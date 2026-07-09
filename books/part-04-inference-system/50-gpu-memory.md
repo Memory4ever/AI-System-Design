@@ -1,62 +1,131 @@
 # 第50章 GPU Memory
 
 **Knowledge Tree:** Part IV Inference System：为什么推理是 AI Infra 的核心战场
-**Status:** Placeholder
+**Status:** Draft
 
 **Roadmap Intent:** 权重、激活、KV Cache、临时 buffer 如何争夺显存。
 
-## Chapter Question
+## 本章要回答的问题
 
-TODO
+为什么大模型系统经常不是算不动，而是装不下、搬不动、调不顺？GPU Memory 为什么会成为训练和推理共同的核心约束？
 
-## Problem
+“显存墙”不是一个口号，而是 AI System 的长期约束。模型参数、activation、optimizer state、KV Cache、temporary buffer、通信 buffer 都在争夺有限 HBM。
 
-TODO
+## 从 memory hierarchy 开始
 
-## Thought Experiment
+GPU 上并不是只有一种 memory。大致可以把它理解为：
 
-TODO
+```text
+register / SRAM / shared memory / L2 cache
+→ HBM
+→ CPU memory
+→ storage
+```
 
-## History / Evolution
+越靠近计算单元，速度越快、容量越小、管理越精细；越远离计算单元，容量越大、访问越慢。
 
-TODO
+这解释了为什么很多优化并不是减少数学运算，而是减少 HBM 读写，或者把数据尽可能留在片上 memory 中。FlashAttention 的核心价值就在这里。
 
-## First Principles
+## 显存里到底有什么
 
-TODO
+训练时，显存至少包括：
 
-## Math
+- parameters
+- gradients
+- optimizer states
+- activations
+- temporary buffers
+- communication buffers
 
-TODO
+推理时，显存至少包括：
 
-## Engineering
+- model weights
+- KV Cache
+- activation / workspace
+- sampling / logits buffer
+- runtime metadata
+- communication buffers
 
-TODO
+这也是为什么训练和推理的优化路径不同。训练要处理 optimizer state 和 backward activation；推理要处理长生命周期 KV Cache 和动态请求。
 
-## Design Trade-offs
+做容量规划时，可以先建立两个近似下界：
 
-TODO
+```text
+weight bytes ≈ parameter_count x bytes_per_weight
 
-## Alternatives and Dead Ends
+KV bytes ≈ 2 x B x T x L x H_kv x D_head x bytes_per_element
+```
 
-TODO
+其中 `B` 是并发序列数，`T` 是每个序列的缓存长度，`L` 是 layer 数，`H_kv` 和 `D_head` 描述 KV heads。真实 batch 中每个请求长度不同，因此该式用于容量量级估算，不表示运行时一定分配规则的稠密张量。
 
-## Engineering Practice
+它们都不是最终 `nvidia-smi` 数值，因为 allocator、workspace、CUDA graph、collective buffer、fragmentation 和 runtime reserve 还会占用空间。但如果连这两个下界都超过容量，任何调度参数都无法补救。
 
-TODO
+更完整的 admission 约束可以写成：
 
-## AI System Position
+```text
+weights + resident KV + peak workspace + runtime reserve <= usable HBM
+```
 
-TODO
+Scheduler 真正可分配的是扣除固定权重和峰值保留后的 KV budget，而不是 GPU 标称总显存。
 
-## Interview Questions
+## KV Cache 为什么改变推理显存
 
-TODO
+模型权重是相对固定的，加载后不会随请求持续增长。KV Cache 不同。它随 batch size、sequence length、layer 数、KV head 数、精度一起增长。
 
-## Research Outlook
+因此推理显存上限常常不是“模型能不能加载”，而是“还能容纳多少并发请求和上下文长度”。
 
-TODO
+这也解释了 PagedAttention、RadixAttention、ShadowKV、KV offload 的意义。它们都不是孤立技巧，而是在应对 KV Cache 变成主要 runtime state 后的 memory pressure。
 
-## Reflection
+## 硬件升级不是最终答案
 
-TODO
+新的 GPU generation、低精度格式、高速互联和 memory hierarchy 会显著改变可行边界：更高算力、更大 HBM、更快互联、更低精度 tensor core，都会推动系统设计变化。具体型号与规格变化很快，不应成为本章的稳定主线。
+
+但硬件升级不会消除系统问题。参数规模、上下文长度和并发需求也会继续增长。新的 FP4/FP8 能力需要软件栈、kernel、量化策略和质量评估配合。
+
+所以正确的结论不是“等硬件变强”，而是“软硬件协同”。硬件给出新的约束和机会，runtime 必须重新组织计算、内存和调度。
+
+## Trade-off
+
+显存优化本质是 trade-off：
+
+- 分片减少单卡显存，但增加通信。
+- 重计算减少 activation 保存，但增加算力。
+- 分页减少碎片，但增加 indirection 和 kernel 复杂度。
+- offload 扩展容量，但引入 PCIe / network latency。
+- 量化降低带宽和容量压力，但可能影响质量。
+- 稀疏化减少访问量，但需要选择策略和精度验证。
+
+没有一种策略永远最好。系统设计必须根据 workload、模型结构、硬件拓扑和服务目标选择组合。
+
+## 本章在知识树中的位置
+
+```text
+模型规模 / 长上下文
+→ GPU Memory
+→ FlashAttention / ZeRO / PagedAttention / ShadowKV
+→ PD 分离
+→ GPU Scheduler / Cost
+```
+
+GPU Memory 是连接模型、训练、推理和平台成本的核心节点。
+
+## 自检问题
+
+1. 为什么显存墙不等于单纯“显存容量不够”？
+2. 训练和推理中显存主要分别被什么占用？
+3. KV Cache 为什么让推理显存成为动态问题？
+4. FlashAttention 为什么可以看作 memory hierarchy 优化？
+5. offload、分页、量化分别交换了什么成本？
+
+## Review notes
+
+本轮 Review 增加了权重和 KV Cache 的容量下界，以及 scheduler 实际面对的 usable HBM 约束；同时把具体硬件型号从长期结论中移出。显存优化首先要有 workload-aware memory breakdown，不能只依据标称容量或单个优化名称。
+
+Primary-source 校验入口：
+
+- FlashAttention: https://arxiv.org/abs/2205.14135
+- FlashAttention-3: https://arxiv.org/abs/2407.08608
+- ShadowKV: https://arxiv.org/abs/2410.21465
+- PagedAttention / vLLM: https://arxiv.org/abs/2309.06180
+
+后续定稿时，任何具体 GPU 性能倍数、显存容量、模型规模和成本数字都必须重新查官方规格或论文来源。
