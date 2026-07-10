@@ -12,9 +12,9 @@ state.
 
 Current priority:
 
-Build the knowledge-tree backbone from `ROADMAP.md`, while selectively using
-high-value source material to draft chapters at their correct knowledge-tree
-positions.
+Part I has been completed as a repository-backed Draft. Continue linearly into
+Part II while preserving the worldview boundaries established by Chapters
+1-10.
 
 ## Completed Repository-Backed Work
 
@@ -68,6 +68,65 @@ The current Draft establishes:
   concerns;
 - Agents expand the system boundary from token generation to tool use,
   memory, state, permissions, trace, and workflow governance.
+
+### Part I Worldview: Chapters 3-10
+
+Status: Draft completed
+
+Repository paths:
+
+`books/part-01-worldview/03-global-knowledge-tree.md`
+
+`books/part-01-worldview/04-why-models-learn.md`
+
+`books/part-01-worldview/05-what-neural-networks-learn.md`
+
+`books/part-01-worldview/06-why-transformer-changed-the-world.md`
+
+`books/part-01-worldview/07-scaling-law.md`
+
+`books/part-01-worldview/08-why-llms-show-intelligence.md`
+
+`books/part-01-worldview/09-ai-system-evolution.md`
+
+`books/part-01-worldview/10-future-of-ai.md`
+
+Core understanding:
+
+- Chapter 3 organizes AI System around capability production, capability
+  delivery, control and governance, and the Agent runtime loop. The knowledge
+  tree is a map of stable responsibilities, not a product architecture.
+- Chapters 4-5 separate representation capacity, optimization, and
+  generalization. Parameter updates minimize empirical risk; the resulting
+  distributed representations remain dependent on data, objective, inductive
+  bias, and deployment distribution.
+- Chapters 6-8 form one capability chain: Transformer provides
+  content-dependent routing and scalable training structure; Scaling Laws
+  describe empirical loss regularities; broad LLM capabilities arise through
+  data, scale, context, and post-training but do not imply reliability or
+  consciousness.
+- Chapter 9 separates system-form evolution from the capability-paradigm
+  history in Chapter 2. It traces the route from local experiments through
+  reproducible pipelines, distributed training, online Serving, LLM runtime,
+  platform governance, and Agent runtime.
+- Chapter 10 treats the future as constraint-driven scenario analysis across
+  Agent, personalization, world models, edge intelligence, and AI
+  platformization. It does not make vendor or timeline predictions.
+
+Part I cross-chapter boundaries were checked in this pass:
+
+- Chapter 2 owns capability-paradigm history; Chapter 9 owns system-form
+  evolution.
+- Chapter 4 owns the optimization mechanism; Chapter 5 owns representation and
+  generalization boundaries.
+- Chapter 6 owns the high-level Transformer design argument; Chapter 14 owns
+  Q/K/V and Self Attention mathematics.
+- Chapter 7 owns empirical scaling regularities; Chapter 8 owns capability,
+  emergence, and reliability distinctions.
+
+All ten Part I chapters remain `Draft`. They have distinct theses, natural
+section structures, self-check questions, `Review notes`, and primary-source
+entry points. Promotion to `Review` or `Final` is intentionally deferred.
 
 ### LLM Acceleration Materials Migration
 
@@ -232,26 +291,25 @@ Completed in this pass:
 
 Current position:
 
-AI System worldview → AI history as bottleneck migration → global knowledge
-tree → repository-wide refinement of the existing Part II / Part III / Part IV
-Draft spine
+Part I complete as Draft → ready to enter Part II model mechanisms
 
-The repository-backed course has completed the first two Part I worldview
-chapters as Drafts and refined all 26 existing Draft chapters. The migrated
-material is now expressed as independent chapter reasoning rather than source
-material commentary.
+The repository-backed course now has a complete ten-chapter Part I worldview
+Draft. The global map, learning and representation foundations, Transformer to
+LLM capability chain, system evolution, and future constraint framework are all
+present in the repository.
 
 Next chapter position:
 
-Continue Part I with Chapter 3: AI System 全局知识树.
+Part II, Chapter 11: Tokenizer.
 
 ## Next Focus
 
-- Stabilize Part I worldview and global AI System knowledge tree.
-- Continue with Chapter 3: AI System 全局知识树 when following the book
-  linearly.
-- Use the reviewed Draft spine as context, but do not promote chapters to
-  `Review` or `Final` until adjacent Placeholder dependencies are written.
+- Continue linearly with Part II, Chapter 11: Tokenizer.
+- Use Part I as the stable worldview and terminology boundary for model,
+  training, inference, platform, and Agent chapters.
+- Keep Part I at `Draft`; do not promote it to `Review` or `Final` until Part II
+  adjacent chapters are written and a second cross-chapter verification is
+  completed.
 - Use `ROADMAP.md` as the single source of truth for chapter order.
 - Only mark chapter progress after the corresponding repo content is written
   or updated.

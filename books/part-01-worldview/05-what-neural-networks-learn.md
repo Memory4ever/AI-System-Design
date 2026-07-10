@@ -1,62 +1,206 @@
 # 第5章 神经网络到底学到了什么
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
-**Status:** Placeholder
+**Status:** Draft
 
 **Roadmap Intent:** 理解特征、表示空间、分布、泛化和归纳偏置。
 
-## Chapter Question
+## 本章要回答的问题
 
-TODO
+训练把大量数值参数更新到了某个低损失区域。那些参数里究竟有什么？模型是在存储样本、提取规则、建立世界模型，还是以另一种方式组织经验？
 
-## Problem
+本章的中心命题是：**神经网络学到的是服务于训练目标的分布式表示与计算特征，而不是一套可以逐条读取的人类知识库。**这些表示由数据分布、架构的 inductive bias、优化路径和目标函数共同塑造，既可能支持泛化，也可能包含记忆、偏差和脆弱相关性。
 
-TODO
+## 从“每个神经元存一条知识”开始
 
-## Thought Experiment
+最直观的想象，是把网络看成数据库：某个神经元识别边缘，某个神经元识别猫，某组参数存储一条事实。这个类比有少量启发性，因为网络内部确实可能出现对某些概念敏感的方向或单元，但作为总体解释会失败。
 
-TODO
+第一，同一概念往往分布在许多参数和激活中；删除一个单元未必删除概念。第二，一个单元可能对多个看似无关的模式响应。第三，模型的知识不仅体现在静态参数，还体现在输入经过多层计算后形成的动态激活。第四，旋转或重新参数化表示空间后，模型功能可能近似不变，而单个坐标的含义会改变。
 
-## History / Evolution
+因此，更稳健的问题不是“这条知识存在哪个参数”，而是：模型把输入映射到了怎样的表示空间，这些表示支持了什么后续计算，又在哪些分布上成立。
 
-TODO
+## 表示是为后续计算服务的中间状态
 
-## First Principles
+把网络写成多层复合函数：
 
-TODO
+```text
+h_0 = x
+h_l = phi_l(h_(l-1); theta_l),  l = 1, ..., L
+y_hat = g(h_L)
+```
 
-## Math
+其中：
 
-TODO
+- `x` 是输入；
+- `h_l` 是第 `l` 层形成的 representation；
+- `phi_l` 是该层参数化变换；
+- `theta_l` 是该层参数；
+- `L` 是层数；
+- `g` 把最终表示映射为预测 `y_hat`。
 
-## Engineering
+`h_l` 不是对输入的中立描述。它保留什么、丢弃什么，由最终训练目标反向决定。如果两个输入差异不会影响 loss，模型没有必然动力保留这种差异；如果某种微小模式能稳定降低 loss，它就可能被放大，即使人类认为它无关紧要。
 
-TODO
+Representation learning 的关键收益，是让系统不必完全依赖手工特征。模型可以把原始输入逐层变换为更适合任务的坐标系。图像模型可能从局部纹理逐步组合出形状和对象，语言模型可能从 token 与局部搭配逐步形成句法、语义和任务相关状态。这里的“层级”是常见经验图景，不意味着每一层都对应唯一、整齐的人类概念。
 
-## Design Trade-offs
+## 什么叫“好的表示”
 
-TODO
+一个表示是否好，不能脱离任务和约束判断。对某个任务有用的表示，可能主动消除另一个任务需要的信息。
 
-## Alternatives and Dead Ends
+可以从三个角度理解。
 
-TODO
+第一是 **separation**。原始空间中纠缠的样本，经过变换后可能更容易被简单决策边界区分。例如最终分类头只需线性变换，就能利用前面层已经组织好的特征。
 
-## Engineering Practice
+第二是 **invariance**。对任务无关的变化，表示应尽量稳定。例如图像轻微平移不应改变对象类别；同义改写不应完全改变语义判断。但不变性过强也会丢失细节，所以它必须服务于具体目标。
 
-TODO
+第三是 **compositional usefulness**。中间特征应能被后续层组合，支持更复杂的判断。单个特征未必对应完整概念，它的价值可能只体现在与上下文中的其他特征共同计算时。
 
-## AI System Position
+这些标准都不是绝对属性。训练目标定义了什么差异重要，架构定义了哪些组合容易表达，数据决定模型实际见到哪些变化。
 
-TODO
+## 数据分布决定模型能学到哪种世界
 
-## Interview Questions
+训练样本通常假设来自某个分布 `P_train(x, y)`。模型在训练时最直接优化的是该分布有限采样上的经验风险。部署时面对的却是 `P_deploy(x, y)`。
 
-TODO
+当二者接近时，训练中发现的规律更可能延续；当二者不同，表示可能失效：
 
-## Research Outlook
+```text
+P_train(x, y) != P_deploy(x, y)
+```
 
-TODO
+这种差异统称 distribution shift，但具体原因可以不同。
 
-## Reflection
+- 输入分布变化：用户语言、设备、场景或长度发生变化。
+- 标签关系变化：同一输入对应的业务规则或偏好改变。
+- 选择偏差：训练数据只覆盖容易收集的人群或成功案例。
+- 反馈回路：模型上线后的决策改变了之后可观察到的数据。
+- 对抗适应：外部参与者主动寻找模型弱点。
 
-TODO
+模型不能从未观察、未表示、未通过目标函数约束的信息中凭空获得可靠规律。大规模数据扩大覆盖面，却不会自动消除许可、偏差、过时、重复和稀有事件不足的问题。
+
+从 AI System 角度看，Data 不是训练前的一次性输入，而是模型世界边界的配置。数据血缘、切片评估、漂移监控和反馈治理因此属于能力质量，而不只是数据工程卫生。
+
+## Inductive bias：为什么有限数据仍可能产生泛化
+
+有限样本通常对应很多都能拟合训练集的函数。模型最终选择哪一个，需要某种偏好，这就是 inductive bias。
+
+偏好可以来自多个位置：
+
+- 架构，例如卷积偏好局部和平移共享，序列模型规定信息怎样流动；
+- 优化，例如初始化、gradient descent 和 regularization 会偏向某些解；
+- 数据增强，把希望保持不变的变换显式加入训练；
+- 目标函数，决定哪些错误更昂贵；
+- 参数共享，使同一计算规则在不同位置或样本复用；
+- 上下文与后训练，进一步塑造模型在运行时表现出的行为。
+
+Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验中选择可推广的解释。真正的问题是偏好是否与部署环境的结构匹配。
+
+当匹配时，模型能用有限样本捕捉可复用规律；不匹配时，模型可能依赖 shortcut。例如训练图像中背景与标签高度相关，模型可能学习背景而不是对象。它在同分布测试集上表现良好，换背景后却失败。
+
+因此，“模型学到了正确特征”不能只靠总体 accuracy 证明。需要构造切片、反事实、扰动和跨分布评估，检查模型究竟利用了什么相关性。
+
+## 记忆与泛化不是简单对立
+
+一个常见二分是：模型要么记忆训练数据，要么学习可泛化规律。实际网络可能同时做两件事。
+
+高频、结构稳定的模式可以被压缩成共享特征；稀有或不规则样本可能通过更局部的参数配置被记住。甚至同一输出既依赖通用模式，也依赖训练中见过的特定关联。
+
+可以从压缩视角形成直觉：如果许多样本共享结构，用一套可复用计算解释它们比逐个存储更经济；如果样本没有明显共享结构，过参数化模型仍可能拟合它们。这个直觉有助于理解表示，但不是对所有神经网络泛化的完整定理。
+
+判断泛化必须回到未见数据和部署分布。训练误差、validation 误差、数据去重、污染检查、时间切分和分布外评估分别回答不同问题。benchmark 得分高也可能来自训练数据污染或测试集与真实场景不一致。
+
+对于生成模型，记忆还涉及隐私与版权风险。模型能够逐字复现某些训练片段，不等于全部知识都以逐字数据库形式存储；反过来，表示是分布式的也不意味着不会泄露具体样本。二者必须通过实证测试区分。
+
+## 分布式表示与 Superposition
+
+如果每个可解释特征都占据一个独立坐标，理解网络会容易很多。但网络的表示维度有限，潜在有用特征可能远多于维度，而且很多特征不会同时激活。模型可以让多个特征共享表示方向，以更高效地利用容量，这种现象常用 superposition 描述。
+
+它带来一个 trade-off：共享可以提高表示容量，却增加干扰和解释难度。单个神经元可能是 polysemantic 的，一个概念也可能分布在多个方向上。通过 probing、activation patching、feature visualization 或 sparse decomposition 可以获得证据，但这些方法观察的是模型行为的某个投影，不应轻易升级为完整因果解释。
+
+尤其要区分三种结论：
+
+```text
+correlation: an activation co-occurs with a concept
+prediction: an activation can predict a concept label
+causation: changing the activation changes model behavior as claimed
+```
+
+线性 probe 能从表示中读出信息，不一定证明模型在原任务中使用了该信息；干预某个方向导致输出变化，也需要排除连带影响。可解释性不是给每个参数命名，而是建立可复现、可反驳的内部机制证据。
+
+## 表示为何会随上下文改变
+
+在静态特征模型中，人们容易把“表示”理解成每个输入固定对应一个向量。现代序列模型中的 token representation 通常依赖上下文。同一个词出现在不同句子中，经过多层信息交互后会形成不同状态。
+
+这意味着模型能力不仅存在于参数中，也存在于参数对当前 context 执行的计算里。参数定义一种转换规则，activation 表示该规则在当前输入上的运行状态。对 LLM 而言，prompt、检索结果、历史对话和工具 observation 都可能改变后续表示。
+
+本章不展开 Transformer 的具体结构。第 6 章会说明 content-dependent routing 为何使这种上下文化计算更可扩展，Part II 再解释 token、embedding 和 Self Attention 的内部机制。
+
+## 工程上怎样验证模型学到了什么
+
+仅看一个平均指标，无法区分模型学到稳定规律还是脆弱 shortcut。工程评估至少需要多层证据。
+
+第一层是数据切片。按语言、长度、时间、来源、用户群、难度和风险类别拆分指标，避免总体平均掩盖局部失败。
+
+第二层是受控扰动。改变理论上无关的表面特征，或保留表面形式但改变关键语义，观察模型是否遵循预期不变性与敏感性。
+
+第三层是跨分布验证。使用时间后移、来源变化或真实线上流量检查表示能否迁移。随机划分只能验证同一数据池内的泛化。
+
+第四层是内部分析。probe、归因和干预可以生成机制假设，但应与外部行为、消融和重复实验结合。
+
+第五层是线上闭环。持续记录输入分布、输出质量、拒答、工具失败和用户反馈，并把异常关联到模型、数据、prompt、runtime 和版本。Observability 告诉我们变化发生在哪里，Evaluation 才判断变化是否有害。
+
+这些方法也有成本。切片越细，样本数越少；评估越贴近真实业务，复现和标注越困难；内部解释越深入，越容易依赖特定模型版本。平台需要根据风险选择证据强度，而不是追求一套万能 dashboard。
+
+## 几种过度解释
+
+第一，“模型学到了人类相同的概念”。相似行为可以由不同内部机制产生。除非有更强证据，否则应说模型形成了对任务有用的表示，而不是断言其概念与人类等同。
+
+第二，“模型只是背诵”。记忆确实存在，但模型也能组合和迁移训练中共享的结构。只用一个标签无法解释不同任务、数据和规模下的行为。
+
+第三，“高维向量天然包含语义”。向量只有在训练目标、数据和后续计算中才有意义。坐标本身不是语义字典。
+
+第四，“可以 probe 出来就代表模型会用”。可读取信息与因果使用不是同一结论。
+
+第五，“同分布 test set 足以证明生产泛化”。真实环境的时间、用户、语言、上下文和反馈机制都可能变化，必须明确外推边界。
+
+## 本章在知识树中的位置
+
+第 4 章解释参数如何被 loss 和 gradient 更新，本章解释这些更新怎样形成任务相关表示，并为什么受到数据分布与 inductive bias 限制。两章关系是：
+
+```text
+Optimization asks: how are parameters changed?
+Representation asks: what useful computation emerges from those changes?
+Generalization asks: where does that computation remain valid?
+```
+
+第 6 章将引入 Transformer 作为一种更适合上下文交互和规模化训练的架构，第 7 章讨论扩大数据、参数和算力时 loss 的经验规律，第 8 章再讨论这些表示如何表现为广泛能力。Part III 的数据与训练章节、Part V 的 Evaluation 与 Observability，都建立在本章的分布边界上。
+
+## 自检问题
+
+1. 为什么把神经网络当作“每个神经元存一条知识”的数据库会失败？
+2. 中间表示 `h_l` 为什么不是对输入的中立描述？
+3. separation、invariance 和 compositional usefulness 分别描述表示的什么性质？
+4. `P_train != P_deploy` 可能由哪些不同机制产生？
+5. 为什么 inductive bias 是从有限样本泛化所必需的？
+6. shortcut learning 为什么可能在同分布 test set 上不暴露？
+7. 记忆与泛化为什么可以同时存在？
+8. superposition 提高了什么，又牺牲了什么？
+9. correlation、decodability 和 causation 在可解释性中有何区别？
+10. 生产系统应怎样组合数据切片、受控扰动、跨分布评估和线上反馈？
+
+## 小结
+
+神经网络学到的不是可直接翻阅的规则表，而是分布在参数与激活中的计算结构。它把输入映射到为训练目标服务的表示空间，在其中放大有用差异、压缩部分无关变化，并让后续层更容易完成任务。
+
+这种能力既来自数据中的规律，也来自架构和优化的偏好。它可以表现为泛化，也可以夹带记忆、偏差和 shortcut；它能在训练分布上工作，也可能在 distribution shift 下迅速失效。理解这些边界，是把模型指标连接到 Evaluation、Observability 和数据反馈闭环的前提。
+
+## Review notes
+
+本章不重复第 4 章的优化推导，也不把任何可解释性方法描述为已经读取了模型全部知识。后续 Review 应补充具体案例时保持“行为证据、可读出信息、因果机制”三层结论分离，并避免在 Part I 提前展开 Transformer block。
+
+优先核验入口：
+
+- Yoshua Bengio, Aaron Courville, Pascal Vincent, "Representation Learning: A Review and New Perspectives", 2013: https://arxiv.org/abs/1206.5538
+- Yann LeCun, Yoshua Bengio, Geoffrey Hinton, "Deep learning", Nature, 2015: https://www.nature.com/articles/nature14539
+- Chiyuan Zhang et al., "Understanding deep learning requires rethinking generalization", 2016: https://arxiv.org/abs/1611.03530
+- Robert Geirhos et al., "Shortcut Learning in Deep Neural Networks", 2020: https://arxiv.org/abs/2004.07780
+- Nelson Elhage et al., "Toy Models of Superposition", 2022: https://transformer-circuits.pub/2022/toy_model/index.html
+- Guillaume Alain, Yoshua Bengio, "Understanding intermediate layers using linear classifier probes", 2016: https://arxiv.org/abs/1610.01644
