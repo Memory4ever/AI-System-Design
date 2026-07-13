@@ -8,13 +8,14 @@ Reset to the repository-backed roadmap.
 
 The previous Part II / Tokenizer / Embedding learning progress came from
 chat-only discussions and should not be treated as repository learning
-state.
+state. That gap has now been replaced by the repository-backed Part II Draft
+recorded below.
 
 Current priority:
 
-Part I has been completed as a repository-backed Draft. Continue linearly into
-Part II while preserving the worldview boundaries established by Chapters
-1-10.
+Parts I, II, and III have been completed as repository-backed Drafts. Continue
+linearly into Part IV while preserving the model, training-state, checkpoint,
+and distributed-execution contracts established by Chapters 1-37.
 
 ## Completed Repository-Backed Work
 
@@ -127,6 +128,265 @@ Part I cross-chapter boundaries were checked in this pass:
 All ten Part I chapters remain `Draft`. They have distinct theses, natural
 section structures, self-check questions, `Review notes`, and primary-source
 entry points. Promotion to `Review` or `Final` is intentionally deferred.
+
+### Part II Model: Chapters 11-22
+
+Status: Draft completed
+
+Repository paths:
+
+`books/part-02-model/11-tokenizer.md`
+
+`books/part-02-model/12-embedding.md`
+
+`books/part-02-model/13-position-encoding.md`
+
+`books/part-02-model/14-self-attention.md`
+
+`books/part-02-model/15-multi-head-attention.md`
+
+`books/part-02-model/16-feed-forward-mlp.md`
+
+`books/part-02-model/17-transformer-layer.md`
+
+`books/part-02-model/18-decoder-only.md`
+
+`books/part-02-model/19-kv-cache.md`
+
+`books/part-02-model/20-sampling.md`
+
+`books/part-02-model/21-moe.md`
+
+`books/part-02-model/22-long-context.md`
+
+Core understanding:
+
+- Tokenizer defines the discrete text interface and trades vocabulary size
+  against sequence length, multilingual coverage, and downstream system cost.
+- Embedding and Position Encoding transform `[B,T]` token ids into positioned
+  `[B,T,d_model]` states without treating ids or positions as semantic scalar
+  values.
+- Self Attention provides content-dependent routing; Multi-Head Attention
+  extends it across learned subspaces and separates Query heads from KV heads
+  through MHA, GQA, and MQA.
+- MLP provides high-capacity position-wise nonlinear transformation. Residual
+  and Normalization combine MHA and MLP into shape-stable Transformer Layers.
+- Decoder-only architecture uses causal language modeling to produce
+  `[B,T,V]` logits. KV Cache reuses invariant historical K/V during
+  autoregressive Decode, and Sampling turns each conditional distribution into
+  an actual token trajectory.
+- MoE conditionally activates expert MLPs, separating total capacity from
+  active parameters while introducing routing, capacity, load balance, and
+  All-to-All communication.
+- Long Context is a joint constraint across position generalization, Attention
+  compute, KV Cache capacity, effective information use, and production SLOs.
+
+The Part II Draft uses one consistent notation:
+
+```text
+B       batch size
+T       sequence length
+V       vocabulary size
+d_model hidden dimension
+H       query head count
+H_kv    key/value head count
+d_h     head dimension
+L       layer count
+```
+
+The end-to-end model path is now repository-backed:
+
+```text
+Text
+-> Tokenizer
+-> Embedding + Position
+-> Self Attention + MLP
+-> Transformer Layer
+-> Decoder Only
+-> KV Cache
+-> Logits / Sampling
+-> MoE / Long Context extensions
+```
+
+Part II cross-chapter boundaries were checked in this pass:
+
+- Chapter 11 ends at token ids; Chapter 12 owns continuous lookup.
+- Chapter 13 owns position mechanisms; Chapter 22 owns length extension and
+  long-context system constraints.
+- Chapter 14 owns single-head Attention; Chapter 15 owns multi-head structure
+  and GQA/MQA.
+- Chapter 16 owns Dense MLP; Chapter 21 owns conditional expert routing.
+- Chapter 18 owns causal model architecture; Chapter 20 owns token selection.
+- Chapter 19 owns the model origin, shape, and capacity of KV Cache; Chapter 41
+  owns runtime memory management, reuse, offload, and scheduling.
+
+All Part I and Part II chapters remain `Draft`. No chapter is promoted to
+`Review` or `Final` in this pass.
+
+### Part II Cross-Chapter Review Pass 2
+
+Status: Completed; chapter maturity remains Draft
+
+Scope:
+
+`books/part-02-model/11-tokenizer.md`
+
+through:
+
+`books/part-02-model/22-long-context.md`
+
+Completed in this pass:
+
+- Reviewed all twelve chapters both as independent arguments and as one model
+  lifecycle, rather than treating chapter-level completeness as sufficient.
+- Added the Part II dependency map at the entry chapter. Chapters 11-20 form
+  the sequential generation trunk; Chapters 21-22 are capacity extensions,
+  not additional operators after Sampling.
+- Confirmed the continuous tensor path from `[B,T]` token ids through
+  `[B,T,d_model]` hidden states, Attention/MLP, `[B,T,V]` logits, per-layer KV
+  state, and next-token selection.
+- Aligned causal probability factorization, tensor positions, shifted targets,
+  and the autoregressive loop in Chapter 18. Chapter 19 now reads as the state
+  branch of a Decode step, while Chapter 20 is the token-decision branch.
+- Clarified that Chapter 21 returns to Chapter 16 and replaces the Dense MLP
+  capacity organization without changing the Transformer Layer's external
+  shape contract. Also distinguished token states from top-k expert
+  assignments in the capacity derivation.
+- Positioned Chapter 21 and Chapter 22 as two orthogonal scaling questions:
+  parameter capacity through conditional computation, and sequence capacity
+  through Position, Attention, KV Cache, effective utilization, and system
+  constraints.
+- Strengthened the Part I to Part II transition from system worldview to token
+  mechanics, and the Part II to Part III transition from model structure to
+  capability production through data, objectives, and optimization.
+- Rechecked chapter boundaries against later Parts: tokenizer data governance
+  remains in Chapter 23; training mechanisms remain in Part III; KV Cache
+  allocation, paging, and scheduling remain in Part IV; RAG and Memory remain
+  in Part VI.
+
+Review conclusion:
+
+Part II now has a coherent dependency structure rather than merely twelve
+complete chapter files. Each chapter retains one central thesis, while chapter
+transitions expose which tensor contract, unresolved problem, or scaling
+constraint the next node receives. This pass does not promote the chapters to
+`Review`; primary-source refresh and a later cross-Part verification are still
+required before maturity changes.
+
+### Part III Training System: Chapters 23-37
+
+Status: Draft completed; cross-chapter Review completed
+
+Repository paths:
+
+`books/part-03-training-system/23-data.md`
+
+`books/part-03-training-system/24-pretraining.md`
+
+`books/part-03-training-system/25-sft.md`
+
+`books/part-03-training-system/26-lora.md`
+
+`books/part-03-training-system/27-rlhf.md`
+
+`books/part-03-training-system/28-ppo.md`
+
+`books/part-03-training-system/29-grpo.md`
+
+`books/part-03-training-system/30-dpo.md`
+
+`books/part-03-training-system/31-checkpoint.md`
+
+`books/part-03-training-system/32-distributed-training.md`
+
+`books/part-03-training-system/33-tensor-parallel.md`
+
+`books/part-03-training-system/34-pipeline-parallel.md`
+
+`books/part-03-training-system/35-zero.md`
+
+`books/part-03-training-system/36-megatron.md`
+
+`books/part-03-training-system/37-deepspeed.md`
+
+Core understanding:
+
+- Training data is the executable specification of the empirical distribution.
+  Filtering, deduplication, decontamination, mixture weights, packing,
+  provenance, and data cursors all change which gradients reach the model.
+- Pretraining repeatedly minimizes causal next-token negative log-likelihood.
+  Token loss, perplexity, optimizer state, global batch, precision, activation
+  memory, and scaling constraints are separated from claims about factual or
+  behavioral reliability.
+- SFT uses demonstrations and token-level loss masks to make target interaction
+  patterns more probable. LoRA changes the parameterization and model-state
+  cost of an update, not the supervision objective itself.
+- RLHF is a feedback pipeline: preference pairs train a reward proxy, then a
+  policy is optimized under a reference constraint. PPO uses a learned value
+  baseline and clipped on-policy updates; GRPO uses same-prompt group-relative
+  rewards without a learned critic; DPO directly optimizes offline preference
+  pairs through policy/reference log-ratios.
+- A training checkpoint is a consistent transaction over model, optimizer,
+  scheduler, RNG, data cursor, parallel layout, and identity metadata. A
+  weights-only artifact, resumable checkpoint, and deployment artifact have
+  different contracts.
+- Distributed training is a constraint-mapping problem. DP splits samples, TP
+  splits operators, PP splits layer depth, CP splits context work, EP splits
+  experts, and ZeRO/FSDP shards data-parallel model states. Every mechanism
+  introduces a specific communication and lifecycle cost.
+- Megatron organizes Transformer computation across multi-dimensional process
+  groups and schedules. DeepSpeed organizes ZeRO, offload, precision,
+  optimizer, and checkpoint behavior as training-runtime policy. Framework
+  names do not replace the underlying mechanism boundaries.
+
+The Part III capability-production path is now repository-backed:
+
+```text
+Data distribution
+-> Pretraining
+-> SFT / LoRA
+-> Preference data and reward
+-> PPO / GRPO / DPO
+-> Consistent Checkpoint
+-> Distributed Training
+-> TP / PP / ZeRO
+-> Megatron / DeepSpeed
+-> Validated model artifact
+```
+
+Important shared equations and state contracts were checked across chapters:
+
+```text
+B_global = micro_batch * accumulation * data_parallel_degree
+
+training state
+= parameters + gradients + optimizer state
+ + scheduler + RNG + data cursor + parallel metadata
+```
+
+Part III cross-chapter boundaries:
+
+- Chapter 23 owns data distribution and lineage; Chapter 24 owns the
+  next-token objective and base training loop.
+- Chapter 25 owns demonstration supervision; Chapter 26 owns low-rank update
+  parameterization and adapter assets.
+- Chapter 27 owns the RLHF feedback and Reward Model pipeline; Chapters 28-30
+  separately own PPO, GRPO, and DPO optimization mechanics.
+- Chapter 31 owns consistent persistence, resume, resharding, and artifact
+  conversion; Chapter 35 owns data-parallel model-state sharding.
+- Chapter 32 owns the distributed-training decision framework and Data
+  Parallel baseline; Chapters 33-35 own TP, PP, and ZeRO mechanisms.
+- Chapter 36 owns multi-dimensional Transformer parallelism composition;
+  Chapter 37 owns DeepSpeed training-state lifecycle policy and the transition
+  to a validated inference artifact.
+- Part III stops at model-artifact production. Prefill, Decode, KV Cache,
+  batching, serving engines, and online scheduling remain in Part IV.
+
+All fifteen chapters have one central thesis, defined mathematical symbols,
+shape or state-flow examples, engineering trade-offs, self-check questions,
+`Review notes`, and primary-source or official-documentation entry points.
+They remain `Draft`; no chapter is promoted to `Review` or `Final` in this
+pass.
 
 ### LLM Acceleration Materials Migration
 
@@ -291,25 +551,25 @@ Completed in this pass:
 
 Current position:
 
-Part I complete as Draft → ready to enter Part II model mechanisms
+Parts I-III complete as Draft → ready to enter Part IV capability delivery
 
-The repository-backed course now has a complete ten-chapter Part I worldview
-Draft. The global map, learning and representation foundations, Transformer to
-LLM capability chain, system evolution, and future constraint framework are all
-present in the repository.
+The repository-backed course now has a continuous worldview, model-mechanism,
+and capability-production spine. Data can be traced through objective,
+post-training, checkpoint, distributed execution, and runtime conversion into
+a validated model artifact.
 
 Next chapter position:
 
-Part II, Chapter 11: Tokenizer.
+Part IV, Chapter 38: 推理到底发生了什么.
 
 ## Next Focus
 
-- Continue linearly with Part II, Chapter 11: Tokenizer.
-- Use Part I as the stable worldview and terminology boundary for model,
-  training, inference, platform, and Agent chapters.
-- Keep Part I at `Draft`; do not promote it to `Review` or `Final` until Part II
-  adjacent chapters are written and a second cross-chapter verification is
-  completed.
+- Continue linearly with Part IV, Chapter 38: 推理到底发生了什么.
+- Use Part I as the stable worldview, Part II as the model-mechanism contract,
+  and Part III as the capability-production and training-state contract.
+- Keep Parts I-III at `Draft`; promotion to `Review` or `Final` remains a
+  separate maturity decision after the adjacent Inference System is complete
+  and a cross-Part verification has been performed.
 - Use `ROADMAP.md` as the single source of truth for chapter order.
 - Only mark chapter progress after the corresponding repo content is written
   or updated.
