@@ -278,6 +278,32 @@ training checkpoint
 
 LoRA merge、TP reshard、tensor-name mapping 和 quantization 都可能改变输出。转换完成必须重新验证，不应把源 checkpoint 的评估结果无条件继承给目标 artifact。
 
+### Deployment Artifact 的完整交接契约
+
+Part IV 接收的不是一个匿名 weights 目录，而是一组共同决定执行语义的身份：
+
+```text
+model architecture + exact weight revision
++ tokenizer / vocabulary / special tokens
++ chat template / generation and stop metadata
++ base model + adapter identity / merge state
++ dtype / quantization scales and calibration identity
++ target runtime format + inference parallel layout
++ source checkpoint / conversion / evaluation lineage
+```
+
+训练时的 `DP/TP/PP/CP/EP` layout 是 source checkpoint 的恢复元数据，不是
+Serving 必须继承的部署拓扑。发布过程可以把 global tensors 重新映射为不同的
+inference `TP/PP/EP` layout，但必须验证 tensor mapping、tied weights、router/
+expert ownership 和数值输出。能在目标 runtime 中 load 只证明格式可读，不能
+证明转换、量化、adapter 组合或 chat protocol 保持了原行为。
+
+验证应分三层：未改数值表示的 consolidation/resharding 检查固定输入 logits
+是否在预期容差内；量化或 kernel 变化使用明确质量阈值和能力回归；最终再通过
+真实 tokenizer、chat template、sampling/stop policy 做 request-level smoke
+test。只有这三层通过，Part III 的 checkpoint 才完成向 Part IV deployment
+artifact 的交接。
+
 ## RLHF 的多模型 Checkpoint
 
 PPO/GRPO 系统可能同时管理 actor、critic、reference、Reward Model 和 rollout policy version。一次可恢复 snapshot 需要说明：
@@ -347,4 +373,4 @@ Primary-source / official documentation 校验入口：
 
 - PyTorch Distributed Checkpoint documentation: https://docs.pytorch.org/docs/stable/distributed.checkpoint.html
 - PyTorch, "Getting Started with Distributed Checkpoint": https://docs.pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
-- Megatron Core Distributed Checkpointing API Guide: https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/dist_checkpointing.html
+- Megatron Core Distributed Checkpointing API Guide: https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.dist_checkpointing.html

@@ -7,170 +7,219 @@
 
 ## 本章要回答的问题
 
-一次 LLM 请求从 API 进入，到第一个 token 返回，再到完整答案流式输出，中间到底发生了什么？
+Part III 最终交付了一个可加载、可验证的模型资产。但模型文件并不会自己接收请求、管理显存、安排 GPU 工作或持续返回 token。一个请求从 API 到达后，究竟经过哪些状态？为什么 LLM inference 不能被理解成一次普通的 `forward()`？TTFT、TPOT、throughput 与 goodput 又分别测量哪一段系统行为？
 
-如果把 LLM 推理理解成普通的 HTTP handler，就会错过大模型系统最核心的瓶颈。传统后端服务通常关心 request count、QPS、latency、CPU、memory、network；LLM 推理还必须关心 prompt length、generated tokens、Prefill、Decode、KV Cache、batch shape、GPU memory、memory bandwidth 和调度策略。
+本章的核心判断是：**LLM inference 是一个持续演化的 token-generation process，而不是一次无状态函数调用。**请求会依次经历输入处理、admission、Prefill、Decode、streaming 和完成清理；每一步都在改变 token progress、KV ownership、GPU memory 与调度资格。
 
-换句话说，LLM 推理不是一次普通函数调用，而是一段持续演化的计算过程。
+本章使用 `T_p` 表示 prompt token 数，`T_o` 表示最终生成 token 数，`R` 表示 active requests 数，`t_a` 表示请求到达时间，`t_1` 表示第一个输出 token 可见时间，`t_i` 表示第 `i` 个输出 token 可见时间。
 
-## 从“调用模型”到“生成 token”
+## 从“加载模型然后调用”开始
 
-最简单的理解是：用户输入 prompt，模型返回 answer。
-
-这个说法对产品接口是成立的，但对系统设计太粗了。对于 decoder-only LLM 来说，生成答案本质上是一个自回归过程：模型每次只预测下一个 token，然后把这个 token 接回上下文，再继续预测下一个 token。
-
-因此，一个请求在系统内部通常可以拆成两个关键阶段：
+最朴素的 Serving 设计是：
 
 ```text
-Request
-→ Tokenize
-→ Prefill
-→ Decode loop
-→ Detokenize / stream output
+HTTP request
+-> model.generate(prompt)
+-> HTTP response
 ```
 
-`Tokenize` 把文本变成 token id。`Prefill` 一次性处理已有 prompt，建立模型对上下文的内部状态。`Decode` 则逐 token 生成，每一步都依赖前面已经生成的内容。
+这个抽象对调用者很方便，却隐藏了系统最重要的事实：
 
-这就是 LLM 推理和普通模型推理的第一处分叉：它不是输入一次、前向一次、输出一次，而是先处理上下文，再进入一个逐步生成的循环。
+- Prompt 长度和输出长度都可能不同。
+- 第一个 token 与后续 token 的计算形态不同。
+- 请求生成期间持续占有逐层 KV Cache。
+- 不同请求可以在每个 Decode iteration 动态组合。
+- 用户可能在完整答案结束前持续接收 stream。
+- cancellation、timeout 和失败都需要回收状态。
 
-## Prefill 和 Decode 为什么必须分开看
+普通 stateless handler 通常在一次调用里完成大部分工作；LLM 请求则可能在数百个 scheduler iterations 中保持存活。系统调度的不只是 request，而是 request 在某个 token position 上的运行时状态。
 
-Prefill 阶段处理的是已有 prompt。假设用户输入了 2000 个 token，模型需要一次性计算这些 token 在每一层中的表示，并生成后续 Decode 所需的 Key / Value 状态。这个阶段的计算量大，但并行度也高，因为 prompt 中所有 token 可以以矩阵形式批量处理。
+## 从 Deployment Artifact 到执行身份
 
-Decode 阶段则不同。每一步只新增一个 token。模型需要基于当前 token 和历史 KV Cache 生成下一个 token。因为第 `t+1` 个 token 依赖第 `t` 个 token，Decode 天然带有串行性。
-
-所以二者的资源画像不同：
+Part III 第 31、37 章交付的是经过转换和验证的 deployment artifact。Runtime
+加载时必须把它解析成一个不可含糊的 execution identity：
 
 ```text
-Prefill: 计算密集，矩阵规模大，并行度高
-Decode : 访存密集，逐 token 串行，对 KV Cache 访问敏感
+model revision + architecture
++ tokenizer / special tokens / chat template
++ base model + adapter / merge state
++ dtype / quantization and KV format
++ runtime version + inference TP/PP/EP layout
++ generation / stop metadata
 ```
 
-这是常见 workload 下的第一阶直觉，不是硬件无关的定律。短 prompt、小模型或低 batch 的 Prefill 也可能没有充分利用计算单元；较大 Decode batch、量化和不同模型结构也会改变算术强度。更严谨的判断应来自目标 workload 上的 profile。推理系统的第一条主线仍然成立：加速不能只说“让模型跑得更快”，而要先拆清楚到底是在加速 Prefill、Decode，还是二者之间的调度。
+训练 checkpoint 的 rank/file layout 不能直接充当 Serving layout。Runtime
+可以按目标 GPU topology 重新选择 inference `TP/PP/EP`，但新的 mapping、kernel
+和 quantization path 必须已经通过 artifact conversion validation。类似地，动态
+adapter 不是请求上的一个普通字符串：它参与权重选择、batch compatibility、
+prefix-cache identity 和审计。
 
-## 一次请求的系统路径
+这组身份是后续状态机的静态前提。请求再携带 prompt tokens、sampling
+parameters、SLO 和 runtime state。静态 artifact identity 与动态 request state
+没有分开时，cache reuse、故障恢复和行为回归都无法可靠解释。
 
-从平台视角看，一次 LLM 请求大致会经过这些层：
+## 请求状态机
+
+先冻结一个与具体框架无关的状态机：
 
 ```text
-Client
-→ Gateway / API Server
-→ Router / Scheduler
-→ Tokenizer
-→ Runtime / Inference Engine
-→ GPU Worker
-→ KV Cache Manager
-→ Detokenizer
-→ Streaming Response
+ARRIVED
+  -> VALIDATED
+  -> TOKENIZED
+  -> WAITING_FOR_ADMISSION
+  -> PREFILLING
+  -> DECODING
+  -> FINISHED
+  -> RELEASED
 ```
 
-Gateway 负责认证、限流、路由和协议适配。Scheduler 决定请求何时进入 batch、和哪些请求一起执行。Runtime 加载模型权重，并调度 GPU kernel。KV Cache Manager 管理每个请求的历史 attention state。Detokenizer 把 token id 还原成用户能读的文本，并通过 stream 返回。
-
-这条路径里，模型只是其中一层。真正的 serving engine 要同时管理计算、内存、请求生命周期和输出流。
-
-## 为什么加速目标不是单一指标
-
-推理系统的优化目标可以先拆成三个维度：latency、throughput、cost。
-
-`Latency` 关注用户等待时间，尤其是 `TTFT` 和 `TPOT`。用户是否觉得“卡”，通常不只取决于完整答案总耗时，还取决于第一个 token 什么时候出现，以及后续 token 是否持续稳定流出。
-
-`Throughput` 关注单位时间内系统能生成多少 token 或处理多少请求。GPU 很昂贵，如果 batch 和调度设计不好，GPU 会因为等待、显存碎片或 batch 空洞而空转。
-
-`Cost` 关注单位 token 或单位请求消耗的资源。模型越大、上下文越长、输出越长，成本越高。部署阶段常见的 KV Cache、量化、图优化、batching、speculative decoding，本质上都在试图用更少资源完成更多生成。
-
-这三个目标不是总能同时优化。低 latency 往往倾向小 batch，高 throughput 往往倾向大 batch；低 cost 可能要求量化或更小模型，但质量又可能受到影响。因此推理系统是一个多目标权衡问题，而不是单纯“跑快一点”。
-
-本书后续统一使用几个指标：
-
-- `TTFT`：time to first token，主要受排队、tokenize、Prefill、KV Cache 写入和调度影响。
-- `TPOT`：time per output token，也可理解为稳定生成阶段的 inter-token latency，主要受 Decode、KV Cache 读取、batching 和调度影响。
-- `Throughput`：单位时间完成的 token 或请求量，通常和 batch occupancy、GPU utilization、KV memory capacity 相关。
-- `Goodput`：在 TTFT、TPOT 等 SLO 约束内完成的有效请求速率。它防止系统用牺牲用户延迟的方式制造表面吞吐。
-
-一次请求的端到端时间可以粗略拆成：
+还可能出现旁路：
 
 ```text
-request latency
-≈ queue time
- + tokenize / routing overhead
- + prefill service time
- + decode iterations
- + stream / detokenize overhead
+WAITING / PREFILLING / DECODING
+  -> CANCELLED | TIMED_OUT | FAILED
+  -> RELEASED
 ```
 
-这也解释了为什么只有 GPU kernel profile 不足以证明服务更快：排队、batch admission、KV memory 和跨节点通信都可能主导用户可见延迟。
+每次状态迁移都必须维护不变量。例如请求进入 `DECODING` 前，prompt 对应的初始 KV state 必须已经可用；进入 `RELEASED` 后，block、临时 buffer 和调度表项都不能继续被引用。
 
-## 慢在哪里
+## 一次端到端请求
 
-大模型推理慢，至少有四类原因。
+### API 与输入处理
 
-第一，模型参数规模大。每一步推理都需要读取大量权重并进行矩阵计算。即使计算单元足够强，权重和中间状态在不同 memory hierarchy 之间移动也会产生巨大开销。
+Frontend 完成认证、限流、schema 校验、chat template、tokenization 和 generation parameters 归一化。Tokenizer 必须与模型资产一致；错误的 vocabulary、special tokens 或 chat template 不一定触发 GPU error，却会改变输入语义。
 
-第二，memory wall 明显。GPU HBM 带宽很高，但相比片上 SRAM / cache 仍然慢得多。许多优化并不是减少数学计算本身，而是减少 HBM 读写，或者把数据尽可能留在更快的片上存储里。
+### Admission
 
-第三，attention 受序列长度影响。Prefill 阶段的 attention 需要处理 prompt 内 token 之间的关系，长上下文会放大计算和显存压力。后续章节会看到，FlashAttention、Ring Attention、ShadowKV 等技术都在不同层面回应这个问题。
+请求不会因为已经到达就必然立刻运行。系统需要判断模型与 adapter 是否已加载、prompt 是否超过限制、是否有足够 KV blocks 和 token budget、排队后是否仍可能满足 SLO，以及租户配额和优先级是否允许进入。
 
-第四，自回归 Decode 串行。生成 1000 个 token，不是一次性生成 1000 个位置，而是循环执行 1000 次。KV Cache 可以避免重复计算历史上下文，但它也把历史状态变成了显存压力。
+Admission control 的目标不是让 queue 永不为空，而是避免接受一个注定造成 memory exhaustion 或大面积 SLO violation 的请求。
 
-## 为什么推理系统会演化出这么多技术
+### Prefill
 
-从这个视角看，后面的推理加速技术不是零散技巧，而是在回答不同瓶颈：
+Prefill 一次处理 prompt tokens，得到第一个 next-token distribution，并在每一层写入 prompt 的 K/V。它决定第一个输出 token 何时可能产生，也是长 prompt 影响其他请求的主要入口。
 
-- KV Cache：减少 Decode 阶段对历史 token 的重复计算。
-- Continuous Batching：减少不同请求生成长度不同造成的 GPU 空洞。
-- PagedAttention：减少 KV Cache 动态增长带来的显存碎片和浪费。
-- Speculative Decoding：缓解逐 token 串行生成的瓶颈。
-- FlashAttention：减少 attention 计算中对 HBM 的中间矩阵读写。
-- Quantization：降低权重和可能的 activation / cache 存储与带宽压力。
-- PD 分离：把 Prefill 和 Decode 两种不同资源画像拆成不同部署单元。
+### Decode loop
 
-这些技术共同说明：LLM 推理系统的核心战场在于 **token 生成过程中的计算、内存和调度协同**。
+Decode 每轮处理当前新 token，读取历史 KV Cache，产生下一个 token，再追加新的 K/V。单个请求内部存在严格依赖：
+
+```text
+token_i
+-> forward step
+-> logits_i+1
+-> sampling
+-> token_i+1
+```
+
+不同请求可以在同一轮共同执行，但同一请求的第 `i+1` 步不能早于第 `i` 步完成。
+
+### Streaming 与完成
+
+Token 经 detokenization 后可以持续发送给客户端。模型侧停止条件包括 EOS、stop tokens 和最大生成长度；系统侧还包括 cancellation、deadline、quota 和 transport failure。
+
+完成不是“最后一个 token 已算出”这么简单。Runtime 还必须释放 KV blocks、清理 request state、记录 usage 与 latency，并确保 stream 的终止语义对调用者可见。
+
+## 指标必须绑定时间边界
+
+### TTFT
+
+```text
+TTFT = t_1 - t_a
+```
+
+它包含 frontend、queueing、tokenization、admission、Prefill、首 token sampling 和首次传输。只测 GPU Prefill kernel 不能代表用户看到的 TTFT。
+
+### TPOT
+
+对 `T_o > 1` 的请求，一种常见定义是：
+
+```text
+TPOT = (t_T_o - t_1) / (T_o - 1)
+```
+
+它概括首 token 之后的平均输出节奏。逐 token 间隔也常称 inter-token latency；监控必须明确是否包含 streaming transport 与客户端 buffering。
+
+### End-to-end latency
+
+```text
+E2E latency = t_T_o - t_a
+E2E ~= TTFT + (T_o - 1) * TPOT
+```
+
+第二行只是忽略抖动后的分解，不是性能保证。输出长度本身由模型、sampling 和 stop policy 决定。
+
+### Throughput 与 Goodput
+
+Request throughput 统计完成请求数，token throughput 统计单位时间处理的 input/output tokens。二者不能互相替代：一个长上下文请求和一个短对话请求对系统的成本完全不同。
+
+Goodput 只统计满足既定 SLO 的有效工作：
+
+```text
+goodput
+= completed work satisfying TTFT / TPOT / deadline objectives
+```
+
+如果吞吐上升来自让更多请求超时，系统做了更多 work，却没有交付更多符合目标的 capability。
+
+## 三层观察模型
+
+Part IV 后续章节按三层定位：
+
+| 层次 | 关注对象 | 章节 |
+| --- | --- | --- |
+| Stage | Prefill、Decode、KV state | 39～41 |
+| Mechanism | batching、paging、speculation、memory、PD、scheduling | 42～44、50～52 |
+| Runtime / Control | TensorRT-LLM、vLLM、SGLang、Dynamo、KServe LLM | 45～49 |
+
+Framework 会变化，这三层问题不会同时消失。一个新 Serving 项目首先应被问：它改变了哪个 stage、哪类状态、哪项资源约束或哪条 control loop？
+
+## 为什么没有单一“推理性能”
+
+推理系统至少同时面对长 prompt 的 TTFT、长输出的 TPOT、GPU token throughput、KV Cache capacity、P95/P99 tail latency、fairness、deadline 和成本。
+
+优化其中一项可能伤害另一项。更大的 batch 可以提高 arithmetic intensity，却增加 queueing；保留更多 prefix cache 可以减少 Prefill，却占据 Decode 所需 KV capacity；激进 admission 可以提高短时 utilization，却可能让 tail latency 失控。
+
+因此 benchmark 必须声明模型、precision、硬件、并行度、`T_p`/`T_o` 分布、并发、到达过程和 SLO。脱离 workload 的“快几倍”不能直接迁移为系统结论。
 
 ## 本章在知识树中的位置
 
-本章是 Part IV 的入口。它不深入某一个优化算法，而是建立推理系统的基本地图：
-
 ```text
-推理到底发生了什么
-→ Prefill
-→ Decode
-→ KV Cache
-→ Continuous Batching
-→ PagedAttention
-→ Speculative Decoding
-→ TensorRT-LLM / vLLM / SGLang
-→ GPU Memory
-→ PD 分离
-→ 推理调度
+Part III validated model artifact
+-> model loading and identity
+-> request state machine
+-> Prefill
+-> Decode + KV state
+-> runtime mechanisms
+-> serving engines
+-> distributed orchestration
+-> Part V platform governance
 ```
 
-后续每一章都可以回到这个入口问题：它到底在优化 LLM 推理路径中的哪一段？
-
-这组章节的内部阅读顺序可以理解为三层：
-
-```text
-阶段层：Prefill / Decode / KV Cache
-机制层：Continuous Batching / PagedAttention / Speculative Decoding / GPU Memory / PD 分离
-引擎层：TensorRT-LLM / vLLM / SGLang / 推理调度
-```
-
-阶段层回答“请求发生了什么”；机制层回答“瓶颈如何被重新组织”；引擎层回答“这些机制如何进入生产 runtime”。
+第37章交付模型资产，本章把它接入在线 capability-delivery path。第39～41章会拆开 Stage 与状态；第42章以后再逐步回答如何调度、管理和扩展。这个 delivery path 只能执行已发布的 capability contract，不能通过更快的 runtime 修复训练数据、目标或 artifact conversion 的错误。
 
 ## 自检问题
 
-1. 为什么 LLM 推理不能简单类比普通 HTTP 服务？
-2. Prefill 和 Decode 的资源画像有什么不同？
-3. 为什么 request count 不能充分描述 LLM serving 负载？
-4. `TTFT` 和 throughput 为什么可能互相冲突？
-5. KV Cache 为什么既是加速手段，也是显存压力来源？
-6. 如果一个推理系统 GPU 利用率很低，可能有哪些原因？
-7. 为什么 PD 分离会从 Prefill / Decode 差异中自然出现？
+1. 为什么 LLM inference 不能视为普通无状态 handler？
+2. 请求进入 Decode 前必须满足哪些状态不变量？
+3. TTFT 为什么不能只测 Prefill kernel？
+4. TPOT 与 end-to-end latency 的关系是什么？
+5. Request throughput 与 token throughput 为什么可能给出不同判断？
+6. Goodput 相比 throughput 多加入了什么约束？
+7. Cancellation 后为什么仍需要显式 RELEASED 状态？
+8. Stage、mechanism 和 runtime 三层怎样帮助定位新框架？
+
+## 小结
+
+LLM Serving 的基本对象不是一次函数调用，而是携带 token progress、KV ownership、SLO 和生命周期的请求状态机。Prefill 决定上下文怎样进入模型，Decode 决定输出怎样逐步产生，runtime 则在两者之间持续管理 memory、batch 与 stream。
+
+下一章从全局状态机进入第一段 GPU 主路径：Prefill 如何把 prompt 转换成初始 logits 和可供后续 Decode 使用的 KV state。
 
 ## Review notes
 
-本轮 Review 为 Prefill/Decode 的资源画像增加了适用条件，并把 queue time、service time、throughput 与 SLO goodput 放进同一条请求路径。后续章节中的任何“更快”都应说明改善了哪个阶段、哪个指标，以及是否牺牲其他约束。
+本轮将第38章重构为 Part IV 的唯一全局入口，冻结请求状态、指标边界和三层章节地图。具体 paging、speculation、framework feature 与 cluster policy 均留给后续章节。
 
-Primary-source 校验入口：
+Primary-source / official entry points：
 
-- DistServe 对 TTFT / TPOT 与 Prefill / Decode 干扰的定义和问题化： https://arxiv.org/abs/2401.09670
-- Orca 对 iteration-level scheduling 的问题化： https://www.usenix.org/conference/osdi22/presentation/yu
+- Orca, iteration-level scheduling and selective batching, OSDI 2022: https://www.usenix.org/conference/osdi22/presentation/yu
+- DistServe, TTFT/TPOT and goodput-oriented disaggregation: https://arxiv.org/abs/2401.09670
+- vLLM V1 architecture: https://docs.vllm.ai/en/stable/design/arch_overview/

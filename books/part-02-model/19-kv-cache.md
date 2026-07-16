@@ -9,7 +9,7 @@
 
 Decoder-only 模型每次只生成一个新 token。如果前缀中历史 token 的 K/V 已经计算过，为什么还要在下一步重新投影？KV Cache 保存什么、为什么不保存 Query，又怎样从模型优化变成运行时状态？
 
-本章的核心判断是：**KV Cache 用逐层保存历史 Key/Value，避免自回归 Decode 重复计算不变前缀；它用显存与状态管理换取更少计算。**本章解释 cache 的模型来源和 shape，Part IV 第41章继续解释分页、复用、offload 和 scheduler。
+本章的核心判断是：**KV Cache 用逐层保存历史 Key/Value，避免自回归 Decode 重复计算不变前缀；它用显存与状态管理换取更少计算。**本章解释 cache 的模型来源和 shape；Part IV 第41章负责 runtime capacity、生命周期、复用与 offload，第43章负责分页映射，第52章负责调度。
 
 ## 不使用 Cache 会重复什么
 
@@ -225,7 +225,7 @@ Decoder-only autoregressive loop
 -> GPU memory manager and scheduler
 ```
 
-本章是 Part II 从模型机制通向 Part IV 的关键桥梁。第20章继续处理每步 logits 的 token 选择，第41章从推理系统角度重新审视 cache。
+本章是 Part II 从模型机制通向 Part IV 的关键桥梁。第20章继续处理每步 logits 的 token 选择；第41章从 runtime 生命周期重新审视 cache，第43章改变其物理 placement，第50～52章再把它纳入 HBM、PD 与调度约束。
 
 ## 自检问题
 
@@ -238,7 +238,7 @@ Decoder-only autoregressive loop
 7. 为什么 KV Cache 没有让完整生成变成线性或常数成本？
 8. GQA/MQA 通过哪个变量降低 cache？
 9. Position id 错误为什么会污染 cached K？
-10. 本章与第41章的职责边界是什么？
+10. 第19、41、43、52章分别负责 KV Cache 的哪一层问题？
 
 ## 小结
 

@@ -212,7 +212,7 @@ Transformer Layer
 -> residual stream shape unchanged
 ```
 
-本章沿参数容量轴扩展第 16 章的 MLP；第 22 章则沿序列容量轴重新汇总 Position、Attention 与 KV Cache。两者都改变主干的可扩展边界，但不是前后依赖的两个算子。具体 Expert Parallel 训练、checkpoint 与调度属于 Part III/IV/V，本章保持模型机制为主。
+本章沿参数容量轴扩展第 16 章的 MLP；第 22 章则沿序列容量轴重新汇总 Position、Attention 与 KV Cache。两者都改变主干的可扩展边界，但不是前后依赖的两个算子。第 32、36 章接住 Expert Parallel、All-to-All 与 checkpoint mapping，第 40 章接住 MoE Decode 的小 expert batches 和通信，第 45～48 章再由 runtime 执行与扩展这些机制。本章保持模型语义为主。
 
 ## 自检问题
 

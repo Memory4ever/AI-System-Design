@@ -7,106 +7,156 @@
 
 ## 本章要回答的问题
 
-为什么一次 LLM 请求不能只说“模型开始生成”？为什么在第一个 token 出来之前，系统要先经历 Prefill？Prefill 为什么通常是计算密集阶段，又为什么它会决定 `TTFT`？
+请求变成 token ids 后，为什么不能直接进入逐 token 输出？Prefill 究竟计算了什么、写入了什么状态？为什么它常被概括为 compute-intensive，却不能在所有模型、长度和硬件上机械地称为 compute-bound？长 prompt 又为什么会伤害正在 Decode 的请求？
 
-Prefill 是模型读入 prompt、建立上下文状态、写入 KV Cache 的阶段。它不是输出阶段，但它决定了模型后续 Decode 是否能高效进行。
+本章的核心判断是：**Prefill 将整段 prompt 映射为第一个 next-token distribution 和逐层 KV state；它利用 token 维度并行换取高 GPU efficiency，但工作量、显存峰值和调度占用会随 prompt 长度快速增长。**
 
-## 从“读题”开始
+本章使用 `B` 表示 sequence batch size，`T_p` 表示 prompt length，`d_model` 表示 hidden dimension，`L` 表示层数，`H_kv` 与 `d_h` 表示 KV heads 和 head dimension。
 
-如果把 Decode 看成逐字回答，那么 Prefill 就是读题。用户给出的 prompt 可能只有几十个 token，也可能有几万甚至更多 token。模型不能在没有读完整上下文的情况下开始可靠生成。
+## 如果逐个 Token 读 Prompt
 
-对于 decoder-only Transformer，Prefill 会一次性处理 prompt 中所有 token。每一层都会产生 hidden states，并为后续自回归生成准备 Key / Value 张量。完成 Prefill 后，请求才真正进入逐 token 的 Decode loop。
+最直接的办法是像 Decode 一样，从 prompt 第一个 token 开始逐个运行模型。它在语义上可行，却浪费 causal attention 已知的并行性。
 
-可以把过程写成：
-
-```text
-Prompt tokens
-→ embedding + position
-→ Transformer layers
-→ logits for next token
-→ KV Cache for all prompt tokens
-```
-
-这解释了为什么 `TTFT` 往往受 Prefill 影响很大：用户看不到 Prefill 的中间结果，只能等待第一个可输出 token。
-
-## 为什么 Prefill 计算密集
-
-Prefill 处理的是一整段序列。矩阵乘法和 attention 都可以在 token 维度上并行展开，因此它的单次计算规模大、GPU 并行度高。
-
-这和 Decode 形成鲜明对比：Decode 每次只新增一个 token，单步矩阵规模小，但要反复执行很多次。
-
-把 Prefill 归为 compute-intensive 是常见系统直觉：较长序列能形成更大的 GEMM，通常比单 token Decode 更容易提高算术强度。但这不是无条件结论。短 prompt、较小 batch、模型结构、量化方式和 kernel 实现都会改变瓶颈，最终仍需用目标硬件上的 roofline/profile 判断。
-
-但是计算密集不代表只看 FLOPs。长 prompt 会放大 attention 计算、activation 临时 buffer 和 KV 写入压力。Prefill 对 GPU memory 也有要求，只是它和 Decode 的瓶颈形态不同。
-
-## Prefill 和 KV Cache
-
-Prefill 的一个关键产物是 KV Cache。
-
-如果没有 Prefill 写入的 cache，Decode 每一步都必须重新处理 prompt 历史。KV Cache 让后续 Decode 可以只处理新增 token，并读取已经缓存的历史 K/V。
-
-因此 Prefill 不是一次可丢弃的 forward。它会创建一个请求级别的 runtime state：
+训练阶段已经能在 causal mask 下同时计算所有位置：位置 `t` 不读取未来 token，但不同位置的矩阵运算仍可一起执行。Prefill 复用了这条结构，把 `T_p` 个已知 tokens 一次送入模型。
 
 ```text
-Request state =
-  prompt tokens
-  current Decode position
-  per-layer KV Cache
-  scheduling metadata
+input ids        [B, T_p]
+-> embedding     [B, T_p, d_model]
+-> L layers      [B, T_p, d_model]
+-> final logits  [B, T_p, V]
 ```
 
-这也是为什么 Prefill 调度不能只看“什么时候跑一次模型”。它还要考虑：生成出来的 KV Cache 放在哪里、能否被 Decode worker 继续使用、是否需要跨节点传输。
+Serving 通常只需要最后一个 prompt position 的 next-token logits，但每一层、每个 prompt position 的 K/V 都要为后续 Decode 保留。
 
-## 为什么会走向 PD 分离
+## Prefill 的两个输出
 
-当 Prefill 和 Decode 的资源画像差异足够大时，把它们放在同一组 GPU 上可能不是最优。
+最后一个位置的 logits `[B,V]` 经过第20章的 sampling policy 得到第一个 output token。第一个 token 可见前经历的主要模型计算正是 Prefill。
 
-Prefill 需要大块计算，适合吞吐型处理；Decode 需要稳定低延迟，持续读取 KV Cache。长 prompt 场景下，Prefill 可能阻塞正在 Decode 的请求，导致用户看到的 token stream 抖动。
+每层还要写入：
 
-这就是 PD 分离的直接动机：让 Prefill worker 负责读 prompt 和写 cache，让 Decode worker 负责稳定生成。是否值得分离，取决于 prompt length、output length、KV 传输成本、网络拓扑和调度策略。
+```text
+K_l, V_l: [B, H_kv, T_p, d_h]
+```
 
-这里的关键指标是 `TTFT`。Prefill 优化不是只追求更高吞吐，还要控制用户看到第一个 token 前的等待时间。后续第51章会把它和 Decode 阶段的 `TPOT` 放在同一个调度框架里比较。
+物理 layout 可能因 kernel 和 runtime 不同而变化，但逻辑维度必须一致。Prefill 结束后，request 从“拥有 prompt ids”升级为“拥有可继续 Decode 的 position 与 KV history”。
 
-除了完全共置和完全分离，还有一种中间策略是 chunked prefill：把很长的 prompt 切成多个 token chunks，在调度循环中与 Decode work 交错。它可以限制单次 Prefill 对 Decode 的阻塞，却会增加调度轮次，并改变 `TTFT`、cache 写入和 batch composition。它说明系统面对的不是二选一，而是如何控制 Prefill 的执行粒度。
+## 计算量从哪里来
 
-## 工程判断
+忽略常数和不同 Attention 变体，一层 dense Transformer 的主要工作可粗略拆为：
 
-评估 Prefill 性能时，应关注：
+```text
+linear / MLP projections: O(B * T_p * d_model^2)
+prompt self-attention:    O(B * T_p^2 * d_model)
+```
 
-- `TTFT` 是否主要花在 prompt processing。
-- Prompt length 分布是否长尾明显。
-- Prefill 是否打断 Decode batch 的节奏。
-- KV Cache 写入后是否需要跨设备迁移。
-- 对长上下文请求是否需要单独队列或资源池。
+短到中等 context 下，大模型的 projection 与 MLP 可能占主要 FLOPs；`T_p` 很长时，Attention 的二次项变得重要。FlashAttention 降低中间矩阵对 HBM 的 IO，并不把 exact full Attention 的数学计算改成线性。
 
-如果服务场景主要是短 prompt、长输出，Decode 可能更重要；如果是 RAG、代码库问答、长文档总结，Prefill 通常会成为 `TTFT` 的主要来源。
+因此“Prefill 是 compute-bound”是一条 workload-dependent heuristic。它通常比单-token Decode 拥有更大的矩阵维度和更高 data reuse，更容易利用 GPU compute；是否真正达到 compute roofline，还取决于模型、kernel、precision、`T_p`、batch、通信和硬件。
+
+## 一个 Shape 小例子
+
+设：
+
+```text
+B       = 2
+T_p     = 4
+d_model = 8
+H_kv    = 2
+d_h     = 4
+```
+
+输入 hidden states 是 `[2,4,8]`。某一层产生的 K 和 V 各为 `[2,2,4,4]`。Prefill 完成后，每个请求拥有 4 个历史 positions 的 K/V；Decode 第一轮只需为新 token 计算一个 position，并读取这 4 个 positions。
+
+Batch 中 prompt 长度不同时，padding 会做无效工作；packing 或 ragged/paged representation 能减少浪费，却提高 kernel 与 metadata 复杂度。
+
+## TTFT 不等于 Prefill Kernel Time
+
+```text
+TTFT
+= frontend + queueing + tokenization + admission
+ + Prefill execution
+ + first-token sampling + first stream delivery
+```
+
+优化 Prefill kernel 只减少其中一项。若请求仍在 queue 中等待 KV blocks，用户 TTFT 不会按 kernel 加速比例下降。反过来，prefix cache hit 可能跳过部分 Prefill work，即使模型 kernel 没有变化。
+
+## 长 Prompt 为什么会干扰 Decode
+
+Prefill 往往以较大 token block 占用 GPU。若同一 worker 同时承载延迟敏感的 Decode iterations，一个超长 prompt 可能延后后续 Decode step，造成 TPOT 抖动。
+
+朴素方案是让 Prefill 一次跑完整 prompt，优点是大矩阵效率高，缺点是 scheduler 无法在中间插入 urgent Decode work。
+
+### Chunked Prefill
+
+Chunked Prefill 把 prompt 分成多个 token chunks：
+
+```text
+T_p = c_1 + c_2 + ... + c_n
+```
+
+每个 iteration 只调度部分 prompt tokens，使 scheduler 可以在 chunks 之间安排 Decode。它减少 head-of-line blocking，却带来更多调度边界、较小矩阵、复杂的 KV reservation，并可能增加单请求 TTFT。
+
+所以 chunk size 是 throughput、TTFT 和 TPOT interference 之间的 policy，不是越小越公平。
+
+## Batch Prefill 的权衡
+
+将多个 prompts 合并能提高 GPU utilization，但等待凑 batch 会增加 queueing。长度差异还会造成 padding 或不规则 shape。
+
+Runtime 可以按长度分桶、使用 token budget、chunk prompts 或将 Prefill 与 Decode 混合调度。它们都在回答同一问题：本轮处理多少新 prompt tokens，才能不牺牲过多 Decode cadence？
+
+## 跨 Runtime 必须保留的身份
+
+Prefill 产生的 KV state 只能由兼容的 Decode 继续使用。至少需要一致：
+
+- Model weights、revision 与 adapter。
+- Tokenizer、chat template 和 token ids。
+- Position ids 与 RoPE configuration。
+- KV dtype、layout、block size。
+- TP/PP 等 parallel layout。
+
+在单 worker 内，这些通常被 runtime 隐含保证；进入 PD 分离后，它们成为跨进程、跨节点的显式 transfer contract。
+
+## 工程验证
+
+Prefill benchmark 应同时记录 `T_p` 分布、batch tokens、queueing、kernel time、first-token sampling 与 TTFT 分位数。正确性验证则应比较 chunked/non-chunked、cached/non-cached 路径在相同 sampling 条件下的 logits 或 token sequence。
+
+不能仅凭 GPU utilization 判断配置。一个长 Prefill 把 GPU 跑满，同时让所有 Decode 请求错过 TPOT SLO，仍是系统层失败。
 
 ## 本章在知识树中的位置
 
 ```text
-推理到底发生了什么
-→ Prefill
-→ KV Cache 写入
-→ Decode
-→ PD 分离
-→ 推理调度
+request admitted
+-> prompt tokens [B,T_p]
+-> Prefill parallel compute
+-> first-token logits
+ + initial per-layer KV state
+-> Decode loop
 ```
 
-Prefill 是从“请求进入系统”到“模型开始流式生成”的关键桥梁。
+第38章定义完整请求状态机，本章负责从 tokenized request 到可 Decode state。第40章将解释为什么后续输出不能继续沿用同样的大块并行方式。
 
 ## 自检问题
 
-1. Prefill 为什么会影响 `TTFT`？
-2. Prefill 产生的 KV Cache 对 Decode 有什么作用？
-3. 为什么 Prefill 通常比 Decode 更 compute-intensive？
-4. 长 prompt 会给 Prefill 带来哪些额外系统压力？
-5. 什么场景下 Prefill / Decode 分离会更有意义？
+1. Prefill 为什么能并行计算所有 prompt positions 而不违反 causal mask？
+2. Prefill 的两个核心输出是什么？
+3. 为什么只使用最后位置 logits，却必须保存所有位置 K/V？
+4. 主要计算项如何随 `T_p` 增长？
+5. 为什么“compute-bound”必须注明 workload 条件？
+6. Chunked Prefill 在 TTFT、TPOT 和 throughput 之间怎样取舍？
+7. PD handoff 前为什么要验证 model 与 KV layout identity？
+
+## 小结
+
+Prefill 利用已知 prompt 的 token-parallelism，高效形成第一个生成分布和初始 KV state。它比 Decode 更容易形成大矩阵计算，但长 prompt 会增加 work、显存和 scheduler occupancy。
+
+Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度。下一章进入 Decode，观察瓶颈怎样转向逐 token 访存与调度。
 
 ## Review notes
 
-本轮 Review 保留“Prefill 通常更计算密集”的直觉，但明确它依赖 workload 与硬件；同时加入 chunked prefill，补齐共置与 PD 分离之间的调度路径。Prefill 负责 prompt processing 和 KV Cache 写入，通常显著影响 TTFT，但 TTFT 还包含排队、路由和其他服务开销。
+本轮补齐 Prefill 的 tensor contract、FLOPs 边界、TTFT 分解、chunked prefill 与长 prompt interference。章节不再无条件称其 compute-bound，也不提前展开 KV 容量和 PD deployment。
 
-Primary-source 校验入口：
+Primary-source entry points：
 
 - DistServe: https://arxiv.org/abs/2401.09670
-- Orca: https://www.usenix.org/conference/osdi22/presentation/yu
+- Sarathi-Serve, chunked-prefills: https://arxiv.org/abs/2403.02310
+- FlashAttention: https://arxiv.org/abs/2205.14135

@@ -13,9 +13,10 @@ recorded below.
 
 Current priority:
 
-Parts I, II, and III have been completed as repository-backed Drafts. Continue
-linearly into Part IV while preserving the model, training-state, checkpoint,
-and distributed-execution contracts established by Chapters 1-37.
+Parts I, II, III, and IV have been completed as repository-backed Drafts.
+Continue linearly into Part V while preserving the model, training-state,
+inference-runtime, SLO, and distributed-control contracts established by
+Chapters 1-52.
 
 ## Completed Repository-Backed Work
 
@@ -467,9 +468,9 @@ The original source files and the temporary material-review document have been
 removed from the repository after migration. The chapter Drafts are now the
 working source of truth for this learning cluster.
 
-### Part IV Inference System Review Pass 1
+### Part IV Inference System: Chapters 38-52
 
-Status: Completed
+Status: Draft completed; cross-chapter Review completed
 
 Repository paths:
 
@@ -493,29 +494,147 @@ Repository paths:
 
 `books/part-04-inference-system/47-sglang.md`
 
+`books/part-04-inference-system/48-dynamo.md`
+
+`books/part-04-inference-system/49-kserve-llm.md`
+
 `books/part-04-inference-system/50-gpu-memory.md`
 
 `books/part-04-inference-system/51-pd-disaggregation.md`
 
 `books/part-04-inference-system/52-inference-scheduling.md`
 
-Completed in this pass:
+Core understanding:
 
-- Removed references to deleted source-material files from Part IV chapters.
-- Replaced source-material notes with `Review notes` and primary-source
-  verification entry points.
-- Standardized the core serving terms: Prefill, Decode, KV Cache, TTFT, TPOT,
-  PD disaggregation, scheduler, and runtime.
-- Added a Part IV internal map in Chapter 38: stage layer, mechanism layer, and
-  engine layer.
-- Clarified boundaries among PagedAttention, vLLM, SGLang, TensorRT-LLM, and
-  inference scheduling.
-- Added workload-dependent caveats to the Prefill compute-bound and Decode
-  memory-bound heuristics.
-- Added capacity models for KV Cache and GPU memory, plus SLO-aware goodput.
-- Distinguished admission control, iteration scheduling, and placement.
-- Verified the stable framework boundaries against current official vLLM,
-  SGLang, TensorRT-LLM, Megatron Core, and DeepSpeed entry points.
+- LLM inference is a stateful token-generation process. A request moves from
+  validation and admission through Prefill, Decode, streaming, completion, and
+  state release; TTFT, TPOT, throughput, and goodput measure different parts
+  of this lifecycle.
+- Prefill converts prompt tokens into first-token logits and initial per-layer
+  KV state. Decode advances the same request under an autoregressive
+  dependency, making iteration cadence and memory movement first-class system
+  concerns.
+- KV Cache exchanges memory for historical-computation reuse. Its logical
+  capacity depends on layer count, KV heads, head dimension, dtype, sequence
+  length, and concurrency; its physical lifecycle additionally requires
+  allocation, sharing, paging, transfer, eviction, and release.
+- Continuous Batching, PagedAttention, and Speculative Decoding are orthogonal
+  mechanisms. They respectively change batch membership, physical KV
+  placement, and target-model progress per serial step.
+- TensorRT-LLM, vLLM, and SGLang organize these mechanisms around different
+  historical abstractions: NVIDIA GPU execution optimization, scheduler/KV
+  ownership, and prefix/program structure. Current features remain
+  version-dependent and overlap.
+- Dynamo lifts inference into distributed request, control, and KV-state
+  paths. KServe LLM expresses topology, Gateway/InferencePool/EPP routing,
+  worker groups, and lifecycle as Kubernetes desired state.
+- GPU memory is a joint budget for weights, KV, workspace, communication,
+  fragmentation, and reserve. PD disaggregation and inference scheduling can
+  improve SLO-aware goodput only when state movement, queueing, and control
+  costs are included.
+
+The Part IV capability-delivery path is now repository-backed:
+
+```text
+validated model artifact
+-> request state machine
+-> Prefill
+-> Decode + KV state
+-> batching / paging / speculation
+-> TensorRT-LLM / vLLM / SGLang
+-> Dynamo / KServe LLM
+-> GPU memory / PD / scheduling
+-> SLO-constrained online capability
+```
+
+Shared state and capacity contracts:
+
+```text
+KV_bytes_per_token = 2 * L * H_kv * d_h * bytes_per_element
+
+M_HBM
+>= M_weights + M_KV + M_workspace
+ + M_communication + M_fragmentation + M_reserve
+```
+
+Part IV cross-chapter boundaries:
+
+- Chapter 19 owns the model-level KV shape and reuse invariant; Chapter 41
+  owns runtime capacity, lifecycle, sharing, eviction, and transfer readiness.
+- Chapter 42 owns iteration-level dynamic batching; Chapter 52 owns admission,
+  iteration, routing/placement, and autoscaling.
+- Chapter 43 owns logical-to-physical KV block mapping; Chapter 46 owns the
+  complete vLLM V1 serving-engine architecture.
+- Chapter 47 owns prefix/program structure as inference-runtime state; Part VI
+  owns Agent planning, tools, memory semantics, and workflow governance.
+- Chapter 48 owns Dynamo's distributed request/control/state architecture;
+  Chapter 51 owns the mechanism and break-even reasoning for PD separation.
+- Chapter 49 owns the LLMInferenceService serving topology and request path;
+  Chapter 57 owns KServe as a general AI-platform capability.
+- Chapter 52 schedules token-generation state; Part V GPU schedulers place and
+  govern Pods, gangs, queues, and cluster resources.
+
+All fifteen chapters remain `Draft`. Framework behavior and API details are
+treated as time-sensitive, with current official documentation and primary
+papers retained as verification entry points.
+
+### Part III-IV Cross-Part Review
+
+Status: Completed; all chapters remain Draft
+
+Review scope:
+
+- Deep Review of Chapters 23-52, including each chapter's central thesis,
+  internal reasoning, input/output contract, adjacent transition, and
+  knowledge-tree ownership.
+- Contract backtracking into the relevant Part I-II chapters for Tokenizer,
+  Decoder-only generation, Sampling, KV Cache, MoE, and Long Context.
+- Surgical upstream corrections only; no roadmap or chapter-structure change.
+
+The reviewed capability path is:
+
+```text
+Part I   system problem and knowledge tree
+-> Part II  model structure and generation semantics
+-> Part III data, objective, training state and deployment artifact
+-> Part IV  request state, runtime execution, memory and SLO delivery
+```
+
+Resolved cross-Part contracts:
+
+- `B_global` now consistently means
+  `B_micro * gradient_accumulation_steps * data_parallel_degree`; local tensor
+  batch dimension `B` remains a separate shape symbol.
+- PPO-style RLHF and DPO both use `beta` around a reference-policy trade-off,
+  but their estimators, reductions, adaptation and configuration values are
+  not treated as interchangeable.
+- A checkpoint is handed to inference only after architecture, tokenizer,
+  chat template, adapter state, quantization, runtime format, lineage and
+  conversion validation form a deployment-artifact identity.
+- Training `DP/TP/PP/CP/EP` layout and inference `TP/PP/EP` layout are separate
+  mappings. Serving may reshard global tensors and must validate the result.
+- Chapter 19 owns model-level KV shape; Chapter 41 owns runtime lifecycle;
+  Chapter 43 owns paging; Chapters 50-52 own capacity, PD and scheduling.
+- MoE flows from router/expert semantics through training Expert Parallel to
+  inference dispatch and runtime communication. Long Context flows from model
+  semantics through training data/Context Parallel to Prefill, KV capacity
+  and SLO constraints.
+- LoRA flows from adapter parameterization through checkpoint lineage to
+  merge or dynamic multi-adapter Serving; adapter identity participates in
+  batching and prefix-cache correctness.
+- Continuous Batching, PagedAttention and Speculative Decoding remain
+  orthogonal scheduling, memory-placement and serial-execution mechanisms.
+- KServe LLM and inference scheduling stop at the LLM data/control path;
+  organization-wide platform governance and GPU-cluster scheduling remain in
+  Part V.
+
+Current framework claims were refreshed against official documentation for
+Megatron Core, TensorRT-LLM, vLLM V1, SGLang, NVIDIA Dynamo and KServe
+LLMInferenceService. Version-dependent behavior is labeled as such; paper
+results are not automatically projected onto current implementations.
+
+No chapter was promoted beyond `Draft`. The next learning position remains
+Part V, Chapter 53: 什么是 AI Platform.
 
 ### Repository-wide Draft Review Pass 1
 
@@ -529,7 +648,8 @@ Scope:
 - Part III: Chapters 26 and 32-37.
 - Part IV: Chapters 38-47 and 50-52.
 
-The 54 `Placeholder` chapters were intentionally left unchanged.
+At the time of that earlier pass, the 54 `Placeholder` chapters were
+intentionally left unchanged.
 
 Completed in this pass:
 
@@ -551,25 +671,27 @@ Completed in this pass:
 
 Current position:
 
-Parts I-III complete as Draft → ready to enter Part IV capability delivery
+Parts I-IV complete as Draft → ready to enter Part V platform capability
 
 The repository-backed course now has a continuous worldview, model-mechanism,
-and capability-production spine. Data can be traced through objective,
-post-training, checkpoint, distributed execution, and runtime conversion into
-a validated model artifact.
+capability-production, and online capability-delivery spine. A request can be
+traced from a validated model artifact through Prefill, Decode, KV state,
+runtime mechanisms, serving engines, distributed control, and SLO-aware
+scheduling.
 
 Next chapter position:
 
-Part IV, Chapter 38: 推理到底发生了什么.
+Part V, Chapter 53: 什么是 AI Platform.
 
 ## Next Focus
 
-- Continue linearly with Part IV, Chapter 38: 推理到底发生了什么.
-- Use Part I as the stable worldview, Part II as the model-mechanism contract,
-  and Part III as the capability-production and training-state contract.
-- Keep Parts I-III at `Draft`; promotion to `Review` or `Final` remains a
-  separate maturity decision after the adjacent Inference System is complete
-  and a cross-Part verification has been performed.
+- Continue linearly with Part V, Chapter 53: 什么是 AI Platform.
+- Use Part I as the worldview, Part II as the model contract, Part III as the
+  capability-production contract, and Part IV as the online inference-runtime
+  and SLO contract.
+- Keep Parts I-IV at `Draft`; promotion to `Review` or `Final` remains a
+  separate maturity decision after adjacent platform chapters and a later
+  cross-Part primary-source refresh are complete.
 - Use `ROADMAP.md` as the single source of truth for chapter order.
 - Only mark chapter progress after the corresponding repo content is written
   or updated.

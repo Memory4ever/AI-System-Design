@@ -222,7 +222,9 @@ Decoder hidden state
 -> repeat until stop
 ```
 
-本章闭合一个 token 的生成循环。Part III 会解释后训练怎样改变 logits 分布，Part IV 会解释多个请求的 Decode 和 Sampling 怎样被 runtime 调度。
+本章闭合一个 token 的生成循环。第 27～30 章会说明 rollout sampling 怎样
+进入 preference optimization，第 40 章说明在线 Decode 怎样执行 token 决策，
+第 44 章则要求 exact speculative decoding 保持同一 target sampling 分布。
 
 到这里，第 11～20 章的顺序主干已经闭合：文本变成 token ids，ids 变成带位置的 hidden states，Transformer 产生 logits 与 KV state，Sampling 选择 token 并把它追加回前缀。接下来的第 21、22 章不是 Sampling 之后的新步骤，而是回到这条主干内部，分别讨论参数容量和序列容量怎样扩展。
 

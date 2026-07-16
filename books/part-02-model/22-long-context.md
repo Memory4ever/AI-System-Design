@@ -201,7 +201,7 @@ Position Encoding
 -> Inference System / RAG / platform policy
 ```
 
-本章是 Part II 的收束节点。它把第 13、14、15、19 章的机制放进同一个约束问题，并连接 Part IV 的 Prefill、Decode、GPU Memory 和 Scheduling，以及 Part VI 的 RAG/Memory。
+本章是 Part II 的收束节点。它把第 13、14、15、19 章的机制放进同一个约束问题。第 23、24 章决定模型实际见过的长度和内容分布，第 32、36 章用 Context Parallel 扩展长序列训练；第 39、41、50～52 章再处理在线 Prefill、KV capacity、memory hierarchy 与 SLO。Part VI 的 RAG/Memory 则改变有效 working set，而不是自动扩大模型能力。
 
 至此 Part II 已回答“一个 token 如何变成答案”，但还没有回答这些 embedding、Attention、MLP 和 router parameters 怎样获得能力。模型结构定义了可学习函数、信息流与运行时状态，具体学到什么仍由数据、目标函数和优化过程决定。Part III 因而从第 23 章“数据”开始，转向能力生产链。
 

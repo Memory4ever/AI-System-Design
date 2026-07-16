@@ -9,7 +9,7 @@
 
 vLLM 为什么会成为 LLM Serving 的代表性引擎？如果第43章已经讲了 PagedAttention，那么 vLLM 章节还应该讲什么？
 
-vLLM 的核心价值不只是“实现 PagedAttention”，而是把 KV Cache memory management、continuous batching、request lifecycle、OpenAI-compatible serving 和分布式推理组织成一个 serving engine。
+本章的核心判断是：**vLLM 的核心价值不只是实现 PagedAttention，而是让 scheduler、KV Cache manager 与 model workers 围绕同一 request state contract 协作，把可变 token work 变成持续的 GPU execution。**
 
 PagedAttention 是 vLLM 的历史性设计起点，但不是今天描述 vLLM 的充分条件。当前架构还要区分 API/entrypoint、engine core、scheduler、KV Cache manager、model runner 与 GPU workers；prefix caching、structured output、speculative decoding、KV transfer 等能力也会继续改变 runtime state。
 
@@ -50,6 +50,64 @@ API process 接收和流式返回请求
 ```
 
 具体进程数量和类名会随版本变化，但控制面状态与 GPU execution 的分离是理解 serving engine 的关键。
+
+## 当前 V1 的稳定架构边界
+
+按当前官方 V1 architecture，可以用三类进程理解：
+
+```text
+API server
+  request parsing / tokenization / streaming
+       |
+Engine Core
+  scheduler + KV Cache management
+       |
+GPU workers / model runner
+  model execution + collectives
+```
+
+Data Parallel 时可能存在多个 API servers、Engine Cores 与额外 coordination；具体数量取决于 TP、PP、DP 配置。本章不把某个进程数写成永恒接口，重点是 ownership：HTTP lifecycle、scheduling state 和 device execution 不能由多个组件无约束地同时修改。
+
+V1 scheduler 使用 token budget 统一描述待处理工作，使 chunked prefill、prefix hit、Decode 与 speculative tokens 能进入同一调度框架。这比“Prefill queue 加 Decode queue”的静态想象更接近当前实现，但内部 policy 仍会继续演进。
+
+## 一个 Request 的 Engine 流
+
+```text
+API server receives request
+-> Engine Core admits request
+-> KV manager finds cached prefix / allocates blocks
+-> scheduler emits scheduled token counts
+-> workers execute model
+-> Engine Core updates request and KV state
+-> output returns to API server
+```
+
+若 block allocation 失败，请求不能假装已被调度；若 external KV load 尚未完成，model execution 也不能提前读取。Scheduler output 因此是计算计划和 memory reservation 的联合结果。
+
+## Dynamic LoRA 进入 Runtime 后改变了什么
+
+第 26 章给出 merge 与动态 adapter 两种资产策略。Merge 后 runtime 看到的是
+独立完整权重；动态 LoRA 则让请求身份变成：
+
+```text
+base model revision + adapter revision
+```
+
+Serving engine 需要管理 adapter load/cache/eviction、base compatibility、rank 与
+target-module constraints，并保证 prefix cache key 包含 adapter identity。否则
+相同 token prefix 可能错误复用由另一组有效权重产生的 KV。
+
+Multi-adapter batching 也不是把任意 adapters 无成本混入同一 batch。Runtime
+必须让每个 token 使用对应低秩增量，kernel/layout 支持、同轮 adapter 数量和
+adapter working set 都会影响 batch efficiency。动态 adapter 提高共享 base 的
+资产密度，但把第 26、31 章的 lineage 与隔离要求带进 scheduler；是否 merge
+应由 workload、变体数量、更新频率和 SLO 共同决定。
+
+## Failure 与 Backpressure
+
+Serving engine 还必须处理客户端断开、GPU worker failure、KV load failure、queue overload 和 tokenizer/model mismatch。Backpressure 应在 admission 和 queue 层显式表现，而不是等待 HBM allocation 失败。
+
+正确性测试要覆盖 prefix hit/miss、block reuse、preemption、cancellation 和相同 prompt 在不同 batch composition 下的输出一致性；性能测试则绑定目标版本，因为 scheduler 与 cache manager 正在快速变化。
 
 ## 和 Continuous Batching 的关系
 
@@ -99,13 +157,27 @@ vLLM 是从单个推理优化走向 production serving engine 的关键节点。
 2. vLLM 的 scheduler 和 block manager 分别解决什么问题？
 3. Continuous Batching 和 PagedAttention 为什么互相依赖？
 4. vLLM 和 TensorRT-LLM 的关注点有什么不同？
-5. vLLM 在 AI Platform 中通常处在哪一层？
+5. 当前 V1 中 API server、Engine Core 与 worker 的 ownership 怎样划分？
+6. 为什么 scheduler output 同时也是 memory reservation decision？
+7. vLLM 在 AI Platform 中通常处在哪一层？
+
+## 小结
+
+vLLM 将 request lifecycle、token scheduling、KV block ownership 和 GPU execution 组织为一个 Serving engine。PagedAttention 是历史起点，V1 Engine Core 才是理解当前系统组合的中心。
+
+第47章继续比较另一种 runtime 抽象：当请求之间存在可复用的程序结构和 prefix tree 时，scheduler 还可以利用哪些信息。
 
 ## Review notes
 
 本轮 Review 将 vLLM 从“PagedAttention 加 API”扩展为 request state、scheduler、KV Cache manager 与 workers 协作的 serving engine，并把与 TensorRT-LLM/SGLang 的比较改为历史主线而非互斥功能。第42章讲调度粒度，第43章讲 KV paging，本章讲这些机制如何进入完整 runtime。
 
+时效性边界：本章已在 2026-07 按 stable V1 architecture、V1 guide 与 LoRA
+feature documentation 核验。进程数量、scheduler policy 和 feature support
+仍是版本化实现；稳定结论仅限 ownership 与 request/KV execution contract。
+
 Primary-source 校验入口：
 
-- vLLM Architecture Overview: https://docs.vllm.ai/en/latest/design/arch_overview/
+- vLLM V1 Architecture Overview: https://docs.vllm.ai/en/stable/design/arch_overview/
+- vLLM V1 user guide and unified scheduling boundary: https://docs.vllm.ai/en/stable/usage/v1_guide/
+- vLLM LoRA feature documentation: https://docs.vllm.ai/en/stable/features/lora/
 - PagedAttention / vLLM paper: https://arxiv.org/abs/2309.06180

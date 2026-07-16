@@ -214,6 +214,11 @@ Raw text
 
 Tokenizer 是 Part II 的入口，也是 Part I 宏观约束第一次落到具体 tensor contract 的位置。它定义模型的离散输入接口，也提前决定了后续参数、Attention、KV Cache 和 Serving 成本的一部分。
 
+这份接口会跨 Part 延续：第 23 章在固定 tokenizer 下构造训练 sequences，
+第 25 章把 special tokens 与 chat template 纳入 SFT protocol，第 38 章要求
+Serving 以同一 tokenizer artifact 还原请求。任一环节独立替换 normalization、
+vocabulary 或 role tokens，都会形成 training-serving skew。
+
 ## 自检问题
 
 1. Word-level tokenizer 为什么会遇到开放词汇问题？

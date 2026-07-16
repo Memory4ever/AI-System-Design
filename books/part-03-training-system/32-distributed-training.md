@@ -13,7 +13,12 @@
 
 本章只建立总决策框架。第 33～35 章分别展开 Tensor Parallel、Pipeline Parallel 和 ZeRO；第 36～37 章再讨论 Megatron 与 DeepSpeed 如何组合这些机制。
 
-本章使用 `D` 表示 data-parallel degree，`b` 表示每个 DP rank 的 micro-batch size，`A` 表示 gradient accumulation steps，`B_global` 表示 global batch size，`P` 表示参数量，`N` 表示总 GPU 数。
+本章使用 `B_micro` 表示每个 DP rank 的 micro-batch size，
+`gradient_accumulation_steps` 表示梯度累积次数，`data_parallel_degree`
+表示 data-parallel degree，`B_global` 表示 global batch size，`P` 表示
+参数量，`N` 表示总 GPU 数。为缩短后续公式，令
+`A=gradient_accumulation_steps`、`D=data_parallel_degree`；这些别名不改变
+Part III 的统一 batch contract。
 
 ## 单卡为什么会失败
 
@@ -59,10 +64,12 @@ same optimizer update on every replica
 g = (1/D) * sum_(d=1)^D g_d
 ```
 
-若每个 rank micro-batch 为 `b`，累积 `A` 次再更新：
+若每个 rank micro-batch 为 `B_micro`，累积 `A` 次再更新：
 
 ```text
-B_global = b * A * D
+B_global
+= B_micro * gradient_accumulation_steps * data_parallel_degree
+= B_micro * A * D
 ```
 
 该公式按 samples 计量；变长 sequence 还要检查每 rank 的有效 token 数和 loss normalization。若一个 rank 处理的 tokens 明显更多，它会成为 straggler。
@@ -196,9 +203,11 @@ TP collective 高频且延迟敏感，通常优先放在节点内高速互联；
 
 ## Global Batch 与收敛语义
 
-增加 `D` 时，如果保持 `b`、`A` 不变，`B_global` 会增大。这样吞吐提高的同时，也改变 optimizer 每步看到的样本数和固定 token budget 下的 step 数。
+增加 `D` 时，如果保持 `B_micro`、`A` 不变，`B_global` 会增大。这样吞吐提高的同时，也改变 optimizer 每步看到的样本数和固定 token budget 下的 step 数。
 
-要比较纯 scaling efficiency，可以保持 `B_global` 不变并减小 `b`/`A`，但 micro-batch 太小会降低 GEMM efficiency。要扩大训练 batch，则需要重新验证 learning rate、warmup 和 convergence。
+要比较纯 scaling efficiency，可以保持 `B_global` 不变并减小
+`B_micro`/`A`，但 micro-batch 太小会降低 GEMM efficiency。要扩大训练
+batch，则需要重新验证 learning rate、warmup 和 convergence。
 
 所以系统 benchmark 必须注明：
 
@@ -296,7 +305,7 @@ training state + checkpoint
 ## 自检问题
 
 1. Parameter、model-state 和 activation capacity 分别指什么？
-2. `B_global = b*A*D` 中每个变量怎样改变训练与执行？
+2. `B_global = B_micro*A*D` 中每个变量怎样改变训练与执行？
 3. 两 rank 梯度例子怎样保持 replica 一致？
 4. 标准 DP 为什么不降低每卡 model-state memory？
 5. TP、PP、CP、EP 和 state sharding 分别直接切什么？

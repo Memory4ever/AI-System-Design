@@ -158,6 +158,13 @@ DPO 常让 `pi_ref` 是 SFT policy 的 frozen copy。它提供两个作用：
 
 不同代码库可能对 `beta`、temperature 或 loss sign 使用不同 convention。不能只比较配置数字，必须先对齐公式。
 
+这里的 `beta` 与第 27、28 章 KL-constrained objective 中的 `beta` 来自同一
+理想化推导：都描述 reward 改善与偏离 reference 之间的 trade-off。但工程中
+不能把两者的配置值直接互换。PPO-style RLHF 可能使用按 rollout 统计自适应的
+KL coefficient 和特定 KL estimator；vanilla DPO 则把 `beta` 作为离线 pair
+logit 的固定缩放。Estimator、token/sequence reduction 和实现 convention
+不同，相同数值不代表相同的实际 KL 或 policy displacement。
+
 `beta` 也不是安全旋钮。更接近 reference 不等于更符合产品目标，偏离更多也不等于更强。
 
 ## DPO 移除了什么系统复杂度

@@ -9,7 +9,7 @@
 
 为什么 KV Cache 不能简单地为每个请求预留一大段连续显存？PagedAttention 为什么会借鉴操作系统的 paging 思想？它解决的是 attention 公式本身的问题，还是 KV Cache 的内存管理问题？
 
-PagedAttention 的核心不是“发明新的注意力语义”，而是把 KV Cache 从连续大块内存变成可分页管理的 block，从而减少动态生成过程中的显存浪费和碎片。
+本章的核心判断是：**PagedAttention 不改变 Attention 数学语义，而是用 block table 将逻辑连续的 KV positions 映射到离散物理 blocks。**它把按最大长度预留的问题改写为按需分配，并将浪费约束到 block 粒度附近。
 
 ## KV Cache 为什么会碎片化
 
@@ -65,6 +65,52 @@ PagedAttention 主要优化 KV Cache memory utilization。
 这也是 vLLM 论文把 PagedAttention 放在 serving throughput 问题中的原因：吞吐不是只由 compute 决定，也受 KV memory 是否能高效装下更多请求影响。
 
 注意这是一条间接路径。PagedAttention 本身不会减少模型权重 FLOPs，也不会消除自回归依赖；它通过提高可用 KV capacity，让 scheduler 有机会维持更大的有效 batch。
+
+## Block 数量与内部碎片
+
+设 block 可容纳 `S_b` 个 tokens，请求当前长度为 `T_r`，则需要：
+
+```text
+N_blocks,r = ceil(T_r / S_b)
+```
+
+最后一个 block 的未使用 slots 为：
+
+```text
+waste_r = N_blocks,r * S_b - T_r
+0 <= waste_r < S_b
+```
+
+相比按最大长度 `T_max` 预留，paging 将单请求末尾浪费限制在一个 block 内；实际 memory 仍包含 block metadata、alignment 和 allocator reserve。
+
+例如 `S_b=4`、`T_r=10` 时需要 3 个 blocks，最后 block 浪费 2 个 token slots。若 block size 改成 16，只需 1 个 block-table entry，却浪费 6 个 slots。Block size 因此是 metadata/kernel efficiency 与内部碎片之间的权衡。
+
+## Prefix Sharing 与 Copy-on-Write
+
+两个请求拥有相同 8-token prefix、block size 为 4 时，可以让前两个 logical blocks 指向同一组 physical blocks：
+
+```text
+request A table: [#7, #2, #11]
+request B table: [#7, #2, #19]
+```
+
+共享 prefix blocks 应保持不可变。请求进入不同生成分支时，为各自的新 logical block 分配独立 physical block；若共享的最后 block 尚未填满且需要追加，则必须 Copy-on-Write，不能直接修改其他请求仍引用的数据。
+
+Memory manager 因此需要引用计数或等价 ownership 机制。释放 request A 时，`#7` 和 `#2` 只有在 B 等其他引用也结束后才能回收。
+
+## Kernel 怎样保持语义
+
+Attention kernel 对每个 logical token position 计算其 block index 与 block offset：
+
+```text
+logical_block = floor(position / S_b)
+offset        = position mod S_b
+physical      = block_table[logical_block]
+```
+
+随后从对应 physical block 读取 K/V。间接寻址改变 memory access path，却不能改变 position 顺序、causal visibility 或 numerical contract。
+
+正确性测试应在相同模型与 deterministic decoding 下比较 contiguous/paged、shared/unshared 和 allocate/free/reuse 路径。Block table 错一项可能产生合法数值但错误的输出。
 
 ## 和普通 attention 的关系
 
@@ -123,7 +169,15 @@ PagedAttention 是从 KV Cache 进入 LLM runtime 内存管理的关键节点。
 2. PagedAttention 中 logical block 和 physical block 分别是什么？
 3. 为什么操作系统 paging 的思想能迁移到 KV Cache？
 4. PagedAttention 提高吞吐的间接路径是什么？
-5. PagedAttention 的 trade-off 是什么？
+5. `ceil(T_r/S_b)` 为什么能限制末尾内部碎片？
+6. Prefix sharing 为什么需要 Copy-on-Write 或不可变 block？
+7. PagedAttention 的 trade-off 是什么？
+
+## 小结
+
+PagedAttention 把 request 的逻辑 token 序列与 physical KV placement 解耦。Block table 支持按需增长、固定粒度回收、prefix sharing 和 Copy-on-Write，使 Continuous Batching 能在变长请求下维持更高有效并发。
+
+它解决的是 state placement，不是 autoregressive serial dependency。下一章转向时间维度，讨论怎样减少昂贵 target model serial steps。
 
 ## Review notes
 

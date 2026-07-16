@@ -134,10 +134,14 @@ N ~= steps * tokens_per_step
 
 增大 batch 可以提高矩阵规模和并行效率，也会减少固定 token budget 下的 optimizer steps，并改变梯度噪声与 learning-rate 选择。Gradient accumulation 可以在不一次放入全部 samples 的情况下形成更大 effective batch，但不能消除多次 forward/backward 的计算。
 
-完整关系在第 32 章写成：
+从本章开始，Part III 统一使用 `B_micro` 表示每个 data-parallel rank
+一次 forward/backward 接收的 micro-batch，使用
+`gradient_accumulation_steps` 和 `data_parallel_degree` 表示另外两个乘数。
+张量 shape 中的 `B` 仍表示当前实际输入张量的 batch 维度。完整关系在第
+32 章展开：
 
 ```text
-B_global = B_micro * accumulation_steps * data_parallel_degree
+B_global = B_micro * gradient_accumulation_steps * data_parallel_degree
 ```
 
 ## Learning-rate schedule 为什么决定训练轨迹

@@ -51,7 +51,7 @@ how to checkpoint sharded state
 
 ```text
 B_global
-= B_micro_per_gpu
+= B_micro
   * gradient_accumulation_steps
   * data_parallel_degree
 ```
@@ -59,9 +59,9 @@ B_global
 假设：
 
 ```text
-B_micro_per_gpu = 2
-accumulation = 8
-DP = 16
+B_micro                    = 2
+gradient_accumulation_steps = 8
+data_parallel_degree        = 16
 ```
 
 则：
@@ -70,7 +70,9 @@ DP = 16
 B_global = 2 * 8 * 16 = 256 samples
 ```
 
-若平台扩容使 `DP` 从 16 变成 32，而其他值不变，global batch 变成 512，training recipe 已经改变。Runtime 能自动推导某些字段，不代表平台应允许多个来源给出冲突值。
+若平台扩容使 `data_parallel_degree` 从 16 变成 32，而其他值不变，global
+batch 变成 512，training recipe 已经改变。Runtime 能自动推导某些字段，
+不代表平台应允许多个来源给出冲突值。
 
 提交前应选定一个 authoritative batch definition，并验证实际有效 tokens、loss normalization 和 scheduler assumptions。
 
@@ -258,6 +260,11 @@ validated training checkpoint
 ```
 
 Part IV 从已发布 artifact 开始，重新分析 Prefill、Decode、KV Cache、batching 和 scheduler。训练中的 ZeRO parameter gather 与推理 KV Cache management 不是同一 state problem。
+
+这个交接还包含一个容易忽略的约束：训练 world size 和 sharding layout 不等于
+Serving layout。DeepSpeed/Megatron checkpoint 可以经 consolidation 和 reshard
+形成新的 inference `TP/PP/EP` mapping；Part IV 只接受经过第 31 章三层验证的
+目标 artifact，而不把训练 rank/file layout 当作在线执行计划。
 
 ## 平台接入与版本治理
 
