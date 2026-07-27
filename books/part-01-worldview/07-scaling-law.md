@@ -1,6 +1,8 @@
 # 第7章 Scaling Law 为什么成立
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-SCALING-LAW`
+**Legacy Chapter:** Ch7
 **Status:** Draft
 
 **Roadmap Intent:** 理解参数、数据、算力之间的经验规律，以及为什么规模会带来能力跃迁。
@@ -183,7 +185,7 @@ Scaling Law 最有价值的使用方式，是在明确范围内提供可证伪�
 
 第 6 章解释 Transformer 为什么提供可扩展训练结构，本章解释在这种结构及特定训练 regime 下，参数、数据和 compute 与 loss 呈现怎样的经验关系。第 8 章将讨论广泛能力为何可能随这些条件增强，以及为什么能力和可靠性不能只由 scaling curve 推导。
 
-在全书后续部分，本章连接 Part III 的数据与分布式训练、Part IV 的推理成本、Part V 的 GPU capacity 和 Cost。Scaling 从来不只是模型科学问题，它决定数据生产、集群投资和 Serving 经济性如何联合设计。
+在全书后续部分，本章连接 Part IV 的数据与分布式训练、Part V 的推理成本、Part VI 的 GPU capacity 和 Cost。Scaling 从来不只是模型科学问题，它决定数据生产、集群投资和 Serving 经济性如何联合设计。
 
 ## 自检问题
 

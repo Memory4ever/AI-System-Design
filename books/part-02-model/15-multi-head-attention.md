@@ -1,6 +1,8 @@
 # 第15章 Multi-Head Attention
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-MULTI-HEAD-ATTENTION`
+**Legacy Chapter:** Ch15
 **Status:** Draft
 
 **Roadmap Intent:** 为什么需要多个注意力头，从不同子空间捕捉关系。
@@ -196,11 +198,29 @@ KV elements per layer ~= 2 * B * T * H_kv * d_h
 
 第19章会加入 layer 数 `L`、dtype bytes 和请求生命周期，完整推导 cache 容量。本章只建立模型架构到 `H_kv` 的接口。
 
+### 压缩状态还必须暴露可执行的分片轴
+
+MQA、GQA 与低秩 KV 压缩都试图减少每个 token 留下的状态，但“总状态更小”不等于“每个设备读取的状态也按并行度下降”。把全部 KV heads 压进一个共享 latent state，在单卡或较小 Tensor Parallel 下很合理；当 Decode 受每个 rank 的 HBM 带宽限制时，这个共享对象却可能需要在每个 rank 复制，形成新的 bandwidth floor。
+
+因此架构压缩还要回答一个运行时问题：压缩后的坐标是否保留了可以映射到设备的 partition axis。一条可行演进是把单个 latent state 分成多个独立 latent heads，每个 head 在本地完成上投影和 Attention，再在输出边界聚合：
+
+```text
+shared latent KV
+-> multiple latent heads
+-> head-to-rank placement
+-> local projection and attention
+-> output aggregation
+```
+
+它以更多 projection、聚合、初始化耦合和 checkpoint/kernel 复杂度，换取 per-rank KV 读取随并行度缩减的可能。增加 latent heads 还会改变多路求和的 variance，不能被当作纯 layout rewrite。反过来，在 TP 较小、通信比 HBM 读取更贵或成熟 kernel 更重要时，单 latent MLA、GQA 乃至 MHA 仍可能是更好的设计。
+
+这里的长期原则是：**模型状态的 shape 同时定义表达空间和系统可分片性。**第37章负责实际 placement 与 collective；本章只负责确保模型架构没有在压缩状态时无意删除运行时所需的切分维度。
+
 ## Multi-Head 与 Tensor Parallel
 
 Attention projection 的 head 维度提供自然切分边界。不同 GPU 可以持有不同 Query/KV heads，局部计算后再在 output projection 周围聚合。
 
-但不能简单认为“一张卡一个 head”。实际 Tensor Parallel 会考虑矩阵 column/row partition、GQA 的 KV replication、head divisibility 和 collective placement。第33章负责完整 TP 机制；本章只指出模型 head layout 会约束并行布局。
+但不能简单认为“一张卡一个 head”。实际 Tensor Parallel 会考虑矩阵 column/row partition、GQA 的 KV replication、head divisibility 和 collective placement。第37章负责完整 TP 机制；本章只指出模型 head layout 会约束并行布局。
 
 ## 本章在知识树中的位置
 
@@ -239,6 +259,8 @@ MQA 和 GQA 进一步把 Query head 数与 KV head 数解耦，用共享 K/V 换
 本章只扩展多头结构，不重复第14章 softmax 小例子，也不提前展开第19章完整 KV Cache 容量。后续 Review 应继续区分 Query head 与 KV head，并以 checkpoint config 核验 `H`、`H_kv` 和 `d_h`。
 
 Primary-source 校验入口：
+
+- Multi-Head Low-Rank Attention（Status: Experimental）: https://arxiv.org/abs/2603.02188
 
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
 - Noam Shazeer, "Fast Transformer Decoding: One Write-Head is All You Need", 2019: https://arxiv.org/abs/1911.02150

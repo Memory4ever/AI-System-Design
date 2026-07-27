@@ -1,6 +1,8 @@
 # 第11章 Tokenizer
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-TOKENIZER`
+**Legacy Chapter:** Ch11
 **Status:** Draft
 
 **Roadmap Intent:** 文本如何被切成 token，为什么 tokenizer 会影响知识表示、上下文长度和多语言能力。
@@ -11,7 +13,7 @@
 
 本章的核心判断是：**Tokenizer 是文本世界与模型计算之间的离散接口。**它不只是预处理工具，而是在 vocabulary size、sequence length、可逆性、多语言覆盖和系统成本之间选择计算粒度。
 
-Tokenizer 的输出止于 token ids。id 如何进入连续空间属于第12章；训练语料如何清洗、去重和治理属于第23章。
+Tokenizer 的输出止于文本 token ids。id 如何进入连续空间属于第12章；第23章把离散协议扩展到 image/video/audio codec，并增加 modality、timestamp、coordinate 与 codebook identity；训练语料如何清洗、去重和治理属于第27章。文本 tokenizer 与多模态 codec 复用“离散协议”原则，但不共享相同信息损失、序列尺度或 decoder contract。
 
 本章使用 `B` 表示 batch size，`T` 表示 token sequence length，`V` 表示 vocabulary size，`d_model` 表示模型 hidden dimension。
 
@@ -167,6 +169,40 @@ Tokenizer
 
 不存在脱离语料和 workload 的“最佳词表大小”。代码、中文、英文、数字和多语言混合流量可能产生完全不同的 token efficiency。
 
+## 从无状态预处理到会话级增量接口
+
+一次性请求中，每次对完整文本重新执行 tokenizer 是合理设计：实现简单、结果容易与模型
+artifact 对齐，而且 tokenization 通常不是主导成本。Agent 与长对话改变了这个约束。一次
+trajectory 会反复提交“几乎相同的长前缀 + 很短的新后缀”；即使后端能够复用 prefix KV，
+前端若仍扫描完整文本，累计 tokenization work 仍可能随会话长度快速增长。优化下游缓存以后，
+瓶颈会向上游接口迁移。
+
+不能把旧 token ids 与新后缀的 token ids 直接拼接，因为一般并不满足：
+
+```text
+tokenize(prefix) ++ tokenize(delta) == tokenize(prefix ++ delta)
+```
+
+Normalization、pre-tokenization 和 subword merge 都可能跨越拼接边界。安全的增量实现因此
+不是“缓存一次函数结果”，而是维持一份可验证的会话状态：已有 token ids、它们覆盖的 byte
+范围、tokenizer 内容摘要与版本，以及用于判断旧后缀何时重新稳定的边界信息。新文本到来时，
+实现只重算受影响的 suffix；只有找到该 tokenizer family 可证明的稳定边界，才复用更早的
+结果。找不到边界、版本变化或输入不满足适用条件时，必须扩大重算范围，最终回退到完整的
+reference tokenizer。
+
+这把 tokenizer contract 从“对同一文本通常给出相同结果”提升为更强的等价性要求：
+
+```text
+incremental_result == frozen_reference_tokenizer(full_text)
+```
+
+工程上还需要 sampled shadow verification、mismatch quarantine、显式 fallback reason，以及把
+tokenizer state 与 KV state 分开管理。前者体积通常更小，可以在 KV eviction 后继续存在；但
+它会新增 session affinity、replication、version invalidation、admission 和 recovery 问题。
+当增量很大、tokenizer family 无法提供稳定边界，或 KV prefix 本身已经失效时，无状态完整
+编码仍然是更简单、也可能更快的方案。因此增量 tokenization 与 prefix KV reuse 是
+`Layering / Dependency`，不是新实现对旧实现的单向替代。
+
 ## 多语言中的隐藏不公平
 
 如果 tokenizer 的训练语料主要来自某种语言，该语言的高频片段更容易获得较长 token；覆盖较少的语言可能被拆得更碎。对于相同语义，不同语言的 `T` 可能不同，从而影响：
@@ -201,6 +237,8 @@ Tokenizer 接入不应只测试一句英文。至少需要验证：
 - 与 checkpoint 声明的 vocabulary、id mapping 和配置一致。
 - 目标流量中的 token length 分布，而不是只看字符长度。
 - tokenizer 版本变化后的离线评估与容量影响。
+- 长会话增量路径与 frozen reference 的逐 id 等价、fallback 与 mismatch quarantine。
+- tokenizer session state 与 KV Cache 的 identity、lifetime、eviction 和恢复边界。
 
 ## 本章在知识树中的位置
 
@@ -214,8 +252,10 @@ Raw text
 
 Tokenizer 是 Part II 的入口，也是 Part I 宏观约束第一次落到具体 tensor contract 的位置。它定义模型的离散输入接口，也提前决定了后续参数、Attention、KV Cache 和 Serving 成本的一部分。
 
-这份接口会跨 Part 延续：第 23 章在固定 tokenizer 下构造训练 sequences，
-第 25 章把 special tokens 与 chat template 纳入 SFT protocol，第 38 章要求
+本章只拥有 text ↔ token ID。第23章拥有 raw modality ↔ continuous/discrete multimodal representation；把 image code 称为 token 不会让它自动继承文本的可逆性、边界或序列成本。
+
+这份接口会跨 Part 延续：第 27 章在固定 tokenizer 下构造训练 sequences，
+第 29 章把 special tokens 与 chat template 纳入 SFT protocol，第 42 章要求
 Serving 以同一 tokenizer artifact 还原请求。任一环节独立替换 normalization、
 vocabulary 或 role tokens，都会形成 training-serving skew。
 
@@ -231,6 +271,8 @@ vocabulary 或 role tokens，都会形成 training-serving skew。
 8. Special tokens 为什么应被视为协议？
 9. Tokenizer 如何造成多语言 token efficiency 差异？
 10. `[B,T]` 的 token ids 为什么不能直接作为连续数值输入模型？
+11. 为什么 `tokenize(A) ++ tokenize(B)` 一般不等于 `tokenize(A ++ B)`？
+12. 增量 tokenization 为什么需要 reference equivalence、版本绑定与安全回退？
 
 ## 小结
 
@@ -240,10 +282,11 @@ Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射�
 
 ## Review notes
 
-本轮联章 Review 补充了 Part II 的主干与扩展分支地图。本章仍止于 token ids，不展开 embedding 训练，也不把 tokenizer training 混入 Part III 的数据治理。后续 Review 应以具体 checkpoint 的 tokenizer artifact 核验 normalization、special-token 和 byte fallback 行为，避免把某个库的默认配置写成通用机制。
+本轮联章 Review 补充了 Part II 的主干与扩展分支地图。本章仍止于 token ids，不展开 embedding 训练，也不把 tokenizer training 混入 Part IV 的数据治理。后续 Review 应以具体 checkpoint 的 tokenizer artifact 核验 normalization、special-token 和 byte fallback 行为，避免把某个库的默认配置写成通用机制。
 
 Primary-source 校验入口：
 
 - Rico Sennrich, Barry Haddow, Alexandra Birch, "Neural Machine Translation of Rare Words with Subword Units", 2016: https://arxiv.org/abs/1508.07909
 - Taku Kudo, John Richardson, "SentencePiece: A simple and language independent subword tokenizer and detokenizer for Neural Text Processing", 2018: https://arxiv.org/abs/1808.06226
 - Taku Kudo, "Subword Regularization: Improving Neural Network Translation Models with Multiple Subword Candidates", 2018: https://arxiv.org/abs/1804.10959
+- Zhenyu Zhang, Zhichao Cao, "TokTier: Exact Stateful Tokenization for Agentic LLM Serving", 2026（Status: Emerging；作者实验，不外推性能数字）: https://arxiv.org/abs/2607.29678

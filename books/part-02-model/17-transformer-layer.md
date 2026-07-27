@@ -1,6 +1,8 @@
 # 第17章 Transformer Layer
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-TRANSFORMER-LAYER`
+**Legacy Chapter:** Ch17
 **Status:** Draft
 
 **Roadmap Intent:** Residual、Normalization、Attention、MLP 如何组成可堆叠模块。
@@ -101,6 +103,101 @@ Y = U + MLP(Norm(U))
 Residual identity path 从 `X` 到 `Y` 不必穿过子层 Norm。这样通常更容易训练深网络，但最终输出尺度和表示行为与 Post-Norm 不同，模型末端常还会有 final norm。
 
 Pre-Norm 并非无条件优于 Post-Norm。两者的表达、训练动态、初始化和最终性能要在具体架构中比较。稳定结论是：Norm 放置改变了梯度路径，不能在加载 checkpoint 时任意互换。
+
+## 从 Pre-Norm 到可控 Post-Norm：问题不只在 Norm 的位置
+
+把架构史简化为“Post-Norm 不稳定，所以被 Pre-Norm 淘汰”会漏掉真正的设计变量。
+Post-Norm 的困难来自 residual、transform branch 与 Norm Jacobian 的联合作用；
+Pre-Norm 用干净的 identity path 改善梯度传播，却也可能让深层更新相对 residual
+主干变弱。两者不是单独移动一层 Norm 就能互换的开关。
+
+一种实验性演进分支，是重新引入可控的 carry / transform 路径：
+
+```text
+vanilla Post-Norm
+  Norm(x + F(x))
+  -> 深层时 residual 与 transform 一起穿过 Norm Jacobian
+
+Pre-Norm
+  x + F(Norm(x))
+  -> 保留干净 identity path，但可能降低部分深层的有效贡献
+
+gated / scaled Post-Norm
+  Norm(alpha * x + F(controlled(x)))
+  -> 显式控制 carry 与 transform 的比例
+```
+
+`Keel` 是该分支的一个受限案例。论文把 Highway-style scaling、额外的输入控制与
+Post-Norm 组合，并在作者的极深、窄模型设定中报告比对应 Pre-Norm baseline 更稳定。
+这支持的长期结论是：**Normalization placement、residual parameterization、depth /
+width ratio、learning rate 与数据量必须联合设计。**它不证明 Post-Norm 已经成为所有
+LLM 的新默认值；论文也明确指出 width scaling、低数据 regime 和不同宽深比仍是边界。
+
+这条演进关系是 `Direct Evolution`：新分支修复旧 Post-Norm 的梯度路径，同时接受了
+额外结构约束。Pre-Norm 在成熟实现、宽模型或证据不足的 workload 中仍然成立。
+
+## Residual Stream 从单一累加状态走向 Depth-wise Routing
+
+标准 residual stream 每层只接收上一层聚合后的状态。它便宜、shape 稳定，也天然适配逐层执行与
+Pipeline Parallel；但深度增加后，较早子层的信息已经被压进一个不断累加的向量，后层无法再区分
+“来自哪一层”，固定等权累加还可能让单层更新相对主干越来越弱。
+
+一种演进是把部分历史层输出保留为可选择的 depth state：当前层先对历史 sources 计算权重，再形成
+本层输入。全量历史选择提供最强表达，却使 activation、跨 stage 传输和推理 I/O 随深度增长；按 block
+汇总历史，把 block 内的普通 residual 与 block 间的选择性聚合组合起来，能把状态量压回有限数量的
+summary。另一条分支只保留固定数量的 depth slots，并让注意力从槽位中选择，成本更可控，但会引入
+slot 容量、写入、覆盖和选择错误。
+
+```text
+single accumulated residual
+→ gated / scaled carry-transform path
+→ explicit depth-history selection
+→ block summaries or bounded depth slots
+```
+
+这里真正变化的是信息路由，不是简单“增加一层 Attention”。Checkpoint 拥有 depth query、block/slot
+结构与聚合参数；训练 runtime 拥有历史 activation 的保存、重算与跨 stage 传输；推理 runtime 拥有
+prefill/decode 的历史状态和 online reduction。更强的 depth routing 换来额外状态、kernel 与并行通信，
+而且作者在特定 MoE 配方中的 loss/benchmark 不能证明它会普遍取代标准 residual。模型较浅、吞吐优先、
+跨 stage 带宽紧张或公开实现尚不成熟时，单一 residual stream 仍是更稳健的设计。
+
+### Parameter Depth 与 Execution Depth 可以分离
+
+普通 Transformer 把“有多少组不同参数”与“一个样本执行多少次 block”绑定为同一个 `L`。这使
+checkpoint、dense batching 与 Pipeline Parallel 都很直接；但当任务所需的组合步数差异很大时，增加
+parameter depth 不是唯一选择。另一条实验性分支复用同一个 block，让 full-sequence hidden state 循环
+`T` 次，并把 step counter、depth budget 与 readout 明确成运行时状态：
+
+```text
+fixed parameter stack
+→ shared block + recurrent hidden state
+→ per-sample execution-depth budget
+→ readout at a defined recurrence step
+```
+
+这条路线用参数复用换取可变的内部计算前沿，却没有免费获得“更深推理”。顺序 critical path、activation
+residency、不同 `T` 的 batching divergence 与停止规则都会进入系统；若用 learned depth embedding，超出训练
+步数还可能失去定义。Pre-Norm、接近 identity 的 gate 或 LayerScale 可以改善早期稳定性，但不能证明任意
+开放语言任务会随 silent steps 单调提升。固定深度在吞吐、可预测性和停止证据不足时仍是默认分支；可见
+CoT 则继续提供监督与 verifier 接口。Depth-recurrent 小模型实验只支持受控组合任务中的机制可行性。
+
+单一 recurrence clock 仍可能把“快速局部更新”和“较慢全局整合”绑在一起。层级递归分支可以用两个
+parameter-shared modules 形成不同时间尺度：fast module 在局部 steps 内更新，slow module 只在外层 cycle
+读取/写回全局 state，再由明确定义的 step 产生 readout。
+
+```text
+input / shared state
+→ fast recurrent updates
+→ slow recurrent consolidation
+→ next outer cycle
+→ readout at a declared horizon
+```
+
+这增加 effective depth 而不同比增加 parameter depth，却把 credit horizon、stop/readout policy、state
+initialization 与 batching divergence变成训练和 runtime contract。PrefixLM、response-only loss 与 task-formatted
+data 可能与 recurrence 共同贡献结果，不能把联合配方的收益全部归因于结构。HRM-Text 的作者实验只支持其
+1B、固定 context 与任务格式中的机制分支；固定层深、单 clock recurrence 和显式 CoT 在可预测 latency、
+通用 raw-text 或可验证中间过程更重要时继续成立。
 
 ## 一次完整 shape 流
 
@@ -250,3 +347,12 @@ Primary-source 校验入口：
 - Jimmy Lei Ba, Jamie Ryan Kiros, Geoffrey E. Hinton, "Layer Normalization", 2016: https://arxiv.org/abs/1607.06450
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
 - Ruibin Xiong et al., "On Layer Normalization in the Transformer Architecture", 2020: https://arxiv.org/abs/2002.04745
+- Chen Chen, Lai Wei, "Post-LayerNorm Is Back: Stable, ExpressivE, and Deep", arXiv v2, 2026: https://arxiv.org/abs/2601.19895
+- Attention Residuals（Status: Experimental；depth-history aggregation 与 block-state trade-off）:
+  https://arxiv.org/abs/2603.15031
+- Mixture-of-Depths Attention（Status: Experimental；bounded depth slots）:
+  https://arxiv.org/abs/2603.15619
+- Thinking Deeper, Not Longer（Status: Experimental；parameter depth 与 execution depth 分离）:
+  https://arxiv.org/abs/2603.21676
+- HRM-Text（双时间尺度 recurrence；Status: Experimental）:
+  https://arxiv.org/abs/2605.20613

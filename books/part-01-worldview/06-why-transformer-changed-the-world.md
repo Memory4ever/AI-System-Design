@@ -1,6 +1,8 @@
 # 第6章 Transformer 为什么改变世界
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-TRANSFORMER`
+**Legacy Chapter:** Ch6
 **Status:** Draft
 
 **Roadmap Intent:** 理解注意力机制如何统一建模序列依赖、上下文关系和可扩展训练。
@@ -131,7 +133,7 @@ p(x_1, ..., x_T) = product_t p(x_t | x_<t)
 - KV Cache 容量与请求级调度；
 - 质量、上下文长度、吞吐和成本的联合权衡。
 
-Part IV 的很多设计，正是对这些新瓶颈的系统回答。
+Part V 的很多设计，正是对这些新瓶颈的系统回答。
 
 ## 替代路线没有消失
 
@@ -160,6 +162,8 @@ RNN 类设计具有流式状态和潜在线性序列处理优势；卷积具有�
 第 4～5 章解释模型怎样优化以及形成什么表示，本章给出一种能把上下文化表示扩展到大数据和大算力的架构形态。第 7 章将在此基础上讨论，当参数、数据和 compute 扩大时，loss 呈现什么经验规律；第 8 章再讨论这些条件如何表现为广泛任务能力。
 
 本章与第 14 章的边界明确：这里回答 Transformer 为什么成为可扩展序列架构，只使用 Attention 的抽象路由；第 14 章才推导 Q/K/V、scaled dot-product、mask 和具体张量形状。Part II 的第 17～19 章还会分别展开完整 Layer、Decoder Only 与 KV Cache。
+
+沿 Compute 横线阅读时，本章是架构起点：第 14、17 章把路由原则落实为 Attention 与规则 Layer，第 28 章把它放入训练 step，第 37 章切分单层算子，第 49 章再把模型语义映射为推理 execution plan。第 54、63 章不是新的计算算法，而是检查 execution plan 能否满足 HBM 与物理 placement 约束。
 
 ## 自检问题
 

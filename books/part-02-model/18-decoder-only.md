@@ -1,6 +1,8 @@
 # 第18章 Decoder Only 架构
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-DECODER-ONLY`
+**Legacy Chapter:** Ch18
 **Status:** Draft
 
 **Roadmap Intent:** 为什么主流 LLM 采用自回归 Decoder Only。
@@ -173,7 +175,7 @@ Pretraining 常对大量有效 positions 计算 next-token loss。Instruction tu
 loss = sum_t mask_t * CrossEntropy(logits_t, label_t)
 ```
 
-`mask_t` 决定哪些位置贡献 loss，不改变 causal Attention 本身。具体数据格式和训练阶段属于 Part III，本章只建立模型接口。
+`mask_t` 决定哪些位置贡献 loss，不改变 causal Attention 本身。具体数据格式和训练阶段属于 Part IV，本章只建立模型接口。
 
 ## Output projection 与 weight tying
 
@@ -201,6 +203,21 @@ next_logits shape = [B,V]
 
 第20章会解释 greedy、temperature、top-k 和 top-p 怎样从这组 logits 选出实际 token。选出的 id 再通过 tokenizer decoder 转回 bytes/text。
 
+## 从显式 CoT 到 Latent Reasoning：减少 Token 不等于消除状态
+
+显式 Chain-of-Thought 把中间步骤写成 token，优点是训练目标、停止条件、缓存和人工审计都复用语言模型接口；代价是每一步都要经过 vocabulary projection、采样和下一轮 Decode。将中间推理压缩成连续 latent state，可以少生成可见 token，却没有消除递归依赖：系统仍需决定 state representation、更新次数、termination、checkpoint identity 与失败恢复。
+
+```text
+explicit token trace
+→ compressed visible trace
+→ recurrent hidden state
+→ learned latent transition with teacher guidance
+```
+
+后两个分支把成本从 token IO 移到 latent transition，并牺牲逐步可读性。训练期用完整 CoT、视觉编码或其他 teacher signal 约束 latent state，只能证明该 state 在指定任务与模型上可学习，不能证明它保留了原推理的全部语义或因果结构。推理期若只用代表 token 判断结束，还会新增 premature stop、state drift 与无法局部纠错的 failure mode。
+
+因此显式 CoT 在高风险审计、工具副作用和需要逐步验证时仍然合理；latent reasoning 更适合中间步骤冗长、可由独立 outcome verifier 检查且 token latency 占主导的受控任务。二者是不同 observability / efficiency contract，而不是后一种对前一种的线性替代。
+
 ## 本章在知识树中的位置
 
 ```text
@@ -215,6 +232,8 @@ token ids
 ```
 
 本章把第 11～17 章组成完整 causal language model。一次 Decode step 同时产生两类结果：供未来步骤复用的逐层 K/V，以及供当前步骤选 token 的 logits。第 19 章沿状态分支解释 KV Cache，第 20 章沿决策分支解释 Sampling，二者共同闭合自回归循环。
+
+第24章把 causal autoregressive factorization 放进更广的生成范式树。Diffusion、Masked/Block Diffusion 可以并行更新多个 provisional positions，却会增加 correction、cache invalidation 与 commit protocol；它们是不同生成 contract，不意味着 Decoder-only 被线性替代。
 
 ## 自检问题
 
@@ -237,10 +256,11 @@ Decoder-only 用 causal mask 与 next-token objective 把一个 Transformer stac
 
 ## Review notes
 
-本轮联章 Review 对齐了 causal factorization、tensor position 与 shifted target 的索引，并把第 19 章的状态分支和第 20 章的决策分支放回同一个 Decode step。本章仍只解释架构、mask、shifted targets 和 logits contract。Pretraining/SFT 数据与 loss 配置属于 Part III，Prefill/Decode 的硬件执行与调度属于 Part IV。
+本轮联章 Review 对齐了 causal factorization、tensor position 与 shifted target 的索引，并把第 19 章的状态分支和第 20 章的决策分支放回同一个 Decode step。本章仍只解释架构、mask、shifted targets 和 logits contract。Pretraining/SFT 数据与 loss 配置属于 Part IV，Prefill/Decode 的硬件执行与调度属于 Part V。
 
 Primary-source 校验入口：
 
 - Alec Radford et al., "Improving Language Understanding by Generative Pre-Training", 2018: https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf
 - Jacob Devlin et al., "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", 2018: https://arxiv.org/abs/1810.04805
 - Colin Raffel et al., "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer", 2019: https://arxiv.org/abs/1910.10683
+- ReGuLaR（teacher-guided variational latent reasoning；Status: Experimental）: https://arxiv.org/abs/2601.23184

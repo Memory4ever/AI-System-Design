@@ -1,6 +1,8 @@
 # 第13章 Position Encoding
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-POSITION-ENCODING`
+**Legacy Chapter:** Ch13
 **Status:** Draft
 
 **Roadmap Intent:** 为什么 Transformer 需要位置信息，以及绝对位置、相对位置、RoPE 的差异。
@@ -108,6 +110,38 @@ score(i,j) = content_score(i,j) + relative_bias(i-j)
 
 优势是相同相对距离可以跨绝对位置共享；代价是 score 计算、索引和实现更复杂，超出训练距离时仍需要定义 clipping、bucket 或 extrapolation 行为。
 
+## ALiBi：数学定义与有限精度执行不是同一契约
+
+ALiBi（Attention with Linear Biases）不向 hidden state 加位置向量，而是按 head 为较远的
+key 加线性负 bias。对 causal Attention，可把距离项简写为：
+
+```text
+score_h(i,j)
+= content_score_h(i,j) - m_h * (i-j),  j <= i
+```
+
+不同 slope `m_h` 让部分 heads 更偏向局部位置。在线性 bias 的数学定义中，任意有限距离
+都有一个实数 score；但 softmax 实际在有限精度上计算。当距离增大到使
+`exp(score_h(i,j) - max_score_h)` 下溢为零时，对应连接的 attention weight 会精确变成零。
+于是系统形成一个没有在模型配置中声明的**隐式有效窗口**：位置仍可编号、pair 仍被计算，
+该 head 却已经无法从远端 token 取回信息。
+
+这个边界不能只由 advertised context length 判断。它同时依赖 slope、dtype、content logits、
+softmax/kernel 实现以及是否 clamp。其系统含义是：
+
+- “位置函数在该距离有定义”不等于“有限精度执行仍保留可观测连接”；
+- 只看平均 perplexity 可能掩盖少数 heads、特定距离与 retrieval slice 的失效；
+- 若设计本意就是局部 Attention，显式 window/sparse mask 通常比先计算再依赖 underflow
+  更容易定义语义、节省工作并测试边界；
+- clamp bias、调整 slope、对距离取对数或 soft-cap logits 都是在改变归纳偏置，不能被当作
+  数值上等价的通用修复。
+
+2026 年一项小规模实验在若干 ALiBi pretrained models 与 148M decoder 训练中观察到这一
+failure mode，也发现默认 ALiBi 在部分 retrieval 设置中仍是强 baseline，多个缓解方案并不
+稳定叠加。因此这里沉淀的是 `Status: Experimental` 的数值契约与验证方法，而不是“ALiBi
+已失效”或某个替代方案已经胜出。旧方案在训练窗口、目标 dtype 与实测 retrieval 范围内仍然
+成立；超出这些条件时才需要重新校准。
+
 ## RoPE：把位置变成旋转
 
 Rotary Position Embedding 不把位置向量直接加到 hidden state，而是对 Query 和 Key 的二维子空间执行与位置相关的旋转。
@@ -164,6 +198,7 @@ position 1: R_1 k = [0,1]
 | Learned absolute | 与 token embedding 相加 | 灵活、实现直接 | 固定表长度，外推弱 |
 | Sinusoidal absolute | 与 token embedding 相加 | 无额外位置参数，可计算新位置 | 训练外长度仍不保证有效 |
 | Relative position | Attention pair score/value | 直接共享相对距离 | 计算与索引更复杂 |
+| ALiBi | Attention score 的 head-specific 线性 bias | 机制简单，直接表达距离偏好 | slope、长度与有限精度共同形成有效窗口 |
 | RoPE | 旋转 Query/Key | 点积自然依赖相对偏移 | 频率与长度外推仍有边界 |
 
 表格描述机制层差异，不代表所有现代模型只会选择其中一种。具体实现可能叠加 bias、局部窗口或 scaling 方法。
@@ -183,6 +218,8 @@ Decoder-only 模型使用 causal mask 阻止位置 `i` 读取未来位置 `j>i`�
 - Prefix reuse、sequence packing 和 sliding window 必须正确维护 position ids。
 - Padding、left padding 与 right padding 可能改变 position id 构造。
 - 扩展 context length 不能只修改配置，还要验证模型有效利用和系统容量。
+- 对 score-bias 方案按 head、distance、dtype 观察 logits、非零 attention fraction 与 retrieval，
+  不能用“kernel 没报错”证明远距离仍可访问。
 
 这些问题说明 position id 是模型运行时状态的一部分，而不是 UI 层的 token 序号。
 
@@ -210,6 +247,7 @@ Embedding X [B,T,d_model]
 8. Causal mask 和 Position Encoding 分别约束什么？
 9. KV Cache 为什么必须维护正确 position index？
 10. 为什么 context extension 不属于本章的单点结论？
+11. 为什么一个数学上有定义的 ALiBi score 仍可能在有限精度 softmax 中形成隐式窗口？
 
 ## 小结
 
@@ -226,3 +264,4 @@ Primary-source 校验入口：
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
 - Peter Shaw, Jakob Uszkoreit, Ashish Vaswani, "Self-Attention with Relative Position Representations", 2018: https://arxiv.org/abs/1803.02155
 - Jianlin Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding", 2021: https://arxiv.org/abs/2104.09864
+- Christopher Schröder et al., "When Attention Goes Blind: Numerical Failure in ALiBi Positional Encodings"（Status: Experimental）, 2026: https://arxiv.org/abs/2608.03994

@@ -1,6 +1,6 @@
 # AI Research Daily — 2026-07-27
 
-> Research window: 2026-07-24 至 2026-07-27
+> Research window: 2026-07-25 至 2026-07-27
 >
 > Accessed: 2026-07-27（Asia/Shanghai）
 >
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-过去 72 小时没有发现需要立即改写项目核心认知的模型实验室官方研究发布。OpenAI、Anthropic、Google DeepMind、Meta AI 等已扫描页面没有出现达到本项目收录门槛的新研究，因此不使用更早的产品新闻填充日报。
+过去 48 小时没有发现需要立即改写项目核心认知的模型实验室官方研究发布。OpenAI、Anthropic、Google DeepMind、Meta AI 等已扫描页面没有出现达到本项目收录门槛的新研究，因此不使用更早的产品新闻填充日报。
 
 论文侧有两项值得深入保留的工作。HiKV 从算法与硬件协同角度压缩 Decode 阶段的 KV 访问，展示了 importance-aware retention 和 element-level selection 的潜力，但结论仍受专用硬件与实验条件约束。Ground Truth First 则把事实有效期、来源和写入质量纳入长期 Agent Memory 评测；其方法论与 Part VI 第 73 章直接相关，但单篇 synthetic benchmark 尚不足以成为核心章节结论。
 
@@ -225,7 +225,9 @@ write quality
 
 ##### Recommended Action
 
-保存为第 73 章及 Evaluation System 的候选来源。等 Part V 完成并进入 Part VI 撰写时重新检索该方向，不因单篇论文提前填充核心章节。
+全文重审后确认其长期原则已由 Ch62/73 的 environment identity、temporal validity、
+provenance 与 derived-state evaluation 覆盖，不重复追加论文专属正文；架构排序仍留在
+Daily/Weekly，不外推。
 
 ### Worth Watching
 
@@ -354,7 +356,9 @@ KV Cache 只是其中最重要的一种 state family。随着模型结构异构�
 
 ##### Recommended Action
 
-保留在 Daily。等相关 state/cache API 在后续版本稳定，并出现跨模型、跨 workload 的系统性设计文档后，再评估是否补充第 41、46、47 或 52 章。
+vLLM tiered state 的长期边界已由 Ch46 吸收；SGLang v0.5.16 经 release/code 重审后，将
+heterogeneous cache identity、reset/rollback/retraction contract 写入 Ch47。具体 API、
+性能与已知问题仍保留在 Daily。
 
 ### Kubeflow
 
@@ -517,6 +521,42 @@ C_requests
 
 **Recommended Action**：保留为第 50 章容量公式的观察案例，不将该硬件特定结果写成普遍结论。等待公开 benchmark methodology、端到端 throughput/latency、功耗和多卡通信结果。
 
+## Retrospective Source Supplement — 2026-07-29
+
+本节按更新后的来源策略做增量回溯，保留原日报的评分、深入分析与结论，不把发现平台的
+热度当作论文质量，也不把迟到索引改写成“当日新发布”。
+
+### Added Coverage
+
+- 模型与研究机构侧补查 xAI、Amazon Science / AGI、Cohere Labs、Ai2、百度 ERNIE、
+  腾讯混元、华为诺亚 / 盘古、上海 AI Lab / InternLM、阶跃星辰、小米 MiMo 与
+  InclusionAI / 蚂蚁的官方入口；没有发现需要补入本窗口的高门槛官方研究发布。
+- 论文侧增加 Hugging Face Daily Papers 作为 discovery feed，并用 Semantic Scholar、
+  Google Scholar、OpenAlex 与 DBLP 做元数据、去重和后续引用线索检查；候选事实仍回到
+  arXiv 原文核验。Crossref 按新策略保留给 Weekly 和 DOI 交叉验证，不作为 Daily
+  freshness feed。
+
+### Supplemented Candidate Triage
+
+| Candidate | Primary-source date | Score | Decision | Incremental reason |
+| --- | --- | ---: | --- | --- |
+| AREX | v1 2026-07-23；v2 2026-07-24 | 23/30 | Worth Watching / boundary | 7 月 24 日修订进入窗口边界；补记 verification-guided recursive research 与 context update |
+| Skill Self-Play | 2026-07-24 | 22/30 | Worth Watching | 补记 skill-conditioned task generation 在 open-ended diversity 与 verifiable feedback 之间的折中 |
+| Molt | 2026-07-22 | — | Not backfilled | 由 7 月 27 日 discovery feed 暴露，但初稿早于窗口，不改写为当日候选 |
+
+AREX 的长期机制信号是把 deep research 拆成 inner research loop 与 outer
+constraint-wise audit，并以 compact improvement state 保留已验证证据和未满足约束。
+Skill Self-Play 则让 proposer、solver 与 dynamic skill controller 协同演化，用 skill
+约束维持可验证性，同时扩展任务分布。两项结论目前都来自单篇预印本及作者实验；尚未
+独立验证其长时程稳定性、训练成本、reward leakage 与对真实 Agent Platform 的迁移性。
+
+**Recommended Action**：已将两项可跨论文复用的机制分别融入现有章节：Skill
+Self-Play 用于细化第 27 章中 task diversity 与 verification reliability 的 curriculum
+trade-off；AREX 用于细化第 76 章中 constraint-wise audit 与 task-scoped improvement
+state。两章均明确标记 `Status: Experimental`，未吸收作者 benchmark、模型规模或具体
+训练 recipe。Molt 转入 Weekly 或后续主题研究，避免用 discovery date 替代
+publication date。
+
 ## Ignored Noise
 
 - 未把 Release 中脱离模型、GPU、batch、输入输出长度和 SLO 的单点加速数字写成通用结论。
@@ -532,7 +572,16 @@ C_requests
 - 更新 `docs/LEARNING_STATE.md` 中的日报来源路径。
 - 清理今天日报中意外插入的整篇重复内容，并按新的固定来源顺序重组。
 - 本次目录与结构调整没有修改 `books/` 核心章节，也没有改变日报中的技术结论。
+- 2026-07-29 按扩展来源策略补做回溯：新增 AREX 与 Skill Self-Play 的简短候选记录。
+- 更新 `books/part-03-training-system/27-rlhf.md`：在已有 Verifiable Reward 论证中融入
+  task diversity、verification reliability 与 skill-conditioned curriculum 的折中。
+- 更新 `books/part-06-agent/76-reflection.md`：在已有 feedback、diagnostics 与 stopping
+  论证中融入 constraint-wise audit 和 task-scoped improvement state。
+- 未更新 `docs/LEARNING_STATE.md`：章节成熟度、知识树边界与当前学习位置没有变化。
 - 未执行 commit 或 push。
+- 2026-07-31 Weekly 全量重审补充：Ground Truth First 判定为现有 Ch62/73 已覆盖；SGLang
+  v0.5.16 的稳定 state-contract 缺口已 refine Ch47。HiKV、Nunchaku 与 Native Multimodal
+  继续只保留 Daily/Weekly。
 
 ## Open Questions
 
@@ -543,6 +592,10 @@ C_requests
 5. Native multimodal scaling 在更大规模、不同数据质量和 dense architecture 下是否仍呈现相同 allocation law？
 6. Quantized artifact contract 能否统一表示 module replacement、structural rewrite 与硬件 kernel capability？
 7. MI455X 的额外 HBM 在真实 Serving workload 中会优先转化为更高 concurrency、更长 context，还是更大的 batch？
+8. Skill-conditioned curriculum 在开放领域中能否维持 validator fidelity，并避免 task
+   generator 与 solver 共同 exploit 同一 verification gap？
+9. Constraint-wise reflection 的 improvement state 在跨模型、长时程真实任务中能否保留
+   negative evidence 与 provenance，而不把压缩误差放大为下一轮错误控制信号？
 
 ## Sources
 
@@ -572,5 +625,22 @@ C_requests
 - [Diffusers Nunchaku integration PR](https://github.com/huggingface/diffusers/pull/14100), accessed 2026-07-27.
 - [Hugging Face on AMD Instinct MI455X: First Transformers Results](https://huggingface.co/blog/badaoui/transformers-on-amd-mi455), published 2026-07-23; accessed 2026-07-27.
 - [AMD Instinct MI455X official specification](https://www.amd.com/en/products/accelerators/instinct/mi400/mi455x.html), launch date 2026-07-23; accessed 2026-07-27.
+
+### 4. Retrospective Discovery and Primary Sources
+
+- [Hugging Face Daily Papers — 2026-07-24](https://huggingface.co/papers/date/2026-07-24),
+  discovery feed; accessed 2026-07-29.
+- [Hugging Face Daily Papers — 2026-07-27](https://huggingface.co/papers/date/2026-07-27),
+  discovery feed; accessed 2026-07-29.
+- Lu et al., [AREX: Towards a Recursively Self-Improving Agent for Deep Research](https://arxiv.org/abs/2607.21461),
+  v1 submitted 2026-07-23, v2 submitted 2026-07-24; accessed 2026-07-29.
+- Huang et al., [Skill Self-Play: Pushing the Frontier of LLM Capability with Co-Evolving Skills](https://arxiv.org/abs/2607.22529),
+  submitted 2026-07-24; accessed 2026-07-29.
+- Hu et al., [Molt: A Scalable PyTorch-Native Training Framework for Agentic Reinforcement Learning](https://arxiv.org/abs/2607.21653),
+  submitted 2026-07-22; accessed 2026-07-29. Listed only to explain the no-backfill decision.
+- Discovery / metadata entry points checked on 2026-07-29:
+  [Semantic Scholar](https://www.semanticscholar.org/),
+  [Google Scholar](https://scholar.google.com/),
+  [OpenAlex](https://openalex.org/) and [DBLP](https://dblp.org/).
 
 > “未发现”只表示本次按公开页面和检索条件没有识别到达到门槛的条目，不等于对所有官方渠道的完备性证明。

@@ -1,6 +1,8 @@
 # 第20章 Sampling
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-SAMPLING`
+**Legacy Chapter:** Ch20
 **Status:** Draft
 
 **Roadmap Intent:** 温度、top-k、top-p、贪心解码如何影响输出风格和稳定性。
@@ -184,6 +186,94 @@ Stop string 可能跨 token 边界，需要 detokenization 或增量匹配；EOS
 
 若模型长期不给 EOS，max tokens 是系统安全边界。若 EOS 被错误 suppress，输出和 KV Cache 会持续增长。
 
+### Test-time Budget 是 Runtime Policy，不是免费能力
+
+Reasoning model 让停止条件进一步变成 compute policy：runtime 可以在达到上限时强制结束
+thinking，也可以在模型过早结束时抑制 delimiter、追加 continuation cue，再给它更多 token。
+这类 budget forcing 证明“生成长度”可以成为可控变量，却不证明更多 token 必然提高质量。
+
+它把旧的自然 EOS 行为换成显式 sequential-compute budget：获得 capacity planning 与质量/成本
+曲线的可控性，同时引入 forced continuation 的分布偏移、重复或错误推理、tail latency、KV
+增长和被截断的 final answer。普通 EOS 在短任务、低延迟或模型已能可靠停止时仍更合理；并行
+采样与 verifier 则用多条轨迹换取鲁棒性，和延长单条轨迹不是同一种 scaling。生产记录必须把
+`reasoning budget + stopping policy + model/runtime version` 绑定到同一 evaluation subject。
+
+### 从请求级 Budget 到轨迹内 Feedback Control
+
+请求开始时一次性选择 `max_tokens`、effort tier 或停止策略，状态少、容易做 admission 和成本上界；当任务难度较窄、
+模型不能暴露内部状态或 deadline 是硬约束时，它仍是最稳健的设计。困难来自同一 checkpoint 面对难度差异很大的
+请求：统一压短会伤害必要探索，统一放长又会把冗余推理转化为 tail latency 与 KV 占用。
+
+一种更细的分支是在生成过程中读取 model-relative signal，例如近期 token confidence 与局部波动，再双向调节继续探索
+或尽快 commit：
+
+```text
+fixed request budget
+-> difficulty-aware external stop
+-> trajectory-state feedback
+-> bidirectional internal control under a hard outer budget
+```
+
+这里的 confidence 不是 correctness，也不是校准后的不确定性。若控制依赖 hidden-state direction，系统还必须把 checkpoint、
+tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter revision 绑定成同一 artifact；版本漂移或 proxy 误判会
+抑制必要 self-correction，也可能放大错误自信。外层 scheduler 仍拥有 deadline、fairness 与资源上限，模型侧 controller 只在
+该 envelope 内调节轨迹。ReBalance 的实验说明这类双向控制在若干 reasoning workload 上可以改变 accuracy-length frontier，
+不证明它能普遍提升线上 capacity。无法取得 hidden/logprob、高风险任务需要可解释 verifier，或控制 artifact 尚未校准时，
+固定 budget、普通 EOS 和外部 early exit 继续成立。
+
+### Parallel Sampling：先分开 Coverage 与 Selection
+
+延长一条轨迹是在纵向增加 sequential compute；并行采样则在横向生成多条候选，再决定接受哪一条：
+
+```text
+prompt + decoding policy
+-> N candidate trajectories
+-> candidate coverage
+-> selector / verifier
+-> accepted answer or abstention
+```
+
+这条路径至少有两个不同的成功概率。`Coverage` 问正确候选是否出现在集合中；`Selection`
+问系统能否从已有候选中识别它。`pass@N` 只能给出前者的上界，不能证明 self-verifier 能达到这个
+上界。扩大 `N` 可能提高覆盖率，也会带来更多近似答案、相关错误和选择成本；若 selector 的辨别力
+没有同步提高，更多样本甚至可能让最终选择更不稳定。
+
+旧的聚合方法各自对应不同假设：majority vote 假设正确轨迹形成最大等价类；pointwise scoring
+假设每条候选可被独立校准；pairwise comparison 只要求局部判断两个候选的相对优劣。Pairwise
+方案并没有消除状态，而是把状态改写为 comparison graph：
+
+```text
+candidate id / text / generation config
++ compared edges and judge outputs
++ per-candidate score / degree
++ comparison budget and stopping rule
+```
+
+先覆盖低 degree 节点、再比较当前近分候选，是在固定预算内平衡 exploration 与 refinement 的一种
+策略；全量 tournament、Swiss-style sparse graph、独立 pointwise score 或 executable verifier 仍是有效
+分支。图上分数差只是当前 judge 与拓扑下的排序证据，不是天然校准的置信度。同一模型同时生成和
+判分还会产生 correlated error：它可能一致偏爱相同措辞、推理风格或错误假设。因此 self-verification
+适合作为 selection signal，不应被写成 acceptance proof；高风险任务仍需要独立 oracle、工具执行、规则
+检查或人工升级，所有候选都未达阈值时还应允许 abstain。
+
+Selection 还可以从单条分数推进到 **query-local distribution state**。当同一问题已经产生许多候选时，系统可在该候选集合内拟合置信度分布、识别经验簇，再过滤或聚合；这比固定全局阈值多利用了一层相对结构，却没有创造外部真值。它的状态至少包括：
+
+```text
+candidate set and normalized answers
++ confidence extraction rule
++ local distribution model and parameters
++ component identity / fallback policy
++ filtering, voting and abstention decision
+```
+
+若分布单峰、样本太少、component 交换，或 temperature、模型和任务发生变化，局部 mixture 会退化；同一个模型产生轨迹又报告 confidence 时，两者还共享校准盲点。因此 majority vote 在答案可规范化且错误较分散时仍然有效，pointwise/pairwise selector 在绝对簇结构不稳定时仍合理，独立 executable verifier 才能把 selection evidence 提升为 acceptance evidence。
+
+Parallel sampling 的预算也不能只写“调用次数”。完整 contract 至少包括各候选的 prompt/prefill
+复用、生成 tokens、KV 占用、judge 输入输出 tokens、并行度、端到端 latency、成本与停止规则。
+一次长 pairwise judge 与一次短 candidate generation 不是等价工作量。Greedy 或单样本在低延迟、低
+风险和 selector 不可靠时仍更合理；majority 在可规范化且错误相对独立时仍很有效；pairwise graph 是
+当绝对评分困难、又无法承受全量两两比较时出现的中间设计，而不是它们的单向替代。
+
 ## Logit penalties 与约束的边界
 
 Repetition、frequency、presence penalties 会根据已生成 tokens 修改 logits；grammar-constrained decoding 会屏蔽不符合语法的候选。
@@ -210,6 +300,22 @@ Repetition、frequency、presence penalties 会根据已生成 tokens 修改 log
 
 Sampling kernel 可以在 GPU 或 CPU 执行，是否成为瓶颈取决于 vocabulary、batch、约束复杂度和数据传输。本章不进入 scheduler 层。
 
+### 保持分布不变，也可以改变 Logits 的物化边界
+
+经典路径先写出完整 `[B,V]` logits，再执行 temperature、mask、normalization 与 sampling。它最容易
+组合任意 logits processor、返回完整 logprobs 并进行调试；在大 batch 的 compute-bound GEMM 中也可能
+最有效。小 batch、large vocabulary 的 decode 则可能受 logits 写回 HBM、再次读取和多次 kernel launch
+限制。
+
+对 categorical sampling，Gumbel-Max 允许逐 tile 计算 `logit + noise`，只保留局部最大值并最终归并，
+从而把 LM head 与 sampler 融合而不物化完整 logits。Tensor Parallel 下还可先在 shard 内归约，再按
+group probability mass 做层次采样。只要 mask、temperature、RNG 与归并保持同一数学分布，这改变的是
+执行计划而不是模型 sampling policy。
+
+代价是 processor order、RNG determinism、shard identity 与 kernel layout 被更紧地耦合；需要完整
+logprobs、复杂 grammar、不可融合 processor、跨重试可复现或高 batch GEMM 占优时，物化 logits 仍更
+简单。某一 revision 的 kernel speedup 不能外推到不同 vocabulary、batch、hardware 或 processor chain。
+
 ## 本章在知识树中的位置
 
 ```text
@@ -222,9 +328,11 @@ Decoder hidden state
 -> repeat until stop
 ```
 
-本章闭合一个 token 的生成循环。第 27～30 章会说明 rollout sampling 怎样
-进入 preference optimization，第 40 章说明在线 Decode 怎样执行 token 决策，
-第 44 章则要求 exact speculative decoding 保持同一 target sampling 分布。
+本章闭合一个 token 的生成循环。第 31～34 章会说明 rollout sampling 怎样
+进入 preference optimization，第 44 章说明在线 Decode 怎样执行 token 决策，
+第 48 章则要求 exact speculative decoding 保持同一 target sampling 分布。
+
+第24章拥有另一条分支：当生成状态允许 masked refinement 或 retroactive editing 时，sampler 不只选择“下一个 token”，还要选择哪些 provisional positions 可修改、何时 commit。该分支可能改变输出分布；只有带正确 acceptance rule 的 speculative verification 才能声称保持 target distribution。
 
 到这里，第 11～20 章的顺序主干已经闭合：文本变成 token ids，ids 变成带位置的 hidden states，Transformer 产生 logits 与 KV state，Sampling 选择 token 并把它追加回前缀。接下来的第 21、22 章不是 Sampling 之后的新步骤，而是回到这条主干内部，分别讨论参数容量和序列容量怎样扩展。
 
@@ -240,6 +348,8 @@ Decoder hidden state
 8. 固定 seed 为什么仍不保证跨 runtime 完全复现？
 9. EOS 与 stop string 分别在哪一层工作？
 10. 为什么 Sampling 不能替代模型能力提升？
+11. 为什么 `pass@N` 不能直接代表系统最终答对的概率？
+12. Pairwise selector 需要持久化哪些 graph state，为什么 score difference 不等于置信度？
 
 ## 小结
 
@@ -249,9 +359,22 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 
 ## Review notes
 
-本轮联章 Review 明确本章是 token 生成主干的闭环点，第 21～22 章属于回看主干的容量扩展。正文仍以固定 logits 完成 temperature、top-k、top-p 的数值比较，并明确 processor 顺序和 seed 的实现边界。RLHF/SFT 属于 Part III，batch scheduling 属于 Part IV，不在本章展开。
+本轮联章 Review 明确本章是 token 生成主干的闭环点，第 21～22 章属于回看主干的容量扩展。正文仍以固定 logits 完成 temperature、top-k、top-p 的数值比较，并明确 processor 顺序和 seed 的实现边界。RLHF/SFT 属于 Part IV，batch scheduling 属于 Part V，不在本章展开。
+
+2026-W10 的 V1 案例用于补全 parallel coverage 与 selection 的分层、comparison-graph state 和
+self-verifier 的相关错误边界。正文只保留这种长期 contract；作者任务分数、固定候选数和“线性 calls”
+不作为跨 workload 性能结论。
+
+DistriVoting 用于补足 query-local mixture state、component-identification failure 与“内部 confidence 只能支持 selection”的边界；其两分量假设、128-sample 预算和数学题结果不作为通用配置。
 
 Primary-source 校验入口：
 
 - Angela Fan, Mike Lewis, Yann Dauphin, "Hierarchical Neural Story Generation", 2018: https://arxiv.org/abs/1805.04833
 - Ari Holtzman et al., "The Curious Case of Neural Text Degeneration", 2019: https://arxiv.org/abs/1904.09751
+- Niklas Muennighoff et al., "s1: Simple test-time scaling", 2025（Status: Experimental）:
+  https://arxiv.org/abs/2501.19393
+- Zihan Wang et al., "V1: Parallel Generation and Pairwise Self-Verification", 2026（Status: Experimental）:
+  https://arxiv.org/abs/2603.04304
+- Believe Your Model / DistriVoting（Status: Experimental）: https://arxiv.org/abs/2603.03872
+- FlashSampling（Status: Experimental；exact fused sampling 与 TP hierarchical reduction）:
+  https://arxiv.org/abs/2603.15854

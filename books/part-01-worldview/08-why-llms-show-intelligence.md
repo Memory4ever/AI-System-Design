@@ -1,6 +1,8 @@
 # 第8章 大模型为什么会产生智能
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-LLM-INTELLIGENCE`
+**Legacy Chapter:** Ch8
 **Status:** Draft
 
 **Roadmap Intent:** 从预测下一个 token 到涌现能力、上下文学习和工具使用。
@@ -84,7 +86,7 @@ Instruction tuning、SFT 和 preference-based post-training 使用更接近产�
 
 这解释了为什么参数规模和 pretraining loss 相近的模型，最终可用性仍可能差异很大。能力表现来自 base model、post-training、system prompt、context、sampling 和外部系统的组合。
 
-也要保持边界：本章不展开 SFT、RLHF、DPO 或 GRPO 的优化机制，它们属于 Part III。这里仅说明 post-training 是“广泛潜在能力”变成“可调用行为”的关键条件，并且可能同时改善可用性、压制某些能力或引入新的偏好偏差。
+也要保持边界：本章不展开 SFT、RLHF、DPO 或 GRPO 的优化机制，它们属于 Part IV。这里仅说明 post-training 是“广泛潜在能力”变成“可调用行为”的关键条件，并且可能同时改善可用性、压制某些能力或引入新的偏好偏差。
 
 ## Emergence：现象、指标与解释必须分开
 
@@ -121,7 +123,7 @@ model policy
 
 这意味着 benchmark 上的“模型能力”和生产中的“系统能力”必须区分。同一个模型接入不同检索、工具、memory 和 workflow 后，实际覆盖范围会明显变化。
 
-工具也放大风险。模型可能选择错误工具、生成错误参数、相信恶意 observation、重复执行有副作用操作或越过权限。Tool use 证明语言模型可以参与行动闭环，不证明它能独立承担开放环境中的可靠控制。权限、schema、幂等、确认、trace 和补偿属于 Part VI 的 Agent runtime。
+工具也放大风险。模型可能选择错误工具、生成错误参数、相信恶意 observation、重复执行有副作用操作或越过权限。Tool use 证明语言模型可以参与行动闭环，不证明它能独立承担开放环境中的可靠控制。权限、schema、幂等、确认、trace 和补偿属于 Part VII 的 Agent runtime。
 
 ## Capability 不等于 Reliability
 
@@ -177,7 +179,7 @@ scalable architecture
 -> system capability amplified by tools
 ```
 
-这条链不反向证明“出现能力，所以某条 scaling law 必然成立”。也不把工具调用等同于完整 Agent。Part III 会展开 post-training，Part VI 会展开 Context、Tool Calling、Planning、Memory 和 Agent Platform。
+这条链不反向证明“出现能力，所以某条 scaling law 必然成立”。也不把工具调用等同于完整 Agent。Part IV 会展开 post-training，Part VII 会展开 Context、Tool Calling、Planning、Memory 和 Agent Platform。
 
 ## 自检问题
 

@@ -1,6 +1,8 @@
 # 第10章 AI 的未来
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-FUTURE`
+**Legacy Chapter:** Ch10
 **Status:** Draft
 
 **Roadmap Intent:** Agent、个性化模型、世界模型、端侧智能与 AI 平台化。
@@ -116,9 +118,9 @@ goal
 
 ### 可能设计
 
-World model 可以学习环境状态如何随 action 演化，再让 policy 在模型内部想象候选轨迹。Dreamer 一类工作展示了从学习到的世界模型中改进行为；生成式交互环境研究则探索从视频或动作条件数据形成可交互预测。
+这里保留未来判断，不在 Part I 提前展开模型机制。稳定的分层是：multimodal perception 建立 observation identity，world model 预测 action-conditioned transition，planner 比较 imagined trajectories，low-level controller 在 safety envelope 内执行，真实 observation 再修正 belief。
 
-未来系统可能组合 multimodal perception、latent dynamics、planning、memory 和 real-world feedback。语言模型负责高层目标与知识，world model 负责环境后果预测，低层 controller 负责实时执行。
+完整机制从 Part III 展开：第23章定义跨模态 representation contract，第24章区分生成与可提交状态，第25章定义 World Model，第26章把预测接入具身闭环。这个 handoff 防止 Ch10 同时承担趋势分析、模型架构、训练和控制。
 
 ### 新瓶颈
 
@@ -222,7 +224,7 @@ Agent Loop:
 
 本章是 Part I 的收束。第 1～3 章建立为什么需要 AI System 及其全局地图，第 4～8 章解释模型学习、表示、可扩展架构、Scaling 与能力边界，第 9 章回看系统形态如何演化。本章再用长期约束向前检验：无论具体技术怎样变化，能力生产、能力交付、控制治理和 Agent 闭环仍是稳定分析框架。
 
-下一章进入 Part II，从 Tokenizer 开始沿一个 token 的生命周期下钻。未来判断只有建立在具体模型机制和系统成本之上，才不会停留在趋势口号。
+下一章进入 Part II，从 Tokenizer 开始沿一个 token 的生命周期下钻；Part III 再把单一 token 扩展到多模态表示、生成、环境状态与行动。未来判断只有建立在具体模型机制和系统成本之上，才不会停留在趋势口号。
 
 ## 自检问题
 
@@ -234,7 +236,7 @@ Agent Loop:
 6. 生成逼真的环境预测为什么不等于因果正确的 world model？
 7. 端侧智能为什么更可能形成 hybrid placement，而不是简单替代云？
 8. AI 平台的稳定抽象应围绕产品名还是对象与控制闭环？
-9. 五个未来方向如何映射回第 3 章的四条主干？
+9. 五个未来方向如何映射回第 3 章的四类系统责任？
 10. 为一个你关注的 AI 趋势写出可证伪条件和会改变结论的约束。
 
 ## 小结

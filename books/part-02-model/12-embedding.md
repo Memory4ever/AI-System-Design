@@ -1,6 +1,8 @@
 # 第12章 Embedding
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-EMBEDDING`
+**Legacy Chapter:** Ch12
 **Status:** Draft
 
 **Roadmap Intent:** 离散 token 如何进入连续向量空间，模型如何在向量空间里表达语义关系。
@@ -133,6 +135,25 @@ M_embedding = V * d_model * b bytes
 
 Embedding lookup 自身的 FLOPs 通常不高，但 table 可能较大，并且访问模式由 token ids 决定。训练时只更新出现的 rows 还是以 dense gradient 表示，取决于实现与分布式策略，不能从数学 lookup 直接推断通信行为。
 
+### 从 Token Row 到 Hashed N-gram Capacity
+
+扩大 MoE experts 把参数投向条件计算，但当 active expert compute 已受预算约束时，继续增加 dormant weights
+未必是最有效的容量位置。另一条分支是在 token row 之外，为局部 n-gram 建多个 hashed lookup，把部分参数
+预算转成 lexical memory：
+
+```text
+token ids
+→ overlapping n-grams
+→ multiple hashes and table lookups
+→ aggregate with token embedding
+→ contextual layers
+```
+
+它以低 FLOPs 增加局部模式容量，却新增 hash collision、table sharding、hot-entry skew、checkpoint layout
+和推理 cache identity。收益只在 embedding 与 expert/depth 的联合 allocation frontier 上成立；过度分配会
+挤压 contextual computation。普通 token embedding 在小词表、内存受限或 lexical shortcut 风险较高时仍是
+更清楚的旧方案，单一模型族的 scaling curve 不能外推成通用参数分配定律。
+
 ## 输入与输出权重是否共享
 
 Decoder-only 模型最终要把 hidden state 投影回 `V` 个 logits：
@@ -195,3 +216,5 @@ Primary-source 校验入口：
 - Tomas Mikolov et al., "Efficient Estimation of Word Representations in Vector Space", 2013: https://arxiv.org/abs/1301.3781
 - Ofir Press, Lior Wolf, "Using the Output Embedding to Improve Language Models", 2017: https://arxiv.org/abs/1608.05859
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
+- Scaling Embeddings in Large Language Models（hashed n-gram capacity；作者 scale/serving contract）:
+  https://arxiv.org/abs/2601.21204

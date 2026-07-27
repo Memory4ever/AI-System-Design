@@ -1,6 +1,8 @@
 # 第14章 Self Attention
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-SELF-ATTENTION`
+**Legacy Chapter:** Ch14
 **Status:** Draft
 
 **Roadmap Intent:** 每个 token 如何根据上下文重新理解自己。
@@ -105,6 +107,18 @@ Y = A V
 ```text
 Attention(Q,K,V) = softmax(QK^T / sqrt(d_h) + M) V
 ```
+
+归一化还隐含一个常被忽略的约束：每一行必须把全部概率质量分给某些可见 positions。若某个 head 在当前
+位置本应执行 no-op，softmax 不能直接令所有权重为零，只能把质量导向一个 value 近零或可被下游忽略的
+位置。BOS、register 或显式 null token 因而可能同时承担信息聚合与“安全泄压口”，不能仅凭高 attention
+weight 就断言它存储了语义。
+
+理论上的 trigger-conditional synthetic task 已证明，在其精确构造下，softmax simplex constraint 会迫使
+至少一个位置形成 sink；移除归一化后可以直接输出全零。这个结论解释了一条机制可能性，不证明真实
+pretrained Transformer 的每个 sink 都只有 no-op 功能，更不证明非归一化 Attention 在语言模型上更好。
+Softmax 保留稳定竞争、成熟 kernel 与清楚尺度；null/register、显式 gate 或非归一化权重则用额外状态、
+缩放和训练稳定性换取 no-op 能力。设计与解释实验都应区分“结构允许的 escape hatch”和“模型实际使用
+该位置承担的因果功能”。
 
 ## 三 token 小例子
 

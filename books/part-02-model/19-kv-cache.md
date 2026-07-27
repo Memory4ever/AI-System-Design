@@ -1,6 +1,8 @@
 # 第19章 KV Cache
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-KV-CACHE`
+**Legacy Chapter:** Ch19
 **Status:** Draft
 
 **Roadmap Intent:** 为什么生成时要缓存历史 Key/Value，它如何改变推理系统设计。
@@ -9,7 +11,7 @@
 
 Decoder-only 模型每次只生成一个新 token。如果前缀中历史 token 的 K/V 已经计算过，为什么还要在下一步重新投影？KV Cache 保存什么、为什么不保存 Query，又怎样从模型优化变成运行时状态？
 
-本章的核心判断是：**KV Cache 用逐层保存历史 Key/Value，避免自回归 Decode 重复计算不变前缀；它用显存与状态管理换取更少计算。**本章解释 cache 的模型来源和 shape；Part IV 第41章负责 runtime capacity、生命周期、复用与 offload，第43章负责分页映射，第52章负责调度。
+本章的核心判断是：**KV Cache 用逐层保存历史 Key/Value，避免自回归 Decode 重复计算不变前缀；它用显存与状态管理换取更少计算。**本章解释 cache 的模型来源和 shape；Part V 第45章负责 runtime capacity、生命周期、复用与 offload，第47章负责分页映射，第56章负责调度。
 
 ## 不使用 Cache 会重复什么
 
@@ -148,7 +150,7 @@ new token [B,1]
 -> cache length T <- T+1
 ```
 
-因此 Prefill 主要批量创建状态，Decode 逐步读取并增长状态。Part IV 会进一步分析两阶段的 compute、bandwidth 与调度差异。
+因此 Prefill 主要批量创建状态，Decode 逐步读取并增长状态。Part V 会进一步分析两阶段的 compute、bandwidth 与调度差异。
 
 ## 计算复杂度怎样变化
 
@@ -202,6 +204,24 @@ Prefix reuse 也要求模型配置、token ids、position ids、adapter 和相�
 
 KV Cache 把重复计算问题转化为显存与状态问题，而不是让推理免费。
 
+### Depth-wise KV Sharing 是 Model Contract，不是 Runtime Eviction
+
+标准 KV Cache 默认每层拥有独立 K/V，因为不同层表示不同 computation stage。若训练时显式学习某层读取自身
+KV、相邻层 KV 或共享 source layer，模型可以减少 depth 维的 KV states；runtime 随后只 materialize 被 checkpoint
+允许的 sharing strategy：
+
+```text
+trained routing/sharing policy
++ layer/head/model revision
+→ physical KV ownership and layout
+→ decode reads under the same mapping
+```
+
+这与运行时根据 pressure 任意丢弃层 KV 不同：后者会改变已训练函数。Sharing 减少 memory/bandwidth，也增加
+checkpoint compatibility、prefix/cache identity、kernel dispatch 和 graph capture 复杂度；错误 mapping 会返回
+形状正确但语义错误的 state。通用已训练模型、需要 layer-local fidelity 或 backend 不支持该 layout 时，per-layer
+KV 仍然成立。Stochastic KV Routing 是训练期 adaptive sharing 的 Experimental 证据，不支持 post-hoc 套用于任意模型。
+
 ## 从模型状态到 Runtime 对象
 
 模型公式只要求 K/V 可访问，生产 runtime 还必须决定：
@@ -213,7 +233,7 @@ KV Cache 把重复计算问题转化为显存与状态问题，而不是让推�
 - 是否 offload、迁移或跨 Prefill/Decode worker 传输。
 - 抢占和失败时怎样处理状态。
 
-这些属于第41～43章及后续推理系统。本章不提前展开 PagedAttention 或 scheduler，只建立它们必须管理的对象来源。
+这些属于第45～47章及后续推理系统。本章不提前展开 PagedAttention 或 scheduler，只建立它们必须管理的对象来源。
 
 ## 本章在知识树中的位置
 
@@ -225,7 +245,9 @@ Decoder-only autoregressive loop
 -> GPU memory manager and scheduler
 ```
 
-本章是 Part II 从模型机制通向 Part IV 的关键桥梁。第20章继续处理每步 logits 的 token 选择；第41章从 runtime 生命周期重新审视 cache，第43章改变其物理 placement，第50～52章再把它纳入 HBM、PD 与调度约束。
+本章是 Part II 从模型机制通向 Part V 的关键桥梁。第20章继续处理每步 logits 的 token 选择；第45章从 runtime 生命周期重新审视 cache，第47章改变其物理 placement，第54～56章再把它纳入 HBM、PD 与调度约束。
+
+从 State 横线看，本章定义 KV state 的模型来源；第 35 章转向训练状态的一致提交，第 42、45 章再把在线生成表示成 request-owned state machine。这里连接的是“状态语义怎样出现”，不是把 KV Cache 与 training checkpoint 视为同一种状态。
 
 ## 自检问题
 
@@ -238,7 +260,7 @@ Decoder-only autoregressive loop
 7. 为什么 KV Cache 没有让完整生成变成线性或常数成本？
 8. GQA/MQA 通过哪个变量降低 cache？
 9. Position id 错误为什么会污染 cached K？
-10. 第19、41、43、52章分别负责 KV Cache 的哪一层问题？
+10. 第19、45、47、56章分别负责 KV Cache 的哪一层问题？
 
 ## 小结
 
@@ -248,7 +270,10 @@ KV Cache 利用 causal model 的不变量：未来 token 不会改变历史位�
 
 ## Review notes
 
-本轮联章 Review 补充了变长请求下按 `sum T_r` 计算的逻辑容量，避免把等长 batch 公式误当成所有 runtime 的实际占用。本章仍只负责 KV Cache 的模型推导、shape、容量与 Prefill/Decode 写入语义。分页、碎片、prefix caching、offload、调度和 PD 传输保留给 Part IV。
+- Stochastic KV Routing（training-time depth-wise KV sharing；Status: Experimental）:
+  https://arxiv.org/abs/2604.22782
+
+本轮联章 Review 补充了变长请求下按 `sum T_r` 计算的逻辑容量，避免把等长 batch 公式误当成所有 runtime 的实际占用。本章仍只负责 KV Cache 的模型推导、shape、容量与 Prefill/Decode 写入语义。分页、碎片、prefix caching、offload、调度和 PD 传输保留给 Part V。
 
 Primary-source 校验入口：
 

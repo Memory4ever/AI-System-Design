@@ -1,6 +1,8 @@
 # 第9章 AI System 的演化路线
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-SYSTEM-EVOLUTION`
+**Legacy Chapter:** Ch9
 **Status:** Draft
 
 **Roadmap Intent:** 从单机训练到分布式训练，从离线模型到在线 Serving，从 MLOps 到 LLMOps。
@@ -9,9 +11,40 @@
 
 为什么一个能在 notebook 中训练和预测的模型，最终会需要 Pipeline、分布式训练、Serving、LLM runtime、平台控制面乃至 Agent runtime？这些系统形态是在解决什么逐步迁移的瓶颈？
 
-第 2 章从规则系统、机器学习、深度学习、LLM 到 Agent 讨论**能力范式**迁移。本章只追踪另一条线：**支撑能力生产与交付的系统形态，如何从单人实验演化为可复现 Pipeline、计算集群、在线服务、状态化 runtime 和治理平台。**
+第 2 章从规则系统、机器学习、深度学习、LLM 到 Agent 讨论**能力范式**迁移。本章追踪另一条线：**支撑能力生产与交付的系统形态，如何从单人实验演化为可复现 Pipeline、计算集群、在线服务、状态化 runtime 和治理平台。**与此同时，Compute、Memory、Communication、Scheduling 与 State 会横向穿过这些阶段，形成可单独追踪的约束迁移。
 
 中心命题是：AI System 的演化由主瓶颈迁移推动。早期瓶颈是“能否做出有效实验”，随后依次变成“能否复现”“能否扩大计算”“能否在线交付”“能否管理运行时状态”，最后变成“能否跨团队控制质量、成本、风险与行动”。
+
+## 系统考古不是寻找相似名词
+
+理解新系统时，回看操作系统、HPC、数据库与分布式系统很有价值。许多 AI Runtime 设计继续面对 locality、copy、synchronization、paging、pipeline、failure 与 scheduling 等长期问题。但“问题相似”不自动意味着“技术直接继承”。
+
+本章使用四种关系描述演化：
+
+| 关系 | 判断标准 | 例子 |
+| --- | --- | --- |
+| Direct Evolution | 新设计明确继承、扩展或替换旧机制 | 在线 Serving 在离线模型交付上增加长期运行与 SLO |
+| Layering / Dependency | 两个机制处于不同层并组合工作 | MPI implementation 可以使用 UCX；AI framework 可以调用 NCCL |
+| Principle Reuse | 相似约束促使系统复用同一设计原则 | PagedAttention 把分页思想用于 KV block placement |
+| Explanatory Analogy | 类比帮助理解，但不存在充分的继承关系 | 把 KV Cache 类比为 CPU Cache |
+
+因此，`IPC → MPI → NCCL → UCC → NIXL` 不能被理解为单一产品替代史。更稳定的观察方式是分别追踪：
+
+```text
+execution unit:
+  process -> rank -> GPU participant -> inference worker
+
+communication object:
+  bytes -> messages -> tensor chunks -> KV blocks / memory regions
+
+communication semantics:
+  shared state / P2P -> collective -> asynchronous state transfer
+
+system owner:
+  kernel -> parallel runtime -> AI inference runtime
+```
+
+对象、语义和 owner 可能同时变化，也可能只变化一项。系统考古的任务是找出被保留的约束和被重新划分的责任，而不是为每个新框架安排一个线性祖先。
 
 ## 第一阶段：单机实验解决可行性
 
@@ -157,6 +190,20 @@ LLMOps 没有让数据血缘、模型版本和部署治理失效；AgentOps 也�
 
 演化不是所有团队都必须走完的成熟度阶梯。一个小规模离线模型没有必要复制大型 Agent 平台；一个高风险工具 Agent 即使流量很小，也可能从第一天就需要严格权限和审计。阶段描述的是问题何时出现，不是采购清单。
 
+## 五条横向约束怎样穿过七个阶段
+
+纵向阶段解释系统责任为何扩大，横向约束解释同一个设计矛盾怎样换了对象和时间尺度：
+
+| 主线 | 早期形态 | AI System 中的形态 | 没有改变的核心问题 |
+| --- | --- | --- | --- |
+| Compute | CPU 上的通用程序 | GPU tensor kernel、并行训练与 token execution | 怎样让昂贵执行单元持续完成有效工作 |
+| Memory | process memory、cache、virtual memory | parameter、activation、KV、Context 与 Agent state | 哪些状态应靠近计算，何时移动或淘汰 |
+| Communication | IPC、socket、message passing | collective、activation exchange、KV transfer | 谁与谁交换什么，何时才算完成 |
+| Scheduling | process/thread scheduling | pipeline、token、GPU、queue 与 workflow scheduling | 有限资源和执行机会怎样分配 |
+| State | file、process 与 transaction state | checkpoint、request、cache、artifact 与 action state | identity、ordering、ownership 与恢复怎样保持 |
+
+这些路线不应各自扩成一套重复的书。第 3 章负责提供索引，后续章节在自己的主要责任边界内展开机制，并通过横向路线连接相邻 Part。
+
 ## 控制闭环是系统成熟的共同标志
 
 无论处于哪个阶段，系统从脚本走向平台的关键不是组件数量，而是能否形成闭环：
@@ -176,7 +223,7 @@ declare objective
 
 ## 本章在知识树中的位置
 
-本章把第 3 章的能力生产、能力交付、控制治理和 Agent 闭环放到时间轴上。它解释了为什么后续 Part III、IV、V、VI 分别会形成 Training System、Inference Runtime、AI Platform 与 Agent Platform。
+本章把第 3 章的能力生产、能力交付、控制治理和 Agent 闭环放到时间轴上。它解释了为什么后续 Part IV、V、VI、VII 分别会形成 Training System、Inference Runtime、AI Platform 与 Agent Platform。
 
 本章不重复第 2 章：第 2 章问“模型和任务能力为何从规则演化到 LLM 与 Agent”，本章问“工程系统为何从 notebook 演化到 Pipeline、Runtime 和治理控制面”。能力突破会触发系统变化，系统成熟又会让能力规模化，二者相互推动但不是同一叙事。
 
@@ -190,18 +237,19 @@ declare objective
 6. Runtime、Serving 与 Gateway 应怎样分工？
 7. 平台 Portal 与平台 control plane 有什么区别？
 8. MLOps、LLMOps、AgentOps 各自新增了哪些状态？
-9. 为什么演化阶段不是每个团队都要照搬的成熟度清单？
-10. 自动化为什么不能替代 Evaluation、权限和回滚闭环？
+9. Direct Evolution、Layering、Principle Reuse 与 Analogy 为什么不能混用？
+10. 为什么演化阶段不是每个团队都要照搬的成熟度清单？
+11. 自动化为什么不能替代 Evaluation、权限和回滚闭环？
 
 ## 小结
 
-AI System 从单机脚本演化到平台，不是因为系统天然喜欢复杂，而是能力规模与交付责任不断暴露隐式状态。可行性之后需要复现，复现之后需要扩展计算，模型生产之后需要在线交付，LLM 又引入 token 与 KV 状态，Agent 最终把权限和外部行动带入运行时。
+AI System 从单机脚本演化到平台，不是因为系统天然喜欢复杂，而是能力规模与交付责任不断暴露隐式状态。可行性之后需要复现，复现之后需要扩展计算，模型生产之后需要在线交付，LLM 又引入 token 与 KV 状态，Agent 最终把权限和外部行动带入运行时。Compute、Memory、Communication、Scheduling 与 State 则提供另一组坐标，用来观察相同约束如何在不同阶段重新出现。
 
 MLOps、LLMOps 和 AgentOps 描述的是被管理对象逐步扩展。系统设计应从当前瓶颈出发，引入足够的 Pipeline、Runtime 和治理能力，同时警惕没有真实复用或控制收益的平台抽象。
 
 ## Review notes
 
-本章保持“系统形态演化”主线，不按年份罗列框架，也不重述第 2 章的模型范式。后续 Review 应重点检查各阶段是否由明确瓶颈触发，以及 MLOps、LLMOps、AgentOps 是否仍以状态和控制责任区分，而不是变成市场术语。
+本章保持“系统形态演化”主线，不按年份罗列框架，也不重述第 2 章的模型范式。本轮结构 Review 增加系统考古的关系分类和五条横向约束，避免把原理复用误写成直接继承。后续 Review 应重点检查各阶段是否由明确瓶颈触发，以及 MLOps、LLMOps、AgentOps 是否仍以状态和控制责任区分，而不是变成市场术语。
 
 优先核验入口：
 

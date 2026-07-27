@@ -1,6 +1,8 @@
 # 第16章 Feed Forward / MLP
 
 **Knowledge Tree:** Part II 模型：一个 Token 如何变成答案
+**Stable Knowledge Node ID:** `MODEL-FFN`
+**Legacy Chapter:** Ch16
 **Status:** Draft
 
 **Roadmap Intent:** Attention 负责信息混合，MLP 负责非线性变换与知识存储。
@@ -187,6 +189,40 @@ FLOPs_FFN per layer ~ O(B*T*d_model*d_ff)
 
 Attention 对 `T` 有成对项，MLP 对 `T` 近似线性，但 `d_ff` 往往较大。实际哪个模块更耗时取决于 sequence length、模型 shape、precision、kernel 和硬件，不能只比较复杂度阶数。
 
+## Linear 为什么最终成为 GEMM
+
+模型公式按 `[B,T,d]` 表达语义，GPU library 通常先把 batch 与 token positions 合并成矩阵的行：
+
+```text
+M = B * T
+K = d_model
+N = d_ff
+
+X_2d = reshape(X, [M,K])
+U    = X_2d W_up          [M,K] x [K,N] -> [M,N]
+```
+
+Down projection 则交换中间维度与输出维度：
+
+```text
+Y = A W_down              [M,d_ff] x [d_ff,d_model]
+```
+
+因此一个 Linear layer 的主要计算可以交给 General Matrix Multiplication（GEMM）。若把一次 multiply 和一次 add 各计为一个浮点操作，单次 dense GEMM 的主项约为：
+
+```text
+FLOPs_GEMM ~= 2 * M * N * K
+```
+
+这个映射解释了为什么模型 shape 会直接进入硬件效率：
+
+- Training 或长 Prefill 的 `M=B*T` 较大，通常有更多独立 tiles 可占满 GPU。
+- Decode 中每次只有少量新 token，`M` 可能很小；权重相同，GEMM 却可能无法形成足够并行工作。
+- `K/N` 的对齐、dtype、layout 和 epilogue 会约束可用 Tensor Core kernel。
+- SwiGLU 有两次 up/gate GEMM、elementwise gate 和一次 down GEMM；它不是一条不可分割的数学指令。
+
+这里必须保持层次边界：`reshape([B,T,d] -> [B*T,d])` 不改变每个 token 独立通过 MLP 的模型语义；cuBLAS、DeepGEMM 或 fused kernel 只是实现这份矩阵契约的不同 execution paths。第49章再解释它们怎样做 tiling、数据搬运、指令调度和硬件适配。
+
 ## MLP 是不是“知识库”
 
 研究发现某些 FFN activations、weights 或中间 features 与事实、模式和可解释概念相关，修改它们也可能影响特定输出。这为“MLP 承载部分知识关联”提供了实验入口。
@@ -217,6 +253,7 @@ MoE:       each token -> selected expert MLPs
 
 MLP 主要由大 GEMM、activation 和 elementwise multiply 组成。高性能实现会考虑：
 
+- 将 `[B,T,d]` 映射为 `M=B*T` 的 GEMM，并针对 Training、Prefill 与 Decode 的不同 `M` 选择 kernel。
 - GEMM shape 与 Tensor Core 对齐。
 - Bias/activation/gate fusion。
 - Activation memory 与 recomputation。
@@ -250,12 +287,14 @@ Attention output [B,T,d_model]
 8. 为什么不能把 MLP 简化为人类可读知识库？
 9. MoE 怎样扩展 Dense MLP？
 10. 为什么序列较短时 MLP 仍可能是主要计算来源？
+11. `X [B,T,d_model]` 进入 up projection 后，GEMM 的 `M/N/K` 分别是什么？
+12. 为什么相同权重在长 Prefill 与单 token Decode 中可能获得完全不同的 GPU 效率？
 
 ## 小结
 
 MLP 与 Attention 分工明确：Attention 在 token 之间路由信息，MLP 在每个 token 内构造和组合非线性 features。扩维提供容量，activation 或 gate 提供条件选择，down projection 恢复 residual stream shape。
 
-MLP 参与形成模型知识与计算特征，但知识是分布式、上下文化的。这个边界既避免低估 MLP，也避免把权重矩阵误解成可直接读取的事实表。
+在执行层，`[B,T,d]` 会被映射成 `M=B*T` 的 GEMM；这解释了为什么相同模型语义会因 Training、Prefill、Decode 的 `M/N/K` 不同而产生不同硬件效率。MLP 参与形成模型知识与计算特征，但知识是分布式、上下文化的。这个边界既避免低估 MLP，也避免把权重矩阵误解成可直接读取的事实表。
 
 ## Review notes
 
@@ -266,3 +305,4 @@ Primary-source 校验入口：
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
 - Noam Shazeer, "GLU Variants Improve Transformer", 2020: https://arxiv.org/abs/2002.05202
 - Mor Geva et al., "Transformer Feed-Forward Layers Are Key-Value Memories", 2020: https://arxiv.org/abs/2012.14913
+- NVIDIA cuBLAS documentation（GEMM / cuBLASLt execution contract）: https://docs.nvidia.com/cuda/cublas/

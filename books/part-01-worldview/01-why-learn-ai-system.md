@@ -1,6 +1,8 @@
 # 第1章 为什么学习 AI System
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-WHY-AI-SYSTEM`
+**Legacy Chapter:** Ch1
 **Status:** Draft
 
 **Roadmap Intent:** AI System 不是模型部署，而是让模型稳定、高效、可控、可迭代地产生业务价值的一组系统。
@@ -188,6 +190,7 @@ AI System 的难点通常不在于是否存在某个技术方案，而在于不�
 → AI System 全局知识树
 → 模型为什么能够学习
 → Transformer / LLM 内部机制
+→ 多模态表示、环境预测与物理行动
 → Training System 如何生产模型能力
 → Inference System 如何高效运行模型
 → AI Infrastructure 如何平台化能力

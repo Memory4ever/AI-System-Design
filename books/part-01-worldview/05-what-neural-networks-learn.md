@@ -1,6 +1,8 @@
 # 第5章 神经网络到底学到了什么
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-REPRESENTATION`
+**Legacy Chapter:** Ch5
 **Status:** Draft
 
 **Roadmap Intent:** 理解特征、表示空间、分布、泛化和归纳偏置。
@@ -125,6 +127,62 @@ causation: changing the activation changes model behavior as claimed
 
 线性 probe 能从表示中读出信息，不一定证明模型在原任务中使用了该信息；干预某个方向导致输出变化，也需要排除连带影响。可解释性不是给每个参数命名，而是建立可复现、可反驳的内部机制证据。
 
+### 从可读出到机制：证据应逐级变强
+
+内部分析至少要区分一条证据阶梯：
+
+```text
+behavioral correlation
+→ decodability
+→ localized intervention
+→ downstream behavioral change
+→ cross-context / cross-model replication
+```
+
+前两层可以发现“某种信息存在于 activation 中”，却没有证明原始 forward path 依赖它。
+更强的主张需要在控制混杂因素的前提下修改候选表示，并观察预期的 downstream computation
+或行为是否随之改变；即使如此，单个 prompt、单个模型家族或局部线性近似上的效果仍不是
+完整机制。
+
+Jacobian-adjusted lens 一类方法提供了一个具体例子：它不直接把中间 activation 投影到
+最终词表，而是用该 activation 对后续 residual 的局部 Jacobian 近似 layer-to-output
+影响，再配合 activation swap、ablation 或 modulation 检查候选方向是否被计算使用。
+这个方法的重要性不在于给出又一种“可视化”，而在于把 readout 与 intervention 放进同一
+实验链。其局部一阶近似、跨 context averaging、token-indexed representation 与模型范围
+仍限制外推，因此它是证据阶梯的实例，不是模型内部知识的最终字典。
+
+### 解释模型也有自己的 Faithfulness Budget
+
+当研究者用 sparse features、transcoder 或 attribution graph 替代原模型的一部分计算时，
+得到的是一个 **解释用 replacement model**，不是原模型本身。它至少引入四类差距：feature
+dictionary 无法重构的 error nodes、未被替换的 attention/QK path、为可读性做的 graph pruning，
+以及人类对 features 和 supernodes 的命名。图更小、更可读，通常意味着保留的计算更不完整。
+
+因此 circuit evidence 应同时报告：replacement reconstruction error、pruning threshold 与 graph
+completeness、在原模型上的 intervention，以及 prompt/model selection 范围。若干选定案例能被
+干预复现，只能证明方法在这些 cases 中生成了可检验 hypothesis；不能推出整张图完整、feature
+label 唯一，或模型普遍按该叙述“思考”。旧的 probe、activation patching 和黑盒行为评测仍然
+成立：它们成本更低、回答的问题不同，并且可以用来交叉检查 replacement model 的盲区。
+
+表示是否在最终层保留某类信息，还取决于训练目标把监督放在什么位置、覆盖哪些 token。只预测
+被 mask 的局部目标，可能让中间层保留纹理和运动细节，却允许最终层把容量收缩到更利于全局语义
+预测的方向；这不等于局部信息从整个网络消失。若下游既需要局部可读出性又需要全局语义，一条
+演进分支是扩大 target coverage，并把 self-supervision 放到多个深度：
+
+```text
+single final-layer objective
+-> masked/local target prediction
+-> visible + masked target coverage
+-> deep supervision across selected layers
+-> layer-wise probe and intervention under matched compute
+```
+
+这会缩短早期层到监督信号的路径，也会让 local detail 与 global abstraction 竞争同一表示预算；更密的
+loss 还增加 compute、loss weighting 与 optimization coupling。V-JEPA 2.1 的受限消融支持这种目标覆盖与
+深度监督可以移动信息在层间的分布，但不能证明 dense objective 普遍更优，也不能把 probe 读出直接当作
+下游因果使用。只需要全局语义的模型仍可能受益于较窄目标；需要定位、跟踪或物理控制时，才应把局部
+信息保留作为明确 contract，并用 intervention 和 downstream task 验证。
+
 ## 表示为何会随上下文改变
 
 在静态特征模型中，人们容易把“表示”理解成每个输入固定对应一个向量。现代序列模型中的 token representation 通常依赖上下文。同一个词出现在不同句子中，经过多层信息交互后会形成不同状态。
@@ -144,6 +202,15 @@ causation: changing the activation changes model behavior as claimed
 第三层是跨分布验证。使用时间后移、来源变化或真实线上流量检查表示能否迁移。随机划分只能验证同一数据池内的泛化。
 
 第四层是内部分析。probe、归因和干预可以生成机制假设，但应与外部行为、消融和重复实验结合。
+
+跨模型比较还要处理表示基底不唯一。同一功能算法可以在不同 hidden basis、宽度或训练随机种子下实现；直接
+对齐 neuron 或 coordinate，可能把 basis change 误判成机制差异。一条更强的比较路线是寻找对线性重参数化
+不敏感的 functional subspace，再分别测试：该 subspace 是否足以恢复目标行为，移除它是否必然破坏行为。
+
+`sufficiency` 与 `necessity` 不对称：找到一个可工作的共同子空间，不证明它是唯一实现；干预失败也可能来自
+projector、probe distribution 或 replacement error。Projector、matching objective、layer/token range、model
+revision 和 intervention 必须进入 evidence identity。Invariant Algorithmic Cores 的 synthetic grokking 实验支持
+“跨 realization 比较应先处理 basis invariance”这一原则，不证明真实 LLM 已拥有可唯一命名的通用算法模块。
 
 第五层是线上闭环。持续记录输入分布、输出质量、拒答、工具失败和用户反馈，并把异常关联到模型、数据、prompt、runtime 和版本。Observability 告诉我们变化发生在哪里，Evaluation 才判断变化是否有害。
 
@@ -171,7 +238,7 @@ Representation asks: what useful computation emerges from those changes?
 Generalization asks: where does that computation remain valid?
 ```
 
-第 6 章将引入 Transformer 作为一种更适合上下文交互和规模化训练的架构，第 7 章讨论扩大数据、参数和算力时 loss 的经验规律，第 8 章再讨论这些表示如何表现为广泛能力。Part III 的数据与训练章节、Part V 的 Evaluation 与 Observability，都建立在本章的分布边界上。
+第 6 章将引入 Transformer 作为一种更适合上下文交互和规模化训练的架构，第 7 章讨论扩大数据、参数和算力时 loss 的经验规律，第 8 章再讨论这些表示如何表现为广泛能力。Part IV 的数据与训练章节、第 66 章 Evaluation System 与后续 Observability，都建立在本章的分布边界上。
 
 ## 自检问题
 
@@ -204,3 +271,8 @@ Generalization asks: where does that computation remain valid?
 - Robert Geirhos et al., "Shortcut Learning in Deep Neural Networks", 2020: https://arxiv.org/abs/2004.07780
 - Nelson Elhage et al., "Toy Models of Superposition", 2022: https://transformer-circuits.pub/2022/toy_model/index.html
 - Guillaume Alain, Yoshua Bengio, "Understanding intermediate layers using linear classifier probes", 2016: https://arxiv.org/abs/1610.01644
+- Gurnee et al., "Verbalizable Representations Form a Global Workspace in Language Models", 2026: https://transformer-circuits.pub/2026/workspace/index.html
+- Anthropic, "Circuit Tracing: Revealing Computational Graphs in Language Models", 2025:
+  https://transformer-circuits.pub/2025/attribution-graphs/methods.html
+- Transformers Converge to Invariant Algorithmic Cores（basis-invariant functional comparison；
+  Status: Experimental）: https://arxiv.org/abs/2602.22600

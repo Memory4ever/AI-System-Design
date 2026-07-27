@@ -1,6 +1,8 @@
 # 第2章 AI 的发展历史
 
 **Knowledge Tree:** Part I 世界观：AI 为什么会发展成今天这样
+**Stable Knowledge Node ID:** `WORLDVIEW-AI-HISTORY`
+**Legacy Chapter:** Ch2
 **Status:** Draft
 
 **Roadmap Intent:** 从规则系统到机器学习、深度学习、Transformer、LLM、Agent，理解每次范式变化背后的瓶颈。
@@ -169,7 +171,7 @@ Attention 的计算和显存开销会随序列长度增长而快速上升。训�
 
 因此，Transformer 不是让系统变简单了，而是让模型能力进一步变强，同时把基础设施问题推到台前。
 
-后面的 Part II 会详细解释 Attention、Transformer Layer、Decoder Only、KV Cache 等机制；Part IV 会从推理系统角度解释 Prefill、Decode、PagedAttention 和调度为什么会出现。这里先抓住主线：**Transformer 的成功，本质上是模型机制和硬件并行能力之间的一次重要对齐。**
+后面的 Part II 会详细解释 Attention、Transformer Layer、Decoder Only、KV Cache 等机制；Part V 会从推理系统角度解释 Prefill、Decode、PagedAttention 和调度为什么会出现。这里先抓住主线：**Transformer 的成功，本质上是模型机制和硬件并行能力之间的一次重要对齐。**
 
 ## LLM：从任务模型到通用能力载体
 
