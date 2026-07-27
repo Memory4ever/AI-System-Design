@@ -13,10 +13,9 @@ recorded below.
 
 Current priority:
 
-Parts I, II, III, and IV have been completed as repository-backed Drafts.
-Continue linearly into Part V while preserving the model, training-state,
-inference-runtime, SLO, and distributed-control contracts established by
-Chapters 1-52.
+Parts I, II, III, IV, V, and VI have been completed as repository-backed
+Drafts. The complete Chapters 1-80 knowledge tree is now available for
+papers-driven refinement, cross-Part verification, and later maturity review.
 
 ## Completed Repository-Backed Work
 
@@ -633,8 +632,230 @@ Megatron Core, TensorRT-LLM, vLLM V1, SGLang, NVIDIA Dynamo and KServe
 LLMInferenceService. Version-dependent behavior is labeled as such; paper
 results are not automatically projected onto current implementations.
 
-No chapter was promoted beyond `Draft`. The next learning position remains
-Part V, Chapter 53: 什么是 AI Platform.
+No chapter was promoted beyond `Draft`. At the time of that review, the next
+learning position was Part V, Chapter 53: 什么是 AI Platform.
+
+### Daily Research Integration: Quantized Artifact and GPU Capacity
+
+Status: Completed; affected chapters remain Draft
+
+Source record:
+
+`papers/2026/07/27/README.md`
+
+Updated repository chapters:
+
+`books/part-03-training-system/31-checkpoint.md`
+
+`books/part-04-inference-system/45-tensorrt-llm.md`
+
+`books/part-04-inference-system/50-gpu-memory.md`
+
+`books/part-04-inference-system/52-inference-scheduling.md`
+
+Stable understanding integrated in this pass:
+
+- A deployment artifact must carry more than quantized tensors and scales.
+  Numerical semantics, module/parameter mapping, structural graph rewrites,
+  kernel and hardware capabilities, and quality evidence jointly define the
+  executable artifact contract.
+- Low-bit storage does not by itself prove lower end-to-end latency.
+  Quantize/dequantize work, kernel launches, unfused memory traffic, and
+  non-quantized operators remain in the execution path.
+- Generic module replacement lowers model-integration cost and preserves
+  framework composability. Architecture-specific graph rewrites and kernel
+  fusion can reduce execution overhead, but increase build, validation, and
+  support-matrix cost.
+- Scheduler-visible KV capacity is derived from HBM only after fixed weights,
+  peak workspace and communication, fragmentation, and reserve are removed.
+  Therefore total-HBM ratios do not directly equal KV-capacity, concurrency,
+  throughput, or goodput ratios.
+- Admission consumes the remaining usable KV budget after resident requests
+  and safety margin. It cannot infer a capacity gain from an artifact label
+  unless the corresponding quantization and kernel path is actually active.
+- The Nunchaku Lite and AMD MI455X reports are retained as bounded mechanism
+  cases. Their version-, hardware-, and workload-specific results are not
+  promoted to general performance claims.
+
+Cross-chapter contract after this pass:
+
+```text
+Chapter 31
+  validated numerical + graph + execution artifact identity
+-> Chapter 45
+  runtime build, quantization, graph rewrite and kernel execution plan
+-> Chapter 50
+  weights, KV, workspace and reserve compete within usable HBM
+-> Chapter 52
+  admission and scheduling operate on the resulting capacity
+```
+
+This integration did not change chapter maturity or course position. At that
+time, the next position was Part V, Chapter 53: 什么是 AI Platform.
+
+### Part V AI Infrastructure: Chapters 53-69
+
+Status: Draft completed and cross-chapter reviewed
+
+Repository scope:
+
+`books/part-05-ai-infrastructure/53-what-is-ai-platform.md`
+
+through:
+
+`books/part-05-ai-infrastructure/69-production-best-practice.md`
+
+Core understanding:
+
+- An AI Platform is a set of stable identity, state, policy, and feedback
+  contracts around AI artifacts and expensive compute. It is not a portal,
+  a Kubernetes passthrough, or a collection of unrelated tools.
+- Kubeflow provides composable Kubernetes-native lifecycle subprojects.
+  Model Registry, Training Operator, KServe, and Gateway respectively own
+  artifact identity, training-workload reconciliation, serving desired state,
+  and external traffic policy.
+- GPU scheduling is a topology-, gang-, queue-, and fairness-constrained
+  placement problem. Volcano and KAI Scheduler are reviewed as two mechanism
+  mappings rather than as feature lists.
+- MLflow maps runs, artifacts, logged models, evaluation evidence, and
+  registered versions into a metadata plane. It does not replace workload,
+  serving, tenancy, or resource control planes.
+- Metrics, Logs, and Traces remain distinct evidence signals: aggregate
+  health, event records, and per-operation causal paths. Shared identities
+  connect them without collapsing their retention, cardinality, or privacy
+  contracts.
+- Cost is attributed resource-time under quality and SLO constraints.
+  Multi-tenancy propagates identity and isolation across control, data,
+  resource, and evidence planes. Security adds lifecycle provenance,
+  least-privilege execution, validation, audit, and threat-driven controls.
+- Production readiness is a continuous evidence and control loop across
+  immutable artifacts, release gates, SLOs, rollback, cost, tenancy,
+  security, and feedback. It is not a one-time launch checklist.
+
+The Part V platform path is now repository-backed:
+
+```text
+Part III deployment artifact
+-> Part IV runtime state and SLO
+-> platform identity and lifecycle contracts
+-> Kubeflow / Registry / Operator / KServe / Gateway
+-> GPU scheduling and queue governance
+-> Metrics / Logs / Traces
+-> cost / tenancy / security
+-> production feedback and recovery
+```
+
+Part V cross-chapter and cross-Part boundaries:
+
+- Chapter 52 schedules request/token/KV state at inference-runtime time;
+  Chapters 59-61 place Pods, gangs, and GPU resources at cluster time.
+- Chapter 31 owns checkpoint and deployment-artifact formation; Chapter 55
+  owns immutable model identity, lineage, evidence, aliases, and promotion
+  metadata.
+- Chapter 49 owns `LLMInferenceService` topology and EPP request paths;
+  Chapter 57 owns the general KServe service lifecycle and Runtime abstraction.
+- Chapter 56 maps Part III training topology into Kubernetes workloads but
+  does not change TP/PP/DP/CP/EP mathematics or replace gang scheduling.
+- Chapters 63-65 separately own aggregate metrics, event evidence, and causal
+  traces. Chapter 62 MLflow is one lifecycle-metadata implementation, not the
+  entire production observability plane.
+- Chapter 68 freezes the platform security boundary for Prompt and Tool
+  execution without pre-empting Part VI's Agent mechanisms.
+- Chapter 69 hands Part VI immutable identity, policy, trace, budget,
+  security, audit, and recovery contracts. Agent execution extends these
+  contracts instead of creating a parallel governance system.
+
+Current framework claims were checked against the July 2026 official
+documentation for Kubeflow, Kubeflow Trainer, KServe 0.18, Gateway API and its
+Inference Extension, Kubernetes DRA, Volcano, KAI Scheduler, MLflow, and
+OpenTelemetry. Version-dependent APIs are labeled as such.
+
+All seventeen chapters remain `Draft`. At the time of that pass, the next
+repository-backed learning position was Part VI, Chapter 70: Prompt.
+
+### Part VI Agent: Chapters 70-80
+
+Status: Draft completed and cross-chapter reviewed
+
+Repository scope:
+
+`books/part-06-agent/70-prompt.md`
+
+through:
+
+`books/part-06-agent/80-agent-platform.md`
+
+Core understanding:
+
+- Prompt is a versioned runtime input to a conditional model distribution,
+  not a deterministic program or a security boundary.
+- Context is the authorized, selected, ordered working set for one model call.
+  RAG supplies external evidence; Memory persists state across calls through
+  governed write, read, consolidation, correction, and forgetting policies.
+- Tool Calling converts model output into a typed proposal. A trusted executor
+  still owns schema and semantic validation, authorization, approval,
+  idempotency, execution, result filtering, and audit.
+- Planning represents future state transitions with dependencies,
+  preconditions, budgets, and completion evidence. Reflection is a bounded
+  inference-time feedback loop, not RLHF or a parameter update.
+- Workflow is the durable deterministic spine for Agent execution. It owns
+  state transitions, retries, replay, approval, cancellation, compensation,
+  and terminal evidence while model-driven nodes retain bounded flexibility.
+- Multi-Agent creates value only when tasks, evidence, models, tools, or
+  authority can be meaningfully decomposed. Multiple personas do not create
+  independent evidence by themselves.
+- MCP standardizes lifecycle, capability negotiation, messaging, and the
+  connection of resources, prompts, and tools. It does not establish server
+  trust, business authorization, workflow reliability, or Agent coordination.
+- Agent Platform extends the Part V platform with goal, plan, context, memory,
+  action, delegation, approval, and long-running workflow state. It reuses the
+  same identity, resource, evidence, cost, tenancy, security, and recovery
+  substrate rather than creating a parallel platform.
+
+The Part VI runtime path is now repository-backed:
+
+```text
+Prompt
+-> Context assembly
+-> RAG / Memory reads
+-> Model proposal
+-> Tool authorization and execution
+-> Observation
+-> Planning / Reflection
+-> durable Workflow
+-> Multi-Agent delegation
+-> MCP connectivity
+-> governed Agent Platform
+```
+
+Part VI cross-chapter and cross-Part boundaries:
+
+- Chapter 70 owns runtime prompting; Chapter 25 owns SFT and parameter-level
+  behavior adaptation.
+- Chapter 22 owns long-context model/system limits; Chapter 71 owns runtime
+  selection, ordering, compression, trust, and token-budget assembly.
+- Chapter 72 owns external evidence retrieval; Chapter 73 owns persisted
+  cross-call state and its write/forget lifecycle.
+- Chapter 74 owns typed tool intent and execution boundaries; Chapter 79 owns
+  MCP connectivity and capability negotiation.
+- Chapter 75 owns a revisable plan; Chapter 77 owns durable authoritative
+  workflow state. Chapter 76 owns inference-time feedback and does not modify
+  the Part III optimization objectives.
+- Chapter 78 assigns bounded responsibility among Agents but relies on
+  Chapter 77 for shared fact state and recovery.
+- Chapter 80 extends Part V governance to the action loop. Part IV continues
+  to own token/KV scheduling and Part V continues to own GPU and tenant
+  resource governance.
+
+Current claims were checked against primary papers for in-context learning,
+RAG, Memory, Tool use, planning, reflection, Multi-Agent, and Agent
+evaluation. MCP is explicitly pinned to the published `2025-11-25`
+specification; the 2026-07-28 release candidate is not treated as an already
+released stable contract. Agent identity and authorization are described as
+an evolving standards area using current NIST material.
+
+All eleven chapters remain `Draft`. All six roadmap Parts and Chapters 1-80
+are now repository-backed Drafts.
 
 ### Repository-wide Draft Review Pass 1
 
@@ -671,30 +892,38 @@ Completed in this pass:
 
 Current position:
 
-Parts I-IV complete as Draft → ready to enter Part V platform capability
+Parts I-VI complete as repository-backed Drafts
 
 The repository-backed course now has a continuous worldview, model-mechanism,
-capability-production, and online capability-delivery spine. A request can be
-traced from a validated model artifact through Prefill, Decode, KV state,
-runtime mechanisms, serving engines, distributed control, and SLO-aware
-scheduling.
+capability-production, online capability-delivery, and platform-governance
+spine, extended through the complete Agent action loop. A task can be traced
+from model capability and a governed artifact through inference, platform
+policy, Context, Memory, tools, Workflow, external effects, evidence, and
+feedback.
 
-Next chapter position:
+Next learning phase:
 
-Part V, Chapter 53: 什么是 AI Platform.
+Papers-driven cross-Part refinement and verification. No new linear chapter
+position remains in the current roadmap.
 
 ## Next Focus
 
-- Continue linearly with Part V, Chapter 53: 什么是 AI Platform.
+- Refine existing chapters only when papers, official specifications, source
+  materials, or real system evidence add durable knowledge or correct an
+  existing contract.
 - Use Part I as the worldview, Part II as the model contract, Part III as the
   capability-production contract, and Part IV as the online inference-runtime
-  and SLO contract.
-- Keep Parts I-IV at `Draft`; promotion to `Review` or `Final` remains a
-  separate maturity decision after adjacent platform chapters and a later
-  cross-Part primary-source refresh are complete.
+  and SLO contract. Use Part V as the platform identity, resource, evidence,
+  tenancy, security, and production-governance contract. Use Part VI as the
+  governed Context-to-action runtime contract.
+- Keep Parts I-VI at `Draft`; promotion to `Review` or `Final` remains a
+  separate maturity decision after papers-driven refinement and a later
+  repository-wide primary-source review.
 - Use `ROADMAP.md` as the single source of truth for chapter order.
-- Only mark chapter progress after the corresponding repo content is written
-  or updated.
+- Update the existing knowledge-tree node instead of appending disconnected
+  paper notes to a chapter.
+- Do not modify books merely to produce a diff; preserve the current argument
+  when new material does not change durable understanding.
 - Before finalizing any chapter that uses recent systems or research claims,
   verify against primary sources and avoid treating internal slides as
   authoritative evidence.

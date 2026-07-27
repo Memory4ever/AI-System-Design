@@ -66,6 +66,11 @@ predicted_KV_growth
 <= allocatable_KV_budget
 ```
 
+这里的 `allocatable_KV_budget` 不是标称 `M_HBM`，而是第 50 章
+`M_KV_usable` 在扣除已有 resident requests 和 admission margin 后的剩余部分。
+量化只有在对应 artifact、kernel 和目标硬件路径实际生效时，才能改变 weights
+或每请求 state 的容量估计；scheduler 不能根据文件名中的 `4bit` 标签假设收益。
+
 预测不可能完全准确，因此需要 conservative margin、ongoing correction 和 overload policy。早期 reject 可能比接受后超时更诚实，也能保护已承诺请求。
 
 ## Iteration Scheduling

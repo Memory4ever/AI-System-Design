@@ -44,11 +44,52 @@ FlashAttention 不只是“更快的 attention”。它的核心思想是 IO-awa
 
 FlashAttention-2 进一步优化并行划分和 work partitioning；FlashAttention-3 则面向 Hopper 等新硬件利用异步数据搬运、WGMMA/TMA 和低精度能力。它们说明：kernel 优化不是只改数学公式，而是在适配硬件的 memory hierarchy 和执行单元。
 
-## 量化和硬件协同
+## 量化为什么不自动带来加速
 
 FP8、FP4、INT8、INT4 这类低精度路径的系统目标，是降低权重、activation 或 cache 的存储和带宽压力，并提高硬件 tensor core 的有效吞吐。
 
-但量化不是免费午餐。低精度需要校准、scale 设计、kernel 支持和质量评估。硬件提供 FP4/FP8 能力，不等于业务模型自动可用；软件栈必须能把模型转换、执行和验证串起来。
+最朴素的方案是只压缩 weights，在执行前再反量化到高精度。它可以减少 artifact 和 resident weight bytes，却不保证 latency 下降：dequantize、额外 kernel launch 和中间 tensor traffic 可能抵消读取节省。Weight-and-activation quantization 更有机会使用低精度 tensor core，但对 outliers、calibration 和 kernel support 的要求更高。
+
+更完整的单步成本应理解为：
+
+```text
+T_step
+≈ T_low_precision_compute
+ + T_quant_dequant
+ + T_kernel_launch
+ + T_unfused_memory
+ + T_non_quantized
+```
+
+这里 `T_step` 是一次目标执行路径的端到端时间，其余各项分别表示低精度计算、
+量化/反量化、kernel launch、未融合访存和未量化算子的时间贡献。它不是要求各项
+严格互斥的 profiler 恒等式，而是避免只看低精度 GEMM 的成本清单。
+
+所以“checkpoint 缩小”“HBM 占用下降”和“端到端推理加速”是三个需要分别验证的结论。
+
+### 通用 Module Replacement 与专用 Structural Fusion
+
+量化 runtime 有两种典型接入路径。
+
+第一种尽量保留原模型 graph，只把目标 linear modules 替换为 quantized implementations。它容易接入新架构，也更容易与 scheduler、LoRA、offload 或 graph compiler 组合。
+
+第二种针对模型结构改写 graph，例如合并 Q/K/V projections，把 normalization、RoPE 和 projection 交给一个 fused operator。它减少 launch 和 HBM round trips，却要求 artifact 明确参数 concat/split、operator semantics 和 kernel capability；新架构不能只靠扫描 module names 自动获得这些变换。
+
+两者的基本权衡是：
+
+```text
+generic module replacement
+  lower integration cost + stronger composability
+  but more launches / unfused traffic
+
+architecture-specific fusion
+  lower execution overhead
+  but higher build, validation and support-matrix cost
+```
+
+SVDQuant / Nunchaku 是这条边界的一个外部案例，而不是 TensorRT-LLM feature comparison。SVDQuant 把难量化的 outliers 放入高精度 low-rank branch，让 4-bit branch 处理 residual；Nunchaku 再把修正分支与低精度 path 融合，避免额外 activation movement。Nunchaku Lite 选择通用 module replacement 以进入 Diffusers，而原始 Nunchaku 的模型专用 fused paths 能获得更深优化。
+
+这个案例说明 TensorRT-LLM 章节中的长期问题：执行计划必须共同决定 precision、graph rewrite、kernel 和 hardware mapping。硬件提供 FP4/FP8 能力，不等于业务模型自动可用；软件栈必须把模型转换、执行和质量验证串起来。
 
 ## Build-time 与 Runtime-time
 
@@ -70,7 +111,7 @@ consolidation/resharding 后构建成另一种 Serving topology。转换器必�
 global tensor identity 出发，而不是依赖源 rank 文件名；目标 artifact 还要
 重新验证 logits、量化质量和多 rank collective correctness。
 
-可部署 artifact 至少应绑定 model revision、tokenizer、quantization scales、build/runtime version、GPU compute capability、parallel degree 与支持的 shape/context limits。否则一次升级后即使 engine 能加载，也无法说明数值和性能仍与原验证相同。
+可部署 artifact 至少应绑定 model revision、tokenizer、quantization semantics、module mapping、structural rewrites、build/runtime version、kernel requirements、GPU compute capability、parallel degree 与支持的 shape/context limits。否则一次升级后即使 engine 能加载，也无法说明数值、graph semantics 和性能仍与原验证相同。
 
 ## In-flight Batching 的位置
 
@@ -93,8 +134,9 @@ TensorRT-LLM 当前官方栈同时包含 in-flight batching 和 paged KV caching
 | Latency | 不同 `T_p/T_o` 下 TTFT、TPOT 如何 |
 | Throughput | 固定 SLO 下 goodput 是否提高 |
 | Compatibility | 目标 GPU、driver、runtime 是否在支持矩阵内 |
+| Integration | 通用 module replacement 还是模型专用 graph rewrite |
 
-低精度减少 bytes 只是机制起点；能否换成可交付能力取决于完整验证。
+低精度减少 bytes 只是机制起点；若量化路径引入更多 launches，容量改善可能没有转化为 latency 改善。能否换成可交付能力取决于完整验证。
 
 ## Trade-off
 
@@ -125,11 +167,13 @@ TensorRT-LLM 章节承担的是“从模型计算到 GPU 执行优化”的桥�
 4. FP4/FP8 为什么要求软硬件协同？
 5. Build-time artifact 与 runtime request state 为什么要分开理解？
 6. In-flight batching 在机制层和框架层分别意味着什么？
-7. 什么时候值得引入 TensorRT-LLM 这类优化栈？
+7. Weight-only quantization 为什么可能降低显存却不降低 latency？
+8. 通用 module replacement 与模型专用 structural fusion 各交换了什么成本？
+9. 什么时候值得引入 TensorRT-LLM 这类优化栈？
 
 ## 小结
 
-TensorRT-LLM 把模型、NVIDIA GPU 和 Serving runtime 联结成经过优化的 execution contract。Fusion、specialized kernels 与 quantization 降低单步成本，in-flight batching 和 paged KV 则管理持续到来的 request state。
+TensorRT-LLM 把模型、NVIDIA GPU 和 Serving runtime 联结成经过优化的 execution contract。Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件对齐，必要时再进行 structural rewrite，才可能把更少 bytes 转化为更低单步成本；in-flight batching 和 paged KV 则管理持续到来的 request state。
 
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
@@ -141,8 +185,11 @@ Primary-source 校验入口：
 - FlashAttention: https://arxiv.org/abs/2205.14135
 - FlashAttention-2: https://arxiv.org/abs/2307.08691
 - FlashAttention-3: https://arxiv.org/abs/2407.08608
+- SVDQuant: https://arxiv.org/abs/2411.05007
+- Hugging Face Nunchaku Lite integration analysis: https://huggingface.co/blog/nunchaku-diffusers
+- Diffusers Nunchaku Lite integration: https://github.com/huggingface/diffusers/pull/14100
 
-本轮 Review 依据当前官方入口补充了 runtime、in-flight batching、paged KV caching 和分布式执行的边界，同时仍将章节主线限定为 NVIDIA GPU execution optimization。具体支持矩阵与性能结论必须绑定版本、模型、精度和硬件，不能从通用图优化原理直接推出。
+本轮 Review 依据当前官方入口补充了 runtime、in-flight batching、paged KV caching 和分布式执行的边界，同时仍将章节主线限定为 NVIDIA GPU execution optimization。Daily Research 中的 SVDQuant/Nunchaku 只作为跨 runtime 的机制对照，用于推导通用 module replacement 与模型专用 fusion 的边界，不代表 TensorRT-LLM 的功能声明。具体支持矩阵与性能结论必须绑定版本、模型、精度和硬件，不能从通用图优化原理直接推出。
 
 时效性边界：上述官方入口已在 2026-07 重新核验；由于 TensorRT-LLM 的
 backend、quantization 和 hardware support matrix 持续变化，本章不把某个

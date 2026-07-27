@@ -287,8 +287,10 @@ model architecture + exact weight revision
 + tokenizer / vocabulary / special tokens
 + chat template / generation and stop metadata
 + base model + adapter identity / merge state
-+ dtype / quantization scales and calibration identity
-+ target runtime format + inference parallel layout
++ dtype / quantization semantics / calibration identity
++ module mapping / structural rewrite / parameter transform
++ target runtime format + kernel and hardware capability
++ inference parallel layout + supported shape/context limits
 + source checkpoint / conversion / evaluation lineage
 ```
 
@@ -303,6 +305,50 @@ expert ownership 和数值输出。能在目标 runtime 中 load 只证明格式
 真实 tokenizer、chat template、sampling/stop policy 做 request-level smoke
 test。只有这三层通过，Part III 的 checkpoint 才完成向 Part IV deployment
 artifact 的交接。
+
+### 量化 Artifact 为什么需要 Graph 与 Kernel 契约
+
+把 weights 写成 4-bit 文件还不能唯一确定模型怎样执行。两个 artifact 可以有
+相同 nominal bit width，却采用不同的：
+
+- weight-only 或 weight-and-activation quantization；
+- group size、scale、zero-point 与 calibration distribution；
+- outlier / low-rank correction；
+- target module selection；
+- Q/K/V concat、projection split 或其他 structural rewrite；
+- dequantize path、fused kernel 与 hardware capability。
+
+因此量化 artifact 至少应表达四层契约：
+
+```text
+Numerical contract
+  quantization method / precision / group / scale / correction
+
+Graph contract
+  target modules / parameter mapping / structural rewrites
+
+Execution contract
+  required kernels / backend / hardware generation / fallback
+
+Evidence contract
+  calibration / logits or quality regression / benchmark conditions
+```
+
+朴素方案是只保存 quantized tensors，让 loader 根据 tensor names 猜执行方式。
+这在“逐个替换同 shape linear modules”的简单路径上可能工作，但遇到 fused
+QKV、多个参数拼接为一个 kernel input，或一个高精度修正分支与低精度分支共同
+执行时，tensor name 已不足以恢复图语义。顺序或 axis 猜错，shape 甚至可能
+仍然合法，行为却已改变。
+
+SVDQuant / Nunchaku 提供了一个具体边界案例。SVDQuant 用高精度 low-rank
+branch 吸收 activation/weight outliers，再让低精度 branch 处理 residual；
+Nunchaku 通过 fusion 避免修正分支的额外 memory traffic 抵消量化收益。通用
+runtime 可以用 module replacement 保留原模型结构，但若要采用 fused QKV 等
+structural rewrite，就必须额外记录参数如何 concat/split、由什么 kernel 消费。
+
+这个案例的长期结论不是某个 Diffusers 字段，而是：**deployment artifact
+必须能够重建经过验证的数值表示与计算图，runtime loadable 只是最低条件。**
+第 45 章继续解释这些 graph/kernel 选择怎样转化为实际 GPU execution plan。
 
 ## RLHF 的多模型 Checkpoint
 
@@ -358,19 +404,23 @@ Data / Pretraining / Post-training state
 8. 异步保存将 pause 转化成了哪些资源问题？
 9. Load 不报错为什么不能证明恢复正确？
 10. Training checkpoint 转换成 runtime artifact 后为什么必须重新评估？
+11. 为什么相同 4-bit nominal precision 仍可能需要不同 graph/kernel contract？
 
 ## 小结
 
 Checkpoint 是训练系统的状态事务。模型参数只是其中一部分；optimizer、scheduler、randomness、data cursor、parallel layout 和 identity metadata 共同决定能否恢复同一训练过程。
 
-分片与异步保存提高可扩展性，也引入 commit、reshard、backpressure 和验证问题。只有经过严格 restore test 和 artifact conversion Evaluation，checkpoint 才能从故障恢复机制成为可发布模型资产。
+分片与异步保存提高可扩展性，也引入 commit、reshard、backpressure 和验证问题。只有经过严格 restore test，并为数值表示、graph rewrite、kernel/hardware capability 和行为证据建立明确的 artifact contract，checkpoint 才能从故障恢复机制成为可发布模型资产。
 
 ## Review notes
 
-本章区分 weights-only、resumable 与 deployment artifacts，覆盖 model-state 容量、事务提交、distributed sharding、resharding、data/RNG state、async save、restore validation 和 RLHF 多模型一致性。具体 ZeRO/FSDP 参数生命周期留给第 35 章，框架 API 留给第 36～37 章。
+本章区分 weights-only、resumable 与 deployment artifacts，覆盖 model-state 容量、事务提交、distributed sharding、resharding、data/RNG state、async save、restore validation 和 RLHF 多模型一致性。本轮进一步将量化 deployment artifact 拆成 numerical、graph、execution 与 evidence contracts，避免把“有 4-bit tensors”误写成“已定义可部署执行语义”。具体 ZeRO/FSDP 参数生命周期留给第 35 章，GPU execution plan 留给第 45 章，框架 API 留给第 36～37 章。
 
 Primary-source / official documentation 校验入口：
 
 - PyTorch Distributed Checkpoint documentation: https://docs.pytorch.org/docs/stable/distributed.checkpoint.html
 - PyTorch, "Getting Started with Distributed Checkpoint": https://docs.pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
 - Megatron Core Distributed Checkpointing API Guide: https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.dist_checkpointing.html
+- SVDQuant: Absorbing Outliers by Low-Rank Components for 4-Bit Diffusion Models: https://arxiv.org/abs/2411.05007
+- Hugging Face, "Bringing Nunchaku 4-bit Diffusion Inference to Diffusers": https://huggingface.co/blog/nunchaku-diffusers
+- Diffusers Nunchaku Lite integration: https://github.com/huggingface/diffusers/pull/14100
