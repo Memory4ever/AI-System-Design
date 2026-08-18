@@ -119,6 +119,33 @@ score(m)
 
 Recency 高不代表正确，similarity 高不代表可披露。Memory read 还要返回 source、time、confidence 和 supersession state。
 
+### 从一次 Top-k 检索到有预算的关联回忆
+
+Flat retrieval 假设一条记录自身包含足够答案；它在事实局部、历史短和高 QPS 时便宜且可预测。但长期交互中的
+证据常分散在多个 episode：某条记录只提供人物或时间 anchor，真正支持结论的变化、承诺和例外位于邻接事件。
+把全部历史送入 Context 可以避免检索 miss，却重新引入噪声、成本和越权暴露。一个中间分支是把读取拆成
+**anchor recall → bounded expansion → evidence assembly**：
+
+```text
+authorized query + temporal / entity cues
+→ hybrid recall of a small anchor set
+→ semantic / structural expansion within a hop and round budget
+→ identity deduplication + provenance merge
+→ evidence packing under the same Context budget
+```
+
+这里的 Graph 不是新的事实 owner。Memory unit 仍需独立 identity、grounded cue、source episode、valid time 与
+supersession；edge 只表达可版本化的关联。Expansion controller 拥有继续、停止与局部邻域选择，Context assembler
+拥有最终 budget，事实 authority 仍来自 source evidence。这样可以恢复跨 episode 的 supporting set，却新增错误
+anchor、stale edge、关联漂移、query-time controller cost 与 graph deletion propagation。关系稀疏、证据局部或
+严格 tail latency 优先时，flat embedding / lexical top-k 仍是更好的分支；历史很短且不能容忍 miss 时，full
+Context 仍成立。
+
+RippleMem 的 text-only LoCoMo / LongMemEval-S 实验为这种两阶段读取提供 `Status: Experimental` 的机制证据；
+其 LLM extraction、固定 hop/budget、同源 answer/judge 与未覆盖的 tool、multimodal、concurrent-update 场景，均不
+支持把 headline 或 graph schema 外推为生产默认值。长期结论是：**当答案需要一组相互关联的 evidence 时，
+检索单位应从孤立 record 演进为受预算、可追溯的 evidence set，而不是无限扩大 top-k。**
+
 ### Fact State 与 Retrieval-policy State 必须分离
 
 Embedding、graph 或规则 index 把 retrieval logic 主要放在 data structure 中；另一条实验性路线是训练一个
@@ -916,3 +943,5 @@ Primary-source 入口：
   https://arxiv.org/abs/2607.02255
 - Hierarchical Graph Memory / HiGram（Status: Experimental）: https://arxiv.org/abs/2608.05095
 - Search2Skill（Status: Experimental）: https://arxiv.org/abs/2608.05245
+- RippleMem（anchor recall → bounded associative expansion；Status: Experimental）:
+  https://arxiv.org/abs/2608.13334

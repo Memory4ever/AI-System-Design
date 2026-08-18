@@ -356,3 +356,5 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2603.21676
 - HRM-Text（双时间尺度 recurrence；Status: Experimental）:
   https://arxiv.org/abs/2605.20613
+- Post-Norm under Curriculum Depth Growing（No Change；受限九层 distillation curriculum 证据）:
+  https://arxiv.org/abs/2608.13156

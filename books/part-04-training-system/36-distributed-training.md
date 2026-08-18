@@ -567,6 +567,46 @@ profile drift 和 checkpoint resume 都是新 failure modes。长度分布稳定
 简单。Data-Centric Parallel 的作者实验只支持其 32×H200、两个模型与合成长度分布中的条件收益，不构成通用
 加速结论；长期原则是 **runtime adaptability 必须守住训练语义不变量**。
 
+### 从 Phase 串行到依赖驱动的跨 Phase 重排
+
+同步 RL post-training 通常按 rollout、reference scoring、actor forward/backward、optimizer update 串行执行。
+这种 phase barrier 在文本任务以 Decode 为绝对主耗时时合理：顺序容易验证，旧 policy snapshot 的读写边界也
+清楚。视觉输入或超长 Prompt 让 prefix encode/prefill 变成显著工作后，完整 phase 串行会把本来只依赖输入与
+当前参数版本的 prefix 也推迟到 response 生成结束。
+
+更细的调度应先从 dependency graph 推导，而不是先追求 GPU utilization。若 reference prefix 与 training prefix
+只依赖输入和只读快照 `theta_k`，它们可以与 rollout Decode 重叠；response-dependent suffix、backward 和
+update 仍保留原来的同步顺序：
+
+```text
+publish and freeze theta_k
+→ overlap rollout decode with response-independent prefixes
+→ wait for response and prefix boundaries
+→ run suffix scoring / loss / backward
+→ wait until every reader of theta_k has quiesced
+→ update and publish theta_(k+1)
+```
+
+这不是 asynchronous RL，也没有用 stale policy 换吞吐。正确性来自三个显式 barrier：重叠区间内快照只读，
+suffix 只在 response 与 boundary state 都 ready 后启动，optimizer 只在旧快照的全部 reader 退出后提交。可隐藏
+的时间上限由 Decode window、prefix work 与 interference 共同决定；Aggregate utilization 上升但 Decode 被
+拖慢时，关键路径未必缩短。
+
+重排还会延长跨 phase state lifetime。Rollout KV、prefix boundary、training activation、weights 与 optimizer
+state 若同时常驻，可能让原来可顺序复用的 HBM 失效。Runtime 因而需要按 producer、consumer 与 last-use 管理
+residency：保留 latency-critical boundary，offload 或 recompute bulky training state，在安全 barrier 后释放
+phase-local buffers，并用分块 update 限制 FP32 optimizer working set。稳定虚拟地址或跨进程 alias 可以减少
+Runtime object 重建，但 page mapping、IPC lifetime 与 layout compatibility 也随之成为正确性状态。
+
+Training 与 rollout 还可能偏好不同 TP degree。强制同一 TP 简化 sharing，却可能让训练放不下或让逐 token
+Decode 多付 collective；复制完整 actor 则增加 HBM 和每次更新后的转换。一条条件分支是让 layout-compatible
+tensors 共享物理存储，只重建不兼容 layout。它获得 phase-specific parallelism，也新增 shard mapping、alias
+validation、snapshot publication 与 failure recovery。输入 prefix 较短、Decode 没有可用 spatial slack、host
+offload 成本高或独立 GPU pools 足够时，原来的串行 colocation / disaggregation 仍更稳健。
+
+Rollplex 在 Qwen2.5-VL-32B、32×H800、指定 GRPO、长度与 batch contract 上为这条路线提供实验性证据；它
+证明的是依赖允许的重排在该 workload 可行，不证明所有 RLHF、模型、硬件或生产故障条件都会获得同样收益。
+
 ## 正确的并行策略选择顺序
 
 1. **建立最小配置 profile**：model-state、activation、workspace、step time。
@@ -660,3 +700,5 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2602.21196
 - PyTorch 2.11（functional、differentiable 与 compiler-visible collectives；Versioned Evidence）:
   https://github.com/pytorch/pytorch/releases/tag/v2.11.0
+- Rollplex（synchronous VLM RL cross-phase scheduling；Status: Experimental；32×H800 evidence）:
+  https://arxiv.org/abs/2608.14498

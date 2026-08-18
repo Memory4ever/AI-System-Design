@@ -1423,3 +1423,5 @@ Implementation evidence：
 
 - Business Arena（stateful counterfactual evaluation；Status: Experimental）:
   https://arxiv.org/abs/2608.08621
+- Vero（repository-level implementation + proof artifact evaluation；No Change / Experimental evidence）:
+  https://arxiv.org/abs/2608.13522

@@ -156,13 +156,15 @@ SQL exact/execution match → execution-grounded checking → semantic/catalog-a
 
 | 候选 | 决策 | 原因 |
 | --- | --- | --- |
-| SwiftQK | Daily Only；Sunday Re-evaluate | 机制清晰且工程意义高，但属于单论文、特定 operator 与有限 hardware contract |
+| SwiftQK | Refine Ch37 / Experimental | Sunday 完成 owner/adjacent chapter 去重后，确认“由 consumer semantics 推导最小 collective payload”是现有 TP 主线的机制缺口；保留有限 hardware contract |
 | Beyond Routing | W32 retroactive / Emerging / Experimental | first-public date 为 2026-08-09；提供重要机制解释，但跨域失败和窄 intervention 边界尚不足以改写 MoE 主线 |
 | QueryProof | No Change — Already Covered；Weekly 保留案例 | Ch62 与 Ch77 已拥有 verifier/workflow 原则；非 matched-scaffold 比较不得进入通用结论 |
 
-**Books Integration Decision:** 今日不修改 `books/`。三项均不否定既有结论；SwiftQK 与 FDAA 可能在形成第二证据或稳定演进链后 refine 既有章节，QueryProof 当前主要强化已覆盖观点。
+**Books Integration Decision:** 当日不修改 `books/`；Sunday W33 复核后，SwiftQK 已 `Refine — Existing Argument /
+Experimental` 至 `TRAIN-TENSOR-PARALLEL`（Current Ch37，Legacy Ch33）。FDAA 保持 W32
+`Emerging / Experimental`，QueryProof 保持 `No Change — Already Covered`。
 
-今日未发现足以立即修改核心知识库的重要进展。
+当日没有立即修改核心知识库；Sunday 的跨日/章节复核确认 SwiftQK 达到 refine 门槛。
 
 ## Ignored Noise
 
@@ -236,6 +238,8 @@ SQL exact/execution match → execution-grounded checking → semantic/catalog-a
   blocked、0 pending；最终 disposition 为 `No Change — Already Covered / Experimental Evaluation Case`，
   因 Ch62/72/73/68 已具体拥有其长期原则。W14 fixed-source Discovery Gate 仍为 Open，Historical Books
   Gate 仍为 Closed，本轮未修改 Books。
+- Sunday W33 回读 Ch36～38 后，SwiftQK 已写入 Current Ch37（Legacy Ch33）；新增的是 algebra-first
+  sufficient-statistic communication 与 AllGather 共存边界，不保留作者 speedup headline。
 
 ## Open Questions
 

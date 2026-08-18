@@ -484,6 +484,8 @@ Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 
   https://github.com/sgl-project/sglang/issues/27462
 
 - Domino（parallel proposal 的 causal correction；Status: Experimental）: https://arxiv.org/abs/2605.29707
+- DARTree（depth-wise causal correction + deferred tree pruning；No Change / Experimental evidence）:
+  https://arxiv.org/abs/2608.13524
 - Draft-OPD（drafter on-policy distribution；Status: Experimental）: https://arxiv.org/abs/2605.29343
 
 - MARS（same-backbone masked multi-token proposal；Status: Experimental）: https://arxiv.org/abs/2604.07023

@@ -394,6 +394,43 @@ false done，loop breaker 能逐级触发 modality switch、strategy change 或 
 不是 mandatory verifier 永远有益。Workflow 应记录 trigger、remaining budget、call cost、accepted evidence 与
 escalation outcome；已有 deterministic checker 或短任务时，简单单 loop 仍更可靠。
 
+### Context 与 Environment 必须在同一恢复点对齐
+
+只回滚对话 Context 会让模型相信旧文件、旧页面或旧资源仍存在；只恢复 workspace 会让模型继续携带失败分支
+形成的假设与观察。长任务的可恢复 checkpoint 因而不是一段 message history，也不是单独的 filesystem snapshot，
+而是决策边界上的联合状态：
+
+```text
+d_t = (agent context c_t, controlled environment state s_t)
+```
+
+最简单的 forward-only 修复在错误局部、后续 action 可补偿时仍合理。Restart + failure summary 清理污染状态，
+却丢弃已完成的可信前缀并重复 side effects。Aligned rewind 则选择旧 checkpoint，恢复 `c_t` 与 `s_t`，把失败
+分支压缩成 advisory rewind memory，再从同一前缀生成新 suffix：
+
+```text
+checkpoint metadata and failure evidence
+→ select a prior aligned boundary
+→ restore context and controlled environment atomically
+→ inject bounded memory of the failed branch
+→ execute a new suffix
+```
+
+Retained prefix 应从 event log 重放到内存，而不是重新执行 Tool，否则“恢复”会重复已提交副作用。Checkpoint
+metadata、context digest、environment snapshot、tool/event frontier 与 rewind memory source 必须绑定同一 generation；
+任一半恢复失败都不能把联合状态标成 ready。选择哪个 checkpoint 与如何总结失败可以由 Agent 提议，但恢复
+authority、可回滚边界、配额和最终 commit 仍由 Workflow Runtime 拥有。
+
+Filesystem snapshot 只能撤销其受控域。Network call、外部 service、进程、消息或付款等未纳入 snapshot 的副作用
+仍需 idempotency、compensation 与 reconciliation；把 Git snapshot 称为“事务回滚”会掩盖这一边界。Checkpoint
+过密还会增加 storage、候选选择和 stale-resource 成本，过疏则重复更多工作。不可逆 action、高风险 Tool 或无法
+冻结外部环境时，应在 action 前设置 approval/commit barrier，而不是事后依赖 rewind。
+
+AgentRewind 在 82 个有确定性检查项的工程任务、指定模型与 harness 上为联合恢复提供实验性证据；实验允许
+unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能证明开放网络、并发协作者和生产副作用已经
+具备 exactly-once recovery。长期结论是：**恢复必须对齐模型所见状态与 Runtime 的 authoritative state，Memory
+只保存失败证据，不能替代环境事务。**
+
 ## Durable Execution 与 Replay
 
 Workflow engine 常通过 event history 重建状态。Replay 要求 orchestration decision 尽量 deterministic；模型 call、当前时间、随机数和 tool result 应记录为 activities/events，而不是重放时重新调用。
@@ -636,6 +673,9 @@ hardware-in-loop 或超大私有代码。低频 workload、不可观测副作用
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。下一章研究多个 Agent 之间的职责和通信。
 
 ## Review notes
+
+- AgentRewind（aligned context/environment rewind；Status: Experimental；controlled-workspace boundary）:
+  https://arxiv.org/abs/2608.14380
 
 - ASI-Evolve（cold-start prior 与 run-derived lesson；Status: Experimental）: https://arxiv.org/abs/2603.29640
 

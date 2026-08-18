@@ -488,6 +488,32 @@ Uniform online policy distillation 会让 teacher 对已正确样本继续提供
 与 group-composition dependency；稳定 offline distillation 或可靠 demonstrations 仍是低复杂度方案。
 SCOPE 提供受限机制证据，不构成跨任务最优 OPD recipe。
 
+### Selective Distillation 还要区分“需要纠正”与“与任务有关”
+
+Teacher/student disagreement、entropy 或低概率能指出某个 token **难学或尚未学会**，却不能证明这份监督由
+当前任务条件决定。若只按 optimization need 选择，有限 token budget 可能花在风格、通用语法或 prompt 表面
+变化上。一个实验性分支固定 student on-policy rollout，并为同一 source prompt 构造 meaning-preserving
+paraphrase 与 task-changing counterfactual，比较两个干预对每个 token distribution 的影响：
+
+```text
+student-owned rollout on original prompt
+→ score the fixed tokens under original / paraphrase / counterfactual
+→ task-changing sensitivity - surface sensitivity
+→ select a bounded token subset
+→ teacher supervision only on selected positions
+```
+
+这是一种 **task-relevance proxy**，不是 causal credit。Counterfactual 可能同时改变 difficulty，paraphrase 可能
+并不严格等价，top-k-with-residual divergence 也只是 full-vocabulary distribution 的近似；生成、验证三元组还会
+把额外模型与数据成本移到训练前。它与 outcome routing 是不同层：outcome verifier 先决定该 trajectory 是否需要
+teacher correction，selector 再决定有限监督预算落在哪些 token。稳定 demonstration、full-token OPD 或简单
+disagreement mask 在任务同质、预算充足、contrast 难可靠构造时继续成立。
+
+CROP 在两个 Qwen teacher/student 组合、数学训练 prompt、固定 10% nominal token budget 下提供受限实验，不能
+证明 counterfactual selector 可跨 domain、model family 或长 Agent trajectory 泛化。应同时报告 triplet validation
+通过率、构造成本、selected-token coverage、teacher calls、下游 outcome 与 no-selection baseline，而不是只保留
+六个 benchmark 的 aggregate headline。
+
 ### Teacher 的绝对分布与 Post-training Delta 是两种监督对象
 
 普通 OPD 在 student rollout 上逼近强 teacher，适合“teacher behavior 本身就是目标”的场景；若 teacher 是
@@ -1130,8 +1156,12 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2607.15161
 - When Does Muon Help Agentic Reinforcement Learning?（optimizer/update-scale/sharding contract；
   Status: Experimental）: https://arxiv.org/abs/2607.16169
+- CROP（paraphrase-calibrated counterfactual relevance for selective OPD；Status: Experimental）:
+  https://arxiv.org/abs/2608.13387
 
 W32 primary-source cases：
 
 - SMRC-SD（state-matched contextual distillation；Status: Experimental）: https://arxiv.org/abs/2608.05219
 - PIRL（prompt-robust multimodal RLVR；Status: Experimental）: https://arxiv.org/abs/2608.08802
+- Intern-S2-Preview technical report（partial rollout、online draft、typed process credit；No Change /
+  Source-family synthesis）: https://arxiv.org/abs/2608.13505

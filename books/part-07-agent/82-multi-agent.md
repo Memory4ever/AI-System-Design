@@ -158,6 +158,28 @@ sender / receiver model identity
 
 adapter 数量线性增长不等于 runtime cost 也线性，更不证明 accuracy parity。不可读 embedding 只能作为 proposal channel，不能替代 authoritative task state、approval 或完成证据。Vision Wormhole 提供了异构 VLM 之间传递 image-span latent 的实验机制，但版本、模型组合和 artifact 边界要求它保持 Experimental；文本/typed artifact 在审计、故障恢复和跨版本兼容更重要时继续成立。
 
+图像 span 并不是 latent communication 的唯一对象。语言 Agent 也可以把发送方末层的一段 hidden states 当作
+候选消息，再映射到接收方 input-embedding 坐标。直接拷贝 state 或 KV 的问题是坐标系、层数和 norm 都属于
+checkpoint；“维度相同”不代表语义兼容。一个 training-free 的受限分支用已生成消息 token 的 receiver
+embeddings 作为临时锚点，求几何保持的正交映射，再做 norm calibration 与 vocabulary-neighborhood anchoring：
+
+```text
+sender final hidden-state suffix
+→ receiver-token anchors for closed-form alignment
+→ norm calibration + bounded vocabulary anchoring
+→ continuous prefix for receiver
+→ downstream task verdict + text fallback
+```
+
+这减少了为每个 sender/receiver pair 训练 adapter 的要求，也可能保留序列化前的连续信息；但它没有得到稳定的
+跨版本协议。Sender message、receiver tokenizer/embedding、selected suffix、alignment rule、anchor coefficient 与
+model revisions 必须共同构成 channel identity。连续 prefix 不可读、难以审计，恶意或漂移 state 还可能绕过文本
+policy scan，因此只能作为 proposal / reasoning channel；authoritative facts、delegation、approval、commit 与完成
+证据仍应落到 typed artifact 或 Workflow state。StateBridge 的四模型、两 family、顺序四 Agent 实验仅支持该
+对齐机制在所列 QA/math/code contract 下可行；没有证明跨任意 architecture、长 workflow、安全 adversary 或模型
+升级后仍兼容。文本消息在可解释、重放和治理优先时继续成立，训练 adapter 在固定高流量 model pair 上也仍可能
+比每次闭式对齐更稳定。
+
 ### Behavioral belief 不等于 authenticated identity
 
 Agent 可从 interaction history 推断 co-player 的响应策略，并据此调整当前 action；这能在重复博弈中形成快速适应，也会产生 strategic shaping、collusion、belief poisoning 和 equilibrium drift。Runtime identity 回答“对方是谁、拥有什么权限”，behavioral belief 只回答“根据有限历史，对方可能怎样行动”，二者必须分开存储和校准。外部 policy 仍定义什么合作可接受，模型不能用预测到的互惠收益自行放宽授权。受控 repeated-game 实验证明 partner diversity 可诱发有限的 in-context adaptation，不证明现实 Agent 会自然合作或隐藏身份更安全。
@@ -390,6 +412,8 @@ Primary-source 入口：
 - AOrchestra（runtime-instantiated executor contract；Status: Experimental）: https://arxiv.org/abs/2602.03786
 - Vision Wormhole（heterogeneous latent communication；Status: Experimental）:
   https://arxiv.org/abs/2602.15382
+- StateBridge（training-free hidden-state alignment；Status: Experimental）:
+  https://arxiv.org/abs/2608.13317
 - In-context co-player inference（behavioral adaptation 与 strategic shaping；Status: Experimental）:
   https://arxiv.org/abs/2602.16301
 - AgentDropoutV2（failure-memory-conditioned message rectify/reject；Status: Experimental）:

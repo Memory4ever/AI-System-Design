@@ -1,7 +1,7 @@
 # 2026 Weekly Research Index
 
-> Coverage: 2026-W01～2026-W32
-> Last Updated: 2026-08-13
+> Coverage: 2026-W01～2026-W33
+> Last Updated: 2026-08-17
 > Research Mode: Retrospective Backfill + Live Weekly
 
 ## Archive Contract
@@ -16,6 +16,10 @@
   Live Daily。历史回填仍只生成完整 ISO Weekly，不补造 Daily。
 - 2026-W31 已在 2026-08-02 Sunday 完成七份 Live Daily 聚合、跨日去重与 Books 决策；
   Coverage Window 为 2026-07-27～2026-08-02，没有生成 provisional Weekly。
+- 2026-W33 于 2026-08-16 Sunday 生成初版，原 21 项 Full Source Review 与 16 Refine / 5 No Change
+  disposition 保留。2026-08-17 discovery replay 发现遗漏的 8 月 14 日 arXiv 展示批次，现已补完四项
+  Full Source Review，并建立 32 项 Discovery Review queue；W33 Discovery/Evidence Gate 与 correction
+  Books Gate 均重新打开。
 - W01～W30 共包含 93 个评分行：20 个 `25～30` 分、60 个 `20～24` 分和 13 个低于
   20 分的边界候选。80 个 retained rows 对应 79 个唯一事件；W27 的 Seed2.0 Model Card
   是同一事件的重复评分行。
@@ -27,9 +31,8 @@
   `20` 个 25～30 分、`60` 个 20～24 分、`13` 个低于 20 分的边界候选。当前重新核验
   screened → deduplicated → `>=20` retained → Source Review 的 discovery recall；冻结窗口仍截至
   2026-07-26，W31 只作为 Live Daily 对照，不参与历史改写。
-- Repository limitation：自动化引用的 `CODEX_HISTORICAL_RESEARCH_PROMPT.md` 当前不在仓库中；
-  本轮依照 `AGENTS.md`、`ROADMAP.md`、现有 Daily prompt 与 Weekly 中已经固化的 Historical Gate
-  contract 执行。该缺失不会被静默解释为“规范已读取”，也不会在本轮擅自创建替代文件。
+- Historical research contract：`CODEX_HISTORICAL_RESEARCH_PROMPT.md` 已在仓库中，Live Weekly 与历史
+  repair 分别遵守 Daily/History Gate；W33 不重启已结束的 W01～W30 forward sweep。
 - 2026-08-08 checkpoint：W08 从旧版 2 项恢复为 23 项候选；22 项完成非模板化 Full Source Review，
   MapTrace 完成低分来源/日期/拒绝核验，故候选层为 `23/23`。历史 GitHub release/RFC 覆盖仍不完整，
   W08 不标记为 archive fully complete。2026-08-13 已完成 23/23 Books disposition 与周级独立 Review：
@@ -1561,6 +1564,8 @@ Weekly 文件此刻实际存在、且六维分数可复算的 candidate rows。�
 | Live W31 | 26 | 13 | 10 | 3 | 7/7 Daily；ResKV / SLIM 按 07-31 v1 回拨并完成 Full Source Review |
 | Live W32 | 44 | 23 | 19 | 2 | 7/7 Daily；36 paper Full Source Reviews；3 blocked identity gaps；0 ordinary pending / discovery gap；candidate checkpoint passed，broader Historical Evidence Gate Open |
 | Archive W01～W32 | 1143 | 707 | 383 | 53 | 只用于算术对账，不表示 all-history Evidence Gate 已通过 |
+| Live W33 | 25 scored + 32 discovery pending | 22 | 3 | 0 | 原 21 项 + 4 correction Full Reviews；32 项尚未评分/去重；Gate reopened |
+| Archive W01～W33 | 1168 scored + 32 discovery pending | 729 | 386 | 53 | provisional arithmetic；W33 correction 未闭合，不是 final census |
 
 结构复核同时确认：W08 的 23 个评分候选现在有 23 个对应 review/boundary packets；W09 有 62 个
 in-window score rows，另有 3 个全文读取后移出本周的跨周去重 packets；W27 的 34 个 score rows 只对应
@@ -1579,6 +1584,7 @@ in-window score rows，另有 3 个全文读取后移出本周的跨周去重 pa
 | W27～W30 | 2026-06-29～2026-07-26 | asynchronous PP、MoE-aware routing、speculation scheduling、stateful selection control plane |
 | W31 | 2026-07-27～2026-08-02 | semantic KV、claim-level provenance、explicit protocol state、bounded Agent repair |
 | W32 | 2026-08-03～2026-08-09 | typed state、conditional graph factorization、Agent testing adequacy、causal repair、workflow resource contracts |
+| W33 | 2026-08-10～2026-08-16 | 原三条路线保留；discovery correction 新增 generation/transport、scientific-workflow authority、process evidence 与 world-state memory 待综合 |
 
 ## Live Weekly Ledger
 
@@ -1586,6 +1592,7 @@ in-window score rows，另有 3 个全文读取后移出本周的跨周去重 pa
 | --- | --- | --- | --- |
 | [W31](2026-W31/README.md) | 7/7（2026-07-27～2026-08-02） | 26 scored；ScientistOne official node；ResKV / SLIM 按 07-31 v1 回拨并完成 Full Source Review；Anthropic cryptanalysis 仍为受限 Weekly evidence | 原 Daily 决策保持；ResKV / SLIM 只形成 Experimental candidates，Historical Books Gate closed |
 | [W32](2026-W32/README.md) | 7/7（2026-08-03～2026-08-09）；08-09 retrospective recovery + 08-13 blocker recovery | 44 unique families；36 paper Full Source Reviews；3 blocked identities；0 pending / discovery gap；typed state、P/D/A/F accounting、Agent testing、safe commitment、skill/memory 与 off-HBM KV 演进重建 | 验证 Daily refinements；恢复候选只形成 provisional dispositions，不修改 Books |
+| [W33](2026-W33/README.md) | 7/7 + 08-17 correction | 25 scored Full Reviews；32 Discovery Review Pending；原三条演进链保留，correction Gate reopened | 原 16 Refine / 5 No Change 保留；correction 为 3 No Change / 1 Books Pending；暂无新 Books 写入 |
 
 ## Cross-Week Evolution Routes
 
@@ -1600,6 +1607,7 @@ W05 task-aware multi-agent topology
 → W21～W25 evaluation moves from answers to executable/physical artifacts
 → W31 protocol state becomes explicit and runtime topology repair stays bounded
 → W32 goals become typed contracts and repair/skill artifacts become auditable
+→ W33 derived state becomes selectively retrievable, repairable and transactionally activated
 ```
 
 这些节点不是一条单一产品路线。W05、W08、W12 是 Agent system 的 `Direct Evolution` 候选；
@@ -1618,6 +1626,7 @@ W04 behavior specification / representation
 → W28 training-state capability isolation
 → W31 run evidence expands to typed claim provenance
 → W32 causal repair and reusable skills acquire provenance and review gates
+→ W33 richer proposal channels retain explicit verifier and commit authority
 ```
 
 演进重点不是“更强模型需要更多安全功能”，而是 evidence object 从 output 扩展到 internal
@@ -1638,6 +1647,7 @@ W06 conditional attention
 → W30 state-aware selection and heterogeneous cache identity
 → W31 semantic state composition adds writer/reader compatibility
 → W32 finer execution cuts require full-fleet provisioning and failure accounting
+→ W33 communication, cache and elasticity units follow downstream sufficient information and state liveness
 ```
 
 关系以 `Principle Reuse` 和 `Layering` 为主：减少理论计算、压缩存储、定制硬件与改变
@@ -2164,3 +2174,26 @@ semantic draft retrieval；bounded formal verification 与 plausible-world safe 
 update 与 search-derived Skill publish Gate；state-matched distillation 与 prompt-robust RLVR；brief-to-task contract；
 elastic GPU configuration portfolio；sparse off-HBM KV working set；以及 versioned stateful counterfactual evaluation。
 Source-Family Books Gate 完成；没有新增 Part、章节或 Stable Node。
+
+## 2026-08-16 W33 Live Weekly Checkpoint（Superseded by 2026-08-17 Correction）
+
+W33 完成 7/7 Daily 与 21/21 candidate Full Source Reviews；最终 disposition 为 16 Refine、5 No Change，
+0 Review Pending、0 Blocked。Beyond Routing 按 8 月 9 日 v1 日期留在 W32，Intern-S2 report 只作为已有
+model family 的 related primary source，不重复制造 release event。
+
+长期 refine 收束为三条路线：TP/KV/MoE/Autoscaling 的控制粒度由 consumer semantics、state liveness 与
+可验证 cost regime 决定；Prompt/Memory/Workflow/Skill 从追加状态推进到 provenance、selective repair、
+transactional activation 与 bounded associative read；diffusion tree、latent prefix、selective teacher signal 与
+Agent-generated proof artifact 均保持 proposal/authority 分离。W33 Source-Family Evidence/Books Gates 通过，
+7 Part / 84 章结构、ROADMAP 与 DECISIONS 不变。该完成声明已由下方 discovery correction 取代。
+
+## 2026-08-17 W33 Discovery Correction
+
+W33 原 21 项 Full Source Review、16 Refine / 5 No Change 与既有 Books 修改保留，但 discovery replay 证明
+Sunday scan 没有召回 8 月 14 日展示批次。QuoteBench、OmniScientist、Beyond Final Scores 与 AlayaWorld 已
+完成正文、实验、限制和关键 Appendix/artifact 审计，令 scored Full Reviews 增至 25；另有 32 项仅完成 identity
+发现，尚待 event date、revision、去重、评分与全文审计。
+
+因此 W33 状态为 `Discovery/Evidence Gate Reopened`：三项 correction 为章节级 No Change，QuoteBench 为
+`Books Pending`，32 项 queue 不进入 Books。年度 `1168 scored + 32 discovery pending` 只作 provisional arithmetic，
+不能用来宣称 archive census 或 W33 Books Integration 完成。7 Part / 84 章结构、ROADMAP 与 DECISIONS 不变。

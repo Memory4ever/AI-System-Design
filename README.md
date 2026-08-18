@@ -69,6 +69,8 @@ Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action 
 2. 再读 [第1章 为什么学习 AI System](./books/part-01-worldview/01-why-learn-ai-system.md)，理解项目的问题意识。
 3. 首次阅读按七大部分推进：世界观 → 模型 → 多模态/世界模型 → 训练系统 → 推理系统 → AI 平台 → Agent。
 4. 建立主干后，再沿 Compute、Memory、Communication、Scheduling 或 State 做主题阅读。
+5. 需要把设计判断变成可验证实践时，进入 [AI-System Labs](./labs/README.md)，按纵向路线从可复现实验推进到
+   End-to-End AI Lifecycle。
 
 ## 仓库结构
 
@@ -81,6 +83,8 @@ books/                 # 正式书稿内容
   part-05-inference-system/
   part-06-ai-infrastructure/
   part-07-agent/
+
+labs/                  # 与 Books Stable Node 双向映射的纵向实践路线
 
 docs/                  # 项目上下文、写作原则、学习状态、决策记录
 assets/                # README 和文档使用的图标、图片资源

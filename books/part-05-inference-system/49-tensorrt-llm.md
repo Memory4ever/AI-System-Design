@@ -169,6 +169,72 @@ MoE grouped GEMM:
 
 Grouped execution 可以减少逐 expert launches 和 padding，却没有消除 router imbalance、空 experts、tail tiles 与 All-to-All。若进一步把 dispatch、GEMM、activation、combine 或通信重叠成更大的 kernel，收益来自减少中间 state movement；代价是 correctness、debugging、artifact compatibility 与 failure isolation 全部扩大。
 
+### MoE Dispatch 应平衡时间，而不是固定代理量
+
+对 grouped expert execution，`tokens per GPU` 是便宜的负载代理，但不是稳定的时间模型。小 expert batch 的
+Decode 可能由“在本 GPU 激活一个新 expert 并读取其 weights”的固定成本主导；tokens 增长后，GEMM tile 与
+compute 开始主导；跨节点时 All-to-All 又可能先成为瓶颈。同一批次的 makespan 因而更接近：
+
+```text
+T_gpu ≈ max(
+  expert activation / weight-read floor,
+  token and tile compute,
+  dispatch / combine communication
+)
+T_layer ≈ max_gpu(T_gpu)
+```
+
+这解释了为何每个固定代理都有自己的成立区间。按 token 均分在 compute-bound 区间合理，却可能把冷 experts
+切到更多 GPUs，重复支付 weight-load 与 tile-padding 成本；按 activated-expert count 均分适合 memory-bound
+小 batch，却可能把大量 token 留在单一 bottleneck；忽略 topology 的平衡表在多节点上还可能用跨节点 traffic
+换取表面上的 GPU 均衡。
+
+更稳健的执行链是先按 `(kernel, dtype, hardware, expert shape)` 校准 cost surface，再用当前 routing window
+求近似 makespan，最后在相近方案之间保留稳定旧表，避免模型误差触发频繁切换。在线 control 不应进入 captured
+critical path：graph 内只消费 versioned dispatch table 并收集计数，solver 在异步 plane 产生下一版；发布时还要
+处理 stale counts、torn table 与 fallback。
+
+这不是让 dispatch 取代 placement。轻度 drift 且 hot experts 已有 replicas 时，移动 tokens 可以修补短期 tail；
+drift 大到目标 replica 根本不存在时，必须移动或复制 weights。新方案同时引入 calibration drift、solver/model
+error、table freshness、remap tax 与 topology-specific maintenance。Static dispatch 在 placement 新鲜、小 experts、
+通信已支配 step 或收益小于控制成本时仍然正确；time-aware dispatch 是有明确 win region 的条件分支。
+
+#### Placement 从事后响应推进到预算内预测
+
+Offline placement 用历史 routing profile 固定 expert-device mapping，适合 task mixture 稳定、weight movement
+昂贵或控制面应尽量简单的场景。在线但 reactive 的迁移等到当前 router 产生准确 token assignments 后才决定
+移动 weights，语义可靠，却把传输放到同一层 expert execution 的关键路径。若 workload 在 task 间快速切换，
+这两种方案分别会遇到 stale map 与 exposed migration tail。
+
+预测式 pre-routing 提供一条中间分支：在目标层 Attention 前，用上一层 residual hidden state 对目标层的 frozen
+router 做一次 early invocation，只汇总 predicted expert counts；normal router 仍在原位置产生 authoritative
+token-to-expert assignments。早期结果只改变 physical placement，不改变模型输出：
+
+```text
+previous-layer residual state
+→ predicted aggregate expert demand
+→ deterministic, budgeted pair-swap plan
+→ overlap expert-weight movement with target attention
+→ authoritative router dispatches exact tokens to the new placement
+```
+
+迁移预算必须由可覆盖窗口而不是“均衡程度”决定：每条 link / rank 可移动的 bytes 应小于 Attention window
+扣除 safety margin 后能隐藏的传输量。Deterministic plan 让 ranks 从相同 compact counts 重建一致 swap order，
+减少 plan broadcast；但 prediction error、attention-window variance、跨 batch thrashing、weight version、partial
+transfer 与 rollback 都成为新状态。错误预测不能改变 routing 语义，却可能让 placement 更差或暴露额外延迟。
+
+因此演进关系是：
+
+```text
+stable workload: offline placement
+→ changing workload: reactive migration after exact routing
+→ predictable short-horizon drift: pre-routing migration under overlap budget
+```
+
+FreeBalance 的作者实验只覆盖两类 MoE、8×A800 NVLink、EP=8、batch 16、8K prefill 和三次测量平均；没有
+覆盖 Decode、跨节点 fabric、continuous batching、迁移故障或 tail SLO。它支持“预测只拥有 placement 建议、
+normal router 继续拥有语义”的机制边界，不支持把预测式迁移写成通用默认方案。
+
 ### 如何比较 cuBLAS 与 DeepGEMM
 
 不能只摘取一个峰值 TFLOPS。至少固定：
@@ -589,10 +655,11 @@ TensorRT-LLM 章节承担的是“从模型计算到 GPU 执行优化”的桥�
 15. 比较两个 GEMM kernel 时，为什么必须同时固定 scale semantics、layout、workspace 与 JIT 状态？
 16. 多种 token families 共享同一 projection weight 时，为什么一组 quantization scale 可能不再成立？
 17. Base family 的选择如何在 Prefill、Decode 与非文本输出之间迁移 correction 成本？
+18. 为什么 MoE 的 token balance、activated-expert balance 与 topology-aware balance 各自只有条件成立区间？
 
 ## 小结
 
-TensorRT-LLM 把模型、NVIDIA GPU 和 Serving runtime 联结成经过优化的 execution contract。GEMM 执行从 `M/N/K` 和 dtype/layout contract 出发：cuBLASLt 用广覆盖的 heuristic kernel space 交付通用路径，DeepGEMM 一类专用库用 JIT、TMA、MMA 和模型特定 layout 换取更深优化。二者可以在同一 runtime 中共存。
+TensorRT-LLM 把模型、NVIDIA GPU 和 Serving runtime 联结成经过优化的 execution contract。GEMM 执行从 `M/N/K` 和 dtype/layout contract 出发：cuBLASLt 用广覆盖的 heuristic kernel space 交付通用路径，DeepGEMM 一类专用库用 JIT、TMA、MMA 和模型特定 layout 换取更深优化。二者可以在同一 runtime 中共存。MoE 还要求 execution plan 把 activated-expert weight floor、token/tile compute 与 communication 放入同一条件成本模型，不能把 token count 当成跨 regime 的固定时间代理。
 
 Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件对齐，必要时再进行 structural rewrite，才可能把更少 bytes 转化为更低单步成本；in-flight batching 和 paged KV 则管理持续到来的 request state。
 
@@ -617,6 +684,10 @@ Primary-source 校验入口：
 - FlashAttention-3: https://arxiv.org/abs/2407.08608
 - SVDQuant: https://arxiv.org/abs/2411.05007
 - MoEBlaze（单卡 MoE layer 受限案例）: https://arxiv.org/abs/2601.05296
+- TEMPO（calibrated makespan-aware expert dispatch；Status: Experimental；8/16-GPU serving evidence）:
+  https://arxiv.org/abs/2608.13057
+- FreeBalance（pre-routing expert migration；Status: Experimental；8×A800 prefill evidence）:
+  https://arxiv.org/abs/2608.14205
 - "MASQuant: Modality-Aware Smoothing Quantization for Multimodal Large Language Models", 2026
   （Status: Experimental）: https://arxiv.org/abs/2603.04800
 - MASQuant official implementation:

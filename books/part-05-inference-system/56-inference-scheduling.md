@@ -142,6 +142,36 @@ Routing 选择已有 endpoints，考虑 queue、KV locality、adapter 与 topolo
 
 把三者混成“调度”会导致错误控制。例如 EPP 把请求路由到某 Pod，不能替代 Kubernetes GPU scheduler 为 Pod 找节点；engine scheduler 让 token 进入下一 iteration，也不能创建新 GPU capacity。
 
+### 弹性粒度从 Model Replica 下沉到 Operator DAG
+
+Model-level autoscaling 把完整模型副本作为最小单位。它容易定义 readiness、failure isolation 与 rollback，也适合
+operator latency 相近、traffic 变化慢或极低延迟 megakernel；但它把 attention、linear/expert、normalization 等
+operator 的异质 sensitivity 绑定在一起。短序列可能由 linear/expert path 主导，长上下文转而由 attention 主导，
+统一复制整图会同时扩容非瓶颈 operator，并承担整份 weights 与 engine control-plane startup。
+
+固定的 Prefill/Decode、Attention/FFN 拆分先暴露了大阶段的独立 service rate。再向下推进一层，可把运行模型看成
+有状态 operator DAG：保留最小完整 base replicas，额外 capacity 只复制当前 critical path 上的 bottleneck operators，
+并联合决定 batch、parallelism、replica count 与 physical placement。
+
+```text
+monolithic model replica
+→ stage-level disaggregation
+→ workload-profiled operator DAG
+→ critical-path capacity adjustment
+→ interference / locality-aware placement
+→ runtime validation against end-to-end SLO
+```
+
+细粒度并不会自动节省 GPU。Operator profiles 必须绑定 model、kernel、precision、batch/sequence range、SM share
+与 fabric；colocation 会产生 SM/HBM/interconnect interference，分开放置又增加 activation transfer。Logical plan
+只有在映射到实际 topology 后仍满足 TTFT/TPOT 才能发布。Scale-down 还需证明 queue 稳定，scale-up 需等待新
+operator ready；resharding 因 weight redistribution 通常比增加 replica 更重。
+
+这条路线把快速 elasticity 换成更多 ownership：谁版本化 profile，谁拥有 operator replica registry，谁对 route
+中的 partial failure、backpressure、fairness 与 stale plan 负责。Ultra-low-latency fused path、低 QPS、小模型、
+operator heterogeneity 很弱或 multi-tenant interference 未建模时，完整模型副本仍是更好的故障域。Operator-level
+elasticity 是 stage disaggregation 的继续细化，不是无条件的下一代替代。
+
 ### Barrier-synchronized Worker 不能只按 Request Count 均衡
 
 Round-robin、FCFS 或 least-queue 在请求可迁移、service time 相近或 worker 独立前进时便宜而合理。PD 后的
@@ -332,10 +362,11 @@ Prefill / Decode
 6. 为什么 early rejection 有时优于接受后超时？
 7. 推理 scheduler 与 Part VI GPU scheduler 的对象分别是什么？
 8. 为什么推理调度必须和 observability 一起设计？
+9. Operator-level elasticity 相比完整模型副本增加了哪些 profile、placement、failure 与 fairness 状态？
 
 ## 小结
 
-Part V 最终把 inference 还原为一个受状态与约束驱动的调度系统。模型结构定义每步计算，KV Cache 定义 request memory，runtime mechanisms 改变可执行 work，Serving engines 管理单个执行域，Dynamo/KServe LLM 扩展到分布式控制面。
+Part V 最终把 inference 还原为一个受状态与约束驱动的调度系统。模型结构定义每步计算，KV Cache 定义 request memory，runtime mechanisms 改变可执行 work，Serving engines 管理单个执行域，Dynamo/KServe LLM 扩展到分布式控制面。弹性粒度可以从完整模型副本下沉到阶段乃至 operator DAG，但每次细化都会把更多 profile、interference、routing 与 failure state 带入控制面。
 
 推理调度负责在这些机制之上兑现 SLO，而不是让某个局部指标最大化。下一部分进入 AI Infrastructure，继续讨论模型、服务和 GPU capability 怎样被平台统一治理。
 
@@ -369,3 +400,5 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2601.17855
 - SLIM（saturation-aware serving model；Status: Experimental；受限硬件与 workload contract）:
   https://arxiv.org/abs/2607.29575
+- OpScale（operator-level provisioning/autoscaling；Status: Experimental；single-model、A100/GB200 evidence）:
+  https://arxiv.org/abs/2608.13499

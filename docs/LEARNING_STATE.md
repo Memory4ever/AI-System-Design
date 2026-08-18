@@ -4191,3 +4191,88 @@ dispositions, seven Part guides, 84 Review-notes boundaries, zero duplicate cont
 mechanism headings after Review notes, no heading jumps or unclosed fences, valid local navigation links, consistent
 ROADMAP current/legacy mappings, URL syntax, `git diff --check`, and `git diff --cached --check`. No files were staged,
 committed or pushed.
+
+## 2026-08-15 Daily Research → Books Integration
+
+Status: Daily Gate passed; W33 remains open and no provisional Weekly was generated
+
+Three arXiv v1 system papers completed full primary-source review and refined existing owners without changing the
+seven-Part / 84-chapter structure:
+
+- `INFER-PAGED-ATTENTION` (Ch47) now continues block-level paging into the conditional token-liveness and physical-
+  reclamation branch, keeping full retention as the preferred low-pressure path.
+- `INFER-TENSORRT-LLM` (Ch49) now explains why MoE expert execution must price activation/weight-read, token/tile
+  compute and communication regimes rather than treating token count as a universal load proxy.
+- `INFER-SCHEDULING` (Ch56) now extends model-replica and stage-level disaggregation into operator-DAG elasticity,
+  with profile identity, interference, locality, SLO validation and failure ownership kept explicit.
+
+All three remain `Status: Experimental`; author benchmarks were retained only in the Daily workload contracts. Intern-S2,
+DARTree, Vero, RippleMem, StateBridge, CROP and Post-Norm Curriculum remain W33 `Review Pending` and were not written
+into Books from abstracts. This was the 2026-08-15 snapshot and is superseded by the 2026-08-16 checkpoint below.
+ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-16 Daily Research and W33 Weekly
+
+Status: Daily Gate passed; initial W33 Weekly/Books Gates passed at this snapshot, superseded by 2026-08-17 discovery correction
+
+The seven carry-over W33 source families were read through primary-paper method, implementation, evaluation,
+ablation/sensitivity, limitations and relevant appendices. RippleMem refined `AGENT-MEMORY` from isolated top-k
+records to anchor recall, bounded associative expansion and provenance-preserving evidence assembly. StateBridge
+refined `AGENT-MULTI-AGENT` with a training-free hidden-state alignment branch while keeping continuous prefixes
+proposal-only and authoritative workflow state typed. CROP refined `TRAIN-GRPO` by separating optimization need from
+task relevance and treating counterfactual sensitivity as a bounded proxy rather than causal credit.
+
+The Sunday cross-day review also promoted SwiftQK from Daily-only to an Experimental refinement of
+`TRAIN-TENSOR-PARALLEL`: TP should derive its minimum collective payload from consumer algebra, retaining AllGather
+when a full tensor is actually required. DARTree, Vero, Post-Norm Curriculum and the Intern-S2 technical report were
+chapter-level No Change / source-family evidence after adjacent-chapter review; their algorithms or joint recipe were
+not duplicated in the mechanism body.
+
+W33 covers 2026-08-10 through 2026-08-16 with 7/7 Dailies, 21/21 Full Source Reviews, 16 Refine and 5 No Change
+dispositions, and zero Review Pending or Blocked candidates. Its three stable synthesis routes are: coarse runtime
+objects to sufficient-information/state-liveness control units; append-only Agent state to governed retrieval/repair/
+activation; and richer proposal channels with explicit verifier and commit authority. The seven-Part, 84-chapter
+structure, ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-17 Daily Research and W33 Discovery Correction
+
+Status: Daily Gate passed; W33 Discovery/Evidence Gate reopened; correction Books Gate closed
+
+The 2026-08-16 W33 completion statement is superseded. A direct replay of the arXiv cs.AI, cs.CL, cs.LG and cs.DC
+recent surfaces recovered the Friday August 14 display batch that the Sunday scan had not recalled. The original 21
+Full Source Reviews, their 16 Refine / 5 No Change dispositions and existing Books changes remain valid, but they no
+longer prove complete W33 discovery coverage.
+
+Four newly recovered W33 source families completed full primary-source review: QuoteBench, OmniScientist, Beyond
+Final Scores and AlayaWorld. OmniScientist, Beyond Final Scores and AlayaWorld are chapter-level No Change evidence;
+QuoteBench remains Books Pending because its generation-contract × execution-transport evaluation mechanism must be
+compared against the complete Ch66/Ch80 argument after correction discovery closes. Thirty-two additional source
+families remain Discovery Review Pending for first-public/revision, deduplication, scoring and full-read decisions.
+
+No W34 provisional Weekly was generated and no Books, ROADMAP or DECISIONS files were changed for this correction.
+Current W33 accounting is 25 scored Full Source Reviews plus 32 unscored discovery candidates; the latter are not
+retained rows and cannot be assigned No Change dispositions before review.
+
+## 2026-08-18 Daily Research → Books Integration
+
+Status: Daily Gate passed; three primary-source mechanisms integrated; W33 correction queue remains open
+
+Three arXiv v1 papers completed full review across metadata, method, implementation, evaluation, ablation/sensitivity,
+limitations and relevant appendices. They refine existing Stable owners without changing the seven-Part / 84-chapter
+structure:
+
+- `TRAIN-DISTRIBUTED-TRAINING` (Ch36) now distinguishes phase-serial synchronous RL from dependency-driven
+  cross-phase overlap. Parameter-snapshot barriers preserve on-policy semantics while phase-aware residency and
+  layout-compatible physical sharing expose the new memory, TP-layout and recovery costs.
+- `INFER-TENSORRT-LLM` (Ch49) now extends MoE placement from offline maps through reactive migration to
+  budgeted predictive pre-routing. The predictor may advise physical placement, while the normal router remains the
+  sole owner of token-to-expert semantics.
+- `AGENT-WORKFLOW` (Ch81) now defines recoverable Agent state as an aligned Context/environment checkpoint.
+  Failure Memory remains advisory; the Runtime owns restoration and commit, and external side effects still require
+  idempotency, compensation or reconciliation.
+
+All three mechanisms remain `Status: Experimental`; author performance claims stay bound to their Daily workload
+contracts. Dynamo v1.4.0 is retained as an official bundled version fact and awaits per-PR/source-family review before
+any Books change. The W33 correction ledger remains separate at 25 reviewed rows plus 32 discovery candidates; this
+Daily neither closes nor relabels that backlog. No W34 provisional Weekly was generated. ROADMAP and DECISIONS
+remain unchanged.
