@@ -149,6 +149,22 @@ max_theta E_(x, y ~ pi_theta)
 
 `beta` 太大时，policy 几乎无法改变；太小时，更容易 reward overoptimization。KL 是更新幅度控制，不是事实性或安全性的证明。
 
+### 改变输出分布是目标，不是无副作用的偏好标签
+
+只要 policy update 真正生效，条件分布就不再与 reference 完全相同：某些候选 response 的概率上升，另一些必然相对下降。Preference optimization 不是在原模型外面附加一个“更喜欢”的标签，而是在重写给定 prompt 下的 action probability。
+
+```text
+pi_ref(y | x)
+-> reward / preference-weighted update
+-> pi_theta(y | x)
+```
+
+KL constraint 只限制这种重写的平均幅度。若它是在某个 prompt distribution 上求期望，平均 KL 很小仍可能掩盖少数 prompt、语言、领域或 safety slice 上的较大移动；Sampling temperature、Prompt 和 Context 又会继续改变最终可观察分布。因此“KL 没超阈值”不能证明原有行为逐项保留。
+
+这里还要把三种边界分开：pretrained parameters 中可被适当条件触发的 **latent capability**，当前 policy 通常会输出的 **elicited behavior**，以及接入 Retrieval、Tool、Sampling 与 guardrail 后的 **system capability**。RLHF 最直接改变第二层：它可以让已有能力更容易被调用，也可以压低不希望出现的行为；参数更新同时可能学习新模式或造成 capability regression，但单凭某个回答消失，无法证明相关表示已从参数中删除。反过来，某项 win rate 上升也不能证明模型获得了跨分布的新推理能力。
+
+所以能力边界不能由 reward curve 或平均 KL 推断，必须比较 base/SFT/reference 与新 policy 在相同 decoding contract 下的多切片 Evaluation，并单独记录 capability gain、behavior shift 与 regression。InstructGPT 的原始实验同时报告目标 prompt distribution 上的人类偏好和公开 NLP evaluations，正体现了这两类证据不能互相替代。
+
 ## Reward hacking 与 Goodhart's Law
 
 Reward Model 是人类偏好的有限代理。Policy optimization 比普通 evaluation 更危险，因为 policy 会针对代理的弱点搜索。
@@ -230,6 +246,24 @@ compatibility、representation privacy、version skew 和 policy/RM co-adaptatio
 Rollout 不像 Pretraining teacher forcing 那样能并行知道未来 tokens。它需要真实 Decode，因此 generation throughput、KV Cache 和 Sampling policy 会直接影响训练吞吐。
 
 训练系统还要维持 prompt、response、old log probabilities、reward、value、advantage、policy version 与 checkpoint 的一致性。Stale rollouts 会让 on-policy assumption 逐步失效。
+
+模型与 rollout runtime 扩展后，还会出现一个更隐蔽的不一致：训练端与生成端虽然加载“同一 checkpoint”，
+却可能因 kernel、precision、并行切分、长 Context communication 或 log-probability 重算路径不同而产生数值漂移。
+小规模单 runtime 中直接复用 rollout probability 最简单；分离 inference / training engines 后，update contract
+必须把 tokenizer、precision、parallel layout、ratio source 与 KL 计算版本一并冻结，并在必要时以训练端重新计算
+或有界校正 ratio：
+
+```text
+rollout policy identity
++ inference numerical path
++ training recomputation path
+→ ratio / KL consistency check
+→ accept, correct or reject trajectory
+```
+
+这用额外通信、重算和校准换取更大规模 RL 的更新稳定性；它不保证 bitwise 一致，也不能把 correction 当作任意
+off-policy reuse 的许可证。短 Context、同一 engine 或数值差异远小于 clipping / reward noise 时，简单路径仍更可靠。
+长序列的 context parallelism 还必须把 communication cost 与 policy-quality target 同时计量，不能只报告峰值吞吐。
 
 ## Human feedback 不等于统一人类价值
 
@@ -365,6 +399,8 @@ preference pairs + reference policy
 9. RLHF rollout 为什么会把推理成本带入训练？
 10. PPO、GRPO、DPO 在 pipeline 中分别替换哪一部分？
 11. Verifiable self-play 为什么仍需在 task diversity 与 verification reliability 之间取舍？
+12. Preference optimization 为什么必然改变条件输出分布，而平均 KL 又为什么不能证明每个 slice 都被保留？
+13. Latent capability、elicited behavior 与 system capability 为什么不能由一次 RLHF 结果互相替代？
 
 ## 小结
 
@@ -377,7 +413,10 @@ RLHF 把相对偏好拟合为 reward，再在 reference policy 约束下优化�
 
 ## Review notes
 
-本章只定义 preference data、Reward Model、KL-constrained policy objective 与系统 pipeline。PPO clipping/value、GRPO group advantage、DPO closed-form pair loss 分别留给第 32～34 章，避免重复算法推导。
+- Ring-Zero（large-scale RL numerical identity 与 context-parallel communication；Status: Experimental）:
+  https://arxiv.org/abs/2607.12395v1
+
+本章只定义 preference data、Reward Model、KL-constrained policy objective 与系统 pipeline。PPO clipping/value、GRPO group advantage、DPO closed-form pair loss 分别留给第 32～34 章，避免重复算法推导。本轮审计进一步把 preference update 对条件输出分布的重写，与 latent capability、可观察行为和 system capability 三层边界分开；平均 KL 仍只是更新幅度信号，不是逐切片能力保持证明。
 
 Primary-source 校验入口：
 

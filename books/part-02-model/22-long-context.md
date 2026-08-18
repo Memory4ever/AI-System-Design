@@ -167,6 +167,41 @@ dense softmax
 → 以 continued training 把稀疏索引器迁入既有模型
 ```
 
+Gated DeltaNet 位于其中的“线性/递归状态”分支。普通 linear attention 可以把历史压缩进固定大小的矩阵状态 `S_t`，却会让不同 key-value association 在有限维度中碰撞；统一 decay 能快速遗忘，但会同时衰减所有记忆；纯 delta rule 可以沿当前 key 定向改写旧 association，却不擅长在 context switch 时整体清空无关状态。Gated DeltaNet 将两种控制组合为：
+
+```text
+S_t = S_(t-1) [ alpha_t (I - beta_t k_t k_t^T) ]
+      + beta_t v_t k_t^T
+o_t = S_t q_t
+```
+
+`alpha_t` 控制全局 state decay，`beta_t` 与 delta term 控制当前 key 方向的定向替换。它把显式的 `T` 个历史 KV 压缩为 recurrent state，并通过 chunkwise parallel form 让训练仍可使用大块矩阵计算；交换条件是 state capacity、association collision、顺序依赖和专用 kernel。论文自身仍把 Gated DeltaNet 与 sliding-window attention 组成 hybrid，说明 fixed-state recall 与显式局部 token access 是互补关系，而不是线性状态已经无条件替代 softmax Attention。
+
+### Cross-layer Routing 必须先对齐 Receiver 的表示基底
+
+跨层复用 recurrent state 能缩短信息路径，但“发送方的 update signal”不一定是“接收方可消费的 state”。尤其
+delta/write-error 绑定当前层的 key、value 与 residual basis，直接传给另一层会把不同坐标系误当成同一语义。
+更稳妥的分支只路由已经对齐的 value/hidden stream，或先经过初始近似恒等、可逐步学习的 projection：
+
+```text
+source-layer state / value stream
+→ explicit basis-alignment projection
+→ gated cross-layer route
+→ receiver-owned recurrent update
+```
+
+Projection、route topology 与 gate 都进入 checkpoint identity；额外路径可能放大梯度、形成层间 shortcut 或破坏
+kernel 规整性。实验比较还必须固定 optimizer、learning rate、训练 token 与 pure/hybrid stack，不能把训练 recipe
+差异归因于 routing。表示基底天然共享或额外路径收益不足时，逐层独立 state 仍是更简单的基线。
+
+它与常说的 gated softmax attention 只复用 gating principle，不是同一机制。后者仍先计算标准 SDPA，再用当前 query 产生的 head-specific sigmoid gate 调节该 head output，可抽象为：
+
+```text
+h_i = sigmoid(x_i W_g) elementwise SDPA(Q_i, K_<=i, V_<=i)
+```
+
+这个 gate 决定“当前 query 要把多少 attention result 写回 residual stream”，并在作者实验中表现出 input-dependent sparsity、较少 attention sink 与更稳定的训练；它没有把历史改写成固定大小 state，也没有取消 dense SDPA 的 pair computation 或 KV Cache。两者的共同点是用输入相关乘法门控制信息流；区别是 Gated DeltaNet 的 gate 属于跨时间 memory transition，gated attention 的 gate 属于当前 token 的 softmax-attention output。前者适合把 sequence-length state 成本压到固定边界并接受 recall trade-off，后者适合保留 exact softmax access、用额外参数与非线性调节输出；需要两类记忆偏好时可以组成 hybrid，而不应仅凭名字互换。
+
 MiniMax-01 展示了第一种折中。Lightning Attention 通过调整乘法顺序和分块执行维护递归
 `K^T V` 状态，计算可随序列长度近似线性增长；但论文实验发现 pure linear attention 的
 retrieval 较弱，于是每七层 linear block 后保留一层 softmax Attention。这里旧方案仍然
@@ -208,6 +243,20 @@ selector miss 静默传播、workspace 与专用 kernel portability。MiniMax Sp
 其 109B/6B-active、matched-token training 与所披露 H800 microbenchmark contract 下支持这种联合设计；
 当前 artifact 的 SM100 contract 不能倒写成历史实验条件。短 Context、严格 exactness、无法 continued
 training 或缺少匹配 kernel 时，Dense FlashAttention 仍是合理分支。
+
+### Selector 可以进入 Forward，但必须显式承担语义责任
+
+Teacher-distilled index branch 把 dense Attention 留作语义 owner，便于校准和迁移；另一条并存分支让
+selector 直接进入 Attention forward。对每个远程 chunk，不再只用 mean/max pooled key 给出一个被 hard
+top-k 丢弃的分数，而是学习近似 chunk LogSumExp mass 的 summary，并先在 chunks 间分配 mass、再在 chunk
+内对 tokens 归一化。由于 chunk score 参与最终 attention output，next-token LM loss 可以直接训练 selector。
+
+这不会把近似 selector 变成 exact full attention。Landmark/query calibration、HoPE/position rule、chunk
+size、top-k、local window 与 sparse kernel 必须随 checkpoint 版本化；漏选 chunk 仍是不可恢复的信息损失。
+将相邻 queries 的候选 chunks 合并加载可以提高 Tensor Core 利用率，却会引入 union overfetch。短 Context、
+严格回读、无法 continued training 或缺少匹配 kernel 时，dense attention 或 teacher-owned selector 仍更合理。
+这条分支当前只在作者披露的 345M、1.4B、OLMo3-7B、指定训练 recipe 与单 H800 batch-1 inference contract
+下得到验证，不构成通用长度或性能保证。
 
 三条路线解决的问题并不相同：hybrid linear/softmax 保留两种记忆偏好，NSA 联合设计训练
 稀疏与硬件访问，DSA 强调既有模型的 staged migration。最终应比较的是 effective utilization、
@@ -352,6 +401,11 @@ hidden states
 但不是通用 memory protocol。FwPKM 的长流实验主要支持“反复读取可逐步积累信息”，并不证明一次读取、
 开放域事实、并发 session 或真实 Agent personalization 已经成立；其实现吞吐也受未优化 kernel 限制。
 
+这里还要区分两份形状相同但生命周期不同的状态：训练得到的 `M_0` 是 checkpoint 的 parametric initialization，
+进入一次 sequence/request 后演化的 `M_t` 才是 runtime mutable state。扩大 slot 数量可以在作者 iso-FLOP 设置中
+增加 addressable capacity，却同步增加 HBM footprint；它不意味着每 token compute、memory traffic 或服务容量都
+保持不变。Checkpoint restore 只能恢复 `M_0`，session resume 则必须绑定并恢复正确的 `M_t`。
+
 因此 runtime 必须把 fast weights 当作 request/session-owned mutable model state：identity 至少包含 model
 revision、initial state、chunk/order、update rule、precision 与 reset/checkpoint boundary。Batch 中无意共享会
 造成跨租户污染，失败重试若从错误状态继续也会改变输出。Attention 在短上下文和精确 token provenance 上
@@ -472,6 +526,24 @@ chunk identity
 却丢失逐 token provenance，并新增 compressed-state schema、gate、refresh 与 model/session identity。外部
 RAG 仍适合需要 ACL、删除和精确引用的 evidence；full scan/full KV 在错误代价高、证据必须完备时继续成立。
 
+### Mergeable Aggregation State 是 Token History 的有损替代
+
+有些长历史任务并不需要以后逐字回读，而只要求持续维护集合、计数、分组或其他可组合统计。把每个中间值都重新
+序列化进 prompt 最容易复用通用模型，却让 context 随历史增长，并把本可并行合并的操作退化成串行 token
+处理。另一条路线让模型输出带显式 algebra 的 compact state，再由确定性执行层合并：
+
+```text
+history shard → model-derived aggregation state
+multiple states → deterministic merge operator
+merged state → query-specific finalization
+```
+
+这不是无损压缩。它用较小、可合并的状态换掉逐 token provenance 和任意回读能力；正确性还依赖 state schema、
+merge 的结合律/交换律、数值范围和模型是否把输入正确映射到该 algebra。集合式 workload、分片并行且允许任务专用
+operator 时，它可以位于完整 context 与外部数据库查询之间；需要原文引用、任意 lookup、删除或 ACL 时，保留 raw
+history 与外部 authoritative store 仍然合理。模型只负责提出 aggregation state，执行器拥有 merge commit，评估则
+必须同时检查局部 state、跨分片 merge 和最终答案，不能只看最终文本碰巧正确。
+
 ## 方案究竟移动了哪个瓶颈
 
 | 方案 | 主要改变对象 | 没有自动解决 |
@@ -534,6 +606,7 @@ Position Encoding
 9. RAG 与 Long Context 为什么是互补而非简单替代？
 10. 生产容量为什么不能只依据最大 context window？
 11. Hybrid linear/softmax、native sparse 与 test-time memory 分别改变了哪一种状态？
+12. Gated DeltaNet 的 memory-transition gate 与 gated softmax attention 的 output gate 分别控制什么？
 
 ## 小结
 
@@ -559,14 +632,22 @@ Primary-source 校验入口：
 - Nelson F. Liu et al., "Lost in the Middle: How Language Models Use Long Contexts", 2023: https://arxiv.org/abs/2307.03172
 - Hanshi Sun et al., "ShadowKV: KV Cache in Shadows for High-Throughput Long-Context LLM Inference", 2024: https://arxiv.org/abs/2410.21465
 - MiniMax et al., "MiniMax-01: Scaling Foundation Models with Lightning Attention", 2025: https://arxiv.org/abs/2501.08313
+- Songlin Yang et al., "Gated Delta Networks: Improving Mamba2 with Delta Rule", 2025: https://arxiv.org/abs/2412.06464
+- Zihan Qiu et al., "Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free", 2025（Status: Experimental）: https://arxiv.org/abs/2505.06708
 - Jingyang Yuan et al., "Native Sparse Attention", 2025: https://arxiv.org/abs/2502.11089
 - DeepSeek-AI, "DeepSeek-V3.2", 2025: https://arxiv.org/abs/2512.02556
 - Ali Behrouz et al., "Titans: Learning to Memorize at Test Time", 2025: https://arxiv.org/abs/2501.00663
 - Ali Behrouz et al., "It's All Connected / MIRAS", 2025: https://arxiv.org/abs/2504.13173
 - Fast-weight Product Key Memory（Status: Experimental；sparse inference-time mutable state）:
   https://arxiv.org/abs/2601.00671
+- Sparse Delta Memory（parametric `M_0` / request-owned `M_t` 与 iso-FLOP capacity；Status: Experimental）:
+  https://arxiv.org/abs/2607.07386v1
+- Linear Attention Architectures（cross-layer routing basis alignment；Status: Experimental）:
+  https://arxiv.org/abs/2607.07953v1
 - Zhichen Liu et al., "LiveMem: Maintaining Memory State Continuity in Long-Running LLM Inference", arXiv v1, 2026（Status: Experimental）: https://arxiv.org/abs/2608.02515
 - HALO / HypeNet（dense checkpoint 到 hybrid recurrent-attention state 的受限迁移案例；Status: Experimental）: https://arxiv.org/abs/2601.22156
+- Mergeable Aggregation State（模型生成可合并代数状态，替代把全部中间历史重新放回 prompt；Status: Experimental）:
+  https://arxiv.org/abs/2607.26448v1
 - Recursive Language Models Meet Uncertainty（Status: Experimental）: https://arxiv.org/abs/2603.15653
 - Density-aware Soft Context Compression（Status: Experimental；density proposal 与 decoder contract）:
   https://arxiv.org/abs/2603.25926
@@ -576,6 +657,7 @@ Primary-source 校验入口：
 - Gated Recurrent Memory（write admission 与 exit gate；Status: Experimental）: https://arxiv.org/abs/2602.10560
 - LycheeMemory（compressed KV memory bank；Status: Experimental）: https://arxiv.org/abs/2602.08382
 - MiniCPM-SALA（sparse/linear hybrid 与 staged conversion；Status: Experimental）: https://arxiv.org/abs/2602.11761
+- HiLS-Attention（forward-coupled hierarchical sparse selector；Status: Experimental；不证明字面意义的无限上下文）: https://arxiv.org/abs/2607.02980v1
 - MiniMax Sparse Attention（selector gradient ownership 与 KV-outer block execution；Status: Experimental）:
   https://arxiv.org/abs/2606.13392
 - REFINE（fast-state objective horizon；Status: Experimental）: https://arxiv.org/abs/2602.16704

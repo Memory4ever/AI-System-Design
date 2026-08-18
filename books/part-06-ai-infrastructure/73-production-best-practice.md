@@ -28,6 +28,22 @@ PoC 往往默认：
 
 生产环境逐项打破这些假设。增加副本或接入 Kubernetes 只能解决其中一部分。
 
+## Demo 证明可能性，生产承担证明责任
+
+一个表现很好的 demo 证明模型在少量受控案例上可能具备目标能力，却没有证明这种能力能被持续交付。进入生产前，需要把隐含假设转换为可审计的 proof obligations：
+
+| 证明责任 | 需要回答的问题 | 主要 owner |
+| --- | --- | --- |
+| Identity | 实际运行的是哪个 model、tokenizer、prompt、adapter、index、runtime 与 policy？ | Registry / release contract |
+| Quality | 在代表性分布和高风险 slices 上是否正确、grounded、安全且稳定？ | Evaluation System |
+| Capacity | 在目标硬件、长度分布、并发和 burst 下是否满足 TTFT、TPOT、goodput 与 memory budget？ | Inference / GPU capacity |
+| Reliability | admission、timeout、cancellation、dependency failure、retry 和 rollback 是否有明确语义？ | Serving / Gateway / runbook |
+| Governance | 谁可访问数据、模型和工具，如何隔离租户、审计动作并保护敏感 telemetry？ | Security / tenancy / policy |
+| Economics | 单请求与单位有效结果成本是否可承担，资源使用由谁归因和预算？ | Cost / quota |
+| Evolution | 线上 evidence 如何归因、进入新评估或变更，并经过 canary 后返回生产？ | Feedback / lifecycle |
+
+这些责任不是要求所有系统一开始就采用最重的平台。低流量、低风险 PoC 可以使用简单实现，但必须明确哪些保证尚未建立。生产化的关键不是组件数量，而是每项风险是否有 owner、evidence、failure policy 和 rollback path。
+
 ## Production Contract
 
 一次可发布变更至少需要绑定：
@@ -156,6 +172,7 @@ Agent 进一步把一次模型请求扩展成带 Context、Memory、Tools 和 Wo
 5. Error budget 如何改变发布决策？
 6. 线上反馈为什么不能直接进入训练集？
 7. Part VI 为 Agent action 提供了哪些不变量？
+8. 一个效果很好的模型 demo 进入生产前还需要完成哪些 proof obligations？
 
 ## 小结
 
@@ -163,7 +180,7 @@ Production readiness 是持续运行的证据与控制闭环，不是上线前�
 
 ## Review notes
 
-本章只收束前 16 章已推导的机制，没有引入新的产品清单。它明确向 Part VII 交付第 66 章的 evaluation evidence/decision contract，以及 identity、policy、trace、budget、security 与 recovery contracts，避免 Agent 平台另起一套治理系统。
+本章只收束前 16 章已推导的机制，没有引入新的产品清单。自检答案回填把 demo 成功转换为 identity、quality、capacity、reliability、governance、economics 与 evolution 七类 proof obligations。它明确向 Part VII 交付第 66 章的 evaluation evidence/decision contract，以及 identity、policy、trace、budget、security 与 recovery contracts，避免 Agent 平台另起一套治理系统。
 
 Primary-source 与官方入口：
 

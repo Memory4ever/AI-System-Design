@@ -147,6 +147,32 @@ SGLang v0.5.9 的 release 与相关 merged PR 提供了这一版本化实现案�
 这只能证明对应 code path 的存在，不能把厂商的 LoRA headline 外推为不同 rank、working set、batch 或硬件下的
 通用吞吐保证。
 
+## 从 Language Program 到异构多模态执行图
+
+Prefix tree 和 grammar state 已经说明 runtime 可以消费比“单个请求”更丰富的结构；多模态 pipeline 又改变了
+结构的边界。LLM、Vision encoder、Diffusion、Audio 与 decoder 不只共享 control dependency，还会交换
+intermediate tensor、hidden state、KV 与 weight。把这些关系都塞进一个应用 DAG 虽然容易开始，却让调度、
+data ownership 和 physical execution 纠缠在业务代码中。
+
+更可维护的分解是让三个平面各自拥有一类状态，再在 frame / page 的 commit boundary 汇合：
+
+```text
+Control Flow: graph topology, activation, join, stream and cancellation
+Data Flow: tensor / KV identity, placement, tiering, reference and recovery
+Compute Flow: engine adapter, kernel path, weight layout and physical execution
+```
+
+Control Flow 可以提前解析静态依赖并在运行时处理循环、OR-AND join 与 streaming frame；Data Flow 统一管理
+跨进程、跨节点和多层存储中的 slot、layout 与 provider；Compute Flow 只在拿到完整、版本兼容的数据后执行。
+这让 engine 不再天然拥有 KV 的全生命周期，但也把正确性责任上移到 framework：global metadata 命中必须与
+physical page、layout generation、active reader 和 eviction transaction 同步，不能把 Redis 或 graph entry 当成
+可用数据本身。
+
+这种 takeover 只有在跨角色复用、异构 pipeline 变化和分布式 transfer 足以覆盖治理成本时才值得。单模型、
+单 engine、低复用场景继续由 engine 本地管理更简单，也拥有更小故障域。现有 Omni-Flow v1 证据只证明三个
+平面的公开设计和若干支持场景；论文没有受控 performance benchmark，并明确把性能、更多 attention/parallel
+variants 与 cache-aware scheduling 留作后续，因此不能把“统一”外推为更高吞吐。
+
 ## 为什么适合 Agent
 
 Agent / Workflow 场景天然有大量结构化上下文：

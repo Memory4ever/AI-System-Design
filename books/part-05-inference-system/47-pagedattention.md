@@ -87,6 +87,35 @@ waste_r = N_blocks,r * S_b - T_r
 
 例如 `S_b=4`、`T_r=10` 时需要 3 个 blocks，最后 block 浪费 2 个 token slots。若 block size 改成 16，只需 1 个 block-table entry，却浪费 6 个 slots。Block size 因此是 metadata/kernel efficiency 与内部碎片之间的权衡。
 
+### 当 Token 已被淘汰，Block 仍可能无法回收
+
+PagedAttention 将连续大块预留改成固定 block allocation，但它的回收接口仍以 block 为单位。只要请求保留
+完整历史，除最后一个 block 外通常没有空洞，这个粒度既简单又高效；问题出现在 H2O、Scissorhands 等
+token-level KV eviction policy 开始删除 block 中间的 tokens 时。逻辑上已经死亡的 slots 若散落在多个
+blocks，allocator 仍不能释放任何一个含 live token 的 block，内部碎片便以新的形式返回。
+
+更细粒度的演进不是让 eviction policy 直接操作 allocator，而是在两者之间增加 token liveness 与物理
+placement 的解耦层：
+
+```text
+eviction policy owns logical live / dead decisions
+→ token table maps logical token identity to block + offset
+→ reclamation planner packs live tokens when net blocks can decrease
+→ asynchronous copies update physical placement
+→ mutable slot map becomes visible before the next attention read
+```
+
+这里必须分开两个 commit。Eviction 决定哪些语义状态可以丢弃；reclamation 只把同一组 retained K/V 搬到
+更少 blocks。后台搬运要保持 token conservation、unique mapping 与 pre-attention visibility，并在复制期间预留
+bounded headroom；否则“回收显存”可能先耗尽显存，或让 kernel 读取尚未完成的 destination。CUDA Graph 也不应
+因每次 relocation 重捕获，稳定 tensor 与 graph input 可以保留，只在 replay 前更新 slot mapping 并通过 event
+建立依赖。
+
+这条分支获得可回收的 token-level holes，却新增 planner work、copy/decode contention、mapping version、共享
+prefix 的 Copy-on-Write 边界和 distributed shard coordination。Native full-retention path 在显存压力不高、质量
+要求禁止 token eviction 或 relocation 收益不足时仍是优先基线；token virtualization 只在 eviction 已经成立且
+预计释放的 blocks 足以覆盖迁移成本时启用。它扩展 paging 的回收粒度，不取代 block allocator。
+
 ## Prefix Sharing 与 Copy-on-Write
 
 两个请求拥有相同 8-token prefix、block size 为 4 时，可以让前两个 logical blocks 指向同一组 physical blocks：
@@ -158,6 +187,7 @@ vLLM 把 PagedAttention 作为核心设计之一，用它支撑高吞吐 LLM Ser
 KV Cache
 → KV memory fragmentation
 → PagedAttention
+→ conditional token-level reclamation
 → vLLM
 → GPU Memory
 → 推理调度
@@ -174,10 +204,11 @@ PagedAttention 是从 KV Cache 进入 LLM runtime 内存管理的关键节点。
 5. `ceil(T_r/S_b)` 为什么能限制末尾内部碎片？
 6. Prefix sharing 为什么需要 Copy-on-Write 或不可变 block？
 7. PagedAttention 的 trade-off 是什么？
+8. Token eviction 后为什么会重新出现内部碎片？Liveness decision 与 physical reclamation 为什么应由不同 owner 负责？
 
 ## 小结
 
-PagedAttention 把 request 的逻辑 token 序列与 physical KV placement 解耦。Block table 支持按需增长、固定粒度回收、prefix sharing 和 Copy-on-Write，使 Continuous Batching 能在变长请求下维持更高有效并发。
+PagedAttention 把 request 的逻辑 token 序列与 physical KV placement 解耦。Block table 支持按需增长、固定粒度回收、prefix sharing 和 Copy-on-Write，使 Continuous Batching 能在变长请求下维持更高有效并发。当上层进一步采用 token eviction 时，第二层 token table 可以在不改变 retained KV 的前提下把逻辑空洞重新压回可释放 blocks，但必须支付 relocation、versioning 与可见性同步成本。
 
 它解决的是 state placement，不是 autoregressive serial dependency。下一章转向时间维度，讨论怎样减少昂贵 target model serial steps。
 
@@ -186,5 +217,7 @@ PagedAttention 把 request 的逻辑 token 序列与 physical KV placement 解�
 Primary-source 校验入口：
 
 - Efficient Memory Management for Large Language Model Serving with PagedAttention: https://arxiv.org/abs/2309.06180
+- vToken（token-level liveness 与 block-level reclamation；Status: Experimental；single H100 / single-GPU
+  decoding scope）: https://arxiv.org/abs/2608.13263
 
 本轮 Review 补充了 internal/external fragmentation 的边界，并明确 PagedAttention 通过 KV capacity 间接影响吞吐。论文中的设计与当前 vLLM 实现不能视为完全同一版本；本章保留机制不变量，具体 block manager 与 kernel 行为应以目标版本文档和代码为准。

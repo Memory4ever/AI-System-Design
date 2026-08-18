@@ -267,6 +267,12 @@ adversarial generator 与人工审计补 coverage。
 annotation 与 verifier 共享错误时，“可验证”仍只相对于该 pipeline 成立。结构简单、人工 gold evidence
 充足的领域继续适合 curated QA；graph-grounded synthesis 是补充 coverage 的分支，不是替代人工数据。
 
+#### 没有真实后端时，Synthetic API State 只能是派生训练状态
+
+当 API specification 存在而 executable backend 尚未部署时，可以让 teacher 提议调用、由 history-conditioned simulator 生成 response，再用 schema/argument checks、语义一致性 judge 与 trajectory vote 筛选 SFT trace。这比 single-call 合成更能覆盖 stateful transition，却不能把 simulator response 升格为环境事实。
+
+Lineage 必须保存 specification revision、task proposal、simulator identity、每次 synthetic transition、过滤 verdict 与最终 real-environment evaluation；还要报告 API × transition coverage、长响应 failure、judge disagreement 与 rejected trace。真实 backend 仍是 effect authority。这条分支用覆盖与成本换取 simulator/judge bias，适合训练 proposal，不适合证明真实 side effect；有可执行环境时，evidence-first 或 specification compilation 仍更强。
+
 ### Failure-driven Curriculum：难例必须来自可重放失败，而不是模型自信
 
 随机合成 tool trajectories 覆盖面广，但常把概率质量花在短、浅、同质调用上。若已有可执行 tool environment，
@@ -383,6 +389,43 @@ policy checkpoint、environment、tool schema、composition recipe 与 verifier 
 这条路线把静态 dataset 推进为可反馈的 curriculum，却新增 distribution chasing、proxy coverage、任务不可满足、
 reward leakage 与环境模拟偏差。固定人工数据在需要长期可比、语义开放或现实副作用不可重放时仍是合理基线；闭环
 合成只在 coverage signal 可解释、task 可执行、verifier 相对独立且 held-out distribution 未被同一控制器消费时成立。
+
+### 从 Trajectory Count 到 Primitive × Transition Coverage
+
+机器人数据若只按 trajectory 数量计费，会把大量重复直线段和少量关键接触转移视为等价。更有诊断力的预算单位
+是可复用 primitive 的组合以及 primitive 之间的 transition interface：先估计结构桶的覆盖和边际收益，再从每个桶
+选择稳定代表，而不是让高频轨迹自然占满预算。
+
+```text
+trajectory stream
+→ primitive and transition discovery
+→ coverage bucket + diminishing-return estimate
+→ representative / medoid selection
+→ policy training and closed-loop tail audit
+```
+
+这会新增 encoder、clustering 与版本 identity；medoid 偏好中心样本，可能把罕见但安全关键的 failure tail 当成
+outlier 删除。发现的 cluster 也不等于真实 Skill。结构估计不稳定、接触尾部重要或数据量仍可承受时，保留全量
+数据仍优于激进子采样。
+
+### 从 Physical Teleoperation 到带 Provenance 的 Digital Teleoperation Data
+
+真实 teleoperation 提供最直接的 robot-action evidence，却被操作员时间、硬件占用和 embodiment 绑定限制。一个扩展
+分支是用 human hand pose 驱动 action-conditioned video world model，再把 pose stream retarget 到目标 robot schema，
+把生成的 egocentric sequence 与 action label 作为派生轨迹：
+
+```text
+human hand pose + scene observation
+→ action-conditioned generated video
+→ pose/depth reconstruction and retargeting
+→ derived robot trajectory with provenance
+→ mixed-data training
+→ real closed-loop admission
+```
+
+它没有消除 sim-to-real，而是把 gap 移到生成 fidelity、pose/depth reconstruction、retargeting 与 per-embodiment
+adaptation。派生 row 必须绑定生成模型、revision、输入来源、robot schema 与 verifier；现实接触、calibration 和
+安全尾部仍需真实 teleoperation。作者设置中的 policy gain 或 synthetic-only feasibility 不能证明生成视频是物理真值。
 
 ## 去重为什么改变梯度而不只是节省磁盘
 
@@ -561,6 +604,11 @@ provenance、合规和可复现性。数据决定能力生产的上游边界，�
 
 ## Review notes
 
+- SIEVE（primitive × transition coverage 与代表性子集；Status: Experimental）:
+  https://arxiv.org/abs/2607.06442v1
+- RynnWorld-Teleop（digital teleoperation derived data；Status: Experimental）:
+  https://arxiv.org/abs/2607.06558v1
+
 - Tracing the Roots（typed training-data lineage；Status: Experimental）: https://arxiv.org/abs/2604.10480
 
 本章将数据定位为经验风险的分布 specification，并建立 Data、Tokenizer、Pretraining、Checkpoint 与 Evaluation 的接口。WAXAL 的多方语音数据 release 作为受限案例补足了 acquisition protocol、partition-level policy 与 split identity：其论文、发布页和 dataset card 的规模与许可口径并不完全一致，支持“consumer 必须锁定实际 artifact contract”，不支持任何模型性能结论。CoVe 作为实验性案例补足 constraint-derived synthetic data 与 verifier lineage；其确定性只对已编码 ontology 成立。Phi-4-reasoning-vision-15B 的技术报告则支持 data tag、visual-token transformation 与 learned compute policy 的连接，但不支持把作者配比或 benchmark 写成通用配方。具体 next-token loss 留给第 28 章；SFT demonstration 与 preference data 分别留给第 29、31 章；AI for Science 的数据入口由本章交给第66章 Evidence、第81章 Workflow 与第72章 Security；平台级数据权限和治理留给 Part VI。
@@ -605,3 +653,5 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2603.20278
 - HopChain（dependency-constrained visual evidence chain；Status: Experimental）:
   https://arxiv.org/abs/2603.17024
+- Environment-free Synthetic Data Generation for API-Calling Agents（synthetic API transition lineage；Status: Experimental；simulator response 不是环境事实）:
+  https://arxiv.org/abs/2607.16900v1

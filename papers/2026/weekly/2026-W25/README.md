@@ -3,7 +3,13 @@
 > Coverage Window: 2026-06-15～2026-06-21
 > Research Mode: Retrospective Backfill
 > Accessed / Backfilled: 2026-07-31；Discovery Reopened: 2026-08-09
-> Re-audit Status: 35/35 final dispositions; 32/34 `20+` Full Source Reviews complete; 24 Refine, 7 No Change, 1 Weekly Only, 1 Emerging, 2 Unverified / Blocked; Source-Family Books Gate complete under blocked-skip; Archive/Discovery Gate open; Books cursor advances to W26
+> Delta Audit Queue: Pending — this legacy report has not yet begun a strict V2.1 delta packet
+> Superseded Baseline: 35/35 final dispositions for the prior denominator; 32/34 `20+` Full Source Reviews complete; 24 Refine, 7 No Change, 1 Weekly Only, 1 Emerging, 2 Unverified / Blocked; Source-Family Books Gate complete under blocked-skip; Archive/Discovery Gate open; Books cursor had advanced to W26
+
+> **V2.1 delta audit queued — 2026-08-25:** `SF-2026-XPERF-AGENTIC-SERVING`
+> (`arXiv:2608.20370v1`, first-public 2026-06-19) is absent from this owner Weekly. The earlier blocked-skip
+> statement does not cover this newly identified family; W25 is `In Progress` for the delta until identity/date,
+> Source Review, provenance and final disposition are written back through a strict V2.1 delta packet. The old Gate remains only a legacy-denominator result and is not a current completeness claim.
 
 ## Executive Summary
 
@@ -218,11 +224,13 @@ NVIDIA MoE fusion 最终 `Refine — Existing Argument / Bounded Case`：Ch21 �
 
 ## Books Integration Decision
 
-`Source-Family Books Gate Complete under blocked-skip`。near-autonomous chemist、LifeSciBench、Agent coding、
+Superseded baseline（旧分母）：`Source-Family Books Gate Complete under blocked-skip`。near-autonomous chemist、LifeSciBench、Agent coding、
 GameCraft、predictive-validity、PlanBench-XL 与 physical-science case 均由现有具体论点去重；Project Fetch 只保留
 Weekly domain fact。24 个 Refine families 逐项检查 owner 与相邻章节，其中 World Model 两项先前已吸收，本轮
 新增/增强 canonical Context lifecycle、typed runtime request revision、MoE fusion/headroom、training convergence
 benchmark、Memory ACL/forgetting 与 typed Agent Session。PerceptionDLM 保持 Emerging；两项 blocked 不进正文。
+该结论不包含 2026-08-25 新增的 `SF-2026-XPERF-AGENTIC-SERVING`；其 Source Review、provenance 与
+Books Decision 仍未完成。W25 尚未开始 strict V2.1 delta packet，因此这里不声明扩大候选集后的新 Gate。
 
 ## Ignored Noise
 
@@ -874,9 +882,11 @@ blocked。
   `Unverified / Blocked Backlog`，普通 pending 清零，post-forward cursor 进入 W26。14 个 W22～W24 spillbacks 已按 v1
   回拨；fixed-source scan 新增并完成 vLLM v0.23.0、NVIDIA MoE fusion 与 MLPerf Training v6.0 review，
   provisional owners分别为 Ch46、Ch21、Ch62。remaining fixed release surfaces未发现可可靠归周的独立 material
-  event，fixed checkpoint 通过并推进 W26。Books Integration 完成 35/35 dispositions；World Model 两项既有
+  event，fixed checkpoint 当时通过并推进 W26。旧分母的 Books Integration 完成 35/35 dispositions；World Model 两项既有
   Source-Family integration 保留，本轮 refine `AGENT-CONTEXT`、`INFER-VLLM`、`MODEL-MOE`、
   `PLATFORM-EVALUATION-SYSTEM`、`PLATFORM-SECURITY` 与 `AGENT-PLATFORM`。两项 blocked 未进入正文。
+  2026-08-25 新增 `SF-2026-XPERF-AGENTIC-SERVING` 不在上述分母内，当前仍待 owner-week reconciliation，
+  因而该 family 仍在 delta audit queue 中，旧 Gate 不代表扩大候选集后的当前完整性。
 
 ## Open Questions
 

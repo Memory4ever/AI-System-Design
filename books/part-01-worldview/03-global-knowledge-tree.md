@@ -243,6 +243,38 @@ horizontal lenses:
 
 以 PagedAttention 为例，它首先作用于推理 runtime 的 KV Cache 内存管理，优化的是在显存约束下的有效容量与批处理机会，并把页表映射和调度协同引入系统。它不是 Serving 生命周期，也不是 GPU 集群 placement。以 KServe 为例，它主要位于 Serving 与平台控制面，解决声明式生命周期和 Runtime 抽象；它不会替代底层 attention kernel。这样的定位比记住功能列表更稳定。
 
+这也是为什么不应把 vLLM、KServe 与 Kubeflow 当成三个并列工具开始学习：
+
+| 技术 | 首要 owner | 主要控制对象 | 不拥有的核心问题 |
+| --- | --- | --- | --- |
+| vLLM | Inference Runtime / Serving Engine | request、token、KV、batch 与模型执行 | 完整模型生命周期和组织治理 |
+| KServe | Model Serving Control Plane | service revision、replica、rollout 与流量入口 | token iteration 与训练数据目标 |
+| Kubeflow | AI Platform / Lifecycle | pipeline、training workload、artifact flow 与平台协作 | 单个 Attention kernel 或 KV block 调度 |
+
+详细机制分别由第 50 章 vLLM、第 53/61 章 KServe LLM topology 与通用 KServe、第 58 章 Kubeflow 展开；这里的表格只负责冻结层次和 owner。
+
+三者可能组合成同一产品路径，却不在同一时间尺度上做决定。知识树先冻结 object、owner 与 contract，框架学习再回答“当前版本如何实现这些责任”。否则相似的 `scheduler`、`autoscaling` 或 `runtime` 名称会让人用 KServe 配置修 KV fragmentation、用 vLLM 解决发布审批，或让高频 token 状态进入低频平台控制面。
+
+同样的方法也适用于质量修正。面对“模型回答不好”，先定位希望改变的对象：
+
+```text
+Prompt Engineering
+  changes: per-request instruction and conditioning
+  owner: Prompt / Context Runtime
+
+RAG
+  changes: retrievable external evidence and assembled Context
+  owner: Data / Index / Retrieval / Context path
+
+Fine-tuning
+  changes: parameters or adapter and long-term behavior distribution
+  owner: Training / Checkpoint / Evaluation path
+```
+
+详细机制分别由第 74 章 Prompt、第 76 章 RAG 和第 29～30 章 SFT/LoRA 拥有；本章只提供遇到质量问题时的路由坐标。
+
+如果任务没有表达清楚，先修 Prompt；如果缺少时效性、私有或可引用事实，优先检查 Retrieval；如果在代表性分布上存在稳定、重复的行为偏差，再考虑参数更新。这个顺序不是固定产品流程，而是避免用成本最高、最难回滚的层去掩盖上游接口或外部知识问题。
+
 ## 设计边界与常见误区
 
 第一，不要把知识树画成严格单向流水线。Evaluation 既发生在训练后，也发生在上线前、运行中和变更后；Feedback 可能回到数据、prompt、retrieval、模型或策略。真实 AI System 是带反馈的图。
@@ -282,7 +314,7 @@ AI System 的全局地图不是模型周围组件的清单，而是两组相互�
 
 ## Review notes
 
-本章有意保持在职责和问题层，不展开具体框架部署，也不重复第 1 章对 AI System 必要性的论证。本轮结构 Review 增加生命周期与系统原语的双轴知识树，并把技术连接区分为 direct evolution、layering、principle reuse 与 analogy。后续 Review 应检查两条轴能否容纳新增章节、术语边界是否一致，以及主题阅读路径是否仍指向明确的章节 owner。
+本章有意保持在职责和问题层，不展开具体框架部署，也不重复第 1 章对 AI System 必要性的论证。本轮结构 Review 增加生命周期与系统原语的双轴知识树，并把技术连接区分为 direct evolution、layering、principle reuse 与 analogy。自检答案回填用 vLLM/KServe/Kubeflow 和 Prompt/RAG/Fine-tuning 验证“先定位对象与 owner，再学习实现”的方法。后续 Review 应检查两条轴能否容纳新增章节、术语边界是否一致，以及主题阅读路径是否仍指向明确的章节 owner。
 
 优先核验入口：
 

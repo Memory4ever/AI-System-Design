@@ -355,6 +355,29 @@ all-head materialization
 希望降低 orchestration cost 时仍成立。Untied Ulysses/UPipe 为这条 memory–throughput trade-off 提供了 H100
 实验性证据，不证明其 chunk 大小或长上下文倍率可跨 topology 与 framework 外推。
 
+### 从等 Token Packing 到有界 Attention Workload Pool
+
+固定 token packing 让每个 packed sequence 占用相同 token budget，能够平衡 activation memory 和线性复杂度算子；
+Ulysses 再在每个 CP group 内切分 sequence/head view。在 raw sample 长度分布不重、或 communication orchestration
+更昂贵时，这条路径仍最简单。但 dense causal attention 的工作量近似取决于 packed sample 内各原始序列长度平方和：
+相同 token 数可以对应完全不同的 attention FLOPs，跨 CP groups 的最慢 replica 会继续拖住 DP synchronization，并把
+不均匀 microbatch 时间传给 PP bubble。
+
+一种实验性演进不是把 outlier 延迟到下一 optimizer step，也不是把 attention 扩成 cluster-wide service，而是先冻结
+本 step 的 raw-sample multiset，再把若干 DP replicas 组成固定大小的 sequence pool：全局 sampler 用 workload-aware、
+exact-cardinality placement 让各 pools 的总 attention work 接近；每个 pool 内再把 sequence×head tiles 分配到 GPU，
+并由 per-iteration CPU plan 驱动 Q/K/V 与 output exchange。DP 扩容时增加 pool 数量而不扩大单个 pool，使
+redistribution scope、通信域和 failure domain 保持有界。Sampler 拥有 step membership，pool planner 只拥有执行放置，
+optimizer/checkpoint 仍拥有训练状态；restart 后重建 groups 并重算 plan，而不是把临时调度状态写入 checkpoint。
+
+这条路线获得更小的 straggler tail，却新增 all-to-all bytes、CPU planning、metadata broadcast、KV dedup、
+floating-point operation reorder 与 topology-sensitive pool/tile 参数。更大的 pool 提高聚合范围，也会增加通信；
+overlap 只能隐藏中段，first dispatch 和 final return 仍暴露。现有证据绑定 Qwen3-30B-A3B、256K/1M packed
+sequences、mbs=1 与 NVIDIA NVLink/RoCE，且没有证明 bitwise-equivalent gradient、sparse/linear attention、
+完整 DistCA/WLB-LLM end-to-end superiority 或跨 topology 收益。短 context、轻 skew 或控制开销占主导时，
+packing + Ulysses 仍更合理；统一高带宽域内，global pool 也仍是可比较分支。数据 packing identity 归第 27 章，
+PP bubble 与 schedule 归第 38 章，本章只拥有跨并行维度的 workload redistribution contract。
+
 这些维度不是互斥开关：
 
 ```text
@@ -422,6 +445,36 @@ uneven bucket、failure recovery 与 reshard migration。规则 DP 在模型较�
 更稳健基线。单个技术报告的集群结果只能说明该布局在其模型、fabric 和 workload 下可行，不能推出 owner-
 oriented collective 普遍优于标准库实现。
 
+### 从 Dense Collective 到 Optimizer-aware Sparse Support
+
+Dense gradient synchronization 把每个参数位置都纳入 collective，语义最直接，也能复用成熟的连续 buffer 与
+collective kernel。低比特量化减少每个位置的 bytes，但通信量仍与参数数量同阶；直接对 raw gradient 做 top-k
+则会引入 biased update、不同 rank 的 support 不一致，以及 error-feedback 长期滞留。它们分别在网络尚可、
+optimizer 对压缩敏感或 sparse index 开销较高时仍然合理。
+
+更激进的分支是让 optimizer state 决定通信 support。若一阶动量的高幅值位置在相邻 steps 上具有足够稳定性，
+系统可以让各 owner rank 只计算自己的 mask shard，先同步下一步要用的全局 mask，再用该 mask 对当前更新进行
+sparse reduce-scatter / all-gather：
+
+```text
+optimizer first-moment at step t
+→ owner-local top-k mask shard
+→ all-gather refreshed mask for step t+1
+→ overlap mask exchange with step-t computation
+→ communicate values on the admitted sparse support
+→ update optimizer and residual state
+```
+
+这里的一步延迟不是无条件正确的近似。Runtime 必须把 optimizer family/revision、sparsity、mask generation、
+refresh epoch、residual/error buffer、index encoding 和 dense fallback 一起绑定到训练状态。Mask drift 会漏掉新出现
+的重要坐标；高 sparsity 会让残差陈旧；indices、packing、sparse kernels 与额外 all-gather 可能吞掉 byte savings。
+若 error buffer offload 依赖高带宽 CPU-GPU link，在 PCIe 集群上还会形成新的 critical path。
+
+SCAPE 的作者实验只在 AdamS、GPT-345M/Llama-500M 的 32 张 GH200 完整预训练，以及 Llama-500M/Llama-1.8B
+覆盖 4～64 张 GH200 的 per-step profiling / strong-scaling study 中支持高稀疏通信的收敛与时间结果；具体稀疏率与加速数字不作为本章通用性能结论。它不证明相同 mask 稳定性适用于 AdamW、MoE、不同模型
+尺度或不同互联。因此长期结论不是“梯度可以固定在某个极高稀疏率”，而是：**通信压缩若改变 optimizer 的有效更新，
+support identity 与 optimizer state 必须共同成为 correctness contract，并由 loss、下游能力与系统时间联合验收。**
+
 ## 分布式训练必须保持哪些不变量
 
 **数学不变量：**
@@ -442,6 +495,12 @@ oriented collective 普遍优于标准库实现。
 - Checkpoint shards 属于同一 logical step。
 - Resume 后 parameter、optimizer、scheduler、data cursor 一致。
 - Resharding 不丢失或重复 global tensor regions。
+
+### Phase-linked Run Identity 连接系统优化与模型证据
+
+大规模 post-training 的系统优化不能只由 MFU 或 step time 验收。一次 CPT→SFT 链应把 data contract、run/checkpoint lineage、parallel/kernel/topology revision、matched evaluation 与最终 artifact 连接起来；某阶段更快、数据更多或 domain score 更高，都不能静默覆盖 general-capability gate。
+
+该 contract 用更高的 registry 与复测成本，换取跨阶段归因和 rollback。小规模或单阶段实验仍可保留更轻的 run record，但只要 checkpoint 被跨阶段消费，生产者与消费者就必须共享不可歧义的 artifact、data 和 runtime identity；数据与 SFT objective 的语义分别回到第 27、29 章。
 
 只看“每张卡分到了什么”不足以判断训练正确。
 
@@ -567,6 +626,54 @@ profile drift 和 checkpoint resume 都是新 failure modes。长度分布稳定
 简单。Data-Centric Parallel 的作者实验只支持其 32×H200、两个模型与合成长度分布中的条件收益，不构成通用
 加速结论；长期原则是 **runtime adaptability 必须守住训练语义不变量**。
 
+### 从 Phase 串行到依赖驱动的跨 Phase 重排
+
+同步 RL post-training 通常按 rollout、reference scoring、actor forward/backward、optimizer update 串行执行。
+这种 phase barrier 在文本任务以 Decode 为绝对主耗时时合理：顺序容易验证，旧 policy snapshot 的读写边界也
+清楚。视觉输入或超长 Prompt 让 prefix encode/prefill 变成显著工作后，完整 phase 串行会把本来只依赖输入与
+当前参数版本的 prefix 也推迟到 response 生成结束。
+
+更细的调度应先从 dependency graph 推导，而不是先追求 GPU utilization。若 reference prefix 与 training prefix
+只依赖输入和只读快照 `theta_k`，它们可以与 rollout Decode 重叠；response-dependent suffix、backward 和
+update 仍保留原来的同步顺序：
+
+```text
+publish and freeze theta_k
+→ overlap rollout decode with response-independent prefixes
+→ wait for response and prefix boundaries
+→ run suffix scoring / loss / backward
+→ wait until every reader of theta_k has quiesced
+→ update and publish theta_(k+1)
+```
+
+这不是 asynchronous RL，也没有用 stale policy 换吞吐。正确性来自三个显式 barrier：重叠区间内快照只读，
+suffix 只在 response 与 boundary state 都 ready 后启动，optimizer 只在旧快照的全部 reader 退出后提交。可隐藏
+的时间上限由 Decode window、prefix work 与 interference 共同决定；Aggregate utilization 上升但 Decode 被
+拖慢时，关键路径未必缩短。
+
+重排还会延长跨 phase state lifetime。Rollout KV、prefix boundary、training activation、weights 与 optimizer
+state 若同时常驻，可能让原来可顺序复用的 HBM 失效。Runtime 因而需要按 producer、consumer 与 last-use 管理
+residency：保留 latency-critical boundary，offload 或 recompute bulky training state，在安全 barrier 后释放
+phase-local buffers，并用分块 update 限制 FP32 optimizer working set。稳定虚拟地址或跨进程 alias 可以减少
+Runtime object 重建，但 page mapping、IPC lifetime 与 layout compatibility 也随之成为正确性状态。
+
+Training 与 rollout 还可能偏好不同 TP degree。强制同一 TP 简化 sharing，却可能让训练放不下或让逐 token
+Decode 多付 collective；复制完整 actor 则增加 HBM 和每次更新后的转换。一条条件分支是让 layout-compatible
+tensors 共享物理存储，只重建不兼容 layout。它获得 phase-specific parallelism，也新增 shard mapping、alias
+validation、snapshot publication 与 failure recovery。输入 prefix 较短、Decode 没有可用 spatial slack、host
+offload 成本高或独立 GPU pools 足够时，原来的串行 colocation / disaggregation 仍更稳健。
+
+Rollplex 在 Qwen2.5-VL-32B、32×H800、指定 GRPO、长度与 batch contract 上为这条路线提供实验性证据；它
+证明的是依赖允许的重排在该 workload 可行，不证明所有 RLHF、模型、硬件或生产故障条件都会获得同样收益。
+
+### Long-context RL 先证明 State Lifetime，再证明 Gradient Boundary
+
+把多百万 token 的 prompt、scratch reasoning、response 与完整 backward graph 同时留在 HBM，最直接也最容易验证；固定 accelerator budget 下容量不再允许时，系统必须先区分哪些状态需要梯度、哪些只需在 response 时恢复、哪些可以在生成后丢弃。
+
+一种 replay/offload 路线在 prompt prefill 结束时捕获 boundary state，把不进入 objective 的 scratch 当作 disposable state，将长 prompt page 化并 offload，在 response ready 后只重放 objective 所需 suffix，再由 context/expert parallel owners 完成 backward。证明顺序必须分层：`allocation fits → restored forward state matches → response loss matches → every required gradient path exists → distributed update commits`。前两层只证明存储可行，不能替代 dK/dV、global attention 或 CP/EP collective 的梯度审计。
+
+收益是固定 GPU 下延长 context，代价是 host/storage bandwidth、page identity、replay time、failure recovery 与更长 state lifetime。短 prompt、足够 HBM 或无法证明 gradient boundary 时，完整常驻 graph 仍更可靠。LongStraw 的 Qwen/GLM、8/32×H20 receipt 支持部分容量与 replay contract；论文明确未闭合的 Qwen CP dK/dV 和 GLM global DSA/CP gradient semantics 必须保留为边界。
+
 ## 正确的并行策略选择顺序
 
 1. **建立最小配置 profile**：model-state、activation、workspace、step time。
@@ -632,6 +739,12 @@ DP 扩展样本吞吐，TP 切 layer 内算子，PP 切深度，CP 切序列，E
 
 ## Review notes
 
+- Libra（arXiv:2607.23250v1；Status: Experimental）：https://arxiv.org/html/2607.23250v1
+  - 证据边界：支持 Qwen3-30B-A3B、256K/1M、mbs=1 与 NVIDIA NVLink/RoCE 条件下的 bounded pool 分支；无公开 artifact、无 bitwise-equivalence 结论，外部 baselines 为 emulated/reimplemented，PP-bubble evidence 也只是间接证据。
+
+- SLAI T-Rex: Full-Parameter Post-training of the DeepSeek-V4 Family on Ascend SuperPOD（arXiv:2607.20145v1；Status: Experimental）：https://arxiv.org/html/2607.20145v1
+  - 证据边界：支持论文披露的 Ascend post-training pipeline 与作者实验；不证明该 recipe 对其他模型、硬件或领域最优，不证明 MFU 增益来自单一优化，也不证明更多 SFT 数据单调改善质量。
+
 本轮结构 Review 在既有分布式训练决策框架上补齐通信基础：从 IPC/MPI 到 accelerator communication 的抽象变化、五层边界、collective semantics、Alpha-Beta cost model、Ring/Tree/recursive-doubling/hierarchical algorithm，以及 MPI、NCCL、UCX、UCC、NIXL 的责任划分。新增内容将训练 collective 与推理 state transfer 建立为“共享原则但语义不同”的横向演化线；后续章节只展开各自消费的通信模式，不重复本章总览。
 
 Primary-source 校验入口：
@@ -660,3 +773,8 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2602.21196
 - PyTorch 2.11（functional、differentiable 与 compiler-visible collectives；Versioned Evidence）:
   https://github.com/pytorch/pytorch/releases/tag/v2.11.0
+- Rollplex（synchronous VLM RL cross-phase scheduling；Status: Experimental；32×H800 evidence）:
+  https://arxiv.org/abs/2608.14498
+- SCAPE（optimizer-aware sparse support；Status: Experimental）: https://arxiv.org/abs/2607.01678
+- LongStraw（fixed-budget multi-million-token RL state lifetime；Status: Experimental）:
+  https://arxiv.org/abs/2607.14952

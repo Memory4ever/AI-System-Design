@@ -46,6 +46,35 @@ Claim contract
 
 问题不在于分数无用，而在于**任何分数都是在某个对象、分布、环境和测量方法下产生的条件性证据**。丢掉条件，只留下数值，评估就会退化为不可解释的排行榜。
 
+## HTTP 成功只是质量判断的第一道门
+
+传统服务的 `error rate` 通常把 timeout、连接失败、`5xx`、进程异常或显式 schema failure 记为错误。这些信号回答执行路径是否完成，却看不见一个语法正常、HTTP `200` 的答案是否事实错误、遗漏关键条件、违反策略或没有完成业务任务。
+
+AI System 至少需要区分五种成功事件：
+
+| 层次 | 成功条件 | 典型失败 |
+| --- | --- | --- |
+| Transport / Runtime | 请求完成，模型和依赖没有显式异常 | timeout、OOM、tool transport error |
+| Contract | 输出满足 schema、stop、引用与协议约束 | JSON 无效、错误 tool arguments、流未正确终止 |
+| Semantic Quality | 内容正确、相关、grounded，并遵循 instruction | hallucination、错误推理、忽略 evidence |
+| Policy / Safety | 行为满足权限、安全、隐私与合规边界 | 越权动作、敏感数据泄漏、危险建议 |
+| Outcome | 用户或环境中的任务结果达到 intended use | 工单未解决、代码未通过、外部状态修改错误 |
+
+生产意义上的成功更接近这些事件的交集：
+
+```text
+delivered_success
+= runtime_success
+  AND contract_success
+  AND quality_success
+  AND policy_success
+  AND outcome_success
+```
+
+某些任务无法为每个请求即时获得 ground truth，因此不能简单把语义错误重新编码成另一个实时 `error_rate`。平台通常组合离线标注集、规则与 deterministic checks、抽样 human review、judge、用户反馈和延迟到达的业务 outcome，并为不同证据保留 provenance 与不确定性。高风险 policy failure 还应作为 hard gate，而不是被大量正常请求在平均值中抵消。
+
+第 67 章可以持续观察 transport/runtime errors 和已产出的质量信号趋势；本章负责定义 semantic success 的口径、样本与决策边界。两者共享 request、model、prompt、retriever、tool 与 environment identity，但不能用可观测性代替规范性判断。
+
 ## 从目标到证据，而不是从指标到目标
 
 Evaluation 的起点不是“平台能采集什么 metric”，而是系统希望满足什么目标。可以把链路写成：
@@ -103,6 +132,14 @@ architecture wrapper 接入同一环境。Protocol adapter 不是中性胶水：
 serialization、retry 和 stop behavior。公平比较应验证 adapter 的 semantic equivalence，并把 adapter revision
 纳入 subject；否则“模型差异”可能只是 harness translation 差异。General Agent Evaluation 的实验支持这一
 对象边界，但不能证明一个 adapter 可对所有 provider 实现完全等价。
+
+### Evaluation Identity 必须包含 Harness 与 Environment
+
+每个 benchmark 维护一套专用脚本，在任务少、协议稳定时最直接。但 Agent evaluation 中，prompt adapter、tool serialization、retry、timeout 与环境初始化都会改变可观察行为；只记录 model 与 benchmark 名称，无法解释同一模型为何在不同 harness 中得到不同结果。
+
+可复现的评估身份至少应写成 `model × benchmark × harness × environment × scorer`。Harness 负责适配与控制流，Environment 负责可执行状态，Scorer 只拥有从轨迹到判断的映射；聚合分数之前必须保存原始 trajectory 与 component-level receipt，才能区分模型退化、adapter drift、工具故障和评分变化。统一协议可以复用执行与观测设施，但每个 adapter 仍需证明语义等价。
+
+统一 harness 降低重复建设，却引入新的兼容层、版本漂移与运行成本。孤立且长期稳定的任务仍可使用专用脚本，但也必须冻结脚本、环境和 scorer 身份，不能把一次聚合分数当作脱离执行条件的模型属性。
 
 这也是第 35 章和第 59 章的接口：Checkpoint 提供可验证 artifact，Registry 提供不可变版本和 evidence references；第 66 章负责说明这些 evidence 是在什么评估契约下产生的。
 
@@ -333,6 +370,32 @@ policy。DynoSim 的厂商实验支持 full-stack state replay 比 timing-only m
 不证明模拟 Pareto、阈值或排名能跨硬件、failure distribution 和软件版本复用。Analytical model、microbenchmark 与
 真实集群验证因而是分层共存关系，而不是后一层取消前一层。
 
+### 从直接 Grid Search 到 Floor-first Diagnosis
+
+即使已有 simulator，也不应把所有候选直接送入昂贵的真机 sweep。随着 MoE、长 Context、并行布局和
+拓扑组合增多，单个“吞吐很低”的结果既昂贵又缺少因果解释。更稳健的证据路线先为目标 artifact、runtime
+与 hardware revision 建立资源向量：权重与 KV 字节、FLOPs、通信字节与消息数、容量约束，以及经实测校准的
+带宽和启动延迟。由此计算 optimistic overlap floor 与 no-overlap floor，再识别随 batch/concurrency 变化的
+第一道 binding wall：
+
+```text
+versioned resource vector + calibrated hardware profile
+→ optimistic / no-overlap lower bounds
+→ first binding wall and impossible-SLO rejection
+→ observed steady-state service time / floor residual
+→ profiler only for material unexplained residual
+→ final silicon replay and tail-SLO validation
+```
+
+这个 floor 只拥有诊断下界，不拥有可实现性能。它可以廉价排除不可能满足的 SLO，并判断 overlap 优化最多
+还有多少空间，却看不到 queueing、host/control-plane、allocator、failure recovery 与实现损耗。用 P50 engine
+service time 解释 residual、再用 P99 验证服务 SLO，也不能把两种统计量混成同一结论。校准数据、union/capacity
+假设和 software revision 一旦变化，旧 floor 必须失效；否则“理论下界”会伪装成错误的部署预测。
+
+因此三类旧方案仍然共存：小搜索空间可直接真机 sweep；状态交互复杂但候选很多时由 simulator 预筛；资源
+瓶颈尚不明确时先做 floor-first triage。作者在特定 MoE、16 张 H20 和披露并发档位上的案例只证明这条诊断
+链可执行，不提供跨模型、精度、拓扑或生产流量的通用速度常数。
+
 静态 episode 便于重置和长期比较；长周期 workflow 中 email、calendar、KB 或文件会在 Agent 休眠时被外部
 参与者修改。此时“记住旧状态”与“重新观察真实世界”必须分开测量：
 
@@ -383,6 +446,12 @@ test boundary and subject identity
 便宜、定位清楚；module test 验证 planning、memory 与多 tool coordination；integration / API test 验证
 跨进程与外部依赖；受控 end-to-end、fault injection 和 shadow/canary 再暴露非确定性、权限、性能与真实
 副作用。越接近生产，证据相关性越高，但成本、波动、隔离难度和 blast radius 也越大。
+
+### Kernel Benchmark 必须先闭合 Correctness Identity
+
+Kernel-generation evaluation 必须把 operator semantics、reference implementation、shape/stride/dtype grid、numerical tolerance、target chip/runtime、anti-hack coverage、timeout 与 profiler revision 绑定为同一 EvalSpec。跨芯片比较只有在 correctness gate 先闭合后才讨论 speed，并应同时报告 pass coverage、严格 speed thresholds、trajectory feedback 和 token/device cost。
+
+更广覆盖提高 portability evidence，却会引入 platform-specific prompt/tolerance 与不对称 anti-hack 能力；这种不对称必须显式披露，不能被一个总体排名隐藏。单芯片小 suite 在目标固定的快速回归中仍然合理，但它不能支持跨 operator、chip 或 harness 的通用性能结论。
 
 Mock 仍然有价值，因为它能控制随机性并精确制造异常；风险在于 mock 掉的恰好是系统最需要验证的
 边界。若替换 LLM、tool、network 或外部状态，测试结果只能证明剩余 orchestration 在该 test double
@@ -447,6 +516,26 @@ alternative valid paths；否则 benchmark 可能把 harness 假设误写成 Age
 WildAgtEval 的合成可执行 API 环境为这一区分提供了受限证据，但其场景由模型辅助分配和生成，部分结果
 由 model judge 判断，不能代表生产 API 故障频率。正文因此保留 protocol 与 attribution 原则，不保留模型
 排名或平均降幅。生产 gate 还必须加入真实流量切片、授权、副作用、latency、cost 与人工恢复证据。
+
+### Cross-layer Evaluation 不允许下游成功掩盖上游故障
+
+只看最终答案在单层模型任务上成本最低；Agent 系统把 evidence retrieval、tool contract、authorization、session
+state 和 response generation 串在一起后，最终成功可能只是下游模型绕过了一个上游缺陷。反过来，一个失败也不能
+自动归因给最后的生成器。可定位的评估需要沿 owner boundary 注入和判定故障：
+
+```text
+evidence identity / freshness fault
+→ tool-schema or execution-contract fault
+→ authorization fault
+→ session / tenant-state fault
+→ final answer and environment outcome
+```
+
+每层都应保存注入点、expected invariant、局部 observation 与 repair scope。Schema normalization 只能修复 schema
+drift；它不能让陈旧 evidence 变新，也不能把错误 session 变成正确主体。下游 grounded-looking output 因而不能给上游
+all-clear，某个 repair 在目标层有效也不能被宣传成端到端通用防护。这种分层增加 fault matrix、运行成本和 attribution
+规则；低风险、短链 workflow 仍可先使用 end-to-end smoke test，但 release gate 至少要覆盖高代价 failure boundary，
+并同时报告局部故障是否被发现、是否被错误掩盖以及最终副作用。
 
 若环境由 LLM 根据 declarative state/rules 动态生成 observation，它位于 mock 与 deterministic simulator 之间：
 YAML/schema 使任务状态和 rubric 可检查，语言生成又允许探索隐含需求；代价是 simulator 自身可能违反规则、
@@ -644,6 +733,30 @@ static answer / multiple choice
 → outcome、side effect 与 recovery evidence
 ```
 
+### Longitudinal State：事实必须先于对话，读写路径必须分开审计
+
+对长期 Memory，只把一段 conversation 当作 ground truth 在短历史里很便宜，也适合 smoke test；但它把“当时有效的事实”、
+“后来失效的事实”和“系统最终渲染出的对话”混成同一对象。历史变长后，正确答案取决于 query 的 as-of time，错误还可能
+发生在写入、更新、检索或生成中的任何一层。更完整的 evaluation object 应先建立 canonical fact ledger：
+
+```text
+fact + validity interval + provenance
+→ rendered events / conversations
+→ as-of-date query
+→ memory write audit
+→ retrieval / read audit
+→ answer and abstention evidence across tenure
+```
+
+这个变化把 memory architecture 的比较从一次性 answer score 推进为 temporal state audit。短 tenure 中，保留全部历史
+往往是便宜而强的基线；随着历史增长，写入错误、过期事实和检索干扰才逐步显现，架构排序甚至可能发生 crossover。
+因此报告必须同时给出 tenure slice、full-history/no-memory controls、write-path precision、read-path recall 和最终答案，不能
+把某个单点排名写成长期赢家。
+
+代价是需要构造并版本化事实、有效区间、事件渲染器和 judge-independent checks；合成用户也未必代表生产分布。
+所以该 contract 证明的是“如何定位长期状态错误”，不是某种 Memory 在所有用户、backbone 与时长上更优。Memory 的实际
+写入、更新与派生状态仍由第 77 章拥有，本章只拥有其 evidence contract 与 release decision。
+
 关键变化不是“换一个更难的 benchmark”，而是把 **evaluation object** 从文本扩展为
 `artifact + environment + execution trace`。例如 exploit-development 评估只有在隔离环境中
 真正编译、运行并触发目标条件，才能区分会描述漏洞与会完成攻击链；N-day 评估还必须版本化
@@ -661,6 +774,12 @@ static answer / multiple choice
 评估组件，并保留失败产物和运行 trace。Anthropic 2026 年的 exploit capability 与 N-day
 研究、OpenAI LifeSciBench 可以作为这种演进的受限案例；它们证明相应测试环境中的能力，
 不能外推为所有软件、领域或生产环境的通用自主性结论。
+
+### Compound Artifact 需要 Preservation Contract
+
+对会修改结构化 artifact 的 Agent，final message 不能成为 outcome authority。EvalSpec 应冻结输入 artifact、允许工具、content/format/structure predicates、必须保持不变的区域以及 final artifact checksum；verifier 还需用人工一致性切片和 deliberate mutations 审计自身。这样可以区分“目标内容正确”与“无关区域被破坏”，也能把 failure 定位到具体 predicate 或 mutation。
+
+该路线获得可复算结果与 failure localization，却把 task-spec completeness 和 verifier bugs 变成新的测量风险。Predicate 无法覆盖开放语义时，专家抽检仍是最终 residual owner；通过当前 verifier 只证明当前冻结 contract，没有证明 artifact 在任意下游环境都等价可用。
 
 专业软件 Workflow 还暴露一个常被 final answer 掩盖的错误：**state/artifact misbinding**。Agent 可能选对
 病例却停在错误 series，生成 segmentation 却没有把它注册到正确 volume，或在 rationale 中引用一个并未
@@ -722,6 +841,32 @@ Dense process score 同样只是训练 proxy。若逐步分数与后续 return �
 `score_t` 与 future return、终局 verifier 和关键 slice 的校准，并允许 proxy 在不确定时 abstain。QVal 提供了
 这种对齐检查的实验性方法；它不把 learned score 升级为部署 correctness gate，也不证明相关性就是因果 credit。
 
+### Deterministic-first 不是拒绝 Judge，而是限制它的权限
+
+Tool-calling benchmark 常在两种 scorer 间摇摆。严格字符串、trajectory 或 state matcher 可复算，却可能拒绝
+语义正确的替代路径；LLM judge 能理解开放表达，却会出现 rubric drift、unsupported completion 和重复运行方差。
+两者不是“旧 evaluator 与新 evaluator”的线性替代，而应按可验证性分权：
+
+```text
+typed tool call + arguments
+→ deterministic schema / authorization / state-transition gates
+→ executable outcome evidence
+→ restricted semantic judge only for residual ambiguity
+→ abstain or human adjudication
+```
+
+Deterministic gate 只拥有可由 schema、database、tool result 或环境 invariant 证明的 verdict；它不能锁死唯一合法
+trajectory。Judge 也只能读取完整 trace 与明确 rubric，不能用流畅 final answer 覆盖缺失 action 或 unchanged bad
+state。所有分支都要保存 task/evaluator revision、raw trajectory、tool I/O、environment snapshot、per-gate verdict、
+retry 与 final adjudication，才能区分 Agent failure 与 evaluator failure。
+
+这个 layered evaluator 仍需反向被评估：对 expert-reviewed sample 计算 disagreement，重复 stochastic judge run，
+报告 slice 与方差，并把 repaired annotation/harness 当作 versioned artifact。2026 年一项 tool-calling validity audit
+为这些 failure modes 和 deterministic-first restricted fallback 提供受限证据；它覆盖的是选定 benchmark/model
+配置，而且 v1 的 Harness artifact 尚未给出 versioned release，因此不能把作者 agreement 数字写成通用可靠性。
+开放语义占主导或 state 不可观察时，human/model judge 仍必要；高风险、可程序验证的 side effect 则不能被 judge
+“理解正确”所替代。
+
 ### 攻击预算是一条风险曲线，不是 ASR@1
 
 安全评估若只测一次采样，会低估攻击者重复尝试的能力；直接穷举大 `N` 又昂贵。更完整的 subject 是
@@ -729,6 +874,14 @@ Dense process score 同样只是训练 proxy。若逐步分数与后续 return �
 而不是把小样本最大值当作模型固有属性。统计外推依赖 exchangeability、分布拟合和 benign/unbreakable
 mixture；自适应攻击、并行相关性或 sampler drift 会破坏这些假设。高风险区仍需实际大预算验证，模型、
 sampling policy 或 attack corpus 改变后必须重估。
+
+### Security Agent 评估是一条 Cost-Success-Refusal Curve
+
+Security Agent 的一次成功率不能说明部署价值：更强配置可能通过更多尝试、昂贵模型或更宽 tool policy 获得成功，也可能因 provider refusal 无法执行本来具备的能力。EvalRun 因而要把 outcome、attempt/epoch budget、API/tool cost、refusal/abstain、runtime policy 与 task contamination 放在同一 operating curve 上。
+
+Offensive 与 defensive workload 还不能共享一个 success 定义。CTF 的可验证 flag、incident investigation 的累积得分、错误 action 的副作用与人工恢复成本必须分别记录，再由 intended use 决定 gate。公开任务可能进入训练数据；仅比较不同 provider/model 的观测矩阵也不是随机实验，不能把价格、policy 或 scaffold 差异因果归于 base model。
+
+这条曲线增加 run 数、价格版本和 contamination audit 成本，却能避免把 peak score 当成唯一结论。小规模内部回归仍可使用固定预算单点，只要不外推为完整部署边界。Cybench/BOTS 的作者实验支持这一评估对象模型，不提供任意生产安全 Agent 的通用排名。
 
 ### 从 run-level evidence 到 claim-level provenance
 
@@ -778,6 +931,271 @@ verifier version、verdict reason、supersession 与 retention，而不能只保
 第 81 章的 Workflow 拥有证据产生与状态转移，本章拥有“这些证据足以支持什么声明”的评估
 契约，两者属于 `Layering / Dependency`。
 
+### 从 Raw Score 到可定位、可校准的 Claim Sensor
+
+一个 sequence-level confidence 把实体、关系、数字和修饰条件压进同一标量，无法告诉系统应该检索哪条 evidence，
+也容易让多数低风险 token 掩盖少数关键错误。更细的分支先识别 typed semantic spans，再对每条 claim 产生可校准
+的风险信号；多次采样形成的支持关系还可以蒸馏为单次前向 probe，以降低在线成本。
+
+```text
+generated answer
+→ typed semantic spans / atomic claims
+→ model-specific uncertainty sensor
+→ deployment-slice calibration and risk-coverage curve
+→ evidence retrieval, abstention or human review
+```
+
+该 probe 是传感器，不是真值概率。它需要标签或 judge 产生训练目标，依赖内部 hidden state，通常还要为不同 backbone
+分别训练，并继承 judge、Wikipedia 与领域分布偏差。低预测风险仍可能是 confident error；外部 evidence、可执行
+verifier 和高风险人工裁决继续拥有最终权威。无法取得内部状态或 calibration slice 漂移时，多样本检查与显式检索
+仍是更稳健但更昂贵的分支。
+
+### Reasoning Graph Agreement 仍是 Sensor，不是 Truth
+
+多次推理文本可以先拆成 claim/relation graph，再用 versioned embedding 与 graph distance 衡量拓扑一致性，并选择
+medoid 作为代表轨迹。这比 token overlap 更接近语义结构，也能暴露局部矛盾；但多个样本可能因为同一模型、prompt
+或错误 premise 而高度一致地犯错。
+
+```text
+sampled reasoning paths + sampling identity
+→ claim/relation graph construction
+→ versioned graph embedding and distance
+→ agreement / medoid sensor
+→ calibration against labels, tools or executable evidence
+→ accept, verify or abstain
+```
+
+Graph parser、relation schema、embedding model、sample count 与 distance threshold 都进入 EvalSpec。原始 agreement
+不是 probability，更不是 truth；只有在 deployment slice 上对独立 ground truth 校准后，才可以支持 risk threshold。
+任务有确定 solver、数据库或可执行 verifier 时，它们继续拥有更高证据权；graph agreement 适合决定“哪里值得继续
+查证”，不适合直接放行结论。
+
+### 从语义等价到蕴含与互斥根
+
+Semantic Entropy 能合并同义改写，却会把蕴含层级和互相矛盾的高层假设都当成普通多样性。更细的 sensor branch 可以先将采样答案聚成语义类，再构造 implication DAG，把概率质量归并到 maximal roots，并用 roots 之间的 incompatibility 调整不确定性。它回答的是“样本是否集中在兼容的高层假设”，不是“哪个答案为真”。
+
+NLI/parser、采样模型、样本数与 normalization 都属于 sensor identity；pairwise graph 带来 `O(n²)` 成本，短问答上的校准不能外推到长文、代码或线上 abstention。逻辑图之后仍需外部 evidence、claim verifier 与 policy threshold。
+
+### Calibration Slice 必须包含 Language × Model Scale × Estimator Contract
+
+只按领域报告一个 calibration 数字，会隐藏 estimator 在不同生成语言、模型家族/规模和 access contract 下的排名
+反转。白盒 probe、token probability、自报告 confidence 与 sample agreement 观察的对象不同，不能共享同一阈值：
+
+```text
+claim type + domain
++ generation language
++ model family / scale
++ estimator access contract
+→ calibrated operating point for the deployment slice
+```
+
+切到 English reasoning 可能改善某个 uncertainty metric，却违反用户语言和信息保真要求；MCQA 通过确定 label 降低
+judge ambiguity，也不证明 open-ended factual claim 已校准。小 slice 方差大、维护成本高，但合并异质 slice 得到的
+漂亮平均值没有发布意义。样本不足时应扩大不确定区间或 abstain，而不是借用另一语言或另一模型的阈值。
+
+### Atomic Claim 置信度怎样合成整体结论
+
+Claim-level verification 解决了“长答案把真假混在一个总分里”的问题，却自然带来下一问：如果每条 atomic
+claim 都只有 `90%`，答案越长，整体置信度是否必然越来越低？答案取决于系统究竟估计哪个事件，以及 claims
+之间是什么逻辑和错误关系。
+
+首先必须分开三个 estimand：
+
+```text
+factual precision:
+  随机抽一条 claim，它被 evidence 支持的概率/比例
+
+all-claims-correct:
+  这次回答中每一条 claim 都正确
+
+conclusion-correct:
+  用户真正依赖的核心结论成立
+```
+
+FActScore 类指标主要估计 factual precision；它不能直接解释为整段文本无错的概率。辅助年份、示例或背景细节
+错误，也不一定推翻核心结论；反过来，一个关键 premise 错误，哪怕其余十条都正确，也可能让 conclusion 失效。
+
+#### 只有独立且全部必要时才能直接相乘
+
+令经过 calibration 的 claim confidence 为：
+
+```text
+q_i = P(c_i correct | evidence, verifier, deployment slice)
+```
+
+若 `n` 条 claims 全部是必要条件，并且错误相互独立，才有：
+
+```text
+P(all correct) = product_i q_i
+```
+
+十条独立的 `0.9` 会得到 `0.9^10 ≈ 0.349`。这不是 calibration 失败，而是“完全无错”这个事件随 claim 数量
+变严格。真实 claims 通常不独立：同一论文版本读错，会让多条 claim 一起错；同一 generator/judge 的盲点也会形成
+相关 false acceptance。一般联合概率应写成：
+
+```text
+P(c_1,...,c_n)
+= P(c_1)
+  * P(c_2 | c_1)
+  * ...
+  * P(c_n | c_1,...,c_(n-1))
+```
+
+若完全不知道依赖结构，只凭各自 `q_i`，联合概率只能落在很宽的边界内：
+
+```text
+max(0, sum_i q_i - (n-1))
+<= P(all correct)
+<= min_i q_i
+```
+
+所以机械乘法可能过度保守，机械平均又可能掩盖一个致命错误。`min(q_i)` 可以作为 critical-claim hard gate，
+但它也不是自动得到的 answer probability。
+
+#### Claim Graph 必须保存逻辑职责与共同来源
+
+Typed claim graph 需要在 `supports` 之外增加：
+
+```text
+critical-premise
+supporting-detail
+derived-conclusion
+alternative-evidence-path
+contradicts
+depends-on
+shared-source-family / shared-verifier
+```
+
+对一个 derived conclusion，premises 正确仍不保证推导正确，因此推理边本身也需要 evidence：
+
+```text
+r_e = P(conclusion follows | required premises are correct)
+```
+
+简单 critical path 可以估计为：
+
+```text
+P(conclusion correct)
+≈ P(required premises jointly correct) * r_e
+```
+
+若两条真正独立的 evidence paths 都能单独支持同一结论，关系是 logical OR，而不是 AND；冗余证据可以提高
+robustness。但官方 Blog、新闻转载和社区摘要若都来自同一论文，只是一个 Source Family，不能作为三条独立路径。
+Source digest、版本、作者/机构、引用 lineage 与 verifier family 必须用于相关性分组。
+
+#### Raw Score 只有经过标签校准才是概率
+
+检索相似度、NLI entailment、judge score、semantic entropy、`P(True)` 和 source count 都只是 features。可以为每条
+claim 构造：
+
+```text
+z_i = [
+  support_score,
+  contradiction_score,
+  retrieval_margin,
+  independent_source_family_count,
+  authority / freshness,
+  semantic_entropy,
+  self-evaluation P(True) / P(IK),
+  model or verifier disagreement,
+  OOD score
+]
+```
+
+然后在有可靠 correctness labels、且与 deployment slices 匹配的 calibration set 上学习：
+
+```text
+q_i = Calibrator(z_i)
+```
+
+Calibrator 可以是 logistic/temperature/isotonic 等简单映射；重点不是模型复杂度，而是独立 calibration/test split、
+subject/verifier identity 与 reliability。预测为 `0.8` 的 claim cohort 应约有 `80%` 在声明 verifier 下正确；否则
+`0.8` 只是排序分数。还应报告 Brier/ECE、AUROC/AUPRC 和 risk–coverage curve，并按 domain、language、freshness、
+risk 与 source availability 切片。Distribution 或 verifier 变化后必须重校准。
+
+Answer-level calibrator 可以继续读取 critical-path confidences、dependency depth、source-family correlation、
+contradiction、inference-edge score、semantic entropy 与 retrieval coverage，直接预测 conclusion / complete-answer event。
+它不应删除 claim-level ledger：一个漂亮的总分无法告诉系统应该删除哪条 claim、继续检索什么或把哪个冲突升级给人。
+
+#### Confidence 最终服务于 Risk–Coverage Decision
+
+系统不需要所有回答都达到 `100%`；它需要在错误和拒答之间做显式决策。若错误回答代价为 `C_wrong`，拒答/
+转人工代价为 `C_abstain`，回答的简化期望损失为：
+
+```text
+Loss(answer)  = (1 - q_answer) * C_wrong
+Loss(abstain) = C_abstain
+```
+
+只有当：
+
+```text
+q_answer > 1 - C_abstain / C_wrong
+```
+
+才值得直接回答。高风险场景提高 threshold，并把 critical claims 交给 executable verifier / expert；低风险探索可接受
+较低 threshold。若要求整篇 critical claims 的 family-wise error 不超过 `delta`，union bound 给出保守预算：
+
+```text
+P(any critical claim wrong)
+<= sum_i (1 - q_i)
+```
+
+它会推动系统减少不必要 claims，而不是无限堆砌“有 90% 把握”的细节。Conformal prediction 可以在 calibration
+distribution 与 exchangeability 等假设下，为候选集合或 component 提供 coverage guarantee；distribution shift、错误
+acceptability function 或 correlated adaptive sampling 仍会破坏解释，不能写成开放世界 truth guarantee。
+
+最终可靠路径是：
+
+```text
+answer draft
+→ atomic claims + criticality / dependency graph
+→ authoritative retrieval and source-family dedup
+→ support / contradict / insufficient evidence
+→ semantic / model / verifier uncertainty
+→ claim and conclusion calibration
+→ answer / omit detail / retrieve more / ask / abstain / escalate
+```
+
+这条链把“模型感觉自己知道”降级为一个 feature，把 evidence 与 verifier 提升为独立 authority，再由风险政策决定
+coverage。真正要优化的不是让 confidence 数字看起来更高，而是在相同 coverage 下减少 false answers，或在相同
+risk 下回答更多问题。
+
+#### 对抗性相关错误：低熵与高共识也可以稳定地错
+
+Semantic entropy、self-consistency 和 majority vote 的有效性还依赖一个未必成立的前提：错误 samples 具有足够
+多样性，正确答案能形成更稳定的 mode。若同一个 checkpoint、训练过程或攻击主动把关键元素塑造成一致的错误值，
+系统会观察到 fluent、低熵、高 agreement 的输出，却没有获得任何独立 truth evidence。
+
+```text
+same model / checkpoint family
+→ correlated false mode
+→ repeated samples agree
+→ confidence estimator reads stability
+→ stability is misclassified as correctness
+```
+
+这不是简单增加 `N` 能修复的问题。更多同源 samples 只会更精确地估计被塑造后的错误分布；让同类模型互审也可能
+共享相同盲点。Evaluation 必须把“自然错误下校准有效”与“对抗性或分布改变后仍有效”分开，并至少记录：
+
+```text
+generator / checkpoint / training lineage
+selector and verifier family
+independent ground-truth coverage by critical element
+unverified element count and correlation group
+accepted-correct / accepted-wrong / abstain
+```
+
+Fool's Gold 的作者实验以 safety-removal 后的 open-weight artifact 构造一致错误分布，为这条 epistemic boundary
+提供受限证据：在其“攻击者没有领域 expert、真实 reference 或 retrieval-verified source”的 threat model 中，重复
+采样、consensus 和若干 label-free observation surface 不能稳定区分 decoy 与正确答案。本文不吸收其 defensive-
+deception recipe，也不把 chemical/biological 结果外推；模型、judge、single-expert audit、escape tail、repair erosion
+和 threat coverage 都限制了结论。
+
+长期设计结论只有一条：**没有独立 ground truth 时，同源一致性只能支持 distribution description，不能支持 truth
+acceptance。** Partial verifier 也必须按 critical elements 报告 coverage；平均验证一部分细节不能掩盖一个未验证的
+致命 claim。可执行 verifier、权威 evidence、独立专家或 abstention 仍是高风险结论的最终分支。
+
 Claim graph 仍可能被同源审查者系统性放行。generator、writer 与 critic 若共享模型家族、Context 或上一轮
 verdict，形式上增加 reviewer 数量也不会产生独立 evidence。发布前的 assurance 因而要区分两类 review：
 
@@ -790,6 +1208,25 @@ fresh reviewer:       仅从当前 manuscript、artifact 与 rubric 重新建立
 需要专家裁决的 residual。Fresh review 增加成本并可能重复已知工作，cross-round review 又容易被旧结论 anchoring。
 低风险、deterministic claim 可由规则验证；开放研究结论则应保留 reviewer identity、可见 Context、disagreement
 与最终 decision owner。这样 evidence-to-claim ledger 才是可重放的 assurance state，而不是论文写完后的评分表。
+
+### Judge 先证明看见了目标变化，再谈总体准确率
+
+Evaluator 的 aggregate accuracy 可能同时掩盖两种相反失败：目标事实已经改变，judge 却保持原 verdict；无关表达被改写，judge 又错误地改变 verdict。因而 construct validity 不应压成一个标量，而应至少有两条受控 intervention arm：
+
+```text
+target-changing edit   → verdict should change   → sensitivity lower bound
+target-preserving edit → verdict should remain  → invariance lower bound
+```
+
+两条 arm 的样本身份、人工裁决、edit provenance 与置信区间必须分别保存。人工也会误判 target-changing edit，有限 control family 也只能给出边界；但这种分解能防止一个看似不错的总分把“对真正变化不敏感”与“对表面变化过敏”互相抵消。它是现有 judge calibration 的前置条件，不替代 executable verifier、domain expert 或 deployment outcome。
+
+多个 uncertainty scorer 的 supervised ensemble 也只能在有代表性的标签与目标模型访问合同下作为 sensor。Black-box consistency、token probability、reflexive judge 与 claim-level score 观察不同误差面，组合后可能改善 AUROC / calibration，却会引入标签成本、domain shift、grader correlation 与 scorer availability。原始相似度、entropy 或 ensemble output 仍不是概率；必须按 deployment slice 校准，并把 abstain、human escalation 与风险覆盖率作为最终决策输出。
+
+### 多轮评估要区分 Context Length 与 Intent Supersession
+
+多轮 Agent 评估不能把“上下文更长”与“用户意图发生 supersession”混为一项。EvalSpec 应显式保存 current function、arguments、revealed/withdrawn values、revision 与 function-switch event，并用 turn-matched no-change control 区分长度压力和状态更新失败。
+
+Final anchored verifier 可以提供可扩展 outcome evidence，却不能证明每个中间 transition 正确。真实用户风格、多意图同轮和含糊修订还需要额外切片；Agent 的 Context、Memory 与 Workflow 可以消费这些状态边界，但 evaluation owner 仍负责定义 transition identity、control arm 与最终可比较性。
 
 ## Scorer 不是绝对真相
 
@@ -814,6 +1251,16 @@ LLM-as-a-Judge 可以降低开放式任务的评估成本，但 judge 也必须�
 - 避免 candidate 与 judge 同源时把 correlated preference 当成独立证据。
 
 “让更强模型打分”是一种 measurement design，不是 ground truth 的替代。
+
+多模态生成还提供一条低训练成本分支：冻结一个 image-conditioned reader，用目标 prompt 在生成图像条件下的
+log-likelihood 作为 **read-back reward sensor**。它测量的是“该 evaluator 能否从图像恢复提示语义”，不是人类
+偏好、事实正确、物理一致或安全。Evaluator model、tokenizer、prompt template、normalization 与 image transform
+都必须进入 run identity，并与 aesthetic、safety、artifact、physics 等独立 evidence 并列。
+
+该 sensor 免去单独训练 reward model，却继承 reader 的语言先验和视觉盲点；policy 进入训练回路后还可能学会
+制造对 reader 友好、对人或真实世界无意义的捷径。因此必须保留独立 holdout、policy-shift red team、跨 evaluator
+迁移与停止条件。开放式语义对齐可把它当廉价 proposal score；涉及高风险内容、细粒度视觉质量或可执行物理状态
+时，专门 verifier 与人工裁决仍拥有最终 gate。
 
 Judge 一旦进入 RL reward loop，评估分布就不再静止。离线 agreement 高，只说明 frozen candidate distribution 上近似某个
 reference；训练中的 policy 会主动搜索 judge blind spot，形成 `policy -> judge reward -> policy shift` 的反馈回路。Reasoning、
@@ -1002,6 +1449,11 @@ state 反向生成初始故障，有助于得到可验证环境，但 task gener
 动态、异步环境还必须冻结 event schedule、simulated time、provider/tool versions、timeout 和重放策略，否则评测的
 对象不再只是 Agent policy。
 
+评估“研究 Agent”时还要进一步冻结 training、serving、sandbox、evaluator 与 budget，只让 Agent 拥有明确的
+data-strategy 决策权；否则一次性能变化无法归因于研究能力。每轮 checkpoint 都应作为不可变 evidence，final
+checkpoint 不能默认等于 best checkpoint，因为反馈驱动的搜索可能越过峰值后退化。Controlled substrate 用较低
+生态真实性换取更清楚的归因；通过后仍要在开放栈复验，并把 stop rule、checkpoint selector 与 EvalSpec 一起版本化。
+
 当 application state 可以通过文件、数据库、metadata 或内部 API 检查时，benchmark construction 还可以把顺序
 从“先生成任务、最后找 judge”反转为 verifier-first synthesis：
 
@@ -1024,6 +1476,14 @@ post-state 时，人工/visual judge 仍是必要分支；两者应通过 disagr
 executable reproduction 是不同证据。增加 process metrics 改善归因，却扩大 annotation、judge、environment drift 和
 benchmark gaming surface；final-only 与 component tests 因此不会被淘汰，而是与 end-to-end stateful evaluation 分层共存。
 
+#### 从明确 Issue 到交互式 Spec：先分开需求访问与实现失败
+
+明确 issue、固定 tests 的 benchmark 对局部修复仍然理想：输入、预期行为与失败位置清楚，回归也容易复现。但从零构建 repository 时，agent 常先面对不完整 product intent。若只看最终 tests，需求从未被告知与 agent 已获得需求却没有正确实现会被压成同一种失败，评测无法判断问题出在 information access 还是 execution conversion。
+
+一种可复现的交互式构造从已验证 source repository、tests 与精确 GroundPRD 出发，再有界隐藏 constraints，生成 fuzzy PRD 与 User Agent Data。Agent 可以在固定 question budget 内查询；user simulator 只揭示被冻结的 hidden constraints；最终 repository 同时接受 black-box behavior、artifact、structure 与 interaction diagnostics。evaluation identity 因而必须冻结 source repo/tests、hidden-constraint set、user simulator、question budget、container/image、agent harness 与 scorer。恢复更多 constraints 只是需求访问证据，不等于实现正确；通过 tests 也不能反推交互过程没有遗漏。
+
+这种路线增加了 repository/test bias、user-agent bias 和 framework/environment identity，因而不能线性取代 static issue benchmark。前者适合诊断模糊需求到完整 artifact 的链路，后者仍适合局部 repair 与长期 release regression。公开证据覆盖 480 tasks、12 languages、50-task Lite split、六个模型与 Claude Code，并附 OpenHands 分析；它不提供跨所有 coding workload 的通用排名，provider precision、并发和生产 latency SLO 也不是该实验的声明范围。
+
 ### Stateful Counterfactual 必须冻结 Fork Identity
 
 一次从初态跑到终态只能比较 outcome，无法回答某个中间决策若改变，后续业务状态是否仍可恢复。对可 snapshot 的
@@ -1042,6 +1502,31 @@ tool schema 与 budget；否则 branch difference 混入环境漂移。Save–fo
 policy 与 evaluator 若同源还会产生 self-confirming result。Business Arena 的受控商业环境只支持 stateful
 counterfactual evaluation 的可行性，不证明现实企业决策、长期用户反应或经济收益。Final-only regression 在低成本
 回归中仍必要；真实 shadow/canary 与人类审批继续拥有 deployment evidence。
+
+### 可复用状态的评估必须冻结 Visibility / Commit Boundary
+
+Matched budget 仍可能比较了不同问题。一次性 request-owned cache 可以在看到当前 query 后选择要保留的状态；共享
+prefix 或可复用 KV 必须在未来 query 到达前 commit。若 benchmark 允许后者提前看到 query，它测到的是 relevance
+selection，不是 reusable information retention。两种方案都合理，但不能共享同一 leaderboard 结论。
+
+评估系统因此要把 state commit 时可见的信息写进 EvalRun identity，并同时冻结 model、tokenizer-expanded length、
+attention backend、implementation revision、budget 与 decoding contract。除目标方法外，还要有 uncompressed 与
+简单 start/recent 等 controls；用 paired records 和 uncertainty 检查 method gap，再单独测量 backend、tokenizer
+overflow、OOM refill 与 harness 变化：
+
+```text
+deployment visibility / commit boundary
+→ matched model, tokenizer, backend, revision and budget
+→ query-aware vs query-agnostic protocol split
+→ uncompressed + trivial controls
+→ paired uncertainty and confound measurement
+→ publish, qualify or withdraw ranking
+```
+
+更严格的合同会牺牲一部分“所有方法都能跑”的可比性：某些 compressor 只能在特定 backend 或可见性条件下工作。
+但当 harness/backend effect 与 method gap 同量级、tokenizer 后长度越过模型边界，或实现无法遵守生产 commit 语义时，
+正确动作是撤回或限定 ranking，而不是继续输出精确名次。这不否定 query-aware 的 one-shot cache；它只阻止把其收益
+外推到 query-agnostic reusable state。KV 生命周期与压缩机制由第 45 章拥有，本章拥有比较声明能否成立。
 
 ## Dataset 是受治理的评估资产
 
@@ -1229,7 +1714,23 @@ OpenAI Evals、MLflow、内部评测平台或领域 simulator 都可以成为 ex
 
 **Eval-set overfitting。** 反复根据同一 hidden set 调 prompt 或模型，使它逐渐成为训练信号。替代方案是分离 development、regression 与 held-out suites，并控制访问和刷新策略。
 
+**Transition ledger without a measured null。** 用一次 greedy decode 比较 checkpoint 前后，把 sampling、batching、
+长度截断或 grader 波动制造的状态翻转写成“能力获得/丢失”。替代方案是把 frozen/no-op subject 通过完全相同的
+pipeline 多次运行，对每个 transition statistic 单独测 noise floor；以 pooled baseline 和 multiple-testing control
+做 per-item 判断，并预先计算 transition-level power。平均准确率稳定不意味着 item ledger 的 null 为零。
+
+这个 control 还必须记录每个 checkpoint 的 completion length、truncation、sampling/batching config 与 seed。同一
+token cap 下更啰嗦但最终正确的轨迹可能被误写为能力退化；三次训练 seed 中任意一次反转结论，都说明单 seed
+comparison 没有足够 authority。Measured null 只能界定当前 model、harness、sampling budget 下的 detection floor，
+不能把“在 pass@k 中未到达”升级为模型分布绝不支持，也不能由短 LoRA/self-training run 否定更长训练方案。
+
 ## 工程实践：从最小可信闭环开始
+
+### Agent 评估必须声明 Runtime Coverage
+
+纯 LLM benchmark 主要测 prompt→completion；Agent workload 还包含工具、状态、orchestration、重试和 runtime policy。评估对象应从 model alias 扩展为 `model + runtime + tool/environment generation`，并用 typed trace 说明哪些路径真正执行。生产 trace 或十几个应用可以暴露新压力，但只是 workload characterization，不能证明样本代表全部 Agent。
+
+为降低反复调参污染，holdout 还应冻结，场景与 runtime coverage 一起版本化，并通过多次运行区分随机波动。Trace coverage 改善可诊断性，却不等于 evaluator 覆盖全部语义错误；场景代表性、隐藏副作用和 judge 漏检仍需独立审计。
 
 一个团队不必一开始建设巨型评估平台。最小可信闭环可以是：
 
@@ -1303,6 +1804,12 @@ desired objective
 16. 为什么 rubric formation、criterion execution 与 global ranking 必须分别版本化和审计？
 17. 为什么 Agent API robustness 应同时使用 isolated 与 cumulative protocol？
 18. 复用真实 control plane 的 simulator 还必须验证哪些 execution-substrate 前提？
+19. Factual precision、all-claims-correct 与 conclusion-correct 为什么不能共用一个分数？
+20. 为什么只有在 claims 独立且全部必要时才能机械相乘置信度？
+21. Source Family、dependency edge 与 inference-edge confidence 怎样改变结论的联合概率？
+22. 为什么 calibration 最终必须与 risk–coverage 和 abstention policy 一起验收？
+23. 为什么低 semantic entropy、高 self-consistency 在 adversarially correlated distribution 中仍不能成为 truth evidence？
+24. 为什么低 HTTP error rate 不能证明模型输出质量满足 intended use？
 
 ## 小结
 
@@ -1311,6 +1818,39 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 它的长期不变量是：完整 subject identity、明确分布、可审计 scorer、per-example evidence、切片与不确定性、分离的 decision policy，以及从生产反馈回到新版本的受控闭环。下一章进入 Monitoring，讨论平台怎样以受控成本持续获得 observed state，而不把“发生了什么”误当成“是否足够好”。
 
 ## Review notes
+
+- LayerRAG-Bench（evidence/tool/authorization/session-state 分层故障注入与 repair-scope attribution；Status: Experimental）:
+  https://arxiv.org/abs/2607.27353v1
+
+- Ground Truth First（arXiv:2607.21962v1；Status: Experimental）：https://arxiv.org/html/2607.21962v1
+  - 证据边界：支持 synthetic longitudinal corpus 中的 fact-validity-first contract、write/read 分离审计与 tenure crossover；不证明任一 memory architecture 在真实用户、任意 backbone 或无限历史上普遍最优。
+
+- ICAE-Bench（arXiv:2607.21217v1；Status: Experimental；artifact commit `cda0ad681e484c69a7f437f991d2ee81c313020a`）：https://arxiv.org/html/2607.21217v1
+  - 证据边界：支持 GroundPRD→hidden constraints→bounded clarification→black-box repository verification；不支持把 Lite 或特定 framework 结果外推为通用 coding-agent 排名。
+
+- DocOps: A Verifiable Benchmark for Autonomous Agents in Complex Document Operations（arXiv:2607.19865v1；Status: Experimental）：https://arxiv.org/html/2607.19865v1
+  - 证据边界：支持已发布任务与 mutation 上的 artifact-state evaluation 和 verifier fidelity；不证明 predicate 完整、与专家审查语义等价，或更高 pass rate 能跨 harness 迁移。
+- KernelGenBench: A Multi-Source and Multi-Chip Benchmark for LLM-based Kernel Generation（arXiv:2607.27231v1；Status: Experimental）：https://arxiv.org/html/2607.27231v1
+  - 证据边界：支持已发布 benchmark contract 及其披露的模型与硬件运行；不证明生产 kernel correctness、通用 tolerance、anti-hack coverage 不等时的公平比较，或模型排名可跨 operator、chip 与 harness 迁移。
+- LLMs Get Lost in Evolving User Intent（arXiv:2607.20734v1；Status: Experimental）：https://arxiv.org/html/2607.20734v1
+  - 证据边界：支持 synthetic final-anchor 合同中的性能退化和 transition diagnosis；不证明真实用户中的发生率、memory 单独即可修复 intent tracking，或初步 RL 结果可泛化。
+
+- AgentCompass: A Unified Evaluation Infrastructure for Agent Capabilities（harness/environment/scorer identity；Status: Experimental）:
+  https://arxiv.org/abs/2607.13705v1
+
+- Logic graph uncertainty（reasoning-graph agreement sensor；Status: Experimental）:
+  https://arxiv.org/abs/2607.08017v1
+
+- SpanUQ（typed semantic spans 与 model-specific uncertainty probe；Status: Experimental）:
+  https://arxiv.org/abs/2607.05721v1
+- Estimating Uncertainty from Reasoning Across Languages and Model Scales（multilingual calibration slices；Status: Experimental）:
+  https://arxiv.org/abs/2607.06327v1
+
+- Think Before You Grid-Search（floor-first serving diagnosis；Status: Experimental）:
+  https://arxiv.org/abs/2607.05876v1
+
+- AgentSysBench（model/tool/state/orchestration workload characterization；Status: Experimental）: https://arxiv.org/abs/2608.15127
+- ClawProBench（runtime-aware typed traces and frozen holdouts；Status: Experimental）: https://arxiv.org/abs/2608.22510
 
 - CHERRL（reward-hacking onset 与 judge-blind temporal audit；Status: Experimental）:
   https://arxiv.org/abs/2606.04923
@@ -1326,12 +1866,28 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 - MiroEval（report/claim/process/environment evidence planes；Status: Experimental）:
   https://arxiv.org/abs/2603.28407
 
-本章取代早期以 MLflow 为中心的组织方式。MLflow 仍作为 metadata/evidence implementation 保留，但不再承担知识树 owner。公开 benchmark 和论文结果只用于说明 measurement problems，不被外推为当前模型或生产系统的通用结论。
+- Evidence boundary：MLflow 只作为 metadata/evidence implementation；公开 benchmark 与论文结果只用于说明
+  measurement problems，不外推为当前模型或生产系统的通用结论。正文已经拥有从 runtime success 到 outcome
+  success 的证据阶梯及其 canonical owner。
 
 Primary research：
 
 - Percy Liang et al., "Holistic Evaluation of Language Models", 2022: https://arxiv.org/abs/2211.09110
 - Lianmin Zheng et al., "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena", 2023: https://arxiv.org/abs/2306.05685
+- Sewon Min et al., "FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation", 2023:
+  https://arxiv.org/abs/2305.14251
+- Luyu Gao et al., "RARR: Researching and Revising What Language Models Say", 2022:
+  https://arxiv.org/abs/2210.08726
+- Saurav Kadavath et al., "Language Models (Mostly) Know What They Know", 2022:
+  https://arxiv.org/abs/2207.05221
+- Lorenz Kuhn, Yarin Gal, Sebastian Farquhar, "Semantic Uncertainty", 2023:
+  https://arxiv.org/abs/2302.09664
+- Chuan Guo et al., "On Calibration of Modern Neural Networks", 2017:
+  https://arxiv.org/abs/1706.04599
+- Victor Quach et al., "Conformal Language Modeling", 2023:
+  https://arxiv.org/abs/2306.10193
+- Mark Russinovich, "Fool's Gold: Defensive Deception Against Safety-Removal Attacks on Open-Weight Models", 2026
+  （Status: Experimental / Security-sensitive evidence boundary）: https://arxiv.org/abs/2608.17202
 - Xiao Liu et al., "AgentBench: Evaluating LLMs as Agents", 2023: https://arxiv.org/abs/2308.03688
 - Carlos E. Jimenez et al., "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?", 2023: https://arxiv.org/abs/2310.06770
 - Anthropic, "Measuring LLMs’ ability to develop exploits", 2026:
@@ -1420,6 +1976,20 @@ Implementation evidence：
 - OpenAI Evals repository: https://github.com/openai/evals
 - OpenComputer（verifier-first executable task synthesis；Status: Experimental）:
   https://arxiv.org/abs/2605.19769
+- RSIBench-Data（冻结 substrate、隔离 data-strategy decision、保留 checkpoint trajectory；Status: Experimental）:
+  https://arxiv.org/abs/2607.25886v1
 
 - Business Arena（stateful counterfactual evaluation；Status: Experimental）:
   https://arxiv.org/abs/2608.08621
+- How Query Visibility Changes KV-Cache Compression Rankings（matched-budget audit；Status: Experimental）：
+  https://arxiv.org/abs/2607.11942v1
+- SpectraReward（frozen multimodal read-back reward sensor；Status: Experimental）:
+  https://arxiv.org/abs/2607.11886v1
+- Vero（repository-level implementation + proof artifact evaluation；No Change / Experimental evidence）:
+  https://arxiv.org/abs/2608.13522
+- Phantom Gains（transition ledger 的 measured-null audit；Status: Experimental）:
+  https://arxiv.org/abs/2608.20290
+- Beyond Success Rate（cost-aware offensive/defensive security-agent evaluation）:
+  https://arxiv.org/abs/2607.15263
+- Beyond Semantic Equivalence（implication/incompatibility graph uncertainty sensor；Status: Experimental；受限问答校准，不证明 truth）:
+  https://arxiv.org/abs/2607.16868v1

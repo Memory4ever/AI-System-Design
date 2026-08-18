@@ -148,6 +148,22 @@ J_GRPO(theta)
 
 不同实现对 response/token normalization、KL 放置和 estimator 有差异。本章保留稳定结构，不把某个 runtime 的具体 loss reduction 当作统一定义。
 
+### 正负 Advantage 不必共享同一 Clipping Contract
+
+对正负 advantage 使用同一旧策略 ratio，优点是保守且容易解释；但它也把“继续放大已变好的动作”和“阻止坏动作
+突然变得过小”绑定在同一 trust-region 规则中。一条实验性分支让正 advantage 使用当前 policy 的 detached
+probability 作为分母：前向 ratio 数值为 1，但分母停止梯度，因此梯度仍推动当前 token probability；负 advantage
+继续使用 behavior-policy ratio 与 clipping，KL、rollout provenance 和 freshness 约束保持不变。
+
+```text
+A > 0: current probability / stop_gradient(current probability)
+A < 0: current probability / behavior probability, with clipping
+```
+
+它把 exploration 与 stability 分成两条控制路径，却会削弱正样本相对 behavior policy 的显式边界，并让 stale rollout、
+极小概率 token 和长度归一化更敏感。对分布漂移小、方差控制优先或 freshness 难保证的训练，标准对称 clipping 仍是
+更稳妥基线；作者结果只支持其特定 RL workload，不构成通用替代。
+
 ## Sequence Reward 怎样作用到 Tokens
 
 若 reward 只在 response 末尾给出，常见简化是同一 `A_i` 作用于该 response 的所有有效 tokens：
@@ -216,6 +232,68 @@ fresh group measurement + versioned generalist prior
 不证明极小 group、non-stationary judge 或多域 rollout 都会收敛。Rollout 便宜或 prior 不可信时，标准 GRPO
 仍更无偏；dense state value 可可靠学习时，同步 critic 仍是有效分支。
 
+## 从 GRPO 到 DAPO：后续演化不是单线版本升级
+
+把 reasoning RL 的演化写成 `PPO -> GRPO -> DAPO -> 下一个缩写`，会掩盖每一步真正替换的系统对象。PPO
+用 learned critic/GAE 降低 policy-gradient variance，并用 old-policy ratio 与 clipping 限制更新；RLOO、GRPO
+等 critic-free 分支则改用同 prompt 的多次采样构造经验 baseline。它们节省 value state，却把代价转移到
+grouped rollout、reward comparison 与样本统计。到这里，问题已从“有没有 critic”分裂为至少四个控制轴：
+
+```text
+advantage baseline：learned value / leave-one-out / group mean-std
+sample admission：固定 prompt batch / 按 mixed-outcome group 动态补样
+loss reduction：response-equal / token-equal / fixed-budget normalization
+update constraint：token ratio / clipped weight / sequence ratio
+```
+
+因此，后续工作不是在同一个旋钮上不断变优，而是在不同失败模式下选择新的 bias、variance、exploration 与
+compute 组合。
+
+### DAPO 把朴素 GRPO 的运行失败拆成四处修补
+
+朴素理解是：GRPO 已经有 group-relative advantage 与 PPO-style clipping，只要扩大 rollout 就能持续提升。
+但长 reasoning 训练会同时遇到 entropy collapse、全对或全错 group 的零梯度、长短 response 在 loss 中的
+权重失衡，以及截断样本被错误惩罚造成的 reward noise。DAPO 保留 group-normalized advantage 与 token-level
+importance ratio，却把这些失效点分别落到四个机制上：
+
+- `Clip-Higher` 解耦上下 clipping 边界，为低概率正优势 token 的概率上升留下更大空间；它增加 exploration
+  余量，也减弱了原对称 trust region 的保守性。
+- `Dynamic Sampling` 持续补采并过滤全对、全错的零优势 group，使每批保留 mixed-outcome prompts；它提高
+  有效梯度密度，也让训练分布变成由当前 policy 难度动态选择的隐式 curriculum。
+- `Token-Level Policy Gradient Loss` 跨 batch 内所有有效 tokens 归一化，而不是先对每条 response 求均值；
+  它避免长 response 的每个 token 被系统性降权，也会让长序列在总更新中占据更大权重。
+- `Overlong Reward Shaping` 区分内容错误与因 generation budget 截断，采用过滤或软惩罚降低边界噪声；它
+  稳定了长度边界附近的信号，也把长度先验显式写进 reward specification。
+
+这四项合起来是一套 large-scale long-CoT RL recipe，不是“证明 GRPO 已被全面替代”的单一新定理。它没有
+修复 verifier correctness、base policy coverage 或 deployment Evaluation；动态补样、长度 shaping 与
+token reduction 还会改变实际优化的数据分布和目标权重。
+
+### DAPO 之后，各分支继续修改不同约束
+
+Dr. GRPO 重新检查 estimator 本身：原 GRPO 的 group reward standard-deviation normalization 会按各 prompt
+的组内 reward dispersion 反向缩放更新，而按实际 response length 归一化会引入长度相关权重。其做法是
+去除这两项，并以固定 generation budget 作为 loss normalization，希望恢复更接近无偏 Monte Carlo 的
+policy-gradient estimator。代价是原本由标准化吸收的 reward-scale 差异重新暴露给 batch composition 和
+optimizer。它与 DAPO 的 token-level reduction 不是可以无条件叠加的两个“技巧”，而是在回答**一个 token、
+一个 response 还是一个
+固定采样预算应成为统计单位**。
+
+CISPO 修改的是 clipping 位置：MiniMax-M1 报告把 importance-sampling weight 本身裁剪，而不是直接裁掉越界
+token 的更新信号。这样可以保留更多梯度，但它已经改变 trust-region estimator 的语义，不能只沿用 PPO/GRPO
+的 clip fraction 解读稳定性。公开证据目前首先是该技术报告中的算法与实验 contract，不应外推为所有模型、
+reward 和 policy lag 下的通用优越性。
+
+GSPO 再把约束单位从 token 移到 sequence：用 sequence likelihood 定义 importance ratio，并在 sequence
+层执行 clipping、rewarding 与 optimization。它让 trajectory-level reward 与 update unit 更一致，作者也在
+其 MoE RL workload 中报告了稳定性收益；但它不再与 token-wise trust region 等价，长序列、单 token
+异常和 off-policy skew 都必须在 sequence contract 下重新测量。
+
+这条演化链的工程含义不是追逐最新名称，而是让实验与 checkpoint metadata 显式记录：baseline estimator、
+sample-admission rule、loss denominator、ratio granularity、clip location、length treatment、reward/verifier
+version 和 rollout policy identity。只有这些对象一致，两个“GRPO-family”实验的 loss、clip fraction、有效
+token 数和最终能力才可比较；算法名称本身不是资产身份，也不是兼容性证明。
+
 ## Verifiable Reward 的优势与边界
 
 数学 final answer、代码 unit tests 和格式检查可以减少 learned Reward Model 的主观误差。这类 reward 适合大规模自动 rollout，也推动了 reasoning-oriented RL。
@@ -250,6 +328,12 @@ Binary verifier 若是 correctness authority，privileged teacher 的 token sign
 Self-Distilled RLVR 的数学形式支持正 multiplier 不翻转 sampled-token direction，不证明 privileged signal “零影响”
 或形成真实 causal credit。可靠 token/process verifier 可用时应优先直接监督；teacher 不可靠时 sequence-level
 verifier reward 仍是安全分支。
+
+#### Teacher 权重遇到负 Outcome 时必须 Reset
+
+在 student on-policy trajectory 上，teacher/student likelihood ratio 可以把 teacher 的 token-level 分布用于调节正向 update，比无条件 KL imitation 更接近 RL；但 ratio 不能获得 reward sign 的 authority。若 outcome advantage 为负，继续按 teacher likelihood 重权可能保留一个虽像 teacher、却被环境判错的 action。因此一个条件分支只在正 advantage 上使用 clipped teacher weighting，负 advantage 重置为 ordinary RL；再以 sequence-level geometric normalization 保持样本内乘性权重的尺度。
+
+这使 outcome verifier 拥有方向、teacher 只调节幅度，与“teacher 永远正确”的 OPD 不同。代价是额外 teacher forward、ratio clipping/normalization state，以及 teacher 在 student trajectory 上局部更弱时的误导；它也不扩大 student 从未探索到的 state support。Teacher 与 student 差异小、outcome reward 足够细或额外 forward 太贵时，普通 RL/OPD 仍是更简单分支。
 
 ### 多阶段交互需要 Phase-specific Credit，而不是一个终局标量
 
@@ -421,6 +505,14 @@ repository drift 使因果归因仍为 Experimental。
 hyperparameters 或 benchmark 时必须锁定 revision。本文只沉淀跨版本仍成立的阶段职责和
 trade-off，不把作者 recipe 泛化为 GRPO 的统一定义。
 
+### Derived Skill 的 Utility 必须由当前 Policy 反事实验证
+
+从历史成功或失败 trajectory 总结 reusable skill，再把它静态注入后续 rollout，是一种合理的 cold-start scaffold；问题是 policy 更新后，旧 skill 可能不再对应当前可达状态，analyzer 也可能生成听起来合理却没有行为增益的规则。
+
+更严格的分支让最新 policy 先产生 on-policy trajectory，再由外部 analyzer 提出 skill candidate；对同一 state/action context，分别计算有 skill 与无 skill 时当前 policy 的 token probability，只有相对 delta 与 group outcome 一致的部分才进入 update。这样 skill 不拥有 reward authority，而是一个 policy-synchronous derived signal：environment outcome/verifier 决定成功，matched with/without comparison 衡量局部 utility，group-relative objective 决定更新幅度。
+
+Analyzer 额外增加推理成本、同源偏差和 prompt dependence；probability delta 仍是 relevance proxy，不证明因果，失败 trajectory 总结的规则还可能放大错误归因。静态 curated skill 在 policy 变化慢、审计或 tenant policy 要求稳定时继续成立。作者实验绑定 Qwen/GLM analyzer、给定文本/视觉 agent environments 与 8×A800 训练，不是普遍的 skill learning recipe。
+
 ### Privileged Trajectory 必须先匹配 Student State
 
 直接把成功 reference trajectory 的第 `t` 步蒸馏给 student，隐含了 student 已处于相同 environment state。
@@ -462,6 +554,14 @@ human phrasing、semantic-equivalence audit 与 no-mutation baseline。
 
 基础同步实现只需要按 prompt 形成 group、完成 reward、计算 old/current/reference log-probability，再提交更新。随着探索精度、teacher、optimizer 或 environment 参与，trajectory 不再只是文本，而是带 lineage 的 objective artifact。本节先处理“哪些样本有资格进入 update”；下一节再处理它们怎样由独立服务产生并保持 freshness。
 
+### OPD 是探索催化剂，不是能力上限扩展器
+
+离线蒸馏或朴素 On-Policy Distillation 在 Teacher 与 Student 能到达相近状态、回答长度分布稳定时仍然合理：Teacher 给出的 token 分布可以直接成为低方差监督，不必先把整个环境改造成 RL 问题。约束改变发生在 Student 的 on-policy rollout 进入 Teacher 训练分布之外之后。此时更大的 Teacher 不必然提供更有用的梯度；Teacher/Student 分布错配会放大不可靠 token，而按 sequence 聚合的长度效应还可能让长轨迹在更新中获得不成比例的权重。
+
+因此，OPD 的状态所有权应留在 Student：先由 Student 产生自己真实可达的 rollout，再查询 Teacher 的 token-level guidance，对过大的分布差异做 clipping 或 log-compression，并由 outcome verifier 决定该轨迹能否进入更新。Prompt coverage、Teacher 版本、压缩阈值与 objective 必须共同版本化。这个机制改善的是可达状态上的探索与监督质量，不会凭空扩大 Student 的表示容量或能力上限。
+
+代价是多一次 Teacher 推理、额外的阈值与 verifier 依赖；过强压缩还会抹掉少数但有价值的纠偏信号。稳定、覆盖充分的任务仍适合离线蒸馏；需要环境交互发现新状态时，RL 仍承担不可替代的探索职责。
+
 ### Low-fidelity Exploration 不能直接成为 High-fidelity Objective Artifact
 
 当大量候选最终都会被丢弃时，探索阶段可以用低精度/低 fidelity policy 扩大 seed search；但进入 gradient 的
@@ -480,6 +580,19 @@ low-fidelity candidate exploration
 探索会系统性丢弃真正高价值 seed；重建也可能失败。FP4 Explore/BF16 Train 是 diffusion RL 的 Experimental
 case，不能外推所有 autoregressive rollout。
 
+低成本代理还可以不直接输出 trajectory，而只输出相对于自身 anchor 的 **policy-update artifact**，再由主模型
+用匹配 anchor 校准这份相对变化。它比复制代理的绝对分布更接近“转移 post-training delta”，但主模型必须保留
+接纳权：model family、tokenizer、support、anchor 和 domain 任一不匹配，都可能把代理偏差放大成更新方向。
+因此 proxy update 只能先作为 proposal，经主模型 likelihood、任务 verifier 与 high-fidelity canary 验收后进入
+objective；没有匹配 anchor 或可验证 outcome 时，重新生成 high-fidelity trajectory 仍是更清晰的基线。
+
+结构化 pruning 之后也不能默认沿用原 policy 的离线 distillation 分布。剪枝改变了 student 可达状态与失败模式；
+只在 teacher/offline trajectories 上恢复容易覆盖旧的成功路径，却看不到 pruned policy 自己会进入的错误状态。
+一个受限恢复分支先从当前 pruned policy 生成 on-policy rollouts，再按 failure type 和 horizon 控制 curriculum，
+最后由 verifier 决定哪些 trajectory 可进入 update。它用更多在线生成与非平稳数据换取 state coverage；稳定、
+已覆盖的分布仍适合便宜的 KD。Pruning revision、rollout policy、failure taxonomy、horizon 与 verifier 必须共同
+进入 artifact identity，不能把短期恢复分数写成原能力已完整重建。
+
 ### Outcome-routed Update 先分支，再做 Group Calibration
 
 Uniform online policy distillation 会让 teacher 对已正确样本继续提供高熵噪声，也无法区分“保持正确”和“修复
@@ -487,6 +600,51 @@ Uniform online policy distillation 会让 teacher 对已正确样本继续提供
 吸收 teacher signal，最后在 group 内校准 sample weight。它新增 verifier error、branch imbalance、teacher bias
 与 group-composition dependency；稳定 offline distillation 或可靠 demonstrations 仍是低复杂度方案。
 SCOPE 提供受限机制证据，不构成跨任务最优 OPD recipe。
+
+### Selective Distillation 还要区分“需要纠正”与“与任务有关”
+
+Teacher/student disagreement、entropy 或低概率能指出某个 token **难学或尚未学会**，却不能证明这份监督由
+当前任务条件决定。若只按 optimization need 选择，有限 token budget 可能花在风格、通用语法或 prompt 表面
+变化上。一个实验性分支固定 student on-policy rollout，并为同一 source prompt 构造 meaning-preserving
+paraphrase 与 task-changing counterfactual，比较两个干预对每个 token distribution 的影响：
+
+```text
+student-owned rollout on original prompt
+→ score the fixed tokens under original / paraphrase / counterfactual
+→ task-changing sensitivity - surface sensitivity
+→ select a bounded token subset
+→ teacher supervision only on selected positions
+```
+
+这是一种 **task-relevance proxy**，不是 causal credit。Counterfactual 可能同时改变 difficulty，paraphrase 可能
+并不严格等价，top-k-with-residual divergence 也只是 full-vocabulary distribution 的近似；生成、验证三元组还会
+把额外模型与数据成本移到训练前。它与 outcome routing 是不同层：outcome verifier 先决定该 trajectory 是否需要
+teacher correction，selector 再决定有限监督预算落在哪些 token。稳定 demonstration、full-token OPD 或简单
+disagreement mask 在任务同质、预算充足、contrast 难可靠构造时继续成立。
+
+CROP 在两个 Qwen teacher/student 组合、数学训练 prompt、固定 10% nominal token budget 下提供受限实验，不能
+证明 counterfactual selector 可跨 domain、model family 或长 Agent trajectory 泛化。应同时报告 triplet validation
+通过率、构造成本、selected-token coverage、teacher calls、下游 outcome 与 no-selection baseline，而不是只保留
+六个 benchmark 的 aggregate headline。
+
+Selective distillation 还可能遇到另一类冲突：teacher 在局部 token distribution 上更强，却把 student 当前已经形成
+的正确 reasoning progress 拉回到另一条风格或路径。仅按 teacher/student disagreement 选段会把这种分歧误当成
+“需要纠正”。一个实验性分支可在 segment boundary 估计 continuation solve probability，以增量 process reward
+表示该段是否推动终局，再只在 teacher direction 与 progress direction 一致的 segment 上蒸馏：
+
+```text
+student on-policy response
+→ segment boundaries + repeated continuation rollouts
+→ estimate incremental solve-probability change
+→ rank within-response teacher/progress conflicts
+→ mask a bounded conflict fraction
+→ reverse-KL distillation on retained segments
+```
+
+它以额外 rollout 和 verifier cost 换取“不要为了模仿 teacher 破坏已有进展”的保护，但 solve-probability estimator
+本身方差大，segment 划分、rollout 数、mask fraction 与 verifier bias 都进入 objective identity。数学可验证任务上
+的受限增益不证明开放式 Agent trajectory 也有可靠 process signal；当 continuation cost 太高、verifier 不可信或
+teacher 就是目标分布时，full-response OPD 与 offline distillation 仍更简单。
 
 ### Teacher 的绝对分布与 Post-training Delta 是两种监督对象
 
@@ -665,6 +823,14 @@ rollout、redundant rollout 和 parameter refresh，但任何吞吐策略都不�
 availability、buffer head-of-line blocking 与恢复一致性。同步 pipeline 在规模较小、trajectory 短或严格
 on-policy 证据更重要时仍成立；无界异步不能仅因 utilization 更高就被视为演进终点。
 
+#### Staleness 还可以成为 Objective-level Actuator
+
+Trajectory lifecycle gate 只能决定样本能否进入 buffer，不能说明已接纳样本在 objective 中应该获得同样大的更新权限。固定 PPO/GRPO clipping 在 rollout 与 current policy 始终接近时最清楚；异步 rollout/training 分池后，同一 batch 内样本的 realized mismatch 可能高度异质，单一 checkpoint lag 无法表达低概率 action 上的风险。
+
+一个实验性分支是对每个 sampled token 计算 current/behavior log-ratio，以 batch 高尾分位数形成 staleness proxy，再只向内收缩 PPO 原有的外侧 clip 边界：匹配较好的样本沿用原 contract，风险较高的样本不能获得更宽的更新区间。这里的关系是 Alternative Branch，而不是替代 lifecycle admission。
+
+它用样本级风险响应换取 quantile 对 domain/length mixture 的依赖；sampled ratio 也不是全 vocabulary divergence 或严格 trust region 的证明，token mismatch 还可能在 sequence ratio 中抵消。proxy 未校准、严格 on-policy 或 correctness 证据优先时，同步或有界 staleness 仍更可靠。
+
 Agent RL 还要求 environment failure 与 policy staleness 使用不同终态。Gateway 可以保留服务端实际 token ids，
 避免客户端 retokenization 改写 action/loss mask；trajectory 进入 buffer 前再联合检查 generating-policy version、
 environment outcome、failure reason 与 reward completeness：
@@ -723,6 +889,12 @@ simulator fidelity、重复错误去重、额外 rollout compute 与 failure-dis
 GrandCode 提供这一多阶段 reward lifecycle 的受限案例，但独立 normalization、缺少关键 ablation 与未公开训练
 代码使 headline 不能归因于某一组件。短任务、可靠 terminal verifier 或延迟很低时，单一 terminal reward 仍更简单。
 
+若每一阶段都同时拥有即时信号和未来 outcome，可以分别对 centered immediate deviation 与 future-return
+deviation 做组内标准化，再在同一 behavior-policy identity 下组合。这样不会让一个尺度更大的终局 reward
+吞没局部防御、格式或工具阶段信号；代价是两套 normalization population、权重和方差都会进入 objective identity。
+它仍是 outcome-conditioned proxy，不是该 turn 对结果的 causal contribution。尤其在攻击/防御训练中，局部
+“看起来安全”不能越过最终 verifier；短轨迹或可靠 terminal reward 下也没有必要增加这条分支。
+
 Multi-Agent trajectory 还暴露另一类 credit 问题：不同 role 的 action 发生在不同 conditional state，不能把
 同一终局 reward 直接复制给所有 agent，也未必能构造“同 prompt 同 state”的 group。可以由独立 coach 按
 role、input、action 与 tool feedback 给出 process reward，再使用跨 trajectory normalization 更新各自 policy。
@@ -776,6 +948,13 @@ count 下重分配探索预算，但最佳草稿由当前 policy 与 verifier �
 要求把中间结果交给独立 receiver 执行或续写，能补充 final correctness，却会把 receiver identity、能力和偏好
 写进 objective。Reflection-conditioned RL 还需把 episode、lesson、retrieval 和 consolidation 分开版本化，避免
 把未经验证的自我解释直接固化进 policy。
+
+Search / research trajectory 还可以用最终被引用的 evidence provenance 回指最早的 `search / read` exposure，
+把这一步标成 relevance candidate，再用 sign-preserving modulation 调整原有 advantage。它改善了“终局标量平均
+铺给所有检索动作”的粒度，却只证明证据曾经进入可见状态，不证明该 exposure 对最终结论具有不可替代的因果贡献。
+重复来源、后续改写与 judge 偏好都会污染归因；因此 terminal outcome 继续拥有 reward gate，provenance、judge、
+query、document revision 与最早可见 step 必须共同版本化。无法稳定恢复 exposure lineage 时，sequence reward
+加明确的检索成本仍更可复算。
 
 Entropy controller 是与 credit assignment 正交的 actuator：固定 clipping 容易解释，dynamic threshold 可以
 在特定 token/ratio regions 调整探索—收敛轨迹，却新增 phase、band、oscillation 和跨模型校准状态。以上机制
@@ -856,6 +1035,47 @@ objective、短 rollout 或恢复语义尚不可靠时，完整同步 trajectory
 公开系统提供了这条 state lifecycle 的具体证据，但没有证明任意 objective 下复用 partial history
 都无偏，也没有给出可直接外推的集群成本结论。
 
+### 从 Opaque Harness Call 到可训练 Trajectory Tree
+
+White-box Agent loop 直接拥有 observation、action、tool result 与 trajectory，最容易定义 mask、reward 和
+policy ratio。成熟 harness 则会自行重试无效调用、压缩 Context、启动 subagent，并重新序列化模型输出；只抓
+最终 transcript 会把原始 sampling tokens、被替换的调用和 branch identity 混在一起。
+
+一种中间路线是不侵入 harness control flow，而在 model-serving boundary 保存不可变 call evidence：
+
+```text
+isolated task environment + opaque harness
+→ serving proxy captures exact input/output tokens and rollout logprobs
+→ longest-prefix matching reconstructs a call tree
+→ remove retry dead leaves and unrelated auxiliary branches
+→ count shared prefix tokens once
+→ PPO / GRPO consumes retained branches under rollout-level reward
+```
+
+这里有两个不能合并的视图。Harness 消费 decoded/structured text 来驱动工具和环境；训练器必须消费 inference
+engine 实际 sampled tokens，不能把 harness 重新格式化后的文本再次 tokenize 后冒充原 trajectory。Serving proxy
+因此拥有 model-call evidence，不拥有 tool semantics；verifier 拥有最终 workspace verdict，不拥有每个 branch 的
+局部 credit；trainer 才拥有 mask、advantage 与 parameter update。
+
+Tree reconstruction 减少 shared-prefix 重复训练，也允许复用无法修改的成熟 harness，却没有自动解决 credit
+assignment。Retry 产生的 dead leaf 可以删除；subagent、Context compaction 和 sibling branch 若共享同一个 terminal
+reward，贡献仍可能不可辨认。简单地把 rollout reward 广播到全部 paths 会引入 bias，PPO 对 forked state 的 value
+backup 也可能需要额外假设。ClawGym II 的作者实验只证明这种 capture/reconstruction 在两种 harness、指定模型和
+受控 verifier 下可训练；硬件、完整 lifecycle cost 与生产 SLO 未披露，不能把其 benchmark 增益写成通用结论。
+
+因此每个 black-box sample 还必须绑定：
+
+```text
+harness / proxy / tokenizer / policy revisions
++ task workspace and verifier identity
++ call / retry / compaction / subagent branch lineage
++ exact sampled tokens, logprobs and train-time correction
+```
+
+Harness 少、trajectory 短或需要逐 action causal credit 时，white-box loop 仍更可靠；只有 harness 复用价值足以覆盖
+proxy schema、tree corruption、reward attribution 与 train/serve mismatch 时，black-box bridge 才值得引入。下一阶段
+压力不是捕获更多 calls，而是为 auxiliary branches 建立可验证的 marginal contribution 与独立 reward boundary。
+
 ### Cross-Policy Rollout Reuse：共享 Experience，不共享概率坐标
 
 标准 GRPO/GSPO 让每批 trajectories 来自一个明确的 rollout policy。这个约束看似浪费——另一个 policy
@@ -891,6 +1111,32 @@ experience plane：policies 可以共享经过来源标注的 evidence，但仍�
 rollout 在需要最清楚的 objective、较低系统复杂度或 verifier 便宜时继续成立；one-way distillation 适合
 只想把强 policy 行为迁给弱 policy；offline replay 适合允许更大 policy lag 的目标。Cross-policy reuse 只在
 额外覆盖与 verifier 复用足以抵消双份 runtime/state、且 provenance 与 bias 可观测时才值得采用。
+
+### Inference-time Controller 是训练分布的一部分
+
+固定 controller 下训练 policy，在 Serving protocol 稳定、tool/scaffold 不变时最容易维持 on-policy 语义；但当
+推理阶段会组合 calculator、retriever、self-consistency、reflection 或其他 controller，模型实际面对的不再是单一
+action protocol。只把 controller 留到上线时外挂，会产生 train–serve mismatch。一个条件化分支是把 controller
+identity 与 trajectory 一起进入 rollout distribution：
+
+```text
+task + policy revision
+→ sample controller / module composition
+→ controller-mediated multi-turn trajectory
+→ turn-level reward / advantage
+→ controller-tagged GRPO update
+→ held-out composition and protocol-shift evaluation
+```
+
+Controller 不是外部噪声，而是决定 observation、可用 action、turn boundary 与 credit assignment 的环境版本。
+每条样本至少绑定 controller vocabulary、composition、implementation revision、tool schema、policy checkpoint、
+reward/verifier 与 turn lineage；Serving 只有使用兼容 protocol，训练收益才可迁移。多 controller exposure 可能提高
+对已测组合的鲁棒性，却增加 rollout cost、group variance、稀疏 credit、protocol-version coupling 和 negative transfer；
+某些 controller 还会把同一能力切成不同长度与 reward density。
+
+现有证据只支持所披露的 Llama-3.2-3B、数学任务与十二种 controller/composition，不证明 controller-agnostic 或
+跨任务 cooperation。协议固定、额外 controller 没有生产价值、或需要最清晰 objective 时，单 controller on-policy
+训练仍更好；controller 快速变化时，还应优先版本化和兼容性测试，而不是无限扩大训练 mixture。
 
 Agentic coding 又把 policy identity 扩展到 environment、tool schema、scaffold、turn boundary 与 verifier。
 一种演进先在不同 domain/scaffold 中分别优化 experts，再让统一 student 在自己访问到的 states 上接受对应
@@ -1027,14 +1273,33 @@ prompt x
 12. 为什么跨 policy 共享 rollout 时不能丢弃 source policy 与 tokenizer identity？
 13. 跨 tokenizer 重算 target log-probability 为什么不等于严格的 token-wise importance correction？
 14. Phase-aware RL orchestration 中，compute scheduler 与 fabric controller 为什么需要共享 epoch 和 fallback？
+15. 为什么 DAPO 应理解为四个运行失败点的组合修补，而不是 GRPO 的单一标量升级？
+16. DAPO 的 token-level reduction 与 Dr. GRPO 的 fixed-budget normalization 为什么不能被视为同一目标？
+17. CISPO 与 GSPO 分别改变 clipping 的什么对象和 importance ratio 的什么粒度？
 
 ## 小结
 
 GRPO 用同 prompt 多个 responses 的相对 reward 代替 learned critic baseline。它减少 value-model 状态，并保留 clipped policy update 与 reference constraint，适合 reward 可比较、尤其可验证的 rollout 任务。
 
 它没有让 RL 变简单到只剩一个公式。Group variance、rollout generation、reward specification、token credit、policy synchronization 和 implementation variants 共同决定训练是否有效。
+从 DAPO 到 Dr. GRPO、CISPO 与 GSPO 的后续分支进一步说明：样本准入、loss reduction、clipping 对象与
+ratio 粒度是彼此独立的设计轴，方法名称不能替代 objective 与 artifact contract。
 
 ## Review notes
+
+- Training Language Models to Cooperate with Inference-Time Controllers（arXiv:2607.23771v1；Status: Experimental）：https://arxiv.org/html/2607.23771v1
+  - 证据边界：支持 Llama-3.2-3B、GSM8K/MATH500/AMC23 与作者十二种 controller/composition 下的 controller-aware GRPO；不证明 controller-agnostic、跨任务或任意 protocol shift 的普遍收益。
+
+- Demystifying On-Policy Distillation: Roles, Pathologies, and Regulations（OPD 分布错配、长度聚合与能力边界；Status: Experimental）:
+  https://arxiv.org/abs/2607.13399v1
+
+- On-policy post-pruning recovery with failure-controlled horizon（Status: Experimental）:
+  https://arxiv.org/abs/2607.13124v1
+
+- UP（positive self-anchored ratio 与 asymmetric clipping；Status: Experimental）:
+  https://arxiv.org/abs/2607.06987v1
+- Single-Rollout Asynchronous Optimization（policy/value/freshness boundary；Status: Experimental）:
+  https://arxiv.org/abs/2607.07508v1
 
 - FP4 Explore, BF16 Train（precision-separated rollout artifact；Status: Experimental）:
   https://arxiv.org/abs/2604.06916
@@ -1057,6 +1322,12 @@ BandPO、HCAPO 与 MicroCoder-GRPO 分别用于补足 probability-aware trust re
 Primary-source 校验入口：
 
 - Zhihong Shao et al., "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", 2024: https://arxiv.org/abs/2402.03300
+- Arash Ahmadian et al., "Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs", 2024: https://arxiv.org/abs/2402.14740
+- Qiying Yu et al., "DAPO: An Open-Source LLM Reinforcement Learning System at Scale", 2025: https://arxiv.org/abs/2503.14476
+- Zichen Liu et al., "Understanding R1-Zero-Like Training: A Critical Perspective", 2025: https://arxiv.org/abs/2503.20783
+- MiniMax et al., "MiniMax-M1: Scaling Test-Time Compute Efficiently with Lightning Attention", 2025
+  （CISPO；technical-report evidence）: https://arxiv.org/abs/2506.13585
+- Chujie Zheng et al., "Group Sequence Policy Optimization", 2025: https://arxiv.org/abs/2507.18071
 - DeepSeek-AI et al., "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv v2 revised 2026: https://arxiv.org/abs/2501.12948
 - Kimi Team et al., "Kimi k1.5: Scaling Reinforcement Learning with LLMs", 2025
   （partial-rollout system case）: https://arxiv.org/abs/2501.12599
@@ -1128,10 +1399,28 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2606.12384
 - OPD²（matched-base policy-delta distillation；Status: Experimental）:
   https://arxiv.org/abs/2607.15161
+- P-OPD（proxy relative-update artifact 与 primary acceptance；Status: Experimental）:
+  https://arxiv.org/abs/2607.11505v1
+- Multi-turn dual reward normalization（immediate / future-return branch；Status: Experimental）:
+  https://arxiv.org/abs/2607.11070v1
+- Provenance-guided earliest-exposure credit（relevance 不是 causal credit；Status: Experimental）:
+  https://arxiv.org/abs/2607.11172v1
 - When Does Muon Help Agentic Reinforcement Learning?（optimizer/update-scale/sharding contract；
   Status: Experimental）: https://arxiv.org/abs/2607.16169
+- CROP（paraphrase-calibrated counterfactual relevance for selective OPD；Status: Experimental）:
+  https://arxiv.org/abs/2608.13387
+- R2-OPD（reasoning-progress-aware segment masking；Status: Experimental）:
+  https://arxiv.org/abs/2608.19408
 
 W32 primary-source cases：
 
 - SMRC-SD（state-matched contextual distillation；Status: Experimental）: https://arxiv.org/abs/2608.05219
 - PIRL（prompt-robust multimodal RLVR；Status: Experimental）: https://arxiv.org/abs/2608.08802
+- Intern-S2-Preview technical report（partial rollout、online draft、typed process credit；No Change /
+  Source-family synthesis）: https://arxiv.org/abs/2608.13505
+- SEED（policy-synchronous hindsight skill distillation；Status: Experimental）:
+  https://arxiv.org/abs/2607.14777
+- Distilled Reinforcement Learning（positive-advantage teacher weighting / negative reset；Status: Experimental；受限 math/code recipe）:
+  https://arxiv.org/abs/2607.17247v1
+- Stale but Stable / SAT（exact v1；Status: Experimental）：https://arxiv.org/html/2607.18722v1
+  - 证据边界：Qwen3-30B-A3B 数学 RL、30,712 prompts、4096 responses/iteration、544 iterations、lag 1/8；event-time GradLoc repo commit 早于论文，不能证明 SAT artifact 已公开。

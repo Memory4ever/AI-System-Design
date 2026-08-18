@@ -21,10 +21,33 @@
 - full GPU、MIG slice、time-slicing 或其他 sharing mode；
 - NVLink/NVSwitch、PCIe、NUMA 与 RDMA topology；
 - driver、CUDA/runtime compatibility；
+- ECC/Xid、thermal throttling、link degradation 与设备健康状态；
 - local data/cache 与 model artifact locality；
 - 多 Pod 必须同时启动的 gang。
 
 两个节点都显示 8 GPU，不代表能运行同一个 8-way TP job。跨慢速网络拼出 8 张卡，数学上满足 count，性能上可能不可接受。
+
+## 为什么调度会成为 AI 平台的核心问题
+
+平台采购或接入的 GPU 数量只是 installed capacity。真正能转化为训练进度或在线 SLO 的容量，会经过多层收缩：
+
+```text
+C_installed
+>= C_healthy_and_compatible
+>= C_topology_feasible
+>= C_policy_admitted
+>= C_useful
+```
+
+`C_healthy_and_compatible` 排除了故障设备和不满足 architecture、HBM、driver/runtime 要求的资源；`C_topology_feasible` 只保留能组成目标 TP/PP/EP 或 gang shape 的设备；`C_policy_admitted` 再应用 queue、quota、priority 与 isolation；`C_useful` 最终要求 workload 真正取得训练进度或兑现 Serving SLO，而不是只显示 GPU 已分配。
+
+这些 `C` 不是脱离 workload 的固定集群常数，而是针对某个 workload contract 和某个资源快照计算的可行容量。同一批设备对 single-GPU notebook 可能充足，对要求单 NVSwitch domain 的 8-way TP workload 却可能为零。
+
+因此，“集群还有 64 张空卡”不等于某个 64-GPU job 可调度，“GPU utilization 很高”也不等于平台产出了有效工作。部分 gang 占卡等待、跨慢链路 collective、热降频、错误重试或在线请求大量违反 SLO，都可能让 allocated capacity 与 useful capacity 分离。
+
+调度决策还具有放大效应。训练作业可能运行数小时或数周，一次错误拓扑会持续支付通信税；在线副本放在错误设备或 failure domain 上，会把局部放置问题转化为 tail latency 和可用性问题。抢占也不是免费回收整数张卡：训练需要保存 optimizer、RNG 和 data progress，推理需要处理已加载权重、engine、adapter cache、in-flight request 与 KV state。
+
+多租户平台最终还必须通过调度兑现组织政策。配额、借用、公平、优先级、reservation 和 preemption 若不进入统一资源决策，只能停留在文档约定。GPU scheduler 因而不是 AI Platform 的一个边缘插件，而是把 workload contract 映射为物理执行条件的核心控制面。
 
 ## Filter、Score 与 Bind
 
@@ -202,6 +225,7 @@ Chapter 63 GPU scheduler
 5. MIG、time-slicing 与 continuous batching 为什么不能混为一谈？
 6. 推理 scheduler 与 GPU scheduler 的时间尺度有何不同？
 7. 为什么 DRA core GA 不等于 consumable capacity 与 health policy 都已稳定？
+8. 为什么 installed capacity、topology-feasible capacity 与 useful capacity 不能混为一谈？
 
 ## 小结
 
@@ -209,7 +233,7 @@ GPU scheduler 的任务不是简单填满设备，而是在设备/拓扑硬约�
 
 ## Review notes
 
-本章只定义通用机制，不绑定具体 scheduler。它承接第 60 章的 training gang、第 56 章的 inference state，并为第 64～65 章提供统一比较坐标。
+本章只定义通用机制，不绑定具体 scheduler。自检答案回填增加了从 installed capacity 到 useful capacity 的约束收缩链，说明 GPU 调度为何是平台控制面的核心问题。它承接第 60 章的 training gang、第 56 章的 inference state，并为第 64～65 章提供统一比较坐标。
 
 Primary-source 与官方入口：
 

@@ -80,6 +80,27 @@ metric、task/data distribution、rewrite policy、threshold 和 human escalatio
 或低延迟路径中继续成立。Adaptive Text Anonymization 的实验只支持其所测 contract，不应被写成 DP 或
 compliance guarantee。
 
+### 从独立 Span 到关系感知的本地 Sanitization
+
+独立 span detector 在规则字段、固定 credential pattern 或低延迟路径中仍然合理，但它容易漏掉**关系推断**：姓名、
+机构、罕见职责或时间线单独看都不敏感，组合后却可能唯一指向某人。关系感知分支把本地 sanitization 组织为：
+
+```text
+candidate sensitive spans
+→ contextual leakage nodes
+→ pairwise utility / leakage edges
+→ local constrained selection
+→ opaque placeholders sent across boundary
+→ consistency-gated restoration on client
+```
+
+原文、graph、selection policy 和 restoration mapping 都由 client security boundary 拥有；cloud model 只看到不透明
+placeholder。Restoration 必须校验 placeholder identity、数量、位置和 mutation，任何未知、丢失或重复 token 都应
+fail closed，而不能“尽量猜回”。该机制用图构建、`O(n·k)` 邻接筛选、utility loss 和 estimator calibration 换取对
+组合泄漏的覆盖；single-turn、固定 attacker 或有限 pairwise graph 不能证明对 adaptive attacker、长会话或外部知识
+的完备防护。Regex/NER 继续承担确定性基线，生成式 rewrite 处理更强语义改写，DP 则拥有发布级数学边界；三者是
+分层与替代分支，不应被一个 sanitization 分数合并。
+
 ## Differential Privacy 先定义被保护对象，再选择机制
 
 PII redaction 尝试识别内容；Differential Privacy（DP）则限制相邻数据集变化对已发布结果
@@ -186,6 +207,25 @@ version、owner、测试集、生效范围、rollback 与 cache key。静态 cla
 高可预测性场景仍更合理。gpt-oss-safeguard 是该模式的 Research Preview 案例，其公开评测不能
 证明开放权重 safeguard 在所有语言、攻击或本地微调后仍保持同一安全边界。
 
+## 从“文本是否恶意”到“谁获得了行为控制权”
+
+Prompt injection 的困难不只在于恶意内容难分类。检索文档、工具描述或 memory 中的一段中性文本，也可能在模型推理时成为 behavior-guiding instruction。只做入口分类会遗漏这种运行时影响；只看 attention 或模型自述又会把相关性误当成因果和授权。
+
+更完整的纵深防御把三个阶段分开：
+
+```text
+retrieval set
+→ source/consensus sensor filters suspicious evidence
+→ runtime influence locator proposes behavior-guiding spans
+→ authority registry adjudicates whether that source may issue instructions
+→ step guard checks proposed action before execution
+→ deterministic tool policy owns allow / deny / approval
+```
+
+这不是三个互相替代的 classifier。Retrieval consensus 依赖 honest-majority 与 representation separation，面对多数污染或可查询 surrogate 会失效；attention-derived locator 是可迁移 sensor，不证明某个 span 在因果上决定了动作；learned step guard 受 synthetic taxonomy、teacher bias、false positive 与 adaptive adversary 限制。它们的收益是把污染入口、推理影响和执行动作分层定位，代价是更多 false reject、版本化 authority registry、额外 latency 与 cross-layer disagreement。
+
+旧的静态规则在强格式、低延迟和已知攻击中仍合理；高风险 action 仍必须由 scope、approval、idempotency 与 sandbox 约束。模型 sensor 可以触发降权、重新检索、询问或人工升级，但不能自行授予来源 authority，也不能成为最终 authorization owner。
+
 ## Safety Evaluation 的单位是 Run，不只是 Prompt
 
 单轮 text test 便宜、确定、适合快速 regression；隔离某一 image/audio encoder 的单模态 test 也有助于
@@ -217,6 +257,12 @@ negative 与 human disagreement；同一模型同时充当 attacker 与 judge �
 因此三种旧设计继续共存：single-turn deterministic suites 做高频回归，isolated-modality tests 定位 encoder/
 filter，human red team 探索新语义风险，automated run campaign 扩大 state-transition coverage。任何一项都不应
 单独承担 release verdict；第 66 章保存 EvalSpec 与 scorer contract，第 73 章再把证据接入 gate 与 rollback。
+
+### Containment 不能只看最终是否发生攻击
+
+Run-centric evaluation 还需要把暴露后的 containment 拆成可定位阶段：不可信内容被读取、影响沿 Memory 或 delegation 传播、模型提出高风险 action、policy 授权，以及 executor 实际 commit。只比较最终 attack-success，会把“同样没有恶意提交”误当成相同行为，也可能奖励通过阻断全部合法工作获得的表面安全。
+
+因此 trace 应同时保存 provenance graph、proposal / authorization / commit 与 authorized-tainted utility。它用更高的 parser、policy、scenario 和 normalization 版本管理成本，换取对传播与阻断位置的可追溯判断。未观察到 commit 仍只是受测 scenario 下的证据，不能升级为防御完备证明；第 66 章继续拥有 EvalSpec 与 scorer identity，本章只拥有风险阶段、authority 与 effect boundary。
 
 ### CoT Monitor 是 Policy-bound Sensor，不是 Authority
 
@@ -312,6 +358,14 @@ sampling 又以审计成本换 detection probability。CPU-only trusted boundary
 protection 与 failure policy 都必须显式。IMMACULATE 的作者实验提供了 service-integrity 机制证据，但其 threat
 model、硬件条件与未公开生产 artifact 不支持通用 latency 或完整性保证。
 
+### Intermediate-state Canary 是 Integrity Sensor，不是 Eviction Authority
+
+Artifact 签名和 final-output check 能证明加载对象或发现最终错误，却不能在不可信 pipeline stage 之间定位哪一段改写了状态。一个 challenge-response 分支是由 verifier 持有 versioned canary 与受信 reference activation，在 live fp16 执行时比较每个 shard 的 intermediate state，并按校准 noise envelope 输出 suspect evidence。
+
+这样把完整性观测推进到状态边界，但 detector 仍只是 sensor：它不能独自证明恶意意图，也不能越权驱逐 peer；eviction、retry 或冗余执行仍由 policy gate、attestation 与 failure budget 决定。reference 预计算与保存增加存储和版本成本，真实异构 nondeterminism 未必服从模拟噪声，adaptive attacker 还可能识别 canary 或将扰动压到检测阈值下。
+
+稳定可信集群中，端到端校验可能更便宜；不可信协作环境则需要 canary、redundancy、attestation 与抽样审计共存。
+
 ## 从 Trace 检查到受限状态空间验证
 
 Trace test 能证明某次运行没有触发已知坏路径，不能证明所有可达状态都满足 temporal safety。若 Agent 的工具、
@@ -393,6 +447,29 @@ authenticated principal and delegated scope
 approval 与 typed audience/resource 会增加交互和降低自治流畅度，但高权限 persistent Agent 不能用便利性换掉这些
 边界。Agents of Chaos 只证明相应 failure mode 可在其开放式高权限 live lab 出现，不提供模型总体攻击率，也不能
 把运行中配置和人工干预归因成 foundation-model 单一缺陷。
+
+### Memory Origin Confusion：Reasoning Claim 低于 Effect Receipt
+
+Memory 还会把不可信内容包装成“过去已经推理过的内部经验”。一条 remembered completion claim 即使包含完整
+reasoning，也不等于 action 已真实发生；多个从同一伪造 memory 派生的 Agent 结论，也不是多份独立证据。
+高风险执行前必须回到 effect owner：
+
+```text
+remembered reasoning / completion claim
+→ dereference source, tool and effect receipt
+→ collapse descendants sharing the same provenance family
+→ validate current principal, policy and exact action digest
+→ execute or accept postcondition only from the effect-owning service
+```
+
+Lexical filter、reasoning-consistency guard 或 model judge 可以作为 detection sensor，却不拥有 truth authority。
+它们可能降低某类 forged-reasoning attack 的命中率，但无法修复已被污染的 authoritative state，也不能替代
+typed effect receipt。该路线增加 provenance graph、receipt retention 与 effect-time latency；低风险 advisory
+memory 可继续使用较轻检查，高权限或不可逆 action 则必须 fail closed、abstain 或请求人工确认。
+
+现有作者实验支持具体 memory-origin confusion 与同源放大 failure mode，不覆盖 system prompt/weights compromise、
+multi-Agent 长链传播或真实生产 EHR 风险；没有公开 artifact 也限制独立复现。因此正文只吸收
+`reasoning claim < authoritative effect receipt` 与 lineage collapse 的安全合同。
 
 ### Shared Memory 必须同时通过 Utility、ACL 与 Forgetting Gate
 
@@ -480,6 +557,31 @@ authority：同源 judge、无 benign calibration、缺少 deterministic side-ef
 automation 误报为攻击，或漏掉跨步骤组合风险。完整 trajectory retention 还扩大隐私和敏感 payload 暴露面。
 AgentHazard 的作者 benchmark 支持“harm 的评估单位应扩展到 run”，但不提供任意生产环境的通用 incident rate。
 
+多 Agent 委派把这条链再推进一步：有害目标可能被拆成多个局部合理的子任务，单节点重新做 prompt
+classification 仍看不见跨节点累积的语义。运行时需要把 source、delegation、memory write 与 irreversible
+sink 组织成带 provenance 的信息流，在 sink 前重建跨节点上下文，再由确定性 policy 决定是否允许 commit。
+这用额外图状态、标注误差和重建延迟换取跨委派风险可见性；semantic taint 仍只是 sensor input，不替代
+capability isolation，也不能授权 LLM 自己拥有最终安全判决。
+
+### Permission Graph 是授权 Proposal，确定性 Authorizer 才拥有 Commit
+
+静态 RBAC 在主体、资源和操作集合稳定时最容易审计；Agent 动态组合工具与多步任务后，权限需求往往先以自然语言
+出现。直接让模型输出 allow/deny 看似省去 policy engineering，却把解释、证据和最终授权交给同一概率组件。更安全的
+分层是把模型限制在 policy compilation 的 proposal 阶段：
+
+```text
+task intent + tool/resource metadata
+→ typed permission intermediate representation
+→ evidence-backed principal/resource/action graph
+→ deterministic policy or SMT authorizer
+→ gateway commit / deny / require approval
+```
+
+图和 IR 让缺失 binding、冲突 policy 与权限传播可以被检查，但它们不是权限真值；模型漏掉的约束、过期 evidence、
+solver 不可用和 gateway 绕行都会产生新的 failure mode。低风险、固定工具集继续适合手写 least-privilege policy；
+动态工作流可以使用模型辅助生成候选图，但 authorizer 必须 fail closed、保存 policy/evidence revision，并让实际 executor
+只接受带授权 receipt 的 canonical action。
+
 ### 从 Host-local Sensor 到独立基础设施安全面
 
 Host agent 容易部署、能理解 application semantics，在 host 仍可信时是合理起点；一旦 host 本身成为攻击对象，
@@ -498,6 +600,29 @@ attested infrastructure sensor
 forensic retention 与 fail-open/fail-closed 都需要独立治理；DPU compromise 还会形成更大的 correlated blast radius。
 Host EDR 继续拥有 application semantics，外置 plane 提供 tamper resistance，二者应联合而非替代。NVIDIA DOCA
 材料证明了产品接口和声明的分层，但没有证明不可绕过，也没有给出可外推的性能或 false-positive contract。
+
+#### 缺失证据必须传播为 Unknown，而不是 False All-clear
+
+单 Agent guardrail 对局部 action、权限和设备状态最便宜，在任务彼此独立时仍是正确基线。协同 mission 增加的约束
+并不是“再多跑一个安全分类器”，而是跨 platform、squad 和 mission 的 temporal invariant：一个节点局部正常，
+不能证明整个队形、通信链或任务目标仍安全。分层 assurance 应让每一级只消费下一级已经版本化的 durable events：
+
+```text
+platform event + source / clock / predicate revision
+→ local verdict: true / false / unknown
+→ squad composition + missing-evidence ledger
+→ mission invariant + bounded response authority
+```
+
+三值语义是这里的关键。Telemetry 丢失、事件过期、时钟无法对齐或下级 monitor 不可达时，父级必须得到
+`unknown`，不能把“未看见失败”折叠成 `false alarm = 0`。Risk policy 再决定 unknown 对应 fail-closed、降级运行、
+扩大隔离还是人工接管；monitor 本身不能借 unknown 自动扩大执行权限。Event identity 至少绑定 source、sequence、
+clock domain、predicate/policy revision 与 retention，才能在重放时区分真实 all-clear、证据缺口和迟到更新。
+
+该分层提高跨 Agent 可审计性，却新增 ordering、availability、分类误差、policy synchronization 和 common-mode failure。
+模拟 fault campaign 可以验证组合语义与 monitor 行为，不能证明真实 radio、异构机器人或生产 safety。单节点任务、
+低耦合 workflow 或中央链路不可靠时，local deterministic guardrail 仍应独立生效；mission assurance 是其上层组合，
+不是替代。
 
 ### Pre-execution Guardrail：检测 Off-task 不能等到副作用发生后
 
@@ -535,6 +660,14 @@ goal + authoritative current state + proposed action
 由二元 classifier 自动修正。SeerGuard 提供 pre-execution semantic prediction 的实验性证据，BadWAM 提供其
 攻击边界；两者共同要求实际状态 reconciliation，而非证明 learned guard 可以替代 deterministic control。
 
+### Sensor Robustness 不能删除 Task-critical Semantics
+
+对 lighting、color 或 texture 做强 augmentation，可能让 policy 在攻击条件下继续完成某些任务；若 benchmark 不要求区分这些属性，模型也可能通过完全忽略被扰动 channel 获得表面 robustness。于是 attack success 下降并不自动意味着 sensor representation 更可靠，它也可能意味着 task-critical semantics 被训练成 nuisance。
+
+防御验收必须同时保留两个 matched 分支：`benign semantic counter-task` 检查颜色等特征在无攻击时仍可用于正确 action，`attacked closed-loop trajectory` 检查防御是否降低真实 deviation、collision 与 failure。只有二者同时成立，augmentation 才能升级为 robustness evidence；grayscale probe、feature attribution 或 learned judge 仍只是 sensor，真实 task outcome 与 safety controller 拥有最终判断。
+
+这种 invariant 会增加数据和物理试验成本，也要求事先声明哪些 sensor feature 对任务有因果职责。静态 spotlight、有限 task 与单一机械臂结果不能覆盖时间变化照明、开放环境或自适应 attacker；因此规则 safety envelope、independent perception 与 fail-closed control 不会被 learned augmentation 取代。
+
 ## Availability 与 Abuse
 
 AI API 的 DoS 不只看 request count。超长 prompt、超大 output limit、expensive tool loops、adapter churn 和 cache-busting 都能放大成本。Gateway 与 runtime 应联合执行：
@@ -547,6 +680,12 @@ AI API 的 DoS 不只看 request count。超长 prompt、超大 output limit、e
 - model/cache identity validation。
 
 拒绝原因与 policy version 必须审计，以便区分攻击、误配置与容量不足。
+
+### Responsive 不等于 Semantic Available
+
+分布式 inference 的 availability 不能只问 endpoint 是否按时返回。Fast / slow-path pipeline 若只在 deadline 前合并远端高质量结果，deadline 同时就是 semantic commit boundary：攻击者无需访问权重或 victim data，只要用 shaped burst 推迟 slow path，merger 就可能丢弃本应提高准确率的证据。系统仍及时响应，却发生 accuracy collapse。
+
+防御因此要把 per-tenant isolation、queue / admission、late-result policy 与最终质量一起监控。延长 deadline 会损害 SLO，强隔离会牺牲利用率；单一 tracking pipeline 的作者实验只证明该 attack surface 可以存在，不证明所有网络抖动或 tiered system 都会同样退化。队列与 placement 机制仍由第 56 章拥有，本章只定义 availability threat 与 security evidence boundary。
 
 ### AI for Science：知识风险与物理执行风险必须分层
 
@@ -565,6 +704,40 @@ data access and consent
 第27章拥有实验数据 lineage，第66章拥有 claim/evidence 判断，第81章拥有 approval、durable execution 与 replication state；本章拥有身份、最小权限、危险操作 policy、隔离、审计和 emergency stop。高质量模型输出不能越过领域专家、实验设施和法规所拥有的 authority。
 
 ## 风险管理而不是一次性认证
+
+### 从边界隔离到受限条件下的可证明执行
+
+最小权限、sandbox 与审计先把 blast radius 限定住；当 action 的输入本身含离散绑定歧义或连续数值误差时，点式 policy decision 仍可能在邻近输入上翻转。更强但更昂贵的分支，是显式构造允许的输入邻域，并要求授权条件对整个邻域成立：
+
+```text
+typed tool return
+→ canonical binding and bounded uncertainty set
+→ exact / Lipschitz / probabilistic certificate
+→ effect-time authorization
+→ commit | probe | defer
+```
+
+证书强度受完整 mediation、type constructor、邻域可枚举性和预算校准限制；预算外输入、跨动作累计风险与错误 safety map 仍需要传统隔离、审批和补偿。确定性规则能完整覆盖时，普通 policy-as-code 更简单，也更容易解释。
+
+#### Proof of Equation Satisfaction 不等于 Proof of Expended Work
+
+ZK relation 可以证明 committed weights 下的方程与输出成立，却未必证明 provider 执行了与声明规模相称的工作：代数 identity blocks 或 replicated coordinates 可能让较小 inner model 满足较大 outer circuit。系统必须显式声明 proof claim type，并用 work-binding circuit、独立 metering/attestation 或随机 challenge 补充 effort evidence。原有 ZK privacy/correctness 保证仍成立，不能因该攻击被整体否定。
+
+### 隐私不是一个开关，而是明文边界的重新分配
+
+“加密推理”必须先说明谁看见 query、corpus、model、intermediate state 和 access pattern。加密检索可以把 homomorphic top-k 改成阈值选择以降低交互，却可能让服务端继续持有明文 corpus，并通过返回集合大小泄漏信息；长上下文私有推理也可以用线性 scan 取代二次 attention，把线性算子留在同态域、非线性算子交给 MPC，但会引入域转换、近似训练和很高延迟。
+
+因此系统不能只记录“使用 FHE/MPC”，还要记录 threat model、明文 owner、阈值/近似误差、访问模式、转换次数和 failure policy。TEE、客户端本地推理、普通 TLS 加服务端明文各有仍然成立的信任与性能区间。
+
+### 共享状态的性能身份同时也是安全身份
+
+跨租户 prefix reuse 把“是否命中 cache”变成可观察的 timing signal。防护可以从完全禁用共享，演进到 principal-specific key namespace、敏感租户独立 pool 和后台泄漏审计；收益是保留租户内复用，代价是失去跨租户 dedup、增加 key 生命周期和审计误报。Cache key 因而必须同时绑定模型语义身份与授权 principal，不能由性能层单独决定。
+
+跨请求 KV reuse 一旦放松 exact-prefix 条件，cache identity 还必须携带完整 causal provenance。攻击者可以让相同 benign chunk 的 KV 继承未出现在 victim input 中的 hostile causal prefix；token match、位置修复、checksum 与 text sanitizer 都不足以证明这段 state 可由另一 principal 消费。
+
+安全复用因此至少绑定 producer tenant/trust domain、可见 causal context、model/adapter/kernel identity 与 recomputation policy。无法证明兼容时回退 exact-prefix 或 full recompute。这个收紧会降低跨租户 dedup，却避免性能优化越权引入不可见 instruction state；普通 exact-prefix reuse 与受控单租户 cache 仍有独立成立区间。
+
+Embodied Agent 又把同一原则扩展到供应链、感知、world state、planning、action、middleware 和 fleet communication。按 first-compromised trust boundary 组织风险，比按 jailbreak/backdoor 名称罗列攻击更能定位责任，但研究密度不能代替真实事故概率，防御仍需由对应状态 owner 验证。
 
 ### 从 Model Capability Gate 到 Deployment-context Residual Risk Loop
 
@@ -628,6 +801,28 @@ AI security 必须贯穿数据、训练、artifact、serving 与 action。正确
 
 ## Review notes
 
+- Hollow-LLM Attack（arXiv:2607.28884v1；Status: Experimental）：https://arxiv.org/html/2607.28884v1
+  - 证据边界：exact-v1 的 zkGPT-derived CPU construction 支持 equation/output proof 可被 algebraically trivial depth/width capacity 满足；不证明商业 ZK serving 已受攻击、所有 circuit 都缺 work binding，或原有 privacy/correctness claim 整体失效。
+
+- FAVA（LLM permission intent → typed IR / permission graph → deterministic SMT authorization；Status: Experimental）:
+  https://arxiv.org/abs/2607.27267v1
+
+- ContainmentBench（post-exposure propagation、proposal / authorization / commit 与 authorized-tainted utility；Status: Experimental）：https://arxiv.org/html/2607.23999v1
+- Slow-path deadline accuracy-collapse attack（responsive service 不等于 semantic availability；Status: Experimental）：https://arxiv.org/html/2607.24692v1
+
+- Mission-Level Runtime Assurance（arXiv:2607.23532v1；Status: Experimental）：https://arxiv.org/html/2607.23532v1
+  - 证据边界：支持 exact-v1 架构与 simulated fault campaign 中的 platform/squad/mission composition 和 unknown propagation；不证明真实 radio、异构机器人、生产 safety 或 companion artifact 的可复现性。
+
+- HijackKV: New Threat in Position-Independent KV Cache Reuse（arXiv:2607.19957v1；Status: Experimental）：https://arxiv.org/html/2607.19957v1
+  - 证据边界：支持作者 position-independent multi-tenant reuse 模型及披露实现中的漏洞；不证明普通 exact-prefix cache reuse 存在相同漏洞、所有平台都暴露相同探测面，或所报 ASR 可跨模型与数据泛化。
+
+- GoldenRetriever（阈值式同态加密检索；受限 query/selection privacy）: https://arxiv.org/abs/2607.29019
+- CAGE（typed-return uncertainty 上的授权证书；Status: Experimental）: https://arxiv.org/abs/2607.29190
+- KVGov（多租户 prefix-cache timing isolation；Status: Experimental）: https://arxiv.org/abs/2608.09225
+- Security of Foundation-Model-Powered Embodied Agents（按 first-compromised boundary 组织的预印本综述）: https://arxiv.org/abs/2608.16843
+- FESC（CKKS + MPC 的 encrypted state-space inference；Status: Experimental）: https://arxiv.org/abs/2608.17442
+- Fool's Gold（针对 safety-removal attack 的 defensive deception；Status: Experimental；治理风险需独立审计）: https://arxiv.org/abs/2608.17202
+
 - NVIDIA DOCA in-silicon security（independent DPU security plane；Official Engineering Evidence）:
   https://developer.nvidia.com/blog/advancing-ai-infrastructure-for-agentic-ai-with-nvidia-doca-in-silicon-security/
 
@@ -653,8 +848,12 @@ Primary-source 与官方入口：
 - JAX-Privacy 1.0: https://research.google/blog/differentially-private-machine-learning-at-scale-with-jax-privacy/
 - Adaptive Text Anonymization（经验 attacker/utility Pareto；不提供 DP 保证；Status: Experimental）:
   https://arxiv.org/abs/2602.20743
+- PromptGraph（关系感知的本地 sanitization 与 fail-closed restoration；Status: Experimental）：
+  https://arxiv.org/abs/2607.10709v1
 - IMMACULATE（probabilistic service-integrity audit；Status: Experimental）:
   https://arxiv.org/abs/2602.22700
+- Integrity of peer-to-peer distributed LLM inference（exact v1；Status: Experimental）：https://arxiv.org/html/2607.19490v1
+  - 证据边界：GPT-2/Pythia 小模型、408 个模拟配置、fp32 reference 对 fp16 live path 与 modeled Gaussian noise；低噪声 AUROC 不能外推 live heterogeneous pool 或 adaptive attacker。
 - Agents of Chaos（cross-channel principal/policy/effect boundary；exploratory evidence）:
   https://arxiv.org/abs/2602.20021
 - GateMem（multi-principal Memory utility/ACL/forgetting evaluation；Status: Experimental）:
@@ -690,3 +889,7 @@ W32 primary-source cases：
 
 - Formal Verification of Agentic Systems（Status: Experimental）: https://arxiv.org/abs/2608.03609
 - SafeCommit（plausible-world action certification；Status: Experimental）: https://arxiv.org/abs/2608.04289
+- Lights, Camera, Malfunction / ChromaGuard（robustness-versus-semantic-retention boundary；Status: Experimental）:
+  https://arxiv.org/abs/2607.14698
+- SafeFlow（跨委派 semantic provenance 与 irreversible-sink validation；Status: Experimental）:
+  https://arxiv.org/abs/2607.25255v1

@@ -41,6 +41,34 @@
 
 所以，“把模型部署起来”只是起点。它证明模型可以被调用，但还没有证明模型能力可以被生产化、平台化和持续治理。
 
+## 可运行端点与可交付能力之间的缺口
+
+一个 HTTP endpoint 能稳定返回 `200`，只证明某条执行路径可以完成。它没有证明调用者得到的是预期能力，也没有回答这个能力能否被准确识别、复现、评估和回滚。
+
+对于传统代码服务，版本身份通常可以由 source revision、build artifact 和 configuration 基本确定。对于 AI 服务，仅记录 checkpoint 名称仍然不够。一个可治理的 capability release 至少需要绑定：
+
+```text
+checkpoint revision
++ tokenizer / special tokens / chat template
++ base model + adapter / merge state
++ dtype / quantization
++ runtime version + inference parallel layout
++ generation / stop policy
++ evaluation evidence
+```
+
+这些元素中任何一个发生变化，都可能在 API schema 不变、服务也不报错的情况下改变 tokenization、logits、输出分布、显存需求或延迟。模型“已经部署”因而只是一个运行事实；能力“已经交付”还要求 release identity、行为证据与 SLO 一致；完整 AI System 则继续拥有数据、训练、反馈和治理闭环。
+
+三者是包含关系，而不是同义词：
+
+```text
+model deployment
+  subset of capability delivery
+  subset of AI System
+```
+
+简单部署在 PoC、单模型和低风险场景下仍然合理。问题不在于它太简单，而在于不能把这个局部成立的方案外推成生产系统的完整边界。
+
 ## 传统后端类比为什么会失效
 
 传统软件系统的核心资产通常是代码。代码经过编译、测试、发布之后，只要输入、依赖和运行环境稳定，行为大体可预测。系统复杂性主要来自流量、状态、并发、故障、网络、存储和组织协作。
@@ -172,7 +200,11 @@ AI System 的难点通常不在于是否存在某个技术方案，而在于不�
 
 设计一个 AI 平台功能时，要先确定它属于哪条链路。是能力生产、能力交付、资源管理、质量反馈，还是 Agent 编排？不同链路的指标、故障模式和抽象边界都不同。
 
+同一个“回答不好”也可能需要修改不同对象。Prompt Engineering 改变当前请求的 instruction、example 与输出约束；RAG 改变运行时可见的外部 evidence；Fine-tuning 则通过 SFT、LoRA 或其他训练过程改变参数及长期行为分布。三者可以组合，但它们分别属于 runtime condition、knowledge/context path 与 capability production，拥有不同的版本、评估和回滚方式。
+
 排查一个线上 AI 问题时，也要避免只看服务日志。一次输出质量下降，可能来自模型版本变化、prompt 变化、retrieval 质量下降、输入分布漂移、sampling 参数变化、上下文截断、工具失败或评估口径变化。AI System 的 observability 必须能跨越模型、数据、请求、上下文和资源。
+
+这里还要把“请求执行成功”与“能力交付成功”分开。Metrics、logs 和 traces 回答发生了什么，Evaluation 才依据任务分布、scorer 与风险政策判断输出是否正确、有用和安全。一个持续返回 HTTP `200` 的系统，仍可能稳定地产生不满足业务目标的答案；第 66～67 章会分别展开质量判断与持续监测的契约。
 
 做技术选型时，还要把未来约束纳入判断。今天只有一个模型、一个团队、少量请求时，简单部署足够；当模型数量增加、请求量增长、团队共享 GPU、需要审计和成本归因时，平台抽象就变得必要。反过来，在 PoC 阶段过早引入过重平台，也会拖慢学习速度。
 
@@ -222,7 +254,7 @@ AI System 的难点通常不在于是否存在某个技术方案，而在于不�
 
 ## Review notes
 
-本轮 Review 收紧了本章的范围：它负责建立“为什么需要 AI System”的问题意识，不提前替代第 3 章的全局分层。文中的价值函数被明确为启发式判断框架，而不是可直接计算的严格目标函数。
+本轮 Review 收紧了本章的范围：它负责建立“为什么需要 AI System”的问题意识，不提前替代第 3 章的全局分层。文中的价值函数被明确为启发式判断框架，而不是可直接计算的严格目标函数。自检答案回填进一步区分了可运行 endpoint、可交付 capability release 与完整 AI System，并补充 Prompt、RAG 与 Fine-tuning 修改对象的最小边界，避免把 checkpoint、HTTP 可用性或某一种质量修正手段误当作完整系统。
 
 Primary-source 校验入口：
 

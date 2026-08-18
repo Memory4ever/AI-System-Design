@@ -175,6 +175,24 @@ MCP 可以承载 tool/resource connection，却不定义：
 
 这些仍由第 77～82 章的 runtime/workflow/platform 管理。协议互操作不等于行为互操作。
 
+## Tool Catalog 扩大后，Discovery 与 Execution 必须分离
+
+把所有 tool schemas 在会话开始时注入 Context，目录小且稳定时最简单；当一个 gateway 聚合数百个 servers、数千个 tools 后，它会同时消耗上下文、放大 selection noise，并让用户无法知道能力位于哪个 server。Prompt caching 只能减少重复 prefill，不能释放逻辑 context，也不能改善 discoverability。
+
+一种可扩展分支是只暴露 discovery 与 execution 两个 meta-tools：
+
+```text
+user-scoped catalog
+→ hybrid sparse/dense tool search
+→ return top-k schemas + server identity + provenance
+→ model proposes exact discovered tool
+→ gateway rechecks authorization and routes execution
+```
+
+Catalog/index owner 负责 schema version、refresh 与 deletion ordering；authorization filter 必须在 retrieval 前后都守住 tenant scope；executor 只接受 discovery 返回的精确 identity，不能让模型猜 tool/server 名。Search confidence 也不是授权，低 recall、描述质量差、index staleness 和 workflow-step confusion 都可能让正确工具缺席。
+
+全量注入在工具少、context 富余或 discovery 服务不可用时仍是清晰 fallback。Selective discovery 用额外检索 latency、index lifecycle、embedding dependency 与 observability 换 context 容量；生产 claim 必须绑定 catalog size、query set、top-k、latency 分布、fallback rate 与 client revisions，不能把单个企业目录的 token reduction 写成 MCP 协议常数。
+
 ## Observability
 
 Trace 应跨：

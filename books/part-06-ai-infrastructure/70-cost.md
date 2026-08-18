@@ -88,6 +88,22 @@ cost_per_good_request
 
 只看 output token 会忽略 Prefill；只看 request 会忽略长度。应同时保留 prompt/output lengths、cache hit、model/quantization、hardware、concurrency 与 SLO。
 
+### Agent 的持久化 Footprint 也是成本
+
+Agent memory、trajectory、tool artifact 与中间摘要把在线计算变成持续增长的存储状态。只计逻辑 bytes 会遗漏
+重复 embedding、索引、版本副本和原文回显；只追求压缩率又可能删除 provenance、schema 或重建所需的边界。
+因此成本账本至少要同时保存两组量：
+
+```text
+footprint = logical bytes + growth + duplication / echo + index overhead
+safety    = reconstructability + schema preservation + provenance coverage
+```
+
+第一组回答“留下多少、为何增长”，第二组回答“压缩或清理后能否恢复 authoritative state”。可重建的 derived
+artifact 可以用更激进的 TTL、压缩或重算策略；不可重建的用户输入、审批与外部 evidence 则要优先保留语义和
+审计契约。代价是 storage accounting 必须理解 artifact type，而不再只是统计 bucket bytes。具体 memory merge、
+遗忘与 provenance 语义由第 77 章拥有；本章只拥有资源成本与重建成本的联合核算。
+
 ## 利用率与有效利用率
 
 高 GPU utilization 可能来自：
@@ -172,6 +188,8 @@ Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、mod
 
 - Prefill Token Equivalents（trajectory state-cost proxy；Status: Experimental）:
   https://arxiv.org/abs/2604.05404
+- Persistent Agent Memory footprint / reconstructability audit（Status: Experimental）:
+  https://arxiv.org/abs/2607.11149v1
 
 本章复用第 56 章 goodput、第 63 章 allocation 和第 67～69 章 evidence，不编造硬件价格或通用 ROI 数字。
 

@@ -174,6 +174,31 @@ H_kv KV heads
 
 Output projection 再把 local head outputs 通过 row-parallel reduction 合回 residual stream。
 
+### Consumer 不需要完整 Tensor 时，只同步充分统计量
+
+常见实现会在 operator boundary 先 AllGather 完整 feature，再执行 normalization；这在 consumer 确实需要每个
+element 时语义清楚，也容易复用成熟 collective。但某些算子只依赖跨 shard 可加的统计量。以 hidden dimension
+分片的 RMS QK-Norm 为例，每个 rank 可以先计算本地平方和，只归约全局 scalar，再在本地 shard 上应用同一
+normalization factor：
+
+```text
+sharded Q / K
+→ local sum of squares
+→ scalar reduction across TP ranks
+→ local scale / weight application
+→ keep Q / K sharded for the next consumer
+```
+
+这里的演进不是“用小消息替代所有 AllGather”，而是先从 consumer semantics 推导最小 payload。若下一算子需要
+完整 tensor、统计量不可分解、通信 latency 由固定开销支配，或专用 persistent kernel 的 occupancy / peer-ordering
+风险超过收益，恢复完整视图仍更合理。Scalar reduction 还会把 synchronization 放进每层关键路径；为重叠本地
+elementwise work 而限制 resident blocks，又新增 topology、launch configuration 与 deadlock-safety contract。
+
+SwiftQK 在 RTX 3090 与 4/8×A100 NVLink、指定 OLMo/OLMoE 与 ShareGPT contract 上为这条 algebra-first
+communication 路线提供 `Status: Experimental` 的实现证据；它不证明跨 PCIe、跨厂商 GPU、任意 Norm axis 或
+任意 precision 都有相同收益。长期原则是：**TP collective 应恢复下游算子真正需要的数学信息，而不是习惯性
+恢复完整 tensor。**
+
 ## Forward 与 Backward 的 Collective
 
 TP communication 不只发生在 forward：
@@ -284,3 +309,5 @@ Primary-source / official documentation 校验入口：
 - Mohammad Shoeybi et al., "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism", 2019: https://arxiv.org/abs/1909.08053
 - Deepak Narayanan et al., "Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM", 2021: https://arxiv.org/abs/2104.04473
 - Megatron Core Parallelism Strategies Guide: https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/parallelism-guide.html
+- SwiftQK（QK-Norm sufficient-statistic communication；Status: Experimental）:
+  https://arxiv.org/abs/2608.09160

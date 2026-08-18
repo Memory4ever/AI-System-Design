@@ -99,6 +99,12 @@ untrusted proposer builds candidate off-commit
 
 这种组合既保留模型灵活性，又让业务不变量可测试。
 
+### 从一次性脚本到平台拥有的可编辑 DAG
+
+自由代码生成适合探索新算子与一次性任务，因为它不要求平台预先拥有完整 operator catalog；但当结果需要被复用、可视化、协作编辑与恢复时，script 不再是足够的状态载体。更稳健的演进是让平台拥有带版本的 canonical DAG，Agent 只提交 typed mutation，backend 在 commit 前验证 schema、引用与无环性，executor 再用 run evidence 验证语义结果，visual editor 与 chat 只呈现同一 graph identity。
+
+这条路线用 operator 生态约束换取可编辑性、审计与恢复；未知算子和短期探索仍可保留脚本分支。Skills 只是可更新的派生操作指南，既不拥有 DAG，也不能绕过平台验证。
+
 ### Template、Realized Graph 与 Trace 不是同一个对象
 
 固定 code-defined template 便于审查、复现和强 verifier，仍是稳定 workload 的默认；但输入、tool availability
@@ -152,6 +158,14 @@ versioned corpus and search / visit actions
 读取测试证据。Offline world 适合训练和回归，live shadow/canary 才拥有部署 promotion authority。DeepSearch-
 World 提供 Wikipedia search/visit 的实验性案例；ABot-AgentOS 的 split-gated evo-asset 则补充了 candidate 只能
 从后续 split 生效的治理边界。二者都不支持把离线 benchmark 结果外推为开放环境 Agent 能力。
+
+#### Learned Environment Transition 是可撤销分支，不是事实提交
+
+冻结的 deterministic offline world 适合回归，但构造每个昂贵 data-science operator 的精确 simulator 仍可能比执行本身更贵。一个条件分支是由 router 判断 transition 应真实执行还是由 learned model 预测：编译、轻量检查和高风险步骤继续走 authoritative environment；训练、搜索等昂贵步骤可以先产生 provisional next state。
+
+这改变了 workflow state 的类型。simulated result 必须标记 model/version、input state、uncertainty、expiry 与 validation obligation，只能进入可撤销 speculative branch；它不能直接覆盖 observed artifact、释放外部副作用或成为 release evidence。发生长链累积误差、rare transition、router uncertainty 或 distribution shift 时，必须回到真实 execution 并 reconcile。
+
+这种路线以 simulator approximation 换 execution cost，也引入 model exploitation、plausible-but-wrong feedback 和 training/inference coupling。真实环境便宜、transition 可缓存或 correctness 优先时，直接执行仍更合理。当前证据局限于 data-science benchmark，不证明 learned transition 等价于真实 compiler、training job 或外部系统。
 
 ### Clarification 与 Workflow-level Speculation 都是有损 Admission
 
@@ -368,6 +382,23 @@ goal and executable specification
 thick state` 的实验性工作流，不证明 unattended engineering 已具备 production correctness。目标难以机器判定、
 副作用不可逆或 evaluator 可被投机时，人工 milestone review 与更小的 deterministic workflow 仍必须保留。
 
+Repository 长期演进后，控制层还需要一份比 raw trace 更易消费、又不能冒充源码的 **behavior map / handbook**。
+它应由当前 source、tests、issues 与执行 evidence 派生，并绑定 repository revision；每次使用前回到 current source
+验证关键命题，编辑后再经过 build/test gate：
+
+```text
+raw repository exploration
+→ source-grounded behavior map
+→ revision-bound handbook
+→ current-source verification before use
+→ edit + executable test
+```
+
+Handbook 降低重复探索成本，却会因重构、隐式 runtime behavior 或错误摘要变成 stale derived state。它必须有
+provenance、invalidation、supersession 和 conflict handling，不能获得 canonical source authority。小仓库、一次性
+修改或文档更新成本高于重新检索时，直接读当前代码仍更可靠；涉及安全、migration 或外部 side effect 的变更，
+handbook 只能帮助定位，不能替代 source review 与 executable evidence。
+
 ### Reusable Scaffold 与 Fix 也是受治理的 Workflow Artifact
 
 一次性 free-form 生成适合小型 prototype；跨文件、资产、build 与 runtime state 的项目更需要稳定 scaffold、
@@ -393,6 +424,43 @@ false done，loop breaker 能逐级触发 modality switch、strategy change 或 
 15-step 等紧预算下，它们也可能挤占完成任务的动作。VLAA-GUI 支持的是“recovery utility 依赖 backbone 与预算”，
 不是 mandatory verifier 永远有益。Workflow 应记录 trigger、remaining budget、call cost、accepted evidence 与
 escalation outcome；已有 deterministic checker 或短任务时，简单单 loop 仍更可靠。
+
+### Context 与 Environment 必须在同一恢复点对齐
+
+只回滚对话 Context 会让模型相信旧文件、旧页面或旧资源仍存在；只恢复 workspace 会让模型继续携带失败分支
+形成的假设与观察。长任务的可恢复 checkpoint 因而不是一段 message history，也不是单独的 filesystem snapshot，
+而是决策边界上的联合状态：
+
+```text
+d_t = (agent context c_t, controlled environment state s_t)
+```
+
+最简单的 forward-only 修复在错误局部、后续 action 可补偿时仍合理。Restart + failure summary 清理污染状态，
+却丢弃已完成的可信前缀并重复 side effects。Aligned rewind 则选择旧 checkpoint，恢复 `c_t` 与 `s_t`，把失败
+分支压缩成 advisory rewind memory，再从同一前缀生成新 suffix：
+
+```text
+checkpoint metadata and failure evidence
+→ select a prior aligned boundary
+→ restore context and controlled environment atomically
+→ inject bounded memory of the failed branch
+→ execute a new suffix
+```
+
+Retained prefix 应从 event log 重放到内存，而不是重新执行 Tool，否则“恢复”会重复已提交副作用。Checkpoint
+metadata、context digest、environment snapshot、tool/event frontier 与 rewind memory source 必须绑定同一 generation；
+任一半恢复失败都不能把联合状态标成 ready。选择哪个 checkpoint 与如何总结失败可以由 Agent 提议，但恢复
+authority、可回滚边界、配额和最终 commit 仍由 Workflow Runtime 拥有。
+
+Filesystem snapshot 只能撤销其受控域。Network call、外部 service、进程、消息或付款等未纳入 snapshot 的副作用
+仍需 idempotency、compensation 与 reconciliation；把 Git snapshot 称为“事务回滚”会掩盖这一边界。Checkpoint
+过密还会增加 storage、候选选择和 stale-resource 成本，过疏则重复更多工作。不可逆 action、高风险 Tool 或无法
+冻结外部环境时，应在 action 前设置 approval/commit barrier，而不是事后依赖 rewind。
+
+AgentRewind 在 82 个有确定性检查项的工程任务、指定模型与 harness 上为联合恢复提供实验性证据；实验允许
+unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能证明开放网络、并发协作者和生产副作用已经
+具备 exactly-once recovery。长期结论是：**恢复必须对齐模型所见状态与 Runtime 的 authoritative state，Memory
+只保存失败证据，不能替代环境事务。**
 
 ## Durable Execution 与 Replay
 
@@ -559,6 +627,12 @@ Workflow 可能等待用户、webhook、job completion 或 resource availability
 
 ## Testing 与 Evaluation
 
+### Synthetic Environment 必须先证明可执行，再用于训练
+
+生成网页或业务环境若只有自然语言表面一致性，Agent 可能在不可能完成的 task、断裂链接或错误数据库状态上学习。可信的 synthetic workflow 应把页面、链接、记录、状态变更 marker 与 task constraint 表为同一 environment generation，并在训练前验证结构、语义、一致性和可行性；运行时只允许经验证的 marker 提交 durable state。
+
+这个流程用 environment build/repair 成本换更少的 invalid supervision。Verifier 自身仍可能共享生成器偏差，真实网站也会漂移；因此 synthetic transfer 必须与真实 canary、版本化 snapshot 和 failure replay 共存，不能把“已验证环境”理解成“已代表生产世界”。
+
 Workflow 可以确定性测试：
 
 - state transition legality；
@@ -637,6 +711,14 @@ Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 deci
 
 ## Review notes
 
+- Harness Engineering Handbook（revision-bound derived behavior map；Status: Experimental）:
+  https://arxiv.org/abs/2607.13285v1
+
+- Verified Synthetic Web Environments（pre-training feasibility and state-marker validation；Status: Experimental）: https://arxiv.org/abs/2608.21898
+
+- AgentRewind（aligned context/environment rewind；Status: Experimental；controlled-workspace boundary）:
+  https://arxiv.org/abs/2608.14380
+
 - ASI-Evolve（cold-start prior 与 run-derived lesson；Status: Experimental）: https://arxiv.org/abs/2603.29640
 
 本章负责 durable orchestration，不把特定 workflow framework 写成标准答案。它承接 Part VI 的 identity、trace、security、cost 和 recovery，并为 Multi-Agent 提供共享事实状态。
@@ -688,3 +770,7 @@ Primary-source 与设计入口：
   https://arxiv.org/abs/2607.07820
 - ABot-AgentOS（split-gated self-evolution assets；Status: Experimental）:
   https://arxiv.org/abs/2607.10350
+- DSWorld（selective learned transition 与 reversible workflow branch；Status: Experimental）:
+  https://arxiv.org/abs/2607.15901v1
+- DataFlow-Harness（canonical editable DAG 与 typed mutation；Status: Experimental；12 tasks / 120 author runs，不证明并发协作或持久恢复）:
+  https://arxiv.org/abs/2607.16617v1

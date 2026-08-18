@@ -82,6 +82,12 @@ retrieval program，并只并行 shard-independent transformations。它们都�
 
 Authorization 必须在返回内容前执行。先全局检索再让模型“忽略无权内容”，已经发生数据泄露。
 
+### Tenant Filter 必须在检索内核中前置执行
+
+在多租户向量检索中，先取全局 top-k 再按 ACL 丢弃结果，只在授权集合不稀疏时尚可接受；当 tenant 只拥有很小的 candidate partition，未授权向量会同时占用 score budget 与 top-k slot，over-fetch 也无法稳定恢复 recall。Tenant / ACL policy 应由可信控制面决定，并在 ANN kernel 的 candidate admission 之前执行；index 只消费不可伪造的 allowlist，不能自行解释用户身份。
+
+Kernel pre-filter 用执行耦合与可能的数据倾斜换回安全和 recall；per-tenant index 隔离更强，却增加内存、build 与 freshness 成本。Codebook-oblivious quantization 只能消除一种 corpus-trained codebook channel，不是 embedding privacy 证明；query、access pattern、compressed vector 与 calibration statistics 仍需第 71、72 章的隔离和 threat model。
+
 ## Retrieval 的基本度量
 
 Retrieval metric 必须与 Agent 实际 query distribution 对齐。面向自然问题训练的 dense retriever，未必适合 deep-research Agent 生成的短 entity、keyword 或逐步 subquery；更强 encoder 在接口分布错位时也可能输给 lexical baseline。评估应联合版本化 query generator、corpus/index、retriever/reranker、packing policy 与 context use，并分开报告 source recall、duplicate evidence、search/tool cost 和 final outcome。
@@ -295,6 +301,24 @@ judge 与 policy revisions。共享 harness 可以减少 distribution shift，�
 格式和 evaluator。Static top-k、外部 deterministic compressor、single-task expert 与 snapshot RAG 因而继续
 成立；联合 policy 只在多任务、长 horizon 且其额外 state/bias 可观测时值得采用。
 
+在资源受限设备上，compression 还必须把自身开销计入决策，而不是只比较压缩后的 generation tokens。固定压缩率
+最容易复现，但同一比例在短证据、长噪声文档和不同模型上会产生不同的 fidelity 与 energy 结果。一个可部署的
+controller 至少需要显式状态：
+
+```text
+query + retrieved evidence + source provenance
++ model / precision / device / power mode
+→ estimate compression cost and saved generation work
+→ choose retain / compress / bypass under a quality floor
+→ record realized latency, energy, fidelity and answer outcome
+```
+
+压缩器只能拥有 evidence transformation，不能拥有事实 authority；被删 span 的 provenance、可回取指针与
+compression revision 仍要保留。单设备、FP16、小模型与 single-query 实验能够说明“压缩本身可能吃掉收益”，却不
+足以训练通用 online controller，也不能外推量化模型、并发负载或不同 RAG corpus。输入很短、evidence 不可丢、
+压缩 overhead 大于预期 decode 节省时 bypass 仍是正确动作；因此 adaptive compression 的目标是 constrained
+net benefit，而不是把压缩率单向推高。
+
 集合型 research task 还暴露了普通 sufficiency gate 的盲区：找到一个正确答案，不等于找全目标集合。若问题要求列举所有满足条件的 entity，控制状态至少要区分：
 
 ```text
@@ -337,6 +361,19 @@ incremental rebuild、ACL/delete propagation 和 graph drift。Skill node 是 re
 
 ## RAG 不消除 Hallucination
 
+### 长文生成需要把检索、叙事状态与核验分开提交
+
+一次取回大量文档再自由生成全文，在短答案和低风险任务中路径最短；长文同时要求全局结构、跨段一致性和逐 claim grounding 时，单次 Context 很难既容纳所有证据又保持可审计。一个更稳健的分支是先冻结 outline，再让每个 section 只读取有界证据和 coherence memory，最后由独立 checker 产生返工而不是直接宣告可信：
+
+```text
+evidence inventory → versioned outline
+→ section-scoped retrieval + bounded coherence state
+→ atomic claims and citations
+→ independent check → accept | revise | abstain
+```
+
+这个分层用更多检索、NLI/attestation 误拒和 revision latency 换可定位的错误边界。Checker 只能证明其契约内的一致性，公开测试文本还可能已进入预训练语料；对新颖私有文档、法规判断或跨段隐含冲突，人工复核与 source-side authorization 仍不能省略。
+
 模型仍可能：
 
 - 未使用 evidence；
@@ -375,6 +412,8 @@ RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，�
 
 ## Review notes
 
+- RH-RAG（隐私约束长文的 outline/section/check 分层；Status: Experimental）: https://arxiv.org/abs/2608.01311
+
 - OmniRetrieval（heterogeneous source-native operators；Status: Experimental）: https://arxiv.org/abs/2605.29250
 - GrepSeek（programmable lexical retrieval；Status: Experimental）: https://arxiv.org/abs/2605.29307
 
@@ -401,3 +440,7 @@ Primary-source 入口：
   https://arxiv.org/abs/2607.19747
 - OpenSeeker（graph-grounded search training；Status: Experimental）: https://arxiv.org/abs/2603.15594
 - BubbleRAG（multi-anchor evidence subgraph；Status: Experimental）: https://arxiv.org/abs/2603.20309
+- Adaptive Compression for Edge-based RAG（net energy / fidelity contract；Status: Experimental）:
+  https://arxiv.org/abs/2608.19535
+- TurboVec（ANN kernel tenant pre-filter 与 codebook-oblivious quantization；Status: Experimental；不构成完整 embedding privacy 证明）:
+  https://arxiv.org/abs/2607.16973v1

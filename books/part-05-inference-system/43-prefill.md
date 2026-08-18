@@ -61,6 +61,12 @@ Sparse Prefill 不是一个统一机制。它至少可沿两个轴演进：固�
 
 跳层并未自动降低 peak KV capacity，也可能只减少部分 layer compute；动态 selection 则新增 scoring、compaction 与 irregular gather。完整 Prefill 在 prompt 短、实现简单性或 correctness-first 时继续成立。任何 sparse/skip plan 都必须分别报告 selection cost、KV materialization、TTFT、Decode quality 与 fallback，而不能只引用 attention FLOPs。
 
+当 proxy budget 继续收紧时，binary mask 不只表达“保留哪些 block”，还可以表达“先处理哪些 block”。
+按价值排序的候选让 kernel 先消费高置信页面，再利用 online-softmax 的运行统计决定是否跳过剩余 value work。
+这把 selection policy 与 kernel state 连接起来，收益来自二者协同，而不是静态稀疏率继续提高；代价是 mask
+order、page mapping 与 softmax state 都进入 execution identity。短上下文、selection overhead 占优或
+correctness contract 更严格时，dense Prefill 仍是正确分支。
+
 Dense FlashAttention 保留 exact full-attention semantics，通过 IO-aware tiling 避免物化完整 score matrix。
 当 context 继续增长，另一条实验性分支是只计算被认为重要的 query-key blocks。它改变的不只是 kernel，
 而是把 Prefill 拆成 discovery 与 execution 两段：
@@ -308,6 +314,8 @@ Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度�
 ## Review notes
 
 - HISA（hierarchical sparse index；Status: Experimental）: https://arxiv.org/abs/2603.28458
+- CoSA（ordered proxy mask 与 online-softmax kernel refinement；Status: Experimental）:
+  https://arxiv.org/abs/2607.25291v1
 
 本轮补齐 Prefill 的 tensor contract、FLOPs 边界、TTFT 分解、chunked prefill 与长 prompt interference。章节不再无条件称其 compute-bound，也不提前展开 KV 容量和 PD deployment。
 

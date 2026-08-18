@@ -1,465 +1,225 @@
 # Daily Research — 2026-08-07
 
-**Coverage Window:** 2026-08-05 09:05 ～ 2026-08-07 09:05（Asia/Shanghai）
-**Access Date:** 2026-08-07
-**Archive Clock:** Friday；仅生成 Daily，不生成 provisional `2026-W32`
-**Status:** Primary-source review complete；2 项 refine 现有章节，1 项完成章节级去重
+**Research Date:** 2026-08-07
+
+**Timezone:** Asia/Shanghai
+
+**Strict Window:** 2026-08-06 09:00:00 ～ 2026-08-07 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
+
+**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
 
 ## Executive Summary
 
-过去 48 小时没有发现模型公司官方 Research 中同时满足 event date、公开机制与长期 AI System
-增量的新发布。主要证据来自 2026-08-05 首次公开的 arXiv v1，以及 8 月 6 日的工程 Release：
-
-1. **AFD-Ledger** 补上了 A/F disaggregation 从局部机制到真实部署决策之间缺失的 accounting
-   layer。长期结论不是“异构 A/F 一定更快”，而是局部 acceleration 必须在相同 model、workload、
-   SLO、预算、catalog 与 runtime contract 下，通过 best-vs-best 的完整 provisioning；FFN-only
-   devices 还会带来 request-bearing-capacity tax。
-2. **The Loss Does Not See the Basis, but Adam Does** 说明相同函数与 loss 不保证 optimizer
-   trajectory 相同。对含 gauge symmetry 的 factored parameterization，coordinate-wise
-   preconditioning 可能选择任意 basis；optimizer 因而是 parameterization contract 的一部分，
-   不是可独立替换的标量旋钮。
-3. **Argus** 为 fixed-weight、persistent agent runtime 提供了新的系统案例，但它的 durable state、
-   bounded missions、review gate、rollback、event log 与 operator escalation 已被 Ch77 的 Workflow
-   control-plane 框架覆盖。本轮采用 `No Change — Already Covered`，不复制架构角色或 benchmark。
-4. **KServe v0.20.0** 与 **Dynamo v1.3.1** 作为工程版本事实保留。前者横跨 routing、KV tiering、
-   traffic splitting、tracing 与 rollout；后者修复并保留了特定 GB200/SGLang/NIXL/EFA failure
-   boundary。Release 不能代替各 PR、设计文档与代码路径，不直接写入 Books。
-
-三篇论文均为单篇 v1 preprint，Evidence Level 为 `Experimental`。正文只吸收长期机制、适用条件
-和反例边界，不吸收作者峰值 benchmark，也没有新增 Part、章节或 ROADMAP 节点。
-
-## 1. 模型与研究机构
-
-### Source Coverage
-
-按 `CODEX_DAILY_RESEARCH_PROMPT.md` 的固定顺序检查：
-
-- **OpenAI — No Material Update**
-- **Anthropic — No Material Update**
-- **Apple Machine Learning Research — No Material Update**
-- **Google DeepMind — No Material Update**
-- **Google Research — No Material Update**
-- **Meta AI / FAIR — No Material Update**
-- **Microsoft Research — No Material Update**
-- **NVIDIA Research — No Material Update**
-- **xAI News / Model Cards — No Material Update**
-- **Amazon Science / AGI — No Material Update**
-- **Cohere Labs — No Material Update**
-- **Ai2 — No Material Update**
-- **Mistral AI — No Material Update**
-- **Alibaba Qwen — No Material Update**
-- **DeepSeek — No Material Update**
-- **Moonshot AI / Kimi — No Material Update**
-- **Zhipu AI — No Material Update**
-- **MiniMax — No Material Update**
-- **ByteDance Seed / Research — No Material Update**
-- **Baidu ERNIE — No Material Update**
-- **Tencent Hunyuan — No Material Update**
-- **Huawei Noah's Ark Lab / Pangu — No Material Update**
-- **Shanghai AI Laboratory / InternLM — No Material Update**
-- **StepFun — No Material Update**
-- **Xiaomi MiMo — No Material Update**
-- **InclusionAI / Ant Group — No Material Update**
-- **Hugging Face Blog — No Material Update**
-
-搜索结果中的旧文章重收录、模型榜单、partner marketing 与缺少 technical report、model card、
-system card 或论文的功能 headline 均未进入候选。
-
-### Candidate Scoring
-
-本组无达到候选门槛的窗口内新事件。
-
-## 2. arXiv / 学术来源
-
-### Source Coverage
-
-按 primary-source 顺序检查 arXiv `cs.AI`、`cs.CL`、`cs.LG`、`cs.DC`、`cs.IR`、`stat.ML`，
-并按关键词扩展到 `cs.PF`、`cs.CR`、`cs.MA`；同时检查 OpenReview/TMLR、Hugging Face Daily
-Papers，并用 Google Scholar、Semantic Scholar、OpenAlex 与 DBLP 做 metadata、identifier、
-作者和 first-public date 的 discovery / cross-check。后四者不替代论文正文或 arXiv revision
-history。
-
-三项 Deep Analysis 均读取 arXiv HTML 的 metadata、Introduction/Background、Method、公式与系统
-结构、Implementation、Evaluation setup、baselines/ablation、limitations、Conclusion 及影响核心
-结论的 appendix。无法披露的 workload 字段标为 `Not Disclosed`，不从实验结果反推生产 contract。
-
-### Candidate Scoring
-
-评分维度依次为 Technical Novelty（TN）、System Impact（SI）、Practical Value（PV）、Source
-Reliability（SR）、Project Relevance（PR）、Longevity（L），每项 0～5。
-
-| Candidate | TN | SI | PV | SR | PR | L | Total | Evidence / Action |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| AFD-Ledger: A/F deployment provisioning | 5 | 5 | 5 | 4 | 5 | 5 | 29 | Experimental；Refine Ch51 |
-| Adam basis dependence | 5 | 5 | 4 | 4 | 5 | 5 | 28 | Experimental；Refine Ch24 |
-| Argus agentic runtime | 4 | 5 | 4 | 4 | 5 | 4 | 26 | Experimental；No Change Ch77 |
-| SafeCommit: memory-grounded action certification | 4 | 4 | 4 | 4 | 4 | 4 | 24 | Must Read；Weekly source-family |
-| CommBench: GPU communication code | 4 | 4 | 4 | 4 | 4 | 4 | 24 | Must Read；Weekly source-family |
-| Architectural implications of Agentic workflows | 4 | 4 | 3 | 4 | 4 | 4 | 23 | Watch；未完成全文 Source Packet |
-| Hierarchical Graph Memory | 4 | 4 | 3 | 4 | 4 | 4 | 23 | Watch；未完成全文 Source Packet |
-
-`SR=4` 表示可以直接访问作者 preprint 与 metadata，但尚未 peer review；它不是对结论真实性或
-production readiness 的满分背书。
-
-### Deep Analysis 1 — AFD-Ledger
-
-**Primary source:** arXiv:2608.04502v1，first public 2026-08-05。
-**Evidence Level:** Experimental / analytical planner + three bounded physical validations。
-**Knowledge Tree:** Ch51 PD/A/F disaggregation（owner）→ Ch52 scheduling → Ch59 placement。
-
-#### Why
+本日报严格覆盖 `2026-08-06 09:00:00` 至 `2026-08-07 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 502 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：2 个 Deep Review、2 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
-AFlex、HeteroPanacea 等工作可以展示 A/F pool 的局部 kernel、energy 或 simulator gain，却没有
-自动回答部署问题：在相同模型、流量、TPOT SLO、总设备预算和可选 hardware catalog 下，独立
-优化后的最佳 A/F plan 是否真的优于独立优化后的最佳 co-located plan。拿新架构对比一个固定而
-较弱的 baseline，会把 provisioning quality 误写成 architecture advantage。
+本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`AGENT-MULTI-AGENT` 中由《A Two-Tier Perspective on Inference-Time Parallelism in Multi-Agent LLM Systems》暴露的状态/证据边界；`INFER-SCHEDULING` 中由《Cascade: Exploiting SLO-Aware latency budget for fair and high goodput LLM inference serving》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
 
-#### Principle
+Books 判断在 Source Review 完成后执行。只有能够定位到当前 owner 具体命题的 family 才写 `No Change — Existing Coverage`；其余高分候选因证据仍是受限实验、诊断或早期系统实例而保留 `Weekly Only — Context`，不以高分自动追加书稿。
+
+## 1. Coverage
 
-局部机制必须经过 full-budget accounting 才能转化为 deployment gain：
+<!-- validator:report-metadata-v2 -->
+| Field | Value |
+| --- | --- |
+| Contract Version | V2.1 |
+| Score Schema | V2 |
+| Report Type | Daily |
+| Window Start | 2026-08-07 |
+| Window End | 2026-08-07 |
+| Registry Version | 2026-08-25 |
+| Coverage Mode | Full Replay |
+| Baseline Report | — |
+| Changed Source IDs | — |
+| Previous Denominator ID | — |
+| Denominator ID | daily-2026-08-07-0900-v2.1-replay-01 |
+| Denominator Frozen At | 2026-08-25T23:59:00+08:00 |
+| Completion Status | Complete |
+| Coverage Gate | Closed |
+| Evidence Gate | Passed |
+| Books Gate | Passed |
 
-```text
-best feasible disaggregated plan under contract Omega
-vs.
-best feasible co-located plan under the same contract Omega
-```
+### Source Coverage Receipt
 
-`Omega` 至少包含 model、workload、input/output contract、TPOT SLO、budget、hardware catalog 与
-runtime capability。A/F 分池还会产生 request-bearing-capacity tax：FFN-only device 不再保存
-完整 request/KV state，移除 expert memory 或扩大 batch 的收益必须先偿还 resident request
-capacity 的损失。
+<!-- validator:source-coverage-v2 -->
+| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
+| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
+| SRC-ARXIV | 2026-08-06T09:00:00+08:00 | 2026-08-07T09:00:00+08:00 | 2026-08-25T23:19:00+08:00 | https://export.arxiv.org/api/query; V2.1 replay | checked | 502 | SF-2026-ARXIV-2608-06434<br>SF-2026-ARXIV-2608-05738<br>SF-2026-ARXIV-2608-05791<br>SF-2026-ARXIV-2608-06557 | page count=7 snapshot files; final_cursor=end; daily-window total=502; deduplicated by arXiv ID; [archived manifest](../_sources/arxiv-v2.1-replay-20260801-24/README.md) | 2026-08-07T09:00:00+08:00 | coverage:SRC-ARXIV:20260807 | — |
 
-#### Mechanism
+<!-- coverage:SRC-ARXIV:20260807:start -->submittedDate query filtered to [2026-08-06T09:00:00+08:00, 2026-08-07T09:00:00+08:00); canonical snapshot-manifest sha256:4e6b4bd4e75a28b227c1ca674bae32e7fd08419d0da4c1702a091950d83b78d7 (rows sorted by basename as basename<TAB>sha256(file)<LF>); raw gzip snapshots, exact UTC queries and per-file hashes are archived at papers/2026/08/_sources/arxiv-v2.1-replay-20260801-24/README.md; 4 routed families.<!-- coverage:SRC-ARXIV:20260807:end -->
 
-AFD-Ledger 使用 role-specific analytical estimator 生成 hardware pair 候选，通过反馈 refinement
-减少需要完整求解的组合，再对候选执行 replica、parallelism、placement、queue 与 budget 的完整
-provisioning。搜索与最终计划被分开：前者减少 evaluation cost，后者才判断 SLO-feasible decode
-throughput。
+### Coverage Limitations
 
-论文分析 Qwen3-235B-A22B 与 DeepSeek-V3.2。披露的 workload table 包含 1K/4K input、多个
-TPOT SLO 与 32/48/64 GPU budgets；作者还在三组 LongCat 2.0 physical deployments 上检查
-architecture decision 和预测误差。作者报告的搜索减少比例、吞吐比与预测误差只属于这些
-model、hardware catalog、budget 与 SLO 组合，未写入 Books 的通用结论。
+- arXiv 采用 first-public `published` timestamp；跨分类条目按 ID 去重，revision 不伪装为新 family。
+- `docs/RESEARCH_SOURCES.md` 的固定来源注册表于 2026-08-25 生效；依据 Effective Date，不把 19 个机构源和 Hugging Face 反推为此前窗口的 Required Daily，也不伪造历史 `no_hit`。
+- 本次用户授权的历史 replay 以可枚举 arXiv 主分母为确定性 Coverage；原始分页、UTC query、SHA-256 与 daily 09:00 分桶保存在月级 snapshot manifest。
+- Hugging Face Daily Papers 属于 non-deterministic discovery backstop；历史日期页恢复失败不改变 arXiv v1 的 owner，也不参与 Coverage Gate 算术。
+- vLLM、SGLang、Dynamo、KServe、Kubernetes、DeepSpeed 等工程源由完整 Sunday Weekly 负责，不强塞进 Daily。
 
-#### Trade-off
+## 2. Candidate Ledger
 
-- Replica、worker ratio 与 device count 是离散变量，会形成 threshold 与 near tie；局部 gain 不会
-  平滑转化为部署 gain。
-- Analytical planner 依赖 profile accuracy 与有限 catalog；物理验证误差不是跨环境置信区间。
-- 论文只比较新建、saturated、steady-state decode service；installed-hardware reuse、elasticity、
-  failure isolation、tail behavior 与 catalog drift 不在证明范围。
-- 当方案差距小于模型误差时，应保留为 near tie，并由 replay、canary 与 telemetry 裁决。
+<!-- validator:candidate-ledger-v2.1 -->
+| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-06434 | arXiv:2608.06434v1 | paper-v1:2608.06434 | 2026-W32 | 2026-08-06 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-06434 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-05738 | arXiv:2608.05738v1 | paper-v1:2608.05738 | 2026-W32 | 2026-08-06 | SRC-ARXIV | 2 | 3 | 1 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-05738 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-05791 | arXiv:2608.05791v1 | paper-v1:2608.05791 | 2026-W32 | 2026-08-06 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2608-05791 | self | — | new_in_window | AGENT-MULTI-AGENT | Integrate | books-review:SF-2026-ARXIV-2608-05791 | yes |
+| SF-2026-ARXIV-2608-06557 | arXiv:2608.06557v1 | paper-v1:2608.06557 | 2026-W32 | 2026-08-07 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2608-06557 | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-ARXIV-2608-06557 | yes |
 
-#### Connection / Evolution
+## 3. Review Completion Receipt
 
-这是 Ch51 的 `Direct Refinement`：AFlex 提供有限平台实现，HeteroPanacea 提供更宽 architecture
-space 的 simulation，AFD-Ledger 则补充 fair provisioning/accounting。三者不是单向替代：
+<!-- validator:review-completion-v1 -->
+| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-06434 | RP-f7127fad8ad02aa8 | standard | arXiv:2608.06434v1 | SRC-ARXIV@arXiv:2608.06434v1 | https://arxiv.org/html/2608.06434v1#S3 (III Method) | https://arxiv.org/html/2608.06434v1#S4 (IV Experiments) | https://arxiv.org/html/2608.06434v1#S5 (V Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-06434 | complete |
+| SF-2026-ARXIV-2608-05738 | RP-ebb289857ec771fb | standard | arXiv:2608.05738v1 | SRC-ARXIV@arXiv:2608.05738v1 | https://arxiv.org/html/2608.05738v1#Sx3 (Method) | https://arxiv.org/html/2608.05738v1#Sx4 (Experiments) | https://arxiv.org/html/2608.05738v1#Sx5 (Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-05738 | complete |
+| SF-2026-ARXIV-2608-05791 | RP-3bb40368284dd536 | deep | arXiv:2608.05791v1 | SRC-ARXIV@arXiv:2608.05791v1 | https://arxiv.org/html/2608.05791v1#S3 (§§3.1–3.3: framework, replica parallelism and dependency-aware structural parallelism) | https://arxiv.org/html/2608.05791v1#S4.SS1 (§4.1 GAIA setup)<br>https://arxiv.org/html/2608.05791v1#S4.SS2 (§4.2 main results)<br>https://arxiv.org/html/2608.05791v1#S4.SS3 (§4.3 critical-path and ablation analysis) | https://arxiv.org/html/2608.05791v1#S4.SS4 (§4.4 regime, cost and generalization discussion)<br>https://arxiv.org/html/2608.05791v1#S4.SS5 (§4.5 Failure Analysis)<br>https://arxiv.org/html/2608.05791v1#A4 (Appendix D Sensitivity and Limitations) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-05791 | complete |
+| SF-2026-ARXIV-2608-06557 | RP-b41fa9bec33984a1 | deep | arXiv:2608.06557v1 | SRC-ARXIV@arXiv:2608.06557v1 | https://arxiv.org/html/2608.06557v1#S4 (§IV Cascade: latency estimator, dynamic budget tracking, feasible KV restoration and implementation) | https://arxiv.org/html/2608.06557v1#S5 (§V Evaluation: three-model production traces, goodput, SLO violations and fairness) | Not Disclosed — v1 has no standalone limitations or prediction-error sensitivity section; bounded counterevidence is https://arxiv.org/html/2608.06557v1#S5.SS2 (§V-B SLO violations), https://arxiv.org/html/2608.06557v1#S5.SS3 (§V-C heterogeneous-traffic fairness), https://arxiv.org/html/2608.06557v1#S5.SS4 (§V-D capacity/load sensitivity), and https://arxiv.org/html/2608.06557v1#S2.SS2 (§II-B PD-co-located and multi-tier-KV scope) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-06557 | complete |
 
-```text
-operator/pool local gain
-→ conditional execution-graph factorization
-→ same-contract best-vs-best provisioning
-→ physical replay / canary / telemetry
-```
+### Source Reviews
 
-Co-location、P/D 与 A/F/PDAF 仍分别在规模、interference、link、state ownership 和预算条件不同
-时成立。
+<!-- review:SF-2026-ARXIV-2608-06434:start -->
+#### Fast and Accurate: An Adaptive VLA Inference Framework through Environment-aware Model Selection
 
-### Deep Analysis 2 — The Loss Does Not See the Basis, but Adam Does
+<!-- claim:SF-2026-ARXIV-2608-06434:start -->《Fast and Accurate: An Adaptive VLA Inference Framework through Environment-aware Model Selection》把 `MULTIMODAL-EMBODIED-VLA` 的问题具体化为：既需长程规划又需高频闭环时，紧耦合限制模型替换并使 slow path 持续拖累频率。其机制是用 RL switching policy 根据实时环境反馈在完全解耦的大型 deliberative VLA 与轻量 reactive VLA 间选择，而非让 fast module 依赖 slow hidden representation；primary v1 的 evaluation 绑定为LIBERO simulation 与真实双臂 manipulation，比较 task success、effective action frequency 与完成时间，比较对象为紧耦合 dual-system VLA 端到端联合训练，fast controller 读取 slow intermediate state。<!-- claim:SF-2026-ARXIV-2608-06434:end -->
 
-**Primary source:** arXiv:2608.05136v1，first public 2026-08-05 17:56:26 UTC。
-**Evidence Level:** Experimental / theorem + matrix-sensing experiments + bounded Transformer probes。
-**Knowledge Tree:** Ch24 Pretraining（owner）→ Ch4 Learning → Ch26 LoRA/PEFT。
+证据支持的范围是：在作者 simulation/real-robot 配置中，环境感知 switching 以稀疏 slow invocation 保持接近 large baseline 的 success，并提高 action frequency；不支持的外推是：作者测得的 action frequency 对其他硬件/robot 成立、RL selector 不影响安全，或 success comparable 等于 failure tail 相同。旧方案仍有成立条件：任务动态低、单一模型满足频率或已有稳定 hierarchical controller 时，固定切换更易验证。新机制获得的收益与代价必须一起读取：解耦支持替换并稀疏调用 slow model，但新增 selector policy、跨模型 state handoff 和一致性验证。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：selector 误判、slow plan 过期、两系统动作语义不一致、反馈延迟、distribution shift 或 safety envelope 被绕过。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-#### Why
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 2 = **6/9**。
+- Score rationale：Design Delta：提供感知到动作的闭环状态的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：机制可复用，但证据仍依赖当前 workload。
+- Knowledge owner：`MULTIMODAL-EMBODIED-VLA`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-06434:end -->
 
-训练文档常把 optimizer 写成 loss 之后可独立选择的更新器。但对 `W=UV^T`，任意正交矩阵 `Q`
-都满足 `(UQ)(VQ)^T=UV^T`：两组参数表达相同函数和 loss。真正的问题是 optimizer 是否也把它们
-视为同一个表示，还是因 coordinate system 不同而选择不同 interpolant。
+<!-- review:SF-2026-ARXIV-2608-05738:start -->
+#### In-Context VLA: Endowing Vision-Language-Action Models with Language via In-Context Post-Training and Agentic Tool Use
 
-#### Principle
+<!-- claim:SF-2026-ARXIV-2608-05738:start -->《In-Context VLA: Endowing Vision-Language-Action Models with Language via In-Context Post-Training and Agentic Tool Use》把 `MULTIMODAL-EMBODIED-VLA` 的问题具体化为：free-form reasoning 既增加闭环 latency，又让 narration token 与 action objective 冲突。其机制是不让 VLA 生成 free-form CoT，而以结构化 perceptual context 只监督 action，并允许 policy 调用 detector、depth 与 VLM 工具主动获得 grounded language；primary v1 的 evaluation 绑定为RoboCasa-GR1、SimplerEnv、LIBERO 及八项真机 manipulation，在 matched configuration 下比较 CoT-based VLA，比较对象为behavior cloning 只读 static image/instruction，或在 action 前生成自由文本 CoT。<!-- claim:SF-2026-ARXIV-2608-05738:end -->
 
-只有对 gauge transformation 保持 equivariance 的 optimizer，才可能把 gradient flow 的某些
-pathwise / implicit-bias 性质迁移到不同 basis；这是必要而非充分条件。Coordinate-wise second-
-moment preconditioning 会在 basis rotation 后改变坐标统计，因此同一 `W` 和 loss 可以走出不同
-的 function-space trajectory。
+证据支持的范围是：作者 matched evaluation 与分析中，消费 grounded language 的 action-only 路径在所测任务上兼顾效率和成功率，而 free-form CoT 暴露 latency/objective conflict；不支持的外推是：所有语言推理都会伤害控制、工具 observation 总是可靠，或仿真/八任务结果证明开放环境安全。旧方案仍有成立条件：任务简单、instruction 充分且工具调用成本高时，直接 behavior cloning action chunk 最稳定。新机制获得的收益与代价必须一起读取：从生成语言改为消费 grounded language 可保留控制频率，但依赖工具 orchestration、schema 和 observation freshness。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：detector/depth/VLM 错误、tool latency、语言证据与当前 frame 失配、未见 paraphrase 或 action supervision 偏差。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-#### Mechanism
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 3 / Durability 1 = **6/9**。
+- Score rationale：Design Delta：提供感知到动作的闭环状态的一条受限机制/诊断分支；System Reach：会跨模型、runtime 与平台边界传播；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`MULTIMODAL-EMBODIED-VLA`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-05738:end -->
 
-论文给出 first-step defect、equivariant update 的结构刻画与 transfer theorem，并比较九种更新
-规则。作者把 Gradient Descent、momentum、shared-scalar Adam、Muon 与 Shampoo 归为满足相应
-equivariance 的规则，把 Adam、RMSProp、Adafactor 等 coordinate-wise 方法归为破坏该对称性的
-规则。实验使用 underdetermined matrix sensing、synthetic 与 hyperspectral data，另在 appendix
-提供 H100 replication 与 character language-model / Transformer twin probes。
+<!-- review:SF-2026-ARXIV-2608-05791:start -->
+#### A Two-Tier Perspective on Inference-Time Parallelism in Multi-Agent LLM Systems
 
-#### Trade-off
+<!-- claim:SF-2026-ARXIV-2608-05791:start -->论文把多 Agent 并行拆成 replica parallelism 与 workflow structural parallelism：前者复制独立样本，后者利用依赖图内并行。GAIA 范围实验显示两者受不同 critical path 限制；协作语义和工具副作用使它不能简化为增加并发数。<!-- claim:SF-2026-ARXIV-2608-05791:end -->
 
-- 所有方法都可能达到很低 train loss，而 planted recovery 或 held-out error 不同；loss equality
-  不是 trajectory equivalence。
-- Equivariance 不是 generalization 或 low-rank recovery 的充分条件；任务需要更强 regularization
-  或 per-coordinate adaptation 时，非 equivariant 方法仍可能更合适。
-- 理论核心针对 factored matrix sensing；stochastic minibatch interaction 尚未被完整刻画。
-- Transformer probes 不能证明 Adam 在一般 LLM Pretraining 中更差，也不能支持全局替换建议。
-
-#### Connection / Evolution
-
-Ch24 过去只说明 Adam state 与 schedule 会改变 trajectory。本次 refine 把 optimizer、
-parameterization、initialization、data order 与 schedule 合并为训练身份，并增加 symmetry-twin
-验证方法。它属于 `Principle Reuse`，不是把 matrix-sensing 结果外推到所有 Transformer。
+论文把多 Agent 并行拆成 replica parallelism 与 workflow structural parallelism：前者复制独立样本，后者利用依赖图内并行。GAIA 范围实验显示两者受不同 critical path 限制；协作语义和工具副作用使它不能简化为增加并发数。 把并行等同为复制更多独立样本，在任务可分且无共享副作用时最直接；一旦 Agent workflow 内部存在依赖边、工具状态和串行 critical path，replica parallelism 不能缩短单条轨迹。论文把控制点拆成跨样本 replica 与图内 structural parallelism，换取更精细的依赖调度；代价是通信、状态一致性和副作用协调，下一阶段压力是可恢复的 workflow state，而不只是更多并发。 该结论只在登记的模型、workload、硬件与 evaluation contract 内成立，不构成无条件替代。
 
-### Deep Analysis 3 — Argus
-
-**Primary source:** arXiv:2608.05144v1，first public 2026-08-05 17:58:58 UTC。
-**Evidence Level:** Experimental / multi-arena technical report / evolving logging contract。
-**Knowledge Tree:** Ch77 Workflow（owner candidate）→ Ch73 Memory → Ch62 Evaluation。
-
-#### Why
-
-Long-horizon Agent 不能依赖单次 context 完成工作，需要在多次 bounded missions 之间保留项目状态，
-在证据支持时继续，在 verifier 或 hidden constraint 暴露失败时回退或换路。问题本质是运行时如何
-拥有 accepted frontier，而不是如何延长一条 prompt。
-
-#### Principle
-
-Argus 把 model parameters `theta` 与 runtime state 分离。Manager 拥有 authority，Planner 生成有
-依赖关系的 bounded tasks，Engineer 产生 artifact，Reviewer 决定 candidate state 是否进入
-accepted frontier。Stage 只允许 hold、前进到相邻 stage 或 rollback；完整 event stream 与有界
-working checkpoint 分离，进展也不要求每个 transition 单调。
-
-#### Mechanism
-
-Shared workspace 持久化 knowledge、artifacts、backlog、budget、daemon 与 memory。Execution 产生
-candidate update，review gate 才 commit retained form。论文覆盖 software repair、GPU kernel、LM
-training、training speed、research assistant 与 data synthesis 等七个 arenas，并保留各自 native
-metric；它没有构造一个可以跨任务直接比较的统一 leaderboard。
-
-#### Trade-off
-
-- Reviewer 是 selective error-correction layer，不是 correctness oracle；false acceptance 会污染
-  accepted state，false rejection 会阻断探索。
-- 六个 paper projects 共用一个环境，campaign hours 存在重叠，review snapshots 由模型生成，
-  logging contract 也在演进。
-- 结果证明 bounded lifecycle、recovery 与 artifact production，不证明论文会被接受、产生科学
-  novelty、优于人类，或达到未测量的 zero-touch autonomy。
-- 成本比较缺少某些 baseline 的原始 per-wave traces，不能把 aggregate token ratio 泛化。
-
-#### Connection / Evolution
-
-Ch77 已经明确 Workflow 是 durable control plane，包含 authoritative event/state、deterministic
-spine、agentic nodes、retry/replay、approval/authority、evaluator-driven search 与 rollback。Argus
-提供了 `Explanatory Case`，但没有形成稳定机制缺口。因此 disposition 为 `No Change — Already
-Covered`，以免按角色名重复书稿。
-
-### Evidence Level
-
-- **官方事实**：论文 title、authors、v1 time 与 revision history 来自 arXiv metadata；工程版本
-  日期与 changed items 来自官方 GitHub Release。
-- **论文实验结论**：mechanism、evaluation contract、limitations 与 benchmark 均按作者正文记录，
-  只绑定披露条件。
-- **自己的推断**：Ch24/Ch51 ownership、Argus 去重、evolution relationship 与 Books disposition
-  是本仓库 integration judgment。
-- **不得推断**：不能把 matrix-sensing 结论写成 Adam 的通用失败，不能把 planner prediction
-  当 production guarantee，也不能从 Agent benchmark 反推内部模型能力或 deployment autonomy。
-
-## 3. AI Infra 与工程项目
-
-### Source Coverage
-
-按固定顺序检查 PyTorch、JAX、CUDA、Triton、vLLM、SGLang、NVIDIA Dynamo、TensorRT-LLM、
-Ray、KServe、Kubeflow、Kubernetes、Hugging Face Transformers、Hugging Face Accelerate、
-DeepSpeed、Megatron-LM、Unsloth、MLX、llama.cpp、ONNX Runtime 与 OpenXLA。
-
-| Candidate | TN | SI | PV | SR | PR | L | Total | Evidence / Action |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| KServe v0.20.0 | 3 | 4 | 5 | 5 | 5 | 3 | 25 | Version Fact；Weekly Source Family |
-| Dynamo v1.3.1 | 2 | 4 | 4 | 5 | 5 | 3 | 23 | Version Fact；Record Only |
-| DeepSpeed v0.19.4 | 2 | 3 | 4 | 5 | 4 | 2 | 20 | Version Fact；Record Only |
-| Kubernetes v1.37.0-rc.0 | 2 | 3 | 3 | 5 | 3 | 2 | 18 | Pre-release；Ignored |
-
-- **KServe v0.20.0** 的 Release 同时包含 model-based routing gates/status、KV cache CPU/secondary
-  filesystem tiers、traffic splitting/group readiness、distributed tracing API、Managed DRA、
-  canary rollout、llm-d/Gateway upgrades 与多项 correctness fixes。它证明版本表面与 integration
-  direction，不证明这些能力已经形成一个统一、稳定、跨 runtime 的 serving contract。W32 将按
-  source family 阅读相关 PR、API types、controller path、migration 与 E2E evidence 后再决定 Books。
-- **Dynamo v1.3.1** 修复 GB200 上 SGLang disaggregated serving 通过 AWS EFA 时的 KV-transfer
-  stall，并固定 NIXL 1.3.2、EFA Installer 1.49.0。Release 同时保留 intermittent silent stall 与
-  GPU/EFA PCIe-topology mismatch 等 known issues，说明 data-path health 不能替代 request completion
-  与 topology-aware allocation。该结论已被 Ch51 的 handoff correctness/failure boundary 覆盖，
-  不追加版本事实。
-- **DeepSpeed v0.19.4** 的 AutoTP/ZeRO-3 inference、scheduler validation 与 MoE 修复属于 patch
-  facts，尚未形成新长期机制。
-- 其余项目未发现窗口内改变 correctness、state ownership、failure semantics 或 SLO contract 的
-  正式 Release/RFC。Nightly、rolling build、dependency bump 与未合并 PR 不进入 Books。
-
-## Knowledge Tree Position
-
-| Candidate | Primary Owner | Target and adjacent chapters read | Books decision |
-| --- | --- | --- | --- |
-| AFD-Ledger | Ch51 PD 分离 | Ch50～52；核对 Ch59 placement boundary | Refine — Existing Argument |
-| Adam basis dependence | Ch24 Pretraining | Ch23～25；核对 Ch4/Ch26 boundary | Integrate — New Mechanism |
-| Argus | Ch77 Workflow | Ch76～78；核对 Ch62/Ch73 boundary | No Change — Already Covered |
-| KServe v0.20.0 | Ch58 KServe，待 W32 Source Packet | Ch52、Ch57～59 | Weekly Only — Version Fact |
-| Dynamo v1.3.1 | Ch48 Dynamo / Ch51 handoff | Ch47～52 | No Change — Already Covered |
-
-没有新增 ROADMAP node、Part 或章节。每项知识只有一个主 owner；Release 中跨多个 subsystem 的
-能力不会被压缩成一个未经验证的通用设计结论。
-
-## Recommended Action
-
-- 已 refine Ch51：加入同 contract、best-vs-best 的 full provisioning、request-bearing-capacity tax、
-  near-tie 与 physical validation boundary。
-- 已 refine Ch24：加入 optimizer/parameterization symmetry contract、coordinate-wise basis
-  dependence 与 symmetry-twin engineering check。
-- Argus 作为 Ch77 的 chapter-level dedup evidence 保留，不复制 Manager/Planner/Engineer/Reviewer
-  taxonomy 或作者 benchmark。
-- KServe v0.20.0 已在 2026-08-13 完成 official release boundary review；多个 change families 只作为
-  Version Fact，不推断默认行为或 production correctness。
-- SafeCommit、CommBench 与 Hierarchical Graph Memory 已完成全文 Source Packet；分别为 Ch68 refine
-  candidate、Ch62 No Change、Ch73 refine candidate，均未写 Books。
-
-## Books Integration
-
-### Absorbed
-
-- `books/part-03-training-system/24-pretraining.md`：补充 optimizer 与 parameterization 联合决定
-  trajectory、gauge equivariance、适用边界与 symmetry-twin 验证。
-- `books/part-04-inference-system/51-pd-disaggregation.md`：补充局部 A/F gain 到完整 deployment
-  provisioning 的 accounting layer、request-bearing-capacity tax 与 near-tie handling。
-- `docs/LEARNING_STATE.md`：同步两项稳定认知与 Experimental evidence boundary。
-
-### Not Absorbed
-
-- **Argus**：Ch77 已有 durable state、bounded workflow、review gate、event log、retry/replay、
-  authority 与 rollback；新增案例不足以改变设计结论。
-- **KServe v0.20.0**：official signed release、tag commit 与 linked change list 已核验；一个 Release
-  汇集多条独立机制，因此仍只记录 Version Fact，不把功能表变成统一架构结论。
-- **Dynamo v1.3.1**：修复和 known issues 是重要版本/兼容性事实，但 Ch51 已覆盖 handoff completion、
-  network topology 与 failure semantics，不把 version matrix 写入长期正文。
-- **SafeCommit / CommBench / HiGram**：2026-08-13 已完成全文 Source Packet；作者 controlled simulator、
-  benchmark hardware 与 memory benchmark 仍是受限证据，Historical Books Gate 关闭。
-
-## Ignored Noise
-
-- 模型榜单、community challenge、partner marketing 与缺少 primary technical evidence 的 headline。
-- arXiv recent 中仅增加 benchmark、缺少机制或与 AI System Design 关联弱的条目。
-- 缺少 model、hardware、precision、input/output、batch、concurrency 与 SLO contract 的性能宣传。
-- GitHub nightly、dependency bump、rolling build、未合并 PR、未来 roadmap 与搜索引擎重收录。
-- Kubernetes release candidate 与普通 patch 未被描述成稳定生产能力。
-
-## Repository Changes
-
-- 新增 `papers/2026/08/07/README.md`。
-- Refine Ch24、Ch51，并同步 `docs/LEARNING_STATE.md`。
-- 未修改 ROADMAP 或 `docs/DECISIONS.md`；未生成 provisional `2026-W32`。
-- 运行前已有 Books、ADR、Learning State、interview 与 8 月 4～6 日 Daily 修改均保留；未执行
-  stage、unstage、commit、push、reset、checkout 或 clean。
-
-## Recovery Addendum — 2026-08-13
-
-- SafeCommit：plausible-world conformal support、all-world safety certificate、probe/fallback 与 controlled
-  benchmark 已核验；主 owner Ch68，Experimental。
-- CommBench：100+ communication tasks、compile/correctness/performance harness 与 B300/GH200/MI325X
-  contracts 已核验；Ch62 已覆盖，No Change。
-- HiGram：hierarchical graph、path localization、coordinated rewrite、LoCoMo/MemConflict 与 provenance/
-  concurrency 缺口已核验；主 owner Ch73，Experimental。
-- KServe v0.20.0：release `1fb7810` 的版本边界已核验；Weekly Only。
-
-## Open Questions
-
-1. AFD-Ledger 的 planner 在 bursty arrivals、prefix cache、tail SLO、elastic scaling 与 failure
-   recovery 下是否仍能保持 architecture decision stability？
-2. Request-bearing-capacity tax 怎样与 installed-hardware reuse、mixed tenancy 和 power cap 一起计量？
-3. Gauge equivariance 与 stochastic minibatch、distributed sharding、mixed precision 以及 real LLM
-   factorized modules 的交互是什么？
-4. Symmetry-twin divergence 应用 function distance、held-out quality 还是 optimizer-state distance 作为
-   deployment-relevant signal？
-5. Argus 的 Reviewer false-accept/false-reject operating point、state supersession 与 delete/rollback
-   contract 如何独立评估？
-6. KServe v0.20.0 的 routing gate、KV tiering、traffic split 与 readiness condition 在 rollback、
-   migration 和 multi-controller failure 时分别由谁拥有？
-7. Dynamo 的 silent EFA stall 如何在 HTTP success、zero-token completion 与 backend telemetry 之间
-   建立端到端 completion invariant？
-
-## Sources
-
-访问日期均为 2026-08-07；论文日期为 arXiv first-public date，Release 日期为官方页面日期。
-
-### Model and Institution Sources
-
-- OpenAI Research: https://openai.com/research/
-- Anthropic Research: https://www.anthropic.com/research
-- Apple Machine Learning Research: https://machinelearning.apple.com/
-- Google DeepMind: https://deepmind.google/blog/
-- Google Research: https://research.google/blog/
-- Meta AI: https://ai.meta.com/blog/
-- Microsoft Research: https://www.microsoft.com/en-us/research/blog/
-- NVIDIA Research: https://research.nvidia.com/
-- xAI News: https://x.ai/news
-- Amazon Science: https://www.amazon.science/
-- Cohere Labs: https://cohere.com/research
-- Ai2 Papers: https://allenai.org/papers
-- Mistral AI Research: https://mistral.ai/research
-- Alibaba Qwen: https://qwenlm.github.io/
-- DeepSeek: https://api-docs.deepseek.com/news/
-- Moonshot AI / Kimi: https://www.kimi.com/
-- Zhipu AI: https://www.zhipuai.cn/
-- MiniMax: https://www.minimaxi.com/news
-- ByteDance Seed: https://seed.bytedance.com/
-- Baidu ERNIE: https://ernie.baidu.com/blog/zh/publication/
-- Tencent Hunyuan: https://github.com/Tencent-Hunyuan
-- Huawei Noah's Ark Lab: https://noahlab.com.hk/
-- Shanghai AI Laboratory: https://www.shlab.org.cn/
-- StepFun Research: https://www.stepfun.com/research
-- Xiaomi MiMo: https://mimo.xiaomi.com/
-- InclusionAI: https://www.inclusion-ai.org/publication/
-- Hugging Face Blog: https://huggingface.co/blog
-
-### Academic Sources
-
-- AFD-Ledger metadata（2026-08-05）: https://arxiv.org/abs/2608.04502
-- AFD-Ledger full HTML: https://arxiv.org/html/2608.04502
-- Adam basis dependence metadata（2026-08-05）: https://arxiv.org/abs/2608.05136
-- Adam basis dependence full HTML: https://arxiv.org/html/2608.05136
-- Argus metadata（2026-08-05）: https://arxiv.org/abs/2608.05144
-- Argus full HTML: https://arxiv.org/html/2608.05144
-- SafeCommit metadata: https://arxiv.org/abs/2608.04289
-- CommBench metadata: https://arxiv.org/abs/2608.04450
-- Architectural Implications of Agentic AI Workflows metadata: https://arxiv.org/abs/2608.04458
-- Hierarchical Graph Memory metadata: https://arxiv.org/abs/2608.05095
-- arXiv cs.AI recent: https://arxiv.org/list/cs.AI/recent
-- arXiv cs.CL recent: https://arxiv.org/list/cs.CL/recent
-- arXiv cs.LG recent: https://arxiv.org/list/cs.LG/recent
-- arXiv cs.DC recent: https://arxiv.org/list/cs.DC/recent
-- arXiv cs.IR recent: https://arxiv.org/list/cs.IR/recent
-- arXiv stat.ML recent: https://arxiv.org/list/stat.ML/recent
-- OpenReview: https://openreview.net/
-- TMLR submissions: https://openreview.net/submissions?venue=TMLR
-- Hugging Face Daily Papers: https://huggingface.co/papers
-- Google Scholar: https://scholar.google.com/
-- Semantic Scholar: https://www.semanticscholar.org/
-- OpenAlex: https://openalex.org/
-- DBLP: https://dblp.org/
-
-### Engineering Sources
-
-- PyTorch Releases: https://github.com/pytorch/pytorch/releases
-- JAX Releases: https://github.com/jax-ml/jax/releases
-- CUDA Toolkit Release Notes: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
-- Triton Releases: https://github.com/triton-lang/triton/releases
-- vLLM Releases: https://github.com/vllm-project/vllm/releases
-- SGLang Releases: https://github.com/sgl-project/sglang/releases
-- Dynamo v1.3.1（2026-08-06）: https://github.com/ai-dynamo/dynamo/releases/tag/v1.3.1
-- TensorRT-LLM Releases: https://github.com/NVIDIA/TensorRT-LLM/releases
-- Ray Releases: https://github.com/ray-project/ray/releases
-- KServe v0.20.0（2026-08-06）: https://github.com/kserve/kserve/releases/tag/v0.20.0
-- Kubeflow Releases: https://github.com/kubeflow/community-distribution/releases
-- Kubernetes Releases: https://github.com/kubernetes/kubernetes/releases
-- Hugging Face Transformers Releases: https://github.com/huggingface/transformers/releases
-- Hugging Face Accelerate Releases: https://github.com/huggingface/accelerate/releases
-- DeepSpeed Releases: https://github.com/deepspeedai/DeepSpeed/releases
-- Megatron-LM Releases: https://github.com/NVIDIA/Megatron-LM/releases
-- Unsloth Releases: https://github.com/unslothai/unsloth/releases
-- MLX Releases: https://github.com/ml-explore/mlx/releases
-- llama.cpp Releases: https://github.com/ggml-org/llama.cpp/releases
-- ONNX Runtime Releases: https://github.com/microsoft/onnxruntime/releases
-- OpenXLA Releases: https://github.com/openxla/xla/releases
+- Evidence Level：primary paper v1；Review Route：`deep`。
+- Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
+- Score rationale：Design Delta：改变了共享状态与协作拓扑的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以并行收益、通信与共识为长期设计约束。
+- Knowledge owner：`AGENT-MULTI-AGENT`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-05791:end -->
+
+<!-- review:SF-2026-ARXIV-2608-06557:start -->
+#### Cascade: Exploiting SLO-Aware latency budget for fair and high goodput LLM inference serving
+
+<!-- claim:SF-2026-ARXIV-2608-06557:start -->Cascade 将 deadline 减去预测剩余服务时间定义为 per-request latency budget，并让调度顺序与 KV restore/prefetch/retain/recompute 共用这一控制量。三模型 production trace 支持作者范围内的 goodput/SLO 结论；服务时间预测误差、深层存储拥塞和跨租户公平性仍会改变收益。<!-- claim:SF-2026-ARXIV-2608-06557:end -->
+
+Cascade 将 deadline 减去预测剩余服务时间定义为 per-request latency budget，并让调度顺序与 KV restore/prefetch/retain/recompute 共用这一控制量。三模型 production trace 支持作者范围内的 goodput/SLO 结论；服务时间预测误差、深层存储拥塞和跨租户公平性仍会改变收益。 按到达顺序或固定优先级调度，并将 KV 分层动作视为独立策略，在负载稳定且 SLO 宽松时简单；当请求 deadline、剩余服务时间和 restore/prefetch 共同决定可行性时，Cascade 以 latency budget 统一排序与 KV 决策。它以预测器和跨层调度复杂度换 goodput/fairness，预测误差、存储拥塞和租户公平仍会造成尾延迟。 该结论只在登记的模型、workload、硬件与 evaluation contract 内成立，不构成无条件替代。
+
+- Evidence Level：primary paper v1；Review Route：`deep`。
+- Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
+- Score rationale：Design Delta：改变了请求调度与资源所有权的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以goodput、公平性与 SLO为长期设计约束。
+- Knowledge owner：`INFER-SCHEDULING`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-06557:end -->
+
+## 4. Benchmark Contracts
+
+Deep Review 会核对作者 evaluation，但本日报不抽离复述性能数字。为避免用 `Benchmark Claim = no` 规避条件账本，所有使用作者实验范围支撑证据边界的 Deep family 均登记完整字段；只有 source v1 未披露的字段才能写带原因的 `Not Disclosed`。若只是本报告尚未提取或复算，该 family 必须保持 review incomplete 且 Evidence Gate Open。
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-05791 | GAIA Level 1–3 multi-agent workflows with stratified repeats | Qwen-Plus; cross-backbone validation is a separate appendix scope | 4× Intel Xeon Platinum 8352V CPUs at 2.10GHz | Not Required — remote model API; local numeric precision is not part of the evaluation contract | task-dependent GAIA prompt and tool context | task-dependent answer/trajectory; normalized output length Not Disclosed | default replica count n=3 with Top-K judge selection k=2 | Python asynchronous workflow execution; exact simultaneous task count Not Disclosed | GAIA task outcome, token consumption and critical-path latency | GAIA official evaluator; Magentic-One baseline; §4.1–4.5, Tables 1–2 and Appendix A.3/D |
+| SF-2026-ARXIV-2608-06557 | two-hour ChatBot, Tool&Agent, Coder, Reasoning and mixed production-trace serving across ten trace mixes | Qwen-2.5-72B, Llama-3-70B and Llama-3-405B; TP=4 | NVIDIA GB200 NVL72 profiles; 9 Qwen-2.5-72B, 6 Llama-3-70B and 12 Llama-3-405B instances in the default mixed cluster | NVFP4 model weights and FP8 KV cache | Table II p50/p95/p99 input tokens: 574–4,540 / 2,491–16,221 / 6,294–24,972 by base class; mixed p50/p95/p99=886/10,749/13,792 | Table II p50/p95/p99 output tokens: 39–1,665 / 328–12,669 / 1,006–34,686 by base class; mixed=86/1,478/4,812 | chunked-prefill chunk size 512; maximum batch size 128 | trace arrival rates 1.5–37.46 QPS; runtime concurrency emerges from arrivals and batching | p90 TTFT≤10× isolated and p90 TPOT≤5× isolated; Table III absolute TTFT/TPOT targets are model/class-specific | vLLM-v1/Vidur trace replay; FCFS, EDF, SJF and E2 baselines; goodput and SLO violation |
+
+## 5. Deep Analysis Selection
+
+<!-- validator:deep-analysis-selection-v1 -->
+| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
+| --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-06557 | score_7_9<br>potential_books_delta | selected | DA-20260807-2608-06557 | — | 逐 family 排序：override=none，V2=9/9 (3/3/3)；保留独立机制、证据边界与 Books Decision；pre-Books delta=static priority becomes consumable, exhaustible and auditable SLO slack | analysis:DA-20260807-2608-06557 |
+| SF-2026-ARXIV-2608-05791 | score_7_9<br>potential_books_delta | selected | DA-20260807-2608-05791 | — | 逐 family 排序：override=none，V2=9/9 (3/3/3)；保留独立机制、证据边界与 Books Decision；pre-Books delta=replica and structural parallelism impose different multi-Agent state-decomposition contracts | analysis:DA-20260807-2608-05791 |
+
+<!-- analysis:DA-20260807-2608-06557:start -->
+### Cascade: Exploiting SLO-Aware latency budget for fair and high goodput LLM inference serving
+
+Cascade 将 deadline 减去预测剩余服务时间定义为 per-request latency budget，并让调度顺序与 KV restore/prefetch/retain/recompute 共用这一控制量。三模型 production trace 支持作者范围内的 goodput/SLO 结论；服务时间预测误差、深层存储拥塞和跨租户公平性仍会改变收益。 按到达顺序或固定优先级调度，并将 KV 分层动作视为独立策略，在负载稳定且 SLO 宽松时简单；当请求 deadline、剩余服务时间和 restore/prefetch 共同决定可行性时，Cascade 以 latency budget 统一排序与 KV 决策。它以预测器和跨层调度复杂度换 goodput/fairness，预测误差、存储拥塞和租户公平仍会造成尾延迟。
+
+<!-- analysis:DA-20260807-2608-06557:end -->
+
+<!-- analysis:DA-20260807-2608-05791:start -->
+### A Two-Tier Perspective on Inference-Time Parallelism in Multi-Agent LLM Systems
+
+论文把多 Agent 并行拆成 replica parallelism 与 workflow structural parallelism：前者复制独立样本，后者利用依赖图内并行。GAIA 范围实验显示两者受不同 critical path 限制；协作语义和工具副作用使它不能简化为增加并发数。 把并行等同为复制更多独立样本，在任务可分且无共享副作用时最直接；一旦 Agent workflow 内部存在依赖边、工具状态和串行 critical path，replica parallelism 不能缩短单条轨迹。论文把控制点拆成跨样本 replica 与图内 structural parallelism，换取更精细的依赖调度；代价是通信、状态一致性和副作用协调，下一阶段压力是可恢复的 workflow state，而不只是更多并发。
+
+<!-- analysis:DA-20260807-2608-05791:end -->
+
+## 6. Books Comparison
+
+<!-- validator:books-comparison-v1 -->
+| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-05791 | AGENT-MULTI-AGENT | books/part-07-agent/82-multi-agent.md#L14<br>books/part-07-agent/82-multi-agent.md#L388 | books/part-07-agent/81-workflow.md#L14<br>books/part-07-agent/84-agent-platform.md#L14 | existing:SF-2026-ARXIV-2608-05791 | delta:SF-2026-ARXIV-2608-05791 | Alternative Branch | Integrate | books-review:SF-2026-ARXIV-2608-05791 |
+| SF-2026-ARXIV-2608-06557 | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#L14<br>books/part-05-inference-system/56-inference-scheduling.md#L335 | books/part-05-inference-system/46-continuous-batching.md#L14<br>books/part-05-inference-system/54-gpu-memory.md#L14 | existing:SF-2026-ARXIV-2608-06557 | delta:SF-2026-ARXIV-2608-06557 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2608-06557 |
+
+<!-- books-review:SF-2026-ARXIV-2608-05791:start --><!-- existing:SF-2026-ARXIV-2608-05791:start -->现有中心命题：Multi-Agent 是责任、状态和通信的系统分解，不是角色提示词的数量。只有任务可分解、接口可验证或观察真正独立时，多 Agent 才可能超过单 Agent + Workflow。<!-- existing:SF-2026-ARXIV-2608-05791:end --><!-- delta:SF-2026-ARXIV-2608-05791:start -->论文把多 Agent 并行拆成 replica parallelism 与 workflow structural parallelism：前者复制独立样本，后者利用依赖图内并行。GAIA 范围实验显示两者受不同 critical path 限制；协作语义和工具副作用使它不能简化为增加并发数。<!-- delta:SF-2026-ARXIV-2608-05791:end -->与上述中心命题相比，这个 family 的新增证据是：论文把多 Agent 并行拆成 replica parallelism 与 workflow structural parallelism：前者复制独立样本，后者利用依赖图内并行。GAIA 范围实验显示两者受不同 critical path 限制；协作语义和工具副作用使它不能简化为增加并发数。 该 delta 已落在《第82章 Multi-Agent》的正文机制锚点；语义相邻边界为 AGENT-WORKFLOW：Workflow 是 Agent 的 durable control plane。它持久化状态和事件，强制 policy、budget、retry、approval 与 compensation；模型在被授权的节点内提出内容或分支，不拥有整个流程的事实状态。；AGENT-PLATFORM：Agent Platform 是 AI Platform 对有状态行动循环的扩展。它统一 Agent definition、run、context、memory、tools、workflow、evaluation 与 policy，但复用 Part VI 的 identity、resource、evidence、cost、tenancy、security 和 recovery substrate。。相邻章节不接管该机制，正文也不继承作者 benchmark headline，只保留适用条件、代价和未证明边界。<!-- books-review:SF-2026-ARXIV-2608-05791:end -->
+
+<!-- books-review:SF-2026-ARXIV-2608-06557:start --><!-- existing:SF-2026-ARXIV-2608-06557:start -->现有中心命题：推理调度不是单一优先队列，而是一组跨时间尺度的决策：admission 决定是否承诺服务，iteration scheduling 决定下一轮 token work，routing/placement 决定计算与 KV 在哪里，autoscaling 决定未来 capacity。<!-- existing:SF-2026-ARXIV-2608-06557:end --><!-- delta:SF-2026-ARXIV-2608-06557:start -->Cascade 将 deadline 减去预测剩余服务时间定义为 per-request latency budget，并让调度顺序与 KV restore/prefetch/retain/recompute 共用这一控制量。三模型 production trace 支持作者范围内的 goodput/SLO 结论；服务时间预测误差、深层存储拥塞和跨租户公平性仍会改变收益。<!-- delta:SF-2026-ARXIV-2608-06557:end -->与上述中心命题相比，这个 family 的新增证据是：Cascade 将 deadline 减去预测剩余服务时间定义为 per-request latency budget，并让调度顺序与 KV restore/prefetch/retain/recompute 共用这一控制量。三模型 production trace 支持作者范围内的 goodput/SLO 结论；服务时间预测误差、深层存储拥塞和跨租户公平性仍会改变收益。 该 delta 已落在《第56章 推理调度》的正文机制锚点；语义相邻边界为 INFER-CONTINUOUS-BATCHING：LLM Serving 的 batch 不是一个静态数组，而是一个会在每个 iteration 重新构造的 token-work 集合。；INFER-GPU-MEMORY：GPU inference capacity 不是“权重能否装入”的二元问题，而是 weights、resident KV、workspace、communication、fragmentation 和 safety reserve 对同一 HBM budget 的动态竞争。。相邻章节不接管该机制，正文也不继承作者 benchmark headline，只保留适用条件、代价和未证明边界。<!-- books-review:SF-2026-ARXIV-2608-06557:end -->
+
+## 7. Semantic Audit
+
+<!-- validator:semantic-audit-v1 -->
+| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| SA-20260807-COVERAGE | fresh-context:final-contract-review | coverage | coverage:SRC-ARXIV:20260807; semantic-review:SA-20260807-COVERAGE | none | Verified — archived arXiv daily hits, Effective Date applicability, denominator and receipt match | passed |
+| SA-20260807-EVIDENCE | fresh-context:final-contract-review | evidence | validator:review-completion-v1; review:SF-2026-ARXIV-2608-06434; review:SF-2026-ARXIV-2608-05738; review:SF-2026-ARXIV-2608-05791; review:SF-2026-ARXIV-2608-06557; semantic-review:SA-20260807-EVIDENCE | none | fresh-context reviewer 已核验版本身份、route-matched locator、claim boundary、benchmark contract 与 Evidence 状态 | passed |
+| SA-20260807-SELECTION | fresh-context:final-contract-review | deep_analysis_selection | analysis:DA-20260807-2608-05791; analysis:DA-20260807-2608-06557; semantic-review:SA-20260807-SELECTION | none | Verified — evidence-stage potential delta, narrative selection and at-most-three selected units | passed |
+| SA-20260807-BOOKS | fresh-context:final-contract-review | books | validator:books-comparison-v1; books-review:SF-2026-ARXIV-2608-05791; books-review:SF-2026-ARXIV-2608-06557; review:SF-2026-ARXIV-2608-06434; review:SF-2026-ARXIV-2608-05738; semantic-review:SA-20260807-BOOKS | none | Verified — durable body anchors, semantic adjacency, evolution relation and every Weekly Only review ref | passed |
+
+<!-- semantic-review:SA-20260807-COVERAGE:start -->Fresh-context reviewer verified Effective Date applicability, archived arXiv daily hits and frozen denominator closure.<!-- semantic-review:SA-20260807-COVERAGE:end -->
+<!-- semantic-review:SA-20260807-EVIDENCE:start -->Fresh-context review passed the frozen Candidate and Review receipt set after locator, claim-boundary and benchmark-contract corrections.<!-- semantic-review:SA-20260807-EVIDENCE:end -->
+<!-- semantic-review:SA-20260807-SELECTION:start -->Fresh-context reviewer verified evidence-stage eligibility and every selected or not-selected narrative decision without Books feedback.<!-- semantic-review:SA-20260807-SELECTION:end -->
+<!-- semantic-review:SA-20260807-BOOKS:start -->Fresh-context reviewer verified all Integrate body anchors, semantic adjacent-owner boundaries, evolution relations and Weekly Only dispositions.<!-- semantic-review:SA-20260807-BOOKS:end -->
+
+## 8. Ignored Noise
+
+502 条 arXiv v1 中有 498 条未进入候选分母。拒绝理由限定为：垂直应用不改变 AI-System contract；单数据集增量无机制差异；纯 quality headline 缺少状态/控制权变化；cross-listing 重复；或只有 LLM/Agent 关键词而没有系统贡献。它们完成 topic-level closure，不以大量低分行稀释候选账本。
+
+## 9. Recommended Action
+
+1. Sunday Weekly 按 Source Family 聚合本日报 Review Provenance；不得按后续发现日重复计分。
+2. 只有重要 revision、artifact 或反证改变 identity、Method 或 claim boundary 时才重开本日报 family。
+3. Books Decision：2 个 `Integrate`、0 个 `No Change — Existing Coverage`、2 个 `Weekly Only — Context`；每个 Integrate/No Change 均有 owner、相邻章节和 bounded Books Review receipt。
+
+## 10. Repository Changes
+
+- 重建 `papers/2026/08/07/README.md` 的 Coverage applicability 与 Books receipts。
+- Refine `books/part-05-inference-system/56-inference-scheduling.md`，只吸收长期机制、取舍与失效边界。
+- Refine `books/part-07-agent/82-multi-agent.md`，只吸收长期机制、取舍与失效边界。
+
+## 11. Open Questions
+
+- 日期精度仅到天的官方页面能否补回原始 HTTP/发布系统 timestamp，以消除 09:00 边界不确定性？
+- Sunday Weekly 是否出现 artifact、independent reproduction 或反证，要求升级/降级 Evidence Level？
+
+## 12. Sources
+
+- [Fast and Accurate: An Adaptive VLA Inference Framework through Environment-aware Model Selection](https://arxiv.org/abs/2608.06434v1) — published/event date: 2026-08-06; accessed: 2026-08-25
+- [In-Context VLA: Endowing Vision-Language-Action Models with Language via In-Context Post-Training and Agentic Tool Use](https://arxiv.org/abs/2608.05738v1) — published/event date: 2026-08-06; accessed: 2026-08-25
+- [A Two-Tier Perspective on Inference-Time Parallelism in Multi-Agent LLM Systems](https://arxiv.org/abs/2608.05791v1) — published/event date: 2026-08-06; accessed: 2026-08-25
+- [Cascade: Exploiting SLO-Aware latency budget for fair and high goodput LLM inference serving](https://arxiv.org/abs/2608.06557v1) — published/event date: 2026-08-07; accessed: 2026-08-25
+- [arXiv API](https://export.arxiv.org/api/help/) — exact submittedDate snapshots; accessed: 2026-08-25
+- [Research Sources Registry](../../../../docs/RESEARCH_SOURCES.md) — registry version 2026-08-25
+
+## 13. Final Status
+
+Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。

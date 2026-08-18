@@ -36,6 +36,23 @@ HTTP request
 
 普通 stateless handler 通常在一次调用里完成大部分工作；LLM 请求则可能在数百个 scheduler iterations 中保持存活。系统调度的不只是 request，而是 request 在某个 token position 上的运行时状态。
 
+## 负载差异不是 HTTP 协议差异
+
+传统后端也可能有长事务、streaming 和有状态计算，因此两者不是绝对二分。关键差异是：在 LLM Serving 中，变长、自回归和 GPU-resident state 从特殊情况变成了主导负载形态。
+
+| 维度 | 传统后端服务的常见抽象 | LLM Serving 的主导抽象 |
+| --- | --- | --- |
+| 调度单位 | request、transaction 或 task | 携带 phase、token progress、KV ownership 和 SLO 的 request state |
+| 工作量估计 | 路由和请求类型通常能给出较稳定边界 | 成本随 `T_p`、未知的 `T_o`、stop policy 与并发共同变化 |
+| 执行形态 | 一次 handler 内完成主要计算 | Prefill 处理已知 prompt，Decode 按严格依赖逐 token 推进 |
+| 活跃状态 | 常在外部存储或进程内维持业务状态 | 每个活跃序列持续占有 GPU KV Cache 与调度表项 |
+| Batching | 固定批处理或 request-level worker pool | 每个 iteration 按 token budget 重新组合 active sequences |
+| 用户 SLO | end-to-end latency、availability、error rate | TTFT、TPOT、deadline、request/token throughput 与 goodput |
+| 路由依据 | endpoint health、区域和实例负载 | 还要考虑 model/adapter identity、prefix/KV locality 与可用 cache capacity |
+| 扩缩容信号 | QPS、CPU、memory、queue length | 还需要长度分布、queued tokens、active sequences、KV occupancy 与分位数 SLO |
+
+只按 QPS 比较两个请求，会把一个 `T_p = 32`、`T_o = 8` 的短交互与一个 `T_p = 32K`、输出长度未知的请求视为相同工作。只按“连接是否仍在”调度，也会忽略请求当前处在 Prefill、Decode、blocked streaming 还是释放阶段。后续章节会分别展开这些机制；本章先冻结它们共同依赖的状态契约。
+
 ## 从 Deployment Artifact 到执行身份
 
 Part IV 第 35、41 章交付的是经过转换和验证的 deployment artifact。Runtime
@@ -225,9 +242,9 @@ Part V 后续章节按三层定位：
 
 | 层次 | 关注对象 | 章节 |
 | --- | --- | --- |
-| Stage | Prefill、Decode、KV state | 39～41 |
-| Mechanism | batching、paging、speculation、memory、PD、scheduling | 42～44、50～52 |
-| Runtime / Control | TensorRT-LLM、vLLM、SGLang、Dynamo、KServe LLM | 45～49 |
+| Stage | Prefill、Decode、KV state | 43～45 |
+| Mechanism | batching、paging、speculation、memory、PD、scheduling | 46～48、54～56 |
+| Runtime / Control | TensorRT-LLM、vLLM、SGLang、Dynamo、KServe LLM | 49～53 |
 
 Framework 会变化，这三层问题不会同时消失。一个新 Serving 项目首先应被问：它改变了哪个 stage、哪类状态、哪项资源约束或哪条 control loop？
 
@@ -301,7 +318,7 @@ LLM Serving 的基本对象不是一次函数调用，而是携带 token progres
 
 ## Review notes
 
-本轮将第42章重构为 Part V 的唯一全局入口，冻结请求状态、指标边界和三层章节地图。具体 paging、speculation、framework feature 与 cluster policy 均留给后续章节。
+本轮将第42章重构为 Part V 的唯一全局入口，冻结请求状态、指标边界和三层章节地图。自检答案回填增加传统后端与 LLM Serving 的负载契约对照，并修正七 Part 改版后的章节编号。具体 paging、speculation、framework feature 与 cluster policy 均留给后续章节。
 
 2026-07-30 增补 nano-vLLM implementation case，用最小 engine loop 连接请求状态、
 token progress、模型执行与 KV ownership。只吸收可跨 Runtime 复用的状态契约；

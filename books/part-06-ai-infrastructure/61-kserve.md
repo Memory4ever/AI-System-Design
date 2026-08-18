@@ -66,14 +66,40 @@ Controller 健康只证明 desired state 被协调，不证明模型 logits 正�
 
 ```text
 process alive
-→ artifact fetched
+→ artifact reference resolved
+→ filesystem mounted
+→ required bytes materialized or deferred-read budget admitted
 → model loaded
 → kernels/runtime initialized
 → warmup passed
+→ representative datapath verified
 → route eligible
 ```
 
-若在 model load 前接流量，会制造冷启动失败；若永远等到所有 cache warm up 才 ready，又可能拖慢恢复。平台需要按 workload 选择 readiness contract，并让 Gateway 只路由到 eligible revision。
+若在 model load 前接流量，会制造冷启动失败；若永远等到所有 cache warm up 才 ready，又可能拖慢恢复。平台需要按
+workload 选择 readiness contract，并让 Gateway 只路由到 eligible revision。
+
+Lazy artifact delivery 进一步打破了“mounted 就等于 fetched”的旧假设。Eager pull 在容器启动前物化全部 bytes，成本
+清楚地出现在启动路径；front-loaded lazy prefetch 仍在 Ready 前支付大部分传输；真正 deferred 的 remote snapshotter
+可以先挂载文件系统，再把 first-touch I/O、解压与 cache 写入推迟到模型加载甚至服务期。它改善的是时间位置，不是
+消灭 data movement：
+
+```text
+eager materialization       pay before container start; simple readiness semantics
+front-loaded lazy prefetch  overlap startup and transfer; Ready after most bytes arrive
+deferred lazy mount         fast mount; first read and node-cache pressure move after mount
+```
+
+选择应由模型实际读取比例、artifact size、registry/network、snapshotter overhead、node-wide cache capacity 与恢复 SLO
+共同决定。只读取少量文件的 workload 可能真正受益；通常完整扫描 dense weights 的 runtime 可能只是把启动账单搬到
+first read，并增加 FUSE、cache eviction 与 daemon lifecycle failure。此时 `Ready=True` 只说明 probe 触达的路径可用，
+不能证明所有尚未物化的 model files 可读。
+
+因此 node artifact cache 不是 kubelet imagefs 的同义词，而是独立的共享状态 owner。平台至少需要记录 snapshotter、
+mount generation、materialized/read fraction、cache occupancy/ENOSPC、daemon revision 和 datapath probe coverage；容量
+耗尽时应停止新的 lazy placement、drain 受影响节点并按 snapshotter 语义恢复，而不能假设重启 daemon 一定安全。
+这些约束来自特定 stargz/SOCI 版本、单节点 KServe testbed 与部分单次 recovery controls，证明了 failure mode 和
+observability gap，却不证明所有 lazy snapshotter 都具有同一故障或相同性能曲线。
 
 ## Desired、Applied 与 Observed 不能压成一个 Ready
 
@@ -167,3 +193,5 @@ KServe 把模型服务从手工容器变成可协调、可版本化的 desired s
 - Installation concepts and component split: https://kserve.github.io/website/docs/install/overview
 - KServe v0.19.0 release（version-sensitive control-plane evidence）:
   https://github.com/kserve/kserve/releases/tag/v0.19.0
+- The Lazy Pod That Lies（lazy model delivery、deferred cost 与 snapshotter failure semantics；
+  Status: Experimental）: https://arxiv.org/abs/2608.19412

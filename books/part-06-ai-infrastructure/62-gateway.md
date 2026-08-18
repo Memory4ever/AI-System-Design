@@ -79,6 +79,14 @@ Gateway API Inference Extension 的 `InferencePool` 在当前 v1 API 中表示�
 
 EPP 失败时的 fail-open/fail-close 是显式可用性与策略 trade-off。Fail-open 保持流量，却可能丢失 locality/SLO；fail-close 保护策略，却扩大控制面故障影响。
 
+### MCP Gateway：把协议、身份、目录与会话归属收束到共享控制点
+
+当每个 Agent 只直连少量、无状态且协议一致的 Tool Server 时，client-side connection 与完整 schema 装载最简单：没有共享控制面，也容易定位失败。约束变化来自数千工具、legacy OpenAPI、多个 MCP 变体、细粒度授权和有状态 session。此时仅做 endpoint load balancing 不够，因为协议翻译、调用者可见的授权目录、候选工具检索与 session-owner routing 必须读取同一 identity。
+
+更稳健的演进是让 Gateway 拥有外部身份、协议适配、authorized catalog view 与 session-to-backend mapping；Agent 仍拥有 task intent 和最终 tool choice，EPP/engine scheduler 仍拥有模型执行。混合 lexical/semantic retrieval 只是缩小候选集，不应绕过授权，也不证明所选工具能正确完成任务。
+
+共享控制点新增了 coordination state：跨 Gateway 的 session miss、集中式 metadata store、Pub/Sub 与长连接恢复可能成为新的 tail-latency 和可用性瓶颈。因而 session identity 需要 owner、lease、expiry、failover 与可观测证据；工具规模小、session 无状态或组织不愿承担共享协调面时，direct connection 仍更合理。当前证据来自单一云厂商部署和作者 microbenchmark，不构成可移植 MCP 标准实现的证明。
+
 ## 认证、授权与模型身份
 
 认证回答调用者是谁，授权回答其能调用哪个模型、数据域和操作。Route 到 endpoint 之前，应把外部 identity 转成内部可信 principal，而不是继续信任可伪造 header。
@@ -149,3 +157,5 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 - Gateway API Inference Extension: https://gateway-api-inference-extension.sigs.k8s.io/
 - InferencePool v1: https://gateway-api-inference-extension.sigs.k8s.io/api-types/inferencepool/
 - KServe control plane: https://kserve.github.io/website/docs/concepts/architecture/control-plane
+- Scalable LLM Agent Tool Access in the Cloud（MCP gateway、authorized discovery 与 session-owner routing；Status: Experimental）:
+  https://arxiv.org/abs/2607.15593v1

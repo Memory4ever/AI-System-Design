@@ -1,124 +1,101 @@
 # AGENTS.md
 
-## Project
+## 项目
 
-This repository is a long-term living book and learning system titled:
+本仓库是一套长期维护、持续演进的书稿与学习系统：
 
 《AI System：从第一性原理到 AI 基建》
 AI System: From First Principles to AI Infrastructure
 
-It is not a collection of random AI notes.
+它不是随机 AI 笔记、新闻收藏或框架手册。目标是建立一套连贯的知识系统，用于理解和设计现代 AI 系统，从模型基础、多模态与世界模型延伸到 Training、Inference、AI Infrastructure 与 Agent。
 
-The goal is to build a coherent knowledge system for understanding and
-designing modern AI systems, from model fundamentals to training,
-inference, AI infrastructure, and agents.
+## 主要读者
 
-## Primary Reader
+主要读者是经验丰富的软件与基础设施工程师，熟悉：
 
-The primary reader is an experienced software and infrastructure engineer
-with background in:
+- 分布式系统、Flink 与 Kafka；
+- Kubernetes、Kubeflow 与 KServe；
+- 模型训练平台与 LLM 推理基础设施。
 
-- Distributed systems
-- Flink and Kafka
-- Kubernetes
-- Kubeflow
-- KServe
-- Model training platforms
-- LLM inference infrastructure
+读者正在建设端到端 AI 模型生命周期平台：
 
-The reader is currently building an end-to-end AI model lifecycle platform:
+```text
+Data / Training → Model → Deployment → Serving → Observability
+```
 
-Data / Training → Model → Deployment → Serving → Observability.
+不要面向毫无基础的初学者写作。
 
-Do not write for a complete beginner.
+## 项目级不变量
 
-## Core Learning Philosophy
+1. 先解释问题、约束和旧方案为何合理，再解释现代机制。
+2. 数学、工程实现、系统取舍和 failure mode 必须回到同一条推理链。
+3. 新技术不得静默覆盖旧方案；要保留约束变化、共存边界和下一重压力。
+4. 不按框架或论文名称堆砌内容；每个机制必须有唯一知识 owner。
+5. 绝不虚构实现、benchmark、论文、版本或实验结论。近期事实必须核验 primary source。
 
-Always prioritize:
+完整学习方法由 `docs/LEARNING_PHILOSOPHY.md` 定义，章节呈现方式由 `docs/WRITING_GUIDE.md` 定义。不要在本文件维护第二份章节模板或演进词汇表。
 
-1. Why the problem exists
-2. Why the current design emerged
-3. What alternatives were possible
-4. Why some alternatives failed
-5. The mathematical principle
-6. The engineering implementation
-7. The system trade-offs
-8. How the design fits into the global AI System knowledge tree
-9. What may change when future constraints change
+## 唯一事实来源
 
-Avoid API-first explanations.
+`ROADMAP.md` 是知识树、Stable Knowledge Node ID、章节顺序和路径的唯一事实来源。
 
-Avoid simply listing concepts.
+每个重要主题必须先定位到现有 owner。只有现有结构确实无法承载一条长期知识链时，才提出 `Structural Candidate`；不要创建彼此割裂的笔记或“前沿收纳章”。
 
-Prefer first-principles derivation and design reasoning.
+## 按任务加载上下文
 
-## Required Reading Before Major Changes
+### 修改 ROADMAP 或 Books
 
-Before changing the roadmap or writing a chapter, read:
+先读取：
 
 1. `ROADMAP.md`
 2. `docs/PROJECT_CONTEXT.md`
 3. `docs/LEARNING_PHILOSOPHY.md`
 4. `docs/WRITING_GUIDE.md`
 5. `docs/LEARNING_STATE.md`
+6. 目标章节与相邻章节
 
-Do not update a chapter in isolation without understanding its position
-in the global knowledge tree.
+### 生成 Daily、Weekly 或 Historical Weekly
 
-## Single Source of Truth
+先读取：
 
-`ROADMAP.md` is the authoritative knowledge tree.
+1. `docs/RESEARCH_CONTRACT.md`
+2. `docs/RESEARCH_SOURCES.md`
+3. `docs/REPORT_CONTRACTS.md`
+4. 对应的 Daily 或 Historical Adapter
+5. `ROADMAP.md` 与最新相关 checkpoint
 
-Every major new topic must first be located in the knowledge tree.
+公共规则按唯一 owner 维护：`docs/RESEARCH_CONTRACT.md` 负责 Coverage discovery 语义、Source Family、
+Score V2、Review / Access 语义与 Books eligibility；`docs/RESEARCH_SOURCES.md` 负责来源注册表；
+`docs/REPORT_CONTRACTS.md` 负责
+Report schema、Semantic Audit 到 Gate 的映射及完成状态真值表。Prompt、Heartbeat 与其他说明文件只引用，
+不得复制这些公共定义。
 
-Do not create disconnected notes when the topic belongs to an existing
-chapter.
+`scripts/validate_research.py` 只证明机器接口与跨报告状态自洽，不能证明来源被正确理解或长期结论成立。
+Evidence / Books Gate 只有在路由所需收据完整、且 `docs/REPORT_CONTRACTS.md` 定义的相关 fresh-context
+Semantic Audit scope 没有未解决 finding 时才能通过；不得把 validator 通过表述成语义验收完成。
 
-## Chapter Design
+### Research → Books
 
-Unless there is a strong reason otherwise, chapters follow:
+候选通过 Evidence Gate 且可能改变长期知识后，再读取目标及相邻章节并执行 Books Decision。Weekly 摘要、评分或 `Must Read` 本身不构成 Books Gate。
 
-1. Chapter Question
-2. Problem
-3. Thought Experiment
-4. History / Evolution
-5. First Principles
-6. Math
-7. Engineering
-8. Design Trade-offs
-9. Alternatives and Dead Ends
-10. Engineering Practice
-11. AI System Position
-12. Interview Questions
-13. Research Outlook
-14. Reflection
+## 写作风格
 
-## Writing Style
+- 以中文为主；英文能提高精度时保留技术术语。
+- 使用连贯叙述，不堆砌割裂单行句。
+- 优先回答 Why、Mechanism、Trade-off、Evolution 与系统位置。
+- 项目或论文名称只作为机制证据、替代方案或受限案例；删除名称后，正文仍应成立。
 
-Write primarily in Chinese.
+## 修改纪律
 
-Keep technical terms in English when that improves precision.
+进行实质性修改之前：
 
-Use coherent prose rather than fragmented one-line sentences.
+1. 确定目标知识节点和文件范围；
+2. 阅读相邻内容并保留术语一致性；
+3. 保护运行前已有及无关修改；
+4. 学习进度或稳定认知实际变化时，只增加必要的 `LEARNING_STATE` checkpoint；
+5. 重大结构或公共合同决策写入 `docs/DECISIONS.md`；
+6. 检查 Markdown、链接、`git diff --check`、diff 与工作树范围。
 
-Explain from first principles.
+除非用户明确授权，不 stage、commit、push，不执行破坏性 Git 操作。
 
-Focus on design philosophy and trade-offs.
-
-Never invent implementation details, benchmarks, papers, or framework behavior.
-
-For current frameworks and recent research, verify against primary sources.
-
-## Change Discipline
-
-Before making a substantial change:
-
-1. Identify the target knowledge-tree node.
-2. Read adjacent chapters.
-3. Preserve terminology consistency.
-4. Update `docs/LEARNING_STATE.md` when learning progress changes.
-5. Update `docs/DECISIONS.md` for major structural decisions.
-
-The goal is not to maximize the amount of content.
-
-The goal is to build a coherent AI System mental model.
+目标不是让内容数量最大化，而是建立可验证、可维护、连贯的 AI System 心智模型。

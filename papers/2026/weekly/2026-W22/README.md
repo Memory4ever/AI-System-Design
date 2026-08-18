@@ -3,7 +3,13 @@
 > Coverage Window: 2026-05-25～2026-05-31
 > Research Mode: Retrospective Backfill
 > Accessed / Backfilled: 2026-07-31；Discovery Reopened: 2026-08-09
-> Re-audit Status: 2026-08-14 Source-Family Books Gate Complete; 43/43 final dispositions; 42/42 `20+` Full Source Reviews complete; 0 Unverified / Blocked; 0 current-review pending; 1 low-score fact verified; broader Archive/Discovery Gate remains Open for cross-index replay; Books cursor advances to W23
+> Delta Audit Queue: Pending — this legacy report has not yet begun a strict V2.1 delta packet
+> Superseded Baseline (2026-08-14): Source-Family Books Gate Complete for the prior 43-family denominator; 42/42 `20+` Full Source Reviews complete; 0 Unverified / Blocked; 0 current-review pending; 1 low-score fact verified; broader Archive/Discovery Gate remains Open for cross-index replay; Books cursor had advanced to W23
+
+> **V2.1 delta audit queued — 2026-08-25:** `SF-2026-AIREP`
+> (`arXiv:2608.21363v1`, first-public 2026-05-31) is absent from this owner Weekly. The prior Gate statement
+> applies only to the old denominator; W22 is `In Progress` for this one-family delta until identity/date,
+> Source Review, provenance and final disposition are written back through a strict V2.1 delta packet. The old Gate remains only a legacy-denominator result and is not a current completeness claim.
 
 ## Executive Summary
 
@@ -160,7 +166,7 @@ text 均已恢复并完成 current-version review；评分只决定审计优先�
 | Later-feed spillbacks recovered | 18 | W23 display feed 16 项 + W24 ResearchClawBench + W25 Smaller Models 已归 W22 |
 | Academic discovery window | Open | HF first pass complete；cross indexes pending |
 | Official / Infra discovery window | Fixed-source checkpoint passed | NVIDIA inference/security/hardware/platform and STAC workload surfaces replayed；cross-index 与 exhaustive PR absence proof 仍开放 |
-| W22 forward Candidate Evidence Gate | Passed | 42/42 `20+` Full Source Reviews complete；0 blocked；0 current-review pending；1/1 low-score boundary complete；broader discovery backlog 保持 Open，forward cursor 进入 W23 |
+| Legacy baseline — W22 forward Candidate Evidence Gate | Passed for prior 43-family denominator | 42/42 `20+` Full Source Reviews complete；1/1 low-score boundary complete；2026-08-25 新增 `SF-2026-AIREP` 尚待 strict V2.1 delta audit；旧 Gate 不代表扩大候选集后的当前完整性；broader discovery backlog 保持 Open |
 
 ## Deep Analysis — Telemetry 的价值与集中化风险
 
@@ -215,7 +221,9 @@ Observations 均按 v1 归 W22；NITP v1 05-24 归 W21。
 
 ## Recommended Action
 
-W22 的 43/43 final dispositions 与 owner review 已完成；27 个旧 blocker 已恢复，不再进入材料请求。
+Superseded baseline（旧 43-family denominator）：W22 的 43/43 final dispositions 与 owner review 当时已完成；
+27 个旧 blocker 已恢复，不再进入材料请求。2026-08-25 新增 `SF-2026-AIREP` 仍待 owner-week Source
+Review、provenance 与 Books disposition。W22 尚未开始 strict V2.1 delta packet，因此这里不声明扩大候选集后的新 Gate。
 正文吸收多主体 World State、LoRA token-level recall boundary、heterogeneous retrieval operators、Memory
 counterfactual attribution、并行 draft 的 architecture/training 双分支、execution snapshot、DPU security plane、
 Skill update benefit decomposition 与 simulator promotion Gate。其余 Refine 逐项复用已有具体论点，No Change/
@@ -227,11 +235,13 @@ Weekly Only 保持证据边界。下一周为 W23；Archive/Discovery cross-inde
 
 ## Books Integration Decision
 
-`Complete — Source-Family Gate`。最终账本为 38 Refine、3 No Change、2 Weekly Only。每个 Refine 都已
+Superseded baseline（旧分母）：`Complete — Source-Family Gate`。最终账本为 38 Refine、3 No Change、
+2 Weekly Only。每个 Refine 都已
 阅读 owner 及相邻章节；只有形成长期机制或修正演进链的内容修改正文，其他 Refine 是对现有具体论点的
 primary-source revalidation。Zero-trust aggregation 与 ScientistOne 为章节级 No Change；coding agents in social
 sciences 与 Rosalind access policy 为 Weekly Only。性能、模型、硬件、precision、length、batch、concurrency、
-SLO 或 artifact 未披露时保持 `Not Disclosed`，没有把作者/厂商结论改写成通用事实。
+SLO 或 artifact 未披露时保持 `Not Disclosed`，没有把作者/厂商结论改写成通用事实。该结论不包含
+`SF-2026-AIREP`；其 Books Decision 仍为 `Not Assessed`，当前 Books Gate 为 Open。
 
 ## Ignored Noise
 

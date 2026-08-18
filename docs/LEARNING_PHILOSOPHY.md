@@ -1,100 +1,98 @@
-# Learning Philosophy
+# 学习理念
 
-## First Principle
+## 第一性原则
 
-Do not reveal the standard solution too early.
+不要过早揭示标准答案。
 
-Begin with the original problem.
+从原始问题出发。
 
-Let the reader experience why simpler designs fail.
+让读者亲自体会更简单的设计为何失败。
 
-Then derive the modern design.
+然后再推导出现代设计。
 
-## Example
+## 示例
 
-Do not begin an Attention chapter with:
+不要在 Attention 章节开头直接写：
 
+```text
 Q = XWq
 K = XWk
 V = XWv
-
-Instead begin with:
-
-Suppose each token must understand itself using the rest of the sequence.
-
-What mechanism would we invent?
-
-Why is an MLP insufficient?
-
-Why did RNNs struggle?
-
-Why do we need content-dependent routing?
-
-Only after deriving the need should Q, K and V appear.
-
-## Preferred Reasoning Pattern
-
-Problem
-→ Naive Solution
-→ Failure
-→ Better Solution
-→ New Failure
-→ Modern Design
-
-## Evolution Is a Constraint History, Not a Ranking
-
-Do not present technical evolution as:
-
-```text
-old technology was wrong
-→ new technology replaced it
-→ only the latest design matters
 ```
 
-An earlier design usually optimized for a real constraint and may remain the
-better choice inside that boundary. A later design should not silently erase
-that context. For every important transition from design `A` to design `B`,
-reconstruct:
+应该先从下面的问题开始：
+
+假设每个 token 都必须借助序列中的其余部分来理解自身。
+
+我们会发明什么机制？
+
+为什么 MLP 不够？
+
+为什么 RNN 会遇到困难？
+
+为什么需要依赖内容的路由？
+
+只有在推导出这种需求之后，才应该引入 Q、K 和 V。
+
+## 推荐的推理模式
 
 ```text
-original constraint
-→ why A was reasonable
-→ where A reached its boundary
-→ what changed in workload / scale / hardware / SLO
-→ what mechanism B introduced
-→ what B improved
-→ what new cost, state, coupling or failure mode B introduced
-→ where A and B still coexist
-→ what pressure may drive the next design
+问题
+→ 朴素方案
+→ 失败
+→ 更好的方案
+→ 新的失败
+→ 现代设计
 ```
 
-Before drawing an evolution arrow, identify the relationship:
+## 演进是约束的历史，而不是技术排名
 
-- **Direct Evolution**: `B` inherits, extends, or replaces `A`.
-- **Layering / Dependency**: `A` and `B` solve different layers and compose.
-- **Principle Reuse**: both respond to similar constraints without direct
-  lineage.
-- **Explanatory Analogy**: similarity helps learning but is not historical or
-  implementation evidence.
+不要把技术演进写成：
 
-“Newer” is metadata, not a design conclusion. The goal is to recover the
-reasoning that made each design rational, and the constraint shift that made a
-different design necessary.
+```text
+旧技术是错误的
+→ 新技术取代了它
+→ 只有最新设计才重要
+```
 
-## Core Focus
+较早的设计通常是在优化某个真实约束，并且在那个边界内仍可能是更好的选择。后来的设计不应静默抹去这段背景。对于每一次从设计 `A` 到设计 `B` 的重要转变，都应重建以下过程：
 
-Prefer:
+```text
+原始约束
+→ 为什么 A 在当时是合理的
+→ A 在哪里触及边界
+→ workload / scale / hardware / SLO 发生了什么变化
+→ B 引入了什么机制
+→ B 改善了什么
+→ B 引入了哪些新的成本、状态、耦合或 failure mode
+→ A 与 B 在哪里仍然共存
+→ 哪种压力可能推动下一种设计
+```
 
-- Why
-- Trade-offs
-- Evolution
-- Alternative designs
-- Dead ends
-- Engineering constraints
+在画出演进箭头之前，先判断二者的关系：
 
-Avoid:
+- **直接演进（Direct Evolution）**：`B` 继承、扩展或取代 `A`。
+- **分层 / 依赖（Layering / Dependency）**：`A` 与 `B` 解决不同层的问题，并组合工作。
+- **原理复用（Principle Reuse）**：二者响应相似约束，但不存在直接谱系。
+- **解释性类比（Explanatory Analogy）**：相似性有助于学习，但不能作为历史或实现证据。
+- **替代分支（Alternative Branch）**：`A` 与 `B` 在不同约束下解决同一问题，不能简单写成前后替代。
 
-- Definition dumping
-- API documentation style
-- Framework catalogues
-- Memorization-oriented writing
+“更新”只是元数据，不是设计结论。目标是还原使每种设计在当时成立的推理，以及让另一种设计变得必要的约束变化。
+
+## 核心关注点
+
+优先关注：
+
+- 为什么（Why）
+- 取舍（Trade-offs）
+- 演进（Evolution）
+- 替代设计
+- 失败路径
+- 工程约束
+
+避免：
+
+- 堆砌定义
+- API 文档式写法
+- 框架目录式罗列
+- 面向记忆的写作

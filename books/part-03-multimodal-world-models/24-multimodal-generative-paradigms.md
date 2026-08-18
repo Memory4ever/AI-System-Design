@@ -180,6 +180,54 @@ corrector owns mutable refinement
 runtime owns commit, rollback and KV compaction
 ```
 
+## 从 Specialist Head 到 Typed Unified Generation
+
+分类、检测、分割、深度与多视角几何传统上各自使用专用 head、loss 和 decoder。这一结构在单任务、固定输出
+shape 与严格延迟下仍最强：类型约束直接写在 architecture 中，非法输出空间较小。但能力数增多后，每个新任务
+都带来独立训练、部署和评估接口，跨任务知识也难以共享。
+
+统一生成不是简单把所有 target 转成字符串，而是把类型边界从专用 head 移到 versioned sample contract：
+
+```text
+visual inputs
++ task and output-schema instruction
+→ native text / image / mixed provisional response
+→ deterministic typed decoder
+→ boxes | masks | dense maps | camera records
+→ task-specific invariant and evaluator
+```
+
+生成模型拥有 provisional response，schema/parser 拥有从 token 或 image record 到 typed object 的 commit，
+下游 evaluator 仍按任务语义判定 correctness。共享 generator 因而可以复用 representation 与训练数据，但不会
+消除 modality-specific codec、coordinate frame、mask topology 或 camera convention。reserved token、parser 与
+annotation conversion revision 必须进入 artifact identity；否则同一 checkpoint 在不同 decoder 下会产生不同
+系统行为。
+
+这条路线用接口复用和 cross-task transfer 换来 parser/schema drift、invalid output、coordinate quantization、
+pseudo-label provenance 和 capability interference。专用 head 在硬实时、强校准 dense output 或安全关键几何中
+仍然合理；统一生成适合任务族持续扩展且 typed decoder 可严格验证的场景。作者跨多个视觉任务的结果只支持
+其转换数据与 evaluator 合同，不证明一种 response representation 对所有视觉 workload 都最优。
+
+### Exploration 是训练计算轴，不是新的生成真值
+
+单一监督 target 最容易复现，也避免额外 candidate generation；当同一条件存在多个合理 mode 时，它却可能把一次
+任意匹配当成唯一正确路径。另一条训练分支为同一输入生成多个候选匹配，按预先声明的 scorer 选择其中一个再更新
+模型，使训练更接近推理时的 mode commitment：
+
+```text
+condition + target set
+→ sample multiple candidate matches
+→ score under frozen matching contract
+→ select one training trajectory
+→ update generator
+```
+
+这让 exploration 成为除模型规模和每样本计算之外的第三条训练计算轴，但没有创造更可靠的 ground truth。候选数增加
+会线性或超线性放大生成与筛选成本，选择器偏差还会把某种 mode 固化成训练偏好。固定单匹配在数据近单峰、预算紧或
+scorer 不可信时仍合理；多候选探索只在候选多样性、selection contract 和单位训练预算收益一起验证时成立。作者的
+受限 scaling curve 不能证明它会普遍替代 AR、diffusion 或 masked generation，只说明 training-time sampling policy
+本身也需要被版本化和计量。
+
 ## 一个统一的成本模型
 
 端到端时间不能只数模型 forward 次数：
@@ -366,6 +414,11 @@ tree mask 落到较慢 kernel、dynamic shape 破坏 graph capture，算法减�
 生成范式不是从“串行”走向“并行”的单向进步史。系统用并行草拟换来了 mutable state，用修正换来了额外 forward，用更大候选空间换来了 verification 和 memory。真正的演进，是让这些成本与输出承诺被显式管理。
 
 ## Review notes
+
+- Vision as Unified Multimodal Generation（typed unified output contract；Status: Experimental）:
+  https://arxiv.org/abs/2607.06560v1
+- Explorative Modeling（多候选匹配与 selection-conditioned training；Status: Experimental）:
+  https://arxiv.org/abs/2607.27372v1
 
 - Amazon Science TTS planning/validation engineering evidence（Status: Experimental；Artifact Not Available）:
   https://www.amazon.science/blog/improving-quality-and-robustness-in-llm-based-text-to-speech-systems

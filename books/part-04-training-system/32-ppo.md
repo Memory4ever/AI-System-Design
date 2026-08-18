@@ -106,6 +106,56 @@ L_value(psi) = E[(V_psi(s_t) - R_target_t)^2]
 
 若 value estimate 很差，advantage 噪声会直接污染 policy update。
 
+### Critic 稳定性是一个联合合同
+
+“Critic 不稳定”不能只归因于 value model 容量不足。Critic 输出什么范围、向什么 target 回归、怎样进入
+advantage，以及不同长度 response 如何接收 terminal reward，会共同决定 policy update。一个典型失败链是：
+
+```text
+bounded outcome reward
+→ unbounded value head produces impossible estimates
+→ bootstrapped target recycles critic error
+→ batch normalization rescales a nearly-zero advantage back to unit scale
+→ fixed lambda weakens terminal evidence for long responses
+→ policy follows amplified estimation noise
+```
+
+对应修复分别位于不同控制层。若 reward 的已知范围是 `[R_min, R_max]`，value parameterization 可以把预测限制
+在该范围；critic target 可以直接回归 sampled terminal outcome，避免把旧 value estimate 同时放进输入和标签；
+policy 使用原始 advantage scale，可以让接近最优时的 update 自然收缩；length-adaptive GAE 则使 terminal
+residual 对早期 token 的权重不因 response length 任意漂移。因为 critic 只在训练期存在，它还可以读取 reference
+answer 或 rubric 这类 reward-defining information，而 policy 在 rollout 与部署时仍看不到它。
+
+这些机制并不组成无条件默认 recipe。Monte Carlo target 降低 bootstrapping bias，却提高方差；bounded head
+要求 reward range 有定义；privileged input 能加快 critic fitting，也可能更快 overfit 或让 reward 泄漏被误判为
+policy 能力；length-adaptive weighting 仍依赖 outcome reward 和 horizon contract。训练系统至少应按 policy / critic
+分别观测 loss、explained variance、value range violation、advantage RMS、response-length slice、update-to-weight
+ratio 与 held-out reward，而不能只看训练 reward 上升。
+
+一项 2026 年的受控研究从 1.5B sanity test 扩展到 40.3K 数学数据和两个 30B-A3B MoE，并逐项 ablate 上述
+控制面；作者结果支持 single-rollout critic 在该 math-RL contract 中匹配或超过 group-based baseline。它没有
+证明该 recipe 跨 reward、tool environment 与模型规模普遍稳定。长期结论是 PPO 与 GRPO 仍是条件分支：
+
+```text
+token-prefix critic
+  finer temporal credit + fewer same-prompt rollouts
+  <-> value state, calibration and optimization risk
+
+group-relative baseline
+  no learned value state
+  <-> more rollout compute, coarser credit and tail makespan
+```
+
+选择哪条分支应由 credit granularity、reward structure、mixed-outcome probability、rollout price 与 critic
+calibration 共同决定，而不是把“移除 Critic”理解为单向技术进步。第33章接过 group-relative 分支及其
+trajectory lifecycle。
+
+### 当 Temporal Credit 不足：Counterfactual Credit 是有条件分支
+
+Return、value baseline 与 GAE 沿时间传播 reward，在 dense signal 或无法重放环境时仍是最稳妥的默认；但 sparse、delayed、stochastic outcome 会把 skill 与 luck 混在同一 return 中。只有当环境提供 structural causal state、可冻结同一 exogenous noise，并允许把某步 action 替换为 baseline-policy action 时，才可以估计 counterfactual coalition 的 Shapley contribution，把 episode return 重分配成 PPO 消费的 per-step reward。
+
+Environment 与 baseline policy 定义反事实语义，estimator 只拥有 credit，PPO 仍拥有 policy update。该分支以 `O(T × M)` counterfactual/value evaluation、baseline-dependent story、bootstrapping bias 和 simulator fidelity 为代价；没有可信 counterfactual world 时，不应把相关性 attribution 写成 causal credit。
+
 ## 为什么需要旧策略概率
 
 Rollout 由 `pi_old` 生成，但 update 后评估的是 `pi_theta`。Importance ratio：
@@ -332,3 +382,5 @@ Primary-source 校验入口：
 - John Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation", 2015: https://arxiv.org/abs/1506.02438
 - John Schulman et al., "Proximal Policy Optimization Algorithms", 2017: https://arxiv.org/abs/1707.06347
 - Long Ouyang et al., "Training language models to follow instructions with human feedback", 2022: https://arxiv.org/abs/2203.02155
+- Counterfactual Shapley Credit Assignment（Status: Experimental；要求可冻结 exogenous noise 的 structural causal environment）:
+  https://arxiv.org/abs/2607.16999v1

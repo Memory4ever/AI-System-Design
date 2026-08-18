@@ -9,7 +9,7 @@
 
 ## 本章要回答的问题
 
-第 27 章已经把数据构造成 token sequences，Part II 也已经给出 Decoder-only 模型。模型怎样仅通过预测下一个 token 改变数十亿参数？Loss 下降、perplexity、训练 token 数、optimizer step 与能力增长分别是什么关系？为什么一次成功的 Pretraining run 不只是反复调用 `backward()`？
+第 27 章已经把数据构造成 token sequences，Part II 也已经给出 Decoder-only 模型。模型怎样仅通过预测下一个 token 改变数十亿参数？Loss 下降、perplexity、训练 token 数、optimizer step 与能力增长分别是什么关系？梯度异常时，warmup、clipping、adaptive optimizer 与逐层 learning rate 分别能解决什么？为什么一次成功的 Pretraining run 不只是反复调用 `backward()`？
 
 本章的核心判断是：**Pretraining 是在大规模数据分布上反复最小化 next-token negative log-likelihood，使参数逐步形成可复用表示与条件生成能力。**它提供通用能力底座，但 loss 下降不自动保证事实可靠、指令遵循或部署分布上的任务成功。
 
@@ -229,6 +229,14 @@ alignment 做 damping，就引入了有意 bias。被 mask 的 block 也不是�
 checkpoint。论文的小模型结果不能证明大规模分布式训练存在 wall-clock 收益，dense update 在实现成熟、景观较均匀或
 可复现性优先时仍是基线。
 
+### Optimizer State Allocation 也应服从参数角色
+
+Uniform Adam 为每个参数维护同构的一阶、二阶状态，语义清楚、kernel 成熟，在参数统计相近且 memory 可接受时仍是基线。MoE 改变的是参数角色与 activation frequency：dense backbone 持续更新，experts 稀疏且按 routing 命中，router 参数少却直接控制流量。
+
+因而一个实验性分支是按角色分配 optimizer state：backbone 保留 momentum 与 factored variance，experts 只保留 factored variance，router 保留更精确统计；共同的 write-back/rounding contract 仍需一致。它把 optimizer memory 从总参数数目的固定倍数改成结构感知预算，却新增 parameter-group policy、factorization bias、checkpoint migration 和对 gradient sparsity 的依赖。
+
+它与 ZeRO/offload 是正交关系：本章决定保存哪些统计，Ch39 决定这些统计物理放在哪里。现有证据来自单个浅层 MoE、短训练与大多单 seed，不能写成 universal optimizer；结构均匀、factored covariance 假设不成立或恢复简单性优先时，完整 Adam 仍更合理。
+
 ## Batch、tokens 与 optimizer steps 不是同一计量
 
 设每个 optimizer step 的 global batch 为 `B_global`，有效平均 sequence tokens 为 `T_eff`：
@@ -269,6 +277,121 @@ g <- g * min(1, max_norm / ||g||)
 ```
 
 它可以避免单次异常梯度破坏训练，却也可能隐藏数据异常、数值 overflow 或不合适的 learning rate。平台应同时观测 unclipped norm、clipping frequency 和 loss behavior。
+
+### 每层是否需要不同或动态的 Learning Rate
+
+先把“这一层实际更新了多少”写清楚。对第 `l` 个 parameter group，可抽象为：
+
+```text
+Delta_theta_l(s)
+= - eta_global(s)
+  * m_l(s)
+  * P_l(optimizer_state_s, g_l)
+```
+
+- `eta_global(s)` 是全局 warmup / peak / decay schedule。
+- `m_l(s)` 是可选的 layer/group multiplier；可以固定，也可以随 step 变化。
+- `P_l(...)` 是 optimizer 根据 gradient 与 moments 产生的 preconditioned update。Adam 的 coordinate-wise adaptation
+  已经让不同参数获得不同 effective step，但它不等于显式的 layer-wise learning rate。
+
+所以“每层用同一个 learning rate”通常只是指共享 `eta_global`；真实 `Delta_theta` 早已因 gradient、Adam moments、
+parameter norm、weight decay 和 clipping 而不同。是否再增加 `m_l(s)`，应由 update evidence 决定，而不是看到深度
+增加就默认启用。
+
+#### 四种经常被混淆的策略
+
+**Global schedule。** 所有 groups 共享 warmup 与 decay，最易复现，也让 update 的时间边界一致。它在标准
+Pretraining recipe、架构/初始化已稳定时通常是首选。
+
+**Optimizer adaptation。** Adam 用一阶、二阶 moments 按坐标缩放 update，主要应对 noisy、sparse 或异方差
+gradient；它不会恢复在 backward path 中已经消失的信号，也不保证各层 update-to-weight ratio 合理。
+
+**Layer-wise / parameter-group multiplier。** Fine-tuning 中可以让靠近输入的 pretrained layers 使用较小 multiplier，
+让新 task head 或上层更快适应；ULMFiT 的 discriminative fine-tuning 是这类思想的早期实例。它的理由是保留可迁移
+表示并减轻 catastrophic forgetting，不是“低层梯度天然更容易爆炸”。在从零 Pretraining 中，不存在脱离架构和
+数据的通用“越深 learning rate 越大/越小”规律。
+
+**Layer-wise trust ratio。** LARS/LAMB 根据 parameter norm 与候选 update norm 形成 group/tensor-level ratio，最初用于
+large-batch training 的尺度失衡。LARS 在其 CNN workload 有效，但 LAMB 论文也明确指出 LARS 在 BERT 等 Attention
+模型上并不一致；这正说明 layer-wise adaptation 是 optimizer/workload branch，不是普适深度修复。
+
+另外，第 17 章的 residual scale、gate、DeepNorm，以及本章前述 `alpha(layer, step)` progressive residual warmup，
+改变的是 forward contribution 与 backward path。它们即使也依赖 layer 和 step，也不能被称为 per-layer learning rate。
+
+#### 哪些情况下值得引入 `m_l(s)`
+
+至少出现以下一种可重复证据时，才值得进入实验：
+
+- Fine-tuning 中底层出现 collateral drift，而上层/新 head 明显欠适配。
+- 新增或扩容参数的 optimizer state 从零开始，需要独立 rewarm；旧参数仍应保持小 update。
+- Large-batch 下不同 parameter groups 的 update-to-weight ratio 跨多个数量级，并与收敛问题相关。
+- 特定层的 gradient/update 长期被 clipping 或 precision floor 主导，且已排除数据、mask、loss reduction 和
+  architecture 问题。
+- Ablation 表明固定 multiplier 或 trust ratio 在 held-out quality、稳定性和 wall-clock 上优于只调 global schedule。
+
+不应只根据 gradient norm 大小设 learning rate。若 `||g_l||` 小是因为 layer 已接近局部最优，强行放大会增加噪声；
+若是因为 upstream Jacobian 已让 signal 消失，放大 optimizer step 只会放大残余噪声；若 parameter scale 本身较小，
+绝对 update 小也可能已有很大的相对变化。更有意义的观测是：
+
+```text
+gradient_rms_l
+update_rms_l
+parameter_rms_l
+update_to_weight_l = update_rms_l / (parameter_rms_l + epsilon)
+clipping_fraction_l
+overflow_or_underflow_l
+held_out_delta by layer/group ablation
+```
+
+#### 动态逐层控制带来的新状态
+
+让 `m_l(s)` 根据在线 gradient 或 validation signal 自动变化，会把 controller 变成训练状态：
+
+```text
+layer identity + global step
++ controller statistics / EMA / thresholds
++ multiplier history and bounds
++ optimizer moments and scheduler phase
+```
+
+这些状态必须进入 checkpoint，并在 DP/TP/PP ranks 上一致。否则 resume、reshard 或 layer renumbering 会静默改变
+trajectory。Controller 还可能追逐 noisy batch、在 layers 间振荡、补偿错误 objective，或因 validation feedback delay
+形成过时决策。固定 parameter groups 在证据不足、恢复/复算优先时更安全；动态策略应有 multiplier bounds、更新
+cadence、holdout gate、rollback 与“退回 global schedule”的 fallback。
+
+结论可以浓缩为：
+
+```text
+先修 gradient path / initialization / normalization
+→ 再修 data, loss reduction and precision
+→ 选择 global LR + warmup/decay + clipping guard
+→ 检查 optimizer 与 per-layer update evidence
+→ 最后才实验 fixed 或 dynamic layer multipliers
+```
+
+逐层 learning rate 是 update actuator，不是深层网络稳定性的第一性原理答案。
+
+### Gradient Clipping 的正确边界与顺序
+
+Global-norm clipping 将所有参与参数视为一个拼接向量并按同一比例缩放；per-group clipping 会改变不同 groups 的
+相对方向。两者都应记录 aggregation scope、norm type、threshold 与 clipping frequency。Distributed training 中，
+必须先明确 gradient 是 local、ReduceScatter shard 还是已经完成 DP reduction 的 global semantic gradient，否则
+“相同 max norm”并不代表相同 update。
+
+Mixed precision 下若 loss 被 scale，clipping 必须作用于 unscaled gradients；PyTorch AMP 官方示例也要求先
+`unscale_` 再 `clip_grad_norm_`，随后才执行 optimizer step。否则 threshold 实际约束的是人为放大的 gradient。
+
+```text
+backward on scaled loss
+→ aggregate / accumulate under declared semantics
+→ unscale gradients
+→ measure unclipped norm and non-finite state
+→ clip if needed
+→ optimizer step
+→ scheduler step
+```
+
+Clipping 适合阻止少数异常 step 破坏 checkpoint；若长期高频触发，应降低到根因诊断，而不是继续把 threshold 调小。
 
 ## Mixed precision 为什么不是简单改 dtype
 
@@ -360,6 +483,12 @@ overhead 吞没。无偏 estimator 只约束期望误差，不自动证明有限
 BF16/FP8 在 debug、旧硬件、小矩阵或 accuracy-first 场景仍成立。低比特证据必须同时绑定 forward、
 backward、optimizer state、rounding、硬件和端到端收敛，不能只报 tensor-core peak。
 
+#### 量化前可以训练 Gauge，而不改写原 Objective
+
+量化困难不仅取决于数值大小，也取决于在等价表示中选择了哪个 basis。某些成对正交变换在 full precision 下保持 Transformer 输出不变，却会因 element-wise quantization 不与 rotation 对易而产生不同误差。
+
+训练期可以用 stop-gradient 的 outlier proxy 只更新 gauge/basis，让 LM weights 仍由原 objective 更新。这样把“改变模型学什么”与“选择更适合量化的等价表示”分开，却新增 optimizer/export state、MLP runtime transform 与 kernel compatibility。短 continued-training 的 fake-quantization 结果只支持机制可行，不证明 full pretraining、真实 low-bit kernel 或 serving 加速。
+
 ### 从固定 Objective 到 Feedback-guided Self-supervised Update
 
 固定 next-token objective 的优点是反馈来源稳定、覆盖广；SFT/RL 直接使用 labels/verifier，更贴近任务但改变
@@ -394,6 +523,28 @@ general pretraining
 objective、token/compute budget、merge/retention policy 及出口 evaluation。定向数据能提高目标能力，也会
 造成通用能力回退、污染或难度过滤器过拟合；因此需要与继续通用 pretraining、直接 SFT/RL 做 compute-
 matched 对照，并保留 restoration 分支。目标分布小、demonstration 可信时直接 SFT 仍更便宜。
+
+#### 相同阶段终点不代表相同后续可训练性
+
+Checkpoint 是否适合下一阶段训练，不能只由最终 loss 或 post-SFT benchmark 判定。两个分支即使在 SFT 后几乎同分，只要进入 SFT 前的最后 pretraining window 不同，面对同一 DPO 或 RL update 仍可能沿不同轨迹移动。因此 artifact identity 还要保存 ordered data window、入口 checkpoint、token budget 与后续 update reference，并比较 stage-wise erosion / retention，而不只看终点。
+
+这项结论来自小模型、500M-token 受控 intervention 与特定 refusal 指标，不支持“把某类数据最后训练”的通用 recipe。它增加 lineage、matched downstream update 和能力 retention 的评估成本；在 saturated scale、其他能力或更大模型上必须重新验证。若后续阶段弱、窗口差异可忽略或 lineage 成本过高，按阶段终点评估仍是合理基线。
+
+Mid-training objective 也可以从随机 token/span corruption 进一步利用程序结构：先抽取 function、dependency 或
+call boundary，再要求模型重建被遮蔽的实现与接口。随机遮蔽在通用语料、解析器不可靠时覆盖更稳；结构感知
+reconstruction 在代码依赖可恢复时能把训练压力集中到跨段语义关系：
+
+```text
+random token / span corruption
+→ syntax-bounded masking
+→ dependency-aware function reconstruction
+→ behavior post-training and executable evaluation
+```
+
+收益是更直接地训练跨函数依赖，代价是 parser、language、teacher、repository sampling 与 corruption policy 都
+进入数据/objective identity。重建成功也不等于生成的程序正确，更不证明该 objective 跨语言或跨 domain 优于
+next-token baseline；必须保留未见 repository、可执行测试和通用能力 retention。解析失败、自然语言主导或目标
+能力可由可信 SFT 提供时，随机 objective 仍是更便宜的旧方案。
 
 ### Adaptive Depth：计算量也可以成为训练出的状态
 
@@ -478,6 +629,23 @@ Loss spike 或 NaN 可能来自：
 
 训练平台的价值，是把模型信号、数据身份与系统信号放在同一条 timeline 上。
 
+### “训练仍在运行”与“会得到好模型”之间隔着多层证据
+
+超长训练最危险的误判，是把一条平滑下降的 training loss 当成最终质量证明。训练信号更适合作为分层证据：每一层能排除一部分故障，却没有任何单一信号可以提前担保 checkpoint 的产品价值。
+
+| 信号层 | 主要观测 | 能支持的结论 | 不能单独证明 |
+| --- | --- | --- | --- |
+| Objective | training/validation loss、per-domain loss、PPL | 当前 objective 在声明的数据与 mask 上是否改善，是否出现过拟合或 domain divergence | 事实性、指令遵循、安全与产品任务质量 |
+| Update | gradient norm、update-to-weight ratio、clipping frequency、optimizer moments | 是否存在爆炸、消失、异常 step 或 group-wise update 失衡 | 梯度方向是否代表正确数据与目标 |
+| Numerical | non-finite count、loss scale、overflow/underflow、skipped step、activation/logit range | mixed-precision path 是否还能产生有限、可执行的 update | 有限数值是否与高精度 reference 足够等价 |
+| Data | source/domain mix、effective tokens、duplication、length、mask、batch identity | 实际消费分布是否符合 data contract，异常 loss 能否定位到样本 | 数据本身是否无偏、真实、合法或覆盖部署长尾 |
+| System | step time、tokens/s、memory、collective、straggler、ECC/Xid、retry | 计算是否持续推进，故障或降速来自哪个 runtime/resource path | 高 utilization 是否产生正确的参数轨迹 |
+| Evaluation | held-out loss、capability/safety suites、sample review、scaling probe | 中间 checkpoint 的可观察能力、回退与趋势 | 未测分布上的最终泛化，或未来规模必然延续当前趋势 |
+
+这些信号必须按 `run / checkpoint / step / data batch / rank` 对齐。一次 loss spike 与同一步的 gradient spike、异常 batch、loss-scale backoff、collective retry 或 device error 相关联，才可能把“现象同时发生”推进到可检验的根因假设。只看全局平均会把单个 domain、layer、rank 或 expert 的退化稀释掉；只看最细粒度指标又会产生噪声和监控成本，因此应保留 global trend、分层 slice 与按事件下钻三档视图。
+
+判断是否值得继续投入剩余训练预算，还需要预先定义 gates，而不是在曲线出现后解释：相对小规模或先前 run 的 loss/token 轨迹是否落在容差带内，held-out quality 是否随 compute 改善，关键能力是否回退，数据与系统异常是否已被解释，最近 checkpoint 是否通过 restore/continuation canary。通过这些 gates 只能说明“当前 trajectory 仍值得继续”，不能证明最终模型一定优秀；最终结论仍属于独立 Evaluation。
+
 ### Elastic Recovery 的目标不是“重新跑起来”
 
 超大规模训练把故障恢复从 process restart 提升为 trajectory correctness。若坏掉的 accelerator
@@ -545,6 +713,11 @@ versioned data q(x)
 12. 为什么 forward output 的量化误差可接受，不代表同一精度也适用于 backward 的弱梯度？
 13. 如何区分真正的低比特收敛证据与被 batch noise 或较短 training horizon 掩盖的偏差？
 14. 为什么允许 test-time sampling 后，early stopping 必须绑定 deployment volume、verifier 与 SLO？
+15. Adam 的 per-coordinate adaptation 为什么不等于显式的逐层 learning rate？
+16. 哪些 evidence 才足以支持 fixed 或 dynamic layer multiplier？
+17. Mixed precision 与 distributed accumulation 下，gradient clipping 应在什么语义边界执行？
+18. Training loss、gradient、数值、数据、系统与 Evaluation 信号分别能排除什么，又不能证明什么？
+19. 为什么超长训练的 continue/stop gate 只能判断 trajectory 是否仍值得投入，不能担保最终模型质量？
 
 ## 小结
 
@@ -554,6 +727,14 @@ Pretraining 用大规模 next-token prediction 把数据分布转化为参数更
 
 ## Review notes
 
+- Final-window pretraining lineage and downstream-update response（matched post-SFT endpoint 不等于同一可训练性；Status: Experimental）：https://arxiv.org/html/2607.25063v1
+
+- GaugeQuant: Online Learning of Quantization-Optimal Bases from LLM Symmetries（arXiv:2607.20757v1；Status: Experimental）：https://arxiv.org/html/2607.20757v1
+  - 证据边界：支持两个模型、短 continued-training 设置中的 learned symmetry basis 与 fake-quantization perplexity；不证明端到端速度、硬件支持、完整预训练稳定性、通用低比特鲁棒性，或 proxy 会最小化真实 quantized loss。
+
+- Structure-aware function reconstruction mid-training（Status: Experimental）:
+  https://arxiv.org/abs/2607.12463v1
+
 本章只负责 next-token objective、训练 step、token/batch 计量、optimizer state 与训练稳定性。数据治理留在第 27 章；SFT 和 preference optimization 留在第 29、31～34 章；collective、state sharding 和 framework runtime 留在第 36～41 章。
 
 2026-W10 的 SageBwd 案例用于补全 backward sensitivity、precision boundary 与 convergence contract。
@@ -562,9 +743,21 @@ Pretraining 用大规模 next-token prediction 把数据分布转化为参数更
 
 Progressive Residual Warmup 用于补足 residual branch activation 的 `layer × time` 状态与恢复边界；其固定 schedule、训练规模和稳定性结果只作为 Experimental evidence。
 
+本轮训练健康审计把 objective、update、numerical、data、system 与 Evaluation 信号分层，并明确 continue/stop gate 的证明边界；指标集合参考 Megatron Core 当前官方 observability contract，但正文不把某一框架的 metric 名称写成通用标准。
+
 Primary-source 校验入口：
 
 - Diederik P. Kingma, Jimmy Ba, "Adam: A Method for Stochastic Optimization", 2014: https://arxiv.org/abs/1412.6980
+- Yang You, Igor Gitman, Boris Ginsburg, "Large Batch Training of Convolutional Networks", 2017（LARS）:
+  https://arxiv.org/abs/1708.03888
+- Yang You et al., "Large Batch Optimization for Deep Learning: Training BERT in 76 minutes", 2019（LAMB）:
+  https://arxiv.org/abs/1904.00962
+- Jeremy Howard, Sebastian Ruder, "Universal Language Model Fine-tuning for Text Classification", 2018:
+  https://arxiv.org/abs/1801.06146
+- PyTorch AMP gradient clipping example:
+  https://docs.pytorch.org/docs/stable/notes/amp_examples.html#gradient-clipping
+- NVIDIA Megatron Core training metrics（版本化 instrumentation evidence）:
+  https://docs.nvidia.com/megatron-core/developer-guide/nightly/user-guide/observability/metrics.html
 - Alec Radford et al., "Improving Language Understanding by Generative Pre-Training", 2018: https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf
 - Tom B. Brown et al., "Language Models are Few-Shot Learners", 2020: https://arxiv.org/abs/2005.14165
 - Jared Kaplan et al., "Scaling Laws for Neural Language Models", 2020: https://arxiv.org/abs/2001.08361
@@ -576,6 +769,8 @@ Primary-source 校验入口：
 - Jintao Zhang et al., "SageBwd: A Trainable Low-bit Attention", 2026（Status: Experimental；公开实现尚未定位）:
   https://arxiv.org/abs/2603.02170
 - Progressive Residual Warmup（Status: Experimental）: https://arxiv.org/abs/2603.05369
+- SkewAdam / Tiered Optimizer State（exact v1 + event-time commit；Status: Experimental）：https://arxiv.org/html/2607.19058v1
+  - 证据边界：6.78B total / 440M active、128 experts、约 81.9M tokens，H200 为主且有 H100/MI300X follow-up；不证明大规模 distributed wall-clock 或普遍收敛。
 - FLOP-Efficient Training / TTC-aware Early Stopping（Status: Experimental）:
   https://arxiv.org/abs/2601.01332
 - ECO Quantized Training（optimizer-state error feedback；Status: Experimental）:

@@ -19,10 +19,250 @@ from multimodal representation through generative paradigms and World Models to
 Embodied/VLA action; former Training, Inference, Infrastructure and Agent chapters
 have moved to Parts IV～VII without changing their durable content.
 
+## 2026-08-27 July Daily V2.1 Full-Month Closure
+
+Status: 31/31 Daily complete；Coverage、Evidence 与 Books Gates passed
+
+- 2026-07-01～31 的 31 个严格北京时间 `[前一日 09:00, 当日 09:00)` 窗口已全部闭环。路由后的
+  454 个 Source Family 均有唯一 owner、Score V2、最终 Review/Access 状态、Books disposition 与
+  Review Provenance；Pending、Blocked、Unverified 与 Disputed 均为 0。
+- Review 路由为 293 个 `deep_complete`、62 个 `standard_complete`、99 个 `closure_complete`；全部
+  454 个 family 的 Access Status 均为 `accessible`。Closure route 只关闭 identity、日期与拒绝理由，
+  不用 metadata 建立机制或 benchmark 结论。
+- Books Decision 为 175 个 `Integrate`、163 个 `No Change — Existing Coverage`、21 个
+  `Weekly Only — Context`、94 个 `Rejected — Low Durability / Out of Scope`，以及 1 个
+  `Version Fact / Mechanism Not Disclosed`。`Integrate` 已写入对应 owner 章节，`No Change` 已对读目标及
+  相邻章节；没有把 Books Decision 当成未执行的建议。
+- 每份 Daily 均通过 Coverage、Evidence、Deep Analysis Selection 与 Books 四域 fresh-context Semantic
+  Audit；31/31 份报告也通过 `scripts/validate_research.py`。D10 的 disposition 枚举简写与 D24 的 locator
+  复用是在最终全月验收中发现并修复的，不作为已知例外保留。
+- 旧的 `2026-07-01～26 Daily V2.1 Rebuild Checkpoint` 与 `2026-07-27～31 Daily V2.1 Closure` 保留为
+  过程记录；本 checkpoint 是当前 July Daily 状态的后发真值。没有 stage、commit 或 push。
+
+## 2026-08-26 Conversation Prefix-Cache Books Integration
+
+Status: `INFER-KV-CACHE` refined; chapter remains Draft
+
+- Prefix-cache monitoring now separates request hit rate, input-token hit rate, reused-prefix length and observed
+  TTFT reduction instead of treating a provider's high cache-hit percentage as an end-to-end compute-saving ratio.
+- A long stable conversation/tool prefix plus a small new suffix explains near-100% token hit rates without semantic
+  matching; suffix Prefill, Decode, cache movement and external work remain explicit costs.
+- Agent transcript duplication received `No Change`: `AGENT-CONTEXT` already owns bounded assembly and raw-artifact
+  fallback, while `AGENT-MULTI-AGENT` already owns typed handoffs, shared authoritative state and coordination tax.
+- ROADMAP and DECISIONS remain unchanged. No staging, commit or push was performed.
+
+## 2026-07-01～26 Daily V2.1 Rebuild Checkpoint
+
+Status: Coverage Gate Closed；Evidence / Books Open；current-state Semantic Audit passed
+
+- 26 个严格北京时间 `[前一日 09:00, 当日 09:00)` 窗口已经恢复；DataCite 注册 fallback 枚举
+  41,705 个唯一 DOI identity，窗口与主题过滤后冻结 350 个 Source Family。canonical inventory 为
+  `papers/2026/07/_sources/datacite-arxiv-recovery-20260701-26/datacite-candidate-inventory.json`，SHA-256
+  `e8f3059965e312a6f3a1f746d69253342fb26baaaf0c68506ff0d2ca4c89ade1`。
+- 26/26 报告通过机器合同校验，且 inventory/report exact-set、窗口 timestamp、唯一 identity 与 registered fallback
+  均已复核；这只关闭 Coverage 的确定性部分，不构成 Evidence 或 Books 语义验收。
+- 当前 350 个 family 的真值账目为：160 个 identity/date closure、1 个
+  `Version Fact / Mechanism Not Disclosed`、182 个普通 `pending` 与 7 个 `blocked`；当前没有任何
+  Standard/Deep family 通过 Evidence Gate。旧 Weekly 的 full-read prose 缺少
+  evidence version、route locator、claim boundary、RP 或 Prior Review Ref 时，只能作为恢复线索，不能迁移为完成状态。
+- W29 的 arXiv:2607.11079、2607.11250、2607.13921、2607.14952 曾因 parser 越过
+  `Full Source Review` section boundary 被误判完成；当前 parser 已按下一个二级标题截断，四项均恢复为
+  `blocked` 并生成 Materials Request。26/26 报告重新通过 strict validator 与 `git diff --check`。
+- 当前浏览器策略未允许 `arxiv.org`，direct arXiv PDF/API/OAI 入口也持续 connection reset。下一 checkpoint
+  必须先恢复 189 个 exact-version primary manuscript（或作者同版 PDF/HTML/TXT），再逐 family 重算
+  Score、owner、selection 与 Books disposition；不得以旧 Weekly prose、降分或 generic locator 消除 blocker。
+- fresh-context 最终复核确认当前树没有遗留 P0/P1：Coverage 的 350-family denominator、北京时间 bucket 与
+  逐日报告集合通过；Evidence、Selection 与 Books 只因 182 个 pending 和 7 个 blocked 保持 Open，不再有
+  false-complete claim。去重材料清单位于
+  `papers/2026/07/_sources/datacite-arxiv-recovery-20260701-26/primary-material-requests.tsv`。
+- 八条没有合格 primary receipt 的 provisional Books 段落已经全部撤回；其中 arXiv:2607.21985v1 的粗粒度
+  PDF 页码、摘要级机制概括和 metadata-derived score/owner 也未通过 fresh-context audit。本批次没有任何
+  Books Integration 可以保留。已删除 superseded OpenAlex snapshot；未 stage、commit 或 push。
+
+## 2026-07-27～31 Daily V2.1 Closure
+
+Status: Five Daily reports complete；Coverage、Evidence 与 Books Gates passed
+
+- 五个北京时间 `[前一日 09:00, 当日 09:00)` 窗口由冻结的 arXiv replay 覆盖：原始分母
+  5,463 个唯一 ID，路由后形成 65 个 Source Family；每项均有最终 Score、Source Review、
+  owner 与 disposition，普通 Pending、Blocked、Unverified 和 Disputed 均为 0。
+- 来源注册表按 Effective Date 适用：这些历史窗口只有 `SRC-ARXIV` 属于到期 Required Daily；
+  2026-08-25 才生效的机构源与 Hugging Face 不再被倒推为历史必扫项，也不伪造 `no_hit`。
+- Books Decision 最终为 5 个 `Integrate`、2 个 `No Change — Existing Coverage`、58 个
+  `Weekly Only — Context`。SemPIC 与 OSReward 由既有正文的 bounded receipt 证明 No Change；
+  其余 Weekly Only 均保留 Source Review，不冒充已经沉淀进 Books。
+- Belayer 写入 `TRAIN-CHECKPOINT`；DualDecoder 与 WitCert 写入 `INFER-KV-CACHE`；
+  Functional Reconstruction 写入 `INFER-SPECULATIVE-DECODING`；DeltaServe 写入
+  `INFER-SCHEDULING`。正文只吸收长期机制、适用条件、trade-off 与未证明边界。
+- Fresh-context Review 在第一轮发现 disposition 真值冲突后拒绝签署；修复 Ledger、Source
+  Review、Books receipt 与 RP provenance 后，第二轮对 65/65 候选通过。111 项测试、五份
+  V2.1 report validator 与 `git diff --check` 均通过。
+- 本 checkpoint 不生成或改写 provisional Weekly，不改变 ROADMAP 或 DECISIONS，也未执行
+  staging、commit 或 push。
+
+## 2026-08-25 Research / Report Contract V2
+
+Status: Contract and validator implemented; historical reports remain compatible
+
+- Research、来源注册表与三类 Report 已分别收敛到 `RESEARCH_CONTRACT.md`、
+  `RESEARCH_SOURCES.md` 与 `REPORT_CONTRACTS.md`；Daily/Historical Prompt 只保留运行差异。
+- 新报告采用 Design Delta、System Reach、Durability 三维 Score V2；旧六维 `/30` 作为
+  Score V1 Legacy 保留，不机械重算。
+- Daily 先保存 Coverage Receipt、闭合 pagination/cursor 并冻结 Source Family denominator；
+  Historical 新增来源先做 Source Delta Audit，只重开真实受影响 owner week。
+- 不在 Books 范围内的长期候选使用 Structural Candidate，上下文事实使用 Weekly Only；
+  本 checkpoint 不触发历史 Books Integration，也不改变现有历史 forward cursor。
+- 标准库 validator 与回归测试已加入；本轮生成或重开的 `--report` 必须使用 V2，兼容性
+  `--audit` 才允许旧报告保持 V1 / unmarked。V2 将 Receipt、Supporting Source IDs、Review Ref
+  和 denominator 双向对账；本 checkpoint 不把旧归档机械升级为 V2。
+
+## 2026-08-25 Daily and Books Integration
+
+Status: Daily and Books Integration complete；Tuesday, no provisional W35 Weekly
+
+- Full listing replay corrected the initial five-family pass to thirteen retained academic Source Families, all with
+  primary-source review and final Books decisions: five Refine, seven `No Change — Explicitly Verified`, and one
+  `Weekly Only / Structural Candidate`; product facts and vendor benchmarks remain outside mechanism prose.
+- TreeWY refines `INFER-SPECULATIVE-DECODING`: hybrid recurrent state cannot use KV pointer rollback, so verification
+  must preserve algebra-aware branch updates and atomically commit accepted recurrent state with KV/output frontier.
+- World-model channel identity refines `MULTIMODAL-WORLD-MODELS`: environment, agent and realised joint channels are
+  separate contracts, and compact support-restricted continuation does not prove unrestricted counterfactual coverage.
+- Structurally indirect prerequisite eviction refines `AGENT-MEMORY`: construction, retention/admission, retrieval and
+  reasoning are separate failure boundaries; a retriever cannot recover a prerequisite already evicted from eligibility.
+- XKV refines `AGENT-MULTI-AGENT`: heterogeneous latent handoff can jointly read sender/receiver caches and create a
+  receiver-position-conditioned residual, while channel identity, prefill-only mutation and text fallback remain explicit.
+- HIERA refines `INFER-TENSORRT-LLM`: execution search must choose an implementation space before generating candidates;
+  the selector owns search strategy, not correctness verification or deployment admission.
+- XPerf, Nexus, ACES, Weighted Memory Tree, DirEAG, ForeTime-VLA and AI Infrastructure in Space remain chapter-specific
+  No Change after Method/experiment/limitation review. SAGE remains a Structural Candidate rather than being forced into
+  an unstable owner or used to create a new chapter from one paper.
+- Submitted timestamps earlier than the 2026-08-24 public listing remain explicit metadata rather than silent event-date
+  rewrites; Sunday W35 must reconcile ownership. ROADMAP and DECISIONS remain unchanged.
+- No staging, commit, push or destructive Git operation was performed. Existing Ch33 work was preserved, and the paused
+  2025 Historical Weekly cursor was not resumed.
+
+## 2026-08-24 Conversation RL Evolution Books Integration
+
+Status: `TRAIN-GRPO` refined; chapter remains Draft
+
+- The online RL evolution is now organized by controlled object rather than acronym chronology: advantage baseline,
+  sample admission, loss normalization and update constraint remain separate axes.
+- DAPO is integrated as a four-part long-CoT recipe for exploration collapse, zero-gradient groups, response-length
+  weighting and truncation noise, with its induced curriculum and objective-weight trade-offs made explicit.
+- Dr. GRPO, CISPO and GSPO are located as distinct estimator, clipping and sequence-granularity branches; their
+  objectives are not assumed composable or universally superior outside the cited primary-source contracts.
+- `TRAIN-PPO` and `TRAIN-DPO` retain their existing owner boundaries. ROADMAP and DECISIONS remain unchanged; no
+  staging, commit or push was performed.
+
+## 2026-08-24 Daily and W34 Spillback Reconciliation
+
+Status: Daily and Books Integration complete；Monday, no provisional W35 Weekly；W34 owner ledger corrected to 22/22
+
+- Weekend replay found two official 2026-08-22 releases that were public inside W34 but absent from the Sunday
+  aggregation: SGLang v0.5.18 and Dynamo v1.4.1. Both remain W34 owner events and are not duplicated into W35.
+- SGLang's opt-in startup path refines `INFER-TENSORRT-LLM`: overlapping checkpoint page staging with CUDA graph
+  capture is safe only when the later real-weight commit preserves graph-visible tensor/storage identity and the
+  unsupported matrix fails back to serial startup.
+- Dynamo's overload fix refines `INFER-DYNAMO`: request path and telemetry monitor are concurrent writers of routing
+  eligibility, so an external immediate mark must leave an explicit reconciliation obligation for authoritative
+  republication. The patch still depends on a later live load event and is not a complete event-stream recovery proof.
+- W34 now records 22 Full Source Reviews, 17 Refine and 5 chapter-specific No Change decisions, with 0 ordinary
+  Pending, Blocked or Disputed. Source-Family Evidence/Books Gates remain passed; Archive/Discovery Recall remains open.
+- arXiv's latest listing remained Friday, 2026-08-21, and no new model/research-institution event with sufficient
+  primary mechanism evidence was found in the weekend window. ROADMAP and DECISIONS remain unchanged.
+- No staging, commit or push was performed; existing Historical Weekly, Books and Lab worktree changes were preserved.
+
+## 2026-08-23 Daily and W34 Books Integration
+
+Status: Daily complete；W34 Source-Family Evidence/Books Gates passed；
+Archive/Discovery Recall remains open
+
+- W34 aggregates seven Daily records for 2026-08-17～2026-08-23. Twenty owner
+  families have complete primary-source reviews and final dispositions:
+  15 Refine, 5 chapter-specific No Change, 0 Review Pending, 0 Blocked and
+  0 Disputed.
+- Durable additions separate costly value estimation from endpoint routing,
+  require a measured frozen/no-op null for capability-transition ledgers, add
+  deterministic post-tool outcome receipts without transferring action authority,
+  and distinguish memory-entry majority from independent evidence support.
+- Edge RAG compression now optimizes net benefit under fidelity and provenance
+  constraints; reasoning-progress distillation masks teacher/student conflicts;
+  same-state simulator rollback can construct bounded safety-preference branches
+  without replacing the physical safety envelope.
+- MidTool, mixed-criticality scheduling, Scientific Data Skills, StateMem and
+  Spyre adapters received explicit No Change decisions against Ch28/27/78,
+  Ch56/63, Ch84, Ch77 and Ch49/66/84 respectively.
+- Eight candidates first-public on 2026-08-13～15 remain W33 spillbacks and were
+  not duplicated in W34. W33's separate discovery correction remains open.
+- ROADMAP, DECISIONS and the 7-Part/84-chapter structure are unchanged. No Git
+  staging, commit or push was performed.
+
 Historical note: dated entries below that precede the 2026-08-13 architecture
 migration use legacy chapter numbers. Legacy Ch23～37 map to current Ch27～41,
 Ch38～52 to Ch42～56, Ch53～69 to Ch57～73, and Ch70～80 to Ch74～84. New or
 updated research records must use Stable Node ID plus current/legacy chapter.
+
+## 2026-08-21 Conversation Questions Books Integration Audit
+
+Status: Ch21、Ch22、Ch28、Ch31 refined; all remain Draft
+
+- `TRAIN-RLHF` now separates the intended conditional output-distribution shift
+  from latent capability, elicited behavior and system capability; average KL is
+  explicitly not a per-slice preservation proof.
+- `TRAIN-PRETRAINING` now separates objective, update, numerical, data, system and
+  Evaluation signals by what each can and cannot prove, and limits continue/stop
+  gates to trajectory decisions rather than final-quality guarantees.
+- `MODEL-LONG-CONTEXT` now locates Gated DeltaNet in the recurrent linear-state
+  branch and distinguishes its memory-transition gate from an SDPA output gate;
+  hybrid coexistence and execution/state trade-offs remain explicit.
+- `MODEL-MOE` now states that standard MoE uses joint end-to-end optimization of
+  shared layers, router and routed experts; human-named domain experts are not the
+  default training contract.
+- LoRA/checkpoint lifecycle, GEMM/TMA/DeepGEMM execution, and model-specific
+  SM100/SM120 support received explicit `No Change` dispositions because their
+  current owner chapters already contain the durable mechanism or the remaining
+  facts are version-sensitive support-matrix details.
+- This audit preserves the existing staged self-check refinements and historical
+  Weekly work; it does not change `ROADMAP.md`, `docs/DECISIONS.md` or papers.
+
+## 2026-08-21 Self-check Answer Backfill
+
+Status: Ch1、Ch5、Ch42、Ch63 refined; all remain Draft
+
+- `WORLDVIEW-WHY-AI-SYSTEM` now distinguishes a runnable endpoint, a versioned
+  capability release and the full AI System lifecycle. Model deployment is a
+  subset of capability delivery, which is itself a subset of AI System.
+- `WORLDVIEW-REPRESENTATION` now derives why a neuron index cannot be a stable
+  knowledge address using the neuron computation and exact permutation
+  invariance, then connects distributed representation to causal evidence.
+- `INFER-REQUEST-LIFECYCLE` now compares backend request workloads with LLM
+  phase/token/KV workloads and fixes its post-migration chapter map.
+- `PLATFORM-GPU-SCHEDULER` now derives how installed capacity contracts through
+  health, compatibility, topology and policy into useful capacity, while
+  preserving the boundary with the inference runtime scheduler.
+- This user-directed Books refinement is independent of the paused historical
+  Weekly archive gate; no paper disposition or archive-completion status changed.
+
+## 2026-08-21 Remaining Chapter 1 Self-check Backfill
+
+Status: Ch1、Ch3、Ch66、Ch67、Ch73、Ch84 refined; all remain Draft
+
+- `WORLDVIEW-WHY-AI-SYSTEM` and `WORLDVIEW-KNOWLEDGE-TREE` now map Prompt,
+  RAG and Fine-tuning to different mutable objects, and use vLLM, KServe and
+  Kubeflow to demonstrate why framework learning must follow owner boundaries.
+- `PLATFORM-EVALUATION-SYSTEM` separates runtime, contract, semantic, policy
+  and outcome success; `PLATFORM-MONITORING` records how explicit service
+  errors and sampled quality signals compose without treating HTTP success as
+  correctness.
+- `PLATFORM-PRODUCTION` now converts demo assumptions into seven production
+  proof obligations covering identity, quality, capacity, reliability,
+  governance, economics and lifecycle evolution.
+- `AGENT-PLATFORM` now separates request/KV state, per-call Context,
+  authoritative AgentRun state and derived Memory, making the boundary from
+  model Serving to runtime orchestration explicit.
+- Existing Prompt, RAG, SFT/LoRA and Workflow chapters already owned their
+  detailed mechanisms, so this pass adds cross-layer contracts without
+  duplicating those chapters. Historical Weekly state is unchanged.
 
 ## 2026-08-13 Seven-Part Architecture and Source-Family Integration
 
@@ -4191,3 +4431,1234 @@ dispositions, seven Part guides, 84 Review-notes boundaries, zero duplicate cont
 mechanism headings after Review notes, no heading jumps or unclosed fences, valid local navigation links, consistent
 ROADMAP current/legacy mappings, URL syntax, `git diff --check`, and `git diff --cached --check`. No files were staged,
 committed or pushed.
+
+## 2026-08-15 Daily Research → Books Integration
+
+Status: Daily Gate passed; W33 remains open and no provisional Weekly was generated
+
+Three arXiv v1 system papers completed full primary-source review and refined existing owners without changing the
+seven-Part / 84-chapter structure:
+
+- `INFER-PAGED-ATTENTION` (Ch47) now continues block-level paging into the conditional token-liveness and physical-
+  reclamation branch, keeping full retention as the preferred low-pressure path.
+- `INFER-TENSORRT-LLM` (Ch49) now explains why MoE expert execution must price activation/weight-read, token/tile
+  compute and communication regimes rather than treating token count as a universal load proxy.
+- `INFER-SCHEDULING` (Ch56) now extends model-replica and stage-level disaggregation into operator-DAG elasticity,
+  with profile identity, interference, locality, SLO validation and failure ownership kept explicit.
+
+All three remain `Status: Experimental`; author benchmarks were retained only in the Daily workload contracts. Intern-S2,
+DARTree, Vero, RippleMem, StateBridge, CROP and Post-Norm Curriculum remain W33 `Review Pending` and were not written
+into Books from abstracts. This was the 2026-08-15 snapshot and is superseded by the 2026-08-16 checkpoint below.
+ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-16 Daily Research and W33 Weekly
+
+Status: Daily Gate passed; initial W33 Weekly/Books Gates passed at this snapshot, superseded by 2026-08-17 discovery correction
+
+The seven carry-over W33 source families were read through primary-paper method, implementation, evaluation,
+ablation/sensitivity, limitations and relevant appendices. RippleMem refined `AGENT-MEMORY` from isolated top-k
+records to anchor recall, bounded associative expansion and provenance-preserving evidence assembly. StateBridge
+refined `AGENT-MULTI-AGENT` with a training-free hidden-state alignment branch while keeping continuous prefixes
+proposal-only and authoritative workflow state typed. CROP refined `TRAIN-GRPO` by separating optimization need from
+task relevance and treating counterfactual sensitivity as a bounded proxy rather than causal credit.
+
+The Sunday cross-day review also promoted SwiftQK from Daily-only to an Experimental refinement of
+`TRAIN-TENSOR-PARALLEL`: TP should derive its minimum collective payload from consumer algebra, retaining AllGather
+when a full tensor is actually required. DARTree, Vero, Post-Norm Curriculum and the Intern-S2 technical report were
+chapter-level No Change / source-family evidence after adjacent-chapter review; their algorithms or joint recipe were
+not duplicated in the mechanism body.
+
+W33 covers 2026-08-10 through 2026-08-16 with 7/7 Dailies, 21/21 Full Source Reviews, 16 Refine and 5 No Change
+dispositions, and zero Review Pending or Blocked candidates. Its three stable synthesis routes are: coarse runtime
+objects to sufficient-information/state-liveness control units; append-only Agent state to governed retrieval/repair/
+activation; and richer proposal channels with explicit verifier and commit authority. The seven-Part, 84-chapter
+structure, ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-17 Daily Research and W33 Discovery Correction
+
+Status: Daily Gate passed; W33 Discovery/Evidence Gate reopened; correction Books Gate closed
+
+The 2026-08-16 W33 completion statement is superseded. A direct replay of the arXiv cs.AI, cs.CL, cs.LG and cs.DC
+recent surfaces recovered the Friday August 14 display batch that the Sunday scan had not recalled. The original 21
+Full Source Reviews, their 16 Refine / 5 No Change dispositions and existing Books changes remain valid, but they no
+longer prove complete W33 discovery coverage.
+
+Four newly recovered W33 source families completed full primary-source review: QuoteBench, OmniScientist, Beyond
+Final Scores and AlayaWorld. OmniScientist, Beyond Final Scores and AlayaWorld are chapter-level No Change evidence;
+QuoteBench remains Books Pending because its generation-contract × execution-transport evaluation mechanism must be
+compared against the complete Ch66/Ch80 argument after correction discovery closes. Thirty-two additional source
+families remain Discovery Review Pending for first-public/revision, deduplication, scoring and full-read decisions.
+
+No W34 provisional Weekly was generated and no Books, ROADMAP or DECISIONS files were changed for this correction.
+Current W33 accounting is 25 scored Full Source Reviews plus 32 unscored discovery candidates; the latter are not
+retained rows and cannot be assigned No Change dispositions before review.
+
+## 2026-08-18 Daily Research → Books Integration
+
+Status: Daily Gate passed; three primary-source mechanisms integrated; W33 correction queue remains open
+
+Three arXiv v1 papers completed full review across metadata, method, implementation, evaluation, ablation/sensitivity,
+limitations and relevant appendices. They refine existing Stable owners without changing the seven-Part / 84-chapter
+structure:
+
+- `TRAIN-DISTRIBUTED-TRAINING` (Ch36) now distinguishes phase-serial synchronous RL from dependency-driven
+  cross-phase overlap. Parameter-snapshot barriers preserve on-policy semantics while phase-aware residency and
+  layout-compatible physical sharing expose the new memory, TP-layout and recovery costs.
+- `INFER-TENSORRT-LLM` (Ch49) now extends MoE placement from offline maps through reactive migration to
+  budgeted predictive pre-routing. The predictor may advise physical placement, while the normal router remains the
+  sole owner of token-to-expert semantics.
+- `AGENT-WORKFLOW` (Ch81) now defines recoverable Agent state as an aligned Context/environment checkpoint.
+  Failure Memory remains advisory; the Runtime owns restoration and commit, and external side effects still require
+  idempotency, compensation or reconciliation.
+
+All three mechanisms remain `Status: Experimental`; author performance claims stay bound to their Daily workload
+contracts. Dynamo v1.4.0 is retained as an official bundled version fact and awaits per-PR/source-family review before
+any Books change. The W33 correction ledger remains separate at 25 reviewed rows plus 32 discovery candidates; this
+Daily neither closes nor relabels that backlog. No W34 provisional Weekly was generated. ROADMAP and DECISIONS
+remain unchanged.
+
+## 2026-08-19 Daily Research → Books Integration
+
+Status: Daily Gate passed; three primary-source mechanisms integrated; historical Weekly work remains paused
+
+Three arXiv v1 papers with first-public date 2026-08-17 completed primary-source review and refined existing owners:
+
+- `TRAIN-GRPO` (Ch33) now connects opaque Agent harness execution to policy optimization through model-boundary
+  token/logprob capture, prefix-tree reconstruction and branch filtering. The harness, serving proxy, verifier and trainer
+  remain separate owners; terminal reward broadcast does not solve sibling/subagent credit assignment.
+- `AGENT-PROMPT` (Ch74) now extends manual and fixed-objective Prompt maintenance into constraint-residual-driven
+  search. Adaptive multipliers choose which measured failure to repair, while schema, authorization, privacy and
+  side-effect enforcement remain outside the Prompt.
+- `AGENT-REFLECTION` (Ch80) now extends local uncertainty proxies into dependency-aware trajectory telemetry and
+  selective verifier/escalation. The derived graph is not a causal graph or calibrated truth probability and cannot
+  authorize tools, side effects or Memory writes.
+
+All three remain `Status: Experimental`; author benchmark numbers stay in the Daily workload contracts. Papers that
+were merely redisplayed on the August 18 arXiv list were assigned to their true April/June/W33 dates rather than treated
+as new events. No W34 provisional Weekly was generated. The 2025 historical cursor remains `W08 Passed; Next: W09;
+Paused by user`; no historical replay resumed. ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-19 Gradient-path and Layer-wise Update Refine
+
+Status: Ch17 and Ch28 refined; no roadmap or chapter-ownership change
+
+- `MODEL-TRANSFORMER-LAYER` (Ch17) now derives vanishing and exploding gradients from products of layer Jacobians,
+  distinguishes directional singular-value behavior from one aggregate norm, and explains how residual identity paths,
+  normalization placement, initialization and residual scaling change the gradient path.
+- `TRAIN-PRETRAINING` (Ch28) now separates global schedules, Adam-style coordinate adaptation, fixed layer/group
+  multipliers, LARS/LAMB trust ratios and layer-by-step residual schedules. Per-layer learning rate is an update actuator,
+  not a repair for forward saturation or gradients that vanished before reaching a layer.
+- The operational diagnosis now compares activation, unclipped gradient, update and parameter scales by layer/group;
+  frequent clipping is treated as a signal to investigate data, loss reduction, precision, collective and optimizer state.
+  Mixed-precision clipping is explicitly placed after gradient unscale and at a declared distributed aggregation boundary.
+
+The seven-Part / 84-chapter structure, ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-19 Hallucination, Self-Knowledge and Claim-Confidence Refine
+
+Status: Ch8 and Ch66 refined; Ch20/Ch76 existing owners explicitly reused
+
+- `WORLDVIEW-LLM-INTELLIGENCE` (Ch8) now separates generalization from hallucination and distinguishes next-token
+  probability from claim correctness. Internal logprob, `P(True)` / `P(IK)` and semantic entropy are treated as
+  calibratable risk signals rather than introspection or truth authorities.
+- `PLATFORM-EVALUATION-SYSTEM` (Ch66) now separates factual precision, all-claims-correct and conclusion-correct;
+  derives when claim probabilities may be multiplied; records dependency, criticality, alternative evidence paths,
+  shared Source Families and inference-edge confidence; and maps calibrated claim/conclusion risk into answer,
+  further retrieval, abstention or escalation.
+- `MODEL-SAMPLING` (Ch20) remains the owner of internal candidate/confidence signals. `AGENT-RAG` (Ch76) remains the
+  owner of retrieval, evidence sufficiency and claim-to-source entailment. Neither mechanism is duplicated in Ch8 or
+  Ch66.
+
+The stable conclusion is that hallucination control is a system evidence-and-decision contract: model confidence is a
+feature, external evidence and verifiers provide bounded authority, and risk policy owns the final coverage/abstention
+decision. The seven-Part / 84-chapter structure, ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-19 UAT and Depth-Separation Refine
+
+Status: Ch4 representation-capacity argument rebuilt; no owner or structure change
+
+- `WORLDVIEW-WHY-MODELS-LEARN` (Ch4) now derives why arbitrary-depth affine networks collapse to one affine map,
+  including the rank restriction introduced by a narrow bottleneck and the distinction between function class and deep
+  linear parameterization/implicit bias.
+- Suitable nonlinear activations are connected to Universal Approximation as a representation-existence result. The
+  chapter explicitly states that one sufficiently wide hidden layer can already be universal under theorem conditions,
+  and that UAT does not establish finite-size efficiency, optimization, finite-data learning, generalization or reliability.
+- Depth Separation is introduced as the missing answer to “why deep”: for specific function families, deep compositional
+  networks can require polynomial size where substantially shallower networks require exponential width. This is an
+  expression-efficiency result, not a guarantee that every task benefits or that deeper networks are easier to optimize.
+
+The stable distinction is now `linear closure -> nonlinear approximation capacity -> depth efficiency -> optimization ->
+generalization -> reliability`. Ch5 and Ch16 retain representation and Transformer-MLP ownership. ROADMAP and
+DECISIONS remain unchanged.
+
+## 2026-08-20 Daily Research → Books Integration
+
+Status: Daily Gate passed; three primary-source mechanisms integrated; no Weekly or structural change
+
+- `MODEL-SAMPLING` (Ch20) now requires a selector-admission test before hidden-state candidate selection replaces
+  majority voting. Decodability is measured with question-grouped, within-question ranking to avoid question-identity
+  leakage; it predicts selector competence but does not become truth or acceptance authority.
+- `PLATFORM-EVALUATION-SYSTEM` (Ch66) now records the adversarially correlated-error boundary: low semantic entropy,
+  repeated agreement and same-family review cannot create independent ground truth when a model distribution is
+  consistently wrong. Critical-element verifier coverage, accepted-wrong and abstention remain explicit.
+- `AGENT-TOOL-CALLING` (Ch78) now extends typed tool execution with a checked-lowering branch for resource-sensitive
+  local programs: audited relations and immutable input facts let an independent checker rebuild a bounded target,
+  while an atomic capacity lease and postcondition gate execution/publication.
+
+CASE, Fool's Gold and SkillEffect remain `Status: Experimental`; author thresholds, performance numbers and the
+security-sensitive deception recipe remain outside long-term prose. The 2025 historical cursor remains paused. No W34
+provisional Weekly was generated. ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-20 2025-W10 Historical Weekly Checkpoint
+
+Status: W10 Candidate Evidence Gate passed with declared discovery gaps; paused before W11
+
+- Replayed the 2025-03-03～2025-03-09 institutional, academic-discovery and engineering-release window. W10 now has
+  28 owner events: 22 `20+` non-template Full Source Reviews and 6 low-score/version-fact verifications, with ordinary
+  `Review Pending = 0`.
+- Phi-4 Mini/Multimodal report remains related evidence for the W09 launch family. Twelve feed items whose v1 predates
+  W10 were returned to W09 rather than duplicated under recommendation dates; all twelve now have Full Source Reviews,
+  bringing W09 to 100 `20+` reviews, 3 low-score verifications and zero ordinary pending.
+- Scholar/OpenAlex/DBLP historical exports and some engineering historical release feeds remain declared Discovery Gaps;
+  therefore the annual Archive Completion Gate remains Open. The Historical Books Gate also remains Closed, and no
+  Books, ROADMAP or DECISIONS file was changed by this historical slice.
+- The W09 spillback backlog is closed and its Candidate Evidence Gate again passes with declared gaps. The 2025 forward
+  cursor now starts W11 discovery replay after reading W10/W11/W12 and the annual ledger; do not redo W09/W10 unless
+  new primary evidence reopens their gates.
+
+## 2026-08-20 2025 Historical Weekly Pause Checkpoint
+
+Status: W10 complete; W11 discovery reopened and intentionally paused
+
+- W09's 12-family spillback backlog is closed: the week now has 100 `20+` Full Source Reviews, 3 low-score
+  verifications and zero ordinary pending. W09 again passes its Candidate Evidence Gate with declared gaps.
+- W10 remains passed with 22 `20+` Full Source Reviews, 6 low-score/version-fact verifications and zero ordinary pending.
+- W11 is not complete. Only Gemma 3 and the OpenAI Responses API / Agents SDK launch are verified Source Review seeds;
+  the March 10～14 academic replay has started, March 11 discovery returned a rate-limit gap, and remaining candidate
+  identity/date/scoring/full-read work is pending.
+- Resume point: read the W10/W11/W12 Weekly files and annual ledger, continue W11 fixed-source and academic discovery,
+  then complete all W11 Full/low-score dispositions before moving to W12. Do not modify Books during this historical pass.
+
+## 2026-08-21 2025 Historical Weekly Resume Checkpoint
+
+Status: resumed; W10 spillback reopened; W11 Source Review 6 verified seeds
+
+- W11 replay recovered seven March 10 feed papers whose v1 dates belong to W10; their identities are recorded in W10,
+  and W10 Candidate Evidence Gate is reopened until Full/low-score dispositions are complete.
+- W11 has six scored/verified seeds: Gemma 3, OpenAI Responses API / Agents SDK, Block Diffusion, Search-R1,
+  Transformers without Normalization (DyT), and DiLoCo Scaling Laws. The latter four received non-template Source Reviews.
+- W11 remains incomplete. Next slice reads Self-Taught Self-Correction, World Modeling Makes a Better Planner,
+  VisualPRM and Open-Sora 2.0, then closes the March 11 rate-limit gap and remaining March 10～14 discovery identities.
+- Historical Books Gate remains closed; no Books, ROADMAP or DECISIONS file was changed by this slice.
+
+## 2026-08-21 W11 Second Source-Review Batch
+
+Status: W11 Source Review 10 verified seeds; Candidate Evidence Gate open
+
+- Self-Taught Self-Correction, D²PO embodied planning, VisualPRM and Open-Sora 2.0 received primary-source reviews,
+  workload-bound scores, Stable Node owners and Books-deferred dispositions.
+- W11 now has ten scored/verified seeds. Discovery replay, March 11 rate-limit recovery and the remaining March 10～14
+  candidate identities are still pending; therefore no weekly completion claim is made.
+- Historical Books Gate remains closed; no Books, ROADMAP or DECISIONS file changed.
+
+## 2026-08-21 W11 Later-page Discovery Checkpoint
+
+Status: W11 10 verified seeds; six W11 reviews pending; W10 reopened by two spillbacks
+
+- GTR, CoRe², VisualWebInstruct, R1-Onevision, CoSTAast and Model Atlas were identified as W11 candidates pending
+  full source review.
+- WildIFEval and the long-output survey were returned to W10 by v1 date; W10 Gate is reopened until both receive
+  Full/low-score dispositions.
+- Historical Books Gate remains closed; no Books file changed.
+
+## 2026-08-21 W10 Later-page Spillback Resolution
+
+Status: W10 Candidate Evidence Gate passed again; W11 remains in progress
+
+- WildIFEval and the long-output survey received Full Source Reviews and were retained in W10 by v1 date.
+- W10 now has 31 `20+` reviews, 6 low-score verifications and zero ordinary pending; declared annual gaps remain open.
+- W11 resumes with six identified candidates awaiting full review. Historical Books Gate remains closed.
+
+## 2026-08-21 W11 Third Source-Review Batch
+
+Status: W11 Source Review 13 verified seeds; Candidate Evidence Gate open
+
+- GTR, CoRe² and VisualWebInstruct received primary-source reviews, scores, Stable Node owners and Books-deferred
+  dispositions. W11 now has thirteen scored/verified seeds.
+- R1-Onevision, CoSTAast and Model Atlas remain the next identified review batch; discovery replay is still open.
+- Historical Books Gate remains closed; no Books file changed.
+
+## 2026-08-21 W11 Fourth Source-Review Batch
+
+Status: W11 Source Review 16 verified seeds; Candidate Evidence Gate open
+
+- R1-Onevision, CoSTAast and Hugging Face Model Atlas received primary-source reviews, scores, Stable Node owners and
+  Books-deferred dispositions. W11 now has sixteen scored/verified seeds.
+- Remaining work is discovery closure, including the March 11 rate-limit gap and fixed engineering-release replay.
+- Historical Books Gate remains closed; no Books file changed.
+
+## 2026-08-21 W11 Discovery Recovery and Engineering Checkpoint
+
+Status: March 11 gap recovered; W11 Source Review 17 verified seeds
+
+- The March 11 academic gap was recovered as nine W11 paper identities awaiting Full/low-score disposition.
+- SGLang v0.4.4 received an official-release Source Review; vLLM v0.8.0 was date-routed to W12 and Transformers
+  v4.49.0 remains in W08.
+- W11 now has seventeen scored/verified seeds. Candidate Evidence Gate and Historical Archive Gate remain open;
+  Historical Books Gate remains closed.
+
+## 2026-08-21 W10 Spillback Resolution Checkpoint
+
+Status: W10 Candidate Evidence Gate passed again; W11 remains in progress
+
+- Seven W11-discovered families were returned to W10 by v1 date and received Full Source Reviews: Unified Reward,
+  Sketch-of-Thought, Forgetting Transformer, R1-Searcher, SafeArena, Multi-Attempt RL and Linear-MoE.
+- W10 now has 29 `20+` Full Source Reviews, 6 low-score verifications and zero ordinary pending. Its declared academic
+  export/release-feed gaps still keep the annual Archive Completion Gate open.
+- W11 resumes at Self-Taught Self-Correction, World Modeling Planner, VisualPRM and Open-Sora 2.0; Historical Books Gate
+  remains closed and no Books file was changed.
+
+## 2026-08-21 W11 Fifth Source-Review Batch
+
+Status: W11 Source Review 21 verified seeds; five recovered identities pending
+
+- Gemini Embedding, domain draft distillation, LMM-R1 and ProjectEval received Full Source Reviews, scores, Stable Node
+  owners and Books-deferred dispositions.
+- Five March 10 identities remain pending: FaceID-6M, Words/Deeds consistency, MOMA-QA, ARRA and NFIG.
+- Candidate Evidence Gate remains open; Historical Books Gate remains closed and no Books file changed.
+
+## 2026-08-21 W11 Sixth Source-Review Batch
+
+Status: W11 Source Review 26 verified candidates; March 11 recovered backlog closed; Candidate Evidence Gate open
+
+- FaceID-6M, Words and Deeds Consistency Test, MOMA-QA / SGVLM and ARRA completed v1 Full Source Reviews with
+  evidence contracts, Stable Node owners, trade-offs and Books-deferred dispositions.
+- NFIG completed a bounded Source Review from arXiv metadata/revision history, the full NeurIPS paper, current complete
+  revision and author code. Its v1 HTML incorrectly exposes a rebuttal template and the v1 PDF exceeded the extractor
+  limit, so the review records a revision boundary instead of claiming event-version textual identity.
+- W11 now has 26 scored and verified candidates; the nine-family March 11 recovery backlog has no ordinary pending.
+  Fixed-source and March 12～14 discovery closure still keep the Candidate Evidence Gate open. Historical Books Gate
+  remains closed and no Books file was changed.
+
+## 2026-08-21 W11 Curation-Lag Replay Checkpoint
+
+Status: W11 Source Review 29 verified candidates; W04 revalidated; W09/W10 reopened by spillbacks
+
+- SEA-VL, Meta Reinforcement Fine-Tuning and Seedream 2.0 completed Full Source Reviews with revision/evaluation
+  boundaries, Stable Node owners and Books-deferred dispositions.
+- YuE was not counted as a new W11 family: the official repository records the model release on 2025-01-26. Its March
+  technical report was full-read as same-family evidence, written back to W04, and W04 passed again at 54/54 scoring,
+  45/45 high-score reviews and 9/9 low-score verifications.
+- The March 12 curation page exposed one W09 and five W10 owner families. They have identity/date routing but not yet
+  full dispositions, so W09 and W10 Candidate Evidence Gates are accurately reopened rather than hidden behind their
+  prior denominators.
+- W11 has five newly identified pending reviews (OmniMamba, LocAgent, Second Me, Perplexity Trap, and inference-time
+  scaling for generative pre-training). March 13/14 and fixed-source closure remain open. Historical Books Gate stays
+  closed and no Books file was changed.
+
+## 2026-08-21 W11 Seventh Source-Review Batch
+
+Status: W11 Source Review 32 verified candidates; two March 12 W11 identities pending
+
+- OmniMamba, LocAgent and Second Me completed non-template Full Source Reviews covering method, state/control flow,
+  evaluation contracts, ablations, limitations, failure modes, prior-design coexistence and Stable Node ownership.
+- The reviews explicitly constrain OmniMamba's single-4090 long-sequence speedups, LocAgent's Python/API-price-bound
+  cost claims, and Second Me's synthetic teacher/judge loop and parameter-memory deletion/provenance gap.
+- Perplexity Trap and Ideas in Inference-time Scaling remain the next W11 review pair. Cross-week spillbacks and the
+  rest of the March 12～14 discovery pages keep the Candidate Evidence Gate open. Historical Books Gate remains closed.
+
+## 2026-08-21 W11 Eighth Source-Review Batch
+
+Status: W11 Source Review 34 verified candidates; known March 12 W11 review queue closed
+
+- Perplexity-Trap completed a full causal/evaluation review; its instrumental-variable assumptions, limited human
+  semantic checks and retrieval-quality versus source-bias trade-off are explicit.
+- Ideas in Inference-time Scaling completed a bounded review as a position paper. Its DDIM/MTP capacity argument is
+  retained, but the cited IMM speed claim is not treated as this paper's experiment and cannot enter Books without the
+  independent primary family.
+- The currently identified March 12 W11 queue has zero ordinary pending. Remaining work is the rest of that page,
+  March 13/14 discovery, fixed-source replay and W09/W10 spillbacks. Historical Books Gate remains closed.
+
+## 2026-08-21 W09/W10 Curation-Lag Spillback Resolution
+
+Status: W09 and W10 Candidate Evidence Gates passed again; W11 discovery remains open
+
+- Evaluating Intelligence via Trial and Error completed its W09 v1 review at 22/30. Failure-count tails remain a useful
+  evaluation abstraction, while the `10^26` parameter projection is explicitly disputed as an extreme log-linear
+  extrapolation rather than a forecast. W09 now has 101 high-score reviews and 3 low-score verifications.
+- VisualSimpleQA, MoE-X, Capacity-Aware Inference, Collapse of Dense Retrievers and OTTER completed event-time v1
+  reviews in W10. Capacity-Aware Inference preserves the v1 Token Drop/Reroute mechanism and does not backdate the
+  later v5 Expanded Drop revision. W10 now has 36 high-score reviews and 6 low-score verifications.
+- Both weeks have zero ordinary pending and passed score/date/revision/owner review again. Existing Scholar/OpenAlex
+  and historical engineering-feed gaps continue to affect only the annual Archive Completion Gate. No Books files
+  were changed; Historical Books Gate remains closed.
+
+## 2026-08-21 W11 Ninth Source-Review Batch
+
+Status: W11 Source Review 38 verified candidates; W10 reopened by three additional spillbacks
+
+- Inductive Moment Matching, malicious instruction-following retrieval, implicit-reasoning shortcuts and Video Action
+  Differencing completed full method/evaluation/appendix reviews with owner and evidence-boundary dispositions.
+- IMM performance is tied to ImageNet/CIFAR, step/precision/VAE/DiT conditions; the implicit-reasoning review uses the
+  official ACL paper because event-time arXiv HTML was unavailable and does not generalize synthetic two-operator
+  shortcut behavior to all hidden reasoning.
+- March 12 later entries returned MagicInfinite, the AI4SE benchmark review and Beyond Decoder-only MT to W10 by v1
+  date, so W10 Candidate Evidence Gate is reopened with three pending reviews. Eight additional W11 identities remain
+  pending. Historical Books Gate remains closed and no Books file was changed.
+
+## 2026-08-21 W10 Second Curation-Lag Resolution
+
+Status: W10 Candidate Evidence Gate passed again at 39 high-score reviews plus 6 low-score verifications
+
+- MagicInfinite, the AI4SE benchmark lifecycle paper, and LaMaTE completed event-time Full Source Reviews after being
+  returned from the March 12 curation page by their March 7/9 v1 dates.
+- MagicInfinite's 20x and realtime claims are bound to its 13B four-step, 8-H100 setup; the AI4SE review retains the
+  v1 173-study/204-benchmark census instead of backdating v3; LaMaTE separates theoretical KV reduction, Transformers-
+  based decode measurements and production engine/SLO unknowns.
+- W10 now has 39 high-score reviews, 6 low-score verifications and zero ordinary pending. The Candidate Evidence Gate
+  passed again; annual Archive gaps remain open. Historical Books Gate remains closed and no Books files changed.
+
+## 2026-08-21 W11 Tenth Source-Review Batch
+
+Status: W11 Source Review 42 verified candidates; four March 12 identities pending
+
+- SegAgent/HLMAT, LightGen, Semanticist/PCA-like visual tokens, and RFLAV completed full source reviews with state
+  ownership, evaluation contracts, ablations, limitations, Stable Node owners, and Books-deferred dispositions.
+- RFLAV used the event-time v1 PDF because both arXiv HTML revisions exposed an unrelated author-response template;
+  its bounded-window drift and occlusion-forgetting evidence prevent interpreting `infinite` as quality-preserving.
+- LightGen's 88 A100 GPU-day/data-diversity claims and Semanticist's PCA analogy remain bound to their own recipes and
+  proxies. RayFlow, QuoTA, PlainQAFact, and NullFace are the next known W11 review batch. Historical Books Gate remains
+  closed and no Books files changed.
+
+## 2026-08-21 W11 Eleventh Source-Review Batch
+
+Status: W11 Source Review 46 verified candidates; current identified March 12 queue closed
+
+- RayFlow, QuoTA, PlainQAFact, and NullFace completed full source reviews. QuoTA used the event-time PDF because its
+  arXiv HTML exposed an unrelated author-response template; PlainQAFact is locked to v1 rather than its 2026 revision.
+- RayFlow's theory and few-step metrics remain bounded to its target-mean estimator and image backbones; QuoTA's gain
+  includes scoring latency; PlainQAFact's small biomedical test and retrieval noise are explicit; NullFace is not
+  described as a formal privacy guarantee against unseen recognizers.
+- The currently identified March 12 W11 review queue is empty, but the rest of the page, March 13/14, and fixed-source
+  replay remain open. Historical Books Gate remains closed and no Books files changed.
+
+## 2026-08-21 W11 Twelfth Source-Review Batch
+
+Status: W11 Source Review 50 verified candidates; W10 revalidated at 40+6; three March 13 identities pending
+
+- TPDiff, Cost-Optimal GQA, MoC, and BIMBA completed full source reviews. TPDiff used the event-time PDF after HTML
+  mismatch; GQA FLOPs/KV reductions are not represented as measured throughput; MoC chunk rules are treated as
+  versioned index artifacts; BIMBA compression is explicitly lossy and query-specific.
+- More Documents, Same Length returned to W10 by its March 6 v1 date and completed a controlled-context Full Source
+  Review. W10 passed again at 40 high-score reviews plus 6 low-score verifications.
+- RewardSDS, VLog, and Alias-Free LDM are the next identified W11 review batch. Remaining March 13/14 and fixed-source
+  discovery keep W11 Gate open. Historical Books Gate remains closed and no Books files changed.
+
+## 2026-08-21 W11 Thirteenth Source-Review Batch
+
+Status: W11 Source Review 53 verified candidates; current identified March 13 queue closed
+
+- RewardSDS, VLog, and Alias-Free LDM completed full source reviews with method, experiment, ablation, limitations or
+  missing-limitations boundary, owner mapping, and Books-deferred dispositions.
+- RewardSDS records reward-alignment versus extra denoise/runtime and reward-hacking risk; VLog treats its narration
+  vocabulary as a versioned index with OOV/supersession pressure; Alias-Free LDM preserves the measured quality-
+  equivariance conflict instead of reporting SPSNR as free robustness.
+- The current identified March 13 queue is empty, but unscreened page entries, March 14, and fixed-source replay keep
+  W11 Candidate Evidence Gate open. Historical Books Gate remains closed and no Books files changed.
+
+## 2026-08-21 W11 March 14 Discovery Checkpoint
+
+Status: W11 81 Full Source Reviews, two low-score verifications; ordinary pending zero and two blocked
+
+- GoT, SANA-Sprint and Light-R1 completed non-template Full Source Reviews across event-time mechanism, state/control
+  flow, evaluation contract, limitations or missing-limitations boundary, owner and Books-deferred disposition.
+- DiT-Air, GroundingSuite and ARPG / Randomized Parallel Decoding then completed reviews across architecture/data
+  pipeline, state ownership, experiment contract and design trade-offs. DiT-Air retains an HTML/PDF boundary and ARPG
+  a v1/current revision boundary rather than treating later headline numbers as event-time facts.
+- M-Attack, TruthPrInt and Curse of Conditions / C²OT completed the final identified March 14 batch. Their reviews
+  separate black-box attack operating points, high-specificity latent detection and conditional-flow train/test prior
+  mismatch from broader claims; C²OT retains an explicit v1/current revision boundary.
+- The first identified March 14 review queue is empty. A full replay of the page remainder then recovered nineteen
+  additional W11 owner identities spanning diffusion security/generation, dynamic multimodal state, evaluation,
+  interpretability, embodied control and one low-relevance software-engineering study. Before the first recovered-page
+  batch, all nineteen remained `Review Pending` and were excluded from the then-current 62-row denominator.
+- Silent Branding Attack, 4D LangSplat and OmniPaint completed the first recovered-page batch. Their reviews preserve
+  data-lineage poisoning, time-varying semantic state and paired-to-unpaired cycle consistency as separate mechanisms,
+  raising the scored/Full Review denominator to 65 and leaving sixteen identities pending.
+- New Trends for Modern MT, Distilling Diversity and Control, and Long Context Tuning completed the next batch. The MT
+  position paper is Weekly Only because its own CommonMT results do not establish general LRM superiority; the two
+  diffusion reviews preserve early-step diversity and scene-level causal state/KV as bounded mechanisms. W11 is now
+  68 scored/Full Reviews with thirteen recovered-page identities pending.
+- Taxonomy Image Generation Benchmark and Image Transform Understanding completed Full Source Reviews, separating
+  taxonomy-specific judge/metric contracts from representation invariance. CINEMA moved to `Unverified / Blocked — P1
+  Full Text Required` because its v1 HTML is a rebuttal template and metadata/abstract cannot support a mechanism score.
+  W11 is now 70 scored/Full Reviews, ten ordinary pending identities and one explicit blocker.
+- ConsisLoRA and Piece it Together completed Full Source Reviews; Whisper Quantization received an 18/30 low-score
+  verification because its ten-file/2-core experiment and internally conflicting latency tables cannot support a
+  durable quantization conclusion. W11 now has 73 scored dispositions (72 Full Reviews + one low-score), seven ordinary
+  pending identities and the CINEMA blocker.
+- Influential Neuron Path, UniGoal and MinorBench completed Full Source Reviews. Their durable boundaries are an
+  interpretability evidence ladder rather than a proved causal circuit, graph-owned embodied workflow state with
+  revision limits, and population/prompt/judge-specific safety evaluation. W11 now has 76 scored dispositions
+  (75 Full Reviews + one low-score), four ordinary pending identities and the CINEMA blocker.
+- PoseLess and the Classifier(-Free) Guidance study completed Full Source Reviews; Bug-report Toxicity received a
+  14/30 outside-scope verification. PerCoV2 moved to `Unverified / Blocked — P1 Full Text Required` because both v1 and
+  current arXiv HTML render a rebuttal template. The recovered-page ordinary queue is now zero: W11 has 79 scored
+  dispositions (77 Full Reviews + two low-score) and two explicit full-text blockers, while fixed-source/engineering
+  replay still keeps the weekly Gate open.
+- Fixed-organization replay recovered Cohere Command A as a 2025-03-13 W11 event. Its launch, open-weight model card and
+  later same-family 55-page technical report were jointly reviewed, separating 3:1 SWA/full-attention and parallel
+  SFT/RL expert-merge checkpoint lineage from vendor throughput claims. W11 now has 80 scored dispositions
+  (78 Full Reviews + two low-score); engineering and remaining organization replay keep the weekly Gate open.
+- ERNIE 4.5 / X1 joint launch was then recovered as a 2025-03-16 W11 event. Official Baidu sources disclose mechanism
+  names and product/tool surfaces but no implementation or evaluation contract, so the review is locked to `Mechanism
+  Partially Disclosed / Books Frozen`; later Turbo/open-source facts are not back-projected. W11 now has 81 scored
+  dispositions (79 Full Reviews + two low-score) and two blockers; engineering replay remains open.
+- Engineering replay recovered Accelerate v1.5.0 as a 2025-03-12 event. Its HPU/SDAA device, visibility, launch and RNG
+  checkpoint surface was reviewed as a portability contract rather than a performance claim; DeepSpeed 0.16.4, Ray
+  2.43.0 and TensorRT-LLM 0.17.0 were deduplicated to February and KServe 0.15.1 to May. W11 now has 82 scored
+  dispositions (80 Full Reviews + two low-score) and two blockers.
+- The same engineering replay recovered ONNX Runtime v1.21.0, whose official release date is 2025-03-08; it was written
+  back to W10 rather than duplicated in W11. Its GenAI decoder/chat surface, breaking migration and execution-provider
+  partition contract completed a 26/30 Full Source Review. W10 is now 41 Full Reviews + six low-score verifications,
+  ordinary pending zero, and its Candidate Gate passes again with declared archive gaps.
+- Kubernetes v1.32.3 was verified as a 2025-03-11/12 patch event and retained at 22/30 because its DRA CEL cost
+  estimation/admission fix changes typed-resource behavior; the review does not promote the entire patch changelog into
+  a new platform architecture. W11 now has 83 scored dispositions (81 Full Reviews + two low-score) and two blockers.
+- W11 fixed-organization and engineering replay is now complete under the declared-gap/blocked-skip rule. Final weekly
+  accounting is 83 scored dispositions (81 Full Reviews + two low-score), zero ordinary pending and two explicit P1
+  blockers (CINEMA, PerCoV2). ONNX Runtime v1.21.0 was written back to W10. W11 Candidate Evidence Gate passes; the
+  annual Archive Completion Gate and Historical Books Gate remain closed. Forward cursor moves to W12 re-audit.
+- W12 has now been reopened. Its previous three-source archive is provisional: March 17-19 discovery pages already
+  expose many unscored families across multimodal documents/geometry/video, Agent interfaces, RL systems and model
+  architecture (including SmolDocling, VGGT, Vamba, FlowTok, TxAgent, R1-VL, RWKV-7 and DAPO). These are identity
+  census entries only; first-public routing, full/low-score review, fixed-source replay and the W12 Gate remain open.
+- The first W12 identity-routing batch found three recommendation-lag spillbacks rather than W12 events: SmolDocling
+  and ReCamMaster were first public on 2025-03-14, and PLADIS on 2025-03-10. All three completed non-template Full
+  Source Reviews in W11. W11 therefore passes again at 86 scored dispositions (84 Full Reviews + two low-score), zero
+  ordinary pending and two explicit P1 blockers; W12 discovery remains open and Historical Books Gate remains closed.
+- The second March 17 recommendation batch routed seven more families back to W11. VGGT, API Agents vs. GUI Agents and
+  Adversarial Data Collection completed full reviews; Vamba, FlowTok, TxAgent and the SSM survey remain explicit
+  `Review Pending`. W11 is therefore reopened at 89 scored dispositions (87 Full Reviews + two low-score), four
+  ordinary pending and two P1 blockers. W12 discovery and Historical Books Gate remain open/closed respectively.
+- Vamba, FlowTok, TxAgent and the SSM survey then completed non-template Full Source Reviews across mechanism,
+  state/data/control flow, implementation, evaluation, ablation, limitations and owner boundaries. W11 passes again
+  under blocked-skip at 93 scored dispositions (91 Full Reviews + two low-score), zero ordinary pending and two P1
+  blockers. The forward cursor returns to W12; Archive Completion remains Open and Historical Books Gate Closed.
+- Continued March 17 routing found TDM was first public on 2025-03-09; it completed a full review in W10, which now
+  passes at 42 Full Reviews plus six low-score verifications. Six additional W11 families were identified—Gradient
+  Inversion Attacks, GROVE, KArAt, ETCH, NAR and SPIRE—so W11 is accurately reopened with six ordinary pending and two
+  P1 blockers. W12 discovery remains in progress and Historical Books Gate remains closed.
+- Gradient Inversion Attacks then completed a revision-boundary review: v1 identity/abstract are event-time evidence,
+  while the accessible full method, experiments and supplement are the 2026 v2/TPAMI revision and are not backfilled
+  silently. W11 now has 94 scored dispositions (92 Full Reviews + two low-score), five ordinary pending and two P1
+  blockers. Historical Books Gate remains closed.
+- GROVE/HowToGround1M, KArAt, ETCH, NAR and SPIRE completed non-template Full Source Reviews. The reviews preserve
+  pseudo-label/data-selection bias, KArAt's negative scaling evidence, ETCH's domain boundary, NAR's retraining and
+  max-batch throughput contract, and SPIRE's discrete-speech/codebook limits. W11 passes again at 99 scored
+  dispositions (97 Full Reviews + two low-score), zero ordinary pending and two P1 blockers. Historical Books Gate
+  remains closed and the cursor returns to W12 discovery.
+- The remaining March 17 recommendation page then routed ProJudge, ARMOR and GoalFlow to W10, and MaRI, CHOrD,
+  TreeMeshGPT, Analogical Reasoning under Perceptual Uncertainty, Cockatiel, Open-World Skill Discovery and
+  Group-robust Unlearning to W11. W10 and W11 are accurately reopened with three and seven ordinary pending items;
+  Historical Books Gate remains closed and no Books claim is made from these identities.
+- ProJudge then completed a full review covering its human-labeled benchmark, GPT-4o-derived training paths,
+  Dynamic Dual-Phase objective, judge-family bias, error-type imbalance, LoRA training and missing calibration/
+  explanation evidence. W10 now has 49 scored dispositions (43 Full Reviews + six low-score) and two ordinary pending
+  items: ARMOR and GoalFlow. Historical Books Gate remains closed.
+- ARMOR and GoalFlow then completed full reviews. ARMOR preserves the modality-head/codebook and self-constructed-data
+  boundaries rather than treating 7% trainable parameters as total cost; GoalFlow is locked to its v1 PDF and NavSim
+  non-reactive contract rather than a road-safety claim. W10 passes again at 51 scored dispositions (45 Full Reviews +
+  six low-score) and zero ordinary pending. Historical Books Gate remains closed; W11's seven-item queue is next.
+- Analogical Reasoning under Perceptual Uncertainty completed a full review in W11. Its result is explicitly bounded to
+  symbolic PMF/confounder inputs and asymmetric comparison with a domain-specific ARLC rule template; it does not
+  establish the same degradation for a real visual front-end. W11 now has 100 scored dispositions (98 Full Reviews +
+  two low-score), six ordinary pending and two P1 blockers. Historical Books Gate remains closed.
+- MaRI and CHOrD then completed v1 Full Source Reviews. MaRI preserves the synthetic/real transfer, mask, gallery and
+  retrieval-only boundary instead of treating a learned embedding as physical material estimation. CHOrD preserves the
+  explicit 2D intermediate-state benefit together with detector/retrieval error propagation and is classified as static
+  scene generation rather than an action-conditioned World Model. W11 now has 102 scored dispositions (100 Full Reviews
+  + two low-score), four ordinary pending and two P1 blockers. Historical Books Gate remains closed.
+- TreeMeshGPT and Cockatiel then completed v1 Full Source Reviews. TreeMeshGPT is recorded as topology-aware
+  autoregressive ordering with manifold, dynamic-frontier and long-sequence failure boundaries, not a generic 3D quality
+  claim. Cockatiel is recorded as a scorer-governed synthetic-data pipeline whose teacher and scorer blind spots remain
+  inherited by the student. W11 now has 104 scored dispositions (102 Full Reviews + two low-score), two ordinary pending
+  and two P1 blockers. Historical Books Gate remains closed.
+- Open-World Skill Discovery and Group-robust Machine Unlearning then completed the final two v1 Full Source Reviews.
+  Skill Boundary Detection is bounded by predictor quality, transition assumptions, event schema and a Minecraft-only
+  controller contract. Group-robust unlearning is bounded by complete group annotations, image classification and a
+  behavioral approximation to reweighted retraining rather than a legal or cryptographic deletion proof. W11 now has
+  106 scored dispositions (104 Full Reviews + two low-score), zero ordinary pending and two explicit P1 blockers. Its
+  Candidate Evidence Gate passes again under the user-approved blocked-skip rule; Historical Books Gate remains closed.
+- The W12 forward cursor resumed with RWKV-7 and DAPO. Both 2025-03-18 v1 papers now have non-template Full Source
+  Reviews. RWKV-7 is bounded as a constant-state recurrent alternative with finite retrieval, numerical-kernel and
+  state-version trade-offs rather than “infinite context”; DAPO is bounded to Qwen2.5-32B math RL with rule verification,
+  unreported hardware/wall-clock and distribution-changing dynamic sampling. W12 now has five scored/reviewed seeds,
+  but the larger March 18-23 discovery census is still unscored, so its Candidate Evidence Gate remains open and
+  Historical Books Gate remains closed.
+- R1-VL and VideoMind then received two more W12 Full Source Reviews. R1-VL's dense reward is bounded by GPT-4-derived
+  key steps, format rules and a four-rollout multimodal contract; VideoMind's role specialization is bounded by top-k
+  proposal recall, verifier inheritance, repeated video processing and undisclosed end-to-end latency. W12 now has seven
+  scored/reviewed candidates, while the remaining March 18-23 census and fixed-source replay keep its Gate open.
+- The next March 18 identity-routing batch returned four recommendation-lag families to W11: Being-0 and SPIN-Bench
+  were first public on 2025-03-16, while reWordBench and V-STaR were first public on 2025-03-14. They remain explicit
+  `Review Pending`; W11 is accurately reopened with four ordinary pending items and two P1 blockers. W12 remains at
+  seven scored/reviewed owner candidates and its discovery replay continues. Historical Books Gate remains closed.
+- Being-0 and V-STaR then completed v1 Full Source Reviews in W11. Being-0 preserves cloud/onboard/control-frequency
+  ownership and controlled-environment safety rather than treating modularity as automatic robustness. V-STaR preserves
+  ground-truth injection, synthetic long-video composition and the absent claimed supplement as evidence boundaries.
+  W11 now has 108 scored dispositions (106 Full Reviews + two low-score), two ordinary pending and two P1 blockers;
+  Historical Books Gate remains closed.
+- SPIN-Bench and reWordBench then completed the fifth spillback batch. SPIN-Bench separates solver-backed planning
+  evidence from o1-judged negotiation metrics and asymmetric harness assignments. reWordBench separates ranking
+  invariance from calibration and downstream LM-judge utility while preserving the semantic-equivalence caveat. W11
+  now has 110 scored dispositions (108 Full Reviews + two low-score), zero ordinary pending and two P1 blockers; its
+  Candidate Evidence Gate passes again under blocked-skip. Historical Books Gate remains closed.
+- The next W12 identity check found two more recommendation-lag events: DropletVideo v1 belongs to W10 on 2025-03-08,
+  and WISA v1 belongs to W11 on 2025-03-11. Both remain explicit `Review Pending`; W10 and W11 are reopened rather
+  than silently retaining their prior pass labels. W12 remains at seven scored/reviewed owner candidates and continues
+  discovery. Historical Books Gate remains closed.
+- DropletVideo and WISA then completed event-time Full Source Reviews. DropletVideo preserves caption-teacher,
+  prompt-rewrite, internet-license and undisclosed training-compute boundaries; WISA is explicitly a semantic physical
+  guidance branch rather than a causal simulator, and its own evaluator failure remains recorded. W10 now has 52 scored
+  dispositions (46 Full Reviews + six low-score) and W11 has 111 (109 Full Reviews + two low-score); both ordinary
+  pending queues return to zero and both Candidate Evidence Gates pass again. Historical Books Gate remains closed.
+- The next March 18 routing batch assigned Personalize Anything and Human-Aligned Uncertainty to W11 (both v1 on
+  2025-03-16), the mechanistic-interpretability adversarial attack to W10 (v1 2025-03-08), and DreamRenderer plus
+  MicroVQA to W12 (v1 2025-03-17). The first three owner weeks are reopened with explicit pending rows; W12 now has
+  two ordinary pending owner candidates in addition to seven completed reviews. Historical Books Gate remains closed.
+- The mechanistic-interpretability adversarial attack then completed its W10 Full Source Review. Its refusal-subspace
+  result is bounded to white-box gradients, small open models, 60 paired prompts, exact chat templates and near-zero
+  cross-model transfer; linear probe separation is not promoted into a single causal refusal claim. W10 now has 53
+  scored dispositions (47 Full Reviews + six low-score), ordinary pending zero, and its Gate passes again.
+- Human-Aligned Uncertainty then completed a W11 Full Source Review. Its Pew-survey correlation is explicitly separated
+  from factual correctness calibration, individual-user trust and free-form claim uncertainty. W11 now has 112 scored
+  dispositions (110 Full Reviews + two low-score), one ordinary pending (Personalize Anything) and two P1 blockers;
+  Historical Books Gate remains closed.
+- Personalize Anything could not pass the Full Source Review gate: its 23.4MB event-time v1 PDF exceeds the current
+  document path, arXiv HTML renders a rebuttal template, and the project page is not a substitute for evaluation and
+  limitations. It is now a P1 Full Text blocker with an exact material request rather than ordinary pending. W11 has
+  112 scored dispositions, zero ordinary pending and three blockers; its Candidate Gate passes under blocked-skip while
+  Historical Books Gate remains closed.
+- MicroVQA completed a W12 Full Source Review. Its expert-curated microscopy workflow, RefineBot constructor bias,
+  MCQ/open-evaluation gap and 30-sample expert error analysis remain explicit. DreamRenderer could not pass the event-time
+  full-text gate because arXiv HTML renders a template and both v1/later PDF paths failed; it is now a P1 Full Text blocker
+  with an exact material request. W12 has eight scored/reviewed candidates, zero ordinary pending and one blocker, but
+  discovery remains open. Historical Books Gate remains closed.
+- The next March 18 routing batch returned the Multimodal CoT Survey (v1 2025-03-16) and LVAS-Agent (v1 2025-03-13)
+  to W11, while Edit Transfer, BlobCtrl, WideRange4D and R0 remain W12 owners (all v1 2025-03-17). W11 is reopened
+  with two ordinary pending items; W12 has four ordinary pending items, eight completed reviews and one blocker.
+  Historical Books Gate remains closed.
+- LVAS-Agent then completed a W11 Full Source Review. Its durable mechanism is the scene-script/audio-design/retrieval/
+  editable-track artifact chain; role names and agent count are not treated as causal evidence. The 207-video benchmark,
+  20-case ablation, 30-person study and undisclosed API/runtime contract bound the result. W11 now has 113 scored
+  dispositions (111 Full Reviews + two low-score), one ordinary pending and three blockers.
+- The Multimodal CoT Survey then completed the eighth spillback batch. Its value is an orthogonal taxonomy of rationale
+  modality, topology, construction, information source, granularity and test-time scaling; it is not primary mechanism
+  evidence. W11 now has 114 scored dispositions (112 Full Reviews + two low-score), zero ordinary pending and three
+  blockers, so its Candidate Gate passes again under blocked-skip. Historical Books Gate remains closed.
+- R0 / Rewards Are Enough then completed a v1-locked W12 Full Source Review. Its durable branch is pretrained-prior-
+  constrained reward maximization with random-eta sampling, gradient-normalized multiple rewards and optional
+  intermediate-step supervision; “image-free” is restricted to post-training prompts because the generator, CFG and
+  high-resolution guidance inherit an image-trained diffusion prior. HPS/ImageReward gains coexist with worse FID,
+  no independent evaluator or human study, undisclosed compute and code still marked coming soon. W12 now has nine
+  scored/reviewed candidates, three ordinary pending and one P1 Full Text blocker; discovery and Historical Books Gates
+  remain open/closed respectively.
+- Edit Transfer then completed its v1 Full Source Review. The reusable mechanism is a role-bearing four-panel visual
+  token canvas plus task LoRA, not arbitrary one-example operator induction: the model is first fine-tuned on 21 curated
+  human-edit types, text/visual conflicts are unresolved, low-level color transfer fails, and the 198-task user study
+  omits participant and uncertainty accounting. Current code/data/checkpoint only establish later artifact lineage.
+  W12 now has ten scored/reviewed candidates, two ordinary pending and one P1 blocker; discovery remains open and no
+  Books files were changed.
+- BlobCtrl then completed its v1 and event-time artifact review. Its durable contribution is a typed intermediate state:
+  Gaussian/ellipse layout, splatted DINO semantics and VAE appearance are owned separately before foreground/background
+  staged fusion. The evidence is bounded by a 100-image author benchmark, adapted baselines partly dependent on BlobCtrl
+  preprocessing, 30 participants x 20 sets, no matched compute or uncertainty, and only iterative single-element edits.
+  The repository records inference-code release on 2025-03-20; v2 is a later major rewrite. W12 now has eleven scored
+  reviews, one ordinary pending and one P1 blocker; Historical Books Gate remains closed.
+- WideRange4D / Progress4D completed the last ordinary W12 queue item. Its transferable principle is continuation-style
+  optimization: freeze a high-quality 3D anchor, admit a mutable temporal frontier, then commit aligned timesteps before
+  expanding farther. The paper is an observed synthetic multi-view reconstruction study, not an action-conditioned World
+  Model; its author benchmark omits scene denominator and user-study protocol, mixes multi-view and monocular input
+  contracts, and provides only a narrow qualitative alignment-loss ablation. W12 now has twelve scored Full Source
+  Reviews, zero ordinary pending and one P1 blocker; discovery remains open for March 19 remainder, March 20-23 and
+  fixed-source replay, and no Books files were changed.
+- The first twelve identities from the March 19 recommendation page were then routed by arXiv v1 rather than feed date.
+  AudioX, CapArena and Atlas belong to W11 (March 13/16/16), reopening that week with three ordinary pending items and
+  three P1 blockers. Impossible Videos, Creation-MMBench, DeepPerception/KARL, Infinite Mobility, the multimodal
+  preference-alignment survey, Frac-Connections, Cosmos-Transfer1, the long-software-task horizon study and FlexWorld
+  belong to W12 and form nine new ordinary pending items. These rows record identity/date only; none is counted as scored
+  or full-read. W12 remains at twelve scored reviews plus nine pending and one blocker; Historical Books Gate is closed.
+- AudioX then completed a v1-locked Full Source Review in W11. Its durable mechanism is a unified missingness and
+  conditioning protocol over modality-specific encoders: pre-encoder input masking and explicit zero/instruction fill
+  feed a concatenated condition into a latent audio DiT. The v1 evidence is bounded by synthetic Qwen2-Audio captions,
+  proprietary music pairs, unmatched specialist data/compute, small 10-person studies, 250-step sampling and no explicit
+  conflict resolver; the 2026 adaptive-fusion revision was not back-projected. W11 now has 115 scored dispositions
+  (113 Full Reviews + two low-score), two ordinary pending and three P1 blockers; no Books files were changed.
+- CapArena completed the next W11 Full Source Review. Pairwise human policy, adaptive sampling, inverse-probability
+  Bradley-Terry ranking and anchored automated judging form the durable evaluation chain. The reported human-level claim
+  is restricted to DOCCI reference captions and in-house pairwise policy; GPT-4o is both evaluated and used as judge/
+  anchor, while 94.3% is a 14-model ranking correlation rather than per-caption correctness. W11 now has 116 scored
+  dispositions (114 Full Reviews + two low-score), one ordinary pending (Atlas) and three P1 blockers.
+- Atlas completed the final W11 ordinary review. Multi-scale summary state, bidirectional cross-scale communication,
+  progressive scale retirement and feature-versioned QKV reuse form the mechanism; its O(N log N) cost preserves only
+  logarithmic communication depth, not exact all-pairs state. The headline is bounded to upsampled ImageNet-100 on
+  8xH100, unmatched baseline configs/kernels, no seeds/CI/memory and no native high-resolution downstream task. W11 now
+  closes under blocked-skip at 117 scored dispositions (115 Full Reviews + two low-score), zero ordinary pending and
+  three P1 Full Text blockers. Historical Books Gate remains closed.
+- User-requested pause checkpoint (2026-08-21): stop after W11 closure. W12 remains the forward cursor with twelve scored
+  Full Source Reviews, nine ordinary pending identities from the first March 19 routing batch and one DreamRenderer P1
+  blocker. The next run must resume at the March 19 second identity-routing batch, then March 20-23 pages and fixed-source
+  replay; it must not reinterpret W11 closure as W12 or annual completion and must not modify Books.
+
+## 2026-08-22 Daily Research → Books Integration
+
+- The 2026-08-21 academic discovery gap was recovered through the arXiv Friday listing without rewriting recommendation
+  time as first-public time. Three papers completed Full Primary Source Reviews; seven additional 20+ identities remain
+  an explicit Sunday full-read queue rather than premature Books evidence.
+- Lazy model delivery refined `PLATFORM-KSERVE`: mount/readiness, byte materialization and route eligibility are separate
+  lifecycle states. Deferred snapshotters move data cost and node-cache failures beyond mount time; the evidence is
+  bounded to specific stargz/SOCI versions, a single-node KServe testbed and incomplete recovery controls.
+- CacheRoute refined `INFER-DYNAMO`: prefix locality may require a stable control-interval plan, not only reactive
+  per-request selection. Plan revision, native cache residency and request routing remain separate owners; shadow replay
+  and a load-only fallback are required because the paper includes 32B regimes where affinity loses or ties.
+- StateMem was `No Change — Already Covered`: Ch77 already separates retrieval from current-state adjudication and
+  carries supersession, dependency invalidation, committed graph versions and explicit unknown-current state.
+- Saturday archive policy was preserved: no provisional W34 Weekly was created. The user-paused 2025 Historical Weekly
+  cursor remains W12 and was not resumed.
+
+## 2026-08-22 2025 Historical Weekly W12 Checkpoint
+
+- The user resumed the 2025 forward cursor at W12. Impossible Videos / IPV-Bench, Creation-MMBench and the
+  event-time DeepPerception v1 paper completed primary-source, revision, evaluation-contract, owner and adjacent-chapter
+  review. W12 now has fifteen scored Full Source Reviews, six ordinary pending identities and one DreamRenderer
+  `P1 Full Text` blocker; discovery remains open for the rest of March 19, March 20–23 and fixed-source replay.
+- DeepPerception is explicitly version-locked: the 2025 v1 evidence covers CoT-SFT followed by uniform IoU/format-reward
+  GRPO on Qwen2-VL-7B. The 2026 v3 KARL rename, Qwen3-VL base and adaptive knowledge-aware reward are later
+  same-family evolution and were not back-projected into W12.
+- Impossible Videos is retained as a counterfactual-generation evaluation slice rather than evidence of causal world
+  modeling. Creation-MMBench is retained as an instance-specific creative-quality plus visual-factuality evaluation case;
+  both keep constructor/judge coupling and undisclosed workload conditions explicit.
+- The per-batch score totals, dates, revisions, owner/adjacent-chapter mappings and Markdown structure were reviewed.
+  Historical Books Gate remains closed and no Books, ROADMAP or DECISIONS files were changed by this checkpoint.
+- The user clarified that historical work should parallelize across complete weeks, not merely across candidates inside
+  one week. Subsequent waves may research W12/W13/W14 concurrently; a single reconciliation/write owner must still
+  resolve first-public dates, spillbacks and Source Family duplicates before each Weekly Gate is recorded.
+- Infinite Mobility, the multimodal preference-alignment survey and Frac-Connections then completed independent W12
+  Full Source Reviews. Infinite Mobility is bounded as typed executable simulation data rather than policy or sim-to-real
+  evidence; the survey remains a source map rather than primary mechanism evidence; Frac-Connections is a fixed-width
+  residual-stream trade-off whose memory/throughput benefit is structural but not measured. W12 now has eighteen scored
+  Full Source Reviews, three ordinary pending identities and one DreamRenderer P1 blocker. Discovery remains open and
+  Historical Books Gate remains closed. W12, W13 and W14 discovery/full-read now run as separate read-only week lanes;
+  one serial owner still reconciles dates, revisions, spillbacks, scores, annual-index rows and per-week Gates.
+- W13 and W14 were also corrected before their parallel replay: the old two-candidate and one-candidate baselines are
+  retained, but `Complete` / `Books Gate completed` no longer describe the week-level archive state. Both Weekly files
+  now explicitly show `Candidate Evidence Gate Reopened` and `Historical Books Gate Closed`; no Books file was changed
+  by this historical status correction.
+- W13's second independent review confirmed severe archive compression and corrected Source-Family ownership. The
+  canonical known ledger is now 55 owner identities: 44 `20+` and eleven low-score closures, plus three unscored
+  related-evidence nodes owned by W09/W11. All 44 `20+` owners have primary-source full-text and strict-schema coverage;
+  all eleven low-score rows have source/date/six-dimensional-score/rejection closure. CaMeL was recovered through the
+  event-time v1 PDF, appendix and artifact, so ordinary pending、schema pending and blocked are all zero. W13 Candidate
+  Evidence Gate remains Not Passed only because Scholar/OpenAlex/DBLP/Crossref discovery lacks a reproducible exhaustive
+  export; Historical Books Gate remains closed and no Books file was changed by the W13 write-back.
+- W14's second independent review expanded and reclassified the one-row baseline to 42 owner identities: 38 `20+`,
+  four low-score closures and one additional W11 related-evidence node. All 38 `20+` owners have full-text and strict-schema
+  coverage; condensed/schema pending, ordinary pending and blocked are zero. TensorRT-LLM v0.18.0 is the fourth low-score
+  closure and remains a version/dependency fact rather than a new inference mechanism:
+  the 145-page AGI Safety and Security report has no Appendix, with its main body ending on PDF page 107 and pages
+  108–145 consisting entirely of References; it is retained as research-agenda/secondary-synthesis evidence, not as
+  validated mitigation evidence. Nova Act and
+  Transformers v4.51.0 were recovered by fixed-source/engineering replay; Foundation Agents Survey, Test-Time Scaling
+  Survey and GPT-ImgEval were closed at 19/30. W11 canonical reconciliation was reopened for Gemini Robotics and the
+  Cyberattack Capability Framework. W14 remains `Candidate Evidence Gate Not Passed / Historical Books Gate Closed`.
+- W12's latest reconciliation replaces an internally inconsistent annual checkpoint with a Source-Family-reproducible
+  ledger: 43 owner identities, of which 22 are scored Full Source Reviews and 21 have identity/date-only `Review Pending`
+  status. Cosmos-Transfer1, Measuring AI Ability to Complete Long Tasks, FlexWorld and DreamRenderer now have strict
+  primary-source packets. DreamRenderer's event-time v1 and official artifact were recovered, so its former P1 blocker
+  is removed; the March 20 FLUX code and May 20 SD3 support remain later artifact nodes. W12 has zero blocked sources but
+  its Candidate Evidence Gate remains Not Passed because the 21 spillbacks and March 20–23/fixed-source/cross-index/
+  engineering replay are open. Historical Books Gate remains closed and no Books file was changed.
+
+## 2026-08-22 2025 Historical Weekly W13～W16 Checkpoint
+
+- A serial Source-Family reconciliation corrected the vLLM Q2 2025 roadmap issue from W15 to its actual 2025-03-29
+  first-public owner week, W13. W13 therefore has 56 owner identities: 44 `20+` strict Full Source Reviews and twelve
+  low-score source/date/score/rejection closures, plus three unscored related-evidence nodes. Ordinary pending, schema
+  pending and blocked remain zero; the week-level Gate remains Open only for reproducible cross-index discovery export.
+- W15 has been rebuilt from one baseline row to 28 owner identities: 21 `20+` and seven low-score closures, plus
+  PaperBench v3 related evidence and two spillbacks. Twenty of the 21 retained candidates have strict Full Source Review;
+  A2A remains `Review Pending` because the event-time 2025-04-09 initial spec/commit has not been recovered. All seven
+  low-score rows are closed; blocked and disputed are zero. Its Candidate Evidence Gate is Not Passed.
+- The W16 read-only lane disproved the old two-row baseline and produced a 39-owner lower-bound ledger: 38 `20+`,
+  one low-score closure, five strict Full Source Reviews and 33 Review Pending candidates. The ledger, five packets,
+  pending/revision/spillback boundaries and annual disposition rows are now written back, but this is still not a
+  discovery-closed census. W16 Candidate Evidence Gate remains Not Passed.
+- W17 and W18 continue as independent read-only week lanes. A single writer still owns date/revision/spillback
+  reconciliation and per-week Gate write-back. Historical Books Gate remains closed; this checkpoint modified no Books,
+  ROADMAP or DECISIONS file.
+
+## 2026-08-22 2025 Historical Weekly W18～W19 Checkpoint
+
+- W18 has been rebuilt to 36 scored owner families: thirteen high-score, eighteen medium-score and five low-score rows.
+  Thirty of the thirty-one retained candidates have strict Full Source Review. UQLM has been returned from W28 by its
+  2025-04-27 research v1 and closed as a versioned UQ toolkit / No Change case. PIPA remains `Review Pending` because
+  the event-time v1 identity changed to AURA in v2; VideoHallu remains `Disputed` because the paper's GRPO label and
+  displayed optimization/reward contract do not align. The five low-score rows have source/date/rejection closure.
+  Seven W19-discovered pre-May-5 families are now identified and dated in W18 but remain unscored Full Source Review
+  pending: the inference-engine survey, ARTIST, R&B, SWE-smith, Who&When, the low-precision training survey and Muon
+  practical efficiency. W18 Candidate Evidence Gate therefore remains Not Passed.
+- W19 was not an empty week. The current replay recovered 26 scored owner families: 25 retained candidates and
+  one low-score program fact. W20 then returned the May-9 LLaVA-pretraining-toxicity family as one additional unscored
+  canonical identity and corrected SweRank's 2025-05-07 v1 owner from W20 back to W19. Absolute Zero, RetroInfer,
+  ZeroSearch, Flow-GRPO and SweRank have strict event-time v1 Source Reviews;
+  the other twenty retained families plus that unscored spillback are `Review Pending`. Fixed-organization negative evidence, the AI Infra
+  Release/RFC/PR replay and cross-index exact-date discovery are still open. W19 Candidate Evidence Gate is therefore
+  Not Passed, and Historical Books Gate remains closed.
+- No Books, ROADMAP or DECISIONS file was changed by these two historical Weekly checkpoints.
+
+## 2026-08-22 2025 Historical Weekly W17 Lower-bound Checkpoint
+
+- The two-row W17 baseline has been disproved and replaced with a 59-family lower-bound ledger: 22 high-score,
+  29 medium-score and eight low-score rows. Forty-three of 51 retained families have strict Full Source Review;
+  eight remain Review Pending, while all eight low-score rows have source/date/score/rejection closure. There are no
+  blocked or disputed identities.
+- The eight pending families are the Anthropic malicious-use linked report, CameraBench's oversized event-time PDF,
+  APC Mental Imagery, Token-Shuffle, TimeChat-Online, DyMU, code-grounded math evaluation and Auto-SLURP. Their exact
+  missing review scope is recorded in W17 rather than hidden behind a generic access failure.
+- W17 remains `Candidate Evidence Gate Not Passed / Historical Books Gate Closed` because those packets and the
+  April 25–27 cross-index, fixed-organization and engineering replay are open. No Books, ROADMAP or DECISIONS file was
+  changed by this checkpoint.
+
+## 2026-08-22 2025 Historical Weekly W20 Lower-bound Checkpoint
+
+- The former two-row W20 index has been replaced by a 44-row owner ledger: fourteen high-score, twenty-seven
+  medium-score and three low-score candidates. Forty of the forty-one retained candidates have strict Full Source
+  Review status; WorldPM remains the sole `Review Pending` item because its event-time v1 Method, reward ownership,
+  baselines, judge-leakage controls, Appendix and artifact contract have not yet been closed.
+- SweRank was removed from W20 after chronology review: arXiv:2505.07849 v1 was first public on 2025-05-07, so its
+  canonical owner, score and completed Source Review now live in W19. W20 keeps no duplicate score for that family.
+- The three low-score rows have explicit source/date/score/rejection closure. Blocked and Disputed are both zero, but
+  fixed-source, cross-index and engineering discovery replay remain open. W20 therefore remains `Candidate Evidence
+  Gate Not Passed / Historical Books Gate Closed`; no Books, ROADMAP or DECISIONS file was changed.
+
+## 2026-08-22 2025 Historical Weekly W22 Lower-bound Checkpoint
+
+- W22 has been rebuilt from two rows to a 28-row lower-bound ledger: fourteen high-score, twelve medium-score and two
+  low-score candidates. Five of twenty-six retained candidates have strict Full Source Review; twenty-one remain
+  `Review Pending`. Blocked is zero and the fixed-source/cross-index/engineering replay remains open.
+- The old KServe owner date was incorrect. `v0.15.0` is owned by W14 (2025-03-31), `v0.15.1` is a W20 revision
+  (2025-05-15), and only the `v0.15.2` patch belongs to W22 (2025-05-27). W22 therefore closes it as a 17-point patch
+  fact instead of a 25-point mechanism event. Candidate Evidence Gate remains Not Passed and Historical Books Gate
+  remains closed; no Books, ROADMAP or DECISIONS file was changed.
+
+## 2026-08-22 2025 Historical Weekly W23 Evidence Gate Checkpoint
+
+- W23 has been rebuilt from one row to forty-three scored owner families: twenty-eight high-score, eleven medium-score
+  and four low-score rows. All 39 retained candidates have strict Full Source Review and all four low-score candidates
+  have source/date/score/rejection closure; Review Pending, Blocked and Disputed are zero.
+- Urania is canonically owned by W23 through arXiv v1 2025-06-05; the W50 Google Research publication is related
+  follow-up evidence, not a second owner. W22 spillbacks are tracked without duplicate W23 scoring. W23 Candidate
+  Evidence Gate passes, while Historical Books Gate remains closed; no Books, ROADMAP or DECISIONS file was changed.
+
+## 2026-08-22 2025 Historical Weekly W24 Evidence-complete / Discovery-open Checkpoint
+
+- W24 has been rebuilt from one row to 163 written-back scored owner families: one hundred nineteen high-score,
+  thirty-three medium-score and eleven low-score rows. One hundred fifty-one of one hundred fifty-two retained candidates have source review;
+  Institutional Books 1.0 remains `Review Pending — Full Text Blocked`. The four-page Illusion of Thinking comment is now
+  fully read and finalized as `Disputed — Source Complete / Artifact Not Released`; missing raw outputs remain an evidence
+  boundary, not an excuse to call the paper unread. All eleven low-score candidates have source/date/revision/rejection closure, including one
+  `Disputed / Reject` theoretical claim.
+- Domain2Vec is canonically arXiv:2506.10952; the previously transcribed 2506.09309 is an unrelated numerical
+  analysis paper. FGN, Meta's MVP/CausalVQA/IntPhys 2/McMetric, GR00T N1.5, GTA1, AbstentionBench, DeepResearch
+  Bench, AutoMind, CUDA-LLM, VIKI-R, Mirage-1, UTBoost, ChineseHarm-Bench, the autonomous-driving survey and Ray
+  2.47.0, distributed-framework bugs, OPT-BENCH, EQA-RM, VGC-Bench, COPE, Chelsea/CentroidKV, QA-LIGN, TACA,
+  Uncertainty-o, SUDER, latent MHA, Brevity, MIRAGE, DeepForm, ReGuidance, GA-LLM, Dreamland, ASVR, CONFLICTS,
+  Kyvo, AniMaker, VRBench, HeadHunter, form-independent unlearning, TaxoAdapt, ClaimSpect, HCA, Institutional Books
+  and the SFT-to-ICL theory claim were recovered during the expanded replay. Code Researcher was returned to W22 by v1 date.
+  vLLM v0.9.1, the first TensorRT for RTX SDK release, Cosmos Predict-2 and the Data Flywheel Blueprint add
+  versioned execution-plan, world-model artifact and model-promotion evidence. The NIM selector, open AI-Q blueprint,
+  cuEquivariance kernels and Holoscan Sensor Bridge add serving-profile, enterprise-workflow, domain-kernel and sensor-state contracts;
+  the audio-token survey/benchmark, PosterCraft, CreatiPoster, DreamActor-H1, efficient probing, UniPre3D, StreamSplat,
+  SNMF feature decomposition, text-aware restoration, token perturbation guidance and TeleMath add representation,
+  generation, bounded-world-state and evaluation-contract evidence; AutoSDT, PartPacker, TaskCraft, HELiX, RAG+ and
+  configurable preference tuning, PAL, PersonaLens, query-level uncertainty, Feedback Friction, Farseer,
+  Chain-of-Action, ViCrit, multimodal response retrieval, out-of-context reasoning, retrieval granularity,
+  AR-vs-flow music generation, self-refining ASR, LoRA-Edit, FT-UKE, Only-Style, MMMG, CC-RAG, POET, TACTIC and VGR
+  add representation, generation, training, evaluation and workflow evidence; CRAFT, Duo, LiveCodeBench Pro,
+  FourierAttention, SwS, DeepVideo-R1 and pLSTM were then recovered from the Hugging Face day-gap replay with strict event-time packets; Avey, InterSyn, SkillBlender, Infinity Instruct, scalable code verification, a learned continue-thinking token, U-CoT+, IFAM, Med-PRM, MoAI and JAFAR form the next strict day-gap batch;
+  the Biomedical AI-Q Blueprint closes below threshold. FlashInfer's June NVIDIA
+  adoption post remains related evidence and spills canonical ownership to W01 with a W17 revision. AWS Bedrock's Qwen import, Adobe/Gardenia workflows and E.ON/Nova multimodal cases add bounded engineering evidence; Nemotron availability and the Bedrock billing taxonomy remain product/cost-contract facts rather than undisclosed mechanisms. The written ledger is
+  now 163; two retained evidence gaps and discovery replay remain open.
+  Later Apple/Optimus/VideoExplorer/weather revisions remain forward evidence. Fixed-organization, HF day-gap and
+  cross-index recall are still open, so W24
+  archive/discovery completion is not claimed and Historical Books Gate remains closed.
+
+## 2026-08-22 2025 Historical Weekly W29 Lower-bound Checkpoint
+
+- W29 has been rebuilt from one baseline row to thirty-five scored owner families: twenty-two high-score,
+  eleven medium-score and two low-score rows. Thirty of thirty-three retained candidates have strict Full Source Review,
+  three remain `Review Pending`, both low-score rows have source/date/rejection closure and Blocked is zero.
+- Hyma, Mixture-of-Recursions, the RLVR contamination study, GitChameleon, SWE-Perf, FLEXITOKENS, AutoSteer,
+  Voxtral, Balalaika, Seq vs Seq/Ettin, REST, EmbRACE-3K, DIJA, EXAONE 4.0, RiemannLoRA, MMHU, PhysX-3D,
+  MindJourney, Mono-InternVL-1.5, AnyCap, SGLang MTP and ChatGPT agent carry strict evidence packets. SWE-Perf and AnyCap keep
+  explicit disputed method/data fields without discarding the rest of their evidence; the Inverse RL survey is also full-read while its taxonomy/formula overclaims remain disputed, GEA is retained only as preliminary human-preference evidence rather than an energy measurement, AbGen's arXiv/artifact contract remains distinct from later ACL metadata, Diffuman4D is bounded to mutable 4D generation rather than causal world-model evidence, TAIL is bounded to program-trace training specification, π³ is bounded to representation-coordinate/gauge ownership, VisionThink is bounded to sample-adaptive resolution acquisition rather than calibrated uncertainty, and CSD-VAR is bounded to next-scale optimization/state ownership without event-time artifact. Fixed-organization, engineering-release and
+  cross-index discovery remain open; RedOne and Teach Old SAEs are returned to W28 by their 2025-07-13 arXiv v1 and 2025-07-08 OpenReview first-public dates. The latter's 2025-07-17 arXiv v1 is forward evidence only. Historical Books Gate remains closed and no Books file was changed.
+
+## 2026-08-22 2025 Historical Weekly W25 Lower-bound Checkpoint
+
+- W25 has been rebuilt from two rows to a 40-owner lower-bound ledger: eleven high-score, twenty-four medium-score
+  and five low-score candidates. Seven of the thirty-five retained candidates have strict Full Source Review; the
+  other twenty-eight remain `Review Pending`, while all five low-score rows have source/date/score/rejection closure.
+- CRITICTOOL and FedNano were returned to W24 by their 2025-06-11 and 2025-06-12 v1 dates. Additional W23/W24
+  spillbacks exposed by the W25 feed are recorded without duplicate W25 scores. Fixed-organization, cross-index and
+  June 19–22 discovery replay remain open, so W25 Candidate Evidence Gate is Not Passed and Historical Books Gate
+  remains closed. No Books, ROADMAP or DECISIONS file was changed by this checkpoint.
+
+## 2026-08-22 2025 Historical Weekly W26 Candidate Evidence Gate Checkpoint
+
+- W26 has been corrected from an erroneous empty-week conclusion to forty-four scored owner families: thirty-three
+  high-score, seven medium-score and four low-score rows. All forty retained candidates now have strict Full
+  Source Review; all four low-score candidates have source/date/score/rejection closure. Review Pending, Blocked
+  and Disputed are zero.
+- Engineering releases were returned to W22, W24 or W25 by their official dates instead of being duplicated in
+  W26. The current Candidate Evidence Gate passes, while fixed-organization and cross-index recall remain subject
+  to the annual Archive/Discovery audit. Historical Books Gate remains closed; no Books, ROADMAP or DECISIONS file
+  was changed by this checkpoint.
+
+## 2026-08-22 2025 Historical Weekly W27 Lower-bound Checkpoint
+
+- W27 has been expanded from one row to thirty-seven scored owner families: sixteen high-score, seventeen medium-score
+  and four low-score rows. Twenty-nine of thirty-three retained candidates have strict Full Source Review; MARVIS remains
+  `Review Pending / Material Gap` because the event-time v1 full text is unavailable, while vLLM RFC #20283, vLLM Q3 roadmap #20336 and SGLang Q3 roadmap #7736 remain proposal-only Review Pending. All four low-score rows have source/date/revision/rejection closure. Disputed is zero
+  for the reviewed state, but pending families have not been prejudged.
+- HiRA, 2-Simplicial Attention, Self-Correction Bench, Answer Matching, Bourbaki, Thinking with Images, JAM-Flow and
+  μ²Tokenizer, ARIG, Mixture of Reasonings, Keye-VL, LongAnimation and the VLA Action Tokenization survey were newly
+  closed against event-time full text; Depth Anything at Any Condition, IntFold, Critical Limitations, LangScene-X and Heeding the Inner Voice are also now strict-complete. Numerous June v1 papers were returned to W25/W26;
+  vLLM v0.9.2 belongs to W28 by its 2025-07-07 release date.
+  Fixed-organization and cross-index recall remain open, so W27 Candidate Evidence Gate is Not Passed and Historical
+  Books Gate remains closed. No Books, ROADMAP or DECISIONS file was changed by this checkpoint.
+
+## 2026-08-22 2025 Historical Weekly W28 Lower-bound Checkpoint
+
+- W28 has been corrected to a ninety-five-owner lower-bound ledger after returning UQLM to W18: sixty-eight high-score, twenty-two
+  medium-score and five low-score candidates. Identity, first-public date, revision family, score and owner are closed
+  for the current ledger, but compact mechanism drafts are not counted as full-paper evidence.
+- Forty-one of ninety retained candidates have strict event-version Full Source Review; Function Calling vs MCP security, the next-token trace-structure study, MobileGUI-RL, SARA, ECom-Bench, DRAGOn and HIRAG are closed while protocol/configuration claims and DRAGOn's superseded v1 evaluation remain explicit disputes. Forty-nine remain
+  `Review Pending`; Teach Old SAEs has a full arXiv-v1 mechanism packet but still requires its 2025-07-08 OpenReview original revision, while Agent KB, POLAR, Response Attack and Spatio-Temporal LLM require
+  the event-time v1 full text; none is counted strict. All five low-score rows have
+  source/date/score/rejection closure, Blocked is zero, and GoalfyMax remains low-score `Disputed` because author
+  identity/approval evidence conflicts.
+- NVIDIA Helix was recovered during fixed-organization replay after the initial ninety-three-row draft. Broader
+  fixed-organization, Hugging Face and academic cross-index discovery remains open, so W28 Candidate Evidence Gate
+  is Not Passed and Historical Books Gate remains closed. No Books, ROADMAP or DECISIONS file was changed.
+
+## 2026-08-22 2025 Historical Weekly Parallel Re-audit Superseding Checkpoint
+
+- Historical Weekly replay remains active and Historical Books Gate remains closed. This checkpoint supersedes the
+  older W13/W14/W25/W28/W29/W30/W31 counts without rewriting earlier chronology.
+- W13 now has sixty scored owners: forty-seven retained and thirteen low-score. Forty-six retained families are strict;
+  only RLHF Data Scaling remains Review Pending; AdaptiVocab is closed with its event-time artifact gap explicit. W14 has forty-six scored owners: forty-two retained and four
+  low-score; all forty-two retained families are now strict. ACTalker and WikiVideo are closed against event-time papers
+  while missing implementation artifacts remain explicit evidence boundaries; OpenCodeReasoning and SkyReels-A2 were
+  upgraded only after full event-version paper/artifact review; their artifact drift and disputed ablation boundaries
+  remain explicit.
+- W25 remains a forty-owner lower bound. Eleven of thirty-five retained families are strict and twenty-four remain pending;
+  the RLVR correct-reasoning study is now closed with Pass@K versus judge-defined CoT-Pass@K, large-group assumptions,
+  judge-calibration and reproduction limits preserved. Guru closes the six-domain reward-routing, effective-gradient,
+  negative-transfer and numerical-subclaim boundaries. W28 is forty-two of ninety strict after Omni-Router; W29 is
+  thirty-two of thirty-three strict after OpenBEATs and Franca, with only the Context Engineering survey pending.
+- W30 has three scored/strict owners after recovering the heterogeneous agent-system scheduling paper. W31 has six
+  scored/strict owners after recovering SLAI scheduling, Graph-R1, DICE and the Graph-Augmented Agent survey; only the
+  withdrawn/blocked G-Core identity remains unscored. Graph-R1's reward-claim mismatch, theory dispute and current-artifact drift;
+  DICE's missing Appendix/artifact and formal-claim disputes
+  remain explicit; W31 Discovery and Historical Evidence Gates are open.
+- Annual Archive/Discovery completion is not claimed. No Books, ROADMAP or DECISIONS file was changed by these
+  historical Weekly write-backs; no Git staging, commit or push was performed.
+
+## 2026-08-24 2025 Historical Weekly Gap Reconciliation Checkpoint
+
+- A repository-wide progress review confirmed that W21 had been skipped by the 2025 reconstruction sweep: its Weekly
+  and annual ledger still contained only the three-row legacy baseline. W22 already named nine May 20-25 spillbacks,
+  and a fresh primary-metadata replay now establishes an approximately 126-owner lower bound. Ninety-seven candidates
+  have strict review facts closed; two retain explicit revision/numerical disputes and two abstract-only low-score
+  blockers remain isolated while final deduplication continues. W21 Candidate Evidence Gate is
+  therefore explicitly reopened rather than inferred complete from discovery.
+- Date reconciliation has already returned SageAttention3 (`2505.11594`, v1 2025-05-16), Time-R1, Orthogonal Residual
+  Updates and Synthetic Data RL to W20. W20's WorldPM full text is recoverable, while those spillbacks and the
+  2025-05-18 NVLink Fusion event prove that W20 also needs discovery reconciliation beyond its previous single pending
+  packet. W12 likewise has a larger March 20-21 discovery gap than its existing 21-item pending ledger records.
+- W12 now has a 110-owner lower bound and continues its row-level repair. W20 has incorporated BARREL
+  (`2505.13529`, v1 2025-05-18) as its 81st owner with score `4/3/4/4/4/4 = 23`, event-version Full Source Review
+  and annual-ledger row. The W20 Candidate Evidence Gate passes again at 64/64 retained strict plus 17/17 low-score
+  closures, Pending/Blocked 0. SageAttention3 keeps its artifact-date dispute; BARREL keeps the v1 abstract/table
+  numeric mismatch and reward-order wording/formula ambiguity explicit rather than laundering them into a headline.
+  W12, W15 and W22 continue as independent read-only research lanes. W21's initial 121-owner claim did not pass
+  root field-level review, so repository writeback remains open. The root workflow remains the single
+  writer for owner-week routing, spillback, deduplication, score reconciliation, Gate decisions and annual-index
+  updates. Historical Books Gate remains closed; this checkpoint changes no Books, ROADMAP or DECISIONS file.
+
+## 2026-08-24 2025-W21 Root Review Correction
+
+- The completed read-only artifact was not accepted as written. It claimed 121 canonical owners and 110/110 strict
+  packets, but six in-window 20+ packets were absent from both its canonical ledger and six-dimensional score ledger:
+  Reasoning Path Compression (`2505.13866`), Lessons from Defending Gemini Against Indirect Prompt Injections
+  (`2505.14534`), The Hallucination Tax of Reinforcement Finetuning (`2505.13988`), downstream fine-tuning data
+  extraction (`2505.15656`), the LRM safety SFT study (`2505.15404`) and Toto/BOOM (`2505.14766`). Primary metadata
+  confirms all six were first public on 2025-05-20 or 2025-05-21 and therefore belong to W21.
+- The honest lower bound is now 127 owners: 60 high, 56 medium and 11 low. Existing evidence accounts for 113 of
+  116 retained strict packets; AceReason-Nemotron, Tool-Star and NovelSeek/InternAgent still require final individual
+  packets and ledger reconciliation. The eleven low rows are closed, five revision disputes remain frozen, and one
+  noncanonical P0 identity gap (`Teaching Models to Lie`) remains outside scoring. W21 Candidate Evidence Gate is
+  reopened; no annual-index or completion claim may use 121/121.
+
+## 2026-08-24 2025 Historical Weekly W12/W15/W21/W22 Root Review
+
+Status: W15, W21 and W22 written back after root review; W12 remains open; Historical Books Gate closed
+
+- W15 is reconciled at 41 scored owners: 34/34 retained strict reviews and 7/7 low-score closures. Thirteen
+  pre-2025-04-14 families were routed back from W16. Ordinary Pending, Blocked and Disputed are zero; the
+  Discovery / Archive Gate remains Conditional Open only for a reproducible cross-index export and the exact
+  2025-04-09 A2A source tree. A2A mechanism claims were narrowed to what the launch evidence proves.
+- W22 is reconciled at 85 scored owners: 47 high, 36 medium and 2 low. All 83 retained families have
+  independently auditable strict packets, both low-score families are closed, and Pending / Blocked / Disputed
+  are zero. Its Candidate Evidence Gate and Discovery Replay Gate pass; the annual Archive Gate remains open.
+- W21's previous 121-owner completion claim was rejected, then rebuilt at 127 owners: 60 high, 56 medium and
+  11 low. Root independently recomputed 127 canonical rows, 127 score rows and all score totals; 116/116 retained
+  families now have one-to-one packets and 11/11 low rows are closed. Review Pending is zero. Five revision
+  disputes remain source-complete with event-time claims frozen rather than reused. Candidate Evidence Gate passes;
+  Discovery / Archive Completion remains Conditional because `Teaching Models to Lie` is still a noncanonical P0
+  identity gap outside the scored ledger.
+- W12's expanded census is 107 W12 owners: 95 strict, 6 low-score closures and 6 explicit source blockers,
+  plus four v1-dated spillbacks to W11. Review Pending is zero, but the Evidence Gate remains open. Root
+  review restored and revalidated all 22 pre-existing strict packets alongside the 73 newly completed strict
+  packets; the 95/95 strict count is therefore content-backed rather than a summary-only claim. The missing-material
+  ledger remains TokenBridge, ETVA, Judge Anything, TULIP, RSD and VideoRFSplat, plus a fixed-organization immutable
+  release/tag export, so the Candidate Evidence Gate remains open under the explicit blocked ledger.
+- No Historical Books integration was performed. No file was staged, committed or pushed.
+
+## 2026-08-26 August 1–25 Daily V2.1 Closure
+
+- `papers/2026/08/01`～`25` 的 25 份 Daily 已按各自北京时间窗口完成 Coverage、Evidence、Deep Analysis Selection、Books Decision 与 fresh-context Semantic Audit，`Completion Status = Complete`，三项 Gate 全部闭合。
+- 冻结账本共 188 个 Source Families：50 个 `deep_complete`、135 个 `standard_complete`、3 个 `closure_complete`；最终 Books disposition 为 39 个 `Integrate`、10 个 `No Change — Existing Coverage`、136 个 `Weekly Only — Context` 与 3 个低耐久度拒绝。D01～24 不再以章末 citation 或最终 disposition 倒推 Books/Selection，36 个 Integrate 均定位到 durable 正文机制和语义相邻 owner。
+- 独立 reviewer 复核了逐日 arXiv 分桶、Effective Date、Evidence locator/claim boundary、Selection eligibility、Books target/adjacency/evolution relation 及所有 Weekly Only review refs，最终零未解决 finding。结构 validator、111 项回归测试与 `git diff --check` 通过；cross-model audit 按用户选择跳过。
+
+### W01 / W40 Ledger Synchronization
+
+- W01 年度索引已补齐 13 项独立低分 closure，现与周文件的 37 retained + 13 low = 50 项账目一致；没有改变 W01 的技术结论或 Books 状态。
+- W40 已完整闭合为 44 个 owner：20 个 retained Full Source Review、23 个普通低分 closure、1 个 Self-Forcing++ 精确全文 blocker；22 个 W39 owner-date spillback 已排除且不重复计分。Root 已复算全部 Total，年度索引同步 44 行。
+- W40 Weekly Evidence Gate 按 blocked-skip 通过；年度 Archive Completion 与 Historical Books Gate 继续关闭。本检查点没有修改 Books，也没有执行 stage、commit 或 push。
+
+### W38 / W39 Final Reclosure
+
+- W38 通过完整 9 月 18～21 日 feed replay 从旧 50 行重闭合为 88 个 owner：38 high、10 medium、40 low；48/48 retained reviews 与 40/40 low closures 完成，ordinary pending/block/dispute 为零。年度索引已同步 88 行。
+- W39 从 1 项 seed 重建为 64 个 owner：34 high、10 medium、20 low；44/44 retained reviews 与 20/20 low closures 完成。W40 发现的 22 个 W39 owner 全部回收，12 个 earlier-owner spillback 排除于本周分母；年度索引已同步 64 行。
+- 两周 Weekly Evidence Gate 均通过，年度 Archive Completion 与 Historical Books Gate 继续关闭；没有修改 Books，也没有执行 stage、unstage、commit 或 push。
+
+### 2025 Historical Forward Pause after W41
+
+- 本轮完成 W38～W41 的周级闭环与根级复算：W38 88 owners（48 reviews / 40 low），W39 64（44 / 20），W40 44（20 / 24，含 1 个精确 blocker），W41 55（38 / 17）；四周 ordinary `Review Pending = 0`，年度索引已同步对应 88、64、44、55 行。
+- W41 已推翻旧 No Material Update：27 high、11 medium、17 low，并从 W42 feed/history 回拨 21 个 W41 owner；55 个 family 均有 final disposition，Historical Books Gate 保持关闭。
+- 用户要求暂停，恢复游标为 `Next: 2025-W42`。后续恢复时先读本 checkpoint、年度索引、W41/W42/W43，再重放 W42；不得跳周或直接写 Books。
+- 明确保留一项索引 backlog：W12 周文件的最终 denominator 为 110（98 strict + 7 low + 5 blocked），年度候选明细仍是旧 43 行，下一轮需单独同步。Annual Archive Completion 仍 Open；本轮没有执行任何 Git 状态操作。
+
+### W12 Gap Reclosure
+
+- W12 已从旧43-owner下界重新闭合为110个owner identities：98项strict Full Source Review、7项低分closure、5项精确`Unverified / Blocked`，ordinary`Review Pending = 0`。ETVA v1、vLLM v0.8.1、Transformers v4.50.0和JAX v0.5.3已恢复；四个W11 spillback未计入W12分母。
+- TokenBridge、Judge Anything、TULIP v1、One-Step Residual Shifting Diffusion v1与VideoRFSplat v1均有精确材料请求。按用户授权blocked-skip，W12 Candidate Evidence Gate为Conditional Pass；Archive source-complete与年度Archive Completion仍Open。
+- Historical Books Gate关闭，本轮未修改Books。年度索引旧43行尚待同步到110-owner最终账本，已作为显式账本修复项保留。
+
+### W36 Full Reconciliation
+
+- W36 已从1项legacy seed重建为65个canonical owners：13 high、11 medium、41 low；24/24 retained Full Source Review与41/41 low-score closure闭合，root复算65/65六维Total且Source Family无重复，ordinary`Review Pending = 0`。
+- Robix `2509.01106v1`是唯一`Unverified / Blocked`并有精确P1全文材料请求；W36 Weekly Evidence Gate按blocked-skip为Pass with disclosure，年度Archive source-complete仍Open。
+- 十一个W35 spillback均未在W36计分，新增四项触发W35 second reopen；年度索引已同步65行。Historical Books Gate关闭，本轮未修改Books。
+
+### W38 Full Reconciliation
+
+- W38 已从2项legacy seed重建为50个scored Source Families：24 high、3 medium、23 low。Root复算50/50六维Total、唯一Source Family与窗口日期，核对27/27 retained Full Source Review和23/23 low-score closure；`Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- W37与当前W39无重复计分；八个earlier-owner family只作spillback，`2506.02153`已存在于W23 canonical ledger。年度索引已同步50行。
+- W38 Weekly Evidence Gate通过；Historical Books Gate与年度Archive Completion继续关闭，本轮未修改Books。
+
+### W13 Gap Reclosure
+
+- W13 已从60项下界重闭合为62个scored owners：39 high、9 medium、14 low。Root复算62/62六维Total与候选唯一性，核对48/48 retained Full Source Review和14/14 low-score closure；`Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- RLHF Data Scaling `2503.22230v1`全文、Megatron-LM MTP implementation event与DeepSpeed v0.16.5均已闭合；Transformers v4.50.0归W12，W13只保留v4.50.1～3 patch family，三个related evidence node不计分。
+- W13 Candidate Evidence Gate通过，Discovery Replay因历史cross-index export不可冻结为Conditional Pass；年度索引已同步62行。Historical Books Gate关闭，本轮未修改Books。
+
+### W35 Second Owner-Date Reclosure
+
+- W35的second reopen经完整submission-history与recommendation回查，除指定四项外又恢复USO、TCIA、In-Tool Learning、Rank-One Safety Injection、Mixture of Contexts与OnGoal；最终由43扩展为53个唯一Source Families：28 high、12 medium、13 low。
+- Root复算53/53六维Total、Source Family唯一性与ROADMAP owner，核对40/40 retained Full Source Review和13/13 low-score closure；`Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。W36四项routing已标Recovered且没有重复评分。
+- W35 Discovery与Evidence Gate重新通过，年度索引已同步53行；HF feed不可访问边界仍保留。Historical Books Gate与年度Archive Completion继续关闭，本轮未修改Books。
+
+### W38 Owner-Date Reopen from W39
+
+- W39 look-ahead确认RPG `2509.16198`、MANZANO `2509.16197`、BaseReward `2509.16127`、VLAC `2509.15937`、Ask-to-Clarify `2509.15061`、Audio DLM `2509.16622`、ARE `2509.17158`、SWE-Bench Pro `2509.16941`与HAPO `2509.16591`均在2025-09-18～21首次公开，属于W38且不在当前50行账本。
+- W38的50-row closure与年度50行快照已重开；九项完成评分、review/low closure、去重、年度writeback与新Gate前不得宣称完成。W39不重复计分。
+- Historical Books Gate与年度Archive Completion继续关闭，本轮未修改Books。
+
+### W14 Gap Reclosure
+
+- W14 已从46项下界重闭合为61个scored owners：43 high、14 medium、4 low。Root复算61/61六维Total与候选唯一性，核对57/57 retained Full Source Review和4/4 low-score closure；ordinary`Review Pending / Unverified / Blocked = 0 / 0 / 0`。
+- 新恢复15项，包括W15回拨的Rethinking Reflection；ACTalker/WikiVideo artifact gap、OpenCodeReasoning artifact drift和SkyReels-A2 revision/ablation dispute均为source-complete evidence boundary。
+- W14 Candidate Evidence Gate通过，Discovery Replay Closed，Archive Completion为Conditional；年度索引已同步61行。Historical Books Gate关闭，本轮未修改Books。
+
+### W25 Superseding Closure
+
+- W25 已闭合为 58 个唯一 owner：17 high、30 medium、11 low。Root 复算全部评分 Total，并核对 47/47 retained Full Source Review、11/11 low-score closure；普通 `Review Pending / Blocked / family-level Disputed = 0 / 0 / 0`。
+- 新恢复的 owner 包括 2025-06-19～20 的 10 个 20+ paper family、6 个低分 family、SGLang GB200 PD + large-scale EP 与 TensorRT-LLM v0.20.0；vLLM v0.9.1 回拨 W24。AceReason-Nemotron 1.1 与 Guru 的局部数值冲突保持明确，不进入稳定机制结论。
+- W25 Candidate Evidence Gate 通过；年度 Archive/Discovery Completion 与 Historical Books Gate 继续关闭。本检查点没有修改 Books、ROADMAP 或 DECISIONS。
+
+### W29 Superseding Closure
+
+- W29 已闭合为 53 个唯一 owner：30 high、12 medium、11 low。Root 复算全部六维 Total，核对 42/42 retained strict Full Source Review 与 11/11 low-score closure；普通 `Review Pending / Blocked = 0 / 0`。
+- 新恢复 ElasticMM、CodeJudgeBench、LoRA-MCL、IFScale、Deep Hidden Cognition、SENTINEL、PhyWorldBench、ECP 与 Astrogator；Context Engineering 166 页 v1 已完成分节全文审计，但作者的“1400+ papers”缺少可复算 systematic-search protocol，不能升级为系统综述证明。
+- RedOne、Teach Old SAEs 与 FlowSpec 的 owner/revision 已按 first-public date 去重；局部数值、字段及 artifact 差异保持 evidence boundary。W29 Candidate Evidence Gate 通过，Historical Books Gate关闭；未修改 Books。
+
+### W28 Full Reconciliation
+
+- W28 已去重为 91 个 scored owners：65 high、21 medium、5 low。Root 复算全部评分 Total，并确认 RAT、GradOT、S³、DP-Fusion 只归 W27；相邻周 scored arXiv owner 交集为 0。
+- 82/86 retained strict complete，4 项保留精确材料 blocker，普通 `Review Pending = 0`，5/5 低分闭合。NeoBabel 与 Spatio-Temporal LLM v1 已恢复；仍缺 POLAR v1、Response Attack v1、Agent KB v1 revision、Teach Old SAEs event-time OpenReview revision。
+- W28 Candidate Evidence Gate 为 Conditional，academic cross-index immutable export 与年度 Archive Completion 继续 Open，Historical Books Gate 关闭。本检查点没有修改 Books。
+
+### W31 Full Reconciliation
+
+- W31 已闭合为 36 个 scored owners：16 high、4 medium、16 low。Root 复算全部评分 Total，核对 20/20 retained Full Source Review 与 16/16 low-score closure；普通 `Review Pending / Unverified / Blocked = 0 / 0 / 0`。
+- G-Core 的事件时 16 页 v1 已恢复，但因次日撤回并注明未经公司批准，终态为 source-complete `Disputed — Withdrawn Source / Mechanism Evidence Frozen`，不得进入 Books；Graph-R1 与 DICE 的 source-complete claim disputes继续保留。
+- 跨周 spillback 与 W30/W32 去重已复核。W31 Candidate Evidence Gate 与 Discovery Replay Gate 通过；年度 Archive Completion 与 Historical Books Gate继续关闭。本检查点未修改 Books。
+
+### W30 Full Reconciliation
+
+- W30 已闭合为 51 个 scored owners：26 high、10 medium、14 low 和 1 个低分材料 blocker。Root 复算全部评分 Total，核对 36/36 retained Full Source Review 与 15/15 low-score/blocked closure；普通 `Review Pending = 0`。
+- Zebra-CoT `2507.16746v1` 只有 metadata/abstract，缺事件时全文；19 分不等于可信全文拒绝。材料补回后必须重做机制、evaluation、score 与 disposition。
+- W30 Candidate Evidence Gate 为 `Conditional Pass — 1 Exact External Material Blocker`，只允许 forward cursor 继续，不能宣称材料无缺口或年度 Archive Completion；Historical Books Gate关闭。本检查点未修改 Books。
+
+### W30/W31 Spillback Reopened by W32
+
+- W32 replay 新路由 3 个 W30 owner（Efficient Agents、InstructVLA、Dens3R），它们不在 W30 的 51 行账本；W30 completion 已重开。
+- W32 同时路由 14 个 W31 owner，其中 Cognitive Kernel-Pro、RL-PLUS 已收录，另外 12 个仍缺 canonical score/review 或低分 closure；W31 的 36 行 completion 已重开。
+- W30 先修复，随后 W31 串行复核；两周新 Gate 通过前，旧 checkpoint只作superseded snapshot。Historical Books Gate继续关闭。
+
+### W30 Spillback Reclosure
+
+- W30 已补入 Efficient Agents、InstructVLA 与 Dens3R，账本由 51 行重闭合为 54 个 scored owners：29 high、10 medium、14 ordinary low 和 1 个低分材料 blocker。Root 复算 54/54 Total，并核对 39/39 retained Full Source Review 与 15/15 low-score/blocked closure；普通 `Review Pending = 0`。
+- Efficient Agents 以 arXiv v1 2025-07-24 为 owner date；正文中的 2026-08-11 只记录为内部日期冲突。Zebra-CoT 仍缺 v1 full text，因此 W30 Gate 保持 `Conditional Pass`，年度 Archive Completion仍未通过。
+- W30 spillback reopen 已关闭；W31 的 12 个遗漏 owner 继续处于 reopened 状态。Historical Books Gate保持关闭，本检查点未修改Books。
+
+### W31 Spillback Reclosure
+
+- W31 已补入旧 36 行账本缺失的 12 个 canonical owner，并对已存在的 RL-PLUS、Cognitive Kernel-Pro 去重；新 denominator 为 48 scored owners：21 high、11 medium、16 low。
+- Root 复算 48/48 Total，核对 32/32 retained Full Source Review、16/16 low-score closure 与 12/12 新增 review；普通 `Review Pending / Unverified / Blocked = 0 / 0 / 0`。W32 中相同 ID 仅作为 spillback ledger，不重复计分。
+- W31 Candidate Evidence 与 Discovery Replay Gate 重新通过，W30/W31 spillback reopen均已闭合。年度 Archive Completion与Historical Books Gate保持关闭，本检查点未修改Books。
+
+### W32 Full Reconciliation
+
+- W32 已闭合为 41 个 scored owners：14 high、2 medium、25 low。Root 复算全部评分 Total，并核对 16/16 retained Full Source Review、25/25 low-score closure；普通 `Review Pending / Blocked / family-level Disputed = 0 / 0 / 0`。
+- VeriGUI→VeriWeb 与七个关键 revision family 已按 event-time 隔离；17 个 spillback 全部路由到 W30/W31，其中新增遗漏已重开 owner week，不在 W32 重复计分。
+- W32 Historical Weekly Evidence Gate通过；年度 Archive Completion与Historical Books Gate继续关闭。本检查点未修改Books。
+
+### W33 Full Reconciliation
+
+- W33 已由旧空周 stub 重建为 36 个 scored owners：12 high、12 medium、12 low。Root 复算 36/36 Total，并核对 24/24 retained Full Source Review 与 12/12 low-score closure；普通 `Review Pending / Unverified / Blocked / family-level Disputed = 0 / 0 / 0 / 0`。
+- 2025-08-11～2025-08-17 owner window、同周 revision、W32 spillback与早周 revision均已去重；vLLM 1.0 RFC保留为计划事实，不写成已实现能力。
+- W33 独立 Review Checkpoint与Historical Weekly Evidence Gate通过；Historical Books Gate与年度 Archive Completion继续关闭，本检查点未修改Books。
+
+### W34 Full Reconciliation
+
+- W34 的 21-row 初稿经独立 recall Review 发现 7 个遗漏 owner，最终重闭合为 28 个 scored Source Families：17 high、8 medium、3 low。Root 复算 28/28 Total，并核对 25/25 retained Full Source Review 与 3/3 low-score closure。
+- 新补入 4DNeX、Next Visual Granularity、S²-Guidance、Precise Action-to-Video、FLARE、MeshCoder 与 Dissecting Tool-Integrated Reasoning；日期、revision、Source Family及W33/W35 spillback均已复核，普通 `Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- W34 Candidate Evidence Gate通过；Historical Books Gate与年度 Archive Completion继续关闭，本检查点未修改Books。
+
+### W34 Owner-Date Reopened by W35
+
+- arXiv primary submission history确认 TPLA `2508.15881` v1 为2025-08-21，Memento `2508.16153` v1为2025-08-22；两项均归W34。旧ledger把它们路由W35，并将Memento误标为AgentFly。
+- W34的28-row closure已重开；两项完成评分、Full Source Review、身份/日期纠正与新Gate前不得宣称W34最终完成。W35不得重复计分。
+- Historical Books Gate与年度Archive Completion继续关闭，本检查点未修改Books。
+
+### W34 Owner-Date Reclosure
+
+- W34 已补入 TPLA 与 AgentFly→Memento lineage，由28行重闭合为30个唯一Source Families：19 high、8 medium、3 low。Root复算30/30 Total，并核对27/27 retained Full Source Review与3/3 low-score closure。
+- 两项按2025-08-21与08-22 v1归W34；08-25 v2/title revision只作same-family evidence，W35未重复计分。普通 `Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- W34 Independent Review与Weekly Evidence Gate重新通过；Historical Books Gate与年度Archive Completion继续关闭，本检查点未修改Books。
+
+### W35 Full Reconciliation
+
+- W35 已由 1 项 legacy seed 重建为 36 个 canonical Source Families：19 high、8 medium、9 low。Root 复算 36/36 Total，并核对 27/27 retained Full Source Review 与 9/9 low-score closure；普通 `Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- TPLA及AgentFly→Memento lineage按v1日期回拨W34且未在W35重复计分；Kubernetes v1.34/DRA core GA归W35，9月follow-up只作同family evidence。
+- W35独立Review Checkpoint与Weekly Evidence Gate通过；Historical Books Gate与年度Archive Completion继续关闭，本检查点未修改Books。
+
+### W35 Owner-Date Reopened by W36
+
+- W36 replay 发现 7 个 v1 日期属于W35且旧36行账本完全缺失的owner：LLaVA-Critic-R1 `2509.00676`、Metis `2509.00404`、Open Data Synthesis `2509.00375`、Camlang `2509.00425`、SQL-of-Thought `2509.00581`、SATQuest `2509.00930`、ELV-Halluc `2508.21496`。
+- W35的36-row closure已重开；7项完成评分、review/low closure与新Gate前不得宣称最终完成。W36不重复计分。
+- Historical Books Gate与年度Archive Completion继续关闭，本检查点未修改Books。
+
+### W35 Owner-Date Reclosure
+
+- W35 已补入 W36 replay 暴露的 7 个 owner-date spillback，账本由36行重闭合为43个唯一Source Families：23 high、11 medium、9 low。Root复算43/43 Total，并核对34/34 retained Full Source Review与9/9 low-score closure；普通`Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- 七项均按2025-08-29～31的arXiv v1日期归W35，W34/W36评分表未重复计分；W35 Independent Review与Weekly Evidence Gate重新通过。
+- Historical Books Gate与年度Archive Completion继续关闭，本检查点未修改Books。
+
+### W35 Second Owner-Date Reopen from W36
+
+- W36 denominator stabilization确认 Universal Deep Research `2509.00244` 的v1为2025-08-29，必须从W36回拨W35；Mixture of Global and Local Experts `2509.00428`、MobiAgent `2509.00531`与C-DiffDet+ `2509.00578`的v1均为2025-08-30，且不在W35当前43行账本。
+- W35的43-row reclosure再次重开。四项完成评分、review/low closure、去重、年度writeback与新Gate前不得宣称最终完成；W36不重复计分。
+- Historical Books Gate与年度Archive Completion继续关闭，本检查点未修改Books。
+
+### W37 Full Reconciliation
+
+- W37 已由1项legacy seed重建为54个canonical owners：19 high、18 medium、17 low。Root复算54/54 Total，并核对37/37 retained Full Source Review与17/17 low-score closure；普通 `Review Pending / Unverified / Blocked / Disputed = 0 / 0 / 0 / 0`。
+- 九个W36 spillback未在W37重复计分；串行对账后七项已在W36 ledger，`2509.03646`与`2509.05209`触发W36补录。
+- W37 Candidate Evidence Gate通过；Discovery/Archive Gate因缺immutable Scholar/OpenAlex export保持Conditional，Historical Books Gate关闭，本检查点未修改Books。
+
+## 2026-08-24 2025-W23 Completion Claim Reopened
+
+- Root progress review found that W23's own cross-week ledger named in-window families that were absent from its
+  43-row canonical score ledger. Primary metadata confirms Saffron-1 (`2506.06444`), Astra (`2506.06205`),
+  Cartridges (`2506.06266`), ConfQA (`2506.07309`), ECoRAG (`2506.05167`) and Bootstrapping World Models
+  (`2506.06006`) as six W23 owners. The final owner denominator is therefore at least 49.
+- `Comment on The Illusion of Thinking` (`2506.09250`, v1 2025-06-10) belongs to W24, not W23. The existing
+  39/39 retained packets and 4/4 low closures remain valid only for the old 43-row ledger; they cannot prove a
+  discovery-complete denominator. W23 Candidate Evidence Gate is reopened and Historical Books Gate remains closed.
+
+## 2026-08-24 2025-W16 Root Reconciliation and W24 Material Recovery
+
+### W27 Full Reconciliation
+
+- W27从37项旧账扩展为41个唯一scored owners：19项高分、18项中分、4项低分。Root逐行复算六维Total并核对36个source-complete retained review、1个blocked packet与4/4低分closure；RAT、GradOT、S³、DP-Fusion按2025-07-06 v1日期从W28回拨，W28只保留spillback关系。
+- 普通`Review Pending = 0`；MARVIS `2507.01544v1`缺事件时全文，保留精确P1材料请求且不进入Books。W27 Candidate Evidence Gate按用户允许的blocked-skip为Conditional Pass，年度Archive/Discovery Recall保持Open，Historical Books Gate关闭。
+
+### W19 Full Reconciliation
+
+- W19已从错误空周闭合为27个唯一scored Source Family：14项高分、12项中分、1项低分。Root复算27/27六维Total并核对26/26 retained Full Source Review与1/1 low-score closure；`2505.05327`由错误的RICo更正为ICon，LLaVA toxicity family按v1日期回拨并完成24分审计。
+- 固定机构、学术来源和AI Infra discovery/dedup已闭合，W18 spillbacks保持canonical W18 owner且不重复计分；`Review Pending / Blocked / Disputed = 0 / 0 / 0`。W19 Discovery与Candidate Evidence Gate通过，Historical Books Gate关闭。
+
+### W17 Full Reconciliation
+
+- W17已完成固定机构、学术来源和AI Infra discovery replay，并从旧2项基线闭合为80个唯一Source Family：22项高分、44项中分、14项低分。Root逐行复算六维Total无误，核对61个strict Full Source Review、5个blocked packets与14/14低分closure；相邻W16/W18 owner交集为0，SGLang v0.4.6 first-public date纠正为2025-04-27。
+- 普通`Review Pending = 0`；CameraBench、Roll the Dice、RealisDance-DiT、All-Angles Bench和Uni3C缺event-time全文，均有精确可接受材料请求。Discovery Replay已闭合，但Candidate Evidence Gate因5项`Unverified / Blocked`保持Not Passed；forward cursor继续，Historical Books Gate关闭。
+
+### W18 Superseding Closure
+
+- W18已从36项旧账扩展并闭合为43个唯一scored owners：18项高分、18项中分、7项低分；root逐行复算六维Total无误，并核对36/36 retained Full Source Review与7/7 low-score closure。PIPA v1已全文恢复并与AURA revision隔离，七个spillback已完成owner/date/score/review写回。
+- `Review Pending = 0`、`Blocked = 0`；VideoHallu以source-complete `Disputed`终态保留，不进入Books。Candidate Evidence Gate通过；年度Archive Completion因跨索引immutable query export和event-time artifact边界保持Conditional，Historical Books Gate关闭。
+
+### W23 Superseding Closure
+
+- Root复算确认W23现为49个唯一owner family：34项高分、11项中分、4项低分，全部六维Total正确；45/45 retained candidates拥有非模板化Full Source Review，4/4低分完成来源、日期、评分与拒绝闭合，`Review Pending = 0`、`Blocked = 0`。
+- 六个此前遗漏的W23 owner已写回；ConfQA→ConfRAG保留为`Disputed — Revision Lineage`，不进入Books。`2506.09250`按v1日期归W24且未在W23计分。W23 Candidate Evidence Gate通过，年度Archive Completion与Historical Books Gate继续关闭。
+
+- W16 has 50 unique Source Families: 21 high-score, 25 medium-score and four low-score closures. The first
+  writeback was rejected because the old 39 owners retained only Total scores; the replacement now contains all
+  50 TN/SI/PV/SR/PR/L rows, and root independently recomputed every sum, the 50 unique candidate/family keys,
+  46/46 retained headings and 4/4 low closures. Ordinary `Review Pending = 0`; OpenAI Codex CLI remains `Unverified / Blocked — P2 Artifact` because the 2025-04-16
+  launch tree is not pinned, while ReZero remains `Disputed — P3 Revision` because current manuscript content
+  cannot be projected back to its 2025 v1 metadata. Discovery / Archive Gate remains Conditional Open;
+  Candidate Evidence Gate remains Conditional Open under these two explicit material boundaries; Historical Books Gate remains closed.
+- W24's four-page `2506.09250v1` comment was recovered and read in full. It is finalized as
+  `Disputed — Source Complete / Artifact Not Released`: solvability, output budget and representation are valid
+  evaluation confounders, but underpowered preliminary tests without raw outputs cannot overturn the original
+  study. Institutional Books 1.0 is now the only retained reading blocker in the current 163-row W24 ledger; its
+  official Harvard DASH PDF URL is known but could not be fetched from the current environment.
+- No Historical Books integration was performed. No file was staged, committed or pushed.

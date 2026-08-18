@@ -123,6 +123,28 @@ Graph owner 只拥有诊断 view，不得改写原 trace；candidate root cause 
 依赖图不完整或低频新故障中仍是正确旧方案；结构化 slicing 适合重复 pipeline 和可见度足够的系统。STRACE
 提供了 structure-guided attribution 的实验性证据，不证明 observational trace 本身已经识别真实因果。
 
+### 从 Root-cause Hypothesis 到受限 Repair
+
+Root-cause graph 缩小调查范围后，还不能把诊断直接提升为修改生产行为的权威。多轮 Agent 的下游症状可能由上游 tool error、环境漂移或模型判断共同造成，因此应把四类状态分开版本化：trace evidence 记录实际发生的 span 与 artifact；diagnoser 只提交带依据的 causal hypothesis；repair controller 根据 side-effect class、权限和回滚条件决定是否允许 patch/rerun；rerun result 再成为新的 evidence。
+
+一次 rerun 成功会提高该修复路径的实用置信度，却可能来自随机采样或环境恢复，不能反向证明原 attribution 必然正确。这个分层获得可审计的 recovery loop，也新增 trace 隐私、schema coupling、诊断误归因和 repair authority 风险。短、确定、规则清晰的 workflow 仍适合人工或固定规则诊断；高副作用动作必须要求人工批准、独立 regression evidence 或 abstain。
+
+当系统尚未拥有可靠 dependency graph 时，还可以先从 raw trace 中检索相似成功/失败记录，由 judge 生成受限
+标签，再学习“当前执行偏离成功轨迹分布的哪里”。这形成另一条诊断演进：
+
+```text
+raw trace search
+→ versioned judge labels
+→ success-manifold / deviation model
+→ suspicious span or transition
+→ reproduction and root-cause confirmation
+```
+
+它比固定阈值能利用跨 span 模式，却把 retrieval corpus、judge、embedding、成功定义和 distribution drift 都
+写入诊断状态。Deviation 只定位异常，不证明因果；新版本产生的合法路径也可能被旧 manifold 误报。因而结果
+只能缩小调查范围，必须回到日志、artifact、复现和 regression test。低频新故障或 judge 无法校准时，规则与
+人工 full-trace review 仍是正确基线。
+
 ## 本章在知识树中的位置
 
 本章完成 Evidence Plane 的三种信号。下一章使用这些 evidence 回答经济问题：资源时间如何转成一次训练、一次成功请求和一个满足 SLO 的 token 的真实成本。
@@ -142,6 +164,9 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 
 ## Review notes
 
+- Trace success-manifold deviation diagnosis（Status: Experimental）:
+  https://arxiv.org/abs/2607.12747v1
+
 本章承接 Part V 请求状态机，并为 Part VII tool/workflow trace 留出扩展：Agent trace 会增加 context retrieval、planning、tool side effects 与 human approval，但沿用相同 propagation 原理。
 
 官方入口：
@@ -151,3 +176,5 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 - OpenTelemetry semantic conventions: https://opentelemetry.io/docs/specs/semconv/
 - STRACE / From Noisy Traces to Root Causes（structure-guided root-cause attribution；Status: Experimental）:
   https://arxiv.org/abs/2607.07702
+- AgentDebugX（exact v1 + event-time commit；Status: Experimental）：https://arxiv.org/html/2607.18754v1
+  - 证据边界：184 localization traces、73 个 initially failed GAIA tasks；strict exact-step attribution 仍低，一次 rerun 不能证明因果归因或跨框架安全性。

@@ -72,6 +72,24 @@ raw signal -> modality encoder -> projected features -> language backbone
 
 它不必然优于 staged alignment。若高质量多模态数据不足、codec 尚不稳定或只需要专用理解能力，冻结 encoder + projector 更容易训练、验证和回滚。
 
+Native shared parameters 也不等于所有目标共享一个 compute-optimal 数据配比。Text loss 与 multimodal loss 观察的
+样本复杂度、token cost 和 capacity bottleneck 不同；增加 multimodal tokens 可能改善跨模态表示，同时挤占 text
+objective 的有效 compute。系统因此不能把二者粗暴相加成一个 scalar scaling law，而应在冻结 architecture、token
+semantics 和 compute accounting 后分别拟合，再观察 Pareto frontier：
+
+```text
+shared parameter budget + total compute
+→ modality-specific loss surfaces
+→ text / multimodal allocation frontier
+→ chosen operating point + retained regression slices
+```
+
+它把 staged alignment 的“资产复用优先”演进为 native training 的“共同容量、分别计账”。收益是可以看到跨模态
+transfer 与预算竞争，代价是每次数据配比、codec 或 objective 变化都可能移动 frontier；training loss 也不自动等于
+downstream quality。数据 provenance 与 sampling 归第 27 章，objective/compute allocation 归第 28 章；本章只规定
+representation identity 必须让这些计量可解释。数据有限、单模态质量优先或需要独立升级 encoder 时，late fusion
+仍是更稳定的分支。
+
 ## 连续表示、离散表示与混合表示
 
 ### 连续表示
@@ -154,6 +172,27 @@ pretraining 时 native path 仍可能更合适，需要独立升级生成器时 
 
 fusion 之后仍要决定不同 modality 如何竞争有限 token budget。均匀或对称 compression 最容易实现，但默认各模态拥有相同 information role；当视觉承担事件定位、音频承担补充语义时，可以让视觉 anchors 条件化音频 selection。反过来，在 ASR、音乐或遮挡场景中，audio-first 或 full-token branch 仍可能更可靠。**方向性 compression 是受任务 truth authority 约束的 policy，不是“视觉永远更重要”的架构事实。**它还需要对 modality conflict、selector drift、chunk boundary 与 abstention 做显式验证。
 
+### 任务贡献与当前可靠性不能共用一个 Gate
+
+静态融合或单一 gate 默认“某模态通常有用”就等于“当前样本值得信任”。任务贡献回答的是长期问题：在目标
+workload 中，文本、图像或音频各自提供什么信息；sample-specific reliability 回答的是当前问题：这次 observation
+是否因噪声、缺失、冲突或 domain shift 而失真。两种 signal 应先分别估计，再由 fusion policy 合成：
+
+```text
+modality representation
+├─ task-contribution sensor
+└─ sample-specific reliability sensor
+             ↓
+calibrated fusion policy
+→ conflict / abstention / single-modality fallback
+```
+
+可靠性估计器拥有的是 policy hint，不是真值概率。用 predicted variance、confidence 或 reconstruction error 调整
+权重，可以避免一条受污染模态拖累全部表示；但估计器自身也会漂移，并可能在相关噪声下共同自信。它用额外
+训练、校准和故障切片换取 sample-adaptive fusion。数据稳定或 calibration evidence 不足时，静态权重、late fusion
+与单模态 fallback 仍更可解释。相关受限实验只证明特定情感数据、模型、硬件和随机种子下的分支可行性，不支持
+把 inverse variance 外推为跨任务 truth authority；第 66 章负责验证 calibration、risk–coverage 与 abstention。
+
 ## 对齐不是把向量拉近这么简单
 
 跨模态 alignment 至少包含三种不同目标：
@@ -234,6 +273,12 @@ batch/concurrency 与 SLO，并分别测 retained evidence、encode cost 和 dow
 
 ## Failure modes
 
+### 语义锚点不是原模态的替代品
+
+长音频可以借助 transcript 作为 semantic anchor，把声学 token 与时间轴、实体和语义片段对齐，再依据时间衰减和 accumulated attention 压缩 cache。它比只按位置裁剪更理解内容，却把 ASR 错误、语言覆盖和时间对齐偏差引入表示 identity。原始声学 token 仍拥有音色、韵律、重叠说话人与非语音事件；anchor 只能帮助选择，不能成为无损真值。
+
+因此系统应同时保留 `raw modality span → anchor revision → fused token range` 的 provenance。低资源语言、噪声环境、实时 streaming 或 ASR 不可信时，固定窗口与原模态保留仍是更稳健的旧分支。
+
 ### Representation collision
 
 不同 modality 或不同 codebook version 产生相同 ID，却被错误共享 embedding。解决方式不是只增加一个 type embedding，还要校验 artifact identity。
@@ -296,12 +341,17 @@ Part II 给出通用 Transformer 组件；本章把单一文本 token 扩展为�
 
 ## Review notes
 
+- VoxZip（transcript-anchored temporal audio KV compression；Status: Experimental）: https://arxiv.org/abs/2608.08569
+
 本章仅吸收完成全文审计的机制证据。LongCat-Next 支持“分层离散 codec + shared AR backbone + modality-specific reconstruction”的受限案例，但不支持离散表示普遍优于连续 feature；Unified Latents 支持 rate、base-model capacity 与 decoder cost 联合选择，但其 artifact、公开数据与端到端成本证据不完整；OmniSIFT 支持 modality-role-aware compression 的受限分支，不支持视觉拥有普遍 truth authority。native multimodal scaling 工作只支持其论文 data/compute contract。厂商 benchmark 不进入通用结论。
 
 - LongCat-Next / DiNA: https://arxiv.org/abs/2603.27538
 - Unified Latents: https://arxiv.org/abs/2602.17270
 - OmniSIFT: https://arxiv.org/abs/2602.04804
+- MRUF（task contribution 与 sample-specific reliability 分离；Status: Experimental）：
+  https://arxiv.org/abs/2607.10599v1
 - Scaling Native Multimodal Pre-Training From Scratch: https://arxiv.org/abs/2607.22043
+  - 证据边界：exact v1 支持其 decoder-only MoE、71M–3B activated-parameter 与披露 token budget 下的 modality-specific scaling/Pareto 现象；硬件、精度、完整数据 provenance 未披露，不能外推为通用 allocation law。
 - Qwen-Image 2.0 Technical Report：详见 `papers/2026/weekly/2026-W20/README.md` 的 event-time Source Review。
 - OneVision-Encoder（codec-guided sparse decoded-RGB tokens；Status: Experimental）:
   https://arxiv.org/abs/2602.08683

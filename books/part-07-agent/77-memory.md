@@ -102,6 +102,14 @@ binary label 不能恢复唯一 next state，并报告了 typed actions 的改�
 所有生产场景，也没有处理多用户 authority、真实并发和故障恢复。因此正文吸收状态机原则，
 不把论文 taxonomy 或 benchmark 写成平台规范。
 
+### 从 Outcome Reward 到 Content-level Credit：归因只能约束写入，不能成为真值
+
+只用最终 QA reward 训练 memory policy 成本低，也适合短链路、固定 schema 和容易人工检查的任务；但它不能回答某段中间 memory content 是否真正帮助了最终答案。一个实验性分支是固定 retrieval/answer interface，对 memory token 或 span 做 masking/counterfactual scoring，把对 answer score 的变化映射为 local process reward，再与 global outcome reward 合并。它把“这次答对了”推进为“哪些被写入的内容可能贡献了这次答案”，从而给 admission、update、compress 与 discard 更稠密的学习信号。
+
+归因分数仍不是 causal ground truth。相关 token 会互相替代或共同起效，masking 会改变输入分布，judge 与 answer model 也共同决定 credit；反复 counterfactual scoring 还增加训练成本。因此 learned memory write 不能因为 attribution 较高就获得事实权威。source episode、extractor/judge version、masking policy、local/global reward、poisoning test、selective deletion 与 held-out evaluation 都必须进入写入收据。heuristic admission 与 outcome-only reward 在稳定、低风险、成本敏感的场景仍是合理分支。
+
+公开实验绑定 Qwen3-4B、LongMemEval training、LoCoMo/PerLTQA OOD、4×H800 80GB、3000 SFT samples、400 RL samples 与 max sequence length 6000；代码和 checkpoint 在 v1 中仅承诺 acceptance 后公开。该证据说明 content-level credit 可以作为训练 proxy，不证明它能识别唯一正确的 memory，或可以跳过 provenance、poisoning 与 deletion gate。
+
 ## Memory Read 是受约束检索
 
 检索可综合：
@@ -118,6 +126,51 @@ score(m)
 该公式只是策略框架，权重由 use case 决定。读取前必须先做 tenant/user/agent authorization，再按当前 task 与 token budget 选择。
 
 Recency 高不代表正确，similarity 高不代表可披露。Memory read 还要返回 source、time、confidence 和 supersession state。
+
+### 从按需读取到选择性主动干预
+
+Passive pull 假设执行 Agent 能意识到“此刻应该查 Memory”。在短、确定性的 workflow 中，这个前提通常成立：读取由当前任务触发，控制权清楚，也不会持续消耗 Context。长轨迹中的问题是，Agent 可能直到犯错都没有发出 read；把整个 memory bank 始终放进 Context，或让 advisor 每步都发言，虽然减少漏检，却会把噪声、错误提醒和 token 成本扩散到所有步骤。
+
+更细的分工是把 memory maintenance 与 intervention timing 分离：
+
+```text
+versioned trajectory evidence
+→ maintained memory bank
+→ intervention controller chooses silent / remind
+→ grounded reminder with bank provenance
+→ acting Agent decides and executes
+```
+
+Bank 仍拥有事实、来源、valid time 与 supersession；controller 只拥有“何时值得打断”的策略状态，不拥有事实真值，也不能绕过 authorization。每次提醒都应引用具体 memory units，并记录 controller revision、触发信号、Context cost 和后续 outcome。评估也不能只看最终 success：至少要区分正确保持沉默、错误介入、关键时刻漏介入，以及提醒是否真的由可授权 evidence 支撑。
+
+这条演进以额外 controller、误打断和漏提醒风险换取较低的常驻 Context 压力。Controller 分布漂移、bank 污染或 provenance 丢失时，系统必须能回退到 passive retrieval 或 always-off，而不是让“主动 Memory”变成不可审计的第二个 planner。现有作者实验与消融只覆盖给定长轨迹 benchmark；没有证明生产授权、并发更新和跨任务的通用 intervention policy。
+
+### 从一次 Top-k 检索到有预算的关联回忆
+
+Flat retrieval 假设一条记录自身包含足够答案；它在事实局部、历史短和高 QPS 时便宜且可预测。但长期交互中的
+证据常分散在多个 episode：某条记录只提供人物或时间 anchor，真正支持结论的变化、承诺和例外位于邻接事件。
+把全部历史送入 Context 可以避免检索 miss，却重新引入噪声、成本和越权暴露。一个中间分支是把读取拆成
+**anchor recall → bounded expansion → evidence assembly**：
+
+```text
+authorized query + temporal / entity cues
+→ hybrid recall of a small anchor set
+→ semantic / structural expansion within a hop and round budget
+→ identity deduplication + provenance merge
+→ evidence packing under the same Context budget
+```
+
+这里的 Graph 不是新的事实 owner。Memory unit 仍需独立 identity、grounded cue、source episode、valid time 与
+supersession；edge 只表达可版本化的关联。Expansion controller 拥有继续、停止与局部邻域选择，Context assembler
+拥有最终 budget，事实 authority 仍来自 source evidence。这样可以恢复跨 episode 的 supporting set，却新增错误
+anchor、stale edge、关联漂移、query-time controller cost 与 graph deletion propagation。关系稀疏、证据局部或
+严格 tail latency 优先时，flat embedding / lexical top-k 仍是更好的分支；历史很短且不能容忍 miss 时，full
+Context 仍成立。
+
+RippleMem 的 text-only LoCoMo / LongMemEval-S 实验为这种两阶段读取提供 `Status: Experimental` 的机制证据；
+其 LLM extraction、固定 hop/budget、同源 answer/judge 与未覆盖的 tool、multimodal、concurrent-update 场景，均不
+支持把 headline 或 graph schema 外推为生产默认值。长期结论是：**当答案需要一组相互关联的 evidence 时，
+检索单位应从孤立 record 演进为受预算、可追溯的 evidence set，而不是无限扩大 top-k。**
 
 ### Fact State 与 Retrieval-policy State 必须分离
 
@@ -166,6 +219,35 @@ query + temporal anchor
 NDCG/Recall 也不再是同一问题。LMEB 的受限对照支持通用 passage ranking 不能代表 long-horizon Memory retrieval，
 不证明其混合数据集均值就是生产选择标准。MTEB/BEIR 在开放文档检索中继续成立；Memory benchmark 还必须测
 write correctness、authorization、deletion/freshness、answer use 与最终 outcome，不能由 retrieval 分数包办。
+
+### Entry Majority 不等于 Independent Evidence Majority
+
+Top-k memory 中三条内容相近的记录，可能都来自同一次 tool result、同一篇文档或同一个上游 summary。按 entry
+数量投票最便宜，在来源近似独立时也合理；但共享祖先会把一次错误复制成“多数”。因此聚合前应先按 provenance
+dependency 估计有效独立支持，而不是把 paraphrase 数量当成置信度：
+
+```text
+retrieved memory entries
+→ resolve source / derivation lineage
+→ group correlated descendants into evidence families
+→ aggregate independent support and conflict
+→ if support is insufficient, expand or dereference raw sources
+→ answer, abstain or request verification
+```
+
+Query-conditioned latent evidence slot 可以压缩相关条目，active recovery 可以在预算内寻找缺失的独立来源；两者都
+只是 inference policy，不拥有 truth authority。来源关系缺失时，系统应把 independence 标为 unknown，而不是默认
+独立。额外 lineage、聚类与搜索会增加 latency、token 和错误合并风险；小型人工 curated memory、单一权威来源或
+只需复现历史决定时，直接按 entry 检索仍更简单。相关性-aware benchmark 的合成 paraphrase 证据只支持这条
+failure model，不能证明生产 memory 的自然相关结构已被准确估计。
+
+### 从 Write-time Summary 转向 Query-conditioned Late Construction
+
+Write-time summary 在查询分布稳定、存储或隐私预算严格时合理：一次压缩降低后续检索与上下文成本。但它对未来问题不可知，删除的细节无法恢复。相反，保存全部 raw history 并在每次查询中整体交给大模型，会提高 recall，却把噪声、context rot、延迟和授权风险推到读路径。
+
+中间路线是保留带 provenance 的原始 interaction，先做高召回检索，再按当前 query 把候选划分为有重叠的有界窗口；轻量 constructor 对每个窗口执行 keep/drop/rewrite，最后由 evidence assembler 合并。重叠窗口保护跨边界事实，但必须保存 source span、rewrite lineage 和去重规则，避免压缩结果脱离原文。
+
+Late construction 把不可逆信息损失延后，却增加每次查询的计算、judge/calibration 漂移和并发更新一致性；它也没有消除 deletion propagation、ACL 或 freshness 问题。查询重复且 schema 稳定时，预计算 summary 仍可能更便宜；高风险回答还应让最终 claim 回指 raw evidence。现有 LongMemEval/LoCoMo 结果只支持作者 workload 下的 accuracy/context trade-off，不证明更低的全生命周期成本。
 
 ## Consolidation 与 Forgetting
 
@@ -263,6 +345,30 @@ authoritative，derived view 需要 source/timestamp/model/policy lineage、corr
 MemRerank 与 Omni-SimpleMem 分别为 preference view 和 multimodal tier 提供受限案例；它们不证明特定 profile、
 CLIP threshold、graph schema 或 benchmark prompt 可跨用户和数据集迁移。
 
+#### Logical Memory Identity 与 Physical Locality 必须分层
+
+短 history、规模较小或 access pattern 不稳定时，full Context、固定 segment summary 或普通 KV/object store
+最容易验证。随着同一组 memories 被反复共同读取，独立压缩每个固定 segment 会丢掉跨 chunk 关系；只优化
+semantic retrieval 又可能让共同访问的 objects 在物理存储上高度分散。可将语义构造与物理放置形成两层：
+
+```text
+bounded source chunk + provenance
+→ reconcile against a small related set
+→ commit a stable logical memory revision
+→ observe co-access evidence
+→ out-of-place physical relocation / compaction
+→ garbage-collect superseded physical copies
+```
+
+Logical memory unit 拥有 identity、source、authorization、revision 与 deletion；reconciliation policy 只拥有
+derived cross-chunk update；storage manager 拥有 placement、relocation 与 GC。物理移动不能创建第二份语义真值，
+也不能静默改变 ACL 或删除状态。它用更好的 locality 和较小的重复读取，换来 write/space amplification、stale
+copies、GC pause、crash recovery 与 delete propagation；访问模式漂移时，旧 colocated layout 还可能反而变差。
+
+现有 v1 证据只支持四个作者 benchmark 下“bounded reconciliation + locality-aware placement”的可行性；事件时
+实现未公开，hardware/model contract 也不完整，且没有验证 crash consistency、privacy、authorization preservation
+或生产多租户。长期结论是两层 owner contract，不是特定 chunk threshold、吞吐 headline 或存储方案。
+
 视觉压缩还提供一种异构分支：把 rich-text layout 确定性渲染为 image，让 VLM 在固定 visual-token budget
 下读取。它可以提高二维信息密度，却把正确性转移给 renderer、OCR/VLM 和 layout policy；图片更难做
 逐字段 provenance、局部更新、删除和 exact dereference。因而它只适合容许感知误差、以概览为主的
@@ -348,6 +454,14 @@ source trajectories
 一旦进入 weights，逐条 provenance、selective deletion 与 exact rollback 不再天然成立；必须冻结 training set、
 update job、checkpoint lineage、judge 和 before/after evaluation。外部 memory 在频繁更正、隐私删除和小样本场景
 仍更合理。Memory Intelligence Agent 提供 Experimental loop，不证明 online weight update 已经 production-safe。
+
+#### Experience Distillation：先保留外部证据，再选择是否固化进参数
+
+把 raw interaction history 放进 Context 或 external memory，是最容易审计和纠错的起点；当经验频繁变化、涉及隐私删除，或样本仍少时，这个旧方案依然合理。压力来自另一侧：长轨迹会在每次推理中反复占用 context 与 environment budget，成功行为也无法在移除历史后保留。此时可以增加一个有条件的 consolidation 分支：teacher 读取累计经验，student 只读取原始任务状态；从已有轨迹构造 one-step decision branches，把 teacher 的局部决策监督压回 student，而不再与环境交互，也不依赖 learned world model 展开长 rollout。
+
+这一步改变的不是 Memory service 的事实所有权，而是参数 checkpoint 的来源。系统必须同时冻结 source episodes、teacher/student identity、预处理与 branch packing、objective、checkpoint lineage、held-out evaluator，以及删除或回滚边界。收益是减少重复 context 和额外 environment samples；代价是 rejected hypothesis、teacher error 与 task-specific shortcut 也可能进入 weights，之后无法逐条删除。因而 external memory 仍是频繁更正、私有、小样本场景的基线；只有稳定、重复、已验证的 procedural behavior 才适合进入 weight consolidation。
+
+该机制的公开证据来自 text games 与 curated software-repair 任务；论文报告 749 个 curated SWE tasks、6 个游戏、约 60–600 turn 且常超过 80K tokens 的经验，但没有披露可用于通用性能外推的 hardware、precision、serving concurrency 或 latency SLO。这里吸收的是状态迁移与可逆性边界，不是把作者 pass@1 或 normalized score 写成普遍收益。
 
 ### Hierarchical Skill 不是固定 Taxonomy，而是 Retrieval Plan
 
@@ -541,6 +655,42 @@ Intervention cost 随轨迹长度增长，多个错误可能相互遮蔽，LLM j
 因此它适合 failure triage 和 regression hypothesis，不应自动触发 Memory patch。MemTrace 的受限实验支持这种
 诊断分层，却没有证明跨系统、长期 side effect 或生产并发下的 attribution 已解决。
 
+### Retrieval 之前还有 Retention / Admission
+
+把 failure 分成 construction 与 retrieval 仍漏掉了一道更早的控制面：在容量受限时，哪些已构造的 memory
+blocks 获准继续存在。完整路径应写成：
+
+```text
+construct candidate memories
+→ retain / admit under a bounded budget
+→ retrieve among eligible blocks
+→ reason and act
+```
+
+若 retention 只看当前 query similarity，直接描述答案的下游 block 往往得分较高；真正使它成立的前置事实可能
+因为用词不同而较弱对齐，先被淘汰。此后即使把 retriever recall 调到 100%，它也只能在 eligible set 中搜索，
+无法取回已经被驱逐的 prerequisite。这解释了为什么“检索没找到”有时不是 retrieval algorithm 的问题，而是
+admission policy 提前改变了可检索世界。
+
+Dependency-aware retention 可以从高 utility block 沿显式 dependency edge 做有界传播，为直接 prerequisites
+保留部分预算：
+
+```text
+query-facing utility
++ bounded prerequisite propagation
+→ retention score
+→ auditable eligible set
+```
+
+它解决 indirect evidence 被 similarity-first eviction 的问题，也引入 graph extraction error、维护成本与预算
+挤占：错误边会保护无关记录，传播太深会退化成“几乎什么都保留”。因此依赖保护必须限制 hop、fan-out 和 budget，
+并分别测量 prerequisite survival、retrieval recall、最终 task outcome 与额外存储/延迟。
+
+这条证据目前来自四类 synthetic dependency templates、两种 encoder、三种 retention policy 与 15 seeds，支持
+“中间预算下的直接 prerequisite protection”这一机制，不证明开放世界 dependency extraction 或生产长期记忆
+已经解决；one-hop rule 也会漏掉更深链条。历史短、事实与 query 直接对齐或容量充足时，similarity、recency
+甚至 append-only archive 仍然更简单。
+
 ### 个性化更新与事实可靠性是两套策略
 
 用户在行动前澄清需求，与在看到结果后修正偏好，写入语义并不相同。前者缩小当前 action 的歧义，后者可能使旧 preference 失效。Memory service 因此不能把所有 feedback 合并成一段 persona，而应保存：
@@ -697,6 +847,34 @@ compiler/judge、tool revision、适用 scope 与 delete/supersession；missed t
 web poisoning 都是新增 failure mode。Search2Skill 的作者实验提供这条分责的实验性证据，不能证明开放 Web、长期
 漂移与 adversarial source 已解决。静态 curated Skill 和按需 search 在高风险、低频或 provenance 不闭合时仍成立。
 
+### Bitemporal Memory 把有效时间与写入时间分开
+
+最后写入覆盖旧值在“只关心当前状态、没有迟到事实”时最简单；但真实 Memory 经常同时面对两条时间线：事实从何时
+起在外部世界有效，以及系统何时收到并提交这条事实。把两者压成一个 timestamp，会让迟到更正看起来像最新事实，
+也会在回放历史视图时静默改写过去。
+
+```text
+immutable entity identity
++ versioned content
++ valid-time interval
++ transaction-time interval
+→ as-of-world / as-of-system query
+→ supersede without erasing prior version
+```
+
+双时态状态使 time-travel retrieval、迟到更正和审计回放可表达，但它不自动决定哪条冲突事实可信。Writer 仍需拥有
+source provenance、retroactive-correction authority 和 overlap policy；index/materialized view 必须跟随版本更新，
+否则 authoritative store 与检索结果会短暂分叉。只需当前偏好、错误代价低且历史审计无意义时，单版本状态仍更便宜；
+法律、配置、身份和长期 Agent Memory 中的事实会被追溯修正时，valid time 与 transaction time 才应成为状态 identity。
+
+### 从纠错写入到全局历史快照：Rollback 必须分离选择与恢复
+
+自然语言 undo 只能提出目标 version；确定性 ID restore 才能移动 authoritative HEAD。Whole-memory snapshot 可以恢复已暴露于后续事实后的内部一致视图，却不能撤销已经提交到工具或外部服务的副作用。线性历史、single-writer 与 best-effort retrieval-index 同步是该方案的成立边界；需要 branch/merge 或高并发时，应升级为显式版本图与事务协调，而不是让 resolver 同时拥有选择和提交权。
+
+### Memory Transaction Boundary 同时约束 Admission、Visibility 与 Recovery
+
+Storage atomicity 不能证明候选事实由 source 支持。一个更强边界先由 source-bound admission 接受或拒绝 patch，再由 chronology/conflict policy 声明可见版本，最后由 durable before-image 与 invariant check 恢复完整 application state。Answer model 不拥有 commit；该边界也不证明 semantic truth、并发故障或物理介质损失已解决。
+
 ## 一致性与并发
 
 多个 Agent steps 或 devices 可能并发写同一用户状态。若最后写覆盖，可能丢失更新；若全部 append，读取时会看到冲突。
@@ -742,6 +920,12 @@ scenario evaluation，不证明真实 false-positive prevalence、retention 合�
 
 ## 评估 Memory
 
+### Verifier 输出必须带着校准边界进入 Memory 生命周期
+
+把 verifier reward 或 confidence 只用于当次选择，会在写入后丢失“为什么接受”；把它持久化到 memory item，则可让 admission、retrieval、冲突、summary 和 archival 使用同一证据。然而 metadata 不是事实真值：verifier 偏差、domain drift 和恶意 observation 会一起被持久化。
+
+因此每条派生 Memory 至少应绑定 verifier identity/version、输入证据、label/confidence/uncertainty、calibration domain 与 expiry。读取时先检查适用性，再与独立来源和 supersession graph 合并；高风险 action 不能把旧 confidence 当作永久授权。无可靠 verifier 时，来源 provenance、人工确认和保守不写入仍优于伪精确分数。
+
 不能只看“记住了多少”。应测：
 
 - write precision：写入内容是否值得保存；
@@ -781,6 +965,12 @@ remove or neutralize malicious semantics
 攻击，也可能破坏用户状态与业务连续性。可靠恢复依赖 provenance、dependency、
 supersession 和 derived-state tracking，使删除或修正能传播到 summaries、indexes、
 caches 与受 retention policy 管理的副本。
+
+### Proof-trace Benchmark：先分开证据覆盖与推理失败
+
+只看最终准确率会把三种失败混在一起：目标事实从未进入 Memory、事实进入了但 revision / invalidation / conflict edge 在压缩中丢失，以及证据完整却没有完成组合推理。对长程状态任务，benchmark 应先由确定性的 typed case grammar 产生 authoritative provenance DAG 与每题 proof trace，再让语言模型只承担表面叙述；评估时分别报告 evidence coverage、dependency-edge preservation、reasoning correctness 与 outcome。
+
+结构化 oracle 是诊断上界，不是生产 Memory 方案；synthetic ontology、叙述模型和 judge 仍限制外部效度。Top-k 命中率在独立事实检索中继续成立，但不能替代关系完整性。
 
 ### Provenance 必须进入 read、action 与 repair 路径
 
@@ -843,6 +1033,7 @@ Prompt、Context、RAG、Memory 共同构成 Agent 的 information state。下�
 13. Memory disposition 与 execution disposition 为什么必须分别规划？
 14. Failure-derived procedural rule 为什么必须保留原始 trace、tool revision 与 supersession？
 15. 比较 Graph、summary 与 raw session 时，为什么必须拆开 representation、organization、maintenance 与 retrieval？
+16. 为什么 prerequisite 在 retention 阶段被淘汰后，提升 retriever recall 也无法恢复它？
 
 ## 小结
 
@@ -850,8 +1041,27 @@ Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多�
 
 ## Review notes
 
+- ChronoMem（arXiv:2607.27773v1；Status: Experimental）：https://arxiv.org/html/2607.27773v1
+  - 证据边界：exact-v1 支持 linear-history whole-memory snapshot、natural-language target selection 与 deterministic ID restore；不证明 branch/merge、高并发事务、retrieval-index 原子同步或外部副作用可被 rollback。
+- MemTxn（arXiv:2607.27834v1；Status: Experimental）：https://arxiv.org/html/2607.27834v1
+  - 证据边界：exact-v1 支持 source-bound admission、conflict visibility、before-image recovery 和 invariant check 的作者合同；不证明 semantic truth、并发故障隔离、物理介质耐久性或所有 Agent memory backend 已具备数据库事务语义。
+
+- Bitemporal Agent Memory（immutable identity + valid/transaction time + supersession；Status: Experimental）:
+  https://arxiv.org/abs/2607.26520v1
+
+- Sample-Efficient Learning from Agent Experience（arXiv:2607.21051v1；Status: Experimental）：https://arxiv.org/html/2607.21051v1
+  - 证据边界：支持 experience-conditioned teacher、one-step branch 与 context-to-weight consolidation 机制；实验局限于披露的 text-game/SWE contract，未披露硬件、精度与生产 SLO。
+- AttriMem（arXiv:2607.21106v1；Status: Experimental）：https://arxiv.org/html/2607.21106v1
+  - 证据边界：支持 masking-derived local reward 作为 memory-construction process feedback；归因依赖 model/judge，且代码未在事件时公开，不能解释为 causal truth。
+
+- MemGuard（persisted verifier metadata for memory governance；Status: Experimental）: https://arxiv.org/abs/2608.21867
+- Proactive Memory Agent（selective intervention timing；Status: Experimental）:
+  https://arxiv.org/abs/2607.08716v1
+
 - MemTrace（memory execution counterfactual attribution；Status: Experimental）:
   https://arxiv.org/abs/2605.28732
+- Structurally Indirect Prerequisite Eviction / DSGC（retention-before-retrieval；Status: Experimental）:
+  https://arxiv.org/abs/2608.20400
 
 - Memory Intelligence Agent（external memory→planner update boundary；Status: Experimental）:
   https://arxiv.org/abs/2604.04503
@@ -916,3 +1126,11 @@ Primary-source 入口：
   https://arxiv.org/abs/2607.02255
 - Hierarchical Graph Memory / HiGram（Status: Experimental）: https://arxiv.org/abs/2608.05095
 - Search2Skill（Status: Experimental）: https://arxiv.org/abs/2608.05245
+- RippleMem（anchor recall → bounded associative expansion；Status: Experimental）:
+  https://arxiv.org/abs/2608.13334
+- CAMA（correlated-memory independent-support recovery；Status: Experimental）:
+  https://arxiv.org/abs/2608.19701
+- LazyMem（broad retrieval + query-conditioned late construction；Status: Experimental）:
+  https://arxiv.org/abs/2607.22690v1
+- RECON（proof-trace memory benchmark；Status: Experimental；synthetic typed cases，不是生产 Memory 结构证明）:
+  https://arxiv.org/abs/2607.16716v1

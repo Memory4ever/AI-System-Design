@@ -5,7 +5,13 @@
 > Accessed: 2026-07-31
 > Backfilled: 2026-07-31
 > Discovery Review Reopened: 2026-08-09
-> Re-audit Status: 25/25 source families have final Books dispositions; 17 Refine, 3 No Change, 3 Weekly Only, 1 Emerging, 1 Disputed; 25/25 Full Source Reviews complete; W30 Source-Family Books Gate passed; broader Archive/Discovery Gate remains Open
+> Delta Audit Queue: Pending — this legacy report has not yet begun a strict V2.1 delta packet
+> Superseded Baseline: 25/25 source families in the prior denominator had final Books dispositions; 17 Refine, 3 No Change, 3 Weekly Only, 1 Emerging, 1 Disputed; 25/25 Full Source Reviews complete; the W30 Source-Family Books Gate had passed; broader Archive/Discovery Gate remains Open
+
+> **V2.1 delta audit queued — 2026-08-25:**
+> `SF-2026-WORLD-MODEL-CHANNEL-IDENTITY` (`arXiv:2608.20401v1`, first-public 2026-07-23) is absent from
+> this owner Weekly. The prior Gate statement applies only to the old denominator; this family remains queued
+> until a strict V2.1 packet records identity/date, Source Review, provenance and final disposition.
 
 ## Executive Summary
 
@@ -55,10 +61,10 @@ forward checkpoint 误写成全历史 Evidence Gate。
 
 | Ledger Item | Current Count | Review Result |
 | --- | ---: | --- |
-| Score rows / candidate families | 25 / 25 | 25 Full Source Reviews complete；0 blocked；0 ordinary pending |
+| Superseded baseline score rows / candidate families | 25 / 25 | 旧分母的 25 Full Source Reviews complete；2026-08-25 新增 `SF-2026-WORLD-MODEL-CHANNEL-IDENTITY` 尚待 owner-week Source Review |
 | Fixed source coverage | Passed | official/model and infra rows retained；Dynamo/SGLang/Nunchaku source packets reviewed；pre-window attribution corrected |
 | Academic discovery window | Expanded | daily discovery feeds + arXiv v1 metadata replayed；cross-index closure pending |
-| W30 Evidence Gate | Forward checkpoint passed | all scored candidates reviewed；broader discovery/Historical Evidence Gate remains Open |
+| Legacy baseline — W30 Evidence Gate | Forward checkpoint passed for prior 25-family denominator | 新增一项 family 已进入 strict V2.1 delta audit queue；旧 Gate 不代表扩大候选集后的当前完整性；broader discovery/Historical Evidence Gate remains Open |
 
 ## 1. 模型与研究机构
 
@@ -340,14 +346,15 @@ cost model 比“统一类名”更重要。
 
 ## Books Integration Decision
 
-`Source-Family Books Gate Passed — Archive Completion Gate Open`。Dynamo v1.3 验证并保留 distributed selection
+Superseded baseline（旧分母）：`Source-Family Books Gate Passed — Archive Completion Gate Open`。Dynamo v1.3 验证并保留 distributed selection
 control-plane 推导：
 frontend/selection 独立扩展，index 是观测副本而非 KV authority，sharding 不自动解决
 consistency、reservation、failover 与 recovery。SGLang v0.5.16 refine Ch47：统一 radix
 identity 不等于统一 physical state，hybrid/recurrent state 必须显式定义 restore、generation、
 reset 与 rollback。HiKV 因 custom-accelerator、batch-1 与质量/端到端边界保持
 `Emerging / Experimental`，没有写成 commodity GPU 的通用结论。新增的 self-state 与 setwise retrieval
-机制分别进入 `PLATFORM-SECURITY` 与 `AGENT-RAG`；其余 16 项由现有具体论点吸收或保留边界。
+机制分别进入 `PLATFORM-SECURITY` 与 `AGENT-RAG`；其余 16 项由现有具体论点吸收或保留边界。该结论不包含
+`SF-2026-WORLD-MODEL-CHANNEL-IDENTITY`；其 Books Decision 仍为 `Not Assessed`，并保持在 strict V2.1 delta audit queue 中。
 
 ## Ignored Noise
 
@@ -718,8 +725,9 @@ closure checkpoint，不再保留伪 blocked 表；所有 disposition 见上方 
 | 24 | SGLang v0.5.16 | Refine — Existing Argument | INFER-SGLANG；heterogeneous state restore/rollback 已复核 |
 | 25 | Nunchaku Lite | Weekly Only — Version/Engineering Fact | INFER-EXECUTION；无完整 workload contract |
 
-计数：`Refine 17 / No Change 3 / Weekly Only 3 / Emerging 1 / Disputed 1`。25 项均已全文审计，
-不存在 blocked 或普通 pending。
+旧分母计数：`Refine 17 / No Change 3 / Weekly Only 3 / Emerging 1 / Disputed 1`。旧 25 项均已全文审计，
+不存在 blocked 或普通 pending；2026-08-25 新增的一项 owner-family delta 仍为 ordinary pending，
+所以当前总报告不能声明 Evidence 或 Books 完成。
 
 ## Repository Changes
 
@@ -727,8 +735,8 @@ closure checkpoint，不再保留伪 blocked 表；所有 disposition 见上方 
 - 删除已被 W30 完整吸收的 `papers/2026/07/22/README.md`；
 - refine `books/part-05-inference-system/51-sglang.md` 与
   `books/part-05-inference-system/52-dynamo.md`；
-- HiKV、Nunchaku、Ground Truth First 与 Native Multimodal 均保留明确 disposition，
-  未为产生 diff 强行写入；
+- HiKV、Nunchaku、Ground Truth First 与 Native Multimodal 均保留明确 disposition，未为产生 diff 强行写入；
+- `SF-2026-WORLD-MODEL-CHANNEL-IDENTITY` 尚待 owner-week reconciliation、Source Review、provenance 与 Books disposition；
 - 未修改 ROADMAP 或新增章节。
 - 2026-08-09 discovery replay 将 W30 从 8 个恢复为 25 个 scored source families；新增
   OpenForgeRL 全文 Source Review，并记录榜单 revision spillbacks。

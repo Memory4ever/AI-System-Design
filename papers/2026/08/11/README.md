@@ -1,266 +1,227 @@
 # Daily Research — 2026-08-11
 
-**Archive Date:** 2026-08-11（Asia/Shanghai）
+**Research Date:** 2026-08-11
 
-**Coverage Window:** 2026-08-09 14:53 ～ 2026-08-11 14:53（Asia/Shanghai）
+**Timezone:** Asia/Shanghai
 
-**Archive Clock:** Tuesday；只生成 Daily，不生成当前周 provisional Weekly。
+**Strict Window:** 2026-08-10 09:00:00 ～ 2026-08-11 09:00:00（北京时间，左闭右开）
 
-**Status:** Daily Complete；Books Integration Evaluated — No Change
+**Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
+
+**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
 
 ## Executive Summary
 
-今天没有已公开、可核验且足以立即改变核心书稿结论的模型公司 Research 或 AI Infra release。学术来源中有三项值得保留的机制证据：
+本日报严格覆盖 `2026-08-10 09:00:00` 至 `2026-08-11 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 601 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：2 个 Deep Review、2 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
+
+本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`PLATFORM-SECURITY` 中由《Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference》暴露的状态/证据边界；`MULTIMODAL-WORLD-MODELS` 中由《World Tokens: Enhancing Embodied Policies with Training-Time World Modeling》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
 
-1. **SwiftQK** 把 Tensor Parallel 下 layerwise QK-Norm 的通信问题，从交换完整 Q/K shard 转化为交换 RMS 所需的局部平方和；它说明 collective payload 应由数学充分统计量决定，而不是机械恢复完整 tensor。
-2. **Beyond Routing** 在保持 Top-K expert identity、执行集合与总 router mass 不变的条件下，只学习已执行 expert outputs 的 aggregation 权重；它把“选择谁执行”与“多大程度相信已执行结果”分成两个可独立检验的决策。
-3. **QueryProof / WarehouseReliabilityBench** 把 analytics Agent 的正确性从 SQL execution accuracy 扩展到 answer、clarify、abstain、refuse 的行为契约，并把 deterministic semantic/catalog gates 放在模型输出之后；但其 7B 与 32B 对比是系统比较，不是模型尺寸因果实验。
+Books 判断在 Source Review 完成后执行。只有能够定位到当前 owner 具体命题的 family 才写 `No Change — Existing Coverage`；其余高分候选因证据仍是受限实验、诊断或早期系统实例而保留 `Weekly Only — Context`，不以高分自动追加书稿。
+
+## 1. Coverage
+
+<!-- validator:report-metadata-v2 -->
+| Field | Value |
+| --- | --- |
+| Contract Version | V2.1 |
+| Score Schema | V2 |
+| Report Type | Daily |
+| Window Start | 2026-08-11 |
+| Window End | 2026-08-11 |
+| Registry Version | 2026-08-25 |
+| Coverage Mode | Full Replay |
+| Baseline Report | — |
+| Changed Source IDs | — |
+| Previous Denominator ID | — |
+| Denominator ID | daily-2026-08-11-0900-v2.1-replay-01 |
+| Denominator Frozen At | 2026-08-25T23:59:00+08:00 |
+| Completion Status | Complete |
+| Coverage Gate | Closed |
+| Evidence Gate | Passed |
+| Books Gate | Passed |
 
-三项都属于新近单一 primary source，evaluation contract 仍窄，尚未形成跨来源稳定结论。今天只写入 Daily，等待 Sunday Weekly 的去重、演进重建与第二证据检查；不修改 `books/`。
+### Source Coverage Receipt
 
-## 来源覆盖
+<!-- validator:source-coverage-v2 -->
+| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
+| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
+| SRC-ARXIV | 2026-08-10T09:00:00+08:00 | 2026-08-11T09:00:00+08:00 | 2026-08-25T23:19:00+08:00 | https://export.arxiv.org/api/query; V2.1 replay | checked | 601 | SF-2026-ARXIV-2608-09160<br>SF-2026-ARXIV-2608-09225<br>SF-2026-ARXIV-2608-09254<br>SF-2026-ARXIV-2608-09730 | page count=7 snapshot files; final_cursor=end; daily-window total=601; deduplicated by arXiv ID; [archived manifest](../_sources/arxiv-v2.1-replay-20260801-24/README.md) | 2026-08-11T09:00:00+08:00 | coverage:SRC-ARXIV:20260811 | — |
+| SRC-GITHUB-COMMIT | 2026-08-10T09:00:00+08:00 | 2026-08-11T09:00:00+08:00 | 2026-08-26T03:45:00+08:00 | SF-2026-ARXIV-2608-09254: https://api.github.com/repos/k-w-lee/query_proof/commits?until=2026-08-10T08:14:24Z&per_page=1; per-family event-time recovery | checked | 1 | SF-2026-ARXIV-2608-09254 | page=1; per_page=1; selected first result as latest commit at/before each exact `until`; older-history pages intentionally not traversed/not required; full SHA, commit timestamp and URL retained | 2026-08-11T09:00:00+08:00 | coverage:SRC-GITHUB-COMMIT:20260811 | — |
 
-### 1. 模型与研究机构
+<!-- coverage:SRC-ARXIV:20260811:start -->submittedDate query filtered to [2026-08-10T09:00:00+08:00, 2026-08-11T09:00:00+08:00); canonical snapshot-manifest sha256:4e6b4bd4e75a28b227c1ca674bae32e7fd08419d0da4c1702a091950d83b78d7 (rows sorted by basename as basename<TAB>sha256(file)<LF>); raw gzip snapshots, exact UTC queries and per-file hashes are archived at papers/2026/08/_sources/arxiv-v2.1-replay-20260801-24/README.md; 4 routed families.<!-- coverage:SRC-ARXIV:20260811:end -->
+<!-- coverage:SRC-GITHUB-COMMIT:20260811:start -->GitHub Commit API recovered and froze 1 repository commit(s): SF-2026-ARXIV-2608-09254: repository=k-w-lee/query_proof; until=2026-08-10T08:14:24Z; sha=c5d22984a238f53218507a03199d2d80c0ea2e2c; commit_timestamp=2026-08-10T07:53:22Z; commit_url=https://github.com/k-w-lee/query_proof/commit/c5d22984a238f53218507a03199d2d80c0ea2e2c; commit provenance supports artifact identity only, not the paper's mechanism claim.<!-- coverage:SRC-GITHUB-COMMIT:20260811:end -->
 
-- 检查窗口内主要模型与研究机构的官方 Research / Blog / model report 更新。
-- 未发现同时满足“事件日期在窗口内、存在 primary technical evidence、与 AI System Design 长期知识树直接相关”的新增候选。
-- 搜索结果中的转载、产品宣传、旧报告重新索引不进入候选表。
+### Coverage Limitations
 
-### 2. arXiv / 学术来源
+- arXiv 采用 first-public `published` timestamp；跨分类条目按 ID 去重，revision 不伪装为新 family。
+- `docs/RESEARCH_SOURCES.md` 的固定来源注册表于 2026-08-25 生效；依据 Effective Date，不把 19 个机构源和 Hugging Face 反推为此前窗口的 Required Daily，也不伪造历史 `no_hit`。
+- 本次用户授权的历史 replay 以可枚举 arXiv 主分母为确定性 Coverage；原始分页、UTC query、SHA-256 与 daily 09:00 分桶保存在月级 snapshot manifest。
+- Hugging Face Daily Papers 属于 non-deterministic discovery backstop；历史日期页恢复失败不改变 arXiv v1 的 owner，也不参与 Coverage Gate 算术。
+- vLLM、SGLang、Dynamo、KServe、Kubernetes、DeepSpeed 等工程源由完整 Sunday Weekly 负责，不强塞进 Daily。
 
-- 检查 arXiv `cs.AI`、`cs.CL`、`cs.LG`、`cs.DC` 的新提交，并以 arXiv metadata 的 first-public date 为事件日期，而不是列表出现日期。
-- Google Scholar、OpenAlex、DBLP 用作发现与 metadata 交叉检查入口；正文与结论只依赖下列 arXiv primary sources。
-- 深入阅读不超过三项：SwiftQK、Beyond Routing、QueryProof / WarehouseReliabilityBench。
+## 2. Candidate Ledger
 
-### 3. AI Infra 与工程项目
+<!-- validator:candidate-ledger-v2.1 -->
+| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-09160 | arXiv:2608.09160v1 | paper-v1:2608.09160 | 2026-W33 | 2026-08-10 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-09160 | self | — | new_in_window | TRAIN-TENSOR-PARALLEL | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-09225 | arXiv:2608.09225v1 | paper-v1:2608.09225 | 2026-W33 | 2026-08-10 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-ARXIV-2608-09225 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2608-09225 | yes |
+| SF-2026-ARXIV-2608-09254 | arXiv:2608.09254v1 | paper-v1:2608.09254 | 2026-W33 | 2026-08-10 | SRC-ARXIV<br>SRC-GITHUB-COMMIT | 2 | 2 | 1 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-09254 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-09730 | arXiv:2608.09730v1 | paper-v1:2608.09730 | 2026-W33 | 2026-08-10 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2608-09730 | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-ARXIV-2608-09730 | yes |
 
-- 检查 GitHub Releases、官方工程文档和项目公告。
-- 未发现能够在窗口内完成 release tag、文档、代码路径和 workload contract 联合核验的高价值新增事件。
-- 搜索页显示时间与 tag 时间不一致的条目不计为已验证 release。
+## 3. Review Completion Receipt
 
-## 候选评分
+<!-- validator:review-completion-v1 -->
+| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-09160 | RP-46e759c675018927 | standard | arXiv:2608.09160v1 | SRC-ARXIV@arXiv:2608.09160v1 | https://arxiv.org/html/2608.09160v1#S3 (III Design and Implementation of SwiftQK) | https://arxiv.org/html/2608.09160v1#S4 (IV Evaluation) | https://arxiv.org/html/2608.09160v1#S5 (V Conclusion and future work) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-09160 | complete |
+| SF-2026-ARXIV-2608-09225 | RP-665286b0c0ee5645 | deep | arXiv:2608.09225v1 | SRC-ARXIV@arXiv:2608.09225v1 | https://arxiv.org/html/2608.09225v1 (§§3.1–4.4: three attacks, HMAC namespace, boundary salting and ORIGAMI) | https://arxiv.org/html/2608.09225v1 (§§5.1–5.9: A100 measurement, simulation, M4 replication and overhead) | https://arxiv.org/html/2608.09225v1 (§7 Limitations) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-09225 | complete |
+| SF-2026-ARXIV-2608-09254 | RP-b0345792c47b5deb | standard | arXiv:2608.09254v1 | SRC-ARXIV@arXiv:2608.09254v1; SRC-GITHUB-COMMIT@https://github.com/k-w-lee/query_proof/commit/c5d22984a238f53218507a03199d2d80c0ea2e2c | https://arxiv.org/html/2608.09254v1#S4 (4 Method) | https://arxiv.org/html/2608.09254v1#S5 (5 Experimental setup) | https://arxiv.org/html/2608.09254v1#S7 (7 Limitations) | https://github.com/k-w-lee/query_proof/commit/c5d22984a238f53218507a03199d2d80c0ea2e2c (latest official-repository commit before arXiv v1; 2026-08-10T07:53:22Z; provenance only) | claim:SF-2026-ARXIV-2608-09254 | complete |
+| SF-2026-ARXIV-2608-09730 | RP-5cae49069e174e8d | deep | arXiv:2608.09730v1 | SRC-ARXIV@arXiv:2608.09730v1 | https://arxiv.org/html/2608.09730v1 (§§3.2–3.5: World Adapter, exclusive action path, training-time denoiser and branch removal) | https://arxiv.org/html/2608.09730v1 (§§4.1–4.5 plus Appendices A–B: LIBERO, SIMPLER, R1 Pro and RTX 5090D latency) | https://arxiv.org/html/2608.09730v1 (§5 Conclusion and Appendix B.4 Comparability) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-09730 | complete |
 
-评分范围为每项 1～5 分，总分 30。
+### Source Reviews
 
-| 顺序 | 候选 | Event Date | Technical Novelty | System Impact | Practical Value | Source Reliability | Project Relevance | Longevity | Total | Evidence Level |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 1 | SwiftQK | 2026-08-10 | 5 | 5 | 4 | 5 | 5 | 4 | 28 | E2 — primary paper；无独立复现 |
-| 2 | Beyond Routing / FDAA | 2026-08-09 | 5 | 4 | 4 | 4 | 5 | 4 | 26 | E2 — primary paper；单作者、窄模型与数据条件 |
-| 3 | QueryProof / WarehouseReliabilityBench | 2026-08-10 | 4 | 4 | 5 | 4 | 5 | 5 | 27 | E2 — paper + public artifact links；本次未独立运行 artifact |
+<!-- review:SF-2026-ARXIV-2608-09160:start -->
+#### SwiftQK: Fast and Communication-Efficient Tensor Parallelism for Query-Key Normalization
 
-## Deep Analysis
+<!-- claim:SF-2026-ARXIV-2608-09160:start -->《SwiftQK: Fast and Communication-Efficient Tensor Parallelism for Query-Key Normalization》把 `TRAIN-TENSOR-PARALLEL` 的问题具体化为：QK-Norm 的稳定性收益在 TP 下引入额外通信。其机制是仅交换 QK-Norm scalar statistics，并用 persistent kernel 重叠 P2P reduction 与 elementwise work；primary v1 的 evaluation 绑定为近期 LLM 的 multi-GPU TP；测 kernel latency 与 serving TPOT，比较对象为full-vector All-Gather TP QK-Norm 与 optimized scalar aggregation。<!-- claim:SF-2026-ARXIV-2608-09160:end -->
 
-### 1. SwiftQK：不要交换完整 tensor，只交换归一化真正需要的统计量
+证据支持的范围是：所测拓扑/模型上显著降低 QK-Norm latency 与 TPOT；不支持的外推是：所有互连/shape、训练收敛或跨实现数值等价。旧方案仍有成立条件：full hidden-vector All-Gather；兼容性广且实现直接。新机制获得的收益与代价必须一起读取：少通信换定制 persistent kernel、P2P 同步和维护复杂度。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：互连拥塞、小 tensor、kernel residency 冲突、deadlock 或数值漂移。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-**Why**
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 2 = **6/9**。
+- Score rationale：Design Delta：提供张量切分与 collective的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：机制可复用，但证据仍依赖当前 workload。
+- Knowledge owner：`TRAIN-TENSOR-PARALLEL`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-09160:end -->
 
-Layerwise QK-Norm 的 RMS 因子依赖一个 query/key hidden vector 的全局平方和。Tensor Parallel 把 hidden 维分到多个 ranks 后，朴素实现会 AllGather 完整 Q/K，再做归一化；这保持语义正确，却把 `O(H)` payload 放入每层关键路径。
+<!-- review:SF-2026-ARXIV-2608-09225:start -->
+#### Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference
 
-**Principle**
+<!-- claim:SF-2026-ARXIV-2608-09225:start -->KVGov 把共享 prefix cache 的 timing signal 视为跨租户身份泄漏：以 principal-specific HMAC salt 分离 cache-key namespace，并用 background audit 观察 breach signal。作者在 vLLM/A100 与 llama.cpp/M4 两条不同栈上验证 channel 存在，但 boundary salting 的缓存收益来自外推，vLLM block-size 变化只关闭部分自由文本攻击；根隔离会牺牲跨租户共享，因此 namespace、principal identity 与 cache economics 必须共同设计。<!-- claim:SF-2026-ARXIV-2608-09225:end -->
 
-分布式算子不应默认恢复完整 tensor；先从算子数学语义推导跨 rank 的最小充分统计量。对 RMS 而言，每个 rank 的局部平方和可加，最终只需共享标量统计量。
+KVGov 把共享 prefix cache 的 timing signal 视为跨租户身份泄漏：以 principal-specific HMAC salt 分离 cache-key namespace，并用 background audit 观察 breach signal。作者在 vLLM/A100 与 llama.cpp/M4 两条不同栈上验证 channel 存在，但 boundary salting 的缓存收益来自外推，vLLM block-size 变化只关闭部分自由文本攻击；根隔离会牺牲跨租户共享，因此 namespace、principal identity 与 cache economics 必须共同设计。 共享 prefix cache 原本用跨租户复用换 TTFT/成本，在单信任域中合理；跨主体共享把 hit/miss 变成身份侧信道后，KVGov 将 principal identity 写进 HMAC namespace，并以 boundary salting 保留有限共享。获得隔离的代价是 cache hit 损失、principal lifecycle 与 audit 调度复杂度，模拟防御也不能替代真实多租户攻击复现。 该结论只在登记的模型、workload、硬件与 evaluation contract 内成立，不构成无条件替代。
 
-**Mechanism**
+- Evidence Level：primary paper v1；Review Route：`deep`。
+- Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
+- Score rationale：Design Delta：改变了授权与安全证据的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以policy、隔离与执行边界为长期设计约束。
+- Knowledge owner：`PLATFORM-SECURITY`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-09225:end -->
 
-各 rank 对本地 Q/K shard 累加平方和，通过 peer-to-peer 标量归约得到全局 RMS factor，同时把独立的 elementwise weight multiplication 与通信重叠，最后在本地 shard 上应用统一因子。论文还使用受限 persistent grid，让 resident blocks 以 stride 处理 tokens，以避免 kernel 内 peer synchronization 因过量 blocks 形成 deadlock。
+<!-- review:SF-2026-ARXIV-2608-09254:start -->
+#### Business Truth, not SQL Accuracy: A Rule-Gated 7B Analytics Agent Outperforms a Direct-Prompted 32B Baseline
 
-**Trade-off**
+<!-- claim:SF-2026-ARXIV-2608-09254:start -->《Business Truth, not SQL Accuracy: A Rule-Gated 7B Analytics Agent Outperforms a Direct-Prompted 32B Baseline》把 `PLATFORM-EVALUATION-SYSTEM` 的问题具体化为：歧义、不可回答、schema drift 会产生成功执行但错误数字。其机制是semantic-layer/physical-catalog rules 决定 answer/clarify/abstain/refuse，再用 deterministic checks gate 输出；primary v1 的 evaluation 绑定为WarehouseReliabilityBench：400 frozen tasks、2 synthetic warehouses；80-task test 一次评估，比较对象为direct-prompted 32B、cost-matched few-shot 与 routing ablation。<!-- claim:SF-2026-ARXIV-2608-09254:end -->
 
-- 收益依赖 normalization axis、TP layout 与通信/计算重叠空间，不代表所有 Norm 都能使用同一方案。
-- persistent kernel 引入 occupancy、launch configuration、peer-ordering 与拓扑敏感性。
-- 论文在 2×RTX 3090 micro-profile、4/8×A100 NVLink、OLMoE 7B、OLMo2 13B、OLMo3 32B 和 ShareGPT workload 上评估；不能把作者的 latency、TPOT 或 throughput 数字外推到其他 GPU、PCIe 拓扑、精度或 SLO。
+证据支持的范围是：该 synthetic split 上 scaffolded 7B 的 Business Truth Rate 方向优于 baselines；不支持的外推是：7B 模型本身优于 32B、真实 warehouse 泛化或 deterministic layer 独立因果贡献。旧方案仍有成立条件：SQL syntax/execution match 加 direct prompt；业务定义稳定时够用。新机制获得的收益与代价必须一起读取：可靠性换 semantic layer 维护与 over-abstention，cost difference 未闭合。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：规则/denominator 过期、template-family CI 不稳或应拒答问题仍被回答。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-**Connection**
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 1 = **5/9**。
+- Score rationale：Design Delta：提供可复算评估证据的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`PLATFORM-EVALUATION-SYSTEM`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-09254:end -->
 
-ROADMAP owner 倾向第 33 章 Tensor Parallel；第 32 章只保留“由 collective semantics 推导最小 payload”的通用原则，第 45～46 章接 kernel/runtime 映射。
+<!-- review:SF-2026-ARXIV-2608-09730:start -->
+#### World Tokens: Enhancing Embodied Policies with Training-Time World Modeling
 
-**Evolution**
+<!-- claim:SF-2026-ARXIV-2608-09730:start -->World Tokens 在训练时让 future-video denoising 与 action expert 共享固定 world tokens，并通过 exclusive routing 防止策略绕过该表示；部署时移除 world-model branch。它把 world modeling 作为 representation supervision 而非在线 simulator，代价是训练耦合，且 LIBERO/SIMPLER/有限真机结果不能证明开放环境因果正确性。<!-- claim:SF-2026-ARXIV-2608-09730:end -->
 
-完整 tensor materialization → 计算局部可加统计量 → 只交换标量 → 与本地 elementwise work 重叠。它不是用新 collective 否定 AllGather；当下游确实需要完整 tensor、统计量不可分解或 kernel 复杂度不值得时，AllGather 仍合理。
+World Tokens 在训练时让 future-video denoising 与 action expert 共享固定 world tokens，并通过 exclusive routing 防止策略绕过该表示；部署时移除 world-model branch。它把 world modeling 作为 representation supervision 而非在线 simulator，代价是训练耦合，且 LIBERO/SIMPLER/有限真机结果不能证明开放环境因果正确性。 在线 world-model rollout 直接提供未来，但把视频 denoising 留在控制环会降低频率；纯行为克隆很快，却缺少 dynamics supervision。World Tokens 把未来预测移到训练期，并强制 action expert 只读取 256 个共享 world tokens，部署时删除视频支路；它以训练耦合和表示瓶颈换 VLA 级延迟，开放环境因果正确性仍未由模拟和有限真机证明。 该结论只在登记的模型、workload、硬件与 evaluation contract 内成立，不构成无条件替代。
 
-### 2. Beyond Routing：Top-K dispatch 与 expert commitment 不是同一个决策
+- Evidence Level：primary paper v1；Review Route：`deep`。
+- Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
+- Score rationale：Design Delta：改变了环境状态转移的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：机制可复用，但证据仍依赖当前 workload。
+- Knowledge owner：`MULTIMODAL-WORLD-MODELS`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-09730:end -->
 
-**Why**
+## 4. Benchmark Contracts
 
-传统 sparse MoE router 的同一组 scores 同时决定 Top-K expert selection 和选中 outputs 的 aggregation weights。Top-K 排名足以完成 dispatch，却未必提供对最终 LM objective 最合适的相对 commitment。
+Deep Review 会核对作者 evaluation，但本日报不抽离复述性能数字。为避免用 `Benchmark Claim = no` 规避条件账本，所有使用作者实验范围支撑证据边界的 Deep family 均登记完整字段；只有 source v1 未披露的字段才能写带原因的 `Not Disclosed`。若只是本报告尚未提取或复算，该 family 必须保持 review incomplete 且 Evidence Gate Open。
 
-**Principle**
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-09225 | multi-tenant prefix-cache timing attacks, defense simulation and independent-stack replication | Qwen2.5-7B-Instruct on vLLM; Qwen2.5-3B on llama.cpp | NVIDIA A100/vLLM 0.26.0 and Apple M4/Metal/llama.cpp | Not Disclosed | A100: 2119-token shared prefix; M4 replication: 781-token shared prefix | one first token measured by TTFT | single probe per measurement; simulation N=1000 trials | multi-tenant threat model; live concurrent-tenant count Not Disclosed | no production SLO; preregistered cached/cold TTFT-ratio breach threshold plus attack-success and audit metrics | real TTFT measurements, deterministic judges and independent llama.cpp replication |
+| SF-2026-ARXIV-2608-09730 | LIBERO, SIMPLER and R1 Pro manipulation | Qwen3-VL-2B-Instruct + DiT-B action expert; Cosmos Predict2.5-2B training-only denoiser | RTX 5090D for latency; simulators plus Galaxea R1 Pro | Not Disclosed | multi-view observation and instruction; normalized input-token length Not Disclosed; 256 world tokens are an internal bottleneck | eight-step action chunk | Not Disclosed | single robot control loop; evaluation trial counts are not serving concurrency | success rate and per-action-chunk latency; no production SLO | LIBERO/SIMPLER task success and R1 Pro trial protocol; comparisons include matched Qwen-GR00T and published VLA/WAM baselines |
 
-应把离散资源决策与已执行结果的连续组合分开验证：dispatch 决定计算和通信路径，aggregation 决定这些结果如何影响 residual stream。
+## 5. Deep Analysis Selection
 
-**Mechanism**
+<!-- validator:deep-analysis-selection-v1 -->
+| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
+| --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-09225 | score_7_9<br>forced_review<br>potential_books_delta | selected | DA-20260811-2608-09225 | — | 逐 family 排序：override=release_security_contract，V2=9/9 (3/3/3)；保留独立机制、证据边界与 Books Decision；pre-Books delta=shared-prefix performance identity also becomes tenant authorization identity | analysis:DA-20260811-2608-09225 |
+| SF-2026-ARXIV-2608-09730 | score_7_9<br>potential_books_delta | selected | DA-20260811-2608-09730 | — | 逐 family 排序：override=none，V2=8/9 (3/3/2)；保留独立机制、证据边界与 Books Decision；pre-Books delta=world-model transition supervision becomes a training-only branch, not only online rollout | analysis:DA-20260811-2608-09730 |
 
-FDAA 固定 native Top-K expert IDs、执行集合和选中 router mass，只基于 token state、已计算 expert outputs、native weights、expert IDs 与 layer embedding 预测 residual commitment scores；重加权后仍保持总 selected mass。最后一层零初始化，使初始状态在数值误差范围内复现原模型。训练冻结 backbone、router 与 experts，只优化约 30 万参数的 head，目标是 next-token cross entropy 加 KL 与 residual regularization。
+<!-- analysis:DA-20260811-2608-09225:start -->
+### Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference
 
-**Trade-off**
+KVGov 把共享 prefix cache 的 timing signal 视为跨租户身份泄漏：以 principal-specific HMAC salt 分离 cache-key namespace，并用 background audit 观察 breach signal。作者在 vLLM/A100 与 llama.cpp/M4 两条不同栈上验证 channel 存在，但 boundary salting 的缓存收益来自外推，vLLM block-size 变化只关闭部分自由文本攻击；根隔离会牺牲跨租户共享，因此 namespace、principal identity 与 cache economics 必须共同设计。 共享 prefix cache 原本用跨租户复用换 TTFT/成本，在单信任域中合理；跨主体共享把 hit/miss 变成身份侧信道后，KVGov 将 principal identity 写进 HMAC namespace，并以 boundary salting 保留有限共享。获得隔离的代价是 cache hit 损失、principal lifecycle 与 audit 调度复杂度，模拟防御也不能替代真实多租户攻击复现。
 
-- 严格 fixed-dispatch protocol 很好地隔离了 aggregation 因果因素，但没有证明改变 dispatch 不会更优。
-- OLMoE 实验主要使用 sequence length 96、batch 1，并在少数 target layers 上干预；DeepSeek-V2-Lite 是单 seed replication。
-- WikiText-only policy 对 C4 的迁移不成立，说明 token adaptivity 不等于 domain generality。
-- 新 head 增加训练、版本、checkpoint compatibility 与 inference kernel/fusion 负担。
+<!-- analysis:DA-20260811-2608-09225:end -->
 
-**Connection**
+<!-- analysis:DA-20260811-2608-09730:start -->
+### World Tokens: Enhancing Embodied Policies with Training-Time World Modeling
 
-第 21 章当前已把 router 写成“选择 expert 并加权组合”，但尚未把 selection、execution 与 commitment 明确拆成三个 contract。该论文能解释潜在缺口，不过仍是 Experimental，暂不写入正文。
+World Tokens 在训练时让 future-video denoising 与 action expert 共享固定 world tokens，并通过 exclusive routing 防止策略绕过该表示；部署时移除 world-model branch。它把 world modeling 作为 representation supervision 而非在线 simulator，代价是训练耦合，且 LIBERO/SIMPLER/有限真机结果不能证明开放环境因果正确性。 在线 world-model rollout 直接提供未来，但把视频 denoising 留在控制环会降低频率；纯行为克隆很快，却缺少 dynamics supervision。World Tokens 把未来预测移到训练期，并强制 action expert 只读取 256 个共享 world tokens，部署时删除视频支路；它以训练耦合和表示瓶颈换 VLA 级延迟，开放环境因果正确性仍未由模拟和有限真机证明。
 
-**Evolution**
+<!-- analysis:DA-20260811-2608-09730:end -->
 
-单一 router scores 同时承担 selection 与 weighting → 固定 dispatch 下审计 aggregation mismatch → 轻量 head 校准 commitment。旧设计仍具有更低复杂度、更自然的联合训练与更简单 serving path；新设计只在 mismatch 稳定、跨域成立且新增状态可管理时值得采用。
+## 6. Books Comparison
 
-### 3. QueryProof：业务正确性是行为契约，不是 SQL 能执行
+<!-- validator:books-comparison-v1 -->
+| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-09225 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L14<br>books/part-06-ai-infrastructure/72-security.md#L608 | books/part-06-ai-infrastructure/71-multi-tenant.md#L14<br>books/part-07-agent/78-tool-calling.md#L14 | existing:SF-2026-ARXIV-2608-09225 | delta:SF-2026-ARXIV-2608-09225 | Layering / Dependency | Integrate | books-review:SF-2026-ARXIV-2608-09225 |
+| SF-2026-ARXIV-2608-09730 | MULTIMODAL-WORLD-MODELS | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14<br>books/part-03-multimodal-world-models/25-multimodal-world-models.md#L276 | books/part-03-multimodal-world-models/23-multimodal-representation.md#L14<br>books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14 | existing:SF-2026-ARXIV-2608-09730 | delta:SF-2026-ARXIV-2608-09730 | Alternative Branch | Integrate | books-review:SF-2026-ARXIV-2608-09730 |
 
-**Why**
+<!-- books-review:SF-2026-ARXIV-2608-09225:start --><!-- existing:SF-2026-ARXIV-2608-09225:start -->现有中心命题：AI security 是贯穿 capability production、delivery 与 action 的风险管理。平台必须识别资产、主体、数据流和信任转换，并用 provenance、least privilege、isolation、validation 与 audit 建立纵深防御。<!-- existing:SF-2026-ARXIV-2608-09225:end --><!-- delta:SF-2026-ARXIV-2608-09225:start -->KVGov 把共享 prefix cache 的 timing signal 视为跨租户身份泄漏：以 principal-specific HMAC salt 分离 cache-key namespace，并用 background audit 观察 breach signal。作者在 vLLM/A100 与 llama.cpp/M4 两条不同栈上验证 channel 存在，但 boundary salting 的缓存收益来自外推，vLLM block-size 变化只关闭部分自由文本攻击；根隔离会牺牲跨租户共享，因此 namespace、principal identity 与 cache economics 必须共同设计。<!-- delta:SF-2026-ARXIV-2608-09225:end -->与上述中心命题相比，这个 family 的新增证据是：KVGov 把共享 prefix cache 的 timing signal 视为跨租户身份泄漏：以 principal-specific HMAC salt 分离 cache-key namespace，并用 background audit 观察 breach signal。作者在 vLLM/A100 与 llama.cpp/M4 两条不同栈上验证 channel 存在，但 boundary salting 的缓存收益来自外推，vLLM block-size 变化只关闭部分自由文本攻击；根隔离会牺牲跨租户共享，因此 namespace、principal identity 与 cache economics 必须共同设计。 该 delta 已落在《第72章 Security》的正文机制锚点；语义相邻边界为 PLATFORM-MULTI-TENANT：Multi-tenancy 是 tenant identity 在 control、data、resource 与 evidence planes 上的一致执行。Namespace 是重要机制，但不是完整租户模型。；AGENT-TOOL-CALLING：模型产生 tool intent 与 typed arguments，可信执行器完成 discovery、validation、authorization、execution 和 observation。Tool use 扩大能力，也把错误从文本域放大到真实环境。。相邻章节不接管该机制，正文也不继承作者 benchmark headline，只保留适用条件、代价和未证明边界。<!-- books-review:SF-2026-ARXIV-2608-09225:end -->
 
-现实 analytics 请求并不总有唯一正确 SQL。歧义、数据缺失、schema drift 和禁止操作要求系统 clarify、abstain 或 refuse；只在“存在正确 SQL”的样本上测 execution match，会把错误回答但成功执行计为成功。
-
-**Principle**
-
-模型适合提出候选解释与 query；可由 domain state 决定的约束，应由版本化 semantic layer、physical catalog 和 deterministic verifier 裁决。Evaluation 必须测 false success，而不只测 answer coverage。
-
-**Mechanism**
-
-WarehouseReliabilityBench 冻结 400 个合成任务与两个 warehouse，约一半任务没有正确 SQL，而有明确行为 contract。QueryProof 用 semantic layer 和 catalog 识别 ambiguity/answerability，静态检查 candidate，执行后再检查 filters、period、non-empty 与 impossible values，最后才允许返回答案。
-
-**Trade-off**
-
-- 合成 warehouse 提供可执行 ground truth 与可复现 seed，但牺牲生产外部有效性。
-- 7B system 获得完整 scaffold，而 32B baseline 是 direct prompt；论文自己明确这是 system comparison，不能归因为小模型优于大模型。
-- 学得的 routing/confidence 在 test 上因过度 abstain 而退化，手工 heuristic 反而更好；rules 也需要维护、覆盖测试和版本治理。
-- 本次未独立运行公开 artifact；论文报告的数字只作为作者实验结论。
-
-**Connection**
-
-第 62 章已覆盖 executable verifier、missing/invalid/abstain state 与 judge 不能替代 truth；第 77 章已区分模型决策与 deterministic workflow state。该工作主要提供受限 domain case 和更清晰的 business-behavior contract，尚未改变两章结论。
-
-**Evolution**
-
-SQL exact/execution match → execution-grounded checking → semantic/catalog-aware behavior contract → selective answer/clarify/abstain/refuse。新阶段没有淘汰 execution accuracy；对明确、可回答任务它仍是必要局部指标，但不再足以代表端到端 business truth。
-
-## Evidence Level 与事实边界
-
-- **官方事实 / primary-source metadata：** 三项 arXiv v1 的提交日期、方法描述、实验设置和作者公开的 artifact 链接。
-- **论文实验结论：** 只在各自论文披露的模型、硬件、数据、precision、length、batch、concurrency 与 baseline 范围内成立。
-- **社区观点：** 本 Daily 未使用社区评论形成结论。
-- **本项目推断：** “最小充分统计量”“selection/execution/commitment 三层 contract”“模型提出、规则裁决”是对多章知识树的系统抽象，不是论文声称的普适标准。
-- **尚未验证：** 三项均无本次独立复现；QueryProof artifact 未运行；SwiftQK 未见跨互联/跨厂商验证；FDAA 的跨模型、跨层和长上下文一般性未知。
-
-## 知识树位置
-
-| 候选 | 主 Owner | 相邻章节 | 当前覆盖判断 |
-| --- | --- | --- | --- |
-| SwiftQK | Ch33 Tensor Parallel | Ch32 Distributed Training；Ch45 Kernel；Ch46 vLLM | 现有章节已有 TP collective 与 layout 原则；缺少 QK-Norm 受限案例，但证据尚不足以沉淀 |
-| Beyond Routing | Ch21 MoE | Ch29 RL/optimization；Ch36 Megatron；Ch40 Decode | 现有章节合并描述 selection 与 weighting；潜在机制缺口，Status: Experimental |
-| QueryProof | Ch62 Evaluation System | Ch63 Monitoring；Ch72 RAG；Ch77 Workflow | 核心原则已覆盖；新增的是 analytics domain case 与更严格 failure taxonomy |
-
-## Recommended Action
-
-| 候选 | 决策 | 原因 |
-| --- | --- | --- |
-| SwiftQK | Daily Only；Sunday Re-evaluate | 机制清晰且工程意义高，但属于单论文、特定 operator 与有限 hardware contract |
-| Beyond Routing | W32 retroactive / Emerging / Experimental | first-public date 为 2026-08-09；提供重要机制解释，但跨域失败和窄 intervention 边界尚不足以改写 MoE 主线 |
-| QueryProof | No Change — Already Covered；Weekly 保留案例 | Ch62 与 Ch77 已拥有 verifier/workflow 原则；非 matched-scaffold 比较不得进入通用结论 |
-
-**Books Integration Decision:** 今日不修改 `books/`。三项均不否定既有结论；SwiftQK 与 FDAA 可能在形成第二证据或稳定演进链后 refine 既有章节，QueryProof 当前主要强化已覆盖观点。
-
-今日未发现足以立即修改核心知识库的重要进展。
-
-## Ignored Noise
-
-- `Training Variable Long Sequences with Data-Centric Parallel`（arXiv:2608.07524）虽出现在当日列表，但 v1 first-public date 为 2026-07-14，属于旧内容重新索引，不作为 2026-08-11 事件。
-- `Controlled Memory Interference`（arXiv:2608.07622）v1 为 2026-08-07；`An AI Scientist that Doesn't Drift`（arXiv:2608.07542）v1 为 2026-07-30，均超出窗口。
-- `ElastiCo`（arXiv:2608.07971）与 `OasisKV`（arXiv:2608.08097）v1 为 2026-08-08，应按真实事件日去重，不回填到今天。
-- GitHub 聚合搜索中出现但无法把 tag date、release notes、文档与代码路径共同核验的条目，不计为候选。
-- 缺少 workload contract 的 benchmark 宣传、媒体转述和无 primary source 的排行榜变化被过滤。
-
-## Repository Changes
-
-- 新增 `papers/2026/08/11/README.md`。
-- 完成三项 primary-source 阅读、评分、事实边界、知识树映射与 Books 决策。
-- 未修改 `books/`、`ROADMAP.md` 或 `docs/DECISIONS.md`。
-- 历史 Weekly forward cursor 的 W23 状态独立维护；本轮完成 SDPG 与 M3Eval 的 v1、appendices、当前
-  official artifact surface 和相邻章节审计，使 W23 达到 17/29 Full Source Reviews；Continual Experience
-  Internalization 等 12 个未完成 families 因 arXiv primary-paper 与相关 GitHub artifact domain 被当前访问策略
-  拒绝，逐项转入 blocked backlog，使 current-review pending 清零并按用户规则把 cursor 推进到 W24；M3Eval
-  因 memory/perception/position/scorer confound 且相关原则已由 Ch62/22 具体拥有，暂定
-  `No Change — Already Covered / Experimental Case`；W23 discovery/Historical Evidence Gates 仍为 Open，
-  Historical Books Gate 仍关闭，
-  本 Daily 不把历史 blocked backlog 误计为完成阅读。
-- forward cursor 随后完成 W24 queue disposition：3/34 `20+` Full Source Reviews 保留，31 个依赖
-  arXiv primary paper（部分还需 GitHub artifact）的 families 因当前保存的访问策略转入
-  `Unverified / Blocked Backlog`，0 current-review pending；cursor 推进到 W25，但 W24 discovery/
-  Historical Evidence Gates 与 Historical Books Gate 均未关闭。
-- forward cursor 继续完成 W25 queue disposition：4/31 `20+` Full Source Reviews 保留，27 个未读
-  families 因同一 primary-paper/artifact domain 访问限制进入 `Unverified / Blocked Backlog`，0
-  current-review pending；cursor 推进到 W26，但 W25 discovery/Historical Evidence Gates 与 Historical
-  Books Gate 均未关闭。
-- forward cursor 继续完成 W26 queue disposition：4/37 `20+` Full Source Reviews 保留，33 个未读
-  families 因同一 primary-paper/artifact domain 访问限制进入 `Unverified / Blocked Backlog`，0
-  current-review pending；cursor 推进到 W27，但 W26 discovery/Historical Evidence Gates 与 Historical
-  Books Gate 均未关闭。
-- forward cursor 继续完成 W27 queue disposition：31 个评分行对应 30 个 unique families，9 个 unique
-  Full Source Reviews 保留，21 个未读 families 因同一 primary-paper/artifact domain 访问限制进入
-  `Unverified / Blocked Backlog`，0 current-review pending；Seed2.0 duplicate relation 保持闭合，cursor
-  推进到 W28，但 W27 discovery/Historical Evidence Gates 与 Historical Books Gate 均未关闭。
-- forward cursor 继续完成 W28 queue disposition：7/21 Full Source Reviews 保留，14 个未读 families
-  因同一 primary-paper/artifact domain 访问限制进入 `Unverified / Blocked Backlog`，0 current-review
-  pending；cursor 推进到 W29，但 W28 discovery/Historical Evidence Gates 与 Historical Books Gate
-  均未关闭。
-- forward cursor 继续完成 W29 queue disposition：7/26 Full Source Reviews 保留，19 个未读 families
-  因同一 primary-paper/artifact domain 访问限制进入 `Unverified / Blocked Backlog`，0 current-review
-  pending；cursor 推进到 W30，但 W29 discovery/Historical Evidence Gates 仍 Open，Historical Books
-  Gate 继续关闭；本轮未修改 Books。
-- forward cursor 继续完成 W30 queue disposition：9/25 Full Source Reviews 保留，16 个未读 families
-  因同一 primary-paper/artifact domain 访问限制进入 `Unverified / Blocked Backlog`，0 current-review
-  pending；cursor 推进到 W31，但 W30 discovery/Historical Evidence Gates 仍 Open，Historical Books
-  Gate 继续关闭；本轮未修改 Books。
-- W31 Live Weekly 重新验收通过：24 个评分行的六维总分可复算，7/7 Daily、跨周去重、Books
-  decision、标题与代码围栏一致，无需改写正文；forward cursor 随后进入最新已结束的 W32。
-- 新增 `papers/2026/08/09/README.md`，把 Beyond Routing 按 first-public date 从本日 discovery node
-  回写 W32；该 Daily 随后于 2026-08-12 完成 coverage repair。W32 现为 7/7 Daily，48 个 Daily
-  score rows 去重为 44 个 unique families，18 个 Full Source Reviews 已完成；15 篇 paper 与 KServe
-  mechanism review 进入 `Unverified / Blocked Backlog`，6 个 8 月 9 日 families 为 Full Source Review
-  Pending，ElastiCo / OasisKV 为 unscored discovery-only gaps。Tangent 已 refine Ch62；W32 Evidence
-  Gate 保持 Open，Historical Books Gate 继续关闭。
-- fixed-source replay 补充核验 vLLM 两个工程来源族：incremental MoE expert offloading 以
-  2026-03-16 open PR 为 first-public owner，完整 Source Review 回拨 W12；W13 的 2026-03-26 RFC
-  仅保留为 architecture follow-up。`TRITON_MLA_SPARSE` 由 2026-03-24 issue 与 2026-03-29 open PR
-  联合定义并写入 W13 Full Source Review。W12 当前为 49 个来源族、48/48 `20+` reviews；W13 当前
-  为 26 个来源族、22/22 `20+` reviews。两项均保持 Experimental/open-PR 边界；Hugging Face 历史
-  papers 页的访问阻断被显式记录，因此 W13 Discovery Gate 与全历史 Books Gate 继续关闭。
-- 全历史六维评分复算发现 W24 的 FastContext 撤稿记录把 Longevity 写成超出量表的 `0`；已按
-  1～5 分规则改为 1，总分由 17/30 更正为 18/30。它仍是唯一的低分 withdrawn provenance record，
-  不改变 W24 的候选数量、分档、Evidence Gate 或 Books 决策。
-- W14 的 HippoCamp official arXiv primary text 已重新可读；本轮完成 benchmark construction、最小支持
-  文件集与 Atomic Unit schema、annotation/QC、三种 evaluation regime、metrics、judge audit、failure
-  analysis 和相关 Appendix 的全文审计。W14 recorded queue 因而达到 24/24 Full Source Reviews、0
-  blocked、0 pending；最终 disposition 为 `No Change — Already Covered / Experimental Evaluation Case`，
-  因 Ch62/72/73/68 已具体拥有其长期原则。W14 fixed-source Discovery Gate 仍为 Open，Historical Books
-  Gate 仍为 Closed，本轮未修改 Books。
-
-## Open Questions
-
-1. SwiftQK 的 scalar-statistic path 在 PCIe、跨节点或非 NVIDIA collective/runtime 中是否仍能覆盖同步成本？
-2. FDAA 在更长 context、更多 MoE backbones、不同 Top-K 与多层同时干预时能否保持收益？
-3. QueryProof 在 matched scaffold、真实 warehouse、不同 semantic-layer completeness 下的 false-success / false-refusal 边界如何变化？
-4. 三项工作能否在本周形成第二 primary source、独立 artifact 结果或明确的技术演进链？
-5. vLLM 两条 open-PR source families 在 merge/rebase 后，机制、测试覆盖与 workload contract 会发生哪些变化？
-6. HippoCamp 的三种 evaluation regime 在 matched permissions、parallelism、tokens/calls、wall-clock 与
-   repeated-run contract 下是否保持相同 failure ordering；Atomic Unit scorer 如何在不泄漏 personal media
-   时开放独立审计？
-
-## Sources
-
-访问日期均为 2026-08-11（Asia/Shanghai）。
-
-1. SwiftQK, arXiv:2608.09160v1, first public 2026-08-10: https://arxiv.org/abs/2608.09160
-2. SwiftQK HTML full text: https://arxiv.org/html/2608.09160
-3. Beyond Routing: Decoupling Expert Dispatch and Aggregation in Sparse Mixture-of-Experts, arXiv:2608.08853v1, first public 2026-08-09: https://arxiv.org/abs/2608.08853
-4. Beyond Routing HTML full text: https://arxiv.org/html/2608.08853
-5. Business Truth, not SQL Accuracy: A Rule-Gated 7B Analytics Agent Outperforms a Direct-Prompted 32B Baseline, arXiv:2608.09254v1, first public 2026-08-10: https://arxiv.org/abs/2608.09254
-6. Business Truth HTML full text: https://arxiv.org/html/2608.09254
-7. arXiv Computer Science — Artificial Intelligence recent submissions: https://arxiv.org/list/cs.AI/recent
-8. arXiv Computation and Language recent submissions: https://arxiv.org/list/cs.CL/recent
-9. arXiv Machine Learning recent submissions: https://arxiv.org/list/cs.LG/recent
-10. arXiv Distributed, Parallel, and Cluster Computing recent submissions: https://arxiv.org/list/cs.DC/recent
-11. HippoCamp, arXiv:2604.01221v1, first public 2026-04-01: https://arxiv.org/abs/2604.01221
-12. HippoCamp official project page: https://hippocamp-ai.github.io/
+<!-- books-review:SF-2026-ARXIV-2608-09730:start --><!-- existing:SF-2026-ARXIV-2608-09730:start -->现有中心命题：World Model 不是“生成世界画面”的名字，而是围绕环境状态转移建立的可检验契约。它必须把当前状态、action、预测 horizon 与 uncertainty 绑定起来，并始终区分 observed state、latent belief 和 imagined state。<!-- existing:SF-2026-ARXIV-2608-09730:end --><!-- delta:SF-2026-ARXIV-2608-09730:start -->World Tokens 在训练时让 future-video denoising 与 action expert 共享固定 world tokens，并通过 exclusive routing 防止策略绕过该表示；部署时移除 world-model branch。它把 world modeling 作为 representation supervision 而非在线 simulator，代价是训练耦合，且 LIBERO/SIMPLER/有限真机结果不能证明开放环境因果正确性。<!-- delta:SF-2026-ARXIV-2608-09730:end -->与上述中心命题相比，这个 family 的新增证据是：World Tokens 在训练时让 future-video denoising 与 action expert 共享固定 world tokens，并通过 exclusive routing 防止策略绕过该表示；部署时移除 world-model branch。它把 world modeling 作为 representation supervision 而非在线 simulator，代价是训练耦合，且 LIBERO/SIMPLER/有限真机结果不能证明开放环境因果正确性。 该 delta 已落在《第25章 World Models：从生成画面到预测环境》的正文机制锚点；语义相邻边界为 MULTIMODAL-REPRESENTATION：多模态系统的第一问题不是把所有输入变成同一 shape，而是建立可版本化的 representation contract：每个表示必须保留它来自哪种 modality、对应什么时间与空间范围、经过哪个 encoder/codec、属于哪个 artifact version，并明确哪些信息已经不可逆地丢失。；MULTIMODAL-EMBODIED-VLA：Embodied AI 把生成结果变成具有 deadline、坐标系、控制权和不可逆副作用的 action。VLA 只有放在 perception → proposal → controller → environment → observation 的闭环中才有系统意义。。相邻章节不接管该机制，正文也不继承作者 benchmark headline，只保留适用条件、代价和未证明边界。<!-- books-review:SF-2026-ARXIV-2608-09730:end -->
+
+## 7. Semantic Audit
+
+<!-- validator:semantic-audit-v1 -->
+| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| SA-20260811-COVERAGE | fresh-context:final-contract-review | coverage | coverage:SRC-ARXIV:20260811; coverage:SRC-GITHUB-COMMIT:20260811; semantic-review:SA-20260811-COVERAGE | none | Verified — archived arXiv daily hits, Effective Date applicability, denominator and receipt match | passed |
+| SA-20260811-EVIDENCE | fresh-context:final-contract-review | evidence | validator:review-completion-v1; review:SF-2026-ARXIV-2608-09160; review:SF-2026-ARXIV-2608-09225; review:SF-2026-ARXIV-2608-09254; review:SF-2026-ARXIV-2608-09730; semantic-review:SA-20260811-EVIDENCE | none | fresh-context reviewer 已核验版本身份、route-matched locator、claim boundary、benchmark contract 与 Evidence 状态 | passed |
+| SA-20260811-SELECTION | fresh-context:final-contract-review | deep_analysis_selection | analysis:DA-20260811-2608-09225; analysis:DA-20260811-2608-09730; semantic-review:SA-20260811-SELECTION | none | Verified — evidence-stage potential delta, narrative selection and at-most-three selected units | passed |
+| SA-20260811-BOOKS | fresh-context:final-contract-review | books | validator:books-comparison-v1; books-review:SF-2026-ARXIV-2608-09225; books-review:SF-2026-ARXIV-2608-09730; review:SF-2026-ARXIV-2608-09160; review:SF-2026-ARXIV-2608-09254; semantic-review:SA-20260811-BOOKS | none | Verified — durable body anchors, semantic adjacency, evolution relation and every Weekly Only review ref | passed |
+
+<!-- semantic-review:SA-20260811-COVERAGE:start -->Fresh-context reviewer verified Effective Date applicability, archived arXiv daily hits and frozen denominator closure.<!-- semantic-review:SA-20260811-COVERAGE:end -->
+<!-- semantic-review:SA-20260811-EVIDENCE:start -->Fresh-context review passed the frozen Candidate and Review receipt set after locator, claim-boundary and benchmark-contract corrections.<!-- semantic-review:SA-20260811-EVIDENCE:end -->
+<!-- semantic-review:SA-20260811-SELECTION:start -->Fresh-context reviewer verified evidence-stage eligibility and every selected or not-selected narrative decision without Books feedback.<!-- semantic-review:SA-20260811-SELECTION:end -->
+<!-- semantic-review:SA-20260811-BOOKS:start -->Fresh-context reviewer verified all Integrate body anchors, semantic adjacent-owner boundaries, evolution relations and Weekly Only dispositions.<!-- semantic-review:SA-20260811-BOOKS:end -->
+
+## 8. Ignored Noise
+
+601 条 arXiv v1 中有 597 条未进入候选分母。拒绝理由限定为：垂直应用不改变 AI-System contract；单数据集增量无机制差异；纯 quality headline 缺少状态/控制权变化；cross-listing 重复；或只有 LLM/Agent 关键词而没有系统贡献。它们完成 topic-level closure，不以大量低分行稀释候选账本。
+
+## 9. Recommended Action
+
+1. Sunday Weekly 按 Source Family 聚合本日报 Review Provenance；不得按后续发现日重复计分。
+2. 只有重要 revision、artifact 或反证改变 identity、Method 或 claim boundary 时才重开本日报 family。
+3. Books Decision：2 个 `Integrate`、0 个 `No Change — Existing Coverage`、2 个 `Weekly Only — Context`；每个 Integrate/No Change 均有 owner、相邻章节和 bounded Books Review receipt。
+
+## 10. Repository Changes
+
+- 重建 `papers/2026/08/11/README.md` 的 Coverage applicability 与 Books receipts。
+- Refine `books/part-03-multimodal-world-models/25-multimodal-world-models.md`，只吸收长期机制、取舍与失效边界。
+- Refine `books/part-06-ai-infrastructure/72-security.md`，只吸收长期机制、取舍与失效边界。
+
+## 11. Open Questions
+
+- 日期精度仅到天的官方页面能否补回原始 HTTP/发布系统 timestamp，以消除 09:00 边界不确定性？
+- Sunday Weekly 是否出现 artifact、independent reproduction 或反证，要求升级/降级 Evidence Level？
+
+## 12. Sources
+
+- [SwiftQK: Fast and Communication-Efficient Tensor Parallelism for Query-Key Normalization](https://arxiv.org/abs/2608.09160v1) — published/event date: 2026-08-10; accessed: 2026-08-25
+- [Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference](https://arxiv.org/abs/2608.09225v1) — published/event date: 2026-08-10; accessed: 2026-08-25
+- [Business Truth, not SQL Accuracy: A Rule-Gated 7B Analytics Agent Outperforms a Direct-Prompted 32B Baseline](https://arxiv.org/abs/2608.09254v1) — published/event date: 2026-08-10; accessed: 2026-08-25
+- [World Tokens: Enhancing Embodied Policies with Training-Time World Modeling](https://arxiv.org/abs/2608.09730v1) — published/event date: 2026-08-10; accessed: 2026-08-25
+- [arXiv API](https://export.arxiv.org/api/help/) — exact submittedDate snapshots; accessed: 2026-08-25
+- [Research Sources Registry](../../../../docs/RESEARCH_SOURCES.md) — registry version 2026-08-25
+
+## 13. Final Status
+
+Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。

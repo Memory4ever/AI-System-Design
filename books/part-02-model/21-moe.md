@@ -239,6 +239,12 @@ local token states
 -> restore original token order
 ```
 
+### Topology-conditioned Multicast 是 Dispatch 的替代分支
+
+在 direct-connect fabric 上，MoE dispatch 不一定要让 source 分别向每个 selected expert 发送完整 activation。若 selected experts 可作为受控 relay，可以建立 source-rooted multicast tree，并在反向 combine tree 上做 partial reduction；这样用多跳与 relay state 换取 source-link congestion。
+
+Router 仍只拥有 token→expert 语义，tree/weight catalog 属于 topology-aware runtime。该分支新增 relay ordering、fault recovery、deadlock 与 topology epoch；强交换网络、小 fanout、故障频繁或 ordering 难验证时，普通 unicast/All-to-All 仍更合理。训练侧 transport/runtime 细节回到第 36 章。
+
 逻辑上，dispatch 输入可看作 `[N,d_model]` token states 和 `[N,k]` routes。物理上需要 grouped GEMM、padding 或动态 shape 来处理每个 expert 的不同 token count。
 
 Grouped GEMM 不是把 MoE 改成一个数学上的稀疏矩阵乘法。它把多个共享 dtype 和部分 layout 约束、但拥有不同 `M_e` 的 expert GEMMs 交给一次 library/kernel 调度：减少逐 expert launch 和 padding 机会，却仍要处理空 expert、长尾 `M_e`、metadata、对齐与负载不均。Dense GEMM、grouped GEMM 与通信融合属于第49章的 execution mapping；本章只拥有 router 如何产生这些不规则 expert batches。
@@ -437,6 +443,10 @@ encoder/decoder、重建误差与专用 kernel 成本时成立。论文的 match
 
 Expert 可能对某些 token 类型、语言或模式表现出统计偏好，但 router/expert specialization 是训练结果，不保证每个 expert 对应一个可命名领域。
 
+标准 MoE 也不是先把数据按“数学、代码、语言”拆开，再逐个训练独立 experts。通常 shared layers、router 与 experts 在同一个端到端 objective 下 joint optimization：一个 token 的主任务梯度只进入它实际选择的 expert paths，shared layers 接收跨 routes 的信号，router 同时受到主任务信号与 load-balancing/capacity 约束。于是每个 expert 看到的是 router 动态形成的条件样本分布，而不是人工声明且永久不变的领域 dataset。
+
+稀疏更新会形成 specialization，却也可能造成 rich-get-richer、expert starvation 与共同表示漂移；这正是 load balancing 属于训练正确性而不只是设备利用率的原因。按领域预训练独立模块后再组合属于另一种 modular composition 路线，需要额外解决 router calibration、shared coordinate、冲突和联合 Evaluation，不能被当作 MoE 的默认训练方式。
+
 把 expert 命名为“数学专家”或“代码专家”需要行为、路由和干预证据。负载均衡还会主动阻止所有相关 token 只集中到单一 expert。
 
 MoE 的稳定定义是 conditional computation，不是人工预先划分知识部门。
@@ -469,6 +479,7 @@ Transformer Layer
 9. MoE expert 为什么不能直接命名为固定人类领域？
 10. MoE 与 Dense MLP、Tensor Parallel 的边界分别是什么？
 11. Grouped GEMM 减少了什么执行开销，又没有消除哪些路由不均衡成本？
+12. 为什么标准 MoE 是 router、shared layers 与 experts 的 joint optimization，而不是按人类领域逐 expert 独立训练？
 
 ## 小结
 
@@ -477,6 +488,9 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 代价是路由成为模型与系统共同状态。负载均衡、capacity、token dispatch、All-to-All、expert placement 和小 GEMM 效率决定稀疏参数能否转化为真实收益。
 
 ## Review notes
+
+- MoX: Efficient MoE Routing on Direct-Connect Topologies（arXiv:2607.20220v1；Status: Experimental）：https://arxiv.org/html/2607.20220v1
+  - 证据边界：支持披露 topology/workload 假设下的 routing/tree algorithm 与 simulation/proxy 改善；不证明 deadlock-free 实现、故障行为、真实硬件时序，或相对 switch fabric 的普遍收益。
 
 本轮联章 Review 明确 MoE 是第 16 章 Dense MLP 的条件化替换，不是 Sampling 的后继阶段，并区分有效 token states、padding positions 与 top-k expert assignments。既有 active/total parameters、load balance、All-to-All、`[B,T,E]` router shape、top-2 演算和 capacity 近似保持不变。Grouped GEMM 只作为 router 产生不规则 expert batches 后的执行接口，kernel 与通信融合仍由第49章及后续 Runtime 章节拥有。
 

@@ -1,372 +1,260 @@
-# AI Research Daily — 2026-08-13
+# Daily Research — 2026-08-13
 
-- **Research date:** 2026-08-13（Asia/Shanghai）
-- **Coverage window:** 2026-08-11 00:00 ～ 2026-08-13 09:08（Asia/Shanghai，约 48 小时）
-- **Access date:** 2026-08-13
-- **Status:** Daily primary-source review completed；5 个 `20+` 学术候选完成全文核验；3 个既有章节 refined
+**Research Date:** 2026-08-13
+
+**Timezone:** Asia/Shanghai
+
+**Strict Window:** 2026-08-12 09:00:00 ～ 2026-08-13 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
+
+**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
 
 ## Executive Summary
 
-今天没有确认到窗口内足以改变知识树的模型机构公告或 AI Infra release；高价值证据集中在 8 月 11 日
-首次公开的五篇 Agent/Memory/Workflow 论文。它们不是五条孤立“新方法”，而是三条相互衔接的演进：
+本日报严格覆盖 `2026-08-12 09:00:00` 至 `2026-08-13 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 444 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 8 个候选：0 个 Deep Review、8 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
+
+本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`AGENT-WORKFLOW` 中由《Beyond Memory: A Transactional Continuity Kernel for Long-Lived AI Agents》暴露的状态/证据边界；`INFER-GPU-MEMORY` 中由《Who Should Own the Expert Cache? Kernel-Managed Tiering for Trillion-Parameter MoE Inference》暴露的状态/证据边界；`MULTIMODAL-EMBODIED-VLA` 中由《Foresight Without Seeing: Latent Futures for World Action Models》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
+
+Books 判断在 Source Review 完成后执行。只有能够定位到当前 owner 具体命题的 family 才写 `No Change — Existing Coverage`；其余高分候选因证据仍是受限实验、诊断或早期系统实例而保留 `Weekly Only — Context`，不以高分自动追加书稿。
+
+## 1. Coverage
+
+<!-- validator:report-metadata-v2 -->
+| Field | Value |
+| --- | --- |
+| Contract Version | V2.1 |
+| Score Schema | V2 |
+| Report Type | Daily |
+| Window Start | 2026-08-13 |
+| Window End | 2026-08-13 |
+| Registry Version | 2026-08-25 |
+| Coverage Mode | Full Replay |
+| Baseline Report | — |
+| Changed Source IDs | — |
+| Previous Denominator ID | — |
+| Denominator ID | daily-2026-08-13-0900-v2.1-replay-01 |
+| Denominator Frozen At | 2026-08-25T23:59:00+08:00 |
+| Completion Status | Complete |
+| Coverage Gate | Closed |
+| Evidence Gate | Passed |
+| Books Gate | Passed |
+
+### Source Coverage Receipt
+
+<!-- validator:source-coverage-v2 -->
+| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
+| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
+| SRC-ARXIV | 2026-08-12T09:00:00+08:00 | 2026-08-13T09:00:00+08:00 | 2026-08-25T23:19:00+08:00 | https://export.arxiv.org/api/query; V2.1 replay | checked | 444 | SF-2026-ARXIV-2608-11605<br>SF-2026-ARXIV-2608-11632<br>SF-2026-ARXIV-2608-11671<br>SF-2026-ARXIV-2608-11738<br>SF-2026-ARXIV-2608-11775<br>SF-2026-ARXIV-2608-11888<br>SF-2026-ARXIV-2608-12103<br>SF-2026-ARXIV-2608-12629 | page count=7 snapshot files; final_cursor=end; daily-window total=444; deduplicated by arXiv ID; [archived manifest](../_sources/arxiv-v2.1-replay-20260801-24/README.md) | 2026-08-13T09:00:00+08:00 | coverage:SRC-ARXIV:20260813 | — |
+| SRC-GITHUB-COMMIT | 2026-08-12T09:00:00+08:00 | 2026-08-13T09:00:00+08:00 | 2026-08-26T03:45:00+08:00 | SF-2026-ARXIV-2608-11775: https://api.github.com/repos/kyrkewood/sleeping-agent/commits?until=2026-08-12T08:19:15Z&per_page=1; per-family event-time recovery | checked | 1 | SF-2026-ARXIV-2608-11775 | page=1; per_page=1; selected first result as latest commit at/before each exact `until`; older-history pages intentionally not traversed/not required; full SHA, commit timestamp and URL retained | 2026-08-13T09:00:00+08:00 | coverage:SRC-GITHUB-COMMIT:20260813 | — |
+
+<!-- coverage:SRC-ARXIV:20260813:start -->submittedDate query filtered to [2026-08-12T09:00:00+08:00, 2026-08-13T09:00:00+08:00); canonical snapshot-manifest sha256:4e6b4bd4e75a28b227c1ca674bae32e7fd08419d0da4c1702a091950d83b78d7 (rows sorted by basename as basename<TAB>sha256(file)<LF>); raw gzip snapshots, exact UTC queries and per-file hashes are archived at papers/2026/08/_sources/arxiv-v2.1-replay-20260801-24/README.md; 8 routed families.<!-- coverage:SRC-ARXIV:20260813:end -->
+<!-- coverage:SRC-GITHUB-COMMIT:20260813:start -->GitHub Commit API recovered and froze 1 repository commit(s): SF-2026-ARXIV-2608-11775: repository=kyrkewood/sleeping-agent; until=2026-08-12T08:19:15Z; sha=2a8e2c00f625b27e4de7d85e334a773a191d3df0; commit_timestamp=2026-05-11T12:53:07Z; commit_url=https://github.com/kyrkewood/sleeping-agent/commit/2a8e2c00f625b27e4de7d85e334a773a191d3df0; commit provenance supports artifact identity only, not the paper's mechanism claim.<!-- coverage:SRC-GITHUB-COMMIT:20260813:end -->
+
+### Coverage Limitations
+
+- arXiv 采用 first-public `published` timestamp；跨分类条目按 ID 去重，revision 不伪装为新 family。
+- `docs/RESEARCH_SOURCES.md` 的固定来源注册表于 2026-08-25 生效；依据 Effective Date，不把 19 个机构源和 Hugging Face 反推为此前窗口的 Required Daily，也不伪造历史 `no_hit`。
+- 本次用户授权的历史 replay 以可枚举 arXiv 主分母为确定性 Coverage；原始分页、UTC query、SHA-256 与 daily 09:00 分桶保存在月级 snapshot manifest。
+- Hugging Face Daily Papers 属于 non-deterministic discovery backstop；历史日期页恢复失败不改变 arXiv v1 的 owner，也不参与 Coverage Gate 算术。
+- vLLM、SGLang、Dynamo、KServe、Kubernetes、DeepSpeed 等工程源由完整 Sunday Weekly 负责，不强塞进 Daily。
+
+## 2. Candidate Ledger
 
-```text
-append-only instructions
-→ rationale-aware maintenance
-→ typed contract consolidation
+<!-- validator:candidate-ledger-v2.1 -->
+| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-11605 | arXiv:2608.11605v1 | paper-v1:2608.11605 | 2026-W33 | 2026-08-12 | SRC-ARXIV | 2 | 2 | 1 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-11605 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-11632 | arXiv:2608.11632v1 | paper-v1:2608.11632 | 2026-W33 | 2026-08-12 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-11632 | self | — | new_in_window | AGENT-WORKFLOW | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-11671 | arXiv:2608.11671v1 | paper-v1:2608.11671 | 2026-W33 | 2026-08-12 | SRC-ARXIV | 2 | 2 | 1 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-11671 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-11738 | arXiv:2608.11738v1 | paper-v1:2608.11738 | 2026-W33 | 2026-08-12 | SRC-ARXIV | 1 | 3 | 1 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-11738 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-11775 | arXiv:2608.11775v1 | paper-v1:2608.11775 | 2026-W33 | 2026-08-12 | SRC-ARXIV<br>SRC-GITHUB-COMMIT | 2 | 2 | 1 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-11775 | self | — | new_in_window | AGENT-CONTEXT | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-11888 | arXiv:2608.11888v1 | paper-v1:2608.11888 | 2026-W33 | 2026-08-12 | SRC-ARXIV | 1 | 2 | 2 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-11888 | self | — | new_in_window | AGENT-PLATFORM | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-12103 | arXiv:2608.12103v1 | paper-v1:2608.12103 | 2026-W33 | 2026-08-12 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-12103 | self | — | new_in_window | INFER-GPU-MEMORY | Weekly Only — Context | — | no |
+| SF-2026-ARXIV-2608-12629 | arXiv:2608.12629v1 | paper-v1:2608.12629 | 2026-W33 | 2026-08-13 | SRC-ARXIV | 2 | 2 | 1 | 5 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2608-12629 | self | — | new_in_window | INFER-TENSORRT-LLM | Weekly Only — Context | — | no |
 
-semantic memory retrieval
-→ provenance-aware authorization / action gating
-→ dependency-guided state and execution repair
+## 3. Review Completion Receipt
 
-isolated search branches
-→ evidence-backed shared environment constraints
-→ stage-aware budget and uncertainty-guided exploration
-```
+<!-- validator:review-completion-v1 -->
+| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2608-11605 | RP-e83e208ef3e55652 | standard | arXiv:2608.11605v1 | SRC-ARXIV@arXiv:2608.11605v1 | https://arxiv.org/html/2608.11605v1#S3 (3 Method) | https://arxiv.org/html/2608.11605v1#S4 (4 Experiments) | https://arxiv.org/html/2608.11605v1#S5 (5 Limitations and Discussion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-11605 | complete |
+| SF-2026-ARXIV-2608-11632 | RP-05dd644bc5ab1177 | standard | arXiv:2608.11632v1 | SRC-ARXIV@arXiv:2608.11632v1 | https://arxiv.org/html/2608.11632v1#S2 (2 System Model and Contract) | https://arxiv.org/html/2608.11632v1#S5 (5 Evaluation) | https://arxiv.org/html/2608.11632v1#S7 (7 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-11632 | complete |
+| SF-2026-ARXIV-2608-11671 | RP-ab5e909867981c13 | standard | arXiv:2608.11671v1 | SRC-ARXIV@arXiv:2608.11671v1 | https://arxiv.org/html/2608.11671v1#S3 (3 Methodology) | https://arxiv.org/html/2608.11671v1#S4 (4 Experiments) | https://arxiv.org/html/2608.11671v1#S5 (5 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-11671 | complete |
+| SF-2026-ARXIV-2608-11738 | RP-334c059638f41e64 | standard | arXiv:2608.11738v1 | SRC-ARXIV@arXiv:2608.11738v1 | https://arxiv.org/html/2608.11738v1#S4 (IV Method) | https://arxiv.org/html/2608.11738v1#S5 (V Experiment) | https://arxiv.org/html/2608.11738v1#S6 (VI Limitations and Future Work) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-11738 | complete |
+| SF-2026-ARXIV-2608-11775 | RP-619c1a07ae029a4b | standard | arXiv:2608.11775v1 | SRC-ARXIV@arXiv:2608.11775v1; SRC-GITHUB-COMMIT@https://github.com/kyrkewood/sleeping-agent/commit/2a8e2c00f625b27e4de7d85e334a773a191d3df0 | https://arxiv.org/html/2608.11775v1#S4.SS1 (4.1 Design Principles) | https://arxiv.org/html/2608.11775v1#S5 (5 Experimental Setup) | https://arxiv.org/html/2608.11775v1#S7 (7 Discussion) | https://github.com/kyrkewood/sleeping-agent/commit/2a8e2c00f625b27e4de7d85e334a773a191d3df0 (latest commit before arXiv v1; 2026-05-11T12:53:07Z) | claim:SF-2026-ARXIV-2608-11775 | complete |
+| SF-2026-ARXIV-2608-11888 | RP-addad354548c511e | standard | arXiv:2608.11888v1 | SRC-ARXIV@arXiv:2608.11888v1 | https://arxiv.org/html/2608.11888v1#S3 (III Methodology) | https://arxiv.org/html/2608.11888v1#S6.SS2 (VI-B Evaluation Setup) | https://arxiv.org/html/2608.11888v1#S7 (VII Discussion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-11888 | complete |
+| SF-2026-ARXIV-2608-12103 | RP-d7d4cf3ff6313274 | standard | arXiv:2608.12103v1 | SRC-ARXIV@arXiv:2608.12103v1 | https://arxiv.org/html/2608.12103v1#S4 (4. The Capacity Response T(C)) | https://arxiv.org/html/2608.12103v1#S9 (9. Design Consequences, Validated in Engines) | https://arxiv.org/html/2608.12103v1#S10 (10. Threats to Validity, and a Methods Ledger) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-12103 | complete |
+| SF-2026-ARXIV-2608-12629 | RP-88fbf37a161f94dd | standard | arXiv:2608.12629v1 | SRC-ARXIV@arXiv:2608.12629v1 | https://arxiv.org/html/2608.12629v1#S4 (4 Agent workflow) | https://arxiv.org/html/2608.12629v1#S5 (5 Evaluation) | https://arxiv.org/html/2608.12629v1#S8 (8 Discussion and conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-12629 | complete |
 
-五篇均为 arXiv v1；作者实验支持对应 mechanism 在其受控条件下成立，不构成 production-ready 或
-跨 workload 的通用结论。本日因此 refine Ch70、Ch73、Ch77，保留旧方案成立条件，并明确新增的状态、
-授权、污染传播和恢复成本；没有新增 Part、章节或 Roadmap 节点。
+### Source Reviews
 
-## 1. 模型与研究机构
+<!-- review:SF-2026-ARXIV-2608-11605:start -->
+#### Foresight Without Seeing: Latent Futures for World Action Models
 
-### Source Coverage
+<!-- claim:SF-2026-ARXIV-2608-11605:start -->《Foresight Without Seeing: Latent Futures for World Action Models》把 `MULTIMODAL-EMBODIED-VLA` 的问题具体化为：控制既需要 dynamics 又不能承担 video denoising latency。其机制是Future-KV 对当前视觉 latent 加 stochastic future slots 做一次 Video-DiT prefill，并在 action denoising 复用逐层 KV；primary v1 的 evaluation 绑定为LIBERO 与 LIBERO-Plus；standard/accelerated ForeWAM；无 embodied pretraining，比较对象为explicit-future WAM 与 direct-policy WAM classes。<!-- claim:SF-2026-ARXIV-2608-11605:end -->
 
-按 Daily 固定顺序检查 OpenAI、Anthropic、Apple Machine Learning Research、Google DeepMind、Google
-Research、Meta AI / FAIR、Microsoft Research、NVIDIA Research、Amazon Science，以及其余核心机构的
-official Research / News / Publication surfaces。本次可访问索引中未确认到 first-public date 位于窗口内、
-且达到本项目长期门槛的机构候选。
+证据支持的范围是：所测模拟任务中无需解码未来视频即可给 Action DiT latent predictive context；不支持的外推是：真实开放世界未来正确、latent 因果可解释或跨机器人泛化。旧方案仍有成立条件：在线生成 future video 或纯 direct policy；前者显式、后者快速。新机制获得的收益与代价必须一起读取：部署省视频生成，换训练期 future observations/teacher 和 latent bottleneck。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：future 分叉、register collapse、contact/OOD dynamics 或 KV 过期。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-这是本次实际访问面的 `No Material Update`，不是对所有机构或所有页面的全局否定。旧 model release、
-被搜索重新索引的论文和没有公开 mechanism 的产品内容未被移入今天。
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 1 = **5/9**。
+- Score rationale：Design Delta：提供感知到动作的闭环状态的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`MULTIMODAL-EMBODIED-VLA`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-11605:end -->
 
-### Candidate Scoring
+<!-- review:SF-2026-ARXIV-2608-11632:start -->
+#### Beyond Memory: A Transactional Continuity Kernel for Long-Lived AI Agents
 
-本组没有新增评分候选。
+<!-- claim:SF-2026-ARXIV-2608-11632:start -->《Beyond Memory: A Transactional Continuity Kernel for Long-Lived AI Agents》把 `AGENT-WORKFLOW` 的问题具体化为：并发候选、stale overwrite、未审计 exposure 与自授权风险。其机制是off-commit candidate evaluation 加 exact predecessor proposal，在短 activation 中重验 authority/freshness/effect 并写 receipt；primary v1 的 evaluation 绑定为bounded executable model：2808230 states、5526474 state-changing transitions，比较对象为storage-retention-only / unmediated updates。<!-- claim:SF-2026-ARXIV-2608-11632:end -->
 
-## 2. 论文与学术来源
+证据支持的范围是：该有界模型和不变量内未发现 activation protocol violation；不支持的外推是：实现无 bug、业务语义正确、真实外部副作用可事务化或无界安全。旧方案仍有成立条件：只保存版本并允许直接写 authoritative state；简单但暴露窗口大。新机制获得的收益与代价必须一起读取：authoritative lineage 换串行化、defer/quarantine latency 与可用性。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：模型外状态、pre-commit 外部副作用、伪造 authority 或 unbounded concurrency。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-### Source Coverage
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 2 = **6/9**。
+- Score rationale：Design Delta：提供可恢复 workflow state的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：机制可复用，但证据仍依赖当前 workload。
+- Knowledge owner：`AGENT-WORKFLOW`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-11632:end -->
 
-按 arXiv `cs.AI → cs.CL → cs.LG → cs.DC` 检查 recent list，并以 cs.SE / cs.MA / cs.CR 等主题交叉
-发现 Coding Agent、Memory、Multi-Agent 和 Agent Security 候选；随后用 arXiv HTML 核验 v1 metadata、
-Introduction、Related Work、Method、Implementation、Evaluation、Ablation、Appendix 与 limitation。
-Hugging Face Daily Papers、Semantic Scholar、Google Scholar、OpenAlex 与 DBLP 只作为 discovery / metadata
-入口，技术结论均回到 arXiv 正文；本轮没有用索引摘要提升 Evidence Level。
+<!-- review:SF-2026-ARXIV-2608-11671:start -->
+#### StellaVLA: In-Context Structured Demonstration for Generalizable Vision-Language-Action Models
 
-五个 retained candidates 同为 `arXiv v1, 2026-08-11`。cs.AI recent 页面在 8 月 12 日展示它们，不改变
-first-public date。
+<!-- claim:SF-2026-ARXIV-2608-11671:start -->《StellaVLA: In-Context Structured Demonstration for Generalizable Vision-Language-Action Models》把 `MULTIMODAL-EMBODIED-VLA` 的问题具体化为：scene/view/object/embodiment OOD 且需高频实时控制。其机制是离线把 raw demo 结构化为 plan/subgoal/verbalized 3D motion，test-time 检索一个 demo 指导 action expert；primary v1 的 evaluation 绑定为VLA-Arena、LIBERO、LIBERO-Plus 与 real-robot OOD demos，比较对象为pi_0.5 与 LingBot-VLA。<!-- claim:SF-2026-ARXIV-2608-11671:end -->
 
-### Candidate Scoring
+证据支持的范围是：报告 snapshot 中结构化单 demo 提升任务分且 action-only inference 无 language latency；不支持的外推是：任意 OOD/embodiment、单 demo 充分或自动结构化无错。旧方案仍有成立条件：为新场景收集数据并 fine-tune，或直接模仿 raw trajectory。新机制获得的收益与代价必须一起读取：免在线 fine-tune 换离线标注、demo retrieval 和双目标训练。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：检错 demo、plan/3D verbalization 错、需多示例或动作语义不一致。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-| Candidate | Event Date | Technical Novelty | System Impact | Practical Value | Source Reliability | Project Relevance | Longevity | Total | Evidence Level |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Recovering Wasted Compute in Autoresearch Agents | 2026-08-11 | 5 | 5 | 5 | 4 | 5 | 5 | 29/30 | E2 — arXiv v1 全文、代码链接与 10-seed protocol；单一 backbone、无独立复现 |
-| Why Does CLAUDE.md Keep Growing? Catastrophic Remembering in Agentic Coding | 2026-08-11 | 5 | 4 | 5 | 4 | 5 | 5 | 28/30 | E2 — arXiv v1 全文、observational corpus + controlled worlds；单篇预印本 |
-| Dependency-Guided Rollback Repair for Memory-Augmented Agents | 2026-08-11 | 5 | 5 | 5 | 4 | 5 | 5 | 29/30 | E2 — arXiv v1 全文、controlled + adapted transfer；fault identifiers 已给定 |
-| MAP-Graph: Provenance-Aware Shared Memory for Multi-Agent Workflows | 2026-08-11 | 5 | 5 | 5 | 4 | 5 | 5 | 29/30 | E2 — arXiv v1 全文、ablation/backbone transfer；synthetic single-round benchmark |
-| SkillZip: Evaluation-Free Skill Compression for Self-Evolving Agents | 2026-08-11 | 5 | 4 | 5 | 4 | 5 | 5 | 28/30 | E2 — arXiv v1 全文、contract audit 与 held-out tasks；保证仅覆盖 extracted contract |
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 1 = **5/9**。
+- Score rationale：Design Delta：提供感知到动作的闭环状态的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`MULTIMODAL-EMBODIED-VLA`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-11671:end -->
 
-### Deep Analysis 1 — Prompt / Skill：从追加记忆到可逆维护
+<!-- review:SF-2026-ARXIV-2608-11738:start -->
+#### Advancing MLLM-based UAV Image Understanding and Reasoning: A Benchmark and a Training-Free Multi-Agent System
 
-#### Why
+<!-- claim:SF-2026-ARXIV-2608-11738:start -->《Advancing MLLM-based UAV Image Understanding and Reasoning: A Benchmark and a Training-Free Multi-Agent System》把 `PLATFORM-EVALUATION-SYSTEM` 的问题具体化为：极端尺度、任意航向和高密度对象需要域工具与自适应搜索。其机制是UAVQA-Bench 加 UAV-MAS：按 query 路由视觉工具、迭代校验推理并按难度调 search depth；primary v1 的 evaluation 绑定为1500 QA、13 UAV datasets、6 capabilities、16 tasks；open/closed MLLM 与 agents，比较对象为Gemini 3 Pro 与对应 32B/8B base model。<!-- claim:SF-2026-ARXIV-2608-11738:end -->
 
-Agent instruction files 和 self-evolving skills 通常在失败后追加规则。追加一条约束的局部成本很低，
-但 rationale 消失后，删除它必须重新判断与其他 rules 的干扰、触发条件和潜在 regression；于是“每次
-修复都合理”可以累积成整体不可维护。
+证据支持的范围是：该 benchmark 中暴露三类 failure，UAV-MAS 在所测配置提高 overall accuracy；不支持的外推是：真实飞行安全、benchmark 外能力或三个模块的独立因果贡献。旧方案仍有成立条件：碎片化窄任务与静态通用工具集；域简单时成本更低。新机制获得的收益与代价必须一起读取：accuracy 换工具调用、迭代校验/search latency 与更大 error surface。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：tool mismatch、validator 漏错、difficulty 估错、search runaway 或 contamination。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-#### Principle
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 1 / System Reach 3 / Durability 1 = **5/9**。
+- Score rationale：Design Delta：主要是版本或案例增量；System Reach：会跨模型、runtime 与平台边界传播；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`PLATFORM-EVALUATION-SYSTEM`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-11738:end -->
 
-可删除性来自 write-time rationale 与 falsification evidence，而不是来自 age、frequency 或文本相似度。
-压缩也不是删掉低频规则，而是在 hard coverage 下寻找最短的 faithful contract representation。
+<!-- review:SF-2026-ARXIV-2608-11775:start -->
+#### The Sleeping Agent: What Gist-Based Context Compression Loses and Why
 
-#### Mechanism
+<!-- claim:SF-2026-ARXIV-2608-11775:start -->《The Sleeping Agent: What Gist-Based Context Compression Loses and Why》把 `AGENT-CONTEXT` 的问题具体化为：长上下文需压缩，但 task 对关系/事件和精确日期依赖不同。其机制是按 salience 分层，只对中优先内容做 structured gist，并用 prompt 显式保留 temporal expressions；primary v1 的 evaluation 绑定为LoCoMo 10 conversations；1935 matched questions，主 aggregate 1501，temperature 0，比较对象为full context、truncation 与 original gist compression。<!-- claim:SF-2026-ARXIV-2608-11775:end -->
 
-Catastrophic Remembering 先在 1,867 个 GitHub repositories、247,694 个 instruction lifetimes 中测量
-instruction retention，再构造 184 个 inverse-IFEval worlds 比较 informative comments、noise comments 与
-control；comment schema 保存 failure、outcome、recurrence/falsification lineage 等删除证据。
+证据支持的范围是：该 matched set 中 gist 优于 truncation，但时间损伤可由保留指令恢复；不支持的外推是：所有长程 agent/memory 或真实 token-budget/latency 最优。旧方案仍有成立条件：直接 truncation 或不分类 gist；时间细节不重要时足够。新机制获得的收益与代价必须一起读取：更小 context 换细节丢失，保留时间表达又占压缩余量。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：salience 排错、隐式时间未识别、排除 adversarial 类别或 prompt/model 漂移。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-SkillZip 将 skill 抽成 interface、guards、workflow、tool requirements、constraints、outputs 和 exceptions，
-把 source residuals 保留为 coverage boundary，再以 minimum-description-length 风格选择共享规则、scope
-lifting、workflow reuse 与 guarded deltas。Zip-on-Write 把 patch 分成 absorb / refine / extend / refactor，
-并在局部更新之外保留 periodic global repack。
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 1 = **5/9**。
+- Score rationale：Design Delta：提供系统状态的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`AGENT-CONTEXT`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-11775:end -->
 
-#### Trade-offs and Evidence Boundary
+<!-- review:SF-2026-ARXIV-2608-11888:start -->
+#### Agent Skills Can Be Harmful: An Empirical Study of Skill-Induced Failures in LLM Agents
 
-- 真实 repository 结果是 observational，不能单独证明 rationale comment 导致增长；controlled worlds 才隔离机制。
-- Catastrophic Remembering 的 pooled ratchet 主要由 two-constraint slice 支撑；部分 maintainer / judge 对照
-  的区间不能排除零。
-- SkillZip 的 hard coverage 保护的是 parser 抽出的 normative units；自然语言抽取错误或行为差异仍需 task evaluation。
-- 更丰富的 rationale、sidecar contract、extractor version 和 repack policy 本身会增加 artifact、storage 与审计成本。
+<!-- claim:SF-2026-ARXIV-2608-11888:start -->《Agent Skills Can Be Harmful: An Empirical Study of Skill-Induced Failures in LLM Agents》把 `AGENT-PLATFORM` 的问题具体化为：复用 guidance 会把 checklist/recipe 变成强制流程并改变路径。其机制是把 skill-guided run 与 no-skill/semantic-matched run 配对做 differential attribution，并生成证据报告；primary v1 的 evaluation 绑定为SkillsBench 与 SWE-Skills-Bench；307 attributed failures，比较对象为no-skill 或 semantically matched reference run。<!-- claim:SF-2026-ARXIV-2608-11888:end -->
 
-#### Connection and Evolution
+证据支持的范围是：这些配对中相关 skill 可诱发功能失败/成本回归，过度验证是主要类别；不支持的外推是：skill 是唯一因果、所有相关 skill 有害或 taxonomy 覆盖生产。旧方案仍有成立条件：只看 aggregate success/token；规模小但便宜。新机制获得的收益与代价必须一起读取：可解释 attribution 换配对运行成本和 reference 选择假设。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：reference 不等价、stochasticity、多 skill interaction 或隐藏环境差异。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-主 owner 是 Ch70；Ch71 只接收 context-budget handoff，Ch80 继续拥有 Skill registry / rollout：
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 1 / System Reach 2 / Durability 2 = **5/9**。
+- Score rationale：Design Delta：主要是版本或案例增量；System Reach：影响集中在该 owner 或受限 workload；Durability：机制可复用，但证据仍依赖当前 workload。
+- Knowledge owner：`AGENT-PLATFORM`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-11888:end -->
 
-```text
-short manually reviewed prompt
-→ append-only failure rules
-→ rationale ledger enables evidence-based deletion
-→ typed local consolidation preserves rare guards
-→ periodic global repack + behavioral regression
-```
+<!-- review:SF-2026-ARXIV-2608-12103:start -->
+#### Who Should Own the Expert Cache? Kernel-Managed Tiering for Trillion-Parameter MoE Inference
 
-关系为 `Direct Evolution`。短 Prompt 与人工 review 没有失效；它们在规则少、owner 明确时成本更低。
+<!-- claim:SF-2026-ARXIV-2608-12103:start -->《Who Should Own the Expert Cache? Kernel-Managed Tiering for Trillion-Parameter MoE Inference》把 `INFER-GPU-MEMORY` 的问题具体化为：expert pool 超 DRAM 且 routing locality 随域变化。其机制是让 OS page cache 管 expert tier/eviction，以 router trace 做 full-pool replay，model knowledge 仅作 admission advice；primary v1 的 evaluation 绑定为GH200；3 个 MoE、128–896 experts/layer，含 1.45TB pool；三种 capacity enforcement，比较对象为same-domain oracle frequency table 与 untuned kernel LRU。<!-- claim:SF-2026-ARXIV-2608-12103:end -->
 
-#### Recommended Action
+证据支持的范围是：该 GH200/trace regime 中 kernel LRU 在等内存墙接近 oracle；不支持的外推是：所有 OS/硬件/workload、低 tail latency 或 page cache 总优。旧方案仍有成立条件：user-space expert-granular pinned tiers；可控但需额外 policy。新机制获得的收益与代价必须一起读取：少一套控制面换 OS policy/page granularity/回收可观测性。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：低 locality/off-domain thrash、reclaim 差异、layout 不匹配或竞争。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-`Refine — Existing Argument`：Ch70 新增 Prompt maintenance / deletion contract 与 typed consolidation；不把
-论文 compression rate 或 instruction-following headline写成通用收益。
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 2 = **6/9**。
+- Score rationale：Design Delta：提供多层内存状态的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：机制可复用，但证据仍依赖当前 workload。
+- Knowledge owner：`INFER-GPU-MEMORY`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-12103:end -->
 
-### Deep Analysis 2 — Memory：从相关性检索到授权、污染传播与选择性恢复
+<!-- review:SF-2026-ARXIV-2608-12629:start -->
+#### CAKE: Compiler-Agent Co-Design for Frontier Kernel Evolution
 
-#### Why
+<!-- claim:SF-2026-ARXIV-2608-12629:start -->《CAKE: Compiler-Agent Co-Design for Frontier Kernel Evolution》把 `INFER-TENSORRT-LLM` 的问题具体化为：前沿 schedule 复杂，粗 error/correctness/timing 反馈不足以迭代。其机制是agent 写 typed hardware-explicit CAKE IR，配 verifier、cost model 与局部诊断，失败反哺 IR/harness；primary v1 的 evaluation 绑定为B200 hidden Flash-KMeans、Kimi Delta Attention、KNN/KMeans 400+ shapes，比较对象为tuned FlashML、direct CUDA/PTX 与 official FlashKDA。<!-- claim:SF-2026-ARXIV-2608-12629:end -->
 
-一条 Memory 即使语义相关，也可能来自 private、revoked、poisoned 或 wrong-user ancestor；删除源记录又
-不会自动修复已派生的 summary、claim、plan、tool action 与 answer。Flat metadata 和“删除检索到的内容”
-都无法表达完整影响域。
+证据支持的范围是：所测 kernels/shapes 中 compiler-agent co-design 可生成达到已调 baseline 的实现；不支持的外推是：所有 kernel 可复现、跨 vendor 泛化、PR 已合入或 cost model 永远准确。旧方案仍有成立条件：直接写 CUDA/PTX 或黑盒 compiler；专家足够时直接但反馈粗。新机制获得的收益与代价必须一起读取：可控搜索/验证换自有 IR/compiler/harness 与 vendor-specific 维护。基于上述 mechanism、evaluation 与 comparator 的 Agent 推断，适用或失效边界包括：verifier blind spot、cost drift、shape overfit 或 dispatcher 泛化失败。这部分推断不是作者实验直接证明的 failure-rate 结论。因而该 family 保留为来源特定的标准证据实例，不因作者相对结果自动升级为默认架构或 Books 结论。
 
-#### Principle
+- Evidence Level：primary paper v1；Review Route：`standard`。
+- Score V2：Design Delta 2 / System Reach 2 / Durability 1 = **5/9**。
+- Score rationale：Design Delta：提供编译后的执行计划的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：高度依赖当前模型/版本。
+- Knowledge owner：`INFER-TENSORRT-LLM`；Disposition：`Weekly Only — Context`。
+<!-- review:SF-2026-ARXIV-2608-12629:end -->
 
-Memory control 要分离：hard authorization、graded path trust、action-risk evidence gate，以及 persistent
-memory disposition 与 execution-trace disposition。Graph reachability 标记“可能受影响”，独立支持才判断
-哪些节点仍可保留。
+## 5. Deep Analysis Selection
 
-#### Mechanism
+<!-- validator:deep-analysis-selection-v1 -->
+| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
+| --- | --- | --- | --- | --- | --- | --- |
 
-MAP-Graph 用 typed execution provenance graph 记录 owner、visibility、source/parent、trust 与 action，先做
-permission filter，再以 semantic score × path trust 排序，最后按 action risk 选择 Allow / Block / Reverify /
-Redact / AskUser。Revocation 会更新直接 affected records，并在后续 ancestry traversal 中传播。
+<!-- analysis-decision:NO-DEEP:start -->本窗口没有进入 Deep Analysis 的 family；所有标准候选仍完成 Source Review。<!-- analysis-decision:NO-DEEP:end -->
 
-Dependency-Guided Rollback 接受已诊断 faulty memories 与 failed trace，构造 memory-to-action dependency
-graph，追踪 descendants，用 independent evidence 保留仍成立的节点；deterministic planner 将 memory 的
-delete/quarantine/preserve 与 trace 的 invalidate/replay/preserve 分开，只重放 answer-relevant executable closure。
+## 6. Books Comparison
 
-#### Trade-offs and Evidence Boundary
+<!-- validator:books-comparison-v1 -->
+| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
-- MAP-Graph 的 2,700 tasks/method 是 synthetic、templated、四个 fixed-order roles 的单轮任务；不执行外部副作用。
-- 其 trust 常数和 risk thresholds 是显式 policy，不是从开放世界事实中学到的“真值”。
-- Rollback paper 的 controlled set 150 cases，transfer set 是 50 个经过 schema 筛选的 LongMemEval-V2 cases；
-  单次 temperature-zero run 不能估计 inference nondeterminism。
-- Repair 输入已包含 diagnosed fault identifiers，所以证据不覆盖在线 fault detection；replay 也不能撤销不可逆工具结果。
+## 7. Semantic Audit
 
-#### Connection and Evolution
+<!-- validator:semantic-audit-v1 -->
+| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| SA-20260813-COVERAGE | fresh-context:final-contract-review | coverage | coverage:SRC-ARXIV:20260813; coverage:SRC-GITHUB-COMMIT:20260813; semantic-review:SA-20260813-COVERAGE | none | Verified — archived arXiv daily hits, Effective Date applicability, denominator and receipt match | passed |
+| SA-20260813-EVIDENCE | fresh-context:contract-adversary | evidence | validator:review-completion-v1; review:SF-2026-ARXIV-2608-11605; review:SF-2026-ARXIV-2608-11632; review:SF-2026-ARXIV-2608-11671; review:SF-2026-ARXIV-2608-11738; review:SF-2026-ARXIV-2608-11775; review:SF-2026-ARXIV-2608-11888; review:SF-2026-ARXIV-2608-12103; review:SF-2026-ARXIV-2608-12629; semantic-review:SA-20260813-EVIDENCE | none | fresh-context reviewer 已核验版本身份、route-matched locator、claim boundary、benchmark contract 与 Evidence 状态 | passed |
+| SA-20260813-SELECTION | fresh-context:final-contract-review | deep_analysis_selection | analysis-decision:NO-DEEP; semantic-review:SA-20260813-SELECTION | none | Verified — evidence-stage potential delta, narrative selection and at-most-three selected units | passed |
+| SA-20260813-BOOKS | fresh-context:final-contract-review | books | validator:books-comparison-v1; review:SF-2026-ARXIV-2608-11605; review:SF-2026-ARXIV-2608-11632; review:SF-2026-ARXIV-2608-11671; review:SF-2026-ARXIV-2608-11738; review:SF-2026-ARXIV-2608-11775; review:SF-2026-ARXIV-2608-11888; review:SF-2026-ARXIV-2608-12103; review:SF-2026-ARXIV-2608-12629; semantic-review:SA-20260813-BOOKS | none | Verified — durable body anchors, semantic adjacency, evolution relation and every Weekly Only review ref | passed |
 
-主 owner 是 Ch73，Ch77 拥有 external compensation/reconciliation，Ch78 复用 shared-state authorization：
+<!-- semantic-review:SA-20260813-COVERAGE:start -->Fresh-context reviewer verified Effective Date applicability, archived arXiv daily hits and frozen denominator closure.<!-- semantic-review:SA-20260813-COVERAGE:end -->
+<!-- semantic-review:SA-20260813-EVIDENCE:start -->Fresh-context review passed the frozen Candidate and Review receipt set after locator, claim-boundary and benchmark-contract corrections.<!-- semantic-review:SA-20260813-EVIDENCE:end -->
+<!-- semantic-review:SA-20260813-SELECTION:start -->Fresh-context reviewer verified evidence-stage eligibility and every selected or not-selected narrative decision without Books feedback.<!-- semantic-review:SA-20260813-SELECTION:end -->
+<!-- semantic-review:SA-20260813-BOOKS:start -->Fresh-context reviewer verified all Integrate body anchors, semantic adjacent-owner boundaries, evolution relations and Weekly Only dispositions.<!-- semantic-review:SA-20260813-BOOKS:end -->
 
-```text
-semantic memory retrieval
-→ permission-scoped records
-→ ancestry-aware trust and revocation
-→ action-time evidence gate
-→ diagnosed fault + affected-subgraph tracing
-→ selective state repair and replay
-```
+## 8. Ignored Noise
 
-MAP-Graph 到 rollback repair 是 `Layering / Dependency`：前者降低错误读取与行动，后者处理错误已经传播后的恢复。
+444 条 arXiv v1 中有 436 条未进入候选分母。拒绝理由限定为：垂直应用不改变 AI-System contract；单数据集增量无机制差异；纯 quality headline 缺少状态/控制权变化；cross-listing 重复；或只有 LLM/Agent 关键词而没有系统贡献。它们完成 topic-level closure，不以大量低分行稀释候选账本。
 
-#### Recommended Action
+## 9. Recommended Action
 
-`Refine — Existing Argument`：Ch73 将已有 provenance / selective repair 原则推进到可执行 read-action-repair
-contract，并保留不可逆 side-effect 的 Workflow 边界。
+1. Sunday Weekly 按 Source Family 聚合本日报 Review Provenance；不得按后续发现日重复计分。
+2. 只有重要 revision、artifact 或反证改变 identity、Method 或 claim boundary 时才重开本日报 family。
+3. Books Decision：0 个 `Integrate`、0 个 `No Change — Existing Coverage`、8 个 `Weekly Only — Context`；每个 Integrate/No Change 均有 owner、相邻章节和 bounded Books Review receipt。
 
-### Deep Analysis 3 — Search Workflow：跨分支共享什么，预算在哪个阶段使用
+## 10. Repository Changes
 
-#### Why
+- 重建 `papers/2026/08/13/README.md` 的 Coverage applicability 与 Books receipts。
+- 本窗口没有新增达到长期知识门槛的机制，Books 正文无变化。
 
-Tree-search Agent 为保持探索而隔离 branches，但这会让 library/API/runtime constraints 在每个 branch 中
-重复发现；同时“找到第一个 valid solution”常导致预算提前停止，随机 sibling selection 又会把计算花在
-长期 dead ends。
+## 11. Open Questions
 
-#### Principle
+- 日期精度仅到天的官方页面能否补回原始 HTTP/发布系统 timestamp，以消除 09:00 边界不确定性？
+- Sunday Weekly 是否出现 artifact、independent reproduction 或反证，要求升级/降级 Evidence Level？
 
-只共享可观察、可复现、绑定 environment identity 的 global constraints；hypothesis 和未经验证的 workaround
-保持 branch-local。预算不是一个总数，而是随 search phase 在 exploration、validity 与 tuning 之间分配。
+## 12. Sources
 
-#### Mechanism
+- [Foresight Without Seeing: Latent Futures for World Action Models](https://arxiv.org/abs/2608.11605v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [Beyond Memory: A Transactional Continuity Kernel for Long-Lived AI Agents](https://arxiv.org/abs/2608.11632v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [StellaVLA: In-Context Structured Demonstration for Generalizable Vision-Language-Action Models](https://arxiv.org/abs/2608.11671v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [Advancing MLLM-based UAV Image Understanding and Reasoning: A Benchmark and a Training-Free Multi-Agent System](https://arxiv.org/abs/2608.11738v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [The Sleeping Agent: What Gist-Based Context Compression Loses and Why](https://arxiv.org/abs/2608.11775v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [Agent Skills Can Be Harmful: An Empirical Study of Skill-Induced Failures in LLM Agents](https://arxiv.org/abs/2608.11888v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [Who Should Own the Expert Cache? Kernel-Managed Tiering for Trillion-Parameter MoE Inference](https://arxiv.org/abs/2608.12103v1) — published/event date: 2026-08-12; accessed: 2026-08-25
+- [CAKE: Compiler-Agent Co-Design for Frontier Kernel Evolution](https://arxiv.org/abs/2608.12629v1) — published/event date: 2026-08-13; accessed: 2026-08-25
+- [arXiv API](https://export.arxiv.org/api/help/) — exact submittedDate snapshots; accessed: 2026-08-25
+- [Research Sources Registry](../../../../docs/RESEARCH_SOURCES.md) — registry version 2026-08-25
 
-作者为 AIDE / ML-Master 增加 global debug consultant：从 error logs 抽取 banned patterns 与 verified fixes，
-在 generation/debug 前注入相关 constraints，并把 timeout / empty log 视为 deterministic terminal dead end。
-另以 prompt directive 或 control-loop reward 让 early stage 建 baseline、late stage 强化 tuning，并用 sibling-level
-Beta posterior / Thompson Sampling 在 uncertainty 与 observed reward 之间选择下一节点。
+## 13. Final Status
 
-#### Trade-offs and Evidence Boundary
-
-- 实验覆盖九个 tabular competitions、GPT-5-mini、两种主要 Agent frameworks、每条件十个 seeds，固定
-  `2 hours / 22 CPU cores`；不能外推到 scientific labs、software engineering 或长时外部工具任务。
-- HPO quality 由 LLM rubric 评分，可能改变 selection objective；shared consultant 若错误会形成全树 poisoning。
-- 论文只保持 model fixed，不意味着总系统成本或所有 runtime 条件相同；新的 registry、judge 与 control rule
-  也消耗 token、CPU 和维护成本。
-
-#### Connection and Evolution
-
-主 owner 是 Ch77；Ch73 只拥有 constraint record 的 persistence，Ch78 只接收 shared-state handoff：
-
-```text
-independent tree branches
-→ repeated environment discovery
-→ provenance-bound shared constraint registry
-→ stage-aware exploration / tuning budget
-→ uncertainty-guided branch selection
-```
-
-这是 `Refine — Existing Argument`，不是“共享所有 Memory”或“Thompson Sampling 替代所有 search policy”。
-
-## Full Source Review Addendum — Five `20+` Candidates
-
-### Catastrophic Remembering — 28/30
-
-- **Problem / Previous Design / Changed Constraint:** append-after-failure 简单、可局部验证；长期维护后，失去
-  rationale 的删除需要重建被隐藏的 counterfactual constraints，规则 retention 出现 ratchet。
-- **State / Flow / Implementation:** repository instruction lifetimes 用 line classification 与 deletion hazard 描述；
-  controlled world 的 maintainer 在 observed failure 后维护 prompt，comment channel 保存 latent reasoning，executor
-  独立测试 constraint satisfaction。正文和 Appendix 披露 judge checks、world draws 与 compute/artifact 边界。
-- **Evidence / Not Proved:** corpus 支持“增长与 age-dependent retention”的关联，inverse-IFEval / WildIFEval 支持
-  comment mechanism 在特定 worlds / models 中的因果效果；不证明所有仓库或 Prompt 都会无界增长，也不证明
-  任意 comment schema 都有效。`Integrate — New Mechanism (Ch70)`。
-
-### SkillZip — 28/30
-
-- **Problem / Mechanism:** self-evolving skill 的冗余常是 scope overlap、复制 workflow 和 exception duplication；
-  one structured extraction + deterministic min-cost cover 生成普通 SKILL.md，sidecar 保存 contract/provenance，
-  structural audit 在缺项时恢复 source spans。continual mode 局部更新并在阈值触发 repack。
-- **Evaluation Contract:** BFCL-V4、LiveMath、Spreadsheet，Qwen-3.7-Max / Qwen-3.6-Plus / Kimi-K2.6；与
-  evolved skill、human skill、SkillReducer 比较，另测 held-out behavior、cross-model transfer、online rounds 与成本。
-- **Evidence / Not Proved:** reported 31.2% average compression 与 fidelity 只绑定这些 generated/evolved skills、
-  tokenizer、models 和 benchmarks；contract preservation 不等于 behavioral equivalence。`Refine — Existing
-  Argument (Ch70; Ch80 handoff)`。
-
-### MAP-Graph — 29/30
-
-- **Problem / Mechanism:** relevant memory 可能不 admissible。typed graph 记录 User/Agent/Tool/Resource/Message/
-  Memory/Claim/Action 及 derivation/access edges；permission 是 hard gate，path trust 是 graded factor，action risk
-  再决定是否执行、重验证或脱敏。
-- **Evaluation Contract:** 2,700 synthetic tasks/method，corporate/software/research 三领域、六实验组、四 roles；
-  Qwen2.5-7B-Instruct 主实验及 GLM/Llama 20% subset transfer，temperature 0 single runs 与 cluster bootstrap。
-- **Evidence / Not Proved:** ablation 支持 permission、trust propagation 与 action gate 分工；不证明 open-domain truth、
-  多轮并发或真实 action safety。`Integrate — New Mechanism (Ch73; Ch78 handoff)`。
-
-### Dependency-Guided Rollback Repair — 29/30
-
-- **Problem / Mechanism:** delete-only 留下 downstream contamination，full reset/replay 破坏 benign state。typed graph
-  将 user input、execution steps 和 memory records 相连；support check、deterministic plan 与 selective replay 分离
-  state repair 和 computation repair。
-- **Evaluation Contract:** 150 controlled cases、三 tool domains、四 fault types；50-case adapted LongMemEval-V2
-  stress set；GPT-4o 主实验、Gemini/Qwen sensitivity，single temperature-zero run；报告 recovery、recurrence、
-  faulty removal、benign preservation、invalidation F1、replay ratio 与 LLM calls。
-- **Evidence / Not Proved:** 结果支持给定 fault IDs 后的 selective repair；不覆盖 fault detector、真实 side-effect
-  undo、完整 LongMemEval-V2 分布或 production concurrency。`Integrate — New Mechanism (Ch73; Ch77 handoff)`。
-
-### Recovering Wasted Compute in Autoresearch Agents — 29/30
-
-- **Problem / Mechanism:** branch isolation 重复调试，premature stopping 留下预算，random search 困在低价值节点。
-  consultant registry 共享可验证 runtime constraints，deterministic rules cut dead ends，stage-aware HPO reward 和
-  Thompson Sampling 改变预算与 branch selection。
-- **Evaluation Contract:** AIDE、ML-Master（及论文总研究中的第三 Agent 条件）、GPT-5-mini；九个 tabular tasks、
-  每项十 seeds、2 小时和 22 CPU cores；official grading scripts，另含 adversarial EDA 与完整 code cases。
-- **Evidence / Not Proved:** 支持该 contract 下 workflow design 改善 valid runs / task scores；不证明跨 domain、跨
-  backbone、production SLO 或共享 registry 永远安全。`Integrate — New Mechanism (Ch77)`。
-
-## 3. AI Infra 与工程项目
-
-### Source Coverage
-
-按 PyTorch → JAX → CUDA → Triton → vLLM → SGLang → NVIDIA Dynamo → TensorRT-LLM → Ray →
-KServe → Kubeflow → Kubernetes → Transformers → Accelerate → DeepSpeed → Megatron-LM → Unsloth →
-MLX → llama.cpp → ONNX Runtime → OpenXLA 检查 official release index / release notes 的窗口日期。
-
-没有确认到 released-at 位于 2026-08-11～13、且改变本书稳定 runtime contract 的 Release、RFC 或重要 PR。
-索引中较旧或无法对齐 tag date 的内容不回填今天。Evidence Level 为 `No Newly Verified Candidate`。
-
-## Evidence Level and Fact Boundary
-
-- **Official / metadata fact:** arXiv v1 日期、官方 research/release index 的可见日期与链接。
-- **Primary paper evidence:** 五篇 `20+` candidates 已覆盖 metadata、background、method、state/control/data flow、
-  implementation、evaluation、baselines/ablations、sensitivity/overhead、limitations 与关键 appendix。
-- **Author experiment:** 所有性能和正确率只属于各自 model、task、seed、hardware/CPU budget、prompt/runtime 与
-  evaluation contract；没有写成通用 production SLO。
-- **Inference:** 三条演进路线是本项目基于多篇 primary evidence 与既有章节做的工程归纳，不是论文作者共同声明。
-- **Community / discovery:** HF、Scholar、Semantic Scholar、OpenAlex、DBLP 的热度、摘要与 metadata 不承担技术结论。
-
-## Knowledge Tree Position
-
-| Source Family | Primary owner | Adjacent chapters read | Books decision |
-| --- | --- | --- | --- |
-| Catastrophic Remembering + SkillZip | Ch70 Prompt | Ch71、Ch73、Ch80 | Integrate / Refine：rationale-aware deletion + typed consolidation |
-| MAP-Graph + Rollback Repair | Ch73 Memory | Ch71、Ch76～78、Ch80 | Integrate：authorization/trust/action gate + selective repair |
-| Recovering Wasted Compute | Ch77 Workflow | Ch73、Ch76、Ch78、Ch80 | Integrate：shared constraint registry + stage-aware budget |
-
-## Recommended Action
-
-- 已完成 `Refine — Existing Argument / Integrate — New Mechanism`：Ch70、Ch73、Ch77。
-- 五篇论文均保持 `Status: Experimental`；不把作者 headline、单 benchmark 排名或特定 taxonomy 写成通用事实。
-- Sunday W33 汇总时与 8 月 10～12 日 Daily 跨日去重，并判断上述三条路线是否需要形成更宽的 Source Family；
-  Live Daily 不因 Weekly 生成而删除。
-- 今日没有模型机构或 Infra 候选达到 Books 门槛。
-
-## Ignored Noise
-
-- arXiv recent 页面的 8 月 12 日分组时间没有被误写成论文 first-public date；五篇均按正文 metadata 记为 8 月 11 日。
-- 搜索摘要、HF/Scholar 热度与旧机构文章只用于 discovery；没有因重新索引写入今天。
-- Release 页面中缺少准确 tag date 或只有 feature list 的条目没有被当作窗口内正式进展。
-
-## Repository Changes
-
-- `papers/2026/08/13/README.md`
-  - 新建当日 Daily，记录五个 Full Source Reviews、三条演进链及证据边界。
-- `books/part-06-agent/70-prompt.md`
-  - 增加 instruction rationale、删除 contract 与 typed skill consolidation；不改变 Prompt 仍是软接口的原结论。
-- `books/part-06-agent/73-memory.md`
-  - 将 provenance 从事后 metadata 推进到 authorization/trust/action gate，并补全 state/trace selective repair；
-    增强已有 selective repair，不声称可撤销外部副作用。
-- `books/part-06-agent/77-workflow.md`
-  - 增加 search branches 的 shared constraint ownership、阶段预算与污染边界；不否定 branch isolation。
-- `docs/LEARNING_STATE.md`
-  - 同步本日稳定认知和未外推范围。
-
-## Open Questions
-
-1. Instruction rationale schema 在真实多人协作仓库中，能否降低长期维护成本而不显著增加 write friction？
-2. Skill contract extractor 的 false omission 如何用独立 parser、behavioral tests 与 human review 联合估计？
-3. Provenance graph 在 multi-tenant、多轮并发和大量 descendants 下，revocation latency 与 storage cost 如何控制？
-4. 在线 fault detector 与 selective rollback 如何连接，且不把 detection false positive 扩大为大规模 replay？
-5. Shared debug registry 如何定义 environment-equivalence key，并在 library/runtime 升级时撤销陈旧 constraints？
-6. Search-phase budget policy 能否在 software engineering、scientific experiment 等非 tabular workload 跨模型复现？
-
-## Sources
-
-### 模型与研究机构（accessed 2026-08-13）
-
-- OpenAI Research: https://openai.com/research/index/
-- Anthropic News: https://www.anthropic.com/news
-- Apple Machine Learning Research: https://machinelearning.apple.com/
-- Google DeepMind: https://deepmind.google/discover/blog/
-- Google Research: https://research.google/blog/
-- Meta AI: https://ai.meta.com/blog/
-- Microsoft Research AI: https://www.microsoft.com/en-us/research/research-area/artificial-intelligence/
-- NVIDIA Research: https://research.nvidia.com/
-- Amazon Science Publications: https://www.amazon.science/publications/
-
-### 论文 Primary Sources（published 2026-08-11；accessed 2026-08-13）
-
-- Catastrophic Remembering: https://arxiv.org/abs/2608.11095
-- Catastrophic Remembering HTML: https://arxiv.org/html/2608.11095
-- SkillZip: https://arxiv.org/abs/2608.11079
-- SkillZip HTML: https://arxiv.org/html/2608.11079
-- MAP-Graph: https://arxiv.org/abs/2608.10509
-- MAP-Graph HTML: https://arxiv.org/html/2608.10509
-- Dependency-Guided Rollback Repair: https://arxiv.org/abs/2608.10502
-- Dependency-Guided Rollback Repair HTML: https://arxiv.org/html/2608.10502
-- Recovering Wasted Compute in Autoresearch Agents: https://arxiv.org/abs/2608.10424
-- Recovering Wasted Compute HTML: https://arxiv.org/html/2608.10424
-- arXiv cs.AI recent: https://arxiv.org/list/cs.AI/recent
-- arXiv cs.CL recent: https://arxiv.org/list/cs.CL/recent
-- arXiv cs.LG recent: https://arxiv.org/list/cs.LG/recent
-- arXiv cs.DC recent: https://arxiv.org/list/cs.DC/recent
-
-### AI Infra 官方入口（accessed 2026-08-13）
-
-- PyTorch Releases: https://github.com/pytorch/pytorch/releases
-- vLLM Releases: https://github.com/vllm-project/vllm/releases
-- SGLang Releases: https://github.com/sgl-project/sglang/releases
-- KServe Releases: https://github.com/kserve/kserve/releases
+Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。

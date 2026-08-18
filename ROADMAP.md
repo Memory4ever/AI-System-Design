@@ -1,6 +1,6 @@
 <!--
-This file is the Single Source of Truth for the AI System knowledge tree.
-Stable Knowledge Node ID is the durable identity. Chapter number is reading order.
+本文件是 AI System 知识树的唯一事实来源。
+稳定知识节点 ID 是长期身份，章节号表示阅读顺序。
 -->
 
 # AI System：从第一性原理到 AI 基建
@@ -35,21 +35,21 @@ Stable Knowledge Node ID is the durable identity. Chapter number is reading orde
 | Part VI AI Infrastructure | Ch57～73 | 多团队如何复用、评估和治理 AI 能力？ |
 | Part VII Agent | Ch74～84 | 模型如何在状态、权限与环境反馈中完成任务？ |
 
-## Stable Knowledge Node ID
+## 稳定知识节点 ID（Stable Knowledge Node ID）
 
-章节号表达当前阅读顺序；Stable Knowledge Node ID 表达长期知识所有权。章节插入、移动或重编号时，Node ID 不变。历史 Weekly 中的旧章节号仍按当时语义解释，不进行机械重写。
+章节号表达当前阅读顺序；稳定知识节点 ID 表达长期知识所有权。章节插入、移动或重编号时，Node ID 不变。历史 Weekly 中的旧章节号仍按当时语义解释，不进行机械重写。
 
 新研究记录统一写：
 
 ```text
-Owner: INFER-SPECULATIVE-DECODING
-Current chapter: Ch48
-Legacy chapter: Ch44
+归属（Owner）：INFER-SPECULATIVE-DECODING
+当前章节（Current chapter）：Ch48
+旧章节（Legacy chapter）：Ch44
 ```
 
 ### 节点映射表
 
-| Stable Node ID | Current | Current path | Legacy |
+| 稳定节点 ID | 当前章节 | 当前路径 | 旧章节 |
 | --- | ---: | --- | ---: |
 | `WORLDVIEW-WHY-AI-SYSTEM` | Ch1 | `books/part-01-worldview/01-why-learn-ai-system.md` | Ch1 |
 | `WORLDVIEW-AI-HISTORY` | Ch2 | `books/part-01-worldview/02-ai-history.md` | Ch2 |
@@ -153,15 +153,15 @@ Legacy chapter: Ch44
 - **Ch25 World Models**：从 observation generation 演进到 action-conditioned transition、latent dynamics、imagined rollout 与 persistent world state。
 - **Ch26 Embodied AI 与 VLA**：感知、语言条件动作、trajectory/action chunk、low-level controller、真实环境反馈和 safety envelope 如何闭环。
 
-### Part IV Training System（Ch27～41）
+### Part IV 训练系统（Training System，Ch27～41）
 
 Ch27～34 拥有数据、pretraining、SFT/LoRA 与 preference optimization；Ch35～41 拥有 checkpoint、collective、TP、PP、ZeRO 与训练 runtime。多模态数据配比和训练 objective 在这里实现，但表示/生成/world/action 语义仍由 Part III 定义。
 
-### Part V Inference System（Ch42～56）
+### Part V 推理系统（Inference System，Ch42～56）
 
 Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、speculation 建立单 engine 机制；Ch49～53 映射 execution plan、serving engine、structured runtime、distributed state 与 topology；Ch54～56收束 HBM、PD 和 SLO scheduling。
 
-### Part VI AI Infrastructure（Ch57～73）
+### Part VI AI 基础设施（AI Infrastructure，Ch57～73）
 
 平台以 control/data/evidence planes 统一 asset、workload、serving、gateway、typed resources、evaluation、observability、cost、tenancy、security 与 production readiness。AI for Science 是跨 Data → Evaluation → Workflow → Security 的领域路线，不建立独立 Part。
 
@@ -175,17 +175,17 @@ Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、spec
 
 | 横轴 | 主要路径 |
 | --- | --- |
-| Compute | Ch6 → Ch14/17 → Ch24 → Ch28/37 → Ch49 → Ch54/63 |
-| Memory | Ch19/22 → Ch23/25 → Ch35/39 → Ch45/47/52/54/55 → Ch75/77 |
-| Communication | Ch9/21/22 → Ch23/26 → Ch36～40 → Ch52/55 → Ch63 → Ch82/83 |
-| Scheduling | Ch24/26 → Ch38 → Ch46/52/53/56 → Ch63～65 → Ch81/84 |
-| State | Ch19 → Ch23/25/26 → Ch35 → Ch42/45/52/55 → Ch59 → Ch75/77/81/84 |
+| 计算（Compute） | Ch6 → Ch14/17 → Ch24 → Ch28/37 → Ch49 → Ch54/63 |
+| 内存（Memory） | Ch19/22 → Ch23/25 → Ch35/39 → Ch45/47/52/54/55 → Ch75/77 |
+| 通信（Communication） | Ch9/21/22 → Ch23/26 → Ch36～40 → Ch52/55 → Ch63 → Ch82/83 |
+| 调度（Scheduling） | Ch24/26 → Ch38 → Ch46/52/53/56 → Ch63～65 → Ch81/84 |
+| 状态（State） | Ch19 → Ch23/25/26 → Ch35 → Ch42/45/52/55 → Ch59 → Ch75/77/81/84 |
 
 历史关系必须标记为 `Direct Evolution`、`Layering / Dependency`、`Principle Reuse` 或 `Explanatory Analogy`。后发技术不得静默覆盖旧方案。
 
 ## 跨领域阅读路线
 
-### Compiler / Kernel / Hardware Co-design
+### 编译器 / Kernel / 硬件协同设计
 
 ```text
 MODEL-FFN / MODEL-MOE
@@ -204,7 +204,7 @@ TRAIN-DATA
 → PLATFORM-SECURITY
 ```
 
-### Edge / On-device AI
+### 边缘 / 端侧 AI（Edge / On-device AI）
 
 ```text
 WORLDVIEW-FUTURE
@@ -215,4 +215,4 @@ WORLDVIEW-FUTURE
 
 ## 建议学习顺序
 
-先顺读七个 Part 建立主干，再沿五条横轴回读。框架章节不是产品手册：先读相邻机制章，再把框架放回 owner 边界。遇到新论文，先定位 Stable Node ID；若现有节点无法承载，再提出 Structural Candidate，而不是把 Ch10、Ch49、Ch66 或 Ch84 当作杂物篮子。
+先顺读七个 Part 建立主干，再沿五条横轴回读。框架章节不是产品手册：先读相邻机制章，再把框架放回 owner 边界。遇到新论文，先定位稳定节点 ID；若现有节点无法承载，再提出结构候选（Structural Candidate），而不是把 Ch10、Ch49、Ch66 或 Ch84 当作杂物篮子。

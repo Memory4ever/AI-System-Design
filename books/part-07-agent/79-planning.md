@@ -98,6 +98,17 @@ Search More, Think Less 与 LongVideo-R1 分别在网页 evidence 与长视频 a
 支持“并行 acquisition + hierarchical checkpoint”，不证明宽度越大越好。单链搜索在依赖强、预算小或 verifier
 弱时仍更稳。
 
+### Subtask Parallelism 与 Trial Parallelism 解决的不是同一个等待
+
+并行 planning 至少有两条不同的轴。Subtask parallelism 把可独立依赖节点同时展开，收益来自缩短 critical path；trial parallelism 对同一个困难节点运行多个竞争路径，收益来自增加找到可验证解的机会。二者的 state 与 commit 语义不同：
+
+```text
+subtask branches: distinct outputs → dependency-aware merge
+trial branches: competing outputs → verifier selects or rejects
+```
+
+如果只用一种“parallel reasoning”格式，runtime 很难定义谁拥有 budget、哪个 branch 可以取消、何时回收 KV/工具配额、如何把 winner 写回主轨迹。显式 branch type 与 grammar 可以让训练和 serving 识别这两个边界，但会增加 annotation、parser、scheduler 和 reinforcement signal；同源 trial 还会共享盲点。任务不可分、verifier 弱或 action 有副作用时，单路径仍更可靠。
+
 ## Replanning 的触发条件
 
 执行 observation 可能显示：

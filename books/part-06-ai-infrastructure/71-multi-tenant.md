@@ -79,6 +79,14 @@ fair share allocation when demand competes
 
 共享能提高效率，也带来 timing side channels、prefix collision、adapter mix-up 和资源干扰。Cache key 至少应包含 tenant policy domain、model/tokenizer/adapter identity；敏感租户可禁用跨租户 prefix reuse 或使用独立 pool。
 
+### 共享 Backbone、私有状态：多租户 VLA 后训练的隔离与复用边界
+
+每个租户独占完整 model、rollout workers 和 optimizer state，隔离最清楚，也便于单租户恢复；当 backbone 相同而 action head、optimizer 和 environment 不同时，这种复制会浪费 resident weights 与 shared forward。可以把 immutable base revision 作为共享 owner，把 tenant-private action module、optimizer、policy version、rollout buffer 与 environment state 保持隔离，并只对 schema/shape 兼容的请求做 group batching。
+
+共享的是可验证的 forward artifact，不是 mutable tenant state。batch key 至少绑定 base revision、processor/action schema、precision 和 compatible prefix；gradient、optimizer step、reward、checkpoint 与 rollout lineage 仍按 tenant 分账。任一租户失败或更新不能推进其他租户的 policy version，也不能让 private observation 进入共享 cache。
+
+这条路线以更高调度与隔离复杂度换 aggregate utilization，并不保证每个租户 wall time、tail SLO 或公平性改善。租户模型差异大、隐私要求高、batch compatibility 低或故障域不能共享时，独占 worker 仍更合适。当前证据主要来自模拟和受控多租户 VLA pipeline，不是生产级 fault-isolation 证明。
+
 ## Identity Propagation
 
 外部用户经过 Gateway 后，应转为不可伪造的 workload principal：
@@ -135,3 +143,5 @@ Multi-tenancy 要让同一个 tenant identity 穿过 API、workload、data、GPU
 - Kubernetes multi-tenancy: https://kubernetes.io/docs/concepts/security/multi-tenancy/
 - Kubernetes RBAC: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
 - Kubernetes NetworkPolicy: https://kubernetes.io/docs/concepts/services-networking/network-policies/
+- JoyNexus（shared backbone / tenant-private post-training state；Status: Experimental）:
+  https://arxiv.org/abs/2607.16074v1

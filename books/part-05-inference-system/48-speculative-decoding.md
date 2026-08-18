@@ -212,6 +212,29 @@ confidence calibration、traffic mix 或 scheduler 行为变化，旧 profile �
 实验，缺少完整 workload contract，故本章只吸收长期原则：**speculation policy 必须看到
 全局 target capacity，而不能只最大化单请求 draft length。**
 
+### 从全局 Verify Length 到输入自适应 Block Policy
+
+全局动态 depth 让 runtime 根据 acceptance profile 和 batch capacity 调整本轮预算，但同一 workload 内的输入
+也可能拥有不同可预测性。固定长度在分布稳定、controller 不可校准或 batch 形态简单时仍最容易复算；当最优
+长度集中在训练 block 附近的小范围内，可以把选择改写成受约束分类，而不是无界搜索：
+
+```text
+current hidden-state snapshot
+→ predict one block size from a bounded local set
+→ draft that many provisional tokens
+→ target exact verification
+→ commit accepted prefix / rollback suffix
+```
+
+这里 predictor 只拥有 proposal budget，不拥有 correctness。Target 的 verification、sampling policy 和 rollback
+语义保持不变；因此 controller 预测错时应退化为额外 draft/verify work，而不能静默改变输出分布。相应 identity
+至少绑定 target/drafter revision、hidden-state interface、candidate set、sampling contract 与 runtime profile。
+
+输入自适应获得更细的 acceptance/cost 匹配，却新增离线 label search、controller training、distribution drift 和
+batch fragmentation。BlockPilot v1 的受限实验还显示 label construction 会随模型和候选数增长；它没有证明
+controller 可跨硬件、并发或 SLO 直接迁移。若 acceptance 差异小、label 成本高或 scheduler 已能用更便宜的
+online statistic 调整 depth，全局固定或 runtime-level policy 仍更合理。
+
 两级 draft/full verification 也不是唯一 ownership 结构。当中等置信候选很多时，把所有 rejection
 直接升级到完整 target 会浪费算力；可以在两者之间插入共享 embedding/output head 的 routed slim
 verifier：drafter 提案后，中间层分别选择接受、局部重写或升级到 full verifier，最早重写位置拥有
@@ -247,6 +270,22 @@ target feature snapshot
 的前提下修正后续候选。第二是 **training distribution**：若 drafter 只在 target/SFT prefixes 上学习，部署时却连续
 消费自己的错误 proposal，就会遇到 exposure mismatch；target-assisted rollout 与 verification-error replay 可以
 把被拒状态重新纳入训练。
+
+### Attention 转换必须保持 Draft Function，而不只是压缩 KV
+
+把已有 MHA/GQA checkpoint 转换成 MLA，可以缩小 draft model 的 cache；若只优化 weight reconstruction、低秩误差或 standalone perplexity，转换后的模型仍可能作为普通生成器工作，却因 proposal ranking 与 target 偏离而显著降低 speculative acceptance。这里约束已经改变：draft 的成功标准不是独立生成质量，而是单位 draft/verify 成本下的 target agreement。
+
+因此转换可以增加一个 training-time-only 的 functional reconstruction 阶段：冻结原 attention block，以真实 calibration hidden states 为输入，优化转换后模块的 query/KV projections，使其在 output projection 之后逼近原模块响应；随后再用 target acceptance 和端到端 output-token throughput 验证，而不是只看重建误差。
+
+```text
+MHA/GQA checkpoint
+→ MLA structural conversion
+→ reconstruct post-projection attention function
+→ measure draft-target acceptance under exact verifier
+→ deploy unchanged MLA cache and inference graph
+```
+
+这个机制保持 target 为唯一 correctness owner，也不需要读取 verifier logits 作为训练监督；代价是额外 calibration data、转换训练、artifact lineage 和 backend-specific 验证。功能逼近并不保证所有任务都改善，draft size、converter、backend 与模型 family 仍会交互。若 drafter 不需要架构转换、转换后的 acceptance 已足够，或维护额外训练 artifact 的成本高于 cache 收益，原始 draft model 继续成立。
 
 ```text
 parallel proposal backbone
@@ -385,6 +424,11 @@ attention；最终仍由 target exact verification 和 KV commit boundary 决定
 fragmentation 和 cache rollback 都是新增成本。流量同质、显存紧或 SLO 稳定性优先时，generic/mixed drafter
 仍更合理；未经 matched cost 的 acceptance length 不能当作端到端加速。
 
+多 proposal artifact 还会把 verify depth 从单请求超参数变成 batch-level shared budget。Scheduler 需要结合
+request confidence、expected accepted work、在线负载与硬件 cost profile，在一批请求之间分配验证深度；
+target model 仍执行 exact acceptance。这个分支用更高潜在吞吐换来 artifact multiplication、routing drift、
+难请求饥饿与 fairness 风险。Homogeneous workload 或强公平 SLO 下，固定 drafter 与固定验证预算仍可能更稳定。
+
 ### Edge / Cloud 分离：Draft 复用把 Verify Depth 变成网络控制问题
 
 当 drafter 位于 edge、target 位于 cloud，独立小模型方案仍然最直接：target 稳定、网络良好且 edge
@@ -412,7 +456,100 @@ multi-tenant cloud 或任意 target drift。正文吸收的是“artifact reuse 
 不是其作者 speedup。低 acceptance、低带宽或 target 跨 family 变化时，直接 cloud decoding；target 稳定且
 同机时，经典 speculative decoding 仍更简单。
 
+### Hybrid Recurrent State 不能只移动 KV Pointer 回滚
+
+纯 Attention runtime 的 speculative branch 通常把候选 K/V 写入临时 slots；拒绝 suffix 后，移动
+`cached length`、回收对应 blocks，再提交 accepted prefix。这种做法成立，是因为 KV Cache 是按 token
+追加、可以按位置截断的 exact state。Hybrid attention/recurrent model 还包含另一类状态：例如 gated
+linear recurrence 已把整段 suffix 压入一个 lossy matrix state。它不是 token 列表，推进到候选末端后无法
+靠缩短一个 pointer 恢复到任意 accepted boundary。
+
+最直接的旧方案是为 tree 中每个候选节点保存完整 recurrent-state snapshot。它正确、易审计，在 tree 很小或
+state 很小时仍合理；但 snapshot 数量随候选节点增长，兄弟分支也不能像 KV blocks 那样自然共享。另一条分支
+是延迟 recurrent update，等 target 确认后再串行重算 accepted tokens；它节省临时状态，却会重新引入本来想
+消除的串行路径。
+
+Tree-structured WY update 展示了一个中间设计：先把 branch-local gated updates 保持成可组合的 compact
+representation，用 tree dependency 和 triangular solve 并行完成 target verification，只在 accepted path
+确定后重建其 recurrent state：
+
+```text
+committed recurrent state
++ branch-local gated deltas over a draft tree
+→ algebra-aware parallel verification
+→ reconstruct accepted-path recurrent state
+→ atomic commit with KV / output frontier
+```
+
+关键不是某个 kernel 名称，而是 **rollback protocol 必须理解 state algebra**。Verifier 仍是唯一 commit owner；
+KV blocks、recurrent state、accepted length 与 streamed output 必须跨过同一个 frontier。否则 token 已被拒绝，
+recurrent state 却可能已经吸收它，后续输出就从不可见的错误历史继续。
+
+这条证据目前只覆盖论文给出的 Qwen3.5 hybrid variants、matched correctness points 和相应硬件/shape；作者报告的
+收益主要出现在 recurrent-state memory pressure 占主导的区域，非 memory-bound 区域可能付出额外开销。更宽的
+draft tree 也不自动等于更高 goodput，因为 verify shape、acceptance、batch interaction 与 state reconstruction
+仍共同决定成本。小 tree、低并发或状态很小的系统继续使用 snapshot；短 chain 且 target verification 已是瓶颈时，
+deferred update 也可能更简单。
+
+### Agent Workflow 让 Proposal Budget 与 Residual State 都变成动态对象
+
+经典 speculative decoding 假定 token stream 结构近似稳定，可以用统一 draft budget 提出连续候选。Agent workload 会在 reasoning、tool schema、JSON/action 与 observation 等语义块之间切换；重复模式和可接受长度随阶段变化，固定 budget 容易在结构边界产生低接受率，也会让一批异质 Agent 请求互相拖累。
+
+一种演进分支是由 Agent runtime 暴露非权限性的 block hint，serving scheduler 仍拥有 proposal budget：
+
+```text
+workflow phase / semantic block hint
+→ isolate drafting context by block
+→ allocate draft budget from observed redundancy
+→ target verifies under the original sampling contract
+→ commit accepted tokens or rollback temporary state
+```
+
+hint 只改变 proposal policy，不能改变 target authority；缺少显式 metadata 时应退化到普通 speculation。它用 Agent–serving interface、per-block statistics 与更多调度状态换取潜在接受率，结构少、batch 小或 workload 漂移大时，统一 drafter 仍更简单。
+
+### 从 Token Draft 到 Read-only Tool Speculation
+
+Token-level speculative decoding 只提前产生候选 token，外部工具仍在完整 action 生成后启动。对长 reasoning
+与慢 read tool 的 Agent turn，可以增加一层 action speculation：main stream 产生首 token 后复用同一 prefix
+KV fork 当前模型，以 forced tool-call prefix 探测下一 action；只有 probe confidence 达到门限才并发执行被
+manifest 标为 read-only 的工具。Main stream 完成后，最终 tool name 与 canonical arguments 完全匹配，
+precomputed observation 才能进入会话；不匹配则丢弃结果并走 serial fallback。被拒 probe 的已验证 token
+prefix 可以继续作为普通 speculative draft，但仍由 target verification 决定提交。
+
+这里存在两个不同 frontier：tool execution 可以提前，conversation/effect commit 不能交给 probe。Exact
+action match 只保护会话采用哪个结果，不会撤销已经消耗的查询、quota、隐私暴露或远端可见副作用，也不能让
+非确定网络结果与稍后 serial call 相同。因此 write/non-idempotent tools 继续串行，除非另有 sandbox、
+checkpoint、transaction 或 compensation。收益只在剩余 decode/tool latency 覆盖 probe overhead、tool
+schema 稳定、prefix cache/logprobs 可用且 serving 有 spare capacity 时成立；短工具、no-think、格式漂移或
+heavy batching 下，serial execution 更合理。
+
+Proposal artifact 也不一定是独立小模型。目标 Agent 可以在 partial trajectory 上切换到受限 speculator mode，
+复用 prefix KV，并用自身 rollout 产生下一次 tool call 的训练目标。这减少 draft/target 行为漂移，却让
+speculator quality 与 Agent policy revision 更紧密耦合。无论预测命中率多高，它仍只拥有 proposal 权限：
+canonical Agent 输出匹配后才能提交副作用；不可逆工具最多预取输入，或在隔离且可丢弃的事务里执行。
+
+多候选验证还暴露另一个边界：一次拒绝后用于 correction 的 residual distribution 不能沿用已被候选集合消耗的概率质量。Residual shaping 可以重新分配剩余质量并在证明条件下保持 target distribution，但增加 shaping loss、numerical path、candidate interaction 与验证成本。它与 workflow-aware drafting 是正交分支：前者修正拒绝后的采样语义，后者改善候选生成；两者都必须以 empirical distribution test 验证 exactness，不能用吞吐提升代替分布契约。
+
 ## 什么时候有效
+
+### Edge 场景先管理 Draft Residency，再谈 Acceptance
+
+多个 draft model 理论上可以按阶段选择最佳 proposal，但 edge device 的主要代价可能是把 draft 从存储搬进内存。把“哪个 draft 可能有效”和“哪个 draft 当前 resident”分离后，scheduler 可以根据预测维护一个有界 working set，并把加载与 target execution 重叠：
+
+```text
+phase signal → draft-effect prediction
+→ memory-feasible resident set
+→ prefetch / evict
+→ propose, verify and update prediction
+```
+
+它用 predictor、驻留抖动和预取带宽换更少 reactive load。Draft pool 小、内存足够或预测不稳定时，固定单 draft 更简单；切换成本必须计入 acceptance gain，不能只比较被接受 token 数。
+
+#### MoE verification 还要结算 target-expert expansion
+
+Edge MoE 的 speculative cost 不能只看 draft acceptance。若 target experts 从 CPU 或 Flash 按需搬运，多 token block 的 verification 会激活各 token expert 的 union；更长 proposal 可能减少 target steps，却触发更多 weight loading。一个受限分支使用固定驻留的 draft expert 产生候选，再由 confidence 与预计 expert expansion 共同截断 block，并预取 target experts；最终 token 与 KV 仍只由 target verification 提交。
+
+它用额外 draft training、router-agreement state 和误预取带宽换更少 reactive load。模型已全驻留、batch 足以摊销 loading、预测漂移或 draft artifact 不可治理时，普通 target-only offload 或现有 speculative path 仍更简单。Acceptance、expert union、residency 与 transfer 必须进入同一个 workload contract，不能用接受率代替端到端 latency。
 
 Speculative Decoding 的收益取决于几个条件。
 
@@ -471,6 +608,7 @@ Decode
 9. 含 truncation policy 的 verification 为什么必须使用 matched-policy baseline？
 10. 为什么 draft checkpoint 必须与 target revision、tokenizer 和 runtime 一起版本化？
 11. Edge/cloud speculation 中，为什么 verify depth 必须同时看到网络状态与 target capacity？
+12. 为什么 hybrid attention/recurrent model 的 speculative rollback 不能只移动 KV cached-length pointer？
 
 ## 小结
 
@@ -480,10 +618,19 @@ Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 
 
 ## Review notes
 
+- DraftExpert（MoE target-expert expansion-aware drafting 与 prefetch；Status: Experimental）：https://arxiv.org/html/2607.24434v1
+
+- Functional Reconstruction for MLA Draft Models（转换后的 draft 以 target acceptance 对齐功能，而不只做 KV/weight reconstruction；Status: Experimental）:
+  https://arxiv.org/abs/2607.27269v1
+
+- MemSpec（edge draft residency 与 adaptive scheduling；Status: Experimental）: https://arxiv.org/abs/2608.10362
+
 - SGLang parallel speculative decoding roadmap（revision-sensitive design evidence）:
   https://github.com/sgl-project/sglang/issues/27462
 
 - Domino（parallel proposal 的 causal correction；Status: Experimental）: https://arxiv.org/abs/2605.29707
+- DARTree（depth-wise causal correction + deferred tree pruning；No Change / Experimental evidence）:
+  https://arxiv.org/abs/2608.13524
 - Draft-OPD（drafter on-policy distribution；Status: Experimental）: https://arxiv.org/abs/2605.29343
 
 - MARS（same-backbone masked multi-token proposal；Status: Experimental）: https://arxiv.org/abs/2604.07023
@@ -494,14 +641,16 @@ Primary-source 校验入口：
 - Accelerating Large Language Model Decoding with Speculative Sampling: https://arxiv.org/abs/2302.01318
 - Revisiting Lossy Verification in Speculative Decoding:
   https://arxiv.org/abs/2607.26627
-- DSpark: Dynamically Optimized Speculative Parallel Drafting for LLM Inference:
-  https://arxiv.org/abs/2607.05147
+- DSpark: Dynamically Optimized Speculative Parallel Drafting for LLM Inference: https://arxiv.org/abs/2607.05147v1
+- SPORK（read-only action speculation；Status: Experimental；write/non-idempotent tools 不在证据边界内）: https://arxiv.org/abs/2607.03333v1
 - EAGLE-3: https://arxiv.org/abs/2503.01840
 - SGLang Multiple Token Prediction: https://www.lmsys.org/blog/2025-07-17-mtp/
 - SpecForge: https://www.lmsys.org/blog/2025-07-25-spec-forge/
 - SpecBundle / SpecForge v0.2: https://www.lmsys.org/blog/2025-12-23-spec-bundle-phase-1/
 - FlexSpec（Status: Experimental；edge/cloud reusable draft 与 network-aware verify control）:
   https://arxiv.org/abs/2601.00644
+- TreeWY（GDN accepted-state reconstruction；Status: Experimental）:
+  https://arxiv.org/abs/2608.20961
 - DFlash（target-conditioned diffusion drafter + exact verification；Status: Experimental）: https://arxiv.org/abs/2602.06036
 - LK Losses（acceptance-aligned drafter objective；Status: Experimental）:
   https://arxiv.org/abs/2602.23881
@@ -513,6 +662,10 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2606.12243
 - Bebop / MTP with Rejection Sampling（Status: Experimental；distribution-aligned MTP proposal）:
   https://arxiv.org/abs/2606.12370
+- Self-speculative tool prediction（dual-mode Agent、shared prefix state；Status: Experimental）:
+  https://arxiv.org/abs/2607.25816v1
+- AngelSpec（workload-specific proposal artifacts 与 batch-level verification budget；Status: Experimental）:
+  https://arxiv.org/abs/2607.25852v1
 
 本轮 Review 补充了 greedy verification、distribution-preserving sampling 与 lossy
 verification 的边界，并补入 EAGLE-3→MTP→SpecForge→SpecBundle 的 artifact evolution。

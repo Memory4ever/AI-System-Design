@@ -1,149 +1,147 @@
-# Codex Historical Research Prompt
+# AI-System-Design Historical Weekly Adapter
 
-## 目标
+版本：V2.1
+适用范围：完整历史 ISO Weekly、Source Delta Audit、材料恢复
 
-Historical Research 用于恢复完整 ISO Weekly 的证据链，而不是把后来看到的新闻摘要反写成
-历史事实。Weekly 必须尽可能接近 Live Daily 的候选覆盖度，同时保留 first-public date、revision、
-primary evidence、技术演进与 Books 决策边界。
+## 1. 任务
 
-Historical Backfill 不创建历史 Daily。所有事件、评分、Source Review、spillback 与缺口直接写入
-对应的 `papers/<ISO-week-year>/weekly/<ISO-week-year>-W<week>/README.md`；年度索引只维护
-可复算汇总账本。
+Historical Research 用于恢复完整 ISO week 的可复算证据链，不把后来看到的摘要反写成历史事实，也不补造历史 Daily。
 
-## 归档时钟与事件归属
+所有通用规则只由以下文件定义：
 
-1. Weekly 覆盖完整 Monday～Sunday，不按月末、季度末或回填批次截断。
-2. 论文以 arXiv v1 或其他可核验 first-public date 归周；revision 是同一 Source Family 的演进节点，
-   不重复计为新论文。
-3. 官方发布、technical report、model/system card、代码或 artifact 可形成不同 event node，但必须共享
-   Source Family，并分别记录日期和证据角色。
-4. discovery feed、Blog 或后续 Weekly 发现更早事件时，写回真实 owner week；推荐日期不能替代事件日期。
-5. 跨年 ISO week 以 ISO-week-year 归档，不能重复进入两个年度。
+1. `docs/RESEARCH_CONTRACT.md`
+2. `docs/RESEARCH_SOURCES.md`
+3. `docs/REPORT_CONTRACTS.md`
 
-## 固定来源顺序
+本 Adapter 只保留历史模式特有的日期归属、并行边界、spillback、材料恢复与增量重开规则。
 
-候选必须按以下顺序检索和组织：
+## 2. 运行前加载
 
-1. 模型与研究机构；
-2. arXiv 与学术来源；
-3. AI Infra 与工程项目。
+读取：
 
-机构和工程项目的固定顺序沿用 `CODEX_DAILY_RESEARCH_PROMPT.md`。学术发现每日/每周使用 arXiv、
-Google Scholar、OpenAlex、DBLP；Semantic Scholar 与 Hugging Face 用于补充发现和去重；Crossref
-用于 Weekly metadata 交叉检验。聚合索引只能发现候选，机制结论必须回到 primary source。
+- `AGENTS.md`
+- 上述三个统一合同
+- `ROADMAP.md`
+- `papers/<year>/weekly/README.md`
+- 当前待处理 Weekly 与前后相邻周
+- `docs/LEARNING_STATE.md` 中最新历史 cursor / checkpoint
 
-## 唯一标识与去重
+只处理当前 checkpoint 尚未闭合的来源或候选。旧 Source Review 是否可复用，必须按
+[Research 合同 §11](./docs/RESEARCH_CONTRACT.md#11-历史兼容review-复用与-source-delta-audit) 验证完整 provenance；
+不得仅凭旧状态、标题或 URL 略过审阅。
 
-每个候选以以下组合建立唯一身份：
+## 3. 历史归属
 
-```text
-Source Family ID
-+ primary identifier（arXiv / DOI / release tag / PR / RFC）
-+ first-public date
-```
+- Weekly 必须覆盖完整 Monday～Sunday，不按月末、季度末、年末或批次截断。
+- 论文按 arXiv v1 或其他可核验 first-public date 归周。
+- revision、正式发表、release、代码和项目页是同一 Source Family 的演进节点，不重复成为论文 owner。
+- discovery feed、索引收录、后续 Weekly 或人工发现日不能替代 event date。
+- 跨年周按 ISO-week-year 归档。
 
-标题大小写、版本号、Blog 标题或推荐日期不能单独作为唯一键。同一论文的 v1、后续 revision、代码发布和
-机构解读应通过 Source Family 连接，并明确属于 `Direct Evolution`、`Layering / Dependency`、
-`Principle Reuse` 或 `Explanatory Analogy`。
+任何日期、身份或 revision 冲突都按公共合同保留对读和不可判定边界；不能用标题或最新版本
+猜测事件时事实。
 
-## 状态词汇表
+## 4. Source Delta Audit
 
-- `Review Pending`：primary material 已可访问，但尚未完成要求的阅读范围。
-- `Unverified / Blocked`：正文、唯一身份、指定版本或决定机制是否成立的 artifact 无法取得。
-- `Discovery Gap`：存在可能遗漏的线索，但尚不能建立候选身份、评分或机制结论。
-- `Disputed`：来源可读，但日期、revision、实验条件、复现结果或不同 primary sources 相互冲突。
-- `Books Pending`：Weekly evidence 已完成，但该 Source Family 尚未完成 Books 判断；它不是 Weekly 缺失。
-- `Version Fact / Mechanism Not Disclosed`：只有官方版本或产品事实，没有公开内部机制。
-
-`Blocked` 可以按用户确认的 blocked-skip 规则不阻止 forward cursor，但必须保留在 Backlog Ledger，
-不能计入 Full Source Review，也不能支持 Books。`Review Pending` 不得与 `Completed` 同时出现。
-
-## 评分与阅读门槛
-
-六维评分均为 0～5：Technical Novelty、System Impact、Practical Value、Source Reliability、
-Project Relevance、Longevity。
-
-- 所有 `20+` 候选必须完成非模板化 Full Source Review。
-- 低于 20 分的候选至少核验 primary identity、日期、评分和拒绝理由。
-- 无法访问正文时不得根据标题或摘要沿用旧评分；旧分数只能标记 provisional discovery priority。
-- Must Read 不等于必须修改 Books。
-
-Full Source Review 至少包含：
+新来源注册表不会触发全年机械重跑。只安排后续检查时，使用
+[Report 合同 §6](./docs/REPORT_CONTRACTS.md#delta-audit-queue-notification-与-true-reopen) 的
+`Delta Audit Queued`，不要提前声明当前 Gate、Completion 或 V2.1 packet。真正开始审计后，才使用
+`Coverage Mode = Delta Audit`：
 
 ```text
-Candidate / Week / Score
-Source Family ID / Source Type
-Event Date / First-public Date / Revision History
-Direct and Related Primary Sources
-Access and Verification Status / Full-read Coverage
-Original Problem / Why Previous Design Was Reasonable / Changed Constraint
-Mechanism / State Ownership / Control Flow / Data Flow / Implementation
-Evaluation Contract / Baselines / Ablations / Sensitivity / Overhead
-Hardware / Model / Precision / Length / Batch / Concurrency / SLO
-What the Evidence Proves / Does Not Prove
-Limitations / Threats to Validity
-Trade-offs / New Failure Modes / Where Previous Design Still Applies
-Evolution Relationship
-Stable Knowledge Node ID / Current Chapter / Legacy Chapter
-Target and Adjacent Chapters Read / Existing Coverage
-Integration Decision / Rejection Reason / Open Questions
+读取注册表 Effective Date
+→ 比较旧 owner-family ledger 与新增来源命中
+→ 核对相邻周 spillback / delayed listing
+→ 核对 identity、first-public 与重要 revision
+→ 只重开真实受影响 owner week
 ```
 
-公开材料未披露的字段写 `Not Disclosed`，不得从产品能力反推内部模型、训练或 runtime。
+重开条件只有：
 
-## Blocked Source Recovery
+- 新发现 in-window Source Family；
+- first-public owner 冲突；
+- 重要 revision 改变机制或实验结论；
+- 原报告没有足够的 receipt / pagination / ledger 证据证明 denominator。
 
-对所有 blocked 项按以下顺序重试：
+完成审计且没有上述差异时，记录 `Source Delta Audit — No Reopen`；它不是 queue notification。baseline、
+changed sources、effective coverage / denominator、earlier-owner reconciliation 与 Review provenance 直接使用
+[Report 合同 §3](./docs/REPORT_CONTRACTS.md#3-v21-最小可审计接口)；不能把“新合同生效”偷换成
+“所有历史 Weekly 重新全文研究”。
+
+## 5. 完整周发现与分母
+
+未生成的历史 Weekly 使用 `Coverage Mode = Full Replay`，直接执行当前注册表的完整周合同：
 
 ```text
-arXiv HTML
-→ 对应事件版本 PDF
-→ 作者项目页 / repository / artifact
-→ 官方 Blog / technical report / model card / system card / RFC / Release
-→ OpenAlex / Crossref / DBLP metadata 交叉确认
+Required Daily
++ Required Weekly
++ 当周 Event / Periodic
++ bounded Backstop
 ```
 
-恢复全文后必须真正补齐 Method、公式/算法、实现、完整 Evaluation、ablation、相关 Appendix、
-limitations 与 artifact，不得只删除 `Blocked` 标签。若仍无法恢复，在年度 Materials Request Ledger
-中记录 Priority、Week、Source Family、已知 identifier、具体缺失材料、不足原因、可接受替代材料、
-建议文件名与补回后的审计范围。
+按公共合同的固定来源组织。每个到期 Source ID 使用
+[Source Coverage Receipt §3.2](./docs/REPORT_CONTRACTS.md#32-source-coverage-receipt) 保存收据并按该节闭合；
+本 Adapter 不复制 Receipt 状态或 Gate 语义。
 
-## 技术演进与 Books Gate
+Google Scholar、Semantic Scholar 等不可冻结 Backstop 直接使用 Report 合同 §3.2，不在本 Adapter
+另定义 Gate 算术或“全网无遗漏”结论。
 
-Weekly 必须保留：
+## 6. 并行研究与单一写入者
+
+多个完整 Week 可以并行执行 discovery、全文阅读和 read-only Source Packet：
 
 ```text
-原始约束
-→ 旧方案为什么合理
-→ 旧方案暴露的边界
-→ workload / scale / hardware / SLO 变化
-→ 新机制改变什么
-→ 证据证明与未证明什么
-→ 新增状态、成本和 failure mode
-→ 新旧方案各自成立的条件
-→ 下一阶段压力
+Week N discovery / review   ─┐
+Week N+1 discovery / review ─┼→ 单一 reconciliation owner
+Week N+2 discovery / review ─┘  → owner Weekly → 年度索引 → per-week Review
 ```
 
-Books 使用两道独立 Gate：
+并行执行者不得同时修改 Weekly、年度索引或 Learning State。单一 reconciliation owner 负责：
 
-- `Source-Family Books Gate`：identity、event-time revision、全文、claim/evidence boundary、artifact、Stable Node owner 与相邻章节均完成后，可逐 family 进入 Books；`Blocked`、`Disputed` 与 `Version Fact / Mechanism Not Disclosed` 不得进入长期机制正文。
-- `Archive Completion Gate`：年度 discovery replay、revision 去重、blocked recovery 与材料账本全部闭合后，才可宣称历史归档完整。
+- first-public / revision / spillback；
+- Source Family 与评分 owner 唯一性；
+- Weekly 写回与年度索引一致性；
+- per-week Coverage / Evidence Gate。
 
-Archive Completion Gate 仍 Open 不必冻结已通过 Source-Family Gate 的可靠机制，但不得把局部完成写成年度无遗漏。Weekly 摘要本身不能进入 Books，也不得为制造 Git Diff 强行修改章节。
+每个子任务只有负责周的 Source Packet 和所有未决项都已显式交给 reconciliation owner 后才能结束。
+“已发现候选”或“已写草稿”不算完成；只有串行写入者能声明负责周通过 Gate。
 
-## 每周与年度验收
+## 7. 证据、叙事选择与语义审阅
 
-每完成一周或一个小批次，立即检查：
+使用 [Research 合同 §7](./docs/RESEARCH_CONTRACT.md#7-review-合同) 与
+[Report 合同 §3.4～3.7](./docs/REPORT_CONTRACTS.md#34-review-completion-receipt)。Historical 模式的唯一额外约束是：
+后续 revision 不能替代事件时版本；如果只能取得后来版本，必须在 evidence version 与
+claim boundary 中限定可支持范围。
 
-- ISO window、first-public date、revision 与跨周归属；
-- 来源真实性、Source Family 唯一性、评分 Total 和 Evidence Level；
-- Full Source Review 是否非模板化，事实、作者结论和推断是否分开；
-- ROADMAP owner 与相邻章节是否实际核对；
-- `Review Pending`、`Blocked`、`Discovery Gap`、`Disputed` 和 `Books Pending` 是否一致；
-- Markdown 标题、围栏、URL、相对路径和行尾空白。
+## 8. Blocked 恢复与 Materials Request
 
-年度完成还要求：所有 Weekly 有最终 discovery disposition；`Review Pending = 0`；每个仍 blocked 项都有
-明确材料请求；spillback 与 revision 可回溯；年度索引、Weekly、Live Daily 和 Learning State 一致；
-`git diff --check` 与工作树范围检查通过。
+材料恢复和状态组合直接使用 [Report 合同 §8.1](./docs/REPORT_CONTRACTS.md#81-唯一状态与-gate-真值表)
+与 [Materials Request §7](./docs/REPORT_CONTRACTS.md#7-materials-request-ledger)。本 Adapter 只规定历史 forward 行为：
 
-不得执行 git stage、commit、push、reset、checkout、clean 或其他破坏性操作。
+用户允许 blocked-skip 时也不改变 Report 合同的状态真值表；只有 §8.1 已允许闭合、且授权与 forward
+policy 已记录时，forward cursor 才能继续。其他状态从同一 checkpoint 恢复。
+
+## 9. Books 边界
+
+Historical Weekly 默认只修复证据体系。未明确授权历史 Books Integration 时，冻结 Books 修改，并使用
+[Report 合同 §8.1](./docs/REPORT_CONTRACTS.md#81-唯一状态与-gate-真值表) 的 Historical Books 例外；
+本 Adapter 不另定义对应 Gate 或 disposition。
+
+若用户另行授权，使用 [Research 合同 §9](./docs/RESEARCH_CONTRACT.md#9-books-gate-与目录外内容)
+和 [Books Comparison §3.6](./docs/REPORT_CONTRACTS.md#36-books-comparison)。Weekly 摘要与评分本身不能直接写进 Books。
+
+## 10. 每周验收
+
+每完成一个 Week，使用 [Report 合同 §8.2](./docs/REPORT_CONTRACTS.md#82-完成条件) 进行 per-week 结构验收，
+并完成四个 scope 的 Semantic Audit；scope applicability 直接使用 Report 合同 §3.7。只有该合同允许
+当前状态移动 forward cursor 时才进入下一周，否则下次从同一 checkpoint 继续。
+
+## 11. 校验与 Git Safety
+
+执行 [Report 合同 §10](./docs/REPORT_CONTRACTS.md#10-校验命令)。命令成功只是结构校验；不得代替每周
+Semantic Audit。
+
+不 stage、commit、push，不清理、覆盖或回滚既有 Daily、Weekly、Books 或其他未提交修改。
+
+最终报告必须给出：owner-family 总数、各 Review 路由完成数、ordinary pending、blocked / disputed、材料请求、
+变更文件、三个 Gate、校验结果与下一 continuation point；状态含义只引用 Report 合同 §8，不在 Adapter 重述。

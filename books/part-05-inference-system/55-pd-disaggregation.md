@@ -90,6 +90,49 @@ t_transfer
 
 长 prompt 同时提高两侧：它增加 co-location interference 的潜在收益，也增大 handoff bytes。不能只用“prompt 很长”得出必须分离。
 
+### 从 Full Transfer 到 Demand-corrected Selective Transfer
+
+Full KV transfer 在链路充足时仍是最清楚的 baseline。受 profile 支持时，可以先 proactive 发送预测重要的 exact KV；Decode consumption 作为最终 demand signal，并行修复缺失 entry，再用 early-decode behavior 做 bounded speculative prefetch。Importance drift、metadata、remote-fetch tail 与 wasted transfer 是新增代价；低负载或 prediction 不稳时必须回到 full transfer。
+
+### 从共享链路调度到物理 Traffic-class Isolation
+
+最简单的部署让 KV transfer、Tensor Parallel collective 和其他数据面流量共享同一 fabric，再由优先级、chunking
+或 rate limit 控制竞争。这在硬件固定、流量较轻或角色经常变化时最灵活；但当 decode collective 与大块 KV
+handoff 同时占用同一关键链路，软件调度只能改变等待顺序，不能创造独立带宽。
+
+一种硬件协同分支是给两类流量不同的物理路径：例如让垂直封装链路承担 KV transfer，让 lateral device links
+保留给 decode Tensor Parallel collective。它把 traffic-class isolation 从 scheduler policy 下沉为 topology contract，
+可以减少 head-of-line interference，却必须支付额外 link、logic die、封装面积、热密度、yield 和固定 mapping 成本。
+角色比例或模型布局变化后，专用链路也可能闲置。
+
+3DLS 的作者结果来自 in-house simulator，对 Llama-3 8B/70B、OPT-175B、指定 traces 与 iso-bandwidth 配置进行
+比较，没有制造芯片或生产服务证据。正文因此只吸收一个条件判断：**当两类 critical traffic 的共享争用已成为
+主瓶颈，物理隔离可以成为软件调度之外的分支；它仍不能省略 KV ownership、queue、completion 与 failure contract。**
+
+### 从完整到达再执行到 Progressive Verified Handoff
+
+传统 handoff 以完整、精确的 KV 为 commit unit：destination 只有收到全部 bytes 并验证 metadata 后才开始 Decode。
+它浪费了传输与计算可重叠的机会，却最容易证明 correctness。若低比特近似能够较早到达，可以把 handoff 拆成
+provisional 与 committed 两条 frontier：
+
+```text
+request + KV generation identity
+→ send prioritized low-bit representation
+→ begin provisional computation
+→ stream higher-fidelity refinements
+→ verify provisional result against admitted error rule
+→ correct / replay when needed
+→ advance exact commit frontier
+```
+
+这不是让近似 KV 静默成为新真值。Destination 必须记录每个 layer/block 的 fidelity、generation、verification
+结果与 correction ownership；取消、retry 和 worker failure 也要区分 provisional buffers 与 committed state。
+如果误差率高、verification 接近重算成本、网络无法与计算重叠，或 tail SLO 不允许 rollback，完整到达再执行仍更好。
+
+Lynx 的作者实验在披露的长上下文模型/任务与 Ascend-oriented LMCache/vLLM 路径上支持分层量化、优先传输和
+verify/correct 的受限收益，但没有覆盖生产并发、独立复现或跨硬件稳定性。它提供的是一个 `Alternative Branch`：
+用 speculative work 换 handoff latency，而不是证明所有 PD 服务都应以近似状态启动 Decode。
+
 ## Break-even 思维
 
 可以把 PD 值得采用的必要条件写成概念不等式：
@@ -203,6 +246,29 @@ decode_active_work    < decode_capacity(y)
 ```
 
 Input/output length distribution 或 prefix hit 改变后，最优 `x:y` 也会变化。静态 1:1 只是 topology，不是 capacity proof；Dynamo Planner 等控制层正是试图根据观测调整这一比例。
+
+### 从固定角色边界到 SLO-bounded Prefill Deflection
+
+固定 Prefill/Decode pools 让 capacity、故障域和 ownership 简单，却可能出现一侧排队、另一侧保留短时 headroom。
+直接把 Prefill 丢给任意空闲 Decode worker 会改善 TTFT，却可能阻塞下一轮 token step，破坏更敏感的 TBT/TPOT。
+因此 deflection 必须是一次带证明义务的临时借用，而不是看到空闲率就迁移角色：
+
+```text
+observe prefill queue + decode active batch
+→ estimate native-prefill TTFT
+→ predict decode step latency under candidate prefill chunks
+→ reserve safety margin against TBT SLO
+→ schedule only the largest safe chunk sequence
+→ continuously re-check state; reject or fall back when stale
+```
+
+控制器至少要绑定 prediction model/revision、observation timestamp、chunk schedule、TBT budget、tenant fairness 和
+fallback。预测误差与 stale telemetry 会把“可借用 headroom”变成 SLO violation；中心 dispatcher 还会成为新的
+延迟与故障点。负载稳定、pool ratio 容易调整，或 Decode SLO 极紧时，固定 role boundary 仍更稳健。
+
+Kairos 的作者实现基于 vLLM 0.18.1，在 A100、DeepSeek-v2-Lite、bursty trace 与所列 P95 TTFT/TBT 合同中验证
+该机制；它未覆盖 request migration、prefix-cache interaction 或分布式 dispatcher。因此这里保留的是
+“用 Decode slack 前必须证明每一步仍满足 SLO”的控制原则，不外推作者吞吐数字。
 
 ## Power 成为可调资源后，Role Ratio 不再是唯一旋钮
 
@@ -336,6 +402,9 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 
 ## Review notes
 
+- Selective KV Transfer（arXiv:2607.28150v1；Status: Experimental）：https://arxiv.org/html/2607.28150v1
+  - 证据边界：exact-v1 支持 profile-guided proactive exact-KV transfer、decode-demand repair 与 bounded prefetch 的作者实现；不证明 importance 在 workload drift 下稳定，也不证明 metadata、remote-fetch tail 与 wasted transfer 在任意 PD topology 中均优于 full transfer。
+
 本轮 Review 将 PD 分离的目标收敛为 TTFT/TPOT SLO 下的 goodput，并补充 KV transfer bytes、队列匹配、cache ownership 与失败语义。Prefill/Decode 的常见资源画像是设计动机，不是证明分离必然更优的充分条件。
 
 Primary-source 校验入口：
@@ -354,5 +423,11 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2602.21548
 - Mix-Quant（phase-aware precision 与 compatible KV handoff；Status: Experimental）:
   https://arxiv.org/abs/2605.20315
+- 3DLS（KV transfer / TP collective 物理 traffic-class isolation；Status: Experimental）:
+  https://arxiv.org/abs/2607.01617
+- Lynx（progressive verified KV handoff；Status: Experimental）:
+  https://arxiv.org/abs/2607.01831
+- Kairos（SLO-bounded Prefill deflection；Status: Experimental）:
+  https://arxiv.org/abs/2607.02043
 
 后续定稿需结合目标版本的 vLLM / SGLang / Dynamo 等系统，区分论文设计、实验性能力与生产支持，不从某一实现反推 PD 分离的通用定义。

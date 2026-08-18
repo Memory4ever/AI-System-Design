@@ -252,6 +252,10 @@ Rethinking On-Policy Distillation 的作者实验只证明在其模型、数据�
 把高熵或高分歧直接当作因果 credit。固定全 token distillation 在算子成熟、差异较均匀或需要最简单 objective
 时继续成立；选择性更新必须保存 threshold、teacher/student snapshots、mask 与被排除 token 的 regression 证据。
 
+#### Outcome Failure 不能单独定位 Perception Credit
+
+共享同一 perception state 采样多条 reasoning continuation，可用下游成功率估计该 perception 是否仍支持求解；再把 teacher-student aware-span disagreement 作为第二 witness，才允许在固定 distillation budget 内重分配 perception token 权重。两者都不是 calibrated posterior：teacher 可能共同出错，PSR 随 policy 漂移；reasoning objective 必须保持独立 owner。
+
 ### Prefix Replay 同时承担复用与 Distribution-shift 债务
 
 Fully online distillation 让 student 在自己访问到的 history 上得到 teacher conditional，能减少纯 teacher
@@ -523,6 +527,9 @@ SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写�
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
 
 ## Review notes
+
+- Perception-Causal Distillation（arXiv:2607.28336v1；Status: Experimental）：https://arxiv.org/html/2607.28336v1
+  - 证据边界：exact-v1 支持以同 perception state 的多 continuation success rate 和 teacher-student aware-span disagreement 重分配有限 distillation budget；两者不是 calibrated posterior，不能排除 teacher 共同错误、policy drift 或 reasoning failure。
 
 - Simple Self-Distillation（sampling-shifted self-target；Status: Experimental）: https://arxiv.org/abs/2604.01193
 

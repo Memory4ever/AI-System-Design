@@ -143,6 +143,21 @@ rollback 成本。因此旧方案继续成立：短任务、强顺序约束、�
 固定 chain / singleton + deterministic checks 往往更安全。动态修复只应由第 81 章的
 Workflow controller 提交，Agent 自述不能直接改写 authoritative topology。
 
+动态 topology 之内还有一个更细的控制对象：**这次把子任务交给哪个 peer**。固定 peer 或 greedy 选择在任务短、
+能力近似、探索成本高时最容易复算；当 peer 能力随任务类型变化且观测稀疏时，可以把 capability estimate、
+uncertainty、task context 与历史 outcome 写成版本化 evidence ledger，再在预算内做 bounded exploration：
+
+```text
+task context + peer capability posterior
+→ explore or exploit under a declared budget
+→ selected peer executes
+→ independent outcome evidence updates the ledger
+```
+
+Peer selector 只拥有委派决策，不拥有最终求解或 verifier。探索会把一部分请求交给不确定 peer，获得长期信息的
+同时增加当下失败、延迟和不公平负载；短任务、不可逆动作或强 SLO 下应缩小探索甚至退回静态路由。该机制也不
+证明局部选择能得到联合最优 topology，更不能据少量 peer 实验外推到超大规模多 Agent。
+
 ### 通信可以压缩成 latent，但 contract 不能一起消失
 
 文本消息可读、可版本化，也容易绑定 evidence；缺点是序列化损失和 token 成本。异构 Agent 若直接交换 latent states，可能保留视觉细节并绕过重复编码，但发送方与接收方模型不同，buffer 本身没有稳定语义。因而 latent channel 至少需要：
@@ -157,6 +172,53 @@ sender / receiver model identity
 ```
 
 adapter 数量线性增长不等于 runtime cost 也线性，更不证明 accuracy parity。不可读 embedding 只能作为 proposal channel，不能替代 authoritative task state、approval 或完成证据。Vision Wormhole 提供了异构 VLM 之间传递 image-span latent 的实验机制，但版本、模型组合和 artifact 边界要求它保持 Experimental；文本/typed artifact 在审计、故障恢复和跨版本兼容更重要时继续成立。
+
+图像 span 并不是 latent communication 的唯一对象。语言 Agent 也可以把发送方末层的一段 hidden states 当作
+候选消息，再映射到接收方 input-embedding 坐标。直接拷贝 state 或 KV 的问题是坐标系、层数和 norm 都属于
+checkpoint；“维度相同”不代表语义兼容。一个 training-free 的受限分支用已生成消息 token 的 receiver
+embeddings 作为临时锚点，求几何保持的正交映射，再做 norm calibration 与 vocabulary-neighborhood anchoring：
+
+```text
+sender final hidden-state suffix
+→ receiver-token anchors for closed-form alignment
+→ norm calibration + bounded vocabulary anchoring
+→ continuous prefix for receiver
+→ downstream task verdict + text fallback
+```
+
+这减少了为每个 sender/receiver pair 训练 adapter 的要求，也可能保留序列化前的连续信息；但它没有得到稳定的
+跨版本协议。Sender message、receiver tokenizer/embedding、selected suffix、alignment rule、anchor coefficient 与
+model revisions 必须共同构成 channel identity。连续 prefix 不可读、难以审计，恶意或漂移 state 还可能绕过文本
+policy scan，因此只能作为 proposal / reasoning channel；authoritative facts、delegation、approval、commit 与完成
+证据仍应落到 typed artifact 或 Workflow state。StateBridge 的四模型、两 family、顺序四 Agent 实验仅支持该
+对齐机制在所列 QA/math/code contract 下可行；没有证明跨任意 architecture、长 workflow、安全 adversary 或模型
+升级后仍兼容。文本消息在可解释、重放和治理优先时继续成立，训练 adapter 在固定高流量 model pair 上也仍可能
+比每次闭式对齐更稳定。
+
+固定高流量 model pair 还暴露了 sender-only translation 的另一条边界：发送方 state 即使被压缩得很好，也不知道
+接收方已经编码了什么、哪一层或哪个位置真正缺信息。于是 latent handoff 可以从“翻译发送方 cache”演进为
+“联合读取两侧 cache，再按 receiver position 产生有界 residual”：
+
+```text
+sender cache + receiver cache
+→ pool and align heterogeneous layer/KV geometry
+→ build receiver-aligned cross-layer joint memory
+→ each receiver position queries the joint memory
+→ gated residual update in receiver-native KV geometry
+→ ordinary decoding with typed/text fallback
+```
+
+这个变化把 message 从 sender-authored summary 变成 receiver-conditioned proposal。Layer map、joint-memory width、
+position query、per-head gate 与 translator checkpoint 都成为 channel identity；zero-initialized residual 可以让未训练
+translator 退化为 receiver-only decoding，但不能把训练后的不可读 cache 当作无风险写入。Runtime 还要冻结两侧
+model/tokenizer/KV layout、输入 cache provenance 与更新时点；只修改 prefill cache 一次，不应追溯改写后续生成 token
+的 cache，也不能越过 Workflow 对事实、授权和 commit 的 owner。
+
+XKV 的作者实验只覆盖三个小模型 family、九个有序 pair、五个 QA datasets、greedy decoding 与单一训练 seed；
+它支持“joint state + receiver-position retrieval”在该 contract 下优于 sender-only latent summary，不证明长程协作、
+安全对抗、在线模型升级或生产并发中的协议稳定性。固定 pair、重复流量且 token cost 主导时，trained cache translator
+可能值得维护；pair 经常变化、审计或恢复优先时，文本/typed artifact 仍是默认路径；无法训练 adapter 时，前述
+training-free alignment 仍是另一条受限分支。
 
 ### Behavioral belief 不等于 authenticated identity
 
@@ -336,7 +398,22 @@ Scaling Test-Time Compute for Agentic Coding 的作者实验是受限的并行�
 当任务不可分、verifier 弱或 side effects 难隔离时，把预算投入单 Agent 的更深 repair、better tool contract 或
 deterministic testing 可能更合理；只有 branch state 可隔离、结果可验证且收益覆盖 coordination tax 时才扩 K。
 
+### Pairwise Judge 可以生成 Shaping Proposal，但不能拥有因果归因
+
+绝对 contribution score 难跨场景校准时，可以用 ordered pairwise comparisons 建矩阵，再经 rank aggregation 形成 potential-based shaping proposal。Judge 只能观察可见 multimodal evidence，不能看见力、私有状态或反事实贡献；position bias、non-stationarity 与 shared-model error 会把排名误写成 credit。最终 task outcome 与独立环境证据仍拥有验收权。
+
 ## Evaluation
+
+### 并行不是一个旋钮：副本并行与结构并行
+
+复制多个独立 trajectory 的 replica parallelism，可以提高找到好答案的概率；workflow structural parallelism 则只并行依赖图中互不等待的节点。前者受样本预算和聚合器限制，后者受 critical path、共享工具和副作用顺序限制。把两者都称为“增加 Agent 数”会隐藏完全不同的状态与成本：
+
+```text
+independent replicas → sample diversity → verifier / aggregation
+workflow DAG → dependency-safe concurrency → barrier / commit
+```
+
+通信拓扑也不能只按消息量裁剪。可以用 edge masking 估计某条 channel 对任务结果和 response stability 的贡献，再蒸馏预算内子图；它用额外 probe 与 attribution bias 换更少通信。Post-hoc 贡献不是强因果证明，mask 后的分布漂移和协作任务代表性仍需在线 canary。小团队、短 workflow 或工具副作用强时，固定 topology 和串行协调仍更透明。
 
 除了 final task success，还要测：
 
@@ -371,6 +448,14 @@ Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，�
 
 ## Review notes
 
+- MARS-RA（arXiv:2607.27967v1；Status: Experimental）：https://arxiv.org/html/2607.27967v1
+  - 证据边界：exact-v1 支持以 pairwise multimodal judgments、rank aggregation 和 potential shaping 改善作者 multi-agent tasks；不证明排名是 causal contribution，且 position bias、judge error、hidden physical state 与 non-stationarity 仍在边界外。
+
+- Two-Tier Inference-Time Parallelism（replica vs workflow structural parallelism；受限 GAIA 实验）: https://arxiv.org/abs/2608.05791
+- E2-Explainer（communication-edge attribution 与 topology distillation；Status: Experimental）: https://arxiv.org/abs/2608.12921
+- MACE（uncertainty-aware peer exploration；Status: Experimental）:
+  https://arxiv.org/abs/2607.11250v1
+
 本章把 AutoGen/CAMEL 作为多 Agent interaction 的研究入口，不把 framework API 当作系统原理。与第 81 章分责：Workflow 拥有状态，Agents 拥有受限决策角色。
 
 Primary-source 入口：
@@ -390,6 +475,10 @@ Primary-source 入口：
 - AOrchestra（runtime-instantiated executor contract；Status: Experimental）: https://arxiv.org/abs/2602.03786
 - Vision Wormhole（heterogeneous latent communication；Status: Experimental）:
   https://arxiv.org/abs/2602.15382
+- XKV / Dual-Cache Latent Space Communication（receiver-conditioned joint cache translation；Status: Experimental）:
+  https://arxiv.org/abs/2608.20617
+- StateBridge（training-free hidden-state alignment；Status: Experimental）:
+  https://arxiv.org/abs/2608.13317
 - In-context co-player inference（behavioral adaptation 与 strategic shaping；Status: Experimental）:
   https://arxiv.org/abs/2602.16301
 - AgentDropoutV2（failure-memory-conditioned message rectify/reject；Status: Experimental）:

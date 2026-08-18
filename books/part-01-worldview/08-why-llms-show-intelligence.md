@@ -145,6 +145,55 @@ model policy
 
 所以 Evaluation 需要区分 capability ceiling 与 reliability distribution。可以分别测试 pass@k、单次成功率、最坏切片、校准、鲁棒性、拒答、恢复和成本。允许多次尝试能展示潜在能力，却可能掩盖一次请求的用户体验和资源代价。
 
+## 能力不等于知道自己知道
+
+把 hallucination 简化成“模型泛化错了”只说对了一部分。Generalization 是把训练中形成的结构应用到未见组合；
+hallucination 则是生成结果越过了当前 evidence boundary，却仍以像答案的形式提交。例如模型可以正确泛化论文摘要
+的写作结构，却把这套结构用于一篇不存在的论文。形式泛化成功，事实约束失败。
+
+基础语言模型在推理时给出的是：
+
+```text
+p_theta(next_token | prompt, generated_history)
+```
+
+它不是：
+
+```text
+P(claim is true | current world and available evidence)
+```
+
+Softmax 对任何输入都会产生总和为 `1` 的 token distribution；weights 也不是一张带 `known / unknown` 字段的知识表。
+因此“当前最可能的续写”可以非常集中，却仍然是错误事实。降低 temperature 只会让这个 mode 更稳定，不会把语言
+概率自动变成 truth probability。
+
+模型内部仍可能包含与正确性相关的信号。可以读取 answer log-probability、token/sequence entropy，让模型在提出
+答案后预测 `P(True)`，或直接预测 `P(IK)`（是否知道）；也可以多次采样，将语义等价答案聚类后计算 semantic
+entropy。这些方法支持一个有边界的结论：**模型有时能感知 familiarity、歧义和自身失败风险，但这种自知是需要
+训练、格式与 deployment distribution 校准的能力，不是模型天然拥有的 introspection oracle。**
+
+同一个模型产生答案又评价答案时，两者共享 weights、Context 和训练偏差。多个 samples 也可能稳定复现同一流行
+误解；低 entropy 只说明分布集中，不说明世界事实正确。[Language Models (Mostly) Know What They Know] 的作者实验
+显示 self-evaluation 在若干任务上可扩展，但 `P(IK)` 在新任务上的 calibration 仍困难；TruthfulQA 又说明更强的
+文本模仿可以同时学到人类常见错误。二者并不矛盾：内部 risk signal 存在，不代表它在开放世界中已可靠校准。
+
+因此“是否允许回答”必须从模型属性升级为系统决策：
+
+```text
+model proposal
+→ internal uncertainty signal
+→ external retrieval / tool / executable evidence
+→ claim-level verification and calibrated risk
+→ answer / ask / retrieve more / abstain / escalate
+```
+
+模型拥有 proposal，不拥有最终 truth verdict；RAG 拥有 evidence access，不自动拥有 evidence sufficiency；verifier
+只能裁决其 specification 覆盖的条件；Evaluation 与业务 policy 才能根据风险决定是否发布。第 20 章解释内部
+sampling/confidence，第 76 章解释 external evidence path，第 66 章负责 claim graph、calibration、coverage 与 abstention。
+
+这也解释了为什么“永不 hallucinate”不是开放世界中的可验证承诺。系统能做的是在声明的 corpus、verifier、时间和
+风险 slice 内，测量 false-answer / abstention trade-off，并在 evidence 不足时拒绝把 fluent continuation 升级为事实。
+
 ## 关于“理解”和“意识”的边界
 
 模型能够形成有用表示、根据上下文改变行为并解决新任务，这是可观察的工程事实。由此可以研究模型是否建立某种内部世界结构、是否使用因果特征、是否能规划和自我修正。
@@ -193,6 +242,9 @@ scalable architecture
 8. capability 和 reliability 应使用哪些不同证据？
 9. 为什么多步 Agent 任务会放大单步错误？
 10. 哪些问题可以由行为实验回答，哪些问题不能从 benchmark 直接推出？
+11. 为什么 token probability 不是 claim correctness probability？
+12. 模型的 `P(True)`、`P(IK)` 或 semantic entropy 能支持什么，又不能支持什么？
+13. 为什么“是否允许回答”最终是系统 evidence-and-decision contract？
 
 ## 小结
 
@@ -212,3 +264,11 @@ scalable architecture
 - Long Ouyang et al., "Training language models to follow instructions with human feedback", 2022: https://arxiv.org/abs/2203.02155
 - Shunyu Yao et al., "ReAct: Synergizing Reasoning and Acting in Language Models", 2022: https://arxiv.org/abs/2210.03629
 - Shivam Garg et al., "What Can Transformers Learn In-Context? A Case Study of Simple Function Classes", 2022: https://arxiv.org/abs/2208.01066
+- Saurav Kadavath et al., "Language Models (Mostly) Know What They Know", 2022:
+  https://arxiv.org/abs/2207.05221
+- Lorenz Kuhn, Yarin Gal, Sebastian Farquhar, "Semantic Uncertainty", 2023:
+  https://arxiv.org/abs/2302.09664
+- Stephanie Lin, Jacob Hilton, Owain Evans, "TruthfulQA", 2021:
+  https://arxiv.org/abs/2109.07958
+- Stephanie Lin, Jacob Hilton, Owain Evans, "Teaching Models to Express Their Uncertainty in Words", 2022:
+  https://arxiv.org/abs/2205.14334

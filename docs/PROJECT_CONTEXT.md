@@ -1,9 +1,8 @@
-# Project Context
+# 项目背景
 
-## Why This Project Exists
+## 为什么建立这个项目
 
-The project began because the learner was encountering a growing number of
-AI technologies:
+这个项目始于学习者接触到越来越多的 AI 技术：
 
 - Transformer
 - LoRA
@@ -17,42 +16,41 @@ AI technologies:
 - Agent
 - DSPy
 
-The problem was not lack of information.
+问题并不是信息不足。
 
-The problem was fragmentation.
+问题在于信息碎片化。
 
-Learning individual frameworks created more knowledge but did not create
-a stable mental model.
+逐个学习框架会增加知识，却无法建立稳定的心智模型。
 
-Therefore this project follows one principle:
+因此，本项目遵循一条原则：
 
-> First build the tree. Then grow the leaves.
+> 先建立树，再长出叶子。
 
-The project is designed as a long-term AI System knowledge tree.
+本项目被设计成一棵可长期生长的 AI System 知识树。
 
-Every new framework, paper, algorithm, and engineering technique should
-have a clear position in this tree.
+每个新框架、论文、算法和工程技术，都应在这棵树中拥有清晰的位置。
 
-## Reader Background
+## 读者背景
 
-The primary learner has extensive software engineering and distributed
-systems experience.
+主要学习者拥有丰富的软件工程与分布式系统经验。
 
-Career history includes:
+职业经历包括：
 
-- E-commerce systems
-- Flink/Kafka stream computing platforms
-- Kubernetes infrastructure
-- AI model lifecycle platforms
+- 电商系统
+- Flink/Kafka 流计算平台
+- Kubernetes 基础设施
+- AI 模型生命周期平台
 
-Current work focuses on:
+当前工作聚焦于：
 
+```text
 Training
 → Deployment
 → Serving
 → Platform Governance
+```
 
-Current technologies include:
+当前涉及的技术包括：
 
 - Kubernetes
 - Kubeflow
@@ -66,28 +64,29 @@ Current technologies include:
 - Higress
 - Observability
 
-The intended career direction is:
+期望的职业发展方向是：
 
+```text
 AI Infrastructure
 → LLM Runtime
 → AI System Architecture
 → Agent Platform
+```
 
-## The Core Question
+## 核心问题
 
-The project does not primarily ask:
+本项目首先追问的不是：
 
-> How do I use this framework?
+> 我该如何使用这个框架？
 
-It asks:
+而是：
 
-> Why did the system converge to this design?
+> 系统为什么会收敛到这种设计？
 
-And:
+以及：
 
-> If the constraints changed, would this still be the best design?
+> 如果约束发生变化，它仍然会是最佳设计吗？
 
-## Long-Term Goal
+## 长期目标
 
-The goal is to develop the ability to design AI systems,
-not merely operate AI tools.
+目标是培养设计 AI 系统的能力，而不仅仅是操作 AI 工具。

@@ -110,6 +110,25 @@ taxonomy 与 lexical proxy 都构成 selection/measurement boundary；日志去�
 
 指标必须带单位、类型和 workload conditions。`tokens/s` 未说明 input/output mix、模型、硬件与 SLO 时没有可比性。
 
+这里的 `Errors` 必须声明语义。`transport_error_rate` 可以由状态码、timeout、OOM 和 dependency failure 直接聚合；`contract_failure_rate` 可以来自 schema validator 或 tool protocol；但 hallucination、instruction failure 与 business outcome 通常需要第 66 章定义的 scorer、抽样和延迟标签。一个请求可以同时是 `runtime_success = true` 和 `quality_success = false`。
+
+Monitoring 可以把已经校准的 evaluation results 聚合为时间序列，用于观察 slice drift、burn rate 和触发调查；它不能从 `HTTP 200`、低 latency 或 token 正常结束自动推导内容正确。否则 dashboard 会把“系统稳定地产生错误答案”显示成健康。
+
+### 从 Error Counter 到 Layer × Detectability Failure Coordinate
+
+按 transport status、timeout、OOM 和 dependency error 统计失败，在请求语义与 transport outcome 高度一致时最直接；但多 provider gateway、流式协议、tool call 和 session failover 把“成功返回”与“状态连续”拆开了。一个请求可能得到 `2xx`、完整结束 SSE stream，却已经发生 tool index collision、跨 provider state 丢失或 retry storm。此时继续把 Errors 定义成单个 counter，会让系统只看见容易检测的症状，看不见 silent contract failure。
+
+更可维护的做法不是不断追加 error code，而是给每个 failure evidence 同时记录两个坐标：
+
+```text
+origin layer: client / gateway / provider adapter / model runtime / dependency / session state
+detectability: explicit signal / invariant violation / cross-signal correlation / silent semantic failure
+```
+
+一次 incident 随后沿同一 evidence object 连接 `symptom → suspected root cause → detection signal → reproduction → recovery`。origin layer 决定谁拥有修复，detectability 决定需要 metrics、trace、schema validator、fault injection 还是第 66 章的 quality evaluator。这样 `runtime_success = true` 与 `contract_success = false` 可以同时成立，也不会把质量失败伪装成 transport error。
+
+这条路线的代价是 failure schema、跨层 correlation 和复现 harness 都需要版本化维护；taxonomy 也永远可能漏掉未知组合。因此它不能替代 SLO、trace sampling、canary 与 incident investigation。系统规模小、协议单一时，RED 指标仍是合理起点；只有 silent failure 已影响恢复责任或 error budget 时，才值得承担二维分类与复现成本。
+
 ## 平均值为什么危险
 
 对于延迟分布：
@@ -223,6 +242,7 @@ zero-trust aggregation 与 Evaluation 是 `Layering / Dependency`，任何一层
 5. Goodput 约束了 throughput 的什么缺陷？
 6. Missing metric 与 zero value 为什么要区分？
 7. 入口 redaction、zero-trust aggregation 与 Evaluation 为什么不能互相替代？
+8. 为什么 `runtime_success = true` 与 `quality_success = false` 可以同时成立？
 
 ## 小结
 
@@ -230,7 +250,7 @@ Monitoring 用受控成本提供系统健康的统计视图。它适合发现趋
 
 ## Review notes
 
-本章复用 Part V 已冻结的 TTFT、TPOT、SLO attainment 与 goodput，不重新定义推理机制；第 68 章拥有事件，第 69 章拥有因果链。
+本章复用 Part V 已冻结的 TTFT、TPOT、SLO attainment 与 goodput，不重新定义推理机制；自检答案回填明确了 transport、contract 与 semantic errors 的不同证据来源。第 68 章拥有事件，第 69 章拥有因果链，第 66 章继续拥有质量口径和发布判断。
 
 Primary-source 与官方入口：
 
@@ -246,3 +266,4 @@ Primary-source 与官方入口：
   https://research.google/blog/private-analytics-via-zero-trust-aggregation/
 - Agentic Search in the Wild（session trajectory 与 evidence-traceability proxy；作者观测边界）:
   https://arxiv.org/abs/2601.17617
+- FailureAtlas（arXiv:2607.17525v1；Status: Experimental）：Method/Taxonomy `#S3/#S4`，case studies `#S6`，limitations `#S8`，完整 catalog `#A1`。作者 catalog 与复现证明分类方法可执行，不证明 failure space 完备，也不提供生产发生率。Repository: https://github.com/Vishal-sys-code/failure-atlas；事件时 commit 未固定。

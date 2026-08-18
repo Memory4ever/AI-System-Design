@@ -189,6 +189,23 @@ Reserve 不是“浪费掉的显存”，而是为 shape variation、collective�
 
 Weight/KV quantization、GQA/MQA、压缩或稀疏 retention 直接减少 resident bytes，但需要质量与 kernel 验证。
 
+KV retention 还存在两个不同粒度。Token eviction 先决定保留哪些历史位置，简单且适配现有 accelerator；但每个
+被保留 token 的完整 K/V vector 仍需从 memory hierarchy 取回。当 vector traffic 成为新的带宽下限，系统可以继续
+选择 token 内的 elements：
+
+```text
+full KV
+→ token-level importance / eviction
+→ element-level selection inside retained vectors
+→ layout-aware fetch + bounded approximate attention
+```
+
+第二层选择与第一层不是免费相乘。它需要保存两级 importance state、校准允许的 accuracy loss，并把非连续访问、
+metadata、sorting 和 kernel/accelerator 支持纳入成本；否则省下的 bytes 会被 fragmented access 与 ranking overhead
+吃掉。可重配置 sorter 能复用两级排序 datapath，但会引入 silicon specialization，离线 per-task calibration 也不能
+自动转移到 production workload。Full KV 仍是 correctness baseline；没有专用 kernel、向量访问尚未主导或严格
+exactness 优先时，token-only retention 仍更合理。
+
 ### 提高利用率
 
 Paging、prefix sharing 和更精确 admission 减少预留与碎片，却不改变每个有效 KV element 的逻辑需求。
@@ -218,7 +235,53 @@ Experimental evidence，不能当作稳定框架行为。模型较小、expert �
 cooling 必须按 training、prefill、decode 和 Agent workflow 的不同状态流共同设计。但厂商 platform
 announcement 只能证明版本化产品事实和设计方向，不能把未披露的 workload benchmark 写成通用结论。
 
+### Weights 与 KV 的联合 HBM 预算：可提交的运行时精度页
+
+静态量化在 workload、expert hotness 与 KV demand 稳定时最容易复现：model artifact 只有一个精度身份。MoE 与长上下文同时出现后，冷 expert weights 与活跃请求 KV 会竞争同一 HBM；把 weight footprint 永久固定在最坏情况，会拒绝本可服务的请求。
+
+一种受控演进是把每个 expert linear block 的 bit-plane 当作 page，并区分 desired precision 与 committed precision。planner 可以依据离线 sensitivity、在线 routing 和 KV pressure 提议目标精度，但 memory manager 只有在状态转换完成后才能提交：降精度先降低 committed bitwidth 再释放多余页；升精度先加载页，再提高 committed bitwidth。kernel 始终只读取 committed state，避免把未完成搬运当作可执行 artifact。
+
+权重因此从静态 artifact 扩展为受策略控制的 runtime state，也新增 calibration drift、prompt-conditioned policy、CPU-GPU traffic、mixed kernel 和失败恢复问题。quality policy、tenant 与 request identity 必须进入 trace；严格可复现、精度预算固定或 transfer cost 高时，静态 weights 仍更安全。当前证据限于三种 MoE、作者 workload 与无生产 arrival/tail-SLO 的实验。
+
 ## 硬件升级不是最终答案
+
+### 从单设备 HBM 到异构近数据与池化状态
+
+当瓶颈来自稀疏 attention 的 KV/index 访问或大量 LoRA adapter，而不是主模型 dense GEMM，把所有状态继续塞进 GPU HBM 会让容量和带宽一起竞争。异构分支可以把可分离的检索/索引工作下沉到 processing-near-memory，或把低复用 adapter 放入 CXL pooled memory 并在 near-data side 完成部分计算：
+
+```text
+GPU-owned dense state
+→ classify latency-critical vs capacity-dominant state
+→ place sparse/index/adapter state near pooled memory
+→ microbatch, rebalance and overlap transfer
+→ account end-to-end latency, energy and failure
+```
+
+它用新设备、NUMA/互联、模拟器校准和一致性协议换取 HBM 容量；收益只在目标访问稀疏、传输可隐藏且池端算子足够稳定时成立。普通 GPU、host offload 或 replication 在规模较小、链路拥塞、故障恢复要求高或硬件生态不成熟时仍更可靠。平台必须把 pooled-state owner、版本、location 与可见性写入同一 artifact/runtime contract。
+
+#### Persistent Near-memory：容量层不再只是 Offload 终点
+
+传统 host/NVMe offload 把容量层视为等待搬回 HBM 的冷存储，这在硬件通用、写入频繁或低并发时很合理；但当
+模型权重和长生命周期 KV 的容量开始限制可接纳 batch，单纯扩大 offload 容量并不能消除传输边界。一个更激进、
+仍处于实验阶段的分支，是让高带宽 persistent medium 靠近 accelerator，并用局部 SRAM、plane-level layout 与
+prefetch 把它变成执行数据源，而不只是离线仓库：
+
+```text
+HBM-only residency
+→ conventional host / storage offload
+→ persistent near-memory pages + local execution cache
+→ layout-aware parallel reads and prefetch
+→ SLO-bounded capacity expansion
+```
+
+这里必须分开两种 owner：persistent tier 拥有 versioned weight/KV page 与 logical-to-physical mapping，HBM/SRAM
+只是 execution cache。Mapping 或 placement 更新在 commit 前必须保留可读的旧地址；kernel 只消费当前 mapping，
+不能反向拥有持久化语义。平台还要把 page layout、prefetch revision、endurance、write amplification、fault recovery、
+request isolation 与 fallback bandwidth 写进同一合同。
+
+收益是更大的可执行容量，代价则是新封装/控制器、异构恢复与技术假设。模拟器可以证明设计在假设参数下有可能，
+不能证明尚未制造硬件的 yield、耐久性、可靠性或 production tail。Hot mutable state、严格 latency、写密集 workload
+或缺少专用硬件时，HBM 与传统 offload 仍是更稳健的分支。
 
 新的 GPU generation、低精度格式、高速互联和 memory hierarchy 会显著改变可行边界：更高算力、更大 HBM、更快互联、更低精度 tensor core，都会推动系统设计变化。具体型号与规格变化很快，不应成为本章的稳定主线。
 
@@ -238,6 +301,10 @@ announcement 只能证明版本化产品事实和设计方向，不能把未披�
 - 稀疏化减少访问量，但需要选择策略和精度验证。
 
 没有一种策略永远最好。系统设计必须根据 workload、模型结构、硬件拓扑和服务目标选择组合。
+
+显存优化首先要建立 workload-aware memory breakdown：从总容量扣除 weights、runtime reserve、workspace 与
+communication buffers，得到真正可供动态 state 使用的 usable HBM，再比较 KV、batch 和 offload policy。标称容量
+或单个优化名称不能直接推出可接纳并发；具体硬件只用于校验这条推导，不能成为长期假设。
 
 ## 本章在知识树中的位置
 
@@ -273,7 +340,14 @@ Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定�
 
 ## Review notes
 
-本轮 Review 增加了权重和 KV Cache 的容量下界，以及 scheduler 实际面对的 usable HBM 约束。随后通过一个明确标注日期与缺失条件的 MI455X capacity case 验证“先扣固定成本，再比较动态容量”的推导；该型号不是章节长期假设，也不承担通用性能结论。显存优化首先要有 workload-aware memory breakdown，不能只依据标称容量或单个优化名称。
+- HiKV（arXiv:2607.22389v1；Status: Experimental）：https://arxiv.org/html/2607.22389v1
+  - 证据边界：支持四个披露模型/任务、`<=1%` paper calibration 与 modeled TSMC 16nm accelerator 下的 token×element hierarchical selection；不证明 commercial GPU、生产并发/SLO 或 exact-attention 下的等效收益。
+
+- KARAT（retrieval-sparse attention 的 PNM placement；Status: Experimental）: https://arxiv.org/abs/2608.03555
+- PLoRA（CXL pooled memory + near-data multi-LoRA serving；Status: Experimental）: https://arxiv.org/abs/2608.05483
+
+- Evidence boundary：MI455X capacity case 只验证“先扣固定成本，再比较动态容量”的推导；它不是本章的
+  长期硬件假设，也不承担通用性能结论。
 
 Primary-source 校验入口：
 
@@ -289,3 +363,8 @@ Primary-source 校验入口：
   https://github.com/vllm-project/vllm/pull/37190
 
 后续定稿时，任何具体 GPU 性能倍数、显存容量、模型规模和成本数字都必须重新查官方规格或论文来源。
+
+- FlashAccel（persistent near-memory HBF co-design；Status: Experimental；端到端结果来自模拟器而非 fabricated hardware）：
+  https://arxiv.org/abs/2607.10186v1
+- PagedWeight（bit-plane weight pages、desired/committed precision 与 KV pressure；Status: Experimental）:
+  https://arxiv.org/abs/2607.16184v1

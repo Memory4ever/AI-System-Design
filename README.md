@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/logo.png" width="96" alt="AI System icon" />
+  <img src="./assets/logo.png" width="96" alt="AI System 图标" />
 </p>
 
 <h1 align="center">AI System：从第一性原理到 AI 基建</h1>
@@ -14,7 +14,7 @@
 
 这不是一组 AI 框架笔记，也不是 API 使用手册。
 
-这个项目要建立一棵稳定的 **AI System Knowledge Tree**，帮助你回答：
+这个项目要建立一棵稳定的 **AI System 知识树**，帮助你回答：
 
 > 一个技术为什么出现？它解决了什么系统问题？做出了什么 trade-off？如果约束变化，它还成立吗？
 
@@ -22,7 +22,7 @@
 
 ## 项目亮点
 
-- **问题优先**：先问 Why，再讲 What，最后讲 How。
+- **问题优先**：先问为什么（Why），再讲是什么（What），最后讲怎么做（How）。
 - **第一性原理**：从原始约束推导设计，而不是直接背标准答案。
 - **系统视角**：把 Tokenizer、Attention、KV Cache、vLLM、KServe、GPU Scheduler、Agent 放回同一棵树。
 - **工程取舍**：持续关注 GPU、memory、latency、throughput、cost、observability 和 governance。
@@ -42,7 +42,7 @@
 | VI | AI Infrastructure | 如何从工具走向平台 |
 | VII | Agent | 如何从回答问题走向执行任务 |
 
-Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action → Training → Inference → Infrastructure → Agent 展开。章节号表达当前阅读顺序，Stable Knowledge Node ID 表达不会随重编号变化的长期 owner。
+Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action → Training → Inference → Infrastructure → Agent 展开。章节号表达当前阅读顺序，稳定知识节点 ID（Stable Knowledge Node ID）表达不会随重编号变化的长期 owner。
 
 同一套章节还可以沿五条系统原语横向阅读：
 
@@ -56,12 +56,33 @@ Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action 
 
 纵向 Part 决定一个问题的主要 owner，横向主线连接跨 Part 的共同约束。Memory 主要问 bytes 放在哪里和怎样移动，State 主要问 identity、ownership、validity 与 recovery。完整章节路径以 [ROADMAP.md](./ROADMAP.md) 为准。
 
+## 研究到书稿的证据链
+
+研究系统不把来源数量或总分当作长期知识。统一流程是：
+
+```text
+Coverage Receipt
+→ Source Family 候选分母
+→ 可定位的 Source Review Receipt
+→ Daily / Weekly
+→ Deep Analysis 选择与 Books Comparison
+→ fresh-context Semantic Audit
+```
+
+- [研究合同](./docs/RESEARCH_CONTRACT.md)：定义 Source Family、三维 Score V2、来源归因、Review / Access 状态与 Books eligibility。
+- [来源注册表](./docs/RESEARCH_SOURCES.md)：维护唯一 Source ID、官方入口、权威范围与扫描节奏。
+- [Report 合同](./docs/REPORT_CONTRACTS.md)：定义 Daily、Sunday Weekly 与 Historical Weekly 的时间责任、V2.1 可审计账本及 Gate 真值表。
+- [Daily Adapter](./CODEX_DAILY_RESEARCH_PROMPT.md) 与 [Historical Adapter](./CODEX_HISTORICAL_RESEARCH_PROMPT.md)：只保留各自的运行差异。
+
+旧六维 `/30` Weekly 作为 Score V1 Legacy 保留；新增来源只对已完成周执行 Source Delta Audit，不会机械重跑全部历史归档。
+
 ## 当前状态
 
-- Roadmap：已扩展为 7 Part / 84 章，并建立 Stable Knowledge Node ID，见 [ROADMAP.md](./ROADMAP.md)
-- Book：章节内容统一放在 [books/](./books/)
-- Current Draft：[第1章 为什么学习 AI System](./books/part-01-worldview/01-why-learn-ai-system.md)
-- Writing Rule：模板是 thinking checklist，不是最终目录结构，见 [docs/WRITING_GUIDE.md](./docs/WRITING_GUIDE.md)
+- 路线图：已扩展为 7 Part / 84 章，并建立稳定知识节点 ID，见 [ROADMAP.md](./ROADMAP.md)
+- 书稿：章节内容统一放在 [books/](./books/)
+- 当前草稿：[第1章 为什么学习 AI System](./books/part-01-worldview/01-why-learn-ai-system.md)
+- 写作规则：模板是思考检查清单，不是最终目录结构，见 [docs/WRITING_GUIDE.md](./docs/WRITING_GUIDE.md)
+- 研究结构与一致性校验：`python3 scripts/validate_research.py`。该结果是语义审阅的必要条件，不等于研究结论已经验收。
 
 ## 推荐阅读方式
 
@@ -69,6 +90,8 @@ Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action 
 2. 再读 [第1章 为什么学习 AI System](./books/part-01-worldview/01-why-learn-ai-system.md)，理解项目的问题意识。
 3. 首次阅读按七大部分推进：世界观 → 模型 → 多模态/世界模型 → 训练系统 → 推理系统 → AI 平台 → Agent。
 4. 建立主干后，再沿 Compute、Memory、Communication、Scheduling 或 State 做主题阅读。
+5. 需要把设计判断变成可验证实践时，进入 [AI-System Labs](./labs/README.md)，按纵向路线从可复现实验推进到
+   端到端 AI 生命周期（End-to-End AI Lifecycle）。
 
 ## 仓库结构
 
@@ -82,9 +105,15 @@ books/                 # 正式书稿内容
   part-06-ai-infrastructure/
   part-07-agent/
 
-docs/                  # 项目上下文、写作原则、学习状态、决策记录
+labs/                  # 与书稿稳定节点双向映射的纵向实践路线
+
+papers/                # Daily、Weekly 与 primary-source 证据归档
+
+docs/                  # 项目上下文、研究合同、写作原则、学习状态与决策记录
+scripts/               # V2.1 contract / V2 score Report 的无依赖校验器
+tests/                 # 研究合同回归测试
 assets/                # README 和文档使用的图标、图片资源
-ROADMAP.md             # AI System knowledge tree single source of truth
+ROADMAP.md             # AI System 知识树的唯一事实来源
 ```
 
 ## 一句话

@@ -270,6 +270,40 @@ throughput 也不能替代真实 restore、reshard 和故障注入测试。
 
 重要 milestone、训练结束和 preemption signal 可以触发额外保存，但 signal handler 不能假设在任意算子中间都能形成一致 checkpoint。
 
+### 从持久 Checkpoint-Restart 到在线 Topology Repair
+
+持久 checkpoint 的首要价值是跨作业、跨集群和灾难故障后的可恢复性。它把恢复点放在独立 storage 中，
+故障域清楚、保留周期长，因而在故障较少、没有 spare capacity，或必须抵御整个节点组丢失时仍是默认分支。
+代价是保存间隔内的 replay、作业重启、排队以及从 storage 恢复完整状态。
+
+当大规模训练中的 fail-stop 节点故障变得频繁，而网络与 host memory 仍有可覆盖余量时，可以增加一条更短的
+在线恢复路径。关键不是把同一份 checkpoint 更频繁地写盘，而是持续维护一个 **已提交的内存恢复世代**：
+
+```text
+completed optimizer step k
+→ asynchronously copy full local rank state to ping-pong host buffers
+→ replicate only non-reconstructible optimizer shards to another failure domain
+→ commit generation k only after local and peer state are complete
+→ on permanent node loss, quiesce at a step boundary
+→ attach a spare, rebuild groups by logical shard identity
+→ reconstruct parameters from healthy peers and optimizer state from replicas
+→ resume from the last committed generation
+```
+
+这条路径把“恢复整个作业”缩小成“修复 topology 与缺失 shard”，但不会删除 checkpoint 语义。它必须额外维护
+recovery generation、parallel-layout identity、local staging/committed buffer、replica failure-domain placement、
+failure classification、spare admission、group epoch 与 logical shard mapping。
+
+若当前 step 的复制未完成，系统必须回到上一 committed generation，不能把半写 buffer 当作新状态。若 owner 与
+所有 replicas 同时丢失、错误属于 silent corruption，或 control plane 无法形成唯一新 topology，则应降级到持久
+checkpoint，而不是继续猜测。增加复制因子可降低丢失概率，却线性消耗 host/network 容量，并要求 replicas 跨 rack、
+power 或 switch failure domain 放置。
+
+DeadPool 的作者实验在 Perlmutter 与 Vista、最多 512 张 A100 或 64 张 GH200、GPT-style 模型与注入故障下支持
+“持续内存保护 + 在线节点替换”这一机制在其合同中可行；具体恢复时间与正常路径开销只属于这些平台、模型布局和
+headroom 条件，不作为本章通用性能结论。它没有覆盖 silent corruption、软件语义错误、没有 spare 的集群或所有 replicas 同域失败。因此
+在线 repair 是持久 checkpoint 之上的 `Layering / Dependency`，不能替代跨故障域的 durable recovery point。
+
 ## Load 成功不等于 Restore 正确
 
 恢复验证至少包括：
@@ -391,6 +425,25 @@ PPO/GRPO 系统可能同时管理 actor、critic、reference、Reward Model 和 
 
 只恢复 actor 而沿用旧 rollout buffer，可能破坏 importance ratio。RL pipeline checkpoint 是多对象一致性问题，不只是模型参数问题。
 
+### Agentic RL 把恢复事务扩展到环境状态
+
+传统训练 checkpoint 假设训练样本可以由 data cursor、random state 和模型状态重新产生。Agentic RL 改变了这个前提：rollout 会执行命令、修改文件、安装依赖并保持进程，训练样本因而同时依赖 LLM context 与 sandbox 的 file-system/runtime state。只恢复 actor、rollout worker 或 token log，可能得到一个语法上可继续、语义上却已经偏离原 trajectory prefix 的样本。
+
+因此恢复点必须跨三个状态域形成同一提交边界：
+
+```text
+logged LLM context L_k
++ sandbox file-system state F_k
++ sandbox runtime state R_k
+→ prefix-consistent recovery point P_k
+```
+
+旧方案仍有成立条件。若环境是无状态 simulator、所有 action 都幂等，或完整 trajectory 可以廉价重跑，那么 step-level model checkpoint 加整条 rollout 重试最简单。约束变化出现在长轨迹、昂贵工具调用与持久副作用：重跑浪费显著，模糊重试还可能把 infrastructure failure 当作任务 observation，污染 reward 和训练分布。
+
+更细的恢复协议应只复用拥有独立 owner、且通过健康检查的稳定 backing state，例如只读 weights 或原始 KV arena；worker-local process、scheduler metadata 和 request-specific KV contents 必须重建。环境 checkpoint 则应在已完成 action 的 quiescent boundary 同时捕获文件系统与运行态，并原子关联对应 context。利用下一轮 LLM generation 的等待窗口隐藏 checkpoint 可以降低可见开销，但需要风险模型判断保存成本是否会越过该窗口。
+
+这条路线以 shadow capacity、checkpoint IO、恢复元数据和更复杂的 commit protocol 换取较小 rollback。它不覆盖 silent corruption、可写远端服务、host-mounted 外部副作用或丢失的持久化输入；这些状态不在同一事务中时，系统不能声称恢复了原轨迹。第 81 章继续拥有 durable workflow 与外部副作用补偿，本章只拥有“训练样本与训练状态能否从同一逻辑前缀恢复”的 checkpoint contract。
+
 ## 安全与 Provenance
 
 Checkpoint 可能包含可执行 object serialization、custom classes 或外部 code dependencies。生产系统不应从不可信来源任意反序列化对象；优先使用受约束 tensor/state formats、allowlist 与 isolated conversion。
@@ -458,3 +511,7 @@ Primary-source / official documentation 校验入口：
 - Diffusers Nunchaku Lite integration: https://github.com/huggingface/diffusers/pull/14100
 - DataStates-LLM（composable state providers 与 heterogeneous streaming；作者实验边界）:
   https://arxiv.org/abs/2601.16956
+- Belayer（Agentic RL 的 rollout/environment prefix-consistent recovery；Status: Experimental）:
+  https://arxiv.org/abs/2608.14635v1
+- DeadPool（持续内存恢复世代与在线 topology repair；Status: Experimental）:
+  https://arxiv.org/abs/2607.01646

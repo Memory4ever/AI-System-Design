@@ -206,6 +206,30 @@ task / future-query distribution
 
 保护 temporal anchors 不是要求所有摘要永久复制每个时间表达式。时间不参与决策、原文可低成本回读时，普通 gist 仍更省；只有 temporal query、expiry、ordering 或 event-time repair 属于 correctness contract 时，timestamp 才应成为 typed protected field。反过来，一句更明确的 compression prompt 能修复某个 benchmark slice，也不证明它迁移到其他 summarizer、语言或长期 Memory pipeline。系统仍需按 information type 做 preservation test，并保留 raw-evidence fallback。
 
+同一 Context 中的知识也不是同质对象。Safety rule、authorization、schema 与 exception 可能要求 exact retention；
+episodic log 可以有损摘要；大型 topic 可能需要分区；低频 evidence 可以移到外部存储。统一 compactor 对所有行
+使用同一压缩率，在短 session 与低风险对话中便宜合理，但递归执行后会让少量必须逐字保真的 control state 与
+大量可压缩历史一起衰减。更稳健的演进是先给知识分型，再把 retention operator 与类型绑定：
+
+```text
+typed knowledge registry
+→ compact: 在类型允许的损失函数内就地改写
+→ decompose: 主题过大时分区，并复制每个分区必须携带的规则
+→ retrieve: 原文外置，查询时先 pin in-scope control state，再按相关性取 evidence
+→ raw source / registry remains authoritative
+```
+
+这里的分类器只提出类型和 scope，不能拥有规则真值或授权。Registry 应保存原文 digest、knowledge type、
+applicability、expiry、source、compactor / retriever version 与恢复引用；任何安全关键规则被降级、跨分区遗漏或
+retrieval 未命中，都应作为 correctness failure，而不是普通 relevance loss。类型化策略提高 rule retention，却
+引入 misclassification、规则复制膨胀、stale scope、重复冲突和额外存储。事实类型无法可靠判断、原文很短或
+审计要求完整 replay 时，保留未压缩 Context 仍更合适。
+
+一项 2026 年研究在多个公开语料与作者构造的 Agent 配置上观察到递归统一压缩会快速损失 safety rule，并以
+type-specific compact / decompose / retrieve 改善 retention。该证据说明“不同 correctness contract 需要不同
+retention policy”，不证明论文报告的具体 recall 能跨模型、语言与企业 policy 复现；因此正文吸收机制，不把
+其数字当作生产 SLO。
+
 Compression 之外还有一种“保留全文、只改变注意入口”的分支：Actor 在实例级选择 spans 并插入轻量 boundary
 tags，Solver 仍读取完整 source。它以额外 selector pass 和 tagged-view identity 换取较低的 irreversible deletion：
 

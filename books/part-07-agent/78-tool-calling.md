@@ -71,6 +71,14 @@ raw model output
 
 Schema 可以拒绝缺字段、错误类型或非法 enum；semantic validation 还要检查金额、目标资源、环境、时间窗口和当前状态。Authorization 必须使用真实 principal，不接受模型生成的 `tenant_id` 或 scope。
 
+### 编译器反馈可以前移，但仍是受限 Authority
+
+先完整生成程序，再调用 compiler/test 并修复，是最通用的黑盒路径；当 grammar 可处理时，constrained decoding 也能提前排除语法错误。但后置诊断会浪费已经生成的 token，并把错误起点埋在长输出中；另一方面，任意 prefix 通常还不是可编译单元，不能直接交给编译器。
+
+折中控制流是把中间输出视为 provisional proposal：由 sealor 把 partial output 补成临时可编译单元，compiler 只拥有 syntax/type diagnostics，harness 根据诊断与预算决定 bounded rollback 或 rewrite，模型再继续生成。这样可把权威反馈前移，却不把 compiler 提升为任务正确性裁判，也不要求白盒访问模型内部状态。
+
+代价是频繁 compiler call、语言特定的 sealing 规则、rollback state 与重放成本；涉及 future definition 的长依赖还会让临时补全失真。后置 compile/repair 仍是跨语言、低频生成的合理基线，而 compile success 不能替代 functional、security 或 outcome verification。
+
 ## Tool Discovery 与选择
 
 ### Interface Granularity：不是 Tool 越多越有能力
@@ -142,6 +150,55 @@ natural-language guess
 这与 RAG 是 `Principle Reuse`：两者都把易变化事实移出模型参数。区别是 RAG 通常返回
 Context，而 Tool Calling 还拥有执行语义、权限、预算和可能的副作用。
 
+## 从语义正确的 Program 到可证明的 Resource Lowering
+
+Skill 或 Prompt 可以要求“流式读取”“分块处理”“不要一次加载全部文件”，但模型最终生成的 program 仍可能 eager-
+load 整个输入。它在小样本上语义正确，进入真实 XLSX、CSV、array 或 scientific artifact 后却超过单次 tool call 的
+memory cap。只在 cgroup OOM 时拒绝能保护节点，却无法把原本可分块的 computation 转成可运行实现；让模型继续
+重试，也不能证明新程序与 source computation 等价。
+
+这形成一条从 advisory optimization 到 checked lowering 的演进：
+
+```text
+Skill describes intended computation and resource obligation
+→ model proposes a concrete source program
+→ match one audited source relation
+→ independent checker rebuilds bounded target from immutable input facts
+→ calculate platform-calibrated live-set bound
+→ acquire atomic capacity lease
+→ execute in bounded runtime
+→ verify postcondition and resource events
+→ publish result or abstain without partial publication
+```
+
+关键 authority 分离是：模型拥有 proposal，relation registry 拥有已审计的语义映射，checker 拥有 target 重建和 bound
+验证，scheduler/capacity manager 拥有 lease，tool runtime 拥有执行，postcondition gate 才拥有 publication。不能接受
+模型自报的 `memory_required`，也不能让被检查的 program 自己提供等价性证明。
+
+这种 architecture 的 generality 不是“自动验证任意代码”。每个 computation family 仍需要一个 audited relation：
+
+```text
+source recognizer
++ semantic/input-fact extractor
++ bounded IR / target constructor
++ arena/live-set bound
++ output postcondition
+```
+
+Common runtime 只能复用 dispatch、capacity accounting、bounded execution 与 staged publication。SkillEffect 的作者实验
+在六个 deterministic、local、read-only operator families 和固定 cgroup cap 下，为这一 trust boundary 提供受限证据；
+Prompt/retry 不能稳定构造 bounded program，而 registered lowering 在其 closed grammar 中通过 verifier。论文的设备、
+输入规模和 peak-memory 倍率不作为通用 Tool 性能结论。
+
+代价是 relation-specific audit、checker TCB、platform manifest calibration、保守 reserve、版本/extension 维护和
+unsupported-program abstention。Runtime/allocator/page size 改变后必须重校准；postcondition 只覆盖声明的结果属性。
+当前 local staged output 也不能直接外推到 email、payment 或 mutable remote service：这些还需要 authorization、
+idempotency、transaction / compensation 与第 81 章 Workflow commit。
+
+因此这不是替代 generic Tool Calling 的默认路径。输入小、资源充足或 operation 不能建立 closed relation 时，普通 typed
+execution + cap/reject 仍更简单；只有 resource failure 频繁、关系可审计、结果可验证时，checked lowering 才值得承担
+额外控制面。
+
 ## Side-effect Class 决定控制
 
 可将工具粗分为：
@@ -180,6 +237,32 @@ Tool result 可能包含：
 - error message with internal details。
 
 执行器应做 output schema validation、redaction、size limit 和 provenance annotation，再将结果送入 Context。网页或 email 中的文字不能因为来自 tool 就升级为 platform instruction。
+
+### Tool Result 之后还需要独立的 Outcome Contract
+
+结构化返回只能证明 tool call 产生了一个可解析 observation，不能证明外部状态满足任务约束。让同一个
+Planner 在读到错误结果后自行判断和恢复最省组件，却容易把“看起来合理”的 failure text 当成成功，或在没有
+可执行恢复路径时继续生成解释。更强的边界是在 tool result 与下一次模型决策之间加入确定性的 outcome monitor：
+
+```text
+raw tool result + predeclared postconditions
+→ deterministic violation checks
+→ non-binding outcome receipt
+   {violations, evidence pointers, currently available recovery tools}
+→ Agent proposes recovery or abstention
+→ policy / executor retains action authority
+```
+
+Monitor 不应重写原始结果、替 Agent 选择动作或直接调用工具。它只拥有对公开 schema、任务合同或 nominal trace
+中可复算不变量的检查权；Agent 仍拥有 proposal，policy 与 executor 仍拥有 authorization 和 side effect。特别是
+`available recovery tools` 不是装饰性 metadata：只有把当前真正可调用的恢复 affordance 放回 observation，检测结果
+才可能转化为有效行动。反过来，检测到 violation 也不等于存在可恢复路径。
+
+这种 layering 用额外检查延迟、合同维护、false positive 和 observation tokens 换取更短的 failure-to-recovery
+路径。守恒约束、跨系统最终一致性或未公开业务语义无法从 nominal traces 自动恢复；incident-derived fault 也可能
+只提高检测率而不提高任务完成率。低风险、结果 schema 本身已经携带强 postcondition，或恢复动作必须人工批准时，
+简单 validation + escalation 仍更合理。Outcome monitor 的价值应同时用 violation recall、clean-run harm、recovery
+attempt correctness 与最终 task outcome 衡量，不能只报告“发现了多少错误”。
 
 ## Loop Boundaries
 
@@ -227,12 +310,17 @@ Trace 应把 model proposal、policy decision、approval、tool call 和 result 
 4. Timeout 后为什么不能盲目 retry？
 5. Tool result 为什么仍是不可信 Context？
 6. Agent loop 哪些边界必须由 runtime 强制？
+7. 为什么模型生成的 bounded program 不能自己证明语义等价和 memory bound？
+8. Checked lowering 的 relation、capacity lease 与 publication gate 分别由谁拥有？
 
 ## 小结
 
 Tool Calling 把语言能力连接到环境，也把概率错误变成现实副作用。可靠系统把模型输出当作 proposal，由可信执行器实施 typed、authorized、observable action。下一章进入多步 Planning。
 
 ## Review notes
+
+- Generative Compilation: On-the-Fly Compiler Feedback as AI Generates Code（sealing、bounded rollback 与 compiler authority；Status: Experimental）:
+  https://arxiv.org/abs/2607.13921v1
 
 - Terminal Agents（interface granularity；Status: Experimental）: https://arxiv.org/abs/2604.00073
 
@@ -247,3 +335,7 @@ Primary-source 入口：
   https://www.anthropic.com/research/agents-in-biology
 - OmniGAIA / OmniAtlas（native perception + on-demand perception tools；Status: Experimental）:
   https://arxiv.org/abs/2602.22897
+- SkillEffect（checked lowering + capacity lease；Status: Experimental）:
+  https://arxiv.org/abs/2608.17007
+- Outcome Monitors（deterministic post-tool receipts 与 recovery affordance；Status: Experimental）:
+  https://arxiv.org/abs/2608.19303

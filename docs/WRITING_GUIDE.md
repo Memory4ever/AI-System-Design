@@ -1,42 +1,34 @@
-# Chapter Writing Guide
+# 章节写作指南
 
-## Template Principle
+## 模板原则
 
-The chapter template is a thinking checklist, not a required final table of
-contents.
+章节模板是一份思考检查清单，而不是最终目录必须采用的固定形式。
 
-During Placeholder or early Draft stages, chapters may keep the full scaffold
-to avoid missing important reasoning.
+在 Placeholder 或早期 Draft 阶段，章节可以保留完整脚手架，以免遗漏重要推理。
 
-During later Draft, Review, or Final stages, restructure the visible headings
-so the chapter reads naturally for its topic. A chapter does not need to expose
-`Problem`, `Math`, `Engineering`, or `Research Outlook` as literal headings if
-that would feel forced.
+进入后期 Draft、Review 或 Final 阶段后，应根据主题重组可见标题，让章节自然流畅。若显得生硬，章节不必把 `Problem`、`Math`、`Engineering` 或 `Research Outlook` 原样用作标题。
 
-However, every major chapter should still cover the underlying questions:
-why the problem exists, how the design emerged, what alternatives failed, what
-mechanism is involved, what engineering constraints matter, what trade-offs
-exist, and where the topic sits in the AI System knowledge tree.
+不过，每个重要章节仍应回答这些底层问题：问题为何存在、设计如何出现、哪些替代方案失败了、涉及什么机制、哪些工程约束重要、存在哪些取舍，以及该主题位于 AI System 知识树的什么位置。
 
-Every major chapter should answer five levels of questions.
+每个重要章节都应回答五个层次的问题。
 
-## Level 1: Problem
+## 层次一：问题（Problem）
 
-What fundamental problem are we solving?
+我们要解决的根本问题是什么？
 
-## Level 2: Design Derivation
+## 层次二：设计推导（Design Derivation）
 
-If we did not know the modern solution, how might we invent it?
+如果我们还不知道现代方案，会如何自行发明它？
 
-Explore naive solutions and why they fail.
+探索朴素方案，以及它们为何失败。
 
-## Level 3: Mechanism
+## 层次三：机制（Mechanism）
 
-Explain the mathematical and algorithmic mechanism.
+解释其数学与算法机制。
 
-## Level 4: Engineering
+## 层次四：工程（Engineering）
 
-Explain how the idea interacts with:
+解释该思想如何与以下因素相互作用：
 
 - GPU
 - Memory
@@ -45,12 +37,13 @@ Explain how the idea interacts with:
 - Distributed systems
 - Production serving
 
-## Level 5: System Position
+## 层次五：系统位置（System Position）
 
-Explain how this concept connects to the entire AI System.
+解释这一概念如何与整个 AI System 连接。
 
-For example:
+例如：
 
+```text
 Tokenizer
 → Embedding
 → Attention
@@ -59,50 +52,30 @@ Tokenizer
 → vLLM
 → PD Disaggregation
 → LLM Runtime
+```
 
-## Writing a Technical Evolution Route
+## 如何书写技术演进路线
 
-When a chapter contains more than one generation of a design, do not organize
-the section as a list of release dates or as “old versus latest”. Use each
-transition as a reasoning unit:
+演进关系及其判断标准只由 [LEARNING_PHILOSOPHY.md](./LEARNING_PHILOSOPHY.md) 定义。本文件只规定如何把那条推理写成可顺读的章节：不要按发布日期罗列，而要让读者看到旧方案成立、约束变化、新机制接手以及新债务出现的连续过程。
 
-1. **Original problem and constraint**: what workload, hardware, scale, or SLO
-   made the earlier design reasonable?
-2. **Earlier mechanism and strength**: what did it solve well, and where is it
-   still sufficient?
-3. **Boundary exposed**: which pressure could it no longer absorb?
-4. **Constraint shift**: what changed enough to justify a different design?
-5. **New mechanism**: which state, data flow, algorithm, or control decision
-   changed?
-6. **Benefit and proof boundary**: what improved, under which verified
-   conditions?
-7. **New debt**: what cost, coupling, correctness requirement, observability
-   need, or failure mode was introduced?
-8. **Relationship**: is this direct evolution, layering/dependency, principle
-   reuse, or only an explanatory analogy?
-9. **Coexistence and next pressure**: when should the earlier design remain,
-   and what unresolved pressure may cause the next transition?
-
-A compact reusable form is:
+可以复用下面这个紧凑结构：
 
 ```text
 A
-  solved: ...
-  under: ...
-  but exposed: ...
+  解决了：...
+  成立条件：...
+  但暴露了：...
 
-constraint shift: ...
+约束变化：...
 
 B
-  changed: ...
-  gained: ...
-  introduced: ...
+  改变了：...
+  获得了：...
+  引入了：...
 
-relationship: replacement | coexistence | layering | principle reuse
-next pressure: ...
+证据边界：证明了...；没有证明...
+关系：直接演进 | 分层/依赖 | 原理复用 | 类比 | 替代分支
+下一重压力：...
 ```
 
-Do not delete an earlier mechanism merely because a newer paper or framework
-exists. Mark it obsolete only when primary evidence shows that its validity
-boundary has disappeared or its premise is wrong; otherwise preserve it as a
-conditional branch in the design space.
+不要仅仅因为出现了更新的论文或框架，就删除较早的机制。只有 primary evidence 表明其有效边界已经消失或前提本身错误时，才能将其标记为过时；否则，应把它作为设计空间中的条件分支保留下来。

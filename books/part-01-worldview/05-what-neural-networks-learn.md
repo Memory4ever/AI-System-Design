@@ -17,9 +17,29 @@
 
 最直观的想象，是把网络看成数据库：某个神经元识别边缘，某个神经元识别猫，某组参数存储一条事实。这个类比有少量启发性，因为网络内部确实可能出现对某些概念敏感的方向或单元，但作为总体解释会失败。
 
-第一，同一概念往往分布在许多参数和激活中；删除一个单元未必删除概念。第二，一个单元可能对多个看似无关的模式响应。第三，模型的知识不仅体现在静态参数，还体现在输入经过多层计算后形成的动态激活。第四，旋转或重新参数化表示空间后，模型功能可能近似不变，而单个坐标的含义会改变。
+先看一个神经元实际做了什么。对输入表示 `h`，第 `i` 个神经元通常只计算一个标量：
 
-因此，更稳健的问题不是“这条知识存在哪个参数”，而是：模型把输入映射到了怎样的表示空间，这些表示支持了什么后续计算，又在哪些分布上成立。
+```text
+a_i = sigma(w_i^T h + b_i)
+```
+
+其中 `w_i` 是该单元的输入权重，`b_i` 是 bias，`sigma` 是非线性函数。这个标量没有数据库里的 key、schema、唯一事实类型或稳定地址。它只有放回前后层连接和当前输入后，才获得计算意义。
+
+更直接的反例来自神经元置换。设一层为 `h = sigma(Wx + b)`，下一层读出 `z = Uh`。若用置换矩阵 `P` 重新排列隐藏单元，并同步改写：
+
+```text
+W' = P W
+b' = P b
+U' = U P^(-1)
+```
+
+因为 element-wise activation 与置换相容，新的网络得到 `h' = P h`，但最终仍有 `U'h' = Uh`。模型函数完全不变，所谓“第 137 个神经元存储某条知识”的地址却已经改变。更一般的表示基底变化也会产生类似问题：坐标是实现选择，不天然是语义身份。
+
+其次，模型通常通过分布式表示完成计算。同一概念可能依赖许多参数、activation directions 和跨层路径，因此删除一个单元未必删除对应行为；反过来，一个单元也可能参与多个特征，修改它会连带影响看似无关的输出。后文的 superposition 会解释网络为何可能让多个特征共享有限表示维度。
+
+最后，知识表现不只来自静态参数，还来自参数对当前输入执行出的动态状态。事实回忆、指代消解或上下文规则，往往需要 tokenization、embedding、Attention、MLP 与 output projection 共同完成。即使某个 activation 能预测概念标签，也只说明信息可被读出；只有受控干预进一步改变了下游行为，才能开始支持“模型实际使用了它”的因果主张。
+
+因此，更稳健的问题不是“这条知识存在哪个参数”，而是：模型把输入映射到了怎样的 feature direction、subspace 与 computation path，这些表示支持了什么后续计算，又在哪些输入分布上成立。单个可解释神经元可以是真实现象，但不足以把整个网络还原成逐条寻址的知识数据库。
 
 ## 表示是为后续计算服务的中间状态
 
@@ -151,6 +171,12 @@ Jacobian-adjusted lens 一类方法提供了一个具体例子：它不直接把
 实验链。其局部一阶近似、跨 context averaging、token-indexed representation 与模型范围
 仍限制外推，因此它是证据阶梯的实例，不是模型内部知识的最终字典。
 
+### 信息存在、可读与被使用是三个不同命题
+
+表示中的“可读”必须拆成三层：信息存在、独立 reader 能解码、模型行为实际使用该信息。让 verbalizer 与 reconstructor 共同训练并以 reconstruction 评分，可能形成只在二者之间有效的 private code；高 reconstruction 因而不能证明具体自然语言 claim grounded。
+
+更强的 contract 是用外部 ground-truth target 约束 decodability，并由与训练 reader 独立的 fresh probe 审计。它减少训练 reader 与表示共同作弊的循环性，却仍受 probe drift、目标遗漏和 correlation≠causation 限制；因果使用仍必须回到 intervention 与 downstream behavior。
+
 ### 解释模型也有自己的 Faithfulness Budget
 
 当研究者用 sparse features、transcoder 或 attribution graph 替代原模型的一部分计算时，
@@ -261,7 +287,10 @@ Generalization asks: where does that computation remain valid?
 
 ## Review notes
 
-本章不重复第 4 章的优化推导，也不把任何可解释性方法描述为已经读取了模型全部知识。后续 Review 应补充具体案例时保持“行为证据、可读出信息、因果机制”三层结论分离，并避免在 Part I 提前展开 Transformer block。
+- Train the Model, Not the Reader: Decodability Supervision for Verifiable Activation Explanations（arXiv:2607.20379v1；Status: Experimental）：https://arxiv.org/html/2607.20379v1
+  - 证据边界：支持披露设置中 reconstruction-only scoring 的失败与 RECAP/probe 结果；不证明 neuron-level causal use、完整 semantic legibility、adaptive training 下的安全性，或高 AUC probe 必然产生 faithful language explanation。
+
+本章不重复第 4 章的优化推导，也不把任何可解释性方法描述为已经读取了模型全部知识。自检答案回填用神经元计算与置换不变性说明单元编号为何不是稳定知识地址，并把分析对象收紧为 feature direction、subspace 与 computation path。后续 Review 应继续保持“行为证据、可读出信息、因果机制”三层结论分离，并避免在 Part I 提前展开 Transformer block。
 
 优先核验入口：
 

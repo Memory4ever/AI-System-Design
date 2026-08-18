@@ -35,6 +35,44 @@ long-running events
 
 请求完成不再等于任务完成。一个 Agent run 可能持续数分钟、数天，被暂停、等待用户、跨多个模型与工具后再恢复。
 
+## Serving 结束不等于 Agent 任务结束
+
+Model Serving 的一次成功通常以 token stream 正常结束、请求状态释放为边界：
+
+```text
+request
+→ Prefill / Decode
+→ token stream
+→ completion / cancellation
+→ release KV and request state
+```
+
+Agent Runtime 则把模型输出解释为候选 decision，再经过 policy、tool execution 和 environment observation 推进任务：
+
+```text
+goal
+→ assemble Context
+→ model proposes action
+→ validate schema / permission / budget
+→ execute or request approval
+→ observe environment
+→ commit task state
+→ continue, recover or terminate with evidence
+```
+
+这使 AI System 的权威状态从模型请求扩展到运行时编排。至少要分开四类对象：
+
+| 状态 | 生命周期 | 所有权与用途 |
+| --- | --- | --- |
+| KV Cache | 一次或一段模型生成 | Inference Runtime 用于避免重复计算，不是业务真值 |
+| Context | 当前 model call | Agent Runtime 组装的可见输入，可能被截断或重建 |
+| AgentRun / Workflow state | 整个任务 | 记录 step、approval、side effect、budget、retry 与 terminal evidence |
+| Memory | 跨 step 或跨 run 的派生信息 | 受 provenance、retention、权限和更新 policy 管理 |
+
+如果把 AgentRun 只保存成 transcript，工具是否真正执行、外部状态是否提交、重试是否重复产生副作用都无法可靠恢复。反过来，让 Serving Engine 持有业务 workflow authority，又会把毫秒级 token scheduler 与分钟到数天的任务状态机耦合在一起。
+
+因此，模型负责产生语义判断与 action proposal，Agent Runtime 负责状态转换和编排，Tool/Environment 拥有真实副作用，Policy plane 决定哪些转换被允许。只有 terminal evidence 满足任务 contract，才能把“请求成功”提升为“任务完成”。
+
 ## Agent Definition 与 Run Identity
 
 可部署 Agent definition 至少绑定：
@@ -491,6 +529,22 @@ Agent definition 更新可能改变 tool path 和长期 state，rollout 比模�
 
 ## Feedback 与演化
 
+### Skill 既有能力供应链，也有版本维护债务
+
+云端强模型可以把能力蒸馏成可在本地小模型执行的 skill，以减少原始数据上送和在线依赖；它交换的是能力差距、残余泄漏、schema 兼容和本地验证成本。Skill artifact 必须绑定 teacher/model、输入披露策略、适用任务、评测证据与撤销条件，不能把“数据没有原样上传”写成隐私保证。
+
+Repository 或 API 演进后，旧 skill 还可能在没有报错的情况下过期。维护流程应把 release diff 转为 bounded update task，同时检查删除失效指导与保留仍有效约束两类对立错误：
+
+```text
+source/version provenance + skill contract
+→ upstream release or policy change
+→ impact analysis and patch
+→ regression / over-edit check
+→ publish new generation, expire old generation
+```
+
+自动维护能降低规模成本，却不能替代 authoritative changelog、artifact diff 和 executable regression。低频、高风险或缺少测试 oracle 的 skill 仍应人工审阅或直接调用原始工具文档。
+
 平台闭环：
 
 ```text
@@ -553,6 +607,7 @@ AI System 的最终对象不是单个模型，而是可持续生产、交付、�
 7. In-flight run 与 emergency policy 的版本优先级如何设计？
 8. 哪类任务应优先使用确定 Workflow 而不是 Agent？
 9. Part I～VII 的主线如何闭合？
+10. 为什么 token request 完成不能直接证明 Agent task 已完成？
 
 ## 小结
 
@@ -562,6 +617,9 @@ Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加�
 
 ## Review notes
 
+- P2Skill（cloud-to-local skill distillation with bounded disclosure；Status: Experimental）: https://arxiv.org/abs/2608.14094
+- Repo2Skill-Evo（release-aware skill maintenance；Status: Experimental）: https://arxiv.org/abs/2608.21964
+
 - SkillGrad（diagnosis/patch/momentum analogy；Status: Experimental）: https://arxiv.org/abs/2605.27760
 - SkillAdaptor（fault-localized Skill patch；Status: Experimental）: https://arxiv.org/abs/2606.01311
 - Harness Updating Is Not Harness Benefit（updater/consumer benefit decomposition；Status: Experimental）:
@@ -569,7 +627,7 @@ Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加�
 
 - SkVM（target-profiled Skill compilation/runtime；Status: Experimental）: https://arxiv.org/abs/2604.03088
 
-本章收束全书，不把 Agent Platform 等同某个 framework。Part VI 的控制面与治理能力被复用，Part VII 只增加 action-loop 特有状态。时效性 agent identity、MCP 和 telemetry 结论均保留版本边界。
+本章收束全书，不把 Agent Platform 等同某个 framework。Part VI 的控制面与治理能力被复用，Part VII 只增加 action-loop 特有状态。自检答案回填进一步区分 Serving request/KV、单次 Context、长期 AgentRun 与派生 Memory，说明 token generation 完成为什么不能代替任务状态提交。时效性 agent identity、MCP 和 telemetry 结论均保留版本边界。
 
 Primary-source 与官方入口：
 

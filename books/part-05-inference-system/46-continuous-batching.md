@@ -85,6 +85,24 @@ new_KV_blocks <= free_or_reclaimable_blocks
 
 Scheduler 先从 running/waiting requests 中选择本轮 work，再由 model runner 将这些 tokens 打包执行。Token budget 太小，GPU 可能吃不饱；太大，单轮时间和 TPOT 抖动会增加。
 
+## 生成语义决定调度粒度：从 Token Iteration 到 Block Denoising
+
+Autoregressive Decode 的已提交状态每步只追加一个 token，因此 token iteration 是自然的 scheduling quantum。Diffusion LM 的状态不同：一个 block 会经历多轮 denoising，同一轮中的请求可能处于不同 refinement step，也可能在不同时间完成当前 block。若仍把整个 batch 当成同步 token step，较早收敛的 block 会等待 straggler，已完成的 capacity 也不能及时回收。
+
+对应的 Alternative Branch 是把一次可重调度 work unit 改成 block-denoise cycle：
+
+```text
+mutable blocks at heterogeneous denoising states
+→ pack one denoise cycle under token / memory bounds
+→ execute dense mixed-state layout
+→ commit completed blocks and reclaim their slots
+→ admit or advance the next blocks
+```
+
+这里 scheduler 拥有 block lifecycle 与 packing，generation algorithm 仍拥有 denoising semantics 和 completion rule。Block identity 至少要绑定 request、block position、denoise step、model revision 与 committed/mutable generation；只有完成规则成立后才能把 block 从 mutable state 变成输出，并释放对应 slot。
+
+更小的 block 提高回收粒度，却增加 scheduling、metadata 和 denoising overhead；更大的 block 更容易形成高效 kernel，却会放大 straggler 和并行近似的质量风险。Mixed-state layout 还要求 kernel 能解释每个 block 的 step state。现有受限案例只覆盖单张 H200、BF16、离线 batch 和给定 diffusion models，没有证明 online arrival、fairness、tail SLO 或 multi-GPU。因而 AR 模型继续使用 token iteration；diffusion 分支只有在 block completion 和 mutable-state packing 的收益超过复杂度时成立。生成范式归第 24 章，本章只拥有 serving scheduling quantum。
+
 ## 一个 Iteration 小例子
 
 假设本轮 token budget 为 8：
@@ -246,5 +264,7 @@ Primary-source 校验入口：
   https://github.com/GeeeekExplorer/nano-vllm/blob/main/nanovllm/engine/block_manager.py
 - LLM-42（selective deterministic decode/verify/rollback；作者系统实验边界）:
   https://arxiv.org/abs/2601.17768
+- BlockServe（block-grained diffusion-LM batching；Status: Experimental；单 H200 离线证据）:
+  https://arxiv.org/abs/2607.08930v1
 
 Orca 论文中的 iteration-level scheduling / selective batching 是机制来源；vLLM、TensorRT-LLM、SGLang 的具体 state machine 与 batch construction 属于各自版本实现。本章只保留机制不变量，不用某个引擎的参数或类名定义 Continuous Batching。

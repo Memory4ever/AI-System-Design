@@ -3,7 +3,13 @@
 > Coverage Window: 2026-05-18～2026-05-24
 > Research Mode: Retrospective Backfill
 > Accessed / Backfilled: 2026-07-31；Discovery Reopened: 2026-08-09
-> Re-audit Status: 2026-08-14 Source-Family Books Gate Complete; 31/31 final dispositions; 22 Refine, 6 No Change, 3 Weekly Only; 17 Stable Node owners changed or revalidated; Historical Archive/Discovery Gate Open
+> Delta Audit Queue: Pending — this legacy report has not yet begun a strict V2.1 delta packet
+> Superseded Baseline (2026-08-14): Source-Family Books Gate Complete for the prior 31-family denominator; 22 Refine, 6 No Change, 3 Weekly Only; 17 Stable Node owners changed or revalidated; Historical Archive/Discovery Gate Open
+
+> **V2.1 delta audit queued — 2026-08-25:** `SF-2026-KVBOOST`
+> (`arXiv:2608.21362v1`, first-public 2026-05-21) was first stabilized by the 2026-08-25 Daily but is absent
+> from this owner Weekly. The prior Gate statement remains the result for its old denominator only; W21 is
+> queued for a strict V2.1 delta audit. The legacy Gate is only a historical result for the old denominator and is not a current completeness claim for the enlarged candidate set.
 
 ## Executive Summary
 
@@ -180,7 +186,7 @@ guide 与 Transformers v5.9.0 只强化已有 trajectory/version-contract 观点
 | Earlier-week spillbacks | 6 | 按 arXiv v1 date 回拨 W20，不在 W21 重复计分 |
 | Academic discovery window | Open | HF first pass complete；Scholar/OpenAlex/DBLP/formal cross-check pending |
 | Official / Infra discovery window | Fixed-source checkpoint passed | OpenAI / NVIDIA / Transformers in-window official surfaces replayed；cross-index 与 exhaustive PR absence proof 仍开放 |
-| W21 Forward Evidence Gate | Passed | 30/30 `20+` Full Source Reviews complete；1/1 low-score boundary complete；0 blocked / current-review pending；academic cross-index replay 仍使全历史 Evidence Gate 保持 Open |
+| Legacy baseline — W21 Forward Evidence Gate | Passed for prior 31-family denominator | 30/30 `20+` Full Source Reviews complete；1/1 low-score boundary complete；2026-08-25 新增 `SF-2026-KVBOOST` 尚待 strict V2.1 delta audit；旧 Gate 不代表扩大候选集后的当前完整性；academic cross-index replay 仍使全历史 Evidence Gate 保持 Open |
 
 ## Deep Analysis — Security Evaluation 必须测量可执行链
 
@@ -259,7 +265,9 @@ Ch62 Evaluation → Ch68 Security → Ch74 Tool Calling → Ch77 Workflow → Ch
 
 ## Recommended Action
 
-W21 Source-Family Books Gate 已完成；后续只处理 cross-index Archive backlog。新增长期机制由 owner 章节维护：
+Superseded baseline（旧 31-family denominator）：W21 Source-Family Books Gate 当时已完成。当前除
+cross-index Archive backlog 外，新增 `SF-2026-KVBOOST` 仍待 owner-week Source Review、provenance 与
+Books disposition。W21 尚未开始 strict V2.1 delta packet，因此这里不声明扩大候选集后的新 Gate；旧分母的新增长期机制由 owner 章节维护：
 Ch17 双时间尺度 recurrence；Ch21 post-trained zero-route MoE；Ch45 attention-aware/mixed-precision KV；Ch55
 phase-aware precision handoff；Ch66 verifier-first benchmark synthesis；Ch72 layered content provenance；Ch84
 Skill pre-admission；Ch63 topology segment scheduling。其余已验证论文按最终账本复核现有论点；survey、guide、
@@ -271,11 +279,12 @@ scientific milestone 和版本事实不为制造 diff 强行写入。
 
 ## Books Integration Decision
 
-`Source-Family Books Gate Complete`。31/31 final dispositions：22 `Refine — Existing Argument`、
+Superseded baseline（旧分母）：`Source-Family Books Gate Complete`。31/31 final dispositions：22 `Refine — Existing Argument`、
 6 `No Change — Already Covered`、3 `Weekly Only / Record Only`。17 个 Stable Node owners 完成修改或具体
 论点级复核；WorldKV 的独立 Gate 已并入本周总账。所有 Experimental/Revision-sensitive 机制保持 model、
 hardware、precision、length、artifact 与 SLO 边界；作者 benchmark、simulation 和被后续 revision 移除的
-NITP 45B Appendix 均未写成通用事实。详细 disposition 见文末 ledger。
+NITP 45B Appendix 均未写成通用事实。详细 disposition 见文末 ledger。该结论不包含
+`SF-2026-KVBOOST`；其 Books Decision 仍为 `Not Assessed`，当前 Books Gate 为 Open。
 
 ## Ignored Noise
 

@@ -5,7 +5,15 @@
 > Accessed: 2026-07-31
 > Backfilled: 2026-07-31
 > Discovery Review Reopened: 2026-08-09
-> Re-audit Status: 34/34 score rows and 33/33 unique candidate families have final Books dispositions; 21 Refine, 7 No Change, 5 Weekly Only, plus one duplicate Seed2.0 score row; W27 Source-Family Books Gate passed and cursor advances to W28; broader Archive/Discovery Gate remains Open
+> Delta Audit Queue: Pending — this legacy report has not yet begun a strict V2.1 delta packet
+> Superseded Baseline: 34/34 score rows and 33/33 unique candidate families in the prior denominator had final Books dispositions; 21 Refine, 7 No Change, 5 Weekly Only, plus one duplicate Seed2.0 score row; the W27 Source-Family Books Gate had passed and the cursor had advanced to W28; broader Archive/Discovery Gate remains Open
+
+> **V2.1 delta audit queued — 2026-08-25:** three owner families are absent from this Weekly:
+> `SF-2026-AGENT-MEMORY-PREREQUISITE-EVICTION` (`arXiv:2608.20400v1`),
+> `SF-2026-NEXUS-KV-VIRTUALIZATION` (`arXiv:2608.20397v1`) and
+> `SF-2026-SCHEMAROUTER` (`arXiv:2608.21375v1`). The old Gate statement applies only to the previous
+> denominator. These three families remain queued until a strict V2.1 packet records owner reconciliation,
+> Source Review, provenance and final dispositions; the old Gate is not a current completeness claim.
 
 ## Executive Summary
 
@@ -68,7 +76,7 @@ workspace lifecycle，后者保持 `Version Fact / Mechanism Not Disclosed`，�
 | Unique candidate families / review packets | 33 / 33 | Seed2.0 两个评分行共享一个 packet；全部 unique families 完成 Full Source Review |
 | Completed / Unverified backlog | 33 / 0 | recovered scored families、RESOURCE2SKILL 与 AgenticSTS 均已审完 |
 | Expanded academic discovery | Checkpoint landed | HF display feed 已按 arXiv v1 重新归周；citation/venue replay 仍开放；fixed official/Infra replay 已通过 |
-| W27 post-forward Candidate Gate | Passed | 33/33 unique `20+` Full Source Reviews；0 ordinary pending；0 blocked；cursor advances W28 |
+| Legacy baseline — W27 post-forward Candidate Gate | Passed for prior 33-family denominator | 33/33 unique `20+` Full Source Reviews；2026-08-25 新增 prerequisite eviction、Nexus 与 SchemaRouter 三个 owner families 尚待 strict V2.1 delta audit；旧 Gate 不代表扩大候选集后的当前完整性；旧 cursor 曾推进 W28 |
 | W27 discovery / Historical Evidence Gate | Open | 更广 citation/venue discovery 尚未闭合；fixed-source replay 已通过 |
 
 ## 1. 模型与研究机构
@@ -374,11 +382,12 @@ Qwen Code 7 月 2 日的 `/loop`、语音与 UI 周更属于 agent product surfa
 
 ## Books Integration Decision
 
-`Source-Family Books Gate Passed — Archive Completion Gate Open`。W27 的 33 个唯一 family 已全部完成
+Superseded baseline（旧分母）：`Source-Family Books Gate Passed — Archive Completion Gate Open`。W27 的 33 个唯一 family 已全部完成
 逐项判断：21 项 refine 既有论证，7 项由现有章节具体覆盖，5 项只保留 Weekly。实际新增正文集中在
 `TRAIN-LORA`、`PLATFORM-EVALUATION-SYSTEM`、`AGENT-MEMORY` 与 `AGENT-PLATFORM`；其余 Refine 项已由
 W27 前后更强的 source family 共同形成现有演进链，或在 asynchronous PP / ELDR 的既有正文中通过复核。
-本周没有把作者 benchmark、publication node 或 release support matrix 外推为通用系统结论。
+本周没有把作者 benchmark、publication node 或 release support matrix 外推为通用系统结论。该结论不包含
+2026-08-25 新增的三个 owner families；它们的 Books Decision 仍为 `Not Assessed`，并保持在 strict V2.1 delta audit queue 中。
 
 ## Ignored Noise
 
