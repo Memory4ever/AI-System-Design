@@ -9,7 +9,7 @@
 
 ## 本章要回答的问题
 
-第 27 章已经把数据构造成 token sequences，Part II 也已经给出 Decoder-only 模型。模型怎样仅通过预测下一个 token 改变数十亿参数？Loss 下降、perplexity、训练 token 数、optimizer step 与能力增长分别是什么关系？为什么一次成功的 Pretraining run 不只是反复调用 `backward()`？
+第 27 章已经把数据构造成 token sequences，Part II 也已经给出 Decoder-only 模型。模型怎样仅通过预测下一个 token 改变数十亿参数？Loss 下降、perplexity、训练 token 数、optimizer step 与能力增长分别是什么关系？梯度异常时，warmup、clipping、adaptive optimizer 与逐层 learning rate 分别能解决什么？为什么一次成功的 Pretraining run 不只是反复调用 `backward()`？
 
 本章的核心判断是：**Pretraining 是在大规模数据分布上反复最小化 next-token negative log-likelihood，使参数逐步形成可复用表示与条件生成能力。**它提供通用能力底座，但 loss 下降不自动保证事实可靠、指令遵循或部署分布上的任务成功。
 
@@ -269,6 +269,121 @@ g <- g * min(1, max_norm / ||g||)
 ```
 
 它可以避免单次异常梯度破坏训练，却也可能隐藏数据异常、数值 overflow 或不合适的 learning rate。平台应同时观测 unclipped norm、clipping frequency 和 loss behavior。
+
+### 每层是否需要不同或动态的 Learning Rate
+
+先把“这一层实际更新了多少”写清楚。对第 `l` 个 parameter group，可抽象为：
+
+```text
+Delta_theta_l(s)
+= - eta_global(s)
+  * m_l(s)
+  * P_l(optimizer_state_s, g_l)
+```
+
+- `eta_global(s)` 是全局 warmup / peak / decay schedule。
+- `m_l(s)` 是可选的 layer/group multiplier；可以固定，也可以随 step 变化。
+- `P_l(...)` 是 optimizer 根据 gradient 与 moments 产生的 preconditioned update。Adam 的 coordinate-wise adaptation
+  已经让不同参数获得不同 effective step，但它不等于显式的 layer-wise learning rate。
+
+所以“每层用同一个 learning rate”通常只是指共享 `eta_global`；真实 `Delta_theta` 早已因 gradient、Adam moments、
+parameter norm、weight decay 和 clipping 而不同。是否再增加 `m_l(s)`，应由 update evidence 决定，而不是看到深度
+增加就默认启用。
+
+#### 四种经常被混淆的策略
+
+**Global schedule。** 所有 groups 共享 warmup 与 decay，最易复现，也让 update 的时间边界一致。它在标准
+Pretraining recipe、架构/初始化已稳定时通常是首选。
+
+**Optimizer adaptation。** Adam 用一阶、二阶 moments 按坐标缩放 update，主要应对 noisy、sparse 或异方差
+gradient；它不会恢复在 backward path 中已经消失的信号，也不保证各层 update-to-weight ratio 合理。
+
+**Layer-wise / parameter-group multiplier。** Fine-tuning 中可以让靠近输入的 pretrained layers 使用较小 multiplier，
+让新 task head 或上层更快适应；ULMFiT 的 discriminative fine-tuning 是这类思想的早期实例。它的理由是保留可迁移
+表示并减轻 catastrophic forgetting，不是“低层梯度天然更容易爆炸”。在从零 Pretraining 中，不存在脱离架构和
+数据的通用“越深 learning rate 越大/越小”规律。
+
+**Layer-wise trust ratio。** LARS/LAMB 根据 parameter norm 与候选 update norm 形成 group/tensor-level ratio，最初用于
+large-batch training 的尺度失衡。LARS 在其 CNN workload 有效，但 LAMB 论文也明确指出 LARS 在 BERT 等 Attention
+模型上并不一致；这正说明 layer-wise adaptation 是 optimizer/workload branch，不是普适深度修复。
+
+另外，第 17 章的 residual scale、gate、DeepNorm，以及本章前述 `alpha(layer, step)` progressive residual warmup，
+改变的是 forward contribution 与 backward path。它们即使也依赖 layer 和 step，也不能被称为 per-layer learning rate。
+
+#### 哪些情况下值得引入 `m_l(s)`
+
+至少出现以下一种可重复证据时，才值得进入实验：
+
+- Fine-tuning 中底层出现 collateral drift，而上层/新 head 明显欠适配。
+- 新增或扩容参数的 optimizer state 从零开始，需要独立 rewarm；旧参数仍应保持小 update。
+- Large-batch 下不同 parameter groups 的 update-to-weight ratio 跨多个数量级，并与收敛问题相关。
+- 特定层的 gradient/update 长期被 clipping 或 precision floor 主导，且已排除数据、mask、loss reduction 和
+  architecture 问题。
+- Ablation 表明固定 multiplier 或 trust ratio 在 held-out quality、稳定性和 wall-clock 上优于只调 global schedule。
+
+不应只根据 gradient norm 大小设 learning rate。若 `||g_l||` 小是因为 layer 已接近局部最优，强行放大会增加噪声；
+若是因为 upstream Jacobian 已让 signal 消失，放大 optimizer step 只会放大残余噪声；若 parameter scale 本身较小，
+绝对 update 小也可能已有很大的相对变化。更有意义的观测是：
+
+```text
+gradient_rms_l
+update_rms_l
+parameter_rms_l
+update_to_weight_l = update_rms_l / (parameter_rms_l + epsilon)
+clipping_fraction_l
+overflow_or_underflow_l
+held_out_delta by layer/group ablation
+```
+
+#### 动态逐层控制带来的新状态
+
+让 `m_l(s)` 根据在线 gradient 或 validation signal 自动变化，会把 controller 变成训练状态：
+
+```text
+layer identity + global step
++ controller statistics / EMA / thresholds
++ multiplier history and bounds
++ optimizer moments and scheduler phase
+```
+
+这些状态必须进入 checkpoint，并在 DP/TP/PP ranks 上一致。否则 resume、reshard 或 layer renumbering 会静默改变
+trajectory。Controller 还可能追逐 noisy batch、在 layers 间振荡、补偿错误 objective，或因 validation feedback delay
+形成过时决策。固定 parameter groups 在证据不足、恢复/复算优先时更安全；动态策略应有 multiplier bounds、更新
+cadence、holdout gate、rollback 与“退回 global schedule”的 fallback。
+
+结论可以浓缩为：
+
+```text
+先修 gradient path / initialization / normalization
+→ 再修 data, loss reduction and precision
+→ 选择 global LR + warmup/decay + clipping guard
+→ 检查 optimizer 与 per-layer update evidence
+→ 最后才实验 fixed 或 dynamic layer multipliers
+```
+
+逐层 learning rate 是 update actuator，不是深层网络稳定性的第一性原理答案。
+
+### Gradient Clipping 的正确边界与顺序
+
+Global-norm clipping 将所有参与参数视为一个拼接向量并按同一比例缩放；per-group clipping 会改变不同 groups 的
+相对方向。两者都应记录 aggregation scope、norm type、threshold 与 clipping frequency。Distributed training 中，
+必须先明确 gradient 是 local、ReduceScatter shard 还是已经完成 DP reduction 的 global semantic gradient，否则
+“相同 max norm”并不代表相同 update。
+
+Mixed precision 下若 loss 被 scale，clipping 必须作用于 unscaled gradients；PyTorch AMP 官方示例也要求先
+`unscale_` 再 `clip_grad_norm_`，随后才执行 optimizer step。否则 threshold 实际约束的是人为放大的 gradient。
+
+```text
+backward on scaled loss
+→ aggregate / accumulate under declared semantics
+→ unscale gradients
+→ measure unclipped norm and non-finite state
+→ clip if needed
+→ optimizer step
+→ scheduler step
+```
+
+Clipping 适合阻止少数异常 step 破坏 checkpoint；若长期高频触发，应降低到根因诊断，而不是继续把 threshold 调小。
 
 ## Mixed precision 为什么不是简单改 dtype
 
@@ -545,6 +660,9 @@ versioned data q(x)
 12. 为什么 forward output 的量化误差可接受，不代表同一精度也适用于 backward 的弱梯度？
 13. 如何区分真正的低比特收敛证据与被 batch noise 或较短 training horizon 掩盖的偏差？
 14. 为什么允许 test-time sampling 后，early stopping 必须绑定 deployment volume、verifier 与 SLO？
+15. Adam 的 per-coordinate adaptation 为什么不等于显式的逐层 learning rate？
+16. 哪些 evidence 才足以支持 fixed 或 dynamic layer multiplier？
+17. Mixed precision 与 distributed accumulation 下，gradient clipping 应在什么语义边界执行？
 
 ## 小结
 
@@ -565,6 +683,14 @@ Progressive Residual Warmup 用于补足 residual branch activation 的 `layer �
 Primary-source 校验入口：
 
 - Diederik P. Kingma, Jimmy Ba, "Adam: A Method for Stochastic Optimization", 2014: https://arxiv.org/abs/1412.6980
+- Yang You, Igor Gitman, Boris Ginsburg, "Large Batch Training of Convolutional Networks", 2017（LARS）:
+  https://arxiv.org/abs/1708.03888
+- Yang You et al., "Large Batch Optimization for Deep Learning: Training BERT in 76 minutes", 2019（LAMB）:
+  https://arxiv.org/abs/1904.00962
+- Jeremy Howard, Sebastian Ruder, "Universal Language Model Fine-tuning for Text Classification", 2018:
+  https://arxiv.org/abs/1801.06146
+- PyTorch AMP gradient clipping example:
+  https://docs.pytorch.org/docs/stable/notes/amp_examples.html#gradient-clipping
 - Alec Radford et al., "Improving Language Understanding by Generative Pre-Training", 2018: https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf
 - Tom B. Brown et al., "Language Models are Few-Shot Learners", 2020: https://arxiv.org/abs/2005.14165
 - Jared Kaplan et al., "Scaling Laws for Neural Language Models", 2020: https://arxiv.org/abs/2001.08361

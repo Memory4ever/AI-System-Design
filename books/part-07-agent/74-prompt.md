@@ -150,6 +150,40 @@ decoding 条件下行为等价，最终仍要经过本章前述 regression 与 c
 “缺少 rationale 会形成保留棘轮”和“typed contract 可保留稀有要求”的受控证据；前者的真实仓库
 部分是观察研究，后者的 fidelity guarantee 只覆盖抽取 contract，均为 `Status: Experimental`。
 
+### 从固定 Prompt Score 到 Constraint-residual Feedback
+
+Prompt A/B test 或自动改写常先把 task accuracy、tool cost、handoff、长度、安全和格式压成一个固定 scalar。
+当约束少且优先级稳定时，这种方案便宜、容易比较；但部署中的 active constraint 会随 domain 和候选变化：同一
+权重可能在 Airline 场景过度调用工具，在 Retail 场景又因过度保守损失成功率。Pareto candidate set 也不会自动
+决定哪个点满足必须遵守的 threshold。
+
+若这些要求能够被独立测量，可以把 Prompt search 演进为一个受限反馈回路：
+
+```text
+versioned prompt pool + objective + explicit thresholds
+→ evaluate objective and each constraint residual
+→ residual-conditioned rewrite proposals
+→ feasibility-aware candidate retention
+→ update per-constraint multipliers
+→ offline regression / canary / rollback
+```
+
+这里的 multiplier 只改变“下一轮优先修哪个 failure”，不把 Prompt 升级为 hard-policy owner。Schema、authorization、
+privacy 和 side-effect safety 仍由模型外 validator 与第 72 章 enforcement 执行。若一个候选在有限 evaluation set 上
+满足 threshold，它只是 **empirically feasible**；model、chat template、tool schema、traffic slice 或 judge 改变后都要
+重新校准。
+
+这条路线比固定 penalty 更能适应 constraint 轮换，也允许 task model 保持冻结，却新增 candidate-evaluation 成本、
+threshold/judge noise、multiplier oscillation、Prompt overfitting 和 constraint gaming。离散 rewrite 也不是可微梯度；
+任何 primal-dual 收敛类比都依赖 surrogate smoothness、rewrite alignment、bounded pool/noise 等假设。CAPO/DCAPO 的
+作者实验在若干 Agent、assistant 与 privacy tasks 上支持 residual-driven search 的受限价值，但硬件、完整 API cost
+与生产 SLO 未披露，不能把“feasible”写成安全证明或跨模型行为等价。
+
+人工 Prompt + deterministic regression 在约束少、风险高或评估数据稀缺时继续成立；固定 scalar 在业务 trade-off
+稳定时更简单；Pareto set 在需要人工选择 operating point 时仍有价值。Constraint-aware search 只在 metric owner、
+threshold、holdout 与 rollback 都明确时成立，下一阶段压力是处理相互冲突约束、反馈漂移和线上不可逆动作，而不是
+让 rewriter 获得更多 authority。
+
 ## 本章在知识树中的位置
 
 第 73 章交付 platform identity、policy 与 security。Prompt 是 Agent runtime 的第一个可变输入，但它只是一部分；下一章讨论 Context 如何在有限 token budget 中选择、排序并组装 Prompt、历史、检索结果和工具状态。
@@ -181,3 +215,5 @@ Primary-source 入口：
   https://arxiv.org/abs/2608.11095
 - SkillZip（Status: Experimental；typed contract consolidation）:
   https://arxiv.org/abs/2608.11079
+- CAPO / DCAPO（Status: Experimental；constraint-residual-driven Prompt search）:
+  https://arxiv.org/abs/2608.16068

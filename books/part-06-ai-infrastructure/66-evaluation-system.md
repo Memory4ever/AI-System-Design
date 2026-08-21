@@ -778,6 +778,209 @@ verifier version、verdict reason、supersession 与 retention，而不能只保
 第 81 章的 Workflow 拥有证据产生与状态转移，本章拥有“这些证据足以支持什么声明”的评估
 契约，两者属于 `Layering / Dependency`。
 
+### Atomic Claim 置信度怎样合成整体结论
+
+Claim-level verification 解决了“长答案把真假混在一个总分里”的问题，却自然带来下一问：如果每条 atomic
+claim 都只有 `90%`，答案越长，整体置信度是否必然越来越低？答案取决于系统究竟估计哪个事件，以及 claims
+之间是什么逻辑和错误关系。
+
+首先必须分开三个 estimand：
+
+```text
+factual precision:
+  随机抽一条 claim，它被 evidence 支持的概率/比例
+
+all-claims-correct:
+  这次回答中每一条 claim 都正确
+
+conclusion-correct:
+  用户真正依赖的核心结论成立
+```
+
+FActScore 类指标主要估计 factual precision；它不能直接解释为整段文本无错的概率。辅助年份、示例或背景细节
+错误，也不一定推翻核心结论；反过来，一个关键 premise 错误，哪怕其余十条都正确，也可能让 conclusion 失效。
+
+#### 只有独立且全部必要时才能直接相乘
+
+令经过 calibration 的 claim confidence 为：
+
+```text
+q_i = P(c_i correct | evidence, verifier, deployment slice)
+```
+
+若 `n` 条 claims 全部是必要条件，并且错误相互独立，才有：
+
+```text
+P(all correct) = product_i q_i
+```
+
+十条独立的 `0.9` 会得到 `0.9^10 ≈ 0.349`。这不是 calibration 失败，而是“完全无错”这个事件随 claim 数量
+变严格。真实 claims 通常不独立：同一论文版本读错，会让多条 claim 一起错；同一 generator/judge 的盲点也会形成
+相关 false acceptance。一般联合概率应写成：
+
+```text
+P(c_1,...,c_n)
+= P(c_1)
+  * P(c_2 | c_1)
+  * ...
+  * P(c_n | c_1,...,c_(n-1))
+```
+
+若完全不知道依赖结构，只凭各自 `q_i`，联合概率只能落在很宽的边界内：
+
+```text
+max(0, sum_i q_i - (n-1))
+<= P(all correct)
+<= min_i q_i
+```
+
+所以机械乘法可能过度保守，机械平均又可能掩盖一个致命错误。`min(q_i)` 可以作为 critical-claim hard gate，
+但它也不是自动得到的 answer probability。
+
+#### Claim Graph 必须保存逻辑职责与共同来源
+
+Typed claim graph 需要在 `supports` 之外增加：
+
+```text
+critical-premise
+supporting-detail
+derived-conclusion
+alternative-evidence-path
+contradicts
+depends-on
+shared-source-family / shared-verifier
+```
+
+对一个 derived conclusion，premises 正确仍不保证推导正确，因此推理边本身也需要 evidence：
+
+```text
+r_e = P(conclusion follows | required premises are correct)
+```
+
+简单 critical path 可以估计为：
+
+```text
+P(conclusion correct)
+≈ P(required premises jointly correct) * r_e
+```
+
+若两条真正独立的 evidence paths 都能单独支持同一结论，关系是 logical OR，而不是 AND；冗余证据可以提高
+robustness。但官方 Blog、新闻转载和社区摘要若都来自同一论文，只是一个 Source Family，不能作为三条独立路径。
+Source digest、版本、作者/机构、引用 lineage 与 verifier family 必须用于相关性分组。
+
+#### Raw Score 只有经过标签校准才是概率
+
+检索相似度、NLI entailment、judge score、semantic entropy、`P(True)` 和 source count 都只是 features。可以为每条
+claim 构造：
+
+```text
+z_i = [
+  support_score,
+  contradiction_score,
+  retrieval_margin,
+  independent_source_family_count,
+  authority / freshness,
+  semantic_entropy,
+  self-evaluation P(True) / P(IK),
+  model or verifier disagreement,
+  OOD score
+]
+```
+
+然后在有可靠 correctness labels、且与 deployment slices 匹配的 calibration set 上学习：
+
+```text
+q_i = Calibrator(z_i)
+```
+
+Calibrator 可以是 logistic/temperature/isotonic 等简单映射；重点不是模型复杂度，而是独立 calibration/test split、
+subject/verifier identity 与 reliability。预测为 `0.8` 的 claim cohort 应约有 `80%` 在声明 verifier 下正确；否则
+`0.8` 只是排序分数。还应报告 Brier/ECE、AUROC/AUPRC 和 risk–coverage curve，并按 domain、language、freshness、
+risk 与 source availability 切片。Distribution 或 verifier 变化后必须重校准。
+
+Answer-level calibrator 可以继续读取 critical-path confidences、dependency depth、source-family correlation、
+contradiction、inference-edge score、semantic entropy 与 retrieval coverage，直接预测 conclusion / complete-answer event。
+它不应删除 claim-level ledger：一个漂亮的总分无法告诉系统应该删除哪条 claim、继续检索什么或把哪个冲突升级给人。
+
+#### Confidence 最终服务于 Risk–Coverage Decision
+
+系统不需要所有回答都达到 `100%`；它需要在错误和拒答之间做显式决策。若错误回答代价为 `C_wrong`，拒答/
+转人工代价为 `C_abstain`，回答的简化期望损失为：
+
+```text
+Loss(answer)  = (1 - q_answer) * C_wrong
+Loss(abstain) = C_abstain
+```
+
+只有当：
+
+```text
+q_answer > 1 - C_abstain / C_wrong
+```
+
+才值得直接回答。高风险场景提高 threshold，并把 critical claims 交给 executable verifier / expert；低风险探索可接受
+较低 threshold。若要求整篇 critical claims 的 family-wise error 不超过 `delta`，union bound 给出保守预算：
+
+```text
+P(any critical claim wrong)
+<= sum_i (1 - q_i)
+```
+
+它会推动系统减少不必要 claims，而不是无限堆砌“有 90% 把握”的细节。Conformal prediction 可以在 calibration
+distribution 与 exchangeability 等假设下，为候选集合或 component 提供 coverage guarantee；distribution shift、错误
+acceptability function 或 correlated adaptive sampling 仍会破坏解释，不能写成开放世界 truth guarantee。
+
+最终可靠路径是：
+
+```text
+answer draft
+→ atomic claims + criticality / dependency graph
+→ authoritative retrieval and source-family dedup
+→ support / contradict / insufficient evidence
+→ semantic / model / verifier uncertainty
+→ claim and conclusion calibration
+→ answer / omit detail / retrieve more / ask / abstain / escalate
+```
+
+这条链把“模型感觉自己知道”降级为一个 feature，把 evidence 与 verifier 提升为独立 authority，再由风险政策决定
+coverage。真正要优化的不是让 confidence 数字看起来更高，而是在相同 coverage 下减少 false answers，或在相同
+risk 下回答更多问题。
+
+#### 对抗性相关错误：低熵与高共识也可以稳定地错
+
+Semantic entropy、self-consistency 和 majority vote 的有效性还依赖一个未必成立的前提：错误 samples 具有足够
+多样性，正确答案能形成更稳定的 mode。若同一个 checkpoint、训练过程或攻击主动把关键元素塑造成一致的错误值，
+系统会观察到 fluent、低熵、高 agreement 的输出，却没有获得任何独立 truth evidence。
+
+```text
+same model / checkpoint family
+→ correlated false mode
+→ repeated samples agree
+→ confidence estimator reads stability
+→ stability is misclassified as correctness
+```
+
+这不是简单增加 `N` 能修复的问题。更多同源 samples 只会更精确地估计被塑造后的错误分布；让同类模型互审也可能
+共享相同盲点。Evaluation 必须把“自然错误下校准有效”与“对抗性或分布改变后仍有效”分开，并至少记录：
+
+```text
+generator / checkpoint / training lineage
+selector and verifier family
+independent ground-truth coverage by critical element
+unverified element count and correlation group
+accepted-correct / accepted-wrong / abstain
+```
+
+Fool's Gold 的作者实验以 safety-removal 后的 open-weight artifact 构造一致错误分布，为这条 epistemic boundary
+提供受限证据：在其“攻击者没有领域 expert、真实 reference 或 retrieval-verified source”的 threat model 中，重复
+采样、consensus 和若干 label-free observation surface 不能稳定区分 decoy 与正确答案。本文不吸收其 defensive-
+deception recipe，也不把 chemical/biological 结果外推；模型、judge、single-expert audit、escape tail、repair erosion
+和 threat coverage 都限制了结论。
+
+长期设计结论只有一条：**没有独立 ground truth 时，同源一致性只能支持 distribution description，不能支持 truth
+acceptance。** Partial verifier 也必须按 critical elements 报告 coverage；平均验证一部分细节不能掩盖一个未验证的
+致命 claim。可执行 verifier、权威 evidence、独立专家或 abstention 仍是高风险结论的最终分支。
+
 Claim graph 仍可能被同源审查者系统性放行。generator、writer 与 critic 若共享模型家族、Context 或上一轮
 verdict，形式上增加 reviewer 数量也不会产生独立 evidence。发布前的 assurance 因而要区分两类 review：
 
@@ -1303,6 +1506,11 @@ desired objective
 16. 为什么 rubric formation、criterion execution 与 global ranking 必须分别版本化和审计？
 17. 为什么 Agent API robustness 应同时使用 isolated 与 cumulative protocol？
 18. 复用真实 control plane 的 simulator 还必须验证哪些 execution-substrate 前提？
+19. Factual precision、all-claims-correct 与 conclusion-correct 为什么不能共用一个分数？
+20. 为什么只有在 claims 独立且全部必要时才能机械相乘置信度？
+21. Source Family、dependency edge 与 inference-edge confidence 怎样改变结论的联合概率？
+22. 为什么 calibration 最终必须与 risk–coverage 和 abstention policy 一起验收？
+23. 为什么低 semantic entropy、高 self-consistency 在 adversarially correlated distribution 中仍不能成为 truth evidence？
 
 ## 小结
 
@@ -1332,6 +1540,20 @@ Primary research：
 
 - Percy Liang et al., "Holistic Evaluation of Language Models", 2022: https://arxiv.org/abs/2211.09110
 - Lianmin Zheng et al., "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena", 2023: https://arxiv.org/abs/2306.05685
+- Sewon Min et al., "FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation", 2023:
+  https://arxiv.org/abs/2305.14251
+- Luyu Gao et al., "RARR: Researching and Revising What Language Models Say", 2022:
+  https://arxiv.org/abs/2210.08726
+- Saurav Kadavath et al., "Language Models (Mostly) Know What They Know", 2022:
+  https://arxiv.org/abs/2207.05221
+- Lorenz Kuhn, Yarin Gal, Sebastian Farquhar, "Semantic Uncertainty", 2023:
+  https://arxiv.org/abs/2302.09664
+- Chuan Guo et al., "On Calibration of Modern Neural Networks", 2017:
+  https://arxiv.org/abs/1706.04599
+- Victor Quach et al., "Conformal Language Modeling", 2023:
+  https://arxiv.org/abs/2306.10193
+- Mark Russinovich, "Fool's Gold: Defensive Deception Against Safety-Removal Attacks on Open-Weight Models", 2026
+  （Status: Experimental / Security-sensitive evidence boundary）: https://arxiv.org/abs/2608.17202
 - Xiao Liu et al., "AgentBench: Evaluating LLMs as Agents", 2023: https://arxiv.org/abs/2308.03688
 - Carlos E. Jimenez et al., "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?", 2023: https://arxiv.org/abs/2310.06770
 - Anthropic, "Measuring LLMs’ ability to develop exploits", 2026:

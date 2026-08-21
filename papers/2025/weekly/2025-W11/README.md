@@ -2,12 +2,18 @@
 
 > Coverage Window: 2025-03-10～2025-03-16
 > Research Mode: Retrospective Backfill
+> Audit Status: Candidate Evidence Gate Reopened — Full Discovery Replay In Progress
+> Historical Books Gate: Closed — Weekly evidence only
 > Accessed: 2026-07-31
 > Backfilled: 2026-07-31
+> Re-audited: 2026-08-20
 
 ## Executive Summary
 
-本周保留 1 项与长期 AI System 认知相关的证据：Gemma 3。重点不是记录发布热度，而是识别其改变了哪一项约束、机制与系统 trade-off。所有结论均按首次公开时间归档，性能或能力数字不脱离作者披露的模型、硬件、精度、输入输出、并发与 SLO 条件使用。
+旧版周报只保留 Gemma 3，不能证明 3 月 10～16 日 fixed-source、academic cross-index 与 engineering release
+已重放。本轮首先恢复 OpenAI Responses API / Agents SDK（2025-03-11）这一独立 platform event，并开始
+Hugging Face/arXiv discovery replay。Gemma 3 与 OpenAI Source Review 可作为已验证 seed，但在全部候选完成
+归周、评分与 Full/low-score disposition前，W11 Candidate Evidence Gate保持 Open，Historical Books Gate关闭。
 
 ## Coverage Window and Limitations
 
@@ -24,12 +30,15 @@
 按固定机构顺序扫描 OpenAI、Anthropic、Apple、Google、Meta、Microsoft、NVIDIA、xAI、Amazon、Cohere、Ai2、Mistral、Qwen、DeepSeek、Kimi、Zhipu、MiniMax、Seed、ERNIE、Hunyuan、Huawei Noah、InternLM、StepFun、MiMo、InclusionAI 与 Hugging Face Blog。
 
 - 保留：Gemma 3（2025-03-12）。
+- 保留：OpenAI Responses API / Agents SDK / built-in tools（2025-03-11，public interface/platform event）。
 
 ## 2. 论文与学术来源
 
 按 arXiv → Google Scholar → OpenAlex → DBLP 发现与去重，回到论文 v1 正文核验；Crossref 只做 metadata 交叉检查。
 
-- 本组无达到保留门槛的候选。
+- Discovery replay 进行中：3 月 10 feed 已恢复 Unified Reward Model、Sketch-of-Thought、Forgetting
+  Transformer、R1-Searcher、SafeArena、Learning from Failures、Linear-MoE、SAGE、LONGCODEU 等 identity；
+  需要按 arXiv v1 日期回拨/留存后才能评分。
 
 ## 3. AI Infra 与工程项目
 
@@ -42,6 +51,7 @@
 | Candidate | Technical Novelty | System Impact | Practical Value | Source Reliability | Project Relevance | Longevity | Total | Decision |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Gemma 3 | 4 | 3 | 3 | 4 | 4 | 3 | 21/30 | Worth Watching；版本事实留 Weekly |
+| OpenAI Responses API / Agents SDK launch | 3 | 5 | 5 | 5 | 5 | 3 | 26/30 | Books Pending — Refine Agent Platform interface contract |
 
 ### Deep Analysis 1 — Gemma 3
 
@@ -101,6 +111,16 @@
 - **Changed Files or Rejection Reason:** 不改 Books；只提供 bounded model case。
 - **Open Questions:** 5:1 local/global ratio 在真实多证据 workload 的 accuracy/TTFT/KV trade-off；不同 engine 对 mixed attention 与 INT4/FP8 的支持；128K 下并发和 P99。
 
+### OpenAI Responses API / Agents SDK Launch
+
+- **Candidate / Week / Score:** OpenAI Responses API / built-in tools / Agents SDK launch / 2025-W11 / 26/30；Source Family `openai-responses-agents-platform-2025`，official announcement + public API/SDK interface event。
+- **Event / sources / coverage:** first public 2025-03-11；已读 https://openai.com/index/new-tools-for-building-agents/ 的 Responses item/stream contract、web/file/computer tools、Agents SDK handoff/guardrail/tracing、Assistants migration boundary及examples。Current docs/code只能作later revision，不倒灌成launch behavior。
+- **Problem / previous design / changed constraint:** Chat Completions适合单次生成，Assistants与custom orchestration分别持有 thread/tool/workflow state；多工具、多模型turn与production debugging使“prompt+function call”不足。新接口将model/tool outputs组织为items/stream events，SDK显式暴露 agent、handoff、guardrail与trace，但应用仍拥有业务authorization、durable state与side-effect commit。
+- **State / flow / implementation:** application input→Responses model/tool items→built-in或function tool→subsequent model turn→final output；Agents SDK Runner协调 agent/handoff，guardrail在input/output边界检查，trace记录execution。announcement只证明public interface，不披露hosted scheduler、tool sandbox、retry/idempotency或internal model机制。
+- **Evaluation contract / evidence boundary:** vendor列出的SimpleQA、OSWorld、WebArena/WebVoyager及customer cases绑定preview model/tool/harness；没有统一hardware、concurrency、TTFT/TPOT或SLO，不能写成通用agent可靠性/性能结论。接口可用不等于tool result正确、权限安全或workflow durable。
+- **Trade-offs / failure modes / coexistence:**统一primitive减少client glue，却增加vendor-hosted state、tool billing、data residency、event schema/migration与partial-failure语义；无需built-in tools时 Chat Completions仍是合理简单分支。Assistants当时尚未正式deprecated，不能用later sunset覆盖launch事实。
+- **Evolution / owner / disposition:** `Direct Evolution`（Chat Completions/Assistants/Swarm→Responses+Agents SDK public platform contract）；owner `AGENT-PLATFORM`（Ch84，legacy Ch80），handoff `AGENT-TOOL-CALLING`、`AGENT-WORKFLOW`、`PLATFORM-TRACE`；目标/相邻章节已由既有全书审计覆盖。`Books Pending — Refine Existing Argument Candidate`，W11 Gate前不改Books。Open questions：item identity、durable resume、exactly-once side effects、trace redaction与provider portability。
+
 ## Evidence Level
 
 - 官方 Blog / Release 只证明公开的产品、版本与项目事实；未公开实现标记为未知。
@@ -126,7 +146,8 @@
 
 ## Books Integration Decision
 
-Books Gate 已完成。该周候选的最终 disposition 已写入各自 Full Source Review；没有评分候选的周保持 No Material Update，不为制造 diff 修改 Books。
+Historical Books Gate关闭。Gemma 3与OpenAI platform event仅作为已验证seed；W11 discovery/evidence Gate闭合前
+不确认任何Books Integration，本轮不修改Books。
 
 
 ## Ignored Noise
@@ -136,15 +157,16 @@ Books Gate 已完成。该周候选的最终 disposition 已写入各自 Full So
 
 ## Repository Changes
 
-- 新增 papers/2025/weekly/2025-W11/README.md。
-- 补全 Gemma 3 候选级 Full Source Review；Books 仍处于 Evidence Gate 前的 provisional 状态。
+- 重开 `papers/2025/weekly/2025-W11/README.md` 的Candidate Evidence Gate，保留Gemma 3并补入OpenAI platform event Full Source Review。
+- 开始3月10～14 academic replay；尚未完成的identity不提前评分或写入Books。
 
 ## Open Questions
 
-- Gemma 3 的最终 Books disposition 等 75/75 Evidence Gate 后，与全年 long-context 演进链共同决定。
+- 继续闭合3月10～14 feed的v1归周、3月11页面429 gap、3月13/14候选与engineering releases；ordinary pending仍非零。
 
 ## Sources
 
 - Gemma 3 — https://blog.google/technology/developers/gemma-3/（First Public: 2025-03-12；Accessed: 2026-07-31）
 - Gemma 3 Technical Report — https://arxiv.org/abs/2503.19786（v1: 2025-03-25；Accessed: 2026-07-31）
 - Gemma 3 Technical Report PDF — https://storage.googleapis.com/deepmind-media/gemma/Gemma3Report.pdf（Accessed: 2026-07-31）
+- OpenAI agent tools launch — https://openai.com/index/new-tools-for-building-agents/（First Public: 2025-03-11；Accessed: 2026-08-20）

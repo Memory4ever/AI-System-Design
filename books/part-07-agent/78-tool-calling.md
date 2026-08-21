@@ -142,6 +142,55 @@ natural-language guess
 这与 RAG 是 `Principle Reuse`：两者都把易变化事实移出模型参数。区别是 RAG 通常返回
 Context，而 Tool Calling 还拥有执行语义、权限、预算和可能的副作用。
 
+## 从语义正确的 Program 到可证明的 Resource Lowering
+
+Skill 或 Prompt 可以要求“流式读取”“分块处理”“不要一次加载全部文件”，但模型最终生成的 program 仍可能 eager-
+load 整个输入。它在小样本上语义正确，进入真实 XLSX、CSV、array 或 scientific artifact 后却超过单次 tool call 的
+memory cap。只在 cgroup OOM 时拒绝能保护节点，却无法把原本可分块的 computation 转成可运行实现；让模型继续
+重试，也不能证明新程序与 source computation 等价。
+
+这形成一条从 advisory optimization 到 checked lowering 的演进：
+
+```text
+Skill describes intended computation and resource obligation
+→ model proposes a concrete source program
+→ match one audited source relation
+→ independent checker rebuilds bounded target from immutable input facts
+→ calculate platform-calibrated live-set bound
+→ acquire atomic capacity lease
+→ execute in bounded runtime
+→ verify postcondition and resource events
+→ publish result or abstain without partial publication
+```
+
+关键 authority 分离是：模型拥有 proposal，relation registry 拥有已审计的语义映射，checker 拥有 target 重建和 bound
+验证，scheduler/capacity manager 拥有 lease，tool runtime 拥有执行，postcondition gate 才拥有 publication。不能接受
+模型自报的 `memory_required`，也不能让被检查的 program 自己提供等价性证明。
+
+这种 architecture 的 generality 不是“自动验证任意代码”。每个 computation family 仍需要一个 audited relation：
+
+```text
+source recognizer
++ semantic/input-fact extractor
++ bounded IR / target constructor
++ arena/live-set bound
++ output postcondition
+```
+
+Common runtime 只能复用 dispatch、capacity accounting、bounded execution 与 staged publication。SkillEffect 的作者实验
+在六个 deterministic、local、read-only operator families 和固定 cgroup cap 下，为这一 trust boundary 提供受限证据；
+Prompt/retry 不能稳定构造 bounded program，而 registered lowering 在其 closed grammar 中通过 verifier。论文的设备、
+输入规模和 peak-memory 倍率不作为通用 Tool 性能结论。
+
+代价是 relation-specific audit、checker TCB、platform manifest calibration、保守 reserve、版本/extension 维护和
+unsupported-program abstention。Runtime/allocator/page size 改变后必须重校准；postcondition 只覆盖声明的结果属性。
+当前 local staged output 也不能直接外推到 email、payment 或 mutable remote service：这些还需要 authorization、
+idempotency、transaction / compensation 与第 81 章 Workflow commit。
+
+因此这不是替代 generic Tool Calling 的默认路径。输入小、资源充足或 operation 不能建立 closed relation 时，普通 typed
+execution + cap/reject 仍更简单；只有 resource failure 频繁、关系可审计、结果可验证时，checked lowering 才值得承担
+额外控制面。
+
 ## Side-effect Class 决定控制
 
 可将工具粗分为：
@@ -227,6 +276,8 @@ Trace 应把 model proposal、policy decision、approval、tool call 和 result 
 4. Timeout 后为什么不能盲目 retry？
 5. Tool result 为什么仍是不可信 Context？
 6. Agent loop 哪些边界必须由 runtime 强制？
+7. 为什么模型生成的 bounded program 不能自己证明语义等价和 memory bound？
+8. Checked lowering 的 relation、capacity lease 与 publication gate 分别由谁拥有？
 
 ## 小结
 
@@ -247,3 +298,5 @@ Primary-source 入口：
   https://www.anthropic.com/research/agents-in-biology
 - OmniGAIA / OmniAtlas（native perception + on-demand perception tools；Status: Experimental）:
   https://arxiv.org/abs/2602.22897
+- SkillEffect（checked lowering + capacity lease；Status: Experimental）:
+  https://arxiv.org/abs/2608.17007

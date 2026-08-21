@@ -268,6 +268,44 @@ candidate set and normalized answers
 
 若分布单峰、样本太少、component 交换，或 temperature、模型和任务发生变化，局部 mixture 会退化；同一个模型产生轨迹又报告 confidence 时，两者还共享校准盲点。因此 majority vote 在答案可规范化且错误较分散时仍然有效，pointwise/pairwise selector 在绝对簇结构不稳定时仍合理，独立 executable verifier 才能把 selection evidence 提升为 acceptance evidence。
 
+### Selector 也要先证明“正确性信号可读”
+
+Majority vote 不只是一个便宜 baseline，它隐含“正确答案比任一错误答案更常出现”。困难问题可能进入相反的
+modal-wrong regime：samples 的错误高度相关，增加 `N` 只会让错误 mode 的票数更稳定。Hidden-state selector
+提供另一条分支——不根据答案出现次数，而从候选的内部表示读取一个 correctness ranking signal。
+
+但 probe accuracy 很容易被 question identity 泄漏。若同一 question 的多个 candidates 被随机拆到 train/test，
+selector 可以学会“这是一道总体很难/很容易的题”，却仍无法在该题内部区分对错。真正与 selection decision 对齐的
+measurement 应是：
+
+```text
+group split by question
+→ rank correct candidates above incorrect candidates within each question
+→ compute leakage-free decodability on held-out questions
+→ compare expected selector gain against voting / verifier cost
+```
+
+只有当这条 within-question signal 在目标 model、layer、task、sampling policy 和 difficulty slice 上稳定可读，才启用
+hidden-state selection；否则保留 majority、output-space score、独立 verifier 或 abstain。这个 gate 测的是 selector
+competence，不是候选本身的 truth probability，也不能授予最终 acceptance authority。
+
+CASE 的作者实验为这条机制提供了受限证据：answer-token hidden state 的线性 readout 在部分 model/task 上可预测
+selection 相对 voting 的收益，而在 signal 近 chance 的设置中不应启用；普通 random split 会显著高估 probe。论文
+主要覆盖 multiple-choice、最终 answer token 与可取得 hidden state 的模型，阈值又依赖 difficulty distribution，
+因此正文不保留固定 AUC、任务增益或“更大模型必然更可解码”的结论。
+
+这形成一条条件演进，而不是单向替代：
+
+```text
+majority under diverse errors
+→ semantic / output-space grouping
+→ hidden-state selector when correctness is decodable
+→ external verifier when acceptance requires truth evidence
+```
+
+更多 candidates 只有在 coverage 增长且 selector 可靠时才增加系统正确率；在 modal-wrong 且无可读 correctness signal
+时，采样和投票都不能制造新知识。
+
 Parallel sampling 的预算也不能只写“调用次数”。完整 contract 至少包括各候选的 prompt/prefill
 复用、生成 tokens、KV 占用、judge 输入输出 tokens、并行度、端到端 latency、成本与停止规则。
 一次长 pairwise judge 与一次短 candidate generation 不是等价工作量。Greedy 或单样本在低延迟、低
@@ -350,6 +388,7 @@ Decoder hidden state
 10. 为什么 Sampling 不能替代模型能力提升？
 11. 为什么 `pass@N` 不能直接代表系统最终答对的概率？
 12. Pairwise selector 需要持久化哪些 graph state，为什么 score difference 不等于置信度？
+13. 为什么 selector 的 calibration 必须按 question 分组并测量 within-question ranking？
 
 ## 小结
 
@@ -376,5 +415,7 @@ Primary-source 校验入口：
 - Zihan Wang et al., "V1: Parallel Generation and Pairwise Self-Verification", 2026（Status: Experimental）:
   https://arxiv.org/abs/2603.04304
 - Believe Your Model / DistriVoting（Status: Experimental）: https://arxiv.org/abs/2603.03872
+- CASE / Decodability（Status: Experimental；hidden-state selection admission gate）:
+  https://arxiv.org/abs/2608.17124
 - FlashSampling（Status: Experimental；exact fused sampling 与 TP hierarchical reduction）:
   https://arxiv.org/abs/2603.15854

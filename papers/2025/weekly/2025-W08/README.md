@@ -3,7 +3,7 @@
 > Coverage Window: 2025-02-17～2025-02-23
 > Research Mode: Retrospective Discovery and Evidence Rebuild
 > Accessed: 2026-08-18
-> Audit Status: Candidate Evidence Gate Passed — 65 owner families；64 Full Source Reviews complete；1 low-score verified；0 pending
+> Audit Status: Candidate Evidence Gate Passed with Declared Blocker — 92 discovered owner families；88 Full Source Reviews complete；3 low-score verified；1 P1 blocked；0 ordinary pending
 > Historical Books Gate: Closed — Weekly evidence only
 
 ## Executive Summary
@@ -11,7 +11,7 @@
 旧版周报只保留 AI co-scientist，并错误地把学术来源和工程项目写成“无候选”。本轮以
 2025-02-17～2025-02-23 的 arXiv v1、官方 Blog 与 GitHub Release 重放 discovery，已经恢复
 65 个本周 owner family 线索，并识别 4 个属于 W07 的 spillback。AI co-scientist、MLGym、
-Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedding Space Capacity、S*、Magma、RDLM、Logic-RL、SWE-Lancer、TrustGen、MMTEB、HumanUP、SongGen、Small Model Learnability Gap、Multimodal Mamba、RAD、Decomposed Reward Models、MoM、FLAG-Trader、SoFar、Craw4LLM、PC-Agent、S2R、Selective Question Answering、SafeRoute、RelaCtrl、YOLOv12、CLIPPER、Explorer、Template-Anchored Safety、NExT-Mol、video-SALMONN-o1、InfiR、LongPO、Temporal Heads、LongWriter-V、Intuitive Physics from Natural Videos、Autellix、Sailor2、Thinking Preference Optimization、HermesFlow、Atom of Thoughts、Dynamic Concepts Personalization、RealSyn、Diffusion-Sharpening、Revisiting Test-time Scaling of o1-like Models、AlphaMaze、PAFT、CoSyn、LServe、From RAG to Memory、LoRAM、Text2World、HeadInfer、AdaptiveStep、AIDE、Model-guidance、Transformers v4.49.0、Accelerate v1.4.0 与 vLLM v0.7.3 已经完成 Full Source Review；Quantum Error Correction with RL 已完成低分来源/日期/拒绝核验；MUDDFormer 已按 arXiv v1 的 2025-02-13 日期回拨 W07 并完成 Full Source Review。65/65 owner family 均有最终 disposition，W08 Candidate Evidence Gate 通过；本轮仍不进入 Books Integration。
+Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedding Space Capacity、S*、Magma、RDLM、Logic-RL、SWE-Lancer、TrustGen、MMTEB、HumanUP、SongGen、Small Model Learnability Gap、Multimodal Mamba、RAD、Decomposed Reward Models、MoM、FLAG-Trader、SoFar、Craw4LLM、PC-Agent、S2R、Selective Question Answering、SafeRoute、RelaCtrl、YOLOv12、CLIPPER、Explorer、Template-Anchored Safety、NExT-Mol、video-SALMONN-o1、InfiR、LongPO、Temporal Heads、LongWriter-V、Intuitive Physics from Natural Videos、Autellix、Sailor2、Thinking Preference Optimization、HermesFlow、Atom of Thoughts、Dynamic Concepts Personalization、RealSyn、Diffusion-Sharpening、Revisiting Test-time Scaling of o1-like Models、AlphaMaze、PAFT、CoSyn、LServe、From RAG to Memory、LoRAM、Text2World、HeadInfer、AdaptiveStep、AIDE、Model-guidance、Transformers v4.49.0、Accelerate v1.4.0 与 vLLM v0.7.3 已经完成 Full Source Review；Quantum Error Correction with RL、DOEI 与 Guardians 已完成低分来源/日期/拒绝核验。LUME、SmolVLM2、Grok 3与Mistral Saba均在later replay中按first-public date回拨W08并完成要求的Source Review；W09 replay发现的23个W08-owner论文均已获得final disposition，其中RIFLEx因event-time v1全文不可访问保留P1 blocked。当前92 discovered owner =91个evidence-final +1个blocked +0 ordinary pending；W08 Candidate Evidence Gate通过并携带声明 blocker，年度Archive Completion Gate继续打开；本轮仍不进入Books Integration。
 
 ## Coverage Window and Limitations
 
@@ -22,6 +22,9 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 - 厂商 benchmark 和论文实验只代表其披露条件，缺少完整 workload contract 时不做跨系统性能结论。
 - Hugging Face `2025-W08` 发现页覆盖 2 月 16～22 日，早于本 ISO week 的 2 月 16 日论文必须
   spillback 到 W07；推荐日期不替代 arXiv v1 日期。
+- Late spillback：LUME（arXiv:2502.15097）v1 2025-02-20归W08；v2 2025-02-25、v3 2025-02-27
+  只是W09 revision lineage。LUME、SmolVLM2、Grok 3与Mistral Saba spillback均完成；W09 HF replay识别出的23个
+  W08-owner family也已全部获得Full/low-score/blocked disposition。RIFLEx携带P1全文请求，不阻塞forward cursor。
 
 ## 1. 模型与研究机构
 
@@ -30,6 +33,9 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 按固定机构顺序扫描 OpenAI、Anthropic、Apple、Google、Meta、Microsoft、NVIDIA、xAI、Amazon、Cohere、Ai2、Mistral、Qwen、DeepSeek、Kimi、Zhipu、MiniMax、Seed、ERNIE、Hunyuan、Huawei Noah、InternLM、StepFun、MiMo、InclusionAI 与 Hugging Face Blog。
 
 - 已完成：AI co-scientist 官方 Blog event（2025-02-19）。
+- `Full Source Review Complete`：Hugging Face SmolVLM2（2025-02-20）；W09 fixed-org scan发现并按官方Blog日期回拨W08。
+- `Full Source Review Complete — Mechanism Partially Disclosed`：xAI Grok 3 Beta（2025-02-19）；由W09 fixed-org negative scan发现并按官方日期回拨。
+- `Full Source Review Complete — Version Fact / Mechanism Partially Disclosed`：Mistral Saba（2025-02-17）；由同一fixed-org scan回拨W08。
 - 已完成 Qwen2.5-VL technical report、SigLIP 2、Magma、Sailor2 与 HermesFlow；其余机构论文仍待逐项核验；论文身份与
   正文审计仍在第 2 组记录，不把机构署名重复计为第二个事件。
 
@@ -58,6 +64,9 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 | Candidate | Primary ID | First Public | Owner / Status |
 | --- | --- | --- | --- |
 | AI co-scientist | Google Research Blog | 2025-02-19 | W08 / Full Source Review Complete |
+| SmolVLM2 | Hugging Face official Blog | 2025-02-20 | W08 / Full Source Review Complete |
+| Grok 3 Beta | xAI official Blog | 2025-02-19 | W08 / Full Source Review Complete；Mechanism Partially Disclosed |
+| Mistral Saba | Mistral official Blog + model card | 2025-02-17 | W08 / Full Source Review Complete；Version Fact / Mechanism Partially Disclosed |
 | Qwen2.5-VL Technical Report | arXiv:2502.13923 | 2025-02-19 | W08 / Full Source Review Complete |
 | MLGym | arXiv:2502.14499 | 2025-02-20 | W08 / Full Source Review Complete |
 | SigLIP 2 | arXiv:2502.14786 | 2025-02-20 | W08 / Full Source Review Complete |
@@ -137,6 +146,37 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 | MUDDFormer | arXiv:2502.12170 | 2025-02-13 | Move to W07；Full Source Review complete；not counted in W08 |
 | SGLang v0.4.3 | GitHub tag `v0.4.3` | 2025-02-14 | W07 engineering event；not counted in W08 |
 
+### Reopened Spillback Backlog from W09 Replay
+
+以下候选均由W09的HF 2月24～28日推荐页/Newsletter发现，但owner严格按arXiv v1日期回拨W08。
+它们已经完成identity/date核验，但尚未评分；在完成正文阅读前不计入final Candidate Scoring。
+
+| Candidate | Primary ID | First Public | Owner / Status |
+| --- | --- | --- | --- |
+| SurveyX | arXiv:2502.14776 | 2025-02-20 | W08 / Full Source Review Complete；Experimental Self-Evaluation Coupling |
+| SIFT | arXiv:2502.14922 | 2025-02-19 | W08 / Full Source Review Complete；Experimental Self-Confirmation Boundary |
+| U-SAFEBENCH | arXiv:2502.15086 | 2025-02-20 | W08 / Full Source Review Complete；Disputed Model Identity / Refusal-only Policy Contract |
+| AlchemyBench / Automated Materials Discovery | arXiv:2502.16457 | 2025-02-23 | W08 / Full Source Review Complete；Disputed Dataset Verification / Feasibility Judge Contract |
+| MedHallu | arXiv:2502.14302 | 2025-02-20 | W08 / Full Source Review Complete；Disputed Dataset Admission / Ground-truth Contract |
+| Think Inside the JSON / ThinkJSON | arXiv:2502.14905 | 2025-02-18 | W08 / Full Source Review Complete；Disputed Objective/Verifier/Evaluation Contract |
+| o3-mini Reasoning/Performance Analysis | arXiv:2502.15631 | 2025-02-21 | W08 / Full Source Review Complete；Disputed Causal/Probability Contract |
+| InterFeedback | arXiv:2502.15027 | 2025-02-20 | W08 / Full Source Review Complete；Experimental Provider-conditioned Evaluation |
+| Tree-of-Debate | arXiv:2502.14767 | 2025-02-20 | W08 / Full Source Review Complete；Disputed Evidence-filter / Tree-depth Contract |
+| Audio-FLAN | arXiv:2502.16584 | 2025-02-23 | W08 / Full Source Review Complete；Preliminary Artifact Partial |
+| CodeCriticBench | arXiv:2502.16614 | 2025-02-23 | W08 / Full Source Review Complete；Experimental Judge-derived Advanced Ground Truth |
+| RIFLEx | arXiv:2502.15894 | 2025-02-21 | W08 / Unverified / Blocked — event-time v1 full text unavailable |
+| MMIR | arXiv:2502.16033 | 2025-02-22 | W08 / Full Source Review Complete；Disputed Dataset Count / Evaluation-helper Contract |
+| Reflective Planning | arXiv:2502.16707 | 2025-02-23 | W08 / Full Source Review Complete；Disputed Test-leakage / Simulator Contract |
+| TAG / TAME Hierarchical MARL | arXiv:2502.15425 | 2025-02-21 | W08 / Full Source Review Complete；Experimental Scope-limited MARL Hierarchy |
+| Curie | arXiv:2502.16069 | 2025-02-22 | W08 / Full Source Review Complete；Experimental Rigor-workflow Evaluation |
+| Scale-Distribution Decoupling | arXiv:2502.15499 | 2025-02-21 | W08 / Full Source Review Complete；Disputed Theory/Figure Contract |
+| Prompt-to-Leaderboard | arXiv:2502.14855 | 2025-02-20 | W08 / Full Source Review Complete |
+| LaTIM | arXiv:2502.15612 | 2025-02-21 | W08 / Full Source Review Complete；Experimental Approximate Decomposition |
+| MolSpectra | arXiv:2502.16284 | 2025-02-22 | W08 / Full Source Review Complete；Experimental Domain-specific Multimodal Pretraining |
+| DOEI | arXiv:2502.15885 | 2025-02-21 | W08 / Low-score verified |
+| CODESYNC | arXiv:2502.16645 | 2025-02-23 | W08 / Full Source Review Complete；Disputed API Ground Truth |
+| Guardians of the Agentic System | arXiv:2502.16750 | 2025-02-23 | W08 / Low-score verified；Unreliable Empirical Contract |
+
 ## Candidate Scoring
 
 当前表只列已经通过完整证据核验的候选；其余条目不得在只读摘要的情况下写入最终分数。
@@ -153,6 +193,31 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 | Embedding Space Capacity | 5 | 4 | 2 | 4 | 5 | 5 | 25/30 | Full Source Review Complete；Books Pending |
 | S*: Test Time Scaling for Code Generation | 4 | 5 | 4 | 4 | 5 | 4 | 26/30 | Full Source Review Complete；Books Pending |
 | Magma | 5 | 5 | 4 | 4 | 5 | 4 | 27/30 | Full Source Review Complete；Books Pending |
+| SmolVLM2 family | 4 | 4 | 5 | 4 | 5 | 5 | 27/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate |
+| Grok 3 Beta | 3 | 4 | 4 | 3 | 5 | 5 | 24/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate / Mechanism Partially Disclosed |
+| Mistral Saba | 2 | 4 | 4 | 4 | 4 | 4 | 22/30 | Full Source Review Complete；Weekly Only — Version/Product Fact / Mechanism Partially Disclosed |
+| Scale-Distribution Decoupling | 4 | 5 | 4 | 3 | 5 | 5 | 26/30 | Full Source Review Complete；Disputed Theory/Figure Contract；Books Frozen |
+| CODESYNC | 4 | 5 | 4 | 2 | 5 | 5 | 25/30 | Full Source Review Complete；Disputed API Ground Truth；Books Frozen |
+| DOEI | 4 | 2 | 3 | 4 | 2 | 3 | 18/30 | Low-score verified；Weekly Only — Domain-specific WSSS mechanism |
+| Prompt-to-Leaderboard | 5 | 5 | 5 | 4 | 5 | 5 | 29/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate |
+| Think Inside the JSON / ThinkJSON | 3 | 4 | 3 | 2 | 5 | 5 | 22/30 | Full Source Review Complete；Disputed Objective/Verifier/Evaluation Contract；Books Frozen |
+| o3-mini Reasoning/Performance Analysis | 3 | 4 | 4 | 2 | 5 | 5 | 23/30 | Full Source Review Complete；Disputed Causal/Probability Contract；Books Frozen |
+| SIFT | 4 | 4 | 4 | 3 | 5 | 5 | 25/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate / Experimental Self-Confirmation Boundary |
+| U-SAFEBENCH | 4 | 5 | 4 | 3 | 5 | 5 | 26/30 | Full Source Review Complete；Disputed Model Identity / Refusal-only Policy Contract；Books Frozen |
+| MedHallu | 4 | 5 | 4 | 2 | 5 | 5 | 25/30 | Full Source Review Complete；Disputed Dataset Admission / Ground-truth Contract；Books Frozen |
+| CodeCriticBench | 4 | 4 | 4 | 3 | 5 | 5 | 25/30 | Full Source Review Complete；Books Pending — No Change Candidate / Experimental Judge-derived Advanced Ground Truth |
+| LaTIM | 5 | 4 | 3 | 4 | 5 | 5 | 26/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate / Experimental Approximate Decomposition |
+| Audio-FLAN | 4 | 5 | 4 | 3 | 5 | 5 | 26/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate / Preliminary Artifact Partial |
+| SurveyX | 4 | 4 | 4 | 3 | 5 | 5 | 25/30 | Full Source Review Complete；Books Pending — No Change Candidate / Experimental Self-Evaluation Coupling |
+| AlchemyBench / Automated Materials Discovery | 4 | 5 | 4 | 3 | 5 | 5 | 26/30 | Full Source Review Complete；Disputed Dataset Verification / Feasibility Judge Contract；Books Frozen |
+| InterFeedback | 4 | 4 | 4 | 3 | 5 | 5 | 25/30 | Full Source Review Complete；Books Pending — No Change Candidate / Experimental Provider-conditioned Evaluation |
+| Tree-of-Debate | 4 | 4 | 4 | 3 | 5 | 5 | 25/30 | Full Source Review Complete；Disputed Evidence-filter / Tree-depth Contract；Books Frozen |
+| MMIR | 4 | 5 | 4 | 3 | 5 | 5 | 26/30 | Full Source Review Complete；Disputed Dataset Count / Evaluation-helper Contract；Books Frozen |
+| Reflective Planning / ReflectVLM | 5 | 5 | 4 | 2 | 5 | 5 | 26/30 | Full Source Review Complete；Disputed Test-leakage / Simulator Contract；Books Frozen |
+| TAG / TAME Hierarchical MARL | 4 | 4 | 3 | 3 | 5 | 5 | 24/30 | Full Source Review Complete；Books Pending — No Change Candidate / Experimental Scope-limited MARL Hierarchy |
+| Curie | 4 | 5 | 5 | 3 | 5 | 5 | 27/30 | Full Source Review Complete；Books Pending — No Change Candidate / Experimental Rigor-workflow Evaluation |
+| MolSpectra | 5 | 4 | 3 | 4 | 4 | 5 | 25/30 | Full Source Review Complete；Books Pending — No Change Candidate / Experimental Domain-specific Multimodal Pretraining |
+| Guardians of the Agentic System | 2 | 3 | 2 | 1 | 5 | 3 | 16/30 | Low-score verified；Weekly Only — Unreliable Empirical Contract / No Books Owner |
 | Continuous Diffusion Model for Language Modeling | 5 | 4 | 3 | 4 | 5 | 4 | 25/30 | Full Source Review Complete；Books Pending |
 | Logic-RL | 4 | 4 | 4 | 3 | 5 | 4 | 24/30 | Full Source Review Complete；Books Pending |
 | SWE-Lancer | 4 | 5 | 4 | 5 | 5 | 5 | 28/30 | Full Source Review Complete；Books Pending |
@@ -208,6 +273,7 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 | Transformers v4.49.0 | 2 | 4 | 4 | 5 | 4 | 3 | 22/30 | Full Source Review Complete；Weekly Only — Version/Integration Fact |
 | Accelerate v1.4.0 | 2 | 4 | 4 | 5 | 5 | 3 | 23/30 | Full Source Review Complete；Books Pending — No Change Candidate |
 | vLLM v0.7.3 | 3 | 5 | 5 | 5 | 5 | 4 | 27/30 | Full Source Review Complete；Books Pending — No Change Candidate |
+| LUME: LLM Unlearning with Multitask Evaluations | 4 | 4 | 5 | 5 | 5 | 5 | 28/30 | Full Source Review Complete；Books Pending — Refine Existing Argument Candidate |
 
 ### Deep Analysis 1 — AI co-scientist
 
@@ -237,6 +303,8 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 | Candidate | First-public | Primary Source | Score | Final Disposition |
 | --- | --- | --- | ---: | --- |
 | Discovering highly efficient low-weight quantum error-correcting codes with reinforcement learning | 2025-02-20 | https://arxiv.org/abs/2502.14372 | 18/30 | Identity/date/abstract and DBLP metadata verified；novel domain RL search, but quantum-code construction is outside the current AI System knowledge tree and adds no reusable model/training/runtime/platform mechanism beyond already-owned RL search principles。Weekly Only；no Books owner。 |
+| DOEI: Dual Optimization of Embedding Information for Attention-Enhanced Class Activation Maps | 2025-02-21 | https://arxiv.org/abs/2502.15885；https://arxiv.org/html/2502.15885v1；https://github.com/AIGeeksGroup/DOEI | 18/30 | Identity、v1 date、full-text method/evaluation scope and official artifact identity verified。The paper contributes a plug-in CAM refinement for ViT-based weakly supervised semantic segmentation on PASCAL VOC/MS COCO；its reusable attention/embedding ideas remain a domain implementation case already owned by multimodal representation/evaluation，not a new general model、training、runtime or platform mechanism。Weekly Only；no Books change。 |
+| Guardians of the Agentic System | 2025-02-23 | https://arxiv.org/html/2502.16750v1；https://arxiv.org/abs/2502.16750v1；https://github.com/GitsSaikat/Guardian-Agent | 16/30 | Identity/date、complete paper scope and seven-commit public artifact surface verified。The paper combines three loosely specified simulations but discloses no sample population、labels、prompts、model snapshots、run settings、hardware、raw outputs or training definition for its probability equations；headline accuracy/ASR/latency tables are therefore not auditable。Repository explicitly withholds security-critical components and exposes no immutable result package。Dynamic threat monitoring is already owned by Security/Evaluation，while these results cannot support a new mechanism or policy。Weekly Only；Unreliable Empirical Contract；no Books owner。 |
 
 ## Full Source Review
 
@@ -4173,6 +4241,1023 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 - **Changed Files or Rejection Reason:** added a non-template 30-field signed-tag review；separated the durable concurrent-Prefill policy from 253 release items；bound numbers to the single-A100 constructed workload；mapped V0/V1, KV/speculation/serialization/metrics state to canonical owners；cleared the final W08 pending；no Books change。
 - **Open Questions:** immutable benchmark dataset/command/output logs and repetition count；character-to-token length；precision/token cap/output distribution；threshold/slot/request-rate sensitivity；long-request starvation bound；multi-tenant fairness；V1-equivalent policy；multi-GPU/PP/PD/KV-transfer behavior；cancellation/failure/schema migration；MTP acceptance/verification cost；metric definitions, goodput and production SLO。
 
+### LUME: Unlearning Must Be Evaluated as a Multi-objective Lifecycle Change
+
+- **Candidate / Week / Score:** LUME: LLM Unlearning with Multitask Evaluations / 2025-W08 / 28/30。
+- **Source Family ID:** `lume-multitask-llm-unlearning-evaluation`。
+- **Source Type:** arXiv v1 full paper + official Amazon benchmark data + released 1B/7B memorized OLMo checkpoints。
+- **Event Date / First-public Date / Revision History:** v1 2025-02-20（W08）；v2 2025-02-25、v3 2025-02-27
+  属W09 revision lineage，不重复计分。W08审计锁定v1，后续revision只作差异核验。
+- **Direct Primary Sources:** https://arxiv.org/abs/2502.15097；https://arxiv.org/html/2502.15097v1；
+  https://github.com/amazon-science/lume-llm-unlearning；official 1B/7B OLMo candidate checkpoints。
+- **Related Primary Sources:** OLMo model/training documentation and Dolma dataset lineage establish the base-checkpoint/data relationship；
+  later LUME revisions only clarify the same family and do not replace the v1 event-time experiment contract。
+- **Access and Verification Status:** v1 benchmark construction、all metrics/algorithms/results/appendices、official data/checkpoint
+  surfaces已核验；repository只含benchmark data，无paper training/unlearning implementation或immutable run manifests。
+- **Full-read Coverage:** creative/PII/public-biography tasks、forget/retain splits、memorized OLMo targets、regurgitation/knowledge/
+  MIA/utility metrics、GA/GD/KL/NPO、epoch curves、privacy-utility results、generation/verification prompts、limitations/ethics与artifact。
+- **Original Problem:** “忘掉某数据”不能由单一loss或refusal测试证明：模型可能停止逐字复述但仍回答facts，MIA仍能识别
+  membership；也可能把forget set连同retain knowledge和general utility一起破坏。Unlearning因此是删除、保留、隐私和成本
+  的联合contract。
+- **Why the Previous Design Was Reasonable:** full retraining without target data提供最清晰counterfactual baseline，但成本高；
+  gradient ascent快速降低forget likelihood；KL/retain loss保护原model。模型小、data lineage完整、法规要求强或误删风险高时，
+  retraining/adapter deletion仍可能更可靠。
+- **Changed Constraint:** frontier checkpoints无法频繁重训，且需处理copyright、PII、misinformation；同一fact可能存在多个training
+  sources，真实data又无法知道“只来自forget set”。需要synthetic clean-room与real overlap tasks并存。
+- **Mechanism:** 构建三类documents：393 synthetic novels、405 fake-PII bios、589 Dolma/Wikipedia real bios；各约1:1 forget/
+  retain，生成4,394 regurgitation/QA examples；fine-tune OLMo1B/7B到完全memorize。对unlearned checkpoints同时测ROUGE-L
+  completion、exact-match knowledge、loss-based black-box MIA AUC与MMLU utility，跨10 epochs观察trajectory。
+- **State Ownership:** source/forget/retain manifests拥有deletion scope；original/pre-unlearn checkpoint拥有baseline；unlearning
+  algorithm拥有parameter delta；regurgitation/QA/MIA/utility scorers拥有不同evidence；registry/security policy拥有release/block/
+  rollback decision；模型self-report不拥有erasure proof。
+- **Control Flow / Data Flow:** base OLMo + full task corpus → memorized target checkpoint → select F/R → GA/GD/KL/NPO updates
+  → per-epoch immutable checkpoints → forget+retain regurgitation/knowledge → MIA member/non-member → MMLU utility → multi-objective
+  decision/rollback。
+- **Implementation Details:** Task1 Mixtral8x7B creates150–200 word stories withtwo-author review；Task2 usesfake SSN 900-range/
+  synthetic contact/address；Task3 samples100–200 word Wikipedia bios fromDolma1.6/OLMo training lineage。QA for tasks1/3 generated
+  then verified byClaude3 Sonnet、Titan Express、Mixtral unanimity；algorithms10 epochs、LR1e-5、batch32。
+- **Evaluation Contract:** forget697/retain690 docs，1B/7B OLMo；v1 paper plots7B。Initial target完全memorized；GA/GD/KL往往
+  同时把forget/retain knowledge降到0，NPO保留更多但MIA AUC仍高；所有方法MMLU下降。MIA只对Task3 memorized subset与
+  specific loss attack成立，不是privacy guarantee。
+- **Baselines / Ablations / Sensitivity / Overhead:** GA、GD、KL regularization、NPO across epochs/tasks/metrics；缺from-scratch
+  oracle model、hyperparameter/forget-size/overlap/seed sensitivity、compute/wall time、other MIAs/extraction attacks、semantic
+  paraphrase/behavioral probes、relearning与downstream safety tests。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** model sizes/LR/batch/epochs披露；GPU、precision、tokens/
+  wall time、distributed layout、energy、serving latency与SLO未披露。Unlearning cost“commensurate with F”只在定义中，未被完整测量。
+- **What the Evidence Actually Proves:** 在clean synthetic+real biography contract内，被测2024-era parameter-update algorithms
+  无法同时实现低forget recall/leakage与高retain/general utility；unlearning effectiveness需要多metric/per-epoch frontier，而不是
+  单点“忘记率”。
+- **What It Does Not Prove:** 数据被法律/信息论意义彻底删除、MIA=0即safe、MMLU保留即所有utility保留、结果外推到larger models/
+  pretraining memories、所有NPO/modern methods失败，或benchmark synthetic PII等同real person risk。
+- **Limitations / Threats to Validity:** 1B/7B fine-tuned memories、small task corpus、no from-scratch oracle、generator/verifier
+  biases、single MIA family、ROUGE/exact-match proxies、real biography source overlap、no code/run manifests、largermodel/license limits。
+- **Trade-offs / New Failure Modes:** stronger forgetting扩大collateral damage；retain/KL保护utility却保留private traces；synthetic clean
+  set提高causal attribution却降低realism；public benchmark可被overfit；per-epoch checkpoint增加storage/governance但暴露Pareto curve。
+- **Where the Previous Design Still Applies:** retraining用于高保证删除；adapter/shard/index deletion用于隔离知识；RAG/ACL deletion
+  用于non-parametric facts；output filters用于短期mitigation但不能冒充unlearning；legal review决定scope/evidence burden。
+- **Evolution Relationship:** `Direct Evolution`：output suppression → single forget metric → forget/retain pair → regurgitation+
+  knowledge+MIA+utility lifecycle frontier；`Alternative Branch`于retraining、parameter edit、adapter/data/index deletion。
+- **ROADMAP Node:** `PLATFORM-SECURITY`（Current Ch72；Legacy Ch68）主 owner；handoff到 `TRAIN-CHECKPOINT`、
+  `PLATFORM-MODEL-REGISTRY`、`PLATFORM-EVALUATION-SYSTEM`与`TRAIN-DATA`。
+- **Target and Adjacent Chapters Read:** 已读Ch72 privacy/threat-model与Ch66 multi-dimensional evidence，核对Ch35 lineage/
+  rollback、Ch59 artifact identity与Ch27 deletion provenance；benchmark verdict不等于legal compliance。
+- **Existing Coverage:** Books已有data/checkpoint lineage、privacy threat model、evaluation/release gate，但未单独展开parameter
+  unlearning lifecycle；LUME提供长期缺口候选，后续Books pass可refine现有Security/Evaluation而非新增论文章。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate`。Historical Books Gate关闭。
+- **Changed Files or Rejection Reason:** 完成late spillback全文审计；纠正W09 revision date误归属；未修改Books。
+- **Open Questions:** from-scratch oracle、larger/pretrained memories、multiple extraction/MIAs、semantic behavior、relearning、
+  overlapping sources、forget-size/seed/cost curve、legal evidence standard、immutable run manifests与independent reproduction。
+
+### SmolVLM2 Family: Video Understanding Becomes a Memory–Quality Operating Curve
+
+- **Candidate / Week / Score:** SmolVLM2 family / 2025-W08 / 27/30。
+- **Source Family ID:** `huggingface-smolvlm2-video-understanding-size-memory-branches`。
+- **Source Type:** Hugging Face official Blog + three open model cards/weights + Transformers/MLX integration branches + later family paper lineage。
+- **Event Date / First-public Date / Revision History:** official Blog/model family released 2025-02-20；later model-card edits、April family paper、app/demos与mainline integrations are revisions。
+  W08 owner锁定2.2B/500M/256M video-understanding release与当时special branches。
+- **Direct Primary Sources:** https://huggingface.co/blog/smolvlm2；https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct；
+  https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct；https://huggingface.co/HuggingFaceTB/SmolVLM2-256M-Video-Instruct。
+- **Related Primary Sources:** Apollo video data-mixture study、Idefics3/SmolLM2/shape-optimized SigLIP artifacts、Transformers `v4.49.0-SmolVLM-2`、
+  MLX/Swift branches与2025-04 family paper用于lineage；不把later mainline/app status倒灌W08。
+- **Access and Verification Status:** Blog、weights/config/model cards、data-mixture percentages、vision/video tables与launch integration instructions已核验；
+  no standalone W08 technical report、full training config/log、fixed frame-sampling contract或independent reproduction。
+- **Full-read Coverage:** Blog three-size rationale/video/vision claims、Video-MME context、Apollo mixture connection、Transformers/MLX/Swift/fine-tuning/app status；
+  2.2B/500M/256M cards architecture/uses/evaluation/memory/data/misuse，launch comments暴露special-branch compatibility failure。
+- **Original Problem:** video understanding通常依赖large VLM/cloud compute；video frames产生长视觉序列，memory/latency随frames和resolution增长，难在phone/consumer GPU运行。
+  单一2B checkpoint无法同时覆盖quality-first server与memory-constrained edge。
+- **Why the Previous Design Was Reasonable:** large VLM有更高capacity与成熟benchmark；cloud service统一hardware/updates；frame-by-frame vision pipeline简单并可复用image model。
+  高风险/复杂long-video、network可用或quality优先时，大模型/专用video stack仍合理。
+- **Changed Constraint:** applications希望本地privacy/offline、低memory和多设备部署，同时输入可交错text/image/multi-image/video；
+  model family需显式暴露size→memory→quality curve，而不是只追求单一最高benchmark。
+- **Mechanism:** family基于Idefics3 multimodal architecture，以shape-optimized SigLIP image encoder和SmolLM2 decoder构建；processor/chat template把video/images/text转成interleaved sequence。
+  3.3M training samples按image34.4%、video33.0%、text20.2%、multi-image12.3%混合；2.2B/500M/256M共享任务语义但容量不同。
+- **State Ownership:** video processor/sampler拥有frame/time identity与media order；vision encoder拥有per-frame visual tokens；chat template拥有modality boundary；
+  decoder/KV cache拥有combined sequence state；model variant拥有capacity/memory contract；runtime/MLX/Transformers拥有device placement/precision，不拥有semantic truth。
+- **Control Flow / Data Flow:** video path/frames + prompt → processor selects/decodes media → vision encoder tokens interleaved with text → decoder autoregressive answer；
+  variant selection先按device/memory/quality policy；output可用于caption/VQA/highlight，但highlight segmentation/verification是上层workflow。
+- **Implementation Details:** 2.2B card声明BF16 video inference约5.2GB GPU RAM，500M约1.8GB；launch使用FlashAttention2与special Transformers branch，MLX Python/Swift走独立branches。
+  Blog展示500M iPhone prototype，VLC integration/in-progress app在launch时不是stable artifact；models不支持image/video generation。
+- **Evaluation Contract:** family在Video-MME/MLVU/MVBench报告2.2B 52.1/55.2/46.27、500M 42.2/47.3/39.73、256M 33.7/40.6/32.7；
+  2.2B另有MathVista/MMMU/OCRBench等vision table。Video-MME含900 videos/254h/11s～1h，但具体frame/audio/subtitle usage未完整披露。
+- **Baselines / Ablations / Sensitivity / Overhead:** Blog强调同size/per-memory比较但缺matched hardware/latency/frame budget、model-size training compute、data-mixture ablation、
+  quantization/MLX parity、duration/frame-sampling sensitivity与error bars。Apollo findings用于mixture design，不能把其全部ablation当作SmolVLM2 experiment。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** parameters、BF16、5.2/1.8GB memory claims与Colab/iPhone demonstrations已披露；
+  exact GPU/device、frame count/FPS/resolution、context/media tokens、batch/concurrency、latency/thermal/energy、TTFT/TPOT/SLO未形成完整contract。
+- **What the Evidence Actually Proves:** Hugging Face公开了三个可执行video-VLM capacity branches与transparent data mixture，并在作者benchmarks中呈现size/memory/quality trade-off；
+  它证明on-device model selection应是operating-point decision，而非把“small”视为单一architecture属性。
+- **What It Does Not Prove:** 256M/500M理解完整长视频、iPhone path production-ready、Video-MME利用所有audio/subtitle信息、memory claim跨device成立、
+  small model不会hallucinate、或2.2B替代large frontier VLM。Blog的“smallest/best per memory”是作者claim。
+- **Limitations / Threats to Validity:** official Blog/model cards但no W08 paper/logs、English-only、author benchmarks、special branch integration、launch-day MLX compatibility issue；
+  cards明确输出可能看似真实但不准确，不适合high-stakes，video sampling/time grounding与long-duration behavior未披露。
+- **Trade-offs / New Failure Modes:** smaller variants降低RAM/energy却损失video score/capacity；frame sampling降低tokens却可漏短事件/时序；local inference改善privacy/offline却增加device fragmentation/thermal；
+  special branches加速release却带来API drift；system prompt可调detail但不是grounding guarantee。
+- **Where the Previous Design Still Applies:** 2.2B/server用于quality-first；500M/256M用于edge/prototype；large VLM用于complex reasoning；
+  frame-level detector/tracker用于precise temporal events；cloud用于centralized updates；human review/evidence retrieval用于high-stakes video claims。
+- **Evolution Relationship:** `Alternative Branch`：large cloud VLM → compact image VLM → video-capable multimodal family with data-mixture tuning →
+  multiple size/device operating points。它用capacity换deployability，与large-model/structured-video pipelines长期共存。
+- **ROADMAP Node:** `MULTIMODAL-REPRESENTATION`（Current Ch23；Legacy N/A）主 owner；handoff到`MULTIMODAL-WORLD-MODELS`（boundary）、
+  `INFER-EXECUTION-ENGINE`、`PLATFORM-MODEL-REGISTRY`、`PLATFORM-EVALUATION-SYSTEM`与`PLATFORM-SECURITY`。
+- **Target and Adjacent Chapters Read:** 已读Ch23 representation/time identity、Ch25 world-model boundary、Ch49 execution、Ch59 registry、Ch66 evaluation与Ch72 security；
+  SmolVLM2拥有video understanding representation，不拥有environment dynamics、event truth或application action authority。
+- **Existing Coverage:** Books已有multimodal encoder/fusion与edge branch，但缺少model-size→memory→video quality曲线、frame/time identity和launch integration drift；
+  可refine现有representation/edge handoff，不新增SmolVLM产品章节。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate`。Historical Books Gate保持关闭。
+- **Changed Files or Rejection Reason:** 本轮只更新W08 Weekly与年度账本；不修改Books，later paper/apps与launch facts分离。
+- **Open Questions:** launch artifact hashes、frame sampling/FPS、audio/subtitle use、duration/context curve、memory measurement device、quantization/MLX parity、
+  latency/thermal/energy、multilingual、temporal grounding、safety/evidence calibration与independent reproduction。
+
+### Grok 3 Beta: Training-time RL and Request-time Compute Are Separate Control Surfaces
+
+- **Candidate / Week / Score:** Grok 3 Beta / 2025-W08 / 24/30。
+- **Source Family ID:** `xai-grok3-base-think-mini-test-time-compute`。
+- **Source Type:** xAI official beta launch + product examples/benchmark tables + later official API release-note lineage；no model/system card、weights、code or technical report。
+- **Event Date / First-public Date / Revision History:** consumer beta launch 2025-02-19；Grok 3 / Grok 3 mini API availability occurred later and is not a W08 API event。
+  The launch explicitly says training was ongoing and models would evolve, so later API snapshots must not be backdated to this beta identity。
+- **Direct Primary Sources:** https://x.ai/news/grok-3；https://docs.x.ai/developers/release-notes。
+- **Related Primary Sources:** xAI Risk Management Framework and Colossus pages provide governance/infrastructure lineage only；they do not disclose Grok 3 architecture、RL objective or serving runtime。
+- **Access and Verification Status:** official launch、all visible benchmark tables/examples、availability language and API chronology verified；no event-time immutable model card、system card、checkpoint、code、training recipe or evaluation artifact。
+  Status is `Full Source Review Complete — Mechanism Partially Disclosed`，not a reproduced model result。
+- **Full-read Coverage:** base/Think/mini branches、pretraining-scale claims、RL/test-time-compute description、`cons@64` benchmark regime、1M context/LOFT claim、visible reasoning examples、DeepSearch and API boundaries、ongoing-training caveat。
+- **Original Problem:** a single fixed-cost next-token pass cannot adapt compute to task difficulty；math、coding and multi-step reasoning may benefit from search、revision or verification，while routine requests require low latency。
+- **Why the Previous Design Was Reasonable:** one model path with fixed decoding policy is simpler to train、serve、price and evaluate；instant responses remain appropriate for latency-sensitive and knowledge-recall workloads。
+  Parallel sampling/selection was already a valid external test-time strategy even without a dedicated reasoning branch。
+- **Changed Constraint:** users want both instant answers and seconds-to-minutes deliberation；the service therefore exposes separate base、Think and mini operating points and a request-time compute budget instead of treating model identity as the whole capability contract。
+- **Mechanism:** disclosed mechanism is limited to larger-scale pretraining plus large-scale RL for the Think branches，which xAI says learned backtracking、strategy refinement and self-checking；runtime can spend variable time and the highest reported AIME'25 result uses `cons@64`。
+  Architecture、parameter count、reward construction、RL algorithm、sampler/aggregator and stopping policy are `Not Disclosed`。
+- **State Ownership:** checkpoint identity owns learned policy/knowledge；mode selection owns base versus Think behavior；runtime budget owns allowed deliberation time/samples；sampler/aggregator owns `cons@64` selection；conversation/UI owns the displayed trace；DeepSearch owns external tool/evidence state。
+  None of these surfaces independently owns factual truth。
+- **Control Flow / Data Flow:** prompt + selected mode → fixed beta checkpoint → optional RL-trained reasoning rollout under variable budget → optional multiple-sample aggregation (`cons@64` only where stated) → final answer/displayed trace。
+  DeepSearch adds a separate query/tool/synthesis workflow and must not be credited to the base model alone。
+- **Implementation Details:** Colossus training used a vendor-claimed 10× compute increase over prior models；the launch mentions a 200,000-GPU cluster for future scaling，not a complete Grok 3 training contract。
+  Model architecture、optimizer、precision、parallelism、checkpoint lineage、reasoning-token controls、server topology and API schema at launch are `Not Disclosed`。
+- **Evaluation Contract:** author tables cover base and reasoning variants on AIME、GPQA、LiveCodeBench、MMLU-Pro、LOFT、SimpleQA、MMMU/EgoSchema and Chatbot Arena。
+  Grok 3 Think reports AIME'25 93.3 at `cons@64`、GPQA 84.6 and LiveCodeBench 79.4；the page does not bind every row to an identical sampling budget or evaluator contract。
+- **Baselines / Ablations / Sensitivity / Overhead:** competitor tables are vendor-assembled；no matched API snapshot、prompt set、temperature、token budget、seed/error bar、contamination audit、single-sample-versus-`cons@64` curve、RL ablation、budget sensitivity or cost-quality frontier is public。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** 1M context and seconds-to-minutes reasoning are product claims；training/serving hardware assignment、precision、input/output lengths per benchmark、batch、concurrency、TTFT/TPOT、tail latency、availability and cost SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** xAI released distinct beta operating points and publicly tied a reasoning branch to RL plus variable test-time compute；the launch demonstrates that model evaluation must version checkpoint、mode and inference budget together。
+  It also proves the reported AIME'25 headline is not a single-pass score because `cons@64` is explicit。
+- **What It Does Not Prove:** any specific architecture or RL algorithm、faithful internal chain-of-thought、independent self-verification、general production superiority、1M-context reliability across tasks、or that DeepSearch gains come from model weights rather than the harness。
+  A visible trace is a product output，not privileged evidence of internal computation or correctness。
+- **Limitations / Threats to Validity:** beta identity was mutable and still training；only vendor evidence is public；benchmark conditions are incomplete and mixed across base/Think/mini；no safety/system card、artifact or independent reproduction；Arena and product examples include harness/user-preference effects。
+- **Trade-offs / New Failure Modes:** more request-time compute may improve hard-task accuracy but increases latency、token/GPU cost、queue variance and fairness pressure；parallel candidates can amplify correlated errors；mode choice complicates routing and regression；displayed reasoning can be persuasive while wrong or strategically unfaithful。
+  DeepSearch adds freshness but also source selection、citation、tool and synthesis failures。
+- **Where the Previous Design Still Applies:** base mode remains preferable for latency/cost-sensitive routine work；single-sample decoding is easier to capacity-plan；external verifier/search remains necessary for factual/high-stakes claims；smaller reasoning branch is useful when STEM reasoning matters more than broad world knowledge。
+- **Evolution Relationship:** `Layering / Dependency` and `Alternative Branch`：larger pretraining → RL-shaped reasoning policy → variable per-request compute → optional parallel aggregation/tool workflow。
+  The later layers do not replace fixed-cost decoding；they introduce separate budget、state and evidence contracts。
+- **ROADMAP Node:** `MODEL-SAMPLING`（Current Ch20；Legacy Ch20）主 owner；handoff到`TRAIN-GRPO`（Ch33/Legacy Ch29）、`INFER-SCHEDULING`（Ch56/Legacy Ch52）、
+  `PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）与`AGENT-WORKFLOW`（Ch81/Legacy Ch77）。
+- **Target and Adjacent Chapters Read:** 已读Ch20 sampling/selection、Ch33 reasoning RL boundary、Ch56 budget/fairness、Ch66 evaluation contract与Ch81 tool workflow；base/Think/DeepSearch分别属于model、runtime与workflow层。
+- **Existing Coverage:** Books已有sampling、test-time compute、GRPO、scheduling与harness distinction；Grok 3补充的长期证据是“checkpoint × mode × inference budget”联合身份及`cons@64`边界，而不是新增产品章节。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate / Mechanism Partially Disclosed`。Historical Books Gate关闭；only durable control-surface/evaluation boundary is eligible for later judgment。
+- **Changed Files or Rejection Reason:** 本轮仅补W08 Weekly与年度账本；API later event、product trace和vendor benchmark没有写入Books。
+- **Open Questions:** event-time immutable snapshot/system card、base/Think/mini exact identity、architecture/parameter count、RL reward/algorithm/data、`cons@64` aggregator、single-sample curves、
+  context reliability、reasoning-faithfulness tests、hardware/precision/cost/SLO、DeepSearch tool/evidence contract、safety evaluation与independent reproduction。
+
+### Mistral Saba: Regional Specialization Is a Data, Deployment, and Lifecycle Branch
+
+- **Candidate / Week / Score:** Mistral Saba / 2025-W08 / 22/30。
+- **Source Family ID:** `mistral-saba-2502-regional-specialization-deployment-lifecycle`。
+- **Source Type:** Mistral official launch + official model-card/API lifecycle entry；closed model/API and enterprise-local deployment，no public weights、technical report、system card or training artifact。
+- **Event Date / First-public Date / Revision History:** launch and model version `mistral-saba-2502` first public 2025-02-17；official lifecycle later records retirement on 2025-09-30 and replacement by Mistral Small 4。
+  Retirement is same-family lifecycle evidence，not a second W08 event and not evidence about the launch implementation。
+- **Direct Primary Sources:** https://mistral.ai/news/mistral-saba/；https://docs.mistral.ai/models/mistral-saba-25-02。
+- **Related Primary Sources:** Mistral changelog/model catalog confirm version identity and legacy status；Mistral Small 3/4 are comparison/replacement lineage，not Saba training evidence。
+- **Access and Verification Status:** official Blog、model identifier、24B/32k facts、API/local-deployment claims、language scope and retirement metadata verified；training data、weights、recipe、benchmark table text/conditions and immutable artifact are unavailable。
+  Status is `Full Source Review Complete — Version Fact / Mechanism Partially Disclosed`。
+- **Full-read Coverage:** regional problem framing、24B model/data claims、Arabic/Indian-language/Tamil scope、API/on-prem/single-GPU/throughput claims、benchmark-image boundary、use cases/customization and current model lifecycle entry。
+- **Original Problem:** broad multilingual models optimize average coverage and may underrepresent dialect、regional knowledge、cultural context and enterprise terminology；scaling a general model can increase cost without fixing local data coverage or sovereignty constraints。
+- **Why the Previous Design Was Reasonable:** one general-purpose multilingual model simplifies training、evaluation、deployment and maintenance，shares cross-language transfer and avoids fragmenting traffic across many regional checkpoints。
+  For broad global queries or low-volume locales，general models remain economically and operationally reasonable。
+- **Changed Constraint:** customers require local linguistic/cultural fit、regional data control、on-prem deployment and lower inference cost；these needs make data composition、deployment boundary and model lifecycle as important as parameter count。
+- **Mechanism:** publicly disclosed mechanism is only that a 24B Mistral Small-derived model was fine-tuned/trained on curated Middle East and South Asia datasets and can serve as a base for narrower adaptations。
+  Dataset identities/weights、tokenizer treatment、pretraining versus post-training proportions、objective、sampling/reweighting and architecture deltas are `Not Disclosed`。
+- **State Ownership:** data curation owns language/region/domain coverage；versioned checkpoint owns learned behavior；API/local package owns executable identity；customer adaptation owns private domain deltas；model registry/lifecycle policy owns deprecation/replacement；application policy owns locale selection and fallback。
+- **Control Flow / Data Flow:** regional/public or customer data → undisclosed specialization training → versioned Saba checkpoint → API or enterprise-local deployment → locale/domain routing → optional customer fine-tuning → monitored response/fallback。
+  The launch does not disclose automated language detection、router policy or update pipeline。
+- **Implementation Details:** 24B parameters、32k context、single-GPU deployment and vendor-claimed >150 tokens/s are disclosed；exact GPU、precision/quantization、batch、prompt/output lengths、runtime/kernel、memory footprint、local packaging/license and adaptation stack are `Not Disclosed`。
+- **Evaluation Contract:** official page includes benchmark images and claims stronger regional relevance than models over 5× larger，but the accessible text does not provide task names for every plot、dataset construction、locale/dialect breakdown、judge protocol、prompting、sampling、hardware or statistical uncertainty。
+  The >150 tokens/s statement is likewise not bound to model precision、sequence lengths、batch/concurrency or SLO。
+- **Baselines / Ablations / Sensitivity / Overhead:** no public matched-data/matched-compute comparison、general-versus-regional mixture ablation、24B size ablation、tokenizer analysis、cross-locale transfer/interference、fairness/safety slice、fine-tuning recipe or local-versus-API parity study。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** model=24B，context=32k and single-GPU/>150 tok/s vendor claims are known；GPU SKU、precision/quantization、memory、input/output lengths、batch、concurrency、TTFT/TPOT、tail latency、availability、energy and cost SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** Mistral offered a distinct regional model/version and treated API、on-prem deployment、customer adaptation and retirement as one lifecycle；it supports the system-design principle that specialization is a data+deployment+registry branch，not simply “use a smaller model”。
+- **What It Does Not Prove:** that Saba is universally better for Arabic/South Asian users、outperforms all 5× models under matched conditions、achieves >150 tok/s on arbitrary single GPUs/workloads、or that regional fluency guarantees factuality、cultural representation、safety or privacy。
+  The source does not reveal how specialization was implemented internally。
+- **Limitations / Threats to Validity:** vendor-only evidence、benchmark plots without complete textual contract、no weights/report/system card、broad region labels hide dialect/community variation、customer use cases are anecdotes rather than controlled studies；later retirement limits operational longevity but is not evidence that the original branch was incorrect。
+- **Trade-offs / New Failure Modes:** curated regional data can improve relevance and reduce serving cost but narrows breadth、increases version fragmentation and may encode curator/customer bias；on-prem improves sovereignty but transfers patching、monitoring and rollback duties；private adaptation adds lineage/contamination risk；retirement creates migration and regression obligations。
+- **Where the Previous Design Still Applies:** general multilingual models remain preferable for broad cross-region tasks、shared maintenance and sparse locale traffic；larger models remain useful for reasoning/capacity-heavy work；RAG/domain tools can supply fresh local facts without retraining；human/domain review remains necessary for regulated use。
+- **Evolution Relationship:** `Alternative Branch` and `Layering / Dependency`：general multilingual scaling → region-aware data specialization → customer/domain adaptation → API/on-prem deployment → lifecycle retirement/migration。
+  Specialized branches coexist with a general fallback and require explicit routing、evaluation and registry ownership。
+- **ROADMAP Node:** `TRAIN-DATA`（Current Ch27；Legacy Ch23）主 owner；handoff到`TRAIN-PRETRAINING`（Ch28/Legacy Ch24）、`PLATFORM-MODEL-REGISTRY`（Ch59/Legacy Ch55）、
+  `PLATFORM-KSERVE`（Ch61/Legacy Ch57）、`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）与`PLATFORM-SECURITY`（Ch72/Legacy Ch68）。
+- **Target and Adjacent Chapters Read:** 已读Ch27 data identity/mixture、Ch28 objective boundary、Ch59 version/lifecycle、Ch61 deployment、Ch66 sliced evaluation与Ch72 sovereignty/security；regional specialization不拥有application truth或compliance verdict。
+- **Existing Coverage:** Books已覆盖data mixture、model registry、deployment/evaluation/security；Saba只提供一个受限产品案例，未披露足以新增训练机制的细节，故不在Historical Books Gate关闭期间改书稿。
+- **Integration Decision:** `Weekly Only — Version/Product Fact / Mechanism Partially Disclosed`。若未来取得technical report、data/evaluation card或artifact，可重开Source-Family Books判断。
+- **Changed Files or Rejection Reason:** 本轮补W08 Weekly和年度账本；未把vendor benchmark、regional superiority或single-GPU throughput外推，也未修改Books。
+- **Open Questions:** exact base checkpoint/architecture、data sources/licenses/mixture、tokenizer and dialect coverage、training objective/compute、benchmark identities and human-rater contract、
+  GPU/precision/memory/latency/SLO、local package/license/patching、API/local parity、safety/privacy slices、retirement migration evidence与independent evaluation。
+
+### Scale-Distribution Decoupling: Stabilizing Deep Layers by Separating Direction and Magnitude
+
+- **Candidate / Week / Score:** Scale-Distribution Decoupling / 2025-W08 / 26/30。
+- **Source Family ID:** `sdd-scale-distribution-decoupled-linear-layer`。
+- **Source Type:** arXiv v1 full paper + official dense/MoE implementation + event-time code-release lineage；experimental architecture/parameterization research。
+- **Event Date / First-public Date / Revision History:** official repository records code/paper release notice on 2025-02-18；arXiv v1 is 2025-02-21 and owns the paper event。
+  Repository has no immutable W08 tag; current four-commit tree is later mutable artifact evidence，not a frozen event snapshot。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.15499v1；https://arxiv.org/abs/2502.15499；https://github.com/kaihemo/SDD。
+- **Related Primary Sources:** OLMo2/OLMoE architecture and OLMoE-mix dataset documentation establish baselines/data；DeepNorm、Pre-Norm/Post-Norm literature provides comparison lineage，not independent SDD reproduction。
+- **Access and Verification Status:** v1 Introduction/Method/theory/experiments/related work/conclusion、all appendices and official repository usage/config surfaces verified。
+  Feature-similarity caption/text conflict and restrictive/approximate theory remain `Disputed`；no immutable run/checkpoint/log artifact or independent reproduction。
+- **Full-read Coverage:** Eq.1 SDD parameterization、FLOP/parameter analysis、Gaussian expressiveness argument、gradients for alpha/V/x、dense/MoE setups、200B/2T/250B results、gradient/pre-post/feature-similarity/hyperparameter/depth ablations、appendix proof/config/results and repository layout。
+- **Original Problem:** deep Transformer training repeatedly multiplies layer Jacobians；standard `y=Wx` makes direction/distribution and magnitude share one matrix，so singular-value drift can amplify or attenuate activations/gradients。
+  Pre-Norm preserves a cleaner identity path but may weaken effective deep-layer change；Post-Norm can preserve stronger transformation yet is more initialization/warmup sensitive。
+- **Why the Previous Design Was Reasonable:** ordinary linear projections are simple、expressive、kernel-efficient and checkpoint-compatible；Pre-Norm+residual、careful initialization、warmup、gradient clipping and BF16 already stabilize many production recipes。
+  DeepNorm/scaled residuals remain valid for extreme depth，and changing every FC is unnecessary when existing gradient/update diagnostics are healthy。
+- **Changed Constraint:** deeper/wider dense and MoE models raise sensitivity to layer placement、initialization and learning rate；teams want Post-Norm-like branches without repeated divergence and without per-layer manual tuning。
+  Stability must persist under larger LR、smaller init std and no-warmup perturbations，not only one carefully tuned recipe。
+- **Mechanism:** replace each linear map `y=Wx` with `y=alpha ⊙ norm(Vx)`，where normalized `Vx` carries direction/distribution and learnable per-output `alpha` owns magnitude。
+  Attention/FFN projections use this SDD layer; attention/FFN output alpha initializes to `1/sqrt(L)` and other projections to1，while V uses `N(0,1/sqrt(2.5*d_model))`。
+- **State Ownership:** V owns transformation direction/distribution；alpha owns per-output scale；normalization owns activation RMS/epsilon behavior；residual/Norm placement owns identity-gradient path；optimizer owns V/alpha moments and global schedule；runtime/kernel owns extra norm/recompute；checkpoint schema owns SDD versus standard-FC compatibility。
+- **Control Flow / Data Flow:** token hidden state x → matrix projection Vx → per-token RMS-style normalization → elementwise alpha scale → attention/FFN/residual path → loss；backprop separates alpha gradient from normalized V/x paths。
+  Global clipping and AdamW remain active，so observed stability is produced by the joint recipe rather than SDD alone。
+- **Implementation Details:** dense=1B/16 layers/d_model2048/GQA8；MoE=3.4B total/588M active/32 layers/d_model1024/64 experts/top8；context4096，OLMoE-mix，AdamW beta(0.9,0.95)，cosine LR，BF16，clip1.0。
+  Authors claim extra FLOPs `6BSH` or `3/H` of model FLOPs and parameter fraction `1/H`; MoE reports ~0.1% parameters。Checkpointing removes activation-memory overhead only by recomputation，not free compute。
+- **Evaluation Contract:** 64 NVIDIA H800 80GB，global batch1024，micro-batch4/device；dense LR3e-4→1.5e-5，MoE4e-4；matched dense comparison at200B tokens，OLMo2/SDD extended to2T，MoE comparison at250B。
+  LM Eval Harness accuracy/loss covers MMLU、HellaSwag、ARC、PIQA、Winogrande、SocialIQA、CSQA、SciQ、CoQA、BoolQ、COPA、OBQA。
+- **Baselines / Ablations / Sensitivity / Overhead:** Pre-Norm OLMo2/OLMoE、plain Post-Norm and DeepNorm；gradient norms by projection/layer，SDD under Pre-/Post-Norm，feature similarity，5× LR、0.1× init std、no warmup and depth scaling。
+  Missing: alpha-only versus norm-only factorial、optimizer/clipping interaction、multiple seeds/error bars、matched wall-clock/FLOP/energy、kernel overhead、very large models and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** 64×H800-80GB、BF16、1B and3.4B/588M-active、4096 tokens、global1024/micro4 disclosed；data-parallel/topology、tokens/s、MFU、wall time、network、failure/restart、energy and production SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** under the authors' OLMo-derived 1B dense and3.4B MoE recipes，SDD trains stably，survives tested hyperparameter perturbations and reaches lower matched-token loss/better selected downstream averages than the reported baselines。
+  It demonstrates a viable alternative parameterization for controlling scale separately from directional weights。
+- **What It Does Not Prove:** that all gradient explosion/vanishing is caused by weight-scale entanglement、that Pre-Norm generally collapses features、that SDD removes the need for warmup/clipping、or that results scale to frontier models/other optimizers/data/hardware。
+  The `1.5× convergence` and negligible-overhead claims are not matched end-to-end wall-clock/SLO results。
+- **Limitations / Threats to Validity:** author-only runs、one data family/optimizer and no seed variance；MoE has only one baseline due compute；full 2T comparison mixes baselines stopped at200B；code lacks immutable tag/run manifests/checkpoints。
+  Figure9 caption says SDD has highest inter-layer similarity while text says lowest，and the Gaussian/near-unit-norm proof uses approximations/absorption assumptions that do not establish equivalence for arbitrary trained nonlinear networks。
+- **Trade-offs / New Failure Modes:** bounded projection outputs and explicit scale improve conditioning but add normalization to every FC、new epsilon/numeric behavior、alpha saturation and checkpoint/kernel incompatibility；recompute hides memory at extra compute；fused kernels require new semantics。
+  Separating scale can also change weight decay/optimizer statistics and invalidate standard weight-loading/quantization assumptions。
+- **Where the Previous Design Still Applies:** standard FC+Pre-Norm remains preferable for mature kernels/checkpoints and stable recipes；Post-Norm+warmup/DeepNorm remains viable when independently validated；per-group LR helps update-scale mismatches but cannot repair missing backward signal；clipping remains an emergency update guard rather than a substitute for architecture diagnostics。
+- **Evolution Relationship:** `Alternative Branch` and `Direct Evolution`：standard FC + initialization/warmup → residual/Pre-Norm stability → scaled Post-Norm/DeepNorm → SDD per-projection direction–magnitude separation。
+  SDD does not replace all earlier branches; it trades implementation compatibility for a wider stable operating region。
+- **ROADMAP Node:** `MODEL-TRANSFORMER-LAYER`（Current Ch17；Legacy Ch17）主 owner；handoff到`TRAIN-PRETRAINING`（Ch28/Legacy Ch24）、
+  `TRAIN-DISTRIBUTED-TRAINING`（Ch36/Legacy Ch32）与`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）。
+- **Target and Adjacent Chapters Read:** 已读Ch17 residual/Jacobian/Norm placement、Ch27 data contract、Ch28 optimizer/gradient diagnosis、Ch29 post-training boundary与Ch36 distributed/numeric contract；SDD改变layer parameterization，不能被误写成逐层learning-rate策略。
+- **Existing Coverage:** Ch17/Ch28已经区分gradient signal、parameter update、Pre-/Post-Norm、warmup/clipping与layer-wise LR；SDD可补充direction–magnitude parameterization分支，但当前theory/figure冲突尚未解除。
+- **Integration Decision:** `Disputed — Books Frozen`。保留为Weekly演进证据；只有修正feature-similarity记录、限定theory scope并核验artifact/复现后，才重开Books判断。
+- **Changed Files or Rejection Reason:** 本轮仅补W08 Weekly和年度账本；没有把摘要的“防止梯度爆炸/消失”写成一般定理，也未修改Books。
+- **Open Questions:** Figure9 correct direction、proof errata/general non-Gaussian boundary、alpha-only/norm-only ablation、weight-decay/optimizer interaction、multi-seed、larger/deeper/frontier scale、
+  fused-kernel/quantization/checkpoint compatibility、matched wall-clock/FLOP/energy、distributed failure/SLO and independent reproduction。
+
+### CODESYNC: Dynamic API Knowledge Requires Versioned Data and Executable Ground Truth
+
+- **Candidate / Week / Score:** CODESYNC / 2025-W08 / 25/30。
+- **Source Family ID:** `codesync-api-evolution-data-engine-benchmark`。
+- **Source Type:** arXiv v1 28-page paper + official WIP data-engine repository + benchmark/training-format artifact + official upstream API documentation cross-check。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-23 owns W08 paper event；repository says release on 2025-02-25 and remained WIP until June；v2 2025-06-18/ICML publication are later revisions。
+  Current 18-commit repository has no immutable W08 tag and must not be treated as the event-time artifact。
+- **Direct Primary Sources:** https://arxiv.org/pdf/2502.16645v1；https://arxiv.org/abs/2502.16645；https://github.com/Lucky-Wang-Chenlong/CodeSync。
+- **Related Primary Sources:** https://numpy.org/doc/1.24/reference/generated/numpy.full.html；https://numpy.org/doc/2.1/reference/generated/numpy.full.html provide authoritative API-version cross-check；
+  library release docs、GitHub source instances and LLaMA-Factory/BigCode harness are dependency/evaluator evidence，not proof that every generated pair is correct。
+- **Access and Verification Status:** v1 paper、all methods/results/appendices/prompts/data formats、current repository and NumPy1.24/2.1 docs verified；arXiv HTML v1 cache unavailable so official PDF used。
+  Figure1 API evolution contradicts official NumPy docs，therefore status is `Full Source Review Complete — Disputed API Ground Truth`。
+- **Full-read Coverage:** signature extraction/version pairing、GitHub search/AST+alias/type localization、DeepSeek-V3 synthesis/manual divergence review、CCT/ECT/MCQ construction、14-model/update-method experiments、HumanEval utility、sample-count/API-type sensitivity、metrics/prompts/hyperparameters/data formats、limitations and repository WIP state。
+- **Original Problem:** pretrained code models freeze knowledge while third-party APIs change；stale signatures can produce non-executable or unsafe code，and ordinary static benchmarks cannot distinguish current API knowledge from memorized legacy usage。
+- **Why the Previous Design Was Reasonable:** periodic model retraining gives broad refresh but is expensive；RAG/tool documentation lookup keeps facts external and current but adds retrieval/context latency；static benchmark snapshots remain cheap/reproducible for release regression。
+  For stable APIs or low-risk assistance，these branches remain simpler than continuous parameter updates。
+- **Changed Constraint:** Python libraries release independently and update thousands of signatures；a model/platform needs version-paired examples、environment identity and continuous refresh，while preserving general code capability and detecting when update injection fails。
+- **Mechanism:** inspect six libraries in legacy/current virtual environments，compare parameter names/order/types，retrieve GitHub call sites with search templates，parse AST/aliases/object types，retain APIs with≥15 invocations，then use DeepSeek-V3 to synthesize legacy/updated pairs with manual divergence review。
+  Split each 15-pair API into10 training/5 test; construct CCT、ECT and four-option MCQ plus SFT/preference pairs。
+- **State Ownership:** library version/environment owns authoritative signature；crawler/AST resolver owns candidate invocation identity；generator owns synthetic pair proposal；human review owns divergence only；benchmark manifest owns split/task/scorer；checkpoint/update method owns learned behavior；runtime interpreter/tests own executability truth；registry owns model/data/environment versions。
+- **Control Flow / Data Flow:** legacy+updated library environments → signature diff → GitHub search → AST/alias/type localization → DeepSeek-V3 pair synthesis → manual divergence check → per-API train/test split → SFT/LoRA/DPO/ORPO/SimPO → CCT/ECT/MCQ + HumanEval → versioned decision。
+  The released benchmark stops before execution-based validation of every pair。
+- **Implementation Details:** pandas2.0.3→2.1.4、NumPy1.24→2.1、SciPy1.10→1.13.1、TensorFlow2.11→2.18、PyTorch2.0→2.5、Flask2.2.2→3.0；paper reports6,063 updates and later says6,036 APIs before filtering。
+  220 APIs=130 functions+59 initializers+31 methods，3,300 pairs，2,200 train and1,100 held-out pairs；repository exposed a four-stage WIP pipeline。
+- **Evaluation Contract:** RQ1 tests9 closed/open models；RQ2 trains5 open models with full SFT、SFT-LoRA、DPO、ORPO、SimPO using LoRA/LLaMA-Factory on A800 servers；CCT/ECT use BLEU/ROUGE-L/RED，MCQ uses n=10 Pass@1/3/5，utility uses164-task HumanEval with10 samples。
+  RQ3 uses32 APIs with5/10/20/50 nested samples and Qwen2.5-7B；API-type slice usestemperature0.9/five samples。
+- **Baselines / Ablations / Sensitivity / Overhead:** model/update-method matrix、full versus LoRA SFT、three preference methods、training-time comparison、HumanEval retention、sample-count and function/initializer/method slices。
+  Missing: retrieval/tool baseline、execution/unit-test metric、library/date holdout、generator/human-review ablation、multiple seeds/error bars、cross-language/package-ecosystem coverage、online refresh/rollback and production latency/cost。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** A800 server class and model identities/epochs/LRs/warmup/beta are partially disclosed；GPU count/topology、precision、sequence length、batch、wall time values、inference concurrency、execution sandbox、energy and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** the authors built a version-paired data/benchmark pipeline and show that tested models/update methods score poorly on their string/MCQ contracts；more examples can improve recall and method APIs are harder in their Qwen2.5-7B slice。
+  It supports treating freshness as `model × library version × environment × evaluator` rather than a timeless model property。
+- **What It Does Not Prove:** that all 3,300 updated calls execute or preserve semantics、that parameter updates beat RAG/tool lookup、that HumanEval≤10% Pass@5 change rules out catastrophic forgetting、or that ten examples/API is universally optimal。
+  BLEU/ROUGE/edit distance and MCQ choice are not executable correctness，and one dynamic two-version snapshot is not continuous synchronization。
+- **Limitations / Threats to Validity:** only six Python libraries and signature-level changes；GitHub search/AST type inference have recall/alias/dynamic-dispatch limits；DeepSeek-V3 supplies both pairs/distractors；manual review checks divergence rather than full execution；repository was WIP/no tag。
+  Material contradiction: NumPy1.24 docs show no `device` argument，NumPy2.1 adds `device=None` restricted to`"cpu"`，while paper Figure1 says2.1 removed `device` and reports `unexpected keyword` for the new version；this undermines benchmark ground-truth confidence until an erratum/full audit exists。
+- **Trade-offs / New Failure Modes:** parameter updating reduces runtime retrieval but creates checkpoint proliferation、stale-again cycles and forgetting；RAG/tool lookup costs latency but can bind live docs；synthetic pairs scale coverage but can invert version truth；string metrics are cheap but reward non-executable surface similarity；execution adds sandbox/dependency cost and flaky-version risk。
+- **Where the Previous Design Still Applies:** frozen regression sets remain useful for known versions；live documentation retrieval is safer for rapidly changing APIs；compiler/type-checker/unit tests own executable validation；full retraining suits broad shifts；human review is required for semantic/deprecation/security changes that signatures cannot capture。
+- **Evolution Relationship:** `Layering / Dependency`：static pretraining knowledge → version-paired benchmark → parameter update branch → retrieval/tool branch → executable environment verification → continuous regression/rollback loop。
+  No branch subsumes the others; freshness and correctness require explicit state ownership across all layers。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`TRAIN-DATA`（Ch27/Legacy Ch23）、
+  `PLATFORM-MODEL-REGISTRY`（Ch59/Legacy Ch55）、`AGENT-RAG`（Ch76/Legacy Ch72）与`AGENT-TOOL-CALLING`（Ch78/Legacy Ch74）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 dynamic/frozen benchmark、environment/executable authority与release gate，Ch59 immutable model/evidence identity，Ch27 versioned data lineage，Ch76 freshness retrieval及Ch78 tool/schema version；CODESYNC benchmark不拥有upstream API truth。
+- **Existing Coverage:** Books已明确versioned environment、living/frozen suites、executable verifier、registry、RAG freshness与tool schema identity；CODESYNC提供受限反例而非新的稳定机制，且ground-truth冲突阻止直接沉淀。
+- **Integration Decision:** `Disputed — API Ground Truth Contradiction / Books Frozen`。只有公开完整pair audit、修正Figure1并加入version-locked execution evidence后，才重开Books判断。
+- **Changed Files or Rejection Reason:** 本轮仅补W08 Weekly和年度账本；未把作者benchmark、HumanEval ratio或“10 samples optimal”外推，也未修改Books。
+- **Open Questions:** 6,063/6,036 count reconciliation、Figure1/NumPy erratum、pair-level executable validation、semantic equivalence/deprecation/security labels、immutable v1 dataset/code、
+  version/date holdout、retrieval/compiler baseline、multi-seed/precision/hardware/cost、continuous refresh/rollback、other languages/ecosystems and independent audit。
+
+### Prompt-to-Leaderboard: Evaluation Becomes a Prompt-conditioned Routing Model
+
+- **Candidate / Week / Score:** Prompt-to-Leaderboard / 2025-W08 / 29/30。
+- **Source Family ID:** `p2l-prompt-conditioned-preference-evaluation-routing`。
+- **Source Type:** arXiv v1 24-page paper + mathematical derivation + prospective Chatbot Arena deployment + official code/model artifact lineage。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-20 owns W08 event；v2 2025-03-10 is later revision。
+  Official PDF v1 is evidence lock；experimental HTML endpoint currently renders an anomalous 2026 manuscript date/current content and cannot replace the v1 PDF，while current 46-commit repo/weights are mutable later artifacts。
+- **Direct Primary Sources:** https://arxiv.org/pdf/2502.14855v1；https://arxiv.org/abs/2502.14855；https://github.com/lmarena/p2l。
+- **Related Primary Sources:** Chatbot Arena vote/leaderboard protocol and released P2L model collection provide deployment/artifact lineage；LiveBench is OOD objective-evaluation evidence；RouteLLM/AutoMix/Hybrid LLM are comparison branches，not P2L reproduction。
+- **Access and Verification Status:** v1 theory、training、feedback prediction、prospective routing、cost frontier、regression/aggregation/OOD experiments、proofs/appendices and current code surface verified。
+  No immutable W08 run/data/checkpoint snapshot、hardware contract、independent replication or production SLO；status `Full Source Review Complete — Books Pending`。
+- **Full-read Coverage:** prompt-conditional BT、leaderboard aggregation、cost-constrained LP/theorem、Prompt-to-Regression/Rao-Kupper variants、1.5M-vote training、41,507 holdout、8,616 prospective votes、model/category routing、cost model、strength/weakness analysis、aggregation scaling、LiveBench OOD and appendices/model list。
+- **Original Problem:** one global leaderboard averages over heterogeneous prompts/users；rare domains receive too few direct votes for stable stratified BT estimates，so “best model” is distribution-dependent and coarse averages hide routing opportunities/regressions。
+- **Why the Previous Design Was Reasonable:** a single strongest model or marginal leaderboard is simple、stable、auditable and avoids routing errors；category routers reduce sparsity with human-defined buckets；binary strong/weak routers require less data/model-catalog state。
+  These remain preferable when catalog is small、traffic homogeneous、SLO strict or preference data unavailable。
+- **Changed Constraint:** fleets contain many models with different strengths/prices and organic traffic spans a long tail；platforms need per-request quality estimates without executing every candidate and must aggregate prompt histories into tenant/use-case decisions。
+- **Mechanism:** replace LM head with M coefficients; for prompt z output `theta(z)`，predict pairwise vote with `sigmoid(x^T theta(z))` and train end-to-end NLL on prompt/model-pair/vote triples。
+  Aggregate a prompt distribution by fitting BT to model-implied win probabilities；route by solving a linear program maximizing expected win matrix against comparator q under average cost `pi^T c<=C`。Rao-Kupper variants model ties/“both bad”。
+- **State Ownership:** model catalog/version owns coefficient index meaning；P2L checkpoint owns conditional preference estimator；prompt/tenant distribution owns aggregation context；cost vector/pricing snapshot owns budget；opponent q and BT/RK family own objective；router policy owns selection；Arena/human voters own preference labels；downstream verifier owns correctness/safety。
+- **Control Flow / Data Flow:** prompt + candidate model catalog → P2L coefficient vector → pairwise win matrix → optional tenant/history aggregation → cost/comparator policy → LP/model selection → chosen provider response → vote/objective result → versioned recalibration。
+  P2L predicts model identity outcomes without generating candidate responses，so it cannot inspect response-specific failures。
+- **Implementation Details:** up to1.5M Chatbot Arena preference pairs、130 model identities、one epoch；SmolLM2-135/360M and Qwen2.5-0.5/1.5/3/7B initializations with new coefficient head。
+  v1 prospective router used grounded Rao-Kupper P2L-0.5/1.5/3/7B over34 public models; current repo includes DeepSpeed/training/routing configs but no W08 immutable tag。
+- **Evaluation Contract:** 41,507 held-out pairwise comparisons across34 models for NLL/MSE；8,616 prospective comparisons during2025-01-19～27 treat router as a model，best P2L-1.5B scored1389 versus best static candidate Gemini-exp-1206 at1364。
+  Cost routing uses per-output-token price×mean output length and average budget，95% CIs；OOD LiveBench has1,000 objective questions over a smaller pool。
+- **Baselines / Ablations / Sensitivity / Overhead:** constant predictor、marginal BT、six P2L sizes/data scales、unconstrained and cost-aware routing、category worst-case、prompt aggregation size、Chinese/math categories and LiveBench OOD。
+  Missing: non-BT/nontransitivity stress、new-model cold start、price/latency/tail-SLO shift、tenant/privacy/fairness slices、selection-feedback simulation、response-aware verifier baseline、multi-period recalibration and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** P2L sizes/data/epoch and provider per-token price method disclosed；training GPUs/topology/precision/batch/context、P2L serving latency/throughput、provider concurrency/rate limits、TTFT/TPOT/tail SLO、availability/energy are `Not Disclosed`。
+- **What the Evidence Actually Proves:** in the authors' Arena distribution/window，prompt text contains useful signal for predicting relative human preference; trained P2L routers prospectively outperformed individual candidates in Arena score and improved an average-cost frontier。
+  Aggregation can approximate same-distribution category leaderboards with fewer prompts than direct stratified fitting in reported slices。
+- **What It Does Not Prove:** factual correctness、safety、calibrated absolute confidence、universal best routing、production cost/latency dominance or stable performance after catalog/provider/prompt/user drift。
+  `#1 Arena` is a time-window/harness/preference result；BT coefficients are relative and the theorem fails under non-transitive preferences。
+- **Limitations / Threats to Validity:** authors operate the evaluation platform/data；organic votes include sampling/population/presentation bias；model identities and prices change；P2L output dimension couples checkpoint to catalog；rare/OOD tenants may differ from Arena；average output-cost ignores input/caching/latency/rate limits。
+  P2L-1.5B was “unexplainably” strongest in live run，and v1 HTML/PDF rendering drift reinforces the need for immutable evidence identity。
+- **Trade-offs / New Failure Modes:** per-prompt routing improves specialization/cost but adds estimator latency、catalog/version migration、cold start and misrouting；personalized histories improve fit but create privacy/tenant leakage；feedback-trained selection can reinforce popularity and reduce exploration；average budget can violate per-request/tail constraints。
+  Static routing is less adaptive but more predictable and easier to rollback。
+- **Where the Previous Design Still Applies:** fixed strongest model for strict reliability/simple fleets；rule/category routing for interpretable domains；response-level verifier/ensemble when actual output quality matters；provider fallback for availability；randomized exploration/shadow evaluation to learn new models and detect estimator drift。
+- **Evolution Relationship:** `Direct Evolution` and `Layering / Dependency`：global marginal leaderboard → category stratification → learned prompt-conditioned coefficients → tenant aggregation → cost-aware routing → online evidence/recalibration。
+  Evaluation does not become routing automatically；policy/gateway must own constraints and failure recovery。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`PLATFORM-GATEWAY`（Ch62/Legacy Ch58）、
+  `INFER-SCHEDULING`（Ch56/Legacy Ch52）、`PLATFORM-COST`（Ch70/Legacy Ch66）与`PLATFORM-MULTI-TENANT`（Ch71/Legacy Ch67）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 conditional evidence/calibration/release gate、Ch62 routing/fallback、Ch56 request policy/fairness、Ch70 cost contract与Ch71 tenant identity；P2L score是policy input，不拥有deployment decision。
+- **Existing Coverage:** Books已有conditional evaluation、model routing、cost/SLO、tenant and failure boundaries，但缺少prompt-conditioned BT→cost-constrained LP的完整机制链；后续Books pass可refine已有章节，不新增产品/论文章。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate`。Historical Books Gate关闭；后续仅沉淀conditional score→policy→feedback contract，不保留短期排行榜数字。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；没有把human preference写成correctness/confidence，也未修改Books。
+- **Open Questions:** immutable W08 dataset/run/checkpoint、v1 HTML/PDF date drift、BT nontransitivity/calibration、new-model/catalog migration、exploration/feedback loop、tenant privacy/fairness、
+  response-aware verifier、input/cache/latency/rate-limit cost、tail SLO、provider failures、multi-period drift and independent reproduction。
+
+### ThinkJSON: Learned Schema Adherence Cannot Replace a Typed Verifier
+
+- **Candidate / Week / Score:** Think Inside the JSON / ThinkJSON / 2025-W08 / 22/30。
+- **Source Family ID:** `thinkjson-synthetic-schema-grpo-sft`。
+- **Source Type:** arXiv v1 full paper + author model/checkpoint card + two released synthetic datasets；experimental structured-output post-training pipeline。
+- **Event Date / First-public Date / Revision History:** arXiv v1 only，2025-02-18；linked GRPO/SFT models and datasets were created/updated around late January～2025-02-25 and are same-family artifact lineage。
+  The final SFT model update after the paper event is not backdated as complete W08 training-code evidence。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.14905v1；https://arxiv.org/abs/2502.14905；
+  https://huggingface.co/MasterControlAIML/DeepSeek-R1-Qwen2.5-1.5b-SFT-R1-JSON-Unstructured-To-Structured；
+  https://huggingface.co/datasets/MasterControlAIML/R1-Reasoning-Unstructured-To-Structured；https://huggingface.co/datasets/MasterControlAIML/JSON-Unstructured-Structured。
+- **Related Primary Sources:** Qwen2.5/DeepSeek-R1-Distill base artifacts、Unsloth/TRL implementation and JSON Schema/constrained-decoding systems provide dependency/alternative evidence；they do not validate the paper's simplified GRPO equations or compliance claim。
+- **Access and Verification Status:** v1 problem/alternatives/data pipeline/rewards/GRPO/SFT/evaluation/discussion and linked model/dataset cards verified；no training repository、immutable run manifest、split/evaluator code or independent reproduction。
+  Objective、verifier and evaluation contracts conflict with claimed GRPO/compliance semantics；status `Full Source Review Complete — Disputed`。
+- **Full-read Coverage:** Qwen-generated schema/text pairs、Distill-R1-Qwen32B reasoning synthesis、20K RL/10K SFT stages、JSON/format reward algorithms、simplified group-relative loss、H100/A100 resource claims、6500-row five-model evaluation、model/dataset cards and stated constrained-decoding/prompt alternatives。
+- **Original Problem:** free-form next-token generation does not guarantee JSON syntax、schema-required fields or faithful extraction；prompt-only control drifts，while regulated records require machine-readable validation、provenance and deterministic rejection/repair。
+- **Why the Previous Design Was Reasonable:** prompt/few-shot formatting is cheap/reversible；constrained decoding guarantees syntactic/schema shape at inference；post-parse validator/retry isolates failures；SFT learns common mappings without rollout cost。
+  In high-stakes workflows，typed parser+schema validator+human review remains more defensible than relying on learned compliance alone。
+- **Changed Constraint:** small local models should map noisy legacy documents into deeply nested schemas with less prompt/post-processing and without frontier-model serving cost；training can use deterministic format/content signals instead of subjective reward models。
+- **Mechanism:** generate filled/blank hierarchical JSON and noisy equivalent narratives with Qwen14B/32B；ask Distill-R1-Qwen32B to synthesize field-mapping reasoning；train Qwen2.5-1.5B with grouped rollouts and JSON/format rewards for~20h on8×H100，then SFT/LoRA on10K reasoning examples for~3h on1×A100。
+  Output protocol uses `<think>` and `<answer>` tags around JSON。
+- **State Ownership:** schema/version owns required shape；synthetic generator owns proposed text/JSON pairs；teacher owns reasoning traces；RL policy/checkpoint owns learned behavior；reward parser owns training signal；SFT dataset owns final mapping style；runtime JSON Schema validator owns structural acceptance；domain system/human owns semantic truth/compliance。
+- **Control Flow / Data Flow:** domain/schema template → filled JSON → synthetic noisy text → teacher mapping trace → 20K grouped RL rollouts → JSON/format rewards → intermediate policy →10K SFT → generated `<answer>` → parser/schema/semantic validation → commit/reject。
+  The paper evaluates the model output before a full typed schema/compliance gate。
+- **Implementation Details:** JSON reward parses answer and compares apparent key sets/value equality plus object-length ratio，rounds to one decimal；format reward regex checks `<think>…</think>\n<answer>…</answer>` after prepending a think tag。
+  Algorithm3 defines rank-fraction advantage and `-A log pi + Reg`，but does not specify canonical GRPO old-policy ratio、clip range、per-token normalization、reference/KL estimator、group size or combined reward weights。
+- **Evaluation Contract:** 6.5K rows，five endpoints/models：ThinkJSON、DeepSeek-R1、Distill-R1-Qwen1.5B/7B、Gemini2 Flash；metrics are no-output rows、valid JSON、mean field-match and noise。
+  ThinkJSON reports62.41% mean match and0.27% noise；prompt/template、sampling、provider snapshots、schema difficulty distribution、test provenance、error bars and exact nested scorer are not disclosed。
+- **Baselines / Ablations / Sensitivity / Overhead:** compares final model with differently sized/provider baselines only；no base1.5B、prompt-only、JSON-mode/constrained-decoding、validator-retry、SFT-only、RL-only、reward-component、teacher/data-source、group-size/KL/clip or schema-depth sensitivity。
+  Training-hour claims lack token/throughput/utilization/equal-compute context。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** 1.5B base、8×H100/~20h RL and1×A100/~3h SFT disclosed；GPU memory/SKU、precision、context/output lengths、batch/group、rollout count、learning rate、optimizer、checkpoint cadence、inference concurrency/latency/energy/SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** the authors released a compact model/data family and report better syntax/noise/field-match on their private/underspecified 6.5K extraction contract；rule-based reward plus SFT is a feasible structured-output training branch。
+  It also exposes that learned formatting and content matching are separate signals。
+- **What It Does Not Prove:** canonical GRPO implementation、faithful/self-checking reasoning、complete JSON Schema adherence、semantic extraction correctness、regulatory compliance、generalization across schemas/domains or superiority over constrained decoding/typed validation。
+  A62.41% mean match is not a compliance-grade success rate，and visible chain-of-thought is not audit evidence。
+- **Limitations / Threats to Validity:** synthetic text/schema and teacher traces share construction lineage；evaluation split/provenance unavailable；final pipeline bundles RL+SFT without ablation；baseline sizes/harnesses unmatched；reward checks appear top-level/length-based and can miss nested/type/required-field errors。
+  Simplified “GRPO” objective conflicts with standard ratio/clipping semantics，and Algorithm2's prepended tag/regex path is ambiguous；artifact cards provide examples, not reproducible training evidence。
+- **Trade-offs / New Failure Modes:** learned adherence reduces prompt/retry cost but can silently emit valid-yet-wrong JSON；format reward can dominate content、length/key proxies can be gamed、teacher errors become policy behavior、SFT can overwrite RL exploration；constrained decoding guarantees shape but not truth and adds runtime state/latency。
+  Exposed reasoning increases tokens/privacy and may create false audit confidence。
+- **Where the Previous Design Still Applies:** grammar/JSON-schema constrained decoding for hard shape guarantees；deterministic parser/type/range/business-rule validation for commits；prompt/SFT for low-risk flexible output；RAG/OCR for source grounding；human review/dual control for regulated records。
+- **Evolution Relationship:** `Alternative Branch` and `Layering / Dependency`：prompt examples → constrained decoding/post-validation → SFT schema behavior → rule-reward RL → RL+SFT hybrid → typed semantic/compliance gate。
+  Training reduces failure probability but never inherits verifier or authorization authority。
+- **ROADMAP Node:** `TRAIN-GRPO`（Current Ch33；Legacy Ch29）主 owner；handoff到`TRAIN-SFT`（Ch29/Legacy Ch25）、
+  `PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）、`PLATFORM-GATEWAY`（Ch62/Legacy Ch58）与`AGENT-TOOL-CALLING`（Ch78/Legacy Ch74）。
+- **Target and Adjacent Chapters Read:** 已核对Ch33 canonical ratio/clipping/reference and verifier contract、Ch29 SFT distribution branch、Ch66 executable evidence、Ch62 request validation及Ch78 typed proposal/executor boundary；模型输出不拥有schema commit或compliance decision。
+- **Existing Coverage:** Books已明确同名GRPO需逐objective核验、format reward可能压过correctness、JSON generation不等于tool system，以及typed validator/executor拥有authority；论文没有改变现有结论。
+- **Integration Decision:** `Disputed — Objective/Verifier/Evaluation Contract / Books Frozen`。若公开真实training code、canonical objective、held-out split、constrained-decoding baseline及nested schema/semantic evidence，再重开Books判断。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly和年度账本；未把作者“compliance/reasoning”叙述写成机制事实，也未修改Books。
+- **Open Questions:** actual GRPO implementation/objective、group/clip/KL/reward weights、recursive JSON Schema verifier、train/test generator independence、6.5K dataset identity、base/SFT/RL factorial、
+  constrained decoding/validator baseline、hardware/precision/token/cost/SLO、semantic/domain error、artifact commit and independent reproduction。
+
+### o3-mini Reasoning Analysis: Token Count Is Workload State, Not a Causal Correctness Knob
+
+- **Candidate / Week / Score:** The Relationship Between Reasoning and Performance in LLMs — o3-mini Thinks Harder, Not Longer / 2025-W08 / 23/30。
+- **Source Family ID:** `o3-mini-reasoning-token-accuracy-observational-analysis`。
+- **Source Type:** arXiv v1 empirical analysis + released response/judge data + statistical notebooks；third-party analysis of closed OpenAI model/API behavior，not a model technical report。
+- **Event Date / First-public Date / Revision History:** arXiv v1 only，2025-02-21；current repository contains later GPQA/DeepSeek-R1/gpt-oss/GPT-5-judge expansions and35 commits，which are revision lineage and not W08 evidence。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.15631v1；https://arxiv.org/abs/2502.15631；
+  https://github.com/MartheBallon/analysis_o3-mini_thinks_harder_not_longer；https://doi.org/10.5281/zenodo.14878936。
+- **Related Primary Sources:** Omni-MATH dataset and Omni-Judge model/repository define task/evaluator lineage；OpenAI model/API docs define version/reasoning-effort surface but do not disclose internal reasoning mechanism。
+- **Access and Verification Status:** v1 analysis、methods/regression/figures/limitations、code/data pointers and current repository lineage verified；Zenodo DOI is identified but direct page access failed in this interface。
+  Model internals are undisclosed and causal/probability interpretations are disputed；no independent judge/human replay locked to W08。
+- **Full-read Coverage:** 4,428 Omni-MATH tasks、model/version/prompt/caps、Omni-Judge protocol、token distributions、difficulty/domain strata、QQ plots、logistic AME、refusal/parse filtering、discussion/limitations、data/code environment and later artifact drift。
+- **Original Problem:** reasoning-model quality and cost are often summarized by a single accuracy or token budget；it is unclear whether a newer model improves by consuming more hidden reasoning tokens or by allocating/using them differently，and whether long traces signal useful work or unresolved difficulty。
+- **Why the Previous Design Was Reasonable:** fixed max tokens and aggregate accuracy are easy to expose、bill and capacity-plan；more budget can rescue hard tasks；single-sample answer verification is cheaper than tracing hidden dynamics。
+  For predictable latency or absent calibrated stopping evidence，fixed budgets remain the safest branch。
+- **Changed Constraint:** reasoning effort creates per-request compute variance up to tens of thousands of hidden tokens；platforms need quality-per-token、tail-cost and admission policies，while avoiding the false rule “longer always means better”。
+- **Mechanism:** no model mechanism is disclosed。The paper sends the same Omni-MATH problems to gpt-4o、o1-mini、o3-mini medium/high，records API reasoning/completion token counts，judges final answers with Omni-Judge，then compares distributions and fits accuracy~tokens+domain+difficulty logistic regressions。
+- **State Ownership:** provider checkpoint/reasoning-effort owns hidden policy and budget allocation；API usage record owns token count；prompt/task owns observed difficulty metadata；Omni-Judge owns provisional correctness label；analysis bins/regression own correlation estimate；scheduler/product policy owns cap/admission；none owns causal explanation by itself。
+- **Control Flow / Data Flow:** problem+vanilla prompt → model/version/reasoning_effort+max cap → hidden reasoning allocation → final answer+usage → Omni-Judge/reference comparison → filter invalid/parse failures → bin/stratify/regress → workload hypothesis → independent cap experiment required before policy change。
+- **Implementation Details:** gpt-4o-2024-06-08、o1-mini-2024-09-12、o3-mini-2025-01-31 medium/high via Batch API；medium/o1 cap25k，high cap100k；Omni-Judge through LM Studio with300 output tokens。
+  Analysis uses Python3.12.6、pandas2.2.3、NumPy2.1.1、statsmodels0.14.4/scikit-learn1.5.2；no provider architecture/training/precision details。
+- **Evaluation Contract:**4,428 Olympiad problems，six primary domains/four quartile tiers；multi-domain questions can be double/triple-counted，regression N≈5.53k；judge claims91.78% agreement with gpt-4o judge lineage，not direct human gold。
+  Reported AME per1,000 tokens: -3.16% o1-mini、-1.96% o3-medium、-0.81% o3-high；high gains~4% average while using more tokens across solved tasks。
+- **Baselines / Ablations / Sensitivity / Overhead:** compares four model/mode snapshots、domain/difficulty strata、correct-only QQ distributions and controlled/uncontrolled logistic coefficients。
+  Missing: randomized token caps/early stopping、matched cap for medium/high、multiple prompts/temperatures、repeat samples/seeds、human/executable judge、selection-bias correction、per-question fixed effects、latency/cost/queue measurements and non-math workloads。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** provider-side hardware/architecture/precision/batch/concurrency are `Not Disclosed`；request caps25k/100k and response token usage are known，but TTFT/TPOT、wall time、price、rate limits、tail latency、energy and SLO are absent。
+- **What the Evidence Actually Proves:** in this model/API/Omni-MATH/judge snapshot，o3-medium attains higher judged accuracy than o1-mini with a similar reasoning-token distribution，while o3-high spends substantially more tokens for a small average gain；long-token responses have lower observed accuracy even after coarse domain/tier controls。
+- **What It Does Not Prove:** that o3 has a specific more-efficient internal algorithm、that longer reasoning causes errors、that shortening a response would improve the same problem、that token count is a calibrated confidence score，or that the relationship generalizes beyond math/models/prompts。
+  Hidden token count is compute usage，not faithful reasoning quality or causal difficulty measure。
+- **Limitations / Threats to Validity:** closed/mutable API models、single sample/prompt、model judge、unknown contamination、different hard caps、filtered refusals/parse failures、coarse observed difficulty and no random intervention。
+  The “conditional error” curve imposes equal True/False priors rather than production prevalence；multi-domain duplication is not clustered in reported robust SE；token allocation is endogenous to latent difficulty/failure，so AME is associative。
+- **Trade-offs / New Failure Modes:** larger caps improve opportunity but inflate GPU/token cost、queue variance and tail latency；short caps bound cost but truncate solvable paths；using token length as confidence can misroute hard-but-solvable and easy-but-looping cases；provider mode drift invalidates thresholds。
+  External verification adds cost but is closer to correctness than token heuristics。
+- **Where the Previous Design Still Applies:** fixed low budget for routine/SLO-bound work；high effort for high-value hard tasks；parallel sampling/verifier when answers are cheaply checkable；admission/fallback for fleet pressure；randomized shadow experiments before deploying adaptive stopping/caps。
+- **Evolution Relationship:** `Principle Reuse` and `Alternative Branch`：fixed decode budget → configurable reasoning effort → observational quality-per-token analysis → randomized cap/stopping experiments → calibrated request-level budget policy。
+  This paper supplies diagnostic evidence，not a direct algorithmic successor。
+- **ROADMAP Node:** `MODEL-SAMPLING`（Current Ch20；Legacy Ch20）主 owner；handoff到`INFER-SCHEDULING`（Ch56/Legacy Ch52）、
+  `PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）、`PLATFORM-COST`（Ch70/Legacy Ch66）与`TRAIN-GRPO`（Ch33/Legacy Ch29）。
+- **Target and Adjacent Chapters Read:** 已核对Ch20 token-budget/selection、Ch56 fairness/tail policy、Ch66 conditional evidence/confounding、Ch70 workload cost与Ch33 reasoning-policy boundary；token count只能是diagnostic state。
+- **Existing Coverage:** Books已区分test-time compute、confidence/correctness、scheduler budget和verifier authority；论文支持但不改变框架，且因因果/probability contract不能把其阈值写入正文。
+- **Integration Decision:** `Disputed — Causal/Probability Contract / Books Frozen`。只保留Weekly诊断；需随机cap/stop干预、matched modes、human/executable labels及完整SLO evidence后重开Books判断。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未把negative correlation写成causal rule或model mechanism，未修改Books。
+- **Open Questions:** randomized matched-cap curves、repeat samples、refusal/judge-failure denominator、actual error prevalence、per-question latent difficulty、judge calibration、model/API snapshot immutability、
+  latency/cost/energy/tail SLO、adaptive stopping policy、non-math transfer and independent reproduction。
+
+### SIFT: Cross-view Agreement Refines Context but Does Not Verify Facts
+
+- **Candidate / Week / Score:** SIFT: Grounding LLM Reasoning in Contexts via Stickers / 2025-W08 / 25/30。
+- **Source Family ID:** `sift-sticker-cross-view-context-refinement`。
+- **Source Type:** arXiv v1 full paper + official inference/evaluation code；training-free inference-time context-rewrite/search method，despite abstract occasionally calling it post-training。
+- **Event Date / First-public Date / Revision History:** arXiv v1 only，2025-02-19；current 92-commit repository has no immutable W08 tag and includes mutable scripts/data，so it is later artifact lineage rather than frozen run identity。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.14922v1；https://arxiv.org/abs/2502.14922；https://github.com/SJTU-DENG-Lab/SIFT。
+- **Related Primary Sources:** OpenCompass0.3.4、GSM8K/MATH-500/GPQA/AIME datasets、DeepSeek-R1 API and model cards define harness/model dependencies；Self-Consistency/ToT/Self-Refine are comparison branches，not independent SIFT verification。
+- **Access and Verification Status:** v1 problem/method/algorithms/experiments/ablations/prompts/limitations and current code surface verified；no immutable event-time environment/run logs、independent semantic verifier、latency/cost artifact or external reproduction。
+  Status `Full Source Review Complete — Experimental Self-Confirmation Boundary`。
+- **Full-read Coverage:** factual-drift definition、SG/CP/FO/IG algorithms、dual-representation agreement、four models/four benchmarks、greedy versus sampled DeepSeek runs、three stages/repeats、three self-consistency variants、FO/IG/CP ablations、token comparisons、limitations/prompts and repository integration steps。
+- **Original Problem:** a model may execute valid reasoning over a misread query—dropping constraints、changing relational words or inventing conditions；ordinary CoT/search optimizes the path after representation error has already entered working context。
+- **Why the Previous Design Was Reasonable:** direct query+CoT uses one model call and preserves complete source text；human-written scratchpads/structured extraction are interpretable；retrieval/tool/verifier adds external authority but costs latency/integration。
+  For short/clear queries or strict SLO，direct inference remains preferable。
+- **Changed Constraint:** difficult/long prompts make relevant facts sparse and phrasing-sensitive；systems can spend extra inference compute to externalize a compact state，compare views and selectively refine before reasoning，without retraining weights。
+- **Mechanism:** SG asks target model to extract a structured Sticker；CP greedily solves Sticker-only and Query+Sticker and accepts only equivalent predictions；on mismatch FO rewrites Sticker against original query，then IG reverse-generates a Sticker from the current prediction followed by another FO/CP；persistent mismatch falls back to direct query answer。
+- **State Ownership:** original query owns source wording；Sticker owns derived/ephemeral fact representation；SG/FO/IG prompts own transformation policy；target checkpoint owns all generations；equivalence/postprocessor owns agreement test；scheduler owns call/token budget；external/human verifier owns correctness。
+- **Control Flow / Data Flow:** Q → SG→S1 → {LLM(S1), LLM(Q,S1)} → equivalent? commit P_QS : FO→S2→CP → mismatch? IG(prediction)→FO→S3→CP → mismatch? fallback LLM(Q)。
+  Self-consistency optionally repeats stickers/predictions/full workflow and aggregates answers。
+- **Implementation Details:** local models use greedy decoding through OpenCompass0.3.4；DeepSeek-R1 Volcengine API forces temperature1.0/top-p0.7，with3 runs onMATH-500 and10 onAIME2024。
+  Code requires replacing OpenCompass files/configs and uses dataset-specific postprocessing；equivalence implementation and exact prompt/token limits are not fully frozen in paper identity。
+- **Evaluation Contract:** Llama3.2-3B、Llama3.1-8B、Qwen2.5-7B、DeepSeek-R1 on GSM8K、MATH-500、GPQA-Diamond、AIME2024；Stage1=SG+CP，Stage2=+FO，Stage3=+IG。
+  DeepSeek-R1 AIME2024 reports78.33→85.67 averaged over10 runs；MATH-50097.3→98.33；other local results mainly single greedy runs。
+- **Baselines / Ablations / Sensitivity / Overhead:** zero-shot CoT、stage growth、FO-skip、iterative repeats、CP selection alternatives、standard Self-Consistency and three SIFT-consistency dimensions。
+  Missing: independent/context-grounding verifier、randomized rewrite control、same-call/token matched prompt-search baseline across all models、semantic-preservation intervention、multi-seed local runs、latency/provider cost、long/noisy non-math contexts and adversarial stickers。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** model/API identities and some sampling settings disclosed；hardware、precision/quantization、input/output caps、batch/concurrency、number of calls by exit path、TTFT/TPOT、wall time、memory、price/energy/tail SLO are `Not Disclosed`。
+  Paper admits total-token accounting fluctuates due format/examples and emphasizes output tokens separately。
+- **What the Evidence Actually Proves:** in authors' benchmark/harness，derived Sticker views plus staged rewrites can change answer distributions and improve reported accuracy; FO before IG matters in tested GSM8K slices，and SIFT can be combined with Self-Consistency。
+  It establishes a viable inference workflow for externalizing and revising a compact context representation。
+- **What It Does Not Prove:** Sticker factual correctness、faithful internal reasoning、independent self-verification、causal correction of “factual drift”、universal cost efficiency or production grounding。
+  Agreement between two outputs of the same model is explicitly necessary but not sufficient；AIME headline uses a small30-problem sampled benchmark and unmatched external model comparisons。
+- **Limitations / Threats to Validity:** same model proposes facts、rewrites representation and solves，creating correlated error/self-confirmation；IG conditions on its own prediction，which can back-propagate a wrong answer into context；FO reduces but does not independently check semantics。
+  Mixed greedy/sampling contracts、known math benchmarks、mutable code/no tag、no significance intervals、dataset-specific parsers and incomplete total-compute accounting limit generalization。
+- **Trade-offs / New Failure Modes:** compact stickers reduce distraction but can omit qualifiers；additional calls improve search but amplify latency/queue/cost；FO may correct source alignment，IG may improve model readability or entrench wrong hypotheses；agreement gate reduces some inconsistency yet accepts correlated errors。
+  Retaining original query preserves evidence but increases context and anchoring interactions。
+- **Where the Previous Design Still Applies:** direct CoT for simple/SLO-critical prompts；deterministic parser/constraint extraction where syntax permits；RAG/tool calls for missing/fresh facts；independent verifier/executable test for correctness；human-authored checklist for regulated/high-risk decisions；Self-Consistency when answer diversity rather than context representation is bottleneck。
+- **Evolution Relationship:** `Alternative Branch` and `Layering / Dependency`：direct prompt → explicit scratchpad/key-fact extraction → cross-view agreement → source-anchored forward rewrite → answer-conditioned inverse rewrite → independent evidence/verifier gate。
+  SIFT implements the middle layers only and cannot replace the final authority layer。
+- **ROADMAP Node:** `AGENT-CONTEXT`（Current Ch75；Legacy Ch71）主 owner；handoff到`AGENT-PROMPT`（Ch74/Legacy Ch70）、
+  `MODEL-SAMPLING`（Ch20/Legacy Ch20）、`INFER-SCHEDULING`（Ch56/Legacy Ch52）与`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）。
+- **Target and Adjacent Chapters Read:** 已核对Ch75 working/derived context、Ch74 prompt control、Ch20 multi-call selection、Ch56 budget/fairness与Ch66 agreement-versus-correctness；Sticker是derived state，不拥有source truth。
+- **Existing Coverage:** Books已有Context provenance、self-consistency、reflection and verifier authority；SIFT补充“cross-view agreement→source rewrite→model-preference rewrite”的受限演进案例，后续可refine而不新增论文小节。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate / Status: Experimental`。Historical Books Gate关闭；后续仅吸收derived-context ownership/self-confirmation boundary，不保留headline numbers。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未把same-model consensus写成fact verification或faithful reasoning，未修改Books。
+- **Open Questions:** immutable event code/run、equivalence implementation、source-semantic preservation metric、independent verifier、matched total-call/token/cost、exit-path distribution、multi-seed/AIME uncertainty、
+  long/noisy/adversarial context、non-math/tool tasks、latency/tail SLO、privacy and independent reproduction。
+
+### U-SAFEBENCH: Safety Policy Depends on Authorized Context, Not Profile Text Alone
+
+- **Candidate / Week / Score:** U-SAFEBENCH / 2025-W08 / 26/30。
+- **Source Family ID:** `u-safebench-profile-conditioned-safety-evaluation`。
+- **Source Type:** arXiv v1 full paper + released benchmark/code/prompt artifacts；profile-conditioned refusal/helpfulness evaluation，not a deployed safety or identity system。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-20 owns W08 event；current32-commit repository/EMNLP2025/data-v1.1 are later mutable lineage and do not silently replace event-time model/result identity。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.15086v1；https://arxiv.org/abs/2502.15086；https://github.com/yeonjun-in/U-SafeBench。
+- **Related Primary Sources:** released Hugging Face data、Anthropic red-team source、SafetyBench/SorryBench and exact provider/model cards establish dataset/model lineage；medical/legal sources would be needed to authorize profile-specific policies but are not benchmark authority。
+- **Access and Verification Status:** v1 definitions、risk taxonomy、data construction、evaluation、18-model results、jailbreak/CoT/system-vs-user slices、cases/prompts/appendices and current repository verified。
+  Appendix swaps Mixtral-8x7B/8x22B provider identifiers and the refusal-only policy is underspecified；status `Full Source Review Complete — Disputed`。
+- **Full-read Coverage:**157 profiles、1,507 harmful/429 benign pairs、human+GPT4o filtering、three risk/two task domains、Llama judge validation、safety/helpfulness/harmonic metrics、model/version table、zero-shot single-run setup、jailbreaks、CoT remedy、prompt-placement and released data/code。
+- **Original Problem:** the same content/action can have different risk given health condition、criminal history、age/role or other authorized context；global safety filters either miss profile-specific harm or over-refuse benign requests，especially when agents can act。
+- **Why the Previous Design Was Reasonable:** universal policy is easier to audit、less discriminatory and avoids collecting sensitive profiles；request-level risk classification protects unknown users；human/clinical escalation owns high-stakes advice。
+  When identity/profile is unavailable or not authorized，conservative global policy and clarification remain safer than inferred personalization。
+- **Changed Constraint:** assistants increasingly retain context and execute purchases/tools；systems may receive explicit medical/role constraints and need policy slices that distinguish general help from user-specific action risk while measuring over-refusal。
+- **Mechanism:** construct profile-conditioned harmful pairs from reannotated red-team instructions、GPT-4o-generated instructions and medical product templates; construct benign counterpairs by replacing profile with general population；provide profile+instruction to model，judge response as Refuse/Fulfill with Llama3.1-8B，compute harmful refusal rate、benign fulfillment rate and harmonic mean。
+  CoT remedy first asks model to generate profile-specific unsafe instructions，then answer current request with those examples as context。
+- **State Ownership:** authenticated/consented profile store owns user attributes；policy taxonomy owns allowed/unsafe mapping；prompt/context owns presented profile text；model owns proposed response/action；judge owns provisional refusal label；tool runtime owns side effects；human/clinical/legal authority owns final high-risk policy；audit store owns evidence/appeal。
+- **Control Flow / Data Flow:** authorized profile+request → risk/policy lookup → model response/proposed action → refusal/helpfulness/content/action verifier → allow/clarify/refuse/escalate → tool authorization → outcome/audit/appeal。
+  Benchmark implements profile text→model→refusal judge only，not identity、policy lookup、tool authorization or outcome monitoring。
+- **Implementation Details:**157 profile strings across physical/mental health and criminal backgrounds；temperature0，single run，max100 output tokens；OpenAI/Anthropic APIs and TogetherAI endpoints with exact table versions；Llama3.1-8B judge reports92/100 agreement with humans。
+  Current repo includes data、prompt、base/CoT/jailbreak runners and eval notebook，but no immutable W08 environment/result manifest。
+- **Evaluation Contract:**1,936 profile-instruction pairs，18 endpoints (15 instruction models+3 LlamaGuard classifiers)；safety=refusal ratio on harmful，helpfulness=fulfillment on benign，overall harmonic mean。
+  Average safety18.6/helpfulness81.6；CoT slice excludes guards and changes average21.3→28.0 safety、79.8→77.9 helpfulness；no confidence intervals/repeats or outcome severity weighting。
+- **Baselines / Ablations / Sensitivity / Overhead:** general profile counterpairs、three risk/two task slices、prefix-injection/refusal-suppression、CoT prompt and user-vs-system profile placement。
+  Missing: safe-completion/clarification/partial-help policy、profile authenticity/consent/error、multiple judges/human experts、counterfactual profile pairs per same instruction at scale、action execution、severity/calibration/thresholds、adaptive attacks、long conversations、privacy/fairness and production SLO。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** API model versions、temperature0/max100 are disclosed；provider hardware/precision/batch/concurrency、latency/rate limits、token/cost、judge throughput、failure retries、tool execution and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** under benchmark definitions/prompts，tested models frequently fulfill instructions labeled unsafe for an explicit profile，while refusal/helpfulness trade off；prompt placement and simple jailbreaks materially change measured behavior。
+  It establishes profile-conditioned safety as an evaluation slice worth owning separately from generic safety。
+- **What It Does Not Prove:** correct real-world risk policy、ability to infer/verify a user's condition/intent、regulatory compliance、actual harmful action、or that refusal is always the appropriate safe behavior。
+  CoT does not robustly fix the issue，and a model knowing a sensitive profile does not authorize using it；benchmark labels/LLM judge are not clinical/legal ground truth。
+- **Limitations / Threats to Validity:** profile categories can encode stereotypes and criminal-history discrimination；many “benign for general population” examples remain contextually risky；human+GPT4o consensus filters toward model-compatible labels；benign set is smaller/synthetic counterprofile。
+  One run/100-token cap and refusal-only judge miss nuanced safety；LlamaGuard used outside intended classification contract；Appendix Table5 swaps `mistralai/Mixtral-8x22B-Instruct-v0.1` under8x7B row and vice versa，making those result identities disputed。
+- **Trade-offs / New Failure Modes:** personalization can prevent harm but requires sensitive-data collection、consent、freshness、access control and appeal；false profiles cause over-refusal/discrimination or unsafe fulfillment；more context expands prompt-injection/leakage；strict refusal reduces utility，while safe completion/clarification needs richer policy/judging。
+  Tool-capable agents amplify errors into irreversible actions。
+- **Where the Previous Design Still Applies:** universal hard prohibitions for universally unsafe content；least-privilege tool policy independent of profile；clarification when context is missing；clinical/legal expert escalation；user-controlled preference versus safety separation；anonymous/minimal-data service when profiling risk outweighs benefit。
+- **Evolution Relationship:** `Direct Evolution` and `Layering / Dependency`：global content policy → risk/task slices → authorized profile-conditioned policy → safe completion/clarification/escalation → action authorization/outcome monitoring → appeals and policy revision。
+  The benchmark covers one evidence layer，not the full control plane。
+- **ROADMAP Node:** `PLATFORM-SECURITY`（Current Ch72；Legacy Ch68）主 owner；handoff到`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）、
+  `PLATFORM-MULTI-TENANT`（Ch71/Legacy Ch67）、`AGENT-CONTEXT`（Ch75/Legacy Ch71）与`AGENT-PLATFORM`（Ch84/Legacy Ch80）。
+- **Target and Adjacent Chapters Read:** 已核对Ch72 threat/policy/identity boundary、Ch66 sliced evidence/calibration、Ch71 tenant isolation、Ch75 context provenance与Ch84 action governance；profile text不拥有identity或policy authority。
+- **Existing Coverage:** Books已有profile/context provenance、privacy、tenant policy、evaluation and action authorization；U-SAFEBENCH补充profile-conditioned slice，但model-identity and refusal-only conflicts prevent direct manuscript integration。
+- **Integration Decision:** `Disputed — Model Identity / Refusal-only Policy Contract / Books Frozen`。修正endpoint identities并建立expert policy、safe-completion and profile-consent/auth evidence后再重开。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未把refusal ratio或CoT prompt写成部署安全结论，未修改Books。
+- **Open Questions:** corrected Mixtral result mapping、profile source/consent/auth/freshness、clinical/legal policy owner、safe completion/clarification taxonomy、judge calibration and severity、
+  repeated/counterfactual evaluation、action outcomes、privacy/fairness/discrimination、adaptive attacks、long-context/tool SLO and independent audit。
+
+### MedHallu: Synthetic Hallucination Detection Needs an Independent Medical Ground Truth
+
+- **Candidate / Week / Score:** MedHallu / 2025-W08 / 25/30。
+- **Source Family ID:** `medhallu-synthetic-medical-hallucination-detection-benchmark`。
+- **Source Type:** arXiv v1 full paper + released10K dataset + benchmark/code artifact；synthetic binary hallucination-detection benchmark，not a clinical decision or real-model hallucination corpus。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-20 owns W08 event；HF dataset commit on2025-02-20 and current GitHub/HF cards are mutable same-family artifacts without immutable complete run identity。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.14302v1；https://arxiv.org/abs/2502.14302；https://github.com/MedHallu/MedHallu；https://huggingface.co/datasets/UTAustin-AIHealth/MedHallu。
+- **Related Primary Sources:** PubMedQA source dataset、Omni/NLI models、Qwen2.5/Gemma/GPT model cards and TextGrad/vLLM dependencies define generation/evaluation lineage；they do not provide independent medical expert labels for MedHallu outputs。
+- **Access and Verification Status:** v1 generation/filtering/correctness pipeline、evaluation、knowledge/abstention/clustering/category analyses、limitations/ethics/all appendices and current data/code cards verified。
+  Admission algorithm/text and NLI model identities conflict，fallback bypasses correctness，and no per-item clinical review exists；status `Full Source Review Complete — Disputed`。
+- **Full-read Coverage:** four hallucination types、1K expert+9K artificial PubMedQA sources、Qwen generation、three-discriminator filtering、NLI/TextGrad/fallback、10K/1K experiments、general/medical models、oracle-knowledge and not-sure variants、semantic clustering、MeSH slices、hardware/software and released artifacts。
+- **Original Problem:** fluent medical answers can be subtly incomplete、misattribute pathways or fabricate evidence；detectors need examples spanning obvious to near-ground-truth errors，and high-stakes systems must expose abstention/risk-coverage rather than force binary confidence。
+- **Why the Previous Design Was Reasonable:** curated human clinical QA is expensive but authoritative；retrieval/citation/expert review verifies real claims；binary synthetic benchmarks are cheap/repeatable and useful for model regression。
+  In deployment，source-backed generation and human escalation remain more defensible than post-hoc self-detection alone。
+- **Changed Constraint:** medical hallucinations are rare/heterogeneous and natural labels scarce；benchmark creators want scalable difficult negatives plus domain context，while platforms need separate detection、evidence and abstention operating points。
+- **Mechanism:** take PubMedQA question/context/ground-truth，prompt Qwen2.5-14B to generate semantically similar but wrong answers in four categories；test candidates against Gemma2-9B、GPT-4o-mini、Qwen2.5-7B，apply bidirectional MNLI threshold0.75 and optional Llama semantic check；use TextGrad up to5 attempts，otherwise pick candidate with highest semantic similarity。
+  Evaluate detectors with/without PubMedQA context and optional `not sure` class。
+- **State Ownership:** PubMedQA version owns source question/context/label provenance；generator owns candidate negative；discriminator/NLI/TextGrad own admission proxies；benchmark manifest owns category/difficulty/split；detector owns provisional label/abstention；medical evidence/expert owns factual truth；release gate owns deployment action。
+- **Control Flow / Data Flow:** PubMedQA Q,K,GT → generator/category prompt → candidate H → discriminator deception filter + bidirectional entailment → TextGrad regenerate/retry → similarity fallback → benchmark item/category/difficulty → detector ± oracle context ± abstain → F1/precision/response-rate → expert/clinical validation required before use。
+- **Implementation Details:** 1,000 pqa_labeled expert samples +9,000 random pqa_artificial machine-labeled samples；Qwen2.5-14B temperature0.3～0.7/top-p0.95/max512，answer length±10%；generation26.5h on4×RTX A6000，PyTorch2.4/CUDA12.2/vLLM0.6.3.post1 TP4/memory utilization0.80。
+  Dataset categories are76% question misinterpretation and0.5% evidence fabrication，so macro/real-world prevalence differs from overall score。
+- **Evaluation Contract:** 10K binary classification with/without provided relevant PubMedQA knowledge across GPT-4o/mini、Gemma2、Llama3、Qwen2.5、DeepSeek-R1-Distill and four medical finetunes；F1/precision by easy/medium/hard。
+  Abstention reports F1/precision plus response rate；e.g. Qwen2.5-14B answers only27.9% in one no-knowledge `not sure` setting。Generation-model comparison uses1K split/three runs，not full detector evaluation seeds。
+- **Baselines / Ablations / Sensitivity / Overhead:** general versus medical finetunes、oracle knowledge/no knowledge、forced binary/not-sure、hallucination difficulty/category/MeSH、Qwen versus Gemma generation and semantic clustering。
+  Missing: real model-generated hallucinations、medical-expert item audit/inter-rater agreement、retrieval/citation verifier、claim-level decomposition、prevalence calibration、generator/discriminator cross-family holdout、threshold/fallback ablation、risk-coverage/utility/cost and clinical workflow outcomes。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** generation GPUs/software/TP and max512 disclosed；detector hardware、precision/quantization、batch/concurrency、prompt/context lengths、latency、cost/energy、failure/retry and SLO largely `Not Disclosed`。
+- **What the Evidence Actually Proves:** the authors released a large synthetic PubMedQA-derived contrast set; tested models have difficulty under its binary prompts，oracle source context often improves classification，and explicit abstention changes precision/F1/coverage trade-offs。
+  It supports separating detector evidence、provided knowledge and response coverage。
+- **What It Does Not Prove:** that each negative is medically false、that difficulty represents real-world hallucination frequency、that general LLMs are safer/better medical systems、that semantic proximity causes detection difficulty，or that `not sure` is calibrated confidence。
+  Oracle ground-truth context is not ordinary RAG，and detector success does not validate generated medical advice。
+- **Limitations / Threats to Validity:**9K source labels are artificial，all hallucinations synthetic and selected to fool generator-related LLMs；no medical expert validation or natural prevalence；fallback explicitly accepts samples after failed checks。
+  Text says majority discriminator deception，Algorithm1 accepts first fooled model，Implementation says “at least one”；paper alternates RoBERTa-large-MNLI and microsoft/deberta-large-mnli identity。Difficulty is circularly defined by the same discriminator ensemble; semantic/NLI tools appear in both construction and analysis。
+- **Trade-offs / New Failure Modes:** synthetic scale reduces annotation cost but teaches generator artifacts；hard-negative mining improves stress but biases toward selected judges；oracle context improves detection but may leak answer and overstate RAG；abstention improves precision while reducing coverage，requiring calibrated escalation capacity。
+  Post-hoc detector adds latency and can disagree with source/evidence verifier。
+- **Where the Previous Design Still Applies:** claim extraction+primary-source retrieval/citation verification；clinical expert review；conservative abstention and escalation；small human-gold benchmark for release gates；natural production samples under privacy controls；task-specific executable/lab evidence where possible。
+- **Evolution Relationship:** `Layering / Dependency` and `Alternative Branch`：binary synthetic detector benchmark → adversarial hard-negative mining → oracle-context detector → explicit abstention/risk coverage → claim-level evidence retrieval → expert/clinical release gate。
+  MedHallu covers early diagnostic layers，not truth authority。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`PLATFORM-SECURITY`（Ch72/Legacy Ch68）、
+  `AGENT-RAG`（Ch76/Legacy Ch72）、`AGENT-CONTEXT`（Ch75/Legacy Ch71）与`AGENT-WORKFLOW`（Ch81/Legacy Ch77）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 synthetic/real benchmark、abstention/calibration/evidence boundary，Ch72 high-stakes policy，Ch76 source retrieval，Ch75 claim context及Ch81 human/expert escalation；detector label不拥有medical truth。
+- **Existing Coverage:** Books已覆盖atomic claims、evidence retrieval、calibrated abstention、risk-coverage and expert gate；MedHallu提供受限领域案例，但admission/ground-truth conflict prevents direct integration。
+- **Integration Decision:** `Disputed — Dataset Admission / Ground-truth Contract / Books Frozen`。需修正algorithm/text/model identity，发布item-level audit并以medical experts/natural outputs复核后再重开。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未把synthetic F1、oracle context或not-sure prompt外推为医疗可靠性，未修改Books。
+- **Open Questions:** authoritative admission rule、DeBERTa/RoBERTa identity、fallback false-positive rate、medical-expert audit/inter-rater agreement、pqa_artificial label quality、natural/prevalence-matched outputs、
+  generator-family holdout、claim/evidence verifier、calibrated risk-coverage、clinical escalation cost/SLO and independent reproduction。
+
+### CodeCriticBench: Critique Verdict, Diagnosis, and Repair Are Different Evidence Objects
+
+- **Candidate / Week / Score:** CodeCriticBench / 2025-W08 / 25/30。
+- **Source Family ID:** `codecriticbench-basic-advanced-code-critique-evaluation`。
+- **Source Type:** arXiv v1 full paper + released4,300-sample dataset + evaluation code/leaderboard；mixed executable/human/judge-derived code-critique benchmark。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-23 owns W08 event；current14-commit repository/HF dataset/leaderboard are mutable artifact lineage without immutable W08 release tag。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.16614v1；https://arxiv.org/abs/2502.16614；https://github.com/multimodal-art-projection/CodeCriticBench；https://huggingface.co/datasets/m-a-p/CodeCriticBench。
+- **Related Primary Sources:** CodeForces、MBPP、LiveCodeBench、StackOverflow source contracts and model/provider cards define source/model identity；sandbox tests/human annotations and judge models have different Evidence Levels and cannot be merged into one “ground truth”。
+- **Access and Verification Status:** v1 collection/construction/metrics/38-model results/scaling/slices/bug/checklist appendices/prompts/model lists and current dataset/code surfaces verified。
+  Basic labels have executable/human support；advanced scores are model-judge generated and calibrated with partially disclosed human subset，so status `Full Source Review Complete — Experimental`。
+- **Full-read Coverage:**3,200 Code Gen+1,100 Code QA、rewrite/bug insertion/StackOverflow collection、difficulty、binary labels、10-dimension checklists、judge+human calibration、ACC/MSE/Pass@1、38-model tables、size/task/category/error/scaling analyses、all appendices and artifacts。
+- **Original Problem:** a model may generate code yet fail to recognize defects、explain why an answer is weak or suggest useful improvement；binary compile/pass alone does not characterize critique depth，but subjective review dimensions lack cheap authoritative labels。
+- **Why the Previous Design Was Reasonable:** unit tests/compiler/static analysis provide deterministic correctness evidence；human code review captures maintainability/security/context；simple correct/error benchmarks are cheap and interpretable。
+  For release gating，executable tests and human approval remain preferable to broad judge scores。
+- **Changed Constraint:** coding agents increasingly review and revise large artifacts；platforms need to distinguish detection、diagnosis and quality dimensions across code generation/QA/difficulty，while scaling evaluation beyond fully manual review。
+- **Mechanism:** collect test-set algorithm tasks from CodeForces/MBPP/LiveCodeBench，rewrite some with DeepSeek-V3，insert expert-defined bugs into sandbox-verified code；collect/clean StackOverflow content and generate questions/responses；label Code Gen by all-tests-pass and Code QA by3-of20-volunteer majority。
+  Generate per-item10-dimension checklists with DeepSeek-V3，score all items with Claude3.5/GPT-4o/Gemini2 majority，then linearly calibrate scores against20% human annotations。
+- **State Ownership:** source dataset/license owns task provenance；sandbox/test suite owns executable binary verdict；human raters own Code-QA correctness subset；generator owns rewritten/questions/bugs；checklist owns rubric；judge ensemble owns provisional advanced scores；calibration fit owns score transformation；benchmark manifest owns difficulty/version；release policy owns action。
+- **Control Flow / Data Flow:** source task/doc → rewrite/response/bug candidate → sandbox/manual filter → binary correctness label + generated checklist → human20% and judge100% scores → calibration → benchmark item → candidate critic emits verdict/reasoning/dimension scores/errors → ACC/MSE/any-error metrics → downstream patch/execution evaluation still required。
+- **Implementation Details:**4,300 samples=3,200 Code Gen+1,100 Code QA；difficulty from12-model correct ratio (`>=80%` easy,60～80 medium,<60 hard)；10 advanced dimensions，questions/answers/checklists average451/322/287 Llama3 tokens with maxima~32K/32K/676。
+  Dataset artifacts include tests、labels、checklists/scores/difficulty；model sizes include estimates and exact serving versions are not consistently frozen in paper table。
+- **Evaluation Contract:**38 open/closed/reasoning models from0.5B to100B+；basic critique asks Correct/Error+reasoning and uses ACC；advanced predicts per-dimension scores and uses MSE；bug identification Pass@1 succeeds when predicted-error set intersects any actual error。
+  No execution of suggested fix、patch validity、regression tests、review usefulness to developer or end-to-end refinement outcome is measured。
+- **Baselines / Ablations / Sensitivity / Overhead:** model-size/type/task/difficulty/application/error-category/dimension slices，basic-advanced correlation and scaling plots。
+  Missing: judge/human holdout and inter-rater calibration、checklist-generator/judge-family ablation、prompt/temperature/repeat variance、context truncation、test adequacy/mutation score、complete-error recall/severity、patch generation/execution、contamination/time split、cost/latency and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** prompt artifact lengths/model identities partly disclosed；hardware、precision、sampling/temperature/max tokens、batch/concurrency、API revisions、judge costs、latency/energy and production SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** released benchmark combines executable Code-Gen correctness、human Code-QA labels and judge-derived multidimensional scores；tested model outputs differ across these contracts and larger/reasoning models often achieve higher basic ACC/lower advanced MSE in this dataset。
+  It supports separating correctness verdict from finer critique dimensions。
+- **What It Does Not Prove:** that larger models are universally better reviewers、that advanced scores are objective quality、that critique reasoning is faithful、that finding one bug means complete diagnosis，or that critique improves a patch/user outcome。
+  A scaling trend matching expectation does not validate dataset truth，and LLM-calibrated labels can share bias with evaluated models。
+- **Limitations / Threats to Validity:** generated/rewritten tasks and judge-generated checklists/scores create evaluator-family bias；only20% human baseline and no reported independent calibration test/inter-rater reliability；Code QA majority labels do not own all10 quality dimensions。
+  Pass@1 accepts any one known error，tests may be incomplete，difficulty is defined by contemporaneous model panel，very long samples may exceed candidate contexts；paper lacks explicit limitations section and immutable run artifact。
+- **Trade-offs / New Failure Modes:** executable labels are authoritative but narrow/test-dependent；human labels are richer but costly/variable；judge labels scale but can reward verbosity/style and circularly favor similar models；fine-grained rubrics improve diagnosis but expand gaming surface/storage/cost。
+  Rewritten tasks improve coverage yet add semantic/contamination drift。
+- **Where the Previous Design Still Applies:** compiler/unit/property/mutation/security tests for correctness；human reviewer for intent/maintainability/risk；static analyzer for known defects；small frozen regression suites for releases；patch execution and differential tests to validate suggested fixes。
+- **Evolution Relationship:** `Layering / Dependency`：binary executable verdict → error taxonomy/diagnosis → item-specific critique rubric → judge/human scoring → patch proposal → sandbox/regression execution → human/release decision。
+  CodeCriticBench covers the first four layers，not repair effectiveness or release authority。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`AGENT-REFLECTION`（Ch80/Legacy Ch76）、
+  `AGENT-WORKFLOW`（Ch81/Legacy Ch77）、`PLATFORM-SECURITY`（Ch72/Legacy Ch68）与`PLATFORM-PRODUCTION`（Ch73/Legacy Ch69）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 verifier/judge/rubric evidence levels，Ch80 critique-versus-correction，Ch81 artifact execution，Ch72 security tests及Ch73 release gate；critic score不拥有patch commit。
+- **Existing Coverage:** Books已明确executable verdict、judge uncertainty、artifact verification and reflection handoff；CodeCriticBench提供受限案例，但没有新增超过现有框架的稳定结论。
+- **Integration Decision:** `Books Pending — No Change Candidate / Status: Experimental`。后续若Books复核，仅引用现有章节覆盖；advanced label和scaling headline不得进入核心结论。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未把judge-derived MSE或parameter scaling写成通用review能力，未修改Books。
+- **Open Questions:** human/LLM score calibration split、inter-rater reliability、exact model/prompt/run identity、test mutation/coverage、all-error recall/severity、response verbosity bias、
+  patch/execution/refinement outcomes、contamination/time split、cost/latency/SLO and independent audit。
+
+### LaTIM: Decomposed Contribution Is an Approximate Explanation, Not Causal Influence
+
+- **Candidate / Week / Score:** LaTIM: Measuring Latent Token-to-Token Interactions in Mamba Models / 2025-W08 / 26/30。
+- **Source Family ID:** `latim-mamba-token-contribution-decomposition`。
+- **Source Type:** arXiv v1 full paper + official two-commit implementation/fork；mechanistic attribution method for Mamba-1/2 with approximate and retrained-exact branches。
+- **Event Date / First-public Date / Revision History:** arXiv v1 only，2025-02-21；current repository has no tag and mutable fork/configs/notebooks，so code identity is later lineage rather than immutable W08 run。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.15612v1；https://arxiv.org/abs/2502.15612；https://github.com/deep-spin/latim。
+- **Related Primary Sources:** official Mamba/Mamba2 checkpoints/code、MambaLRP、Mamba-Attention/Attribution、IWSLT17/GoldAlign/RULER/FineWeb-Edu define architecture/baselines/tasks；none independently prove LaTIM causal faithfulness。
+- **Access and Verification Status:** v1 derivations、approx/exact strategies、copy/MT/retrieval experiments、error/limitations/risks/all appendices and implementation surface verified；no immutable runs/checkpoints or human/causal intervention evidence。
+  Status `Full Source Review Complete — Experimental Approximate Decomposition`。
+- **Full-read Coverage:** Transformer attribution background、Mamba hidden-attention recurrence、Mamba1/2 contribution equations、SiLU/GroupNorm handling、norm/ALTI/logit scores、copy faithfulness、translation AER、RULER behavior、activation/retraining/error analyses、configs/hardware and repository。
+- **Original Problem:** Attention exposes an explicit token-pair matrix，while SSMs compress history into recurrent state；without decomposition，operators cannot see which prior tokens contributed to a current representation or diagnose long-context recall failure。
+- **Why the Previous Design Was Reasonable:** attention maps/norm attribution are cheap and intuitive for Transformers；behavioral probes/ablation measure output effects without architecture-specific algebra；SSM hidden-state inspection preserves runtime efficiency。
+  In production diagnosis，task failures and interventions remain more actionable than dense explanation tensors。
+- **Changed Constraint:** Mamba-1/2 adoption creates a need for token-level attribution despite fixed-size recurrent state and nonlinear convolution/gating；interpretability must handle architecture-specific state flow and quantify approximation error。
+- **Mechanism:** unroll selective SSM recurrence into lower-triangular block matrix `M_ij` mapping past projected/convolved tokens to current state；split causal convolution into token components，approximate non-additive SiLU per component，apply output gate/projection，then scalarize contribution vectors using L1/L2、ALTI or logit projection。
+  Mamba2 additionally freezes GroupNorm's input-conditioned affine operator at observed activation and ignores offset。
+- **State Ownership:** checkpoint/architecture owns recurrence/gates/activation；input run owns dynamic A/B/C/GroupNorm operators；decomposition code owns contribution tensors/approximation；aggregation rule owns displayed score；task gold alignment owns limited validation；analyst owns interpretation，not model truth。
+- **Control Flow / Data Flow:** input tokens → projection+causal convolution → SiLU approximate component split → unrolled SSM block matrix → gate/GroupNorm/output projection → per-(output,input) vectors → norm/ALTI/logit scalar map → compare with copy/alignment/retrieval gold → hypothesis → intervention required for causal claim。
+- **Implementation Details:** exact standard-checkpoint decomposition is impossible under non-additive SiLU；default applies SiLU to separate components and sums，yielding nonzero layer error。Exact branch replaces activation with identity and continues pretraining/retrains；Mamba2 GroupNorm offset is unassigned。
+  Full block tensor conceptually scales `N×N×D×D` and can be far larger than recurrent inference state；implementation/notebook path is analysis-time，not serving-time observability。
+- **Evaluation Contract:**13M 8-layer copying models (50-token copy;128 eval)、IWSLT17 de↔en/fr↔en Mamba130M/370M with GoldAlign/AwesomeAlign AER、RULER passkey/FWE on Mamba2 130M～1.4B and sequence1,024/2,048。
+  Approximation branch continues370M on FineWeb-Edu；all LaTIM experiments on RTX A6000-48GB。
+- **Baselines / Ablations / Sensitivity / Overhead:** Mamba-Attention、Mamba-Attribution、MambaLRP，L1/L2/ALTI/logit variants，copy AUC/AP/R@K，best-layer/aggregated AER，SiLU/Taylor/ReLU/identity and continued pretraining，model size/context/key-count slices。
+  Missing: input/feature deletion-insertion causal tests on open language、human explanation validation、hybrid SSM-attention models、error normalization sensitivity、memory/time scaling versus N/D、multi-seed and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** RTX A6000 and training configs/dataset sizes/LRs/steps partially disclosed；precision、analysis peak memory/runtime、sequence scaling beyond2K、batch for attribution、concurrency、latency/energy/production SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** algebraically unrolled linear recurrence exposes an input-conditioned contribution structure；under authors' approximations，LaTIM maps better match known copy diagonals and best-layer MT alignments than tested baselines，and visualizations correlate with selected retrieval failures。
+  Removing activation yields zero algebraic reconstruction error in a modified/retrained model with similar reported MT metrics。
+- **What It Does Not Prove:** causal token influence、faithful complete reasoning、general open-domain explanation、production robustness or that sparse/decaying maps cause Mamba retrieval errors。
+  Norm/ALTI scalarization and best-layer selection are analyst choices；approximate components do not sum exactly to standard Mamba outputs，and exact branch is a different checkpoint/architecture。
+- **Limitations / Threats to Validity:** SiLU is non-additive yet reused component-wise；reported error grows across layers (0.21→0.45→0.57) and “minimal” lacks universal scale；GroupNorm offset is ignored。
+  Copy gold diagonal is constructed from expected mechanism，MT gold/candidate alignment is imperfect，retrieval explanations are mostly qualitative；best-layer selection may use evaluation knowledge；only Mamba1/2 and short controlled tasks are validated。
+- **Trade-offs / New Failure Modes:** token maps improve diagnosis but materialize quadratic/high-dimensional analysis state，lose SSM serving advantage and can create false confidence；approximation preserves checkpoint but distorts conservation，identity activation gives exactness but requires retraining and may alter capability；layer aggregation improves convenience but can erase local alignments。
+- **Where the Previous Design Still Applies:** behavioral eval and causal ablation for deployment decisions；attention-based models when explicit pairwise state is worth quadratic cost；MambaLRP/global attribution when model-level logit influence matters；raw recurrent-state probes for long sequences；human/expert review in high-stakes use。
+- **Evolution Relationship:** `Alternative Branch` and `Principle Reuse`：implicit recurrent state → hidden-attention unrolling → approximate token contribution → task-aligned validation → modified exact-linear architecture → causal intervention/robustness evidence。
+  Explanation layers accumulate rather than replacing behavioral tests。
+- **ROADMAP Node:** `MODEL-LONG-CONTEXT`（Current Ch22；Legacy Ch22）主 owner；handoff到`WORLDVIEW-LLM-INTELLIGENCE`（Ch8/Legacy Ch8）、
+  `PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）与`PLATFORM-OBSERVABILITY`（Ch67/Legacy Ch63）。
+- **Target and Adjacent Chapters Read:** 已核对Ch22 attention-history versus compressed recurrent state，Ch8 interpretability evidence ladder，Ch66 explanation/evaluation boundary及Ch67 diagnostic observability；attribution map不拥有causal verdict。
+- **Existing Coverage:** Books已有SSM fixed-state trade-off和interpretability evidence ladder；LaTIM补充architecture-specific decomposition及approximation/exactness分支，后续可refine现有章节而非新增论文节点。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate / Status: Experimental`。Historical Books Gate关闭；只沉淀approximate-decomposition→modified-exact→causal-evidence路线，不保留headline metric。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未把heatmap写成mechanistic truth或生产observability，未修改Books。
+- **Open Questions:** normalized decomposition error/threshold、SiLU component semantics、GroupNorm offset allocation、memory/time complexity、causal deletion/intervention、best-layer selection protocol、hybrid architectures、
+  long/open-domain tasks、multi-seed/human validation、immutable artifact and independent reproduction。
+
+### Audio-FLAN: A Unified Schema Is a Data Contract, Not Evidence of a Unified Model
+
+- **Candidate / Week / Score:** Audio-FLAN: A Preliminary Release / 2025-W08 / 26/30。
+- **Source Family ID:** `audio-flan-unified-audio-instruction-mixture`。
+- **Source Type:** arXiv v1 40-page dataset paper + official mutable GitHub repository + later Hugging Face dataset lineage；a preliminary instruction-data design and census，not a trained unified audio-language model report。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-23 owns W08；v2 was submitted 2026-06-07 and is later revision evidence only。Current Hugging Face `Audio-FLAN-Dataset` shows an October 2025 update and cannot be backdated as event-time full availability。
+- **Direct Primary Sources:** https://arxiv.org/pdf/2502.16584v1；https://arxiv.org/abs/2502.16584v1；https://github.com/lmxue/Audio-FLAN；https://huggingface.co/HKUSTAudio。
+- **Related Primary Sources:** the 52 source datasets and their individual papers/cards/licenses define raw-data provenance and rights；Dynamic-SUPERB、MMAU、AIR-Bench define cited motivation/evaluation context，but Audio-FLAN v1 does not train or evaluate a unified model on them。
+- **Access and Verification Status:** v1 metadata、introduction/related motivation、task taxonomy、construction/schema、instruction variation/validation、dataset statistics、discussion、all task/dataset/instruction appendices，plus current official repository/HF lineage verified。The paper describes 108.5M instances while the repository says only a subset is available and the full dataset will be released progressively；status `Full Source Review Complete — Preliminary Artifact Partial`。
+- **Full-read Coverage:** 23 major/80 minor tasks across speech/music/sound；52 unique source datasets after dataset-level dedup；understanding/generation counts；template→LLM paraphrase→format/audio-ID validation；JSONL fields；instance/attribute distributions；imbalance discussion；source tables and example templates。No model method、training run、benchmark table、ablation or zero-shot experiment exists in v1。
+- **Original Problem:** audio understanding and generation were split across task-specific datasets、formats and models；a unified model cannot consume a stable multi-task mixture until inputs、outputs、task identity、modality boundaries and source lineage share an explicit contract。
+- **Why the Previous Design Was Reasonable:** task-specific corpora preserve clean labels、specialized architectures、known licenses and interpretable evaluation；separate ASR、TTS、MIR and sound-generation pipelines avoid forcing incompatible outputs into one objective。They remain preferable when accuracy、rights、latency or deployment scope is narrow。
+- **Changed Constraint:** instruction-tuned multimodal systems want one model to alternate among understanding and generation tasks；the bottleneck moves from a single task's sample count to cross-dataset schema normalization、mixture balance、representation identity and evaluation leakage。
+- **Mechanism:** collect public or request-access audio datasets；map original/manually processed labels into a hierarchical task ontology；express each instance as instruction/input/output with audio-ID delimiters and metadata；seed task-specific templates；use LLaMA/GPT to paraphrase instruction/input/output strings；validate JSONL syntax and audio-ID consistency，regenerate invalid variations or intervene manually；aggregate into a continuously updated mixture。
+- **State Ownership:** each source dataset owns raw sample、license/consent and original split；adapter owns label/task mapping；template/paraphraser owns instruction variant；manifest owns source/digest/version and mixture accounting；codec/model would own representation identity but is not defined by this paper；evaluation owner must define source-disjoint/unseen contract separately。
+- **Control Flow / Data Flow:** source dataset + labels → task definition/manual mapping → canonical template → LLM paraphrase variants → structural/audio-ID validation → common JSONL record + audio reference → versioned mixture manifest → future tokenizer/model training → source-disjoint evaluation and release gate。The v1 paper stops before the model-training arrow。
+- **Implementation Details:** v1 reports 52 unique datasets、23 major/80 minor tasks and 108.5M task instances；speech contributes 100.42M，music 2.17M and sound 5.91M，with speech generation 41.52M and paralinguistics 16.47M。Understanding totals 62.44M and generation 46.06M。These are task-instance counts over reused source datasets，not proof of 108.5M independent audio assets or balanced effective tokens。
+- **Evaluation Contract:** no Audio-FLAN-trained checkpoint or controlled experiment is reported。The paper gives taxonomy/count/attribute statistics and cites prior audio benchmarks only as motivation；there is no train/validation/test model result、zero-shot held-out-task protocol、human quality study、rights audit or downstream utility measurement。
+- **Baselines / Ablations / Sensitivity / Overhead:** no baseline model、mixture ablation、instruction-template/paraphrase ablation、dedup sensitivity、source-disjoint split analysis、task weighting、quality filtering comparison or training-overhead study。A useful follow-up must compare specialized versus unified models at matched data/tokens/compute and separate seen-source、seen-task/new-record from unseen-source/unseen-task generalization。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** dataset-construction hardware、LLM versions/snapshots、sampling settings、audio hours/sample rates/formats、storage、tokenized lengths、training model/precision/batch/concurrency、latency/cost/energy and serving SLO are `Not Disclosed`。Only the broad use of LLaMA/GPT for paraphrasing and dataset instance accounting is stated。
+- **What the Evidence Actually Proves:** the authors specified a broad audio task ontology、a common instruction record and a pipeline for adapting heterogeneous academic datasets；v1 documents an intended 108.5M-instance census and acknowledges strong domain/task imbalance。The official repository confirms event-time/public lineage is preliminary and only a subset is released progressively。
+- **What It Does Not Prove:** that the full counted corpus was downloadable in W08；that source samples are independently deduplicated or legally redistributable；that task instructions are semantically correct；that a single architecture can jointly learn all outputs；or that breadth causes zero-shot generalization、robustness or production value。
+- **Limitations / Threats to Validity:** speech dominates instances；same audio can support multiple tasks/instructions，so row count inflates effective diversity；dataset-level dedup does not establish audio/speaker/source overlap removal；`unseen` is a field，not a demonstrated split algorithm；LLM paraphrase validation checks structure/audio IDs rather than semantic preservation。Licenses remain heterogeneous per source，and speaker identity、voice cloning、gender/age/emotion labels raise consent、bias and misuse risks。
+- **Trade-offs / New Failure Modes:** a common schema reduces adapter fragmentation and enables shared training，but hides source-specific semantics and label quality；larger mixture broadens coverage yet shifts gradient budget toward dominant speech tasks；continuous updates improve recall but break immutable reproducibility；instruction variation improves surface diversity while adding generator artifacts；unified understanding/generation increases reuse but couples incompatible tokenizers、loss scales and safety policies。
+- **Where the Previous Design Still Applies:** specialized ASR/TTS/MIR models for bounded SLO and validated labels；per-source training when license/consent cannot be mixed；frozen curated manifests for reproducible studies；modality-specific encoders/codecs when fidelity differs；small human-gold and source-disjoint suites for trustworthy evaluation。
+- **Evolution Relationship:** `Direct Evolution` plus `Layering / Dependency`：fragmented task datasets → shared task ontology/schema → versioned source/rights/mixture manifest → representation/tokenizer contract → unified or routed model training → source/task-disjoint evaluation → governed release。The paper establishes the schema layer，not the later model/evidence layers。
+- **ROADMAP Node:** `TRAIN-DATA`（Current Ch27；Legacy Ch23）主 owner；handoff到`MULTIMODAL-REPRESENTATION`（Ch23）、`MULTIMODAL-GENERATIVE-PARADIGMS`（Ch24）、`PLATFORM-MODEL-REGISTRY`（Ch59/Legacy Ch55）、`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）与`PLATFORM-SECURITY`（Ch72/Legacy Ch68）。
+- **Target and Adjacent Chapters Read:** 已核对Ch27 acquisition/schema/provenance/mixture/split contract，Ch23 audio representation identity，Ch24 understanding/generation output contract，Ch59 artifact lineage，Ch66 evaluation-object/source-disjoint evidence及Ch72 partition-level license/consent boundary；dataset row不拥有model capability或deployment authority。
+- **Existing Coverage:** Books已覆盖partition-level rights、versioned manifest、mixture-as-gradient-budget、representation identity、artifact/evaluation contracts。Audio-FLAN补充“统一多模态任务schema先于统一模型”的受限音频案例，后续应refine现有论证而非新增论文节点。
+- **Integration Decision:** `Books Pending — Refine Existing Argument Candidate / Preliminary Artifact Partial`。Historical Books Gate关闭；未来只沉淀schema→mixture→model→evidence演进，不保留108.5M或zero-shot宣传作为通用结论。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把dataset census、later HF artifact或作者愿景外推为统一模型能力。
+- **Open Questions:** event-time/full dataset manifest and digests、per-source license/consent/redistribution、audio/speaker/source dedup、immutable split and `unseen` semantics、audio hours/sample-rate/codec identity、semantic paraphrase audit、mixture weights/effective tokens、matched-compute training and source/task-disjoint evaluation、safety/misuse slices、cost/SLO and independent reproduction。
+
+### SurveyX: Compressing Evidence Enables Long-form Synthesis but Can Also Compress Away Its Boundary
+
+- **Candidate / Week / Score:** SurveyX: Academic Survey Automation via Large Language Models / 2025-W08 / 25/30。
+- **Source Family ID:** `surveyx-automated-academic-survey-workflow`。
+- **Source Type:** arXiv v1 full paper + example website；experimental long-form research workflow with retrieval、reference compression、outline/content generation、citation rewriting and mixed LLM/human evaluation；no public code/data/run artifact located。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-20 owns W08；v2 2025-02-27 is W09 revision lineage and is not a new W08 event。The HTML also identifies a later KDD 2025 publication context，which does not replace v1 chronology。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.14776v1；https://arxiv.org/pdf/2502.14776v1；https://arxiv.org/abs/2502.14776v1；https://www.surveyx.cn/。
+- **Related Primary Sources:** AutoSurvey and STORM define workflow baselines；arXiv corpus、Google Scholar、bge-base-en-v1.5 and GPT-4o-2024-08-06 define retrieval/model dependencies。The example site exposes outputs but no immutable source corpus、code、prompt/run manifest or independent replication package。
+- **Access and Verification Status:** v1 introduction/related work、full preparation/generation pipeline、equations/algorithms、metrics、20-topic evaluation、four ablations、human-evaluation note、all prompts/templates/appendices and project-site surface verified。No explicit limitations/ethics section and no executable artifact were found；status `Full Source Review Complete — Experimental Self-Evaluation Coupling`。
+- **Full-read Coverage:** offline+online acquisition、keyword expansion/1,000-document stopping、embedding→LLM filtering、AttributeTree/forest、hint-based outline/content generation、separate/reorganize dedup、paragraph RAG rewriting、figure/table extraction、GPT-4o automatic evaluation、six-PhD content review、human/AutoSurvey/naive-RAG baselines、retrieval metrics and ablations。
+- **Original Problem:** a survey needs fresh and broad references、more evidence than fits one context window、a coherent cross-paper structure and claim-level citations；single-pass LLM generation has stale knowledge、context overflow、weak synthesis and fabricated/irrelevant references。
+- **Why the Previous Design Was Reasonable:** manual expert surveys preserve judgment、negative evidence and citation scope；naive RAG is simple and keeps source text closer to generation；static offline corpora are reproducible；fixed outlines reduce workflow state。These remain better for high-stakes reviews、small corpora or strong audit requirements。
+- **Changed Constraint:** literature volume and freshness exceed one researcher/model context；the system must separate discovery、evidence compression、outline planning、subsection drafting and post-generation citation repair while keeping artifacts reviewable。
+- **Mechanism:** search a February-2025 arXiv snapshot plus a Google Scholar crawler；iteratively expand keywords by abstract clustering until 1,000 documents；coarse-filter with bge embeddings and fine-filter with an LLM；compress each paper into type-specific AttributeTree，forming an AttributeForest；derive per-reference hints，generate/deduplicate/reorganize outlines，draft subsection-by-subsection with cross-section context，then retrieve attribute records per paragraph to rewrite citations/content and generate/reuse figures/tables。
+- **State Ownership:** corpus snapshot/crawler owns discovered identity and date；retriever/filter owns candidate set；primary paper owns evidence；AttributeTree owns lossy derived representation；outline/draft/rewrite artifacts own versioned workflow state；citation map owns claim→source links；judge/human review owns provisional evidence；domain expert owns final synthesis/significance verdict。
+- **Control Flow / Data Flow:** topic → offline/online recall → keyword expansion → embedding+LLM filter → primary papers → per-type AttributeTrees → outline hints → deduplicated hierarchy → subsection drafts → paragraph→AttributeForest retrieval → rewritten cited report + figures/tables → automatic/human evaluation → expert review/revision。A durable implementation must retain dereference links from every derived node and claim to exact source spans。
+- **Implementation Details:** offline corpus reports 2,632,189 arXiv papers as of 2025-02-10 and daily updates；keyword expansion stops after 1,000 retrieved documents；bge-base-en-v1.5 supports retrieval/evaluation and GPT-4o-2024-08-06 is the agent across the process。Twenty LLM-related topics are compared；six PhD students score content quality。Runtime code、prompts as machine-readable assets、source snapshots and generated reports are not packaged immutably。
+- **Evaluation Contract:** automatic GPT-4o scores coverage/structure/relevance/synthesis/critical analysis and claim citation recall/precision；retrieval uses human-reference IoU、embedding similarity and LLM relevance。Human evaluation covers content dimensions only，with six PhD raters and averaged scores。SurveyX reports automatic average4.590 and citation F1 81.52 versus human4.754/81.83，but these are author-harness results，not calibrated truth or production reliability。
+- **Baselines / Ablations / Sensitivity / Overhead:** human surveys、same-reference naive RAG、AutoSurvey64K；remove keyword expansion、replace AttributeTree with full text、one-shot outline and remove RAG rewriting。Missing: primary-source versus compressed-tree factorial、independent judge/model family、blinding/inter-rater statistics、corpus/retrieval recall gold、claim-level human factual audit、topic/time/domain shift、long-tail/negative-result retention、full cost/latency and reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** exact GPT-4o snapshot and bge model are disclosed；hardware、API temperature/seeds/retries/context/output lengths、number of source papers retained per topic、tokens/cost/wall time、batch/concurrency/rate limits、failure recovery、precision/quantization and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** in the authors' 20-topic GPT-4o harness，a staged retrieval→compression→planning→draft→rewrite workflow scores above tested naive/AutoSurvey baselines；ablations associate AttributeTree、outline optimization and rewrite stages with different metric declines。Human raters also preferred SurveyX over AutoSurvey on reported content dimensions。
+- **What It Does Not Prove:** exhaustive literature recall、claim truth、citation entailment under expert audit、preservation of limitations/contradictions through AttributeTree compression、human-expert equivalence、reliable figure rights/attribution or generalization beyond LLM survey topics。Same-family model generation and automatic judging can share blind spots，and averaged human ratings are not an independent factual verifier。
+- **Limitations / Threats to Validity:** 20 topics all concern LLMs and reuse an earlier benchmark set；GPT-4o generates and automatically evaluates；human baseline selection and rater blinding/assignment/agreement are undisclosed；retrieved-document IoU treats one human bibliography as complete gold；AttributeTree templates impose taxonomy and may drop qualifiers、null results、appendices or equations。Paragraph rewriting against lossy derived records can make citations look relevant without proving entailment；current website/code/run identity is not reproducible。
+- **Trade-offs / New Failure Modes:** evidence compression saves context but creates omission and stale-summary risk；iterative keyword expansion improves breadth but can drift toward embedding/LLM-selected clusters；LLM filtering reduces noise but introduces correlated recall loss；outline-first writing improves coherence but can force papers into a premature taxonomy；post-hoc citation rewriting improves surface linkage while obscuring whether claims preceded evidence；figure reuse adds license/provenance obligations。
+- **Where the Previous Design Still Applies:** expert-led scoping and final synthesis；frozen corpus/queries for reproducible reviews；direct primary-source reading for decisive claims；naive/full-text RAG when corpus is small enough；independent claim-level verifier and human domain review；simple deterministic outline/workflow for narrow recurring reports。
+- **Evolution Relationship:** `Direct Evolution` and `Layering / Dependency`：single-pass internal-knowledge draft → naive RAG → staged retrieval + lossy evidence compilation → outline/subsection workflow → claim/citation rewrite → independent factual/expert gate → versioned living review。Later stages add evidence layers rather than replacing direct source reading。
+- **ROADMAP Node:** `AGENT-WORKFLOW`（Current Ch81；Legacy Ch77）主 owner；handoff到`AGENT-RAG`（Ch76/Legacy Ch72）、`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）与`AGENT-PLATFORM`（Ch84/Legacy Ch80）。
+- **Target and Adjacent Chapters Read:** 已核对Ch81 deterministic spine/artifact lineage/workflow state，Ch76 retrieval→packing→citation attribution，Ch66 subject/corpus/scorer/run identity与deep-research evidence，Ch84 versioned Agent definition/run/platform contract；derived AttributeTree不拥有primary-evidence truth。
+- **Existing Coverage:** Books已覆盖research workflow 的 corpus/retriever/artifact/scorer identity、direct-source dereference、citation/evidence split、independent verifier和durable state。SurveyX提供受限实现案例，但没有新增长期机制或推翻既有路线。
+- **Integration Decision:** `Books Pending — No Change Candidate / Experimental Self-Evaluation Coupling`。Historical Books Gate关闭；保留Weekly证据，不把作者的“接近human expert”或短期评分写入Books。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，也未把LLM judge、bibliography IoU或citation F1外推为事实完整性。
+- **Open Questions:** immutable code/corpus/query/result artifacts、Google Scholar crawler/version、retrieval recall/admission、AttributeTree information-loss audit、claim→primary-span entailment、negative/contradictory evidence retention、human blinding/agreement/domain expertise、independent judge、figure license/provenance、topic/time shift、cost/latency/SLO and independent reproduction。
+
+### AlchemyBench: A Textual Recipe Score Is Not a Laboratory Feasibility Verdict
+
+- **Candidate / Week / Score:** Towards Fully-Automated Materials Discovery / Open Materials Guide / AlchemyBench / 2025-W08 / 26/30。
+- **Source Family ID:** `alchemybench-open-materials-guide-llm-judge`。
+- **Source Type:** arXiv v1 20-page dataset/benchmark paper + public 17,667-row dataset + mutable code/demo repository；experimental text-mined synthesis prediction and LLM-judge framework，not a physical-laboratory execution study。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-23 owns W08；v2 2025-03-06、v3 2025-03-10 and v4 2025-03-19 are later revision lineage。Current repository/HF cards are mutable and do not expose an immutable W08 release tag/commit in the paper。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.16457v1；https://arxiv.org/pdf/2502.16457v1；https://arxiv.org/abs/2502.16457v1；https://github.com/HeegyuKim/AlchemyBench；https://huggingface.co/datasets/iknow-lab/open-materials-guide-2024。
+- **Related Primary Sources:** Semantic Scholar API、PyMuPDF4LLM、OpenAI model/embedding APIs、FAISS and six publisher sources define collection/extraction dependencies；source papers own reported recipes，while real laboratory runs/instruments would own physical feasibility but are absent from the benchmark。
+- **Access and Verification Status:** v1 collection/extraction、expert checks、four prediction tasks、temporal/impact splits、judge calibration、five-model/RAG experiments、limitations、all prompts/hyperparameters/results/ethics appendices，plus dataset and repository surfaces verified。The public cards say all17,667 recipes are expert-verified，but the paper reports expert review of only ten recipes；judge calibration uses20 predictions and fails on feasibility-level agreement。Status `Full Source Review Complete — Disputed Dataset Verification / Feasibility Judge Contract`。
+- **Full-read Coverage:** 400K search→28,685 open-access PDFs→17,667 recipes；60 keywords/six publishers/PDF→Markdown/GPT-4o extraction；X/material/equipment/procedure/characterization schema；ten-recipe/eight-expert data audit；16,026/1,472/169 temporal-impact splits；seven-criterion rubric；ICC/Pearson/Spearman；GPT-4o/o3 variants；one-shot and top-K RAG；all appendix prompts、license checks、ethical risks and current artifacts。
+- **Original Problem:** synthesis literature contains actionable protocols but is unstructured、incomplete and expensive to evaluate；lexical metrics cannot judge whether materials、equipment and ordered steps are physically appropriate，while expert review is slow and scarce。
+- **Why the Previous Design Was Reasonable:** human-written protocols and expert/lab review preserve tacit constraints；small domain-specific datasets have clearer chemistry and provenance；BLEU/Jaccard/BERTScore are cheap regression signals；actual experimental execution is authoritative for feasibility。These remain necessary for safety-critical or novel synthesis。
+- **Changed Constraint:** platforms want broad machine-readable recipes、future-paper splits and scalable open-ended scoring；LLM extraction/generation can cover many techniques，but the evaluation object must distinguish textual similarity、expert plausibility and physical outcome。
+- **Mechanism:** query Semantic Scholar with expert keywords；download purported CC-BY/open PDFs；parse to Markdown；use GPT-4o to classify/extract target contribution、materials、equipment、ordered procedure and characterization；split by publication year and journal impact；prompt candidate LLMs from target contribution，optionally retrieving top-K train recipes by embedding similarity；have a fixed GPT-4o-Aug judge compare prediction with literature recipe across seven1–5 criteria and average them。
+- **State Ownership:** source article/license owns textual recipe provenance；parser/extractor owns derived schema；dataset manifest owns split/version；retriever owns exemplar set；candidate model owns proposal；judge/rubric owns provisional textual score；domain expert owns plausibility adjudication；instrument/protocol/sample/measurement owns real feasibility and discovery claim；safety authority owns permission to execute。
+- **Control Flow / Data Flow:** source search → open-access/license filter → PDF/Markdown → GPT extraction → expert sample audit → versioned recipe record/split → target contribution → candidate recipe ± retrieved examples → LLM rubric score → expert disagreement review → typed protocol/unit/inventory/safety gate → physical experiment → calibrated measurement/replication。AlchemyBench stops before the typed/physical gates。
+- **Implementation Details:** paper reports17,667 recipes from28,685 retrieved open-access articles and a400K search pool；ethical appendix says12,958 articles were license-filtered/verified and100 sampled for redistribution rights，which is not reconciled with all extracted rows。Dataset has16,026 train、1,472 standard-impact test and169 high-impact test rows。Temperature0/top-p1/max4,096 for GPT-4o variants；o3 max16,384。
+- **Evaluation Contract:** data quality is rated by eight experts on ten recipes；judge agreement uses ten workflows × two candidate models =20 predictions。Overall-score Pearson reaches0.80 for GPT-4o-Aug versus a three-person high-confidence subgroup and0.61 versus all eight；per-criterion feasibility correlation is -0.04 and all-expert feasibility ICC is -0.58。Full benchmark scores use GPT-4o-Aug judge, not physical execution；RAG runs only on169 high-impact rows for selected models。
+- **Baselines / Ablations / Sensitivity / Overhead:** BLEU、ROUGE-L、BERTScore and four LLM judges；GPT-4o-mini/Aug/Nov and o3-mini reasoning efforts；RAG K={0,1,5,10,25}。Missing: extraction-model/parse ablation、large stratified expert audit、independent chemistry validator、candidate/judge same-family bias、prompt/order/seed/rubric sensitivity、source/split dedup、retrieval leakage、physical lab execution、hazard/unit/inventory checks、cost and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** API model snapshots/reasoning effort、temperature/top-p/max tokens and dataset sizes are disclosed；provider hardware/precision/quantization、request batch/concurrency/retries、input/token/cost/wall time、rate limits、RAG index latency、physical equipment and production/lab SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** the authors released a broad structured recipe corpus and executable text-generation/judging pipeline；temporal splits support a future-paper evaluation branch；on20 predictions，some LLM overall scores correlate more strongly with selected expert aggregates than lexical metrics；retrieved similar recipes improve the same judge's score under reported settings。
+- **What It Does Not Prove:** expert verification of all17,667 rows；chemical correctness、safe quantities、procedure feasibility or successful synthesis；that journal impact measures novelty/difficulty；that o3 reasoning effort causes better scientific reasoning；that K=5 is universal；or that an LLM judge can replace domain experts、instruments、replication or release authority。
+- **Limitations / Threats to Validity:** ten audited recipes cannot validate a17K dataset；expert correctness/coherence ICCs are low and feasibility agreement conflicts sharply；the judge sees an LLM-extracted literature recipe rather than raw measurement；generator/extractor/judge share OpenAI-family biases；temporal split does not remove pretraining exposure to source concepts or duplicates；open-access/publisher filtering biases domains；impact factor is a venue proxy。Dataset-card “expert-verified” and paper evidence boundary conflict。
+- **Trade-offs / New Failure Modes:** LLM extraction scales schema coverage but silently propagates unit/order/stoichiometry errors；open-access policy improves redistribution but skews domains；LLM judge reduces cost but can reward fluent unsafe procedures；RAG supplies analogies but encourages recipe copying and context overload；temporal/impact splits improve auditability but confound novelty with venue/year；turning scores into automated execution could amplify hazards。
+- **Where the Previous Design Still Applies:** expert-curated narrow corpora；deterministic unit/material/equipment checks；human protocol/safety approval；sandbox/simulation before physical action；actual synthesis/characterization and independent replication；lexical metrics as cheap secondary regression indicators；manual review when expert disagreement is high。
+- **Evolution Relationship:** `Layering / Dependency` and `Alternative Branch`：unstructured papers → typed text-mined recipe corpus → temporal prediction benchmark → calibrated model judge → expert adjudication → executable protocol/inventory/safety validation → physical experiment → measurement/replication。Automation at one layer does not inherit authority from the next。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`TRAIN-DATA`（Ch27/Legacy Ch23）、`AGENT-WORKFLOW`（Ch81/Legacy Ch77）与`PLATFORM-SECURITY`（Ch72/Legacy Ch68）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 judge calibration/disagreement/executable evidence，Ch27 scientific data protocol/instrument/provenance，Ch81 typed experiment→approval→lab→measurement workflow，以及Ch72 information/physical-action permission boundary；text score不拥有lab feasibility or execution authority。
+- **Existing Coverage:** Books已完整覆盖AI for Science的Data→Evidence→Workflow→Security路线、model-judge校准和物理实验authority。AlchemyBench提供一个强反例，但没有新增长期机制；其“expert-verified/fully automated”证据冲突不应进入正文。
+- **Integration Decision:** `Disputed — Dataset Verification / Feasibility Judge Contract / Books Frozen`。需要发布分层专家审计、per-criterion calibrated judge、deterministic/physical validation and immutable run lineage后再重开。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把文本recipe score、overall correlation或RAG gain写成材料发现/实验成功。
+- **Open Questions:** exact17,667↔12,958 article/recipe/license accounting、full-row expert-audit rate、source/split duplicates、unit/stoichiometry validation、per-technique judge calibration、negative feasibility correlation、candidate/judge family bias、journal-impact proxy、physical lab execution/safety/replication、immutable W08 code/data/model snapshots、cost/SLO and independent reproduction。
+
+### InterFeedback: Correction after an Oracle Signal Is a Conditional Retry, Not Model Learning
+
+- **Candidate / Week / Score:** InterFeedback: Unveiling Interactive Intelligence of Large Multimodal Models via Human Feedback / 2025-W08 / 25/30。
+- **Source Family ID:** `interfeedback-feedback-conditioned-multimodal-evaluation`。
+- **Source Type:** arXiv v1 18-page benchmark paper；interactive multimodal evaluation with model-simulated and single-user feedback，not a training/adaptation method。No official code/data repository is linked in v1。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-20 owns W08；v2 2025-03-09 and v3 2025-11-07 are later revision lineage only。Closed-model endpoints and open model artifacts must be interpreted at the paper-listed snapshots。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.15027v1；https://arxiv.org/pdf/2502.15027v1；https://arxiv.org/abs/2502.15027v1。
+- **Related Primary Sources:** MathVerse、MMMU-Pro、NuminaMath、CodeComprehension and model cards define source tasks/model identity；GPT-4o、Gemini and Claude provider snapshots define simulated-feedback channels。They do not establish equivalence to diverse human feedback。
+- **Access and Verification Status:** v1 formulation、data construction、provider/receiver loop、simple/detail and three-level human feedback、all open/closed model experiments、implementation details、model-source appendix and qualitative examples verified。No explicit limitations/ethics section、artifact or multi-user protocol exists；status `Full Source Review Complete — Experimental Provider-conditioned Evaluation`。
+- **Full-read Coverage:** POMDP framing、exact-match reward、MathVerse3,940/MMMU-Pro1,730 sources、receiver-error∩provider-correct selection、three provider models/ten open receivers、single-round automatic run、120-item human set/five task types/one trained user、three feedback levels、accuracy/correction-rate tables、two A6000s/temperature0/model snapshots and examples。
+- **Original Problem:** static accuracy does not show whether a model can use new evidence、user correction or execution feedback after an initial error；production assistants need to distinguish baseline solving ability from feedback interpretation、revision and stopping behavior。
+- **Why the Previous Design Was Reasonable:** one-shot exact-match suites are cheap、comparable and easy to reproduce；human testing captures natural correction but is expensive/variable；simple retry measures stochastic coverage。They remain essential baselines before attributing gains to interactive intelligence。
+- **Changed Constraint:** each wrong response may require tailored feedback，so a fixed second-turn prompt cannot cover all receivers；scalable evaluation needs a provider that knows correctness and can generate response-conditioned diagnostics，plus a human slice to test external validity。
+- **Mechanism:** run receiver on all items to collect errors；run provider on same items to collect correct responses；retain intersection where provider is correct and receiver wrong；give receiver either binary correctness or provider-generated detailed feedback for one additional round and compute corrected/errors。Separately，one trained user supplies increasingly informative feedback over up to three rounds on120 tasks，with ground-truth answer disclosed at level3。
+- **State Ownership:** source benchmark owns image/question/answer；receiver snapshot owns initial/revised outputs；exact-match parser owns binary correctness；provider snapshot/prompt owns simulated feedback；intersection manifest owns receiver/provider-specific test population；human operator owns one feedback trajectory；evaluation policy owns turn budget/stopping；final environment/verifier owns real task outcome。
+- **Control Flow / Data Flow:** source item → receiver answer → exact-match error → provider answer/correctness → receiver-specific intersection → binary or detailed feedback → revised answer → correction rate。Human branch: fixed item → initial answer → level1 hint → level2 explanation → level3 ground-truth disclosure → answer/reasoning record。No weights are updated in either branch。
+- **Implementation Details:** automatic branch uses temperature0、two RTX A6000 GPUs and one feedback round；Qwen2-VL image resolution is capped at512×512 for memory。Provider endpoints include gpt-4o-2024-08-06、Gemini-1.5 and Claude-3.5-Sonnet-2024-10-22；paper text/table alternates Gemini `Pro`/`Flash` naming，so exact provider identity needs reconciliation。
+- **Evaluation Contract:** accuracy is initial exact-match rate；correction rate is corrected initial errors divided by receiver errors，but each provider/receiver pair has a different intersection and test count。Automatic detailed/simple feedback is evaluated on selected MathVerse/MMMU-Pro cases；human branch reports task-wise accuracy and per-round correction on120 items from one user。Level3 explicitly supplies GT and therefore tests explanation/compliance after disclosure，not independent problem solving。
+- **Baselines / Ablations / Sensitivity / Overhead:** static accuracy、binary feedback、detailed feedback from three providers、one-to-three human feedback rounds and ten/four model comparisons。Missing: common fixed test set、provider-error/adversarial feedback、multi-user variability、feedback quality labels/blinding、same-token retry baseline、independent resampling、turn/token matched compute、prompt/order/history sensitivity、confidence/calibration、tool/environment outcome and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** two A6000s、temperature0、Qwen image512×512 and endpoint dates disclosed；GPU allocation per model、precision/quantization、prompt/output lengths、batch/concurrency、provider tokens/cost/latency/rate limits、retry failure、energy and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** on provider-solvable receiver errors，an extra oracle correctness signal or tailored model feedback can convert some exact-match failures；feedback sensitivity differs from initial accuracy；detailed feedback sometimes helps more than binary feedback and sometimes harms。A single trained user's trajectories show leading closed models also fail to use early hints consistently on this120-item set。
+- **What It Does Not Prove:** human-equivalent interaction、model learning/self-improvement、general feedback comprehension、faithful reasoning、causal advantage over an additional sampled attempt、comparable ranking across receivers/providers or production collaboration quality。Correction after GT disclosure is not evidence of solving or knowing why。
+- **Limitations / Threats to Validity:** receiver-specific intersection conditions on provider success and output formatting，creating different/easier populations and selection bias；provider both supplies information and defines admission；binary feedback leaks correctness oracle；exact match misses valid equivalents；one user suppresses rather than measures human variability；80/120 human items are visual logic and small10-item slices yield unstable percentages。Provider naming drifts，no artifact is released，and multiple rounds were curtailed after preliminary observations。
+- **Trade-offs / New Failure Modes:** interactive evaluation reveals recoverability but adds provider dependence、token/cost and feedback leakage；stronger detail can clarify errors or anchor the receiver to a bad rationale；more rounds increase correction opportunity and answer-elimination gaming；single-user consistency improves internal comparison but destroys population validity；fixed static suites remain more comparable while missing real feedback behavior。
+- **Where the Previous Design Still Applies:** one-shot regression for base capability；independent retry/pass@k for stochastic coverage；deterministic/environment feedback when available；multi-user studies for UX；fixed common populations for ranking；human escalation for ambiguous/high-risk corrections；training evaluation separately when weights actually change。
+- **Evolution Relationship:** `Direct Evolution` and `Layering / Dependency`：static answer accuracy → repeated independent attempt → correctness-conditioned retry → diagnostic feedback-conditioned revision → multi-turn human interaction → environment/action outcome and durable workflow evaluation。Each layer adds state and cost rather than replacing the earlier baseline。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`AGENT-REFLECTION`（Ch80/Legacy Ch76）、`AGENT-WORKFLOW`（Ch81/Legacy Ch77）与`MULTIMODAL-REPRESENTATION`（Ch23）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 snapshot→feedback-conditioned trajectory、feedback-channel identity/turn budget，Ch80 verifier independence/stopping/revision，Ch81 human correction/durable transition，以及Ch23 modality/preprocess identity；correction metric不拥有learning or user-population claim。
+- **Existing Coverage:** Books已明确static、pass@k、interactive、state-evolution evaluation分层，以及feedback independence、retry/stopping和human-control state。InterFeedback提供受限案例，但没有新增长期机制或改变现有结论。
+- **Integration Decision:** `Books Pending — No Change Candidate / Experimental Provider-conditioned Evaluation`。Historical Books Gate关闭；不保留短期模型排名或“interactive intelligence/self-improvement”措辞。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把oracle-conditioned correction写成学习、推理或人机协作能力。
+- **Open Questions:** fixed common test population、provider Pro/Flash identity、provider-error and adversarial feedback、multi-user/blinded feedback、same-token retry/pass@k baseline、exact-match equivalence、feedback informativeness calibration、turn/token/cost/SLO、tool/environment outcomes、immutable artifacts and independent reproduction。
+
+### Tree-of-Debate: More Roles Create Structured Opposition, Not Independent Evidence
+
+- **Candidate / Week / Score:** Tree-of-Debate: Multi-Persona Debate Trees Elicit Critical Thinking for Scientific Comparative Analysis / 2025-W08 / 25/30。
+- **Source Family ID:** `tree-of-debate-scientific-comparative-synthesis`。
+- **Source Type:** arXiv v1 22-page full paper + public mutable code/dataset/evaluation artifact；experimental same-model multi-persona scientific-comparison workflow。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-20 owns W08；v2 2025-06-09 and ACL2025 acceptance/repository evolution are later lineage。Current repository has106 commits and no paper-linked immutable W08 tag/commit visible。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.14767v1；https://arxiv.org/pdf/2502.14767v1；https://arxiv.org/abs/2502.14767v1；https://github.com/pkargupta/tree-of-debate；https://raw.githubusercontent.com/pkargupta/tree-of-debate/main/persona.py；https://raw.githubusercontent.com/pkargupta/tree-of-debate/main/moderator.py；https://raw.githubusercontent.com/pkargupta/tree-of-debate/main/tree_of_debate.py。
+- **Related Primary Sources:** the100 paired source papers own scientific claims；BGE retrieval、Llama-3.1-Nemotron-70B、vLLM and baseline implementations own component identity。The five annotators selected/evaluated their own familiar pairs，not an independent population-level novelty oracle。
+- **Access and Verification Status:** v1 methodology、retrieval/persona/moderator/tree expansion、100-pair expert dataset、baselines/ablations、all results/limitations/prompts/examples/configuration，plus current executable core paths verified。Paper text and current code disagree on evidence filtering and maximum tree-depth semantics；no immutable W08 run identity reconciles them。Status `Full Source Review Complete — Disputed Evidence-filter / Tree-depth Contract`。
+- **Full-read Coverage:** segment retrieval、claim/evidence/preemption、support/refute/clarify filter、subtopic generation、present/respond/revise、expansion/synthesis；45 method/55 task and30 cited/70 non-cited pairs；five expert profiles；single/two-stage/no-tree/no-self-deliberation；sentence factuality/breadth/contextualization；Llama/vLLM/A100 config；qualitative trees、prompts and source code。
+- **Original Problem:** pairwise paper comparison must decompose multiple contributions、retrieve fine-grained evidence and explain why similarities/differences matter；single summary often relies on titles/abstracts and collapses method、data、evaluation and task claims into surface similarity。
+- **Why the Previous Design Was Reasonable:** expert related-work reading preserves domain context and novelty authority；single/two-stage summaries are cheap and predictable；one Agent with explicit comparison rubric avoids coordination overhead；direct claim-to-source tables are easier to audit。They remain preferable for high-stakes priority/novelty disputes。
+- **Changed Constraint:** long papers exceed context budgets and comparisons branch into partially independent subclaims；a workflow needs topic-local retrieval、opposing hypotheses、bounded expansion and final synthesis while keeping every claim mapped to evidence。
+- **Mechanism:** chunk two papers into roughly three-sentence segments；instantiate two personas from the same Llama checkpoint plus a same-model moderator；retrieve top-delta evidence for each topic；generate evidence-linked novelty claims and retrieve opponent-targeted counter-evidence；debate each selected subtopic through present/respond/revise；moderator decides expansion based on progression/questions/winner and synthesizes the resulting tree。
+- **State Ownership:** source papers own claim truth；retriever owns candidate spans；persona role owns adversarial proposal，not independent expertise；moderator owns subtopic/expansion/synthesis policy；tree artifact owns debate state；expert annotator owns provisional pair-specific assessment；external scholar/source/evaluation owns final novelty or priority judgment。
+- **Control Flow / Data Flow:** paper pair + root topic → chunk/index → per-paper topic evidence → claim/evidence maps → opponent-query preemption → moderator subtopics → parallel debate nodes → revised arguments → expansion/stop → tree artifact → comparative summary → expert factuality/breadth/context review。A reliable variant must dereference every summary claim to exact source spans and preserve unresolved/disputed state。
+- **Implementation Details:** v1 uses Llama-3.1-Nemotron-70B-Instruct-HF、top1% token sampling、task-specific temperatures0～0.5、delta=5 segments、k=3 subtopics、claimed max depth3 and four A100 GPUs via vLLM。Current `persona.py` retains evidence only when `irrelevant=no` and one of support/refute/clarify=yes；paper Section3.3 says such evidence is “filtered out”。Current main loop increments one global `depth` counter per expansion rather than computing per-node depth。
+- **Evaluation Contract:**100 pairs selected by five graduate researchers across NLP/data mining/electrical/aerospace；each expert evaluates their own chosen pairs and all five methods on sentence factuality plus0～4 breadth/contextualization。Results are normalized and aggregated by method/task and cited/non-cited slice；no independent second rater、inter-rater agreement、blinding、confidence interval or significance test is reported。
+- **Baselines / Ablations / Sensitivity / Overhead:** same-model single-stage and two-stage title/abstract/introduction baselines；No Tree merges child topics；No SD removes iterative full-paper segment retrieval。Missing: compute/token-matched full-text RAG、unstructured debate、single-agent evidence table、independent-model personas/moderator、retriever/chunk/delta/k/depth sensitivity、order/swap/random-seed、cross-rater repeat、claim-level entailment and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** model、four A100s、vLLM、temperatures、delta/k/depth and per-call max-token settings partially disclosed；A100 memory/topology、precision/quantization、paper/context lengths、total calls/tokens/wall time、batch/concurrency、peak memory、latency/cost/energy and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** under the authors'100-pair/same-model workflow，tree-structured debate plus iterative retrieval receives higher aggregated expert breadth/contextualization than tested prompt baselines，while factuality varies by slice。It demonstrates a feasible artifact decomposition for comparative synthesis and exposes a contextualization–factuality trade-off。
+- **What It Does Not Prove:** independent multi-agent reasoning、scientific novelty truth、priority resolution、reduced confirmation bias、domain-general superiority or causal necessity of debate rather than extra retrieval/calls/structure。Five roles using one checkpoint share blind spots；one evaluator per self-selected pair cannot establish population-level reliability。
+- **Limitations / Threats to Validity:** authors acknowledge deeper paths invent unsupported methods/future studies and factuality falls on harder task comparisons；paper treats these hallucinations as potentially useful but they remain unsupported claims。Baseline receives less source content/compute；same model is persona/moderator/synthesizer；annotator selection and evaluation are coupled。Core paper/code filtering and depth contracts conflict，and current repository chronology is mutable。
+- **Trade-offs / New Failure Modes:** debate decomposes claims and surfaces opposition but multiplies calls、retrievals and shared-model rhetoric；adversarial “my paper is better” prompts can reward advocacy over truth；tree expansion allocates budget adaptively but moderator bias may over-expand ambiguity or stop decisive evidence；deeper context improves synthesis while increasing unsupported bridges；direct expert comparison remains slower but authoritative。
+- **Where the Previous Design Still Applies:** expert pair review for novelty/priority；single-agent structured comparison for small budgets；direct claim/evidence matrix for auditability；single/two-stage summaries for low-risk discovery；independent verifier/second rater for publication decisions；static top-k/full-text reading when adaptive retrieval adds no value。
+- **Evolution Relationship:** `Direct Evolution` plus `Layering / Dependency`：single comparative summary → evidence-aware two-stage synthesis → topic-local retrieval → adversarial claim branches → versioned debate tree → claim/source verification + independent expert adjudication。More personas are a workflow decomposition，not automatic evidence independence。
+- **ROADMAP Node:** `AGENT-MULTI-AGENT`（Current Ch82；Legacy Ch78）主 owner；handoff到`AGENT-RAG`（Ch76/Legacy Ch72）、`AGENT-WORKFLOW`（Ch81/Legacy Ch77）与`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）。
+- **Target and Adjacent Chapters Read:** 已核对Ch82 persona/debate、single-agent baseline、coordination/error-correlation，Ch76 adaptive evidence retrieval/source dereference，Ch81 dynamic tree/artifact state，以及Ch66 claim-level evidence/rater disagreement；same-model debate不拥有independent truth。
+- **Existing Coverage:** Books已完整覆盖persona不等于独立能力、debate成本与相关共识、adaptive retrieval、dynamic graph和claim-evidence gate。Tree-of-Debate不改变这些结论，且当前paper/code冲突阻止其作为正文机制证据。
+- **Integration Decision:** `Disputed — Evidence-filter / Tree-depth Contract / Books Frozen`。需提供event-time commit/run、修正文稿逻辑、按node计算depth并完成compute-matched/independent-rater复核后再重开。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把persona debate或作者expert score写成scientific novelty authority。
+- **Open Questions:** event-time commit and executed filter/depth semantics、global-versus-node expansion、source-span entailment、baseline compute/content parity、single-agent/unstructured-debate baseline、model/persona independence、rater blinding/agreement、pair-order/seed sensitivity、token/cost/SLO and independent reproduction。
+
+### MMIR: Detecting a Synthetic Conflict Is Not the Same as Recovering Real Multimodal Truth
+
+- **Candidate / Week / Score:** Multimodal Inconsistency Reasoning (MMIR) / 2025-W08 / 26/30。
+- **Source Family ID:** `mmir-multimodal-inconsistency-benchmark`。
+- **Source Type:** arXiv v1 full benchmark paper；synthetic-edit multimodal inconsistency dataset with open-ended/MCQ evaluation and probing pipeline。V1 promises future code/data release but exposes no linked immutable artifact。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-22 owns W08；v2 2025-03-04 and v3 2025-06-10 are later revision lineage。Model/API names and dataset statistics must remain locked to v1 rather than current endpoints。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.16033v1；https://arxiv.org/abs/2502.16033v1。
+- **Related Primary Sources:** VisualWebArena/Zenodo artifacts、Chrome DevTools/python-pptx editors、MSCOCO replacement images and six model cards define source/preprocess/model identity；o1-1217 creates/evaluates proposals and o1-mini-0912 maps open outputs and MM-CoT candidates，so generator/helper/judge roles are not independent evidence。
+- **Access and Verification Status:** v1 motivation/related work、four-stage construction、five error categories、open/MCQ protocols、all six-model results/slices/prompting probes、limitations、generator-evaluator loop、editing code、model/data appendices verified。Table1 totals543 while abstract/body/final set state534，and privileged helper/judge calibration is absent；status `Full Source Review Complete — Disputed Dataset Count / Evaluation-helper Contract`。
+- **Full-read Coverage:**521 source artifacts、2,534 proposals→2,446 self-approved→1,273 backend-valid→747 reviewed→534 final；DOM/PPTX elements/SoM/bounding boxes；five categories；artifact/modality/layout slices；o1/GPT-4o/four open models；CoT/SoM/MM-CoT；all prompts、self-evaluation loop、CDP/PPTX edit snippets、model implementation and release promise。
+- **Original Problem:** real webpages/slides/posters can contain mutually inconsistent text、images、numbers、identities or spatial/temporal cues；benchmarks built only from aligned pairs cannot distinguish perception of each modality from cross-element consistency reasoning。
+- **Why the Previous Design Was Reasonable:** aligned VQA/OCR/layout benchmarks isolate perception and are cheaper to label；natural corrupted documents provide realistic errors but weak ground truth；text-only fact checking has explicit claims/evidence。These remain necessary component baselines and real-distribution anchors。
+- **Changed Constraint:** deployment must detect internal conflicts without assuming one modality is authoritative；evaluation needs typed element identity、controlled counterfactual edits and locality labels，while preserving layout density and provenance。
+- **Mechanism:** parse selected webpages/PPTX into typed elements/bounding boxes and SoM image；ask o1 to propose one category-specific edit plus target IDs/rationale and self-evaluate twice；enforce edit syntax/element existence/backend constraints；execute text/image edits via CDP or python-pptx；human-review resulting artifacts；evaluate models either by selecting element descriptions or by mapping free text back to element IDs with o1-mini。
+- **State Ownership:** original artifact/license owns source truth；parser owns DOM/PPTX element IDs/bounds；generator owns candidate inconsistency；editor owns modified artifact lineage；human reviewer owns admission judgment；GT IDs own synthetic edit locality；o1-mini owns provisional output mapping；model owns prediction；real user/business data would own production inconsistency prevalence and severity。
+- **Control Flow / Data Flow:** source artifact → typed elements + SoM → generator proposal/GT/rationale → same-family evaluator feedback → structural/backend checks → executable edit → modified artifact/updated metadata → human admission → open/MCQ prompt → model response → regex or o1-mini ID mapping → accuracy/slice analysis。MM-CoT adds candidate generation → helper ID mapping → candidate bounding-box marks → second model pass。
+- **Implementation Details:** source pool349 webpages+172 presentations=521；final paper says534 validated items from747 human-reviewed edits。Table1 artifact rows sum240+223+71=534，but its printed total is543；error rows sum138+84+141+76+95=534 yet also print543。Average elements24.9；MCQ description length382.6 words and open responses fixed59 words are reported without generation-policy detail。
+- **Evaluation Contract:** MCQ regex-matches predicted IDs；open answers are mapped by o1-mini-0912 to likely IDs。Six snapshots use defaults: o1-1217、GPT-4o-1120、Qwen2.5-VL7B、LLaVA-NeXT7B、InternVL2.5-8B、Phi3.5-Vision4B。Accuracy is sliced by artifact/category/modality/element count；no judge-human agreement、parser error、confidence interval、multi-seed or natural-error test is reported。
+- **Baselines / Ablations / Sensitivity / Overhead:** vanilla open-ended versus MCQ；CoT、SoM、combined and two-stage MM-CoT。Missing: same-compute retry/ensemble、oracle/non-oracle candidate mapper、non-OpenAI judge、random/lexical candidate baseline、clean-artifact false-positive set、natural inconsistency corpus、edit-type/severity/source-domain ablation、resolution/preprocess normalization and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** model sizes/snapshot aliases and some default implementations disclosed；hardware、vision resolution/tokenization、precision/quantization、context/output limits、batch/concurrency、API temperature/retries、judge/helper tokens、latency/cost/energy and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** a controlled pipeline can create human-screened layout-rich artifacts with known synthetic edit locations；tested models show low exact localization accuracy and different sensitivity to modality/layout under this harness；CoT/SoM effects are model-dependent。It supports separating perception、cross-element consistency and localization evidence。
+- **What It Does Not Prove:** real-world inconsistency prevalence、truth recovery、causal “reasoning” superiority of proprietary models、universal open/closed model gap、natural hallucination detection or MM-CoT as a model-only reasoning gain。Helper/judge and structured element metadata add external work，and synthetic edits may have artifacts/shortcuts。
+- **Limitations / Threats to Validity:** authors acknowledge limited domains/scale and synthetic-natural gap；source artifacts are manually selected；generator and evaluator share o1 lineage；human reviewer count/protocol/agreement are not disclosed；open-ended judge is uncalibrated。Dataset count contradicts itself；layout complexity uses element count and is confounded by artifact type；“default settings” do not normalize vision preprocessing；promised release is not event-time evidence。
+- **Trade-offs / New Failure Modes:** controlled edits give exact localization and taxonomy but encode generator/editor fingerprints；MCQ improves deterministic scoring while injecting long semantic captions；open answers are realistic but require a fallible model mapper；SoM externalizes element identity but may occlude pixels；MM-CoT focuses search but pays helper/two-pass cost and can anchor on wrong candidates；real clean controls remain necessary to measure false alarms。
+- **Where the Previous Design Still Applies:** aligned perception/OCR/layout tests for component diagnosis；text claim-evidence consistency when modalities are not needed；natural document QA with domain review；deterministic DOM/schema invariants for known contradictions；clean-artifact false-positive suites；human escalation where truth authority is ambiguous。
+- **Evolution Relationship:** `Layering / Dependency` and `Direct Evolution`：aligned single-modality/perception suite → controlled cross-element counterfactual edits → typed localization benchmark → open-response mapping → candidate-guided multimodal refinement → natural inconsistency + outcome/false-positive evaluation。Synthetic localization is one evidence layer，not deployment truth。
+- **ROADMAP Node:** `PLATFORM-EVALUATION-SYSTEM`（Current Ch66；Legacy Ch62）主 owner；handoff到`MULTIMODAL-REPRESENTATION`（Ch23）、`AGENT-REFLECTION`（Ch80/Legacy Ch76）与`AGENT-WORKFLOW`（Ch81/Legacy Ch77）。
+- **Target and Adjacent Chapters Read:** 已核对Ch66 synthetic population/scorer/helper identity，Ch23 modality/layout/provenance/conflict shortcuts，Ch80 evidence-backed refinement与Ch81 versioned artifact edit/workflow；synthetic GT不拥有real-world truth authority。
+- **Existing Coverage:** Books已覆盖synthetic benchmark population、multimodal representation identity、layout/caption shortcut、judge calibration and iterative refinement cost。MMIR不改变现有结论；count/helper边界冲突阻止其进入正文。
+- **Integration Decision:** `Disputed — Dataset Count / Privileged Evaluation-helper Contract / Books Frozen`。需修复534/543账目、公开event-time artifacts、校准o1-mini mapper、加入clean/natural controls和compute-matched probing后再重开。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把作者accuracy、o1优势或MM-CoT gain写成通用multimodal reasoning结论。
+- **Open Questions:** authoritative item count/source manifest、human-review protocol/agreement、clean false-positive and natural-error sets、generator/editor fingerprint、o1-family judge/helper bias、candidate-mapper oracle boundary、vision preprocessing、layout confound、prompt/seed/compute sensitivity、artifact release、cost/SLO and independent reproduction。
+
+### Reflective Planning: Imagined Futures Are Provisional Control Evidence, Not Observed Physics
+
+- **Candidate / Week / Score:** Reflective Planning / ReflectVLM / 2025-W08 / 26/30。
+- **Source Family ID:** `reflectvlm-imagined-future-robot-planning`。
+- **Source Type:** arXiv v1 full paper + project videos；simulator-only VLM post-training、action-conditioned diffusion dynamics and one-step reflective planning。No public code/data/checkpoint artifact is linked from v1/project evidence。
+- **Event Date / First-public Date / Revision History:** arXiv v1 only，2025-02-23 owns W08。Project page/video is same-family demonstration evidence，not an immutable executable release or real-robot result。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.16707v1；https://arxiv.org/abs/2502.16707v1；https://reflect-vlm.github.io/。
+- **Related Primary Sources:** LLaVA1.5/Vicuna/CLIP and InstructPix2Pix define base artifacts；the procedural board simulator、dependency graph、oracle policy and scripted primitives define the actual environment/authority。Commercial VLM APIs are zero-shot baselines，not matched post-training alternatives。
+- **Access and Verification Status:** v1 problem/related work、POMDP、DAgger-like post-training、reflection relabeling、DDM、inference algorithm、procedural tasks、all experiments/ablations/costs/discussion、task/expert/training/prompt/MCTS appendices and project videos verified。Paper explicitly includes a few test points in DDM training；no real robot or immutable artifact。Status `Full Source Review Complete — Disputed Test-leakage / Simulator Contract`。
+- **Full-read Coverage:** action set/failure model；1,000×5 expert demonstrations；three post-training iterations/1K trajectories each；proposal/reflection CE objectives；InstructPix2Pix UNet+decoder/1M transitions；H-step rollout；100 unseen tasks；zero-shot VLM/MCTS/reflection variants/five seeds；single-A100 latency；expert dependency graph and complete hyperparameters/baseline prompts。
+- **Original Problem:** long-horizon manipulation compounds action errors and partial observability；reactive VLMs see only current/goal images，while symbolic planners need hand-built state/dynamics。A system needs to inspect candidate consequences before committing physical action and then refresh from observation。
+- **Why the Previous Design Was Reasonable:** TAMP/simulator planning provides explicit states/invariants；reactive VLM action is fast and avoids model-bias rollout；behavior cloning is simple；MCTS explores alternatives when value/transition are reliable。These remain preferable for known physics、tight deadlines or safety-critical contact。
+- **Changed Constraint:** open visual tasks lack complete symbolic state，but simulator data can supervise a VLM and learned dynamics can propose visual futures；planning must trade rollout fidelity/latency against action error and recovery。
+- **Mechanism:** train LLaVA-based policy on privileged oracle actions；roll out mixed learner/expert actions and aggregate DAgger-like data；relabel each timestep twice—current/goal→expert action and current/goal+actual H-step future+proposed action sequence→same expert action；train an action-conditioned diffusion next-image model；at inference autoregress H proposed actions/future images，then ask the policy to revise and execute only the first action。
+- **State Ownership:** simulator/environment owns actual state/transition；oracle owns privileged training label/dependency graph；sensor owns current image；VLM owns action proposal；DDM owns ephemeral imagined images；reflection head owns revised proposal；scripted controller owns primitive execution；fresh observation owns correction；evaluation run owns task success/latency。Predicted pixels never become observed state。
+- **Control Flow / Data Flow:** simulator state → RGB current/goal → policy proposal sequence → DDM imagined H-step branch → reflection prompt/current+goal+future+plan → one revised primitive → scripted controller → simulator transition/failure → fresh RGB → next cycle。Training separately flows privileged state/dependency→oracle action→mixed rollout→proposal/reflection examples and DDM transitions。
+- **Implementation Details:** VLM uses CLIP ViT-L/14-336 + Vicuna13B/LLaVA1.5 with rank128 LoRA；pretrain5,000 demos，post-train1K trajectories/iteration over three iterations。DDM uses InstructPix2Pix，10K boards/50K max50-step trajectories/about1M transitions，20K UNet+4K decoder steps at512px。The paper says a few test data points are deliberately included in DDM training，breaking a clean held-out contract。
+- **Evaluation Contract:**100 simulator tasks with unseen configurations/colors/spatial arrangements；oracle has97% success and privileged state。Main post-training variants average five seeds，commercial/MCTS run once；success is board completion within50 steps。Reflect+diffusion reaches82.4% after iteration3，simulator-future upper bound85.4%，no-reflect@test82.2%；latency0.45s no-reflect、11.10s diffusion、6.05s simulator and391.42s MCTS on one A100。
+- **Baselines / Ablations / Sensitivity / Overhead:** zero-shot LLaVA-OneVision/Gemini/GPT snapshots；pretrained policy；oracle-valued50-iteration MCTS；no reflection training/test、diffusion future and true simulator future；three training iterations/five seeds。Missing: clean DDM test split、equal-data SFT factorial、matched-compute beam/search/MPC、H/noise/failure sensitivity、world-model prediction metrics/calibration、real robot/domain randomization、safety/intervention/tail latency and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** one A100 inference and training architecture/batch/LR/steps/resolutions disclosed；training GPU count/topology/time、precision/quantization、VLM context/output lengths、DDM sampling steps、online concurrency、tail/jitter/energy、controller frequency and safety SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** in the authors' procedural simulator with privileged oracle labels and scripted primitives，post-training improves over the pretrained policy；conditioning a trained reflection head on true or learned future images can add a small success increment，while learned rollouts cost substantial latency。It provides a concrete action-conditioned imagination→revision mechanism。
+- **What It Does Not Prove:** real-world physics understanding、sim-to-real manipulation、general long-horizon robotics、causal correctness of generated pixels、test-time compute alone as the source of gains、superiority to well-tuned planning or production safety。Commercial zero-shot models lack task training/action interface，and DDM test exposure invalidates clean generalization claims。
+- **Limitations / Threats to Validity:** no explicit limitations section；all tasks share generated interlocking-board family、known primitives and scripted controller；oracle exposes dependency graph/full state；success scorer and simulator share task specification。DDM includes test points；diffusion/world model error and uncertainty are not quantified；MCTS baseline uses oracle value yet degrades and is not compute/data matched；results omit real sensors/contact/calibration/unsafe actions。
+- **Trade-offs / New Failure Modes:** imagination can reject bad plans without physical trial but compounds model bias and may create visually plausible impossible states；reflection adds11.1s versus0.45s/step and same-model correlated error；oracle-guided post-training improves policy but hides autonomy in privileged supervision；true simulator future is stronger/faster upper bound when available；reactive policy remains preferable when prediction is stale or deadlines dominate。
+- **Where the Previous Design Still Applies:** explicit TAMP/MPC for known physics；reactive/receding-horizon policy with rapid observation refresh；behavior cloning for bounded tasks；true simulator when calibrated and cheap；independent controller/safety envelope and real-robot validation before action authority；short horizon when learned dynamics uncertainty grows。
+- **Evolution Relationship:** `Direct Evolution` and `Layering / Dependency`：reactive visual policy → oracle-guided interactive post-training → true-future reflection supervision → learned action-conditioned visual dynamics → bounded imagined rollout → one-action commit + observation refresh → uncertainty-aware/real-robot closed loop。World model and controller solve different layers。
+- **ROADMAP Node:** `MULTIMODAL-WORLD-MODELS`（Current Ch25）主 owner；handoff到`MULTIMODAL-EMBODIED-VLA`（Ch26）、`AGENT-REFLECTION`（Ch80/Legacy Ch76）与`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）。
+- **Target and Adjacent Chapters Read:** 已核对Ch25 observed/belief/imagined state和action-conditioned rollout，Ch26 proposal/controller/refresh/sim-to-real，Ch80 feedback independence/stopping，以及Ch66 simulator/evidence contract；generated future不拥有physical truth/action authority。
+- **Existing Coverage:** Books已完整覆盖显式future rollout、world-model bias、one-action commit、fresh observation、controller authority和sim-to-real evidence ladder。ReflectVLM机制没有新增结构缺口，且test leakage阻止正文吸收。
+- **Integration Decision:** `Disputed — DDM Test Leakage / Simulator-only Evaluation Contract / Books Frozen`。需重建严格held-out DDM、公开artifact、matched-compute planning、prediction uncertainty与real-robot/safety evidence后再重开。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把simulator success、commercial zero-shot gap或true-simulator upper bound外推为机器人通用能力。
+- **Open Questions:** exact leaked test transitions and effect、immutable task/split/artifact、DDM PSNR/control-sufficiency/uncertainty、H/sampling-step sensitivity、data/compute matched SFT/MPC/MCTS、oracle dependence、real robot/contact/domain shift、controller deadline/safety/intervention、tail cost/SLO and independent reproduction。
+
+### TAG: A Level Interface Can Localize Coordination, but It Does Not Remove Joint Complexity
+
+- **Candidate / Week / Score:** TAG: A Decentralized Framework for Multi-Agent Hierarchical Reinforcement Learning / 2025-W08 / 24/30。
+- **Source Family ID:** `tag-tame-levelenv-hierarchical-marl`。
+- **Source Type:** arXiv v1 full paper；framework/formalism plus two simulator experiments for decentralized hierarchical MARL。Code is promised upon acceptance but not linked/released in v1。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-21 owns W08；v2 2025-02-24、v3 2025-03-03 and v4 2025-03-05 are later revision lineage。No immutable W08 implementation/run artifact was available for code-level verification。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.15425v1；https://arxiv.org/abs/2502.15425v1。
+- **Related Primary Sources:** MPE Simple Spread、VMAS Balance、PettingZoo、BenchMARL、PPO/IPPO/MAPPO and autoencoder references define environment/baseline/interface identity；TAME biological analogy motivates architecture but is not engineering evidence for convergence or scalability。
+- **Access and Verification Status:** v1 motivation/related work、formal LevelEnv、vertical information flow、learning/scalability claims、all2/3-level implementations、two-environment results、communication analysis、discussion/impact and complete hyperparameters verified。No public code、convergence proof or scale test beyond four environment agents；status `Full Source Review Complete — Experimental Scope-limited MARL Hierarchy`。
+- **Full-read Coverage:** L levels/N_l agents/adjacency sets；observations/actions/message/reward/policy equations；recursive reset/step；bottom-up messages/rewards and top-down observation-shaping actions；PPO/MAPPO heterogeneous variants；identity versus8D AE communication；2M-step/five-seed MPE/VMAS results；action-correlation analysis and all appendices。
+- **Original Problem:** flat joint MARL suffers exponential state/action growth and non-stationarity；two-level HRL or centralized training couples all agents and limits heterogeneous update/temporal scales。A reusable system needs local interfaces between adjacent coordination layers。
+- **Why the Previous Design Was Reasonable:** centralized critic improves credit assignment during training；flat independent agents are simple and avoid manager bottlenecks；two-level manager/worker covers many tasks；hand-designed goals/messages are interpretable。They remain preferable when agent count/task decomposition is small or centralized state is available。
+- **Changed Constraint:** deeper organizations may need different algorithms/frequencies per level and decentralized/local updates；hierarchy should expose each lower level as an environment without requiring every upper agent to know raw global state。
+- **Mechanism:** organize agents into adjacent levels；each lower agent emits a message/reward through phi，forming upper observation/reward；upper policy emits an action that enters the lower policy's observation rather than directly executing environment action；LevelEnv recursively invokes lower `step` and updates local policies。Concrete variants use observation concatenation/reward sums or an8D reconstruction autoencoder as phi。
+- **State Ownership:** real environment owns physical state/reward；bottom agent owns primitive action；LevelEnv owns adjacency/interface/step order；phi owns message and shaped upper reward；upper policy owns guidance input；each learner owns buffer/optimizer/policy；topology/version owner must own level membership/frequency。Messages/actions are coordination signals，not authoritative environment facts。
+- **Control Flow / Data Flow:** environment observation/reward → bottom policy/action → environment step → per-agent observation/reward → phi message/reward aggregation → upper LevelEnv observation → upper guidance action → lower policy-conditioned action；repeat recursively at different frequencies。Training updates each local learner while all other learners change its effective environment。
+- **Implementation Details:** tested systems have four bottom agents，one or two managers across2/3 levels；upper PPO uses Cartesian-product discrete action spaces，e.g.625 actions in reported settings。Most phi are hand-designed identity concatenation/sum；3PPO-comm trains a two-layer AE to reconstruct observations into8 dimensions independently of task reward。Three-level upper actions update every two lower steps。
+- **Evaluation Contract:** Simple Spread and Balance，four agents，100-step episodes，2M training steps，five random seeds/95% CIs；baselines MAPPO、IPPO、adapted joint-action PPO and a10-episode heuristic for Spread。Only average environment reward/learning curves and selected action-mode correlations are reported；no held-out topology/task/agent-count transfer or wall-clock/communication cost。
+- **Baselines / Ablations / Sensitivity / Overhead:**2PPO、3PPO、MAPPO-PPO、2MAPPO-PPO、3PPO-comm versus MAPPO/IPPO/PPO/heuristic；identity versus learned communication across two tasks。Missing: matched parameter/FLOP/sample/wall-clock budget、flat heterogeneous baseline、fixed-vs-learned reward shaping、depth1/2/3 factorial at same action space、topology/frequency/message-size sensitivity、agent-count scaling、failure/dropout and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** architecture and optimizer/buffer/minibatch/2M-step hyperparameters disclosed；hardware、precision、wall time、simulator vectorization/concurrency、parameter/FLOP/message-byte overhead、latency/energy/failure recovery and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** the LevelEnv abstraction can compose selected PPO/MAPPO learners in2/3-level hierarchies；under two four-agent simulator workloads，some hierarchical variants learn faster/reach higher average reward than tested baselines。Learned8D communication helps Balance and hurts Spread，showing task-dependent compression trade-offs。
+- **What It Does Not Prove:** arbitrary-depth stable learning、removal of exponential complexity、general scalability、fully decentralized implementation for all variants、meaningful semantic communication or transfer to LLM Agents/distributed systems。Action correlation demonstrates association，not causal useful information；MAPPO can retain centralized critics within a level。
+- **Limitations / Threats to Validity:** only two simple cooperative simulators/four actors/five seeds；topology and phi/rewards are mostly hand-designed；depth changes action spaces/frequencies/parameters simultaneously。Upper Cartesian action remains combinatorial；no convergence analysis；code unavailable；duplicate Empirical Validation sections suggest manuscript immaturity。Biological/societal analogy does not establish system properties。
+- **Trade-offs / New Failure Modes:** hierarchy reduces each node's view and allows temporal abstraction but adds non-stationarity across levels、reward distortion、manager bottlenecks and topology tuning；compressed messages reduce observation size but lose task-relevant state；local autonomy improves modularity while complicating global credit/recovery；centralized critic/flat policy remains better when global information is cheap and stable。
+- **Where the Previous Design Still Applies:** flat IPPO for weakly coupled agents；MAPPO/centralized critic for cooperative credit assignment；two-level HRL for clear manager-worker tasks；hand-designed messages/goals for safety/audit；single Workflow/controller when hierarchy adds no independent observation or action authority。
+- **Evolution Relationship:** `Principle Reuse` and `Alternative Branch`：flat learner → centralized-training/decentralized-execution → two-level HRL → recursive LevelEnv/local update → heterogeneous cadence/communication → topology adaptation with explicit evidence。This is not direct lineage to LLM Multi-Agent orchestration。
+- **ROADMAP Node:** `AGENT-MULTI-AGENT`（Current Ch82；Legacy Ch78）主 owner；handoff到`AGENT-WORKFLOW`（Ch81/Legacy Ch77）、`TRAIN-PPO`（Ch32/Legacy Ch28）与`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）。
+- **Target and Adjacent Chapters Read:** 已核对Ch82 topology/coordination tax/message-state boundary，Ch81 authoritative workflow topology，Ch32 PPO evidence/credit contract及Ch66 workload/compute/failure evaluation；RL hierarchy signal不自动映射成LLM Agent authority。
+- **Existing Coverage:** Books已覆盖hierarchical topology、local interfaces、message versus state、communication compression and task-dependent topology。TAG只提供受限 MARL analogy/implementation，未新增核心机制缺口。
+- **Integration Decision:** `Books Pending — No Change Candidate / Status: Experimental`。Historical Books Gate关闭；不保留“arbitrary depth/scalability/biological society”宣传或 benchmark reward。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，也未把MARL simulator result外推为LLM Multi-Agent或分布式平台结论。
+- **Open Questions:** public event-time code/run、depth/agent-count scaling、convergence under cross-level non-stationarity、matched action/parameter/compute baselines、reward ownership、task-aware communication、topology/frequency adaptation、message/failure cost、security/authority、wall-clock/SLO and independent reproduction。
+
+### Curie: Scientific Rigor Comes from Enforced State Transitions and Evidence, Not an Agent Persona
+
+- **Candidate / Week / Score:** Curie: Toward Rigorous and Automated Scientific Experimentation with AI Agents / 2025-W08 / 27/30。
+- **Source Family ID:** `curie-rigorous-scientific-experiment-workflow`。
+- **Source Type:** arXiv v1 full system/benchmark paper + mutable open-source framework/benchmark；computer-science experiment automation with architect/technician agents、validators、state machine、scheduler and versioned experiment knowledge。
+- **Event Date / First-public Date / Revision History:** arXiv v1 2025-02-22 owns W08；v2 2025-02-26 is later revision lineage。Current repository has337 commits、later EXP-Bench/AutoML and different provider examples，so it is not immutable W08 implementation evidence。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.16069v1；https://arxiv.org/pdf/2502.16069v1；https://arxiv.org/abs/2502.16069v1；https://github.com/Just-Curieous/Curie。
+- **Related Primary Sources:** 46 task source papers/projects、OpenHands、Magentic-One、GPT-4o/API and starter environments define benchmark/baseline identity。Later repository features and EXP-Bench cannot be backdated into v1 claims。
+- **Access and Verification Status:** v1 architecture/all three rigor modules、benchmark/complexity taxonomy、five-trial evaluation、metrics/judge/manual alignment、all case studies/task lists/prompts and current repository surface verified。Judge calibration subset size/agreement rates、immutable W08 run and complete resource budgets are absent；status `Full Source Review Complete — Experimental Rigor-workflow Evaluation`。
+- **Full-read Coverage:** Architect/Technician roles；setup/execution validators；plan partitioning/state transitions/scheduling；DAG-like Time Machine/tiered writes；46 tasks in LLM reasoning/vector indexing/cloud/ML training；design/setup/alignment/conclusion metrics；OpenHands/Magentic baselines；complexity slices、five trials、judge prompt/manual checks、benchmark details and repository/runtime requirements。
+- **Original Problem:** scientific experimentation is a long-running mutable artifact process；free-form agents can skip controls、execute broken setups、lose variable/provenance state and derive conclusions from corrupted intermediate results。Final-answer validation arrives too late to localize or recover errors。
+- **Why the Previous Design Was Reasonable:** human researchers own hypotheses and significance；deterministic scripts/notebooks are reproducible；single coding agents rapidly implement bounded experiments；fixed pipelines are easy to audit。They remain preferable when task/workflow is stable or validator coverage is incomplete。
+- **Changed Constraint:** open-ended questions require iterative plan changes and parallel experiment partitions，but every mutation still needs schema、dependency、resource、execution and evidence gates；coordination state must outlive model context and retries。
+- **Mechanism:** Architect proposes/refines high-level plan；Inter-ARM compiles independent-variable ranges into partitions，evaluates permissible transitions and schedules by priority/agent availability；Intra-ARM checks plan/setup/I/O/placeholders and runs code repeatedly in a clean environment；Technicians execute assigned partitions；Experiment Knowledge Module stores typed plans/results/path metadata with DAG history and role-scoped validated writes。
+- **State Ownership:** human/problem spec owns research question/acceptable evidence；Architect owns proposals/priorities；Inter-ARM owns authoritative partition state machine/scheduling；validator owns provisional gate verdict；Technician owns code/run artifact；sandbox owns execution state；knowledge module owns version/provenance；evaluator/expert owns benchmark verdict；model text owns no direct commit authority。
+- **Control Flow / Data Flow:** question+context+starter artifacts → architect plan → partition compiler → setup validation → technician code → clean repeated execution → result validation → versioned result/path/provenance → architect analysis/replan → final report → executable/manual/LLM evidence gates。Failed transitions return bounded diagnostics rather than silently advancing state。
+- **Implementation Details:**46 tasks:16 reasoning、15 vector DB、8 cloud、7 ML training，with easy/medium/hard complexity along design/setup/relationship/goal axes。All systems use GPT-4o and each task runs five trials。Current repo requires Docker/API keys and persists generated scripts/workspace/report，but later provider/feature state is mutable and not the v1 experiment snapshot。
+- **Evaluation Contract:** binary per-task Experiment Design、Execution Setup、Implementation Alignment、Conclusion Correctness；LLM judge handles design/setup/conclusion against provided ground truth，humans assess semantic code-plan alignment。Paper says a subset of judge results was expert-cross-checked/refined but gives no subset size/agreement。Weighted averages: Curie97.9/78.1/73.4/36.1，OpenHands83.6/32.4/40.2/10.5，Magentic82.9/6.8/35.2/2.3。
+- **Baselines / Ablations / Sensitivity / Overhead:** OpenHands and Magentic-One with professional-experimenter prompt，same GPT-4o，five trials；domain/complexity/metric slices and case studies。Missing: remove-each-rigor-module factorial、single-agent+deterministic-validator baseline、equal tool/call/token/time/resource budgets、environment success/reference replay、judge calibration details、task contamination、cross-model/provider transfer、failure injection and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** GPT-4o common base and some task resource constraints disclosed；exact API snapshot/temperature/context、tool permissions、tokens/calls/cost/wall time、GPU/CPU/cloud resources、parallelism/retry/timeout、container images/dependency locks、tail completion and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** in the authors'46-task CS benchmark，adding explicit validation、partition/state control and structured experiment history to a GPT-4o multi-agent harness produces more executable/aligned setups and more correct conclusions than tested GPT-4o baselines。It supports deterministic rigor/control planes around model proposals。
+- **What It Does Not Prove:** autonomous science、novel discovery、experimental truth、cross-discipline/physical-lab rigor、reproducibility outside the authors' environments or a universal3.4x gain。36.1% conclusion correctness remains low；same-model/bespoke-harness comparison does not isolate architecture from tool/context/budget differences。
+- **Limitations / Threats to Validity:** no dedicated limitations section；small author-designed benchmark and provided ground-truth ranges may expose expected solutions；mostly coding/computer-system tasks with executable surfaces；judge calibration is underspecified；manual alignment may be unblinded。No cost/compute parity or module ablation；current repository drift prevents exact event-time reproduction；validators can share task-spec blind spots。
+- **Trade-offs / New Failure Modes:** state gates and repeated execution prevent cascading errors but increase latency/tool cost and may reject creative valid methods；partitioning enables parallelism but can violate hidden dependencies；tiered writes improve integrity but create schema/migration/transaction recovery duties；LLM validators scale semantics yet share hallucinations；human researchers remain needed for significance、rubric and unexpected evidence。
+- **Where the Previous Design Still Applies:** notebooks/scripts for narrow reproducible studies；single-agent implementation with deterministic tests；human-led hypothesis/interpretation；fixed Workflow for known procedures；manual domain review when truth cannot be executable；simpler state store when concurrency/recovery are not required。
+- **Evolution Relationship:** `Direct Evolution` and `Layering / Dependency`：free-form single Agent → role-separated execution → deterministic validator gates → versioned partition state machine/scheduler → typed experiment lineage → executable+expert evidence → human-owned scientific claim/release。Multi-Agent is secondary to the control/evidence substrate。
+- **ROADMAP Node:** `AGENT-WORKFLOW`（Current Ch81；Legacy Ch77）主 owner；handoff到`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）、`AGENT-MULTI-AGENT`（Ch82/Legacy Ch78）、`PLATFORM-SECURITY`（Ch72/Legacy Ch68）与`TRAIN-DATA`（Ch27/Legacy Ch23）。
+- **Target and Adjacent Chapters Read:** 已核对Ch81 deterministic spine/state transition/artifact lineage，Ch66 executable evidence/judge calibration，Ch82 role decomposition/shared state，Ch72 sandbox/permissions和Ch27 scientific data provenance；LLM agent不拥有experiment truth或state commit。
+- **Existing Coverage:** Books已完整覆盖Curie的长期机制：deterministic workflow spine、typed state、validation、sandbox、artifact lineage、Multi-Agent ownership and evidence ladder。该论文没有新增核心缺口，版本结果无需重复写入。
+- **Integration Decision:** `Books Pending — No Change Candidate / Status: Experimental`。Historical Books Gate关闭；不保留3.4x headline或当前产品功能清单。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把binary judge、execution setup或benchmark conclusion写成科学发现/可复现真理。
+- **Open Questions:** immutable v1 commit/container/task data/run logs、judge audit subset/agreement、ground-truth construction/contamination、module ablation、equal tool/token/time/resource budget、partition dependency/failure recovery、validator false accept/reject、cross-model/domain/physical experiments、security/cost/SLO and independent reproduction。
+
+### MolSpectra: A Training-only Modality Can Shape a Representation without Becoming an Inference Input
+
+- **Candidate / Week / Score:** MolSpectra: Pre-training 3D Molecular Representation with Multi-modal Energy Spectra / 2025-W08 / 25/30。
+- **Source Family ID:** `molspectra-3d-spectrum-contrastive-pretraining`。
+- **Source Type:** arXiv v1/ICLR2025 full paper + four-commit code/config artifact；domain-specific 3D molecular/simulated-spectrum self-supervised pretraining，not an AI System framework or experimental spectroscopy result。
+- **Event Date / First-public Date / Revision History:** arXiv v1 only，2025-02-22 owns W08。Current GitHub code is mutable and untagged；ICLR acceptance is venue metadata rather than a separate mechanism event。
+- **Direct Primary Sources:** https://arxiv.org/html/2502.16284v1；https://arxiv.org/pdf/2502.16284v1；https://arxiv.org/abs/2502.16284v1；https://github.com/AzureLeon1/MolSpectra。
+- **Related Primary Sources:** PCQM4Mv2、QM9/QM9S、MD17、TorchMD-Net/Coord/SliDe and OSF processed data define source/model/evaluation identity。QM9S spectra are B3LYP/def-TZVP frequency/TD-DFT calculations，not the real experimental measurements invoked in broad motivation。
+- **Access and Verification Status:** v1 denoising theory、SpecFormer patch/spectrum encoding、MPR/contrastive/two-stage objectives、all QM9/MD17/sensitivity/ablation/baselines、proofs、visualization、hardware/config/limitations and current repository surface verified。No immutable run/checkpoint/raw logs or independent reproduction；status `Full Source Review Complete — Experimental Domain-specific Multimodal Pretraining`。
+- **Full-read Coverage:** three spectra shapes/normalization；denoising-force equivalence assumptions；patch/position/type/Transformer encoding；masked reconstruction and structure-spectrum InfoNCE；PCQM4Mv2→QM9S stages；134K molecules；12 QM9/eight MD17 tasks；patch/stride/mask/loss/spectrum ablations；H20 hardware/software and all appendices。
+- **Original Problem:** coordinate denoising teaches local geometry/force-field structure but may omit electronic/vibrational/rotational signals encoded by spectra；property labels are scarce and downstream inference may not have spectra。Pretraining needs a privileged auxiliary modality that can transfer into a 3D encoder and then be discarded at serving time。
+- **Why the Previous Design Was Reasonable:** coordinate denoising is equivariant、cheap and available for far more molecules；2D/SMILES pretraining avoids expensive 3D/spectral calculation；single-spectrum CNNs are simple；direct property supervision is authoritative when labels exist。They remain preferable when spectra are unavailable/noisy or domain transfer is broad。
+- **Changed Constraint:** paired3D structures and simulated UV-Vis/IR/Raman spectra make cross-modal supervision possible on134K small molecules；the system can spend extra training compute to distill correlated spectral features while keeping downstream input contract geometry-only。
+- **Mechanism:** patch each spectrum with modality-specific linear projection/position/type encoding；concatenate all spectrum patches into SpecFormer；mask/reconstruct patches to learn intra/inter-spectrum dependencies；denoise perturbed3D coordinates with TorchMD-Net；pool/project both encoders and apply in-batch contrastive alignment。First pretrain geometry on PCQM4Mv2，then jointly train geometry/spectra on QM9S；discard spectrum encoder for fine-tuning。
+- **State Ownership:** molecular dataset owns atom/order/conformation/spectrum identity and theory level；preprocessor owns grid/log transform/patching；SpecFormer owns auxiliary spectrum representation；3D encoder owns deployed representation；contrastive batch owns negative population；split/benchmark owns evaluation identity；physical experiment/quantum calculation owns scientific truth beyond labels。
+- **Control Flow / Data Flow:** PCQM4Mv2 geometry → coordinate-denoising pretrain → QM9S paired geometry+three computed spectra → geometry denoising + spectrum MPR + cross-modal contrast → 3D encoder checkpoint → geometry-only QM9/MD17 fine-tuning/inference。Spectrum is privileged training evidence，not a runtime requirement。
+- **Implementation Details:** QM9S has~134K molecules with UV-Vis601 points1.5–13.5eV/0.02eV and IR/Raman3501 points500–4000cm^-1/1cm^-1；log10 intensity preprocessing。SpecFormer3 layers/16 heads/d=256，mask0.10、patch20/stride10、batch128；8 H20-96GB、920GB RAM、184 Xeon cores，PyTorch2.3.1/CUDA12.1。
+- **Evaluation Contract:** QM9 split110K/10K/>10K on12 MAE properties；MD17 per molecule train1K/validation50/test remainder on force MAE。MolSpectra is compared with scratch and pretrained models；authors report best on8/12 QM9 and improvement over Coord10/12，while MD17 improves some molecules and regresses on naphthalene/toluene/uracil versus Coord。No uncertainty/seed statistics are shown in main tables。
+- **Baselines / Ablations / Sensitivity / Overhead:** scratch SchNet/EGNN/DimeNet/PaiNN/SphereNet/TorchMD；Transformer-M/SE3-DDM/3D-EMGP/Coord/SliDe；w/o contrast、w/o MPR、w/o spectra，per-spectrum removal and patch/stride/mask/loss sensitivity。Missing: stage2 denoising-only compute/data-matched control、molecule-disjoint pretraining split、experimental-spectrum noise/domain transfer、different backbone/scale/seeds、pretraining cost/energy and independent reproduction。
+- **Hardware / Model / Precision / Length / Batch / Concurrency / SLO:** hardware/software、model depth/heads/dim、batch/hyperparameter grid disclosed；precision、distributed topology/utilization、training steps/time/FLOPs/checkpoint selection、data-loading cost、inference latency/memory/throughput/energy and SLO are `Not Disclosed`。
+- **What the Evidence Actually Proves:** on QM9/QM9S/MD17 contracts，adding masked multi-spectrum representation and contrastive alignment to coordinate denoising changes a3D encoder and improves many reported property/force MAEs。It demonstrates a training-only auxiliary modality and two-stage alignment mechanism。
+- **What It Does Not Prove:** that the encoder learns quantum mechanics、experimental spectroscopy、general chemical dynamics、drug/material discovery or molecule-disjoint transfer。QM9S uses computed spectra and includes the same QM9 molecular universe later split for property evaluation；MD17 gains are mixed，and attention visualization is not causal evidence。
+- **Limitations / Threats to Validity:** authors note only134K small molecules/three1D spectra and TorchMD backbone；QM9 is limited to small CHNOF molecules。Stage2 pretraining can see downstream test molecule identities without property labels，so result is transductive rather than new-molecule pretraining evidence；hyperparameters are tuned on pretraining data but model selection details are unclear。No experimental-spectrum/domain/noise robustness or multiple seeds。
+- **Trade-offs / New Failure Modes:** auxiliary spectra add physics-related supervision but require paired expensive simulations/measurements and theory/calibration lineage；single-stream attention captures cross-spectrum correlations but costs quadratic patch interaction；contrastive negatives can create false negatives among similar molecules；discarding spectrum encoder simplifies serving but hides which spectral signal transferred；denoising-only remains broader and cheaper。
+- **Where the Previous Design Still Applies:** coordinate/force denoising at large scale；2D/SMILES encoders when3D unavailable；direct supervised quantum property models；single-spectrum encoders for specialized tasks；experimental spectroscopy pipelines when measurement fidelity is the target；geometry-only deployment for low-latency inference。
+- **Evolution Relationship:** `Principle Reuse` and `Layering / Dependency`：geometry denoising → auxiliary single-modality pretraining → joint multi-spectrum MPR → geometry-spectrum contrastive distillation → geometry-only downstream encoder。This is a domain branch of multimodal alignment，not a general replacement for native multimodal models。
+- **ROADMAP Node:** `MULTIMODAL-REPRESENTATION`（Current Ch23）主 owner；handoff到`TRAIN-PRETRAINING`（Ch28/Legacy Ch24）、`TRAIN-DATA`（Ch27/Legacy Ch23）与`PLATFORM-EVALUATION-SYSTEM`（Ch66/Legacy Ch62）。
+- **Target and Adjacent Chapters Read:** 已核对Ch23 modality/preprocess/provenance/privileged representation，Ch28 auxiliary objective/two-stage pretraining，Ch27 scientific data/theory/measurement lineage与Ch66 split/evidence boundary；computed spectrum不拥有experimental truth。
+- **Existing Coverage:** Books已覆盖modality-specific encoder、shared fusion、training-only privileged signal、contrastive alignment、data lineage and domain evaluation。MolSpectra是受限分子案例，不构成新的系统机制或结构缺口。
+- **Integration Decision:** `Books Pending — No Change Candidate / Status: Experimental`。Historical Books Gate关闭；不保留SOTA numbers或“learned quantum mechanics”表述。
+- **Changed Files or Rejection Reason:** 本轮只补W08 Weekly与年度账本；未修改Books，未把computed-spectrum/QM9结果外推为实验物理或通用多模态能力。
+- **Open Questions:** molecule-disjoint pretraining/eval、experimental-spectrum transfer/noise/calibration、stage2 compute-matched denoising baseline、seed/error bars、larger chemistry/elements/spectra、backbone scaling、false-negative contrastive effects、immutable checkpoint/logs、training cost/SLO and independent reproduction。
+
 ## Evidence Level
 
 - 官方 Blog / Release 只证明公开的产品、版本与项目事实；未公开实现标记为未知。
@@ -4189,6 +5274,10 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 
 ## Knowledge Tree Position
 
+- SmolVLM2 → `MULTIMODAL-REPRESENTATION`（主 owner），连接`MULTIMODAL-WORLD-MODELS`（boundary）、
+  `INFER-EXECUTION-ENGINE`、`PLATFORM-MODEL-REGISTRY`、`PLATFORM-EVALUATION-SYSTEM`与`PLATFORM-SECURITY`。
+- LUME → `PLATFORM-SECURITY`（主 owner），连接 `TRAIN-CHECKPOINT`、`PLATFORM-MODEL-REGISTRY`、
+  `PLATFORM-EVALUATION-SYSTEM`与`TRAIN-DATA`；unlearning benchmark evidence不等于legal erasure proof。
 - AI co-scientist → `AGENT-WORKFLOW`（主 owner），并连接 `AGENT-MEMORY`、
   `AGENT-MULTI-AGENT`、`PLATFORM-EVALUATION-SYSTEM` 与 `PLATFORM-SECURITY`。
 - Soundwave → `MULTIMODAL-REPRESENTATION`（主 owner），并连接 `TRAIN-DATA`、`TRAIN-SFT`、
@@ -4345,6 +5434,12 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 - Model-guidance → `MULTIMODAL-GENERATIVE-PARADIGMS`（主 owner），并连接 `TRAIN-PRETRAINING`、
   `PLATFORM-EVALUATION-SYSTEM` 与 `PLATFORM-COST`；它把 request-time conditional/unconditional score difference
   amortize 到 training target，但最佳配方仍含 empty-label estimator 与额外 EMA forwards，不能命名为完全消除 CFG。
+- Grok 3 → `MODEL-SAMPLING`（主 owner），并连接`TRAIN-GRPO`、`INFER-SCHEDULING`、
+  `PLATFORM-EVALUATION-SYSTEM`与`AGENT-WORKFLOW`；checkpoint、mode、request-time budget、sample aggregator与tool harness
+  是不同控制面，`cons@64`不能与single-pass score或faithful reasoning等同。
+- Mistral Saba → `TRAIN-DATA`（主 owner），并连接`TRAIN-PRETRAINING`、`PLATFORM-MODEL-REGISTRY`、
+  `PLATFORM-KSERVE`、`PLATFORM-EVALUATION-SYSTEM`与`PLATFORM-SECURITY`；regional data、checkpoint、API/on-prem deployment、
+  locale routing与retirement分别拥有不同state，产品发布没有披露训练机制。
 - Transformers v4.49.0 → `PLATFORM-MODEL-REGISTRY`（主 owner），并连接 `INFER-KV-CACHE`、
   `MULTIMODAL-REPRESENTATION`、`TRAIN-DISTRIBUTED-TRAINING` 与 `PLATFORM-EVALUATION-SYSTEM`；tag、config、
   processor、cache、quantizer 与 parallel plan 共同构成 executable compatibility identity，Release 不能替代下游 regression evidence。
@@ -4357,6 +5452,58 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 
 ## Recommended Action
 
+- SmolVLM2：Weekly evidence complete；Books Pending — Refine Existing Argument Candidate；保留size/memory/video-quality operating curve。
+- Grok 3：Weekly evidence complete；Books Pending — Refine Existing Argument Candidate / Mechanism Partially Disclosed；只保留
+  checkpoint×mode×inference-budget identity，不把visible reasoning或vendor benchmark写成faithful process/通用优势。
+- Mistral Saba：Weekly evidence complete；`Weekly Only — Version/Product Fact / Mechanism Partially Disclosed`；保留regional specialization、
+  API/on-prem与retirement lifecycle边界，不从产品能力反推data mixture、training objective或runtime。
+- Scale-Distribution Decoupling：Full Source Review complete；`Disputed Theory/Figure Contract — Books Frozen`；保留direction–magnitude
+  parameterization分支，但不把作者理论、`1.5×`或feature-similarity冲突外推为通用结论。
+- CODESYNC：Full Source Review complete；`Disputed API Ground Truth — Books Frozen`；保留versioned freshness/evaluation路线，
+  但官方NumPy文档与Figure1冲突未修复前，不把其pairs或更新方法结果写成可靠机制证据。
+- DOEI：18/30；Low-score verified；WSSS/CAM domain mechanism保留Weekly，不强行创建通用Books owner。
+- Prompt-to-Leaderboard：Full Source Review complete；Books Pending — Refine Existing Argument Candidate；保留prompt-conditioned
+  evidence→cost policy路线，不把Arena preference/排名写成truth、safety或production SLO。
+- ThinkJSON：Full Source Review complete；`Disputed Objective/Verifier/Evaluation Contract — Books Frozen`；保留learned-formatting
+  分支，但standard GRPO、nested schema correctness与compliance claims均未被证明。
+- o3-mini reasoning analysis：Full Source Review complete；`Disputed Causal/Probability Contract — Books Frozen`；只保留
+  reasoning-token workload诊断，不把observational negative slope写成限长可提高正确率的因果策略。
+- SIFT：Full Source Review complete；Books Pending — Refine Existing Argument Candidate / Experimental；保留derived-context
+  refinement路线，同时明确same-model agreement和inverse generation的self-confirmation边界。
+- U-SAFEBENCH：Full Source Review complete；`Disputed Model Identity / Refusal-only Policy Contract — Books Frozen`；保留
+  profile-conditioned safety slice，但不把明文profile、refusal ratio或CoT prompt写成部署policy。
+- MedHallu：Full Source Review complete；`Disputed Dataset Admission / Ground-truth Contract — Books Frozen`；保留synthetic
+  detector/abstention evidence layer，不把LLM-filtered negatives、oracle context或F1写成medical truth。
+- CodeCriticBench：Full Source Review complete；Books Pending — No Change Candidate / Experimental；保留verdict→diagnosis→repair
+  分层，不把judge-derived advanced score或size trend写成patch effectiveness。
+- LaTIM：Full Source Review complete；Books Pending — Refine Existing Argument Candidate / Experimental；保留SSM state
+  decomposition路线，但approximate contribution map不升级为causal explanation。
+- Audio-FLAN：Full Source Review complete；Books Pending — Refine Existing Argument Candidate / Preliminary Artifact Partial；保留
+  task ontology→common schema→versioned mixture→model/evidence路线，不把108.5M instances或zero-shot愿景写成统一模型能力。
+- SurveyX：Full Source Review complete；Books Pending — No Change Candidate / Experimental；保留
+  source retrieval→lossy evidence compilation→artifact workflow→independent verifier路线，不把同源GPT-4o评分或citation F1写成事实完整性。
+- AlchemyBench：Full Source Review complete；`Disputed Dataset Verification / Feasibility Judge Contract — Books Frozen`；保留
+  text-mined recipe→judge→expert→physical evidence ladder，不把10条审计、20个预测或overall correlation写成17K expert verification/实验成功。
+- InterFeedback：Full Source Review complete；Books Pending — No Change Candidate / Experimental；保留
+  static→retry→feedback-conditioned revision路线，不把receiver-specific oracle subset上的correction rate写成learning或人类交互能力。
+- Tree-of-Debate：Full Source Review complete；`Disputed Evidence-filter / Tree-depth Contract — Books Frozen`；保留
+  evidence-local debate tree分支，但same-model persona、paper/code冲突和非独立rater不支持novelty authority。
+- MMIR：Full Source Review complete；`Disputed Dataset Count / Privileged Evaluation-helper Contract — Books Frozen`；保留
+  synthetic inconsistency→typed localization→natural/effect evidence路线，不把o1-mini helper后的accuracy写成model-only reasoning。
+- Reflective Planning：Full Source Review complete；`Disputed DDM Test Leakage / Simulator-only Contract — Books Frozen`；保留
+  action-conditioned imagination→one-action commit→fresh observation路线，不把oracle/simulator success外推为real robot。
+- TAG：Full Source Review complete；Books Pending — No Change Candidate / Experimental；保留LevelEnv局部接口与层级cadence，
+  不把四agent两环境结果外推为arbitrary-depth scalability或LLM Multi-Agent。
+- Curie：Full Source Review complete；Books Pending — No Change Candidate / Experimental；保留deterministic validator→partition state→artifact lineage，
+  不把36.1% conclusion correctness或3.4x相对值写成autonomous science。
+- MolSpectra：Full Source Review complete；Books Pending — No Change Candidate / Experimental；保留training-only auxiliary modality路线，
+  不把computed spectra或transductive QM9结果写成实验量子知识/generalization。
+- Guardians：16/30；Low-score verified；`Weekly Only — Unreliable Empirical Contract`；动态威胁监控原则已被Books拥有，
+  无样本/标签/prompt/run contract的94%与ASR表格不进入长期知识库。
+- RIFLEx：`Unverified / Blocked — P1 Full Text Required`；当前只确认v1 identity/date、announcement和later artifact lineage，
+  不用v3/current code替代v1全文，不评分、不进入Books。
+- LUME：Weekly evidence complete；Books Pending — Refine Existing Argument Candidate；保留forget/retain/privacy/utility/
+  cost多目标frontier，不把单一MIA或regurgitation rate写成删除证明。
 - AI co-scientist：Weekly evidence complete；Books Pending。
 - Magma：Weekly evidence complete；Books Pending；不得把 3 月后的训练代码/数据倒写为 W08 event-time artifact。
 - RDLM：Weekly evidence complete；Books Pending；small-model likelihood evidence 不外推为大模型 serving 收益。
@@ -4469,7 +5616,7 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 - vLLM v0.7.3：Weekly evidence complete；`Books Pending — No Change Candidate`；保留 complete/single/multiple partial Prefill、
   V0/V1、no-speculation/n-gram/MTP 与 local/distributed engine 分支；不把 constructed single-A100 TTFT 或不同硬件 PR 数字
   合并成 Release-wide production goodput 结论。
-- W08 的 65/65 owner family 已有最终 disposition；Candidate Evidence Gate 通过。按用户要求，forward cursor 在进入 W09 前暂停。
+- W08已有91个evidence-final disposition：88个Full Source Reviews + 3个low-score verifications；另有1个P1 blocked、0 ordinary pending。Candidate Evidence Gate通过并携带声明 blocker；年度Archive Completion Gate保持打开。
 
 ## Event-Date Daily Decision
 
@@ -4478,8 +5625,7 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 ## Books Integration Decision
 
 Historical Books Gate 关闭。本任务只重建 Weekly evidence；当前已完成的 AI co-scientist、MLGym、
-Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedding Space Capacity、S*、Magma、RDLM、Logic-RL、SWE-Lancer、TrustGen、MMTEB、HumanUP、SongGen、Small Model Learnability Gap、Multimodal Mamba、RAD、Decomposed Reward Models、MoM、FLAG-Trader、SoFar、Craw4LLM、PC-Agent、S2R、Selective Question Answering、SafeRoute、RelaCtrl、YOLOv12、CLIPPER、Explorer、Template-Anchored Safety、NExT-Mol、video-SALMONN-o1、InfiR、LongPO、Temporal Heads、LongWriter-V、Intuitive Physics from Natural Videos、Autellix、Sailor2、Thinking Preference Optimization、Atom of Thoughts、Dynamic Concepts Personalization、RealSyn、Revisiting Test-time Scaling、PAFT、CoSyn、LServe、From RAG to Memory / HippoRAG 2、Text2World 与 HeadInfer Source Family 标记为 `Books Pending — Integration Deferred`；AIDE、Accelerate v1.4.0 与 vLLM v0.7.3 标记为 `Books Pending — No Change Candidate`；Transformers v4.49.0 标记为 `Weekly Only — Version/Integration Fact / Books Pending — No Change Candidate`；HermesFlow、Diffusion-Sharpening、AlphaMaze、LoRAM、AdaptiveStep 与 Model-guidance 标记为 `Disputed — Books Frozen`；Quantum Error Correction with RL 标记为 `Weekly Only — Low-score / Outside Knowledge-tree Scope`。W08 Weekly evidence 已闭合，
-不修改 `books/`。
+Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedding Space Capacity、S*、Magma、RDLM、Logic-RL、SWE-Lancer、TrustGen、MMTEB、HumanUP、SongGen、Small Model Learnability Gap、Multimodal Mamba、RAD、Decomposed Reward Models、MoM、FLAG-Trader、SoFar、Craw4LLM、PC-Agent、S2R、Selective Question Answering、SafeRoute、RelaCtrl、YOLOv12、CLIPPER、Explorer、Template-Anchored Safety、NExT-Mol、video-SALMONN-o1、InfiR、LongPO、Temporal Heads、LongWriter-V、Intuitive Physics from Natural Videos、Autellix、Sailor2、Thinking Preference Optimization、Atom of Thoughts、Dynamic Concepts Personalization、RealSyn、Revisiting Test-time Scaling、PAFT、CoSyn、LServe、From RAG to Memory / HippoRAG 2、Text2World、HeadInfer、Prompt-to-Leaderboard、SIFT、LaTIM与Audio-FLAN Source Family 标记为 `Books Pending — Integration Deferred/Refine Candidate`；CodeCriticBench、SurveyX、InterFeedback、TAG、Curie与MolSpectra标记为`Books Pending — No Change Candidate / Experimental`；Grok 3标记为`Books Pending — Refine Existing Argument Candidate / Mechanism Partially Disclosed`；AIDE、Accelerate v1.4.0 与 vLLM v0.7.3 标记为 `Books Pending — No Change Candidate`；Transformers v4.49.0 标记为 `Weekly Only — Version/Integration Fact / Books Pending — No Change Candidate`；Mistral Saba标记为`Weekly Only — Version/Product Fact / Mechanism Partially Disclosed`；HermesFlow、Diffusion-Sharpening、AlphaMaze、LoRAM、AdaptiveStep、Model-guidance、Scale-Distribution Decoupling、CODESYNC、ThinkJSON、o3-mini reasoning analysis、U-SAFEBENCH、MedHallu、AlchemyBench、Tree-of-Debate、MMIR与Reflective Planning标记为 `Disputed — Books Frozen`；Quantum Error Correction with RL、DOEI和Guardians标记为`Weekly Only — Low-score / Outside、Domain-specific or Unreliable Evidence`；RIFLEx标记为`Unverified / Blocked — Books Frozen`。ordinary backlog已清零，W08 Weekly evidence在声明P1 blocker的条件下闭合；不修改 `books/`。
 
 
 ## Ignored Noise
@@ -4563,13 +5709,19 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
 - 完成 vLLM v0.7.3 的 signed tag、完整 Release/compare、concurrent partial Prefill、KV hash ownership、n-gram/MTP
   speculation、msgpack、metrics 与 pipeline-support PR 联合核验；把 single-A100 workload 与其他硬件 claim 分离，
   并标记为 `Books Pending — No Change Candidate`。
-- W08 Candidate Evidence Gate 通过：65/65 owner family = 64 Full Source Reviews + 1 low-score verified；0 pending。
+- 前一检查点曾以66/66 owner通过Gate；该状态已被随后发现的SmolVLM2 spillback取代，不再作为当前完成声明。
+- 2026-08-20 fixed-org spillback新增并完成SmolVLM2、Grok 3与Mistral Saba；随后W09 replay暴露23个未写回的W08论文family；21个可访问family均完成要求的Full/low-score核验，RIFLEx因v1全文cache miss且本地网络不可达保留P1 blocked。当前92 discovered owner = 88 Full Source Reviews + 3 low-score verified + 1 blocked + 0 ordinary pending；Candidate Evidence Gate通过，Archive Completion Gate保持打开。
 - 移除旧版“学术与工程无候选”和“Books Gate 已完成”的不实状态。
 - 2025 Weekly evidence rebuild 进行中；本周没有进入 Books Integration。
 
 ## Open Questions
 
-- W09 discovery replay 尚未开始；forward cursor 按用户要求暂停在 `Next: W09`。
+- SmolVLM2已完成Blog、three model cards、data-mixture、Transformers/MLX artifact、evaluation与on-device boundary审计；仍缺frame sampling、duration/memory/energy与独立复现。
+- Grok 3已完成base/Think/mini、RL/test-time compute、beta/API chronology、visible reasoning与benchmark contract审计；仍缺model/system card、architecture、RL recipe、faithfulness、成本/SLO与独立复现。
+- Mistral Saba已完成regional specialization、24B/32k、API/on-prem、single-GPU/vendor-throughput与retirement lifecycle审计；仍缺
+  technical/system card、data/training recipe、benchmark/hardware contract、local package、safety slices与独立复现。
+
+- W09 discovery replay已开始并在其年度索引保存进度；LUME backlog按v1归属留在W08，不在W09重复评分。
 - vLLM v0.7.3 缺 immutable benchmark dataset/log/repetition、character-to-token mapping、precision/output distribution、
   partial-slot/threshold/request-rate sensitivity、long-request fairness bound、V1-equivalent policy、multi-GPU/PP/PD、failure/
   schema migration、MTP acceptance cost 与 production goodput/SLO；当前不支持 Release-wide 性能结论。
@@ -4726,7 +5878,69 @@ Qwen2.5-VL、SigLIP 2、SuperGPQA、LoRA Knowledge Capacity、Soundwave、Embedd
   rare-domain/fairness、multimodal hardware/token/freeze-schedule、device memory/latency/energy/privacy/SLO 与 independent reproduction；
   论文 appendix、后来的 model card 与 final benchmark 之间的 config/data lineage 仍需 reconciliation。
 
+## Materials Request Ledger
+
+| Priority | Week | Candidate / Source Family | Known Identifier | Missing Material | Why Current Evidence Is Insufficient | Acceptable Substitute | Suggested Filename | Audit Required After Recovery |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P1 Full Text | 2025-W08 | RIFLEx / `riflex-video-rope-frequency-extrapolation` | arXiv:2502.15894v1；https://arxiv.org/abs/2502.15894v1 | Event-time v1 PDF or complete v1 TeX/HTML | arXiv v1 HTML/PDF repeatedly return cache miss；local network cannot resolve arxiv.org。Current repo/project page and v3 lineage expose later code/results but cannot prove v1 method、evaluation、limitations or artifact state。 | Original `2502.15894v1.pdf` downloaded from arXiv；complete v1 TeX source archive；author-preserved event-time PDF with matching hash/metadata | `2502.15894v1-RIFLEx.pdf` | Read full method/frequency derivation、all model/workload/evaluation/ablation/limitations/appendices；diff v1 versus v2/v3；bind code release chronology、hardware/precision/frames/FPS/latency/cost；then score and assign owner/disposition。 |
+
 ## Sources
+
+- Guardians of the Agentic System v1 — https://arxiv.org/html/2502.16750v1；https://arxiv.org/pdf/2502.16750v1；https://arxiv.org/abs/2502.16750v1（First Public: 2025-02-23；18 pages；Accessed: 2026-08-20；Low-score Verification Complete / Unreliable Empirical Contract）
+- Guardian-Agent public subset — https://github.com/GitsSaikat/Guardian-Agent（seven commits；security-critical components withheld；no immutable dataset/run/result contract；Accessed: 2026-08-20）
+- MolSpectra v1 — https://arxiv.org/html/2502.16284v1；https://arxiv.org/pdf/2502.16284v1；https://arxiv.org/abs/2502.16284v1（First Public: 2025-02-22；18 pages；Accessed: 2026-08-20；Full Source Review Complete / Experimental Domain-specific Multimodal Pretraining）
+- MolSpectra official repository — https://github.com/AzureLeon1/MolSpectra（current four-commit mutable code/config + OSF processed QM9S lineage；Accessed: 2026-08-20）
+- Curie v1 — https://arxiv.org/html/2502.16069v1；https://arxiv.org/pdf/2502.16069v1；https://arxiv.org/abs/2502.16069v1（First Public: 2025-02-22；21 pages；Accessed: 2026-08-20；Full Source Review Complete / Experimental Rigor-workflow Evaluation）
+- Curie official repository — https://github.com/Just-Curieous/Curie（current mutable337-commit product/EXP-Bench lineage；not an immutable W08 run；Accessed: 2026-08-20）
+- TAG / TAME Agent Framework v1 — https://arxiv.org/html/2502.15425v1；https://arxiv.org/abs/2502.15425v1（First Public: 2025-02-21；Accessed: 2026-08-20；Full Source Review Complete / Experimental Scope-limited MARL Hierarchy）
+- Reflective Planning / ReflectVLM v1 — https://arxiv.org/html/2502.16707v1；https://arxiv.org/abs/2502.16707v1；https://reflect-vlm.github.io/（First Public: 2025-02-23；Accessed: 2026-08-20；Full Source Review Complete / Disputed DDM Test Leakage and Simulator-only Contract）
+- MMIR v1 — https://arxiv.org/html/2502.16033v1；https://arxiv.org/abs/2502.16033v1（First Public: 2025-02-22；Accessed: 2026-08-20；Full Source Review Complete / Disputed Dataset Count and Evaluation-helper Contract）
+- Tree-of-Debate v1 — https://arxiv.org/html/2502.14767v1；https://arxiv.org/pdf/2502.14767v1；https://arxiv.org/abs/2502.14767v1（First Public: 2025-02-20；22 pages；Accessed: 2026-08-20；Full Source Review Complete / Disputed Evidence-filter and Tree-depth Contract）
+- Tree-of-Debate code/data — https://github.com/pkargupta/tree-of-debate；https://raw.githubusercontent.com/pkargupta/tree-of-debate/main/persona.py；https://raw.githubusercontent.com/pkargupta/tree-of-debate/main/moderator.py；https://raw.githubusercontent.com/pkargupta/tree-of-debate/main/tree_of_debate.py（current mutable lineage；paper/code filter and depth semantics conflict；Accessed: 2026-08-20）
+- InterFeedback v1 — https://arxiv.org/html/2502.15027v1；https://arxiv.org/pdf/2502.15027v1；https://arxiv.org/abs/2502.15027v1（First Public: 2025-02-20；18 pages；Accessed: 2026-08-20；Full Source Review Complete / Experimental Provider-conditioned Evaluation）
+- AlchemyBench / Open Materials Guide v1 — https://arxiv.org/html/2502.16457v1；https://arxiv.org/pdf/2502.16457v1；https://arxiv.org/abs/2502.16457v1（First Public: 2025-02-23；20 pages；Accessed: 2026-08-20；Full Source Review Complete / Disputed Dataset Verification and Feasibility Judge Contract）
+- AlchemyBench code/data — https://github.com/HeegyuKim/AlchemyBench；https://huggingface.co/datasets/iknow-lab/open-materials-guide-2024（17,667-row mutable artifact；card says expert-verified while paper audits ten recipes；Accessed: 2026-08-20）
+- SurveyX v1 — https://arxiv.org/html/2502.14776v1；https://arxiv.org/pdf/2502.14776v1；https://arxiv.org/abs/2502.14776v1（First Public: 2025-02-20；15 pages；Accessed: 2026-08-20；Full Source Review Complete / Experimental Self-Evaluation Coupling）
+- SurveyX project outputs — https://www.surveyx.cn/（example-output surface only；no immutable code/corpus/run package verified；Accessed: 2026-08-20）
+- Audio-FLAN v1 — https://arxiv.org/pdf/2502.16584v1；https://arxiv.org/abs/2502.16584v1（First Public: 2025-02-23；40 pages；Accessed: 2026-08-20；Full Source Review Complete / Preliminary Artifact Partial）
+- Audio-FLAN official repository / dataset lineage — https://github.com/lmxue/Audio-FLAN；https://huggingface.co/HKUSTAudio（repository states subset-only progressive release；current HF dataset updated after W08；Accessed: 2026-08-20）
+- RIFLEx v1 metadata — https://arxiv.org/abs/2502.15894v1（First Public: 2025-02-21；Accessed: 2026-08-20；Full Text Blocked）
+- RIFLEx project/current repository — https://riflex-video.github.io/；https://github.com/thu-ml/DiT-Extrapolation（later mutable lineage only；Accessed: 2026-08-20）
+
+- LaTIM v1 — https://arxiv.org/html/2502.15612v1；https://arxiv.org/abs/2502.15612（First Public: 2025-02-21；Accessed: 2026-08-20；Full Source Review Complete / Experimental Approximate Decomposition）
+- LaTIM official repository — https://github.com/deep-spin/latim（two-commit mutable artifact；Accessed: 2026-08-20）
+- CodeCriticBench v1 — https://arxiv.org/html/2502.16614v1；https://arxiv.org/abs/2502.16614（First Public: 2025-02-23；Accessed: 2026-08-20；Full Source Review Complete / Experimental）
+- CodeCriticBench code/data — https://github.com/multimodal-art-projection/CodeCriticBench；https://huggingface.co/datasets/m-a-p/CodeCriticBench（4,300-sample mutable artifact；Accessed: 2026-08-20）
+- MedHallu v1 — https://arxiv.org/html/2502.14302v1；https://arxiv.org/abs/2502.14302（First Public: 2025-02-20；Accessed: 2026-08-20；Full Source Review Complete / Disputed Admission-Ground-truth Contract）
+- MedHallu dataset/code — https://github.com/MedHallu/MedHallu；https://huggingface.co/datasets/UTAustin-AIHealth/MedHallu（10K mutable artifact；Accessed: 2026-08-20）
+- U-SAFEBENCH v1 — https://arxiv.org/html/2502.15086v1；https://arxiv.org/abs/2502.15086（First Public: 2025-02-20；Accessed: 2026-08-20；Full Source Review Complete / Disputed Model-Policy Contract）
+- U-SAFEBENCH official repository — https://github.com/yeonjun-in/U-SafeBench（data-v1.1/current mutable artifact；Accessed: 2026-08-20）
+- SIFT v1 — https://arxiv.org/html/2502.14922v1；https://arxiv.org/abs/2502.14922（First Public: 2025-02-19；Accessed: 2026-08-20；Full Source Review Complete / Experimental）
+- SIFT official repository — https://github.com/SJTU-DENG-Lab/SIFT（OpenCompass-based mutable artifact；Accessed: 2026-08-20）
+- o3-mini reasoning/performance analysis v1 — https://arxiv.org/html/2502.15631v1；https://arxiv.org/abs/2502.15631（First Public: 2025-02-21；Accessed: 2026-08-20；Full Source Review Complete / Disputed Causal-Probability Contract）
+- o3-mini analysis repository/data — https://github.com/MartheBallon/analysis_o3-mini_thinks_harder_not_longer；https://doi.org/10.5281/zenodo.14878936（current repository contains later lineage；Accessed: 2026-08-20）
+- ThinkJSON v1 — https://arxiv.org/html/2502.14905v1；https://arxiv.org/abs/2502.14905（First Public: 2025-02-18；Accessed: 2026-08-20；Full Source Review Complete / Disputed Objective-Verification Contract）
+- ThinkJSON model/data artifacts — https://huggingface.co/MasterControlAIML/DeepSeek-R1-Qwen2.5-1.5b-SFT-R1-JSON-Unstructured-To-Structured；
+  https://huggingface.co/datasets/MasterControlAIML/R1-Reasoning-Unstructured-To-Structured；https://huggingface.co/datasets/MasterControlAIML/JSON-Unstructured-Structured（mutable artifact lineage；Accessed: 2026-08-20）
+- Prompt-to-Leaderboard v1 PDF — https://arxiv.org/pdf/2502.14855v1（First Public: 2025-02-20；24 pages；Accessed: 2026-08-20；Full Source Review Complete）
+- Prompt-to-Leaderboard metadata/revisions — https://arxiv.org/abs/2502.14855（v1: 2025-02-20；v2: 2025-03-10；Accessed: 2026-08-20）
+- Prompt-to-Leaderboard official repository — https://github.com/lmarena/p2l（mutable code/model lineage；Accessed: 2026-08-20）
+- DOEI v1 — https://arxiv.org/html/2502.15885v1；https://arxiv.org/abs/2502.15885（First Public: 2025-02-21；Accessed: 2026-08-20；Low-score Verification Complete）
+- DOEI official repository — https://github.com/AIGeeksGroup/DOEI（artifact identity only；Accessed: 2026-08-20）
+- CODESYNC v1 PDF — https://arxiv.org/pdf/2502.16645v1（First Public: 2025-02-23；28 pages；Accessed: 2026-08-20；Full Source Review Complete / Disputed API Ground Truth）
+- CODESYNC official repository — https://github.com/Lucky-Wang-Chenlong/CodeSync（WIP mutable artifact；Accessed: 2026-08-20）
+- NumPy `full` v1.24/v2.1 docs — https://numpy.org/doc/1.24/reference/generated/numpy.full.html；
+  https://numpy.org/doc/2.1/reference/generated/numpy.full.html（authoritative version cross-check；Accessed: 2026-08-20）
+- Scale-Distribution Decoupling v1 — https://arxiv.org/html/2502.15499v1（First Public: 2025-02-21；Accessed: 2026-08-20；Full Source Review Complete / Disputed Theory-Figure Contract）
+- SDD official repository — https://github.com/kaihemo/SDD（Code/paper notice: 2025-02-18；mutable four-commit artifact；Accessed: 2026-08-20）
+- SmolVLM2 official Blog — https://huggingface.co/blog/smolvlm2（First Public: 2025-02-20；Accessed: 2026-08-20；Spillback Complete）
+- SmolVLM2 model cards — https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct；
+  https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct；
+  https://huggingface.co/HuggingFaceTB/SmolVLM2-256M-Video-Instruct（Accessed: 2026-08-20）
+- Grok 3 Beta official launch — https://x.ai/news/grok-3（First Public: 2025-02-19；Accessed: 2026-08-20；Spillback Complete / Mechanism Partially Disclosed）
+- xAI API release notes — https://docs.x.ai/developers/release-notes（later API chronology only；Accessed: 2026-08-20）
+- Mistral Saba official Blog — https://mistral.ai/news/mistral-saba/（First Public: 2025-02-17；Accessed: 2026-08-20；Spillback Complete / Mechanism Partially Disclosed）
+- Mistral Saba official model card — https://docs.mistral.ai/models/mistral-saba-25-02（32k、version/retirement/replacement lineage；Accessed: 2026-08-20）
 
 - vLLM v0.7.3 official release — https://github.com/vllm-project/vllm/releases/tag/v0.7.3（Released: 2025-02-20；signed tag `ed6e907`；253 commits / 93 contributors；Accessed: 2026-08-18）
 - vLLM v0.7.3 tagged source — https://github.com/vllm-project/vllm/tree/v0.7.3（Immutable engine/test/benchmark identity；Accessed: 2026-08-18）

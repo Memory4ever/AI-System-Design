@@ -4276,3 +4276,125 @@ contracts. Dynamo v1.4.0 is retained as an official bundled version fact and awa
 any Books change. The W33 correction ledger remains separate at 25 reviewed rows plus 32 discovery candidates; this
 Daily neither closes nor relabels that backlog. No W34 provisional Weekly was generated. ROADMAP and DECISIONS
 remain unchanged.
+
+## 2026-08-19 Daily Research → Books Integration
+
+Status: Daily Gate passed; three primary-source mechanisms integrated; historical Weekly work remains paused
+
+Three arXiv v1 papers with first-public date 2026-08-17 completed primary-source review and refined existing owners:
+
+- `TRAIN-GRPO` (Ch33) now connects opaque Agent harness execution to policy optimization through model-boundary
+  token/logprob capture, prefix-tree reconstruction and branch filtering. The harness, serving proxy, verifier and trainer
+  remain separate owners; terminal reward broadcast does not solve sibling/subagent credit assignment.
+- `AGENT-PROMPT` (Ch74) now extends manual and fixed-objective Prompt maintenance into constraint-residual-driven
+  search. Adaptive multipliers choose which measured failure to repair, while schema, authorization, privacy and
+  side-effect enforcement remain outside the Prompt.
+- `AGENT-REFLECTION` (Ch80) now extends local uncertainty proxies into dependency-aware trajectory telemetry and
+  selective verifier/escalation. The derived graph is not a causal graph or calibrated truth probability and cannot
+  authorize tools, side effects or Memory writes.
+
+All three remain `Status: Experimental`; author benchmark numbers stay in the Daily workload contracts. Papers that
+were merely redisplayed on the August 18 arXiv list were assigned to their true April/June/W33 dates rather than treated
+as new events. No W34 provisional Weekly was generated. The 2025 historical cursor remains `W08 Passed; Next: W09;
+Paused by user`; no historical replay resumed. ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-19 Gradient-path and Layer-wise Update Refine
+
+Status: Ch17 and Ch28 refined; no roadmap or chapter-ownership change
+
+- `MODEL-TRANSFORMER-LAYER` (Ch17) now derives vanishing and exploding gradients from products of layer Jacobians,
+  distinguishes directional singular-value behavior from one aggregate norm, and explains how residual identity paths,
+  normalization placement, initialization and residual scaling change the gradient path.
+- `TRAIN-PRETRAINING` (Ch28) now separates global schedules, Adam-style coordinate adaptation, fixed layer/group
+  multipliers, LARS/LAMB trust ratios and layer-by-step residual schedules. Per-layer learning rate is an update actuator,
+  not a repair for forward saturation or gradients that vanished before reaching a layer.
+- The operational diagnosis now compares activation, unclipped gradient, update and parameter scales by layer/group;
+  frequent clipping is treated as a signal to investigate data, loss reduction, precision, collective and optimizer state.
+  Mixed-precision clipping is explicitly placed after gradient unscale and at a declared distributed aggregation boundary.
+
+The seven-Part / 84-chapter structure, ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-19 Hallucination, Self-Knowledge and Claim-Confidence Refine
+
+Status: Ch8 and Ch66 refined; Ch20/Ch76 existing owners explicitly reused
+
+- `WORLDVIEW-LLM-INTELLIGENCE` (Ch8) now separates generalization from hallucination and distinguishes next-token
+  probability from claim correctness. Internal logprob, `P(True)` / `P(IK)` and semantic entropy are treated as
+  calibratable risk signals rather than introspection or truth authorities.
+- `PLATFORM-EVALUATION-SYSTEM` (Ch66) now separates factual precision, all-claims-correct and conclusion-correct;
+  derives when claim probabilities may be multiplied; records dependency, criticality, alternative evidence paths,
+  shared Source Families and inference-edge confidence; and maps calibrated claim/conclusion risk into answer,
+  further retrieval, abstention or escalation.
+- `MODEL-SAMPLING` (Ch20) remains the owner of internal candidate/confidence signals. `AGENT-RAG` (Ch76) remains the
+  owner of retrieval, evidence sufficiency and claim-to-source entailment. Neither mechanism is duplicated in Ch8 or
+  Ch66.
+
+The stable conclusion is that hallucination control is a system evidence-and-decision contract: model confidence is a
+feature, external evidence and verifiers provide bounded authority, and risk policy owns the final coverage/abstention
+decision. The seven-Part / 84-chapter structure, ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-19 UAT and Depth-Separation Refine
+
+Status: Ch4 representation-capacity argument rebuilt; no owner or structure change
+
+- `WORLDVIEW-WHY-MODELS-LEARN` (Ch4) now derives why arbitrary-depth affine networks collapse to one affine map,
+  including the rank restriction introduced by a narrow bottleneck and the distinction between function class and deep
+  linear parameterization/implicit bias.
+- Suitable nonlinear activations are connected to Universal Approximation as a representation-existence result. The
+  chapter explicitly states that one sufficiently wide hidden layer can already be universal under theorem conditions,
+  and that UAT does not establish finite-size efficiency, optimization, finite-data learning, generalization or reliability.
+- Depth Separation is introduced as the missing answer to “why deep”: for specific function families, deep compositional
+  networks can require polynomial size where substantially shallower networks require exponential width. This is an
+  expression-efficiency result, not a guarantee that every task benefits or that deeper networks are easier to optimize.
+
+The stable distinction is now `linear closure -> nonlinear approximation capacity -> depth efficiency -> optimization ->
+generalization -> reliability`. Ch5 and Ch16 retain representation and Transformer-MLP ownership. ROADMAP and
+DECISIONS remain unchanged.
+
+## 2026-08-20 Daily Research → Books Integration
+
+Status: Daily Gate passed; three primary-source mechanisms integrated; no Weekly or structural change
+
+- `MODEL-SAMPLING` (Ch20) now requires a selector-admission test before hidden-state candidate selection replaces
+  majority voting. Decodability is measured with question-grouped, within-question ranking to avoid question-identity
+  leakage; it predicts selector competence but does not become truth or acceptance authority.
+- `PLATFORM-EVALUATION-SYSTEM` (Ch66) now records the adversarially correlated-error boundary: low semantic entropy,
+  repeated agreement and same-family review cannot create independent ground truth when a model distribution is
+  consistently wrong. Critical-element verifier coverage, accepted-wrong and abstention remain explicit.
+- `AGENT-TOOL-CALLING` (Ch78) now extends typed tool execution with a checked-lowering branch for resource-sensitive
+  local programs: audited relations and immutable input facts let an independent checker rebuild a bounded target,
+  while an atomic capacity lease and postcondition gate execution/publication.
+
+CASE, Fool's Gold and SkillEffect remain `Status: Experimental`; author thresholds, performance numbers and the
+security-sensitive deception recipe remain outside long-term prose. The 2025 historical cursor remains paused. No W34
+provisional Weekly was generated. ROADMAP and DECISIONS remain unchanged.
+
+## 2026-08-20 2025-W10 Historical Weekly Checkpoint
+
+Status: W10 Candidate Evidence Gate passed with declared discovery gaps; paused before W11
+
+- Replayed the 2025-03-03～2025-03-09 institutional, academic-discovery and engineering-release window. W10 now has
+  28 owner events: 22 `20+` non-template Full Source Reviews and 6 low-score/version-fact verifications, with ordinary
+  `Review Pending = 0`.
+- Phi-4 Mini/Multimodal report remains related evidence for the W09 launch family. Twelve feed items whose v1 predates
+  W10 were returned to W09 rather than duplicated under recommendation dates; all twelve now have Full Source Reviews,
+  bringing W09 to 100 `20+` reviews, 3 low-score verifications and zero ordinary pending.
+- Scholar/OpenAlex/DBLP historical exports and some engineering historical release feeds remain declared Discovery Gaps;
+  therefore the annual Archive Completion Gate remains Open. The Historical Books Gate also remains Closed, and no
+  Books, ROADMAP or DECISIONS file was changed by this historical slice.
+- The W09 spillback backlog is closed and its Candidate Evidence Gate again passes with declared gaps. The 2025 forward
+  cursor now starts W11 discovery replay after reading W10/W11/W12 and the annual ledger; do not redo W09/W10 unless
+  new primary evidence reopens their gates.
+
+## 2026-08-20 2025 Historical Weekly Pause Checkpoint
+
+Status: W10 complete; W11 discovery reopened and intentionally paused
+
+- W09's 12-family spillback backlog is closed: the week now has 100 `20+` Full Source Reviews, 3 low-score
+  verifications and zero ordinary pending. W09 again passes its Candidate Evidence Gate with declared gaps.
+- W10 remains passed with 22 `20+` Full Source Reviews, 6 low-score/version-fact verifications and zero ordinary pending.
+- W11 is not complete. Only Gemma 3 and the OpenAI Responses API / Agents SDK launch are verified Source Review seeds;
+  the March 10～14 academic replay has started, March 11 discovery returned a rate-limit gap, and remaining candidate
+  identity/date/scoring/full-read work is pending.
+- Resume point: read the W10/W11/W12 Weekly files and annual ledger, continue W11 fixed-source and academic discovery,
+  then complete all W11 Full/low-score dispositions before moving to W12. Do not modify Books during this historical pass.

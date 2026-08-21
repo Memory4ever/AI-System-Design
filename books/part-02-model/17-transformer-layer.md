@@ -9,9 +9,9 @@
 
 ## 本章要回答的问题
 
-Multi-Head Attention 与 MLP 单独都能计算，为什么不能简单首尾相接并无限堆叠？Residual connection 和 Normalization 分别稳定了什么？Pre-Norm 与 Post-Norm 为什么会改变深层训练行为？
+Multi-Head Attention 与 MLP 单独都能计算，为什么不能简单首尾相接并无限堆叠？梯度为什么会随深度消失或爆炸？Residual connection 和 Normalization 分别稳定了什么？Pre-Norm 与 Post-Norm 为什么会改变深层训练行为？
 
-本章的核心判断是：**Transformer Layer 是一个保持 residual stream shape 不变的可堆叠状态更新单元。**Attention 负责跨 token 混合，MLP 负责逐位置变换，Residual 保留信息与梯度短路，Normalization 控制子层输入尺度。
+本章的核心判断是：**Transformer Layer 是一个保持 residual stream shape 不变、并显式管理跨层信息与梯度路径的可堆叠状态更新单元。**Attention 负责跨 token 混合，MLP 负责逐位置变换，Residual 保留信息与梯度短路，Normalization 控制子层输入尺度。
 
 本章使用 `B` 表示 batch size，`T` 表示 sequence length，`d_model` 表示 hidden dimension，`H` 表示 Query head 数，`d_h` 表示单个 head dimension，`d_ff` 表示 MLP 中间维度，`L` 表示 layer 数。
 
@@ -60,6 +60,113 @@ dY/dX = I + dF/dX
 ```
 
 即使 `dF/dX` 在某些方向很小，梯度仍有 identity 路径。Residual 不能保证任意深网络稳定，却显著改变了优化条件。
+
+## 梯度为什么会随深度消失或爆炸
+
+设一个没有 residual 的深网络满足：
+
+```text
+x_(l+1) = F_l(x_l)
+```
+
+从第 `L` 层的 loss 反向传播到第 `l` 层，需要连续乘上每层 Jacobian：
+
+```text
+dLoss/dx_l
+= J_l^T * J_(l+1)^T * ... * J_(L-1)^T * dLoss/dx_L
+
+J_k = dF_k(x_k) / dx_k
+```
+
+问题不在于“乘法次数多”本身，而在于这些 Jacobian 怎样缩放不同方向。若关键方向的 singular value 长期小于
+`1`，乘积会指数式收缩，早期层几乎收不到可用信号；若长期大于 `1`，乘积会迅速放大，微小扰动也可能变成
+巨大梯度。真实网络通常两者同时存在：某些子空间 vanishing，另一些子空间 exploding，所以只看一个 global
+gradient norm 会掩盖方向和深度差异。
+
+对某层参数 `W_l`，参数梯度还同时依赖 forward activation 与 backward signal：
+
+```text
+dLoss/dW_l
+≈ input_activation_l outer_product dLoss/dpreactivation_l
+```
+
+因此“小梯度”可能来自上游 signal 已消失，也可能来自 activation 饱和、loss mask、数据分布或该层在当前 batch
+根本没有被激活；“大梯度”可能来自 Jacobian 放大，也可能是异常样本、错误 loss reduction、mixed-precision
+overflow 或 optimizer state 不连续。Vanishing / exploding gradient 是观测到的结果，不是自动给出根因的诊断标签。
+
+Glorot initialization 的出发点正是让初始化时 activation 与 gradient 的尺度尽量跨层保持；He initialization
+进一步把 rectifier 的 gating 统计纳入方差设计。它们改善第 0 步附近的 signal propagation，却不会保证训练后
+权重、数据与 optimizer 共同演化时所有 Jacobian 仍接近等距。初始化是稳定起点，不是永久 invariant。
+
+### Residual 怎样改变 Jacobian 乘积
+
+对 residual block：
+
+```text
+x_(l+1) = x_l + F_l(x_l)
+```
+
+单层 Jacobian 变成：
+
+```text
+dx_(l+1)/dx_l = I + J_F_l
+```
+
+这为梯度增加不依赖 transform branch 的 identity component，使每一层不再只能穿过 `J_F_l`。但 residual 不是
+“梯度永不消失/爆炸”的证明：若 `J_F_l` 尺度过大、方向长期一致，`I + J_F_l` 的乘积仍可能爆炸；若更新长期
+抵消 identity path，某些方向仍会衰减。Residual scaling、gate 和初始化的作用，是让 transform branch 在训练早期
+保持可控，而不是取消梯度数学。
+
+Normalization placement 又改变了 identity path 是否必须经过 Norm Jacobian。抽象地看：
+
+```text
+Post-Norm: y = Norm(x + F(x))
+           dy/dx = J_Norm * (I + J_F)
+
+Pre-Norm:  y = x + F(Norm(x))
+           dy/dx = I + J_F * J_Norm
+```
+
+Post-Norm 的直接路径仍经过 `J_Norm`；Pre-Norm 把 `I` 留在外侧，因此通常更容易把 gradient 传到早期层。
+Xiong 等人的分析进一步表明，原始 Post-LN Transformer 在初始化时靠近输出的参数可能具有较大期望梯度，
+learning-rate warmup 能缓和 early update；这不是“所有层梯度都同时爆炸”，也不意味着 Pre-Norm 永远不需要
+warmup。数据、optimizer、precision 与架构变化后仍要重新测量。
+
+### 解决手段属于不同控制层
+
+| 控制层 | 典型机制 | 直接改变什么 | 不能替代什么 |
+| --- | --- | --- | --- |
+| Parameterization | Xavier/He initialization、residual scale、gate、DeepNorm | 初始 Jacobian 与 branch update 尺度 | 数据/optimizer 正确性 |
+| Architecture | Residual、Pre-Norm/Post-Norm、RMSNorm/LayerNorm placement | forward state 与跨层 gradient path | 极端 batch 或 overflow 处理 |
+| Optimizer schedule | warmup、decay、parameter-group multiplier | 参数 update 的时间尺度 | 已经消失的 backward signal |
+| Update guard | gradient clipping | 限制一次 update 的 global norm | vanishing gradient、长期错误 scaling |
+| Numeric policy | BF16/FP16 loss scaling、FP32 accumulation | 可表示范围与舍入误差 | 错误 objective 或 residual topology |
+
+DeepNorm 一类方法把 residual scaling 与匹配的 initialization 联合设计，以约束极深 Transformer 的 model update；
+它不是“给深层更小 learning rate”的同义词。反过来，给每层单独调 learning rate 只会在 backward 完成后缩放
+参数 update，无法修复 forward saturation、错误 Norm placement 或梯度在到达该层前已经消失的问题。逐层
+learning-rate policy 的适用边界留到第 28 章讨论。
+
+### 工程上怎样判断是哪一种问题
+
+一次可信诊断至少把以下量按 layer / parameter group 展开，而不是只看一个 aggregate：
+
+```text
+activation RMS / max and non-finite count
+gradient RMS / norm before clipping
+update RMS and update-to-weight ratio
+clipping fraction and overflow / skipped-step count
+loss, data batch identity and optimizer step
+```
+
+- 早期层 gradient 长期接近零、后层正常，优先检查 gradient path、activation saturation、mask 和 initialization。
+- 多层在同一 batch 同时出现尖峰，优先检查数据、loss reduction、precision、collective 与 optimizer state。
+- Gradient norm 正常但 update-to-weight ratio 异常，问题更可能在 learning rate、Adam moments、weight decay 或
+  parameter grouping。
+- 几乎每一步都触发 clipping，clipping 可能只是在隐藏错误 recipe；应回到 unclipped distribution 找根因。
+
+这里的目标不是让所有层 gradient norm 相等。Embedding、Attention、MLP、Norm 和 output head 的参数尺度与功能不同；
+健康训练需要的是可解释、可重复、与 loss 改善一致的信号，而不是人为把每层压成同一个数字。
 
 ## Normalization 控制什么
 
@@ -330,6 +437,9 @@ Positioned hidden states
 8. MLP 的 `d_ff` 为什么不会改变 layer 输出 shape？
 9. Layer 数 `L` 会怎样影响 KV Cache 与 Pipeline Parallel？
 10. 为什么 Transformer Layer 还不是完整 Decoder-only 模型？
+11. 为什么 Jacobian singular value 长期偏离 `1` 会让某些方向的梯度消失或爆炸？
+12. Residual connection 为什么改善 gradient path，却不能保证任意深度都稳定？
+13. 为什么 gradient clipping 和逐层 learning rate 不能修复已经消失的 backward signal？
 
 ## 小结
 
@@ -347,6 +457,12 @@ Primary-source 校验入口：
 - Jimmy Lei Ba, Jamie Ryan Kiros, Geoffrey E. Hinton, "Layer Normalization", 2016: https://arxiv.org/abs/1607.06450
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
 - Ruibin Xiong et al., "On Layer Normalization in the Transformer Architecture", 2020: https://arxiv.org/abs/2002.04745
+- Xavier Glorot, Yoshua Bengio, "Understanding the difficulty of training deep feedforward neural networks", 2010:
+  https://proceedings.mlr.press/v9/glorot10a.html
+- Kaiming He et al., "Delving Deep into Rectifiers", 2015: https://arxiv.org/abs/1502.01852
+- Razvan Pascanu, Tomas Mikolov, Yoshua Bengio, "On the difficulty of training Recurrent Neural Networks", 2013:
+  https://arxiv.org/abs/1211.5063
+- Hongyu Wang et al., "DeepNet: Scaling Transformers to 1,000 Layers", 2022: https://arxiv.org/abs/2203.00555
 - Chen Chen, Lai Wei, "Post-LayerNorm Is Back: Stable, ExpressivE, and Deep", arXiv v2, 2026: https://arxiv.org/abs/2601.19895
 - Attention Residuals（Status: Experimental；depth-history aggregation 与 block-state trade-off）:
   https://arxiv.org/abs/2603.15031

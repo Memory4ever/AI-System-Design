@@ -123,12 +123,11 @@ usage insight。不能用“采用 DP”代替 privacy unit、threat model、eps
 日期归属、Source Family 去重、评分、全文或明确 blocked ledger 后，才通过该周 Candidate Evidence
 Gate。存在 blocked 项可以继续 forward cursor，但年度 Archive Completion Gate 保持 Open。
 
-Forward cursor checkpoint（2026-08-18）：`W01 Passed；W02 Passed；W03 Passed；W04 Passed；W05 Passed；W06 Passed；W07 Passed；W08 Passed；Next: W09；Paused by user`。W08 已完成
+Forward cursor checkpoint（2026-08-20）：`W01 Passed；W02 Passed；W03 Passed；W04 Passed；W05 Passed；W06 Passed；W07 Passed；W08 Passed with P1 Blocked Carried；W09 Passed with Declared Gaps；W10 Passed with Declared Discovery Gaps；W11 Discovery Reopened / Paused`。W08 的92 discovered owner已完成88个Full Source Reviews、3个low-score verifications并保留1个RIFLEx P1 blocked；W09完成100个20+ Full Source Reviews与3个低分核验，其中W10 replay回拨的12个family已全部闭合；W10完成22个20+ Full Source Reviews与6个低分/版本事实核验，共28个owner events、0 ordinary pending。W11仅恢复Gemma 3与OpenAI Responses API/Agents SDK两个verified seed，并开始3月10～14 discovery identity列表；其Candidate Evidence Gate仍Open。依用户要求任务暂停，不继续W11。Scholar/OpenAlex/DBLP export gap与部分historical release-feed blockers继续进入年度Archive ledger；年度Archive Completion Gate保持Open，Historical Books Gate保持关闭。
 discovery / ownership ledger：恢复 61 个本周 arXiv family、AI co-scientist Blog family 与 3 个本周 engineering release family，
 并把 arXiv:2502.09245、arXiv:2502.11271、MUDDFormer（arXiv:2502.12170）与 SGLang v0.4.3 按 first-public date 回拨 W07。
 当前 65 个 W08 owner family 中，AI co-scientist、MLGym、Qwen2.5-VL、SigLIP 2、SuperGPQA、
-LoRA Knowledge Capacity、Soundwave、Embedding Space Capacity、S*、Magma、RDLM、Logic-RL、SWE-Lancer、TrustGen、MMTEB、HumanUP、SongGen、Small Model Learnability Gap、Multimodal Mamba、RAD、Decomposed Reward Models、MoM、FLAG-Trader、SoFar、Craw4LLM、PC-Agent、S2R、Selective Question Answering、SafeRoute、RelaCtrl、YOLOv12、CLIPPER、Explorer、Template-Anchored Safety、NExT-Mol、video-SALMONN-o1、InfiR、LongPO、Temporal Heads、LongWriter-V、Intuitive Physics from Natural Videos、Autellix、Sailor2、Thinking Preference Optimization、HermesFlow、Atom of Thoughts、Dynamic Concepts Personalization、RealSyn、Diffusion-Sharpening、Revisiting Test-time Scaling、AlphaMaze、PAFT、CoSyn、LServe、From RAG to Memory / HippoRAG 2、LoRAM、Text2World、HeadInfer、AdaptiveStep、AIDE、Model-guidance、Transformers v4.49.0、Accelerate v1.4.0 与 vLLM v0.7.3 已完成完整 Source Review；HermesFlow、Diffusion-Sharpening、AlphaMaze、LoRAM、AdaptiveStep 与 Model-guidance 因 objective / result / executable / scope contract 冲突保持 `Disputed`；Quantum Error Correction with RL 已完成低分来源/日期/拒绝核验；MUDDFormer 已在 W07 完成 v1-locked Full Source Review。W08 65/65 owner family 均有最终 disposition：64/64 Full Source Review + 1/1 low-score verification；0 pending；Candidate Evidence Gate 通过，Books Gate 继续关闭。此前 look-ahead 发现 Hugging Face 推荐页混合更早
-Source Family：`Jailbreaking to Jailbreak` 的 v1 为 2 月 9 日，回拨 W06；LLaDA、Overthinking、
+LoRA Knowledge Capacity、Soundwave、Embedding Space Capacity、S*、Magma、RDLM、Logic-RL、SWE-Lancer、TrustGen、MMTEB、HumanUP、SongGen、Small Model Learnability Gap、Multimodal Mamba、RAD、Decomposed Reward Models、MoM、FLAG-Trader、SoFar、Craw4LLM、PC-Agent、S2R、Selective Question Answering、SafeRoute、RelaCtrl、YOLOv12、CLIPPER、Explorer、Template-Anchored Safety、NExT-Mol、video-SALMONN-o1、InfiR、LongPO、Temporal Heads、LongWriter-V、Intuitive Physics from Natural Videos、Autellix、Sailor2、Thinking Preference Optimization、HermesFlow、Atom of Thoughts、Dynamic Concepts Personalization、RealSyn、Diffusion-Sharpening、Revisiting Test-time Scaling、AlphaMaze、PAFT、CoSyn、LServe、From RAG to Memory / HippoRAG 2、LoRAM、Text2World、HeadInfer、AdaptiveStep、AIDE、Model-guidance、Transformers v4.49.0、Accelerate v1.4.0 与 vLLM v0.7.3 已完成完整 Source Review；HermesFlow、Diffusion-Sharpening、AlphaMaze、LoRAM、AdaptiveStep 与 Model-guidance 因 objective / result / executable / scope contract 冲突保持 `Disputed`；Quantum Error Correction with RL 已完成低分来源/日期/拒绝核验；MUDDFormer 已在 W07 完成 v1-locked Full Source Review。前一检查点曾以W08 65/65 owner通过Gate，后来被spillback discovery重开；fixed-org replay补回LUME、SmolVLM2、Grok 3与Mistral Saba，W09 HF replay再回拨23个W08-owner family。当前所有可访问项已闭合，RIFLEx携带P1 blocked ledger，W08再次通过Candidate Evidence Gate。Source Family：`Jailbreaking to Jailbreak` 的 v1 为 2 月 9 日，回拨 W06；LLaDA、Overthinking、
 Step-Video-T2V 等 v1 位于 2 月 10～16 日，回拨 W07；推荐日期从不替代事件日期。W02 replay
 发现 2025-01-09 榜单中的 DPO Kernels v1 实际属于 2025-01-05；该 family 已回拨 W01 并完成第 37 份
 Full Source Review。W01 在确认 01-10 与 01-13 连续两页无新增 owner 后，重新通过 37/37 scoring、
@@ -275,7 +274,7 @@ precision 和 lifetime correctness，但不拥有 TP collective math 或平台�
 vLLM v0.7.3 已锁定 signed tag `ed6e907`，完成完整 Release/compare 及 concurrent partial Prefill、KV hash owner、
 n-gram/MTP speculation、msgpack、metrics 与 V1 pipeline paths 审计。它支持“调度对象扩展为带 KV/phase/proposal 的
 token state”这一既有结论，但 constructed single-A100 TTFT 与各硬件 PR 数字不能合并为 Release-wide 性能结论；
-标记为 `Books Pending — No Change Candidate`。按用户要求，W08 后暂停，W09 尚未开始。
+标记为 `Books Pending — No Change Candidate`。W09 已于 2026-08-20 恢复单向重放，当前状态见上方 forward cursor。
 随后完成 MLGym 与 Qwen2.5-VL 的 30 字段全文审计：前者只支持可执行、异构 artifact 的
 Research-Agent evaluation contract，不支持“自治科学发现”；后者支持 native-resolution + absolute-time
 representation contract，但缺少组件 ablation、完整 workload 和独立复现，不能从 benchmark 表外推生产效率。
@@ -453,9 +452,164 @@ Claude Opus 4.5 保持用户已批准的 `Excluded / Unverified`；它不计 Ful
 | 2025-W08 | Accelerate v1.4.0 | 23 | Complete | Books Pending — No Change Candidate |
 | 2025-W08 | vLLM v0.7.3 | 27 | Complete | Books Pending — No Change Candidate |
 | 2025-W08 | Low-weight Quantum Error-Correcting Codes with RL | 18 | Low-score verified | Weekly Only — Outside Knowledge-tree Scope |
+| 2025-W08 | LUME: LLM Unlearning with Multitask Evaluations | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
 | 2025-W09 | Claude 3.7 Sonnet and Claude Code | 23 | Complete | Weekly Only — Version/Product Fact / Mechanism Not Disclosed |
-| 2025-W10 | EAGLE-3 | 26 | Complete | Refine — Existing Argument |
-| 2025-W10 | Mistral OCR | 19 | Complete | Weekly Only — Version/Product Fact / Mechanism Not Disclosed |
+| 2025-W09 | SWE-RL | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | SpargeAttn | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Drop-Upcycling | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Kanana | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Towards Optimal Multi-draft Speculative Decoding | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | WebGames | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | OmniAlign-V | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Language Models' Factuality Depends on the Language of Inquiry | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Rank1 | 25 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | DeltaBench / Can LLMs Detect Errors in Long CoT? | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Agentic Reward Modeling | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | VEM: Environment-Free Exploration for Training GUI Agent | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | CritiQ: Mining Data Quality Criteria from Human Preferences | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Training LLMs with MXFP4 | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Self-Training Elicits Concise Reasoning | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Granite Embedding Models | 27 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | WorldModelBench | 28 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | LongRePS | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | PersonaBench | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | Safety Tax | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | ARIES: Autonomous Reasoning on Interactive Thought Graphs | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | GUI Pivot / Query Inference | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | RaPID: Retrieval-Augmented Long Text Generation | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Babel Multilingual LLMs | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | LADDER / Test-Time Reinforcement Learning | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | What Makes a Good Diffusion Planner? | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Ray 2.43.0 LLM APIs | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | JAX 0.5.1 | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Unsloth Direct Windows Support | 19 | Low-score Verification Complete | Weekly Only — Version/Compatibility Fact / No New Core Mechanism |
+| 2025-W09 | GPT-4.5 research preview | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Mechanism Partially Disclosed |
+| 2025-W09 | DeepSeek FlashMLA v1 | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / W09 Snapshot Not Tagged |
+| 2025-W09 | DeepSeek DeepEP V1 | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / V1 Artifact Mutable |
+| 2025-W09 | DeepSeek DeepGEMM v1 | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / W09 Snapshot Not Tagged |
+| 2025-W09 | DeepSeek DualPipe code artifact | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Mechanism Pre-window |
+| 2025-W09 | DeepSeek EPLB initial artifact | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Initial Snapshot Partially Recovered |
+| 2025-W09 | DeepSeek 3FS open-source artifact | 29 | Full Source Review Complete | Books Pending — Structural/Refine Candidate / W09 Snapshot Not Tagged |
+| 2025-W09 | DeepSeek smallpond open-source artifact | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / 3FS-coupled Evidence |
+| 2025-W09 | DeepSeek V3/R1 Online Inference System Overview | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Vendor Production Case |
+| 2025-W09 | Wan2.1 code and weights release | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Later Report Evidence |
+| 2025-W09 | Ai2 olmOCR model/data/pipeline release | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Teacher and Pipeline Coupled |
+| 2025-W09 | Microsoft Phi-4-mini + Phi-4-multimodal launch family | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Later Report Evidence |
+| 2025-W09 | Cohere Command R7B Arabic open-weights release | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Regional Post-training Branch |
+| 2025-W08 | SmolVLM2 official release | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W08 | Grok 3 Beta | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Mechanism Partially Disclosed |
+| 2025-W08 | Mistral Saba | 22 | Full Source Review Complete | Weekly Only — Version/Product Fact / Mechanism Partially Disclosed |
+| 2025-W08 | SurveyX | 25 | Full Source Review Complete | Books Pending — No Change Candidate / Experimental Self-Evaluation Coupling |
+| 2025-W08 | SIFT | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Experimental Self-Confirmation Boundary |
+| 2025-W08 | U-SAFEBENCH | 26 | Full Source Review Complete | Disputed Model Identity / Refusal-only Policy Contract — Books Frozen |
+| 2025-W08 | AlchemyBench / Automated Materials Discovery | 26 | Full Source Review Complete | Disputed Dataset Verification / Feasibility Judge Contract — Books Frozen |
+| 2025-W08 | MedHallu | 25 | Full Source Review Complete | Disputed Dataset Admission / Ground-truth Contract — Books Frozen |
+| 2025-W08 | Think Inside the JSON / ThinkJSON | 22 | Full Source Review Complete | Disputed Objective/Verifier/Evaluation Contract — Books Frozen |
+| 2025-W08 | o3-mini Reasoning/Performance Analysis | 23 | Full Source Review Complete | Disputed Causal/Probability Contract — Books Frozen |
+| 2025-W08 | InterFeedback | 25 | Full Source Review Complete | Books Pending — No Change Candidate / Experimental Provider-conditioned Evaluation |
+| 2025-W08 | Tree-of-Debate | 25 | Full Source Review Complete | Disputed Evidence-filter / Tree-depth Contract — Books Frozen |
+| 2025-W08 | Audio-FLAN | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Preliminary Artifact Partial |
+| 2025-W08 | CodeCriticBench | 25 | Full Source Review Complete | Books Pending — No Change Candidate / Experimental Judge-derived Advanced Ground Truth |
+| 2025-W08 | RIFLEx | — | Unverified / Blocked — v1 full text unavailable | Books Frozen — P1 Full Text Required |
+| 2025-W08 | MMIR | 26 | Full Source Review Complete | Disputed Dataset Count / Privileged Evaluation-helper Contract — Books Frozen |
+| 2025-W08 | Reflective Planning | 26 | Full Source Review Complete | Disputed DDM Test Leakage / Simulator-only Evaluation Contract — Books Frozen |
+| 2025-W08 | TAG / TAME Hierarchical MARL | 24 | Full Source Review Complete | Books Pending — No Change Candidate / Experimental Scope-limited MARL Hierarchy |
+| 2025-W08 | Curie | 27 | Full Source Review Complete | Books Pending — No Change Candidate / Experimental Rigor-workflow Evaluation |
+| 2025-W08 | Scale-Distribution Decoupling | 26 | Full Source Review Complete | Disputed Theory/Figure Contract — Books Frozen |
+| 2025-W08 | Prompt-to-Leaderboard | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W08 | LaTIM | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Experimental Approximate Decomposition |
+| 2025-W08 | MolSpectra | 25 | Full Source Review Complete | Books Pending — No Change Candidate / Experimental Domain-specific Multimodal Pretraining |
+| 2025-W08 | DOEI | 18 | Low-score verified | Weekly Only — Domain-specific WSSS mechanism / No New Core Owner |
+| 2025-W08 | CODESYNC | 25 | Full Source Review Complete | Disputed API Ground Truth — Books Frozen |
+| 2025-W08 | Guardians of the Agentic System | 16 | Low-score Verification Complete | Weekly Only — Unreliable Empirical Contract / No Books Owner |
+| 2025-W09 | Make LoRA Great Again / GOAT | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Stable-SPAM (v1) | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | VideoGrain | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | DICEPTION (v1) | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Mobile-Agent-V (v1) | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Thus Spake Long-Context LLM (survey v1) | 25 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | KV-Edit | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | K-LoRA | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | ART / Anonymous Region Transformer | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Artifact Withdrawn |
+| 2025-W09 | Clustering-On-Difficulty downstream scaling | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Headline Metric Disputed |
+| 2025-W09 | Visual Perception Token | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | MLLMs Know Where to Look / ViCrop | 27 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | Finding the Sweet Spot / Preference Data | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | WiCkeD | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | TheoremExplainAgent (v1) | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | BIG-Bench Extra Hard (v1) | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | GHOST 2.0 | 18 | Low-score verified | Weekly Only — Outside Core Knowledge-tree Scope |
+| 2025-W09 | Plutus | 25 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | Project Alexandria | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Legal Status Jurisdiction-Specific |
+| 2025-W09 | Can Language Models Falsify? / REFUTE | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Distill Any Depth | 22 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | MMKE-Bench | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Artifact Metadata Inconsistent |
+| 2025-W09 | FSPO | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Accented ATC ASR | 18 | Low-score verified | Weekly Only — Domain Case / No New Core Mechanism |
+| 2025-W09 | AISafetyLab technical report | 26 | Full Source Review Complete | Books Pending — No Change Candidate / Code Event Spillback W01 |
+| 2025-W09 | PosterSum | 24 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | Beyond Next-Token / xAR | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | LongRoPE2 | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | ArtGS | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | FUSED / Reversible Federated Unlearning | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Relation-Specific Neurons | 26 | Full Source Review Complete | Books Pending — No Change Candidate |
+| 2025-W09 | MAMUT | 22 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Downstream Model Evidence Missing |
+| 2025-W09 | DVPO / Pretrain Value, Not Reward (v1) | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Theorem Assumptions Restricted |
+| 2025-W09 | NeoBERT | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Ext2Gen v1 | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Artifact Unreleased at v1 |
+| 2025-W09 | SuperRAG | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Core Parser Not Open |
+| 2025-W09 | R2-T2 | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / High Test-time FLOP Cost |
+| 2025-W09 | Self-rewarding Correction | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Internal Reward Not Independent |
+| 2025-W09 | SoRFT | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Proxy Reward False Negatives |
+| 2025-W09 | UniTok | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | EDGS / Sparse Time-Variant Gaussian Splatting | 23 | Full Source Review Complete | Books Pending — No Change Candidate / Rendering Evidence Only |
+| 2025-W09 | FINEREASON | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | FlexiDiT | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | MedVLM-R1 v1 | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Reasoning Faithfulness Unverified |
+| 2025-W09 | Mobius | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Training-Free Base-Model Bound |
+| 2025-W09 | Dream Engine / Multimodal Representation Alignment | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | R1-T1 v1 | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / v1 Evidence Incomplete |
+| 2025-W09 | Variational Consistency Training / VCT | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Predictive Data Selection / PreSelect | 29 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Chain of Draft | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Prompting Case |
+| 2025-W09 | DeepSolution / SolutionRAG | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Domain Case |
+| 2025-W09 | ViDoRAG / ViDoSeek | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | LettuceDetect | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | TeleRAG | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | DexGraspVLA | 27 | Full Source Review Complete | Books Pending — Experimental Embodied Branch |
+| 2025-W09 | TokenSwift / Ultra-long Sequence Generation | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Efficient Test-Time Scaling via Self-Calibration | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | DuoDecoding | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | Web AI Agent Vulnerability | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W09 | LLM as a Broken Telephone | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | EAGLE-3 | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | Mistral OCR | 19 | Low-score Verification Complete | Weekly Only — Version/Product Fact / Mechanism Not Disclosed |
+| 2025-W10 | Visual-RFT | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | Cognitive Behaviors / Four Habits of STaRs | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | LLM Apprehension and Uncertainty | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | Liger | 27 | Full Source Review Complete | Books Pending — Experimental Alternative Branch |
+| 2025-W10 | Large-Scale Data Selection for Instruction Tuning | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | SampleMix | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | RSQ | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | MultiAgentBench | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | MPO / Meta Plan Optimization | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | Mask-DPO | 27 | Full Source Review Complete | Books Pending — Experimental Factuality Alignment |
+| 2025-W10 | PipeOffload | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | IVR / Evolutionary Guided Decoding | 26 | Full Source Review Complete | Books Pending — Experimental Guided-Decoding Branch |
+| 2025-W10 | AppAgentX | 25 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | HoT / Highlighted Chain of Thought | 24 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate / Over-trust Risk |
+| 2025-W10 | Process-based Self-Rewarding Language Models | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | KodCode | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | Gen3C | 25 | Full Source Review Complete | Books Pending — Experimental Generation Branch |
+| 2025-W10 | ToolRet / Retrieval Models Aren't Tool-Savvy | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | START | 28 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | STORM | 27 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | Audio Flamingo 2 | 26 | Full Source Review Complete | Books Pending — Refine Existing Argument Candidate |
+| 2025-W10 | JAX 0.5.2 | 17 | Low-score Verification Complete | Weekly Only — Patch Release / No New Core Mechanism |
+| 2025-W10 | LLMVoX | 19 | Low-score Verification Complete | Weekly Only — Domain Model |
+| 2025-W10 | EgoLife | 19 | Low-score Verification Complete | Weekly Only — Application Case |
+| 2025-W10 | LINGOLY-TOO | 18 | Low-score Verification Complete | Weekly Only — Evaluation Case |
+| 2025-W10 | IFIR | 19 | Low-score Verification Complete | Weekly Only — Domain Retrieval Benchmark |
 | 2025-W11 | Gemma 3 | 21 | Complete | No Change — Already Covered |
 | 2025-W12 | Private prediction for large-scale synthetic text generation | 23 | Complete | Refine — Existing Argument |
 | 2025-W12 | NVIDIA Dynamo | 27 | Complete | Refine — Existing Argument |

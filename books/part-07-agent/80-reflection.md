@@ -191,6 +191,29 @@ Token entropy、embedding cluster entropy 等只是 proxy，不是 factual confi
 和 domain 漂移。未校准或高风险任务仍应直接使用 deterministic verifier/strong review，slow critic 的输出也
 必须经过第 77 章的 Memory write gate。分层监控优化的是 critique allocation，不是让 self-reflection 成为 oracle。
 
+局部 proxy 还有一个结构盲点：当前 action 看起来低风险，不表示它没有继承数步之前的错误 tool result、timeout
+或错误假设。把历史只压成 sequence score，又会混淆真正的 continuation、平行尝试与已收到 environment feedback
+的分支。监控粒度可以进一步从当前 token/step 演进为 dependency-aware trajectory state：
+
+```text
+reasoning / tool / observation nodes
+→ temporal, continuation, parallel, feedback and goal-alignment edges
+→ local uncertainty + relation-aware propagation
+→ trajectory risk estimate
+→ selective verifier, replan, abstain or human escalation
+```
+
+这种图是从 trace 派生的 telemetry，不是环境真实 causal graph。Rule cues、tool signatures 或 embedding similarity
+可能漏掉隐式依赖，也可能把语言相似误判成控制依赖；传播还会放大早期误差并让 graph 随 trajectory 增长。Graph
+builder、relation weights、model/harness/tool revisions、threshold 与 calibration slice 因此必须共同版本化。Score 只能
+拥有“是否升级检查”的建议权，不能授权工具、副作用或写入长期 Memory。
+
+RUPA 的作者实验在 tau2、Terminal-Bench-2、GAIA 与六个公开模型上支持 relational feature 对 local/linear
+uncertainty proxy 的受限补充，并展示了较早失败检测与多样本选择；硬件、额外 latency/cost、并发和 production SLO
+未披露，best-F1 threshold 也不是可直接部署的 operating point。短任务、强 executable verifier 或高风险 action
+仍应直接验证；只有 dependency signal 经 held-out slice 校准、且 selective review 节省大于 graph cost 时，这条分支
+才成立。下一阶段压力是用可执行 intervention 与环境证据校准 edges，而不是继续增加图的复杂度。
+
 压缩后的 improvement state 仍属于当前 run 的 working state，不应仅因它概括了经验就
 自动升级为第 77 章的长期 Memory。跨任务写入仍需要 source、scope、confidence、expiry
 和 supersession policy。
@@ -256,6 +279,7 @@ Primary-source 入口：
 - ReAct: https://arxiv.org/abs/2210.03629
 - AREX, 2026, `Status: Experimental`: https://arxiv.org/abs/2607.21461
 - SearchAuditor, 2026, `Status: Experimental`: https://arxiv.org/abs/2608.05212
+- RUPA, 2026, `Status: Experimental`: https://arxiv.org/abs/2608.16002
 - Deep Search with Hierarchical Meta-Cognitive Monitoring（Status: Experimental）:
   https://arxiv.org/abs/2601.23188
 - Reflective Test-Time Planning（reflection-guided parameter adaptation；Status: Experimental）:

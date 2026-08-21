@@ -147,20 +147,183 @@ Backpropagation 不是另一种学习目标，而是高效计算这些梯度的�
 如果每一层都只是线性变换，多层相乘仍然等价于一次线性变换：
 
 ```text
-W_3(W_2(W_1 x)) = W_equivalent x
+h_1 = W_1 x
+h_2 = W_2 h_1
+y   = W_3 h_2
+
+y = W_3 W_2 W_1 x
+  = W_equivalent x
 ```
 
-增加层数不会扩展可表达的函数类型。激活函数引入非线性，使网络能够通过多层组合形成分段、层级和条件化的变换。
+加入 bias 也不改变结论：
 
-Universal Approximation Theorem 常被用来解释这一点，但需要准确限制结论。Cybenko 等结果在特定输入域、函数类别和激活条件下证明单隐层网络具有逼近能力。它支持“这个函数族具有广泛表示能力”，不能支持以下推论：
+```text
+h_1 = W_1 x + b_1
+y   = W_2 h_1 + b_2
 
-- 任意大小的网络都能表示目标函数；
+y = W_2 W_1 x + W_2 b_1 + b_2
+  = W_equivalent x + b_equivalent
+```
+
+因此任意深度的纯 affine network 仍属于同一个函数族：
+
+```text
+F_affine = {x -> W x + b}
+```
+
+它只能对空间执行 rotation、scaling、projection、shear 和 translation，不能表示 `x^2`、`abs(x)`、XOR，
+也不能让不同输入区域使用不同变换。若中间 hidden width 小于输入/输出维度，矩阵乘积的 rank 还受最窄
+bottleneck 限制；深度此时可能缩小可表达集合，而不是扩大它。
+
+这不表示深层线性参数化毫无意义。`W = W_L...W_1` 会改变 optimization trajectory、implicit bias、矩阵分解
+和可能的 low-rank preference；但这是：
+
+```text
+same function class
++ different parameterization and optimization bias
+```
+
+而不是获得新的非线性函数类别。
+
+### 非线性让输入进入不同的局部计算区域
+
+加入 activation：
+
+```text
+h = sigma(W_1 x + b_1)
+y = W_2 h + b_2
+```
+
+一般无法再把 `sigma` 吸收到一个固定的 `W_equivalent` 中。以 ReLU 为例：
+
+```text
+ReLU(z) = max(0, z)
+```
+
+不同输入会激活不同 neurons，于是网络在不同区域执行不同 affine map：
+
+```text
+f(x) =
+  W_A x + b_A,  x in region A
+  W_B x + b_B,  x in region B
+  ...
+```
+
+ReLU 在每个固定 activation region 内是线性的，但整个函数是 piecewise linear；“局部线性”不等于“全局线性”。
+例如：
+
+```text
+abs(x) = ReLU(x) + ReLU(-x)
+```
+
+已经无法由一条全局直线表示。更深的网络继续组合这些 partitions，使简单局部变换形成复杂、层级化的函数。
+
+可以把核心直觉写成：
+
+> 线性层负责变换坐标，非线性让不同输入进入不同的局部计算区域；只有二者交替组合，深度才不再坍缩为一个固定矩阵。
+
+## UAT 回答“能不能表示”
+
+Universal Approximation Theorem 为上述直觉提供了表示能力边界。经典结果的一种抽象表述是：对紧致输入域
+`K` 上的连续目标函数 `f` 和任意 `epsilon > 0`，在满足定理条件的 nonlinear activation 下，存在足够宽的
+单隐层网络：
+
+```text
+f_hat(x)
+= sum_(i=1)^m a_i * sigma(w_i^T x + b_i) + c
+```
+
+使得：
+
+```text
+sup_(x in K) |f(x) - f_hat(x)| < epsilon
+```
+
+Cybenko 的经典版本使用 continuous sigmoidal nonlinearity；后续结果把条件推广到更广的 activation family，
+其中关键边界是 activation 不能让整个网络重新坍缩为有限维的多项式/线性函数族。对 `sigma(z)=z`，上式直接化为
+`W x + b`，所以纯线性网络不具备这种 universal approximation property。
+
+UAT 的重要结论是：
+
+```text
+suitable nonlinearity + sufficient width
+→ broad approximation capacity
+```
+
+但它同时带来一个容易被忽略的反直觉：**一个 hidden layer 在理论上已经可以 universal approximate。**因此 UAT
+不能单独回答“为什么现代网络还需要很深”。它也没有给出实际所需 width、数据和计算，更没有保证优化器能找到
+那组参数。
+
+UAT 是 existence theorem，不是 training theorem。它不能推出：
+
+- 任意有限大小的网络都能达到目标误差；
+- gradient descent 能在有限预算内找到存在的参数；
 - 有限训练数据足以确定正确函数；
-- gradient descent 一定能找到逼近解；
-- 训练出的模型一定泛化；
-- 模型因而理解了任务。
+- 训练误差下降会产生 deployment generalization；
+- 模型因此理解了任务或具备事实可靠性。
 
-表示能力只是学习成立的必要条件之一，不是完整证明。
+所以必须保持：
+
+```text
+Representable
+!= Efficiently representable
+!= Optimizable
+!= Learnable from finite data
+!= Generalizable
+!= Reliable
+```
+
+## Depth Separation 回答“为什么要深”
+
+如果浅层网络已经 universal，深度的主要价值就不是把“不可能表示”变成“可能表示”，而是**表达效率与组合式
+inductive bias**。某些函数可以由深网络用 polynomial 数量的 units 表示，但浅网络若要达到相近误差，可能需要
+exponential width。Depth Separation 理论研究的正是：
+
+```text
+同一个 target function
+→ shallow network: how wide?
+→ deep network: how many reusable compositions?
+```
+
+Telgarsky 构造了深层、窄网络可以表达，而显著更浅的网络必须指数级增宽才能逼近的函数；Eldan 与 Shamir 也证明，
+在其构造与 activation 条件下，增加很少的 depth 就可能带来指数级 size separation。这些是特定函数族上的
+theoretical separation，不表示所有任务都会获得相同倍数，也不表示更深一定更容易优化。
+
+直觉上，浅层网络可能需要用大量 neurons 直接枚举复杂 input regions；深层网络则可以复用中间计算：
+
+```text
+pixels
+→ edges
+→ textures
+→ parts
+→ objects
+→ relations
+```
+
+这不是说每层必然整齐对应一个人类概念，而是说 function composition 可以让后层重复利用前层形成的 features。
+一个巨大 shallow lookup-like surface 与多层可复用 computation 都可能表示目标函数，后者在某些 compositional
+tasks 上更紧凑。
+
+UAT 与 Depth Separation 因而分别回答：
+
+```text
+纯线性 closure:
+  为什么加深仍没有新函数类别？
+
+UAT:
+  非线性网络在足够容量下能逼近多广的函数？
+
+Depth Separation:
+  同一个函数用浅层和深层表示，参数规模可能差多少？
+```
+
+最完整的结论是：
+
+> 线性层负责变换坐标，非线性让不同输入进入不同的局部计算区域，从而赋予网络通用函数逼近能力；深度再把这些非线性变换组织成可复用的层级组合，使某些复杂函数能够以远少于浅层网络的参数和计算来表达。
+
+这条结论只关闭 representation-capacity 问题。梯度能否穿过深度、optimizer 能否找到解，属于本章前述
+backpropagation/optimization 与第 17、28 章的稳定性问题；这些参数最终形成什么表示、为何泛化或失败，则由
+下一章接手。
 
 ## 从算法到训练系统
 
@@ -215,9 +378,12 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 5. mini-batch gradient 为什么只是完整梯度的估计？batch size 会连接哪些系统约束？
 6. Backpropagation 与 gradient descent 分别解决什么问题？
 7. 为什么纯线性多层网络不能通过加深获得更强的函数类别？
-8. Universal Approximation 能支持什么结论，不能支持什么结论？
-9. mixed precision 为什么既是性能优化，也是数值正确性问题？
-10. 为什么训练 loss 正常下降仍不足以批准模型上线？
+8. ReLU 每个 activation region 内都线性，为什么整个网络仍是非线性的？
+9. Universal Approximation 能支持什么结论，不能支持什么结论？
+10. UAT 已说明单隐层足够时，Depth Separation 为什么仍然重要？
+11. Representable、efficiently representable、optimizable 和 generalizable 有何区别？
+12. mixed precision 为什么既是性能优化，也是数值正确性问题？
+13. 为什么训练 loss 正常下降仍不足以批准模型上线？
 
 ## 小结
 
@@ -234,4 +400,9 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 - David E. Rumelhart, Geoffrey E. Hinton, Ronald J. Williams, "Learning representations by back-propagating errors", Nature, 1986: https://www.nature.com/articles/323533a0
 - George Cybenko, "Approximation by superpositions of a sigmoidal function", 1989: https://link.springer.com/article/10.1007/BF02551274
 - Kurt Hornik, Maxwell Stinchcombe, Halbert White, "Multilayer feedforward networks are universal approximators", 1989: https://doi.org/10.1016/0893-6080(89)90020-8
+- Moshe Leshno et al., "Multilayer feedforward networks with a nonpolynomial activation function can approximate any function", 1993:
+  https://doi.org/10.1016/S0893-6080(05)80131-5
+- Matus Telgarsky, "Benefits of depth in neural networks", 2016: https://arxiv.org/abs/1602.04485
+- Ronen Eldan, Ohad Shamir, "The Power of Depth for Feedforward Neural Networks", 2016:
+  https://arxiv.org/abs/1512.03965
 - Yann LeCun, Yoshua Bengio, Geoffrey Hinton, "Deep learning", Nature, 2015: https://www.nature.com/articles/nature14539

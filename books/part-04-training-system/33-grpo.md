@@ -882,6 +882,47 @@ objective、短 rollout 或恢复语义尚不可靠时，完整同步 trajectory
 公开系统提供了这条 state lifecycle 的具体证据，但没有证明任意 objective 下复用 partial history
 都无偏，也没有给出可直接外推的集群成本结论。
 
+### 从 Opaque Harness Call 到可训练 Trajectory Tree
+
+White-box Agent loop 直接拥有 observation、action、tool result 与 trajectory，最容易定义 mask、reward 和
+policy ratio。成熟 harness 则会自行重试无效调用、压缩 Context、启动 subagent，并重新序列化模型输出；只抓
+最终 transcript 会把原始 sampling tokens、被替换的调用和 branch identity 混在一起。
+
+一种中间路线是不侵入 harness control flow，而在 model-serving boundary 保存不可变 call evidence：
+
+```text
+isolated task environment + opaque harness
+→ serving proxy captures exact input/output tokens and rollout logprobs
+→ longest-prefix matching reconstructs a call tree
+→ remove retry dead leaves and unrelated auxiliary branches
+→ count shared prefix tokens once
+→ PPO / GRPO consumes retained branches under rollout-level reward
+```
+
+这里有两个不能合并的视图。Harness 消费 decoded/structured text 来驱动工具和环境；训练器必须消费 inference
+engine 实际 sampled tokens，不能把 harness 重新格式化后的文本再次 tokenize 后冒充原 trajectory。Serving proxy
+因此拥有 model-call evidence，不拥有 tool semantics；verifier 拥有最终 workspace verdict，不拥有每个 branch 的
+局部 credit；trainer 才拥有 mask、advantage 与 parameter update。
+
+Tree reconstruction 减少 shared-prefix 重复训练，也允许复用无法修改的成熟 harness，却没有自动解决 credit
+assignment。Retry 产生的 dead leaf 可以删除；subagent、Context compaction 和 sibling branch 若共享同一个 terminal
+reward，贡献仍可能不可辨认。简单地把 rollout reward 广播到全部 paths 会引入 bias，PPO 对 forked state 的 value
+backup 也可能需要额外假设。ClawGym II 的作者实验只证明这种 capture/reconstruction 在两种 harness、指定模型和
+受控 verifier 下可训练；硬件、完整 lifecycle cost 与生产 SLO 未披露，不能把其 benchmark 增益写成通用结论。
+
+因此每个 black-box sample 还必须绑定：
+
+```text
+harness / proxy / tokenizer / policy revisions
++ task workspace and verifier identity
++ call / retry / compaction / subagent branch lineage
++ exact sampled tokens, logprobs and train-time correction
+```
+
+Harness 少、trajectory 短或需要逐 action causal credit 时，white-box loop 仍更可靠；只有 harness 复用价值足以覆盖
+proxy schema、tree corruption、reward attribution 与 train/serve mismatch 时，black-box bridge 才值得引入。下一阶段
+压力不是捕获更多 calls，而是为 auxiliary branches 建立可验证的 marginal contribution 与独立 reward boundary。
+
 ### Cross-Policy Rollout Reuse：共享 Experience，不共享概率坐标
 
 标准 GRPO/GSPO 让每批 trajectories 来自一个明确的 rollout policy。这个约束看似浪费——另一个 policy
