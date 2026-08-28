@@ -95,6 +95,19 @@ Supervisor
 
 控制简单，但 supervisor 成为 bottleneck 和 single point of interpretation。
 
+Supervisor 的权力还要按时间范围分层。对当前 run 的 `redirect / abort / retry` 是执行控制；把一条成功轨迹、
+prompt、tool recipe 或 harness 交给未来 run 使用，则是能力状态变更。前者可以在预算内快速生效，后者必须经过
+独立 verification、lineage 与 admission：
+
+```text
+live trace → supervisor redirect / abort → current-run outcome
+verified trajectory + provenance → bounded trial → harness promotion → future runs
+```
+
+若两者混在一起，一次偶然成功或被污染的 worker output 会跨 run 固化。分层获得在线纠错与经验复用，却新增
+promotion queue、artifact version、rollback 和陈旧性；没有可靠 verifier、任务一次性或环境快速变化时，只保留
+run-local correction 更安全。跨 run adoption 的平台责任交给第 84 章，当前章只拥有角色和交互拓扑。
+
 **Peer/Debate**
 
 多个 agent 提出或批评候选，再由规则或 judge 选择。适合探索，不保证 majority 正确；同源模型可能形成 correlated consensus。
@@ -447,6 +460,11 @@ Workflow 提供 durable shared state，Multi-Agent 在其上分配责任。下�
 Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，而不是更多对话。稳定系统依赖 typed handoffs、shared workflow state、bounded delegation 和独立 verification。下一章进入连接标准 MCP。
 
 ## Review notes
+
+- PILOT（live supervisor control 与 persistent harness promotion；Status: Experimental）：
+  https://arxiv.org/abs/2608.26530v1
+  - 证据边界：论文支持作者环境中的在线 redirect/abort 与轨迹固化；不证明弱 supervisor、开放工具环境或
+    跨任务长期采用仍安全有效。
 
 - MARS-RA（arXiv:2607.27967v1；Status: Experimental）：https://arxiv.org/html/2607.27967v1
   - 证据边界：exact-v1 支持以 pairwise multimodal judgments、rank aggregation 和 potential shaping 改善作者 multi-agent tasks；不证明排名是 causal contribution，且 position bias、judge error、hidden physical state 与 non-stationarity 仍在边界外。

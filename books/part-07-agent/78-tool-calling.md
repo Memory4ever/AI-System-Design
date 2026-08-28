@@ -317,7 +317,30 @@ Trace 应把 model proposal、policy decision、approval、tool call 和 result 
 
 Tool Calling 把语言能力连接到环境，也把概率错误变成现实副作用。可靠系统把模型输出当作 proposal，由可信执行器实施 typed、authorized、observable action。下一章进入多步 Planning。
 
+### Disclosure Minimization 不能替代 Authorization
+
+为了减少模型看到的敏感字段，runtime 可以按 action schema 将参数分成明文、摘要、受保护引用与完全隐藏等层级，
+并在最小化前对 canonical raw request 计算不可变 digest：
+
+```text
+raw typed action
+→ canonicalization + attestation digest
+→ field-tier disclosure view for model/reviewer
+→ independent authorization over raw action identity
+→ executor rechecks digest, scope and effect policy
+```
+
+Disclosure 回答“谁能看见哪些字段”，authorization 回答“谁能让哪个 effect 发生”；摘要匹配也只证明提交内容
+没有在中途被替换，不证明动作被允许。Tier table、wire schema 与 policy 应从同一声明生成，避免三份配置漂移；
+代价是 schema evolution、canonicalization bug、审计可读性与受保护字段调试困难。低敏感、只读工具可继续使用
+完整 typed arguments；高风险工具必须让 executor 持有原始值与最终决定权。
+
 ## Review notes
+
+- Separating Disclosure from Authorization（field-tier minimization + attestation digest；
+  Status: Experimental）：https://arxiv.org/abs/2608.25474v1
+  - 证据边界：公开证据是论文中的本地实现与 policy literals；不证明任意远端服务、schema evolution 或
+    business authorization 已自动正确。
 
 - Generative Compilation: On-the-Fly Compiler Feedback as AI Generates Code（sealing、bounded rollback 与 compiler authority；Status: Experimental）:
   https://arxiv.org/abs/2607.13921v1

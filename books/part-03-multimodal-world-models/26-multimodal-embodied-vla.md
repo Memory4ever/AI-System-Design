@@ -473,7 +473,37 @@ VLA 不拥有 Agent workflow；Agent 也不拥有毫秒级 controller。二者�
 
 AI 从语言进入物理世界后，最重要的变化不是多了一种输出 token，而是输出拥有 deadline、控制权和后果。越强的 generative prior，越需要独立的现实反馈和安全边界。
 
+### Demonstration 既是 Context，也可能成为 Task Contract
+
+语言 instruction 简洁、可组合，却经常丢失动作节奏、空间约束与隐含 affordance；机器人 demonstration 最直接，
+但跨 embodiment action space 不兼容。Human video 提供一个中间接口：先把它作为 in-context task specification，
+预测机器人 future-observation chunk，再由 inverse dynamics 解码本体 action：
+
+```text
+human demonstration prefix
+→ task-conditioned future robot observation
+→ inverse dynamics
+→ action chunk
+→ environment feedback
+```
+
+Future chunk prediction 可以迫使模型利用 demonstration，而不是只记住语言标签；代价是 synthetic video/filter
+bias、human-robot embodiment gap 和更大的生成成本。当前证据只覆盖 stationary tabletop、有限实机 trials 与
+受限 synthetic pipeline，因此必须标为 Experimental，不能替代 low-level controller、safety envelope 或人工接管。
+
+多臂系统还要求把 arm identity 从训练数据偶然位置提升为 typed actuator interface。Planner 可输出按时间排序、
+每臂独立的 finite atomic prompt，统一 executor 联合产生动作；训练时同步置换每臂的 view/state/prompt/action tuple，
+才能学习 role permutation，而不是记住“左臂永远负责某动作”。它只证明已见 atomic skill 的有限组合泛化，
+不会自动解决 planner error、open-world skill acquisition、control frequency 或多臂 collision safety。
+
 ## Review notes
+
+- Zero-WAM（human-video task contract + future-observation/action decomposition；Status: Experimental）：
+  https://arxiv.org/abs/2608.26103v1
+- MA-VLA（per-actuator typed prompt + permutation invariance；Status: Experimental）：
+  https://arxiv.org/abs/2608.25864v1
+  - 证据边界：两项结果分别绑定 RoboTwin/有限实机、特定 backbone 与训练配置；小样本成功率、synthetic
+    filtering 和 seen-skill recombination 不证明开放环境安全或通用具身泛化。
 
 - RedFlow（arXiv:2607.27782v1；Status: Experimental）：https://arxiv.org/html/2607.27782v1
   - 证据边界：exact-v1 支持 progress-local action credit、positive-neighborhood support 与 offline corrective-target assignment；结果限于 LIBERO 和三项固定 embodiment 实机任务，不证明 OOD failure 可被可靠纠正或 progress/clustering error 已消除。

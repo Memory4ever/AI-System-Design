@@ -505,6 +505,25 @@ storm、head-role drift、host contention 和 TP ranks 间可见性不一致。�
 FullKV 仍最好；互联慢且 recall 不可隐藏时，精心校准的不可逆 compression 也可能更合适。作者分类和收益
 只在其模型、数据、budget 与 PCIe contract 下成立，不能把 head taxonomy 写成模型通则。
 
+Recoverable tiering 需要额外存储层，另一条较窄的分支是在既有 eviction 结果内寻找“保留项与误删项之间的
+可替代冗余”。若某个被删 token（orphan）的注意力重要性高于一个仍被保留、但与其他保留项高度冗余的 token
+（donor），运行时可以在不增加 cache budget 的前提下，把 orphan 换回、把 donor 换出：
+
+```text
+eviction result
+→ estimate donor / orphan pairwise redundancy
+→ swap important orphan in and redundant donor out
+→ keep the same KV budget
+→ verify quality under the same model, layer and workload contract
+```
+
+这不是用 donor 重建 orphan 的 K/V，也不是通用纠错码；orphan 的原始 K/V 必须仍可从候选状态取得，修复动作
+只是固定预算内的成员交换。Pairing policy 拥有重要性、冗余度、交换预算与 pair identity；cache manager 负责原子
+更新 kept set。它用 pair search、候选状态与交换 metadata 换取对少量误删的纠正，错误 donor 选择会把一次选择误差
+变成另一处信息丢失。冗余结构随模型、层、位置和 workload 漂移，因此必须与 calibration revision 绑定，并保留
+FullKV、cold-tier recall 或不做交换的退化路径。作者结果只说明该分支在其模型与任务合同中能改善部分 pruning
+结果，不证明任意 token pair 可互换，也不证明端到端 serving latency 必然下降。
+
 ### 冷层可以保存 Symbol Archive，但无损只相对量化 Codes
 
 Host tier 通常保存原始或低精度 KV pages，随机读取容易，却仍按 token 线性占用空间。另一条实验分支先把 KV
@@ -787,6 +806,10 @@ KV Cache 是 LLM Serving 的核心状态契约：它以显存换取历史 comput
 下一章讨论 Continuous Batching：请求长度和结束时间不同，scheduler 怎样在每一轮重新组合这些携带 KV state 的请求。
 
 ## Review notes
+
+- TwinKV（固定预算内 donor/orphan membership swap；Status: Experimental）：https://arxiv.org/abs/2608.27128v1
+  - 证据边界：作者模型与任务支持在既有 pruning 后按 pairwise redundancy 换回部分重要 orphan、换出冗余 donor；不证明该
+    redundancy 是因果 token importance，也不保证 repair scan 在所有 context、batch、hardware 与 SLO 下偿还成本。
 
 - Stage-Replay（arXiv:2607.28495v1；Status: Experimental）：https://arxiv.org/html/2607.28495v1
   - 证据边界：exact-v1 的 fixed-prefix precision control 与双向 all-layer cache transplant 支持 KV construction path 是所测 stage divergence 的充分 carrier；不证明 K/V、特定 layer 或 kernel 是唯一根因，也不支持跨模型、跨实现直接外推。

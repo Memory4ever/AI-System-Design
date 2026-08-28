@@ -1805,6 +1805,7 @@ def validate_report_text(
     blocking_failure = False
     incomplete_coverage = False
     blocking_source_failures: Dict[Tuple[str, str], str] = {}
+    conditionally_due_required_receipts: Dict[str, int] = {}
     for number, row in enumerate(coverage_rows, start=1):
         source_id = row.get("Source ID", "").strip("`")
         prefix = f"source coverage row {number}"
@@ -1815,7 +1816,11 @@ def validate_report_text(
         seen_coverage[source_id] = row
         cadence = registry.get(source_id, {}).get("Cadence", "")
         if cadence in {"Required Daily", "Required Weekly"} and source_id not in due_ids:
-            errors.append(f"{prefix}: non-due Required source {source_id} must be omitted")
+            # A Weekly source is not part of the Daily coverage denominator, but it may
+            # still be the exact supporting evidence for an in-window candidate. Defer
+            # the decision until the Candidate Ledger is available; unused receipts
+            # remain forbidden so this cannot turn into an accidental weekly scan.
+            conditionally_due_required_receipts[source_id] = number
         result = row.get("Result", "")
         if result not in SOURCE_RESULTS:
             errors.append(f"{prefix}: invalid Result {result!r}")
@@ -1942,6 +1947,7 @@ def validate_report_text(
     benchmark_claims: Dict[str, bool] = {}
     candidate_access: Dict[str, Tuple[str, str]] = {}
     candidate_by_family: Dict[str, Mapping[str, str]] = {}
+    used_supporting_source_ids: set = set()
     earlier_owner_pending = False
     seen_families: set = set()
     for number, row in enumerate(candidate_rows, start=1):
@@ -1973,6 +1979,7 @@ def validate_report_text(
 
         candidate_state = row.get("Candidate State", "")
         supporting_source_ids = _split_multi(row.get("Supporting Source IDs", ""))
+        used_supporting_source_ids.update(supporting_source_ids)
         review = row.get("Review Status", "")
         access = row.get("Access Status", "")
         override = row.get("Review Override", "")
@@ -2209,6 +2216,17 @@ def validate_report_text(
                 errors.append(
                     f"{prefix}: No Change — Existing Coverage requires Access Status accessible"
                 )
+
+    for source_id, row_number in sorted(conditionally_due_required_receipts.items()):
+        if source_id not in used_supporting_source_ids:
+            errors.append(
+                f"source coverage row {row_number}: non-due Required source {source_id} must be omitted"
+            )
+        elif seen_coverage[source_id].get("Result") != "checked":
+            errors.append(
+                f"source coverage row {row_number}: non-due Required source {source_id} "
+                "may appear only as checked supporting evidence"
+            )
 
     for family in sorted(set(receipt_families) - seen_families):
         errors.append(f"receipt family {family} is missing from Candidate Ledger")

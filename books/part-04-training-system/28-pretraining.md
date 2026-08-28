@@ -524,6 +524,23 @@ objective、token/compute budget、merge/retention policy 及出口 evaluation�
 造成通用能力回退、污染或难度过滤器过拟合；因此需要与继续通用 pretraining、直接 SFT/RL 做 compute-
 matched 对照，并保留 restoration 分支。目标分布小、demonstration 可信时直接 SFT 仍更便宜。
 
+#### Skill Artifact 是结构化能力数据，不是行为证明
+
+普通语料提供描述，trajectory 提供一次执行过程；带接口、步骤、前后置条件和 reference 的 skill artifact 位于两者之间。
+把它加入 targeted pretraining 可以让模型更早接触可组合的能力结构，但 artifact 被读入 weight 不等于能力已在真实环境中
+成立。训练 identity 至少还要保存 skill source、license、版本、适用环境、依赖、coverage 与去重关系，并把执行验证留给
+后续 SFT/RL/Evaluation：
+
+```text
+versioned skill artifact corpus
+→ capability-structured pretraining signal
+→ trajectory / environment post-training
+→ executable evaluation and adoption
+```
+
+收益是减少纯自然语言描述与执行轨迹之间的结构缺口；代价是 skill 质量不均、过时接口、数据污染与虚假可执行性。
+当 skill corpus 小、provenance 不清或真实 demonstration 充足时，直接用经过验证的轨迹仍更可靠。
+
 #### 相同阶段终点不代表相同后续可训练性
 
 Checkpoint 是否适合下一阶段训练，不能只由最终 loss 或 post-SFT benchmark 判定。两个分支即使在 SFT 后几乎同分，只要进入 SFT 前的最后 pretraining window 不同，面对同一 DPO 或 RL update 仍可能沿不同轨迹移动。因此 artifact identity 还要保存 ordered data window、入口 checkpoint、token budget 与后续 update reference，并比较 stage-wise erosion / retention，而不只看终点。
@@ -725,7 +742,39 @@ Pretraining 用大规模 next-token prediction 把数据分布转化为参数更
 
 预训练 checkpoint 是通用能力底座，不是最终产品行为。它学到什么由数据、objective、容量和优化共同决定；它是否可靠还需要独立 Evaluation 与后续训练约束。
 
+### Optimizer 也在选择参数空间中的方向尺度
+
+把所有参数共享一个标量 learning rate，隐含假设是不同更新方向对 loss 的敏感度相近。深层 Transformer
+并不满足这个假设：少数主导奇异方向可能对过大步长非常敏感，大量 bulk directions 却仍可承受更积极的
+更新。逐参数自适应方法、矩阵正交化更新和统一标量步长因此不是简单的“谁更先进”，而是在估计不同粒度的
+可行 update geometry。
+
+一个实验性分支先用小规模 probe 估计各层更新谱，再把主导方向与 bulk directions 分开分配 step scale：
+
+```text
+layer-local gradient/update matrix
+→ event-time spectral probe
+→ head / bulk sensitivity estimate
+→ bounded directional step allocation
+→ loss-spike, update-ratio and downstream checks
+```
+
+它解决的是统一步长在不同谱方向上的过保守或过激，不是证明每层都应有独立、持续变化的 learning rate。
+收益需要用相同 token budget、batch、precision、warmup、clipping 与 optimizer state 做 matched comparison；新增代价是
+probe 成本、谱估计噪声、层间尺度漂移与更多控制状态。模型规模、数据分布或训练阶段改变后，旧谱先验必须重估；
+当训练稳定、可观测性不足或控制复杂度超过收益时，统一 schedule 仍是更可靠的 baseline。
+
 ## Review notes
+
+- Skill Pretraining（structured capability artifact as mid-training data；Status: Experimental）：
+  https://arxiv.org/abs/2608.26563v1
+  - 证据边界：作者构造与模型实验支持 skill artifact 作为训练信号；不证明数据中的接口可执行、跨环境迁移或
+    可取代真实 trajectory / verifier。
+
+- Spectral Allocation / SAMuon（direction-aware optimizer step allocation；Status: Experimental）：
+  https://arxiv.org/abs/2608.25990v1
+  - 证据边界：当前证据来自论文披露的 124M、300M、1B 规模和有限 batch/任务；不证明 frontier-scale
+    训练、不同架构或任意数据分布都应采用相同 head/bulk profile。
 
 - Final-window pretraining lineage and downstream-update response（matched post-SFT endpoint 不等于同一可训练性；Status: Experimental）：https://arxiv.org/html/2607.25063v1
 

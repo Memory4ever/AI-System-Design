@@ -623,7 +623,32 @@ Part V 最终把 inference 还原为一个受状态与约束驱动的调度系�
 
 推理调度负责在这些机制之上兑现 SLO，而不是让某个局部指标最大化。下一部分进入 AI Infrastructure，继续讨论模型、服务和 GPU capability 怎样被平台统一治理。
 
+### Workflow Critical Path 与 Prefix Residency 必须联合决策
+
+只最大化 prefix hit 会长期保留共享状态，却可能拖慢 workflow critical path；只按 shortest remaining work
+或 deadline 又会逐出即将被下游节点复用的 prefix。Multi-Agent DAG 需要比较“现在执行谁”之后的状态，而不只
+比较当前队首：
+
+```text
+candidate schedule decision
+→ predicted post-decision queue / KV state
+→ longest remaining workflow path
++ downstream prefix reuse value
++ movement / preemption cost
++ aging and fairness constraints
+→ execute, retain, move or evict
+```
+
+Runtime 仍拥有真实 page、queue 与 completion state，workflow graph 只提供 dependency 与 critical-path hint。
+这条路线用更复杂预测、DAG metadata 和错误估计风险换潜在 makespan/cache 收益；单请求、低共享率、图不可信
+或强 deadline isolation 时，FIFO/EDF 与普通 prefix-aware policy 仍更稳。
+
 ## Review notes
+
+- TOPAS（workflow-aware prefix-state scheduling；Status: Experimental）：
+  https://arxiv.org/abs/2608.25523v1
+  - 证据边界：支持 post-decision state、workflow longest-remaining-path 与 prefix reuse 联合目标；作者
+    synthetic DAG / SGLang 结果不能外推不同图、cache pressure、fairness 或生产 tail-SLO。
 
 - Conformal cascade routing（prediction-set commit / defer 与有限样本 marginal coverage；Status: Experimental）：https://arxiv.org/html/2607.25018v1
 

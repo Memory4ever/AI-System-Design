@@ -759,6 +759,18 @@ class ReportValidationTests(unittest.TestCase):
         self.assertTrue(any("non-due Required source PUB-A must be omitted" in error for error in errors))
         self.assertEqual([], self.validator.validate_report_text(VALID_DAILY, self.registry))
 
+    def test_non_due_required_source_may_be_checked_supporting_evidence(self):
+        report = VALID_DAILY.replace(
+            "| ORG-A | https://example.com/research; release or paper | checked | 1 | SF-001 | end | — |",
+            "| ORG-A | https://example.com/research; release or paper | checked | 1 | SF-001 | end | — |\n"
+            "| PUB-A | https://publisher.example.org/exact-report; exact supporting report | checked | 1 | SF-001 | end | — |",
+        )
+        report = report.replace(
+            "| 2026-08-25 | ORG-A | 3 |",
+            "| 2026-08-25 | ORG-A;PUB-A | 3 |",
+        )
+        self.assertEqual([], self.validator.validate_report_text(report, self.registry))
+
     def test_checked_hits_require_candidate_families(self):
         invalid = VALID_DAILY.replace("| checked | 1 | SF-001 |", "| checked | 1 | — |")
         errors = self.validator.validate_report_text(invalid, self.registry)
@@ -1899,6 +1911,9 @@ The primary and counterevidence disagree under the recorded evaluation contracts
             "| SF-001 | forced_review | selected | DA-001 |",
             1,
         )
+        # Review Override is part of the frozen provenance contract, so an
+        # important revision must carry the provenance of the forced route.
+        revision = revision.replace("RP-1188b619ab6e379d", "RP-b1fae292ff3ad6ca", 1)
         self.assertEqual([], self.validator.validate_report_text(revision, self.registry))
 
     def test_spillback_reference_is_weekly_only_and_cannot_point_to_self(self):

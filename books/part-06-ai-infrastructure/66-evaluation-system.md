@@ -1117,6 +1117,25 @@ Answer-level calibrator 可以继续读取 critical-path confidences、dependenc
 contradiction、inference-edge score、semantic entropy 与 retrieval coverage，直接预测 conclusion / complete-answer event。
 它不应删除 claim-level ledger：一个漂亮的总分无法告诉系统应该删除哪条 claim、继续检索什么或把哪个冲突升级给人。
 
+#### 自动 Metric 不必冒充人工判断，也可以用来减少人工样本
+
+`auto-only` 用规模换偏差，`human-only` 用可信度换成本；二者不是只能二选一。若目标是估计一个系统总体质量或两个系统
+的 population-level 差异，可把大量自动 metric 视为廉价但有偏的辅助变量，再用同分布抽取的少量人工标签估计并校正
+这份偏差。Prediction-powered inference 一类方法因此改变的是 estimator，而不是把 metric 升级为 ground truth：
+
+```text
+large unlabeled population + automatic scores
++ smaller representative human-labeled sample
+→ estimate metric residual / correction
+→ bias-corrected population estimate + confidence interval
+```
+
+这条路线获得更高 statistical power 或更少 annotation，却新增 sample-design、metric/human correlated error、
+distribution drift 与 interval interpretation 责任。Paired design、unpaired design、parametric 或 non-parametric procedure
+不是可互换实现；必须冻结抽样单位、target estimand、配对关系和缺失标签策略。区间描述的是声明 population 与假设下的
+系统级估计，不是单条回答正确概率，也不能授权单次高风险 action。Metric 与人工 residual 的关系在新 domain、模型或
+prompt distribution 上失效后，必须重新标注和校准；样本很小、目标不可稳定标注或错误高度相关时，保守的人工评估仍成立。
+
 #### Confidence 最终服务于 Risk–Coverage Decision
 
 系统不需要所有回答都达到 `100%`；它需要在错误和拒答之间做显式决策。若错误回答代价为 `C_wrong`，拒答/
@@ -1817,7 +1836,43 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 
 它的长期不变量是：完整 subject identity、明确分布、可审计 scorer、per-example evidence、切片与不确定性、分离的 decision policy，以及从生产反馈回到新版本的受控闭环。下一章进入 Monitoring，讨论平台怎样以受控成本持续获得 observed state，而不把“发生了什么”误当成“是否足够好”。
 
+### 先定位候选，再决定或拒答
+
+当 evaluator 直接在所有标签或答案中选一个类别时，单一置信分数混合了两个错误：正确候选可能根本没有进入
+可见集合，或候选已经正确但最终 selector 选错。更可审计的链路先构造带 coverage contract 的 shortlist，再
+对 shortlist 做校准选择，并允许 abstain：
+
+```text
+raw candidates
+→ conformal localization set
+→ calibrated selector
+→ decide | abstain | human escalation
+```
+
+Coverage 保证依赖 calibration/test exchangeability，只是有限样本下的 marginal guarantee；selector 的多次采样、
+few-shot prompt 与 calibration revision 都必须进入 EvalSpec。分布漂移、高风险 slice 或 shortlist 为空时必须拒答，
+不能把“集合很小”解释成事实真值。
+
+视觉 rubric 的 criteria provenance、component weight、prefix localization 与 judge revision 也要独立记录。细粒度
+credit 改善错误定位，却引入自动 rubric 偏差、模糊 prefix 对齐和同族 judge 偏置；最终 release gate 仍需独立
+人工或可执行证据。多语言能力评估还必须把 interface language 与 reasoning language 拆成两个 factor，并用
+role-swapped/self-play 或 matched task 控制 first-player 与规则差异；“英文推理改善”不是跨模型语言层级定律。
+
 ## Review notes
+
+- Prediction-Powered Evaluation and Meta-Evaluation（automatic metric as variance-reduction signal；Status: Experimental）：
+  https://arxiv.org/abs/2608.26638v1
+  - 证据边界：论文在六个 WMT 数据集上支持有限人工标签与大量自动分数的 bias-corrected system comparison；
+    结论依赖抽样、配对、metric residual 与分布假设，不提供单样本 correctness probability，也不证明跨任务通用节省率。
+
+- Localize-Then-Decide Guarantees for LLM Judgments（conformal shortlist + calibrated abstention；
+  Status: Experimental）：https://arxiv.org/abs/2608.25824v1
+- V-Rubrics（atomic visual criteria + component/prefix-localized reward；Status: Experimental）：
+  https://arxiv.org/abs/2608.25580v1
+- Skill Issue（interface language × reasoning language evaluation；Status: Experimental）：
+  https://arxiv.org/abs/2608.25832v1
+  - 证据边界：三项研究分别绑定 preference judging、Qwen3-VL 与 3–4B 多语言 self-play；exchangeability、
+    judge bias、tokenization、重复采样成本和 domain shift 均需在 deployment slice 重新校准。
 
 - LayerRAG-Bench（evidence/tool/authorization/session-state 分层故障注入与 repair-scope attribution；Status: Experimental）:
   https://arxiv.org/abs/2607.27353v1

@@ -207,6 +207,17 @@ expected accepted progress
 在不同 verification shapes、batch composition 和硬件上的 throughput profile。若
 confidence calibration、traffic mix 或 scheduler 行为变化，旧 profile 就可能失效。
 
+### 接受率损失要分成 Information Floor 与 Model Gap
+
+Block drafter 在一次 proposal 中并不知道 target 将实际提交的前序 token，因此后位置缺少 realized prefix information；
+这部分是接口带来的 information floor。除此之外，drafter 对已知条件的建模误差才是可训练的 model gap。只观察平均
+accepted length 会把二者混在一起，进而错误地把所有拒绝都归因于 drafter 太弱。
+
+可用一个只补充已实现前序 token 的诊断 probe 估计 floor，再与当前 block drafter 比较；但 probe 不是新的 serving
+方案，也不能绕过 target verification。这个分解帮助判断应该改 model、改变 block interface，还是接受不可偿还的串行依赖；
+代价是额外诊断执行与更细的 workload slicing。若单 token drafting 已经满足 SLO，或 block 内依赖弱，原来的 aggregate
+acceptance/cost profile 仍是足够的工程指标。
+
 2026 年 DSpark 预印本用 semi-autoregressive drafter 与动态 verify length 展示了这条方向，
 随后也出现 runtime integration；论文中的生产收益仍是作者在特定 DeepSeek workload 上的
 实验，缺少完整 workload contract，故本章只吸收长期原则：**speculation policy 必须看到
@@ -616,7 +627,34 @@ Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 
 
 至此第46～48章分别从 batch membership、KV placement 和 serial target steps 三个正交方向优化 runtime。下一章开始把这些机制映射到实际 Serving stacks。
 
+### Context Asymmetry 是质量—成本分支，不是免费 Exactness
+
+经典 speculation 让小 drafter 提议、完整 target verifier 读取同一条件并执行 exact acceptance。长 Agent context
+使 verifier 成本占主导后，可以让 drafter 保留完整输入，而让 verifier 只读取压缩条件，再用少量融合或
+divergence signal 调节接受：
+
+```text
+full context → drafter proposal
+compressed context → verifier score
+fusion / divergence gate → accept, correct or fallback
+```
+
+因此该路线属于 bounded quality–latency alternative，不能沿用经典 speculative decoding 的 target-distribution
+exactness 结论。压缩器、融合参数与 divergence threshold 都成为版本化 artifact；低置信、Context 冲突或
+高风险请求必须回到 full-context verifier。完整 Context 仍是正确性基线；只有 matched quality、batch、长度、
+硬件与 SLO 证明节省覆盖压缩和 fallback 成本时，asymmetric verifier 才成立。
+
 ## Review notes
+
+- Block Drafting Information Floor（realized-prefix information 与 model gap 分解；Status: Experimental）：
+  https://arxiv.org/abs/2608.27339v1
+  - 证据边界：论文给出特定 target/domain/draft interface 下的分析与实验；information floor 不构成跨模型接受率
+    常数，单 token probe 也不等于端到端更快。
+
+- AsymSpec（full-context drafter + compressed-context verifier；Status: Experimental）：
+  https://arxiv.org/abs/2608.26004v1
+  - 证据边界：论文结果绑定所披露的 Qwen3-32B、vLLM、任务与确定性设置；该路线改变 verifier
+    条件，不能被描述为经典 exact speculative decoding 的无损替代。
 
 - DraftExpert（MoE target-expert expansion-aware drafting 与 prefetch；Status: Experimental）：https://arxiv.org/html/2607.24434v1
 

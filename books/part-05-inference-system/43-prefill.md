@@ -214,6 +214,23 @@ T_p = c_1 + c_2 + ... + c_n
 
 所以 chunk size 是 throughput、TTFT 和 TPOT interference 之间的 policy，不是越小越公平。
 
+#### 等长 Chunk 也不代表等量工作
+
+固定 token 数切块便于实现和容量记账，但后续 chunk 会看到更长的已提交前缀；在 causal Attention 下，同样的
+`q_len` 因 `k_len` 增长而承担不同工作量。把每个物理 chunk 固定映射到一个 pipeline stage，会让后段 stage
+逐渐成为 straggler。一个实验性分支保留 chunk identity 与依赖，只把逻辑块映射为可重排的 virtual stages：
+
+```text
+fixed prompt chunks + cumulative prefix lengths
+→ estimate per-chunk work under the current execution contract
+→ map logical chunks to virtual stages
+→ preserve causal order while balancing stage makespan
+```
+
+它改变的是调度映射，不是 Attention 语义，也不允许尚未完成的前缀被后续块读取。收益换来更多 stage metadata、
+dependency bookkeeping、profile drift 与调度开销；模型结构、sequence-length distribution 或 kernel 改变后必须重新校准。
+短 prompt、stage 已均衡或 scheduling overhead 接近 bubble 时，固定映射仍更简单。
+
 ## Batch Prefill 的权衡
 
 将多个 prompts 合并能提高 GPU utilization，但等待凑 batch 会增加 queueing。长度差异还会造成 padding 或不规则 shape。
@@ -312,6 +329,11 @@ Prefill 利用已知 prompt 的 token-parallelism，高效形成第一个生成�
 Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度。下一章进入 Decode，观察瓶颈怎样转向逐 token 访存与调度。
 
 ## Review notes
+
+- Virtual Pipeline Parallelism（prefix-growth-aware virtual stage mapping；Status: Experimental）：
+  https://arxiv.org/abs/2608.26523v1
+  - 证据边界：作者结果绑定其 MoE、并行配置与硬件；不证明 virtual mapping 在任意 chunk、pipeline 或线上
+    arrival/SLO 下都有收益，也不改变 causal dependency 与 KV correctness contract。
 
 - HISA（hierarchical sparse index；Status: Experimental）: https://arxiv.org/abs/2603.28458
 - CoSA（ordered proxy mask 与 online-softmax kernel refinement；Status: Experimental）:

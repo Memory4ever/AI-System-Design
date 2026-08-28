@@ -614,7 +614,29 @@ Long Context 不是一个模型参数，而是一组联合约束。位置机制�
 
 不同方案只移动特定瓶颈：位置扩展、IO 优化、稀疏连接、分布执行、cache 压缩与检索各有不同失败模式。正确决策必须同时看质量、延迟、并发和成本。
 
+### Immutable Task Prefix 与 Recent Reasoning State 可以分治
+
+Sliding window 丢弃最旧 token，在局部依赖主导时简单有效；Agent reasoning 却常同时依赖开头的 system/task
+contract 与最新工作状态。一个更有条件的分支固定保留不可变 task prefix，只让中间推理历史滑出，并保持
+RoPE position 与 KV identity 连续：
+
+```text
+immutable task / system prefix
++ recent reasoning window
+→ bounded attention state
+→ continued absolute positions
+→ next reasoning step
+```
+
+训练也必须模拟同一可见性：长序列只对末端窗口计算 loss，并让 prefix 与 recent window 共同提供条件。它用
+bounded KV 和 tile skipping 换取中间证据丢失、tool output 淹没窗口与更复杂 kernel/mask；短生成、需要精确
+回看完整轨迹或 task prefix 会变化时，完整 Context 或 retrieval/compression 仍更合理。Prefix Sliding 的结果
+绑定 Qwen3 1.7B/7B、单 H100 与特定 window，不能外推任意模型或生产 serving。
+
 ## Review notes
+
+- Prefix Sliding（task prefix + recent reasoning window；Status: Experimental）：
+  https://arxiv.org/abs/2608.26070v1
 
 - Flux Attention（prompt-conditioned layer routing；Status: Experimental）: https://arxiv.org/abs/2604.07394
 - SinkTrack（adaptive dual-track context anchor；Status: Experimental）: https://arxiv.org/abs/2604.10027

@@ -169,6 +169,22 @@ logit 的固定缩放。Estimator、token/sequence reduction 和实现 conventio
 
 `beta` 也不是安全旋钮。更接近 reference 不等于更符合产品目标，偏离更多也不等于更强。
 
+### Preference Scale 与 Optimization Scale 不应共用一个旋钮
+
+Vanilla DPO 把 `beta` 同时放进 preference logit 和 loss gradient。这样做在目标固定、只需要一套简单 recipe 时很合理，
+但它把两个本应分别回答的问题耦合起来：一是 preference pair 被假设有多大噪声，二是 optimizer 每一步应走多远。
+因此在固定 learning rate 下，改变 `beta` 不只是改变 reference trade-off，也会改变 gradient magnitude 与 saturation；
+两个 run 即使 loss curve 相近，也可能得到不同的 policy displacement。
+
+一种实验性分支是先对 softplus preference loss 做中心化与尺度归一化，使 preference-noise scale 仍由 `beta`
+表达，而 optimizer learning rate 独立拥有 update scale。该变换可以保持有限 `beta > 0` 下的最优解集合，
+并让 `beta -> 0` 连续趋向线性 preference-margin objective；它解决的是参数语义与调参可解释性，不是 preference
+data、reference identity 或 distribution shift。工程验收仍要分别记录 raw margin、gradient/update norm、实际 KL、
+chosen/rejected likelihood 与独立行为评估，不能因为目标函数在数学上 argmin-equivalent 就假设有限步训练轨迹相同。
+
+旧的单一 `beta` 在固定数据、固定 optimizer 且已有充分 sweep 的场景仍更简单；只有跨 scale 迁移、自动调度或需要解释
+policy displacement 时，分离两种 scale 才值得增加新的配置与校准状态。
+
 ## DPO 移除了什么系统复杂度
 
 Fine-tuning loop 不再需要：
@@ -275,3 +291,7 @@ DPO 把 reward difference 参数化为 policy 相对 reference 的 sequence log-
 Primary-source 校验入口：
 
 - Rafael Rafailov et al., "Direct Preference Optimization: Your Language Model is Secretly a Reward Model", 2023: https://arxiv.org/abs/2305.18290
+- Disentangling Optimization Scale from Preference Scale in DPO（centered-softplus reformulation；Status: Experimental）:
+  https://arxiv.org/abs/2608.27032v1
+  - 证据边界：论文支持有限 `beta > 0` 下的 argmin equivalence、`beta -> 0` 连续端点及作者模型/数据上的
+    optimization/KL 现象；不证明有限步 trajectory、所有 optimizer 或所有 preference distribution 下都更优。

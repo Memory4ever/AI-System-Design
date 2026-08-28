@@ -141,6 +141,14 @@ o_hat = D(z)
 
 它可以更快 rollout，却可能丢失 contact、object identity 或安全关键细节。reconstruction 好不证明 latent 对 control sufficient；必须用 action-conditioned outcome 验证。
 
+#### 从黑盒 Transition 到 Operator-structured Dynamics
+
+单体 `F(z_t, a_t)` 在数据充分、状态语义不稳定时最灵活；若环境 transition 具有可组合结构，可把 latent evolution
+分解为状态 operator 与 action forcing 的组合，让“环境自己如何演化”和“动作改变什么”成为不同接口。它提高机制检查、
+跨 action 比较与局部替换能力，却引入 operator 选择、组合误差和结构先验偏差。结构可解释也不等于 causal identification：
+仍需 intervention、off-policy action 与 closed-loop outcome 证明。数据少或真实 dynamics 无法稳定分解时，黑盒 transition
+继续是合理 baseline。
+
 #### Reason-then-Render：Transition Token 是 Proposal，不是物理定律
 
 可将 observation transition 编码为离散 transition token，让 reasoner 根据 current observation 与 action intent 预测 token，再由 renderer 结合当前 appearance 生成 future observation。Tokenizer、reasoner、decoder 与 action schema 必须共同进入 identity。Generation quality、pairwise likelihood 或 motion transfer 只支持表示可用性，不能替代 intervention、closed-loop planning 或 physical control evidence。
@@ -416,6 +424,26 @@ perceptual plausibility
 
 evaluation contract 应绑定 environment version、initial-state distribution、action policy、horizon、observation schema、seed、hardware/runtime、scorer 和 failure denominator。persistent-state benchmark 还应测试 view revisit、object mutation、contradictory observation、delete/supersede 与 recovery。
 
+### 单次合理 Rollout 之后：评估条件分布是否对齐
+
+确定性或近确定性环境中，固定初态与 action 后比较一次 predicted transition 可以是充分而便宜的 baseline；但很多物理过程
+在相同条件下存在多个合法 outcome。此时“生成了一条合理轨迹”只证明 support 中可能有一个样本，无法证明模型给各结果
+分配了正确概率。更严格的合同需要固定初态和 action，独立重复采样，再把 rollout 映射为可审计 outcome：
+
+```text
+same initial observation + same action contract
+→ repeated independent rollouts
+→ integrity-valid outcome extraction
+→ empirical outcome distribution
+→ compare with reference distribution
+```
+
+它把 world model 从 plausible video generator 进一步约束为 stochastic transition sampler。代价是更高采样成本、outcome
+离散化误差、reference distribution 构造成本和 seed/runtime identity；有限样本下没有观察到某个 rare outcome，也不证明
+它的概率为零。单次 deterministic transition test 在近确定性场景、smoke test 或预算很低时仍合理；只有环境固有随机性会
+影响 planning/risk 时，distribution-level alignment 才成为发布条件。即使分布更接近 reference，也仍需 matched-budget
+policy evaluation 才能证明它改善决策。
+
 ### 转移准确率不等于规划可用性
 
 从真实 transition 中随机采样并验证预测，在测试分布与 Planner 实际访问分布接近时便宜而合理。但 Planner 会主动寻找高价值、低频甚至对抗性的状态；局部 transition 在样本上全部正确，并不保证 rollout 能覆盖决定胜负的稀有分支。对不完全信息环境，问题还多一层：transition 可以正确，而 belief update 或 inference function 仍然错误。
@@ -511,7 +539,41 @@ Integrity gate 防止扭曲或消失的机器人部件被一个轨迹分数掩�
 
 训练侧可以扩大 action consequence coverage，并用 action-grounded representation 或 intervention-effect objective 强化条件依赖，但这会用更多 off-policy data、target-domain对齐与 expert module 换覆盖。Expert-only model 在窄任务、低成本和动作分布稳定时仍合理；只有在 deployment policy 会系统性偏离 demonstration 时，off-expert fidelity 才成为必须的发布合同。
 
+### 把 Reason、Execute 与 Render 拆成不同状态责任
+
+Video generator 直接预测 pixels 时，视觉连贯性与可执行 state transition 混在同一 latent state；coding Agent
+直接生成每一帧又会把高频确定性更新变成长链语言推理。一个实验性分支让 Agent 只在低频修改 executable
+mechanism，由代码推进高频状态，再让 video model 渲染 observation：
+
+```text
+high-level intent / diagnosis
+→ coding agent revises executable mechanism
+→ deterministic state transition S_exe
+→ addressable visual proxy S_vis
+→ video renderer
+→ observation and next revision
+```
+
+低分辨率 entity、camera、pose、trajectory 与 spatial relation proxy 是 state-to-render interface，不是世界真值。
+这条分解获得可编辑机制与高频执行，却新增代码安全、state/proxy drift、renderer inconsistency 与 recovery 问题。
+当前证据只有小规模 gameplay data 与 qualitative 结果，没有 real-time、causal fidelity 或完整 open-world simulator
+证明；简单动力学或已有 simulator 仍应使用显式环境模型。
+
 ## Review notes
+
+- LEON（operator-structured latent dynamics + action forcing；Status: Experimental）：
+  https://arxiv.org/abs/2608.27259v1
+  - 证据边界：controlled-dynamics 与两个 World Action Model 案例支持结构分解；不证明 operator 是真实因果机制、
+    跨环境稳定，或已满足物理安全与 closed-loop control。
+
+- PAWBench（repeated-rollout probabilistic alignment；Status: Experimental）：https://arxiv.org/abs/2608.27345v1
+  - 证据边界：50 个场景与 11 个系统支持“单条 plausibility 不能证明 outcome distribution 对齐”的评估缺口；
+    reference construction、outcome discretization 与有限采样限制外推，也不直接证明下游 policy improvement。
+
+- Code World Model（reason / execute / render ownership split；Status: Experimental）：
+  https://arxiv.org/abs/2608.25927v1
+  - 证据边界：论文披露 5.6 小时 gameplay data、LoRA 与 qualitative proxy-following；没有公开代码或
+    quantitative causal/control evaluation，不能写成通用 World Model 架构已验证。
 
 - Differentiable Quantile Matching（arXiv:2607.28415v1；Status: Experimental）：https://arxiv.org/html/2607.28415v1
   - 证据边界：exact-v1 支持 differentiable quantile regularizer 与 detached history queue 的小 batch estimator 机制；不证明 marginal normality 足以支持 planning/control，也不证明更长 queue 在 encoder drift 下单调更优。

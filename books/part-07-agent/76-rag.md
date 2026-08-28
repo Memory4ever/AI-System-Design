@@ -410,7 +410,28 @@ RAG 是 Context 的 external knowledge path，不是长期用户状态的全部�
 
 RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。下一章进入可跨会话演化的 Memory。
 
+### Retrieval Router 选择的是检索系统，而不只是文档
+
+固定 BM25、dense 或 multimodal pipeline 在语料稳定、延迟预算明确时最容易校准；异质 document workload 中，
+query 可能需要不同 modality 与 reranking depth。Router 可以只看 query，在预认证 action 集合中选择检索架构：
+
+```text
+query + tenant / corpus identity
+→ eligible retrieval actions
+→ effectiveness-latency policy
+→ selected index / reranker
+→ evidence sufficiency and answer gate
+```
+
+Soft reward target 比 noisy hard argmax 更能保留 action 间差异，但 query-only router 看不到目标文档 layout，
+也可能记住 domain lexical cue。多套 index 会增加显存、更新、删除与 authorization 一致性成本；oracle gap、
+P95 latency、index footprint 与 downstream answer quality 必须一起记录。语料单一、成本敏感或路由样本不足时，
+固定 hybrid retrieval 仍更可维护。
+
 ## Review notes
+
+- RetrievalRouter（per-query modality/architecture selection；Status: Experimental）：
+  https://arxiv.org/abs/2608.25625v1
 
 - RH-RAG（隐私约束长文的 outline/section/check 分层；Status: Experimental）: https://arxiv.org/abs/2608.01311
 

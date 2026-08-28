@@ -698,6 +698,23 @@ human tuning 在稳定 shape、低搜索预算或高 assurance 场景仍更合�
 Kernel-Smith 的受限证据补充了 population/archive 与多阶段 evaluator，但 isolated-kernel speedup 不能外推为
 serving throughput；只有 artifact 进入真实 graph、memory plan、batching 与 SLO contract 后，才构成系统收益。
 
+MoE 还会让这条边界更尖锐：单个 expert kernel 的算术加速若低于 forward pass 的 launch、dispatch、route 与
+communication floor，isolated speedup 可以很大而端到端几乎不变。正确的优化顺序应先用 end-to-end profile 建立
+可偿还上限，再决定是否改 kernel、融合 graph、调整 routing/placement 或减少同步边界：
+
+```text
+request-level latency / throughput trace
+→ route + launch + memory + communication attribution
+→ counterfactual ceiling for the target operator
+→ local optimization
+→ end-to-end replay with route and quality checks
+```
+
+Route drift 本身也不是 quality loss 的充分解释；量化可以改变 expert selection，却可能主要由 weight error 而非 routing
+变化造成质量退化。因而 route overlap、output quality 与系统性能必须分别测量，不能用任一代理替代另外两项。
+这条诊断用更多 trace、replay 与 intervention 成本换取不把局部数字误写成系统收益；当算子已被 profile 证明占据关键路径、
+shape 稳定且 route 不变时，旧的 kernel-first 优化仍然合理。
+
 硬件 portability 也不能只增加一个 fallback kernel。Architecture-exclusive symbol 可能在 build/link 阶段
 失败，package installed 不等于 device capability，indexer、attention backend、paged-KV metadata 与 graph
 capture 还可能分别不兼容。因而 portable backend 的最小 contract 是：
@@ -968,6 +985,12 @@ Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件�
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
 ## Review notes
+
+- Launch-Bound and Substitutable（MoE local optimization 与 end-to-end ceiling；Status: Experimental）：
+  https://arxiv.org/abs/2608.26612v1
+  - 证据边界：作者只在 OLMoE-1B-7B、DeepSeek-V2-Lite、Qwen3-30B-A3B 与 A100 80GB serverless
+    合同中验证 kernel/quantization/compile intervention；不支持把 headline speedup、route drift 或 ceiling 外推到其他
+    topology、batch、precision 与 production SLO。
 
 - GyRot（arXiv:2607.27694v1；Status: Experimental）：https://arxiv.org/html/2607.27694v1
   - 证据边界：exact-v1 支持作者配置中 rotation/group 解耦、outlier alignment 与 integer metadata/datapath co-design；实验包含模型精度和 28nm RTL/model evaluation，不证明 GPU kernel、silicon、在线并发或生产 tail-SLO 收益。

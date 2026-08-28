@@ -737,7 +737,32 @@ training state + checkpoint
 
 DP 扩展样本吞吐，TP 切 layer 内算子，PP 切深度，CP 切序列，EP 切 experts，ZeRO/FSDP 切 model states。每种机制都会把局部压力迁移到通信、同步、拓扑或状态生命周期，最终必须用吞吐、效率、收敛和恢复共同验证。推理 state transfer 延续了 locality、bandwidth 与 completion 等约束，但新增动态 request、ownership、routing 和 admission 边界。
 
+### Training-time Prefix Sharing 需要不可变更新视图
+
+Agent RL 的 rollout 常形成共享 system prompt、repository state 或任务前缀的树。逐 trajectory 独立执行 update
+forward 最容易证明正确，在树很小、prefix 短或 policy freshness 经常变化时仍合理；当共享前缀占主导，update
+阶段会重复 materialize 相同 KV/activation，成为新的吞吐与显存瓶颈。
+
+共享的前提不是“字符串相同”，而是同一 optimizer update 内所有消费者看到同一不可变 policy/data view：
+
+```text
+(policy revision, tokenizer, prefix tokens, position/mask, adapter, update epoch)
+→ immutable prefix identity
+→ one prefix computation and cache owner
+→ fine-grained suffix scheduling
+→ per-trajectory loss / gradient attribution
+```
+
+Prefix cache manager 只拥有物化与生命周期，不能改变样本权重、loss mask 或 gradient owner。它用更高的
+reuse 换取 cache metadata、跨 worker placement、eviction 与 straggler state；树形共享弱、长 suffix 主导或
+update view 频繁变化时，独立 forward 仍更简单。任何吞吐数字都必须绑定 Agent workload、共享率、GPU/
+interconnect、序列长度和并行策略，不能当作普通 pretraining 的通用增益。
+
 ## Review notes
+
+- psRL（training-time prefix sharing；Status: Experimental）：https://arxiv.org/abs/2608.25683v1
+  - 证据边界：支持论文披露的 immutable update view、KV manager 与细粒度调度机制；作者 Agent workload
+    结果不证明任意 RL、普通 SFT 或不同互联环境获得同等收益。
 
 - Libra（arXiv:2607.23250v1；Status: Experimental）：https://arxiv.org/html/2607.23250v1
   - 证据边界：支持 Qwen3-30B-A3B、256K/1M、mbs=1 与 NVIDIA NVLink/RoCE 条件下的 bounded pool 分支；无公开 artifact、无 bitwise-equivalence 结论，外部 baselines 为 emulated/reimplemented，PP-bubble evidence 也只是间接证据。

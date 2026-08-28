@@ -526,7 +526,31 @@ SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写�
 
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
 
+### 从平均拟合转向覆盖尚未学会的序列
+
+传统 SFT 重复采样全部示例，因为早期每个 token 都可能提供有效梯度；训练继续后，大量序列已被当前 policy
+高概率复现，继续把预算平均分给它们会降低有限更新的边际覆盖。可以在冻结的初始 policy 上估计“已拟合”与
+“仍在尾部”的序列，并只对后者增加训练权重：
+
+```text
+frozen pre-SFT policy
+→ per-sequence fit / coverage estimate
+→ retain under-fit tail under a fixed data budget
+→ SFT update
+→ evaluate both immediate capability and downstream RL initialization
+```
+
+这不是把高 loss 样本无条件当作好数据。高 loss 也可能来自噪声、错误标签、领域外样本或不可学习冲突；过滤器
+还会随 checkpoint 改变，并可能暂时降低平均 likelihood 或 pass@1。若目标是为 RL 提供更广的可达行为，
+coverage/tail 指标可能比训练集平均 loss 更合适；若数据小、噪声高或后续没有 RL，完整且均匀的 SFT baseline
+仍更容易复现。
+
 ## Review notes
+
+- TailSFT（under-fit tail filtering as RL initialization；Status: Experimental）：
+  https://arxiv.org/abs/2608.25756v1
+  - 证据边界：作者结果绑定 OLMo-3 7B、数学/代码数据与特定 GRPO 后续阶段；不能外推为所有 SFT
+    都应丢弃易样本，也不证明过滤器能识别数据真伪。
 
 - Perception-Causal Distillation（arXiv:2607.28336v1；Status: Experimental）：https://arxiv.org/html/2607.28336v1
   - 证据边界：exact-v1 支持以同 perception state 的多 continuation success rate 和 teacher-student aware-span disagreement 重分配有限 distillation budget；两者不是 calibrated posterior，不能排除 teacher 共同错误、policy drift 或 reasoning failure。
