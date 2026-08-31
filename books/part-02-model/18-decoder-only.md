@@ -79,7 +79,9 @@ p(x_1,...,x_T) = product_(t=1)^T p(x_t | x_<t)
 p(x_(t+1) | x_<=t)
 ```
 
-也就是说，概率分解与 shifted targets 是同一件事的两种索引视角。Causal mask 保证位置 `t` 只能读取 `<=t` 的输入，label 再向左错开一位，避免未来 token 泄漏。
+也就是说，概率分解与 shifted targets 是同一件事的两种索引视角。Causal mask 在 Attention 路径上声明位置 `t` 只能读取 `<=t` 的输入，label 再向左错开一位，由此建立 next-token learning 的局部信息边界。
+
+但 mask 只是 Attention 路径的声明，不是整个 Decoder block 已经满足因果性的证明。跨位置 normalization、并行 scan、fused kernel 或错误的状态复用仍可能把未来信息带回当前位置。因此，第 17 章把完整实现的因果性提升为可观测的 **prefix invariance**：同一前缀单独运行与作为更长序列前缀运行时，前缀位置的输出必须在数值容差内一致。这里先定义架构 contract，完整行为审计由该不变量闭合。
 
 堆叠 `L` 层后得到：
 
@@ -122,7 +124,7 @@ logits    [1,5,V]
 labels    [1,5]
 ```
 
-位置 0 根据 `BOS` 预测 `The`，位置 3 根据 `[BOS,The,sky,is]` 预测 `blue`。训练可以一次并行计算所有 positions，因为正确历史 tokens 已经由数据提供，同时 causal mask 阻止读取未来 labels。
+位置 0 根据 `BOS` 预测 `The`，位置 3 根据 `[BOS,The,sky,is]` 预测 `blue`。训练可以一次并行计算所有 positions，因为正确历史 tokens 已经由数据提供；causal mask 阻断未来位置的 Attention edge，而完整实现是否仍存在其他跨位置泄漏，需要用第 17 章的 prefix invariance 行为审计确认。
 
 ## Teacher forcing 与生成串行性的差异
 
@@ -218,6 +220,10 @@ explicit token trace
 
 因此显式 CoT 在高风险审计、工具副作用和需要逐步验证时仍然合理；latent reasoning 更适合中间步骤冗长、可由独立 outcome verifier 检查且 token latency 占主导的受控任务。二者是不同 observability / efficiency contract，而不是后一种对前一种的线性替代。
 
+固定使用完整显式轨迹或固定使用 latent state，是这一设计空间的两个端点。中间分支可以先预测下一段 reasoning span 的冗余度与压缩置信度，只把高置信、低信息增量的 span 编码为 latent representation，同时让 precision-critical span 继续走显式 CoT。这里的 gate 决定的是**下一段采用哪种 reasoning representation**，不是在生成后由 target verifier 接受或回滚 proposal；因此它属于 Decoder-only 的表示与状态演进，而不是 speculative decoding 的 commit protocol。
+
+这种选择性表示减少了部分可见 token，却新增 gate calibration、显式/latent 双路径训练和 latent error propagation。置信度失准或 distribution shift 会把本应显式保留的步骤过早压缩；高风险、需要逐步审计或 gate 未校准时，完整显式 CoT 仍是正确 fallback。现有 exact-v1 证据只覆盖论文披露的数学任务、模型、span anticipation、三阶段训练与消融，不证明压缩无损，也不证明开放域 reasoning 能获得相同结果。<!-- source-family:SF-2026-ARXIV-2605-25745 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -235,6 +241,12 @@ token ids
 
 第24章把 causal autoregressive factorization 放进更广的生成范式树。Diffusion、Masked/Block Diffusion 可以并行更新多个 provisional positions，却会增加 correction、cache invalidation 与 commit protocol；它们是不同生成 contract，不意味着 Decoder-only 被线性替代。
 
+## 从机制演进到系统设计
+
+Decoder-only 的状态不仅是可见 token。Looped 或 latent reasoning 把部分推理迁入 recurrent hidden state 后，dense per-loop loss 只能约束 readout 可见方向；normalization 隐藏的尺度仍可能在 residual recurrence 中携带信息。训练 contract 因而要明确哪些 latent state 对 loss 可见、何时提交以及如何停止。
+
+减少显式 token 可以降低输出带宽，却增加不可观测状态、循环稳定性和调试成本。latent state 无法校准或行为审计失败时，应回到显式 CoT、固定 loop 或普通 autoregressive decode；减少 token 不等于删除推理状态。
+
 ## 自检问题
 
 1. Transformer Layer 与完整模型架构之间还缺哪些定义？
@@ -247,10 +259,11 @@ token ids
 8. Loss mask 与 causal mask 分别控制什么？
 9. Weight tying 共享哪两个接口？
 10. Logits 为什么还不是最终 token？
+11. 为什么 causal mask 是 Attention 路径的声明，而 prefix invariance 才是整个 Decoder block 的行为不变量？
 
 ## 小结
 
-Decoder-only 用 causal mask 与 next-token objective 把一个 Transformer stack 变成通用条件生成模型。训练时 shifted targets 提供所有位置的监督，推理时模型必须逐步生成并追加 token。
+Decoder-only 用 causal factorization、Attention 路径上的 causal mask 与 next-token objective，把一个 Transformer stack 变成通用条件生成模型；完整 stack 还必须满足 prefix invariance，架构声明才真正成为可验证的因果行为。训练时 shifted targets 提供所有位置的监督，推理时模型必须逐步生成并追加 token。
 
 这种统一接口简化了数据与任务表达，也把序列状态、生成串行性、Sampling 和评估复杂度带入系统。它是现代 LLM 的重要架构选择，而不是所有任务的唯一最优解。
 
@@ -264,3 +277,11 @@ Primary-source 校验入口：
 - Jacob Devlin et al., "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", 2018: https://arxiv.org/abs/1810.04805
 - Colin Raffel et al., "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer", 2019: https://arxiv.org/abs/1910.10683
 - ReGuLaR（teacher-guided variational latent reasoning；Status: Experimental）: https://arxiv.org/abs/2601.23184
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-24898:start -->
+- `SF-2026-ARXIV-2606-24898` — Daily `2026-06-13`；primary `arXiv:2606.24898v1`；Books review `books-review:SF-2026-ARXIV-2606-24898`。
+
+  **已吸收的语义增量：** Looped LM 的dense per-loop cross-entropy只控制readout可见变量；RMSNorm/LayerNorm隐藏radial scale时，recurrent residual仍携带scale，必须让scale对loss可见或从recurrence移除。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-24898:end -->

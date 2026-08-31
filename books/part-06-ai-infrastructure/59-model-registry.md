@@ -113,6 +113,33 @@ Artifact store 保存大对象，Registry 保存 metadata 与引用：
 
 把大权重存进 Registry database 会使 metadata control plane 被数据传输拖垮；只存 URI 而没有 digest，又无法验证内容未被替换。合理设计是 URI + content digest + provenance + access policy。
 
+### 物理共享不能合并逻辑模型身份
+
+少量、彼此独立的 checkpoint 直接保存完整副本，恢复路径最短，也最容易验证。一个 base model 派生出大量
+同源 fine-tuning checkpoint 后，完整复制会把重复 tensor 同时放大为容量、传输和缓存压力。Artifact Store
+可以在 bytes 层引入 family clustering、tensor/chunk-level dedup 与 lossless delta compression，但这不改变
+Registry 的逻辑对象：
+
+```text
+logical model revision
+→ base / delta lineage
+→ content digest and authorization
+→ physical chunks shared by the artifact store
+→ independent materialization and hash verification
+→ deployment reference / rollback target
+```
+
+<!-- semantic-body-binding:SF-2025-ZIPLLM-STORAGE:start -->
+物理 dedup owner 只能决定 bytes 怎样共享；Registry 仍保存每个逻辑模型的 identity、base/delta lineage、
+完整性 hash、访问策略和可独立 materialize 的恢复路径。删除 base 或共享 chunk 前必须证明所有引用均可恢复，
+否则一次存储优化会同时破坏多个 deployment revision。
+<!-- semantic-body-binding:SF-2025-ZIPLLM-STORAGE:end -->
+
+收益是减少容量和传输，代价是 clustering 误判、base deletion、恢复放大、加密/量化不兼容和跨租户侧信道。
+family 相似性不稳定、license/tenant boundary 不允许共享，或独立恢复比容量更重要时，完整 checkpoint 仍是正确
+分支。公开实验只覆盖作者披露的 Hugging Face model families 与编码组合，不能外推到任意 encrypted、quantized
+或受不同授权约束的 artifact。
+
 Kubeflow 官方当前也明确 Model Registry/Hub 是 passive metadata repository，不是主动 control plane。部署 controller 可以读取 Registry 决策，但 Registry 不应自行创建 GPU workloads。
 
 ## 一次 Promotion 的状态转换
@@ -141,6 +168,29 @@ registered
 - domain-specific metadata 允许扩展，但需 namespace 与版本；
 - promotion gate 比 initial registration 更严格。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22875:start -->
+联邦生成模型的 ownership 证据不能只保存最终 watermark 命中；Registry 应把 watermark revision、artifact hash、client identity、训练/聚合 lineage 与泄露追踪结果绑定。它提高归责能力，却不自动证明法律所有权，也不能让watermark 检测覆盖未观测的模型变换。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22875:end -->
+
+### Distributed Model Merge 需要把 Replication 与 Merge Strategy 分层
+
+权重平均、task arithmetic 等 merge strategy 通常不满足交换、结合与幂等，直接把它们当 CRDT operation 会让消息顺序改变最终 checkpoint。更稳健的两层结构让外层 CRDT 只复制有唯一身份的贡献集合，所有 replica 再以同一排序、strategy revision 和参数执行 deterministic merge：
+
+```text
+immutable contribution IDs
+→ conflict-free replicated contribution set
+→ deterministic ordered merge strategy
+→ merged artifact + lineage
+```
+
+外层可保证相同贡献集合最终收敛，却不能证明 merge 后模型质量，也不能让非确定 kernel 自动可复现。它增加 metadata、重复计算和 contribution retention；单写者 registry 或集中式 merge 仍更简单。Promotion 必须继续由独立 evaluation 决定，而不是由 replica convergence 授权。
+
+<!-- source-family:SF-2026-ARXIV-2605-19373 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -155,6 +205,17 @@ Chapter 35 checkpoint
 
 沿 State 横线，第 55 章管理单个在线请求的 KV ownership 与 handoff，本章切换到跨运行长期存在的 artifact identity、revision 和 promotion state；第 75 章再把被授权的 artifact、evidence 与当前任务输入组装为一次调用的 working state。三者分别位于 request、asset 与 invocation 边界。
 
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22593 -->
+registry 的 release authority 不是 package presence；必须测量谁能发布、撤回、覆盖 metadata，以及 registry mediator 是否保留身份和审计链。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；公开 registry metadata 只能观察可见 authority，不证明离线凭据、组织流程或未披露 compromise。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+## 从机制演进到系统设计
+
+Registry 从保存权重文件演进为模型交付身份图：base、adapter、tokenizer、data/objective、checkpoint、quantization、runtime compatibility、evaluation evidence 和 deployment decision 必须可追溯。规模化 PEFT 进一步说明，一个 base 可以对应大量租户 adapter，版本和访问边界不能只靠文件名表达。
+
+更完整的 lineage 支持复现、promotion 和 rollback，却增加元数据一致性与存储治理成本。缺少兼容性或 evidence 的 artifact 只能处于 candidate 状态，不能被 registry 的“已注册”误解为“可生产发布”；简单目录仍可用于本地实验，但不承担跨团队 release authority。
+
 ## 自检问题
 
 1. 为什么 object storage 路径不能作为模型身份？
@@ -167,26 +228,6 @@ Chapter 35 checkpoint
 ## 小结
 
 Model Registry 让模型从一组文件变成有身份、有来源、有证据、可发布和可回滚的资产。它连接 Part IV 的 checkpoint 与 Part V 的 runtime artifact，但保持 metadata control plane 的被动边界。
-
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22593 -->
-registry 的 release authority 不是 package presence；必须测量谁能发布、撤回、覆盖 metadata，以及 registry mediator 是否保留身份和审计链。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；公开 registry metadata 只能观察可见 authority，不证明离线凭据、组织流程或未披露 compromise。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- recovered-daily-20260623:PLATFORM-MODEL-REGISTRY:start -->
-## 2026-06-23 evidence integration — PLATFORM-MODEL-REGISTRY
-
-相邻章 `books/part-06-ai-infrastructure/60-training-operator.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22875**：FedOT: Ownership Verification and Leakage Tracing via Watermarks for Federated LDMs 的 exact-v1 机制为：In this paper, we propose FedOT, the first framework for ownership verification and leakage tracing in federated LDMs. 因此 把 ownership/provenance 证据与 artifact hash、client identity 和泄露追踪绑定。 该 family 的 failure pressure 是：However, FL requires sharing the global model with multiple participants, which risks unauthorized model distribution or resale by malicious clients. 披露的 evaluation signal 是：Extensive experiments demonstrate that FedOT achieves superior performance in both ownership verification and traceability. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22875` — primary `arXiv:2606.22875v1`; Method=`arXiv:2606.22875v1 — §3.1 FedOT Framework; §3.2 Watermark Design and Training; §0.A.1 Federated LDMs and Threat Model`; Evaluation=`arXiv:2606.22875v1 — §0.C.2 Analysis of LVT`; non-proof=`arXiv:2606.22875v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：However, FL requires sharing the global model with multiple participants, which risks unauthorized model distribution or resale by malicious clients. 披露的 evaluation signal 是：Extensive experiments demonstrate that FedOT achieves superior performance in both ownership verification and traceability. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:PLATFORM-MODEL-REGISTRY:end -->
 
 ## Review notes
 
@@ -201,3 +242,30 @@ Primary-source 与官方入口：
 - MLflow Model Registry workflow: https://mlflow.org/docs/latest/ml/model-registry/workflow
 - MinT（managed adapter/policy revision lifecycle；作者系统边界）:
   https://arxiv.org/abs/2605.13779
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22875` — primary `arXiv:2606.22875v1`; Method=`arXiv:2606.22875v1 — §3.1 FedOT Framework; §3.2 Watermark Design and Training; §0.A.1 Federated LDMs and Threat Model`; Evaluation=`arXiv:2606.22875v1 — §0.C.2 Analysis of LVT`; non-proof=`arXiv:2606.22875v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：However, FL requires sharing the global model with multiple participants, which risks unauthorized model distribution or resale by malicious clients. 披露的 evaluation signal 是：Extensive experiments demonstrate that FedOT achieves superior performance in both ownership verification and traceability. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260623:PLATFORM-MODEL-REGISTRY:start -->
+### 2026-06-23 evidence integration — PLATFORM-MODEL-REGISTRY
+
+相邻章 `books/part-06-ai-infrastructure/60-training-operator.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22875**：FedOT: Ownership Verification and Leakage Tracing via Watermarks for Federated LDMs 的 exact-v1 机制为：In this paper, we propose FedOT, the first framework for ownership verification and leakage tracing in federated LDMs. 因此 把 ownership/provenance 证据与 artifact hash、client identity 和泄露追踪绑定。 该 family 的 failure pressure 是：However, FL requires sharing the global model with multiple participants, which risks unauthorized model distribution or resale by malicious clients. 披露的 evaluation signal 是：Extensive experiments demonstrate that FedOT achieves superior performance in both ownership verification and traceability. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:PLATFORM-MODEL-REGISTRY:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21787:start -->
+- `SF-2026-ARXIV-2606-21787` — Daily `2026-06-20`；primary `arXiv:2606.21787v1`；Books review `books-review:SF-2026-ARXIV-2606-21787`。
+
+  **已吸收的语义增量：** 模型 artifact 的 semantic fingerprint 应与文件 hash、版本和部署证据并存，用于识别行为差异而非替代 lineage
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21787:end -->

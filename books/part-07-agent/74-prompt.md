@@ -121,6 +121,12 @@ owner and rollout status
 
 修改一个词也可能改变行为，因此需要 offline regression、canary、rollback 与 observability。Prompt evaluation 必须覆盖 task success、format、safety、tool choice、latency 和 token cost，而非只比较少量漂亮回答。
 
+<!-- source-family:SF-2026-ARXIV-2605-27784 -->
+
+当多个 system、project、user 与 tool instruction 同时出现时，仅靠文本顺序和人工 review 解析 precedence，在规则少且冲突罕见时足够；规则增长后，同一组局部合理约束可能不存在共同可满足解，或只在某些输入上冲突。可执行的 prompt specification 可以先把候选约束编译成逻辑谓词，用 SAT/SMT 类检查发现 collision，生成最小 witness，并把选择的 resolution profile 绑定到部署版本。
+
+形式检查拥有的是“抽取后约束是否一致”，不是自然语言意图真值。抽取错误、开放世界知识与概率行为仍需 regression、canary 和人工判断；过度形式化也会抬高维护成本。短 prompt 仍可直接审阅，只有多层 policy、重复继承与高代价冲突出现时，才值得用 executable spec 提前暴露不一致，并让 witness 成为可复现测试，而不是把求解器当作模型行为保证。
+
 ### 追加规则容易，可逆地删除规则很难
 
 长期维护的 Prompt、`AGENTS.md` 或 procedural skill 往往从一次次局部失败中追加规则。每次追加都可能
@@ -184,9 +190,31 @@ threshold/judge noise、multiplier oscillation、Prompt overfitting 和 constrai
 threshold、holdout 与 rollback 都明确时成立，下一阶段压力是处理相互冲突约束、反馈漂移和线上不可逆动作，而不是
 让 rewriter 获得更多 authority。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-13449:start -->
+repository instruction 文件是可执行 control surface；评价必须区分规则存在、被读取、进入 context、被遵守与最终 outcome。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-13449:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-20512:start -->
+repository guidance 从静态 README/AGENTS 文本变为 probe-and-refine：运行 coding agent，定位失败 step，再在固定 step budget 内修改 guidance 并跨模型验证；repo owner 持有发布/回滚，过拟合时保留旧指导。代价是 probe 成本和 benchmark leakage。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-20512:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-26356:start -->
+把模块间指令干扰作为可测试的组合边界，而非默认隔离；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-26356:end -->
+
 ## 本章在知识树中的位置
 
 第 73 章交付 platform identity、policy 与 security。Prompt 是 Agent runtime 的第一个可变输入，但它只是一部分；下一章讨论 Context 如何在有限 token budget 中选择、排序并组装 Prompt、历史、检索结果和工具状态。
+
+## 从机制演进到系统设计
+
+Prompt 从临时文本演进成影响行为和权限边界的版本化输入 artifact。system instruction、task data、retrieved evidence 与 tool result必须保留来源和优先级，不能因为拼接到同一 Context 就获得同等 authority。
+
+模板化和自动优化提高复用，却增加 injection、版本漂移和隐式 policy 变化。Prompt 只能提出行为约束，真实授权仍由 Tool/Workflow/Platform执行；高风险请求或来源冲突时，应缩小能力、请求澄清或拒绝，而不是让更长提示词代替 enforcement。
 
 ## 自检问题
 
@@ -201,16 +229,6 @@ threshold、holdout 与 rollback 都明确时成立，下一阶段压力是处�
 ## 小结
 
 Prompt 是概率模型的运行时接口，可以表达任务和软约束，却不能承担确定执行和权限隔离。下一章把它放入完整 Context assembly，研究有限上下文如何成为 Agent 的工作状态。
-
-<!-- recovered-daily-20260625:AGENT-PROMPT:start -->
-## 2026-06-25 evidence integration — AGENT-PROMPT
-
-- **SF-2026-ARXIV-2606-26356**：`Instruction Bleed formulation; prompt-composed module interference` 所定义的源特定机制用于把模块间指令干扰作为可测试的组合边界，而非默认隔离；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Prompt/module families tested do not establish universal isolation or adversarial robustness` 是 `Instruction Bleed: Cross-Module Interference in Prompt-Composed Agentic Systems` 的 source-specific 反例/局限边界；若运行条件离开 `Cross-module interference experiments and mitigations` 的验证域，`AGENT-PROMPT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-26356**：Primary `arXiv:2606.26356v1`；Method `https://arxiv.org/html/2606.26356v1 — §Instruction Bleed formulation; prompt-composed module interference`；Evaluation `https://arxiv.org/html/2606.26356v1 — §Cross-module interference experiments and mitigations`；未证明边界 `https://arxiv.org/html/2606.26356v1 — §Prompt/module families tested do not establish universal isolation or adversarial robustness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:AGENT-PROMPT:end -->
 
 ## Review notes
 
@@ -227,3 +245,32 @@ Primary-source 入口：
   https://arxiv.org/abs/2608.11079
 - CAPO / DCAPO（Status: Experimental；constraint-residual-driven Prompt search）:
   https://arxiv.org/abs/2608.16068
+
+### Daily integration evidence trace
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26356**：Primary `arXiv:2606.26356v1`；Method `https://arxiv.org/html/2606.26356v1 — §Instruction Bleed formulation; prompt-composed module interference`；Evaluation `https://arxiv.org/html/2606.26356v1 — §Cross-module interference experiments and mitigations`；未证明边界 `https://arxiv.org/html/2606.26356v1 — §Prompt/module families tested do not establish universal isolation or adversarial robustness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260625:AGENT-PROMPT:start -->
+### 2026-06-25 evidence integration — AGENT-PROMPT
+
+- **SF-2026-ARXIV-2606-26356**：`Instruction Bleed formulation; prompt-composed module interference` 所定义的源特定机制用于把模块间指令干扰作为可测试的组合边界，而非默认隔离；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Prompt/module families tested do not establish universal isolation or adversarial robustness` 是 `Instruction Bleed: Cross-Module Interference in Prompt-Composed Agentic Systems` 的 source-specific 反例/局限边界；若运行条件离开 `Cross-module interference experiments and mitigations` 的验证域，`AGENT-PROMPT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:AGENT-PROMPT:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13449:start -->
+- `SF-2026-ARXIV-2606-13449` — Daily `2026-06-12`；primary `arXiv:2606.13449v1`；Books review `books-review:SF-2026-ARXIV-2606-13449`。
+
+  **已吸收的语义增量：** repository instruction 文件是可执行 control surface；评价必须区分规则存在、被读取、进入 context、被遵守与最终 outcome
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13449:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20512:start -->
+- `SF-2026-ARXIV-2606-20512` — Daily `2026-06-19`；primary `arXiv:2606.20512v1`；Books review `books-review:SF-2026-ARXIV-2606-20512`。
+
+  **已吸收的语义增量：** `Probe-and-Refine Tuning of Repository Guidance for Coding Agents` 路由到 `AGENT-PROMPT`：repository guidance 从静态 README/AGENTS 文本变为 probe-and-refine：运行 coding agent，定位失败 step，再在固定 step budget 内修改 guidance 并跨模型验证；repo owner 持有发布/回滚，过拟合时保留旧指导。代价是 probe 成本和 benchmark leakage。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20512:end -->

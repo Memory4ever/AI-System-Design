@@ -266,6 +266,12 @@ Generalization asks: where does that computation remain valid?
 
 第 6 章将引入 Transformer 作为一种更适合上下文交互和规模化训练的架构，第 7 章讨论扩大数据、参数和算力时 loss 的经验规律，第 8 章再讨论这些表示如何表现为广泛能力。Part IV 的数据与训练章节、第 66 章 Evaluation System 与后续 Observability，都建立在本章的分布边界上。
 
+## 从机制演进到系统设计
+
+模型内部表示从“能重构某个概念”走向“能被独立监督读出并在新 probe 上稳定复现”时，证据强度才真正上升。语言化解释、activation correlation 与 reconstruction score 可以提出候选机制，却不能单独证明模型在任务中使用了该表示；需要把 decodability、intervention、fresh-probe monitoring 与外部行为结果分开。
+
+更强的诊断提高可解释性，也会引入 probe capacity、label leakage 与 observer effect。解释器无法跨分布复现或 intervention 不改变行为时，应回退为相关性证据而不是因果结论；模型学到的表示仍由 data、objective 与 architecture 共同限定。
+
 ## 自检问题
 
 1. 为什么把神经网络当作“每个神经元存一条知识”的数据库会失败？
@@ -305,3 +311,11 @@ Generalization asks: where does that computation remain valid?
   https://transformer-circuits.pub/2025/attribution-graphs/methods.html
 - Transformers Converge to Invariant Algorithmic Cores（basis-invariant functional comparison；
   Status: Experimental）: https://arxiv.org/abs/2602.22600
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-20379:start -->
+- `SF-2026-ARXIV-2607-20379` — Daily `2026-07-23`；primary `arXiv:2607.20379v1`；Books review `books-review:SF-2026-ARXIV-2607-20379`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: reconstruction-scored verbalizer -> independent claim audit -> externally supervised decodability plus fresh-probe monitoring 该 delta 已进入 `books/part-01-worldview/05-what-neural-networks-learn.md#L174`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-20379:end -->

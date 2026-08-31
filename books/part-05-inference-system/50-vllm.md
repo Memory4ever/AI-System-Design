@@ -335,6 +335,12 @@ KV Cache
 
 vLLM 是从单个推理优化走向 production serving engine 的关键节点。
 
+## 从机制演进到系统设计
+
+vLLM 这类 engine 的职责从单一 CUDA Serving 扩展到多 backend 后，执行身份必须包含 compiler/runtime version、dispatch target 与真实 kernel path。平台声明“允许使用某 accelerator”不能替代 observed dispatch receipt，否则性能和正确性都无法归因。
+
+更多 backend 提高可移植性，却增加 feature gap、fallback silence 与 profile drift。目标设备或 kernel 未被运行时证据确认时，应回到已验证 backend 或明确标记 CPU/GPU fallback；framework 名称本身不拥有硬件执行事实。
+
 ## 自检问题
 
 1. 为什么 vLLM 不能只理解为 PagedAttention？
@@ -392,3 +398,11 @@ Primary-source 校验入口：
   https://github.com/vllm-project/vllm/pull/32618
 - OasisKV（sparse off-HBM working-set prefetch；Status: Experimental）:
   https://arxiv.org/abs/2608.08097
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17090:start -->
+- `SF-2026-ARXIV-2606-17090` — Daily `2026-06-13`；primary `arXiv:2606.17090v1`；Books review `books-review:SF-2026-ARXIV-2606-17090`。
+
+  **已吸收的语义增量：** Apple ANE runtime 的执行身份必须绑定 macOS/ANE compiler版本与实际dispatch target；direct graph/program路径才能区分“允许调度到ANE”与“确认在ANE执行”。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17090:end -->

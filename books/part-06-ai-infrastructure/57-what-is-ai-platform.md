@@ -154,6 +154,12 @@ Part VII Agent runtime and action governance
 
 Part VI 将逐步展开平台的具体控制面：Kubeflow 展示生命周期组件如何组合，Registry 管理资产，Operator 管理 workload，KServe 与 Gateway 管理服务入口，GPU Scheduler 管理稀缺资源，Evaluation 把目标转化为发布证据，最后由 observability、cost、tenancy 和 security 闭合治理。
 
+## 从机制演进到系统设计
+
+AI Platform 的演进起点是共享脚本和集群资源；随着 artifact、训练、Serving、Evaluation 与 Agent 状态相互依赖，平台必须分离 declarative desired state、runtime observed state 和 evidence-backed release decision。Controller 可以协调生命周期，却不能把资源就绪冒充模型质量或业务完成。
+
+统一控制面提高复用和治理能力，也增加 schema、migration、reconciliation 与 blast radius。小团队或一次性实验仍可使用更薄的脚本路径；进入多租户和生产后，所有自动动作都应有 identity、policy、receipt 与 rollback。
+
 ## 自检问题
 
 1. 为什么统一 UI 不等于 AI Platform？
@@ -166,16 +172,6 @@ Part VI 将逐步展开平台的具体控制面：Kubeflow 展示生命周期组
 ## 小结
 
 AI Platform 的本质是统一 identity、state、policy 和 feedback，使模型生命周期从个人操作变成组织能力。下一章以 Kubeflow 为例，观察这组抽象如何建立在 Kubernetes reconciliation 之上，以及为什么一个生态不能自动等同于一个完整平台。
-
-<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:start -->
-## 2026-06-25 evidence integration — PLATFORM-FOUNDATIONS
-
-- **SF-2026-ARXIV-2606-25532**：`Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought` 所定义的源特定机制用于把硬件约束和发现链纳入平台设计候选的验收边界；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Exact-v1 research-prototype and evaluated hardware-design boundary` 是 `Agentic evolution of physically constrained foundation models` 的 source-specific 反例/局限边界；若运行条件离开 `Hardware-compliance evaluation and discovered-system validation` 的验证域，`PLATFORM-FOUNDATIONS` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25532**：Primary `arXiv:2606.25532v1`；Method `https://arxiv.org/html/2606.25532v1 — §Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought`；Evaluation `https://arxiv.org/html/2606.25532v1 — §Hardware-compliance evaluation and discovered-system validation`；未证明边界 `https://arxiv.org/html/2606.25532v1 — §Exact-v1 research-prototype and evaluated hardware-design boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:end -->
 
 ## Review notes
 
@@ -190,3 +186,18 @@ Primary-source 与官方入口：
 - Kubeflow architecture: https://www.kubeflow.org/docs/started/architecture/
 - Kubernetes controllers: https://kubernetes.io/docs/concepts/architecture/controller/
 - Team Topologies, platform as a product: https://teamtopologies.com/key-concepts
+
+### Daily integration evidence trace
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25532**：Primary `arXiv:2606.25532v1`；Method `https://arxiv.org/html/2606.25532v1 — §Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought`；Evaluation `https://arxiv.org/html/2606.25532v1 — §Hardware-compliance evaluation and discovered-system validation`；未证明边界 `https://arxiv.org/html/2606.25532v1 — §Exact-v1 research-prototype and evaluated hardware-design boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:start -->
+### 2026-06-25 evidence integration — PLATFORM-FOUNDATIONS
+
+- **SF-2026-ARXIV-2606-25532**：`Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought` 所定义的源特定机制用于把硬件约束和发现链纳入平台设计候选的验收边界；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Exact-v1 research-prototype and evaluated hardware-design boundary` 是 `Agentic evolution of physically constrained foundation models` 的 source-specific 反例/局限边界；若运行条件离开 `Hardware-compliance evaluation and discovered-system validation` 的验证域，`PLATFORM-FOUNDATIONS` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:end -->

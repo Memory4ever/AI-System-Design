@@ -142,6 +142,15 @@ Coverage recall 与 Candidate admission 是两个不同阶段。全量枚举、C
 ledger，以 `pre-denominator closure` 逐项记录 identity、日期和 family-specific 理由；不接受 Score V2，
 也不进入 Source Review。Score V2 只决定已经入池候选的审阅深度，绝不能反向承担候选筛选。
 
+冻结分母前还必须核验 primary source 的公开状态。若 arXiv、正式 publisher 或 Review Authority 明确标记
+`withdrawn`、`removed` 或等价撤回状态，该 revision 直接在 screening ledger 以
+`pre-denominator closure = withdrawn_primary_source` 闭合：只保留 identity、first-public date、权威状态来源、
+撤回日期（若披露）与原因原文的短释义，不进入 Candidate Ledger，不打 Score V2，不生成 Source Review、
+Deep Analysis、Books Comparison、Materials Request 或 Books marker。后续新 revision 只有在拥有独立公开版本身份、
+可访问正文且真实 first-public window 重新归属后，才能作为新的 revision node 评估；不得用后续版本复活已撤回
+revision 的 selected 记录。若撤回发生在报告完成后，应重开真实 owner Report，删除其 retained/selected/blocked
+链路并重算 denominator、receipt 与 Gate，而不是把 withdrawal 当成全文访问 blocker。
+
 冻结前必须由 fresh-context reviewer 同时检查 proposed retained 的 false positive 和 pre-denominator
 closures 的 false negative。审计不得只抽样，也不得以预设保留比例代替逐项判断。
 

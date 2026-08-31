@@ -218,6 +218,10 @@ uncertainty proxy 的受限补充，并展示了较早失败检测与多样本�
 自动升级为第 77 章的长期 Memory。跨任务写入仍需要 source、scope、confidence、expiry
 和 supersession policy。
 
+### 先显式采样 Belief，再决定 Answer、Clarify 或 Abstain
+
+直接从单次 hidden state 判断是否回答，问题清晰且模型校准时成本最低；歧义对话中，单一路径会隐藏竞争解释。Reflection owner 可以先采样 K 个 belief hypothesis，再依据分歧选择回答、澄清或 abstain。收益是把 epistemic branch 变成可检查状态，代价是 K 倍采样和 aggregation bias；样本高度相关、模拟用户或 judge 偏置时，分歧并不代表真实不确定性，应回退规则澄清或人工处理。exact-v1 只支持 BAG 的所测数据、模型和模拟评估，不证明 belief samples 是真实 posterior。<!-- source-family:SF-2026-ARXIV-2605-25831 -->
+
 ## Reflection 与 Retry 的区别
 
 Retry 对相同 operation 再执行，适合 transient failure；Reflection 修改 candidate/plan 后再尝试，适合可诊断缺陷。
@@ -245,9 +249,31 @@ Reflexion 风格系统会保存 linguistic feedback。只有当 feedback 与 tas
 
 只报告 final success 会隐藏十倍调用成本和失败样本选择偏差。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-11543:start -->
+Skill 的目录组织本身会改变资源读取与有效采用轨迹；Progressive Disclosure 必须以知识等价变体、trajectory evidence 与 verifier outcome 联合评测。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-11543:end -->
+
+### Reflection 的停止条件需要 Typed Epistemic State
+
+递归反思如果只问“答案是否更好”，很容易在同一证据上改写措辞而不增加信息。每轮应输出 typed epistemic state：哪些 claim 已有证据、哪些存在冲突、哪一步缺 observation，以及新的 proposal 相对前一轮缩小了多少 order gap。这个 gap 只能作为 local diagnostic；truth 仍由 evidence gate 决定。
+
+停止策略同时受证据增益、预算与最大迭代数约束。gap 不再下降、验证器反复冲突或预算耗尽时，系统应返回当前已证实部分并暴露未知，必要时转人工，而不是无限递归。固定轮数在低风险、成本敏感任务中仍是有效上限；typed state 的价值是让停止原因可解释，而不是保证找到真相。
+
+<!-- source-family:SF-RECURSIVE-STATE-TERMINATION -->
+
 ## 本章在知识树中的位置
 
 Planning 产生预期路径，Reflection 消费实际反馈并修正。下一章 Workflow 将两者放入 durable state machine，确保 retries、approvals、timeouts 和 side effects 在进程失败后仍有一致语义。
+
+## 从机制演进到系统设计
+
+Reflection 从生成一段自评文字演进到可治理的 skill/strategy revision 后，candidate lesson、decision history、held-out evaluation、rejected alternative、promotion 与 rollback 必须分离。随机 masking 或新任务 slice可以估计某条 skill 的增量价值，但 verifier 与 policy 不能在同一证据上共同漂移。
+
+持久反思提高跨任务复用，却会引入自证偏差、skill dependency、权限扩散和错误经验固化。held-out 失败、因果贡献不稳定或新任务回退时，应拒绝 promotion、恢复旧 skill 或交还人工；短任务的一次反思仍只是一条候选诊断。
 
 ## 自检问题
 
@@ -284,3 +310,47 @@ Primary-source 入口：
   https://arxiv.org/abs/2601.23188
 - Reflective Test-Time Planning（reflection-guided parameter adaptation；Status: Experimental）:
   https://arxiv.org/abs/2602.21198
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08671:start -->
+- `SF-2026-ARXIV-2606-08671` — Daily `2026-06-08`；primary `arXiv:2606.08671v1`；Books review `books-review:SF-2026-ARXIV-2606-08671`。
+
+  **已吸收的语义增量：** SkillHone 为 skill revision 保留 decision history、evaluation 与 rejected alternatives，使后续 agent 能解释、回退和继续演化持久技能。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08671:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11543:start -->
+- `SF-2026-ARXIV-2606-11543` — Daily `2026-06-11`；primary `arXiv:2606.11543v1`；Books review `books-review:SF-2026-ARXIV-2606-11543`。
+
+  **已吸收的语义增量：** Skill 的目录组织本身会改变资源读取与有效采用轨迹；Progressive Disclosure 必须以知识等价变体、trajectory evidence 与 verifier outcome 联合评测。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11543:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14629:start -->
+- `SF-2026-ARXIV-2606-14629` — Daily `2026-06-13`；primary `arXiv:2606.14629v1`；Books review `books-review:SF-2026-ARXIV-2606-14629`。
+
+  **已吸收的语义增量：** Self-improving VLM 的 verifier 更新必须与 policy update 分离，并用 held-out new-task slice 与 rollback gate 防止 verifier在旧任务提升时对新任务回退。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14629:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15390:start -->
+- `SF-2026-ARXIV-2606-15390` — Daily `2026-06-14`；primary `arXiv:2606.15390v1`；Books review `books-review:SF-2026-ARXIV-2606-15390`。
+
+  **已吸收的语义增量：** Skill library 应用随机 masking 估计 per-skill causal effect，并对每任务只暴露有正贡献的最小集合。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15390:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16496:start -->
+- `SF-2026-ARXIV-2606-16496` — Daily `2026-06-16`；primary `arXiv:2606.16496v1`；Books review `books-review:SF-2026-ARXIV-2606-16496`。
+
+  **已吸收的语义增量：** experience reflection 只有在 candidate lesson、held-out validation 与 promotion 分离时才是可控演进；生成的反思不能直接覆盖运行策略
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16496:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16523:start -->
+- `SF-2026-ARXIV-2606-16523` — Daily `2026-06-16`；primary `arXiv:2606.16523v1`；Books review `books-review:SF-2026-ARXIV-2606-16523`。
+
+  **已吸收的语义增量：** Agent skill registry 需要 lineage、executable evaluation、dependency/permission metadata 与更新治理，不能把可检索文本集合称为 living skill infrastructure
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16523:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16774:start -->
+- `SF-2026-ARXIV-2606-16774` — Daily `2026-06-16`；primary `arXiv:2606.16774v1`；Books review `books-review:SF-2026-ARXIV-2606-16774`。
+
+  **已吸收的语义增量：** 开放 skill 搜索应维护 collective tree、可复现 rollout evidence 与 promotion/pruning，而不是把一次成功轨迹直接写成全局 skill
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16774:end -->

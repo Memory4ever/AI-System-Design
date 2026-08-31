@@ -195,6 +195,12 @@ KV Cache
 
 PagedAttention 是从 KV Cache 进入 LLM runtime 内存管理的关键节点。
 
+## 从机制演进到系统设计
+
+PagedAttention 从解决连续 KV 分配碎片，演进到 prefix sharing、copy-on-write 与可编程 sparse index 后，page table 成为请求可见性的状态边界。Agent workload 可以通过索引选择减少读取，但 kernel 只能执行已声明的 sparse pattern，不能证明被跳过的信息不重要。
+
+更灵活的分页和稀疏读取降低 HBM 浪费，却增加 metadata、index drift、共享隔离和数值验证成本。pattern 未校准、请求高风险或 page identity 不一致时，应回到 dense attention 或私有 KV；分页优化继续保持模型语义不变这一基本合同。
+
 ## 自检问题
 
 1. 为什么为每个请求预留最大 KV Cache 会浪费显存？
@@ -221,3 +227,11 @@ Primary-source 校验入口：
   decoding scope）: https://arxiv.org/abs/2608.13263
 
 本轮 Review 补充了 internal/external fragmentation 的边界，并明确 PagedAttention 通过 KV capacity 间接影响吞吐。论文中的设计与当前 vLLM 实现不能视为完全同一版本；本章保留机制不变量，具体 block manager 与 kernel 行为应以目标版本文档和代码为准。
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06453:start -->
+- `SF-2026-ARXIV-2606-06453` — Daily `2026-06-05`；primary `arXiv:2606.06453v1`；Books review `books-review:SF-2026-ARXIV-2606-06453`。
+
+  **已吸收的语义增量：** Programmable sparse-attention indexes and kernels change request-level serving state and execution for Agent workloads.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06453:end -->

@@ -235,6 +235,20 @@ Embedding X [B,T,d_model]
 
 本章负责位置机制本身。第14章使用这些位置化表示计算 Attention；第22章再讨论长度外推、计算、KV Cache 和有效利用的联合约束。
 
+## 从机制演进到系统设计
+
+### “可计算”还不等于“可唯一辨识”
+
+RoPE 在任意整数位置都能计算旋转，因此比固定 learned table 更容易延伸；但表示是否唯一还取决于频率、有限维度、token projection 和判定协议。需要分别检查 position inversion/aliasing 与 token inversion/aliasing：同一表示可能无法唯一恢复位置，也可能让不同 token-position 组合在所用 protocol 下不可区分。
+
+这个边界不是说 RoPE 必然失效，而是说多 head、多 layer 或更长公式定义本身不能自动消除表示碰撞。实际系统仍需在目标长度、dtype、频率配置和任务上验证；碰撞或行为退化时，回退训练窗口、缩放/重训、分段 Context 或显式检索。理论协议与作者 indexing 实验只限定其假设下的表示能力，不证明所有真实模型都达到最坏情形。
+
+<!-- source-family:SF-2026-ARXIV-2605-15514 -->
+
+位置表示从固定或旋转编码走向更长窗口时，必须区分静态相关、训练过程中通道如何形成，以及删除或扰动该通道后的因果效果。最终 probe 相似不等于模型真实依赖该位置通道，外推长度也不等于可用信息距离同步增加。
+
+更复杂的位置机制可以改善长度泛化，却增加数值精度、频率别名和训练—推理不一致。消融或长序列行为不稳定时，应回到已训练窗口、分段 Context 或显式检索；绝对、相对、RoPE 与 ALiBi 仍是不同 workload 下的条件分支。
+
 ## 自检问题
 
 1. 为什么没有位置机制的 Self Attention 对输入排列具有对称性？
@@ -265,3 +279,11 @@ Primary-source 校验入口：
 - Peter Shaw, Jakob Uszkoreit, Ashish Vaswani, "Self-Attention with Relative Position Representations", 2018: https://arxiv.org/abs/1803.02155
 - Jianlin Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding", 2021: https://arxiv.org/abs/2104.09864
 - Christopher Schröder et al., "When Attention Goes Blind: Numerical Failure in ALiBi Positional Encodings"（Status: Experimental）, 2026: https://arxiv.org/abs/2608.03994
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21249:start -->
+- `SF-2026-ARXIV-2606-21249` — Daily `2026-06-20`；primary `arXiv:2606.21249v1`；Books review `books-review:SF-2026-ARXIV-2606-21249`。
+
+  **已吸收的语义增量：** 位置表示的训练动力学需要区分静态相关、训练演化与因果消融，最终 probe 相似度不能证明模型真的使用该位置通道
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21249:end -->

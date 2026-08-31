@@ -185,6 +185,32 @@ chosen/rejected likelihood 与独立行为评估，不能因为目标函数在�
 旧的单一 `beta` 在固定数据、固定 optimizer 且已有充分 sweep 的场景仍更简单；只有跨 scale 迁移、自动调度或需要解释
 policy displacement 时，分离两种 scale 才值得增加新的配置与校准状态。
 
+### 从对称 Pair Gradient 到 Probability-geometry Gate
+
+Vanilla DPO 假设每个 retained pair 都应推动 chosen/rejected margin。数据经过充分审校、pair preference 与 reference
+policy 的局部改进方向一致时，这一旧方案简单且可复现；但 pair 只表达相对偏好，并不保证它对当前 policy 的 chosen
+与 rejected 概率同时产生期望方向。直接累积所有梯度，可能主要压低 rejected，甚至让 chosen likelihood 一起下降。
+
+因此可以把 rejected response 的 probability geometry 作为 **update sensor**：当负梯度继续作用于已经处在极低概率
+区域的 response、容易放大 valley collapse 时，显式 gate 衰减 rejected-gradient magnitude；其他区域仍保留标准
+preference update。最后仍由 optimizer 在同一 checkpoint、batch 和 learning-rate contract 内提交更新。Gate 调制的
+是 rejected 方向的梯度流，不拥有“偏好是否真实”的判决权，也不是对整条 pair 做 gradient-conflict admission。
+
+```text
+preference pair + reference identity
+→ rejected-response probability geometry
+→ gated rejected-gradient magnitude
+→ bounded optimizer update
+→ chosen likelihood, margin, KL and task evaluation
+```
+
+它用额外梯度统计、阈值校准与潜在 selection bias 换稳定性；错误 gate 可能丢掉困难但有效的 preference，batch-level
+统计也可能掩盖 subgroup conflict。高质量、同分布数据或 gate 不能可靠校准时，原始 DPO 加独立 likelihood/KL 监控
+仍是更清楚的基线。现有 exact-v1 实验支持若干架构与 preference datasets 上的条件现象，不证明对任意 optimizer、
+数据噪声或长期行为都更优。
+
+<!-- source-family:SF-GRADIENT-GATED-DPO -->
+
 ## DPO 移除了什么系统复杂度
 
 Fine-tuning loop 不再需要：
@@ -240,6 +266,22 @@ DPO 只要求 chosen 相对 rejected 的 policy/reference margin 增大。某些
 
 ## 工程数据流
 
+### DPO 的分布式身份不止是梯度归约
+
+单机集中式 pair dataset 下，把 DPO 看成普通 mini-batch 优化是合理的；进入 federated/decentralized topology 后，client preference distribution、reference/policy revision、local drift、communication round 与 graph connectivity 会共同决定 objective/run identity。协议 owner 必须保存这些状态，并约束何时聚合、何时拒绝 stale update；通信层不能把它们压成无来源的平均梯度。
+
+去中心化减少集中数据搬运，却引入 non-IID 偏好、拓扑断连、版本漂移与更难复算的 campaign。连接或版本契约失效时，应暂停聚合并回退到可追溯的集中式 pair snapshot。`arXiv:2605.20696v1` 的 §3 与 §7、Appendix E/F 只支持其图拓扑和实验设置；§8 不证明任意 federated DPO 都能获得集中式质量或隐私保证。
+
+<!-- source-family:SF-2026-ARXIV-2605-20696 -->
+
+### Online Discovery 与 Offline Preference Update 可以分权
+
+纯 online GRPO 让 rollout 与 update 紧耦合，在奖励稀疏、探索昂贵时成本很高；纯 offline DPO 成本稳定，却只能消费已有覆盖。一条条件分支让 online 阶段只发现 informative state/rollout，并冻结 provenance-complete preference dataset，再由 offline DPO 拥有后续 update。Handoff 必须绑定生成 policy、reward/evaluator、采样条件、pair 构造与冻结时间。
+
+它以较少在线更新换取 selection bias、dataset staleness 与二阶段 objective mismatch；覆盖退化时应恢复在线采样或人工数据修复，不能继续消费陈旧 pairs。`arXiv:2605.21266v1` 的 iterative/hybrid Method 与 §4 实验只支持作者流程；§6、Appendix B 不证明该拆分普遍优于端到端 online RL。
+
+<!-- source-family:SF-2026-ARXIV-2605-21266 -->
+
 ```text
 pair dataset
 -> tokenize shared prompt + chosen/rejected
@@ -264,6 +306,12 @@ SFT reference policy
 ```
 
 本章收束第 31～34 章：RLHF 定义 preference pipeline，PPO/GRPO 是在线 policy optimization，DPO 是离线 pairwise 路线。下一章转向所有训练阶段共同依赖的 Checkpoint 状态。
+
+## 从机制演进到系统设计
+
+DPO 把 online rollout 与 critic 移出主路径后，训练状态集中到 preference pair、reference policy、beta 与 campaign history。重复 campaign 说明“保留旧能力”与“积累下一轮如何训练的知识”不是一件事，strategy/evaluator memory 需要独立版本；preference noise 与 update scale 也必须拆开诊断。
+
+更薄的运行时换来对数据覆盖、reference identity 和 beta 的更高敏感度。chosen probability 下降、噪声主导或 campaign 间目标冲突时，应回到 SFT、人工数据修复或 online PPO/GRPO；DPO 是偏好优化的条件分支，不是 RLHF 的无条件替代。
 
 ## 自检问题
 
@@ -295,3 +343,23 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2608.27032v1
   - 证据边界：论文支持有限 `beta > 0` 下的 argmin equivalence、`beta -> 0` 连续端点及作者模型/数据上的
     optimization/KL 现象；不证明有限步 trajectory、所有 optimizer 或所有 preference distribution 下都更优。
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-GRADIENT-GATED-DPO:start -->
+- `SF-GRADIENT-GATED-DPO` — Daily `2026-05-05`；primary `arXiv:2605.02626v1`；Books review `books-review:SF-GRADIENT-GATED-DPO`。
+
+  **已吸收的语义增量：** DPO 对 chosen/rejected 使用对称 sequence-level coefficient，但极低概率 rejected region 可能发生 destructive squeezing；probability-geometry gate 只调制 rejected-gradient magnitude，preference truth 与最终 optimizer commit 仍由独立数据和训练合同拥有。
+<!-- daily-books-trace:SF-GRADIENT-GATED-DPO:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21089:start -->
+- `SF-2026-ARXIV-2606-21089` — Daily `2026-06-18`；primary `arXiv:2606.21089v1`；Books review `books-review:SF-2026-ARXIV-2606-21089`。
+
+  **已吸收的语义增量：** 重复 DPO campaign 的 checkpoint 链需要另存 strategy/evaluator memory；保留旧能力不等于积累了如何训练下一 campaign 的科学知识。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21089:end -->
+
+<!-- daily-books-trace:SF-2026-DPO-SCALE-SEPARATION:start -->
+- `SF-2026-DPO-SCALE-SEPARATION` — Daily `2026-08-28`；primary `arXiv:2608.27032v1`；Books review `books-review:SF-2026-DPO-SCALE-SEPARATION`。
+
+  **已吸收的语义增量：** 拆开 preference-noise 与 update scale。
+<!-- daily-books-trace:SF-2026-DPO-SCALE-SEPARATION:end -->

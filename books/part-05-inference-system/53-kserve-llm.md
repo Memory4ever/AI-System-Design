@@ -175,6 +175,12 @@ vLLM / SGLang / TensorRT-LLM
 
 第52章从 distributed runtime 内部观察 request/state/control paths，本章从 Kubernetes control plane 观察同一能力如何声明和收敛。第54章回到所有 topology 共享的硬约束：GPU memory budget。
 
+## 从机制演进到系统设计
+
+LLM Serving topology 从固定 model Pod 演进到 base-plus-extension 与复合 model graph 后，控制面需要表达共享 base、按请求装载的 adapter/extension、named walks、loop/stream 与 component placement。声明式 topology 拥有 desired state，runtime 才拥有实际 cache、walk 与执行状态。
+
+更灵活的 graph 提高复用，却增加 extension compatibility、placement、冷启动和动态循环治理。graph 无法冻结、extension 身份不明或 controller 不支持恢复时，应回到固定 stage DAG 或独立 deployment；第 61 章继续拥有通用服务资源生命周期。
+
 ## 自检问题
 
 1. Deployment + Service 为什么不足以表达所有 LLM topology？
@@ -207,3 +213,17 @@ Official entry points：
 - KServe dependencies: https://kserve.github.io/website/docs/model-serving/generative-inference/llmisvc/llmisvc-dependencies
 - Gateway API Inference Extension: https://gateway-api-inference-extension.sigs.k8s.io/
 - InferencePool API: https://gateway-api-inference-extension.sigs.k8s.io/api-types/inferencepool/
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09643:start -->
+- `SF-2026-ARXIV-2606-09643` — Daily `2026-06-09`；primary `arXiv:2606.09643v1`；Books review `books-review:SF-2026-ARXIV-2606-09643`。
+
+  **已吸收的语义增量：** extensible foundation model serving 需要把 base weights 与 extension state 虚拟化：共享公共层、按请求装载/组合扩展，并由 placement/cache 控制其生命周期。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09643:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12688:start -->
+- `SF-2026-ARXIV-2606-12688` — Daily `2026-06-11`；primary `arXiv:2606.12688v1`；Books review `books-review:SF-2026-ARXIV-2606-12688`。
+
+  **已吸收的语义增量：** 复合多模态模型的 serving contract 应从固定 stage DAG 演进为 model graph + named walks，显式支持 seq/parallel/loop/dynamic-loop/stream 与 component placement。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12688:end -->

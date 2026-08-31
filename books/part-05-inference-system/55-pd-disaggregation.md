@@ -90,6 +90,19 @@ t_transfer
 
 长 prompt 同时提高两侧：它增加 co-location interference 的潜在收益，也增大 handoff bytes。不能只用“prompt 很长”得出必须分离。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-01708:start -->
+即使不改变 KV 数值，也可以利用其表示冗余降低 transfer bytes。普通通用压缩 codec 容易维护，却可能让编码/解码吞吐和临时 buffer 进入关键路径；一种受限分支针对浮点 KV 的 exponent redundancy 使用固定 dense code，并把无法编码的值放入 sparse escape stream。它保持 bit-exact handoff，因此不改变 Decode correctness owner，但要求 destination 在消费前重建并校验同一 tensor identity。
+
+codec 是否值得启用应按完整 handoff 结算：
+
+```text
+compression gain on exact KV bytes
+> encode + decode + metadata + small-payload fixed overhead
+```
+
+长、连续 payload 更可能摊薄固定成本；短 chunk、低并发或高速本地互联可能反而更慢。codebook、escape layout、dtype、block shape 与 codec version 都要进入 transfer identity，任何 decode/CRC 不匹配都回退未压缩精确传输。作者受限结果只能支持其披露模型、精度和链路，不能把压缩率外推成 PD goodput。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-01708:end -->
+
 ### 从 Full Transfer 到 Demand-corrected Selective Transfer
 
 Full KV transfer 在链路充足时仍是最清楚的 baseline。受 profile 支持时，可以先 proactive 发送预测重要的 exact KV；Decode consumption 作为最终 demand signal，并行修复缺失 entry，再用 early-decode behavior 做 bounded speculative prefetch。Importance drift、metadata、remote-fetch tail 与 wasted transfer 是新增代价；低负载或 prediction 不稳时必须回到 full transfer。
@@ -236,6 +249,13 @@ decode；installed-hardware reuse、elasticity、failure isolation、tail behavi
 漂移仍未被证明。它是对前述 conditional factorization 的 `Direct Refinement`，不是证明 A/F
 disaggregation 应成为默认部署。
 
+### Model Switch 不能把 Weight State 与 Request State 混成一次迁移
+
+固定为每个模型保留一组常驻实例，在模型集合小、HBM 充足时最可靠；多模型与 MIG 分区并存后，重复装载 weights 会让切换时间支配请求延迟。C2C 路径可以在设备分区间转移权重或复用已驻留副本，使 model switch 不必经 host reload，但 control owner 必须分别跟踪 weight revision/residency、KV/request state 与 MIG topology：前者可共享，后两者仍需逐请求交接。收益是降低切换停顿，代价是 C2C 带宽竞争、拓扑依赖和 stale-weight 风险；小模型、低切换频率或无隔离 DMA 时，独立常驻/host load 仍是更清楚的 fallback。
+
+<!-- source-family:SF-2026-ARXIV-2605-19481 -->
+exact-v1 §III–V 只证明论文的 C2C weight/state 路径，§VI–VII 的 MIG/hardware 结果不证明任意设备、模型或 KV 迁移都能获得相同收益。
+
 ## xPyD Capacity 不是固定比例
 
 设有 `x` 个 Prefill workers、`y` 个 Decode workers。稳定运行要求长期 arrival work 不超过两池可持续 capacity，并避免 handoff queue 无界增长：
@@ -296,6 +316,10 @@ Power plane 可以约束节点总预算，但 request/KV ownership 仍由 servin
 模型需跨多 GPU 或 role shift 很慢时，固定 ratio/统一 cap 更简单。单节点、小模型、特定 GPU 与 trace
 上的实验不能外推到 rack/facility 协调；跨节点还要处理 power-domain failure、network contention 与
 多模型公平性。
+
+### Diffusion Serving 的角色切分不是 LLM P/D 的直接复制
+
+把 diffusion 请求放在同构实例同步执行，负载小且 step 数稳定时合理；生产内容管线的异步 stage、不同 model component 和弹性实例使单队列出现阻塞。Serving owner 可把去噪、条件编码与后处理的状态显式化，用异步 pipeline 和 hybrid instance scheduler 分配资源。收益是提高利用率和弹性，代价是跨 stage handoff、队列抖动与质量/版本一致性风险；流量低或拓扑简单时同构部署仍更可靠。exact-v1 只支持论文披露的 diffusion topology、硬件和质量/时延实验，不能外推到任意生成模型或 SLO。<!-- source-family:SF-2026-ARXIV-2605-25550 -->
 
 ## Handoff 状态机
 
@@ -380,6 +404,18 @@ PD 分离是从单机 runtime 优化走向集群级 serving architecture 的关�
 
 沿 Communication 横线，本章把第 36～40 章面向稳定 rank groups 的 tensor communication 转换为 request-scoped KV state transfer；第 63 章再从平台控制面确保 source、destination 与 network topology 的 placement 可行。这是语义变化与分层依赖，不是 collective library 的版本演进。
 
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22541 -->
+MoE prefill 不应把 attention、expert dispatch 与 communication 绑成同步 barrier；ASAP 以 PD disaggregation 和 asynchronous expert pipeline 重排控制流，但必须保存请求/segment/expert state identity。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；结论绑定 CANN8.3、PyTorch2.1、特定 MoE/硬件与 workload；异步 stale/misroute 或 SLO slack 耗尽时必须退回同步/隔离路径。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+
+## 从机制演进到系统设计
+
+P/D 分离从固定两池演进到网络、KV tier、MoE expert、power 与 accelerator 都参与的条件化切分后，handoff state 必须绑定 request、segment、KV format、precision、pool epoch 与 fabric path。Spectrum/heterogeneous/async 分支分别移动字节、角色与 barrier，但都不能改变已提交 token 语义。
+
+分离可改善阶段利用率，却增加传输、量化、拥塞 externality、pool ratio 与 failure recovery。handoff 成本超过计算收益、共享 fabric 饱和或 state identity 不一致时，应回到 colocated serving、固定角色或重算；P/D/A/F 是共存分支，不是层层取代。
+
 ## 自检问题
 
 1. Prefill 和 Decode 的资源画像为什么不同？
@@ -400,11 +436,6 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 
 第56章将收束这些选择：scheduler 怎样在 phase、memory、locality、SLO 与成本之间做分层决策。
 
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22541 -->
-MoE prefill 不应把 attention、expert dispatch 与 communication 绑成同步 barrier；ASAP 以 PD disaggregation 和 asynchronous expert pipeline 重排控制流，但必须保存请求/segment/expert state identity。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；结论绑定 CANN8.3、PyTorch2.1、特定 MoE/硬件与 workload；异步 stale/misroute 或 SLO slack 耗尽时必须退回同步/隔离路径。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
 
 ## Review notes
 
@@ -439,3 +470,67 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2607.02043
 
 后续定稿需结合目标版本的 vLLM / SGLang / Dynamo 等系统，区分论文设计、实验性能力与生产支持，不从某一实现反推 PD 分离的通用定义。
+
+### Daily Books delta trace（2026-06—08）
+
+- `2026-05-04 / SF-2026-ARXIV-2605-01708` — exact-v1 `arXiv:2605.01708v1`；正文只吸收 bit-exact codec 与完整 handoff critical-path 结算，未外推压缩率为服务 goodput。
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08635:start -->
+- `SF-2026-ARXIV-2606-08635` — Daily `2026-06-08`；primary `arXiv:2606.08635v1`；Books review `books-review:SF-2026-ARXIV-2606-08635`。
+
+  **已吸收的语义增量：** SpectrumKV 将 PD 之间的 KV 传输从 token keep/drop 二元决策改为 per-token mixed precision，使网络字节、量化误差与重算成为同一控制面。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08635:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-10493:start -->
+- `SF-2026-ARXIV-2606-10493` — Daily `2026-06-10`；primary `arXiv:2606.10493v1`；Books review `books-review:SF-2026-ARXIV-2606-10493`。
+
+  **已吸收的语义增量：** 在 Decode 章节补一段本地 MoE 的 CPU–GPU ownership：stream-loaded prefill、node-local PD separation 与 dual-batch overlap；保留 5090/AVX-512 边界及 30s/20 tok/s 只是论文 reference goals。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-10493:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13708:start -->
+- `SF-2026-ARXIV-2606-13708` — Daily `2026-06-11`；primary `arXiv:2606.13708v1`；Books review `books-review:SF-2026-ARXIV-2606-13708`。
+
+  **已吸收的语义增量：** Remote-memory indirection 可用 memory-side NIC 上预注册、静态可验证的 compact ISA 执行，把依赖链从多 RTT 收敛为一次 request。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13708:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17081:start -->
+- `SF-2026-ARXIV-2606-17081` — Daily `2026-06-12`；primary `arXiv:2606.17081v1`；Books review `books-review:SF-2026-ARXIV-2606-17081`。
+
+  **已吸收的语义增量：** PD disaggregation controller应联合感知P/D pool、hierarchical KV cache与routing congestion的externality，并在saturation knee后切换cache affinity/load balance
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17081:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17104:start -->
+- `SF-2026-ARXIV-2606-17104` — Daily `2026-06-15`；primary `arXiv:2606.17104v1`；Books review `books-review:SF-2026-ARXIV-2606-17104`。
+
+  **已吸收的语义增量：** accelerator evaluation必须拆开Prefill TTFT与Decode TPOT/throughput，并把batch/network条件带入heterogeneous PD placement决策
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17104:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16264:start -->
+- `SF-2026-ARXIV-2606-16264` — Daily `2026-06-16`；primary `arXiv:2606.16264v1`；Books review `books-review:SF-2026-ARXIV-2606-16264`。
+
+  **已吸收的语义增量：** disaggregated serving 的 multiplexing 应联合 admission、prefill/decode placement 与 per-request SLO slack，避免局部利用率吞噬 tail budget
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16264:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-01617:start -->
+- `SF-2026-ARXIV-2607-01617` — Daily `2026-07-03`；primary `arXiv:2607.01617v1`；Books review `books-review:SF-2026-ARXIV-2607-01617`。
+
+  **已吸收的语义增量：** 新增证据边界：When PD KV transfer and decode collectives share a fabric, software scheduling cannot eliminate head-of-line interference. Mapping the two traffic classes to physically distinct link domains can protect the handoff critical path, but it spends packaging area, thermal/yield budget and topology flexibility; it remains an architecture-specific branch rather than a default PD requirement. 该 delta 已进入 `books/part-05-inference-system/55-pd-disaggregation.md#L97`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-01617:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-01831:start -->
+- `SF-2026-ARXIV-2607-01831` — Daily `2026-07-03`；primary `arXiv:2607.01831v1`；Books review `books-review:SF-2026-ARXIV-2607-01831`。
+
+  **已吸收的语义增量：** 新增证据边界：A PD handoff need not wait for the last exact KV byte before doing any work. A progressive protocol can transmit an approximate low-bit view first, execute speculatively, then verify and correct against later refinements. It converts transfer latency into provisional computation, but requires generation identity, verification authority, rollback/correction and an exact commit frontier. 该 delta 已进入 `books/part-05-inference-system/55-pd-disaggregation.md#L112`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-01831:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-02043:start -->
+- `SF-2026-ARXIV-2607-02043` — Daily `2026-07-03`；primary `arXiv:2607.02043v1`；Books review `books-review:SF-2026-ARXIV-2607-02043`。
+
+  **已吸收的语义增量：** 新增证据边界：Static PD role boundaries can waste decode headroom while prefill queues violate TTFT. A controller may deflect chunked prefill onto decode workers only when a calibrated per-step model proves remaining TBT slack, with safety margin and fallback. This improves temporary capacity matching but couples estimation error, stale state and fairness to both SLOs. 该 delta 已进入 `books/part-05-inference-system/55-pd-disaggregation.md#L250`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-02043:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28150:start -->
+- `SF-2026-ARXIV-2607-28150` — Daily `2026-07-31`；primary `arXiv:2607.28150v1`；Books review `books-review:SF-2026-ARXIV-2607-28150`。
+
+  **已吸收的语义增量：** 新增证据边界：Profiled proactive transfer, decode demand fetch and speculative prefetch cooperate; low load falls back to full transfer. 该 delta 已进入 `books/part-05-inference-system/55-pd-disaggregation.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28150:end -->

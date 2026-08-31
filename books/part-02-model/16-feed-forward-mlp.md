@@ -167,6 +167,12 @@ SwiGLU(X) = SiLU(X W_gate) elementwise_mul (X W_up)
 
 Gate 允许模型根据当前 token state 动态调节哪些 candidate features 通过。代价是多一个 `d_model x d_ff` projection，因此实际模型常调整 `d_ff`，在参数预算下比较，而不是保持所有维度不变。
 
+这个乘法不能只解释成“多一个 gate”。非 gated FFN 依靠 activation 后的加性组合，GLU 则让两条可学习分支共同决定局部 kernel 与 conditioning，因而改变训练可达的函数区域。旧 FFN 在参数、kernel 与稳定性预算更紧时仍是合理基线；gated 分支获得更强的条件交互，却增加 projection、初始化耦合和执行成本，conditioning 变差时应回退非 gated FFN 或缩小 gate branch。
+
+`arXiv:2605.20749v1` 的 §4 分析与 §3.3、§5、Appendix C 实验只支持 NTK/two-layer 及作者规模下的可达性差异；§6 不证明 SwiGLU 在所有深度、优化器或硬件上都更优。
+
+<!-- source-family:SF-2026-ARXIV-2605-20749 -->
+
 ## 参数量与 FLOPs
 
 忽略 bias，标准两层 MLP 参数量约为：

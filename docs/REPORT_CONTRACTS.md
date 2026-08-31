@@ -125,6 +125,10 @@ Historical Weekly 才能执行 Delta Audit。Delta Audit 的 `Previous Denominat
 本表只承载已经通过 `RESEARCH_CONTRACT.md §4.2` admission 的候选及其同层级 closure 动作。Coverage
 screening ledger 中的 `pre-denominator closure` 不得复制进本表，不打 Score V2，也不计入 Candidate
 Denominator。`closure_only` 是“已入池后经评分与审阅得到关闭处置”，不是 title/abstract 阶段的拒绝项。
+权威来源已标记 `withdrawn / removed` 的 revision 必须在 screening 阶段用
+`withdrawn_primary_source` 闭合；Candidate Ledger、Source Review、Deep Analysis、Books Decision 与
+Materials Request 中不得继续保留该 revision。撤回状态本身只出现在 Coverage receipt / screening closure，
+用于解释 raw identity 为什么没有进入 denominator。
 
 <!-- validator:candidate-ledger-v2.1 -->
 | Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |

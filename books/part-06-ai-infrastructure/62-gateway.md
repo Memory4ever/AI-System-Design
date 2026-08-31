@@ -130,9 +130,32 @@ request_latency
 
 它还应传播 trace context 与 request identity，让后端 metrics/logs/traces 可关联。高层路由不能只消费瞬时 GPU utilization，应使用经过聚合、带 freshness 和 fallback 的 signals，避免控制环振荡。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-13968:start -->
+跨local/HPC/cloud推理要分离auth/job-dispatch control channel与encrypted token-stream data channel，并让tier routing/context summarization成为显式policy。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-13968:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16358:start -->
+LLM API router 的 plaintext authority 应收缩到 client-attested enclave；auth/scheduling/accounting 可留在 untrusted host，但目的地必须绑定 measured image。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16358:end -->
+
 ## 本章在知识树中的位置
 
 本章连接 KServe service desired state 与实际请求流量，并把租户、SLO 和观测信号送往 Serving data plane。下一章继续向下进入 cluster resource plane：GPU Scheduler 如何为 training 与 inference Pods 分配真正稀缺且具有拓扑的设备。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22560 -->
+第三方 LLM gateway 不能仅返回 provider name；每次路径选择要生成 evidence-bound provenance，绑定 policy、provider endpoint、fallback、请求版本与可验证 receipt。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；只覆盖受测 gateway/provider；receipt 证明公开路径与策略执行，不证明 provider 内部模型或隐藏处理。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+## 从机制演进到系统设计
+
+Gateway 从认证与负载均衡入口演进到跨站点、跨 provider 和 Agent protocol 的策略控制点后，routing decision 必须绑定 model/provider identity、capability、queue/runtime、WAN state、privacy policy、session 与 receipt。Gateway 可以选择路径，却不能同时拥有不可验证的明文和执行 authority。
+
+集中策略提高复用与治理，却增加 session stickiness、transport translation、enclave attestation 和单点 blast radius。receipt、身份或重试幂等性无法证明时，应回到直连、固定 provider 或人工批准；engine scheduler 继续拥有 token work，GPU scheduler 继续拥有 Pod placement。
 
 ## 自检问题
 
@@ -146,12 +169,6 @@ request_latency
 ## 小结
 
 Gateway 将外部流量转化为带身份、协议、配额和可观测上下文的内部请求。它可以借助 EPP 做 inference-aware endpoint selection，但不进入 token iteration。下一章转向更慢、更稀缺的资源决策：GPU placement。
-
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22560 -->
-第三方 LLM gateway 不能仅返回 provider name；每次路径选择要生成 evidence-bound provenance，绑定 policy、provider endpoint、fallback、请求版本与可验证 receipt。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；只覆盖受测 gateway/provider；receipt 证明公开路径与策略执行，不证明 provider 内部模型或隐藏处理。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
 
 ## Review notes
 
@@ -167,3 +184,41 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 - KServe control plane: https://kserve.github.io/website/docs/concepts/architecture/control-plane
 - Scalable LLM Agent Tool Access in the Cloud（MCP gateway、authorized discovery 与 session-owner routing；Status: Experimental）:
   https://arxiv.org/abs/2607.15593v1
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13968:start -->
+- `SF-2026-ARXIV-2606-13968` — Daily `2026-06-12`；primary `arXiv:2606.13968v1`；Books review `books-review:SF-2026-ARXIV-2606-13968`。
+
+  **已吸收的语义增量：** 跨local/HPC/cloud推理要分离auth/job-dispatch control channel与encrypted token-stream data channel，并让tier routing/context summarization成为显式policy
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13968:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15050:start -->
+- `SF-2026-ARXIV-2606-15050` — Daily `2026-06-14`；primary `arXiv:2606.15050v1`；Books review `books-review:SF-2026-ARXIV-2606-15050`。
+
+  **已吸收的语义增量：** 跨站点 LLM 路由必须联合 GPU DCGM、vLLM queue/runtime 与 WAN RTT/jitter，并把 replica lifecycle 与 capability constraint 放进 placement state。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15050:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15822:start -->
+- `SF-2026-ARXIV-2606-15822` — Daily `2026-06-15`；primary `arXiv:2606.15822v1`；Books review `books-review:SF-2026-ARXIV-2606-15822`。
+
+  **已吸收的语义增量：** agentic routing中gateway不能同时拥有明文与不可验证转发authority；应以三方TLS、privacy-preserving query construction和verifiable billing分拆trust
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15822:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16358:start -->
+- `SF-2026-ARXIV-2606-16358` — Daily `2026-06-16`；primary `arXiv:2606.16358v1`；Books review `books-review:SF-2026-ARXIV-2606-16358`。
+
+  **已吸收的语义增量：** LLM API router 的 plaintext authority 应收缩到 client-attested enclave；auth/scheduling/accounting 可留在 untrusted host，但目的地必须绑定 measured image
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16358:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17949:start -->
+- `SF-2026-ARXIV-2606-17949` — Daily `2026-06-17`；primary `arXiv:2606.17949v1`；Books review `books-review:SF-2026-ARXIV-2606-17949`。
+
+  **已吸收的语义增量：** 异构 serving gateway 应联合选择 model 与具体 replica，把质量/成本约束和 queue/load state 放入同一 routing decision；先选模型再盲目 LB 会丢失耦合。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17949:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-15593:start -->
+- `SF-2026-ARXIV-2607-15593` — Daily `2026-07-18`；primary `arXiv:2607.15593v1`；Books review `books-review:SF-2026-ARXIV-2607-15593`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct MCP client-to-server connectivity does not scale to heterogeneous transports, large tool catalogs, centralized policy and stateful failover. A gateway can own protocol translation, identity-bound visibility, deterministic retrieval and session placement, but the session identifier and routing state become correctness-critical distributed state. 该 delta 已进入 `books/part-06-ai-infrastructure/62-gateway.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-15593:end -->

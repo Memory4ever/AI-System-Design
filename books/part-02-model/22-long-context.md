@@ -576,6 +576,29 @@ history 与外部 authoritative store 仍然合理。模型只负责提出 aggre
 
 厂商或模型卡声明的最大长度只能作为兼容入口，不能代替这些证据。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+#### Draft Attention 可以提供稀疏候选，但 Target 仍拥有语义
+
+直接由 target model 计算 dense attention 最容易保持原模型语义；当长上下文 pair compute 成为主瓶颈，可以复用较便宜 draft model 的 attention 作为 target 稀疏 admission mask，再只计算被选中的 target attention。这里 draft 只拥有候选连接，target projection、target KV 与最终输出仍是 authoritative state：
+
+```text
+draft attention pattern
+→ bounded sparse candidate mask
+→ target Q/K/V computation on admitted pairs
+→ target-owned output
+```
+
+这种路径避免重新训练 target，却引入 selector false negative、draft/target 分布漂移和稀疏 kernel 成本。mask 未覆盖关键 token、draft revision 不匹配或稀疏度不足以摊销控制开销时，应扩大候选集或回退 dense attention；作者速度与精度结果只属于其披露模型、长度、稀疏度和 evaluator，不能外推为通用长上下文收益。
+
+<!-- source-family:SF-2026-ARXIV-2605-15508 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16310:start -->
+MLA 的 post-projection QK RMSNorm 可拆为可吸收到权重的静态部分与逐 token/group 动态标量，从而保留 latent-KV decode path。该变换减少额外状态，却要求数值等价、RoPE 与量化路径共同验证；不满足时继续显式执行 normalization。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16310:end -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -592,6 +615,31 @@ Position Encoding
 沿 Memory 横线，本章首先暴露 sequence length 对 activation 与 KV capacity 的联合压力；第 35、39 章分别处理训练状态的持久化与分片，第 45、47、52、54、55 章则处理在线 KV 的生命周期、placement、tiering、总预算与跨池移动。这是一组 memory-category 分支，不是一条状态格式的继承链。
 
 至此 Part II 已回答“一个文本 token 如何变成答案”。进入训练之前，还需处理一个不能被文本主线顺带解决的边界：图像、视频、音频、environment state 与 action 如何获得带 time、modality 和 provenance 的 representation contract；不同生成范式又怎样定义 mutable state 与 commit。Part III 因而先从第23章进入多模态表示，再沿生成、World Model 到具身行动。Part IV 从第27章“数据”开始，回答这些能力怎样由数据和优化产生。
+
+### Immutable Task Prefix 与 Recent Reasoning State 可以分治
+
+Sliding window 丢弃最旧 token，在局部依赖主导时简单有效；Agent reasoning 却常同时依赖开头的 system/task
+contract 与最新工作状态。一个更有条件的分支固定保留不可变 task prefix，只让中间推理历史滑出，并保持
+RoPE position 与 KV identity 连续：
+
+```text
+immutable task / system prefix
++ recent reasoning window
+→ bounded attention state
+→ continued absolute positions
+→ next reasoning step
+```
+
+训练也必须模拟同一可见性：长序列只对末端窗口计算 loss，并让 prefix 与 recent window 共同提供条件。它用
+bounded KV 和 tile skipping 换取中间证据丢失、tool output 淹没窗口与更复杂 kernel/mask；短生成、需要精确
+回看完整轨迹或 task prefix 会变化时，完整 Context 或 retrieval/compression 仍更合理。Prefix Sliding 的结果
+绑定 Qwen3 1.7B/7B、单 H100 与特定 window，不能外推任意模型或生产 serving。
+
+## 从机制演进到系统设计
+
+Long Context 的第一阶段是扩大可见窗口，随后压力依次转移到位置外推、Prefill 二次复杂度、KV 容量和信息利用率。因而后续方案不是同一条速度排行榜，而是多条条件分支：稀疏 selector 减少读取，sliding/prefix policy 保留不同类型的历史，recurrent 或 parametric state 把跨段信息迁出显式 token window。
+
+这些机制共同要求 context state 带有位置、可见性、预算、更新规则和 fallback identity。更小的状态换来更低 memory/compute，却会引入 selector drift、中间证据丢失、写入污染和训练—推理可见性不一致。需要完整回看、selector 未校准或状态语义变化时，应回退 dense context、检索或更大 KV；位置扩展本身不能证明模型真正利用了远距离证据。
 
 ## 自检问题
 
@@ -613,63 +661,6 @@ Position Encoding
 Long Context 不是一个模型参数，而是一组联合约束。位置机制决定远距离关系能否表达，Attention 决定 Prefill 成对计算，KV Cache 决定 Decode 状态容量与带宽，训练与 Evaluation 决定模型能否真正利用信息。
 
 不同方案只移动特定瓶颈：位置扩展、IO 优化、稀疏连接、分布执行、cache 压缩与检索各有不同失败模式。正确决策必须同时看质量、延迟、并发和成本。
-
-### Immutable Task Prefix 与 Recent Reasoning State 可以分治
-
-Sliding window 丢弃最旧 token，在局部依赖主导时简单有效；Agent reasoning 却常同时依赖开头的 system/task
-contract 与最新工作状态。一个更有条件的分支固定保留不可变 task prefix，只让中间推理历史滑出，并保持
-RoPE position 与 KV identity 连续：
-
-```text
-immutable task / system prefix
-+ recent reasoning window
-→ bounded attention state
-→ continued absolute positions
-→ next reasoning step
-```
-
-训练也必须模拟同一可见性：长序列只对末端窗口计算 loss，并让 prefix 与 recent window 共同提供条件。它用
-bounded KV 和 tile skipping 换取中间证据丢失、tool output 淹没窗口与更复杂 kernel/mask；短生成、需要精确
-回看完整轨迹或 task prefix 会变化时，完整 Context 或 retrieval/compression 仍更合理。Prefix Sliding 的结果
-绑定 Qwen3 1.7B/7B、单 H100 与特定 window，不能外推任意模型或生产 serving。
-
-<!-- recovered-daily-20260623:MODEL-LONG-CONTEXT:start -->
-## 2026-06-23 evidence integration — MODEL-LONG-CONTEXT
-
-相邻章 `books/part-02-model/21-moe.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22874**：SpotAttention: Plug-In Block-Sparse Routing for Pretrained Long-Context Transformers 的 exact-v1 机制为：We present SpotAttention, a lightweight selector that attaches to a frozen pretrained transformer and learns by KL distillation to estimate its attention distribution. 因此 把稀疏选择器、token/KV identity、预算和 dense fallback 纳入请求状态。 该 family 的 failure pressure 是：Sparse attention cuts these costs by attending only to a relevant subset of past tokens, but selecting that subset is itself expensive. 披露的 evaluation signal 是：Quantizing the selector's K-cache to INT4 or FP4 microscale shrinks it 3.5x at no accuracy cost. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22874` — primary `arXiv:2606.22874v1`; Method=`arXiv:2606.22874v1 — §SpotAttention: Plug-In Block-Sparse Routing for Pretrained Long-Context Transformers; §Method; §2.1 Selector architecture`; Evaluation=`arXiv:2606.22874v1 — §Evaluation.; §Analysis and ablations; §Empirical shape gap.`; non-proof=`arXiv:2606.22874v1 — §Conclusion`; fallback=该 family 的 failure pressure 是：Sparse attention cuts these costs by attending only to a relevant subset of past tokens, but selecting that subset is itself expensive. 披露的 evaluation signal 是：Quantizing the selector's K-cache to INT4 or FP4 microscale shrinks it 3.5x at no accuracy cost. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:MODEL-LONG-CONTEXT:end -->
-
-<!-- recovered-daily-20260624:MODEL-LONG-CONTEXT:start -->
-## 2026-06-24 evidence integration — MODEL-LONG-CONTEXT
-
-相邻章 `books/part-02-model/13-position-encoding.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-25156**：长上下文设计从单一 accuracy 目标改为 retrieval、likelihood、short-context quality、decode state 与 kernel cost 的 Pareto；Polar direction/magnitude channel 配 gated-delta recurrent state。 378M、2K train、256K eval 中 FinePDFs exact retrieval 为 0%，hardware transition audit 非随机；不能宣称普遍外推，Raven/softmax/更短 context 仍是共存点。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-25156: `arXiv:2606.25156v1`; exact-v1 URL=`https://arxiv.org/html/2606.25156v1`; Method=`https://arxiv.org/html/2606.25156v1 — §3 Methodology; Polar Attention; Gated-Delta Memory`; Evaluation=`https://arxiv.org/html/2606.25156v1 — §4 Experimental Setup; 5 Results; C Complete Sweep`; Non-proof=`378M、2K train、256K eval 中 FinePDFs exact retrieval 为 0%，hardware transition audit 非随机；不能宣称普遍外推，Raven/softmax/更短 context 仍是共存点。`; Artifact=`https://github.com/kreasof-ai/atma`
-<!-- recovered-daily-20260624:MODEL-LONG-CONTEXT:end -->
-
-<!-- recovered-daily-20260625:MODEL-LONG-CONTEXT:start -->
-## 2026-06-25 evidence integration — MODEL-LONG-CONTEXT
-
-- **SF-2026-ARXIV-2606-25342**：`Parametric Attention and Lifelong In-Context Learning formulation` 所定义的源特定机制用于把跨段记忆从隐式上下文提升为可更新的长期参数状态，并由模型路径决定写入与读取；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Discussion; finite-memory and task-family limitations` 是 `Lifelong In-Context Learning with Transformers Requires Parametric Forms of Attention` 的 source-specific 反例/局限边界；若运行条件离开 `Experiments; Lifelong sequence results` 的验证域，`MODEL-LONG-CONTEXT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25342**：Primary `arXiv:2606.25342v1`；Method `https://arxiv.org/html/2606.25342v1 — §Parametric Attention and Lifelong In-Context Learning formulation`；Evaluation `https://arxiv.org/html/2606.25342v1 — §Experiments; Lifelong sequence results`；未证明边界 `https://arxiv.org/html/2606.25342v1 — §Discussion; finite-memory and task-family limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:MODEL-LONG-CONTEXT:end -->
 
 ## Review notes
 
@@ -726,3 +717,104 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2602.24281
 - TTT with KV Binding（test-time update as conditional linear-attention state；Status: Experimental）:
   https://arxiv.org/abs/2602.21204
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22874` — primary `arXiv:2606.22874v1`; Method=`arXiv:2606.22874v1 — §SpotAttention: Plug-In Block-Sparse Routing for Pretrained Long-Context Transformers; §Method; §2.1 Selector architecture`; Evaluation=`arXiv:2606.22874v1 — §Evaluation.; §Analysis and ablations; §Empirical shape gap.`; non-proof=`arXiv:2606.22874v1 — §Conclusion`; fallback=该 family 的 failure pressure 是：Sparse attention cuts these costs by attending only to a relevant subset of past tokens, but selecting that subset is itself expensive. 披露的 evaluation signal 是：Quantizing the selector's K-cache to INT4 or FP4 microscale shrinks it 3.5x at no accuracy cost. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-25156: `arXiv:2606.25156v1`; exact-v1 URL=`https://arxiv.org/html/2606.25156v1`; Method=`https://arxiv.org/html/2606.25156v1 — §3 Methodology; Polar Attention; Gated-Delta Memory`; Evaluation=`https://arxiv.org/html/2606.25156v1 — §4 Experimental Setup; 5 Results; C Complete Sweep`; Non-proof=`378M、2K train、256K eval 中 FinePDFs exact retrieval 为 0%，hardware transition audit 非随机；不能宣称普遍外推，Raven/softmax/更短 context 仍是共存点。`; Artifact=`https://github.com/kreasof-ai/atma`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25342**：Primary `arXiv:2606.25342v1`；Method `https://arxiv.org/html/2606.25342v1 — §Parametric Attention and Lifelong In-Context Learning formulation`；Evaluation `https://arxiv.org/html/2606.25342v1 — §Experiments; Lifelong sequence results`；未证明边界 `https://arxiv.org/html/2606.25342v1 — §Discussion; finite-memory and task-family limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260623:MODEL-LONG-CONTEXT:start -->
+### 2026-06-23 evidence integration — MODEL-LONG-CONTEXT
+
+相邻章 `books/part-02-model/21-moe.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22874**：SpotAttention: Plug-In Block-Sparse Routing for Pretrained Long-Context Transformers 的 exact-v1 机制为：We present SpotAttention, a lightweight selector that attaches to a frozen pretrained transformer and learns by KL distillation to estimate its attention distribution. 因此 把稀疏选择器、token/KV identity、预算和 dense fallback 纳入请求状态。 该 family 的 failure pressure 是：Sparse attention cuts these costs by attending only to a relevant subset of past tokens, but selecting that subset is itself expensive. 披露的 evaluation signal 是：Quantizing the selector's K-cache to INT4 or FP4 microscale shrinks it 3.5x at no accuracy cost. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:MODEL-LONG-CONTEXT:end -->
+
+<!-- recovered-daily-20260624:MODEL-LONG-CONTEXT:start -->
+### 2026-06-24 evidence integration — MODEL-LONG-CONTEXT
+
+相邻章 `books/part-02-model/13-position-encoding.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-25156**：长上下文设计从单一 accuracy 目标改为 retrieval、likelihood、short-context quality、decode state 与 kernel cost 的 Pareto；Polar direction/magnitude channel 配 gated-delta recurrent state。 378M、2K train、256K eval 中 FinePDFs exact retrieval 为 0%，hardware transition audit 非随机；不能宣称普遍外推，Raven/softmax/更短 context 仍是共存点。
+
+<!-- recovered-daily-20260624:MODEL-LONG-CONTEXT:end -->
+
+<!-- recovered-daily-20260625:MODEL-LONG-CONTEXT:start -->
+### 2026-06-25 evidence integration — MODEL-LONG-CONTEXT
+
+- **SF-2026-ARXIV-2606-25342**：`Parametric Attention and Lifelong In-Context Learning formulation` 所定义的源特定机制用于把跨段记忆从隐式上下文提升为可更新的长期参数状态，并由模型路径决定写入与读取；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Discussion; finite-memory and task-family limitations` 是 `Lifelong In-Context Learning with Transformers Requires Parametric Forms of Attention` 的 source-specific 反例/局限边界；若运行条件离开 `Experiments; Lifelong sequence results` 的验证域，`MODEL-LONG-CONTEXT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:MODEL-LONG-CONTEXT:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15378:start -->
+- `SF-2026-ARXIV-2606-15378` — Daily `2026-06-14`；primary `arXiv:2606.15378v1`；Books review `books-review:SF-2026-ARXIV-2606-15378`。
+
+  **已吸收的语义增量：** hybrid architecture 中 efficient attention 主要塑造 optimization，而长程 retrieval 仍主要由 full-attention layers 承担；ratio 与 positional treatment 应按该分工设计。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15378:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16310:start -->
+- `SF-2026-ARXIV-2606-16310` — Daily `2026-06-16`；primary `arXiv:2606.16310v1`；Books review `books-review:SF-2026-ARXIV-2606-16310`。
+
+  **已吸收的语义增量：** MLA 的 post-projection QK RMSNorm 可拆成可吸收的静态权重与每 token/group 动态标量，从而保留 latent KV decode path
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16310:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16429:start -->
+- `SF-2026-ARXIV-2606-16429` — Daily `2026-06-16`；primary `arXiv:2606.16429v1`；Books review `books-review:SF-2026-ARXIV-2606-16429`。
+
+  **已吸收的语义增量：** hybrid linear-attention distillation 的初始化应校准 Taylor/local response，而不是从 full-attention 权重直接复制后期待训练自行修复
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16429:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21803:start -->
+- `SF-2026-ARXIV-2606-21803` — Daily `2026-06-20`；primary `arXiv:2606.21803v1`；Books review `books-review:SF-2026-ARXIV-2606-21803`。
+
+  **已吸收的语义增量：** TTT-NTP 在推理时用 next-token prediction 写入 fast weights；write scope、chunk boundary 与 reset policy 必须成为 context state
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21803:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-02980:start -->
+- `SF-2026-ARXIV-2607-02980` — Daily `2026-07-04`；primary `arXiv:2607.02980v1`；Books review `books-review:SF-2026-ARXIV-2607-02980`。
+
+  **已吸收的语义增量：** 新增证据边界：Teacher-distilled selection keeps dense attention as semantic owner; a coexisting branch can put an approximate chunk-mass selector directly into hierarchical forward attention so next-token loss trains selection. This improves ownership alignment but adds landmark/query calibration, position-rule coupling, selector misses, union overfetch, continued-training cost and specialized sparse kernels; it remains an approximation rather than exact full attention. 该 delta 已进入 `books/part-02-model/22-long-context.md#L247`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-02980:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-07386:start -->
+- `SF-2026-ARXIV-2607-07386` — Daily `2026-07-09`；primary `arXiv:2607.07386v1`；Books review `books-review:SF-2026-ARXIV-2607-07386`。
+
+  **已吸收的语义增量：** 新增证据边界：Sparse Delta Memory replaces a fixed dense recurrent matrix with an explicit N-by-d memory table. Product keys choose a small write set and read set, and a gated delta rule changes only selected slots. Increasing N expands addressable state without increasing per-token arithmetic proportionally, but the physical table grows and leaves fast on-chip memory. 该 delta 已进入 `books/part-02-model/22-long-context.md#L374`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-07386:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-07953:start -->
+- `SF-2026-ARXIV-2607-07953` — Daily `2026-07-09`；primary `arXiv:2607.07953v1`；Books review `books-review:SF-2026-ARXIV-2607-07953`。
+
+  **已吸收的语义增量：** 新增证据边界：A common recurrent form exposes where DeltaNet/GDN/Kimi-like architectures differ in decay, update and gating rather than treating names as incomparable systems. Cross-layer error routing fails when a write residual is injected into a basis that does not share its representation; CLVR first projects the write value into an aligned hidden stream, making the added route semantically compatible. 该 delta 已进入 `books/part-02-model/22-long-context.md#L180`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-07953:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607.26448:start -->
+- `SF-2026-ARXIV-2607.26448` — Daily `2026-07-30`；primary `arXiv:2607.26448v1`；Books review `books-review:SF-2026-ARXIV-2607.26448`。
+
+  **已吸收的语义增量：** 新增证据边界：The model emits compact mergeable aggregation state so set-like queries can be combined without serializing every intermediate value back through the prompt. This trades exact raw-history access for algebraic state semantics, merge correctness and task-specific operator support; it fills a gap between token context and externally executable aggregation. 该 delta 已进入 `books/part-02-model/22-long-context.md#L529`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607.26448:end -->
+
+<!-- daily-books-trace:SF-2026-PREFIX-SLIDING:start -->
+- `SF-2026-PREFIX-SLIDING` — Daily `2026-08-27`；primary `arXiv:2608.26070v1`；Books review `books-review:SF-2026-PREFIX-SLIDING`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：永久保留 system/task prefix 与最近 reasoning window，丢弃中间 token；继续 RoPE position 复用 KV，RL 侧用约4×window context、末端 loss mask；并保留边界：LiveCodeBench 旧代码依赖受损；短生成收益小、tool output 可淹没 window；v1 时 repo 只有 README/License，无实现代码。 相邻章节对读：books/part-02-model/21-moe.md#L317;books/part-03-multimodal-world-models/23-multimodal-representation.md#L215。MoE 拥有 conditional compute，Multimodal Representation 拥有 modality identity；token-retention policy 与 context-loss boundary 属于 Long Context。
+<!-- daily-books-trace:SF-2026-PREFIX-SLIDING:end -->

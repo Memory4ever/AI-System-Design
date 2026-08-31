@@ -443,6 +443,29 @@ Delta theta represented by small trainable factors
 
 缓解方法可能包括混入部分 pretraining/domain data、降低 update magnitude、增加数据多样性、使用 adapters 或早停。但每种方法都重新定义训练分布，必须通过 multi-slice Evaluation 验证。
 
+### Forgetting Budget 可以绑定当前 Loss，而不是固定 Learning Rate
+
+固定小 learning rate 在数据与 checkpoint 接近时简单可靠；目标域 loss 变化大时，同一步长会造成不同权重位移。以 `step size × sqrt(loss)` 近似更新风险，可让 optimizer owner 随样本难度调整学习率并设置 forgetting budget。收益是减少不必要回退，代价是 bound 假设与 per-sample 噪声；估计不稳时回退统一保守 LR 和 held-out replay。<!-- source-family:SF-2026-ARXIV-2605-20005 --> exact-v1 §3–5 支持其 bound 与实验，§6 不证明该尺度对所有 optimizer/architecture 成立。
+
+checkpoint 已产生回退时，全量重训最清楚但昂贵；比较 base 与 adapted checkpoint 的 delta spectrum，可定位异常子空间并做受限 repair。它换来较低修复成本，却可能误删真正的领域适应；必须以原域/目标域双 holdout 和可回滚 delta 验收，无法分离时回退重训。<!-- source-family:SF-2026-ARXIV-2605-20296 --> exact-v1 §3–4 只证明作者的 checkpoint-delta repair，§5 不支持把频谱异常当作通用因果解释。
+
+### Replay Ratio 从固定超参数演进为可迁移 Controller
+
+固定 replay ratio 在域顺序已知、旧数据可保留且 target model 已完成小规模标定时最容易复算；continual SFT 的域难度和
+遗忘压力随 step 改变后，一个静态比例会在某些阶段浪费旧数据，在另一些阶段又保护不足。条件分支是先在较小 proxy
+model 上把当前 loss、旧域回归和历史 replay 状态编码为 controller observation，学习下一步 replay mixture，再把冻结的
+controller 迁移给更大 target。此时可执行 training state 不再只有 `dataset + ratio`，还包括 controller revision、proxy
+checkpoint、observation/action schema、reward 与 proxy-target compatibility receipt；target trainer 拥有执行 mixture 的
+权力，但不能在线悄然改写冻结 policy。
+
+这一分离用廉价 proxy exploration 换取 target 上较少的 controller-search 成本，却新增 proxy assumption：小模型上的
+forgetting dynamics、domain order 或 reward landscape 可能不能代表大模型。Controller 还可能对 proxy 噪声过拟合，固定
+后无法适应 target 的新 failure。因而迁移前要与 fixed-ratio、target-local canary 和双域 holdout 对照；compatibility 失效
+时回退保守 replay 或重新标定，而不是继续执行 stale policy。`arXiv:2606.00400v1` 的 §5–§8 只支持其披露的 proxy
+controller、transfer 与实验设置；§9 不证明任意模型尺度、域序列或安全约束都共享同一最优 replay policy。
+
+<!-- source-family:SF-2026-ARXIV-2606-00400 -->
+
 ## SFT 能否注入知识
 
 模型可能从 SFT examples 学到新事实或领域映射，但这不是可靠知识管理协议。少量参数更新可能：
@@ -480,6 +503,14 @@ Demonstration 只给出一个目标 response。它没有直接说明：
 
 ## Evaluation 应分开能力与行为
 
+### Final Answer 稳定时，Reasoning Trace 仍可能先退化
+
+只验收最终答案在产品只关心结果、且 reasoning 不被消费时是合理的；一旦 trace 被 verifier、tool router 或训练下游使用，结构可能在 answer accuracy 尚未下降前先 collapse。Evaluation owner 应分别版本化 trace validity、final outcome 与 latent capability，并把模板、长度和 evaluator revision 绑定到同一 checkpoint。
+
+多轴验收能更早发现 scaffold collapse，却增加 evaluator 偏差和对“好推理格式”的过拟合；trace 非必需或 evaluator 不可靠时，最终结果仍是主 gate，并保留隐藏能力 probe 作为受限 sensor。`arXiv:2605.21127v1` 的 §3、Appendix A、ThinkPack §4 只支持作者任务中的结构退化；§6–§8 不证明可见 trace 忠实反映模型内部推理或普遍先于能力下降。
+
+<!-- source-family:SF-2026-ARXIV-2605-21127 -->
+
 SFT 后应同时比较：
 
 - Instruction-following 与格式成功率。
@@ -490,6 +521,14 @@ SFT 后应同时比较：
 - 对 prompt phrasing 和 system policy 的鲁棒性。
 
 Training loss 只衡量对 demonstrations 的拟合。若 validation set 与训练模板高度相似，它也可能高估真实产品分布上的泛化。
+
+### SFT 也需要显式 Distribution-drift Contract
+
+标准 SFT 假设目标数据足以定义新行为，却可能在局部提升时破坏原能力。moving trust-region anchor 可以限制当前 policy 相对参考分布的漂移，并随训练阶段更新参考点；它把 catastrophic forgetting 从事后惊讶变成训练中的约束。代价是额外参考推理、anchor 选择和适应速度下降，过强约束会阻止真正需要的能力迁移。
+
+因此 anchor 必须绑定任务切片与可接受 drift，而不是一个全局距离。发生分布切换或 reference 已过时时，应重新基准或回退到更弱约束并执行完整回归。小规模、同分布微调仍可使用普通 SFT，但不能把一次 loss 下降当作原能力保持的证明。
+
+<!-- source-family:SF-STABILIZING-LLM-SUPERVISED-FINE-TUNING-VIA-EXPLICIT-DISTRIBUTIONAL-CONTR -->
 
 ## 本章在知识树中的位置
 
@@ -504,6 +543,32 @@ pretrained checkpoint
 ```
 
 本章把第 28 章的通用 next-token learner 转成可交互模型。第 30 章改变更新的参数化成本，第 31～34 章加入相对偏好，Part VII 再把 prompt、tool 与 workflow 组织成运行时协议。
+
+### 从平均拟合转向覆盖尚未学会的序列
+
+传统 SFT 重复采样全部示例，因为早期每个 token 都可能提供有效梯度；训练继续后，大量序列已被当前 policy
+高概率复现，继续把预算平均分给它们会降低有限更新的边际覆盖。可以在冻结的初始 policy 上估计“已拟合”与
+“仍在尾部”的序列，并只对后者增加训练权重：
+
+```text
+frozen pre-SFT policy
+→ per-sequence fit / coverage estimate
+→ retain under-fit tail under a fixed data budget
+→ SFT update
+→ evaluate both immediate capability and downstream RL initialization
+```
+
+这不是把高 loss 样本无条件当作好数据。高 loss 也可能来自噪声、错误标签、领域外样本或不可学习冲突；过滤器
+还会随 checkpoint 改变，并可能暂时降低平均 likelihood 或 pass@1。若目标是为 RL 提供更广的可达行为，
+coverage/tail 指标可能比训练集平均 loss 更合适；若数据小、噪声高或后续没有 RL，完整且均匀的 SFT baseline
+仍更容易复现。
+
+
+## 从机制演进到系统设计
+
+SFT 从完整 response 的统一 token loss 演进到有条件的 supervision allocation：syntax-complete block、under-modeled tail、shared-perception span 或 teacher/student aware span 都是在回答“哪些示范信号值得当前 update 消费”。样本选择器可以提出稀疏监督，但 objective 与最终能力回归仍拥有提交权。
+
+更集中的梯度提高有效预算，却可能丢失 easy-sample regularization、放大 selector bias 或造成能力回退。选择器未校准、共享感知假设不成立或 tail 过窄时，应回到完整 response SFT；SFT 继续拥有行为模仿，偏好与长期 credit 交给后续分支。
 
 ## 自检问题
 
@@ -525,25 +590,6 @@ pretrained checkpoint
 SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写分布收窄为目标交互行为。它仍然执行 token-level maximum likelihood，但数据 schema、角色协议与监督位置改变了模型被奖励的行为。
 
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
-
-### 从平均拟合转向覆盖尚未学会的序列
-
-传统 SFT 重复采样全部示例，因为早期每个 token 都可能提供有效梯度；训练继续后，大量序列已被当前 policy
-高概率复现，继续把预算平均分给它们会降低有限更新的边际覆盖。可以在冻结的初始 policy 上估计“已拟合”与
-“仍在尾部”的序列，并只对后者增加训练权重：
-
-```text
-frozen pre-SFT policy
-→ per-sequence fit / coverage estimate
-→ retain under-fit tail under a fixed data budget
-→ SFT update
-→ evaluate both immediate capability and downstream RL initialization
-```
-
-这不是把高 loss 样本无条件当作好数据。高 loss 也可能来自噪声、错误标签、领域外样本或不可学习冲突；过滤器
-还会随 checkpoint 改变，并可能暂时降低平均 likelihood 或 pass@1。若目标是为 RL 提供更广的可达行为，
-coverage/tail 指标可能比训练集平均 loss 更合适；若数据小、噪声高或后续没有 RL，完整且均匀的 SFT baseline
-仍更容易复现。
 
 ## Review notes
 
@@ -590,3 +636,23 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2603.17216
 - mSFT（Status: Experimental；heterogeneous task stopping 与 mixture-dependent rollback）:
   https://arxiv.org/abs/2603.21606
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18286:start -->
+- `SF-2026-ARXIV-2606-18286` — Daily `2026-06-11`；primary `arXiv:2606.18286v1`；Books review `books-review:SF-2026-ARXIV-2606-18286`。
+
+  **已吸收的语义增量：** Code SFT 的 sparse supervision unit 应是 syntax-complete、data-flow-connected code block，而非孤立 high-loss token；完整 response 继续作 context。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18286:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28336:start -->
+- `SF-2026-ARXIV-2607-28336` — Daily `2026-07-31`；primary `arXiv:2607.28336v1`；Books review `books-review:SF-2026-ARXIV-2607-28336`。
+
+  **已吸收的语义增量：** 新增证据边界：Shared-perception rollouts estimate PSR; teacher/student aware-span KL is a second witness; soft-AND deficiency reallocates a fixed distillation budget while DAPO stays separate. 该 delta 已进入 `books/part-04-training-system/29-sft.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28336:end -->
+
+<!-- daily-books-trace:SF-2026-TAILSFT:start -->
+- `SF-2026-TAILSFT` — Daily `2026-08-27`；primary `arXiv:2608.25756v1`；Books review `books-review:SF-2026-TAILSFT`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：训练时过滤已拟合 sequence，把梯度集中到 under-modeled tail，并用轻量诊断判断何时值得启用；并保留边界：只覆盖一个 7B 家族与特定后训练配方；不能推广为所有 easy sample 都应丢弃。 相邻章节对读：books/part-04-training-system/28-pretraining.md#L154;books/part-04-training-system/30-lora.md#L127。Pretraining 拥有通用 optimizer 轨迹，LoRA 拥有参数化更新空间；demonstration loss 的样本选择属于 SFT。
+<!-- daily-books-trace:SF-2026-TAILSFT:end -->

@@ -178,6 +178,25 @@ prefix sharing 必须保留、rollback 不可接受或 verifier 干扰严重时�
 固定 batch 仍适合小规模 debugging。单一 SGLang/H100 prototype 不能证明跨 GPU、跨版本或 quantized/MoE
 runtime 的 bitwise equivalence。
 
+<!-- source-family:SF-2026-ARXIV-2605-28053 -->
+
+固定窗口 verifier 让复现边界最清楚，但仍会验证大量本来不会翻转的 token。若已在目标 runtime 上校准，调度器可用
+top-1 与 top-2 logit margin 作为触发信号：fast path 先产生 request-private token 与对应 KV；只有低 margin token
+进入 reference path，reference verifier 决定 commit；若二者不一致，必须同时修复该 token 与当前 KV column，不能
+只改输出文本。Trigger 只拥有“是否送验”的 proposal，reference path 才拥有提交权，scheduler 还要把稀疏 verifier
+形成的 tail work 计入队列与 SLO。
+
+在 token flip 稀疏时，这能少付 verifier 税；代价是 margin calibration drift、near-tie 漏检、reference path 成本和
+尾延迟，高 margin 也只表示局部排序稳定，不表示语义正确。Audit/CI、flip 密集、quantized/MoE 或校准 OOD workload
+应回退 always-on verifier、batch-invariant kernel 或固定 batch。exact-v1 只覆盖论文披露的五个模型、数据、BF16 与
+batching 设置，不证明跨 kernel、硬件或版本的 bitwise equivalence。
+
+<!-- source-family:SF-2026-ARXIV-2605-30218 -->
+
+Continuous batching 通常假设每步只读 model state、只写 request-owned KV/token cursor；只要 request state 不混淆，任意兼容请求都可拼入同一 iteration。Test-time training 一类生成路径会在请求过程中更新私有参数或适配状态，此时调度键还必须包含 state owner、version、phase 与本步 READ/WRITE effect。只有 effect 兼容的请求才能共批，每次更新也只能提交到对应 request 的状态对象，不能因共享 kernel 把一个请求的学习结果泄漏给另一个请求。
+
+Typed effect batching 保留利用率，却增加 copy-on-write、状态存储、phase fragmentation 和 rollback；更新版本错配会产生比 KV 串扰更隐蔽的语义污染。普通 immutable-weight decode 仍使用现有 continuous batching；私有状态很小或并发低时，逐请求执行可能比维护复杂 effect scheduler 更可靠。exact-v1 只支持披露 TTT workload 的 batching 约束，不证明所有在线学习算法可安全合批。
+
 ## Preemption 不是删除队列元素
 
 KV 不足时，把请求从 running 移回 waiting 需要选择 state policy：
@@ -228,6 +247,12 @@ Decode
 
 它不是一个孤立优化，而是现代 LLM serving engine 的基本调度方式之一。
 
+## 从机制演进到系统设计
+
+Continuous Batching 的调度量子最初是 autoregressive token iteration；block diffusion 等生成范式把它改成 denoise cycle，完成 block 后可立即回收 slot，并在不同 denoising state 间重新 packing。scheduler 必须同时约束 token、memory 与 provisional-state budget，而不是只数 active requests。
+
+更细的 slot reuse 提高 occupancy，却增加异质状态对齐、临时结果与 commit boundary。denoise state 不兼容、质量合同不清或 batch 重排成本过高时，应回到同阶段 batching 或普通 AR iteration；determinism 与 preemption 仍需独立验证。
+
 ## 自检问题
 
 1. Static Batching 为什么会在 LLM Decode 阶段浪费 GPU？
@@ -239,6 +264,14 @@ Decode
 7. Continuous Batching 会带来哪些公平性和延迟 trade-off？
 8. nano-vLLM 为什么属于 iteration-level scheduling，却不等于 mixed-phase batching？
 9. Release-and-recompute 抢占把 memory pressure 转化成了什么代价？
+
+## 多组件生成把 Batch 变成 Pipeline Feedback Control
+
+自回归 LLM 的 iteration 通常由同一 decoder 推进；图像 diffusion serving 还包含 denoiser 与 VAE 等性能形态不同的组件。若只让 denoiser 满载，VAE backlog 会把已完成 latent 堵在队列里；若为 VAE 预留过多资源，又会降低 denoising throughput。Continuous Batching 因而从单队列 token admission 演进为 component-aware control：同时观察 denoising step、UNet/DiT work、VAE latency、共享资源 contention 和下游 queue feedback，再决定新请求进入、阶段切换与资源份额。
+
+这一分支改善 pipeline balance，却新增跨组件状态、反馈振荡和公平性问题；作者 workload 的吞吐收益不能外推到不同分辨率、steps、hardware 或 SLO。单组件瓶颈稳定时，静态分区或普通 iteration-level batching 仍更简单。[受限证据：arXiv:2605.08835v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08835 -->
 
 ## 小结
 
@@ -268,3 +301,11 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2607.08930v1
 
 Orca 论文中的 iteration-level scheduling / selective batching 是机制来源；vLLM、TensorRT-LLM、SGLang 的具体 state machine 与 batch construction 属于各自版本实现。本章只保留机制不变量，不用某个引擎的参数或类名定义 Continuous Batching。
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08930:start -->
+- `SF-2026-ARXIV-2607-08930` — Daily `2026-07-10`；primary `arXiv:2607.08930v1`；Books review `books-review:SF-2026-ARXIV-2607-08930`。
+
+  **已吸收的语义增量：** 新增证据边界：Change the continuous-batching quantum from an autoregressive token iteration to a diffusion block-denoise cycle. Reclaim completed block slots immediately, align requests at heterogeneous denoising states in one dense layout, and admit work under a token/memory bounding box. 该 delta 已进入 `books/part-05-inference-system/46-continuous-batching.md#L88`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08930:end -->

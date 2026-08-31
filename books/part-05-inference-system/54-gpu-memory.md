@@ -266,6 +266,20 @@ announcement 只能证明版本化产品事实和设计方向，不能把未披�
 
 权重因此从静态 artifact 扩展为受策略控制的 runtime state，也新增 calibration drift、prompt-conditioned policy、CPU-GPU traffic、mixed kernel 和失败恢复问题。quality policy、tenant 与 request identity 必须进入 trace；严格可复现、精度预算固定或 transfer cost 高时，静态 weights 仍更安全。当前证据限于三种 MoE、作者 workload 与无生产 arrival/tail-SLO 的实验。
 
+<!-- source-family:SF-2026-ARXIV-2605-28095 -->
+
+离线大批推理若沿用 data parallel，每张 GPU 复制完整 weights，控制最简单，却会把本可供 KV 与 batch 使用的 HBM 固定占满。节点内互联空闲且 workload 以 throughput 为目标时，可以把 layer weight 只放在 owner GPU：大批次让 owner 将 weights 流送给 peers（weight-as-stream），小尾批次则把 activations 送到 owner 计算（compute-as-service），运行时按传输量选择分支。
+
+它用 fabric bandwidth、同步和 layer-owner 故障域换 HBM 容量，且只在传输可被大批计算摊薄、尾部 activation 明显小于 weights 时成立；在线 tail-SLO、跨节点慢链路或 owner hotspot 会使收益消失。常规 DP 在模型可装下、请求小或隔离优先时仍更可预测。作者离线推理实验不证明该设计适用于持续到达、跨机通信或任意模型形状。
+
+### 混合序列模型需要 Typed Memory Pages
+
+统一 page size、统一 eviction 在状态同构、访问路径相近时能降低 allocator 与 scheduler 复杂度；混合 Mamba–Transformer runtime 同时拥有 recurrent state、attention KV、weights 与临时 workspace，它们的更新频率、可重建性和 fault cost 不同。因而 page identity 应携带 state type、model/request revision、placement owner 与 recoverability，allocator 只能提供容量，执行计划才决定何种状态可迁移或驱逐。
+
+Typed pages 能减少错误 eviction 并改善分层放置，但会增加页表、碎片、迁移路径和 kernel dispatch 复杂度；工作负载单一或状态规模很小时，统一页仍更合适。arXiv:2605.22416v1 的系统与实验只支持其混合架构和披露环境，不证明同一分页策略在所有 Mamba、Transformer、硬件与 SLO 下都占优。
+
+<!-- source-family:SF-2026-ARXIV-2605-22416 -->
+
 ## 硬件升级不是最终答案
 
 ### 从单设备 HBM 到异构近数据与池化状态
@@ -329,6 +343,14 @@ request isolation 与 fallback bandwidth 写进同一合同。
 communication buffers，得到真正可供动态 state 使用的 usable HBM，再比较 KV、batch 和 offload policy。标称容量
 或单个优化名称不能直接推出可接纳并发；具体硬件只用于校验这条推导，不能成为长期假设。
 
+### Embedding Hot Cache 与 KV Cache 竞争同一块 HBM
+
+传统规划常把 embedding lookup 与 KV cache 分给两个独立 owner，但二者最终争用同一 HBM capacity 与 bandwidth。请求分布变化时，扩大 hot embedding cache 可能减少 lookup，却挤压 KV、增加 eviction 与 recompute；反向扩大 KV 又可能放大 embedding miss。更完整的 controller 要以请求 mix、sequence length 和 tail-latency SLO 联合分配，并让 allocation decision 带版本与观测窗口。
+
+联合控制提高整体利用率，却增加预测误差和跨组件抖动。命中率或长度分布失真时，应回退到静态 reservation 或硬水位，避免两个 cache 相互驱逐。独立配额在 workload 稳定、隔离优先时仍然合理。
+
+<!-- source-family:SF-WHEN-KV-MEETS-EMBEDDINGS-DYNAMIC-GPU-MEMORY-ALLOCATION-FOR-ACCELERATING- -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -342,31 +364,6 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 GPU Memory 是连接模型、训练、推理和平台成本的核心节点。
 
 沿 Memory 横线，第 19、45 章定义 KV bytes 的来源与生命周期，第 47 章改变逻辑到物理 block 的映射，本章统一 weights、KV、workspace、communication 与 reserve 的 HBM budget；第 55 章再判断是否值得把 state 移到另一个 pool。沿 Compute 横线，本章只是 execution plan 的物理可行性约束，不是新的计算阶段。
-
-## 自检问题
-
-1. 为什么显存墙不等于单纯“显存容量不够”？
-2. 训练和推理中显存主要分别被什么占用？
-3. KV Cache 为什么让推理显存成为动态问题？
-4. FlashAttention 为什么可以看作 memory hierarchy 优化？
-5. Fixed、request-dynamic 与 step-peak memory 为什么要分开？
-6. Reserve 为什么不是简单浪费？
-7. offload、分页、量化分别交换了什么成本？
-8. 为什么总 HBM 的倍率不等于 KV capacity 或 request concurrency 的倍率？
-9. Hardware specification、compatibility test 与 Serving benchmark 分别能支持什么结论？
-10. 为什么 expert paging 只能复用 tiling 的 IO-aware 原则，不能像 online softmax 一样消除所选 Expert 的权重读取？
-
-## 小结
-
-Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定固定底座，KV 决定随请求增长的容量，workspace 与 communication 决定瞬时峰值，fragmentation 和 reserve 决定逻辑公式与实际可分配空间的差距。
-
-下一章讨论 PD 分离：当 Prefill 与 Decode 被放入不同 GPU pools，显存和计算压力可以独立规划，但 KV state 必须付出跨池移动成本。
-
-#### 端侧 NPU 只有全链迁移才构成新的 Memory/Energy 分支
-
-把单个 embedding 或 generation operator 放到 NPU，不能证明端侧 RAG 的系统收益，因为 reranking、跨设备搬运、模型加载和 host orchestration 仍可能占据主要内存、延迟与能耗。更完整的 contract 要把 embedding、reranking 与 generation 作为同一条 NPU-resident path 测量，并把加载顺序、static-graph 约束、context bound 与整机 energy/latency 一起纳入 owner。是否使用 NPU 因而是全链驻留与生命周期决策，不是算子级布尔值。
-
-GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文、模型不受支持或内存峰值超限时，hybrid path 可能更稳健。现有证据仅来自 Snapdragon X Elite 单机和 120-query corpus，不能外推其他 NPU 或线上多租户容量；迁移不完整时，新增 device transfer 还可能抵消节能收益。
 
 ### Chiplet Locality 需要 Layout 与 Placement 共同拥有
 
@@ -398,33 +395,36 @@ Bit-exact entropy coding 可以降低权重存储，却会在执行时引入 dec
 <!-- body-source:SF-2026-ARXIV-2606-21023 -->
 **Demystifying Numerical Instability in LLM Inference: Achieving Reproducible Inference for Mission-Critical Tasks with HEAL 所揭示的约束变化。** 异构 GPU 上 greedy decode 仍会因 kernel-boundary downcast 累积而翻转；HEAL 用 INT16 Q/K/V 与双 16-bit GEMM 误差补偿换取接近 FP32 的功能复现性。这条路径只在 exact-v1 披露的任务与系统边界内成立；`arXiv:2606.21023v1 §6 Conclusion; Appendix B error, flip-rate and truncation studies` 记录了未证明范围。硬件、精度或 kernel identity 不匹配时回退到已验证精度路径并重新测量 memory/latency；原有简单路径在其假设成立时继续共存。
 
-<!-- recovered-daily-20260624:INFER-GPU-MEMORY:start -->
-## 2026-06-24 evidence integration — INFER-GPU-MEMORY
+## 从机制演进到系统设计
 
-相邻章 `books/part-05-inference-system/55-pd-disaggregation.md` 只接收 handoff，不重复拥有机制。
+GPU memory 优化从单一 HBM 容量规划演进到 locality、tiering、compression 与异构 device 的联合执行。Weights、KV、workspace 和 communication buffer具有不同可预测性与生命周期：chiplet placement 要与 layout 协同，长状态可以下沉 DRAM/CXL/NVMe，MoE weights 可按激活相关性 staging，压缩格式则必须与 GEMM tiling共同调度。
 
-### Owner-merged minimal text
+每减少一类常驻 bytes，通常都会增加 prefetch miss、decode bandwidth、remote access、metadata 或质量回退。低比特甚至可能通过更多 reasoning tokens 抬高总成本，因此验收单位应是完成请求/任务所需的峰值 memory、latency、energy 和 output quality，而不是单个 tensor 的压缩比。状态不可预测或迁移成本主导时，常驻 HBM 与未压缩布局仍更可靠。
 
-- **SF-2026-ARXIV-2606-24506**：冷 MoE serving 将 stable weights 与 demand-driven KV 拆成独立资源池；planner virtualize shared KV，layer-wise scheduler/persistent kernel 只激活所需 weights 和 KV heads。 证据聚焦冷模型、低并发与给定 context/model mix；热点突发、跨租户 isolation、模型装载故障和高并发下 shared-pool contention 未证明，应能回退 dedicated allocation。
+## 自检问题
 
-### Source-specific Review notes
+1. 为什么显存墙不等于单纯“显存容量不够”？
+2. 训练和推理中显存主要分别被什么占用？
+3. KV Cache 为什么让推理显存成为动态问题？
+4. FlashAttention 为什么可以看作 memory hierarchy 优化？
+5. Fixed、request-dynamic 与 step-peak memory 为什么要分开？
+6. Reserve 为什么不是简单浪费？
+7. offload、分页、量化分别交换了什么成本？
+8. 为什么总 HBM 的倍率不等于 KV capacity 或 request concurrency 的倍率？
+9. Hardware specification、compatibility test 与 Serving benchmark 分别能支持什么结论？
+10. 为什么 expert paging 只能复用 tiling 的 IO-aware 原则，不能像 online softmax 一样消除所选 Expert 的权重读取？
 
-- SF-2026-ARXIV-2606-24506: `arXiv:2606.24506v1`; exact-v1 URL=`https://arxiv.org/html/2606.24506v1`; Method=`https://arxiv.org/html/2606.24506v1 — §3 CrossPool Design; KV Planner; Layer-wise Scheduler; Control Lowering`; Evaluation=`https://arxiv.org/html/2606.24506v1 — §5 Experiments; Context Scalability; Overall Performance`; Non-proof=`证据聚焦冷模型、低并发与给定 context/model mix；热点突发、跨租户 isolation、模型装载故障和高并发下 shared-pool contention 未证明，应能回退 dedicated allocation。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:INFER-GPU-MEMORY:end -->
+## 小结
 
-<!-- recovered-daily-20260625:INFER-GPU-MEMORY:start -->
-## 2026-06-25 evidence integration — INFER-GPU-MEMORY
+Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定固定底座，KV 决定随请求增长的容量，workspace 与 communication 决定瞬时峰值，fragmentation 和 reserve 决定逻辑公式与实际可分配空间的差距。
 
-- **SF-2026-ARXIV-2606-25285**：`3 EPTS: Elastic Post-Training Sparsity` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Limitations and Discussion` 是 `EPTS: Elastic Post-Training Sparsity for Efficient Large Language Model Compression` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments; Experimental Setup; Main Results` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25519**：`3 Experimental Setup; 5 Quantization Inflates Reasoning Tokens; 6 Anatomy` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Can We Reduce Reasoning-Token Inflation; D.2 Model details` 是 `Quantization Inflates Reasoning: Token Inflation as a Hidden Cost of Low-Bit Reasoning Models` 的 source-specific 反例/局限边界；若运行条件离开 `D Additional evaluation details; D.1 Benchmarks and evaluation protocol` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26488**：`Compression of recursive reasoners across precision, pruning, distillation and attention variants` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Edge recursive models only; token-level preservation does not imply global-reasoning preservation` 是 `What Survives When You Compress a Recursive Reasoner for the Edge?` 的 source-specific 反例/局限边界；若运行条件离开 `Three tasks and two recursive architectures; local vs puzzle-exact accuracy` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+下一章讨论 PD 分离：当 Prefill 与 Decode 被放入不同 GPU pools，显存和计算压力可以独立规划，但 KV state 必须付出跨池移动成本。
 
-### 2026-06-25 source-specific Review notes
+#### 端侧 NPU 只有全链迁移才构成新的 Memory/Energy 分支
 
-- **SF-2026-ARXIV-2606-25285**：Primary `arXiv:2606.25285v1`；Method `https://arxiv.org/html/2606.25285v1 — §3 EPTS: Elastic Post-Training Sparsity`；Evaluation `https://arxiv.org/html/2606.25285v1 — §4 Experiments; Experimental Setup; Main Results`；未证明边界 `https://arxiv.org/html/2606.25285v1 — §Limitations and Discussion`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25519**：Primary `arXiv:2606.25519v1`；Method `https://arxiv.org/html/2606.25519v1 — §3 Experimental Setup; 5 Quantization Inflates Reasoning Tokens; 6 Anatomy`；Evaluation `https://arxiv.org/html/2606.25519v1 — §D Additional evaluation details; D.1 Benchmarks and evaluation protocol`；未证明边界 `https://arxiv.org/html/2606.25519v1 — §7 Can We Reduce Reasoning-Token Inflation; D.2 Model details`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26488**：Primary `arXiv:2606.26488v1`；Method `https://arxiv.org/html/2606.26488v1 — §Compression of recursive reasoners across precision, pruning, distillation and attention variants`；Evaluation `https://arxiv.org/html/2606.26488v1 — §Three tasks and two recursive architectures; local vs puzzle-exact accuracy`；未证明边界 `https://arxiv.org/html/2606.26488v1 — §Edge recursive models only; token-level preservation does not imply global-reasoning preservation`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:INFER-GPU-MEMORY:end -->
+把单个 embedding 或 generation operator 放到 NPU，不能证明端侧 RAG 的系统收益，因为 reranking、跨设备搬运、模型加载和 host orchestration 仍可能占据主要内存、延迟与能耗。更完整的 contract 要把 embedding、reranking 与 generation 作为同一条 NPU-resident path 测量，并把加载顺序、static-graph 约束、context bound 与整机 energy/latency 一起纳入 owner。是否使用 NPU 因而是全链驻留与生命周期决策，不是算子级布尔值。
+
+GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文、模型不受支持或内存峰值超限时，hybrid path 可能更稳健。现有证据仅来自 Snapdragon X Elite 单机和 120-query corpus，不能外推其他 NPU 或线上多租户容量；迁移不完整时，新增 device transfer 还可能抵消节能收益。
 
 ## Review notes
 
@@ -476,3 +476,123 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2607.10186v1
 - PagedWeight（bit-plane weight pages、desired/committed precision 与 KV pressure；Status: Experimental）:
   https://arxiv.org/abs/2607.16184v1
+
+### Daily integration evidence trace
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24506: `arXiv:2606.24506v1`; exact-v1 URL=`https://arxiv.org/html/2606.24506v1`; Method=`https://arxiv.org/html/2606.24506v1 — §3 CrossPool Design; KV Planner; Layer-wise Scheduler; Control Lowering`; Evaluation=`https://arxiv.org/html/2606.24506v1 — §5 Experiments; Context Scalability; Overall Performance`; Non-proof=`证据聚焦冷模型、低并发与给定 context/model mix；热点突发、跨租户 isolation、模型装载故障和高并发下 shared-pool contention 未证明，应能回退 dedicated allocation。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25285**：Primary `arXiv:2606.25285v1`；Method `https://arxiv.org/html/2606.25285v1 — §3 EPTS: Elastic Post-Training Sparsity`；Evaluation `https://arxiv.org/html/2606.25285v1 — §4 Experiments; Experimental Setup; Main Results`；未证明边界 `https://arxiv.org/html/2606.25285v1 — §Limitations and Discussion`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25519**：Primary `arXiv:2606.25519v1`；Method `https://arxiv.org/html/2606.25519v1 — §3 Experimental Setup; 5 Quantization Inflates Reasoning Tokens; 6 Anatomy`；Evaluation `https://arxiv.org/html/2606.25519v1 — §D Additional evaluation details; D.1 Benchmarks and evaluation protocol`；未证明边界 `https://arxiv.org/html/2606.25519v1 — §7 Can We Reduce Reasoning-Token Inflation; D.2 Model details`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26488**：Primary `arXiv:2606.26488v1`；Method `https://arxiv.org/html/2606.26488v1 — §Compression of recursive reasoners across precision, pruning, distillation and attention variants`；Evaluation `https://arxiv.org/html/2606.26488v1 — §Three tasks and two recursive architectures; local vs puzzle-exact accuracy`；未证明边界 `https://arxiv.org/html/2606.26488v1 — §Edge recursive models only; token-level preservation does not imply global-reasoning preservation`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260624:INFER-GPU-MEMORY:start -->
+### 2026-06-24 evidence integration — INFER-GPU-MEMORY
+
+相邻章 `books/part-05-inference-system/55-pd-disaggregation.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24506**：冷 MoE serving 将 stable weights 与 demand-driven KV 拆成独立资源池；planner virtualize shared KV，layer-wise scheduler/persistent kernel 只激活所需 weights 和 KV heads。 证据聚焦冷模型、低并发与给定 context/model mix；热点突发、跨租户 isolation、模型装载故障和高并发下 shared-pool contention 未证明，应能回退 dedicated allocation。
+
+<!-- recovered-daily-20260624:INFER-GPU-MEMORY:end -->
+
+<!-- recovered-daily-20260625:INFER-GPU-MEMORY:start -->
+### 2026-06-25 evidence integration — INFER-GPU-MEMORY
+
+- **SF-2026-ARXIV-2606-25285**：`3 EPTS: Elastic Post-Training Sparsity` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Limitations and Discussion` 是 `EPTS: Elastic Post-Training Sparsity for Efficient Large Language Model Compression` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments; Experimental Setup; Main Results` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25519**：`3 Experimental Setup; 5 Quantization Inflates Reasoning Tokens; 6 Anatomy` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Can We Reduce Reasoning-Token Inflation; D.2 Model details` 是 `Quantization Inflates Reasoning: Token Inflation as a Hidden Cost of Low-Bit Reasoning Models` 的 source-specific 反例/局限边界；若运行条件离开 `D Additional evaluation details; D.1 Benchmarks and evaluation protocol` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26488**：`Compression of recursive reasoners across precision, pruning, distillation and attention variants` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Edge recursive models only; token-level preservation does not imply global-reasoning preservation` 是 `What Survives When You Compress a Recursive Reasoner for the Edge?` 的 source-specific 反例/局限边界；若运行条件离开 `Three tasks and two recursive architectures; local vs puzzle-exact accuracy` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:INFER-GPU-MEMORY:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-23001:start -->
+- `SF-2026-ARXIV-2606-23001` — Daily `2026-06-23`；primary `arXiv:2606.23001v1`；Books review `books-review:SF-2026-ARXIV-2606-23001`。
+
+  **已吸收的语义增量：** EnerInfer: Energy-Aware On-Device LLM Inference 的 exact-v1 机制为：To address these challenges, we propose EnerInfer, the first on-device LLM inference framework that jointly manages energy efficiency, throughput, and thermal comfort for LLM workloads. 因此 把设备频率、功耗/温度估计、QoE 和模型/backend identity 联合验收。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-23001:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08761:start -->
+- `SF-2026-ARXIV-2606-08761` — Daily `2026-06-08`；primary `arXiv:2606.08761v1`；Books review `books-review:SF-2026-ARXIV-2606-08761`。
+
+  **已吸收的语义增量：** APEX4 把 W4A4 的瓶颈定位到同一 SM 内 Tensor Core 与 CUDA Core 的 compute imbalance，并用 kernel mapping 避免 mixed-precision fallback。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08761:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11257:start -->
+- `SF-2026-ARXIV-2606-11257` — Daily `2026-06-10`；primary `arXiv:2606.11257v1`；Books review `books-review:SF-2026-ARXIV-2606-11257`。
+
+  **已吸收的语义增量：** 在 GPU Memory 章节补一个端侧 NPU 的全链 RAG memory/energy 分支，限定 Snapdragon X Elite、120-query 与单机测量，禁止外推其他 NPU。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11257:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11718:start -->
+- `SF-2026-ARXIV-2606-11718` — Daily `2026-06-11`；primary `arXiv:2606.11718v1`；Books review `books-review:SF-2026-ARXIV-2606-11718`。
+
+  **已吸收的语义增量：** Chiplet GPU 的 GEMM locality 需要让 chiplet-local tiles 在 global address space 连续，使 page-granularity placement 与 CTA affinity 一致。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11718:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12556:start -->
+- `SF-2026-ARXIV-2606-12556` — Daily `2026-06-11`；primary `arXiv:2606.12556v1`；Books review `books-review:SF-2026-ARXIV-2606-12556`。
+
+  **已吸收的语义增量：** 长 context state 可跨 GPU/host/CXL-hybrid/NVMe 构成 byte-addressable tier，并利用 model-weight/prefix access 可预测性做 multi-tier DMA prefetch。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12556:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14779:start -->
+- `SF-2026-ARXIV-2606-14779` — Daily `2026-06-11`；primary `arXiv:2606.14779v1`；Books review `books-review:SF-2026-ARXIV-2606-14779`。
+
+  **已吸收的语义增量：** KV offload 不应串行穿过单 host/SSD；应把多 DRAM/SSD 汇成 bandwidth-weighted pool，并以 user-space SPDK bypass filesystem。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14779:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15453:start -->
+- `SF-2026-ARXIV-2606-15453` — Daily `2026-06-14`；primary `arXiv:2606.15453v1`；Books review `books-review:SF-2026-ARXIV-2606-15453`。
+
+  **已吸收的语义增量：** MoE expert staging 可利用跨层与相邻 token 的 activation correlation 预取，并保持原 router 决策不变。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15453:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15789:start -->
+- `SF-2026-ARXIV-2606-15789` — Daily `2026-06-15`；primary `arXiv:2606.15789v1`；Books review `books-review:SF-2026-ARXIV-2606-15789`。
+
+  **已吸收的语义增量：** lossless weight compression要让tile-level ANS decode与GEMM tiling/weight residency联合调度，bit-exact减存储但新增decode bandwidth与kernel state
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15789:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22283:start -->
+- `SF-2026-ARXIV-2606-22283` — Daily `2026-06-21`；primary `arXiv:2606.22283v1`；Books review `books-review:SF-2026-ARXIV-2606-22283`。
+
+  **已吸收的语义增量：** 对 ANE 的 datapath、roofline、compiler/on-disk format、weight compression、driver/firmware command protocol建立 measured/decompile-derived/predicted 三类 claim，并区分 direct private route 与 Core ML supported path。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22283:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-10186:start -->
+- `SF-2026-ARXIV-2607-10186` — Daily `2026-07-12`；primary `arXiv:2607.10186v1`；Books review `books-review:SF-2026-ARXIV-2607-10186`。
+
+  **已吸收的语义增量：** 新增证据边界：Co-design an HBF stack and GPU attachment, distribute small SRAM buffers close to flash planes, map weights and KV into layouts that expose plane-level parallelism, prefetch future pages without stalling dependent kernels, and use an HBF-aware storage/programming layer to coordinate persistent and HBM/SRAM state. Capacity permits larger SLO-bounded batches; bandwidth and page latency remain the limiting constraints. 该 delta 已进入 `books/part-05-inference-system/54-gpu-memory.md#L262`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-10186:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16184:start -->
+- `SF-2026-ARXIV-2607-16184` — Daily `2026-07-18`；primary `arXiv:2607.16184v1`；Books review `books-review:SF-2026-ARXIV-2607-16184`。
+
+  **已吸收的语义增量：** 新增证据边界：Weights and KV compete for the same HBM budget, so MoE weight precision can become mutable runtime state. A safe page table must commit lower precision before freeing pages and restore pages before committing higher precision; planner identity and per-request quality policy become part of serving correctness. 该 delta 已进入 `books/part-05-inference-system/54-gpu-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16184:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-22389:start -->
+- `SF-2026-ARXIV-2607-22389` — Daily `2026-07-25`；primary `arXiv:2607.22389v1`；Books review `books-review:SF-2026-ARXIV-2607-22389`。
+
+  **已吸收的语义增量：** 新增证据边界：Hierarchical token and element selection exposes intra-token vector fetch as a second KV bandwidth floor and co-designs ranking state with a reconfigurable sorter. 该 delta 已进入 `books/part-05-inference-system/54-gpu-memory.md#L188`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-22389:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-03555:start -->
+- `SF-2026-ARXIV-2608-03555` — Daily `2026-08-05`；primary `arXiv:2608.03555v1`；Books review `books-review:SF-2026-ARXIV-2608-03555`。
+
+  **已吸收的语义增量：** KARAT 将 retrieval sparse attention 的 KV/index 工作放到 PNM，并用 microbatch、重平衡和 configuration search 协调 GPU 与近存计算。作者在三种模型与 agent traces 上报告吞吐/TDP，但收益依赖 PNM 设备和模拟/原型合同，不能外推到普通 GPU fleet。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-03555:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-05483:start -->
+- `SF-2026-ARXIV-2608-05483` — Daily `2026-08-06`；primary `arXiv:2608.05483v1`；Books review `books-review:SF-2026-ARXIV-2608-05483`。
+
+  **已吸收的语义增量：** PLoRA 用 CXL pooled memory 与 near-data processing 承担多 LoRA 状态，把单 GPU 显存约束转成池化容量与传输/计算协同。系统管理器和模拟器由真实硬件校准，但主要结论仍受 H100 与四设备配置约束。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-05483:end -->

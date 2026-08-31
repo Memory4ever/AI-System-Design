@@ -31,6 +31,7 @@ BOOKS_COMPARISON_MARKER = "<!-- validator:books-comparison-v1 -->"
 SEMANTIC_AUDIT_MARKER = "<!-- validator:semantic-audit-v1 -->"
 BENCHMARK_MARKER = "<!-- validator:benchmark-contract-v1 -->"
 MATERIALS_REQUEST_MARKER = "<!-- validator:materials-request-v1 -->"
+WITHDRAWN_PRIMARY_SOURCE_CLOSURE = "withdrawn_primary_source"
 
 DAILY_PRESENTATION_HEADINGS = [
     "## Executive Summary",
@@ -375,6 +376,168 @@ def _expect_columns(text: str, marker: str, expected: Sequence[str]) -> Tuple[Li
                 f"table after {marker} has schema {header}; expected {list(expected)}"
             )
     return rows, errors
+
+
+def _markdown_tables(text: str) -> List[Tuple[List[str], List[Dict[str, str]]]]:
+    """Parse ordinary Markdown tables outside fenced examples.
+
+    Screening ledgers intentionally remain report-owned rather than gaining a
+    second global schema marker.  This small parser lets cross-interface guards
+    consume their declared closure semantics without treating examples in code
+    fences as live report state.
+    """
+    lines = text.splitlines()
+    tables: List[Tuple[List[str], List[Dict[str, str]]]] = []
+    open_fence: Optional[Tuple[str, int]] = None
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        if open_fence is None:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+            if opening:
+                marker = opening.group(1)
+                open_fence = (marker[0], len(marker))
+                index += 1
+                continue
+        else:
+            closing = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", line)
+            if closing:
+                marker = closing.group(1)
+                if marker[0] == open_fence[0] and len(marker) >= open_fence[1]:
+                    open_fence = None
+            index += 1
+            continue
+
+        if (
+            line.strip().startswith("|")
+            and index + 1 < len(lines)
+            and lines[index + 1].strip().startswith("|")
+        ):
+            headers = _cells(line)
+            separator = _cells(lines[index + 1])
+            if len(separator) == len(headers) and _is_separator(separator):
+                rows: List[Dict[str, str]] = []
+                row_index = index + 2
+                while row_index < len(lines) and lines[row_index].strip().startswith("|"):
+                    values = _cells(lines[row_index])
+                    if len(values) == len(headers):
+                        rows.append(dict(zip(headers, values)))
+                    row_index += 1
+                tables.append((headers, rows))
+                index = row_index
+                continue
+        index += 1
+
+    return tables
+
+
+def _withdrawn_primary_source_families(text: str) -> set:
+    """Return families explicitly closed as withdrawn by a screening ledger."""
+    family_headers = {
+        "source family id",
+        "source_family_id",
+        "source family",
+        "family id",
+    }
+    withdrawn: set = set()
+    for headers, rows in _markdown_tables(text):
+        normalized_headers = {
+            header: re.sub(r"\s+", " ", header.strip().strip("`").casefold())
+            for header in headers
+        }
+        family_column = next(
+            (header for header, normalized in normalized_headers.items() if normalized in family_headers),
+            None,
+        )
+        closure_columns = [
+            header
+            for header, normalized in normalized_headers.items()
+            if "closure" in normalized
+            or normalized in {"screening decision", "screening disposition"}
+        ]
+        if family_column is None or not closure_columns:
+            continue
+        for row in rows:
+            declares_withdrawal = any(
+                row.get(column, "").strip().strip("`").casefold()
+                == WITHDRAWN_PRIMARY_SOURCE_CLOSURE
+                for column in closure_columns
+            )
+            if not declares_withdrawal:
+                continue
+            family = row.get(family_column, "").strip().strip("`")
+            if family not in ABSENT_VALUES:
+                withdrawn.add(family)
+    return withdrawn
+
+
+def _has_family_ref_marker(text: str, ref_prefix: str, family: str) -> bool:
+    pattern = re.compile(
+        rf"<!--\s*{re.escape(ref_prefix)}:{re.escape(family)}(?::(?:start|end))?\s*-->"
+    )
+    open_fence: Optional[Tuple[str, int]] = None
+    for line in text.splitlines():
+        if open_fence is None:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+            if opening:
+                marker = opening.group(1)
+                open_fence = (marker[0], len(marker))
+                continue
+            if pattern.search(line):
+                return True
+        else:
+            closing = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", line)
+            if closing:
+                marker = closing.group(1)
+                if marker[0] == open_fence[0] and len(marker) >= open_fence[1]:
+                    open_fence = None
+    return False
+
+
+def _validate_withdrawn_primary_source_purge(
+    text: str,
+    candidate_rows: Sequence[Mapping[str, str]],
+    errors: List[str],
+) -> None:
+    """Enforce the withdrawn-revision terminal closure across report interfaces."""
+    withdrawn = _withdrawn_primary_source_families(text)
+    if not withdrawn:
+        return
+
+    def rows_if_present(marker: str, columns: Sequence[str]) -> List[Dict[str, str]]:
+        if marker not in text:
+            return []
+        rows, _table_errors = _expect_columns(text, marker, columns)
+        return rows
+
+    review_rows = rows_if_present(REVIEW_COMPLETION_MARKER, REVIEW_COMPLETION_COLUMNS)
+    analysis_rows = rows_if_present(
+        DEEP_ANALYSIS_SELECTION_MARKER, DEEP_ANALYSIS_SELECTION_COLUMNS
+    )
+    books_rows = rows_if_present(BOOKS_COMPARISON_MARKER, BOOKS_COMPARISON_COLUMNS)
+    material_rows = rows_if_present(MATERIALS_REQUEST_MARKER, MATERIALS_REQUEST_COLUMNS)
+
+    for family in sorted(withdrawn):
+        prefix = f"withdrawn_primary_source family {family}"
+        if any(row.get("Source Family ID", "").strip("`") == family for row in candidate_rows):
+            errors.append(f"{prefix} must not remain in Candidate Ledger")
+        if any(row.get("Source Family ID", "").strip("`") == family for row in review_rows):
+            errors.append(f"{prefix} must not remain in Review Completion Receipt")
+        if _has_family_ref_marker(text, "review", family) or _has_family_ref_marker(
+            text, "claim", family
+        ):
+            errors.append(f"{prefix} must not retain a Source Review")
+        if any(row.get("Source Family ID", "").strip("`") == family for row in analysis_rows) or _has_family_ref_marker(
+            text, "analysis-decision", family
+        ):
+            errors.append(f"{prefix} must not remain in Deep Analysis Selection or selected records")
+        if any(row.get("Source Family ID", "").strip("`") == family for row in books_rows):
+            errors.append(f"{prefix} must not remain in Books Comparison / Decision")
+        if _has_family_ref_marker(text, "books-review", family):
+            errors.append(f"{prefix} must not retain a Books Review")
+        if any(row.get("Source Family ID", "").strip("`") == family for row in material_rows):
+            errors.append(f"{prefix} must not remain in Materials Request")
 
 
 def _split_multi(value: str) -> List[str]:
@@ -1874,6 +2037,7 @@ def validate_report_text(
     errors.extend(table_errors)
     candidate_rows, table_errors = _expect_columns(text, candidate_marker, candidate_columns)
     errors.extend(table_errors)
+    _validate_withdrawn_primary_source_purge(text, candidate_rows, errors)
 
     if is_v21:
         if metadata.get("Contract Version") != "V2.1":

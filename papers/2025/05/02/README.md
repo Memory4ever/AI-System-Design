@@ -1,0 +1,319 @@
+# Daily Research — 2025-05-02
+
+**Research Date:** 2025-05-02
+
+**Timezone:** Asia/Shanghai
+
+**Strict Window:** 2025-05-01 09:00:00 ～ 2025-05-02 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay
+
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，状态真值见第 7、13 节
+
+## Executive Summary
+
+本轮从官方 arXiv Atom/API 严格窗口重新冻结 690 个 v1 identity，而不是从 W18 `/30` 评分反推。注册分类命中 296 项：220 条 Core Daily 已逐项完成 title+abstract 语义筛选，76 条 keyword route 也完成语义判断；fresh-context 全量复核纠正了 `SF-2025-UNISAFE` 的一项 false negative，最终冻结 17 个候选（5.74%），其余 279 个 family 保留 identity、摘要证据与具体 pre-denominator closure。
+
+17 个候选均已核验 exact-v1 的机制、实验与边界：16 项使用本地冻结的官方 HTML，`SF-2025-UNISAFE` 使用官方 exact-v1 HTML 与可复核 locator receipt；全部完成 Score V2、route-matched Review、Benchmark Contract 与逐 family Books Comparison。长期增量集中于五项：长视频事件图 RAG、训练网络流旁路诊断、EMA 量化状态动力学、peer-owned distributed RAG、CPU cache token side channel。其余十二项由 Books 现有主线承载。
+
+独立 reviewer 已复核 296-row screening ledger 的 false-positive/false-negative、17 份 exact-v1 Review、三项 Deep Analysis selection，以及五项 Books 写回后的 owner/adjacent 连贯性。`SF-2025-UNISAFE` 的漏检已经回写 ledger，并确认其长期命题已由 Ch26 承载；当前无 unresolved finding。
+
+## 1. Coverage
+
+<!-- validator:report-metadata-v2 -->
+| Field | Value |
+| --- | --- |
+| Contract Version | V2.1 |
+| Score Schema | V2 |
+| Report Type | Daily |
+| Window Start | 2025-05-02 |
+| Window End | 2025-05-02 |
+| Registry Version | 2026-08-25 |
+| Coverage Mode | Full Replay |
+| Baseline Report | — |
+| Changed Source IDs | — |
+| Previous Denominator ID | — |
+| Denominator ID | DEN-20250502-a04a30f778729999be29 |
+| Denominator Frozen At | 2026-08-31T18:30:00+08:00 |
+| Completion Status | Complete |
+| Coverage Gate | Closed |
+| Evidence Gate | Passed |
+| Books Gate | Passed |
+
+### Source Coverage Receipt
+
+<!-- validator:source-coverage-v2 -->
+| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SRC-ARXIV | 2025-05-01T09:00:00+08:00 | 2025-05-02T09:00:00+08:00 | 2026-08-31T17:35:00+08:00 | official Atom `submittedDate:[202505010100 TO 202505020100]`; registered categories; Core full semantic + keyword route | checked | 690 | SF-2025-UNLOK<br>SF-2025-AVA<br>SF-2025-ENRONQA<br>SF-2025-MOSA<br>SF-2025-T2VPHYS<br>SF-2025-LLMPRISM<br>SF-2025-SOLO<br>SF-2025-RNB<br>SF-2025-DISTRIBUTED-RAG<br>SF-2025-HALLUMIX<br>SF-2025-FREQKV<br>SF-2025-UNISAFE<br>SF-2025-GRAPH-MOE<br>SF-2025-PATCHWORK-RAG<br>SF-2025-SPILL-BEANS<br>SF-2025-OET<br>SF-2025-NEMO-INSPECTOR | page=2; start=0 partial plus bounded overlap/tail start=650; reconciled 690 unique; final_cursor=end | 2025-05-02T01:00:00Z | coverage:SRC-ARXIV:20250502 | — |
+
+<!-- coverage:SRC-ARXIV:20250502:start -->官方 query 声明 690 条；首响应保留 673 个完整 entry（SHA-256 `546c479016b885fb2f40bcd36e2f24902c0e09fb2bf261acf3d604be1ca94824`），以 start=650 的 40-entry 官方尾片（SHA-256 `3b91d9611ae647fcfad90fc716fde0af38b2a13f19bce29c17169feaf17d1f73`）闭合重叠后得到 690/690。296 条注册分类筛选、17 retained 与 279 closures 位于 screening ledger。<!-- coverage:SRC-ARXIV:20250502:end -->
+
+### Coverage Limitations
+
+- Atom 首响应被传输中断；未删除原始 partial receipt，而是用有重叠的官方 bounded tail 闭合并校验 query total、unique identity 和严格窗口。
+- W18 仅作 prior discovery/evidence clue；没有自动 retain、没有继承旧六维 `/30` 分数，也没有把 W18 的 review 声明冒充本日 exact-v1 Review。
+- 注册表 2026-08-25 才生效的组织/backstop 来源不追溯性重写本窗口。本轮论文 recall 由官方 arXiv 查询闭合；独立 denominator audit 已覆盖全部 296 项并纠正一项 false negative。
+
+## 2. Candidate Ledger
+
+<!-- validator:candidate-ledger-v2.1 -->
+| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2025-UNLOK | arXiv:2505.01456v1 | paper-v1:2505.01456 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-UNLOK | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2025-UNLOK | yes |
+| SF-2025-AVA | arXiv:2505.00254v1 | paper-v1:2505.00254 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | deep_complete | accessible | knowledge_gap | review:SF-2025-AVA | self | — | new_in_window | AGENT-RAG | Integrate | books-review:SF-2025-AVA | yes |
+| SF-2025-ENRONQA | arXiv:2505.00263v1 | paper-v1:2505.00263 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-ENRONQA | self | — | new_in_window | AGENT-RAG | No Change — Existing Coverage | books-review:SF-2025-ENRONQA | yes |
+| SF-2025-MOSA | arXiv:2505.00315v1 | paper-v1:2505.00315 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-MOSA | self | — | new_in_window | MODEL-LONG-CONTEXT | No Change — Existing Coverage | books-review:SF-2025-MOSA | yes |
+| SF-2025-T2VPHYS | arXiv:2505.00337v1 | paper-v1:2505.00337 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-T2VPHYS | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | No Change — Existing Coverage | books-review:SF-2025-T2VPHYS | yes |
+| SF-2025-LLMPRISM | arXiv:2505.00342v1 | paper-v1:2505.00342 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2025-LLMPRISM | self | — | new_in_window | PLATFORM-MONITORING | Integrate | books-review:SF-2025-LLMPRISM | yes |
+| SF-2025-SOLO | arXiv:2505.00347v1 | paper-v1:2505.00347 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2025-SOLO | self | — | new_in_window | TRAIN-PRETRAINING | Integrate | books-review:SF-2025-SOLO | yes |
+| SF-2025-RNB | arXiv:2505.00358v1 | paper-v1:2505.00358 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2025-RNB | self | — | new_in_window | TRAIN-DATA | No Change — Existing Coverage | books-review:SF-2025-RNB | yes |
+| SF-2025-DISTRIBUTED-RAG | arXiv:2505.00443v1 | paper-v1:2505.00443 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2025-DISTRIBUTED-RAG | self | — | new_in_window | AGENT-RAG | Integrate | books-review:SF-2025-DISTRIBUTED-RAG | yes |
+| SF-2025-HALLUMIX | arXiv:2505.00506v1 | paper-v1:2505.00506 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-HALLUMIX | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2025-HALLUMIX | yes |
+| SF-2025-FREQKV | arXiv:2505.00570v1 | paper-v1:2505.00570 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2025-FREQKV | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-2025-FREQKV | yes |
+| SF-2025-UNISAFE | arXiv:2505.00779v1 | paper-v1:2505.00779 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | release_security_contract | review:SF-2025-UNISAFE | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | No Change — Existing Coverage | books-review:SF-2025-UNISAFE | yes |
+| SF-2025-GRAPH-MOE | arXiv:2505.00792v1 | paper-v1:2505.00792 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-GRAPH-MOE | self | — | new_in_window | MODEL-MOE | No Change — Existing Coverage | books-review:SF-2025-GRAPH-MOE | yes |
+| SF-2025-PATCHWORK-RAG | arXiv:2505.07833v1 | paper-v1:2505.07833 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2025-PATCHWORK-RAG | self | — | new_in_window | INFER-SCHEDULING | No Change — Existing Coverage | books-review:SF-2025-PATCHWORK-RAG | yes |
+| SF-2025-SPILL-BEANS | arXiv:2505.00817v1 | paper-v1:2505.00817 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2025-SPILL-BEANS | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2025-SPILL-BEANS | yes |
+| SF-2025-OET | arXiv:2505.00843v1 | paper-v1:2505.00843 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | deep_complete | accessible | release_security_contract | review:SF-2025-OET | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2025-OET | yes |
+| SF-2025-NEMO-INSPECTOR | arXiv:2505.00903v1 | paper-v1:2505.00903 | 2025-W18 | 2025-05-01 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2025-NEMO-INSPECTOR | self | — | new_in_window | TRAIN-DATA | No Change — Existing Coverage | books-review:SF-2025-NEMO-INSPECTOR | yes |
+
+## 3. Review Completion Receipt
+
+<!-- validator:review-completion-v1 -->
+| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2025-UNLOK | RP-db903c975129961a | standard | arXiv:2505.01456v1 | SRC-ARXIV@arXiv:2505.01456v1 | https://arxiv.org/html/2505.01456v1 — exact-v1 §3 UnLOK benchmark；§4 threat model, attacks and defenses | https://arxiv.org/html/2505.01456v1 — exact-v1 §5 setup；§6 results | https://arxiv.org/html/2505.01456v1 — exact-v1 §6 discussion；Appendix B reproducibility boundary | Not Disclosed — exact event-time code revision is not frozen | claim:SF-2025-UNLOK | complete |
+| SF-2025-AVA | RP-5d482f3eeba8e5e3 | deep | arXiv:2505.00254v1 | SRC-ARXIV@arXiv:2505.00254v1 | https://arxiv.org/html/2505.00254v1 — exact-v1 §3 system overview；§4 index construction；§4.1 Event KG | https://arxiv.org/html/2505.00254v1 — exact-v1 §5 agentic retrieval；§6 implementation；§7 evaluation | https://arxiv.org/html/2505.00254v1 — exact-v1 §8 limitations | Not Disclosed — linked implementation revision is not frozen in the paper | claim:SF-2025-AVA | complete |
+| SF-2025-ENRONQA | RP-f5694b6cc89062bb | standard | arXiv:2505.00263v1 | SRC-ARXIV@arXiv:2505.00263v1 | https://arxiv.org/html/2505.00263v1 — exact-v1 §3 dataset construction；§4 quality | https://arxiv.org/html/2505.00263v1 — exact-v1 §5 benchmarking；§6 memorized knowledge | https://arxiv.org/html/2505.00263v1 — exact-v1 §7 discussion；Ethics statement | Not Disclosed — dataset release revision is not frozen | claim:SF-2025-ENRONQA | complete |
+| SF-2025-MOSA | RP-e0eff22681655851 | standard | arXiv:2505.00315v1 | SRC-ARXIV@arXiv:2505.00315v1 | https://arxiv.org/html/2505.00315v1 — exact-v1 §2 Mixture of Sparse Attention | https://arxiv.org/html/2505.00315v1 — exact-v1 §3 experiments；Appendix FLOPs/model settings | https://arxiv.org/html/2505.00315v1 — exact-v1 §5 limitations | Not Disclosed — optimized sparse kernel is not released as frozen evidence | claim:SF-2025-MOSA | complete |
+| SF-2025-T2VPHYS | RP-a7dd096fa6a14828 | standard | arXiv:2505.00337v1 | SRC-ARXIV@arXiv:2505.00337v1 | https://arxiv.org/html/2505.00337v1 — exact-v1 §3 benchmark；§3.3 protocol | https://arxiv.org/html/2505.00337v1 — exact-v1 §4 experiments；Appendix A implementation | https://arxiv.org/html/2505.00337v1 — exact-v1 §5 discussion；Appendix B limitations | Not Disclosed — benchmark revision is not frozen | claim:SF-2025-T2VPHYS | complete |
+| SF-2025-LLMPRISM | RP-45270c77721f3a37 | deep | arXiv:2505.00342v1 | SRC-ARXIV@arXiv:2505.00342v1 | https://arxiv.org/html/2505.00342v1 — exact-v1 §III motivation；§IV methodology A-D | https://arxiv.org/html/2505.00342v1 — exact-v1 §V evaluation and deployed experience A-D | https://arxiv.org/html/2505.00342v1 — exact-v1 §VII generalization and limits | Not Disclosed — production deployment code is not public | claim:SF-2025-LLMPRISM | complete |
+| SF-2025-SOLO | RP-8e97daa877e57fa9 | deep | arXiv:2505.00347v1 | SRC-ARXIV@arXiv:2505.00347v1 | https://arxiv.org/html/2505.00347v1 — exact-v1 §3 ultra-low-bit optimizer；§3.1-3.3 EMA dynamics | https://arxiv.org/html/2505.00347v1 — exact-v1 §4 experiments；Appendix C settings | https://arxiv.org/html/2505.00347v1 — exact-v1 § Discussion/Limitations boundary — exact-v1 discussion/ablation and precision limits | Not Disclosed — exact training implementation revision not frozen | claim:SF-2025-SOLO | complete |
+| SF-2025-RNB | RP-66cb5a5af3eebc67 | deep | arXiv:2505.00358v1 | SRC-ARXIV@arXiv:2505.00358v1 | https://arxiv.org/html/2505.00358v1 — exact-v1 §3 regrouping and balancing | https://arxiv.org/html/2505.00358v1 — exact-v1 §4 experiments；Appendix E/F implementation/settings | https://arxiv.org/html/2505.00358v1 — exact-v1 Appendix D cost and discussion limits | Not Disclosed — exact data/control artifact revision is not frozen | claim:SF-2025-RNB | complete |
+| SF-2025-DISTRIBUTED-RAG | RP-af959f00565708d7 | deep | arXiv:2505.00443v1 | SRC-ARXIV@arXiv:2505.00443v1 | https://arxiv.org/html/2505.00443v1 — exact-v1 §3 distributed RAG model and topic-aware random walk | https://arxiv.org/html/2505.00443v1 — exact-v1 §4 experiments and sensitivity | https://arxiv.org/html/2505.00443v1 — exact-v1 § Discussion/Limitations boundary — exact-v1 discussion and threat boundary | Not Disclosed — exact simulation/repository revision is not frozen | claim:SF-2025-DISTRIBUTED-RAG | complete |
+| SF-2025-HALLUMIX | RP-18e6c620b163bad2 | standard | arXiv:2505.00506v1 | SRC-ARXIV@arXiv:2505.00506v1 | https://arxiv.org/html/2505.00506v1 — exact-v1 §2 benchmark；§3 methodology | https://arxiv.org/html/2505.00506v1 — exact-v1 §4 results | https://arxiv.org/html/2505.00506v1 — exact-v1 §5 discussion, sub-source overfitting and length | Not Disclosed — exact benchmark release revision not frozen | claim:SF-2025-HALLUMIX | complete |
+| SF-2025-FREQKV | RP-a6d41e065303d3ac | deep | arXiv:2505.00570v1 | SRC-ARXIV@arXiv:2505.00570v1 | https://arxiv.org/html/2505.00570v1 — exact-v1 §4 method | https://arxiv.org/html/2505.00570v1 — exact-v1 §5 experiments；§6 latency analysis | https://arxiv.org/html/2505.00570v1 — exact-v1 analysis and Appendix D overhead | Not Disclosed — exact implementation revision not frozen | claim:SF-2025-FREQKV | complete |
+| SF-2025-UNISAFE | RP-c59fc86a6569ea86 | deep | arXiv:2505.00779v1 | SRC-ARXIV@arXiv:2505.00779v1 | https://arxiv.org/html/2505.00779v1 — exact-v1 §§3–5，尤其 §5.1 probabilistic ensemble/JRD 与 §5.2 conformal threshold | https://arxiv.org/html/2505.00779v1 — exact-v1 §§6.1–6.3；Appendix D | https://arxiv.org/html/2505.00779v1 — exact-v1 Appendix B.4，明确 safety not guaranteed，OOD/error/uncertain fallback 要求 halt 或 human intervention | Project page disclosed；exact event-time repository commit Not Disclosed | claim:SF-2025-UNISAFE | complete |
+| SF-2025-GRAPH-MOE | RP-dc35bed10e0e8e1d | standard | arXiv:2505.00792v1 | SRC-ARXIV@arXiv:2505.00792v1 | https://arxiv.org/html/2505.00792v1 — exact-v1 §§2-4 graph routing mechanism and entropy | https://arxiv.org/html/2505.00792v1 — exact-v1 §5 evaluation；Appendix experiment details | https://arxiv.org/html/2505.00792v1 — exact-v1 limitations/ablation and Appendix deployment boundary | Not Disclosed — no frozen distributed runtime artifact | claim:SF-2025-GRAPH-MOE | complete |
+| SF-2025-PATCHWORK-RAG | RP-1330dfdaddbe22fe | deep | arXiv:2505.07833v1 | SRC-ARXIV@arXiv:2505.07833v1 | https://arxiv.org/html/2505.07833v1 — exact-v1 title Patchwork；§3 framework/spec/allocation/configuration/SLO mitigation | https://arxiv.org/html/2505.07833v1 — exact-v1 §4 evaluation and sensitivity | https://arxiv.org/html/2505.07833v1 — exact-v1 § Discussion/Limitations boundary — exact-v1 discussion and workload/topology limits | Not Disclosed — exact event-time implementation revision not frozen | claim:SF-2025-PATCHWORK-RAG | complete |
+| SF-2025-SPILL-BEANS | RP-8c425204109245ce | deep | arXiv:2505.00817v1 | SRC-ARXIV@arXiv:2505.00817v1 | https://arxiv.org/html/2505.00817v1 — exact-v1 §4 threat and attack | https://arxiv.org/html/2505.00817v1 — exact-v1 §§5-6 leakage evaluation | https://arxiv.org/html/2505.00817v1 — exact-v1 §8 countermeasures；Ethics | Not Disclosed — attack artifact revision not frozen | claim:SF-2025-SPILL-BEANS | complete |
+| SF-2025-OET | RP-031fd74103ee7e19 | deep | arXiv:2505.00843v1 | SRC-ARXIV@arXiv:2505.00843v1 | https://arxiv.org/html/2505.00843v1 — exact-v1 §3 toolkit workflow | https://arxiv.org/html/2505.00843v1 — exact-v1 §4 evaluation | https://arxiv.org/html/2505.00843v1 — exact-v1 § Discussion/Limitations boundary — exact-v1 discussion and attack coverage limits | Not Disclosed — toolkit repository revision not frozen | claim:SF-2025-OET | complete |
+| SF-2025-NEMO-INSPECTOR | RP-94fc219af7130cf1 | standard | arXiv:2505.00903v1 | SRC-ARXIV@arXiv:2505.00903v1 | https://arxiv.org/html/2505.00903v1 — exact-v1 §2 overview；§3 usage | https://arxiv.org/html/2505.00903v1 — exact-v1 §4 results | https://arxiv.org/html/2505.00903v1 — exact-v1 §6 limitations | Not Disclosed — exact tool revision not frozen | claim:SF-2025-NEMO-INSPECTOR | complete |
+
+### Source Reviews
+
+<!-- review:SF-2025-UNLOK:start --><!-- claim:SF-2025-UNLOK:start -->多模态 unlearning 不能只报告遗忘分数；必须同时冻结敏感对象、攻击面、泛化、specificity 与防御目标。<!-- claim:SF-2025-UNLOK:end -->论文构造敏感多模态知识与七类攻击/六类防御目标，在受限模型和任务上比较 efficacy、generalization 与 specificity。它不证明参数内信息被普遍删除，也不能替代法律删除、数据 lineage 或 production release gate。<!-- review:SF-2025-UNLOK:end -->
+
+<!-- review:SF-2025-AVA:start --><!-- claim:SF-2025-AVA:start -->长视频 RAG 要先把连续观察压缩为带时间和来源的可修订事件图，再让 agent 在不同视图间检索；短视频直接 VLM 仍是低复杂度分支。<!-- claim:SF-2025-AVA:end -->作者以 3 秒片段生成描述并做语义合并，构造事件/实体/时间图，再用多视图检索、MCTS 与 self-consistency 回答。AVA-100 只覆盖八段长视频和 120 个问题；描述误差、图陈旧与搜索成本会累积，不能外推为通用实时视频理解。<!-- review:SF-2025-AVA:end -->
+
+<!-- review:SF-2025-ENRONQA:start --><!-- claim:SF-2025-ENRONQA:start -->私有文档 RAG 的正确答案必须绑定用户、邮箱快照、权限与 retrieval receipt；benchmark 命中不证明真实企业隐私和访问控制。<!-- claim:SF-2025-ENRONQA:end -->作者从 103,638 封邮件构造 528,304 QA，并以 150 个 inbox 测试个性化检索与模型记忆。该合同支持检索/记忆差异分析，不证明真实企业 ACL、删除、时效或隐私合规。<!-- review:SF-2025-ENRONQA:end -->
+
+<!-- review:SF-2025-MOSA:start --><!-- claim:SF-2025-MOSA:start -->content-based sparse attention 以 selector 换取更低 attention work，但 selector error、position identity 和稀疏 kernel 决定它是否优于 dense。<!-- claim:SF-2025-MOSA:end -->作者在 iso-FLOP 的非自回归语言建模设置比较 expert-choice sparse attention；perplexity 优势并不总转化为下游收益，短序列较弱，且未提供优化 kernel 或 causal serving 证据。<!-- review:SF-2025-MOSA:end -->
+
+<!-- review:SF-2025-T2VPHYS:start --><!-- claim:SF-2025-T2VPHYS:start -->视频生成质量不能代替物理一致性；评估必须冻结物理规律、prompt、hint/counterfactual、judge 与人类协议。<!-- claim:SF-2025-T2VPHYS:end -->作者以十二类 first-principles law 构建 benchmark 并报告受测系统平均分均低于 0.60。它诊断生成失败，不证明模型具有或缺乏可用于控制的因果 world state，也不预测真实机器人 policy success。<!-- review:SF-2025-T2VPHYS:end -->
+
+<!-- review:SF-2025-LLMPRISM:start --><!-- claim:SF-2025-LLMPRISM:start -->当训练框架不可插桩时，网络流序列可提供 job/parallelism/phase 的旁路传感；共享流量、加密、拓扑和框架漂移会使它失效，必须回退显式 instrumentation。<!-- claim:SF-2025-LLMPRISM:end -->论文从交换机/host 网络流推断训练任务、并行策略与阶段，并报告自 2024-10 的生产部署经验。作者的识别率和时间线误差只属于其平台与流量合同；旁路传感无法证明模型正确，也可能被共享流量或版本漂移混淆。<!-- review:SF-2025-LLMPRISM:end -->
+
+<!-- review:SF-2025-SOLO:start --><!-- claim:SF-2025-SOLO:start -->低比特 optimizer 的风险不只是静态误差：unsigned EMA 会淹没新信号，signed state 会放大方差或方向错误；状态演化决定是否还能学习。<!-- claim:SF-2025-SOLO:end -->作者用 log quantization 与 precision-specific momentum 处理 2-bit 级 Adam state，并在受限模型/训练设置比较。证据不覆盖所有 optimizer、分布式 checkpoint、故障恢复或数值格式；高精度 state 在小规模或不稳定训练中仍是基线。<!-- review:SF-2025-SOLO:end -->
+
+<!-- review:SF-2025-RNB:start --><!-- claim:SF-2025-RNB:start -->数据域不能永久沿用人工标签；可由表示和梯度反馈重组，但 estimator、mixture revision 与 drift fallback 必须纳入 lineage。<!-- claim:SF-2025-RNB:end -->作者以 embedding 与累计 final-layer gradient similarity 动态重组域并更新 mixture。受控实验支持样本效率，不能证明 final-layer proxy 在 frontier scale、生产漂移或不同 optimizer 下稳定；cluster churn 和 feedback cost 是新风险。<!-- review:SF-2025-RNB:end -->
+
+<!-- review:SF-2025-DISTRIBUTED-RAG:start --><!-- claim:SF-2025-DISTRIBUTED-RAG:start -->分布式 RAG 将 corpus ownership 留在 peer，并以 topic-aware discovery 代替中央索引；它减少集中收集，却不会自动提供 query privacy、信任或一致性。<!-- claim:SF-2025-DISTRIBUTED-RAG:end -->作者在仿真网络比较 topic-aware random walk 与 flooding/centralized baselines，并报告接近中央检索、消息更少。证据不覆盖对抗 peer、真实网络故障、隐私证明或生产尾延迟；稳定可审计 corpus 仍适合中央 RAG。<!-- review:SF-2025-DISTRIBUTED-RAG:end -->
+
+<!-- review:SF-2025-HALLUMIX:start --><!-- claim:SF-2025-HALLUMIX:start -->hallucination detector 的分数只属于给定任务、来源、长度和 evaluator；跨来源平均值不能替代 slice 与 calibration。<!-- claim:SF-2025-HALLUMIX:end -->作者构建 task-agnostic multi-domain benchmark，比较检测器并揭示来源过拟合与长度效应。最佳指标属于其数据划分和标签协议，不证明开放世界事实核验、生产置信度或单条 claim 正确性。<!-- review:SF-2025-HALLUMIX:end -->
+
+<!-- review:SF-2025-FREQKV:start --><!-- claim:SF-2025-FREQKV:start -->频域 KV 压缩用有损 summary 延伸窗口；频率分配、RoPE/position identity 与关键 token 丢失决定它何时必须回退 FullKV。<!-- claim:SF-2025-FREQKV:end -->作者在 LLaMA2/3、8K 训练与最长 256K 评测下比较长上下文任务和 latency。证据不覆盖 continuous batching、并发尾延迟或关键事实不可丢失的 workload，不能把平均质量外推为通用无损缓存。<!-- review:SF-2025-FREQKV:end -->
+
+<!-- review:SF-2025-UNISAFE:start --><!-- claim:SF-2025-UNISAFE:start -->learned world-model uncertainty 只能充当安全传感器；safety filter/controller 才拥有动作 override，无法可靠判定时必须 halt 或交给人。<!-- claim:SF-2025-UNISAFE:end -->作者将 probabilistic ensemble 的 epistemic uncertainty、trajectory-level conformal calibration、latent reachability 与动作覆盖串成闭环，并在 Dubins、IsaacLab block plucking 和 Franka Jenga 上验证。exact-v1 同时明确不保证安全：初态 OOD、模型/价值误差或 fallback 本身不可靠时仍会失败；因此不能把受限实验外推为通用机器人安全证明。<!-- review:SF-2025-UNISAFE:end -->
+
+<!-- review:SF-2025-GRAPH-MOE:start --><!-- claim:SF-2025-GRAPH-MOE:start -->router 可利用 token graph context 改变 expert selection，但质量增益只有在 capacity、load、dispatch 与 placement 同时成立时才转化为系统收益。<!-- claim:SF-2025-GRAPH-MOE:end -->作者在中等语言模型和 60M 视觉 MoE、K=2 下报告 modest gains。它不提供 frontier distributed dispatch、expert placement 或生产路由漂移证据，因此不能改变既有系统结论。<!-- review:SF-2025-GRAPH-MOE:end -->
+
+<!-- review:SF-2025-PATCHWORK-RAG:start --><!-- claim:SF-2025-PATCHWORK-RAG:start -->RAG serving 优化必须以端到端 operator DAG 和 SLO budget 为单位；单算子加速若移动 bottleneck，不能代表请求收益。<!-- claim:SF-2025-PATCHWORK-RAG:end -->v1 论文以四类 RAG 应用评估异构 placement、configuration 与 runtime mitigation，并报告 throughput/SLO violation 改善。结果只属于作者模型、硬件和 workload；current Atom 标题 Harmonia 是后续 rename，不能回写为 v1 标题或证明生产普适性。<!-- review:SF-2025-PATCHWORK-RAG:end -->
+
+<!-- review:SF-2025-SPILL-BEANS:start --><!-- claim:SF-2025-SPILL-BEANS:start -->即便 API 不返回 logits，共享 CPU cache 与 embedding access 仍可能泄露 token；防御必须进入 co-location、page sharing 和 cache isolation，而不只是输出过滤。<!-- claim:SF-2025-SPILL-BEANS:end -->作者在特定 co-location 与监控 token set 下恢复 API key/英文 token，headline rate 受可监控集合、CPU/cache 与部署布局约束。它不证明任意云、多租户或模型都可被同样攻击，但足以扩展平台 threat model。<!-- review:SF-2025-SPILL-BEANS:end -->
+
+<!-- review:SF-2025-OET:start --><!-- claim:SF-2025-OET:start -->prompt-injection defense 必须面对能依据反馈优化的攻击，并把内容 detection 与 tool/action authorization 分开。<!-- claim:SF-2025-OET:end -->论文提供 optimization-based white/black-box attack workflow并比较防御。它不证明覆盖开放攻击空间、真实工具 authority 或持续漂移；评测工具不取得 deployment security authority。<!-- review:SF-2025-OET:end -->
+
+<!-- review:SF-2025-NEMO-INSPECTOR:start --><!-- claim:SF-2025-NEMO-INSPECTOR:start -->synthetic data inspection 应保留原 generation、filter reason、reviewer 与 downstream evaluation；可视化工具只支持 diagnosis，不自动决定 admission。<!-- claim:SF-2025-NEMO-INSPECTOR:end -->作者展示推理可视化、分析和人工过滤，并在 GSM-Plus/OpenMath 案例报告质量变化。结果属于所选生成器、过滤标准和下游任务；它不证明人工筛选可扩展或自动过滤无偏。<!-- review:SF-2025-NEMO-INSPECTOR:end -->
+
+## 4. Benchmark Contracts
+
+每行只冻结 exact-v1 公开条件；`Not Disclosed` 不从相邻论文或常见默认值补齐。
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2025-UNLOK | multimodal unlearning benchmark with typed attacks/defenses | models listed in exact-v1 §5 | Not Disclosed | Not Disclosed | dataset-defined | task-defined | Not Disclosed | offline | efficacy/generalization/specificity; no production threshold | benchmark rules and attack success metrics |
+| SF-2025-AVA | long-video indexing and agentic question answering | Qwen2.5-VL-7B for indexing; answer roster in paper | 2×RTX 4090 for index construction | Not Disclosed | 3-second video chunks; videos >10 hours | answer text | Not Disclosed | self-consistency 8/16 samples | >5 FPS indexing; QA quality; no production SLO | AVA-100 human-authored QA and paper metrics |
+| SF-2025-ENRONQA | personalized QA over private email corpora | retrieval and LLM baselines listed in §5 | Not Disclosed | Not Disclosed | email/query-defined | answer text | Not Disclosed | offline | QA metrics; no latency or privacy SLO | dataset answers and benchmark scorer |
+| SF-2025-MOSA | iso-FLOP language modeling with sparse attention | models listed in exact-v1 Appendix | Not Disclosed | Not Disclosed | sequence lengths in paper | Not Disclosed | Not Disclosed | offline | perplexity/downstream score; no serving SLO | paper task evaluators |
+| SF-2025-T2VPHYS | text-to-video physical consistency across 12 law categories | video generators listed in §4 | Not Disclosed | Not Disclosed | prompt-defined | video | Not Disclosed | offline | physical consistency score; no production threshold | human protocol plus benchmark judge |
+| SF-2025-LLMPRISM | black-box diagnosis of production LLM training network flows | production training jobs; exact model roster Not Disclosed | production platform topology Not Disclosed | Not Disclosed | flow sequence | job/parallelism/phase labels | Not Disclosed | multi-job platform | diagnosis accuracy and timeline error; no user-facing SLO | ground-truth platform job metadata |
+| SF-2025-SOLO | language-model training with ultra-low-bit optimizer states | model roster in exact-v1 §4 | hardware Not Disclosed | 2-bit and comparison precisions | training sequence length Not Disclosed | Not Disclosed | settings in Appendix C | distributed topology Not Disclosed | loss/downstream quality and memory; no production SLO | paper training/evaluation pipeline |
+| SF-2025-RNB | foundation-model pretraining data regrouping and mixture balancing | model roster in exact-v1 §4 | Not Disclosed | Not Disclosed | training corpus-defined | Not Disclosed | Not Disclosed | offline training | loss/downstream metrics; no production SLO | paper benchmark evaluators |
+| SF-2025-DISTRIBUTED-RAG | peer-to-peer retrieval-augmented generation | retrieval/generation models in exact-v1 | simulation; hardware Not Disclosed | Not Disclosed | query/corpus-defined | answer text | Not Disclosed | peer network simulation | retrieval/answer quality and messages; no production SLO | simulation benchmark metrics |
+| SF-2025-HALLUMIX | hallucination detection across NLI, summarization and QA | detector roster in exact-v1 | Not Disclosed | Not Disclosed | dataset/length slices | label | Not Disclosed | offline | accuracy/F1; no production calibration threshold | benchmark labels and paper metrics |
+| SF-2025-FREQKV | long-context inference with frequency-domain KV compression | LLaMA2/3 roster in exact-v1 | hardware in exact-v1 §6; topology Not Disclosed | Not Disclosed | trained 8K; evaluated up to 256K | task-defined | Not Disclosed | Not Disclosed | task quality and latency; no production SLO | long-context benchmark metrics |
+| SF-2025-UNISAFE | Dubins safe control；IsaacLab block plucking；Franka Jenga | latent world model + probabilistic ensemble + DDQN/SAC safety policy | fixed-base Franka Research 3、dual RGB cameras、Meta Quest Pro；simulation/accelerator Not Disclosed | Not Disclosed | 128/256 images + proprioception；trajectory horizon as disclosed | task action、safety override 或 halt | world-model batch 16；其余见 Appendix B | offline training；closed-loop single robot | failure/intervention and task success；uncertainty forward `<0.1s` 为作者 desktop 条件，未给 production hard-real-time SLO | Dubins ground-truth dynamics/constraints；simulated task outcome；hardware Jenga outcome |
+| SF-2025-GRAPH-MOE | context-aware routing in language and vision MoE | medium LM and 60M vision MoE | Not Disclosed | Not Disclosed | task-defined | task-defined | K=2 routing | offline | task metrics/router entropy; no serving SLO | paper benchmark evaluators |
+| SF-2025-PATCHWORK-RAG | end-to-end serving for four RAG applications | models/operators listed in exact-v1 | heterogeneous cluster in exact-v1; topology details Not Disclosed here | Not Disclosed | application-defined | application-defined | Not Disclosed | multi-stage serving | throughput and SLO violations; thresholds in exact-v1 | application-specific quality/SLO evaluator |
+| SF-2025-SPILL-BEANS | CPU cache side-channel token leakage from LLM inference | victim model/runtime in exact-v1 | CPU/cache configuration in exact-v1; general topology Not Disclosed | Not Disclosed | prompt/token stream | token identity | Not Disclosed | co-located attacker | token/key recovery under paper threat model; no production threshold | known token ground truth |
+| SF-2025-OET | adaptive prompt-injection evaluation | target model/defense roster in exact-v1 | API/local; hardware Not Disclosed | Not Disclosed | prompt-defined | attack response | Not Disclosed | offline/adaptive queries | attack success and utility; no production threshold | toolkit rules and paper evaluator |
+| SF-2025-NEMO-INSPECTOR | LLM generation inspection and filtering | generator/training models in exact-v1 | Not Disclosed | Not Disclosed | dataset-defined | generation text | Not Disclosed | offline | filter rate and downstream accuracy; no production SLO | dataset/task evaluator |
+
+## 5. Deep Analysis Selection
+
+<!-- validator:deep-analysis-selection-v1 -->
+| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
+| --- | --- | --- | --- | --- | --- | --- |
+| SF-2025-AVA | forced_review;potential_books_delta | not_selected | — | — | 已完成 route-matched Review；三项容量优先给跨训练、RAG 与安全边界的演进链。 | analysis-decision:SF-2025-AVA |
+| SF-2025-LLMPRISM | score_7_9;potential_books_delta | selected | DA-TRAINING-CONTROL-STATE | — | 代表本日一条跨层状态/控制权演进主线。 | analysis:DA-TRAINING-CONTROL-STATE |
+| SF-2025-SOLO | score_7_9;potential_books_delta | subsumed | — | DA-TRAINING-CONTROL-STATE | 独立 Review 保留；机制作为同一控制链分支进入长叙事。 | analysis:DA-TRAINING-CONTROL-STATE |
+| SF-2025-RNB | score_7_9 | subsumed | — | DA-TRAINING-CONTROL-STATE | 独立 Review 保留；机制作为同一控制链分支进入长叙事。 | analysis:DA-TRAINING-CONTROL-STATE |
+| SF-2025-DISTRIBUTED-RAG | score_7_9;potential_books_delta | subsumed | — | DA-RAG-RUNTIME | 独立 Review 保留；机制作为同一控制链分支进入长叙事。 | analysis:DA-RAG-RUNTIME |
+| SF-2025-FREQKV | score_7_9 | subsumed | — | DA-RAG-RUNTIME | 独立 Review 保留；机制作为同一控制链分支进入长叙事。 | analysis:DA-RAG-RUNTIME |
+| SF-2025-UNISAFE | score_7_9;forced_review | subsumed | — | DA-EVIDENCE-SECURITY | 保留独立 physical-control owner；在安全叙事中只承担 uncertainty sensor→action override→halt/human fallback 分支。 | analysis:DA-EVIDENCE-SECURITY |
+| SF-2025-PATCHWORK-RAG | score_7_9 | selected | DA-RAG-RUNTIME | — | 代表本日一条跨层状态/控制权演进主线。 | analysis:DA-RAG-RUNTIME |
+| SF-2025-SPILL-BEANS | score_7_9;potential_books_delta | selected | DA-EVIDENCE-SECURITY | — | 代表本日一条跨层状态/控制权演进主线。 | analysis:DA-EVIDENCE-SECURITY |
+| SF-2025-OET | forced_review | subsumed | — | DA-EVIDENCE-SECURITY | 独立 Review 保留；机制作为同一控制链分支进入长叙事。 | analysis:DA-EVIDENCE-SECURITY |
+
+<!-- analysis:DA-TRAINING-CONTROL-STATE:start -->### Deep Analysis 1 — 训练系统从显式指标走向可恢复的状态观测与控制
+
+稳定训练最初依赖框架内指标、标准精度 optimizer 和固定数据域，因为这些状态容易解释。规模、异构平台和 memory 约束改变后，三条分支出现：LLMPrism 用网络流旁路推断 job/parallelism/phase；SOLO 处理低比特 EMA 的 signal swamping 与方向误差；R&B 以表示/梯度信号动态调整数据域。收益是少侵入、少内存和自适应，代价是 proxy drift、误诊、cluster churn 与 checkpoint identity 复杂化；显式 instrumentation、高精度 state 和固定 mixture 在稳定/高风险场景仍是 fallback。<!-- analysis:DA-TRAINING-CONTROL-STATE:end -->
+
+<!-- analysis:DA-RAG-RUNTIME:start -->### Deep Analysis 2 — RAG 从中央静态索引演进为带 ownership 与 SLO 的状态系统
+
+中央索引在 corpus 稳定、权限统一时最简单。长视频、peer-owned knowledge 和多算子 serving 改变约束：AVA 把连续观察压缩为可修订事件图；Distributed RAG 把 corpus 留在 peer 并增加 topic-aware discovery；Patchwork 以 operator DAG 和 end-to-end budget 调度；FreqKV 只作为有损 memory branch。新机制获得时序检索、数据自治和资源弹性，也引入图陈旧、query leakage、peer failure、跨算子 bottleneck 和 lossy state；小语料、稳定权限与低并发仍可使用中央检索/FullKV。<!-- analysis:DA-RAG-RUNTIME:end -->
+
+<!-- analysis:DA-EVIDENCE-SECURITY:start -->### Deep Analysis 3 — 安全从内容攻击评测推进到平台隔离与 action authority
+
+静态 prompt 测试在模型无工具、单租户时合理。OET 表明攻击会依据反馈优化，UnLOK/HalluMix/T2VPhys 提醒 evaluator 必须绑定攻击、slice 和任务；Spill The Beans 进一步把威胁移到共享 CPU cache，绕过输出过滤。物理控制是独立分支：UNISafe 把 epistemic uncertainty 当安全传感器，由 safety filter 覆盖动作，无法可靠判断时 halt 或交给人，而不是让 learned score 自己成为安全证明。于是 detection 只拥有风险信号，tool/action gate、robot safety controller、co-location、page sharing 与 cache isolation 才拥有执行 authority。代价是更复杂的 threat model、资源隔离、误报与 intervention；无共享硬件、无工具权限或具备确定性约束的低风险 workload 仍可保留较轻控制。<!-- analysis:DA-EVIDENCE-SECURITY:end -->
+
+<!-- analysis-decision:SF-2025-AVA:start -->该 family 的全文 Review 和 Books 比较已完成；本日报不以第四段论文摘要突破三项 Deep Analysis 上限。<!-- analysis-decision:SF-2025-AVA:end -->
+
+## 6. Books Comparison
+
+<!-- validator:books-comparison-v1 -->
+| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2025-UNLOK | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/66-evaluation-system.md#L1; books/part-03-multimodal-world-models/23-multimodal-representation.md#L1 | existing:SF-2025-UNLOK | delta:SF-2025-UNLOK | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-UNLOK |
+| SF-2025-AVA | AGENT-RAG | books/part-07-agent/76-rag.md#L1 | books/part-07-agent/75-context.md#L1; books/part-07-agent/77-memory.md#L1 | existing:SF-2025-AVA | delta:SF-2025-AVA | Direct Evolution | Integrate | books-review:SF-2025-AVA |
+| SF-2025-ENRONQA | AGENT-RAG | books/part-07-agent/76-rag.md#L1 | books/part-07-agent/75-context.md#L1; books/part-06-ai-infrastructure/71-multi-tenant.md#L1 | existing:SF-2025-ENRONQA | delta:SF-2025-ENRONQA | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-ENRONQA |
+| SF-2025-MOSA | MODEL-LONG-CONTEXT | books/part-02-model/22-long-context.md#L1 | books/part-02-model/15-multi-head-attention.md#L1; books/part-05-inference-system/49-tensorrt-llm.md#L1 | existing:SF-2025-MOSA | delta:SF-2025-MOSA | Alternative Branch | No Change — Existing Coverage | books-review:SF-2025-MOSA |
+| SF-2025-T2VPHYS | MULTIMODAL-WORLD-MODELS | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1 | books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L1; books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | existing:SF-2025-T2VPHYS | delta:SF-2025-T2VPHYS | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-T2VPHYS |
+| SF-2025-LLMPRISM | PLATFORM-MONITORING | books/part-06-ai-infrastructure/67-monitoring.md#L1 | books/part-06-ai-infrastructure/66-evaluation-system.md#L1; books/part-06-ai-infrastructure/68-logging.md#L1 | existing:SF-2025-LLMPRISM | delta:SF-2025-LLMPRISM | Alternative Branch | Integrate | books-review:SF-2025-LLMPRISM |
+| SF-2025-SOLO | TRAIN-PRETRAINING | books/part-04-training-system/28-pretraining.md#L1 | books/part-04-training-system/27-data.md#L1; books/part-04-training-system/29-sft.md#L1 | existing:SF-2025-SOLO | delta:SF-2025-SOLO | Direct Evolution | Integrate | books-review:SF-2025-SOLO |
+| SF-2025-RNB | TRAIN-DATA | books/part-04-training-system/27-data.md#L1 | books/part-04-training-system/28-pretraining.md#L1; books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | existing:SF-2025-RNB | delta:SF-2025-RNB | Direct Evolution | No Change — Existing Coverage | books-review:SF-2025-RNB |
+| SF-2025-DISTRIBUTED-RAG | AGENT-RAG | books/part-07-agent/76-rag.md#L1 | books/part-07-agent/75-context.md#L1; books/part-07-agent/77-memory.md#L1 | existing:SF-2025-DISTRIBUTED-RAG | delta:SF-2025-DISTRIBUTED-RAG | Alternative Branch | Integrate | books-review:SF-2025-DISTRIBUTED-RAG |
+| SF-2025-HALLUMIX | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | books/part-06-ai-infrastructure/67-monitoring.md#L1; books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2025-HALLUMIX | delta:SF-2025-HALLUMIX | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-HALLUMIX |
+| SF-2025-FREQKV | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L1 | books/part-02-model/22-long-context.md#L1; books/part-05-inference-system/47-pagedattention.md#L1 | existing:SF-2025-FREQKV | delta:SF-2025-FREQKV | Alternative Branch | No Change — Existing Coverage | books-review:SF-2025-FREQKV |
+| SF-2025-UNISAFE | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L1 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1; books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2025-UNISAFE | delta:SF-2025-UNISAFE | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-UNISAFE |
+| SF-2025-GRAPH-MOE | MODEL-MOE | books/part-02-model/21-moe.md#L1 | books/part-02-model/16-feed-forward-mlp.md#L1; books/part-04-training-system/37-tensor-parallel.md#L1 | existing:SF-2025-GRAPH-MOE | delta:SF-2025-GRAPH-MOE | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-GRAPH-MOE |
+| SF-2025-PATCHWORK-RAG | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#L1 | books/part-05-inference-system/55-pd-disaggregation.md#L1; books/part-06-ai-infrastructure/63-gpu-scheduler.md#L1 | existing:SF-2025-PATCHWORK-RAG | delta:SF-2025-PATCHWORK-RAG | Direct Evolution | No Change — Existing Coverage | books-review:SF-2025-PATCHWORK-RAG |
+| SF-2025-SPILL-BEANS | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/71-multi-tenant.md#L1; books/part-06-ai-infrastructure/73-production-best-practice.md#L1 | existing:SF-2025-SPILL-BEANS | delta:SF-2025-SPILL-BEANS | Layering / Dependency | Integrate | books-review:SF-2025-SPILL-BEANS |
+| SF-2025-OET | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/66-evaluation-system.md#L1; books/part-07-agent/78-tool-calling.md#L1 | existing:SF-2025-OET | delta:SF-2025-OET | Principle Reuse | No Change — Existing Coverage | books-review:SF-2025-OET |
+| SF-2025-NEMO-INSPECTOR | TRAIN-DATA | books/part-04-training-system/27-data.md#L1 | books/part-06-ai-infrastructure/66-evaluation-system.md#L1; books/part-04-training-system/28-pretraining.md#L1 | existing:SF-2025-NEMO-INSPECTOR | delta:SF-2025-NEMO-INSPECTOR | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2025-NEMO-INSPECTOR |
+
+五项 `Integrate` 的精确写回要求位于 `_sources/daily-v2.1-replay-202505/2025-05-02-books-writeback-queue.md`。root 已按事件顺序写入对应 owner；独立 reviewer 已重读 owner/adjacent，确认机制位于既有演进链中并保留 trade-off、failure 与 fallback，Books Gate 通过。
+
+<!-- books-review:SF-2025-UNLOK:start --><!-- existing:SF-2025-UNLOK:start -->Security/Evaluation 已要求攻击、模型、数据、目标与 evaluator 共同构成安全证据身份。<!-- existing:SF-2025-UNLOK:end --><!-- delta:SF-2025-UNLOK:start -->UnLOK 提供多模态 unlearning 的 typed attack-defense benchmark，但不改变既有 authority 或 release gate。<!-- delta:SF-2025-UNLOK:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-UNLOK:end -->
+
+<!-- books-review:SF-2025-AVA:start --><!-- existing:SF-2025-AVA:start -->RAG 已有 chunk/index/provenance，但缺少持续视频流如何变成可修订事件图的完整路径。<!-- existing:SF-2025-AVA:end --><!-- delta:SF-2025-AVA:start -->补充 observation→VLM description→semantic chunk→event/entity/temporal graph→tri-view retrieval/search；graph revision 与 staleness 成为 retrieval state。<!-- delta:SF-2025-AVA:end -->演进关系 `Direct Evolution`；当前决定 `Integrate`。<!-- books-review:SF-2025-AVA:end -->
+
+<!-- books-review:SF-2025-ENRONQA:start --><!-- existing:SF-2025-ENRONQA:start -->RAG 已把 tenant、ACL、corpus revision 与 retrieval receipt 纳入私有知识边界。<!-- existing:SF-2025-ENRONQA:end --><!-- delta:SF-2025-ENRONQA:start -->EnronQA 是个性化私有文档 RAG 的数据与评测案例，不新增 owner。<!-- delta:SF-2025-ENRONQA:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-ENRONQA:end -->
+
+<!-- books-review:SF-2025-MOSA:start --><!-- existing:SF-2025-MOSA:start -->Long Context 已区分 dense fallback、content selector、position identity 与 sparse-kernel cost。<!-- existing:SF-2025-MOSA:end --><!-- delta:SF-2025-MOSA:start -->把每个 attention head 视作 expert 并按 token content 选择子集，是现有 content-based sparse branch 的实现。<!-- delta:SF-2025-MOSA:end -->演进关系 `Alternative Branch`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-MOSA:end -->
+
+<!-- books-review:SF-2025-T2VPHYS:start --><!-- existing:SF-2025-T2VPHYS:start -->World Model/Evaluation 已区分视频 plausibility、物理一致性、action-conditioned transition 与因果证据。<!-- existing:SF-2025-T2VPHYS:end --><!-- delta:SF-2025-T2VPHYS:start -->十二类物理规律、hint/counterfactual probe 与人工协议是既有 evaluation contract 的案例。<!-- delta:SF-2025-T2VPHYS:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-T2VPHYS:end -->
+
+<!-- books-review:SF-2025-LLMPRISM:start --><!-- existing:SF-2025-LLMPRISM:start -->Monitoring 已有 metrics/logs/traces 与 collective telemetry，但缺少无法植入代码时的网络流序列诊断分支。<!-- existing:SF-2025-LLMPRISM:end --><!-- delta:SF-2025-LLMPRISM:start -->补充 network-flow sequence 作为低侵入 correlated sensor，用来推断训练 job identity、并行配置、phase/timeline 与 stall；它只拥有诊断线索，不拥有 correctness。<!-- delta:SF-2025-LLMPRISM:end -->演进关系 `Alternative Branch`；当前决定 `Integrate`。<!-- books-review:SF-2025-LLMPRISM:end -->
+
+<!-- books-review:SF-2025-SOLO:start --><!-- existing:SF-2025-SOLO:start -->Pretraining 已有 low-precision update、error feedback 与 role-aware optimizer state，但没有解释 EMA dynamics 的两种量化失真。<!-- existing:SF-2025-SOLO:end --><!-- delta:SF-2025-SOLO:start -->补充 unsigned EMA 的 signal swamping 与 signed state 的 variance/wrong-direction 分支；量化器、momentum precision 与 checkpoint identity 必须共同冻结。<!-- delta:SF-2025-SOLO:end -->演进关系 `Direct Evolution`；当前决定 `Integrate`。<!-- books-review:SF-2025-SOLO:end -->
+
+<!-- books-review:SF-2025-RNB:start --><!-- existing:SF-2025-RNB:start -->Data 已把 mixture weight 视为受 gradient/coverage/evaluation 反馈约束的动态控制状态。<!-- existing:SF-2025-RNB:end --><!-- delta:SF-2025-RNB:start -->embedding+gradient regrouping 与 final-layer similarity 是该控制链的受限 estimator，不新增 owner。<!-- delta:SF-2025-RNB:end -->演进关系 `Direct Evolution`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-RNB:end -->
+
+<!-- books-review:SF-2025-DISTRIBUTED-RAG:start --><!-- existing:SF-2025-DISTRIBUTED-RAG:start -->RAG 主要以中央索引为默认，已讨论 partition 和 federation，但缺少 peer-owned knowledge 的完整控制边界。<!-- existing:SF-2025-DISTRIBUTED-RAG:end --><!-- delta:SF-2025-DISTRIBUTED-RAG:start -->补充 peer-owned indexes 与 topic-aware random walk：恢复数据所有权，同时引入 query leakage、peer availability/trust、routing 与 index consistency。<!-- delta:SF-2025-DISTRIBUTED-RAG:end -->演进关系 `Alternative Branch`；当前决定 `Integrate`。<!-- books-review:SF-2025-DISTRIBUTED-RAG:end -->
+
+<!-- books-review:SF-2025-HALLUMIX:start --><!-- existing:SF-2025-HALLUMIX:start -->Evaluation 已把 hallucination 拆为 claim/evidence、slice、length、evaluator 与 calibration contract。<!-- existing:SF-2025-HALLUMIX:end --><!-- delta:SF-2025-HALLUMIX:start -->HalluMix 是跨 NLI/summary/QA 的 benchmark 实例，强调 sub-source overfitting 与长度效应。<!-- delta:SF-2025-HALLUMIX:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-HALLUMIX:end -->
+
+<!-- books-review:SF-2025-FREQKV:start --><!-- existing:SF-2025-FREQKV:start -->KV/Long Context 已覆盖 feature/frequency compression、position identity、lossy error 与 FullKV fallback。<!-- existing:SF-2025-FREQKV:end --><!-- delta:SF-2025-FREQKV:start -->FreqKV 的迭代频域压缩是已有 branch 的具体 estimator，不新增运行时 owner。<!-- delta:SF-2025-FREQKV:end -->演进关系 `Alternative Branch`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-FREQKV:end -->
+
+<!-- books-review:SF-2025-UNISAFE:start --><!-- existing:SF-2025-UNISAFE:start -->Ch26 已把 uncertainty-aware controller、physical action authority、learned reachability/CBVF 的证据边界，以及 conservative controller/human fallback 串成闭环。<!-- existing:SF-2025-UNISAFE:end --><!-- delta:SF-2025-UNISAFE:start -->UNISafe exact-v1 提供 trajectory-level conformal calibration 与 latent reachability 的受限实例，并再次证明 learned uncertainty 不能独占安全 authority；该长期命题已完整承载。<!-- delta:SF-2025-UNISAFE:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-UNISAFE:end -->
+
+<!-- books-review:SF-2025-GRAPH-MOE:start --><!-- existing:SF-2025-GRAPH-MOE:start -->MoE 已把 token/context-conditioned router、capacity、load、placement、dispatch 与 drift/fallback 放在同一链。<!-- existing:SF-2025-GRAPH-MOE:end --><!-- delta:SF-2025-GRAPH-MOE:start -->token similarity/attention context 形成 graph signal，是已有 context-aware routing 的一种输入。<!-- delta:SF-2025-GRAPH-MOE:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-GRAPH-MOE:end -->
+
+<!-- books-review:SF-2025-PATCHWORK-RAG:start --><!-- existing:SF-2025-PATCHWORK-RAG:start -->Inference Scheduling 已把 RAG 写成 typed operator DAG、bounded queue、heterogeneous placement 与 end-to-end SLO controller。<!-- existing:SF-2025-PATCHWORK-RAG:end --><!-- delta:SF-2025-PATCHWORK-RAG:start -->Patchwork v1 提供 pipeline spec、placement/config selection 与 SLO mitigation 的受限实现；当前 metadata 后来改名 Harmonia，不改写 v1 identity。<!-- delta:SF-2025-PATCHWORK-RAG:end -->演进关系 `Direct Evolution`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-PATCHWORK-RAG:end -->
+
+<!-- books-review:SF-2025-SPILL-BEANS:start --><!-- existing:SF-2025-SPILL-BEANS:start -->Security 已覆盖 tenant isolation、model/data side channels，但缺少 token embedding access 可经共享 CPU cache 泄露的明确 control boundary。<!-- existing:SF-2025-SPILL-BEANS:end --><!-- delta:SF-2025-SPILL-BEANS:start -->补充 shared cache/page/embedding access side channel；隔离、page sharing、cache partition 与 co-location policy 属于平台 authority，不是模型过滤。<!-- delta:SF-2025-SPILL-BEANS:end -->演进关系 `Layering / Dependency`；当前决定 `Integrate`。<!-- books-review:SF-2025-SPILL-BEANS:end -->
+
+<!-- books-review:SF-2025-OET:start --><!-- existing:SF-2025-OET:start -->Security/Evaluation 已要求 adaptive attack、threat model、utility 与 action gate 分离。<!-- existing:SF-2025-OET:end --><!-- delta:SF-2025-OET:start -->optimization-based white/black-box prompt injection 是已有 adaptive red-team branch 的工具实例。<!-- delta:SF-2025-OET:end -->演进关系 `Principle Reuse`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-OET:end -->
+
+<!-- books-review:SF-2025-NEMO-INSPECTOR:start --><!-- existing:SF-2025-NEMO-INSPECTOR:start -->Data/Evaluation 已把 synthetic sample、inspection、filter、lineage 与 human audit 分开。<!-- existing:SF-2025-NEMO-INSPECTOR:end --><!-- delta:SF-2025-NEMO-INSPECTOR:start -->NeMo-Inspector 是 generation inspection/filtering 的工具案例，不新增证据 authority。<!-- delta:SF-2025-NEMO-INSPECTOR:end -->演进关系 `Layering / Dependency`；当前决定 `No Change — Existing Coverage`。<!-- books-review:SF-2025-NEMO-INSPECTOR:end -->
+
+## 7. Semantic Audit
+
+本节由未参与 2025-05-02 初始筛选、报告写作或 Books 写回的 fresh-context reviewer 完成。审计覆盖全部 296 个注册 identity、全部 retained family、三项 Deep Analysis selection，以及五项写回后的 owner/adjacent 语义链；发现并修复一项 denominator false negative 和七处章节路径错误。
+
+<!-- validator:semantic-audit-v1 -->
+| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| SA-20250502-COVERAGE | fresh-context:may01-agent-cross-audit-20250502 | coverage | coverage:SRC-ARXIV:20250502 | — | 全量重读 296 条 title+abstract；已修复 `FN-20250502-UNISAFE`，将 `2505.00779v1` 从 closure 提升为 retained，最终 17/279；无 unresolved false positive/negative。 | passed |
+| SA-20250502-EVIDENCE | fresh-context:may01-agent-cross-audit-20250502 | evidence | review:SF-2025-UNLOK; review:SF-2025-AVA; review:SF-2025-ENRONQA; review:SF-2025-MOSA; review:SF-2025-T2VPHYS; review:SF-2025-LLMPRISM; review:SF-2025-SOLO; review:SF-2025-RNB; review:SF-2025-DISTRIBUTED-RAG; review:SF-2025-HALLUMIX; review:SF-2025-FREQKV; review:SF-2025-UNISAFE; review:SF-2025-GRAPH-MOE; review:SF-2025-PATCHWORK-RAG; review:SF-2025-SPILL-BEANS; review:SF-2025-OET; review:SF-2025-NEMO-INSPECTOR | — | 17/17 exact-v1 mechanism、evaluation、limitations 与 benchmark boundary 已复核；16 份本地 HTML hash 与 packet 一致，UNISafe 由官方 exact-v1 HTML locator receipt 支撑。 | passed |
+| SA-20250502-SELECTION | fresh-context:may01-agent-cross-audit-20250502 | deep_analysis_selection | analysis:DA-TRAINING-CONTROL-STATE; analysis:DA-RAG-RUNTIME; analysis:DA-EVIDENCE-SECURITY | — | 所有 eligible family 均有 selected/subsumed/not_selected disposition；UNISafe 保留独立 physical-control owner，只在安全叙事承担 action-authority 分支。 | passed |
+| SA-20250502-BOOKS | fresh-context:may01-agent-cross-audit-20250502 | books | books-review:SF-2025-UNLOK; books-review:SF-2025-AVA; books-review:SF-2025-ENRONQA; books-review:SF-2025-MOSA; books-review:SF-2025-T2VPHYS; books-review:SF-2025-LLMPRISM; books-review:SF-2025-SOLO; books-review:SF-2025-RNB; books-review:SF-2025-DISTRIBUTED-RAG; books-review:SF-2025-HALLUMIX; books-review:SF-2025-FREQKV; books-review:SF-2025-UNISAFE; books-review:SF-2025-GRAPH-MOE; books-review:SF-2025-PATCHWORK-RAG; books-review:SF-2025-SPILL-BEANS; books-review:SF-2025-OET; books-review:SF-2025-NEMO-INSPECTOR | — | 已修复 `BOOKS-PATH-20250502-01` 七处章节路径；重读 AVA/Distributed RAG/LLMPrism/SOLO/Spill the Beans 的 owner+adjacent，确认连续性、trade-off、failure/fallback；其余 12 项 Existing Coverage 均成立。 | passed |
+
+## 8. Ignored Noise
+
+279 个 pre-denominator closure 全部保留在 `2025-05-02-screening-ledger.json/tsv`，每项包含 exact identity、v1 时间、分类、route、title、abstract 证据与 family-specific closure reason。它们主要是垂直领域应用、secondary synthesis、局部 benchmark/dataset 和不改变长期 state/data/control ownership 的单点算法；没有被误写成低分候选或全文审阅。
+
+## 9. Recommended Action
+
+1. 将本日报的 17 个 owner candidate 聚合进 W18，并继续按 Source Family 做跨日去重。
+2. 只有 exact-v1 revision、artifact 或来源 delta 改变现有结论时才重新打开本日 Gate。
+
+## 10. Repository Changes
+
+- 新建本日报、296-row screening ledger、Review packet、16 份 exact-v1 HTML receipt、一份 UNISafe 官方 exact-v1 locator receipt 和 Books writeback queue。
+- 保留中断 Atom 原始响应与 bounded tail，不覆盖或伪造完整单响应。
+- fresh-context 全量审计纠正了 UNISafe 的一项 false negative，并把 denominator 从 16/280 重冻为 17/279。
+- root 已按事件顺序修改 `76-rag.md`、`67-monitoring.md`、`28-pretraining.md` 与 `72-security.md`，写入 AVA、Distributed RAG、LLMPrism、SOLO 与 Spill the Beans 的长期机制、trade-off 与 fallback；独立 Books audit 已通过。
+- 修复 Books Comparison 与 queue 中七处失效章节路径引用。
+- 未修改 ROADMAP、LEARNING_STATE；未 stage、commit 或 push。
+
+## 11. Open Questions
+
+- 网络流旁路诊断在加密、共享流量与拓扑变化下怎样校准并安全 abstain？
+- 2-bit optimizer state 如何与 checkpoint 恢复、分布式聚合和 mixed-precision overflow 联合定义 identity？
+- peer-owned RAG 如何同时处理 query privacy、peer trust、index consistency 和 SLO？
+- token side channel 的隔离应在 scheduler、runtime、OS page sharing 还是 cache partition 哪层拥有最终 authority？
+
+## 12. Sources
+
+- [Unlearning Sensitive Information in Multimodal LLMs: Benchmark and Attack-Defense Evaluation](https://arxiv.org/html/2505.01456v1) — arXiv:2505.01456v1；首次公开 `2025-05-01T01:54:00Z`；访问 2026-08-31。
+- [Empowering Agentic Video Analytics Systems with Video Language Models](https://arxiv.org/html/2505.00254v1) — arXiv:2505.00254v1；首次公开 `2025-05-01T02:40:23Z`；访问 2026-08-31。
+- [EnronQA: Towards Personalized RAG over Private Documents](https://arxiv.org/html/2505.00263v1) — arXiv:2505.00263v1；首次公开 `2025-05-01T03:07:30Z`；访问 2026-08-31。
+- [Mixture of Sparse Attention: Content-Based Learnable Sparse Attention via Expert-Choice Routing](https://arxiv.org/html/2505.00315v1) — arXiv:2505.00315v1；首次公开 `2025-05-01T05:22:11Z`；访问 2026-08-31。
+- [T2VPhysBench: A First-Principles Benchmark for Physical Consistency in Text-to-Video Generation](https://arxiv.org/html/2505.00337v1) — arXiv:2505.00337v1；首次公开 `2025-05-01T06:34:55Z`；访问 2026-08-31。
+- [LLMPrism: Black-box Performance Diagnosis for Production LLM Training Platforms](https://arxiv.org/html/2505.00342v1) — arXiv:2505.00342v1；首次公开 `2025-05-01T06:38:52Z`；访问 2026-08-31。
+- [Pushing the Limits of Low-Bit Optimizers: A Focus on EMA Dynamics](https://arxiv.org/html/2505.00347v1) — arXiv:2505.00347v1；首次公开 `2025-05-01T06:47:45Z`；访问 2026-08-31。
+- [R&B: Domain Regrouping and Data Mixture Balancing for Efficient Foundation Model Training](https://arxiv.org/html/2505.00358v1) — arXiv:2505.00358v1；首次公开 `2025-05-01T07:08:19Z`；访问 2026-08-31。
+- [Distributed Retrieval-Augmented Generation](https://arxiv.org/html/2505.00443v1) — arXiv:2505.00443v1；首次公开 `2025-05-01T10:37:06Z`；访问 2026-08-31。
+- [HalluMix: A Task-Agnostic, Multi-Domain Benchmark for Real-World Hallucination Detection](https://arxiv.org/html/2505.00506v1) — arXiv:2505.00506v1；首次公开 `2025-05-01T13:22:45Z`；访问 2026-08-31。
+- [FreqKV: Key-Value Compression in Frequency Domain for Context Window Extension](https://arxiv.org/html/2505.00570v1) — arXiv:2505.00570v1；首次公开 `2025-05-01T14:53:12Z`；访问 2026-08-31。
+- [Uncertainty-aware Latent Safety Filters for Avoiding Out-of-Distribution Failures](https://arxiv.org/html/2505.00779v1) — arXiv:2505.00779v1；首次公开 `2025-05-01T18:18:17Z`；访问 2026-08-31。
+- [Improving Routing in Sparse Mixture of Experts with Graph of Tokens](https://arxiv.org/html/2505.00792v1) — arXiv:2505.00792v1；首次公开 `2025-05-01T18:44:20Z`；访问 2026-08-31。
+- [Patchwork: A Unified Framework for RAG Serving](https://arxiv.org/html/2505.07833v1) — arXiv:2505.07833v1；首次公开 `2025-05-01T18:58:26Z`；访问 2026-08-31。
+- [Spill The Beans: Exploiting CPU Cache Side-Channels to Leak Tokens from Large Language Models](https://arxiv.org/html/2505.00817v1) — arXiv:2505.00817v1；首次公开 `2025-05-01T19:18:56Z`；访问 2026-08-31。
+- [OET: Optimization-based prompt injection Evaluation Toolkit](https://arxiv.org/html/2505.00843v1) — arXiv:2505.00843v1；首次公开 `2025-05-01T20:09:48Z`；访问 2026-08-31。
+- [NeMo-Inspector: A Visualization Tool for LLM Generation Analysis](https://arxiv.org/html/2505.00903v1) — arXiv:2505.00903v1；首次公开 `2025-05-01T22:47:06Z`；访问 2026-08-31。
+- [W18 prior discovery baseline](../../weekly/2025-W18/README.md) — 只作历史线索，不继承 V1 评分或完成状态。
+
+## 13. Final Status
+
+- Completion Status = `Complete`
+- Coverage = `Closed`
+- Evidence = `Passed`
+- Books = `Passed`
+- unresolved findings = `0`
+- 下一检查点：Sunday Weekly 聚合与跨日 Source Family 去重；除非出现 revision/source delta，本日不再重开。

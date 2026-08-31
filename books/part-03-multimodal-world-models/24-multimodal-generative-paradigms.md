@@ -275,20 +275,11 @@ proposal-correction training 会显式生成错误中间状态，让模型学习
 
 ## Cache、rollback 与 exactness
 
-<!-- daily-20260627:MULTIMODAL-GENERATIVE-PARADIGMS:start -->
-### Owner-merged minimal durable delta
+### Commitment Policy 可以从未来稳定轨迹学习
 
-并行文本生成不必只在全双向重算与纯 causal cache 之间二选一：受限 right-context side path 可以提供可编辑上下文，causal path 则保留 append-friendly state。generation identity 因而必须记录 mutable context 由哪条路径持有、哪些 cache entry 可复用，以及 provisional span 在何时提交。
+固定置信阈值或 block schedule 假设所有 token 的收敛速度相似。对于迭代修正生成，可以从完整去噪轨迹标注“该位置何时之后不再变化”，训练 token-local controller 预测 commitment，并用动态 threshold 决定冻结位置。它把 commit owner 从静态规则变为受限 learned policy，可减少无效更新；代价是监督依赖未来轨迹、分布漂移会导致过早锁定，且 rollback 更复杂。若 controller 未校准，原有保守固定 schedule 仍是 fallback。现有证据只覆盖冻结模型上的 plug-in 控制器，不证明其保持自回归式 exactness。
 
-### Trade-off、failure、fallback 与 coexistence
-
-Side path 增加参数、训练耦合与 cache-version 复杂度；要求 exact streaming 或 kernel 不支持时回退 causal generation。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-27732 — primary arXiv:2606.27732v1; exact-v1 URL=https://arxiv.org/html/2606.27732v1; Method=https://arxiv.org/html/2606.27732v1 — §3 Method; 3.4 R2LM Architecture; 3.5 Training and Inference; Evaluation=https://arxiv.org/html/2606.27732v1 — §4 Experiments; 4.1 Experimental Setup; 4.2 Main Results: Multiple-Choice Benchmarks; Non-proof=https://arxiv.org/html/2606.27732v1 — §5 Conclusion。
-<!-- daily-20260627:MULTIMODAL-GENERATIVE-PARADIGMS:end -->
-
+<!-- source-family:SF-2026-ARXIV-2605-24697 -->
 
 AR append-only KV 最容易复用。block 或 editable generation 若修改早期 token，受影响的 attention state 必须重算或版本化。一个安全的 cache key 至少包含：
 
@@ -322,6 +313,12 @@ version，未选位置只能在校准误差预算内复用。
 损失。模型 confidence 不是 cache-validity probability；作者在 diffusion LM 上的实验也不能外推到 append-only
 AR Decode。固定全刷新在 step 数少、变化广泛或 exactness 优先时仍是基线；固定 mask 在 shape 稳定、graph
 capture 重要时更容易工程化。
+
+### Cache 误差是沿生成轨迹演化的状态
+
+把 diffusion cache 的误差看成每个 site 的固定 representation mismatch，适合静态校准，却忽略先前修正会改变后续输入。trajectory-consistent calibration 沿 corrected history 逐步估计 site-local prior，使 cache 决策读取当前生成轨迹而非一次性误差表；收益是减少累计偏差，代价是离线 prior、prompt 分布和采样 schedule 共同进入 artifact identity。prior 漂移或未覆盖 cache policy 时应回退 base cache 或 full computation。现有证据只覆盖披露图像模型、H800 与采样路径，不能外推在线并发或分布外 prompt。
+
+<!-- source-family:SF-2026-ARXIV-2605-24870 -->
 
 ## Scheduling：并行机会也需要被分配
 
@@ -403,11 +400,42 @@ tree mask 落到较慢 kernel、dynamic shape 破坏 graph capture，算法减�
 6. policy 是固定参数、模型置信度控制，还是 scheduler 预算控制？
 7. Evaluation 是否使用 committed output 和完整 workload contract？
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-27732:start -->
+Diffusion-LM 可用 asymmetric bidirectional sidecar 提供受控右上下文，同时让主干保留可缓存的单向状态。它以额外 sidecar 参数和融合开销换 parallel correction；若右上下文收益抵不过 cache invalidation 和迭代成本，仍回到纯 AR 或无缓存的双向分支。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-27732:end -->
+
+### Distributional Distance 可以成为受限训练目标
+
+Fréchet 类表示距离通常用于训练后评估，因为 batch 内同时估计 population statistics 与反向传播会带来偏差和不稳定。把统计 population 与 gradient batch 解耦后，它可以成为直接 distribution-matching loss，但需要维护 estimator state，并继承 representation encoder 的语义偏差。该路线适合明确表示空间与分布目标的生成 workload；它不证明 perceptual alignment，也不能从图像结果外推所有模态，样本级 likelihood 或任务损失仍是重要共存分支。
+
+<!-- source-family:SF-2026-ARXIV-2604-28190 -->
+
+### 固定长度 Diffusion 把长度预测变成 Admission 决策
+
+自回归生成可以逐 token 停止，固定长度 diffusion LM 却需要在去噪开始前分配响应槽位；因此 length predictor 实际上拥有一次 admission-time compute budget。预测偏长会浪费并行迭代，预测偏短则可能截断语义并触发扩容或整段重试，破坏原本的延迟优势。动态长度只有在预测开销、重试策略和 SLO 一起计入时才成立；长度高度不确定或输出必须完整时，保守上界或自回归分支仍更可靠。[受限证据：arXiv:2605.04215v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-04215 -->
+
 ## 本章在知识树中的位置
 
 第18章解释 Decoder Only AR，第20章解释 token sampling；本章把 AR 放进更宽的生成范式树，并拥有 mutable generation、block refinement 与 commit boundary。第25章只在生成状态同时表达 action-conditioned environment transition 时才称其为 World Model。
 
 训练 objective 归 Part IV；线上 KV、batching、speculative verification 与 scheduler 分别由 Ch45～48、Ch56 拥有。本章定义它们要执行的 generation semantics，而不重复框架实现。
+
+## 从机制演进到系统设计
+
+生成范式的演进不是 AR 被 Diffusion 线性取代，而是 factorization、并行度与 correction authority 的重新分配。AR 每次提交一个 token，状态简单但串行；masked、block 或 diffusion 路线并行提出多个 provisional positions，再以迭代修正换吞吐。混合方案进一步把 proposal、verification、rollback 和 commit 拆开。
+
+并行生成只有在质量合同、cache invalidation 和停止规则都被版本化后才成立。它获得并行度，却增加迭代次数、临时状态、拒绝/回滚以及训练—推理 mismatch；短输出、严格 exactness 或 correction 成本高时，AR 仍可能更优。图像、视频和文本的 evaluator、长度与硬件路径不同，不能共享未经条件化的性能结论。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22370 -->
+长视频生成不能无限复制完整历史 KV；按 prompt-history 相关性选择可读历史，把 cache budget、selection error 与 continuity 绑定同一运行时状态。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；只覆盖受测长单镜头生成；selection miss 会破坏长期一致性，不能外推到可交互 world state。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
 
 ## 面试与自检问题
 
@@ -428,11 +456,13 @@ tree mask 落到较慢 kernel、dynamic shape 破坏 graph capture，算法减�
 
 生成范式不是从“串行”走向“并行”的单向进步史。系统用并行草拟换来了 mutable state，用修正换来了额外 forward，用更大候选空间换来了 verification 和 memory。真正的演进，是让这些成本与输出承诺被显式管理。
 
+### Early convergence 与 high confidence 不是同一个 Commit 证据
 
-### 从局部结果到可执行的系统边界
+并行去噪最初常用当前位置的边际置信度决定是否提前提交；它便宜，却把“这一步很确定”误写成“后续步骤不会再改变”。约束变化是多个位置共同修正时，单点高置信仍可能被后续条件关系推翻。更严格的 runtime 可以追踪一个 token 在连续 denoising steps 中是否已经稳定，把 early-convergence signal 与边际 confidence 联合用于 provisional-to-committed transition。
 
-<!-- body-source:SF-2026-ARXIV-2606-22370 -->
-长视频生成不能无限复制完整历史 KV；按 prompt-history 相关性选择可读历史，把 cache budget、selection error 与 continuity 绑定同一运行时状态。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；只覆盖受测长单镜头生成；selection miss 会破坏长期一致性，不能外推到可交互 world state。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+这会减少不必要的更新，却增加跨步状态、滞回阈值与误提交风险；稳定检测仍不是联合分布正确性的证明。检测不可靠、输出有外部副作用或 exactness 优先时，应延后到 block verifier 或完整 denoising 结束再 commit。该分支补充本章的 mutable-state 路线，不宣称它普遍优于 confidence schedule。[受限证据：arXiv:2605.10980v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-10980 -->
 
 ## Review notes
 
@@ -471,3 +501,60 @@ cache approximation 与 framework revision；否则同名 checkpoint 在两个 r
 - SenCache: https://arxiv.org/abs/2602.24208
 - dLLM framework（generative-process artifact identity；Status: Experimental）:
   https://arxiv.org/abs/2602.22661
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27732 — primary arXiv:2606.27732v1; exact-v1 URL=https://arxiv.org/html/2606.27732v1; Method=https://arxiv.org/html/2606.27732v1 — §3 Method; 3.4 R2LM Architecture; 3.5 Training and Inference; Evaluation=https://arxiv.org/html/2606.27732v1 — §4 Experiments; 4.1 Experimental Setup; 4.2 Main Results: Multiple-Choice Benchmarks; Non-proof=https://arxiv.org/html/2606.27732v1 — §5 Conclusion。
+
+### Source-family integration record
+
+<!-- daily-20260627:MULTIMODAL-GENERATIVE-PARADIGMS:start -->
+### Owner-merged minimal durable delta
+
+并行文本生成不必只在全双向重算与纯 causal cache 之间二选一：受限 right-context side path 可以提供可编辑上下文，causal path 则保留 append-friendly state。generation identity 因而必须记录 mutable context 由哪条路径持有、哪些 cache entry 可复用，以及 provisional span 在何时提交。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Side path 增加参数、训练耦合与 cache-version 复杂度；要求 exact streaming 或 kernel 不支持时回退 causal generation。
+
+<!-- daily-20260627:MULTIMODAL-GENERATIVE-PARADIGMS:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-ORDER-AGNOSTIC-CHAIN-RULE:start -->
+- `SF-ORDER-AGNOSTIC-CHAIN-RULE` — Daily `2026-06-01`；primary `arXiv:2606.00997v1`；Books review `books-review:SF-ORDER-AGNOSTIC-CHAIN-RULE`。
+
+  **已吸收的语义增量：** Order-agnostic masked language models expose conditionals that need not compose into one coherent joint distribution; reveal order therefore becomes part of the decoding contract rather than a harmless scheduler choice. 证据边界：Reported likelihood shifts and uniform-spreading effects are specific to evaluated models and schedules; they do not prove that every diffusion language model is incoherent or inferior to autoregression.
+<!-- daily-books-trace:SF-ORDER-AGNOSTIC-CHAIN-RULE:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13426:start -->
+- `SF-2026-ARXIV-2606-13426` — Daily `2026-06-12`；primary `arXiv:2606.13426v1`；Books review `books-review:SF-2026-ARXIV-2606-13426`。
+
+  **已吸收的语义增量：** diffusion model 的 speculative block proposal 必须由 target-model block verifier统一 commit/rollback，才能把并行候选与 exact output distribution 分开
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13426:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13496:start -->
+- `SF-2026-ARXIV-2606-13496` — Daily `2026-06-12`；primary `arXiv:2606.13496v1`；Books review `books-review:SF-2026-ARXIV-2606-13496`。
+
+  **已吸收的语义增量：** diffusion serving cache 应把 denoising step、state identity 与误差预算绑定，在 step-level reuse 与 recompute 间动态选择
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13496:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15805:start -->
+- `SF-2026-ARXIV-2606-15805` — Daily `2026-06-15`；primary `arXiv:2606.15805v1`；Books review `books-review:SF-2026-ARXIV-2606-15805`。
+
+  **已吸收的语义增量：** discrete diffusion并行commit需用pairwise compatibility修正marginal confidence，避免独立高置信token组成冲突configuration
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15805:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06560:start -->
+- `SF-2026-ARXIV-2607-06560` — Daily `2026-07-08`；primary `arXiv:2607.06560v1`；Books review `books-review:SF-2026-ARXIV-2607-06560`。
+
+  **已吸收的语义增量：** 新增证据边界：Convert heterogeneous annotations into a shared sample contract—visual inputs, natural-language task/schema instruction, and a text/image/mixed response that can be deterministically decoded back into boxes, masks, dense maps or camera records—so one generative model can learn many vision tasks without task-specific heads. 该 delta 已进入 `books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L183`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06560:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607.27372:start -->
+- `SF-2026-ARXIV-2607.27372` — Daily `2026-07-30`；primary `arXiv:2607.27372v1`；Books review `books-review:SF-2026-ARXIV-2607.27372`。
+
+  **已吸收的语义增量：** 新增证据边界：Explorative Modeling factors the training loop over multiple candidate matches and trains on the selected match, making sampling during training closer to inference-time mode commitment. Exploration becomes a third compute axis, but multiplies candidate-generation cost and introduces selection bias; author scaling curves do not prove a universal replacement for AR or diffusion. 该 delta 已进入 `books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L211`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607.27372:end -->

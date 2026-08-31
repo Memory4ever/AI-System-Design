@@ -151,6 +151,12 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 
 第 46 章 continuous batching 是 application scheduling，不是 cluster GPU sharing。二者都提高利用率，但作用层不同。
 
+<!-- source-family:SF-2026-ARXIV-2605-26461 -->
+
+MPS 之类的进程级共享在 workload 彼此可信、错误可通过重启整卡恢复时，能以很低的管理成本提高利用率；但当多租户进程共享 SM 与上下文后，“地址访问隔离”和“致命设备错误后的恢复”成为两条不同责任链。MMU 可以限制越界地址影响，却不能保证 fatal SM fault 后其他 client 的 runtime state 仍可继续使用。
+
+因此 production sharing 需要显式 fault-domain contract：硬件/驱动拥有地址隔离，node runtime 负责检测 fatal fault、冻结受影响 allocation、重建 MPS client 与 context，scheduler 再依据恢复结果决定 rebind 或迁移。它以 recovery controller、重建延迟和更复杂的健康状态换取更细故障域；若驱动无法证明 client-level containment，或 workload 无 checkpoint / replay，MIG、独占 GPU 或整节点失败回退仍更可靠。单一软件栈的 fault-injection 结果不能外推为所有 GPU、driver 与 kernel 组合的隔离保证。
+
 ## 从固定 Job Shape 到 Elastic Configuration Portfolio
 
 传统 scheduler 接收一个固定 GPU request，只决定放在哪里；但 training/inference job 可能存在多个合法配置，
@@ -202,6 +208,18 @@ failure modes：driver 必须准确广告/执行 capacity，scheduler 的 admiss
 
 ## 与推理 Scheduler 的边界
 
+### Power Budget 是分层资源契约
+
+把 GPU 数量当唯一容量会遗漏供电链的四个不同 owner：设计 provisioning 决定理论上限，rack validation 证明安装边界，operational cap 留出可靠性余量，runtime scheduler 才能消费瞬时 swing。调度器应依据可用功率而非铭牌功率 admission，并保留测量延迟与降级策略；收益是提高基础设施利用率，代价是 telemetry、控制稳定性和故障域耦合。功率波动不可测或业务不能容忍 throttle 时，静态保守 cap 仍更合理。单个大规模集群的测量不能外推为所有硬件和冷却拓扑。
+
+<!-- source-family:SF-2026-ARXIV-2605-24461 -->
+
+### 可回收资源需要 Lease 与 Reclaim Protocol
+
+机会型 host/member 资源若只有“可用/不可用”标签，回收会在 checkpoint、网络迁移和流量切换之间制造竞态。更完整的契约包含 lease、成员身份、目标网络、reclaim notice 与 deadline；scheduler 负责选择目标，workload controller 负责 checkpoint，traffic owner 负责连接排空。收益是利用闲置资源，代价是恢复状态、控制面消息和尾延迟增加；短任务或不可迁移状态仍应使用保留资源。现有证据支持一种 voluntary resource protocol，不证明跨集群回收天然无损。
+
+<!-- source-family:SF-2026-ARXIV-2605-28872 -->
+
 ```text
 Chapter 56 inference scheduler
   request / token / KV / iteration, millisecond scale
@@ -212,9 +230,35 @@ Chapter 63 GPU scheduler
 
 二者通过 autoscaling、resource requests、topology 和 metrics 连接。把 token queue 直接塞进 kube-scheduler 会产生高频耦合；让 runtime 完全看不到 cluster topology 又会产生错误 placement。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-06818:start -->
+异构 accelerator 调度不能只把设备建模成同质卡数：layer variant、设备能力与非抢占执行时间共同决定可行 placement，scheduler 需要在 accuracy 约束内选择模型变体和设备组合。该机制只在论文给定的 layer/profile与非抢占假设下成立；profile 漂移时回退静态兼容设备池。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-06818:end -->
+
+### Cross-API Sharing 要同时拥有 Scheduling Domain 与 Address Space
+
+time-slicing、MPS 与 MIG 都假设 runtime 与隔离边界相对明确；当 CUDA 与 Vulkan 等不同 API 共享同一设备时，空间复用还会引入跨 API 的 allocation、同步与地址可见性问题。平台不能只把两类进程放在同一 GPU 上就宣称共享成功：scheduler 要拥有可审计的 resource partition，driver/runtime 要拥有 synchronization 与 memory-safety contract，workload identity 还必须绑定 API、context 和 device state。
+
+这种分支可以提高碎片利用率，却把隔离证明、故障归因和 driver 兼容性变得更难。任何同步超时、越界可见性或驱动不支持都应回退为单 API、time-slicing 或硬隔离；MIG 等旧方案在强租户隔离和可预测 SLO 优先时仍然更合适。
+
+<!-- source-family:SF-VUDA-CUDA-VULKAN-SHARING -->
+
+### 从削峰响应到 Grid-responsive Compute
+
+只把功率当容量上限，在电价和供电条件平稳时足够；MW 级 AI/HPC 负载接入电网后，能源可用性会在秒级到小时级变化。Scheduler owner 需要把 job deadline、checkpoint/elasticity、设施安全边界和 grid signal 分成不同时间尺度，由三层 controller 决定降频、迁移或延后，而不是让电网直接控制 workload。收益是把 compute 变成可验证的柔性负载，代价是吞吐损失、控制复杂度与 SLA 风险；信号丢失或 safety island 触发时必须回退本地安全功率。exact-v1 只支持 GridPilot 披露的 cluster/grid interface 与实测环境，不证明任意数据中心或电网均有相同收益。<!-- source-family:SF-2026-ARXIV-2605-26384 -->
+
 ## 本章在知识树中的位置
 
 本章建立 GPU scheduling 的稳定问题模型。下一章用 Volcano 映射 batch/gang/queue 机制，再用 KAI 观察 AI-native queue 与 GPU sharing 的另一种工程组合。
+
+## 从机制演进到系统设计
+
+GPU scheduler 最初按卡数和显存做 placement；异构 accelerator、MIG、拓扑与动态并行出现后，资源必须表达 capability、locality、sharing mode、health 和可重配置成本。调度器选择 placement，runtime 决定算子和通信，二者通过可验证 profile 交接，而不是互相猜测。
+
+更精细的 typed resources 提高利用率，却增加碎片、reconfiguration latency、profile drift 和 fairness问题。capability 不可验证、拓扑快速变化或隔离要求严格时，应回退整卡、静态 pool 或保守 quota。理论可放置不等于满足训练/推理 SLO。
 
 ## 自检问题
 
@@ -230,32 +274,6 @@ Chapter 63 GPU scheduler
 ## 小结
 
 GPU scheduler 的任务不是简单填满设备，而是在设备/拓扑硬约束下形成可执行 workload，并维持长期公平与可接受抢占成本。下一章进入 Volcano，查看这些原则如何被表达为 PodGroup、Queue、actions 与 plugins。
-
-<!-- recovered-daily-20260624:PLATFORM-GPU-SCHEDULER:start -->
-## 2026-06-24 evidence integration — PLATFORM-GPU-SCHEDULER
-
-相邻章 `books/part-06-ai-infrastructure/65-kai-scheduler.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-25082**：MIG scheduler 同时拥有 configuration 内作业放置与 configuration 间 repartition；controller 以 power/performance state、partition action 与 reward 决定何时重分，而不是把 MIG 当静态 SKU。 主要是 simulation 与测得的 MIG power characteristic；repartition downtime、state migration、真实混合作业 SLO 和多节点 GPU fabric 未闭合，收益不足时保留静态 partition。
-- **SF-2026-ARXIV-2606-25098**：grid signal 成为 cluster scheduler 的外部 control input，power telemetry/model 回写可用 curtailment budget；priority job 保留服务级别，elastic job 承担降载或跨地域迁移。 130 kW GPU cluster 与展示的 dispatch/geo shift 不证明 hyperscale、所有训练 checkpoint 或数据主权条件；telemetry/model 失准时回退静态 power cap 和 locality policy。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-25082: `arXiv:2606.25082v1`; exact-v1 URL=`https://arxiv.org/html/2606.25082v1`; Method=`https://arxiv.org/html/2606.25082v1 — §IV Proposed Solution; Scheduling Within Configuration; Dynamic Re-Partitioning`; Evaluation=`https://arxiv.org/html/2606.25082v1 — §V Experiments and Results`; Non-proof=`主要是 simulation 与测得的 MIG power characteristic；repartition downtime、state migration、真实混合作业 SLO 和多节点 GPU fabric 未闭合，收益不足时保留静态 partition。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-25098: `arXiv:2606.25098v1`; exact-v1 URL=`https://arxiv.org/html/2606.25098v1`; Method=`https://arxiv.org/html/2606.25098v1 — §3 Architecture for Power-Flexible AI Infrastructure`; Evaluation=`https://arxiv.org/html/2606.25098v1 — §4 Experimental Demonstration; 5 Grid Services; 6 Geo-Load Shifting`; Non-proof=`130 kW GPU cluster 与展示的 dispatch/geo shift 不证明 hyperscale、所有训练 checkpoint 或数据主权条件；telemetry/model 失准时回退静态 power cap 和 locality policy。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:PLATFORM-GPU-SCHEDULER:end -->
-
-<!-- recovered-daily-20260625:PLATFORM-GPU-SCHEDULER:start -->
-## 2026-06-25 evidence integration — PLATFORM-GPU-SCHEDULER
-
-- **SF-2026-ARXIV-2606-26341**：`Many Problems One GPU batching and nonlinear-optimization execution design` 所定义的源特定机制用于把异构问题批处理与 GPU 执行配置作为调度状态，而非模型内部细节；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Only disclosed nonlinear solvers/problem shapes; no cluster-level scheduling or isolation proof` 是 `Scaling Nonlinear Optimization: Many Problems One GPU` 的 source-specific 反例/局限边界；若运行条件离开 `GPU scaling experiments across problem families` 的验证域，`PLATFORM-GPU-SCHEDULER` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-26341**：Primary `arXiv:2606.26341v1`；Method `https://arxiv.org/html/2606.26341v1 — §Many Problems One GPU batching and nonlinear-optimization execution design`；Evaluation `https://arxiv.org/html/2606.26341v1 — §GPU scaling experiments across problem families`；未证明边界 `https://arxiv.org/html/2606.26341v1 — §Only disclosed nonlinear solvers/problem shapes; no cluster-level scheduling or isolation proof`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:PLATFORM-GPU-SCHEDULER:end -->
 
 ## Review notes
 
@@ -274,3 +292,43 @@ Primary-source 与官方入口：
 - Dominant Resource Fairness: https://www.usenix.org/conference/nsdi11/dominant-resource-fairness-fair-allocation-multiple-resource-types
 - ElastiCo（elastic configuration portfolio 与 interference-aware placement；Status: Experimental）:
   https://arxiv.org/abs/2608.07971
+
+### Daily integration evidence trace
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-25082: `arXiv:2606.25082v1`; exact-v1 URL=`https://arxiv.org/html/2606.25082v1`; Method=`https://arxiv.org/html/2606.25082v1 — §IV Proposed Solution; Scheduling Within Configuration; Dynamic Re-Partitioning`; Evaluation=`https://arxiv.org/html/2606.25082v1 — §V Experiments and Results`; Non-proof=`主要是 simulation 与测得的 MIG power characteristic；repartition downtime、state migration、真实混合作业 SLO 和多节点 GPU fabric 未闭合，收益不足时保留静态 partition。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25098: `arXiv:2606.25098v1`; exact-v1 URL=`https://arxiv.org/html/2606.25098v1`; Method=`https://arxiv.org/html/2606.25098v1 — §3 Architecture for Power-Flexible AI Infrastructure`; Evaluation=`https://arxiv.org/html/2606.25098v1 — §4 Experimental Demonstration; 5 Grid Services; 6 Geo-Load Shifting`; Non-proof=`130 kW GPU cluster 与展示的 dispatch/geo shift 不证明 hyperscale、所有训练 checkpoint 或数据主权条件；telemetry/model 失准时回退静态 power cap 和 locality policy。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26341**：Primary `arXiv:2606.26341v1`；Method `https://arxiv.org/html/2606.26341v1 — §Many Problems One GPU batching and nonlinear-optimization execution design`；Evaluation `https://arxiv.org/html/2606.26341v1 — §GPU scaling experiments across problem families`；未证明边界 `https://arxiv.org/html/2606.26341v1 — §Only disclosed nonlinear solvers/problem shapes; no cluster-level scheduling or isolation proof`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260624:PLATFORM-GPU-SCHEDULER:start -->
+### 2026-06-24 evidence integration — PLATFORM-GPU-SCHEDULER
+
+相邻章 `books/part-06-ai-infrastructure/65-kai-scheduler.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-25082**：MIG scheduler 同时拥有 configuration 内作业放置与 configuration 间 repartition；controller 以 power/performance state、partition action 与 reward 决定何时重分，而不是把 MIG 当静态 SKU。 主要是 simulation 与测得的 MIG power characteristic；repartition downtime、state migration、真实混合作业 SLO 和多节点 GPU fabric 未闭合，收益不足时保留静态 partition。
+- **SF-2026-ARXIV-2606-25098**：grid signal 成为 cluster scheduler 的外部 control input，power telemetry/model 回写可用 curtailment budget；priority job 保留服务级别，elastic job 承担降载或跨地域迁移。 130 kW GPU cluster 与展示的 dispatch/geo shift 不证明 hyperscale、所有训练 checkpoint 或数据主权条件；telemetry/model 失准时回退静态 power cap 和 locality policy。
+
+<!-- recovered-daily-20260624:PLATFORM-GPU-SCHEDULER:end -->
+
+<!-- recovered-daily-20260625:PLATFORM-GPU-SCHEDULER:start -->
+### 2026-06-25 evidence integration — PLATFORM-GPU-SCHEDULER
+
+- **SF-2026-ARXIV-2606-26341**：`Many Problems One GPU batching and nonlinear-optimization execution design` 所定义的源特定机制用于把异构问题批处理与 GPU 执行配置作为调度状态，而非模型内部细节；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Only disclosed nonlinear solvers/problem shapes; no cluster-level scheduling or isolation proof` 是 `Scaling Nonlinear Optimization: Many Problems One GPU` 的 source-specific 反例/局限边界；若运行条件离开 `GPU scaling experiments across problem families` 的验证域，`PLATFORM-GPU-SCHEDULER` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:PLATFORM-GPU-SCHEDULER:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06818:start -->
+- `SF-2026-ARXIV-2606-06818` — Daily `2026-06-06`；primary `arXiv:2606.06818v1`；Books review `books-review:SF-2026-ARXIV-2606-06818`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06818:end -->

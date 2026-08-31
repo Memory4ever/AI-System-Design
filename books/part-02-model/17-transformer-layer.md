@@ -421,6 +421,20 @@ l = 0,...,L-1
 
 所以 `L` 不只是模型容量，也是 Training 与 Inference System 的关键维度。
 
+### Layer “冗余”取决于干预协议
+
+逐层替换为某个固定 baseline，适合测“删除这一层后模型是否仍工作”；把两层互换，则测它们在上下文位置和 residual state 下是否可替代。这两个 protocol 改变的输入状态、下游补偿空间和 evaluator 都不同，因此不能从 replacement 影响小直接推出 layers 可交换或可安全剪枝。
+
+任何 layer-redundancy 结论都应绑定 checkpoint、干预操作、位置、数据切片和 evaluator，并在剪枝后重新验证完整模型。受限实验可以暴露 protocol-dependent redundancy，但不证明跨模型或跨任务存在固定“无用层”；证据不一致时保留原层结构，或只把干预作为诊断而非 release 决策。
+
+<!-- source-family:SF-2026-ARXIV-2605.16234 -->
+
+### Residual Stream 之外还可能存在跨层更新状态
+
+标准 residual block 把每层输出视为对同一 activation state 的局部修正，优点是路径清晰、并行实现成熟；但它没有显式利用连续层更新方向之间的相关性。若额外维护 depth-wise momentum，当前层可以结合先前层的更新方向再写回 residual stream，这改变的是跨层控制状态，而不是简单的归一化或矩阵预条件。潜在收益是更有效的深度传播，代价是顺序依赖、额外状态和初始化敏感性；动量失稳会沿深度累积。浅层或跨层相关性弱时，标准 residual 仍更稳妥。现有受控消融支持收益主要来自 momentum 而非 preconditioning，但不证明该结构适用于所有规模和训练配方。
+
+<!-- source-family:SF-2026-ARXIV-2605-24425 -->
+
 ## Dropout、precision 与训练/推理差异
 
 训练时可能在 Attention weights、sub-layer outputs 或 residual branches 使用 dropout；推理时通常关闭。Mixed precision 会让 Norm、residual accumulation 与 softmax 的数值策略更重要。
@@ -470,6 +484,7 @@ Positioned hidden states
 11. 为什么 Jacobian singular value 长期偏离 `1` 会让某些方向的梯度消失或爆炸？
 12. Residual connection 为什么改善 gradient path，却不能保证任意深度都稳定？
 13. 为什么 gradient clipping 和逐层 learning rate 不能修复已经消失的 backward signal？
+14. 为什么 causal mask 的配置审查不能替代 prefix invariance 的行为审计？
 
 ## 小结
 
@@ -504,3 +519,7 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2605.20613
 - Post-Norm under Curriculum Depth Growing（No Change；受限九层 distillation curriculum 证据）:
   https://arxiv.org/abs/2608.13156
+- `SF-2026-PREFIX-INVARIANCE`，The Mask Is Not the Model（Status: Experimental；两次 forward-pass
+  prefix invariance audit 在 8 个 checkpoints、192 个 injected-fault trials 中定位全部注入缺陷，并报告两个共享
+  lineage 的实现缺陷；不能外推为行业缺陷率，也不能替代跨长度、dtype、kernel 与 distributed path 的覆盖）:
+  https://arxiv.org/abs/2608.22876v1

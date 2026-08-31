@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic arXiv identity-screening ledger for a June Daily.
+"""Build a deterministic arXiv identity-screening ledger for one Daily.
 
 This helper does not decide the Candidate Denominator, Evidence Gate, or Books
 Gate. It converts frozen DataCite arXiv DOI snapshots into a complete
@@ -68,12 +68,32 @@ ROUTE_RE = re.compile(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report-date", required=True, help="YYYY-MM-DD in Asia/Shanghai")
-    parser.add_argument("--source-dir", required=True, type=Path)
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        help="legacy packet directory containing a datacite/ child",
+    )
+    parser.add_argument(
+        "--snapshot-dir",
+        action="append",
+        type=Path,
+        default=[],
+        help="directory containing frozen DataCite .json.gz snapshots; repeat for adjacent arXiv months",
+    )
     parser.add_argument("--output", required=True, type=Path)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.source_dir and not args.snapshot_dir:
+        parser.error("provide --source-dir or at least one --snapshot-dir")
+    return args
 
 
 def submitted_v1(attributes: dict) -> str | None:
+    """Return the official arXiv v1 submission-history timestamp.
+
+    DataCite's ``Submitted:v1`` matches the arXiv Submission history entry and
+    is the canonical first-public event used by this project.  ``Updated:v1``
+    is metadata-update timing and must not silently move the owner Daily.
+    """
     for item in attributes.get("dates", []):
         if item.get("dateType") == "Submitted" and item.get("dateInformation") == "v1":
             return item.get("date")
@@ -102,7 +122,10 @@ def main() -> None:
     start_utc = window_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     end_utc = window_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    snapshot_paths = sorted((args.source_dir / "datacite").glob("*.json.gz"))
+    snapshot_dirs = list(args.snapshot_dir)
+    if args.source_dir:
+        snapshot_dirs.append(args.source_dir / "datacite")
+    snapshot_paths = sorted({path for directory in snapshot_dirs for path in directory.glob("*.json.gz")})
     if not snapshot_paths:
         raise SystemExit("no DataCite snapshots found")
 

@@ -451,6 +451,16 @@ Expert 可能对某些 token 类型、语言或模式表现出统计偏好，但
 
 MoE 的稳定定义是 conditional computation，不是人工预先划分知识部门。
 
+### Expert 数量改变后，超参数也需要架构身份
+
+Dense FFN 或固定 expert 配置中，直接复用一组已经调好的 learning rate、初始化尺度和 width scaling，在架构不变时成本最低，也容易比较实验。当 Dense FFN 被拆成更多、更窄或更宽的 experts 后，总参数、单 token active parameters、router 分配和每个 expert 实际接收的样本量不再同步变化；此时把旧超参数原样搬过去，会把“条件计算机制是否有效”与“参数化是否失配”混在同一次训练里。
+
+更稳健的演进是把超参数从某个 checkpoint 的经验数字提升为带架构坐标的 scaling identity：training owner 明确 dense width、expert width/count、top-k、初始化与 optimizer scale 之间的变换，router 仍拥有 token-to-expert 选择，runtime 仍只执行已发布的稀疏路径。这样可以减少每一种 MoE 形态都重新网格搜索的成本，并让 dense-to-MoE 对照更可解释；代价是参数化公式本身也要经过规模、数据和 optimizer family 的校准，错误迁移会表现为训练不稳、expert 饥饿或把架构差异误判成优化收益。
+
+当架构变化很小、训练预算足以独立调参，或目标 optimizer/数据分布离校准域很远时，逐配置 tuning 仍是可信 fallback；统一 scaling rule 是可迁移的起点，不是免调参保证。`arXiv:2605.23893v1` 的 §3 与 §5 支持在作者披露的 Dense FFN/MoE 配置间构造并评估这类超参数迁移，§6 不证明任意 expert topology、模型规模、数据或 optimizer 都保持最优。
+
+<!-- source-family:SF-2026-ARXIV-2605-23893 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -465,6 +475,17 @@ Transformer Layer
 ```
 
 本章沿参数容量轴扩展第 16 章的 MLP；第 22 章则沿序列容量轴重新汇总 Position、Attention 与 KV Cache。两者都改变主干的可扩展边界，但不是前后依赖的两个算子。第 36、40 章接住 Expert Parallel、All-to-All 与 checkpoint mapping，第 44 章接住 MoE Decode 的小 expert batches 和通信，第 49～52 章再由 runtime 执行与扩展这些机制。本章保持模型语义为主。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22325 -->
+把 MoE collapse 从单一 load-balance 指标提升为 routing dynamics：多种平衡正则最终可进入相似退化吸引域，必须同时观察 expert specialization、token flow 与训练阶段。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；结论受模型规模、数据和 router family 限制；观测到共同吸引域不证明所有 MoE 必然 collapse。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+## 从机制演进到系统设计
+
+MoE 最初只把 Dense MLP 的全部激活改成 top-k 条件激活；在 expert 数量和并行规模继续增长后，真正的新约束不再只是平均负载，而是 router state 是否稳定、specialization 是否形成，以及 token flow 能否被当前 topology 高效执行。相同 token id 也不意味着相同内部路径，因此 routing pattern 可以作为诊断信号，却不能直接拥有正确性结论。
+
+这条演进把 router 从一个局部分类器变成模型与 runtime 共享的受观测状态：训练侧同时检查 load、specialization 与 collapse dynamics，执行侧再决定 placement、dispatch 和 grouped GEMM。收益是扩大总容量并保留条件计算；代价是路由漂移、热点 expert、All-to-All 与诊断成本。Dense MLP 在规模较小或通信主导时仍是更稳健的分支，静态 load-balance 指标也仍是必要但不充分的 baseline。
 
 ## 自检问题
 
@@ -487,25 +508,6 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 代价是路由成为模型与系统共同状态。负载均衡、capacity、token dispatch、All-to-All、expert placement 和小 GEMM 效率决定稀疏参数能否转化为真实收益。
 
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22325 -->
-把 MoE collapse 从单一 load-balance 指标提升为 routing dynamics：多种平衡正则最终可进入相似退化吸引域，必须同时观察 expert specialization、token flow 与训练阶段。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；结论受模型规模、数据和 router family 限制；观测到共同吸引域不证明所有 MoE 必然 collapse。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- recovered-daily-20260623:MODEL-MOE:start -->
-## 2026-06-23 evidence integration — MODEL-MOE
-
-相邻章 `books/part-02-model/22-long-context.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22798**：Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control 的 exact-v1 机制为：Holding the emitted token id fixed at repeated anchors, we find it does not: the experts that produce it still separate task context, trajectory history, and reasoning-effort mode. 因此 把 router state 视为内部诊断/选择信号，而不是未经验证的正确性证明。 该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22798` — primary `arXiv:2606.22798v1`; Method=`arXiv:2606.22798v1 — §Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control; §MoE routing.; §3 Analysis of Anchor-Conditioned Routing`; Evaluation=`arXiv:2606.22798v1 — §3 Analysis of Anchor-Conditioned Routing; §5.3 Analysis`; non-proof=`arXiv:2606.22798v1 — §7 Conclusion; §A.13 Failure case studies`; fallback=该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:MODEL-MOE:end -->
 
 ## Review notes
 
@@ -539,3 +541,30 @@ Primary-source 校验入口：
   （受限 scaling-law 案例）: https://arxiv.org/abs/2601.08215
 - ERNIE 5.0 Technical Report（elastic depth/width/sparsity；作者模型边界）: https://arxiv.org/abs/2602.04705
 - TAOT（topology-aware expert replica placement；Status: Experimental）: https://arxiv.org/abs/2608.03676
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22798` — primary `arXiv:2606.22798v1`; Method=`arXiv:2606.22798v1 — §Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control; §MoE routing.; §3 Analysis of Anchor-Conditioned Routing`; Evaluation=`arXiv:2606.22798v1 — §3 Analysis of Anchor-Conditioned Routing; §5.3 Analysis`; non-proof=`arXiv:2606.22798v1 — §7 Conclusion; §A.13 Failure case studies`; fallback=该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260623:MODEL-MOE:start -->
+### 2026-06-23 evidence integration — MODEL-MOE
+
+相邻章 `books/part-02-model/22-long-context.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22798**：Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control 的 exact-v1 机制为：Holding the emitted token id fixed at repeated anchors, we find it does not: the experts that produce it still separate task context, trajectory history, and reasoning-effort mode. 因此 把 router state 视为内部诊断/选择信号，而不是未经验证的正确性证明。 该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:MODEL-MOE:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-20220:start -->
+- `SF-2026-ARXIV-2607-20220` — Daily `2026-07-23`；primary `arXiv:2607.20220v1`；Books review `books-review:SF-2026-ARXIV-2607-20220`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: source-to-destination unicast dispatch -> selected-expert multicast tree -> reverse-tree partial reduction under direct-connect congestion 该 delta 已进入 `books/part-02-model/21-moe.md#L242`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-20220:end -->

@@ -79,23 +79,6 @@ parameters、SLO 和 runtime state。静态 artifact identity 与动态 request 
 
 ## 请求状态机
 
-<!-- daily-20260627:INFER-REQUEST-LIFECYCLE:start -->
-### Owner-merged minimal durable delta
-
-Inference capacity 是 phase-coupled closed loop，不是单个 kernel 数字。request record 必须区分 vision encoding、prefill、decode、queue/host work 与 device placement；kernel-level simulation 可以预测候选配置，但 promotion 必须回到目标硬件上的 task completion time 与 success。改变 control cadence 或移动瓶颈的局部加速，不自动等于更快完成成功任务。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Simulation 与 component latency 不证明生产 SLO 或 embodied success；mismatch、thermal drift 或 deadline miss 时回退已实测的保守 placement/control。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-27906 — primary arXiv:2606.27906v1; exact-v1 URL=https://arxiv.org/html/2606.27906v1; Method=https://arxiv.org/html/2606.27906v1 — §7.2. Methodology and Outcomes on Phi-3.5-V; Evaluation=https://arxiv.org/html/2606.27906v1 — §2. Platform and Experimental Setup; 3.1. Phase-Level Results; 6.1. Three-Backend Benchmark; Non-proof=https://arxiv.org/html/2606.27906v1 — §8. Discussion; 10. Conclusion。
-- SF-2026-ARXIV-2606-28529 — primary arXiv:2606.28529v1; exact-v1 URL=https://arxiv.org/html/2606.28529v1; Method=https://arxiv.org/html/2606.28529v1 — §Optimization Methods.; B.1 Optimization Method Settings; Evaluation=https://arxiv.org/html/2606.28529v1 — §4 Experiments; 4.1 Setup; Simulation Task Setup.; Non-proof=https://arxiv.org/html/2606.28529v1 — §5 Conclusion; 6 Limitations; A.3 Assumptions and Limitations。
-- SF-2026-ARXIV-2606-28565 — primary arXiv:2606.28565v1; exact-v1 URL=https://arxiv.org/html/2606.28565v1; Method=https://arxiv.org/html/2606.28565v1 — §2.1. Modern LLMs and Inference Frameworks; 3.3. Gaps in Existing Approaches; 4. Tool Architecture and Methodologies; Evaluation=https://arxiv.org/html/2606.28565v1 — §5.2. Production Kernel Microbenchmarking; 6. Experimental Setup; 7. Results and Analysis; Non-proof=https://arxiv.org/html/2606.28565v1 — §8. Conclusions; Appendix B Limitations。
-<!-- daily-20260627:INFER-REQUEST-LIFECYCLE:end -->
-
-
 先冻结一个与具体框架无关的状态机：
 
 ```text
@@ -298,6 +281,22 @@ cascade 仍然合理；device deployment 还可能因 coverage、thermal 或 qua
 playback、P95/P99 与错误恢复。2025 年 Google 的 S2ST 部署是该演进的受限案例，公开材料没有
 完整硬件与 tail-SLO contract，因而正文只吸收 pipeline trade-off。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-20537:start -->
+Execution-State Capsule 在 graph-boundary 捕获可恢复的静态 buffer/执行状态，使 on-device small-batch serving 可 checkpoint/restore，而非重建整个 runtime；FlashRT 拥有 capsule schema 与兼容性，失配时冷启动。代价是图绑定、静态内存和 backend 特化。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-20537:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-25838:start -->
+后端路由器可以依据请求级 confidence 在快速和高质量路径之间选择，但 confidence 只拥有 route proposal 权。阈值需按 workload 校准，并记录 fallback 与 outcome；漂移、低置信或高风险请求回退 canonical backend，不能把 router 自评分当成正确性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-25838:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28529:start -->
+把 embodied inference optimization 从 per-step latency 扩展到 closed-loop task time、success 与 hardware-dependent sweet spot。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28529:end -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -313,6 +312,12 @@ Part IV validated model artifact
 ```
 
 第41章交付模型资产，本章把它接入在线 capability-delivery path。第43～45章会拆开 Stage 与状态；第46章以后再逐步回答如何调度、管理和扩展。这个 delivery path 只能执行已发布的 capability contract，不能通过更快的 runtime 修复训练数据、目标或 artifact conversion 的错误。
+
+## 从机制演进到系统设计
+
+请求生命周期最初以一次 prompt→response 为边界；会话、Agent 和交互式多模态 workload 出现后，request 之外还存在 idle、tool wait、state mutation 和下一 decision point。runtime 因而可以在空闲期准备 speculative state，或按 confidence 选择后端，但所有准备结果必须绑定 base-state identity，并在用户输入或环境变化时失效。
+
+提前计算和 confidence routing 可以降低命中路径延迟，却会消耗闲时资源并引入 false accept、stale state 和路由偏差。只有 acceptance gate 能原子提交新状态；任何 identity mismatch 都回到普通 Prefill/Decode。单次无状态请求仍是最简单、最容易隔离的分支。
 
 ## 自检问题
 
@@ -332,26 +337,6 @@ Part IV validated model artifact
 LLM Serving 的基本对象不是一次函数调用，而是携带 token progress、KV ownership、SLO 和生命周期的请求状态机。Prefill 决定上下文怎样进入模型，Decode 决定输出怎样逐步产生，runtime 则在两者之间持续管理 memory、batch 与 stream。
 
 下一章从全局状态机进入第一段 GPU 主路径：Prefill 如何把 prompt 转换成初始 logits 和可供后续 Decode 使用的 KV state。
-
-<!-- recovered-daily-20260625:INFER-REQUEST-LIFECYCLE:start -->
-## 2026-06-25 evidence integration — INFER-REQUEST-LIFECYCLE
-
-- **SF-2026-ARXIV-2606-25838**：`III Method; IV Confidence-Aware Routing` 所定义的源特定机制用于让路由器基于请求置信度持有后端选择与回退权；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VII-C Limitations and future work` 是 `Edges Before Embeddings: A Confidence-Aware Blur Gate for Vision-Language Pipelines` 的 source-specific 反例/局限边界；若运行条件离开 `V Experiments; V-A Evaluation protocol; VI Deployment Patterns` 的验证域，`INFER-REQUEST-LIFECYCLE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25838**：Primary `arXiv:2606.25838v1`；Method `https://arxiv.org/html/2606.25838v1 — §III Method; IV Confidence-Aware Routing`；Evaluation `https://arxiv.org/html/2606.25838v1 — §V Experiments; V-A Evaluation protocol; VI Deployment Patterns`；未证明边界 `https://arxiv.org/html/2606.25838v1 — §VII-C Limitations and future work`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:INFER-REQUEST-LIFECYCLE:end -->
-
-<!-- june29-owner:INFER-REQUEST-LIFECYCLE:start -->
-## 2026-06-29 约束变化与机制增量
-
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29565`）。** 现有 request state machine 到 RELEASED 为止，没有持有跨请求 idle-window speculative state、base-state identity、confidence gate 与 mutation invalidation。 因此本次把这些增量合并到同一知识 owner：有状态会话的 idle time 可用于推演到下个 decision point；request lifecycle owner 保存 speculative state、acceptance confidence 与 base-state identity，命中后才原子提交。False accept、用户输入或 state drift 立即作废预推进并回退正常 decode。 共同代价与回退边界是：只在 LayerScale 专有 engine、单 H100、70B-class 4-bit target 上测得 capability-gated fast path；8B BF16 不触发 gate，且大量收益为测量常数上的闭式推导。任何 state mutation 或置信漂移都必须 invalidate 并恢复普通 decode。
-
-### 2026-06-29 source-specific Review notes
-
-Review note：`SF-2026-ARXIV-2606-29565`；Method `https://arxiv.org/html/2606.29565v1 — §2 Problem Formulation; speculative pre-positioning state machine`；Evaluation `https://arxiv.org/html/2606.29565v1 — §4 Experimental Setup; 5 Evaluation`；未证明边界 `https://arxiv.org/html/2606.29565v1 — §6 Discussion`。
-<!-- june29-owner:INFER-REQUEST-LIFECYCLE:end -->
 
 ## Review notes
 
@@ -373,3 +358,60 @@ Primary-source / official entry points：
 - Google Research, "Real-time speech-to-speech translation", 2025
   （pipeline-fusion bounded case）:
   https://research.google/blog/real-time-speech-to-speech-translation/
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27906 — primary arXiv:2606.27906v1; exact-v1 URL=https://arxiv.org/html/2606.27906v1; Method=https://arxiv.org/html/2606.27906v1 — §7.2. Methodology and Outcomes on Phi-3.5-V; Evaluation=https://arxiv.org/html/2606.27906v1 — §2. Platform and Experimental Setup; 3.1. Phase-Level Results; 6.1. Three-Backend Benchmark; Non-proof=https://arxiv.org/html/2606.27906v1 — §8. Discussion; 10. Conclusion。
+- SF-2026-ARXIV-2606-28529 — primary arXiv:2606.28529v1; exact-v1 URL=https://arxiv.org/html/2606.28529v1; Method=https://arxiv.org/html/2606.28529v1 — §Optimization Methods.; B.1 Optimization Method Settings; Evaluation=https://arxiv.org/html/2606.28529v1 — §4 Experiments; 4.1 Setup; Simulation Task Setup.; Non-proof=https://arxiv.org/html/2606.28529v1 — §5 Conclusion; 6 Limitations; A.3 Assumptions and Limitations。
+- SF-2026-ARXIV-2606-28565 — primary arXiv:2606.28565v1; exact-v1 URL=https://arxiv.org/html/2606.28565v1; Method=https://arxiv.org/html/2606.28565v1 — §2.1. Modern LLMs and Inference Frameworks; 3.3. Gaps in Existing Approaches; 4. Tool Architecture and Methodologies; Evaluation=https://arxiv.org/html/2606.28565v1 — §5.2. Production Kernel Microbenchmarking; 6. Experimental Setup; 7. Results and Analysis; Non-proof=https://arxiv.org/html/2606.28565v1 — §8. Conclusions; Appendix B Limitations。
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25838**：Primary `arXiv:2606.25838v1`；Method `https://arxiv.org/html/2606.25838v1 — §III Method; IV Confidence-Aware Routing`；Evaluation `https://arxiv.org/html/2606.25838v1 — §V Experiments; V-A Evaluation protocol; VI Deployment Patterns`；未证明边界 `https://arxiv.org/html/2606.25838v1 — §VII-C Limitations and future work`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+#### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29565`；Method `https://arxiv.org/html/2606.29565v1 — §2 Problem Formulation; speculative pre-positioning state machine`；Evaluation `https://arxiv.org/html/2606.29565v1 — §4 Experimental Setup; 5 Evaluation`；未证明边界 `https://arxiv.org/html/2606.29565v1 — §6 Discussion`。
+
+### Source-family integration record
+
+<!-- daily-20260627:INFER-REQUEST-LIFECYCLE:start -->
+### Owner-merged minimal durable delta
+
+Inference capacity 是 phase-coupled closed loop，不是单个 kernel 数字。request record 必须区分 vision encoding、prefill、decode、queue/host work 与 device placement；kernel-level simulation 可以预测候选配置，但 promotion 必须回到目标硬件上的 task completion time 与 success。改变 control cadence 或移动瓶颈的局部加速，不自动等于更快完成成功任务。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Simulation 与 component latency 不证明生产 SLO 或 embodied success；mismatch、thermal drift 或 deadline miss 时回退已实测的保守 placement/control。
+
+<!-- daily-20260627:INFER-REQUEST-LIFECYCLE:end -->
+
+<!-- recovered-daily-20260625:INFER-REQUEST-LIFECYCLE:start -->
+### 2026-06-25 evidence integration — INFER-REQUEST-LIFECYCLE
+
+- **SF-2026-ARXIV-2606-25838**：`III Method; IV Confidence-Aware Routing` 所定义的源特定机制用于让路由器基于请求置信度持有后端选择与回退权；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VII-C Limitations and future work` 是 `Edges Before Embeddings: A Confidence-Aware Blur Gate for Vision-Language Pipelines` 的 source-specific 反例/局限边界；若运行条件离开 `V Experiments; V-A Evaluation protocol; VI Deployment Patterns` 的验证域，`INFER-REQUEST-LIFECYCLE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:INFER-REQUEST-LIFECYCLE:end -->
+
+<!-- june29-owner:INFER-REQUEST-LIFECYCLE:start -->
+### 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29565`）。** 现有 request state machine 到 RELEASED 为止，没有持有跨请求 idle-window speculative state、base-state identity、confidence gate 与 mutation invalidation。 因此本次把这些增量合并到同一知识 owner：有状态会话的 idle time 可用于推演到下个 decision point；request lifecycle owner 保存 speculative state、acceptance confidence 与 base-state identity，命中后才原子提交。False accept、用户输入或 state drift 立即作废预推进并回退正常 decode。 共同代价与回退边界是：只在 LayerScale 专有 engine、单 H100、70B-class 4-bit target 上测得 capability-gated fast path；8B BF16 不触发 gate，且大量收益为测量常数上的闭式推导。任何 state mutation 或置信漂移都必须 invalidate 并恢复普通 decode。
+
+<!-- june29-owner:INFER-REQUEST-LIFECYCLE:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-ASYNC-INFERENCE-OVERHEADS:start -->
+- `SF-ASYNC-INFERENCE-OVERHEADS` — Daily `2026-06-02`；primary `arXiv:2606.01927v1`；Books review `books-review:SF-ASYNC-INFERENCE-OVERHEADS`。
+
+  **已吸收的语义增量：** 补 scheduling/I/O overlap、sequence-parallel sampling 与 Amdahl optimal-TP 边界。
+<!-- daily-books-trace:SF-ASYNC-INFERENCE-OVERHEADS:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20537:start -->
+- `SF-2026-ARXIV-2606-20537` — Daily `2026-06-19`；primary `arXiv:2606.20537v1`；Books review `books-review:SF-2026-ARXIV-2606-20537`。
+
+  **已吸收的语义增量：** `Execution-State Capsules: Graph-Bound Execution-State Checkpoint and Restore for Low-Latency, Small-Batch, On-Device Physical-AI Serving` 路由到 `INFER-REQUEST-LIFECYCLE`：Execution-State Capsule 在 graph-boundary 捕获可恢复的静态 buffer/执行状态，使 on-device small-batch serving 可 checkpoint/restore，而非重建整个 runtime；FlashRT 拥有 capsule schema 与兼容性，失配时冷启动。代价是图绑定、静态内存和 backend 特化。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20537:end -->

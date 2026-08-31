@@ -929,6 +929,25 @@ off-policy drift 和“临时状态何时清空”的问题。Tool-R0、EMPO² �
 
 ### 从一个终局标量到 Typed Credit：Reward 必须匹配决策边界
 
+#### Adapter 约束会让 Token Credit 退化为少数 Residual Direction
+
+按 token 分配 surprisal、entropy reduction 或 policy-divergence weight，是全参数 update 能沿多个方向表达差异时合理的旧路径；
+LoRA/adapter 把更新限制在低秩子空间后，不同 token signal 可能投影到少数相似 residual directions，表面上存在细粒度权重，
+实际 gradient mass 却高度集中。Credit owner 因而要先记录 weight Gini、effective-token ratio 等 concentration diagnostic，
+再决定是否把 advantage 按 adapter-residual contribution 重分配；trajectory outcome reward 仍拥有 correctness gate，adapter
+diagnostic 只拥有 token 内部的分配建议。
+
+这条分支可在 signal degeneracy 已被观测时恢复一部分有效更新。ARCA 的运行时观测量是 adapter-enabled 与
+adapter-disabled 最后一层 hidden state 的 L2 residual；在论文实现里，它复用已有 KL/reference-policy 路径所需的
+一次 no-grad adapter-disabled forward，而不是显式计算 Jacobian。代价仍包括这次额外 forward、trajectory 内
+normalization、两条 hidden-state 路径的一致性以及 adapter-rank coupling；错误 redistribution 会放大 verifier noise，
+浓度高也不必然意味着 credit 错误。Full-rank update、短 response、uniform credit 已稳定，或 reference path 成本
+不可接受时，原有 sequence/group advantage 更简单。`arXiv:2606.00257v1` 的 §3、§4 只支持作者在其 LoRA、MATH
+与训练合同中的 degeneration diagnostic 和 redistribution；附录中的 softmax Jacobian 属于理论解释，不是运行时
+机制。§4.8 也不证明 ARCA 可替代 outcome reward、critic 或其他模型族的 credit assignment。
+
+<!-- source-family:SF-2026-ARXIV-2606-00257 -->
+
 <!-- daily-20260621:train-grpo:start -->
 ### Reward 轨迹的可推导性、感知依赖与 decision density
 
@@ -1186,6 +1205,14 @@ target task utility / weight
 
 Worst-task 或 improvement-aware weighting 可避免强任务掩盖弱任务，却可能牺牲平均能力、放大 noisy verifier 并增加 straggler。Uniform mixture 在任务同质、过滤率相近或产品目标本就按平均效用定义时仍更简单。类似地，sequence-level objective 的 token normalization 会改变长短 trajectory 的实际权重；消除短答偏置不能被解释成“越长越好”，还必须约束 verbosity、token budget 与 tail latency。
 
+### 多 Reward 聚合不能掩盖 Channel Collapse
+
+把多个 reward 直接求和或加权，在通道尺度稳定、目标一致时最简单；RLIF 中各 channel 的稀疏度、噪声和梯度方向可能不同，平均值上升仍可能伴随某一关键能力退化。Aggregator 因而只能形成 update proposal，训练控制面还需监控 per-channel coverage、collapse、gradient conflict 与 held-out behavior；单通道 guardrail 拥有否决权。
+
+这种约束避免强信号吞没弱信号，却增加 reward calibration、冲突处理和样本成本；目标单一时保留单 reward 更可解释。arXiv:2605.22620v1 的方法与实验只支持论文定义的多 reward 设置，不证明任意 reward 组合都能通过同一聚合器得到 Pareto 改善。
+
+<!-- source-family:SF-2026-ARXIV-2605-22620 -->
+
 ## 关键诊断指标
 
 除 PPO 常见 ratio、KL 和 clip fraction 外，还应观测：
@@ -1258,6 +1285,49 @@ DPO
 
 GRPO 仍属于 policy optimization，不应因为没有 critic 就被描述成 supervised pair loss。DPO 则不需要从当前 policy 为每个 update 生成一组 responses。
 
+### 从序列 Reward 到受约束的 Token Credit
+
+把同一个序列 advantage 广播到所有 token，在轨迹短、关键步骤不稀疏时简单且稳定；长推理会让真正改变结果的少数 token 与大量过渡 token 获得相同更新。一个条件分支是用当前策略与参考策略的有界分布距离形成 token 权重，再用 entropy gate 抑制“罕见但自信的错误偏离”，同时保持序列总 advantage 的尺度。它减少了 credit dilution，却没有证明 entropy 等于语义正确，也引入参考分布计算、温度校准和错误归因；因此它只能作为 reward redistribution proposal，最终正确性仍由 outcome/verifier contract 拥有，普通短轨迹仍可保留序列级更新。[受限证据：arXiv:2605.03327v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-03327 -->
+
+### Exploration 必须与 Verified Progress 对齐
+
+把 entropy 当成统一奖励会鼓励无方向随机性；在 group-relative update 中，更合理的做法是让 entropy change 与已验证 progress 关联：有效但尚未解决的区域保留探索，已经收敛或完全失败的区域减少无效 rollout。binary reward 场景还要控制 pass rate，使样本既不是全对也不是全错，才能保留可学习的组内差异。
+
+这两个 controller 都依赖 verifier 与难度估计，错误反馈会把策略推向狭窄区域。应记录 pass-rate/entropy target、实际分布和回退阈值；当 verifier 不稳定时回到普通 GRPO/PPO 或更广 sampling。它们是信息效率分支，不改变 on-policy identity 与独立评估要求。
+
+#### Policy-level Explorer 只拥有 Proposal，不拥有 Update Truth
+
+提高 temperature 或注入 token-level noise 是扩大 rollout diversity 的直接旧路径；当 step-wise noise 破坏长链一致性时，
+可以让较小 policy 提供结构不同但内部连贯的 trajectory proposal，再由较大 target policy 与同一 verifier 评分、归一化并
+提交 update。变化不在于“小模型教大模型正确答案”，而在于 rollout 的 proposal identity 从单一 policy 扩展为混合来源：
+每条 trajectory 必须绑定 proposer checkpoint、target/reference policy、sampling budget 与 annealing phase，target trainer
+仍拥有最终 gradient，verifier 仍拥有 outcome gate。
+
+小模型降低 proposal compute 并可能增加 policy-level diversity，却引入 support mismatch、off-policy bias、弱 proposer
+质量上限和 schedule 状态；纯小模型 rollout 还可能让 target 长期停留在过时 support。因而应限制混合比例、监控
+importance/compatibility，并逐步回到 target-owned rollout；若一致性或收益不成立，回退普通 target sampling。`arXiv:2605.30789v1`
+的 §3、§4 只支持作者披露模型、任务和 progressive transition 下的 S2L-PO 结果；Limitations 不证明小模型天然适合作为
+所有 GRPO workload 的 explorer，也不改变 on-policy 与独立 verifier 要求。
+
+<!-- source-family:SF-2026-ARXIV-2605-30789 -->
+
+<!-- source-family:SF-EP-GRPO-ENTROPY-PROGRESS-ALIGNED-GROUP-RELATIVE-POLICY-OPTIMIZATION-WITH -->
+<!-- source-family:SF-ROLLOUT-PASS-RATE-CONTROL-STEERING-BINARY-REWARD-RL-TOWARD-ITS-MOST-INFO -->
+
+### Verifiable Reward 不等于每个样本都可学习
+
+RLVR 把答案是否通过 verifier 变成稳定 reward，在任务分布与当前 policy 有足够交集时简单有效；某些样本即使 reward 可计算，也可能没有与其余数据一致、可泛化的 policy-gradient direction。训练 admission 因而应把“可验证”与“当前可学习”分开，通过跨样本 gradient/representation evidence 识别孤立方向。
+
+过滤能减少无效更新，却可能删掉真正新颖但稀有的能力，并增加 gradient probe 成本。低相似不等于永远不可学习；curriculum、数据重写或模型阶段变化后应重新评估。数据量小、probe 不稳定时，保留样本并降低权重或转人工分析，比永久删除更稳健。
+
+<!-- source-family:SF-2026-ARXIV-2605-16787 -->
+
+### Tool Feedback 只能密化已有接口信息
+
+Outcome-only RLVR 在工具任务早期有效，因为最终答案可验证；当 policy 学会 exploit 稀疏信号后，训练可能先升后塌。把 tool error、observation 与 intermediate verifier 写入 token/step credit 可以提前暴露失败，但 feedback owner 只能传播接口已经提供的信息，不能凭 reward densification 修复含糊 schema 或不可观测状态。收益是更短的 credit path，代价是工具日志耦合和 shaping bias；反馈被 hack 或与目标冲突时，应回退 outcome gate、修复 interface，再逐步恢复 dense reward。exact-v1 只支持 Freebase/CWQ、Qwen-7B、四 seed 与 oracle ablation，不证明所有工具环境都能避免 collapse。<!-- source-family:SF-2026-ARXIV-2605-26037 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -1270,6 +1340,40 @@ prompt x
 ```
 
 本章承接第 32 章的 ratio/clipping，先替换 value baseline，再把同一 objective 扩展到有状态 rollout、typed credit、policy freshness 与可恢复 trajectory；第 34 章走另一条离线 preference optimization 路线。第 35 章保存相关训练状态，第 36～41 章只接管 actor update 的分布式执行与 runtime policy。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22570 -->
+LLM reasoning RL 的 update quality 取决于 rollout freshness、update count 与 policy drift；同一 reward 下不能把更多 optimizer steps 当成免费收益。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单模型/任务与固定 1e-6 LR 不证明通用最优 update ratio；更少 drift 以额外 rollout 成本为代价。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22716 -->
+效率 RL 不应奖励所有短答案；correct-only adaptive reward 先冻结 correctness，再在正确轨迹中调节效率 credit，避免把错误的短输出当优化方向。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单 scale/数据与 reward verifier 限制结论；correct-only gate 会牺牲错误样本中的潜在学习信号。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+### Teacher Signal 要跟随 Learner 的当前 Rollout Distribution
+
+离线 teacher traces 成本可控、容易复现，但 learner policy 演进后会遇到训练集未覆盖的状态。在线 teacher 可在 learner 当前 rollout 上提供 critique/reward，使监督对齐真实访问分布；代价是采样、teacher 调用和反馈相关性显著增加。
+
+Teacher 只拥有辅助信号，不拥有最终 objective；需要绑定 learner/teacher revision、rollout policy 与 judge，并保留 frozen holdout。成本过高、teacher 不稳定或在线分布过窄时，回退离线数据或混合 replay。
+
+现有 exact-v1 只在其披露的 reasoning learner、teacher、任务集合与采样预算中验证这种 on-policy distillation；它支持“当前 rollout 能暴露离线 trace 未覆盖状态”，不证明任意 teacher、开放任务或更大预算下都优于离线监督。未披露模型、硬件、并发与 judge 条件保持 Not Disclosed。
+
+<!-- source-family:SF-2026-ARXIV-2605-17497 -->
+
+### Asynchronous RL 必须把 Policy Staleness 写进 Advantage
+
+异步 rollout 提高 actor 利用率，却让 trajectory 来自旧 policy。若把所有样本当 current policy，importance ratio、group baseline 与 advantage 会混入版本偏差。Runtime 应携带 behavior-policy revision，并在 update 时校正、降权或拒绝超出 staleness window 的样本。
+
+这用吞吐换校正方差、丢样和更多版本状态；环境昂贵且 drift 慢时可接受有界陈旧，质量敏感或 policy 快速变化时回退同步 barrier。staleness 数字必须与 convergence/outcome 一起验收。
+
+exact-v1 的支持范围仅包括其披露的 GRPO 配置、模型、rollout workload 与少量 sequential generation-optimization stages；它证明这些设置可容忍比既有假设更大的 staleness，不证明异步程度可以无界增加，也不建立跨模型通用阈值。未披露硬件、并发与生产 SLO 保持 Not Disclosed。
+
+<!-- source-family:SF-2026-ARXIV-2605-17570 -->
+
+## 从机制演进到系统设计
+
+GRPO 去掉 critic 后，把主要状态转移到同 prompt rollout group、相对 reward 与 policy freshness。规模扩大时，瓶颈不只在公式：domain curriculum、group straggler、stale rollout、update ratio、reward density 和 supervisory repair 共同决定有效 credit。controller 可以利用 gradient transfer 或运行时风险选择 domain/group，但不能拥有最终 correctness。
+
+这类控制减少无效 rollout 或 critic 状态，却引入更多采样、估计噪声、跨域干扰和 collapse gate。收益必须在相同 rollout/token/optimizer budget 下比较；gradient conflict、verifier drift 或 policy divergence 越界时，应回退 proportional mixture、同步 rollout 或 PPO/SFT 分支。PPO 与 GRPO 是 credit fidelity、variance 和 compute 的条件分支，而不是新旧替代。
 
 ## 自检问题
 
@@ -1299,38 +1403,6 @@ GRPO 用同 prompt 多个 responses 的相对 reward 代替 learned critic basel
 从 DAPO 到 Dr. GRPO、CISPO 与 GSPO 的后续分支进一步说明：样本准入、loss reduction、clipping 对象与
 ratio 粒度是彼此独立的设计轴，方法名称不能替代 objective 与 artifact contract。
 
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22570 -->
-LLM reasoning RL 的 update quality 取决于 rollout freshness、update count 与 policy drift；同一 reward 下不能把更多 optimizer steps 当成免费收益。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单模型/任务与固定 1e-6 LR 不证明通用最优 update ratio；更少 drift 以额外 rollout 成本为代价。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- body-source:SF-2026-ARXIV-2606-22716 -->
-效率 RL 不应奖励所有短答案；correct-only adaptive reward 先冻结 correctness，再在正确轨迹中调节效率 credit，避免把错误的短输出当优化方向。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单 scale/数据与 reward verifier 限制结论；correct-only gate 会牺牲错误样本中的潜在学习信号。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- recovered-daily-20260624:TRAIN-GRPO:start -->
-## 2026-06-24 evidence integration — TRAIN-GRPO
-
-相邻章 `books/part-04-training-system/31-rlhf.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-25178**：多域 RLVR curriculum 不再只追当前 domain learnability；controller 从正在计算的 GRPO projected gradients 估计跨域 transfer，对 bandit arm value 做平滑后决定下一 domain。 六域、Qwen3-1.7B/Llama3.2-3B 与 <1% overhead 不证明更大模型、non-verifiable reward 或 adversarial domain；gradient conflict 不稳定时回退 proportional/hand-designed mix。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-25178: `arXiv:2606.25178v1`; exact-v1 URL=`https://arxiv.org/html/2606.25178v1`; Method=`https://arxiv.org/html/2606.25178v1 — §3 Method; Gradient-Based Transferability; Curriculum Algorithm`; Evaluation=`https://arxiv.org/html/2606.25178v1 — §4 Experiments; B Implementation/Evaluation Details`; Non-proof=`六域、Qwen3-1.7B/Llama3.2-3B 与 <1% overhead 不证明更大模型、non-verifiable reward 或 adversarial domain；gradient conflict 不稳定时回退 proportional/hand-designed mix。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:TRAIN-GRPO:end -->
-
-<!-- recovered-daily-20260625:TRAIN-GRPO:start -->
-## 2026-06-25 evidence integration — TRAIN-GRPO
-
-- **SF-2026-ARXIV-2606-26027**：`4 Method; 4.2 catastrophic collapse; 4.4 supervisory fixes` 所定义的源特定机制用于把崩溃信号与监督修复绑定到策略更新门控；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `B Training Details; C Qwen3 Training; E Training Dynamic` 是 `Why Multi-Step Tool-Use Reinforcement Learning Collapses and How Supervisory Signals Fix It` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiments; 5.1 Dataset and Models; D Detailed Evaluation` 的验证域，`TRAIN-GRPO` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-26027**：Primary `arXiv:2606.26027v1`；Method `https://arxiv.org/html/2606.26027v1 — §4 Method; 4.2 catastrophic collapse; 4.4 supervisory fixes`；Evaluation `https://arxiv.org/html/2606.26027v1 — §5 Experiments; 5.1 Dataset and Models; D Detailed Evaluation`；未证明边界 `https://arxiv.org/html/2606.26027v1 — §B Training Details; C Qwen3 Training; E Training Dynamic`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:TRAIN-GRPO:end -->
 
 ## Review notes
 
@@ -1474,3 +1546,155 @@ W32 primary-source cases：
   https://arxiv.org/abs/2607.17247v1
 - Stale but Stable / SAT（exact v1；Status: Experimental）：https://arxiv.org/html/2607.18722v1
   - 证据边界：Qwen3-30B-A3B 数学 RL、30,712 prompts、4096 responses/iteration、544 iterations、lag 1/8；event-time GradLoc repo commit 早于论文，不能证明 SAT artifact 已公开。
+
+### Daily integration evidence trace
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-25178: `arXiv:2606.25178v1`; exact-v1 URL=`https://arxiv.org/html/2606.25178v1`; Method=`https://arxiv.org/html/2606.25178v1 — §3 Method; Gradient-Based Transferability; Curriculum Algorithm`; Evaluation=`https://arxiv.org/html/2606.25178v1 — §4 Experiments; B Implementation/Evaluation Details`; Non-proof=`六域、Qwen3-1.7B/Llama3.2-3B 与 <1% overhead 不证明更大模型、non-verifiable reward 或 adversarial domain；gradient conflict 不稳定时回退 proportional/hand-designed mix。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26027**：Primary `arXiv:2606.26027v1`；Method `https://arxiv.org/html/2606.26027v1 — §4 Method; 4.2 catastrophic collapse; 4.4 supervisory fixes`；Evaluation `https://arxiv.org/html/2606.26027v1 — §5 Experiments; 5.1 Dataset and Models; D Detailed Evaluation`；未证明边界 `https://arxiv.org/html/2606.26027v1 — §B Training Details; C Qwen3 Training; E Training Dynamic`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260624:TRAIN-GRPO:start -->
+### 2026-06-24 evidence integration — TRAIN-GRPO
+
+相邻章 `books/part-04-training-system/31-rlhf.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-25178**：多域 RLVR curriculum 不再只追当前 domain learnability；controller 从正在计算的 GRPO projected gradients 估计跨域 transfer，对 bandit arm value 做平滑后决定下一 domain。 六域、Qwen3-1.7B/Llama3.2-3B 与 <1% overhead 不证明更大模型、non-verifiable reward 或 adversarial domain；gradient conflict 不稳定时回退 proportional/hand-designed mix。
+
+<!-- recovered-daily-20260624:TRAIN-GRPO:end -->
+
+<!-- recovered-daily-20260625:TRAIN-GRPO:start -->
+### 2026-06-25 evidence integration — TRAIN-GRPO
+
+- **SF-2026-ARXIV-2606-26027**：`4 Method; 4.2 catastrophic collapse; 4.4 supervisory fixes` 所定义的源特定机制用于把崩溃信号与监督修复绑定到策略更新门控；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `B Training Details; C Qwen3 Training; E Training Dynamic` 是 `Why Multi-Step Tool-Use Reinforcement Learning Collapses and How Supervisory Signals Fix It` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiments; 5.1 Dataset and Models; D Detailed Evaluation` 的验证域，`TRAIN-GRPO` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:TRAIN-GRPO:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-DEEP-RESEARCH-RUBRIC-RL:start -->
+- `SF-DEEP-RESEARCH-RUBRIC-RL` — Daily `2026-06-01`；primary `arXiv:2606.01091v1`；Books review `books-review:SF-DEEP-RESEARCH-RUBRIC-RL`。
+
+  **已吸收的语义增量：** DR-Rubric retrieves external evidence, synthesizes atomic verifiable constraints, scores policy outputs against that rubric, and feeds the result into group-relative reinforcement learning; rubric provenance, granularity, bootstrap version, and polarization therefore become reward-state and stopping-contract inputs rather than free-form judge text. 证据边界：Results are bounded to the reported research-agent tasks, models, search environment, and bootstrap depth; external evidence may be incomplete or stale, generated constraints can be wrong, and later bootstrap steps polarize and collapse rather than guaranteeing self-improvement.
+<!-- daily-books-trace:SF-DEEP-RESEARCH-RUBRIC-RL:end -->
+
+<!-- daily-books-trace:SF-STRAGGLER-AWARE-RL-GROUP:start -->
+- `SF-STRAGGLER-AWARE-RL-GROUP` — Daily `2026-06-02`；primary `arXiv:2606.02218v1`；Books review `books-review:SF-STRAGGLER-AWARE-RL-GROUP`。
+
+  **已吸收的语义增量：** 增加在保持同步 on-policy 下按 posterior straggler risk 动态选择 group size。
+<!-- daily-books-trace:SF-STRAGGLER-AWARE-RL-GROUP:end -->
+
+<!-- daily-books-trace:SF-ASYMPO:start -->
+- `SF-ASYMPO` — Daily `2026-06-03`；primary `arXiv:2606.03070v1`；Books review `books-review:SF-ASYMPO`。
+
+  **已吸收的语义增量：** Section 3 shows that a current-policy-only objective can become unstable when positive and negative advantage responses enter the loss at different current-policy scales. We therefore study a general scaled log-probability objective. For a prompt x x and response y g = ( a g , 1 , … , a g , m g ) y_{g}=(a_{g,1},\ldots,a_{g,m_{g}}) , let Given group-relative advantages { A g } g = 1 G \{A_{g}\}_{g=1}^{G} , we consider objectives of the form The central design question is how to choose the coefficient C g C_{g} using only current-policy probabilities. Boundary: This work studied current-policy-only optimization for asynchronous RL, where behavior-policy probabilities can correct distribution drift but substantially complicate the rollout–learner interface. We identified a loss-scale imbalance that arises when stale responses are evaluated under the current policy: although group-relative advantages sum to zero, positive and negative responses can have different current negative log-probability scales, causing one side of the policy loss to dominate. To address this failure mode without behavior-policy probabilities, we introduced two current-policy-only objectives: SPO, which reduces the influence of negative-advantage responses with a fixed coefficient, and ASymPO, which adaptively normalizes each response by its own current average token negative log-probability.
+<!-- daily-books-trace:SF-ASYMPO:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15333:start -->
+- `SF-2026-ARXIV-2606-15333` — Daily `2026-06-14`；primary `arXiv:2606.15333v1`；Books review `books-review:SF-2026-ARXIV-2606-15333`。
+
+  **已吸收的语义增量：** reinforcement unlearning 可把低 reward hard-case group 放入 off-policy replay，并用 importance correction 重用，而不是继续在易例 on-policy 采样。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15333:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15455:start -->
+- `SF-2026-ARXIV-2606-15455` — Daily `2026-06-14`；primary `arXiv:2606.15455v1`；Books review `books-review:SF-2026-ARXIV-2606-15455`。
+
+  **已吸收的语义增量：** RLVR 的 diversity collapse 应按 problem saturation/overtraining 解释，并用 zero-success/boundary contribution gate 决定哪些题继续更新。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15455:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18831:start -->
+- `SF-2026-ARXIV-2606-18831` — Daily `2026-06-18`；primary `arXiv:2606.18831v1`；Books review `books-review:SF-2026-ARXIV-2606-18831`。
+
+  **已吸收的语义增量：** long-context RL 的 data owner 应同时覆盖 retrieval、multi-evidence synthesis 与 reasoning，避免只通过 reward shaping 修补 evidence localization。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18831:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21090:start -->
+- `SF-2026-ARXIV-2606-21090` — Daily `2026-06-18`；primary `arXiv:2606.21090v1`；Books review `books-review:SF-2026-ARXIV-2606-21090`。
+
+  **已吸收的语义增量：** post-training control loop 应分别持有 campaign-level memory、within-campaign early stop 与 optimizer；峰值 checkpoint 必须先于最终 collapse 被保存和晋级。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21090:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21884:start -->
+- `SF-2026-ARXIV-2606-21884` — Daily `2026-06-21`；primary `arXiv:2606.21884v1`；Books review `books-review:SF-2026-ARXIV-2606-21884`。
+
+  **已吸收的语义增量：** 对 deterministic generator 构造 solver-grounded CoT 后，区分 forward-derivable procedure 与 information-free backtracking search；不可忠实前向化的 search 应外置为 catalog/search，再让模型做 bounded verification。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21884:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22043:start -->
+- `SF-2026-ARXIV-2606-22043` — Daily `2026-06-21`；primary `arXiv:2606.22043v1`；Books review `books-review:SF-2026-ARXIV-2606-22043`。
+
+  **已吸收的语义增量：** multimodal RLVR 的 answer reward 会先强化语言 shortcut，再在足够视觉证据/奖励强度下发生 watching transition；应监控 visual reliance 并在形成窗口干预。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22043:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22164:start -->
+- `SF-2026-ARXIV-2606-22164` — Daily `2026-06-21`；primary `arXiv:2606.22164v1`；Books review `books-review:SF-2026-ARXIV-2606-22164`。
+
+  **已吸收的语义增量：** 多轮 RL 的难度由 decision density ρ 而非 raw horizon 单独决定；routine reward-equivalent turns 给 trajectory estimator 增方差但不增期望 signal，低 ρ 时需要 turn-level critic/credit。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22164:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06987:start -->
+- `SF-2026-ARXIV-2607-06987` — Daily `2026-07-09`；primary `arXiv:2607.06987v1`；Books review `books-review:SF-2026-ARXIV-2607-06987`。
+
+  **已吸收的语义增量：** 新增证据边界：For positive advantages, UP replaces the stale rollout ratio with πθ divided by a stop-gradient copy of itself. Its forward value is one while its gradient is the current-policy REINFORCE gradient, so the positive branch no longer hits the usual upper clipping ceiling. The negative branch retains a conventional bounded ratio/KL safeguard, making the change asymmetric rather than removing stability controls globally. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L151`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06987:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11070:start -->
+- `SF-2026-ARXIV-2607-11070` — Daily `2026-07-14`；primary `arXiv:2607.11070v1`；Books review `books-review:SF-2026-ARXIV-2607-11070`。
+
+  **已吸收的语义增量：** 新增证据边界：DC-GRPO decomposes centered discounted return into separately normalized immediate-reward and future-return deviations, then recombines them so turns do not inherit one undifferentiated trajectory advantage. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11070:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11172:start -->
+- `SF-2026-ARXIV-2607-11172` — Daily `2026-07-14`；primary `arXiv:2607.11172v1`；Books review `books-review:SF-2026-ARXIV-2607-11172`。
+
+  **已吸收的语义增量：** 新增证据边界：A verifier maps each supported atomic evidence item to the earliest search/read step that exposed the cited document; sign-preserving modulation amplifies credited positive steps and shields them from uniform negative penalty. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11172:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11505:start -->
+- `SF-2026-ARXIV-2607-11505` — Daily `2026-07-14`；primary `arXiv:2607.11505v1`；Books review `books-review:SF-2026-ARXIV-2607-11505`。
+
+  **已吸收的语义增量：** 新增证据边界：A smaller proxy explores with GRPO; relative policy update signals are extracted, anchor-calibrated across model scales and applied to a larger primary with a signal-guided objective. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11505:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13124:start -->
+- `SF-2026-ARXIV-2607-13124` — Daily `2026-07-15`；primary `arXiv:2607.13124v1`；Books review `books-review:SF-2026-ARXIV-2607-13124`。
+
+  **已吸收的语义增量：** 新增证据边界：On-policy distillation evaluates a frozen pre-pruning teacher on student samples; repetition/truncation feedback and two EMAs shrink early horizons then restore long generation as recovery improves. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13124:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13399:start -->
+- `SF-2026-ARXIV-2607-13399` — Daily `2026-07-16`；primary `arXiv:2607.13399v1`；Books review `books-review:SF-2026-ARXIV-2607-13399`。
+
+  **已吸收的语义增量：** 新增证据边界：OPD is an exploration catalyst on student-owned on-policy states, not a capacity creator; teacher/student mismatch and length aggregation can corrupt the guidance signal. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13399:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-14777:start -->
+- `SF-2026-ARXIV-2607-14777` — Daily `2026-07-17`；primary `arXiv:2607.14777v1`；Books review `books-review:SF-2026-ARXIV-2607-14777`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: sparse outcome RL/static skills -> policy-synchronous hindsight-skill on-policy distillation 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-14777:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-17247:start -->
+- `SF-2026-ARXIV-2607-17247` — Daily `2026-07-20`；primary `arXiv:2607.17247v1`；Books review `books-review:SF-2026-ARXIV-2607-17247`。
+
+  **已吸收的语义增量：** 新增证据边界：outcome-only RL/unconditional OPD -> sign-authorized teacher weighting 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-17247:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-18722:start -->
+- `SF-2026-ARXIV-2607-18722` — Daily `2026-07-22`；primary `arXiv:2607.18722v1`；Books review `books-review:SF-2026-ARXIV-2607-18722`。
+
+  **已吸收的语义增量：** 新增证据边界：SAT derives a detached sampled log-ratio, computes a batch-relative high-tail quantile, and contracts only the sign-selected outward side of PPO's interval. It is a drop-in sampled-surrogate change: the adaptive interval is contained in PPO's, pull-back updates are unchanged, and the objective differs only in the newly clipped outward band. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-18722:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-23771:start -->
+- `SF-2026-ARXIV-2607-23771` — Daily `2026-07-27`；primary `arXiv:2607.23771v1`；Books review `books-review:SF-2026-ARXIV-2607-23771`。
+
+  **已吸收的语义增量：** 新增证据边界：Multi-controller sampling and turn-level GRPO train the policy against a vocabulary of inference-time controller/module compositions. 该 delta 已进入 `books/part-04-training-system/33-grpo.md#L1115`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-23771:end -->

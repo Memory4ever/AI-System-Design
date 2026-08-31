@@ -354,6 +354,10 @@ group probability mass 做层次采样。只要 mask、temperature、RNG 与归�
 logprobs、复杂 grammar、不可融合 processor、跨重试可复现或高 batch GEMM 占优时，物化 logits 仍更
 简单。某一 revision 的 kernel speedup 不能外推到不同 vocabulary、batch、hardware 或 processor chain。
 
+### 多数票选择的是稳定盆地，不是真值
+
+当多条采样轨迹的错误近似独立时，多数票是便宜的 selector；一旦同一模型反复落入稳定但错误的 reasoning basin，票数只测到自洽密度。此时 selection owner 可以在多数证据上叠加一个有界外部证据修正：只有可审计信号足够强才改变排序，信号弱时保留原决定或交给 verifier。收益是避免微弱、噪声证据任意翻转结果；代价是额外 evidence acquisition 与校准，失败模式则是 evidence source 同样相关或被污染。低风险、错误近似独立的任务仍可使用多数票。exact-v1 只在论文测试的数学任务、三个模型族与证据构造中支持这条分支，不证明它是开放域 truth oracle。<!-- source-family:SF-2026-ARXIV-2605-26172 -->
+
 ## 本章在知识树中的位置
 
 ```text

@@ -264,6 +264,12 @@ Embedding + Position
 
 本章只完成单 head 的内容路由。第15章会让多个投影子空间并行工作；第17章再把 Attention 与 MLP、Residual、Normalization 组成完整 Layer。
 
+## 从机制演进到系统设计
+
+Attention state 的经典分解保存 key 与 value，因为 query-key 决定路由、value 决定读取内容；新的因式分解可以把路由改写为 query-value 并减少缓存对象，但这同时改变模型参数化、训练目标和 runtime identity，不能被当作无语义变化的 KV 优化。
+
+更少缓存换来重新训练、kernel 支持与分布外稳定性风险。若等价性、质量或执行路径没有在目标模型上验证，标准 Q/K/V Attention 仍是正确 fallback；FlashAttention 等执行优化继续只拥有 IO 调度，不拥有模型语义。
+
 ## 自检问题
 
 1. 逐位置 MLP 为什么不能让 token 读取上下文？
@@ -276,6 +282,14 @@ Embedding + Position
 8. FlashAttention 改变了算法语义还是 IO 执行？
 9. 为什么逻辑 shape 与物理 layout 必须区分？
 10. Self Attention、KV Cache 与 PagedAttention 分别位于哪一层？
+
+## 从固定写入规则到目标导出的递归更新
+
+把注意力历史压进固定大小的递归状态时，旧路径常让模型直接学习一个未归一化的写入系数。这在 key 范数稳定时简单有效；但当范数变化很大，同一个系数会对应完全不同的实际更新幅度，state 可能过写或几乎不写。更稳健的演进是先把 state update 解释成逐步求解 online-regression objective，再由投影几何推导按 key 范数归一化的动态步长。模型仍可学习基础速率，更新规则却不再把输入尺度变化误当作记忆重要性。
+
+这条分支获得更可解释的写入尺度与数值稳定性，代价是额外范数计算、epsilon 与更新规则都成为模型身份的一部分；它也没有恢复被有限状态容量压缩掉的信息。Softmax Attention 在需要精确 token 访问时仍成立，Gated Delta 一类 learned update 在数据分布稳定、kernel 更成熟时也继续共存。本节只说明 update rule 的约束来源，不把单一实验外推为线性注意力的通用优势。[受限证据：arXiv:2605.08587v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08587 -->
 
 ## 小结
 
@@ -291,3 +305,11 @@ Primary-source 校验入口：
 
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
 - Tri Dao et al., "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness", 2022: https://arxiv.org/abs/2205.14135
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21848:start -->
+- `SF-2026-ARXIV-2606-21848` — Daily `2026-06-21`；primary `arXiv:2606.21848v1`；Books review `books-review:SF-2026-ARXIV-2606-21848`。
+
+  **已吸收的语义增量：** 把 query-key 路由改为 query-value 路由，并在 inference 预乘 query factor，只保存 value representation；QVV(3) 保持投影矩阵数同时移除 key cache。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21848:end -->

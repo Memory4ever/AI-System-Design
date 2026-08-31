@@ -99,6 +99,12 @@ observed inputs and freshness
 
 这使 fairness、routing 和 admission 可解释，也能与 counterfactual analysis 连接。
 
+<!-- source-family:SF-2026-ARXIV-2605-27785 -->
+
+Agent trace 只落成 JSON/文本对象，在单次故障排查时足够；规模扩大后，跨 run、tool、state transition 与 outcome 的问题会变成查询工作负载。此时可以把 trace schema 暴露为关系/列式 evidence plane，让普通过滤、join 与聚合保持 deterministic owner，只在需要语义归类的有界字段上调用 model operator，并保存 operator version、input set 与输出 provenance。
+
+这种 client-native 查询层减少导出和手写分析脚本，却把模型调用成本、非确定性、隐私与 query plan 变成新的控制面。模型算子不能参与主键、权限、计数或审计不可变事实的计算；失败时必须退回纯结构化查询或明确标记 unsupported。数据量小、问题已知时，离线 notebook 仍更简单；只有 trace 规模与重复分析需求足够大时，才值得建设统一 evidence engine。
+
 ### Collective Timeout 需要冻结 Participant-local History
 
 Watchdog timeout 能终止永久 hang，却通常只告诉我们哪个 rank 最先观察到症状；culprit 可能是更早发生的

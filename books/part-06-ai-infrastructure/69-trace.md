@@ -145,9 +145,50 @@ raw trace search
 只能缩小调查范围，必须回到日志、artifact、复现和 regression test。低频新故障或 judge 无法校准时，规则与
 人工 full-trace review 仍是正确基线。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-09692:start -->
+agent telemetry 必须把 authority graph 与 causal execution graph 分离，并在调用时绑定 durable delegation_id、re-delegation lineage、normalized action/resource semantics。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-09692:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-10937:start -->
+在 Trace 章节补一段 compiler rewrite provenance：non-injective transform 后由 observable behavior 重建 lineage；显式 ID 仍与其共存。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-10937:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-14805:start -->
+长Multi-Agent trace应编译成event knowledge graph，并用校准predictor分配稀缺counterfactual replay budget；预测只排序证据，不替代replay oracle。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-14805:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15811:start -->
+software supply-chain runtime evidence应按统一event-time组成temporal heterogeneous provenance graph，并将anomaly detection与attack-stage reconstruction解耦。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15811:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-26449:start -->
+让证据生产者写入 provenance 链，消费者据此追踪而不把来源等同于真值；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-26449:end -->
+
+### Contamination 先表现为 Control-flow Divergence
+
+不确定或被污染的 evidence 未必直接出现在最终答案，它可能先改变 decomposition、routing、tool choice 或 retry path。因而 provenance 不能只跟随文本片段，还要穿过 artifact transformation 与 workflow edge，记录相同输入下控制流何处首次分叉。该图能定位传播链，却受 synthetic corruption model 与 trace completeness 限制；缺少因果 intervention 时只能报告关联，不能把 divergence 自动解释成根因。
+
+<!-- source-family:SF-2026-ARXIV-2604-27586 -->
+
 ## 本章在知识树中的位置
 
 本章完成 Evidence Plane 的三种信号。下一章使用这些 evidence 回答经济问题：资源时间如何转成一次训练、一次成功请求和一个满足 SLO 的 token 的真实成本。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22698 -->
+black-box agent forensics 需要固定 probe transcript、system-prompt/topic 条件与 attribution threshold，把模型/配置 fingerprint 当 evidence 而非身份真值。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；synthetic transcript 与 threshold/config scope 限制外推；provider 更新、sampling 和 prompt drift 会使 fingerprint 失效。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+## 从机制演进到系统设计
+
+Trace 从请求 spans 演进到跨 model、tool、workflow 和 environment 的语义因果链后，必须同时记录执行顺序、数据/状态依赖、版本与外部 effect。只有这样，终局 failure 才能回溯到首次有害 commitment，而不是把相关步骤误当原因。
+
+更细 trace 提高 replay 和 attribution，却带来数据量、隐私、采样偏差和跨系统 clock/identity 问题。关键 action 与 state transition 需要不可丢的 receipt，普通高频 span 可以采样；trace 缺口存在时只能缩小 claim，不能由流畅 narrative 补全不存在的事件。
 
 ## 自检问题
 
@@ -161,36 +202,6 @@ raw trace search
 ## 小结
 
 Trace 让请求经过多个控制面和数据面时仍保留 causal context。好的 tracing 记录关键边界与决策，而不是最大化 span 数量。下一章将可观测事实转换为成本归因与优化约束。
-
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22698 -->
-black-box agent forensics 需要固定 probe transcript、system-prompt/topic 条件与 attribution threshold，把模型/配置 fingerprint 当 evidence 而非身份真值。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；synthetic transcript 与 threshold/config scope 限制外推；provider 更新、sampling 和 prompt drift 会使 fingerprint 失效。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- recovered-daily-20260624:PLATFORM-TRACE:start -->
-## 2026-06-24 evidence integration — PLATFORM-TRACE
-
-相邻章 `books/part-06-ai-infrastructure/67-monitoring.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24626**：故障诊断不再把全 trajectory 填入一个 context；investigator 用 segment search/read tools 主动取证，并用 persistent STM 保存跨轮 hypothesis/evidence，使 attribution 与原始 trace 长度解耦。 Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-24626: `arXiv:2606.24626v1`; exact-v1 URL=`https://arxiv.org/html/2606.24626v1`; Method=`https://arxiv.org/html/2606.24626v1 — §2 Methodology: SAFARI`; Evaluation=`https://arxiv.org/html/2606.24626v1 — §3 Experimental Setup; 4 Results; A/B/C appendices`; Non-proof=`Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:PLATFORM-TRACE:end -->
-
-<!-- recovered-daily-20260625:PLATFORM-TRACE:start -->
-## 2026-06-25 evidence integration — PLATFORM-TRACE
-
-- **SF-2026-ARXIV-2606-26449**：`ProvenAI provenance-native trace schema and evidence links` 所定义的源特定机制用于让证据生产者写入 provenance 链，消费者据此追踪而不把来源等同于真值；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Trace completeness depends on instrumented producers; provenance does not imply source truth` 是 `ProvenAI: Provenance-Native Traces of Evidence in Generated Answers` 的 source-specific 反例/局限边界；若运行条件离开 `Generated-answer trace/evidence evaluation` 的验证域，`PLATFORM-TRACE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-26449**：Primary `arXiv:2606.26449v1`；Method `https://arxiv.org/html/2606.26449v1 — §ProvenAI provenance-native trace schema and evidence links`；Evaluation `https://arxiv.org/html/2606.26449v1 — §Generated-answer trace/evidence evaluation`；未证明边界 `https://arxiv.org/html/2606.26449v1 — §Trace completeness depends on instrumented producers; provenance does not imply source truth`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:PLATFORM-TRACE:end -->
 
 ## Review notes
 
@@ -210,3 +221,77 @@ black-box agent forensics 需要固定 probe transcript、system-prompt/topic �
   https://arxiv.org/abs/2607.07702
 - AgentDebugX（exact v1 + event-time commit；Status: Experimental）：https://arxiv.org/html/2607.18754v1
   - 证据边界：184 localization traces、73 个 initially failed GAIA tasks；strict exact-step attribution 仍低，一次 rerun 不能证明因果归因或跨框架安全性。
+
+### Daily integration evidence trace
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24626: `arXiv:2606.24626v1`; exact-v1 URL=`https://arxiv.org/html/2606.24626v1`; Method=`https://arxiv.org/html/2606.24626v1 — §2 Methodology: SAFARI`; Evaluation=`https://arxiv.org/html/2606.24626v1 — §3 Experimental Setup; 4 Results; A/B/C appendices`; Non-proof=`Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26449**：Primary `arXiv:2606.26449v1`；Method `https://arxiv.org/html/2606.26449v1 — §ProvenAI provenance-native trace schema and evidence links`；Evaluation `https://arxiv.org/html/2606.26449v1 — §Generated-answer trace/evidence evaluation`；未证明边界 `https://arxiv.org/html/2606.26449v1 — §Trace completeness depends on instrumented producers; provenance does not imply source truth`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260624:PLATFORM-TRACE:start -->
+### 2026-06-24 evidence integration — PLATFORM-TRACE
+
+相邻章 `books/part-06-ai-infrastructure/67-monitoring.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24626**：故障诊断不再把全 trajectory 填入一个 context；investigator 用 segment search/read tools 主动取证，并用 persistent STM 保存跨轮 hypothesis/evidence，使 attribution 与原始 trace 长度解耦。 Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。
+
+<!-- recovered-daily-20260624:PLATFORM-TRACE:end -->
+
+<!-- recovered-daily-20260625:PLATFORM-TRACE:start -->
+### 2026-06-25 evidence integration — PLATFORM-TRACE
+
+- **SF-2026-ARXIV-2606-26449**：`ProvenAI provenance-native trace schema and evidence links` 所定义的源特定机制用于让证据生产者写入 provenance 链，消费者据此追踪而不把来源等同于真值；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Trace completeness depends on instrumented producers; provenance does not imply source truth` 是 `ProvenAI: Provenance-Native Traces of Evidence in Generated Answers` 的 source-specific 反例/局限边界；若运行条件离开 `Generated-answer trace/evidence evaluation` 的验证域，`PLATFORM-TRACE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:PLATFORM-TRACE:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09692:start -->
+- `SF-2026-ARXIV-2606-09692` — Daily `2026-06-09`；primary `arXiv:2606.09692v1`；Books review `books-review:SF-2026-ARXIV-2606-09692`。
+
+  **已吸收的语义增量：** agent telemetry 必须把 authority graph 与 causal execution graph 分离，并在调用时绑定 durable delegation_id、re-delegation lineage、normalized action/resource semantics。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09692:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-10937:start -->
+- `SF-2026-ARXIV-2606-10937` — Daily `2026-06-10`；primary `arXiv:2606.10937v1`；Books review `books-review:SF-2026-ARXIV-2606-10937`。
+
+  **已吸收的语义增量：** 在 Trace 章节补一段 compiler rewrite provenance：non-injective transform 后由 observable behavior 重建 lineage；显式 ID 仍与其共存。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-10937:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14805:start -->
+- `SF-2026-ARXIV-2606-14805` — Daily `2026-06-12`；primary `arXiv:2606.14805v1`；Books review `books-review:SF-2026-ARXIV-2606-14805`。
+
+  **已吸收的语义增量：** 长Multi-Agent trace应编译成event knowledge graph，并用校准predictor分配稀缺counterfactual replay budget；预测只排序证据，不替代replay oracle
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14805:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15811:start -->
+- `SF-2026-ARXIV-2606-15811` — Daily `2026-06-15`；primary `arXiv:2606.15811v1`；Books review `books-review:SF-2026-ARXIV-2606-15811`。
+
+  **已吸收的语义增量：** software supply-chain runtime evidence应按统一event-time组成temporal heterogeneous provenance graph，并将anomaly detection与attack-stage reconstruction解耦
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15811:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20374:start -->
+- `SF-2026-ARXIV-2606-20374` — Daily `2026-06-19`；primary `arXiv:2606.20374v1`；Books review `books-review:SF-2026-ARXIV-2606-20374`。
+
+  **已吸收的语义增量：** `ARGUS: Production-Scale Tracing and Performance Diagnosis for over 10,000-GPU Clusters` 路由到 `PLATFORM-TRACE`：ARGUS 将万卡训练诊断从节点日志提升为跨 rank/collective/network/storage 的统一 trace identity；collector 控制采样与时钟映射，diagnoser 只在证据图上定位瓶颈，超预算时降采样并保留关键 span。代价是 telemetry overhead 与相关性误判。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20374:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-12747:start -->
+- `SF-2026-ARXIV-2607-12747` — Daily `2026-07-15`；primary `arXiv:2607.12747v1`；Books review `books-review:SF-2026-ARXIV-2607-12747`。
+
+  **已吸收的语义增量：** 新增证据边界：A latent continuous-time trajectory model learns normal flow from successful traces; deviations on failed traces yield step attribution, with conformal detection controlling thresholds. 该 delta 已进入 `books/part-06-ai-infrastructure/69-trace.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-12747:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-18754:start -->
+- `SF-2026-ARXIV-2607-18754` — Daily `2026-07-22`；primary `arXiv:2607.18754v1`；Books review `books-review:SF-2026-ARXIV-2607-18754`。
+
+  **已吸收的语义增量：** 新增证据边界：Typed trace capture feeds a multi-turn debugger that narrows agent, step and failure class; the diagnosis is converted into a bounded repair and evaluated by a single rerun. Failure taxonomy and framework integrations are extensible surfaces rather than model truth. 该 delta 已进入 `books/part-06-ai-infrastructure/69-trace.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-18754:end -->

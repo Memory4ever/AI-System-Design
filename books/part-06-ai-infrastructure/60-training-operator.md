@@ -9,7 +9,7 @@
 
 ## 本章要回答的问题
 
-为什么分布式训练不能只用一个 Kubernetes Deployment？Training Operator 管理的是训练算法、GPU placement，还是 workload topology 与生命周期？
+为什么分布式训练不能只用一个 Kubernetes Deployment？Training Operator 管理的是训练算法、GPU placement，还是 workload topology 与生命周期？当在线强化学习不再是单一 trainer loop 时，平台又应怎样把它声明为可恢复的 Job，而不吞掉算法语义？
 
 本章的核心判断是：**Training Operator 把“运行一次具有角色、拓扑和完成语义的训练”声明为可协调对象；它负责 reconciliation 和 workload lifecycle，但不改变训练并行数学，也不替代 queue/gang scheduler。**
 
@@ -85,6 +85,35 @@ Operator 的重试也要区分：
 
 若这四种语义混在一个 `restartPolicy` 中，训练成本与产物 lineage 都会失真。
 
+## 在线 RL 需要多阶段 Job 契约
+
+SFT 与离线 DPO 可以近似为“固定数据进入 optimizer loop”；PPO、GRPO 等在线强化学习却需要让生成、评价与更新反复闭环。朴素做法是把整个脚本塞进一个 trainer 容器，只暴露 image、command 和 GPU 数。这样虽然容易提交，却会让平台只看见进程是否退出，看不见 rollout 已经对应哪个 policy、reward 是否完成、更新是否已经持久化，以及新权重能否安全交给下一轮生成。
+
+一个在线 RL iteration 更接近带版本边界的状态机：
+
+```text
+policy k
+→ rollout
+→ reward / verifier
+→ advantage or preference construction
+→ actor / critic update
+→ publish policy k+1
+→ evaluation / checkpoint
+```
+
+这些角色并非每种算法都必选。PPO 常需要 actor、reference、reward 与 critic；GRPO 可以移除 critic；离线 DPO 直接消费 preference pairs，跳过在线 rollout、reward serving 与逐轮 weight publish。因此平台不能用一套固定 Pod 清单定义“RL”，而应把提交契约拆成四层：
+
+- experiment spec 保存算法、数据、reward 组合与超参数意图；
+- versioned runtime 把所需角色解析为已验证的进程拓扑、镜像、资源池与通信后端；
+- controller 记录 phase、iteration、attempt、依赖和 terminal condition；
+- artifact manifest 绑定 trajectory、model versions、checkpoint 与 evaluation evidence。
+
+若平台选择在 `TrainJob` 之上提供 RL-specific Job，这个对象的价值不是再包装一层 YAML，而是给每个阶段建立可幂等重放的完成条件。`Pod Succeeded` 只说明某次进程结束；只有 output manifest 已提交、校验通过并被下一阶段引用，phase 才能前进。恢复也应从最近的 durable phase boundary 继续，而不是猜测整个 iteration 是否做完。
+
+Trajectory 是这条状态机的关键中间资产。至少需要保留 prompt/sample identity、behavior-policy version、tokenizer/template、sampling configuration、response masks 与 truncation、reward/verifier definition；PPO/GRPO 还需按 objective 保存或重算 old log-probability、value、advantage 等必要量。核心不变量是：**用于更新的样本必须能证明自己由哪个 behavior policy 产生。**新权重只有在更新与 checkpoint 完成后才应原子发布给 rollout pool。同步循环最容易保证这个边界；异步 rollout 可以提高 GPU 利用率，却必须额外声明允许的 policy lag、buffer retention、过期样本 drop/wait 规则和跨版本恢复语义。
+
+这里的 owner 边界要保持清楚：第 31～34 章拥有 RLHF、PPO、GRPO 与 DPO 的 objective 和角色选择；第 36 章拥有 rollout/training overlap、并行拓扑与 weight-sync data path；本章只拥有这些机制如何变成用户可提交、operator 可协调、失败后可恢复的平台 lifecycle contract。
+
 ## Operator 与训练并行的边界
 
 第 36～41 章定义 TP、PP、DP/ZeRO、CP、EP 的 tensor/state/communication 机制。Operator 只负责把这些需求映射为 process topology、environment 和 resources。
@@ -127,7 +156,7 @@ TrainJob identity
 
 ## Trade-off
 
-高度抽象的 Runtime 提交简单，却可能挡住新的 framework options；允许用户任意 patch PodTemplate 又会破坏平台的安全、观测和调度假设。
+高度抽象的 Runtime 提交简单，却可能挡住新的 framework options；允许用户任意 patch PodTemplate 又会破坏平台的安全、观测和调度假设。在线 RL 还增加另一组取舍：同步 phase barrier 容易审计但可能留下 rollout/training bubble，异步 pipeline 提高利用率却扩大 policy staleness、队列状态与失败重放面。
 
 可行做法是：
 
@@ -149,6 +178,8 @@ TrainJob identity
 4. 为什么 Operator 不能替代 gang scheduler？
 5. Elastic scheduling 需要训练框架提供什么能力？
 6. 如何把最终 checkpoint 绑定到正确 execution attempt？
+7. 为什么在线 RL 的 `Pod Succeeded` 不能证明一个 iteration 已经可恢复地完成？
+8. RL runtime 怎样在不固化某一种算法角色的前提下保证 trajectory 与 policy version 一致？
 
 ## 小结
 
@@ -166,3 +197,9 @@ Training Operator 标准化的是训练 workload 的声明、构建、观察和�
 - JobSet: https://jobset.sigs.k8s.io/
 - Kubeflow Trainer v2.2 release（manager-owned patch/status evidence；版本化实现）:
   https://github.com/kubeflow/trainer/releases/tag/v2.2.0
+- Kubeflow Trainer Runtime Guide（`TrainJob` 与 reusable runtime blueprint 的官方边界）:
+  https://trainer.kubeflow.org/en/latest/operator-guides/runtime.html
+- veRL HybridFlow Programming Guide（PPO controller 与 actor/rollout/reference、critic/reward worker roles 的实现证据）:
+  https://verl.readthedocs.io/en/latest/hybrid_flow.html
+- veRL V1 Async Trainer（异步 rollout/training、partial trajectory 与 bounded staleness 的版本化实现证据）:
+  https://verl.readthedocs.io/en/latest/advance/v1_async_trainer.html

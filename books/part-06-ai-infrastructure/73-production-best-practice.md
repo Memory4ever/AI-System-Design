@@ -88,6 +88,20 @@ Gate 应自动读取 evidence，人工只处理风险判断与例外。把所有
 
 LLM 输出非确定性使逐响应完全相等不现实。应比较 schema、safety、quality distribution、latency/cost 与 task success，并保留 golden deterministic cases 检查转换错误。
 
+渐进发布不仅用于替换整个 model revision，也可以承载**可逆的输入特征迁移**。当上游 schema 或特征分布连续变化时，旧做法是先重新训练一个适配新分布的模型，再切换服务；它在迁移低频、训练成本可接受时边界最清楚。若同一特征会在多个训练周期中逐步衰减，serving 可以把 fading policy 作为独立版本化资产，在 canary 中按计划降低旧特征贡献，并把同一 policy 传回后续训练。这样把一次突变拆成可观察、可回退的分布迁移，而不是让生产流量替模型承担未知 schema。
+
+```text
+feature/schema revision + fading policy
+→ shadow / canary under a bounded traffic slice
+→ observe quality, drift and fallback use
+→ commit one migration step or rollback
+→ feed the committed policy into the next training run
+```
+
+这个分支用更长迁移周期、双路径维护与 policy/model 版本耦合换取可逆性。fading 过快会制造未训练分布，过慢会长期背负旧 schema；若特征语义发生不兼容变化、监控不能定位退化，仍应回到显式数据迁移、完整重训与 blue/green 切换。
+
+<!-- source-family:SF-IEFF-CONTINUOUS-FEATURE-FADING -->
+
 ## Capacity、Failure 与 Recovery
 
 <!-- daily-20260621:platform-production:start -->
@@ -113,6 +127,20 @@ ML serving load test 以 adaptive capacity search 而非固定 traffic sweep，�
 - backup restore 与 artifact/metadata consistency。
 
 Disaster recovery 不能只备份 weights。Registry metadata、lineage、policies、secrets references、service specs 和 audit evidence 同样决定能否恢复。
+
+离线批处理也需要同样的 recovery contract。逐 partition 编码最容易隔离失败，却可能把 GPU 切成大量低利用率小批；把全部 partitions 合并成一个无界大批虽然提高吞吐，却延迟首个结果并放大 OOM 与重算范围。更稳妥的折中是 bounded-memory SuperBatch：保留 logical partition identity，在内存上限内聚合 GPU batch，逐项发布带 lineage 的 early output，并在 checkpoint 中记录已经提交的 partition/item frontier。
+
+```text
+logical partitions + immutable input revision
+→ bounded SuperBatch assembly
+→ GPU execution + per-item output lineage
+→ early durable commit
+→ resume from committed frontier after failure
+```
+
+它用组批状态、输出去重和 checkpoint 写放大换取利用率与可恢复性。小规模任务、严格 partition isolation 或不支持幂等输出的 sink 仍适合逐 partition 处理；不能证明 output identity 和 replay 安全时，不应只为更高 GPU occupancy 合批。
+
+<!-- source-family:SF-SURGE-SUPERBATCH-STREAMING-ENCODING -->
 
 ## SLO 驱动运行
 
@@ -158,6 +186,12 @@ online request and business outcome
 
 产品数量不能回答这些问题。
 
+### Base Service 演进必须与 Adapter 恢复共用迁移契约
+
+当服务只部署一个完整模型时，版本升级可以近似成替换 artifact 并逐步放量；大量 adapter 复用同一 base 后，base revision、adapter initialization、service readiness 与 rollout promotion 便成为同一迁移状态机。控制面必须先证明 adapter 能在新 base 上恢复并通过健康检查，再允许流量提升；否则“base 已就绪”会掩盖冷启动失败或语义不兼容。这样能减少重复模型副本并保持持续训练产物可部署，但代价是 registry 需要保存 base–adapter compatibility、恢复进度和回滚锚点。旧的整模型蓝绿发布在 adapter 数量少或耦合不可证明时仍更简单可靠。现有证据展示的是一种 ReLoRA 风格实现，不证明所有 adapter 架构都可无损迁移。
+
+<!-- source-family:SF-2026-ARXIV-2606-02606 -->
+
 ## 本章在知识树中的位置：从 Part VI 进入 Part VII
 
 Part VI 建立了受治理的 capability substrate：
@@ -174,6 +208,12 @@ artifact identity
 Agent 进一步把一次模型请求扩展成带 Context、Memory、Tools 和 Workflow state 的长期执行。它仍需要本 Part 的 identity、policy、trace、budget 与 recovery，但控制对象从“模型服务”扩大到“可能产生外部副作用的任务”。
 
 下一章从 Prompt 开始，不把 Prompt 当作普通字符串，而把它视为 Agent runtime 的一部分输入与软接口。
+
+## 从机制演进到系统设计
+
+Production 从固定 traffic sweep 与人工配置演进到 telemetry→proposal→sandbox evaluation→guarded apply→rollback 的闭环后，模型或 Agent 只拥有候选变更，control plane 持有版本与提交权。capacity search 也必须绑定 warm-up、arrival、artifact 与 SLO，而不是把单点吞吐当作可发布容量。
+
+自动闭环缩短调优周期，却增加试验流量、错误 cost model 与回滚状态。证据不足、blast radius 不可控或 rollback 未演练时，应停在 shadow/canary 或人工审批；生产成熟度由可恢复的决策链衡量，不由工具数量衡量。
 
 ## 自检问题
 
@@ -200,3 +240,20 @@ Primary-source 与官方入口：
 - Google SRE, Service Level Objectives: https://sre.google/sre-book/service-level-objectives/
 - NIST AI RMF: https://www.nist.gov/itl/ai-risk-management-framework
 - SLSA provenance: https://slsa.dev/spec/v1.2/provenance
+
+### Daily Books delta trace（2026-06—08）
+
+- `2026-05-02 / SF-IEFF-CONTINUOUS-FEATURE-FADING` — exact-v1 `arXiv:2605.00324v1`；正文只吸收可逆 feature migration policy、canary 与完整重训回退。
+- `2026-05-02 / SF-SURGE-SUPERBATCH-STREAMING-ENCODING` — exact-v1 `arXiv:2605.01060v1`；正文只吸收 bounded SuperBatch、early durable commit 与 crash-recovery frontier，不外推吞吐结果。
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20318:start -->
+- `SF-2026-ARXIV-2606-20318` — Daily `2026-06-19`；primary `arXiv:2606.20318v1`；Books review `books-review:SF-2026-ARXIV-2606-20318`。
+
+  **已吸收的语义增量：** `AgenticDB: Self-Evolving Reconfiguration Framework for Database Workloads` 路由到 `PLATFORM-PRODUCTION`：AgenticDB 将数据库 reconfiguration 变成 telemetry→proposal→sandbox evaluation→guarded apply→rollback 的闭环；DB control plane 而非 LLM 持有变更权限和状态版本。代价是试验流量与错误 cost model，fallback 为上一配置和人工 approval。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20318:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22013:start -->
+- `SF-2026-ARXIV-2606-22013` — Daily `2026-06-21`；primary `arXiv:2606.22013v1`；Books review `books-review:SF-2026-ARXIV-2606-22013`。
+
+  **已吸收的语义增量：** ML serving load test 以 adaptive capacity search 而非固定 traffic sweep，联合寻找满足 latency/SLO 的最大 load 与资源点，并保留 warm-up、arrival 和 model artifact identity。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22013:end -->

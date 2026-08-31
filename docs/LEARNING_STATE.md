@@ -19,6 +19,30 @@ from multimodal representation through generative paradigms and World Models to
 Embodied/VLA action; former Training, Inference, Infrastructure and Agent chapters
 have moved to Parts IV～VII without changing their durable content.
 
+## 2026-09-01 2026 年 5 月 Daily 全月闭环与 withdrawn 规则固化
+
+- 2026-05-01～05-31 共 31 份 V2.1 Daily 已完成 Coverage、Evidence、Books Decision 与 fresh-context / post-write Semantic Audit；全月 1,975 条 Candidate Ledger 记录中 536 条 `Integrate` 均能唯一回溯到 Books 正文：473 条使用 `source-family` marker，63 条使用同一 canonical family 的 `semantic-body-binding`，独立复读未发现语义缺口、owner drift、重复正文或 evidence-boundary drift。
+- first-public date 已统一按 `Asia/Shanghai` 解释：修复 789 条日期和 64 条跨 ISO week 的 Owner Week；未改变 Review、评分、Books Decision 或 Gate。
+- `arXiv:2605.04356v1` 经 official exact-version abs 确认为 withdrawn。该 revision 已从 Candidate、Score、Source Review、Deep Analysis、Books Comparison、Materials Request 与 Books marker 链路清除，仅在 screening ledger 保留 `withdrawn_primary_source` 的可审计 pre-denominator closure；后续 revision 必须按独立身份与真实 first-public window 重新路由。
+- 31/31 Daily 当前状态为 `Complete / Coverage Closed / Evidence Passed / Books Passed`，ordinary pending、blocker 与未解决 semantic finding 均为 0。月级 validator、150 项回归测试、Python 编译检查及本轮 unstaged 文本的 scoped diff check 通过；这些机器检查只证明接口一致性，语义闭环以逐日及全月独立审计收据为依据。
+- 本检查点未 stage、commit 或 push；工作树中既有 staged/unstaged 修改继续保留。全工作树 cached diff check 仍会报告此前抓取的 HTML/TSV source artifacts 自带行尾空白，本检查点未机械改写这些原始证据文件，也不把工作树称为 clean。
+
+## 2026-08-31 Conversation RL Runtime / Job Books Integration
+
+Status: `PLATFORM-TRAINING-OPERATOR` refined; chapter remains Draft
+
+- The new long-term candidate was how an AI platform should turn RLHF/PPO/GRPO/DPO workflows into a Runtime/Job
+  contract that reduces model-developer orchestration work without hiding algorithm semantics.
+- `TRAIN-RLHF`, `TRAIN-PPO`, `TRAIN-GRPO` and `TRAIN-DPO` received `No Change`: their existing chapters already
+  distinguish pipeline, online rollout/update and offline preference optimization, including actor, critic, reference,
+  reward and policy-version boundaries.
+- `PLATFORM-TRAINING-OPERATOR` now explains why online RL is a versioned multi-phase lifecycle rather than one trainer
+  container: runtime role resolution, durable phase receipts, trajectory identity, atomic weight publication and
+  synchronous-versus-asynchronous recovery trade-offs are integrated into the operator argument.
+- Kubeflow Trainer and veRL official documentation were used only as current implementation evidence; the durable
+  contract does not promote a framework-specific schema to a universal RL API. ROADMAP and DECISIONS remain unchanged;
+  no staging, commit or push was performed.
+
 ## 2026-08-28 Conversation Synthetic-Data / MoE Residency Books Integration
 
 Status: `TRAIN-DATA` and `INFER-GPU-MEMORY` refined; chapters remain Draft
@@ -5452,6 +5476,42 @@ Status: W15, W21 and W22 written back after root review; W12 remains open; Histo
   ledger remains TokenBridge, ETVA, Judge Anything, TULIP, RSD and VideoRFSplat, plus a fixed-organization immutable
   release/tag export, so the Candidate Evidence Gate remains open under the explicit blocked ledger.
 - No Historical Books integration was performed. No file was staged, committed or pushed.
+
+## 2026-08-31 2025 年 5 月误启动批次收束与停止点
+
+- 本轮原计划应为 2026 年 5 月 Daily 重建，但误启动了 2025-05-01～2025-05-04。该批次已经停止扩展；未创建 `papers/2025/05/05/README.md`，现存 05-05 内容仅为运行停止前生成的 source-screening artifacts，不能解释为 Daily 已开始或完成。
+- 2025-05-01 最终为 `Complete / Coverage Closed / Evidence Passed / Books Passed`：853 raw、339 registered routes、19 retained、834 pre-denominator closures，unresolved findings = 0。
+- 2025-05-02 最终为 `Complete / Coverage Closed / Evidence Passed / Books Passed`：690 raw、296 registered、17 retained、279 pre-denominator closures；独立审计恢复 UNISafe false negative，unresolved findings = 0。
+- 2025-05-03 最终保持 `Conditional / Coverage Closed / Evidence Conditional Pass / Books Conditional Pass`：721 raw、291 registered、23 arXiv + 1 OpenAI retained、268 pre-denominator closures；独立审计恢复 Phantora，唯一 unresolved finding 为 VideoHallu exact-v1 objective identity dispute，不得宣称 Complete。
+- 2025-05-04 最终为 `Complete / Coverage Closed / Evidence Passed / Books Passed`：150 raw/registered、14 retained、136 pre-denominator closures，unresolved findings = 0。
+- 本批次 Books 写回及 `No Change — Existing Coverage` 判断均已进入各日报的 Books Comparison / Repository Changes，并由独立 reviewer 复核 owner、相邻章节、正文 binding 与 evidence boundary。工作树保留现有 staged/unstaged 状态；本轮不执行 stage、commit 或 push。
+- Historical Daily 工作现在明确暂停。下一次用户恢复该任务时，正确的单向游标是 `2026-05-01`；不得从 2025-05-05 继续，也不得把本 checkpoint 解释为已经启动 2026 年 5 月。
+
+## 2026-08-31 2026-06～08 Daily → Books 完整对账与全书连贯性闭环
+
+- 本检查点只对账 2026 年 6～8 月 92 份 Daily 中已获得 `Books Disposition: Integrate` 的
+  Source Family，不重新打开 Daily 的 Coverage / Evidence 结论。冻结集合为 983 项：6 月 728、7 月
+  175、8 月 80；全部能够解析到 ROADMAP 中唯一 Stable Knowledge Node 与当前 owner 章节。
+- 983/983 项均已在 owner 章节的最终 `Review notes` 保留精确 Source Family trace，并完成
+  Daily delta、具体正文命题与证据边界三方语义对账：158 项由正文中的精确 Source Family binding
+  证明，1 项由既有 causal-block 命题精确承载，其余 824 项必须同时具备 Daily 的 passed fresh-context
+  Books receipt 与当前正文中可复算的具体命题。通用章节主线、章末 citation 或关键词命中均不再单独
+  视为 Integration 证明；原先缺少具体落点的增量已补入正文的条件化机制分支。
+- `integration-reconciliation.tsv` 与 `semantic-audit.tsv` 共 983 行，最终状态均为
+  `semantic_verified / verified_integration`，没有 foreign owner、pending 或未定位项。84/84 章完成结构与
+  owner 审计，59 个实际接收本期 Integration 的章节全部通过逐 Source Family 语义账本验收；其余 25 章
+  保留现有 owner，未为制造 diff 强行扩写。每章只保留一个最终 `Review notes` 证据边界，证据区之后不存在
+  机制正文。正文中的编辑性标题已改为读者语义：58 个综合段统一使用“从机制演进到系统设计”，106 个补强
+  命题在 35 章内各自合并为唯一“条件化机制分支与共存边界”段，不再形成重复审计附录或论文清单。
+- 修复 Part III 四章的实际阅读断裂：原先落在 `Reflection` 之后的机制段已移回自检之前，恢复
+  `representation → generation/commit → world transition → physical action` 的连续推导；内容与证据
+  未删除。
+- 七个 Part 的进入条件、演进主线、章节分工与退出契约已复核；六个 Part 边界及 Compute、Memory、
+  Communication、Scheduling、State 五条横轴和五条代表性演进链均有独立审计记录。84 个 Stable Node
+  ID 唯一，84 章内容 hash 唯一，没有完全相同副本。
+- 本检查点的 Books Integration Gate 与 Books Coherence Gate 均通过。验收账本位于
+  `papers/2026/_sources/books-integration-audit-2026-06-08/`；本轮未 stage、commit 或 push，也未处理
+  工作树中与本任务无关的恢复副本删除状态。
 
 ## 2026-08-26 August 1–25 Daily V2.1 Closure
 

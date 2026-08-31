@@ -48,6 +48,12 @@ source
 
 Index 应记录 source URI、content digest、version/time、tenant/ACL、parser/chunker 和 embedding model。Embedding vector 不是 source of truth。
 
+### OCR 之后仍需要 Document-level State Owner
+
+逐页 OCR 保留页内坐标且易于并行，但跨页段落、表格和标题会被切断，RAG 随后面对互相矛盾的 chunk 与结构索引。ingestion 应在 page artifact 之上维护 document revision，跨页合并结构并同步 chunk、locator 与 enrichment；原页和 region provenance 仍是可回溯 source of truth。收益是检索消费同一文档状态，代价是合并错误会跨页放大且更新粒度变大；结构不可靠时回退 page-level evidence。现有结果绑定披露 OCR/VLM、H200 与文档集，不证明跨页摘要可替代原始证据。
+
+<!-- source-family:SF-2026-ARXIV-2605-24973 -->
+
 ## Online Retrieval Pipeline
 
 ```text
@@ -88,6 +94,34 @@ Authorization 必须在返回内容前执行。先全局检索再让模型“忽
 
 Kernel pre-filter 用执行耦合与可能的数据倾斜换回安全和 recall；per-tenant index 隔离更强，却增加内存、build 与 freshness 成本。Codebook-oblivious quantization 只能消除一种 corpus-trained codebook channel，不是 embedding privacy 证明；query、access pattern、compressed vector 与 calibration statistics 仍需第 71、72 章的隔离和 threat model。
 
+<!-- semantic-body-binding:SF-2025-ARXIV-250501538-HONEYBEE:start -->
+当租户权限由重叠 role graph 表达时，“一个 tenant 一个索引”会复制大量公共向量，而单一全局索引又让每次 query 承担复杂过滤。中间分支可以把稳定的 RBAC role/permission cut 编译成 ANN physical partitions，并对跨 partition 的热点向量做受控 replication。Policy owner 仍拥有 role graph 与 revision；index builder 只消费已签署的 partition plan，runtime 只在授权 partition 中搜索。它用更低查询过滤成本换 memory、update fan-out、role churn rebuild 和 policy/index 双版本一致性。角色稳定、重叠结构显著时值得考虑；权限频繁变化、小 corpus 或强隔离优先时，kernel pre-filter/per-tenant index 更透明。HONEYBEE 的 13.5×/90.4% 只属于作者 RBAC benchmark、HNSW 参数和 workload，不能成为通用向量数据库承诺。
+<!-- semantic-body-binding:SF-2025-ARXIV-250501538-HONEYBEE:end -->
+
+### Retrieval 可以预测未来需求，但必须允许取消与过期
+
+同步检索只在问题明确后发起，语义可靠且控制简单，却把 retrieval latency 完整暴露给生成路径。predictive prefetch 根据当前 trajectory 预测后续 information demand，并让检索与生成重叠；prefetch controller 因而必须拥有 query revision、freshness deadline、cancellation 和最终 evidence admission，而不是把预取结果自动塞进 context。
+
+收益是隐藏部分 IO 延迟；代价是误预测流量、过期证据和更大的 cache/context 压力。预测置信不足、数据快速变化或高风险 claim 出现时，回退同步检索与重新验证。exact-v1 只覆盖其披露任务、预测器、retriever 和延迟/有用性指标，不证明开放对话、不同知识库或生产尾延迟中的普遍收益。
+
+<!-- source-family:SF-2026-ARXIV-2605-17989 -->
+
+### SSD Filtered ANN 要把 Superset Traversal 与最终验证分开
+
+为每种 metadata filter 建独立索引，查询简单但组合爆炸、更新昂贵；直接在图遍历中强过滤又可能过早剪掉通往有效邻居的路径。SSD 路径可以遍历一个受控 superset，以 pipeline 隐藏随机 IO，再在候选进入 top-k 前由 filter verifier 做最终 admission。
+
+这种分层改善索引复用与 IO overlap，却增加无效读取、候选缓冲和 filter selectivity 估计；高选择性、频繁更新或工作集可驻内存时，专用/内存索引仍可能更合适。exact-v1 只支持其披露数据集、SSD、索引参数、filter 分布和 recall/latency 合同，不证明任意检索库或在线更新条件的优势。
+
+<!-- source-family:SF-2026-ARXIV-2605-17992 -->
+
+### Index Update 可以借用 Search I/O Stall，但不能借走 Freshness Authority
+
+把 index update 与 search 完全串行，状态简单、容易证明 snapshot 一致；disk ANN 在等待随机 I/O 时存在空窗，后台 updater 可以把可分解的更新工作放入这些 stall windows，并由 feedback controller 限制单次 overrun。Search owner 仍固定 query snapshot，update owner 只构建下一 revision，publisher 在完成性和 freshness gate 通过后原子切换，不能让半成品进入候选集。
+
+这提高设备利用率，却会增加 stall prediction、update starvation、tail-latency interference 与双 revision 容量；I/O pattern 变化或 freshness deadline 临近时，应回退独立 update window。`arXiv:2605.19335v1` 的 §4 与 §6 只支持其 LIOS decomposition、bounded budgeting 和 FreshDiskANN/OdinANN experiments，§8 不证明其他 ANN、设备或 production concurrency 同样受益。
+
+<!-- source-family:SF-2026-ARXIV-2605-19335 -->
+
 ## Retrieval 的基本度量
 
 Retrieval metric 必须与 Agent 实际 query distribution 对齐。面向自然问题训练的 dense retriever，未必适合 deep-research Agent 生成的短 entity、keyword 或逐步 subquery；更强 encoder 在接口分布错位时也可能输给 lexical baseline。评估应联合版本化 query generator、corpus/index、retriever/reranker、packing policy 与 context use，并分开报告 source recall、duplicate evidence、search/tool cost 和 final outcome。
@@ -119,6 +153,12 @@ Embedding 系统常用 cosine similarity：
 ```text
 cos(q, d) = (q · d) / (||q|| ||d||)
 ```
+
+高维空间还会让 cosine/距离的对比度收缩：nearest 与 typical neighbor 的 margin 变小后，微小数值误差、hubness 或索引近似都可能重排 top-k。Vector dimension 因而不是“越大表示越强”的孤立参数；evaluation 要同时保存 score distribution、neighbor margin、stability under perturbation 与下游 evidence use，index owner 再据此选择降维、hybrid lexical signal 或拒绝低对比 query。
+
+这些诊断用额外 calibration 与可能的表示损失换可预测检索；它们不能从 synthetic concentration 直接推出某个生产 embedding 已失效。低维、margin 充足或 lexical exact-match 主导时，普通 top-k 仍成立。`arXiv:2606.28330v1` 的 PDF §II–§V 只支持其 concentration analysis、synthetic 与 simplified RAG experiments，§VI–§VII 明确没有生产 embedding validation。
+
+<!-- source-family:SF-2026-ARXIV-2606-28330 -->
 
 相似不等于有用或真实。Evaluation 至少区分：
 
@@ -235,6 +275,14 @@ abstention cost。论文在若干 QA datasets 上报告 selective generation 改
 
 旧的 relevance/reranking 仍然成立：它们负责高效找到候选，sufficiency gate 负责判断候选
 集合是否已足够。前者不能被后者替代，后者也无法从未召回的 corpus 中创造 evidence。
+
+### Escalation 与 Abstention Threshold 必须联合校准
+
+级联 RAG 常分别设置“是否再检索/升级”和“是否拒答”的阈值，单独调参在 distribution 稳定时简单；两者共享同一 evidence uncertainty 时，独立阈值会形成空洞或重叠区域。更完整的 calibration object 把 threshold pair、target risk、calibration distribution 与 fallback cost 一起冻结：retrieval controller 决定升级，answer gate 决定提交或 abstain，二者都不能修改 source truth。
+
+联合校准可以明确风险预算，却新增样本需求、distribution-shift sensitivity 与更多 abstention；认证只对声明分布和 risk level 成立。低风险、单阶段或缺少 calibration set 时，保守规则与人工升级仍更稳。`arXiv:2605.20084v1` 的 §3–§5 只支持其 BalanceRAG threshold certification 与受测 cascades，文中 Limitations 不允许把阈值外推到新 corpus、retriever 或模型。
+
+<!-- source-family:SF-2026-ARXIV-2605-20084 -->
 
 ## Agentic Retrieval：Relevance 也可以是执行先验
 
@@ -361,6 +409,23 @@ incremental rebuild、ACL/delete propagation 和 graph drift。Skill node 是 re
 
 ## RAG 不消除 Hallucination
 
+<!-- source-family:SF-2026-ARXIV-2605-26778 -->
+
+回答与检索文档内容一致，不等于回答由该文档支撑：模型可能只是在 parametric memory 中本就知道答案，检索内容甚至没有进入有效推理路径。若 evaluation 只看最终正确率或 citation overlap，就无法区分“证据导致了答案”与“答案碰巧和证据一致”。更严格的 groundedness contract 需要成对干预：保留问题、替换或遮蔽关键证据，观察结论与引用是否按预期改变，并把这种 counterfactual sensitivity 与普通 correctness 分开报告。
+
+干预评估提高了因果诊断力，却增加样本构造、对照污染和 evaluator 成本；答案对证据不敏感也可能因为模型拥有正确先验，而非一定错误。低风险搜索可继续用 relevance/citation 指标快速迭代，高风险发布则需要 provenance、support span 与干预证据共同证明检索链真正拥有结论的 support authority。
+
+### Web Retrieval 的 Corpus 也可能主动塑造 Agent Trajectory
+
+<!-- semantic-body-binding:SF-ECOGEO-TRAJECTORY-AWARE-EVIDENCE-ECOSYSTEMS-FOR-WEB-ENABLED-LLM-SEARCH-A:start -->
+传统 RAG 把 corpus 当作被动事实集合；web-enabled Agent 会连续搜索、引用、回访并让多个页面共同塑造后续 query，
+于是发布者优化的不再是单页排名，而是整条 evidence trajectory。检索系统必须记录页面 provenance、跨站关联、
+query evolution 与最终 claim uptake，不能把“多处出现”自动解释为独立证据。协调内容生态可以提高可发现性，也会
+制造相关来源、反馈回路与操纵面；高风险结论应回到独立 primary source 和 claim-level entailment。固定私有 corpus
+仍适合低变化、强治理场景。受控虚构产品实验只证明 trajectory-level influence 可以被测量，不证明现实 web 排名
+或所有搜索 Agent 会同样受影响。
+<!-- semantic-body-binding:SF-ECOGEO-TRAJECTORY-AWARE-EVIDENCE-ECOSYSTEMS-FOR-WEB-ENABLED-LLM-SEARCH-A:end -->
+
 ### 长文生成需要把检索、叙事状态与核验分开提交
 
 一次取回大量文档再自由生成全文，在短答案和低风险任务中路径最短；长文同时要求全局结构、跨段一致性和逐 claim grounding 时，单次 Context 很难既容纳所有证据又保持可审计。一个更稳健的分支是先冻结 outline，再让每个 section 只读取有界证据和 coherence memory，最后由独立 checker 产生返工而不是直接宣告可信：
@@ -384,31 +449,123 @@ evidence inventory → versioned outline
 
 高风险场景需要 evidence-aware response policy：缺 evidence 时 abstain，关键 claims 可验证，冲突升级给人或确定性规则。Citation 只是引用字符串，必须检查 claim-to-source entailment。
 
+### Grounded Output 也可能泄露 Corpus Membership
+
+让回答严格蕴含 retrieved evidence，是减少无依据生成的合理旧路径；在 corpus 含私有文档、攻击者可反复查询时，同一 entailment signal 也可能暴露某份文档是否存在于索引中。攻击者不需要读取 chunk，只需构造与目标文档相关的 probes，并比较模型输出对该内容的支持模式。于是 corpus owner 不仅要控制 retrieval ACL，还要拥有 membership threat model、query budget、rate/identity correlation 与输出 release policy；generator 不能因为答案“有证据”就取得泄露判定权。
+
+收紧输出、加入不确定性、限制重复 probes 或对敏感 corpus 做更强隔离可以降低攻击面，却会牺牲回答效用、可解释性和合法用户的 recall；简单噪声还可能被多次查询平均掉。公开 corpus、低敏感度或查询主体可信时，普通 evidence-aware RAG 仍成立；无法校准泄露风险时应回退私有检索服务、人工审批或不对外暴露该 corpus。`arXiv:2605.24312v1` 的 §3 与 §4 支持作者 entailment-based black-box membership attack 及五次查询合同，§5 不证明所有 retriever、模型、文档或攻击预算都同样可辨识，也不证明单一防御足够。
+
+<!-- source-family:SF-2026-ARXIV-2605-24312 -->
+
 ## Freshness、Deletion 与 Consistency
+
+<!-- source-family:SF-2026-ARXIV-2605-27494 -->
+
+Answer cache 只按 query key 复用，在知识稳定、答案无时间敏感性时最省成本；文档更新、删除或权限变化后，同一问题却可能命中已经失去 support 的旧答案。缓存 identity 因而不能只绑定问题，还要绑定 supporting evidence 的版本、可见性与 freshness policy。命中时先验证这些依赖仍可解析且继续支撑 claim，再允许提交；验证失败回退到 retrieval 与 regeneration。
+
+这种 evidence-aware cache 用 dependency index、invalidation fan-out 与命中前验证换一致性；文档频繁变化时验证成本可能接近重算，错误的 support extraction 也会制造假新鲜。稳定、只读 corpus 仍可使用 TTL 或版本化 namespace；需要删除语义、审计或强时效时，则应让 evidence identity 而不是 query string 拥有复用权。
+
+### GraphRAG 的 Citation 必须绑定实际 Traversal
+
+在扁平文档检索中，citation 通常绑定被送入 Context 的 chunk；图检索还会经由实体、关系和多跳邻域选择证据。若最终只列出几条可见文档，系统就无法区分“被访问但未采用”“作为中间桥接”“真正支持 claim”的节点。可审计路径应同时冻结 graph revision、遍历邻域、访问集合、支持边和最终 citation：
+
+```text
+query + graph revision
+→ bounded traversal
+→ visited and supporting subgraph
+→ claim-level citation
+→ independent entailment check
+```
+
+这提高了可追踪性和删除传播能力，却增加图快照、路径基数与隐私成本。可见或被访问不等于对结论有因果贡献，路径存在也不证明关系正确；低跳数、单文档即可回答的任务仍应回退到普通 retrieval + claim citation，避免为了图结构制造虚假的解释感。
+
+<!-- source-family:SF-2026-ARXIV-2605-15109 -->
 
 更新 corpus 时要同步处理 vector、lexical index、cache 与 derived summaries。删除请求必须传播到全部 derived state，不能只删 source。
 
 Query trace 应记录 index version 和 retrieved document digests，使线上答案可复现。Mutable “latest index” 不足以事后审计。
 
+### Concurrent Update 让 SSD Index 同时拥有 Search 与 Maintenance State
+
+<!-- semantic-body-binding:SF-NAVIS-CONCURRENT-SEARCH-AND-UPDATE-WITH-LOW-POSITION-SEEKING-OVERHEAD-IN:start -->
+内存足够、语料批量刷新时，离线重建 index 再原子切换最容易保持一致；当向量图落在 SSD、写入持续发生且查询
+不能停机时，packed page locality 会与 selective vector read 冲突，entrance graph 也会在更新中变旧。可维护的
+路径是让 storage layout 支持只读必要向量，复用更新遍历形成轻量 entrance state，并让 cache 显式感知 entrance
+identity。Index owner 负责 graph revision、并发可见性和 crash recovery；retriever 只消费已发布 snapshot，不能
+把搜索过程中看到的半更新边升级为 evidence。
+
+这条分支用更低 position-seeking overhead 和在线 freshness 换取写放大、cache invalidation、并发控制和更复杂的
+恢复语义。写流量低、corpus 可停机重建或内存索引可容纳时，immutable generation 加原子切换仍更简单可靠。
+作者结果只覆盖其 SSD、图布局与 workload；未披露或未复现的 durability、tenant isolation 和尾延迟不能外推为
+通用 RAG 性能结论。
+<!-- semantic-body-binding:SF-NAVIS-CONCURRENT-SEARCH-AND-UPDATE-WITH-LOW-POSITION-SEEKING-OVERHEAD-IN:end -->
+
+### 连续媒体先变成可修订事件状态，再进入检索
+
+短视频可以直接作为一次 VLM 输入，路径短、状态少，在片段能够完整装入 Context 时仍是合理基线。长视频或持续感知流改变了约束：原始 frame 数量随时间增长，同一事件跨片段延续，后续观察还可能修正早期描述。此时直接把 frame caption 当作独立 chunk，会同时丢失时间关系、实体连续性与 revision provenance。
+
+<!-- semantic-body-binding:SF-2025-AVA:start -->
+更可维护的分支先按固定 observation window 产生带来源的描述，再合并为 event/entity/time graph；检索器从不同视图提出候选，最后仍回到原始时间段核验。Graph owner 负责 event identity、timestamp、merge history 与 stale-edge invalidation，retrieval policy 只拥有 search plan，不能把推断边当作 source fact。它以额外的视频解析、图更新和多步搜索成本换取跨时间证据；描述误差会沿图传播，实时更新还会制造旧边与新观察冲突。语义连续性弱、视频很短或低延迟优先时，直接 VLM/segment retrieval 仍更合适。AVA 的受限实验覆盖 8 段长视频和 120 个问题，只证明这条状态化检索路径在该合同下可执行，不证明通用实时视频理解或图搜索质量。
+<!-- semantic-body-binding:SF-2025-AVA:end -->
+
+### Corpus Ownership 可以留在 Peer，但信任问题不会消失
+
+中央索引把 corpus、权限和 freshness 收敛到一个控制面，最容易审计，也会形成集中收集、单点容量与跨域治理压力。当文档必须由各 peer 保管时，检索可以演进为 topic-aware discovery：query 在候选 peer 间路由，每个 peer 只对本地授权 corpus 执行 retrieval，再汇总带 provenance 的结果。
+
+<!-- semantic-body-binding:SF-2025-DISTRIBUTED-RAG:start -->
+这个分支改变的是 corpus 与 index 的 state ownership，不是自动获得隐私。Peer discovery、query forwarding、result merge 和 timeout policy 都要版本化；恶意 peer、内容撤销、重复证据、访问模式和跨 peer 一致性仍需独立治理。仿真中的 topic-aware random walk 只说明在作者网络与 workload 下可用较少消息接近其中央 baseline，不覆盖对抗 peer、真实故障、query privacy 或生产尾延迟。稳定、可集中授权的 corpus 继续使用中央或分区索引；只有数据主权约束高于协调成本时，peer-owned retrieval 才值得进入主路径。
+<!-- semantic-body-binding:SF-2025-DISTRIBUTED-RAG:end -->
+
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16341:start -->
+filtered ANN planner 应把 selectivity error 到 plan regret 的 phase boundary 作为切换条件，而不是用单一 pre/post/in-filter 规则。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16341:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19692:start -->
+旧的周期 reverse-kNN 扫描在毒文档入库后才处置；该工作把 sentinel hub-score、冻结阈值和 quarantine 决策放进写路径，由索引入口拥有 admit/reject 控制，阈值缓冲按写增量维护。代价是 sentinel/encoder 漂移和自然 hub 误报；tight-domain、删除最坏路径或监测盲区仍由 provenance 审核与周期扫描兜底。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19692:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19719:start -->
+语义缓存的发布标准从 PR-AUC 排序改为 threshold-aware P-CHR 曲线与 CRR：cache owner 保存 score/threshold/命中预算，evaluation 将 ranking quality 分解为可校准差距和由正例率决定的结构差距，再决定是否上线 retriever/reranker。post-hoc calibration 仅是共存修复，不能替代重新训练或生产域阈值重估。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19719:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19898:start -->
+filtered ANN 从静态单索引选择变为 query-aware router：规则或 learned policy 依据 filter selectivity/shape 将查询送往不同索引路径；router 拥有 plan choice，监测失配时回落到精确过滤或保守规则。代价是训练分布漂移会把 latency 优化变成 recall 回归。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19898:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-24204:start -->
+把 interval predicate 的双端点约束映射为统一 2D dominance space；每个 predicate 拥有独立 UDG instance，patch edge 只在 validity 保持时补路由，避免两个 scalar index 的交集爆炸。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-24204:end -->
+
+### Retrieval Object 需要 Validity 与 Lifecycle
+
+Passage ranking 在语料静态、事实长期有效时足够简单；持续变化的知识库中，失效事实若到生成后才被发现，已经污染了 retrieval set。更稳定的对象是带 provenance、validity interval、conflict state 与 lifecycle 的 atomic nugget：admission 先排除 expired/retracted 项，再在授权范围内排序。代价是 nugget extraction、关系维护与失效传播成本；来源无法原子化或生命周期未知时，应保留原 passage 并显式降级 authority，而不是伪造精细状态。
+
+<!-- source-family:SF-2026-ARXIV-2604-27306 -->
+
+### 视觉证据也必须有可追踪的 Claim–Evidence 生命周期
+
+文档包含截图、图表或扫描页时，文本 chunk ID 不足以复现证据。ingestion 应保存 source 与 page revision、截图或渲染身份、region/bounding-box locator，再把区域证据逐 hop 绑定到 atomic claim。region locator 解决的是“回到哪里”，不能替代来源权威、entailment、sufficiency 或独立 verifier；页面重排、OCR 版本变化和图像裁剪都会使旧 locator 失效，因此必须随 corpus revision 一起版本化。
+
+更根本的限制是，自回归生成后的 token-level attribution 不会自动组合成可靠的 claim-level provenance。若生成时没有保存 evidence admission 与 claim mapping，事后仅靠 black-box query 重建 credit assignment 可能需要组合搜索，成本随长文本迅速增长。于是 provenance 不能被视为生成结束后的装饰：检索接纳、context packing 与 generation commit 必须共同携带证据身份；做不到时应明确标记 unsupported claim，而不是用一个模糊引用覆盖整段答案。
+
+<!-- source-family:SF-PIXEL-LEVEL-RAG-EVIDENCE-CHAIN -->
+<!-- source-family:SF-AUTOREGRESSIVE-CREDIT-ATTRIBUTION-BARRIER -->
+
+### Retrieval Control 应成为 Reader 外部的 Typed State
+
+让 reader 在 prompt 中隐式决定是否检索、查哪里，在 corpus 小且单轮任务中最简单；多源、权限与预算约束出现后，决策无法审计或恢复。RAG controller 应外置 retrieval state，记录 query tree、已访问 source、预算、权限、证据覆盖与下一 routing action，再把受控证据交给 reader。收益是可重放、可恢复和最小权限，代价是 state schema 与 router 错误；state stale、错误剪枝或跨租户泄漏时应回退静态检索/人工批准。exact-v1 只支持 StateRAG 披露的 MARS/SMP 等机制和实验，不证明任意 corpus 或 reader 上的收益。<!-- source-family:SF-2026-ARXIV-2605-25379 -->
+
+### Checker Reward 不能同时充当训练信号和独立证据
+
+用 NLI/grounding checker 给 RAG policy 奖励，checker 与真实质量高度一致时能减少人工标注；policy 适应 checker 后，可能通过迎合判别边界获得高分而不改善证据支持。Training owner 与 evaluation owner 必须分离：checker 可生成 proposal reward，但 release gate 需独立 judge、held-out evidence 与多 seed regression。收益是保留可扩展反馈，代价是双评估链和更高成本；独立性不足或 reward collapse 时应冻结 policy、回退基线并审查错误 cascade。exact-v1 只支持论文的医疗 RAG、checker、模型和实验设置，不证明临床正确性或跨域稳定性。<!-- source-family:SF-2026-ARXIV-2605-25988 -->
+
 ## 本章在知识树中的位置
 
 RAG 是 Context 的 external knowledge path，不是长期用户状态的全部实现。下一章讨论 Memory 如何跨交互写入、压缩、检索和遗忘状态，以及为什么 memory write 比 retrieval 多一层信任问题。
-
-## 自检问题
-
-1. RAG 相比参数化知识提供了什么能力？
-2. 为什么 embedding vector 不是 source of truth？
-3. Authorization 为什么必须发生在 retrieval data path？
-4. Dense 与 lexical retrieval 的偏好有何不同？
-5. 为什么正确 retrieval 仍可能产生错误回答？
-6. Index version 为什么要进入 trace？
-7. Relevance、context sufficiency 与 answer faithfulness 分别归属哪一层？
-8. 为什么多步 Agentic Retrieval 中 query、compression、verification 与 stop 必须作为联合 policy 评估？
-9. “平均搜索步数更少”为什么既可能是效率提升，也可能是 premature failure？
-
-## 小结
-
-RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。下一章进入可跨会话演化的 Memory。
 
 ### Retrieval Router 选择的是检索系统，而不只是文档
 
@@ -428,67 +585,35 @@ Soft reward target 比 noisy hard argmax 更能保留 action 间差异，但 que
 P95 latency、index footprint 与 downstream answer quality 必须一起记录。语料单一、成本敏感或路由样本不足时，
 固定 hybrid retrieval 仍更可维护。
 
-<!-- recovered-daily-20260623:AGENT-RAG:start -->
-## 2026-06-23 evidence integration — AGENT-RAG
+## 从机制演进到系统设计
 
-相邻章 `books/part-07-agent/77-memory.md#L1` 只消费 handoff，不重复拥有机制。
+RAG 从 top-k 相似度检索演进到 evidence admission 和闭环预算控制。Query、candidate generation、rerank、dedup、context allocation、answer attribution 与 abstention 是不同阶段；高相关不等于足够证据，shared index 的 population density 和跨租户 crowding 也会改变召回行为。
 
-### Owner-merged minimal body
+更多检索可以提高 recall，却增加噪声、token 成本、污染传播和错误置信。系统应冻结 corpus/index/embedding revision，记录候选为何被选、模型是否实际使用证据，并在 coverage 不足或来源冲突时拒答。小语料、稳定查询或 exact lookup 场景中，简单 top-k 仍可能是更透明的 baseline。
 
-- **SF-2026-ARXIV-2606-22778**：HAKARI-Bench: A Lightweight Benchmark for Comparing Retrieval Architectures and Efficiency Settings under Unified Conditions 的 exact-v1 机制为：We present HAKARI-Bench, a lightweight benchmark that reconstructs existing retrieval suites into small datasets (Nano-sets): 35 benchmarks and 551 tasks across 43 languages in a unified format, enabling same-condition, model-agnostic comparison of five retrieval families (BM25, dense, sparse, late interaction, rerankers) and their efficiency variants. 因此 把 retrieval 配置、candidate set、证据 identity 与质量—成本评估绑定。 该 family 的 failure pressure 是：With the rapid spread of retrieval-augmented generation and semantic search, choosing the right embedding and retrieval configuration is increasingly hard. 披露的 evaluation signal 是：HAKARI-Bench does not replace full evaluation; it enables rapid model selection, regression detection, and reading the quality-efficiency Pareto frontier. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23642**：Improving Long-Context Retrieval with Multi-Prefix Embedding 的 exact-v1 机制为：We propose Multi-Prefix Embedding (MPE), which partitions a document into chunks separated by EOS tokens, encodes the full sequence in a single causal forward pass, and extracts one embedding at each prefix boundary. 因此 把 retrieval 配置、candidate set、证据 identity 与质量—成本评估绑定。 该 family 的 failure pressure 是：Long-context retrieval exposes a tension: single-vector embeddings lose fine-grained detail, while token-level multi-vector methods incur prohibitive storage. 披露的 evaluation signal 是：Experiments on MLDR-en, BrowseComp-Plus, and LongEmbed show that MPE is competitive with or outperforms single-vector, independent-chunk, and multi-vector baselines, while providing a natural source attribution mechanism for locating evidence chunks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+## 自检问题
 
-### Source-specific exact-v1 Review notes
+1. RAG 相比参数化知识提供了什么能力？
+2. 为什么 embedding vector 不是 source of truth？
+3. Authorization 为什么必须发生在 retrieval data path？
+4. Dense 与 lexical retrieval 的偏好有何不同？
+5. 为什么正确 retrieval 仍可能产生错误回答？
+6. Index version 为什么要进入 trace？
+7. Relevance、context sufficiency 与 answer faithfulness 分别归属哪一层？
+8. 为什么多步 Agentic Retrieval 中 query、compression、verification 与 stop 必须作为联合 policy 评估？
+9. “平均搜索步数更少”为什么既可能是效率提升，也可能是 premature failure？
 
-- `SF-2026-ARXIV-2606-22778` — primary `arXiv:2606.22778v1`; Method=`arXiv:2606.22778v1 — §Lightweight evaluation and Nano-set construction; §Design of HAKARI-Bench; §Appendix A Nano-set construction and dataset list`; Evaluation=`arXiv:2606.22778v1 — §HAKARI-Bench: A Lightweight Benchmark for Comparing Retrieval Architectures and Efficiency Settings under Unified Conditions; §Retrieval evaluation benchmarks and retrieval architectures; §Lightweight evaluation and Nano-set construction`; non-proof=`arXiv:2606.22778v1 — §Discussion; §Scope of evaluated models; §Conclusion`; fallback=该 family 的 failure pressure 是：With the rapid spread of retrieval-augmented generation and semantic search, choosing the right embedding and retrieval configuration is increasingly hard. 披露的 evaluation signal 是：HAKARI-Bench does not replace full evaluation; it enables rapid model selection, regression detection, and reading the quality-efficiency Pareto frontier. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-23642` — primary `arXiv:2606.23642v1`; Method=`arXiv:2606.23642v1 — §3 Method; §3.1 Scoring, Training, and Retrieval; §3.2 Random Prefix-Length Augmentation`; Evaluation=`arXiv:2606.23642v1 — §4 Experiments; §4.1 Setup; §4.2 Main Results`; non-proof=`arXiv:2606.23642v1 — §Storage overhead.; §Source attribution.; §5 Conclusion`; fallback=该 family 的 failure pressure 是：Long-context retrieval exposes a tension: single-vector embeddings lose fine-grained detail, while token-level multi-vector methods incur prohibitive storage. 披露的 evaluation signal 是：Experiments on MLDR-en, BrowseComp-Plus, and LongEmbed show that MPE is competitive with or outperforms single-vector, independent-chunk, and multi-vector baselines, while providing a natural source attribution mechanism for locating evidence chunks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:AGENT-RAG:end -->
+## RAG Benchmark 的 Corpus 本身也是实验状态
 
-<!-- recovered-daily-20260624:AGENT-RAG:start -->
-## 2026-06-24 evidence integration — AGENT-RAG
+直接从开放语料抽问答最接近真实分布，却难以确认答案、证据与污染边界；合成问答又容易只测生成器偏好。一个更可审计的分支是对冻结 corpus 做受控 transformation，生成可验证 answer/evidence pair，同时保存 source span、变换规则、generator/verifier revision 与污染检查。这样 retrieval failure、generation failure 与 evidence mismatch 可以分别归因。
 
-相邻章 `books/part-07-agent/77-memory.md` 只接收 handoff，不重复拥有机制。
+代价是构造成本、变换偏差和任务自然度下降；高分只在 corpus、transformation、retriever、verifier 与 leakage policy 冻结时可解释。开放域线上评估仍需要真实流量与人工核验，受控 benchmark 不能替代它。[受限证据：arXiv:2605.08838v1]
 
-### Owner-merged minimal text
+<!-- source-family:SF-2026-ARXIV-2605-08838 -->
 
-- **SF-2026-ARXIV-2606-24204**：把 interval predicate 的双端点约束映射为统一 2D dominance space；每个 predicate 拥有独立 UDG instance，patch edge 只在 validity 保持时补路由，避免两个 scalar index 的交集爆炸。 闭合 two-bound conjunctive predicate 与论文数据集不覆盖任意布尔 filter、动态高 churn 或 distributed index consistency；过滤结构不匹配时回退普通 filtered ANN。
-- **SF-2026-ARXIV-2606-25191**：document assessment 不再默认多 Agent scoring；pilot probe 测 reasoning-score coupling，弱模型路由到 per-document isolation，只有 score 有信息的模型才承担 assessment/reranking。 7B–9B、给定 QA benchmark 与 pilot-derived threshold 不证明高 stakes、长多跳或 retrieval drift；diagnostic 不稳时回退 isolation 或普通 single-pass RAG。
-- **SF-2026-ARXIV-2606-28387**：text-to-SQL 在 generation 前先检索 typed catalog object（table/column/metric/relation/query history）；parallel vector search、lineage expansion、reranker 与 deterministic ACL 共同决定可见 schema。 CRUSH4SQL/SEDE/BIRD 与 warehouse catalog quality 不证明跨 dialect、动态权限或低元数据环境；metadata noise/ACL 不确定时回退受限 catalog browse 或人工 schema selection。
+## 小结
 
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-24204: `arXiv:2606.24204v1`; exact-v1 URL=`https://arxiv.org/html/2606.24204v1`; Method=`https://arxiv.org/html/2606.24204v1 — §III Unified Dominance Abstraction; IV/V Unified Dominance Graph`; Evaluation=`https://arxiv.org/html/2606.24204v1 — §VI Experiment; Search Performance and Index Construction`; Non-proof=`闭合 two-bound conjunctive predicate 与论文数据集不覆盖任意布尔 filter、动态高 churn 或 distributed index consistency；过滤结构不匹配时回退普通 filtered ANN。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-25191: `arXiv:2606.25191v1`; exact-v1 URL=`https://arxiv.org/html/2606.25191v1`; Method=`https://arxiv.org/html/2606.25191v1 — §3 Reasoning-Score Coupling; 4 Candidate Treatments; MADARA`; Evaluation=`https://arxiv.org/html/2606.25191v1 — §5 Experimental Setup; 6 Results; K Cost-Accuracy`; Non-proof=`7B–9B、给定 QA benchmark 与 pilot-derived threshold 不证明高 stakes、长多跳或 retrieval drift；diagnostic 不稳时回退 isolation 或普通 single-pass RAG。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-28387: `arXiv:2606.28387v1`; exact-v1 URL=`https://arxiv.org/html/2606.28387v1`; Method=`https://arxiv.org/html/2606.28387v1 — §3 Schema-First Retrieval; Catalog Objects; Retrieval and Access Control`; Evaluation=`https://arxiv.org/html/2606.28387v1 — §4 Experimental Setup; 5 Results; D Analyses`; Non-proof=`CRUSH4SQL/SEDE/BIRD 与 warehouse catalog quality 不证明跨 dialect、动态权限或低元数据环境；metadata noise/ACL 不确定时回退受限 catalog browse 或人工 schema selection。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:AGENT-RAG:end -->
-
-<!-- recovered-daily-20260625:AGENT-RAG:start -->
-## 2026-06-25 evidence integration — AGENT-RAG
-
-- **SF-2026-ARXIV-2606-25656**：`3 Methods; 3.2 Regular RAG; 3.3 GraphRAG; 3.4 Modular and Agentic RAG; 3.5 Context Optimization` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusions and future work; C Retrieval-Generation Gap` 是 `Is GraphRAG Needed? From Basic RAG to Graph-/Agentic Solutions with Context Optimization` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experimental setup; 5 Experimental results` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25674**：`3 Method; 3.2 Low-bit Embedding Backbone; 3.5 Multi-precision Embedding Quantization` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `4.4 Analysis; task-type sensitivity to quantization` 是 `BitNet Text Embeddings` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments; 4.1 Experimental Setup; B Evaluation Details` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26439**：`TileMaxSim IO-aware GPU MaxSim scoring; dimension tiling and fused product quantization` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Evaluated MaxSim layouts and GPUs only; index update and distributed consistency are not proved` 是 `TileMaxSim: IO-Aware GPU MaxSim Scoring with Dimension Tiling and Fused Product Quantization` 的 source-specific 反例/局限边界；若运行条件离开 `GPU retrieval throughput, latency and quality evaluation` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26441**：`GPUSparse learned sparse retrieval with parallel inverted indices` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Static benchmark indexes do not prove high-churn update cost, multi-tenant isolation or cross-node scaling` 是 `GPUSparse: GPU-Accelerated Learned Sparse Retrieval with Parallel Inverted Indices` 的 source-specific 反例/局限边界；若运行条件离开 `Retrieval quality, latency and GPU scaling experiments` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25656**：Primary `arXiv:2606.25656v1`；Method `https://arxiv.org/html/2606.25656v1 — §3 Methods; 3.2 Regular RAG; 3.3 GraphRAG; 3.4 Modular and Agentic RAG; 3.5 Context Optimization`；Evaluation `https://arxiv.org/html/2606.25656v1 — §4 Experimental setup; 5 Experimental results`；未证明边界 `https://arxiv.org/html/2606.25656v1 — §6 Conclusions and future work; C Retrieval-Generation Gap`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25674**：Primary `arXiv:2606.25674v1`；Method `https://arxiv.org/html/2606.25674v1 — §3 Method; 3.2 Low-bit Embedding Backbone; 3.5 Multi-precision Embedding Quantization`；Evaluation `https://arxiv.org/html/2606.25674v1 — §4 Experiments; 4.1 Experimental Setup; B Evaluation Details`；未证明边界 `https://arxiv.org/html/2606.25674v1 — §4.4 Analysis; task-type sensitivity to quantization`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26439**：Primary `arXiv:2606.26439v1`；Method `https://arxiv.org/html/2606.26439v1 — §TileMaxSim IO-aware GPU MaxSim scoring; dimension tiling and fused product quantization`；Evaluation `https://arxiv.org/html/2606.26439v1 — §GPU retrieval throughput, latency and quality evaluation`；未证明边界 `https://arxiv.org/html/2606.26439v1 — §Evaluated MaxSim layouts and GPUs only; index update and distributed consistency are not proved`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26441**：Primary `arXiv:2606.26441v1`；Method `https://arxiv.org/html/2606.26441v1 — §GPUSparse learned sparse retrieval with parallel inverted indices`；Evaluation `https://arxiv.org/html/2606.26441v1 — §Retrieval quality, latency and GPU scaling experiments`；未证明边界 `https://arxiv.org/html/2606.26441v1 — §Static benchmark indexes do not prove high-churn update cost, multi-tenant isolation or cross-node scaling`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:AGENT-RAG:end -->
-
-<!-- june29-owner:AGENT-RAG:start -->
-## 2026-06-29 约束变化与机制增量
-
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29151`、`SF-2026-ARXIV-2606-29571`）。** 现有 RAG 正文有 typed query plan 与固定/校准检索回退，但没有把自然语言 semantic operator 编译为可重写 logical DAG、再由 physical planner 联合提交 backend/router/threshold 的计划对象。 现有 RAG 正文版本化 metric/index identity，但没有把 encoder anisotropy 变成上线前 cosine-versus-rank/L1 的 metric selection diagnostic。 因此本次把这些增量合并到同一知识 owner：旧 RAG 路径把自然语言直接送入固定 retriever；CADENZA 先编译 task-specific operator DAG，再由 logical rewrite 与 physical planner 按 quality/latency/cost 选择 backend。RAG owner 持有 DAG、operator identity 与 plan commit；统计或 backend profile 漂移时回退固定检索计划。 Embedding distance 不应固定为 cosine；retrieval owner 先测 anisotropy，再在同一 corpus/query revision 上选择 cosine、rank 或 L1 类 metric，并把 metric 写入 index identity。诊断漂移或收益不稳时回退已校准 cosine/混合检索。 共同代价与回退边界是：只证明 SemBench 上 intent-specific operator DAG 与异构 backend 的 quality/latency/cost 计划选择；未证明跨 operator 的联合最优、teacher-noise 之外的 label shift，或 Azure/API 与本地模型间可移植性。失配时固定到已校准 retrieval plan。 只比较 19 个 parameter-free metric、19 encoder 与七个静态数据集；0.01 crowded split、dominant-direction removal 和相关性未证明在线 corpus 漂移下的因果门槛，也未覆盖 learned metric。收益消失时恢复已校准 cosine/混合检索。
-
-### 2026-06-29 source-specific Review notes
-
-Review note：`SF-2026-ARXIV-2606-29151`；Method `https://arxiv.org/html/2606.29151v1 — §2.2 System Architecture; 4 Logical Planner; 5 Physical Planner`；Evaluation `https://arxiv.org/html/2606.29151v1 — §7 Experiments; 7.1 Experimental Setup`；未证明边界 `https://arxiv.org/html/2606.29151v1 — §6.3 Robustness; G Validation Set Noise`。
-
-Review note：`SF-2026-ARXIV-2606-29571`；Method `https://arxiv.org/html/2606.29571v1 — §3.4 Geometry measures; 4.3 The cause: a few crowded directions; 4.4 Mechanism and consequences`；Evaluation `https://arxiv.org/html/2606.29571v1 — §3.1 Encoders; 3.3 Datasets; 3.5 Scoring`；未证明边界 `https://arxiv.org/html/2606.29571v1 — §6 Limitations`。
-<!-- june29-owner:AGENT-RAG:end -->
+RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。预测性检索可以隐藏部分 IO，SSD filtered ANN 可以扩大索引复用，但二者都必须把错误预测、过期、最终过滤和 evidence admission 留给明确 owner。下一章进入可跨会话演化的 Memory。
 
 ## Review notes
 
@@ -496,6 +621,13 @@ Review note：`SF-2026-ARXIV-2606-29571`；Method `https://arxiv.org/html/2606.2
   https://arxiv.org/abs/2608.25625v1
 
 - RH-RAG（隐私约束长文的 outline/section/check 分层；Status: Experimental）: https://arxiv.org/abs/2608.01311
+
+- AVA（长视频的事件图与多视图检索；Status: Experimental）：https://arxiv.org/html/2505.00254v1
+  - 证据边界：3 秒片段描述、语义合并、事件/实体/时间图与多视图搜索只在 AVA-100 的 8 段视频、120 个问题上评估；不证明实时流、开放域或图陈旧条件下仍成立。
+- Distributed RAG（peer-owned corpus 的 topic-aware discovery；Status: Experimental）：https://arxiv.org/html/2505.00443v1
+  - 证据边界：结果来自仿真网络；不覆盖对抗 peer、真实网络故障、隐私证明或生产 tail latency。
+- HONEYBEE（RBAC role graph 驱动 ANN physical partition；Status: Experimental）：https://arxiv.org/html/2505.01538v1
+  - 证据边界：headline 只绑定作者 RBAC benchmark、HNSW 参数与 workload；不证明动态 policy、任意数据分布或生产 tail latency。
 
 - OmniRetrieval（heterogeneous source-native operators；Status: Experimental）: https://arxiv.org/abs/2605.29250
 - GrepSeek（programmable lexical retrieval；Status: Experimental）: https://arxiv.org/abs/2605.29307
@@ -527,3 +659,201 @@ Primary-source 入口：
   https://arxiv.org/abs/2608.19535
 - TurboVec（ANN kernel tenant pre-filter 与 codebook-oblivious quantization；Status: Experimental；不构成完整 embedding privacy 证明）:
   https://arxiv.org/abs/2607.16973v1
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22778` — primary `arXiv:2606.22778v1`; Method=`arXiv:2606.22778v1 — §Lightweight evaluation and Nano-set construction; §Design of HAKARI-Bench; §Appendix A Nano-set construction and dataset list`; Evaluation=`arXiv:2606.22778v1 — §HAKARI-Bench: A Lightweight Benchmark for Comparing Retrieval Architectures and Efficiency Settings under Unified Conditions; §Retrieval evaluation benchmarks and retrieval architectures; §Lightweight evaluation and Nano-set construction`; non-proof=`arXiv:2606.22778v1 — §Discussion; §Scope of evaluated models; §Conclusion`; fallback=该 family 的 failure pressure 是：With the rapid spread of retrieval-augmented generation and semantic search, choosing the right embedding and retrieval configuration is increasingly hard. 披露的 evaluation signal 是：HAKARI-Bench does not replace full evaluation; it enables rapid model selection, regression detection, and reading the quality-efficiency Pareto frontier. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23642` — primary `arXiv:2606.23642v1`; Method=`arXiv:2606.23642v1 — §3 Method; §3.1 Scoring, Training, and Retrieval; §3.2 Random Prefix-Length Augmentation`; Evaluation=`arXiv:2606.23642v1 — §4 Experiments; §4.1 Setup; §4.2 Main Results`; non-proof=`arXiv:2606.23642v1 — §Storage overhead.; §Source attribution.; §5 Conclusion`; fallback=该 family 的 failure pressure 是：Long-context retrieval exposes a tension: single-vector embeddings lose fine-grained detail, while token-level multi-vector methods incur prohibitive storage. 披露的 evaluation signal 是：Experiments on MLDR-en, BrowseComp-Plus, and LongEmbed show that MPE is competitive with or outperforms single-vector, independent-chunk, and multi-vector baselines, while providing a natural source attribution mechanism for locating evidence chunks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24204: `arXiv:2606.24204v1`; exact-v1 URL=`https://arxiv.org/html/2606.24204v1`; Method=`https://arxiv.org/html/2606.24204v1 — §III Unified Dominance Abstraction; IV/V Unified Dominance Graph`; Evaluation=`https://arxiv.org/html/2606.24204v1 — §VI Experiment; Search Performance and Index Construction`; Non-proof=`闭合 two-bound conjunctive predicate 与论文数据集不覆盖任意布尔 filter、动态高 churn 或 distributed index consistency；过滤结构不匹配时回退普通 filtered ANN。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25191: `arXiv:2606.25191v1`; exact-v1 URL=`https://arxiv.org/html/2606.25191v1`; Method=`https://arxiv.org/html/2606.25191v1 — §3 Reasoning-Score Coupling; 4 Candidate Treatments; MADARA`; Evaluation=`https://arxiv.org/html/2606.25191v1 — §5 Experimental Setup; 6 Results; K Cost-Accuracy`; Non-proof=`7B–9B、给定 QA benchmark 与 pilot-derived threshold 不证明高 stakes、长多跳或 retrieval drift；diagnostic 不稳时回退 isolation 或普通 single-pass RAG。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-28387: `arXiv:2606.28387v1`; exact-v1 URL=`https://arxiv.org/html/2606.28387v1`; Method=`https://arxiv.org/html/2606.28387v1 — §3 Schema-First Retrieval; Catalog Objects; Retrieval and Access Control`; Evaluation=`https://arxiv.org/html/2606.28387v1 — §4 Experimental Setup; 5 Results; D Analyses`; Non-proof=`CRUSH4SQL/SEDE/BIRD 与 warehouse catalog quality 不证明跨 dialect、动态权限或低元数据环境；metadata noise/ACL 不确定时回退受限 catalog browse 或人工 schema selection。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25656**：Primary `arXiv:2606.25656v1`；Method `https://arxiv.org/html/2606.25656v1 — §3 Methods; 3.2 Regular RAG; 3.3 GraphRAG; 3.4 Modular and Agentic RAG; 3.5 Context Optimization`；Evaluation `https://arxiv.org/html/2606.25656v1 — §4 Experimental setup; 5 Experimental results`；未证明边界 `https://arxiv.org/html/2606.25656v1 — §6 Conclusions and future work; C Retrieval-Generation Gap`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25674**：Primary `arXiv:2606.25674v1`；Method `https://arxiv.org/html/2606.25674v1 — §3 Method; 3.2 Low-bit Embedding Backbone; 3.5 Multi-precision Embedding Quantization`；Evaluation `https://arxiv.org/html/2606.25674v1 — §4 Experiments; 4.1 Experimental Setup; B Evaluation Details`；未证明边界 `https://arxiv.org/html/2606.25674v1 — §4.4 Analysis; task-type sensitivity to quantization`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26439**：Primary `arXiv:2606.26439v1`；Method `https://arxiv.org/html/2606.26439v1 — §TileMaxSim IO-aware GPU MaxSim scoring; dimension tiling and fused product quantization`；Evaluation `https://arxiv.org/html/2606.26439v1 — §GPU retrieval throughput, latency and quality evaluation`；未证明边界 `https://arxiv.org/html/2606.26439v1 — §Evaluated MaxSim layouts and GPUs only; index update and distributed consistency are not proved`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26441**：Primary `arXiv:2606.26441v1`；Method `https://arxiv.org/html/2606.26441v1 — §GPUSparse learned sparse retrieval with parallel inverted indices`；Evaluation `https://arxiv.org/html/2606.26441v1 — §Retrieval quality, latency and GPU scaling experiments`；未证明边界 `https://arxiv.org/html/2606.26441v1 — §Static benchmark indexes do not prove high-churn update cost, multi-tenant isolation or cross-node scaling`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+#### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29151`；Method `https://arxiv.org/html/2606.29151v1 — §2.2 System Architecture; 4 Logical Planner; 5 Physical Planner`；Evaluation `https://arxiv.org/html/2606.29151v1 — §7 Experiments; 7.1 Experimental Setup`；未证明边界 `https://arxiv.org/html/2606.29151v1 — §6.3 Robustness; G Validation Set Noise`。
+
+Review note：`SF-2026-ARXIV-2606-29571`；Method `https://arxiv.org/html/2606.29571v1 — §3.4 Geometry measures; 4.3 The cause: a few crowded directions; 4.4 Mechanism and consequences`；Evaluation `https://arxiv.org/html/2606.29571v1 — §3.1 Encoders; 3.3 Datasets; 3.5 Scoring`；未证明边界 `https://arxiv.org/html/2606.29571v1 — §6 Limitations`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260623:AGENT-RAG:start -->
+### 2026-06-23 evidence integration — AGENT-RAG
+
+相邻章 `books/part-07-agent/77-memory.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22778**：HAKARI-Bench: A Lightweight Benchmark for Comparing Retrieval Architectures and Efficiency Settings under Unified Conditions 的 exact-v1 机制为：We present HAKARI-Bench, a lightweight benchmark that reconstructs existing retrieval suites into small datasets (Nano-sets): 35 benchmarks and 551 tasks across 43 languages in a unified format, enabling same-condition, model-agnostic comparison of five retrieval families (BM25, dense, sparse, late interaction, rerankers) and their efficiency variants. 因此 把 retrieval 配置、candidate set、证据 identity 与质量—成本评估绑定。 该 family 的 failure pressure 是：With the rapid spread of retrieval-augmented generation and semantic search, choosing the right embedding and retrieval configuration is increasingly hard. 披露的 evaluation signal 是：HAKARI-Bench does not replace full evaluation; it enables rapid model selection, regression detection, and reading the quality-efficiency Pareto frontier. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23642**：Improving Long-Context Retrieval with Multi-Prefix Embedding 的 exact-v1 机制为：We propose Multi-Prefix Embedding (MPE), which partitions a document into chunks separated by EOS tokens, encodes the full sequence in a single causal forward pass, and extracts one embedding at each prefix boundary. 因此 把 retrieval 配置、candidate set、证据 identity 与质量—成本评估绑定。 该 family 的 failure pressure 是：Long-context retrieval exposes a tension: single-vector embeddings lose fine-grained detail, while token-level multi-vector methods incur prohibitive storage. 披露的 evaluation signal 是：Experiments on MLDR-en, BrowseComp-Plus, and LongEmbed show that MPE is competitive with or outperforms single-vector, independent-chunk, and multi-vector baselines, while providing a natural source attribution mechanism for locating evidence chunks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:AGENT-RAG:end -->
+
+<!-- recovered-daily-20260624:AGENT-RAG:start -->
+### 2026-06-24 evidence integration — AGENT-RAG
+
+相邻章 `books/part-07-agent/77-memory.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24204**：把 interval predicate 的双端点约束映射为统一 2D dominance space；每个 predicate 拥有独立 UDG instance，patch edge 只在 validity 保持时补路由，避免两个 scalar index 的交集爆炸。 闭合 two-bound conjunctive predicate 与论文数据集不覆盖任意布尔 filter、动态高 churn 或 distributed index consistency；过滤结构不匹配时回退普通 filtered ANN。
+- **SF-2026-ARXIV-2606-25191**：document assessment 不再默认多 Agent scoring；pilot probe 测 reasoning-score coupling，弱模型路由到 per-document isolation，只有 score 有信息的模型才承担 assessment/reranking。 7B–9B、给定 QA benchmark 与 pilot-derived threshold 不证明高 stakes、长多跳或 retrieval drift；diagnostic 不稳时回退 isolation 或普通 single-pass RAG。
+- **SF-2026-ARXIV-2606-28387**：text-to-SQL 在 generation 前先检索 typed catalog object（table/column/metric/relation/query history）；parallel vector search、lineage expansion、reranker 与 deterministic ACL 共同决定可见 schema。 CRUSH4SQL/SEDE/BIRD 与 warehouse catalog quality 不证明跨 dialect、动态权限或低元数据环境；metadata noise/ACL 不确定时回退受限 catalog browse 或人工 schema selection。
+
+<!-- recovered-daily-20260624:AGENT-RAG:end -->
+
+<!-- recovered-daily-20260625:AGENT-RAG:start -->
+### 2026-06-25 evidence integration — AGENT-RAG
+
+- **SF-2026-ARXIV-2606-25656**：`3 Methods; 3.2 Regular RAG; 3.3 GraphRAG; 3.4 Modular and Agentic RAG; 3.5 Context Optimization` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusions and future work; C Retrieval-Generation Gap` 是 `Is GraphRAG Needed? From Basic RAG to Graph-/Agentic Solutions with Context Optimization` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experimental setup; 5 Experimental results` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25674**：`3 Method; 3.2 Low-bit Embedding Backbone; 3.5 Multi-precision Embedding Quantization` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `4.4 Analysis; task-type sensitivity to quantization` 是 `BitNet Text Embeddings` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments; 4.1 Experimental Setup; B Evaluation Details` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26439**：`TileMaxSim IO-aware GPU MaxSim scoring; dimension tiling and fused product quantization` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Evaluated MaxSim layouts and GPUs only; index update and distributed consistency are not proved` 是 `TileMaxSim: IO-Aware GPU MaxSim Scoring with Dimension Tiling and Fused Product Quantization` 的 source-specific 反例/局限边界；若运行条件离开 `GPU retrieval throughput, latency and quality evaluation` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26441**：`GPUSparse learned sparse retrieval with parallel inverted indices` 所定义的源特定机制用于把检索索引、量化、GPU scorer 与更新一致性拆成显式数据面状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Static benchmark indexes do not prove high-churn update cost, multi-tenant isolation or cross-node scaling` 是 `GPUSparse: GPU-Accelerated Learned Sparse Retrieval with Parallel Inverted Indices` 的 source-specific 反例/局限边界；若运行条件离开 `Retrieval quality, latency and GPU scaling experiments` 的验证域，`AGENT-RAG` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:AGENT-RAG:end -->
+
+<!-- june29-owner:AGENT-RAG:start -->
+### 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29151`、`SF-2026-ARXIV-2606-29571`）。** 现有 RAG 正文有 typed query plan 与固定/校准检索回退，但没有把自然语言 semantic operator 编译为可重写 logical DAG、再由 physical planner 联合提交 backend/router/threshold 的计划对象。 现有 RAG 正文版本化 metric/index identity，但没有把 encoder anisotropy 变成上线前 cosine-versus-rank/L1 的 metric selection diagnostic。 因此本次把这些增量合并到同一知识 owner：旧 RAG 路径把自然语言直接送入固定 retriever；CADENZA 先编译 task-specific operator DAG，再由 logical rewrite 与 physical planner 按 quality/latency/cost 选择 backend。RAG owner 持有 DAG、operator identity 与 plan commit；统计或 backend profile 漂移时回退固定检索计划。 Embedding distance 不应固定为 cosine；retrieval owner 先测 anisotropy，再在同一 corpus/query revision 上选择 cosine、rank 或 L1 类 metric，并把 metric 写入 index identity。诊断漂移或收益不稳时回退已校准 cosine/混合检索。 共同代价与回退边界是：只证明 SemBench 上 intent-specific operator DAG 与异构 backend 的 quality/latency/cost 计划选择；未证明跨 operator 的联合最优、teacher-noise 之外的 label shift，或 Azure/API 与本地模型间可移植性。失配时固定到已校准 retrieval plan。 只比较 19 个 parameter-free metric、19 encoder 与七个静态数据集；0.01 crowded split、dominant-direction removal 和相关性未证明在线 corpus 漂移下的因果门槛，也未覆盖 learned metric。收益消失时恢复已校准 cosine/混合检索。
+
+<!-- june29-owner:AGENT-RAG:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-CROWDED-EMBEDDING-EXTERNALITY:start -->
+- `SF-CROWDED-EMBEDDING-EXTERNALITY` — Daily `2026-06-02`；primary `arXiv:2606.28343v1`；Books review `books-review:SF-CROWDED-EMBEDDING-EXTERNALITY`。
+
+  **已吸收的语义增量：** 把 corpus population density 与 cross-tenant crowding 作为共享 index failure mode 和 release monitor。
+<!-- daily-books-trace:SF-CROWDED-EMBEDDING-EXTERNALITY:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08950:start -->
+- `SF-2026-ARXIV-2606-08950` — Daily `2026-06-09`；primary `arXiv:2606.08950v1`；Books review `books-review:SF-2026-ARXIV-2606-08950`。
+
+  **已吸收的语义增量：** 向量数据库的 insertion、indexing、query 与 mixed read/write 生命周期必须同 storage hierarchy、broadcast-gather 与 partitioning 一起评估；增加 core/node 可因协调瓶颈反向降低吞吐。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08950:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13145:start -->
+- `SF-2026-ARXIV-2606-13145` — Daily `2026-06-12`；primary `arXiv:2606.13145v1`；Books review `books-review:SF-2026-ARXIV-2606-13145`。
+
+  **已吸收的语义增量：** billion-scale ANNS 的 owner 是 clustering/index lifecycle 加 user-space all-flash I/O、adaptive pruning 与 GPU build pipeline，而非只比较内存 HNSW query latency
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13145:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15179:start -->
+- `SF-2026-ARXIV-2606-15179` — Daily `2026-06-14`；primary `arXiv:2606.15179v1`；Books review `books-review:SF-2026-ARXIV-2606-15179`。
+
+  **已吸收的语义增量：** document-isolated device-cloud RAG 应用 waiting debt 与 certificate-guided minimal supplement 异步聚合证据，而不是等待所有设备或一次性上传全文。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15179:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-28361:start -->
+- `SF-2026-ARXIV-2606-28361` — Daily `2026-06-14`；primary `arXiv:2606.28361v1`；Books review `books-review:SF-2026-ARXIV-2606-28361`。
+
+  **已吸收的语义增量：** 多轮 RAG 服务可把历史文档/推理改成 append-only conclusion chain，并在一次调用中联合生成 reasoning 与 conclusion，使跨轮输入从近 O(N²) 降为 O(N)。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-28361:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-28365:start -->
+- `SF-2026-ARXIV-2606-28365` — Daily `2026-06-15`；primary `arXiv:2606.28365v1`；Books review `books-review:SF-2026-ARXIV-2606-28365`。
+
+  **已吸收的语义增量：** RAG ingestion enrichment应作为budgeted multi-index portfolio，分开agentic template proposal、atomic view-model evaluation与confidence-aware promotion
+<!-- daily-books-trace:SF-2026-ARXIV-2606-28365:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-28367:start -->
+- `SF-2026-ARXIV-2606-28367` — Daily `2026-06-15`；primary `arXiv:2606.28367v1`；Books review `books-review:SF-2026-ARXIV-2606-28367`。
+
+  **已吸收的语义增量：** retrieval enhancement必须在固定strong reranker后做incremental ablation，并按heterogeneous source分别校准acceptance threshold
+<!-- daily-books-trace:SF-2026-ARXIV-2606-28367:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16341:start -->
+- `SF-2026-ARXIV-2606-16341` — Daily `2026-06-16`；primary `arXiv:2606.16341v1`；Books review `books-review:SF-2026-ARXIV-2606-16341`。
+
+  **已吸收的语义增量：** filtered ANN planner 应把 selectivity error 到 plan regret 的 phase boundary 作为切换条件，而不是用单一 pre/post/in-filter 规则
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16341:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16494:start -->
+- `SF-2026-ARXIV-2606-16494` — Daily `2026-06-16`；primary `arXiv:2606.16494v1`；Books review `books-review:SF-2026-ARXIV-2606-16494`。
+
+  **已吸收的语义增量：** 多模态 RAG 的 primacy bias 会让后到 evidence 被系统性忽略；evaluation 与 assembly 必须扰动 evidence order 并保留位置归因
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16494:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17467:start -->
+- `SF-2026-ARXIV-2606-17467` — Daily `2026-06-17`；primary `arXiv:2606.17467v1`；Books review `books-review:SF-2026-ARXIV-2606-17467`。
+
+  **已吸收的语义增量：** 专业文档 RAG 的 ingestion 需保留 provenance-aware sanitization、可追溯 rejection 与 utility check，不能把 paraphrase 或通用文本过滤当作 indirect-instruction 清除证明。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17467:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18037:start -->
+- `SF-2026-ARXIV-2606-18037` — Daily `2026-06-17`；primary `arXiv:2606.18037v1`；Books review `books-review:SF-2026-ARXIV-2606-18037`。
+
+  **已吸收的语义增量：** MCP factuality verifier 必须把 source block identity、claim-to-source relation 与 final answer 分开评分；高 block F1 不能证明 provenance relation正确。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18037:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18310:start -->
+- `SF-2026-ARXIV-2606-18310` — Daily `2026-06-17`；primary `arXiv:2606.18310v1`；Books review `books-review:SF-2026-ARXIV-2606-18310`。
+
+  **已吸收的语义增量：** RAG threat model 需覆盖 retriever parameter editing：攻击者可改变 ranking 而不改 corpus；index/model revision、anchor repair 与 retrieval regression 必须同 lifecycle 验证。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18310:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18379:start -->
+- `SF-2026-ARXIV-2606-18379` — Daily `2026-06-17`；primary `arXiv:2606.18379v1`；Books review `books-review:SF-2026-ARXIV-2606-18379`。
+
+  **已吸收的语义增量：** Billion-node graph retrieval owner 应贯通 graph construction、cluster/index lifecycle、训练与 serving refresh，避免离线 embedding/index 与在线推荐 state 各自漂移。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18379:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18497:start -->
+- `SF-2026-ARXIV-2606-18497` — Daily `2026-06-17`；primary `arXiv:2606.18497v1`；Books review `books-review:SF-2026-ARXIV-2606-18497`。
+
+  **已吸收的语义增量：** Vector DB deletion 必须追踪 source→embedding→HNSW node→backup/replica 的物理生命周期；soft-delete tombstone 不是擦除，需 epoch key rotation与 signed deletion proof。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18497:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19692:start -->
+- `SF-2026-ARXIV-2606-19692` — Daily `2026-06-19`；primary `arXiv:2606.19692v1`；Books review `books-review:SF-2026-ARXIV-2606-19692`。
+
+  **已吸收的语义增量：** `When Global Gating Is Enough: Admission-Time Hubness Control in Anisotropic Vector Retrieval Systems` 路由到 `AGENT-RAG`：旧的周期 reverse-kNN 扫描在毒文档入库后才处置；该工作把 sentinel hub-score、冻结阈值和 quarantine 决策放进写路径，由索引入口拥有 admit/reject 控制，阈值缓冲按写增量维护。代价是 sentinel/encoder 漂移和自然 hub 误报；tight-domain、删除最坏路径或监测盲区仍由 provenance 审核与周期扫描兜底。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19692:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19719:start -->
+- `SF-2026-ARXIV-2606-19719` — Daily `2026-06-19`；primary `arXiv:2606.19719v1`；Books review `books-review:SF-2026-ARXIV-2606-19719`。
+
+  **已吸收的语义增量：** `Closing the Calibration Gap in Semantic Caching` 路由到 `AGENT-RAG`：语义缓存的发布标准从 PR-AUC 排序改为 threshold-aware P-CHR 曲线与 CRR：cache owner 保存 score/threshold/命中预算，evaluation 将 ranking quality 分解为可校准差距和由正例率决定的结构差距，再决定是否上线 retriever/reranker。post-hoc calibration 仅是共存修复，不能替代重新训练或生产域阈值重估。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19719:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19898:start -->
+- `SF-2026-ARXIV-2606-19898` — Daily `2026-06-19`；primary `arXiv:2606.19898v1`；Books review `books-review:SF-2026-ARXIV-2606-19898`。
+
+  **已吸收的语义增量：** `Query-aware Routing for Filtered Approximate Nearest Neighbors Search` 路由到 `AGENT-RAG`：filtered ANN 从静态单索引选择变为 query-aware router：规则或 learned policy 依据 filter selectivity/shape 将查询送往不同索引路径；router 拥有 plan choice，监测失配时回落到精确过滤或保守规则。代价是训练分布漂移会把 latency 优化变成 recall 回归。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19898:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21777:start -->
+- `SF-2026-ARXIV-2606-21777` — Daily `2026-06-20`；primary `arXiv:2606.21777v1`；Books review `books-review:SF-2026-ARXIV-2606-21777`。
+
+  **已吸收的语义增量：** retrieval verifier telemetry 应保存 evidence coverage、置信校准与 abstention，verifier 分数不能直接改写知识库
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21777:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16973:start -->
+- `SF-2026-ARXIV-2607-16973` — Daily `2026-07-19`；primary `arXiv:2607.16973v1`；Books review `books-review:SF-2026-ARXIV-2607-16973`。
+
+  **已吸收的语义增量：** 新增证据边界：Tenant allowlists are applied inside the retrieval kernel before scoring/admission, avoiding post-filter over-fetch; a separate codebook-oblivious scalar-quantization branch removes corpus-trained codebooks but does not eliminate vector leakage. 该 delta 已进入 `books/part-07-agent/76-rag.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16973:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-01311:start -->
+- `SF-2026-ARXIV-2608-01311` — Daily `2026-08-03`；primary `arXiv:2608.01311v1`；Books review `books-review:SF-2026-ARXIV-2608-01311`。
+
+  **已吸收的语义增量：** RH-RAG 把隐私约束下的长文生成拆为全局 outline、带 bounded coherence memory 的分段写作，以及由 NLI/attestation 驱动的事实检查与返工。文学、金融与法律实验说明该 pipeline 在作者的 7B–8B 本地模型设置中可改善 grounding/coherence；公开文本可能已进入预训练语料，通用 NLI checker 会增加误拒与 revision 成本，因此不等于对新颖私密文档的独立保证。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-01311:end -->
+
+<!-- daily-books-trace:SF-2026-RETRIEVALROUTER:start -->
+- `SF-2026-RETRIEVALROUTER` — Daily `2026-08-27`；primary `arXiv:2608.25625v1`；Books review `books-review:SF-2026-RETRIEVALROUTER`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：冻结 Qwen3-0.6B 主体并以 LoRA query encoder 和 soft reward target，在五类 pipeline 间按 nDCG/latency 权衡逐 query 路由；并保留边界：需同时维护约 40GB 多索引；query-only 看不到 document layout，未验证跨域 routing，oracle gap 仍大。 相邻章节对读：books/part-07-agent/75-context.md#L72;books/part-07-agent/77-memory.md#L113。Context 拥有 assembly，Memory 拥有长期 read/write；逐 query retrieval pipeline selection 属于 RAG。
+<!-- daily-books-trace:SF-2026-RETRIEVALROUTER:end -->

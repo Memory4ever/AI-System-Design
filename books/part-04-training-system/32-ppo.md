@@ -156,6 +156,10 @@ Return、value baseline 与 GAE 沿时间传播 reward，在 dense signal 或无
 
 Environment 与 baseline policy 定义反事实语义，estimator 只拥有 credit，PPO 仍拥有 policy update。该分支以 `O(T × M)` counterfactual/value evaluation、baseline-dependent story、bootstrapping bias 和 simulator fidelity 为代价；没有可信 counterfactual world 时，不应把相关性 attribution 写成 causal credit。
 
+### 从整条 Outcome 到可重放的局部 Credit
+
+整条 trajectory 共用终局 reward，在步骤短、失败点清楚时足够；长推理会把正确前缀与错误后缀一起惩罚。Counterfactual credit 分支由训练系统持有 intermediate-state identity，在候选错误点 reset，并重采样 suffix 来估计局部改动的结果差。它提高归因分辨率，却成倍增加 rollout、依赖可重放环境，并可能被错误 localization 误导；无法可靠 reset 时仍应使用 sequence-level advantage 或 process verifier。exact-v1 只支持 CPI/RRPO/SRPO 与论文披露的 verifiable reasoning 环境，不能证明开放任务中的因果归因。<!-- source-family:SF-2026-ARXIV-2605-25507 -->
+
 ## 为什么需要旧策略概率
 
 Rollout 由 `pi_old` 生成，但 update 后评估的是 `pi_theta`。Importance ratio：
@@ -352,6 +356,12 @@ RLHF reward + reference constraint
 
 本章负责 PPO policy mechanics。第 35 章将 actor、critic、reference、reward、optimizer 和 rollout version 放进 checkpoint/lifecycle 视角；分布式执行留给第 36～41 章。
 
+## 从机制演进到系统设计
+
+PPO 的 critic 从通用 return estimator 演进到因果 credit、privileged input 与长度自适应 GAE 后，核心仍是把 rollout outcome 转成可控 advantage，而不是把 value estimate 当成真值。结构化环境或额外观测可以减少 delayed-reward ambiguity，但必须与 policy 可用信息和 evaluation boundary 分开。
+
+更强 critic 降低方差，也会增加偏置、泄漏、额外模型状态和训练成本。因果假设不成立、value range 漂移或 privileged signal 不可部署时，应回到标准 GAE、更保守 clipping、GRPO 或 SFT；Reward correctness 仍不由 PPO 本身解决。
+
 ## 自检问题
 
 1. LLM 生成中的 state、action 和 trajectory 分别是什么？
@@ -384,3 +394,17 @@ Primary-source 校验入口：
 - Long Ouyang et al., "Training language models to follow instructions with human feedback", 2022: https://arxiv.org/abs/2203.02155
 - Counterfactual Shapley Credit Assignment（Status: Experimental；要求可冻结 exogenous noise 的 structural causal environment）:
   https://arxiv.org/abs/2607.16999v1
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-BPCO-CRITIC:start -->
+- `SF-2026-BPCO-CRITIC` — Daily `2026-08-25`；primary `arXiv:2608.23566v1`；Books review `books-review:SF-2026-BPCO-CRITIC`。
+
+  **已吸收的语义增量：** 新增 value range、unbiased target、raw advantage、length-adaptive GAE 与 privileged critic input 的条件链，并保留实验边界。
+<!-- daily-books-trace:SF-2026-BPCO-CRITIC:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16999:start -->
+- `SF-2026-ARXIV-2607-16999` — Daily `2026-07-19`；primary `arXiv:2607.16999v1`；Books review `books-review:SF-2026-ARXIV-2607-16999`。
+
+  **已吸收的语义增量：** 新增证据边界：Given a structural causal environment and baseline policy, matched-noise counterfactual coalitions estimate per-action Shapley contributions, redistribute delayed return into per-step rewards and feed PPO with an explicit causal-credit branch. 该 delta 已进入 `books/part-04-training-system/32-ppo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16999:end -->

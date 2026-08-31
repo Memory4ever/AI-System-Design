@@ -304,6 +304,14 @@ DeadPool 的作者实验在 Perlmutter 与 Vista、最多 512 张 A100 或 64 �
 headroom 条件，不作为本章通用性能结论。它没有覆盖 silent corruption、软件语义错误、没有 spare 的集群或所有 replicas 同域失败。因此
 在线 repair 是持久 checkpoint 之上的 `Layering / Dependency`，不能替代跨故障域的 durable recovery point。
 
+### Failure Domain 决定 Checkpoint 的存储层级
+
+把所有 checkpoint 直接写到远端持久存储，语义最简单，也适合恢复目标单一、训练规模较小时；但在大集群中，每次保存都支付远端带宽与同步等待，而进程、节点、机架故障需要的 durability 并不相同。更细的路径是把 checkpoint revision、failure blast radius 与 local、peer、remote placement 绑定：本地层负责低延迟重启，peer 层跨越单节点故障，remote 层才承担更大故障域与长期保留。
+
+Tier policy 必须拥有 save acknowledgment、replica validity、promotion、reclaim 与 recovery selection，不能由各 worker 猜测“最近文件”是否可用。收益是把常见小故障的恢复开销从远端路径移走；代价是副本一致性、容量回收、相关故障和错误分层。任一层无法证明满足目标 failure domain 时，应回退到已确认的 remote checkpoint。现有 exact-v1 只在其披露的集群、故障频率、存储层级与恢复实验中支持该设计，不证明生产故障独立、跨机架带宽或尾部恢复时间。
+
+<!-- source-family:SF-2026-ARXIV-2605-17821 -->
+
 ## Load 成功不等于 Restore 正确
 
 恢复验证至少包括：
@@ -319,6 +327,14 @@ headroom 条件，不作为本章通用性能结论。它没有覆盖 silent cor
 最危险的错误是 silently partial load：某些 keys 缺失后随机初始化、unexpected keys 被忽略，job 仍能运行。Resume path 应默认严格，warm-start path 才允许显式 exclusions。
 
 ## Checkpoint 转换与发布
+
+### Weight Trajectory Extrapolation 只能产生 Checkpoint Proposal
+
+完整 RLVR step 按序执行最清楚，却可能在短轨迹呈低秩变化时重复昂贵更新。可以把若干 weight revisions 视为状态序列，拟合低秩方向并外推 candidate checkpoint；proposal builder 只拥有候选 weights，artifact registry 不得直接 commit。Held-out training/evaluation、数值稳定性、参数约束与可加载性共同决定 admission，并始终保留最后完整 checkpoint fallback。
+
+外推减少部分 step 成本，却可能放大曲率变化、reward drift 和低秩假设误差；一项检查失败就回退正常训练。`arXiv:2605.21468v1` 的 §3 与 §4 只支持作者 RLVR 轨迹和实验；§6–§7 不证明长 horizon、不同 optimizer 或新 reward regime 中仍可安全外推。
+
+<!-- source-family:SF-2026-ARXIV-2605-21468 -->
 
 Training checkpoint 可能使用 sharded tensors、optimizer-specific format 和内部 names。Inference runtime 需要：
 
@@ -477,6 +493,12 @@ Data / Pretraining / Post-training state
 
 沿 State 横线，本章把第 19 章已经出现的运行时模型状态问题扩展为带 logical step、version 与 commit boundary 的训练事务；第 42 章随后把同样的 identity、ownership 与 completion 问题应用到在线 request lifecycle。两者是状态原则复用，不共享 checkpoint 格式或提交协议。
 
+## 从机制演进到系统设计
+
+Checkpoint 从周期性磁盘快照演进到异步保存、内存 recovery generation 与逻辑 shard 替换后，恢复单位从整个 job 缩小为可证明一致的 committed state。只有不可重建的 optimizer/model state 需要复制，失败节点可按 shard identity 接管；但 corruption、错误分类和全局依赖仍要求持久快照。
+
+更快恢复换来 spare capacity、复制流量、generation tracking 与更复杂的故障语义。状态一致性无法证明或失败不是 fail-stop 时，必须回退持久 checkpoint/restart；load 成功依然不等于 RNG、optimizer、data cursor 与外部副作用都正确恢复。
+
 ## 自检问题
 
 1. Weights-only、resumable checkpoint 和 deployment artifact 有何区别？
@@ -495,7 +517,7 @@ Data / Pretraining / Post-training state
 
 Checkpoint 是训练系统的状态事务。模型参数只是其中一部分；optimizer、scheduler、randomness、data cursor、parallel layout 和 identity metadata 共同决定能否恢复同一训练过程。
 
-分片与异步保存提高可扩展性，也引入 commit、reshard、backpressure 和验证问题。只有经过严格 restore test，并为数值表示、graph rewrite、kernel/hardware capability 和行为证据建立明确的 artifact contract，checkpoint 才能从故障恢复机制成为可发布模型资产。
+分片、异步保存与分层存储提高可扩展性，也引入 commit、reshard、backpressure、failure-domain placement 和验证问题。只有经过严格 restore test，并为数值表示、graph rewrite、kernel/hardware capability 和行为证据建立明确的 artifact contract，checkpoint 才能从故障恢复机制成为可发布模型资产。
 
 ## Review notes
 
@@ -515,3 +537,11 @@ Primary-source / official documentation 校验入口：
   https://arxiv.org/abs/2608.14635v1
 - DeadPool（持续内存恢复世代与在线 topology repair；Status: Experimental）:
   https://arxiv.org/abs/2607.01646
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-01646:start -->
+- `SF-2026-ARXIV-2607-01646` — Daily `2026-07-03`；primary `arXiv:2607.01646v1`；Books review `books-review:SF-2026-ARXIV-2607-01646`。
+
+  **已吸收的语义增量：** 新增证据边界：Persistent checkpoint-restart is not the only recovery branch. For frequent fail-stop node loss, the runtime can continuously maintain a committed in-memory recovery generation, replicate only non-reconstructible optimizer shards, and replace a failed node by logical shard identity. This reduces replay and restart scope but depends on spare nodes, failure classification and explicit fallback for corruption or replica loss. 该 delta 已进入 `books/part-04-training-system/35-checkpoint.md#L273`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-01646:end -->

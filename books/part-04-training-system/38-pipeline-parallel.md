@@ -159,6 +159,29 @@ x measured end-to-end throughput
 同步 1F1B 仍是合理基线。只有固定 delay、optimizer 稳定性和端到端收益都经过目标 workload
 验证后，异步分支才值得承担新增状态。
 
+### 有界异步用多条反向流水填 Bubble，但不取消 Update Boundary
+
+同步 1F1B 以 bubble 换来版本清楚，完全异步则可能让 forward 与 backward 相隔任意多个参数版本。一个中间分支
+是把第一 stage 的 forward 限制在其 backward 之前最多领先两个 micro-batches，同时交错多条 reverse pipeline
+填补空隙；所有参与本轮 gradient accumulation 的 micro-batches 完成后，optimizer 才提交一次 update。Scheduler
+拥有多方向依赖与 readiness，optimizer 拥有参数提交边界，micro-batch receipt 必须记录所见版本，利用率不能通过
+模糊 weight ownership 获得。
+
+这种有界异步可在论文设置中减少 bubble 并保持收敛，但会增加多 pipeline 状态、activation queue、调度证明与故障
+恢复复杂度；模型深度、网络拓扑或执行抖动变化时，两步上界和收益都可能失效。需要严格复现、内存余量小或异常
+版本出现时，应回退同步 1F1B。exact-v1 只支持论文披露的 GPT/BERT、硬件、训练预算和附录 schedule，不证明任意
+pipeline 拓扑都能得到相同利用率或收敛行为。
+
+<!-- source-family:SF-2026-ARXIV-2605-29664 -->
+
+### Runtime Variability 下由 Readiness 取得 Dispatch Authority
+
+静态 1F1B 等 schedule 在设备同质、执行时间稳定时开销低且容易证明 bubble；runtime jitter、straggler 或动态 shape 出现后，计划时间不再等于任务真的可运行。readiness-driven runtime 让依赖已满足、buffer 已就绪的 micro-batch stage 进入 ready set，再由 dispatcher 选择执行，同时保留静态 schedule 作为正常路径与 fallback。
+
+它可以绕开暂时阻塞并提高韧性，却引入 ready-state bookkeeping、额外队列、内存峰值和可能的公平性/确定性问题；错误 readiness 会破坏依赖或覆盖 activation。变异很小或严格复现优先时，静态计划仍更合适。exact-v1 只支持其披露 pipeline、variability injection、模型与硬件，不证明任意并行拓扑都降低 step tail 或保持同等内存上界。
+
+<!-- source-family:SF-2026-ARXIV-2605-18750 -->
+
 ## Interleaving 为什么引入 Virtual Stages
 
 若一个 physical device 只持有一个连续 stage，`p` 受设备数限制。Interleaved schedule 让一个 device 持有多个 non-contiguous model chunks / virtual stages：
@@ -193,6 +216,10 @@ Boundary bytes 取决于 dtype、sequence、micro-batch 和 partition location�
 通信可以和相邻 stage compute 重叠，但 send/recv ordering 必须一致，否则容易 deadlock。
 
 第 36 章的五层模型在这里可以直接用于定位：activation/gradient transfer 是语义，pipeline schedule 决定 message ordering，communication runtime 负责 send/recv 与 completion，transport 和 topology 决定实际路径。只看到 network bandwidth，无法解释 schedule ordering 或 buffer lifetime 导致的等待。
+
+### 跨地域 Pipeline 需要同时调度路径、优先级与成本
+
+单一机房内，固定 stage mapping 加局部带宽估计通常足够；跨地域链路的带宽、价格与故障域不同，schedule ordering 不能再与 transport path 分开。Pipeline control owner 需要联合持有 micro-batch priority、可用链路、路径成本与 completion state，并在带宽变化时重新分配。这样可减少远距离 bubble 与账单失控，代价是在线 pathfinding、控制开销和更大的 failure surface；预测失准或控制器故障时，应回退到静态安全路径或单区域执行。exact-v1 只支持 BACE-Pipe 的模拟器与 trace 条件，不证明任意云际网络或真实故障下的收益。<!-- source-family:SF-2026-ARXIV-2605-25375 -->
 
 ## Stage Balance 比平均 Layer 数更重要
 
@@ -272,6 +299,10 @@ PP 也不会自动提高模型质量。它只改变同一 forward/backward graph
 
 ## 工程验证
 
+### Schedule Abstraction 要先证明依赖合法，再比较 Bubble
+
+手工枚举 1F1B/interleaving 在拓扑固定时清楚；stage、micro-batch 与资源约束组合增多后，可用统一 schedule representation 生成候选，并以依赖公式、表格或 simulator 检查合法性，再比较 bubble、memory 和 communication。收益是扩大设计空间，代价是 abstraction/simulator fidelity；生产发布仍须真实 workload 验证，简单拓扑保留手写 schedule。<!-- source-family:SF-2026-ARXIV-2605-24006 --> exact-v1 §III–IV 支持 schedule abstraction，§V simulator 结果不证明真实集群收益。
+
 至少测量：
 
 - Per-stage forward/backward time 与 idle fraction。
@@ -283,6 +314,14 @@ PP 也不会自动提高模型质量。它只改变同一 forward/backward graph
 - Same-layout resume 和 PP reshard/convert。
 
 单一 aggregate GPU utilization 无法定位是 bubble、stage imbalance 还是 communication wait。
+
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-07881:start -->
+异步 Pipeline Parallel 允许相邻 stage 在有界 weight inconsistency 下继续推进，以减少同步 bubble；runtime 必须记录每个 microbatch 读取的 weight version，并用 staleness bound 决定接受、等待或回退同步 schedule。它用更复杂的版本状态和收敛风险换吞吐，不能把局部 bubble 降低外推成端到端训练收益。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-07881:end -->
 
 ## 本章在知识树中的位置
 
@@ -299,6 +338,12 @@ deep-model capacity bottleneck
 
 在 Scheduling 横线上，本章按训练 dependency graph 分配 micro-batch execution slots；第 46、56 章把相同的有限执行机会问题改写为在线 token admission 与 iteration scheduling。两者属于 scheduling principle reuse，但训练 bubble 与在线 SLO 不是同一个目标函数。
 
+## 从机制演进到系统设计
+
+Pipeline Parallel 从固定 stage 与同步 microbatch schedule 出发，因为它最容易保持 forward/backward 依赖；层成本、异构链路或动态 workload 变化后，stage balance、schedule 和 activation movement 需要联合优化。runtime 可以重排 microbatch，却不能改变 global batch、loss weighting 或 tied-weight consistency。
+
+更动态的 pipeline 降低 bubble，却增加 schedule state、跨 stage failure、activation pressure 和可复现性成本。模型较小、stage 稳定或通信主导时，固定 1F1B/GPipe 仍更可靠；任何 source-specific schedule 都必须在相同训练语义和收敛合同下比较。
+
 ## 自检问题
 
 1. Layer partition 为什么解决 capacity 却不自动解决 utilization？
@@ -314,9 +359,9 @@ deep-model capacity bottleneck
 
 ## 小结
 
-Pipeline Parallel 沿模型深度分散 layers 和训练状态，再用 micro-batches 让多个 stages 并行工作。Bubble、activation lifetime、boundary communication 和 stage imbalance 决定 capacity 收益能否转化为吞吐。
+Pipeline Parallel 沿模型深度分散 layers 和训练状态，再用 micro-batches 让多个 stages 并行工作。Bubble、activation lifetime、boundary communication、stage imbalance 与 runtime variability 决定 capacity 收益能否转化为吞吐。
 
-GPipe、1F1B 与 interleaving 是不同 schedule 选择，不只是三个名字。它们改变时间线、memory 与 communication，并需要 checkpoint 和 parameter-version semantics 配套。
+GPipe、1F1B 与 interleaving 是不同静态 schedule 选择；readiness-driven dispatch 则是在变异出现时接管有限调度权的分支。它们改变时间线、memory 与 communication，并需要 checkpoint、dependency 和 parameter-version semantics 配套。
 
 ## Review notes
 
@@ -328,3 +373,11 @@ Primary-source 校验入口：
 - Deepak Narayanan et al., "PipeDream: Generalized Pipeline Parallelism for DNN Training", 2018: https://arxiv.org/abs/1806.03377
 - Deepak Narayanan et al., "Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM", 2021: https://arxiv.org/abs/2104.04473
 - Philip Zmushko et al., "One-Step Gradient Delay is Not a Barrier for Large-Scale Asynchronous Pipeline Parallel LLM Pretraining", arXiv v1, 2026: https://arxiv.org/abs/2606.30634
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07881:start -->
+- `SF-2026-ARXIV-2606-07881` — Daily `2026-06-06`；primary `arXiv:2606.07881v1`；Books review `books-review:SF-2026-ARXIV-2606-07881`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07881:end -->

@@ -146,6 +146,14 @@ Server 自述的 tool annotations 和 descriptions 不能作为唯一信任依�
 
 HTTP authorization 解决 client 代表 resource owner 访问 server 的协议流程，但最终 scope design、token storage、confused-deputy defense 与 business authorization 仍由实现负责。Local stdio server 同样是可执行代码，需要 package provenance 和 sandbox。
 
+### Authorization 之前还需要可验证的 Server Admission
+
+在 server 数量少、由同一团队静态安装时，固定 allowlist、TLS endpoint 与 package review 足以建立初始信任；开放 catalog 或第三方 MCP server 动态加入后，连接成功和 OAuth scope 只能证明通信/委托成立，不能证明眼前 server identity、tool set、sensitivity 声明和受审 artifact 与批准对象相同。Host admission plane 应在注册时验证 server identity、tool allowlist、sensitivity metadata、attestation root 与 conformance vector，并把验证结果绑定到 protocol/version；effect-time authorization 仍按 principal、参数和业务 policy 独立执行。
+
+这种两阶段边界把“谁可以加入能力目录”与“谁可以调用某次动作”分开，收益是阻止未知或变更后的 server 仅凭自述进入 trusted path；代价是 key/root 生命周期、revocation、metadata 漂移、false rejection 和生态兼容成本。Attestation root 被攻破、server 更新后未重验或 sensitivity 欠报时，admission 也会给出错误信心。封闭部署可继续使用 pinned package digest 与人工 allowlist；无法验证时回退 sandbox、只读最小能力或拒绝注册。`arXiv:2605.24248v1` 的 §3 与 §5 支持作者 wire format、verification 与受测安全合同，§6 不证明任意 MCP implementation、供应链或 attestation root 都可信，也不替代调用时授权。
+
+<!-- source-family:SF-2026-ARXIV-2605-24248 -->
+
 ## Sampling、Elicitation 与递归能力
 
 在 `2025-11-25` implementation 或仍提供相应 extension 的系统中，Server 请求 client
@@ -177,21 +185,6 @@ MCP 可以承载 tool/resource connection，却不定义：
 
 ## Tool Catalog 扩大后，Discovery 与 Execution 必须分离
 
-<!-- daily-20260628:AGENT-MCP:start -->
-### Owner-merged minimal durable delta
-
-协议连接层要再向下编译成可执行控制状态。每个 protocol 先 lowering 为可回放的有限状态 IR，组合前检查 transition 与 source/type evidence；一次 tool execution 则必须由 grant、handle、policy 与 audit objects 共同标识。Capability 或连接成功只产生 proposal，只有 host-side invariant 与 effect authorization 才能 commit。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Pairwise finite-state composition 与十个 invariant fixtures 不证明任意多协议、生产 runtime 或 proprietary implementation 安全；IR/handle 不完整时隔离协议并回退单工具人工授权。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-28690 — primary arXiv:2606.28690v1; exact-v1 URL=https://arxiv.org/html/2606.28690v1; Method=https://arxiv.org/html/2606.28690v1 — §4. The AgentThread Framework; 4.5. Composition Methodology; Evaluation=https://arxiv.org/html/2606.28690v1 — §Formal Security Analysis of Agent Protocol Composition; 6. Evaluation; 6.1. Evaluation Setup; Non-proof=https://arxiv.org/html/2606.28690v1 — §6.4. RQ3: Composition Failures; 7. Discussion; 9. Threats to Validity；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
-<!-- daily-20260628:AGENT-MCP:end -->
-
-
 把所有 tool schemas 在会话开始时注入 Context，目录小且稳定时最简单；当一个 gateway 聚合数百个 servers、数千个 tools 后，它会同时消耗上下文、放大 selection noise，并让用户无法知道能力位于哪个 server。Prompt caching 只能减少重复 prefill，不能释放逻辑 context，也不能改善 discoverability。
 
 一种可扩展分支是只暴露 discovery 与 execution 两个 meta-tools：
@@ -214,6 +207,10 @@ Catalog/index owner 负责 schema version、refresh 与 deletion ordering；auth
 
 ## Observability
 
+### Consequential Output 必须携带可独立验证的 Claim Receipt
+
+协议只保证消息格式与传输，不保证工具输出真实。对会触发外部行动的 response，host 应要求 claim、来源、验证方法与结果组成 receipt，再由独立 verifier 决定是否提交；收益是把事实 authority 从生成文本移出，代价是额外调用、延迟和 verifier 缺口。低风险只读调用可降级记录而非阻塞。<!-- source-family:SF-2026-ARXIV-2605-20312 --> exact-v1 §2–3 支持其 claim protocol，§5–6 的 pilot/properties 与 §8 不证明开放 MCP 生态已安全。
+
 Trace 应跨：
 
 ```text
@@ -226,9 +223,39 @@ Agent workflow
 
 记录 server/tool/resource identity、latency、result size、policy decision、error/cancel，同时默认排除 credentials 和敏感 content。MCP 版本、capabilities 和 server trust level 也应进入 evidence。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19992:start -->
+Tool Programs 将静态 endpoint 列表变成可组合、带类型与执行语义的服务接口；服务端拥有 program validation/sandbox，agent 只提交受限程序，失败时回落到单步 endpoint。灵活性以验证复杂度、资源上界和更大的代码注入面为代价。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19992:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28690:start -->
+把每个 agent protocol lowering 为带 source/type evidence 的有限状态 IR，先做 pairwise composition 与 trace replay，再把 counterexample 编译成可执行回归；未知组合保持隔离。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28690:end -->
+
+### 多 Server 组合把 Permission 变成 Information-flow 问题
+
+单个 MCP server 的 read 或 write 权限都可能合法，但跨 server workflow 可以把一个域的数据写入另一个域。安全对象因此不是独立 tool permission，而是带 principal、server identity 与 taint 的端到端 flow。Canary/taint 需要跨 tool-call edge 保留，并在 effect-time authorizer 前汇合；synthetic canary 和已枚举 server 不能证明完整 non-interference，信息流证据不全时应隔离组合或要求人工授权。
+
+<!-- source-family:SF-2026-ARXIV-2604-27819 -->
+
+### 物理能力不能被压平成同一种 Tool
+
+当 MCP 连接的不是普通软件 API，而是具有时序、噪声、校准和安全包络的异构物理神经设备时，`name + input schema` 不足以表达可执行契约。控制面需要额外声明 capability、观测/执行时钟、精度与漂移、资源占用、校准版本、允许动作和紧急停止路径；调度器才能区分“可调用”与“此刻安全可提交”。统一协议提升发现与组合能力，却不能抹平设备差异，抽象泄漏或 stale calibration 都可能造成物理错误；无法满足 typed contract 时应隔离为人工审批的专用 adapter。[受限证据：arXiv:2605.04256v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-04256 -->
+
 ## 本章在知识树中的位置
 
 MCP 是 Agent connectivity node，连接 Prompt、Context、RAG、Memory 与 Tools。最后一章将所有机制提升到 Agent Platform：如何管理 Agent definition、runs、state、resources、evaluation、security 和运营闭环。
+
+## 从机制演进到系统设计
+
+MCP 把工具和资源发现标准化后，新的压力从“能否连接”转向“组合后是否仍满足身份、权限和数据约束”。单个 server/schema 通过检查不代表工具链安全；host需要对来源、capability、Data Facts、side-effect class 和跨 server 组合做 admission。
+
+统一协议降低集成成本，却扩大 supply-chain、confused-deputy 和组合权限风险。协议层只传递声明与结构，Platform/Security 才拥有信任和执行决策；缺少 provenance、版本或可撤销性时，应限制为只读、隔离会话或拒绝连接。专用直连接口在边界更窄时仍可共存。
 
 ## 自检问题
 
@@ -243,16 +270,6 @@ MCP 是 Agent connectivity node，连接 Prompt、Context、RAG、Memory 与 Too
 ## 小结
 
 MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用外部能力。它标准化接口，不授予信任。最后一章讨论平台如何在这些连接之上治理完整 Agent lifecycle。
-
-<!-- recovered-daily-20260625:AGENT-MCP:start -->
-## 2026-06-25 evidence integration — AGENT-MCP
-
-- **SF-2026-ARXIV-2606-26211**：`Data Facts metadata schema; provenance, semantics, constraints and exchange contract` 所定义的源特定机制用于以带 provenance、语义和约束的 Data Facts 作为跨 Agent 交换契约；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness` 是 `Data Facts: A Metadata Schema for Structured Data Exchange in the NANDini Multi-Agent Ecosystem` 的 source-specific 反例/局限边界；若运行条件离开 `NANDini multi-agent exchange examples and schema coverage` 的验证域，`AGENT-MCP` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-26211**：Primary `arXiv:2606.26211v1`；Method `https://arxiv.org/html/2606.26211v1 — §Data Facts metadata schema; provenance, semantics, constraints and exchange contract`；Evaluation `https://arxiv.org/html/2606.26211v1 — §NANDini multi-agent exchange examples and schema coverage`；未证明边界 `https://arxiv.org/html/2606.26211v1 — §Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:AGENT-MCP:end -->
 
 ## Review notes
 
@@ -275,3 +292,47 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 ### 2026-06-26 source-specific Review notes
 
 - `SF-2026-ARXIV-2606-27027` — ShareLock: A Stealthy Multi-Tool Threshold Poisoning Attack Against MCP; primary=`arXiv:2606.27027v1`; Method=`arXiv:2606.27027v1 — §4. ShareLock: a Multi-Tool Threshold Poisoning Attack Framework; §D.1. System Prompt for Zero-Shot Detection`; Evaluation=`arXiv:2606.27027v1 — §5. Evaluation; §5.1. Experimental Setup; §Appendix D Experimental details of Safety Classification Task`; counterevidence/non-proof locator=`arXiv:2606.27027v1 — §3.3. Threat Model; §6. Discussion and Limitations; §7. Conclusion`; claim boundary=证据限于四类多工具场景、论文测试的主流 LLM 和两个 MCP client；平均攻击成功率超过 90% 不证明任意 client/trigger 都可攻破，也不证明 group-level 防御不可能。; fallback=组合身份或授权证据不完整时 deny/quarantine，并交给独立 reference monitor。
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28690 — primary arXiv:2606.28690v1; exact-v1 URL=https://arxiv.org/html/2606.28690v1; Method=https://arxiv.org/html/2606.28690v1 — §4. The AgentThread Framework; 4.5. Composition Methodology; Evaluation=https://arxiv.org/html/2606.28690v1 — §Formal Security Analysis of Agent Protocol Composition; 6. Evaluation; 6.1. Evaluation Setup; Non-proof=https://arxiv.org/html/2606.28690v1 — §6.4. RQ3: Composition Failures; 7. Discussion; 9. Threats to Validity；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26211**：Primary `arXiv:2606.26211v1`；Method `https://arxiv.org/html/2606.26211v1 — §Data Facts metadata schema; provenance, semantics, constraints and exchange contract`；Evaluation `https://arxiv.org/html/2606.26211v1 — §NANDini multi-agent exchange examples and schema coverage`；未证明边界 `https://arxiv.org/html/2606.26211v1 — §Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- daily-20260628:AGENT-MCP:start -->
+### Owner-merged minimal durable delta
+
+协议连接层要再向下编译成可执行控制状态。每个 protocol 先 lowering 为可回放的有限状态 IR，组合前检查 transition 与 source/type evidence；一次 tool execution 则必须由 grant、handle、policy 与 audit objects 共同标识。Capability 或连接成功只产生 proposal，只有 host-side invariant 与 effect authorization 才能 commit。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Pairwise finite-state composition 与十个 invariant fixtures 不证明任意多协议、生产 runtime 或 proprietary implementation 安全；IR/handle 不完整时隔离协议并回退单工具人工授权。
+
+<!-- daily-20260628:AGENT-MCP:end -->
+
+<!-- recovered-daily-20260625:AGENT-MCP:start -->
+### 2026-06-25 evidence integration — AGENT-MCP
+
+- **SF-2026-ARXIV-2606-26211**：`Data Facts metadata schema; provenance, semantics, constraints and exchange contract` 所定义的源特定机制用于以带 provenance、语义和约束的 Data Facts 作为跨 Agent 交换契约；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness` 是 `Data Facts: A Metadata Schema for Structured Data Exchange in the NANDini Multi-Agent Ecosystem` 的 source-specific 反例/局限边界；若运行条件离开 `NANDini multi-agent exchange examples and schema coverage` 的验证域，`AGENT-MCP` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:AGENT-MCP:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19992:start -->
+- `SF-2026-ARXIV-2606-19992` — Daily `2026-06-19`；primary `arXiv:2606.19992v1`；Books review `books-review:SF-2026-ARXIV-2606-19992`。
+
+  **已吸收的语义增量：** `Beyond Static Endpoints: Tool Programs as an Interface for Flexible Agentic Web Services` 路由到 `AGENT-MCP`：Tool Programs 将静态 endpoint 列表变成可组合、带类型与执行语义的服务接口；服务端拥有 program validation/sandbox，agent 只提交受限程序，失败时回落到单步 endpoint。灵活性以验证复杂度、资源上界和更大的代码注入面为代价。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19992:end -->
+
+<!-- daily-books-trace:SF-2026-MCP-TOOL-DISCOVERY:start -->
+- `SF-2026-MCP-TOOL-DISCOVERY` — Daily `2026-08-26`；primary `arXiv:2608.23992v1`；Books review `books-review:SF-2026-MCP-TOOL-DISCOVERY`。
+
+  **已吸收的语义增量：** 新增 discovery/execution 分离、双重 tenant authorization、index lifecycle 与全量注入 fallback。
+<!-- daily-books-trace:SF-2026-MCP-TOOL-DISCOVERY:end -->

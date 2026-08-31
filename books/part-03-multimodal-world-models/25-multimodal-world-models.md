@@ -129,6 +129,14 @@ goal/action permutation 检查预测是否依赖真实 transition evidence，再
 若 goal 本身改变物理过程，移除它会让模型欠条件化；若 goal 只编码 evaluator 的答案，保留它则会制造 shortcut。
 模型接口必须记录每个 conditioning channel 的 authority，而不能把所有文本都视为等价 Context。
 
+### Sparse Keyframe Prediction 是 Dense Rollout 之前的 Planner Branch
+
+逐帧 video rollout 保留细粒度 dynamics，在控制频率高、接触过程关键时不可替代；任务级规划有时只需要判断“执行一段 action 后关键状态会是什么”。Image-editing model 可以把当前 observation、goal 与 action proposal 编译成少量 future keyframes，再由 action predictor 检查是否存在可行过渡。它改变的是 rollout granularity：world-model owner 只产生 sparse planning evidence，controller 仍必须用真实 observation 或 simulator 验证后才能提交物理 action。
+
+稀疏预测降低生成成本，却会跳过碰撞、时序和短暂安全状态，还依赖 edited-image domain 与 task annotations；视觉上可信也不等于 transition 可执行。短 horizon、低风险、高层 manipulation 可把它作为候选生成，dense simulator 或真实闭环在接触和安全关键路径继续成立。`arXiv:2605.19319v1` 的 §3 与 §4 只支持其 sparse keyframe planner、goal-conditioned action predictor 和受测 robot/simulation tasks，§5 明确 short-horizon、annotation 与 domain-gap 限制。
+
+<!-- source-family:SF-2026-ARXIV-2605-19319 -->
+
 ### Latent dynamics
 
 直接预测 pixels 代价高，且许多低层变化与决策无关。latent model 学习：
@@ -204,6 +212,21 @@ observed fact -> derived belief -> imagined branch
 
 每次 scene/interaction transition 还要声明哪些主体参与、哪些状态允许更新，未参与实体默认保持旧版本而非被模型顺手重写。Open schema 因而不是无结构：它把 schema discovery 与 state admission 分开，并新增 evidence threshold、promotion delay、conflict/supersession 和 tracker growth。Domain 稳定、属性有限或高风险审计优先时，固定 schema 仍更可靠；开放角色模拟需要扩展性时，promotion boundary 可以降低一次生成把猜测写成世界事实的风险。角色偏好与人物传记仍由 Agent Memory 管理，物理 transition 则需要 action-conditioned/outcome evidence，不能由文学连贯性替代。
 
+#### Foundation Evidence 只有通过 Class-calibrated Gate 才能修改 Persistent Map
+
+仅由 geometric sensor 更新地图，在标定稳定、类别闭集和可见性充足时最容易审计；foundation model 能补开放词汇语义，
+却可能在遮挡、视角变化或语言 prior 下给出与几何通道冲突的 claim。Persistent map 的更新因而不能把更强模型的输出直接
+视为事实：world-state owner 要按 object class 校准 commit threshold，并在同一 event 中出现 semantic claim 与 geometric
+evidence 冲突时启用 conflict-drop window；被拒绝的 claim 保留为带 provenance 的 evidence，而不是写入 active map。
+
+Per-class gate 改善开放语义的 admission，却增加 calibration set、类别长尾、sensor synchronization 与迟迟不 commit 的
+false negative；几何通道本身错误时，conflict-drop 也会压掉正确语义。因而系统要保留 raw observations、abstain 与
+supersession，并在校准失效时回退 geometry-only map 或人工复核。Planner/VLA controller 只能读取已提交 revision，不能
+为了动作连贯性绕过 map owner。`arXiv:2606.00318v1` 的 §5、§6 只支持作者 indoor benchmark 中的 per-class gate 与
+conflict-drop operator；§7 不证明它适用于未测类别、传感器、开放世界或真实机器人 safety contract。
+
+<!-- source-family:SF-2026-ARXIV-2606-00318 -->
+
 ### 从单主体场景到多主体可干预状态
 
 单主体 World Model 可以把其他对象都吸收到 environment state 中；当多个主体拥有独立目标、动作历史与可见域时，
@@ -249,21 +272,6 @@ camera/calibration、proprioception、action horizon、backbone/policy revision 
 泛化或安全。
 
 ## State ownership
-
-<!-- daily-20260627:MULTIMODAL-WORLD-MODELS:start -->
-### Owner-merged minimal durable delta
-
-若预测器可以绕过声明的 state 重读原始历史，预测正确也无法识别 state 本身是否有效。应让版本化 belief state 成为 transition/prediction path 的唯一受控输入，再检查它是否保留下游 consumer 所需信息。这样 state representation 才从辅助解释升级为可审计接口。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Strict mediation 增加训练成本，也可能让有损 textual state 成为瓶颈；无需可识别性时，直接 latent/history access 仍是合理旧路径。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-27681 — primary arXiv:2606.27681v1; exact-v1 URL=https://arxiv.org/html/2606.27681v1; Method=https://arxiv.org/html/2606.27681v1 — §Proposition 2 (Non-identifiability under leaky architectures) .; Proposition 3 (Training–inference consistency) .; 4.2 Model Architecture; Evaluation=https://arxiv.org/html/2606.27681v1 — §2 Problem Setup: Text Based POMDPs; 5 Experimental Evaluation; 5.3 Evaluation Metrics; Non-proof=https://arxiv.org/html/2606.27681v1 — §7 Conclusion。
-<!-- daily-20260627:MULTIMODAL-WORLD-MODELS:end -->
-
 
 安全的 world-model runtime 至少区分：
 
@@ -347,6 +355,21 @@ temporal transition owner + spatial refinement state
 或安全关键对象仍应保留较完整 state；长 horizon、可容忍感知误差的 imagination 才适合更激进压缩。相关
 论文证明的是作者视频/环境设置中的受限机制，不证明它们已经拥有可部署的 causal world model。
 
+### 从双向视频补全到可交互的因果少步 Rollout
+
+双向 diffusion 能利用完整前后文生成高质量离线视频，在素材已知且不要求交互时仍是合理方案；交互式 world model
+却必须按 camera/action 的因果顺序推进，并在每个控制周期内给出下一状态。一个演进路径是先对开放视频 backbone
+做 camera-control fine-tuning，再训练 autoregressive diffusion transition，随后以 causal ODE/consistency
+distillation 和 asymmetric DMD 压缩为少步 streaming rollout。Runtime 版本化 action/camera schema 与 causal
+history；backbone 只提出下一视觉状态，真实 observation 与 controller 仍分别拥有状态真值和动作提交权。
+
+复用开放 backbone 并缩短 rollout 可降低训练与在线步数，但会引入 teacher-student mismatch、少步质量下降、
+self-rollout drift、camera coverage 缺口和复杂训练 recipe。离线生成继续使用双向模型；安全规划应限制想象 horizon，
+用真实观察闭环纠正。exact-v1 只支持论文披露的 Wan2.1、HY1.5 等 backbone、数据与 latency 设置，不证明物理因果、
+planner utility 或安全性。
+
+<!-- source-family:SF-2026-ARXIV-2605-30263 -->
+
 ### 从全历史条件到有界 History Bank 与 Self-rollout Distillation
 
 把完整视频历史一直放进 Context，最先解决的是信息不丢失；当模型进入流式 world-model runtime，历史长度、
@@ -422,6 +445,12 @@ Memory 可以向 world model提供观察历史，world model 可以把受限预�
 
 ## Evaluation：从画面质量到干预结果
 
+### 视频只有编译成可执行 Transition，才能测试 Belief Planning
+
+<!-- semantic-body-binding:SF-EGO2WORLD-COMPILING-EGOCENTRIC-COOKING-VIDEOS-INTO-EXECUTABLE-WORLDS-FOR:start -->
+Egocentric video 提供观察序列，却没有天然的 action precondition、object state 或 counterfactual transition。把片段编译成带 provenance 的 symbolic graph 和 transition rules，可让 planner 在可执行 world 中测试 belief update；compiler 拥有 observation-to-state proposal，environment verifier 拥有规则执行和 contradiction。它把视觉数据变成可重复测试，代价是符号化遗漏、规则错误和 domain-specific ontology；开放物理控制仍需真实闭环，不能把 cooking benchmark 的可执行性外推成通用 world-model fidelity。
+<!-- semantic-body-binding:SF-EGO2WORLD-COMPILING-EGOCENTRIC-COOKING-VIDEOS-INTO-EXECUTABLE-WORLDS-FOR:end -->
+
 一个 evidence ladder：
 
 ```text
@@ -440,6 +469,22 @@ perceptual plausibility
 evaluation contract 应绑定 environment version、initial-state distribution、action policy、horizon、observation schema、seed、hardware/runtime、scorer 和 failure denominator。persistent-state benchmark 还应测试 view revisit、object mutation、contradictory observation、delete/supersede 与 recovery。
 
 ### 单次合理 Rollout 之后：评估条件分布是否对齐
+
+### 视觉逼真与三维一致性是两份不同证据
+
+逐帧视觉质量可以筛掉明显伪影，却不能证明相机运动、遮挡关系、物体尺度和场景几何在 rollout 中自洽。面向 planning 的 World Model 需要把 perceptual realism 与 geometric consistency 分开测，并绑定 camera/scene state：
+
+```text
+initial observation + camera/action contract
+→ generated rollout
+→ perceptual quality evidence
++ multi-view / temporal geometry evidence
+→ planning-relevant acceptance
+```
+
+几何约束能减少“看起来合理但无法作为环境状态”的视频，却增加标定、深度/位姿估计和 evaluator 偏差；二维生成任务、固定视角或不消费三维状态的 workload 仍可只用感知质量基线。即使几何一致，也不证明 transition 具有因果可控性，更不能替代 action-conditioned policy evaluation。
+
+<!-- source-family:SF-2026-ARXIV-2605-15185 -->
 
 确定性或近确定性环境中，固定初态与 action 后比较一次 predicted transition 可以是充分而便宜的 baseline；但很多物理过程
 在相同条件下存在多个合法 outcome。此时“生成了一条合理轨迹”只证明 support 中可能有一个样本，无法证明模型给各结果
@@ -466,6 +511,14 @@ policy evaluation 才能证明它改善决策。
 因此评估合同需要拆成三层：transition fidelity 检查局部状态转移；planner-induced coverage 或 play adequacy 检查 Planner 真正会访问的状态和最终策略结果；belief-state/inference validation 单独检查不可观测信息如何进入决策。可枚举环境可进一步使用 certificate 或 counterexample witness，把“没有在样本中出错”提升为对特定状态空间的可验证声明。
 
 穷举证书不会扩展到任意大状态空间，采样又可能漏掉稀有但决定性的错误；用反例自动修复生成模型还可能破坏原本正确的分支。因此 sampled transition tests 仍适合作为 smoke test，但不能独自承担规划可用性的发布门。
+
+### Repair Metric 必须与 Rollout Horizon 对齐
+
+相邻 latent 的欧氏距离在短步、局部平滑且 action 不改变可达区域时是便宜的 repair proxy；长 horizon 下，两个相近 latent 可能通向完全不同的 trajectory basin。更强的 contract 是比较 horizon-matched trajectory reachability：repair candidate 必须绑定起始状态、action/policy revision、rollout horizon 与 simulator revision，再由 evaluator 判断它是否恢复了可达未来，而不是只恢复局部表示。
+
+这种 metric 更接近控制目标，但代价是额外 rollout、模型偏差和对 horizon 的敏感性；simulator 不可信或只做局部去噪时，latent distance 仍可作为第一层筛选。arXiv:2605.22164v1 只支持其方法与实验中的 reachability-aware repair，不证明该度量在任意环境、policy 或长 horizon 下都忠实于真实世界。
+
+<!-- source-family:SF-2026-ARXIV-2605-22164 -->
 
 ## 主要 trade-offs
 
@@ -511,31 +564,41 @@ open-loop rollout 便于比较候选长轨迹，却累积误差；short-horizon 
 6. 对 safety-critical transition 建 independent verifier 或 hard constraint。
 7. 保存 prediction trace，使失败可归因到 perception、dynamics、planner 或 controller。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22804:start -->
+长视频理解可把边缘侧压缩记忆与云侧高成本推理分开：边缘持有连续 observation summary，云侧只消费带版本的摘要与关键片段。压缩降低上传和 Context 成本，却可能丢失 action-relevant transition；不确定或摘要失效时必须回取原始观测，不能把传输节省当作 world-state fidelity。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22804:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22966:start -->
+Imagine-then-Act 把短期 latent trajectory 置于 action 之前，因此 imagined state 也成为可攻击输入。world model只能提出预测，controller 必须把预测身份、扰动边界和真实 observation reconciliation 分开；想象一致但实机状态冲突时，以真实观测回滚，不能授予 imagined rollout 执行权。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22966:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28385:start -->
+机器人 world-model 评估不能只比较视频感知质量；结构化 evaluator 应分别检查物体、接触、动作阶段和因果 transition，并保留逐项证据。VLM evaluator 提高诊断粒度，却仍可能继承视觉与语言偏差；高风险结论必须回到 simulator state、真实传感器或人工标注。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28385:end -->
+
+### 搜索、价值与策略必须共享同一个 imagined-state owner
+
+把 world-model search 产生的轨迹交给另一个、未见过搜索分布的 value owner，在搜索浅且分布稳定时足够简单；长 horizon 和持续 policy update 会放大两者的结构错配。一个条件化分支是让 diffusion policy 同时吸收 searched trajectory，并在同一 imagined-state contract 下更新 policy/value。它减少搜索与学习的 handoff mismatch，却增加生成式优化成本和 learned-world bias；模型 rollout 漂移时必须缩短 horizon、回到真实环境校准，或与独立 value baseline 并存。exact-v1 只支持论文披露的 world model、任务和实验预算，不证明长程真实环境控制已解决。<!-- source-family:SF-2026-ARXIV-2605-26282 -->
+
+### 可规划表示需要可识别条件，而不只是重建质量
+
+重建或一步预测足以训练可用 latent，却不能保证 action-relevant state 在表示中可恢复。若环境动力学满足论文给出的线性可识别条件，representation owner 才能把 latent 作为规划状态，并用 identifiability test 而不是视觉相似度验收。收益是把“能生成”与“可控制”分开；代价是更强的分布和动力学假设，非 Gaussian、非平稳或部分可观测环境会造成错误同一化。条件失败时应保留原 observation、使用非线性 belief state 或回到 simulator。exact-v1 的证明和实验限于 stationary additive-noise、Gaussian 或近 Gaussian 设置及披露的像素控制任务。<!-- source-family:SF-2026-ARXIV-2605-26379 -->
+
 ## 本章在知识树中的位置
 
 第23章提供 modality/time/provenance identity，第24章提供生成与修正语义；本章只有在状态变换由 action 条件化并可被干预验证时才提升为 World Model。第26章接过 action authority 与真实控制。
 
 Agent Planning 可以消费 imagined rollout，Agent Memory 可以保存事实与经验，但 owner 分别仍是 `AGENT-PLANNING` 和 `AGENT-MEMORY`。Environment benchmark 与 release gate 归 `PLATFORM-EVALUATION-SYSTEM`。
 
-## 面试与自检问题
+## 从机制演进到系统设计
 
-1. video generator 与 controllable world model 的最小区别是什么？
-2. latent reconstruction 好为什么不证明适合 control？
-3. imagined state 为什么不能直接写入事实 memory？
-4. persistent world state 需要哪些 supersession 机制？
-5. 为什么 long-horizon error 不是 one-step error 的简单倍数？
-6. simulator 与 learned world model 在什么条件下应共存？
-7. 如何设计 counterfactual evaluation？
-8. 为什么 compact closed-loop predictor 不能证明系统拥有 compact unrestricted counterfactual world model？
-9. controller 为什么必须独立拥有 action authority？
+从视频生成进入 World Model 的关键约束变化，是输出不再只需“看起来合理”，而要在给定 action 后保持可修正的 environment transition。系统因此从下一帧生成，演进到 latent state、action-conditioned rollout、持久 landmark/memory 与 observation reconciliation；state owner 必须区分预测状态、已观测事实和计划假设。
 
-## Research Outlook
-
-关键压力是从“更逼真”转向“更可干预、更可校准、更可修正”：建立跨视角 object identity、带 uncertainty 的 long rollout、model exploitation 测试、persistent-state recovery，以及 world model 与安全 controller 的 typed interface。
-
-## Reflection
-
-World Model 的价值不在于替现实世界生成一段视频，而在于让系统对“若采取这个 action，会发生什么”形成可证伪的内部假设。越能想象，越需要知道哪些只是想象。
+更长的 imagined rollout 可以降低真实交互成本，却会累积 model bias、state drift 和不可观测变量。生成质量只证明感知 plausibility，不能证明 causal controllability；simulator 或 persistent memory 也不能自动获得真实环境 authority。出现冲突时应以新 observation 修正或丢弃预测 state，并保留短 horizon、真实环境 replay 和人工验证作为共存路径。
 
 ### Action-conditioned World Model 要先通过 Integrity Gate
 
@@ -574,7 +637,6 @@ high-level intent / diagnosis
 当前证据只有小规模 gameplay data 与 qualitative 结果，没有 real-time、causal fidelity 或完整 open-world simulator
 证明；简单动力学或已有 simulator 仍应使用显式环境模型。
 
-
 ### 从局部结果到可执行的系统边界
 
 <!-- body-source:SF-2026-ARXIV-2606-22363 -->
@@ -586,23 +648,44 @@ high-level intent / diagnosis
 <!-- body-source:SF-2026-ARXIV-2606-22509 -->
 在 hierarchical RL 执行动作前，用 world model 想象候选 transition 并以 safety constraint 过滤；world model 只提议风险，真实 controller 和 fallback 持有提交权。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；手工 goal mapping、RTX3060 8GB 实验与模拟环境不能外推真实机器人或视觉泛化；model error 会产生 false-safe。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
 
-<!-- recovered-daily-20260623:MULTIMODAL-WORLD-MODELS:start -->
-## 2026-06-23 evidence integration — MULTIMODAL-WORLD-MODELS
+## 面试与自检问题
 
-相邻章 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L1` 只消费 handoff，不重复拥有机制。
+1. video generator 与 controllable world model 的最小区别是什么？
+2. latent reconstruction 好为什么不证明适合 control？
+3. imagined state 为什么不能直接写入事实 memory？
+4. persistent world state 需要哪些 supersession 机制？
+5. 为什么 long-horizon error 不是 one-step error 的简单倍数？
+6. simulator 与 learned world model 在什么条件下应共存？
+7. 如何设计 counterfactual evaluation？
+8. 为什么 compact closed-loop predictor 不能证明系统拥有 compact unrestricted counterfactual world model？
+9. controller 为什么必须独立拥有 action authority？
 
-### Owner-merged minimal body
+## Research Outlook
 
-- **SF-2026-ARXIV-2606-22804**：CoVStream: Edge-Cloud Collaboration for Understanding of Long Video Streams 的 exact-v1 机制为：Therefore, we propose CoVStream, the first edge-cloud collaborative framework for understanding long video streams. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：However, they overlook a crucial deployment fact: the stream is often produced by computationally constrained devices. 披露的 evaluation signal 是：Experiments on VideoMME-Long, LVBench, and RTV-Bench show that CoVStream reduces bandwidth usage by 87.6% while retaining 99.2% of the cloud baseline accuracy on LVBench. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-22966**：Attacking the Trusted Imagination: Oracle-Level Integrity Attacks on Imagine-then-Act World Models 的 exact-v1 机制为：A world-action model (WAM) first imagines a short future as a latent trajectory z~, on which the action is then conditioned. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：We identify this trusted imagination, rather than the reactive policy, as the exposed attack surface. 披露的 evaluation signal 是：We evaluate three targets: RynnVLA-002, LingBot-VA, and LaDi-WM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-28385**：RoboGaze: Evaluating Robot World Models via Structured Vision-Language Analysis 的 exact-v1 机制为：We present RoboGaze, a training-free, multi-agent VLM framework that provides structured, interpretable evaluation for generated robot-manipulation videos. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 披露的 evaluation signal 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+关键压力是从“更逼真”转向“更可干预、更可校准、更可修正”：建立跨视角 object identity、带 uncertainty 的 long rollout、model exploitation 测试、persistent-state recovery，以及 world model 与安全 controller 的 typed interface。
 
-### Source-specific exact-v1 Review notes
+## Reflection
 
-- `SF-2026-ARXIV-2606-22804` — primary `arXiv:2606.22804v1`; Method=`arXiv:2606.22804v1 — §2.1 System Overview; §2.3 Cloud Server: Decoupled Management and Reasoning Architecture`; Evaluation=`arXiv:2606.22804v1 — §3 Experiment; §3.3 Diagnostic Experiment; §3.4 Qualitative Analysis`; non-proof=`arXiv:2606.22804v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：However, they overlook a crucial deployment fact: the stream is often produced by computationally constrained devices. 披露的 evaluation signal 是：Experiments on VideoMME-Long, LVBench, and RTV-Bench show that CoVStream reduces bandwidth usage by 87.6% while retaining 99.2% of the cloud baseline accuracy on LVBench. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-22966` — primary `arXiv:2606.22966v1`; Method=`arXiv:2606.22966v1 — §3 Threat Model; §4 Method; §6 Mechanism: off-manifold is intrinsic to corrupting imagination`; Evaluation=`arXiv:2606.22966v1 — §5 Experiments; §5.1 Setup: three targets spanning the imagination-action coupling; §5.7 Adaptive attacker: the defense holds`; non-proof=`arXiv:2606.22966v1 — §7 The task-level null, and why it motivates the oracle threat; §8 Limitations`; fallback=该 family 的 failure pressure 是：We identify this trusted imagination, rather than the reactive policy, as the exposed attack surface. 披露的 evaluation signal 是：We evaluate three targets: RynnVLA-002, LingBot-VA, and LaDi-WM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-28385` — primary `arXiv:2606.28385v1`; Method=`arXiv:2606.28385v1 — §3 Method; §4.2 Evaluation Protocol; §A.2.1 Dataset Construction`; Evaluation=`arXiv:2606.28385v1 — §RoboGaze: Evaluating Robot World Models via Structured Vision-Language Analysis; §3.3 Candidate Discovery and Specialist Analysis; §4.2 Evaluation Protocol`; non-proof=`arXiv:2606.28385v1 — §5 Conclusion; §A.4.8 Scope of Learned-Evaluator Comparisons`; fallback=该 family 的 failure pressure 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 披露的 evaluation signal 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:MULTIMODAL-WORLD-MODELS:end -->
+World Model 的价值不在于替现实世界生成一段视频，而在于让系统对“若采取这个 action，会发生什么”形成可证伪的内部假设。越能想象，越需要知道哪些只是想象。
+
+### Imagined Rollout 只有经过校准，才能进入控制
+
+单一 world model 的长 horizon rollout 会累积误差，却常以连贯视频掩盖不确定性。ensemble 可以产生多个 latent future，并把分歧转为 MPC 的风险信号；只有校准后的 imagined state 才能影响 action ranking。收益是显式感知 model uncertainty，代价是多次 rollout、相关模型错误与更高延迟；ensemble 共识不等于真实，超出 calibration domain 时回退短 horizon 或真实观测。
+
+驾驶等场景还要求 latent state 围绕 driver、traffic participant 与可控 transition 建模，而不是优化通用 video fidelity。driver-centric conditioning 提高规划相关性，却可能遗漏未建模参与者；因此环境状态必须保留 provenance、coverage 与 uncertainty，通用生成质量只能作辅助指标。
+
+<!-- source-family:SF-ELVIS-ENSEMBLE-CALIBRATED-LATENT-IMAGINATION-FOR-LONG-HORIZON-VISUAL-MPC -->
+<!-- source-family:SF-DRIVER-WM-A-DRIVER-CENTRIC-TRAFFIC-CONDITIONED-LATENT-WORLD-MODEL-FOR-IN -->
+
+### World state 的可编辑性与表示防坍塌
+
+只保存下一帧或一段 latent trajectory，适合一次性预测，却无法承载长期规划中的假设、外部修正与撤销。进入可交互场景后，world state 需要把 geometry、free space、hypothetical insertion 和 observation-backed correction 分成 typed fields；Agent 只能通过有 schema、版本和回滚边界的 spatial tools 读写。这样 hypothetical state 不会静默覆盖观测事实，代价是状态合并、冲突检测与工具延迟。纯视频生成在只需视觉连续性时仍更简单，真实行动提交仍由第 26 章的 controller 和 safety envelope 拥有。[受限证据：arXiv:2605.09218v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-09218 -->
+
+表示学习本身还有另一条压力：只要求预测目标容易找到低信息量的坍塌解。把整个高维表示强行拉向各向同性先验可以抑制坍塌，却可能同时抹平有用的低维结构。一个实验性分支是在多个随机低维子空间中约束分布，让 anti-collapse regularization 覆盖多种投影，而不要求 full ambient representation 完全各向同性。它以更多投影、超参数和训练计算换更柔性的几何约束；子空间覆盖不足仍会漏掉坍塌方向，普通 variance/covariance regularization 在规模较小、目标稳定时继续成立。[受限证据：arXiv:2605.09241v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-09241 -->
 
 ## Review notes
 
@@ -676,3 +759,211 @@ Agent World Model 支持 synthetic environment 作为训练分支，但不证明
   https://arxiv.org/abs/2607.15898v1
 - EvolvingWorld（open-schema state lifetime 与 promotion boundary；Status: Experimental；文学角色模拟，不证明物理因果 dynamics）:
   https://arxiv.org/abs/2607.17250v1
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27681 — primary arXiv:2606.27681v1; exact-v1 URL=https://arxiv.org/html/2606.27681v1; Method=https://arxiv.org/html/2606.27681v1 — §Proposition 2 (Non-identifiability under leaky architectures) .; Proposition 3 (Training–inference consistency) .; 4.2 Model Architecture; Evaluation=https://arxiv.org/html/2606.27681v1 — §2 Problem Setup: Text Based POMDPs; 5 Experimental Evaluation; 5.3 Evaluation Metrics; Non-proof=https://arxiv.org/html/2606.27681v1 — §7 Conclusion。
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22804` — primary `arXiv:2606.22804v1`; Method=`arXiv:2606.22804v1 — §2.1 System Overview; §2.3 Cloud Server: Decoupled Management and Reasoning Architecture`; Evaluation=`arXiv:2606.22804v1 — §3 Experiment; §3.3 Diagnostic Experiment; §3.4 Qualitative Analysis`; non-proof=`arXiv:2606.22804v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：However, they overlook a crucial deployment fact: the stream is often produced by computationally constrained devices. 披露的 evaluation signal 是：Experiments on VideoMME-Long, LVBench, and RTV-Bench show that CoVStream reduces bandwidth usage by 87.6% while retaining 99.2% of the cloud baseline accuracy on LVBench. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-22966` — primary `arXiv:2606.22966v1`; Method=`arXiv:2606.22966v1 — §3 Threat Model; §4 Method; §6 Mechanism: off-manifold is intrinsic to corrupting imagination`; Evaluation=`arXiv:2606.22966v1 — §5 Experiments; §5.1 Setup: three targets spanning the imagination-action coupling; §5.7 Adaptive attacker: the defense holds`; non-proof=`arXiv:2606.22966v1 — §7 The task-level null, and why it motivates the oracle threat; §8 Limitations`; fallback=该 family 的 failure pressure 是：We identify this trusted imagination, rather than the reactive policy, as the exposed attack surface. 披露的 evaluation signal 是：We evaluate three targets: RynnVLA-002, LingBot-VA, and LaDi-WM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-28385` — primary `arXiv:2606.28385v1`; Method=`arXiv:2606.28385v1 — §3 Method; §4.2 Evaluation Protocol; §A.2.1 Dataset Construction`; Evaluation=`arXiv:2606.28385v1 — §RoboGaze: Evaluating Robot World Models via Structured Vision-Language Analysis; §3.3 Candidate Discovery and Specialist Analysis; §4.2 Evaluation Protocol`; non-proof=`arXiv:2606.28385v1 — §5 Conclusion; §A.4.8 Scope of Learned-Evaluator Comparisons`; fallback=该 family 的 failure pressure 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 披露的 evaluation signal 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-family integration record
+
+<!-- daily-20260627:MULTIMODAL-WORLD-MODELS:start -->
+### Owner-merged minimal durable delta
+
+若预测器可以绕过声明的 state 重读原始历史，预测正确也无法识别 state 本身是否有效。应让版本化 belief state 成为 transition/prediction path 的唯一受控输入，再检查它是否保留下游 consumer 所需信息。这样 state representation 才从辅助解释升级为可审计接口。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Strict mediation 增加训练成本，也可能让有损 textual state 成为瓶颈；无需可识别性时，直接 latent/history access 仍是合理旧路径。
+
+<!-- daily-20260627:MULTIMODAL-WORLD-MODELS:end -->
+
+<!-- recovered-daily-20260623:MULTIMODAL-WORLD-MODELS:start -->
+### 2026-06-23 evidence integration — MULTIMODAL-WORLD-MODELS
+
+相邻章 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22804**：CoVStream: Edge-Cloud Collaboration for Understanding of Long Video Streams 的 exact-v1 机制为：Therefore, we propose CoVStream, the first edge-cloud collaborative framework for understanding long video streams. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：However, they overlook a crucial deployment fact: the stream is often produced by computationally constrained devices. 披露的 evaluation signal 是：Experiments on VideoMME-Long, LVBench, and RTV-Bench show that CoVStream reduces bandwidth usage by 87.6% while retaining 99.2% of the cloud baseline accuracy on LVBench. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-22966**：Attacking the Trusted Imagination: Oracle-Level Integrity Attacks on Imagine-then-Act World Models 的 exact-v1 机制为：A world-action model (WAM) first imagines a short future as a latent trajectory z~, on which the action is then conditioned. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：We identify this trusted imagination, rather than the reactive policy, as the exposed attack surface. 披露的 evaluation signal 是：We evaluate three targets: RynnVLA-002, LingBot-VA, and LaDi-WM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-28385**：RoboGaze: Evaluating Robot World Models via Structured Vision-Language Analysis 的 exact-v1 机制为：We present RoboGaze, a training-free, multi-agent VLM framework that provides structured, interpretable evaluation for generated robot-manipulation videos. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 披露的 evaluation signal 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:MULTIMODAL-WORLD-MODELS:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13053:start -->
+- `SF-2026-ARXIV-2606-13053` — Daily `2026-06-12`；primary `arXiv:2606.13053v1`；Books review `books-review:SF-2026-ARXIV-2606-13053`。
+
+  **已吸收的语义增量：** world-model planning 的 imagined future 必须解码为 task-grounded event/predicate state，再用progress/semantic/physical/uncertainty verifier决定 action proposal 是否可执行
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13053:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13092:start -->
+- `SF-2026-ARXIV-2606-13092` — Daily `2026-06-12`；primary `arXiv:2606.13092v1`；Books review `books-review:SF-2026-ARXIV-2606-13092`。
+
+  **已吸收的语义增量：** world-model rollout 的可信边界应由 configuration/horizon/resolution certificate 与自我 abstention 表达，不能由平均预测误差替代
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13092:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15341:start -->
+- `SF-2026-ARXIV-2606-15341` — Daily `2026-06-14`；primary `arXiv:2606.15341v1`；Books review `books-review:SF-2026-ARXIV-2606-15341`。
+
+  **已吸收的语义增量：** 驾驶 world model 必须由当前 observation/action 生成 reactive future，不能偷用 oracle future layout；causal text controls 与 context-forced distillation服务闭环。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15341:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20679:start -->
+- `SF-2026-ARXIV-2606-20679` — Daily `2026-06-14`；primary `arXiv:2606.20679v1`；Books review `books-review:SF-2026-ARXIV-2606-20679`。
+
+  **已吸收的语义增量：** video-world-model policy 应把 episode history 压成 recap tokens，并由 cue gate 估计 progress，同时注入 video backbone 与 action decoder。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20679:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15594:start -->
+- `SF-2026-ARXIV-2606-15594` — Daily `2026-06-15`；primary `arXiv:2606.15594v1`；Books review `books-review:SF-2026-ARXIV-2606-15594`。
+
+  **已吸收的语义增量：** latent world-model control需把conformal latent-error bound、constraint checker与robust MPC绑定，模型proposal不能直接取得physical commit authority
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15594:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16070:start -->
+- `SF-2026-ARXIV-2606-16070` — Daily `2026-06-15`；primary `arXiv:2606.16070v1`；Books review `books-review:SF-2026-ARXIV-2606-16070`。
+
+  **已吸收的语义增量：** world model若要支持planning应生成可独立执行的environment program，并用同state的K-step lookahead与real environment逐branch比较
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16070:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17730:start -->
+- `SF-2026-ARXIV-2606-17730` — Daily `2026-06-17`；primary `arXiv:2606.17730v1`；Books review `books-review:SF-2026-ARXIV-2606-17730`。
+
+  **已吸收的语义增量：** 交互式 world model 的 memory 必须把 action-conditioned transition、event frame 与 object identity 跨 rollout 保存；只缓存视觉帧不足以复现可干预因果状态。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17730:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18697:start -->
+- `SF-2026-ARXIV-2606-18697` — Daily `2026-06-18`；primary `arXiv:2606.18697v1`；Books review `books-review:SF-2026-ARXIV-2606-18697`。
+
+  **已吸收的语义增量：** world-model fine-tuning data 是 planning control surface：SWAAP 先优化近似 clean dynamics 的低回报目标模型，再以 stealth-constrained gradient matching 修改有限 transition targets。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18697:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21173:start -->
+- `SF-2026-ARXIV-2606-21173` — Daily `2026-06-20`；primary `arXiv:2606.21173v1`；Books review `books-review:SF-2026-ARXIV-2606-21173`。
+
+  **已吸收的语义增量：** 从 sparse-goal demonstrations 反演 transition dynamics 需要把 reward/goal condition、Bellman identifiability 与 learned transition 分开，恢复条件不是任意环境真值
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21173:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21315:start -->
+- `SF-2026-ARXIV-2606-21315` — Daily `2026-06-20`；primary `arXiv:2606.21315v1`；Books review `books-review:SF-2026-ARXIV-2606-21315`。
+
+  **已吸收的语义增量：** Social World Model 要把多主体状态、关系变化与 action-conditioned transition 分层，并用 wake/sleep/deploy gates 限制自更新
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21315:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21775:start -->
+- `SF-2026-ARXIV-2606-21775` — Daily `2026-06-20`；primary `arXiv:2606.21775v1`；Books review `books-review:SF-2026-ARXIV-2606-21775`。
+
+  **已吸收的语义增量：** world-model rollout horizon 应成为按任务难度与不确定性调节的状态，而非训练/推理期固定常数
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21775:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-31734:start -->
+- `SF-2026-ARXIV-2606-31734` — Daily `2026-07-01`；primary `arXiv:2606.31734v1`；Books review `books-review:SF-2026-ARXIV-2606-31734`。
+
+  **已吸收的语义增量：** 新增证据边界：Long-video memory can evolve from fixed recent-frame retrieval to a learned context-query layer whose read pattern changes by predicted frame and denoising timestep. It improves selective reuse without granting causal world-state semantics, and introduces full-context growth, entity-binding error, query-policy drift and a separate need for compression, update and forgetting. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L346`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-31734:end -->
+
+<!-- daily-books-trace:SF-2026-ACTION-WORLD-MODEL-EVAL:start -->
+- `SF-2026-ACTION-WORLD-MODEL-EVAL` — Daily `2026-08-26`；primary `arXiv:2608.24885v1`；Books review `books-review:SF-2026-ACTION-WORLD-MODEL-EVAL`。
+
+  **已吸收的语义增量：** 新增 visual integrity、expert/off-expert alignment 与 matched-budget policy improvement 三段式 evaluation contract。
+<!-- daily-books-trace:SF-2026-ACTION-WORLD-MODEL-EVAL:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20545:start -->
+- `SF-2026-ARXIV-2606-20545` — Daily `2026-06-19`；primary `arXiv:2606.20545v1`；Books review `books-review:SF-2026-ARXIV-2606-20545`。
+
+  **已吸收的语义增量：** `Current World Models Lack a Persistent State Core` 路由到 `MULTIMODAL-WORLD-MODELS`：WRBench 把 camera motion 当 observability intervention，依次验证相机执行、在视场内连续性、离开视场后的状态演化和重新观察一致性；world-model evaluator 拥有 persistent-state verdict，普通 fidelity 指标仅并列。失败时回到显式 state memory/受限 camera。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20545:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06216:start -->
+- `SF-2026-ARXIV-2607-06216` — Daily `2026-07-08`；primary `arXiv:2607.06216v1`；Books review `books-review:SF-2026-ARXIV-2607-06216`。
+
+  **已吸收的语义增量：** 新增证据边界：Treat real-time world-model deployment as joint state and runtime design: bound persistent history by semantic retrieval, train the causal student on its own rollout distribution, and co-design residency/parallelism/kernels around streaming latency. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L327`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06216:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06640:start -->
+- `SF-2026-ARXIV-2607-06640` — Daily `2026-07-08`；primary `arXiv:2607.06640v1`；Books review `books-review:SF-2026-ARXIV-2607-06640`。
+
+  **已吸收的语义增量：** 新增证据边界：Decompose representation claims into reachability, admission and assignment: a direction can be observable yet absent from the latent, admitted by an objective yet duplicated elsewhere, or carried by a different eligible route than removal-cost intuition predicts. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L273`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06640:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06925:start -->
+- `SF-2026-ARXIV-2607-06925` — Daily `2026-07-09`；primary `arXiv:2607.06925v1`；Books review `books-review:SF-2026-ARXIV-2607-06925`。
+
+  **已吸收的语义增量：** 新增证据边界：The baseline gives the transition model both the current scene/action and an instruction that directly names the spatial relation later used as the evaluation target. The model can therefore copy goal semantics rather than infer the environment transition. Removing goal identity from dynamics and keeping it in the planner's objective forces the learned transition to explain observation changes instead of receiving the answer-bearing variable. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L111`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06925:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13410:start -->
+- `SF-2026-ARXIV-2607-13410` — Daily `2026-07-16`；primary `arXiv:2607.13410v1`；Books review `books-review:SF-2026-ARXIV-2607-13410`。
+
+  **已吸收的语义增量：** 新增证据边界：Known ego motion is factored out of egocentric observation transition and propagated as an identifiable context, leaving the learned world model to spend capacity on residual scene dynamics. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13410:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-14169:start -->
+- `SF-2026-ARXIV-2607-14169` — Daily `2026-07-16`；primary `arXiv:2607.14169v1`；Books review `books-review:SF-2026-ARXIV-2607-14169`。
+
+  **已吸收的语义增量：** 新增证据边界：Transition accuracy must evolve to planner-induced coverage, play adequacy and separate belief/inference validation. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-14169:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-15898:start -->
+- `SF-2026-ARXIV-2607-15898` — Daily `2026-07-18`；primary `arXiv:2607.15898v1`；Books review `books-review:SF-2026-ARXIV-2607-15898`。
+
+  **已吸收的语义增量：** 新增证据边界：A world model can separate slowly changing semantic structure from fast pixel detail and let the coarse prediction condition fine rollout. The abstraction level must match its temporal rate: too much detail drifts at long horizon, while overly abstract high-rate state loses motion. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-15898:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-17250:start -->
+- `SF-2026-ARXIV-2607-17250` — Daily `2026-07-20`；primary `arXiv:2607.17250v1`；Books review `books-review:SF-2026-ARXIV-2607-17250`。
+
+  **已吸收的语义增量：** 新增证据边界：static persona/scene -> typed persistent state transitions and promotion 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-17250:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-19749:start -->
+- `SF-2026-ARXIV-2607-19749` — Daily `2026-07-23`；primary `arXiv:2607.19749v1`；Books review `books-review:SF-2026-ARXIV-2607-19749`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: replay that preserves predictive state -> component-level forgetting diagnosis -> actor rehearsal from graded imagined trajectories 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L175`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-19749:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28415:start -->
+- `SF-2026-ARXIV-2607-28415` — Daily `2026-07-31`；primary `arXiv:2607.28415v1`；Books review `books-review:SF-2026-ARXIV-2607-28415`。
+
+  **已吸收的语义增量：** 新增证据边界：Differentiable quantile-quantile matching replaces characteristic functions; a detached cross-batch queue enlarges rank statistics. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28415:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28624:start -->
+- `SF-2026-ARXIV-2607-28624` — Daily `2026-07-31`；primary `arXiv:2607.28624v1`；Books review `books-review:SF-2026-ARXIV-2607-28624`。
+
+  **已吸收的语义增量：** 新增证据边界：Q-Former+FSQ learns discrete physical-language transitions; a VLM predicts tokens from frame/action intent; diffusion decoder renders future conditioned on current appearance. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-28624:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-09730:start -->
+- `SF-2026-ARXIV-2608-09730` — Daily `2026-08-11`；primary `arXiv:2608.09730v1`；Books review `books-review:SF-2026-ARXIV-2608-09730`。
+
+  **已吸收的语义增量：** World Tokens 在训练时让 future-video denoising 与 action expert 共享固定 world tokens，并通过 exclusive routing 防止策略绕过该表示；部署时移除 world-model branch。它把 world modeling 作为 representation supervision 而非在线 simulator，代价是训练耦合，且 LIBERO/SIMPLER/有限真机结果不能证明开放环境因果正确性。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-09730:end -->
+
+<!-- daily-books-trace:SF-2026-CODE-WORLD-MODEL:start -->
+- `SF-2026-CODE-WORLD-MODEL` — Daily `2026-08-27`；primary `arXiv:2608.25927v1`；Books review `books-review:SF-2026-CODE-WORLD-MODEL`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：拆分 S_exe/S_vis：coding agent 管低频推理与机制修订，code 管确定性 transition，video model 通过可寻址 proxy 渲染 observation；并保留边界：没有实时、控制或因果定量评估；agent 不能从零可靠构造复杂 simulator，项目页没有公开代码。 相邻章节对读：books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L81;books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171。前者拥有 token commit，后者拥有 sensor/action freshness；可修订 simulator state 与 visual proxy 的 ownership 属于 World Models。
+<!-- daily-books-trace:SF-2026-CODE-WORLD-MODEL:end -->
+
+<!-- daily-books-trace:SF-2026-LEON-WAM:start -->
+- `SF-2026-LEON-WAM` — Daily `2026-08-28`；primary `arXiv:2608.27259v1`；Books review `books-review:SF-2026-LEON-WAM`。
+
+  **已吸收的语义增量：** 补足 operator-structured transition 与 causal-proof 边界。
+<!-- daily-books-trace:SF-2026-LEON-WAM:end -->
+
+<!-- daily-books-trace:SF-2026-PAWBENCH:start -->
+- `SF-2026-PAWBENCH` — Daily `2026-08-28`；primary `arXiv:2608.27345v1`；Books review `books-review:SF-2026-PAWBENCH`。
+
+  **已吸收的语义增量：** 补足 repeated-rollout distribution identity。
+<!-- daily-books-trace:SF-2026-PAWBENCH:end -->

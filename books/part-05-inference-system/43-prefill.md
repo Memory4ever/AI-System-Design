@@ -237,6 +237,20 @@ dependency bookkeeping、profile drift 与调度开销；模型结构、sequence
 
 Runtime 可以按长度分桶、使用 token budget、chunk prompts 或将 Prefill 与 Decode 混合调度。它们都在回答同一问题：本轮处理多少新 prompt tokens，才能不牺牲过多 Decode cadence？
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-02960:start -->
+MoE Prefill 还增加了一个 placement 分支。最直接的方案让 token activation 通过 all-to-all 到固定 expert placement；它在 batch 小、expert weight 很大或链路足够快时最清楚。长 Prompt 与大 batch 会拉长每个 expert 的计算窗口，此时可以反过来异步 all-gather 本轮需要的 expert weights，让 token 留在本地计算，以消除 activation dispatch 的冗余交换。
+
+```text
+prefill batch + routed expert demand
+→ predict active expert-weight working set
+→ asynchronously gather weights under the compute window
+→ execute local expert work
+→ fall back to activation dispatch on miss or drift
+```
+
+这不是普遍替代：weight transfer 的固定成本必须被足够长的 Prefill compute 隐藏，路由分布、batch arrival 和可用带宽共同决定 saturation threshold。错误预测会复制无用 weights，突发流量还可能同时放大显存与网络压力；Decode、小 batch、低带宽或路由漂移强时，固定 expert placement 与 activation all-to-all 仍更稳定。该阈值属于 scheduler/runtime state，不能从单次离线吞吐直接写成部署常数。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-02960:end -->
+
 ## nano-vLLM：Prefill 不是“总把完整 Prompt 再跑一遍”
 
 nano-vLLM 的 `prepare_prefill()` 把逻辑定义具体化。对每个 sequence，它先计算：
@@ -294,6 +308,22 @@ Prefill benchmark 应同时记录 `T_p` 分布、batch tokens、queueing、kerne
 
 不能仅凭 GPU utilization 判断配置。一个长 Prefill 把 GPU 跑满，同时让所有 Decode 请求错过 TPOT SLO，仍是系统层失败。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-25353:start -->
+Prefill 可把 weight execution 与 attention state 分成独立放置路径，使权重吞吐和 KV/attention locality 分别优化。解耦增加跨路径同步与 layout compatibility；收益不足或 state identity 不一致时回退共置执行。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-25353:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-25426:start -->
+三层 cache blocking 与 weight pre-packing 把 Prefill 的数据复用显式映射到目标 cache hierarchy。它以 shape-specialized packing 和额外 artifact 换内存效率；模型形状、硬件或 precision 变化后必须失效重建，并保留通用 kernel fallback。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-25426:end -->
+
+<!-- semantic-body-binding:SF-2026-VPP:start -->
+递增前缀 workload 使后续请求复用更长历史、各 stage 成本持续变化；Prefill runtime 因而需要在已完成 prefix identity不变的前提下重排 virtual stages。它用 schedule state 和迁移成本换 bubble 降低；重排收益不足或状态不兼容时回退固定 stage。
+<!-- semantic-body-binding:SF-2026-VPP:end -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -306,6 +336,20 @@ request admitted
 ```
 
 第42章定义完整请求状态机，本章负责从 tokenized request 到可 Decode state。第44章将解释为什么后续输出不能继续沿用同样的大块并行方式。
+
+### Chunked Prefill 的稀疏候选应按 Block Union 复用
+
+每个 query block 独立选择历史 KV，语义局部且容易实现，但相邻 query 常反复选择近似集合，造成索引、加载和 kernel launch 重复。可在一个 chunk 内合并候选 block，形成可复用的 union，再由 dense target attention 在该集合内计算；selector 只拥有候选，不能改变 target score。
+
+Union 提高 KV locality，却可能因过度合并带来 overfetch，或因 selector 漏召回损伤质量。收益必须绑定 chunk/block、上下文长度、稀疏率、模型、硬件和 TTFT；selector 未校准或 union 接近全量时回退 dense chunked prefill。
+
+<!-- source-family:SF-2026-ARXIV-2605-16839 -->
+
+## 从机制演进到系统设计
+
+Prefill 的原始优势来自已知 prompt 的 token 并行；长 Context 与异构硬件把瓶颈进一步推向 memory orchestration、chunk pipeline、weight movement 和 cache blocking。执行计划因此从单个大 GEMM 演进到按 chunk、memory tier 和 device topology 安排工作，同时仍要产生与 dense Prefill 相同的初始 logits 与 KV identity。
+
+更细粒度的 pipeline 可以降低峰值和通信等待，却增加调度、packing、跨 chunk依赖及专用 kernel 成本。shape、hardware 或 cache assumption 改变时必须重新 profile；短 prompt、通用硬件或可移植性优先时，普通 dense Prefill 仍更合适。
 
 ## 自检问题
 
@@ -327,32 +371,6 @@ request admitted
 Prefill 利用已知 prompt 的 token-parallelism，高效形成第一个生成分布和初始 KV state。它比 Decode 更容易形成大矩阵计算，但长 prompt 会增加 work、显存和 scheduler occupancy。
 
 Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度。下一章进入 Decode，观察瓶颈怎样转向逐 token 访存与调度。
-
-<!-- recovered-daily-20260623:INFER-PREFILL:start -->
-## 2026-06-23 evidence integration — INFER-PREFILL
-
-相邻章 `books/part-05-inference-system/44-decode.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22968**：MOCAP: Wafer-Scale-Chip-Oriented Memory-Orchestrated Chunked Pipelining Framework for Prefill-Only LLM Inference 的 exact-v1 机制为：To address these challenges, we present MOCAP, a memory-orchestrated chunked pipelining framework for prefill-only LLM inference on WSCs. 因此 把 wafer-scale memory orchestration、chunk pipeline 与 prefill-only 边界显式化。 该 family 的 failure pressure 是：For long-context prefill, communication overhead grows with sequence length and quickly becomes a bottleneck on conventional GPU systems, making wafer-scale chips (WSCs) a promising substrate due to their high communication bandwidth and large aggregate compute and memory capacity. 披露的 evaluation signal 是：It further incorporates Latency-Balanced Chunk Partitioning (LBCP) to balance chunk execution cost under both attention-cost growth and KV reallocation overhead, improving pipeline efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22968` — primary `arXiv:2606.22968v1`; Method=`arXiv:2606.22968v1 — §MOCAP: Wafer-Scale-Chip-Oriented Memory-Orchestrated Chunked Pipelining Framework for Prefill-Only LLM Inference; §3.1 Memory Imbalance Limits Feasible Sequence Length; §4 MOCAP Framework`; Evaluation=`arXiv:2606.22968v1 — §5 Evaluation`; non-proof=`arXiv:2606.22968v1 — §7 Conclusion`; fallback=该 family 的 failure pressure 是：For long-context prefill, communication overhead grows with sequence length and quickly becomes a bottleneck on conventional GPU systems, making wafer-scale chips (WSCs) a promising substrate due to their high communication bandwidth and large aggregate compute and memory capacity. 披露的 evaluation signal 是：It further incorporates Latency-Balanced Chunk Partitioning (LBCP) to balance chunk execution cost under both attention-cost growth and KV reallocation overhead, improving pipeline efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:INFER-PREFILL:end -->
-
-<!-- recovered-daily-20260625:INFER-PREFILL:start -->
-## 2026-06-25 evidence integration — INFER-PREFILL
-
-- **SF-2026-ARXIV-2606-25353**：`3 Architecture; 3.1 Weight-Attention Decoupled Organization; 4 Implementation` 所定义的源特定机制用于把权重、attention 与 cache-blocking 路径拆成可独立放置和优化的前缀计算状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Discussion; 7.2 Future Works` 是 `Cache-Resident LLM Inference in GB-Scale Last-Level Caches` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiment Setup; 6 Evaluation` 的验证域，`INFER-PREFILL` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25426**：`3 Method; 3.1 Three-level cache blocking; 3.2 Weight pre-packing` 所定义的源特定机制用于把权重、attention 与 cache-blocking 路径拆成可独立放置和优化的前缀计算状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusion; Limitations` 是 `Above the Inner Loop: Exceeding Accelerate at LLM Prefill GEMM on the M1 AMX` 的 source-specific 反例/局限边界；若运行条件离开 `4 Evaluation; 4.1 Experimental setup; 4.7 End-to-end prefill GEMM measurement` 的验证域，`INFER-PREFILL` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25353**：Primary `arXiv:2606.25353v1`；Method `https://arxiv.org/html/2606.25353v1 — §3 Architecture; 3.1 Weight-Attention Decoupled Organization; 4 Implementation`；Evaluation `https://arxiv.org/html/2606.25353v1 — §5 Experiment Setup; 6 Evaluation`；未证明边界 `https://arxiv.org/html/2606.25353v1 — §7 Discussion; 7.2 Future Works`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25426**：Primary `arXiv:2606.25426v1`；Method `https://arxiv.org/html/2606.25426v1 — §3 Method; 3.1 Three-level cache blocking; 3.2 Weight pre-packing`；Evaluation `https://arxiv.org/html/2606.25426v1 — §4 Evaluation; 4.1 Experimental setup; 4.7 End-to-end prefill GEMM measurement`；未证明边界 `https://arxiv.org/html/2606.25426v1 — §6 Conclusion; Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:INFER-PREFILL:end -->
 
 ## Review notes
 
@@ -394,3 +412,57 @@ Primary-source entry points：
   https://github.com/GeeeekExplorer/nano-vllm/blob/main/nanovllm/engine/block_manager.py
 - nano-vLLM Prefill scheduling and state commit:
   https://github.com/GeeeekExplorer/nano-vllm/blob/main/nanovllm/engine/scheduler.py
+
+### Daily integration evidence trace
+
+- `2026-05-04 / SF-2026-ARXIV-2605-02960` — exact-v1 `arXiv:2605.02960v1`；正文吸收 Prefill-only MoE 的 weight-gather 条件分支、saturation/drift state 与 activation-dispatch fallback。
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22968` — primary `arXiv:2606.22968v1`; Method=`arXiv:2606.22968v1 — §MOCAP: Wafer-Scale-Chip-Oriented Memory-Orchestrated Chunked Pipelining Framework for Prefill-Only LLM Inference; §3.1 Memory Imbalance Limits Feasible Sequence Length; §4 MOCAP Framework`; Evaluation=`arXiv:2606.22968v1 — §5 Evaluation`; non-proof=`arXiv:2606.22968v1 — §7 Conclusion`; fallback=该 family 的 failure pressure 是：For long-context prefill, communication overhead grows with sequence length and quickly becomes a bottleneck on conventional GPU systems, making wafer-scale chips (WSCs) a promising substrate due to their high communication bandwidth and large aggregate compute and memory capacity. 披露的 evaluation signal 是：It further incorporates Latency-Balanced Chunk Partitioning (LBCP) to balance chunk execution cost under both attention-cost growth and KV reallocation overhead, improving pipeline efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25353**：Primary `arXiv:2606.25353v1`；Method `https://arxiv.org/html/2606.25353v1 — §3 Architecture; 3.1 Weight-Attention Decoupled Organization; 4 Implementation`；Evaluation `https://arxiv.org/html/2606.25353v1 — §5 Experiment Setup; 6 Evaluation`；未证明边界 `https://arxiv.org/html/2606.25353v1 — §7 Discussion; 7.2 Future Works`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25426**：Primary `arXiv:2606.25426v1`；Method `https://arxiv.org/html/2606.25426v1 — §3 Method; 3.1 Three-level cache blocking; 3.2 Weight pre-packing`；Evaluation `https://arxiv.org/html/2606.25426v1 — §4 Evaluation; 4.1 Experimental setup; 4.7 End-to-end prefill GEMM measurement`；未证明边界 `https://arxiv.org/html/2606.25426v1 — §6 Conclusion; Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260623:INFER-PREFILL:start -->
+### 2026-06-23 evidence integration — INFER-PREFILL
+
+相邻章 `books/part-05-inference-system/44-decode.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22968**：MOCAP: Wafer-Scale-Chip-Oriented Memory-Orchestrated Chunked Pipelining Framework for Prefill-Only LLM Inference 的 exact-v1 机制为：To address these challenges, we present MOCAP, a memory-orchestrated chunked pipelining framework for prefill-only LLM inference on WSCs. 因此 把 wafer-scale memory orchestration、chunk pipeline 与 prefill-only 边界显式化。 该 family 的 failure pressure 是：For long-context prefill, communication overhead grows with sequence length and quickly becomes a bottleneck on conventional GPU systems, making wafer-scale chips (WSCs) a promising substrate due to their high communication bandwidth and large aggregate compute and memory capacity. 披露的 evaluation signal 是：It further incorporates Latency-Balanced Chunk Partitioning (LBCP) to balance chunk execution cost under both attention-cost growth and KV reallocation overhead, improving pipeline efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:INFER-PREFILL:end -->
+
+<!-- recovered-daily-20260625:INFER-PREFILL:start -->
+### 2026-06-25 evidence integration — INFER-PREFILL
+
+- **SF-2026-ARXIV-2606-25353**：`3 Architecture; 3.1 Weight-Attention Decoupled Organization; 4 Implementation` 所定义的源特定机制用于把权重、attention 与 cache-blocking 路径拆成可独立放置和优化的前缀计算状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Discussion; 7.2 Future Works` 是 `Cache-Resident LLM Inference in GB-Scale Last-Level Caches` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiment Setup; 6 Evaluation` 的验证域，`INFER-PREFILL` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25426**：`3 Method; 3.1 Three-level cache blocking; 3.2 Weight pre-packing` 所定义的源特定机制用于把权重、attention 与 cache-blocking 路径拆成可独立放置和优化的前缀计算状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusion; Limitations` 是 `Above the Inner Loop: Exceeding Accelerate at LLM Prefill GEMM on the M1 AMX` 的 source-specific 反例/局限边界；若运行条件离开 `4 Evaluation; 4.1 Experimental setup; 4.7 End-to-end prefill GEMM measurement` 的验证域，`INFER-PREFILL` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:INFER-PREFILL:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09441:start -->
+- `SF-2026-ARXIV-2606-09441` — Daily `2026-06-09`；primary `arXiv:2606.09441v1`；Books review `books-review:SF-2026-ARXIV-2606-09441`。
+
+  **已吸收的语义增量：** RAG 重复文档的 prefill 可保存 selective index 而非整份 KV：offline 编码局部 attention，online 只重算 query-sensitive cross attention，以 storage traffic 换 TTFT。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09441:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607.25291:start -->
+- `SF-2026-ARXIV-2607.25291` — Daily `2026-07-29`；primary `arXiv:2607.25291v1`；Books review `books-review:SF-2026-ARXIV-2607.25291`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: binary proxy mask -> ordered candidate mask -> online-softmax kernel refinement -> budget-aware sparse prefill. 该 delta 已进入 `books/part-05-inference-system/43-prefill.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607.25291:end -->
+
+<!-- daily-books-trace:SF-2026-VPP:start -->
+- `SF-2026-VPP` — Daily `2026-08-28`；primary `arXiv:2608.26523v1`；Books review `books-review:SF-2026-VPP`。
+
+  **已吸收的语义增量：** 补足递增前缀负载和 virtual-stage 重排。
+<!-- daily-books-trace:SF-2026-VPP:end -->

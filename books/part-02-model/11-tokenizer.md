@@ -240,6 +240,14 @@ Tokenizer 接入不应只测试一句英文。至少需要验证：
 - 长会话增量路径与 frozen reference 的逐 id 等价、fallback 与 mismatch quarantine。
 - tokenizer session state 与 KV Cache 的 identity、lifetime、eviction 和恢复边界。
 
+### 当 token 进入 Scaling Contract，比较单位必须回到信息量
+
+词表大小、token 数和训练 FLOPs 经常被放在同一张 scaling 表里比较，但 token 不是跨 tokenizer 稳定的计量单位。同一段信息可以被切成不同数量的 token；若直接用 token 计预算，压缩率更高的 tokenizer 会同时改变序列长度、attention 计算、训练样本计数与推理延迟，使“更多训练数据”与“更高编码效率”混在一起。更稳健的做法是把 byte 或另一个可复算的信息单位作为跨模型的 canonical denominator，再把 tokenizer 映射产生的 token 数作为 execution shape。
+
+这并不意味着 byte-level model 总是更优。较大的语义单元仍可能改善局部建模效率；代价是词表参数、稀有单元、跨语言公平性和 fallback 行为都发生变化。系统验收因此要同时报告 bytes、tokens、平均及尾部压缩率，并把这些量交给训练与推理预算模型。旧的 token 计数在同一 tokenizer、同一 normalization 与同一版本内仍然成立；一旦跨 tokenizer 比较，就必须退回稳定的信息单位。
+
+<!-- source-family:SF-COMPUTE-OPTIMAL-TOKENIZATION -->
+
 ## 本章在知识树中的位置
 
 ```text

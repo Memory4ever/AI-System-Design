@@ -219,6 +219,15 @@ MATERIALS_REQUEST = """
 """
 
 
+WITHDRAWN_PRIMARY_SOURCE_CLOSURE = """
+### Pre-denominator Closures
+
+| Source Family ID | Primary Identifier | Pre-denominator Closure | Authority Status Ref |
+| --- | --- | --- | --- |
+| SF-001 | arXiv:2608.00001v1 | withdrawn_primary_source | https://example.com/research#withdrawn |
+"""
+
+
 SOURCE_MATERIALS_REQUEST = """
 <!-- validator:materials-request-v1 -->
 | Request ID | Priority | Source Family ID | Source ID | Gap / Limitation ID | Owner Week | Known Identifiers / URLs | Missing Material | Why Existing Evidence Is Insufficient | Acceptable Substitute | Suggested File Name | Required Review Scope |
@@ -1322,6 +1331,46 @@ class ReportV21ValidationTests(unittest.TestCase):
 
     def test_valid_v21_report_has_auditable_completion_receipts(self):
         self.assertEqual([], self.validator.validate_report_text(VALID_DAILY_V21, self.registry))
+
+    def test_withdrawn_primary_source_closure_purges_all_downstream_records(self):
+        withdrawn = VALID_DAILY_V21.replace(
+            "\n## 2. Candidate Ledger\n",
+            WITHDRAWN_PRIMARY_SOURCE_CLOSURE + "\n## 2. Candidate Ledger\n",
+            1,
+        ) + MATERIALS_REQUEST
+
+        errors = self.validator.validate_report_text(withdrawn, self.registry)
+
+        expected_surfaces = {
+            "Candidate Ledger",
+            "Review Completion Receipt",
+            "Source Review",
+            "Deep Analysis Selection",
+            "Books Comparison",
+            "Books Review",
+            "Materials Request",
+        }
+        for surface in expected_surfaces:
+            self.assertTrue(
+                any(
+                    "withdrawn_primary_source family SF-001" in error and surface in error
+                    for error in errors
+                ),
+                f"missing withdrawn-source error for {surface}: {errors}",
+            )
+
+    def test_withdrawn_primary_source_example_in_fence_is_not_live_state(self):
+        fenced_example = VALID_DAILY_V21.replace(
+            "\n## 8. Ignored Noise\n",
+            "\n```markdown\n"
+            + WITHDRAWN_PRIMARY_SOURCE_CLOSURE
+            + "```\n\n## 8. Ignored Noise\n",
+            1,
+        )
+        self.assertEqual(
+            [],
+            self.validator.validate_report_text(fenced_example, self.registry),
+        )
 
     def test_v21_daily_requires_visible_status_and_canonical_section_order(self):
         missing_status = VALID_DAILY_V21.replace(

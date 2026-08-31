@@ -127,6 +127,14 @@ sum_k alpha_k = 1
 
 数据配比因而是一种多目标优化：不同 domain 的 loss、能力收益、重复率、质量和合规成本并不相同。不存在脱离模型规模、token budget 与 Evaluation 的通用最优比例。
 
+### Data Reuse 改变的是 Layer-wise Growth，不只是 Epoch 计数
+
+在数据充足、样本近似独立时，扩大 unique corpus 是最直接的能力来源；数据稀缺后重复采样可以让优化器继续沿已有方向下降，却也可能把少数模式放大。更细的解释应把 reuse schedule、sampling bias 与 layer-wise relative norm 一起记录：data loader 拥有样本出现频率，training telemetry 观测各层增长，controller 才能判断重复是在加速尚未学完的结构，还是只强化已占优模式。
+
+重复可能提高有限数据的 compute 利用率，也增加 overfitting、层间失衡和分布偏置；小数据上的速度收益不能自动变成更多 unique data 下的结论。数据充分或 reuse signal 与 held-out capability 冲突时，应回退更低重复率和静态 mixture。`arXiv:2605.20314v1` 的 §2–§5 只支持其 sampling-bias、relative-norm mechanism 与 interventions，§6 明确 repetition 何时不成立；它不证明重复数据普遍优于新增数据。
+
+<!-- source-family:SF-2026-ARXIV-2605-20314 -->
+
 ### 静态 Mixture 到版本化 Data Control Plane
 
 固定 `alpha_k` 最容易复现，也能在各 domain 收敛速度相近时避免 controller 噪声；但真实训练中，选择、
@@ -210,6 +218,33 @@ TTFT 与 KV 成本。数据系统因此应把 `source image -> transformation ->
 过滤器会降低明显噪声，也会带来选择偏差。规则可能误伤代码、公式、方言或低资源语言；模型过滤器会继承评分模型的偏好；过度追求“教科书风格”可能减少真实世界多样性。
 
 因此过滤策略需要同时报告 retention rate 和分布变化，而不能只报告“删除了多少低质量数据”。删除前后各语言、领域、长度和来源发生了什么，才决定模型看见了什么。
+
+### Filter Threshold 必须绑定 Compute-to-Unique-Data Regime
+
+在 compute 少、原始数据多时，高阈值过滤可以减少明显低质 token；当 compute 已能多次覆盖稀缺 corpus 时，继续追求更纯的小集合会同时提高重复率并丢失长尾。Filter owner 因而要把 retained unique tokens、expected passes、model/compute scale 与 domain coverage 绑定到同一 manifest，再用 held-out capability 验证，而不是复用固定 quality score。
+
+扩大 retained set 保留多样性，却带回噪声、许可与训练成本；收紧 threshold 提高平均质量，却可能在 high-compute/data-scarce regime 过早耗尽新信息。数据充足、预算低或风险语料明确时，传统高阈值过滤仍合理。`arXiv:2605.19407v1` 的 §3–§7 只支持其 compute/data/filter scaling studies，§8 不证明某一 filter 或 threshold 跨模型、token budget 与领域保持最优。
+
+<!-- source-family:SF-2026-ARXIV-2605-19407 -->
+
+### 内容无害不等于更新无害：过滤器还要预测 Training Effect
+
+按主题、安全分类或表面质量过滤 benign SFT data，在样本风险与参数更新方向高度相关时便宜而合理；但微调会改变
+模型内部的 compliance boundary，一条内容本身无害的样本仍可能沿着与拒答能力相关的表示方向推动参数。约束从
+“这条文本说了什么”变成“这条文本在当前 checkpoint、训练 recipe 下会造成什么更新”后，filter artifact 需要同时
+记录内容判定与有限的 training-effect evidence：用于抽取 compliance direction 的 checkpoint、被选中的
+safety-critical layers、projection score、threshold 以及最终 admission decision。数据 pipeline 拥有这份证据与
+decision lineage；trainer 只能消费已版本化的过滤结果，不能把训练后才出现的 safety regression 追溯成一个无身份的
+“数据质量问题”。
+
+这种机制用额外 forward/probe 成本、checkpoint coupling 和误拒绝 benign diversity，换取在训练前发现一类表面过滤器
+看不到的 safety-degrading samples。Compliance direction 可能随模型、adapter、数据顺序和 safety policy 漂移，layer
+selection 也可能把 correlation 误写成因果；因此它不能取代内容过滤、训练后 safety regression 或 held-out red-team。
+Probe 未校准、目标 checkpoint 不同或误拒绝成本过高时，保留传统过滤并在小规模 canary 上验证更新仍是更稳健的旧路径。
+`arXiv:2606.00160v1` 的 §IV 与 §V 只支持作者披露模型和任务中的 compliance-vector extraction、layer selection 与
+过滤实验；§VI 不证明相同方向、阈值或层集合能跨模型族、训练配置和生产安全边界复用。
+
+<!-- source-family:SF-2026-ARXIV-2606-00160 -->
 
 ### Synthetic data：从“先生成再打分”到 Specification Compilation
 
@@ -483,23 +518,40 @@ documents
 
 ## Data lineage 是训练可复现性的前提
 
+### 元数据生成也必须是可治理的数据变换
+
+人工维护 schema、统计特征和语义标签在小型、稳定数据集上清晰可靠；数据源和版本增多后，手工登记容易落后于真实 artifact。可以把 schema inference、profiling、semantic annotation 和 Croissant/JSON-LD 等标准化描述组织为一条可重放 pipeline，但它的输出仍是派生 metadata，不是来源事实本身：
+
+```text
+source snapshot + parser revision
+→ schema inference and profiling
+→ semantic annotation
+→ typed metadata artifact
+→ validation and manual override
+```
+
+自动化减少登记成本并改善跨工具发现，却会放大推断错误、敏感字段暴露和模型版本漂移。每次产物应绑定 source snapshot、工具与规则版本、置信边界及人工修订历史；高风险 license、PII 与 label 语义仍需独立检查。数据规模小或 schema 变化极少时，受控 manifest 仍是更简单的基线。
+
+<!-- source-family:SF-2026-ARXIV-2605-15079 -->
+
+### Data Attribution 本身也需要对抗性 Provenance Contract
+
+把 attribution value 当作参与者贡献的被动统计，在参与方诚实且训练集中式时便于定价与审计；分布式学习允许参与者改变本地更新，使全局 utility 几乎不变却抬高自身 credit。因而 attribution pipeline 要记录本地数据/更新身份、计算方法和最终 utility，并以 adversarial audit 检查“credit 增长是否对应可复现贡献”：
+
+```text
+participant data and update lineage
+→ attribution computation
+→ claimed contribution
+→ matched global-utility and attack audit
+→ accept | quarantine | recompute
+```
+
+更强审计增加重算、隐私暴露和机制博弈成本，也无法从相关 attribution 单独证明因果贡献。参与方可信、规模小或 attribution 不触发支付/治理时，简单统计仍可使用；一旦 credit 会改变资源或权益，原始 lineage 与独立 utility evidence 必须保留，不能让参与者同时拥有更新和最终归因权。
+
+<!-- source-family:SF-2026-ARXIV-2605-15520 -->
+
 <!-- daily-20260621:train-data:start -->
 ### 从 sample provenance 到训练生命周期 lineage
-
-<!-- daily-20260628:TRAIN-DATA:start -->
-### Owner-merged minimal durable delta
-
-标注聚合不能静默删除价值分歧。Data owner 应保存 per-annotator label、annotator/threshold identity、disagreement 与 aggregation revision；majority 或 soft label 只是可重建的 materialized view。训练可消费聚合结果，但 evaluation 与 policy review 必须能恢复 contested boundary。
-
-### Trade-off、failure、fallback 与 coexistence
-
-三位 annotator 和单一 HateXplain/BERT slice 不能区分稳定价值阈值与标注噪声；高分歧时保留多视图或转人工，不把 minority label 自动升级为真值。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-28772 — primary arXiv:2606.28772v1; exact-v1 URL=https://arxiv.org/html/2606.28772v1; Method=https://arxiv.org/html/2606.28772v1 — §3 Methods; Evaluation=https://arxiv.org/html/2606.28772v1 — §3.3 Statistical Analysis; 4 Results; Non-proof=https://arxiv.org/html/2606.28772v1 — §Majority Vote Silences Minority Values: Annotator Disagreement at the Hate/Offensive Boundary in HateXplain; 4.1 Disagreement Concentrates at the Value Boundary; 4.5 Boundary Disagreement Is Not Driven by Annotation Error；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
-<!-- daily-20260628:TRAIN-DATA:end -->
-
 
 RoboLineage 把 rollout、review、dataset decision、training run、policy metadata、evaluation、deployment recommendation 与 next-collection plan 变成 typed lineage artifacts，agent 只能在 artifact boundary 内推进。
 
@@ -543,6 +595,26 @@ manifest + content hash；typed graph 只在跨版本、多 derivation 和治理
 
 Lineage 还连接到 checkpoint：只有知道某个 checkpoint 看过哪些 data versions、到哪个 data cursor，才能解释能力变化、恢复训练或执行删除影响分析。
 
+### 从 Shard 可见到 Batch 原子发布
+
+不可变 manifest 解决了“训练读的是哪一版数据”，却不自动解决对象存储中 producer 与 consumer 并发时的
+可见性边界。最简单的旧路径是让 worker 各自写 shard，trainer 看到对象就读取；在单 producer、写入完成后再
+启动训练时，这种方式足够直接。在线预处理、跨 worker packing 与持续训练并存后，单个对象存在不再意味着一个
+global batch 已完整、顺序一致且可以安全回收。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09994:start -->
+更严格的数据平面把 global batch 作为原子 commit unit：producer 先写带 checksum、sample range 与 batch epoch
+的对象，再发布 batch manifest；consumer 只推进到已提交 manifest，并以独立 consumption cursor 确认使用完成；
+GC 只有在 producer publication 与全部必要 consumer acknowledgment 都满足后才能删除。状态所有权由此分成
+`object bytes → producer`、`batch visibility → manifest owner`、`consumption progress → trainer`、`reclamation → GC policy`。
+
+这条路径避免 partial batch、重复消费和过早回收，却引入 manifest 协调、元数据读放大、迟到 worker 与 orphan
+object 清理。对象存储的一致性语义、batch size、worker 数或 recovery policy 改变后必须重新验证；离线静态
+dataset、单 consumer 或可以整体重跑的小任务仍可使用 shard manifest + checkpoint cursor。现有实验只支持其
+公开的对象存储与 64-GPU workload，不证明任意数据湖、训练框架或生产 tail 下都有相同收益。
+[受限证据：arXiv:2605.09994v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09994:end -->
+
 ### AI for Science：实验记录不是普通文档语料
 
 科学数据除了来源和许可，还需要 protocol、instrument、unit、calibration、sample/batch、环境条件、negative result 与人工修订。论文正文中的结论、补充材料中的测量、实验室原始读数和模型生成的 hypothesis 不是同一 Evidence Level；若在解析时压成无类型文本，模型会把推测、观察与结论混为同一 truth source。
@@ -557,6 +629,22 @@ physical sample / simulation state
 ```
 
 `TRAIN-DATA` 只拥有 acquisition、schema、provenance 与 mixture；第66章判断 derived artifact 能支持什么 claim，第81章组织实验/仿真 Workflow，第72章限制危险材料、隐私数据和现实执行权限。AI for Science 因而是跨 owner 的领域组合，不需要独立 Part。
+
+### Unlearning 要对齐 Counterfactual Optimizer State
+
+删除数据后只修正当前参数，适合无状态或近似一阶更新；带 momentum、Adam moments 或 L-BFGS memory 的 optimizer 还保存“如果从未看过该数据，本应不存在”的历史方向。完整删除合同应比较 counterfactual parameter、optimizer memory 与下一步 update，而不是只测当前输出忘记率。
+
+重建这些状态可能接近重训成本，近似修正又会留下残余。高影响删除应保留训练 lineage、optimizer revision 和 matched retrain audit；无法证明等价时标记近似 unlearning，不把一次行为测试升级为完全擦除。
+
+<!-- source-family:SF-2026-ARXIV-2605-17590 -->
+
+### Reasoning-trace Bypass 先排除 Parser 与 Prefill 差异
+
+同一被删除知识在普通问答拒绝、加入 reasoning trace 后又出现，不必然说明 weights 保留了知识；format/parser、system prefix、prefill 长度、seed 与 decoding 也可能改变 elicitation。Unlearning evaluation 必须冻结这些身份，并用 matched intervention 逐项隔离。
+
+该协议提高因果解释，却增加实验矩阵与重复运行。若只观察单一 prompt gap，应报告 bypass evidence 而非 weight-level memory；只有在输入路径对齐后仍稳定恢复，才支持更强残留结论。
+
+<!-- source-family:SF-2026-ARXIV-2605-18891 -->
 
 ## Streaming 与随机性
 
@@ -574,7 +662,21 @@ Shuffle buffer 太小可能产生 source clustering；不同 worker 重复读取
 
 所以 data loader 不是训练外围组件。它参与定义实际 `q(x)`，并与第 35 章 Checkpoint 的可恢复状态直接相连。
 
+### 时间顺序也是 Data / Objective Identity
+
+随机 shuffle 在样本近似平稳、目标不依赖事件顺序时能改善优化混合；事实随时间演化时，它会把旧状态和新状态当作可交换证据。Temporal corpus 应保存 snapshot time、ordering policy、dedup revision 与重复率，并明确训练是在学习“某时点事实”还是“变化规律”。Data pipeline 拥有顺序与版本，trainer 不能在 run 内静默重排后仍复用同一数据身份。
+
+按时间组织能改善事实绑定和时序评估，却削弱 i.i.d. 假设、降低混合随机性并可能放大短期偏差；非时间任务或数据稀疏时，shuffle 仍是更稳健的基线。arXiv:2605.22769v1 的实验只支持其 corpus、ordering 与评估协议，不证明所有预训练任务都应采用时间顺序。
+
+<!-- source-family:SF-2026-ARXIV-2605-22769 -->
+
 ## 数据质量不能只看 validation loss
+
+### Synthetic Trajectory Weight 可以由真实任务外层目标拥有
+
+先生成再由外部 judge 二值过滤实现简单，却把 judge 偏差直接写进数据。bilevel 选择让下层模型在加权 synthetic multi-turn trajectories 上训练，上层 reweighting head 依据 held-out real trajectories 的损失连续调整每条权重。收益是数据选择与真实目标对齐，代价是双层优化昂贵、held-out 集可能被反复适配，且权重难解释；可靠 judge 或低数据量时，离散过滤仍更稳健。该证据只表明特定任务上的连续重加权有效，不证明它消除了 synthetic bias。
+
+<!-- source-family:SF-2026-ARXIV-2605-24743 -->
 
 Validation loss 能回答 held-out distribution 上的平均预测质量，却可能掩盖：
 
@@ -587,6 +689,49 @@ Validation loss 能回答 held-out distribution 上的平均预测质量，却�
 数据实验应把 model outcome 与 pipeline changes 连接起来。至少同时记录 token-level loss、能力切片、memorization/privacy tests、数据覆盖和训练效率。
 
 DataComp-LM 一类 controlled data benchmark 的价值也在这里：保持模型与计算预算相对可比，才能把质量差异更可信地归因到数据策略，而不是隐藏在规模变化中。
+
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-FOLD-ONLINE-DEDUP:start -->
+在线去重从反复扫描 LSH bucket 演进为持续维护的 HNSW：数据面把文档映射为适配 Jaccard 的 bitmap signature，索引 owner 负责增量插入与候选搜索，SIMD 和 cached popcount 只优化执行。它用额外索引状态换在线吞吐；证据只覆盖给定语料、signature 和 reference-label 设置，不能证明跨语言、任意相似度或最终训练质量。
+<!-- semantic-body-binding:SF-FOLD-ONLINE-DEDUP:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-13873:start -->
+source-level unlearning若是硬需求，应在训练时把shared backbone与source-addressable sparse sinks分离，并把disable-sink作为部署revoke动作。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-13873:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16110:start -->
+machine-unlearning 验收需要无需 scratch retrain/shadow fleet 的 proof-of-ignorance audit，并显式保存攻击面与误判边界。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16110:end -->
+
+### Post-training Data Selection 是当前 Policy 的在线控制环
+
+静态 difficulty sampling 在 policy 固定时可重放且易审计；RL 过程中模型能力移动后，长期保留已学会或完全不可学的样本会浪费 rollout。在线 selector 可以依据当前 policy 的 reward/gradient frontier 估计 active learning zone，再决定采样、降权或延后。
+
+Selector 只拥有数据 admission，不拥有 objective；它用更高数据效率换 policy-dependent feedback、分布收缩和额外观测成本。frontier 估计不稳或需要严格复现实验时，回退冻结 mixture，并保留所有采样概率与 policy revision。
+
+<!-- source-family:SF-2026-ARXIV-2605-17003 -->
+
+### pass@1 提升可能掩盖 Solution Coverage 收缩
+
+只优化最可能成功路径会提高 pass@1，却可能把 base model 的多个有效 reasoning forks 压缩成单一路线，使 pass@k 或分布外恢复能力下降。数据构建应显式保存 decision points 与替代分支，训练和评估同时报告单次成功与多样覆盖：
+
+```text
+problem + verified solution forks
+→ decision-point-aware synthesis
+→ training mixture
+→ pass@1 + pass@k + diversity/validity slices
+```
+
+鼓励多样性会增加生成、验证和训练成本，也可能保留低质量噪声；不存在多解需求或部署只允许确定输出时，聚焦最优路径仍合理。作者观察只属于其 reasoning task 与 decoding，不证明所有 post-training 都会收缩覆盖。
+
+<!-- source-family:SF-2026-ARXIV-2605-17026 -->
+
+### 数据阶段切换也会改变最优 Batch 控制
+
+沿用稳定训练阶段的大 batch 穿过 quality transition，在分布平稳时可以维持吞吐；新数据阶段刚切换时，梯度信号与噪声结构同时改变，固定 batch 会稀释短暂但有用的方向。Data/optimizer control owner 可以在切换点先降 batch、低位积累信号，再逐步 ramp up 抑制噪声。收益是把 phase transition 变成显式控制状态，代价是吞吐波动和额外调参；切换检测错误、数据异质性或 ramp 过快都会放大不稳定。没有可信 transition signal 时，固定 batch 或保守 warmup 仍更合适。exact-v1 只支持论文的理论结构与所测 midtraining 配置，不证明该 schedule 对所有模型规模与集群都优。<!-- source-family:SF-2026-ARXIV-2605-25698 -->
 
 ## 本章在知识树中的位置
 
@@ -602,6 +747,12 @@ Raw sources
 ```
 
 本章定义能力生产链的输入分布。第 28 章解释 next-token objective 怎样消费这些 tokens；第 35 章负责保存 data cursor 与 dataset identity；第 66 章再把 evaluation dataset、contamination evidence、slice 与 deployment population 组织成评估契约。
+
+## 从机制演进到系统设计
+
+训练数据从静态语料集合演进成有版本的生产系统：采集和过滤决定候选分布，去重与 repeat policy 决定 compute 是否反复消费同一信号，mixture/controller 决定不同 domain 在训练阶段获得多少预算，synthetic-data pipeline 则把 generator、validator 与 lineage 引入数据面。
+
+新的控制能力改善覆盖和成本，却会引入 controller reward 偏差、合成错误放大、semantic near-duplicate 漏检和 provenance 断裂。数据 owner 因而必须保存 source、transform、sample、split、mixture、checkpoint consumption 与删除证据；行为或 feature attribution只能提供复核线索，不能替代删除/重训对照。固定 mixture、人工抽样和保留原样本仍是 drift 或归因不可靠时的 fallback。
 
 ## 自检问题
 
@@ -628,62 +779,6 @@ Raw sources
 
 更可靠的数据系统必须同时管理采集协议、质量、覆盖、partition ownership、许可与 consent、重复、污染、
 provenance、合规和可复现性。数据决定能力生产的上游边界，也决定后续任何 loss 下降究竟代表什么。
-
-<!-- recovered-daily-20260623:TRAIN-DATA:start -->
-## 2026-06-23 evidence integration — TRAIN-DATA
-
-相邻章 `books/part-04-training-system/28-pretraining.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22883**：CLI-Universe: Towards Verifiable Task Synthesis Engine for Terminal Agents 的 exact-v1 机制为：To overcome this, we introduce CLI-Universe, a principled synthesis engine that constructs terminal-agent tasks. 因此 把任务/样本生成、可执行验证、过滤与训练 lineage 绑定。 该 family 的 failure pressure 是：While recent LLM-based terminal agents have demonstrated promising capabilities, the scarcity of high-quality, executable training data remains a critical bottleneck. 披露的 evaluation signal 是：Remarkably, fine-tuning Qwen3-32B on CLI-Universe-6K achieves 33.4% on Terminal-Bench 2.0. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-28386**：Data Provenance for Image Auto-Regressive Generation 的 exact-v1 机制为：Leveraging this, we present a post-hoc framework that enables the robust detection of such patterns for provenance tracing. 因此 把任务/样本生成、可执行验证、过滤与训练 lineage 绑定。 该 family 的 failure pressure 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 披露的 evaluation signal 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22883` — primary `arXiv:2606.22883v1`; Method=`arXiv:2606.22883v1 — §3 Method; §3.2 Task Blueprint Construction; §3.4 Test Construction and Executable Filtering`; Evaluation=`arXiv:2606.22883v1 — §4.3 Scaling Analysis; §4.4.1 Cross-benchmark transfer; §4.5 Error Study`; non-proof=`arXiv:2606.22883v1 — §5 Conclusion; §Appendix C Failure Mode Examples`; fallback=该 family 的 failure pressure 是：While recent LLM-based terminal agents have demonstrated promising capabilities, the scarcity of high-quality, executable training data remains a critical bottleneck. 披露的 evaluation signal 是：Remarkably, fine-tuning Qwen3-32B on CLI-Universe-6K achieves 33.4% on Terminal-Bench 2.0. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-28386` — primary `arXiv:2606.28386v1`; Method=`arXiv:2606.28386v1 — §3 Method; §3.3 A Framework for Data Provenance in IARs; §3.3.1 QuantLoss`; Evaluation=`arXiv:2606.28386v1 — §4 Empirical Evaluation; §4.1 Experimental Setup; §4.2–§4.4 Results and Ablations`; non-proof=`arXiv:2606.28386v1 — §R Adaptive Attack; §W Comparison with Membership Inference Baselines; §5 Conclusions`; fallback=该 family 的 failure pressure 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 披露的 evaluation signal 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:TRAIN-DATA:end -->
-
-<!-- recovered-daily-20260624:TRAIN-DATA:start -->
-## 2026-06-24 evidence integration — TRAIN-DATA
-
-相邻章 `books/part-04-training-system/28-pretraining.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24133**：把固定或单目标 data mixture 改为 SAC controller：state 汇聚 domain loss/lexical diversity/weight-norm，action 写回下一训练阶段的 domain weights，多目标 reward 决定调度。 The Pile、给定 16-layer/2048-dim recipe 与 reward sensitivity 不证明跨 tokenizer、optimizer、数据污染或超大规模 pretraining 仍有相同收益。
-- **SF-2026-ARXIV-2606-24998**：数据去重从 hygiene 建议升级为 compute allocation contract：相同样本的 internal repetition 先改善后破坏 eval loss，data owner 应记录 repeat count、unique pool 与 model-size-dependent peak。 结论绑定 synthetic repeated pools、模型尺度与 loss-floor fit；自然语料的语义近重复、curriculum 与 downstream contamination 未证明，不能由单一 repeat threshold 自动删除。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-24133: `arXiv:2606.24133v1`; exact-v1 URL=`https://arxiv.org/html/2606.24133v1`; Method=`https://arxiv.org/html/2606.24133v1 — §2 Methodology: The Holistic Data Scheduler; 2.2 Online Data Mixing`; Evaluation=`https://arxiv.org/html/2606.24133v1 — §3 Experiments and Analysis; 3.1 Experimental Setup`; Non-proof=`The Pile、给定 16-layer/2048-dim recipe 与 reward sensitivity 不证明跨 tokenizer、optimizer、数据污染或超大规模 pretraining 仍有相同收益。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24998: `arXiv:2606.24998v1`; exact-v1 URL=`https://arxiv.org/html/2606.24998v1`; Method=`https://arxiv.org/html/2606.24998v1 — §3 Methods; Repeated-pool construction`; Evaluation=`https://arxiv.org/html/2606.24998v1 — §4 Results; F Training and Evaluation Details`; Non-proof=`结论绑定 synthetic repeated pools、模型尺度与 loss-floor fit；自然语料的语义近重复、curriculum 与 downstream contamination 未证明，不能由单一 repeat threshold 自动删除。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:TRAIN-DATA:end -->
-
-<!-- recovered-daily-20260625:TRAIN-DATA:start -->
-## 2026-06-25 evidence integration — TRAIN-DATA
-
-- **SF-2026-ARXIV-2606-25388**：`III System Overview; IV Methodology; IV-F Execution-Guided Validation and Control` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VII Discussion and Future Work` 是 `TabClean: Reusable LLM-Synthesized Programs for Tabular Data Cleaning` 的 source-specific 反例/局限边界；若运行条件离开 `V Experimental Evaluation; V-A Experimental Setup` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25871**：`3 Our Approach; 3.1 System Architecture; 3.3 Per-Class Isotonic Calibration; 3.4 Cascade Decision Logic` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `5 Production Deployment and Discussion; sponsored-search relevance boundary` 是 `AutoRelAnnotator: Calibrated Model Cascades for Cost-Efficient Relevance Evaluation in Sponsored Search` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments and Evaluation; 4.2 Dataset and Setup; 4.5 Cascade Performance` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25996**：`2 Autodata; 2.1 Agentic Self-Instruct; 4 Meta Optimization of the Data Scientist` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusion and Discussion; Hacking & limitations; A Token Efficiency and Truncation` 是 `Autodata: An agentic data scientist to create high quality synthetic data` 的 source-specific 反例/局限边界；若运行条件离开 `3 Experiments; CS, legal, and scientific reasoning tasks` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25388**：Primary `arXiv:2606.25388v1`；Method `https://arxiv.org/html/2606.25388v1 — §III System Overview; IV Methodology; IV-F Execution-Guided Validation and Control`；Evaluation `https://arxiv.org/html/2606.25388v1 — §V Experimental Evaluation; V-A Experimental Setup`；未证明边界 `https://arxiv.org/html/2606.25388v1 — §VII Discussion and Future Work`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25871**：Primary `arXiv:2606.25871v1`；Method `https://arxiv.org/html/2606.25871v1 — §3 Our Approach; 3.1 System Architecture; 3.3 Per-Class Isotonic Calibration; 3.4 Cascade Decision Logic`；Evaluation `https://arxiv.org/html/2606.25871v1 — §4 Experiments and Evaluation; 4.2 Dataset and Setup; 4.5 Cascade Performance`；未证明边界 `https://arxiv.org/html/2606.25871v1 — §5 Production Deployment and Discussion; sponsored-search relevance boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25996**：Primary `arXiv:2606.25996v1`；Method `https://arxiv.org/html/2606.25996v1 — §2 Autodata; 2.1 Agentic Self-Instruct; 4 Meta Optimization of the Data Scientist`；Evaluation `https://arxiv.org/html/2606.25996v1 — §3 Experiments; CS, legal, and scientific reasoning tasks`；未证明边界 `https://arxiv.org/html/2606.25996v1 — §6 Conclusion and Discussion; Hacking & limitations; A Token Efficiency and Truncation`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:TRAIN-DATA:end -->
-
-<!-- june29-owner:TRAIN-DATA:start -->
-## 2026-06-29 约束变化与机制增量
-
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29171`）。** 现有 Data 正文拥有 lineage、dedup、contamination 与删除证据，却缺少从训练 pair 经 SAE feature 归因到 learned behavioral policy 的中间可审计层。 因此本次把这些增量合并到同一知识 owner：普通 sample lineage 只能回答数据来自哪里；symbolic mechanistic attribution 进一步把样本影响连接到可解释 behavioral policy，使数据 owner 能把选择、删除或复核请求落到行为证据链。归因仍是模型化证据，符号解释不稳定时保留原数据并回退重训/对照实验。 共同代价与回退边界是：只在 Llama-3.2-3B-Instruct refusal proxy、特定 SAE 与 200 个 SFT pair 上验证一阶符号归因；feature label、Ridge fidelity 与 first-order approximation 不等于真实删除/重训因果。保留原样本与重训对照。
-
-### 2026-06-29 source-specific Review notes
-
-Review note：`SF-2026-ARXIV-2606-29171`；Method `https://arxiv.org/html/2606.29171v1 — §3 Symbolic Mechanistic Data Attribution Framework; 3.2 Symbolic Policy Model; 3.3 Influence Computation`；Evaluation `https://arxiv.org/html/2606.29171v1 — §4 Experimental Setup; 5 Results`；未证明边界 `https://arxiv.org/html/2606.29171v1 — §6 Discussion; Symbolic model fidelity and scope; First-order approximation`。
-<!-- june29-owner:TRAIN-DATA:end -->
 
 ## Review notes
 
@@ -738,3 +833,180 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2603.17024
 - Environment-free Synthetic Data Generation for API-Calling Agents（synthetic API transition lineage；Status: Experimental；simulator response 不是环境事实）:
   https://arxiv.org/abs/2607.16900v1
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28772 — primary arXiv:2606.28772v1; exact-v1 URL=https://arxiv.org/html/2606.28772v1; Method=https://arxiv.org/html/2606.28772v1 — §3 Methods; Evaluation=https://arxiv.org/html/2606.28772v1 — §3.3 Statistical Analysis; 4 Results; Non-proof=https://arxiv.org/html/2606.28772v1 — §Majority Vote Silences Minority Values: Annotator Disagreement at the Hate/Offensive Boundary in HateXplain; 4.1 Disagreement Concentrates at the Value Boundary; 4.5 Boundary Disagreement Is Not Driven by Annotation Error；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22883` — primary `arXiv:2606.22883v1`; Method=`arXiv:2606.22883v1 — §3 Method; §3.2 Task Blueprint Construction; §3.4 Test Construction and Executable Filtering`; Evaluation=`arXiv:2606.22883v1 — §4.3 Scaling Analysis; §4.4.1 Cross-benchmark transfer; §4.5 Error Study`; non-proof=`arXiv:2606.22883v1 — §5 Conclusion; §Appendix C Failure Mode Examples`; fallback=该 family 的 failure pressure 是：While recent LLM-based terminal agents have demonstrated promising capabilities, the scarcity of high-quality, executable training data remains a critical bottleneck. 披露的 evaluation signal 是：Remarkably, fine-tuning Qwen3-32B on CLI-Universe-6K achieves 33.4% on Terminal-Bench 2.0. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-28386` — primary `arXiv:2606.28386v1`; Method=`arXiv:2606.28386v1 — §3 Method; §3.3 A Framework for Data Provenance in IARs; §3.3.1 QuantLoss`; Evaluation=`arXiv:2606.28386v1 — §4 Empirical Evaluation; §4.1 Experimental Setup; §4.2–§4.4 Results and Ablations`; non-proof=`arXiv:2606.28386v1 — §R Adaptive Attack; §W Comparison with Membership Inference Baselines; §5 Conclusions`; fallback=该 family 的 failure pressure 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 披露的 evaluation signal 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24133: `arXiv:2606.24133v1`; exact-v1 URL=`https://arxiv.org/html/2606.24133v1`; Method=`https://arxiv.org/html/2606.24133v1 — §2 Methodology: The Holistic Data Scheduler; 2.2 Online Data Mixing`; Evaluation=`https://arxiv.org/html/2606.24133v1 — §3 Experiments and Analysis; 3.1 Experimental Setup`; Non-proof=`The Pile、给定 16-layer/2048-dim recipe 与 reward sensitivity 不证明跨 tokenizer、optimizer、数据污染或超大规模 pretraining 仍有相同收益。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24998: `arXiv:2606.24998v1`; exact-v1 URL=`https://arxiv.org/html/2606.24998v1`; Method=`https://arxiv.org/html/2606.24998v1 — §3 Methods; Repeated-pool construction`; Evaluation=`https://arxiv.org/html/2606.24998v1 — §4 Results; F Training and Evaluation Details`; Non-proof=`结论绑定 synthetic repeated pools、模型尺度与 loss-floor fit；自然语料的语义近重复、curriculum 与 downstream contamination 未证明，不能由单一 repeat threshold 自动删除。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25388**：Primary `arXiv:2606.25388v1`；Method `https://arxiv.org/html/2606.25388v1 — §III System Overview; IV Methodology; IV-F Execution-Guided Validation and Control`；Evaluation `https://arxiv.org/html/2606.25388v1 — §V Experimental Evaluation; V-A Experimental Setup`；未证明边界 `https://arxiv.org/html/2606.25388v1 — §VII Discussion and Future Work`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25871**：Primary `arXiv:2606.25871v1`；Method `https://arxiv.org/html/2606.25871v1 — §3 Our Approach; 3.1 System Architecture; 3.3 Per-Class Isotonic Calibration; 3.4 Cascade Decision Logic`；Evaluation `https://arxiv.org/html/2606.25871v1 — §4 Experiments and Evaluation; 4.2 Dataset and Setup; 4.5 Cascade Performance`；未证明边界 `https://arxiv.org/html/2606.25871v1 — §5 Production Deployment and Discussion; sponsored-search relevance boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25996**：Primary `arXiv:2606.25996v1`；Method `https://arxiv.org/html/2606.25996v1 — §2 Autodata; 2.1 Agentic Self-Instruct; 4 Meta Optimization of the Data Scientist`；Evaluation `https://arxiv.org/html/2606.25996v1 — §3 Experiments; CS, legal, and scientific reasoning tasks`；未证明边界 `https://arxiv.org/html/2606.25996v1 — §6 Conclusion and Discussion; Hacking & limitations; A Token Efficiency and Truncation`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+#### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29171`；Method `https://arxiv.org/html/2606.29171v1 — §3 Symbolic Mechanistic Data Attribution Framework; 3.2 Symbolic Policy Model; 3.3 Influence Computation`；Evaluation `https://arxiv.org/html/2606.29171v1 — §4 Experimental Setup; 5 Results`；未证明边界 `https://arxiv.org/html/2606.29171v1 — §6 Discussion; Symbolic model fidelity and scope; First-order approximation`。
+
+### Source-family integration record
+
+<!-- daily-20260628:TRAIN-DATA:start -->
+### Owner-merged minimal durable delta
+
+标注聚合不能静默删除价值分歧。Data owner 应保存 per-annotator label、annotator/threshold identity、disagreement 与 aggregation revision；majority 或 soft label 只是可重建的 materialized view。训练可消费聚合结果，但 evaluation 与 policy review 必须能恢复 contested boundary。
+
+### Trade-off、failure、fallback 与 coexistence
+
+三位 annotator 和单一 HateXplain/BERT slice 不能区分稳定价值阈值与标注噪声；高分歧时保留多视图或转人工，不把 minority label 自动升级为真值。
+
+<!-- daily-20260628:TRAIN-DATA:end -->
+
+<!-- recovered-daily-20260623:TRAIN-DATA:start -->
+### 2026-06-23 evidence integration — TRAIN-DATA
+
+相邻章 `books/part-04-training-system/28-pretraining.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22883**：CLI-Universe: Towards Verifiable Task Synthesis Engine for Terminal Agents 的 exact-v1 机制为：To overcome this, we introduce CLI-Universe, a principled synthesis engine that constructs terminal-agent tasks. 因此 把任务/样本生成、可执行验证、过滤与训练 lineage 绑定。 该 family 的 failure pressure 是：While recent LLM-based terminal agents have demonstrated promising capabilities, the scarcity of high-quality, executable training data remains a critical bottleneck. 披露的 evaluation signal 是：Remarkably, fine-tuning Qwen3-32B on CLI-Universe-6K achieves 33.4% on Terminal-Bench 2.0. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-28386**：Data Provenance for Image Auto-Regressive Generation 的 exact-v1 机制为：Leveraging this, we present a post-hoc framework that enables the robust detection of such patterns for provenance tracing. 因此 把任务/样本生成、可执行验证、过滤与训练 lineage 绑定。 该 family 的 failure pressure 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 披露的 evaluation signal 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:TRAIN-DATA:end -->
+
+<!-- recovered-daily-20260624:TRAIN-DATA:start -->
+### 2026-06-24 evidence integration — TRAIN-DATA
+
+相邻章 `books/part-04-training-system/28-pretraining.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24133**：把固定或单目标 data mixture 改为 SAC controller：state 汇聚 domain loss/lexical diversity/weight-norm，action 写回下一训练阶段的 domain weights，多目标 reward 决定调度。 The Pile、给定 16-layer/2048-dim recipe 与 reward sensitivity 不证明跨 tokenizer、optimizer、数据污染或超大规模 pretraining 仍有相同收益。
+- **SF-2026-ARXIV-2606-24998**：数据去重从 hygiene 建议升级为 compute allocation contract：相同样本的 internal repetition 先改善后破坏 eval loss，data owner 应记录 repeat count、unique pool 与 model-size-dependent peak。 结论绑定 synthetic repeated pools、模型尺度与 loss-floor fit；自然语料的语义近重复、curriculum 与 downstream contamination 未证明，不能由单一 repeat threshold 自动删除。
+
+<!-- recovered-daily-20260624:TRAIN-DATA:end -->
+
+<!-- recovered-daily-20260625:TRAIN-DATA:start -->
+### 2026-06-25 evidence integration — TRAIN-DATA
+
+- **SF-2026-ARXIV-2606-25388**：`III System Overview; IV Methodology; IV-F Execution-Guided Validation and Control` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VII Discussion and Future Work` 是 `TabClean: Reusable LLM-Synthesized Programs for Tabular Data Cleaning` 的 source-specific 反例/局限边界；若运行条件离开 `V Experimental Evaluation; V-A Experimental Setup` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25871**：`3 Our Approach; 3.1 System Architecture; 3.3 Per-Class Isotonic Calibration; 3.4 Cascade Decision Logic` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `5 Production Deployment and Discussion; sponsored-search relevance boundary` 是 `AutoRelAnnotator: Calibrated Model Cascades for Cost-Efficient Relevance Evaluation in Sponsored Search` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments and Evaluation; 4.2 Dataset and Setup; 4.5 Cascade Performance` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25996**：`2 Autodata; 2.1 Agentic Self-Instruct; 4 Meta Optimization of the Data Scientist` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusion and Discussion; Hacking & limitations; A Token Efficiency and Truncation` 是 `Autodata: An agentic data scientist to create high quality synthetic data` 的 source-specific 反例/局限边界；若运行条件离开 `3 Experiments; CS, legal, and scientific reasoning tasks` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:TRAIN-DATA:end -->
+
+<!-- june29-owner:TRAIN-DATA:start -->
+### 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29171`）。** 现有 Data 正文拥有 lineage、dedup、contamination 与删除证据，却缺少从训练 pair 经 SAE feature 归因到 learned behavioral policy 的中间可审计层。 因此本次把这些增量合并到同一知识 owner：普通 sample lineage 只能回答数据来自哪里；symbolic mechanistic attribution 进一步把样本影响连接到可解释 behavioral policy，使数据 owner 能把选择、删除或复核请求落到行为证据链。归因仍是模型化证据，符号解释不稳定时保留原数据并回退重训/对照实验。 共同代价与回退边界是：只在 Llama-3.2-3B-Instruct refusal proxy、特定 SAE 与 200 个 SFT pair 上验证一阶符号归因；feature label、Ridge fidelity 与 first-order approximation 不等于真实删除/重训因果。保留原样本与重训对照。
+
+<!-- june29-owner:TRAIN-DATA:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-FOLD-ONLINE-DEDUP:start -->
+- `SF-FOLD-ONLINE-DEDUP` — Daily `2026-06-03`；primary `arXiv:2606.03001v1`；Books review `books-review:SF-FOLD-ONLINE-DEDUP`。
+
+  **已吸收的语义增量：** FOLD replaces repeatedly rescanned LSH buckets with an incrementally maintained HNSW index over bitmap signatures aligned to Jaccard similarity, then implements the search path in a multithreaded FAISS C++/Python system with SIMD and cached-popcount optimizations. Boundary: The exact-v1 demonstrates an online deduplication design under the selected Jaccard-signature and HNSW assumptions; it does not establish recall or cost for arbitrary languages, similarity functions, distribution drift or a complete training-quality outcome.
+<!-- daily-books-trace:SF-FOLD-ONLINE-DEDUP:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11127:start -->
+- `SF-2026-ARXIV-2606-11127` — Daily `2026-06-10`；primary `arXiv:2606.11127v1`；Books review `books-review:SF-2026-ARXIV-2606-11127`。
+
+  **已吸收的语义增量：** 在训练数据章节补一段 provenance-preserving synthetic curation：faithfulness/reward 双 gate 与 diagnosed repair；不得把阈值或 judge 规模写成通用 release SLO。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11127:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12385:start -->
+- `SF-2026-ARXIV-2606-12385` — Daily `2026-06-11`；primary `arXiv:2606.12385v1`；Books review `books-review:SF-2026-ARXIV-2606-12385`。
+
+  **已吸收的语义增量：** 模型卡不足以表达递归 training dependencies；provenance 应以 artifact identity 和 operation-centered edges 递归解析生成、过滤、judge 与 selection 关系。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12385:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12764:start -->
+- `SF-2026-ARXIV-2606-12764` — Daily `2026-06-11`；primary `arXiv:2606.12764v1`；Books review `books-review:SF-2026-ARXIV-2606-12764`。
+
+  **已吸收的语义增量：** Code training-data audit 必须检测 functional equivalence，而不能只依赖文本 overlap；应以 exposed target 对未 exposed reference 做 counterfactual execution comparison。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12764:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18284:start -->
+- `SF-2026-ARXIV-2606-18284` — Daily `2026-06-11`；primary `arXiv:2606.18284v1`；Books review `books-review:SF-2026-ARXIV-2606-18284`。
+
+  **已吸收的语义增量：** 训练 task generator 时可用一次 solver-labeled pool 训练 activation probe，把 targeted solve-rate 作为 amortized reward；最终仍由 held-out solver 验证。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18284:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13629:start -->
+- `SF-2026-ARXIV-2606-13629` — Daily `2026-06-12`；primary `arXiv:2606.13629v1`；Books review `books-review:SF-2026-ARXIV-2606-13629`。
+
+  **已吸收的语义增量：** synthetic-data inference 必须把 generator、selection/filter与downstream sample视为同一随机过程，并检验 task-level exchangeability 后才报告置信区间
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13629:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13873:start -->
+- `SF-2026-ARXIV-2606-13873` — Daily `2026-06-12`；primary `arXiv:2606.13873v1`；Books review `books-review:SF-2026-ARXIV-2606-13873`。
+
+  **已吸收的语义增量：** source-level unlearning若是硬需求，应在训练时把shared backbone与source-addressable sparse sinks分离，并把disable-sink作为部署revoke动作
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13873:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15216:start -->
+- `SF-2026-ARXIV-2606-15216` — Daily `2026-06-14`；primary `arXiv:2606.15216v1`；Books review `books-review:SF-2026-ARXIV-2606-15216`。
+
+  **已吸收的语义增量：** pretraining subset selection 应在 gradient space 以 set-level diversity 与 quality 联合优化，而不是逐样本 top-score。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15216:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15367:start -->
+- `SF-2026-ARXIV-2606-15367` — Daily `2026-06-14`；primary `arXiv:2606.15367v1`；Books review `books-review:SF-2026-ARXIV-2606-15367`。
+
+  **已吸收的语义增量：** deep-research 训练数据应从 graph-grounded task 生成，经真实 AgentLoop rollout，再用多维 trajectory verifier 决定收录。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15367:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16110:start -->
+- `SF-2026-ARXIV-2606-16110` — Daily `2026-06-16`；primary `arXiv:2606.16110v1`；Books review `books-review:SF-2026-ARXIV-2606-16110`。
+
+  **已吸收的语义增量：** machine-unlearning 验收需要无需 scratch retrain/shadow fleet 的 proof-of-ignorance audit，并显式保存攻击面与误判边界
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16110:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17122:start -->
+- `SF-2026-ARXIV-2606-17122` — Daily `2026-06-16`；primary `arXiv:2606.17122v1`；Books review `books-review:SF-2026-ARXIV-2606-17122`。
+
+  **已吸收的语义增量：** instant unlearning 可把 passport 嵌入 LoRA 表示并以 authority-mediated verification 验证配置，但 deactivate credential 不自动证明所有信息删除
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17122:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21337:start -->
+- `SF-2026-ARXIV-2606-21337` — Daily `2026-06-20`；primary `arXiv:2606.21337v1`；Books review `books-review:SF-2026-ARXIV-2606-21337`。
+
+  **已吸收的语义增量：** 训练数据 pipeline 应将任务生成、过滤、difficulty routing 与训练后 validation 绑定同一 lineage，synthetic volume 不是质量证明
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21337:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22142:start -->
+- `SF-2026-ARXIV-2606-22142` — Daily `2026-06-21`；primary `arXiv:2606.22142v1`；Books review `books-review:SF-2026-ARXIV-2606-22142`。
+
+  **已吸收的语义增量：** RoboLineage 把 rollout、review、dataset decision、training run、policy metadata、evaluation、deployment recommendation 与 next-collection plan 变成 typed lineage artifacts，agent 只能在 artifact boundary 内推进。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22142:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06442:start -->
+- `SF-2026-ARXIV-2607-06442` — Daily `2026-07-08`；primary `arXiv:2607.06442v1`；Books review `books-review:SF-2026-ARXIV-2607-06442`。
+
+  **已吸收的语义增量：** 新增证据边界：Replace trajectory-count coverage with reusable-structure coverage: allocate budget over primitive compositions and transition interfaces under diminishing returns, then choose stable representatives within each structural bucket. 该 delta 已进入 `books/part-04-training-system/27-data.md#L393`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06442:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06558:start -->
+- `SF-2026-ARXIV-2607-06558` — Daily `2026-07-08`；primary `arXiv:2607.06558v1`；Books review `books-review:SF-2026-ARXIV-2607-06558`。
+
+  **已吸收的语义增量：** 新增证据边界：Decouple operator time from physical robot recording by driving an action-conditioned video world model with human hand poses, retargeting the pose stream to a robot schema and treating the generated egocentric sequence plus action label as a derived training trajectory. 该 delta 已进入 `books/part-04-training-system/27-data.md#L411`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06558:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16900:start -->
+- `SF-2026-ARXIV-2607-16900` — Daily `2026-07-19`；primary `arXiv:2607.16900v1`；Books review `books-review:SF-2026-ARXIV-2607-16900`。
+
+  **已吸收的语义增量：** 新增证据边界：API specifications seed solvable tasks; a teacher proposes calls, a history-conditioned simulator produces derived responses, schema and semantic checks filter transitions, and a trajectory judge admits SFT traces before real-environment evaluation. 该 delta 已进入 `books/part-04-training-system/27-data.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16900:end -->

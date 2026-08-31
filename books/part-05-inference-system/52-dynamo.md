@@ -298,6 +298,23 @@ observe queue / latency / KV / throughput
 
 系统需要 request id、state generation、worker readiness、draining、transfer timeout 和 retry boundary。生成过程通常不能像幂等 GET 一样任意重放；重试可能得到不同 sampling 结果，已返回 token 也无法收回。
 
+### Wide-EP 的部分 Rank 恢复是一项联合 Runtime Contract
+
+普通 worker failure 可以把请求迁走并重算；宽 Expert Parallel MoE 中，一个 rank 丢失还会同时改变 live membership、
+expert coverage、通信 group 与已捕获 CUDA graph 的执行身份。只让 membership service 删除失败 worker 会留下 expert
+空洞；只复制 expert 又可能让旧 graph、buffer address 或 collective topology 继续引用失效 rank。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10670:start -->
+可恢复路径需要把三个提交合成一个 epoch：先冻结受影响请求，收缩 live membership；再从具备正确 model/expert
+revision 的冗余状态恢复 coverage；最后重建 collective、buffer 与 CUDA-graph execution identity，全部通过后才发布
+新 routing epoch。旧请求若已产生不可撤回 token，只能按 stream policy 终止或显式重试，不能假装无缝迁移。
+
+这用冗余 expert state、额外 HBM、reconfiguration latency 与更复杂的 admission 换 partial-rank survival；它只覆盖
+预先声明的故障模型，无法处理模型状态共同损坏、控制面分区或不足以恢复 expert coverage 的多点故障。小规模 EP、
+无冗余预算或恢复时间超过 SLO 时，整组重启和请求级 fallback 仍更清楚。公开实验只支持其 partial-rank failure 与
+给定 serving stack，不构成任意 MoE fleet 的 availability 保证。[受限证据：arXiv:2605.10670v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10670:end -->
+
 ## 与第55章的边界
 
 本章回答 Dynamo 怎样组合 routing、state transfer、cache tiering 和 planner。第55章从第一性原理回答 PD separation 何时值得，以及 transfer/interference 的 break-even。Dynamo 是一种实现，不是 PD 有效性的证明。
@@ -318,6 +335,12 @@ Serving engines
 在 Scheduling 横线上，第 46 章拥有单 engine 的 iteration-level token scheduling，本章把决策扩展到 worker routing、KV locality 与 capacity planning，第 53、56 章再分别处理声明式 topology 和跨时间尺度策略。这里是调度责任的分层，不是一个全局 scheduler 取代所有局部 scheduler。
 
 在 Memory 横线上，第 47 章拥有单 engine 的 KV block mapping，本章扩展到多 worker transfer 和多层 cache，第 54、55 章再分别给出总 HBM budget 与 PD handoff break-even。Runtime tiering 改变 state placement，不改变 KV 的模型语义。
+
+## 从机制演进到系统设计
+
+Dynamo 类分布式 runtime 从 queue/KV-aware routing 演进到显式 state edge 后，data edge 与 KV-state edge 必须分别表达 compatibility、fork、compose、transfer、evict 与 recompute policy。edge/cloud split 还要求把语义 work 与网络/算力资源联合路由，而不是把模型切分当成固定部署常量。
+
+显式状态编排提高复用和可迁移性，却增加全局 index、epoch、无线/网络预测和失效一致性。状态 identity 或资源模型失准时，应回到本地执行、固定 split 或无共享路由；本章拥有 runtime plane，具体 PD handoff 继续交给第 55 章。
 
 ## 自检问题
 
@@ -368,3 +391,17 @@ Official / primary entry points：
   https://github.com/ai-dynamo/dynamo/releases/tag/v1.4.1
 - Dynamo PR #13432（overload mark reconciliation and remaining event-stream boundary）:
   https://github.com/ai-dynamo/dynamo/pull/13432
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08116:start -->
+- `SF-2026-ARXIV-2607-08116` — Daily `2026-07-10`；primary `arXiv:2607.08116v1`；Books review `books-review:SF-2026-ARXIV-2607-08116`。
+
+  **已吸收的语义增量：** 新增证据边界：Split a reasoning process into device-side prelude/coda and server-side recurrent reasoning units, then jointly route semantic work and wireless/compute resources rather than treating network placement as a fixed model split. 该 delta 已进入 `books/part-05-inference-system/52-dynamo.md#L114`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08116:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-10987:start -->
+- `SF-2026-ARXIV-2607-10987` — Daily `2026-07-14`；primary `arXiv:2607.10987v1`；Books review `books-review:SF-2026-ARXIV-2607-10987`。
+
+  **已吸收的语义增量：** 新增证据边界：Stateful operator tuple and graph separate data edges from KV-state edges; compatibility identity, fork/compose/transfer/evict/recompute policies make cache movement an explicit orchestration decision. 该 delta 已进入 `books/part-05-inference-system/52-dynamo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-10987:end -->

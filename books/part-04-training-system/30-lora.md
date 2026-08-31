@@ -341,21 +341,6 @@ W = W_0 + lambda_1 Delta W_1 + lambda_2 Delta W_2
 
 ## Checkpoint 与可复现性
 
-<!-- daily-20260627:TRAIN-LORA:start -->
-### Owner-merged minimal durable delta
-
-Privacy-preserving adaptation 需要 matched-update causal ladder。在固定 base revision、adapter identity 与 training budget 后，pseudonymization、differential privacy 与 optimizer/update-count effect 必须独立变化；否则 memorization 降低无法归因给 privacy mechanism。DP 继续拥有 formal guarantee，empirical probe 只测量给定 attack 下的 leakage。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Matched control 增加实验成本，empirical attack 的 recall 也有边界；未测到 leakage 不是 privacy guarantee，不确定时保留更严格 data/DP path。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-28479 — primary arXiv:2606.28479v1; exact-v1 URL=https://arxiv.org/html/2606.28479v1; Method=https://arxiv.org/html/2606.28479v1 — §III Threat Model and Methodology; Evaluation=https://arxiv.org/html/2606.28479v1 — §VI Utility Evaluation; Non-proof=https://arxiv.org/html/2606.28479v1 — §III Threat Model and Methodology; III-A Threat Model; VII Discussion。
-<!-- daily-20260627:TRAIN-LORA:end -->
-
-
 Adapter artifact 至少需要绑定：
 
 - Base model identity 和 exact revision。
@@ -385,6 +370,24 @@ LoRA          cheaper parameter update and model variants
 Distillation  capability transfer into a student
 ```
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15734:start -->
+continual post-training可把document-specific gradient变成indexed retrievable artifact，在query时临时apply并在请求后rollback，避免shared-weight cumulative drift。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15734:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28479:start -->
+用 matched-update controls 分离 DP guarantee、pseudonymization 与 optimizer-step memorization effect。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28479:end -->
+
+### 训练便宜不等于部署便宜
+
+LoRA 降低的是适配参数与训练成本；若上线时仍把 adapter 合并进完整 dense 模型，推理 FLOPs、内存访问和 kernel 形态未必下降。面向部署预算的 distillation 需要进一步决定保留哪些 rank、层或结构，把训练出的能力编译成真正满足 latency/memory budget 的 student。收益是把 PEFT 与 serving cost 连起来，代价是额外 teacher run、结构搜索和能力损失；多租户需要快速切换 adapter 时，保留 LoRA runtime 反而可能比生成多个 student 更合适。[受限证据：arXiv:2605.04341v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-04341 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -397,6 +400,12 @@ pretrained base
 ```
 
 本章承接第 29 章的 objective，改变训练状态与模型资产成本。第 35 章继续处理 adapter checkpoint 的恢复和 lineage；Part V 处理动态 adapter 的执行，Part VI 处理其资产治理。
+
+## 从机制演进到系统设计
+
+LoRA 从一次低成本微调演进到多租户、持续变化的 adapter lifecycle 后，低秩矩阵不再只是训练参数，而是带 base revision、objective、contributor、priority 与撤销语义的独立 artifact。去中心化或边缘场景还要求系统明确谁拥有 contribution、怎样合并、参与者退出时如何 unlearn，以及何时需要重训。
+
+细粒度 adapter 提高复用和个性化，却增加组合冲突、base 漂移、merge 顺序和 provenance 成本。校正或 unlearning 只有在目标 contribution 可定位、效果可验证时才可提交；否则保留旧 adapter、隔离租户或回退完整微调。参数更少不等于 runtime、registry 和安全状态更简单。
 
 ## 自检问题
 
@@ -416,20 +425,6 @@ pretrained base
 LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters、gradients、optimizer states 和每任务 artifact。它保留基座模型的大部分计算，并以受限更新空间换取成本与资产复用。
 
 QLoRA 继续压缩冻结基座存储，merge 与动态加载则把训练选择传播到 Serving。LoRA 的完整系统价值不只在“参数少”，而在 base、adapter、objective、checkpoint 和 runtime 之间形成可管理契约。
-
-<!-- recovered-daily-20260623:TRAIN-LORA:start -->
-## 2026-06-23 evidence integration — TRAIN-LORA
-
-相邻章 `books/part-04-training-system/31-rlhf.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22878**：Priority-Aware Learning-Unlearning Correction for Dynamic Decentralized LoRA Fine-Tuning 的 exact-v1 机制为：As large language models (LLMs) are increasingly deployed at the network edge to provide pervasive generative AI services, decentralized federated learning (DFL) provides a vital mechanism for privacy-preserving, domain-specific fine-tuning through peer-to-peer exchanges of parameter-efficient updates. 因此 把参与者加入/退出、LoRA contribution coordinate、unlearning correction 与通信预算版本化。 该 family 的 failure pressure 是：However, the dynamic nature of practical decentralized edge networks, where devices may dynamically join or leave the collaborative training process, requires the system to continuously adapt to new data while selectively removing prior contributions. 披露的 evaluation signal 是：To address this challenge, we propose a priority-aware learning-unlearning correction framework based on orthogonal LoRA that can enhance the knowledge evaluation through topology adjustment. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22878` — primary `arXiv:2606.22878v1`; Method=`arXiv:2606.22878v1 — §Priority-Aware Learning-Unlearning Correction for Dynamic Decentralized LoRA Fine-Tuning Thanks: N. Yang, Y. He, S. Wang, and C. Yin are with the Beijing Laboratory of Advanced Information Network, and the Beijing Key Laboratory of Network System Architecture and Convergence, Beijing University of Posts and Telecommunications, Beijing 100876, China (emails: {yangnuocheng, heyechen, sihuawang, ccyin}@bupt.edu.cn). Thanks: Z. Chen and T. Q. S. Quek are with the Information Systems Technology and Design Pillar, Singapore University of Technology and Design, 487372, Singapore (emails: zihan_chen@mymail.sutd.edu.sg, tonyquek@sutd.edu.sg).; §III System Model and Problem Formulation; §III-A Dynamic Decentralized LoRA System`; Evaluation=`arXiv:2606.22878v1 — §IV Problem Analysis and Proposed Method; §IV-B Correction Gap Analysis under DGD; §V-C Ablation Study`; non-proof=`arXiv:2606.22878v1 — §VI Conclusion`; fallback=该 family 的 failure pressure 是：However, the dynamic nature of practical decentralized edge networks, where devices may dynamically join or leave the collaborative training process, requires the system to continuously adapt to new data while selectively removing prior contributions. 披露的 evaluation signal 是：To address this challenge, we propose a priority-aware learning-unlearning correction framework based on orthogonal LoRA that can enhance the knowledge evaluation through topology adjustment. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:TRAIN-LORA:end -->
 
 ## Review notes
 
@@ -455,3 +450,51 @@ Primary-source 校验入口：
   Status: Experimental）: https://arxiv.org/abs/2603.16867
 - Scaling DoRA（Status: Experimental；factored norm、fused kernel 与 compatibility dispatch）:
   https://arxiv.org/abs/2603.22276
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28479 — primary arXiv:2606.28479v1; exact-v1 URL=https://arxiv.org/html/2606.28479v1; Method=https://arxiv.org/html/2606.28479v1 — §III Threat Model and Methodology; Evaluation=https://arxiv.org/html/2606.28479v1 — §VI Utility Evaluation; Non-proof=https://arxiv.org/html/2606.28479v1 — §III Threat Model and Methodology; III-A Threat Model; VII Discussion。
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22878` — primary `arXiv:2606.22878v1`; Method=`arXiv:2606.22878v1 — §Priority-Aware Learning-Unlearning Correction for Dynamic Decentralized LoRA Fine-Tuning Thanks: N. Yang, Y. He, S. Wang, and C. Yin are with the Beijing Laboratory of Advanced Information Network, and the Beijing Key Laboratory of Network System Architecture and Convergence, Beijing University of Posts and Telecommunications, Beijing 100876, China (emails: {yangnuocheng, heyechen, sihuawang, ccyin}@bupt.edu.cn). Thanks: Z. Chen and T. Q. S. Quek are with the Information Systems Technology and Design Pillar, Singapore University of Technology and Design, 487372, Singapore (emails: zihan_chen@mymail.sutd.edu.sg, tonyquek@sutd.edu.sg).; §III System Model and Problem Formulation; §III-A Dynamic Decentralized LoRA System`; Evaluation=`arXiv:2606.22878v1 — §IV Problem Analysis and Proposed Method; §IV-B Correction Gap Analysis under DGD; §V-C Ablation Study`; non-proof=`arXiv:2606.22878v1 — §VI Conclusion`; fallback=该 family 的 failure pressure 是：However, the dynamic nature of practical decentralized edge networks, where devices may dynamically join or leave the collaborative training process, requires the system to continuously adapt to new data while selectively removing prior contributions. 披露的 evaluation signal 是：To address this challenge, we propose a priority-aware learning-unlearning correction framework based on orthogonal LoRA that can enhance the knowledge evaluation through topology adjustment. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-family integration record
+
+<!-- daily-20260627:TRAIN-LORA:start -->
+### Owner-merged minimal durable delta
+
+Privacy-preserving adaptation 需要 matched-update causal ladder。在固定 base revision、adapter identity 与 training budget 后，pseudonymization、differential privacy 与 optimizer/update-count effect 必须独立变化；否则 memorization 降低无法归因给 privacy mechanism。DP 继续拥有 formal guarantee，empirical probe 只测量给定 attack 下的 leakage。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Matched control 增加实验成本，empirical attack 的 recall 也有边界；未测到 leakage 不是 privacy guarantee，不确定时保留更严格 data/DP path。
+
+<!-- daily-20260627:TRAIN-LORA:end -->
+
+<!-- recovered-daily-20260623:TRAIN-LORA:start -->
+### 2026-06-23 evidence integration — TRAIN-LORA
+
+相邻章 `books/part-04-training-system/31-rlhf.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22878**：Priority-Aware Learning-Unlearning Correction for Dynamic Decentralized LoRA Fine-Tuning 的 exact-v1 机制为：As large language models (LLMs) are increasingly deployed at the network edge to provide pervasive generative AI services, decentralized federated learning (DFL) provides a vital mechanism for privacy-preserving, domain-specific fine-tuning through peer-to-peer exchanges of parameter-efficient updates. 因此 把参与者加入/退出、LoRA contribution coordinate、unlearning correction 与通信预算版本化。 该 family 的 failure pressure 是：However, the dynamic nature of practical decentralized edge networks, where devices may dynamically join or leave the collaborative training process, requires the system to continuously adapt to new data while selectively removing prior contributions. 披露的 evaluation signal 是：To address this challenge, we propose a priority-aware learning-unlearning correction framework based on orthogonal LoRA that can enhance the knowledge evaluation through topology adjustment. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:TRAIN-LORA:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15734:start -->
+- `SF-2026-ARXIV-2606-15734` — Daily `2026-06-15`；primary `arXiv:2606.15734v1`；Books review `books-review:SF-2026-ARXIV-2606-15734`。
+
+  **已吸收的语义增量：** continual post-training可把document-specific gradient变成indexed retrievable artifact，在query时临时apply并在请求后rollback，避免shared-weight cumulative drift
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15734:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15963:start -->
+- `SF-2026-ARXIV-2606-15963` — Daily `2026-06-15`；primary `arXiv:2606.15963v1`；Books review `books-review:SF-2026-ARXIV-2606-15963`。
+
+  **已吸收的语义增量：** federated LoRA rank heterogeneity可用prefix-nested parameterization让低rank client更新成为高rank adapter前缀并保持aggregation identity
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15963:end -->

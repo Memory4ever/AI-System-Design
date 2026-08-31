@@ -294,6 +294,16 @@ single-layer capacity bottleneck
 9. TP degree 合法但低效可能有哪些原因？
 10. TP checkpoint conversion 为什么需要 global layout metadata？
 
+## 网络从搬运字节到受限计算
+
+<!-- semantic-body-binding:SF-ACCELERATING-MOE-WITH-DYNAMIC-IN-SWITCH-COMPUTING-ON-MULTI-GPUS:start -->
+<!-- semantic-body-binding:SF-TOWARDS-COMPUTE-AWARE-IN-SWITCH-COMPUTING-FOR-LLMS-TENSOR-PARALLELISM-ON:start -->
+普通 collective 把 switch 当作透明传输设备，语义简单、fallback 清楚；MoE 热点与多内存寻址使部分 reduction/aggregation 可以下沉到网络，但此时 switch 不再只是 byte transport，而是受 ISA、片上容量、拓扑与 runtime schedule 约束的 compute owner。可执行计划必须同时描述模型 kernel 的 memory semantics、允许下沉的算子、switch state/capacity、通信顺序与普通 collective fallback。
+
+In-switch 计算可以减少端点流量和热点等待，却引入硬件专用性、状态溢出、可观测性与故障恢复问题；communication-centric reduction 若与 LLM kernel 的读写语义不匹配，局部带宽收益会被额外搬运或同步抵消。硬件不支持、容量不足、算子不等价或故障时，应恢复标准 NCCL/RCCL collective。它是 TP/EP 通信计划的条件分支，不是网络对模型语义的接管。[受限证据：arXiv:2605.05607v1、2605.05628v1]
+<!-- semantic-body-binding:SF-ACCELERATING-MOE-WITH-DYNAMIC-IN-SWITCH-COMPUTING-ON-MULTI-GPUS:end -->
+<!-- semantic-body-binding:SF-TOWARDS-COMPUTE-AWARE-IN-SWITCH-COMPUTING-FOR-LLMS-TENSOR-PARALLELISM-ON:end -->
+
 ## 小结
 
 Tensor Parallel 通过 column/row decomposition 把一个 operator 分配给多个 ranks。局部 GEMM 只有与正确 collective 和相邻 operator layout 组合，才保持原模型语义。

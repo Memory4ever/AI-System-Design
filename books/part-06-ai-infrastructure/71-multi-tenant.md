@@ -79,6 +79,19 @@ fair share allocation when demand competes
 
 共享能提高效率，也带来 timing side channels、prefix collision、adapter mix-up 和资源干扰。Cache key 至少应包含 tenant policy domain、model/tokenizer/adapter identity；敏感租户可禁用跨租户 prefix reuse 或使用独立 pool。
 
+Provider 侧按 account 或 organization 隔离 cache，在用户直连时是合理边界；经过 gateway 后，共享 credential、默认
+metadata 或退化的 identity translation 可能把多个外部用户压进同一个 provider cache domain。端到端 cache identity
+因此要绑定 external principal、gateway principal、provider account/BYOK、model/revision 与 tenant sharing policy。
+Gateway 负责可信的 identity translation，provider cache owner 执行 isolation key；tenant policy 决定是否共享，
+timing 或 metadata probe 只能提示异常，不能证明缓存内容已被恢复。
+
+完整 identity 可保留租户内复用并发现明显跨域现象，却会造成 namespace fragmentation、hit-rate 损失、测量噪声、
+负载和时间漂移；provider 内部不透明时仍无法形成完备证明。敏感 workload 应禁用共享 cache、使用专用 credential/
+pool 或完整重算，普通单租户调用继续使用 provider 原生 cache。exact-v1 的观察只覆盖论文披露的三个 provider、
+随机 prompts 与检测阈值，不支持从 timing signal 推导具体内容泄露。
+
+<!-- source-family:SF-2026-ARXIV-2605-30613 -->
+
 ### 共享 Backbone、私有状态：多租户 VLA 后训练的隔离与复用边界
 
 每个租户独占完整 model、rollout workers 和 optimizer state，隔离最清楚，也便于单租户恢复；当 backbone 相同而 action head、optimizer 和 environment 不同时，这种复制会浪费 resident weights 与 shared forward。可以把 immutable base revision 作为共享 owner，把 tenant-private action module、optimizer、policy version、rollout buffer 与 environment state 保持隔离，并只对 schema/shape 兼容的请求做 group batching。
@@ -121,6 +134,12 @@ external identity
 
 本章把 identity、queue、cost 与 evidence 组合成租户边界。下一章进一步按威胁模型检查数据、模型、runtime、API、Prompt 和工具供应链，说明 tenancy 是 security 的一部分而非全部。
 
+## 从机制演进到系统设计
+
+多租户从 Namespace 与 quota 隔离扩展到共享 resident backbone 后，兼容的 forward prefix 可以 group batch，但 action head、optimizer、rollout、policy version 与私有 loss/backward 必须在 tenant 边界前拆分。共享计算不等于共享训练状态或发布权限。
+
+更高利用率换来侧信道、错误聚合、noisy neighbor 和 provenance 复杂度。prefix、policy 或 trust level 不兼容时，应回到独立 batch、独立 process 或专属 GPU；隔离强度必须随数据、状态和副作用风险提升。
+
 ## 自检问题
 
 1. 为什么 Kubernetes 没有完整的一等 Tenant？
@@ -145,3 +164,11 @@ Multi-tenancy 要让同一个 tenant identity 穿过 API、workload、data、GPU
 - Kubernetes NetworkPolicy: https://kubernetes.io/docs/concepts/services-networking/network-policies/
 - JoyNexus（shared backbone / tenant-private post-training state；Status: Experimental）:
   https://arxiv.org/abs/2607.16074v1
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16074:start -->
+- `SF-2026-ARXIV-2607-16074` — Daily `2026-07-18`；primary `arXiv:2607.16074v1`；Books review `books-review:SF-2026-ARXIV-2607-16074`。
+
+  **已吸收的语义增量：** 新增证据边界：A multi-tenant post-training service can share a resident VLM backbone while isolating tenant action heads, optimizers, rollout records and policy versions. Group batching is safe only across compatible forward prefixes and must split before private loss/backward/update. 该 delta 已进入 `books/part-06-ai-infrastructure/71-multi-tenant.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16074:end -->

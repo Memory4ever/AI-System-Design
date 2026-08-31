@@ -141,7 +141,31 @@ serialization、retry 和 stop behavior。公平比较应验证 adapter 的 sema
 
 统一 harness 降低重复建设，却引入新的兼容层、版本漂移与运行成本。孤立且长期稳定的任务仍可使用专用脚本，但也必须冻结脚本、环境和 scorer 身份，不能把一次聚合分数当作脱离执行条件的模型属性。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-01771:start -->
+同一条要求也适用于**过程指令**。模型在最终文本中承诺“已查证”“按步骤执行”只是一条 self-report；若任务要求调用指定工具、保存证据或遵守操作顺序，评估必须观察真实 tool-call trace、环境 affordance 和 effect receipt。只看回答内容的 observer 永远无法区分真实执行与流畅叙述。
+
+```text
+process contract + enabled affordances
+→ typed action/tool trace
+→ environment transition and receipts
+→ process-compliance metrics
+→ final outcome judgment
+```
+
+收紧环境可以阻止不合规路径，却可能让 benchmark 退化为过度脚本化；开放环境更接近部署，却增加替代合法路径和 verifier false reject。因此 process compliance 与 outcome success 必须分开报告，文本 agreement 只作 sensor。选定任务、工具和 provider API 的实验不能外推成所有模型的通用遵从率。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-01771:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-02038:start -->
+Prompt 变化也属于 evaluation distribution，而不是报告中的装饰。单一模板在接口稳定时复现成本最低，却会把 parser、措辞和 verbal-confidence format 的偶然性误算成模型能力。可靠性审计应为同一 task family 保留多个语义等价 prompt variants、原始 generations、解析状态和按 variant 的 spread；只有在统一 normalization 后，才聚合 accuracy 或 calibration。
+
+variant 数量增加会抬高推理成本，也可能引入并不等价的改写。因而模板必须有等价性审计，invalid parse 与 abstain 不能默认成错或对。作者的英语多选、1–8B 模型和单一 runtime 结果只说明单 prompt 会隐藏所测条件下的波动，不证明任意开放任务都需要相同数量的 variants。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-02038:end -->
+
 这也是第 35 章和第 59 章的接口：Checkpoint 提供可验证 artifact，Registry 提供不可变版本和 evidence references；第 66 章负责说明这些 evidence 是在什么评估契约下产生的。
+
+### Backend 是 Evaluation Identity 的一部分
+
+同一模型与数据集并不保证同一结论：kernel、precision、decoding 与 harness backend 会改变可观察输出。最简单的单 backend 跑分在环境冻结时合理；跨 backend 发布时，run identity 必须记录执行路径并先做 paired reproducibility check。它换来可解释的结果差异，却增加重复运行成本；差异低于预先声明容差时可保留单 backend。<!-- source-family:SF-2026-ARXIV-2605-19537 --> exact-v1 §3–4 只证明作者比较中的 backend delta，§5 不支持外推为所有 runtime 的固定偏差。
 
 ## 第二个不变量：评估结论总是相对于分布
 
@@ -190,6 +214,10 @@ overall
 
 切片越细，样本越少、方差越大；切片过粗，又会掩盖风险。平台不应自动生成无限 dashboard，而应由 failure taxonomy 和业务风险决定哪些 slice 是 release-blocking，哪些只用于探索。
 
+### 不确定性必须绑定覆盖假设，而不是装饰性置信区间
+
+点估计便于排序，但遇到 shift 时不能说明错误风险。Conformal-style interval 可以把 calibration set 与 coverage target 交给 evaluation owner，输出带条件的 prediction set；代价是区间变宽、exchangeability 假设和 recalibration 成本。假设失效时应降级为 slice-level diagnostic 而非发布保证。<!-- source-family:SF-2026-ARXIV-2605-19779 --> exact-v1 §2–4 支持其 conformal pipeline 与研究结果，§5 明确不证明任意依赖或分布漂移下仍覆盖。
+
 ## 评估对象有四个层次
 
 ### Model Evaluation
@@ -205,6 +233,34 @@ overall
 在目标硬件与 workload 下测量 TTFT、TPOT、goodput、错误率、容量、恢复和成本。质量相同但无法满足 SLO 的 artifact 仍不能发布；延迟更低但输出质量回归也不是有效优化。
 
 ### Agent and Outcome Evaluation
+
+#### 从 Final Pass 扩展到 Trajectory、Cycle 与 Checkpoint Decision
+
+<!-- semantic-body-binding:SF-AGENTLENS-REVEALING-THE-LUCKY-PASS-PROBLEM-IN-SWE-AGENT-EVALUATION:start -->
+一次通过可能来自脆弱搜索路径、偶然 tool result 或不可复现环境；评估因此要保存尝试分布、关键 action、失败恢复和
+重复运行，而不能把 lucky pass 与稳定能力等价。收益是能区分 capability 与 reliability，代价是更多 sandbox 成本和
+run-state 存储；确定性短任务仍可用单次执行。作者结果只覆盖其 SWE-Agent、repository 与 harness。
+<!-- semantic-body-binding:SF-AGENTLENS-REVEALING-THE-LUCKY-PASS-PROBLEM-IN-SWE-AGENT-EVALUATION:end -->
+
+<!-- semantic-body-binding:SF-SWE-CYCLE-BENCHMARKING-CODE-AGENTS-ACROSS-THE-COMPLETE-ISSUE-RESOLUTION-:start -->
+把 issue localization、patch、test、review 与交付拆成孤立 benchmark，会让下游成功掩盖上游 handoff failure。
+Full-cycle evaluation 应冻结 repository/environment identity，逐阶段保存 artifact 与 executable verifier receipt，
+同时报告 isolated competence 与 end-to-end completion。它提高现实性，却扩大环境故障和 judge 误差；单机制研究
+仍需要隔离阶段 baseline。有限 repository 与执行 judge 不构成通用软件工程自治证明。
+<!-- semantic-body-binding:SF-SWE-CYCLE-BENCHMARKING-CODE-AGENTS-ACROSS-THE-COMPLETE-ISSUE-RESOLUTION-:end -->
+
+<!-- semantic-body-binding:SF-ROBUST-CHECKPOINT-SELECTION-FOR-MULTIMODAL-LLMS-VIA-AGENTIC-EVALUATION-A:start -->
+late-stage checkpoint 差异接近 evaluator noise 时，按单个平均分取最大值会选择偶然赢家。更稳健的 release decision
+先用 pointwise floor 排除明显不合格，再做 listwise ranking 与 pairwise refinement，并把稳定性和评估不确定性写入
+选择记录。它用更多 judge 调用换较低 selection variance；judge 相关偏差或分布漂移时必须回退独立任务测试和人工复核。
+<!-- semantic-body-binding:SF-ROBUST-CHECKPOINT-SELECTION-FOR-MULTIMODAL-LLMS-VIA-AGENTIC-EVALUATION-A:end -->
+
+<!-- semantic-body-binding:SF-FAITHFUL-OR-FABRICATED-A-CAUSAL-FRAMEWORK-FOR-RATIONALIZATION-BIAS-IN-LL:start -->
+Judge 给出的理由不能仅因与标签一致就当作 faithful evidence。Blind、Truth、Flip、Placebo 与 Reveal-after 等 cue
+intervention 可分离 outcome anchoring、rationale anchoring 与 explanation drift；evaluation owner 保存 intervention
+identity 和 tie-aware metrics，ranking 只消费已校准结果。新增成本是多臂实验和 cue-specific 外推边界；它能发现
+rationalization bias，不证明隐藏推理或真实因果链已被恢复。
+<!-- semantic-body-binding:SF-FAITHFUL-OR-FABRICATED-A-CAUSAL-FRAMEWORK-FOR-RATIONALIZATION-BIAS-IN-LL:end -->
 
 #### Skill 必须在真实 Control Path 中评估
 
@@ -352,22 +408,6 @@ AJ-Bench 的实验支持 tool access 在其 516 条标注轨迹上提高平均 F
 
 ### Evaluator 可以主动制造 Probe，但不能冒充被动观察
 
-<!-- daily-20260627:PLATFORM-EVALUATION-SYSTEM:start -->
-### Owner-merged minimal durable delta
-
-Evaluation 必须分开 generator 能产生什么，与 release selector 能可靠识别什么。对 formalization，type acceptance 与 semantic equivalence 是两个独立 signal；对 repeated sampling，answer coverage 与 selection accuracy 必须分报，并显式记录 correlation/modal ceiling。增加 sample budget 不能修复无法识别已覆盖答案的 oracle 或 selector。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Semantic judge 与 selector 都可能错误或相关；uncovered/undecidable 必须保持 Unknown，高风险分歧交回独立 verification 或人工。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-28013 — primary arXiv:2606.28013v1; exact-v1 URL=https://arxiv.org/html/2606.28013v1; Method=https://arxiv.org/html/2606.28013v1 — §Methods.; 5.1 Per-method cell decomposition; 5.4 A predictive regularity: stratum-rates are method-invariant; Evaluation=https://arxiv.org/html/2606.28013v1 — §4 Experimental Setup; 5 Experimental Results and Analysis; Non-proof=https://arxiv.org/html/2606.28013v1 — §6 Discussion and Limitations; 7 Conclusion。
-- SF-2026-ARXIV-2606-28661 — primary arXiv:2606.28661v1; exact-v1 URL=https://arxiv.org/html/2606.28661v1; Method=https://arxiv.org/html/2606.28661v1 — §Proposition 1 (Design effect of test-time sampling) .; Two-stage design effect.; Evaluation=https://arxiv.org/html/2606.28661v1 — §1 Introduction and roadmap; 2 Test-time sampling is cluster sampling; Non-proof=https://arxiv.org/html/2606.28661v1 — §6 Conclusion。
-<!-- daily-20260627:PLATFORM-EVALUATION-SYSTEM:end -->
-
-
 离线 judge 只能评价自然轨迹已经暴露的行为；某些 criterion 在普通 run 中很少出现，absence 不能证明系统通过。
 In-world evaluator 可以通过原生 dialogue/action 创建 criterion-relevant situation，再观察 Agent response，从被动打分
 演进为 coverage-seeking intervention。Evaluator 的 action、环境 revision、触发 criterion 与后续 trajectory 必须一起
@@ -478,6 +518,22 @@ test boundary and subject identity
 Kernel-generation evaluation 必须把 operator semantics、reference implementation、shape/stride/dtype grid、numerical tolerance、target chip/runtime、anti-hack coverage、timeout 与 profiler revision 绑定为同一 EvalSpec。跨芯片比较只有在 correctness gate 先闭合后才讨论 speed，并应同时报告 pass coverage、严格 speed thresholds、trajectory feedback 和 token/device cost。
 
 更广覆盖提高 portability evidence，却会引入 platform-specific prompt/tolerance 与不对称 anti-hack 能力；这种不对称必须显式披露，不能被一个总体排名隐藏。单芯片小 suite 在目标固定的快速回归中仍然合理，但它不能支持跨 operator、chip 或 harness 的通用性能结论。
+
+#### Bit-exact Replay 可以脱离同型硬件，但不能脱离数值路径身份
+
+在同型 accelerator 上重放 inference，最容易把 bitwise mismatch 定位为 artifact 或 runtime drift；硬件已经不可用、
+跨 GPU generation 复核或第三方只能获得软件环境时，这个旧前提不再成立。条件分支是在软件中复现被披露的 tensor-core
+arithmetic、reduction order、rounding 与 router path，以 exact model/runtime input 重算 reference bits。Evaluation owner
+必须冻结 model、weights、operator coverage、dtype、kernel/arithmetic model、input、emulator revision 和 expected digest；
+emulator 只拥有 replay evidence，不能接管 production execution 或把“相同输出”升级为硬件相同。
+
+这种路线用较慢的软件执行和更窄的 operation coverage，换取无需同型硬件的确定性复核；主要 failure mode 是 unsupported op、未建模 kernel、
+编译器变化或 router tie-breaking 都会制造 false mismatch 或 false assurance。可用原硬件、只需容差正确性或 emulator coverage
+不足时，真实设备 replay 与 tolerance-based test 仍应并列保留。`arXiv:2606.00279v1` 的 §3.1、§4.1 与 §3.2、§4.4
+只支持作者披露 GPU variants、模型和算术路径上的 bit-exact software emulation；§5 不证明它覆盖任意 operator，也不构成
+security attestation、性能等价或未测硬件的保证。
+
+<!-- source-family:SF-2026-ARXIV-2606-00279 -->
 
 Mock 仍然有价值，因为它能控制随机性并精确制造异常；风险在于 mock 掉的恰好是系统最需要验证的
 边界。若替换 LLM、tool、network 或外部状态，测试结果只能证明剩余 orchestration 在该 test double
@@ -614,6 +670,19 @@ MobilityBench 分别提供了 feedback-aware serving simulation 和 domain API r
 
 ### Agent Serving 的容量单位是 Workflow，而不只是 Request
 
+同一条 workflow 在静态 trace replay 与真实环境中会形成不同 request prefix：Tool 返回值、失败重试和分支选择会改变后续 Context。若 benchmark 只重放固定 token 序列，它能隔离 serving regression，却不能验证 runtime 面对动态步骤时的 batching、cache 与 admission。更完整的合同保留真实 step prefix，并在受控环境中执行 Tool，再分别报告静态与 live 轨道：
+
+```text
+versioned task and environment
+→ real step prefix + tool execution
+→ dynamic request stream
+→ serving SLO and workflow outcome
+```
+
+Live 轨道提高 workload fidelity，也引入环境漂移、不可复现副作用和更高成本；静态 replay 仍适合回归与因果定位。两者不能合并成一个分数，且环境成功不证明模型策略正确，模型完成任务也不能掩盖 serving SLO 违约。
+
+<!-- source-family:SF-2026-ARXIV-2605-18859 -->
+
 固定 ISL/OSL microbenchmark 能隔离 kernel 与 runtime regression，但 Agent workload 会在多轮请求之间插入
 tool think time、动态 prefix、短输出、长 Context 与 bursty phase。此时容量问题不再是“每秒生成多少 token”，
 而是“在每个请求都满足 latency/speed SLO 时，可同时维持多少条 active trajectories”：
@@ -746,6 +815,22 @@ Reference judge 仍不是 truth，onset 又依赖 smoothing、threshold 和 shor
 training。Fixed rule 对已知 signature 和高频 guardrail 更便宜，human/executable audit 仍是高风险决策 owner。
 CHERRL 的六条受控 hacking runs 支持 discoverability、exploitability 与 onset 可以分开记录，但不提供真实复合偏置、
 在线 false-positive、intervention 或跨模型通用性证据。
+
+### Process Reward Model 成为 Sensor 前，先测试 Transformation Stability
+
+直接在原始 reasoning traces 上测 PRM accuracy，在输入格式和错误形态稳定时是必要 baseline；一旦 PRM 被用于 dense reward、
+搜索剪枝或 release gate，语义保持的改写、局部重排和对抗扰动可能改变分数却不改变正确性，原始集上的平均指标便不足以
+授权它成为 load-bearing sensor。Evaluation owner 应把 transformation family、semantic-equivalence oracle、PRM revision、score
+shift、false-positive/false-negative、mitigation 与未覆盖 slice 绑定为同一 receipt；PRM 只提供过程信号，独立 outcome
+verifier 和 release authority 保留最终判断。
+
+Stress test 扩大了已知攻击面覆盖，却新增 transformation generator bias、等价性误判、重复查询成本和对 test suite 的
+过拟合；通过已知扰动也不证明开放分布鲁棒。固定格式、低风险辅助排序或 outcome verifier 足够强时，原始 benchmark
+仍是便宜分支；高风险使用则应在 mitigation 后重测并保留 abstain/降级为非权威 signal。`arXiv:2606.00437v1` 的 §3、
+§4 只支持 EST-PRM 对作者所测 PRM、transformations 与 mitigation 的 vulnerability analysis；§7/Limitations 不证明
+所有 PRM 共享同一失效模式，也不证明 stress-test pass 等于生产安全。
+
+<!-- source-family:SF-2026-ARXIV-2606-00437 -->
 
 ## 从答案评分到可执行证据
 
@@ -1287,6 +1372,10 @@ target-preserving edit → verdict should remain  → invariance lower bound
 
 Final anchored verifier 可以提供可扩展 outcome evidence，却不能证明每个中间 transition 正确。真实用户风格、多意图同轮和含糊修订还需要额外切片；Agent 的 Context、Memory 与 Workflow 可以消费这些状态边界，但 evaluation owner 仍负责定义 transition identity、control arm 与最终可比较性。
 
+### Scoring Rule 要奖励任务效用，而不是只奖励“像答案”
+
+通用 judge score 易部署，却会把表达偏好混入正确性。任务效用可分解为可验证结果、校准置信与拒答成本，再用 proper scoring/utility contract 汇总；这让 release decision 可解释，却要求明确代价矩阵。代价未知时应保留分项指标。<!-- source-family:SF-2026-ARXIV-2605-20490 --> exact-v1 §2–4 只支持 ECUAS 的定义与论文实验，Limitations 不允许把该权重当成跨任务真值。
+
 ## Scorer 不是绝对真相
 
 不同任务需要不同证据源：
@@ -1587,6 +1676,58 @@ deployment visibility / commit boundary
 正确动作是撤回或限定 ranking，而不是继续输出精确名次。这不否定 query-aware 的 one-shot cache；它只阻止把其收益
 外推到 query-agnostic reusable state。KV 生命周期与压缩机制由第 45 章拥有，本章拥有比较声明能否成立。
 
+### MoE Load Balance 不能替代 Functional Specialization
+
+expert token count 与 routing frequency 易采集，适合发现过载，却不能回答 expert 是否真的学习了不同功能；均匀路由甚至可能掩盖同质化。evaluation contract 应把 routing specialization、representation rank、domain isolation、routing stiffness 与 n-gram expertise 等诊断分开，并通过受控 intervention 检查指标是否对应行为变化。
+
+这提供比频率图更接近机制的证据，也付出多指标解释、数据域设计、干预成本和潜在 metric gaming；诊断相关性仍不等于因果完备。模型不使用 MoE 或缺乏可干预路由时，常规质量/负载评估继续成立。exact-v1 只支持其披露 benchmark、模型、五类指标与 intervention，不证明这些指标跨架构、语言或生产流量具有统一阈值。
+
+<!-- source-family:SF-2026-ARXIV-2605-18498 -->
+
+### Component Priority 只能是 Action Evidence
+
+只看 Agent 最终分数，在系统组件多、试验昂贵时无法回答下一次应改哪里；component-level update priority 可以把错误归因、干预成本与预期收益组织成中间 action evidence。但 optimizer 只拥有试验排序权，不能把 priority 当作最终质量结论；每次更新仍要用多步 held-out replay 验证真实改善，并保留未被选择组件的反事实基线。
+
+分层信号能减少盲目搜索，却增加标签、归因与回放成本，也可能让易测组件挤压真正瓶颈。任务简单或组件耦合无法分解时，端到端 gate 仍是可信基线。arXiv:2605.22505v1 仅支持作者 harness 中 priority signal 与改善的受测关系，不证明 priority 在任意 agent architecture 上具有因果性。
+
+<!-- source-family:SF-2026-ARXIV-2605-22505 -->
+
+### Attribution 是 Versioned Evaluation Contract
+
+单一 attribution score 在解释对象、受众和风险固定时便于比较；一旦既要解释模型行为、又要支持审计或用户申诉，同一个分数会混合不同证据标准。Evaluation run 应显式绑定解释对象、受众、允许的 evidence、faithfulness/citation evaluator 与失败处置；scorer 只产生 evidence，release 或 governance owner 决定是否接受归因声明。
+
+多协议合同提高责任清晰度，代价是 evaluator 版本、阈值和兼容矩阵的维护；低风险内部调试仍可采用单一 proxy。arXiv:2605.23080v1 的框架与实验只支持其 attribution taxonomy 和受测设置，不证明某一 attribution metric 对所有用户、模型与任务都忠实。
+
+<!-- source-family:SF-2026-ARXIV-2605-23080 -->
+
+## Evaluation Identity 还必须覆盖测量路径、工作负载与规范目标
+
+Evaluation 的结果不只可能被 scorer 改写；在结果进入 scorer 之前，client 如何施压、输入如何构造、规范如何拆成可测试命题，都可能改变最终结论。三者因此应依次进入 EvalRun identity，而不是作为“生成数据的脚本细节”留在报告之外。
+
+### Benchmark Client 也是 Measurement Instrument
+
+单进程、asyncio client 在低并发时路径短、复现容易；并发升高后，client 自己的 event loop、连接池和请求队列可能先饱和，服务端收到的 arrival process 已经不是声明的 workload。此时 TTFT、TPOT 或吞吐下降不能直接归因给 engine。measurement owner 应冻结 client architecture、进程/连接数、load-generation policy、clock 和 client-side queue telemetry，再由独立 server trace 确认请求何时真正到达。
+
+这能区分 generator saturation 与 server saturation，却增加分布式 load generator、时钟对齐和结果合并成本；generator 过度并行还可能把网络或协调层变成新瓶颈。低并发 correctness smoke test 仍可使用简单 client；高并发容量结论则应在 client queue 出现前降级或重跑。`arXiv:2605.24217v1` 的 §3 与 §4 支持作者识别并评估的单进程排队偏差，§5 不证明每个 benchmark client、网络或生产拓扑都有相同瓶颈。
+
+<!-- source-family:SF-2026-ARXIV-2605-24217 -->
+
+### Long-context Reasoning 要冻结 Position、Content 与 Length
+
+固定长度和 filler，只移动 target，适合隔离位置效应；只增长长度，则适合观察容量边界。真实 reasoning benchmark 同时改变 target position、intervening content 与 context length 时，若不把三者联合版本化，所谓“context rot”可能只是题目难度、干扰语义或位置分布变化。dataset owner 应发布可复算的 factor grid，harness owner 固定 tokenizer 后长度与 packing，scorer 只评价冻结任务，不得在运行中重采样这些坐标。
+
+联合设计提高归因力，却扩大样本矩阵、成本和多重比较风险；受测模型、任务或 filler family 变化后还要重新校准。只需验证一个确定性最大长度或特定位置回归时，单因素测试仍更直接。`arXiv:2605.23170v1` 的 §3 与 §4 支持作者在九个模型、GSM8K 与 ARC-Challenge 上的三因素受控评估，§7 不证明该失效形态跨任务、语言或所有长上下文架构成立。
+
+<!-- source-family:SF-2026-ARXIV-2605-23170 -->
+
+### 长篇 Policy 要先编译成 Versioned Atomic Tenets
+
+人工按整份 constitution 或 system card 给一个总体合规分数，在规范短、风险低时成本最低；规范变长且多轮交互会组合触发条款后，总分无法指出是哪条义务、哪个版本或哪段对话失守。更可审计的路径是由 policy owner 冻结发布版本，evaluation compiler 把它分解为带来源位置的 atomic tenets，再生成多轮对抗场景、保存完整 transcript，并由与生成器分离的 validator 回到原条款确认 finding；release owner 最后决定接受、修复或豁免。
+
+这种编译让 failure 可定位和回归，却引入 tenet 漏拆、语义重叠、adversarial generator 偏差、validator 同源偏差和高昂人工复核。规范很短、条款可由确定性 rule 直接检查时，静态 checklist 仍合理；高风险 finding 还需人工与真实 deployment control 复核。`arXiv:2605.24229v1` 的 §3 至 §5 支持作者对已发布规范的 atomic-tenet 与多轮审计流程，§6 不证明其条款抽取完备、evaluator 无偏或结果等同真实部署安全。
+
+<!-- source-family:SF-2026-ARXIV-2605-24229 -->
+
 ## Dataset 是受治理的评估资产
 
 Evaluation dataset 不应只是一个 CSV 路径。它至少需要：
@@ -1612,6 +1753,29 @@ access and retention policy
 
 训练数据和评估数据必须有可查询 provenance。第 27 章负责数据去重、decontamination 与 lineage；本章负责说明污染如何削弱 evaluation claim。一次扫描只能证明“在当前算法和语料视野下未发现匹配”，不能永久证明没有污染。
 
+### “不再回答”不是 Deletion Evidence
+
+用目标问题的准确率、输出概率或 refusal rate 验证 suppression，在目标只是阻止某类输出时成本低且合理；但当系统声称已经从训练所得能力中删除指定 forget set 时，同一现象也可能来自拒答层、输出过滤或局部 model edit。此时“模型不再给出原答案”不能证明训练影响已经消失，evaluation contract 必须把可验证对象从单次输出改为相对重训练参照的、数据集定义的删除命题：
+
+```text
+training dataset D + forget set F + training procedure / revision
+→ provenance-bearing reference: Train(D \ F)
+→ candidate: Unlearn(Theta_D, F)
+→ explicit distance / tolerance on a frozen behavior distribution
+→ retain-utility checks + adversarial recovery and derived-capability probes
+→ deletion-qualified verdict or suppression / editing-only verdict
+```
+
+其中 dataset owner 负责 `D`、`F`、训练过程与 reference provenance；evaluation owner 负责 distance、probe distribution、容差和 verdict；单个 scorer 只计算被冻结的观测，不能自行把拒答升级成 deletion claim。这样能把“控制可见输出”与“移除训练影响”分开，也能发现原答案被压制、推导能力却仍可恢复的 failure。代价是 reference retraining 昂贵且受随机性影响，distance 和 threat model 的选择也会改变结论；把一个随机种子的 reference 当作唯一真值、只测原句而不测派生能力，或把 retain-set 中重新学到的能力归因于 forget set，都会制造错误保证。
+
+当 provenance-bearing retrain reference 不可构建、reference 本身不唯一或恢复 probes 覆盖不足时，系统仍可把 suppression、editing 或 policy alignment 作为有用目标继续评估，但应发布对应的受限指标，不宣称 dataset-defined deletion。`arXiv:2606.27379v1` 的 §2 与 §4–§5 支持上述定义、参照和派生能力检查；§3 只分析现有 benchmark、metric 与对抗恢复证据，§6 及附录 A–B 还保留了 reference 可行性、policy removal 与 deletion 的区别以及多模态扩展边界。它是一篇 evaluation-contract position paper，不提供新的 unlearning system、公开 artifact 或可外推的通用删除成功率。
+
+<!-- source-family:SF-2026-ARXIV-2606-27379 -->
+
+### Open-world Evaluation 必须重复发生，而不是一次验收
+
+封闭 benchmark 在环境静态时可复现；工具、网页与事实持续变化后，一次 snapshot 会把过期知识误当能力。Evaluation owner 应维护 recurring probes、environment revision 与 change receipt，并区分模型退化和世界改变。收益是发现时效性 failure，成本是维护基准与重标注；静态数学/代码任务仍可沿用固定集。<!-- source-family:SF-2026-ARXIV-2605-20520 --> exact-v1 §2–3 只证明论文的 open-world protocol，§2.4 不支持所有领域的更新频率。
+
 ## Offline、Shadow、Canary 与 Online Evaluation
 
 不同阶段提供不同强度和风险的证据：
@@ -1630,21 +1794,6 @@ access and retention policy
 
 ## Evaluation Run 的平台对象模型
 
-<!-- daily-20260628:PLATFORM-EVALUATION-SYSTEM:start -->
-### Owner-merged minimal durable delta
-
-同一个 outcome metric 若在 optimizer、evaluator 与 champion selector 中分别重写，候选即使不变也会发生 selection inversion。Evaluation owner 应发布版本化 callable metric contract，让所有阶段消费同一 extraction/aggregation artifact，并保存 raw trajectory、contract revision 与可重算 verdict。
-
-### Trade-off、failure、fallback 与 coexistence
-
-一个 canonical metric 不能修复错误目标或缺失 trajectory；contract migration 也会改变历史可比性。Schema/semantics 不兼容时 Gate 保持 Open，并用旧 revision 对 raw evidence 重算。
-
-### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-29038 — primary arXiv:2606.29038v1; exact-v1 URL=https://arxiv.org/html/2606.29038v1; Method=https://arxiv.org/html/2606.29038v1 — §2 Pipeline Architecture and Metric Aggregation Divergence; 2.4 Positioning: Pipeline Architecture as Unregistered Degrees of Freedom; Evaluation=https://arxiv.org/html/2606.29038v1 — §3.2 Controlled Aggregation Experiment (EA-2); Appendix A Experiment Parameters; Non-proof=https://arxiv.org/html/2606.29038v1 — §Metric Aggregation Divergence: A Hidden Validity Threat in Agent-Based Policy Optimization and a Contractual Remedy; 6 Discussion; 7 Limitations and Conclusion；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
-<!-- daily-20260628:PLATFORM-EVALUATION-SYSTEM:end -->
-
-
 一个可审计的 Evaluation Run 可以抽象为：
 
 ```text
@@ -1660,6 +1809,18 @@ EvaluationRun
 ├─ failures / exclusions
 └─ immutable artifacts and timestamps
 ```
+
+### Generated Evaluator 先成为 Artifact，才能成为 Scorer
+
+Agent 数量少、任务协议稳定时，由领域 owner 手写 EvalSpec、metric 与 deterministic verifier，虽然扩展慢，却最容易审计，也仍是合理基线。任务、framework 与 requirement 快速分化后，生成器可以从 source、需求和 execution trace 提议 evaluation plan、metric code、trace parser、dependencies 与 report；约束也随之改变：这些输出不能因“代码已生成”或“第一次运行成功”就获得评分权，而要作为独立的 versioned evaluator artifact，绑定 generator、input/trace schema、适用域、依赖、代码与 report revision。
+
+Evaluator admission 应保存一条不可跳步的状态链：`draft → executable → non-vacuous → meta-evaluated → admitted`。生成器只拥有 proposal；execution harness 在干净环境中重建依赖、消费声明的 trace 并产出 `Eval@1` receipt；evaluation owner 用空输入、已知正反例和 deliberate mutation 检查 parser、metric 与 report 是否真正区分目标 failure，而不是恒定返回、静默丢字段或只复述 requirement；独立 meta-evaluator、确定性 anchor 与人工样本再核对 construct validity、scope expansion 和 disagreement。只有 admitted revision 才能参与 candidate promotion 的 evidence bundle，release owner 仍独占 promote、hold 或 rollback 的 commit authority，不能让生成器用自己生成的 evaluator 自证候选通过。
+
+这条链以更少的逐任务手写工作换取可复用 evaluation skills、运行轨迹覆盖和更清楚的 evaluator-failure 定位，但新增 instrumentation、trace storage、dependency sandbox、meta-evaluation 延迟与人工标注成本。常见 failure 包括 plan-code drift、跨 framework API 不兼容、trace schema 缺字段、metric 可运行但 vacuous、judge 与人工对 construct 的理解不一致，以及 generator、meta-evaluator 和被测 Agent 的 common-mode bias。低规模稳定任务继续沿用人工 EvalSpec 与 deterministic verifier；任一 admission gate 失败、证据冲突或适用域漂移时，应回退人工/既有 verifier、修复后生成新 revision，或将结果降为诊断 signal，而不是参与 promotion。
+
+`arXiv:2605.11378v1` 的 §2、§3.1–§3.3、§4.1–§4.4 与 Appendix A 只支持作者六阶段 EvalAgent、evaluation-skill package、AgentEvalBench/meta-evaluation 和 20 个 Agent × 两类 requirement 的实验；§6 与 §4.4 还把证据限制在 Claude-family backbone、预收集 trace、62.5%–65.0% first-run executability 和主观 meta-evaluation。它不证明自动生成 evaluator 等同 ground truth、能跨 framework 直接执行、上述 admission gate 足以保证 construct validity，或 production promotion 可以取消人工与可执行 verifier；论文命名了代码仓库，但未披露本次证据所用的 immutable commit。
+
+<!-- source-family:SF-AN-EMPIRICAL-STUDY-OF-AUTOMATING-AGENT-EVALUATION -->
 
 平台还需要把 `Run` 与 `Decision` 分开：
 
@@ -1699,6 +1860,10 @@ Gate 还必须区分：
 - **relative regression**：是否比当前 production 更差；
 - **non-inferiority**：新系统是否在允许范围内不劣；
 - **improvement**：收益是否大于 measurement uncertainty 与切换成本。
+
+### 层级 Attribution 要保留路由路径，不能只给总分
+
+系统有多级 router/evaluator 时，总体成功率无法定位 failure owner。评估记录应保存每级输入、选择、证据与最终 outcome，再做 hierarchical attribution；收益是可定位回归，代价是 trace 成本与 attribution model 偏差。低风险单路径系统仍可只记端到端结果。<!-- source-family:SF-2026-ARXIV-2605-22866 --> exact-v1 §3–4 与 Appendix A 只支持作者的层级归因，§6 不证明观察相关性等于因果责任。
 
 ## Evaluation 与 Observability 的边界
 
@@ -1780,6 +1945,10 @@ OpenAI Evals、MLflow、内部评测平台或领域 simulator 都可以成为 ex
 
 **Judge-as-truth。** 用一个 model judge 替代所有人工与 verifier。替代方案是多证据校准、顺序随机化、disagreement 分析和高风险人工复核。
 
+<!-- source-family:SF-2026-ARXIV-2605-27789 -->
+
+同一个 judge 在输入证据量、答案长度或呈现顺序不同的情况下可能改变偏好，因此“换了 judge 后结论一致”也不足以证明比较稳健。更可审计的比较要冻结 evidence budget 与 answer budget，随机化顺序，按相关样本/任务 cluster 估计不确定性，并在预注册假设上用第二个独立 judge 或人工子集复核。它用更多调用、标注与统计复杂度换取较少的长度偏差和伪独立样本；两个 judge 共享训练偏差时仍会一致地错。低风险快速筛选可以保留单 judge，高风险上线或模型排序则不能把单次 win rate 当作普遍质量事实。
+
 **Online-only。** 认为真实流量自动产生真实结论。替代方案是把 offline control、shadow、canary 与持续线上观测组合起来。
 
 **Metric-to-production automation。** 一个阈值直接移动 `production` alias。替代方案是让 gate 同时检查 identity、quality、safety、SLO、cost 与 exception policy。
@@ -1797,6 +1966,12 @@ pipeline 多次运行，对每个 transition statistic 单独测 noise floor；�
 token cap 下更啰嗦但最终正确的轨迹可能被误写为能力退化；三次训练 seed 中任意一次反转结论，都说明单 seed
 comparison 没有足够 authority。Measured null 只能界定当前 model、harness、sampling budget 下的 detection floor，
 不能把“在 pass@k 中未到达”升级为模型分布绝不支持，也不能由短 LoRA/self-training run 否定更长训练方案。
+
+<!-- source-family:SF-2026-ARXIV-2605-27712 -->
+
+序列中每一步的置信度还必须遵守时间边界。离线分析若用完整轨迹训练 belief estimator，再回填早期 checkpoint，容易让未来 evidence 泄漏进过去的置信度；得到的 calibration 看似更好，却不能在线复现。Prefix-safe contract 要求第 (t) 步的 belief 只读取当时可见的 prefix，并把 probability calibration 与 candidate ranking 分开：前者回答概率是否可信，后者回答候选排序是否有用。
+
+这种时间切片会减少训练可用信息并提高每步标注/存储成本，但能避免不可部署的 hindsight score。完整轨迹分析仍适合事后诊断，不能直接拥有在线 stop/commit authority；只有 prefix-safe、按 checkpoint 评估并报告 calibration error 的估计器，才可参与运行时阈值决策。现有结果属于披露任务与轨迹的实验性证据，不证明跨领域 calibration 自动迁移。
 
 ## 工程实践：从最小可信闭环开始
 
@@ -1819,6 +1994,106 @@ comparison 没有足够 authority。Measured null 只能界定当前 model、har
 9. 新版本重新走同一闭环，不原地覆盖证据。
 
 规模扩大后，再增加 suite registry、分布式 execution、sampling、review queue、policy engine、online joins 和 retention，而不是先做一个功能繁多的 dashboard。
+
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-14000:start -->
+autoformalization不能以kernel acceptance作为唯一质量gate；还应审计semantic faithfulness、Mathlib reuse与cross-file reuse。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-14000:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16603:start -->
+data-analytic Agent 应把 query/transform/result 编译成可执行 verification graph，使数值结论可由独立节点重放而非只审 prose。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16603:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19057:start -->
+当只有少量确定正例而未标注集混合正负时，evaluation audit 可用 positive-unlabeled inference 估计隐藏错误率，但必须公开 class-prior 与 identifiability assumptions。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19057:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19613:start -->
+coding-agent evaluation 应把一次长 session 建模为连续 change requests，并观察首次不可恢复失败，而不是把独立 task solve rate 当 stamina。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19613:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-24124:start -->
+将自由文本 CoT 编译为 typed dependency/constraint/expression trace；deterministic verifier 拥有可机械化检查，LLM audit 只处理 semantic deduction，失败步骤进入 repair 而非直接接受终局答案。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-24124:end -->
+
+### 从模型名评分到 Versioned Evaluation Object
+
+外部推理服务中，“同一个模型”可能对应不同 endpoint、量化、上下文策略、价格与运行时版本。评测原子对象因此应是 versioned endpoint/model configuration，并在同一 contract 中绑定 workload、质量、能耗、延迟、价格、失败率和 evaluator identity。Provider drift 或不可观测字段存在时，结论只能属于该配置与时间窗口。
+
+<!-- source-family:SF-2026-ARXIV-2605-00300 -->
+
+版本比较也不能只看 aggregate delta。均分不变时，item-level harmed/helped churn 仍可能很大；release gate 需要重复采样、within-model reliable-change interval、sampling variance 与 harmed/helped ledger，才能区分随机波动、能力迁移和真实兼容性退化。单一阈值不应跨模型族或 benchmark 外推。
+
+<!-- source-family:SF-2026-ARXIV-2604-27405 -->
+
+Prompt interface 同样属于评测身份。跨模型比较要区分 frozen common-prompt contract 与 per-model optimized deployment contract：前者测统一接口下的可比性，后者测各自最佳可部署能力。混用两者会把 prompt mismatch 误归因给权重，或把额外 search budget 隐藏在模型排名中。
+
+<!-- source-family:SF-2026-ARXIV-2604-27637 -->
+
+当被测对象是 code agent 时，verifier 也不是附属脚本。Special-judge synthesis、test-case parallelism、multi-node sandbox、配置化 suite 与失败重放共同决定 reward truth、吞吐与复现边界；generated judge、sandbox policy 和任务覆盖必须版本化，不能由一次通过推导任意程序正确。
+
+<!-- source-family:SF-2026-ARXIV-2604-27467 -->
+
+Simulator 则必须拆成两个可能冲突的 contract：behavioral realism 回答“像不像真实用户”，tester reliability 回答“能否保持系统相对判断”。二者应共享 canonical session schema、loss accounting 与 applicability metadata，但分别出账；有限语言、用户群与 simulator family 的相关性不证明生产迁移。
+
+<!-- source-family:SF-2026-ARXIV-2604-27878 -->
+
+### Evaluation Object 必须携带依赖图、时间与可复现条件
+
+Workspace Agent 的任务不是在互相独立的附件上答题，而是在文件依赖图中读取、修改并保持跨文件不变量。Evaluation object 因而必须保存初始 workspace、依赖边、允许与禁止的 mutation、终态判定和副作用；只比较最终文本会漏掉错误读取、隐式破坏和未授权写入。真实 workspace 提高部署相关性，却增加 fixture 版本、reset 和 judge 维护成本，静态 QA 仍适合隔离单步理解能力。
+
+<!-- source-family:SF-2026-ARXIV-2605-03596 -->
+
+只保存原始 source code 与 environment，能够最忠实地重跑同一实现，却会把“问题是什么”和“当时怎样解”锁在一起，
+依赖变化后也难区分任务漂移与实现腐化。Declarative Task Contract 可把问题描述、资源、输入输出、metric、执行条件
+和 candidate solution 分离：benchmark owner 版本化 task spec，Agent 只提交候选，harness/verifier 依据 contract
+决定接受。它支持独立实现和跨时间复现，但要承担 schema 表达力不足、自动抽取错误、环境缺失与 verifier common-mode
+failure；无法完整声明的任务必须保留 reference code/container、回归测试和人工 adjudication。
+
+这里的“可复现”只表示在声明条件下可重建判定过程，不自动证明两个实现语义等价。exact-v1 的证据只覆盖 Croissant
+Tasks vocab、论文实验与其局限讨论；Agent 生成的 reproduction 不证明 schema 完备，也不能外推所有 benchmark。
+
+<!-- source-family:SF-2026-ARXIV-2605-29786 -->
+
+能力结果还必须绑定时间。模型 release、elicitation、tool scaffold 和评测日期之间的 frontier lag，会让一个当时正确的测量被误读为当前系统能力；因此 release-grade 结果不能只写模型名和分数，而要作为带版本与日期的 immutable evaluation object。对 frontier safety claim，机构权威和 venue 也不能替代可复现条件：至少需要 artifact、配置、运行预算、evaluator 与独立 rerun 边界。
+
+<!-- source-family:SF-2026-ARXIV-2605-04135 -->
+
+这份可复现性不是免费的：平台要长期保存 artifact、harness、依赖、环境和原始 receipt，维护迁移路径，并为独立 rerun 支付算力与人工 adjudication。artifact 过期、依赖消失或 evaluator 无法重建时，结果必须标为 stale/unreproducible，不能继续充当 release gate。轻量的“模型名、日期、分数”记录在低风险趋势浏览或历史索引中仍然有价值，但只能描述当时观测，不得支持当前能力、安全或上线结论；关键条件无法公开时同样降级为受限 evidence。[受限证据：arXiv:2605.03596v1、2605.04135v1、2605.08192v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08192 -->
+
+### 从“可观测结果”到可发布结论，还需要识别与证明边界
+
+生产日志天然带有历史策略、用户选择和环境变化造成的 confounding。把日志直接喂给 evaluator，只能得到相关性描述，不能自动回答“换一个策略会怎样”。evaluation run 必须先声明证据角色：`OBS` 负责描述，`EXP` 通过随机化或可辩护干预支持因果估计，`SIM` 只在 fidelity contract 内提供反事实。多轮 Agent 还要重建 mediator 与 state transition；缺失这些条件时，结论应降级为 observational signal，而不是 release-grade causal claim。
+
+安全评估同样不能只靠固定采样。search-based route 可以冻结 deployment config，在 likelihood budget 内复用 prefix cache、做 chunked search，并报告找到的 failure mass 与尚未覆盖的 residual mass。它擅长发现低概率但结构化的失败，代价是搜索策略本身会改变被观察分布；因此必须与随机 sampling 并列，不能把“没有搜到”解释为“没有风险”。
+
+当 Agent 生成 compiler、kernel 或其他可执行 artifact 时，信任路径需要分层。tests 暴露环境与实现 mismatch，translation certificate 由独立 checker 验证语义保持，machine proof 只覆盖被形式化的 theorem；parser、spec、toolchain 与硬件仍是未验证边界。任一层失败时回退为不发布或使用已知实现，而不是让上游模型的自信接管 release authority。
+
+压缩模型的 release gate 也不能停留在平均 perplexity。必须比较 dense 与 pruned 模型的 item-level transition、fairness/calibration slices，并在真实 sparse kernel、存储格式和目标硬件上验证收益。结构稀疏只有在实现路径实际消费它时才是系统优化；否则只是参数模式变化。旧的平均指标仍可作早期 guardrail，但不能独自承担上线决定。
+
+<!-- source-family:SF-CONFOUNDED-LOG-EVALUATION -->
+<!-- source-family:SF-AGENT-SAFETY-SEARCH-MEASUREMENT -->
+<!-- source-family:SF-AGENT-GENERATED-VERIFIED-COMPILER -->
+<!-- source-family:SF-PRUNING-BEHAVIORAL-REGRESSION -->
+
+### Evaluation 必须测量 Channel、Invariance、Drift 与 Access Boundary
+
+Agent repair 的 execution trace 与 evaluator channel 可能对同一结果给出不同结论。评估对象必须同时冻结 artifact、执行环境、trace schema、judge input 与最终 outcome；channel disagreement 需要单独报告，而不能被一个总分吞掉。相似地，语义等价 prompt 若触发输出模式崩塌，说明系统缺少 invariance：release gate 应在 paraphrase family 上比较 mode transition，而非只测单一措辞。
+
+IID benchmark 也不能直接外推到 deployment drift。Jacobian-sensitive 或局部敏感度 bound 可以把输入变化与风险增量关联，但只在邻域、光滑性和估计误差成立时有效；超出校准域就应触发 shadow/canary 或拒绝结论。任何 intervention 还要系统检查意外 side effect，通过受影响切片、对照 artifact 与回滚条件证明“修复没有搬走问题”，而不是只复测目标指标。
+
+最后，真实 Agent 往往受授权限制，无法看到完整 ground truth。evaluation environment 必须显式建模 role、可见证据与合法 action；“未回答”可能是正确遵守权限，而不是能力失败。授权变化应进入 run identity，通用全访问 benchmark 只能作为上界，不能替代部署 contract。
+
+<!-- source-family:SF-AUDITREPAIRBENCH-A-PAIRED-EXECUTION-TRACE-CORPUS-FOR-EVALUATOR-CHANNEL-R -->
+<!-- source-family:SF-PARAPHRASE-INDUCED-OUTPUT-MODE-COLLAPSE-WHEN-LLMS-BREAK-CHARACTER-UNDER- -->
+<!-- source-family:SF-JACOBIAN-VELOCITY-BOUNDS-FOR-DEPLOYMENT-RISK-UNDER-COVARIATE-DRIFT -->
+<!-- source-family:SF-AUTOMATICALLY-FINDING-AND-VALIDATING-UNEXPECTED-SIDE-EFFECTS-OF-INTERVEN -->
+<!-- source-family:SF-PARTIAL-EVIDENCE-BENCH-BENCHMARKING-AUTHORIZATION-LIMITED-EVIDENCE-IN-AG -->
 
 ## 本章在知识树中的位置
 
@@ -1858,6 +2133,134 @@ desired objective
 → observe again
 ```
 
+### 先定位候选，再决定或拒答
+
+当 evaluator 直接在所有标签或答案中选一个类别时，单一置信分数混合了两个错误：正确候选可能根本没有进入
+可见集合，或候选已经正确但最终 selector 选错。更可审计的链路先构造带 coverage contract 的 shortlist，再
+对 shortlist 做校准选择，并允许 abstain：
+
+```text
+raw candidates
+→ conformal localization set
+→ calibrated selector
+→ decide | abstain | human escalation
+```
+
+Coverage 保证依赖 calibration/test exchangeability，只是有限样本下的 marginal guarantee；selector 的多次采样、
+few-shot prompt 与 calibration revision 都必须进入 EvalSpec。分布漂移、高风险 slice 或 shortlist 为空时必须拒答，
+不能把“集合很小”解释成事实真值。
+
+视觉 rubric 的 criteria provenance、component weight、prefix localization 与 judge revision 也要独立记录。细粒度
+credit 改善错误定位，却引入自动 rubric 偏差、模糊 prefix 对齐和同族 judge 偏置；最终 release gate 仍需独立
+人工或可执行证据。多语言能力评估还必须把 interface language 与 reasoning language 拆成两个 factor，并用
+role-swapped/self-play 或 matched task 控制 first-player 与规则差异；“英文推理改善”不是跨模型语言层级定律。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22474 -->
+把 factual verification 从所有 claim 同成本复核改为 claim-risk/uncertainty 驱动的资源分配；阈值、coverage 与 verification latency 必须联合验收。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；March-2022 Wikipedia、FactScore 和 T4/256-token 生成条件限定结论；uncertainty score 未校准时不能拥有 release authority。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22633 -->
+把 verbal confidence 与内部冲突分开：模型可高置信输出但隐藏 state 对相反命题均有支持，evaluation 需要独立测 conflict geometry 和 resolution behavior。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；representation probe 是诊断，不证明因果使用；不能直接成为 release gate。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22719 -->
+forecast benchmark 必须按 decision-time 可获得输入冻结，并以 walk-forward 防止 later-data leakage；nowcast revision 也要成为 dataset version。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；样本小、统计功效不足且金融 domain 特定；结果不能证明生产 alpha，只证明 leakage-aware protocol。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22737 -->
+stateful Agent evaluation 可由确定性 environment transition、predicate 与 event log 计算 GroundEval，而不是让 LLM judge 重新解释完整轨迹。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；context mode 可观测性更弱，确定性 evaluator 也只覆盖已编码 predicate；未编码目标不会自动出现。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+### Agent Kernel Evaluation 要把隐藏 Shape 与运行回执分开
+
+固定公开 shape 容易复现 kernel correctness 和速度，却会诱导 Agent 针对已知 case 过拟合。更完整的 benchmark 冻结 task/harness revision，在隐藏 shape、dtype 与硬件目标上执行候选 kernel，同时保存 compile、correctness、runtime 和失败回执。Agent 只提出优化，harness 拥有 correctness 与测量边界。
+
+隐藏任务提高 generalization 证据，却降低可调试性并增加硬件噪声；公开回归集仍用于开发，隐藏集只承担发布判断。作者 benchmark 不能证明未覆盖 operator、driver 或 GPU 上的泛化。
+
+<!-- source-family:SF-2026-ARXIV-2605-16819 -->
+
+### Counterfactual Localization 只能定位风险转折，不能读取真实意图
+
+只标最终 deceptive outcome 无法知道轨迹何时越过可恢复边界。可固定每个 sentence prefix、重复采样 continuation，估计该前缀后进入危险结果的条件概率，再定位显著跃迁；这是一种因果干预式诊断，而不是从单条 CoT 读取内在意图。
+
+重采样增加成本且受 generator、环境和 judge 影响；语言 cue 跨环境漂移时，内部 transition feature 也只能作为受限 sensor。高风险系统仍需外部行为、authorization 和 stop policy，不能由定位器单独授权或定罪。
+
+<!-- source-family:SF-2026-ARXIV-2605-17113 -->
+
+### Training 与 Inference Simulator 需要共享配置身份
+
+分离的训练/推理 simulator 适合局部容量规划，但会让 model graph、parallelism、hardware、network 和 runtime assumptions 漂移。统一 simulator 应以同一版本化配置生成两类事件，并分别对真实 trace 校准，才能让 what-if 结果可比较。
+
+统一模型提高复用，却扩大误差传播和校准负担；作者平均预测误差只属于其配置空间，不覆盖 data-dependent kernel、故障恢复或生产 tail。早期规划可用 simulator，发布仍需真实 hardware replay/canary。
+
+<!-- source-family:SF-2026-ARXIV-2605-17164 -->
+
+### 多语言 Safety 需要分解 Aggregate Failure
+
+总体 jailbreak rate 会混合模型安全韧性、prompt 难度、语言处理难度和 concept-language 特异差距。分层 latent-variable/IRT 分析可把这些因素作为不同参数估计，使数据补强和 guardrail 修复指向具体 failure slice。
+
+分解依赖题目可比性、标注和模型假设；参数可辨识不等于真实因果，低资源语言的小样本还会放大不确定性。原始逐语言 outcome、攻击类型和置信区间必须保留，聚合指标继续承担趋势监控，但不能独自证明公平或安全。
+
+<!-- source-family:SF-2026-ARXIV-2605-17173 -->
+
+### Duplex Agent Evaluation 要联合测 Timing 与 Content
+
+离线评估完整回答适合单轮文本；双向实时 Agent 的价值还取决于何时打断、等待、追问和响应。Evaluation 应重放或运行 versioned event stream，同时对响应内容、turn alignment、interrupt handling 与 latency window 评分。
+
+联合合同更接近交互体验，却引入时钟同步、网络抖动和环境不可重复；content 正确不能覆盖错过行动窗口，低延迟也不能覆盖错误结论。开发期仍可分开测 ASR/LLM/TTS，发布时再用端到端 duplex trajectory 收束。
+
+现有 exact-v1 只在其 §3 定义的 duplex tasks、turn/interrupt protocol 与 §4 披露的模型端点上验证这套联合评分；它不证明未披露硬件、网络、并发或开放对话中的 latency/content 分布。因而基准结果只能校准 evaluation contract，不能直接成为生产 SLO。
+
+<!-- source-family:SF-2026-ARXIV-2605-17360 -->
+
+## 从“有结果”到可追责、可干预的 Evidence
+
+### 表征审计必须先消除模板混淆，再谈因果
+
+把不同提示的 activation 直接拼成矩阵，容易把 template、长度和 mean-direction shift 当成目标概念。可信的 activation audit 应先固定 prompt contract、中心化或显式建模均值方向，再报告 effective rank 等描述量，最后用 intervention 或 causal ablation 检查该方向是否真正控制输出。收益是把“可分”与“可干预”分开，代价是实验矩阵扩大且结论更局部；只做线性 probe 可作为发现工具，不能成为 release claim。
+
+<!-- source-family:SF-2026-ARXIV-2605-24583 -->
+
+### Explainability 的 Release Claim 存在不可兼得边界
+
+复杂环境、高任务性能、面向人的简洁解释与完全忠实的内部描述通常不能同时保证。平台因此不应把一个 explanation score 当成统一证明，而应声明它优化了 fidelity、completeness、comprehensibility 或 coverage 中的哪些维度，以及牺牲了什么。收益是避免把可读叙述冒充因果证据，代价是需要多种解释 artifact 和不同消费者 gate；低风险、简单模型中，局部可读解释仍可能充分。理论边界不意味着所有解释都无用，只限制可作出的联合保证。
+
+<!-- source-family:SF-2026-ARXIV-2605-24727 -->
+
+### 长轨迹评分必须处理提前终止与删失
+
+把任务成功率直接平均，默认每条轨迹都观察到同一终点；超时、预算耗尽或安全中止会把未知未来混成失败。trajectory evaluator 应把终止原因、观察 horizon 与 censoring policy 写入 evaluation object，并采用满足 properness 的评分规则，使模型不能通过提前退出操纵分数。收益是跨策略比较更可信，代价是需要生存/删失假设和更复杂的不确定性报告；在固定短 horizon 且无中止时，普通成功率仍足够。现有理论与实验不证明任何单一 proper score 能覆盖所有任务价值。
+
+<!-- source-family:SF-2026-ARXIV-2605-24756 -->
+
+### 污染校正需要主动干预，而不是事后猜测
+
+看到异常高分后再估计 benchmark contamination，无法区分记忆、能力和数据生态。更强的协议在可控训练副本中按已知比例注入样本，拟合 contamination–response curve，再把目标 run 映射到带不确定性的校正区间。它把污染从传闻变成可复现实验，但需要训练数据写权限与未污染 counterfactual，闭源模型通常不具备这些条件；此时只能报告疑似污染而不能伪造校正分。现有证据仅覆盖披露模型与五类 benchmark。
+
+<!-- source-family:SF-2026-ARXIV-2605-24818 -->
+
+### Safety Policy 可以编译成可追踪测试，但不能自动获得完备性
+
+人工逐条写 jailbreak 测试在 policy 较小时合理，policy 演进后容易留下未覆盖路径。将自然语言规则编译为形式化 predicate 与 semantic graph，可以从未覆盖边生成带 policy revision、path identity 和 expected outcome 的测试候选；evaluator 仍负责验证翻译和执行结果。收益是覆盖可追踪，代价是 policy-to-logic 错译和图爆炸；多轮状态或规则歧义较高时仍需人工设计。当前证据只覆盖静态单轮场景，不能证明测试生成完备。
+
+<!-- source-family:SF-2026-ARXIV-2605-24883 -->
+
+### Rubric 与 Pairwise Preference 是不同测量算子
+
+绝对 rubric score 给出可解释维度，却要求评分者稳定使用刻度；pairwise preference 降低尺度负担，却只提供相对次序并受候选集合影响。评估系统应在同一受控质量阶梯上比较两者的一致性、区分力和成本，而不是把它们当成可互换标签。低样本或需要具体缺陷说明时 rubric 仍有价值，大规模排序可优先 pairwise；混合 trade-off 必须保留原始判断。现有实验主要来自法律文本，不能规定所有领域的 evaluator 形式。
+
+<!-- source-family:SF-2026-ARXIV-2605-25240 -->
+
+### Benchmark 相关性应分解共同构念与生态噪声
+
+多个 leaderboard 同涨不等于它们测量同一能力：模型家族、训练数据、提交策略和 task-specific variance 都会制造相关。latent measurement model 可把共同因子、任务特异方差与元数据效应分开，帮助 release owner 判断“能力变化”还是“评测生态变化”；代价是模型可辨识、样本代表性和时间稳定性假设。原始逐 benchmark 结果必须保留，latent factor 只能作为解释层。现有证据是一轮六 benchmark 的观察性快照，不构成因果能力本体。
+
+<!-- source-family:SF-2026-ARXIV-2605-25272 -->
+
+## 从机制演进到系统设计
+
+Evaluation 从单一 benchmark 分数演进为版本化的决策证据系统。首先冻结 subject、dataset/environment、metric/judge 和 run identity；随后对 calibration、slice、uncertainty 与复现参数建模；当评估成本或开放任务使完整真值不可得时，再引入顺序检验、受控子集、可执行 predicate、typed reasoning trace 或 abstention。
+
+更自动的 evaluator 能扩大覆盖，却会引入 judge bias、leakage、aggregation degrees of freedom、相关样本和未编码目标。任何分数只有在其 EvalSpec 和适用分布内成立，release authority 必须独立于产生分数的模型；低功效、漂移或 oracle 不完整时结论应为 inconclusive，而不是强行排序。人工评审、完整 benchmark 和真实 environment outcome始终作为高风险 fallback。
+
 ## 自检问题
 
 1. 为什么 benchmark 分数总是一个条件性结论？
@@ -1885,124 +2288,84 @@ desired objective
 23. 为什么低 semantic entropy、高 self-consistency 在 adversarially correlated distribution 中仍不能成为 truth evidence？
 24. 为什么低 HTTP error rate 不能证明模型输出质量满足 intended use？
 
+## Evaluation Contract 还必须管理配置、样本身份与工作负载状态
+
+### Pairwise Verdict 需要 Configuration Envelope
+
+“A 比 B 安全”只有在 harness configuration 被固定时才是可复算声明。Evaluation owner 应保存模型端点、prompt/template、sampling、package、judge 与 metric 配置，并报告配置网格内的排序一致性和方差，而不是只给一个 pairwise number。收益是区分模型差异与 harness-induced reversal，代价是组合爆炸；覆盖不足时应把结论降为 configuration-conditional，而不是平均掩盖反转。exact-v1 只在论文的模型、benchmark、package envelope 与 SDI/CFR 等指标中观察到该现象，不能估计所有评测配置。<!-- source-family:SF-2026-ARXIV-2605-25492 -->
+
+### Membership Audit 要绑定 Sample Identity 与低 FPR 决策
+
+把单样本攻击分数直接平均，在总体巨大、目标 FPR 很低时会被有限 shadow model 与抽样偏差支配。Measurement owner 应保存 sample identity、per-sample vulnerability、aggregation threshold 与 finite-population correction，并在同一 false-positive contract 下报告不确定性。收益是使 membership 声明可解释，代价是更多 shadow computation 和更宽置信区间；Gaussian post-processing 或总体假设失效时应退回 per-sample 结果或标记不可判定。exact-v1 只支持论文的数据、攻击与 analytical simulation，不证明生产模型隐私状态。<!-- source-family:SF-2026-ARXIV-2605-25819 -->
+
+### Benchmark Completion 必须覆盖证据与 Action Space
+
+只测静态输入输出，在 response space 小且动作固定时合理；部署 benchmark 若未覆盖可取得证据和允许 action，就可能把“未搜索到”误判为能力不足。Eval owner 应版本化 evidence fibers、action completeness 与 acquisition curve，先证明可完成性，再比较 agent。收益是区分 benchmark 缺口与系统缺口，代价是维护 action model 和数据覆盖；空间开放或 completeness 无法证明时，应明确只报告 sampled coverage。exact-v1 仅支持论文的 controlled channels 与 Tox21/Matbench/JARVIS audits，不证明开放世界完备性。<!-- source-family:SF-2026-ARXIV-2605-25997 -->
+
+### Activation Oracle 的 Confidence 也要校准
+
+内部 activation score 适合排序，却不能直接当 correctness probability。Evaluation owner 应为具体 operator、layer、label availability 与 calibration split 建立 confidence contract，并比较多种 operator 的 reliability，而非只看平均分。收益是让 interpretability probe 可进入 selective decision，代价是样本与重新校准成本；secret-word 可枚举性、层漂移或 label shift 会使置信度失真，应退回无置信度的诊断用途。exact-v1 只支持四个 Qwen/Gemma oracle、每 operator 约六千样本及所测任务，不提供通用内部真值保证。<!-- source-family:SF-2026-ARXIV-2605-26045 -->
+
+### Agent Workload 不是普通 Long-prompt Workload
+
+把输入 token 总量当作主要成本，在 cache 不可复用时成立；多轮 Agent 大量复用 prefix 后，execution 会转为 decode-dominated，并依赖长生命周期 KV state。Workload contract 应记录 turn graph、cache-hit identity、KV lifetime、tool pauses 和 decode distribution，capacity owner 才能重放。收益是避免用静态长提示压测误配硬件，代价是 trace 基础设施与隐私处理；prefix identity 失效或 cache eviction 改变时必须重新测量。exact-v1 只支持五个 agent benchmark、披露的 Gemma/Qwen 配置和 serving stack，不证明所有生产 agent 都呈同一比例。<!-- source-family:SF-2026-ARXIV-2605-26297 -->
+
+### Domain Workflow 可以编译为 Deterministic Verifier
+
+人工编写少量 ERP 题目容易审计，却难覆盖约束组合；纯自然语言生成又会引入不可判定答案。Benchmark owner 可以把领域专家 specification 编译为 constraint optimization program，由同一版本的 generator 与 executable verifier 产生任务和判定。收益是扩大覆盖并保留可复算性，代价是 specification bug 会系统性污染数据；必须以人工 anchor、独立 solver 和版本化约束做交叉检查。exact-v1 只支持单一 ERP domain 与生成任务，不证明真实业务流程或跨域泛化。<!-- source-family:SF-2026-ARXIV-2605-26321 -->
+
+### Miscoverage 要拆成 Sampling Failure 与 Selection Failure
+
+只给最终 coverage 数字，会把候选集中没有正确项和 selector 选错混成同一故障。Evaluation owner 应分别估计有限采样失败，并在 calibration/exchangeability 条件下对 conditional selection 使用 conformal gate，再组合总体 bound。收益是为增加采样或改进 selector 指明责任，代价是校准集、额外样本与假设检查；分布漂移或相关自适应采样会破坏保证，应退回经验 risk-coverage 曲线或 abstain。exact-v1 仅支持论文的有限采样实验、conditional exchangeability 与 population-bound 假设，不是开放世界 truth guarantee。<!-- source-family:SF-2026-ARXIV-2605-27091 -->
+
+## Adaptive Evaluation 也必须被当作实验过程
+
+<!-- semantic-body-binding:SF-TOWARDS-RELIABLE-LLM-EVALUATION-CORRECTING-THE-WINNER-S-CURSE-IN-ADAPTIV:start -->
+在同一 benchmark 上反复调 prompt、policy 或超参数并只报告最佳配置，会产生 procedure-level winner's curse：即使每次单独评测都正确，选择过程也会系统性高估最终 winner。EvalRun 因而要保存尝试序列、selection rule、holdout reuse 与 stopping condition，并用独立 holdout、sequential correction 或重新运行校正选择偏差。它降低虚假改进，却需要更多样本和计算；一次性、预注册比较仍可沿用普通置信区间。[受限证据：arXiv:2605.05973v1]
+<!-- semantic-body-binding:SF-TOWARDS-RELIABLE-LLM-EVALUATION-CORRECTING-THE-WINNER-S-CURSE-IN-ADAPTIV:end -->
+
+<!-- semantic-body-binding:SF-BEYOND-ACCURACY-POLICY-INVARIANCE-AS-A-RELIABILITY-TEST-FOR-LLM-SAFETY-J:start -->
+Judge 可靠性还应接受 policy-preserving rewrite test：若语义与安全政策保持不变，只改变表述、顺序或无关上下文，verdict 应在声明容差内保持不变。该 invariance 是 evaluator release evidence，而不是另一个总分；失败时应回退冻结人工 anchor、确定性 outcome 或更窄适用域。稳定性通过也不证明 judge 正确，只说明它没有被这类等价变换轻易翻转。[受限证据：arXiv:2605.06161v1]
+<!-- semantic-body-binding:SF-BEYOND-ACCURACY-POLICY-INVARIANCE-AS-A-RELIABILITY-TEST-FOR-LLM-SAFETY-J:end -->
+
+## Evidence Chain 与在线干预
+
+普通复现实验保存代码、配置和分数，在协作规模较小时已经有价值；当论文数字、执行环境与发布 artifact 由不同主体持有，仅保存最终表格无法证明某次计算确实发生，也无法阻止事后替换。更强的 evidence chain 把代码身份、输入与配置、实际执行、输出摘要和签名收据绑定到同一 run identity，使结果具备 nonrepudiation。它增加密钥、attestation 与长期验证成本，也不能证明实验设计本身正确；低风险探索仍可使用普通 provenance，高影响结论才需要签名链。[受限证据：arXiv:2605.08586v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08586 -->
+
+评测“AI 是否发现了新方法”还必须限制系统可编辑的范围，冻结 evaluator、training knobs 与强基线，并检查收益能否跨 scale 保持。否则 Agent 可能只是在调参、修改 harness 或利用 evaluator 缺口。这个 contract 降低虚假 discovery，却提高复现成本并可能压制合理搜索空间；开放探索可以保留宽 scope，但不能直接获得“新机制已成立”的发布权威。[受限证据：arXiv:2605.08678v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08678 -->
+
+长轨迹的 post-hoc attribution 能解释失败，却无法在错误传播前阻断它。进入在线运行后，auditor 只能读取当前 prefix，并在 earliest decisive error 出现时选择继续或告警；alarm time、false-positive cost、可观察 prefix 和 downstream propagation 因而成为 EvalSpec。在线审计获得干预机会，代价是未来信息不可见、误报会中断正确轨迹；低风险离线分析仍适合 post-hoc 路径。[受限证据：arXiv:2605.08715v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08715 -->
+
+Embodied evaluation 也不能把“环境任务已经完成”和“Agent 正确地结束并承诺完成”压成一个分数。world completion、stop decision、terminal statement 与证据充分性应分别记录；这能暴露执行成功但停止失败、或无证据承诺成功的系统错误，却增加 terminal-state annotation 与 judge 依赖。确定性 simulator 可直接检查时仍优先使用环境谓词，开放世界则保留人工 adjudication。[受限证据：arXiv:2605.08747v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08747 -->
+
+在 edge federated fine-tuning 中，final accuracy 或 simulation 只能证明算法在给定抽象下有效，不能证明真实设备可部署。evaluation contract 至少联合 quality-under-budget、cost-to-target、真实设备 resource/energy 与 perturbation robustness；它把“达到精度”提升为“在约束内稳定达到精度”，但扩大测试矩阵并降低跨设备可比性。早期算法筛选仍可用 simulation，只能标记为 feasibility evidence。[受限证据：arXiv:2605.08636v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-08636 -->
+
+多轮 jailbreak 比较若各自拥有不同 turn、retry、interaction、strategy-generation 和 judge budget，最终 ASR 不具可比性。可复现 harness 应把 strategy、prompt generation、refinement 与 flow control 拆成可组合模块，并冻结每层 budget 与 revision。模块化提高归因与公平性，却可能限制真实攻击的自适应空间；开放红队仍可采用更宽预算，但不得与固定合同的 benchmark 排名混算。[受限证据：arXiv:2605.11002v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-11002 -->
+
+## Action Control 需要 Sensitivity 与 Invariance 双臂证据
+
+只看 action accuracy，无法区分 Agent 是否真正消费了当前状态，还是依赖与训练集相关的表面 cue。因果评估应构造两个相互约束的干预臂：改变决定正确 action 的 decisive state 时，行为必须相应改变；保持 decisive state 不变、只替换无关 cue 时，行为应保持在声明容差内。前者测 target-changing sensitivity，后者测 target-preserving invariance；任一单臂通过都不足以证明 action control。
+
+<!-- source-family:SF-CAUSAL-STATE-BINDING-PREDICTS-ACTION-CONTROL-IN-LANGUAGE-AGENTS -->
+EvalSpec 需要冻结 event/state schema、可控干预、matched interface、action scorer 与 tolerance，并保存每对干预样本的 trajectory。它能把相关性成功分解为更强的 behavioral evidence，却增加构造 matched interventions 的成本，也可能因遗漏真正 mediator 而误判。无法构造可信干预时，应把结论降级为 observational association，继续使用真实 outcome、人工 adjudication 与 production incident evidence。即使双臂通过，也只证明披露任务上的结构耦合，不证明模型具有内在 agency 或能迁移到开放环境。[受限证据：arXiv:2605.09692v1]
+
 ## 小结
 
-Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页面。它把 intended use 转化为 EvalSpec，把有限数据和环境转化为带不确定性的 evidence，再把 evidence 放入受风险政策约束的发布与反馈决策。
+Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页面。它把 intended use 转化为 EvalSpec，把有限数据和环境转化为带不确定性的 evidence，再把 evidence 放入受风险政策约束的发布与反馈决策。对 MoE 等条件计算系统，负载统计只是运行证据，功能 specialization 仍需独立指标与干预验证。release-grade 结论还必须能重建其 artifact、harness 与环境；无法重建的历史分数只能作为描述性记录。
 
 它的长期不变量是：完整 subject identity、明确分布、可审计 scorer、per-example evidence、切片与不确定性、分离的 decision policy，以及从生产反馈回到新版本的受控闭环。下一章进入 Monitoring，讨论平台怎样以受控成本持续获得 observed state，而不把“发生了什么”误当成“是否足够好”。
-
-### 先定位候选，再决定或拒答
-
-当 evaluator 直接在所有标签或答案中选一个类别时，单一置信分数混合了两个错误：正确候选可能根本没有进入
-可见集合，或候选已经正确但最终 selector 选错。更可审计的链路先构造带 coverage contract 的 shortlist，再
-对 shortlist 做校准选择，并允许 abstain：
-
-```text
-raw candidates
-→ conformal localization set
-→ calibrated selector
-→ decide | abstain | human escalation
-```
-
-Coverage 保证依赖 calibration/test exchangeability，只是有限样本下的 marginal guarantee；selector 的多次采样、
-few-shot prompt 与 calibration revision 都必须进入 EvalSpec。分布漂移、高风险 slice 或 shortlist 为空时必须拒答，
-不能把“集合很小”解释成事实真值。
-
-视觉 rubric 的 criteria provenance、component weight、prefix localization 与 judge revision 也要独立记录。细粒度
-credit 改善错误定位，却引入自动 rubric 偏差、模糊 prefix 对齐和同族 judge 偏置；最终 release gate 仍需独立
-人工或可执行证据。多语言能力评估还必须把 interface language 与 reasoning language 拆成两个 factor，并用
-role-swapped/self-play 或 matched task 控制 first-player 与规则差异；“英文推理改善”不是跨模型语言层级定律。
-
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22474 -->
-把 factual verification 从所有 claim 同成本复核改为 claim-risk/uncertainty 驱动的资源分配；阈值、coverage 与 verification latency 必须联合验收。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；March-2022 Wikipedia、FactScore 和 T4/256-token 生成条件限定结论；uncertainty score 未校准时不能拥有 release authority。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- body-source:SF-2026-ARXIV-2606-22633 -->
-把 verbal confidence 与内部冲突分开：模型可高置信输出但隐藏 state 对相反命题均有支持，evaluation 需要独立测 conflict geometry 和 resolution behavior。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；representation probe 是诊断，不证明因果使用；不能直接成为 release gate。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- body-source:SF-2026-ARXIV-2606-22719 -->
-forecast benchmark 必须按 decision-time 可获得输入冻结，并以 walk-forward 防止 later-data leakage；nowcast revision 也要成为 dataset version。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；样本小、统计功效不足且金融 domain 特定；结果不能证明生产 alpha，只证明 leakage-aware protocol。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- body-source:SF-2026-ARXIV-2606-22737 -->
-stateful Agent evaluation 可由确定性 environment transition、predicate 与 event log 计算 GroundEval，而不是让 LLM judge 重新解释完整轨迹。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；context mode 可观测性更弱，确定性 evaluator 也只覆盖已编码 predicate；未编码目标不会自动出现。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- recovered-daily-20260623:PLATFORM-EVALUATION-SYSTEM:start -->
-## 2026-06-23 evidence integration — PLATFORM-EVALUATION-SYSTEM
-
-相邻章 `books/part-06-ai-infrastructure/67-monitoring.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22783**：Breaking the Evaluation Paradox: Evaluating High-Entropy Search with Computationally Irreducible Constraints 的 exact-v1 机制为：We introduce VERITAS (Verifiable Traversal Assessment for Search), a framework built on the principle of computationally irreducible constraints. 因此 把样本、metric、judge、阈值、不确定性和 release authority 分离。 该 family 的 failure pressure 是：We break this paradox by shifting the evaluation paradigm from simulating a messy reality to constructing computationally pure challenges. 披露的 evaluation signal 是：Evaluating the exhaustive search capabilities of large language models (LLMs) is plagued by a fundamental paradox: verifying completeness requires complete ground truth, yet high-entropy enumeration tasks make such ground truth impossible for humans to create. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-22826**：MINCE: Shrinking LLM Evaluation Datasets via Few-Model Monte Carlo Calibration 的 exact-v1 机制为：We introduce MINCE (Monte Carlo Informed N-sizing for Compact Evaluation), which uses Monte Carlo simulation over per-item logs from a small set of calibration models to find the minimum subset size that bounds accuracy drift and then fixes a randomly sampled subset at that size, with no prediction layer needed. 因此 把样本、metric、judge、阈值、不确定性和 release authority 分离。 该 family 的 failure pressure 是：Existing subset selection methods reduce this cost but depend on large calibration pools or learned prediction layers. 披露的 evaluation signal 是：Evaluating LLMs across many model variants -- quantized, fine-tuned, or deployment-specific -- requires running large benchmarks repeatedly, a process that can take tens of hours per model on edge hardware such as NPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22783` — primary `arXiv:2606.22783v1`; Method=`arXiv:2606.22783v1 — §3 Method; §A.4 The Dilemma of Construction and Verification; §A.4.1 Construction Difficulty`; Evaluation=`arXiv:2606.22783v1 — §Breaking the Evaluation Paradox: Evaluating High-Entropy Search with Computationally Irreducible Constraints; §3.1 Evaluation Paradox; §3.3 Asymptotic Analysis`; non-proof=`arXiv:2606.22783v1 — §5 Conclusion; §A.6 Conclusion: Returning to the Origin of Difficulty; §C.8 Conclusion: Validating Computational Irreducibility`; fallback=该 family 的 failure pressure 是：We break this paradox by shifting the evaluation paradigm from simulating a messy reality to constructing computationally pure challenges. 披露的 evaluation signal 是：Evaluating the exhaustive search capabilities of large language models (LLMs) is plagued by a fundamental paradox: verifying completeness requires complete ground truth, yet high-entropy enumeration tasks make such ground truth impossible for humans to create. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-22826` — primary `arXiv:2606.22826v1`; Method=`arXiv:2606.22826v1 — §3 Method; §3.3 Subset Construction`; Evaluation=`arXiv:2606.22826v1 — §MINCE: Shrinking LLM Evaluation Datasets via Few-Model Monte Carlo Calibration; §Appendix D Threshold Sensitivity Analysis; §Appendix E GPU Evaluation Speedup Breakdown`; non-proof=`arXiv:2606.22826v1 — §6 Conclusion`; fallback=该 family 的 failure pressure 是：Existing subset selection methods reduce this cost but depend on large calibration pools or learned prediction layers. 披露的 evaluation signal 是：Evaluating LLMs across many model variants -- quantized, fine-tuned, or deployment-specific -- requires running large benchmarks repeatedly, a process that can take tens of hours per model on edge hardware such as NPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:PLATFORM-EVALUATION-SYSTEM:end -->
-
-<!-- recovered-daily-20260624:PLATFORM-EVALUATION-SYSTEM:start -->
-## 2026-06-24 evidence integration — PLATFORM-EVALUATION-SYSTEM
-
-相邻章 `books/part-06-ai-infrastructure/67-monitoring.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24074**：把一次性 benchmark 分数改成带双侧错误界、逐 token 成本和停止阈值的 SPRT certification；certifier 持有 query/score/log-likelihood state，跨阈值才发布 reliable/unreliable verdict。 只证明给定 reliability gap、binary correctness oracle 与 small-error leading order；不证明开放式 judge 标签、分布漂移或任意非独立 query 下仍满足同一界。
-- **SF-2026-ARXIV-2606-24081**：把 T2I jailbreak 的 prompt-only 比较升级为 paper-to-pipeline contract：attack module、victim、filter、multimodal judge、配置、日志与版本 artifact 共同成为可复现状态。 11 种 attack、4 个 victim 与论文匹配配置不证明未知 attack 自动复现；prompt/heuristic memory update 及 closed-source safety filter 仍是黑盒边界。
-- **SF-2026-ARXIV-2606-24124**：将自由文本 CoT 编译为 typed dependency/constraint/expression trace；deterministic verifier 拥有可机械化检查，LLM audit 只处理 semantic deduction，失败步骤进入 repair 而非直接接受终局答案。 逐步验证成本随 trace 线性增长，semantic deduction 仍依赖 LLM audit，inference schema library 有限；三类 benchmark 不证明任意开放域推理。
-- **SF-2026-ARXIV-2606-24996**：deployment-facing leaderboard claim 必须经过 interface lock、clean positive anchor、native negative control、power/false-promotion 与 first-failing-gate report card；任一 gate 失败即禁止发布 selection inversion。 证据来自 forecasting candidate families 与两个 locked interface；不证明所有 task metric 或业务成本可被同一 gate 捕获，underpowered audit 只能给 inconclusive。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-24074: `arXiv:2606.24074v1`; exact-v1 URL=`https://arxiv.org/html/2606.24074v1`; Method=`https://arxiv.org/html/2606.24074v1 — §3 Reliability Certification Setup; 4 Constructing a Certification SOTM`; Evaluation=`https://arxiv.org/html/2606.24074v1 — §5 A Matching Reliability Certification Lower Bound`; Non-proof=`只证明给定 reliability gap、binary correctness oracle 与 small-error leading order；不证明开放式 judge 标签、分布漂移或任意非独立 query 下仍满足同一界。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24081: `arXiv:2606.24081v1`; exact-v1 URL=`https://arxiv.org/html/2606.24081v1`; Method=`https://arxiv.org/html/2606.24081v1 — §3 PixJail Framework; 3.2 Attack Module; 3.3 Evaluation Pipeline; 3.4 Memory Updates`; Evaluation=`https://arxiv.org/html/2606.24081v1 — §4 Experiments; 4.1 Data, Models and Metrics; 4.3 Main Results`; Non-proof=`11 种 attack、4 个 victim 与论文匹配配置不证明未知 attack 自动复现；prompt/heuristic memory update 及 closed-source safety filter 仍是黑盒边界。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24124: `arXiv:2606.24124v1`; exact-v1 URL=`https://arxiv.org/html/2606.24124v1`; Method=`https://arxiv.org/html/2606.24124v1 — §3 DSL for Reasoning Trace Formalization; 4 Structured Verification`; Evaluation=`https://arxiv.org/html/2606.24124v1 — §5 Evaluation; E Standalone Verification on ProcessBench`; Non-proof=`逐步验证成本随 trace 线性增长，semantic deduction 仍依赖 LLM audit，inference schema library 有限；三类 benchmark 不证明任意开放域推理。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24996: `arXiv:2606.24996v1`; exact-v1 URL=`https://arxiv.org/html/2606.24996v1`; Method=`https://arxiv.org/html/2606.24996v1 — §2 Results: Two Roles for the Certification Protocol`; Evaluation=`https://arxiv.org/html/2606.24996v1 — §A Report-Card and Gate Procedure; C/D Robustness Controls`; Non-proof=`证据来自 forecasting candidate families 与两个 locked interface；不证明所有 task metric 或业务成本可被同一 gate 捕获，underpowered audit 只能给 inconclusive。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:PLATFORM-EVALUATION-SYSTEM:end -->
-
-<!-- recovered-daily-20260625:PLATFORM-EVALUATION-SYSTEM:start -->
-## 2026-06-25 evidence integration — PLATFORM-EVALUATION-SYSTEM
-
-- **SF-2026-ARXIV-2606-25487**：`3 Setup; Appendix A Prompts, wrappers, and attack configuration` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Limitations` 是 `How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring` 的 source-specific 反例/局限边界；若运行条件离开 `4 Results; 4.1 Calibration against human labels; 4.3 white-box attack` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25622**：`IV Theoretical Framework: MAS Architecture and Experimental Setup` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VI Limitations & Future Work` 是 `Probabilistic Agents in Deterministic Audits: Evaluating Multi-Agent Systems for Automated Audits Based on the German IT-Grundschutz` 的 source-specific 反例/局限边界；若运行条件离开 `V Results & Discussion` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25760**：`3 Benchmark and Evaluation Protocol; 7 Inductive-Conformal Click Disks` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `A4 Out-of-distribution analysis; A5 Methods deferred; A25 vendor protocol details` 是 `Uncertainty Quantification for Computer-Use Agents: A Benchmark across Vision-Language Models and GUI Grounding Datasets` 的 source-specific 反例/局限边界；若运行条件离开 `4 UQ Generalizes Selectively; 5 Graded Error and Calibration` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25782**：`2 Dataset; 3 Adversarial Attack Methodology; 4 Safety Judge Panel` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `OOD holdout and multi-turn attack boundary; 0.B Inference Throughput and Latency` 是 `Do Encoders Suffice? A Systematic Comparison of Encoder and Decoder Safety Judges for LLM Adversarial Evaluation` 的 source-specific 反例/局限边界；若运行条件离开 `5 Evaluation Protocol; 6 Results; 6.3 Cost and Latency Trade-offs` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26071**：`4 Protocol and Methods; 5 Environments; 7 Methodological Insights` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `10 Limitations and Future Work; negative-results and confounding boundary` 是 `Model Forensics: Investigating Whether Concerning Behavior Reflects Misalignment` 的 source-specific 反例/局限边界；若运行条件离开 `6 Case Studies; 8 Recommendations` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26185**：`Temperature-control and reproducibility protocol for LLM-as-judge safety evaluation` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Temperature control is necessary but not sufficient; prompt/model/vendor drift remains` 是 `Necessary but Not Sufficient: Temperature Control and Reproducibility in LLM-as-Judge Safety Evaluations` 的 source-specific 反例/局限边界；若运行条件离开 `Cross-temperature, repeat-run and judge-agreement evaluation` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26300**：`Verification Horizon formulation for coding-agent rewards` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `No universal reward verifier; longer horizons and hidden environment state remain` 是 `The Verification Horizon: No Silver Bullet for Coding Agent Rewards` 的 source-specific 反例/局限边界；若运行条件离开 `Reward-verification experiments across coding horizons` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26429**：`DualEval joint model-item calibration` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Joint calibration assumes the evaluated item/model pool; new distributions require refitting` 是 `DualEval: Joint Model-Item Calibration for Unified LLM Evaluation` 的 source-specific 反例/局限边界；若运行条件离开 `Unified LLM evaluation experiments and calibration analysis` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26456**：`Safety-Aware Mutation Testing proposal and interaction-aware mutant model` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Vision paper: no completed empirical stop-rule validation; ADS component/fault model is provisional` 是 `Towards Safety-Aware Mutation Testing for Autonomous Driving Systems` 的 source-specific 反例/局限边界；若运行条件离开 `Simulation-based ADS testing protocol and proposed adequacy criterion` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26492**：`Within-program versus leave-program-out diagnostic design` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Fault-injected programs and studied diagnosers do not prove production root-cause validity` 是 `Evaluation-Strategy Gap in Fault Diagnosis of Deep Learning Programs` 的 source-specific 反例/局限边界；若运行条件离开 `DynFault: 5,542 traces from 38 DL programs; balanced-accuracy gap analysis` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25487**：Primary `arXiv:2606.25487v1`；Method `https://arxiv.org/html/2606.25487v1 — §3 Setup; Appendix A Prompts, wrappers, and attack configuration`；Evaluation `https://arxiv.org/html/2606.25487v1 — §4 Results; 4.1 Calibration against human labels; 4.3 white-box attack`；未证明边界 `https://arxiv.org/html/2606.25487v1 — §6 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25622**：Primary `arXiv:2606.25622v1`；Method `https://arxiv.org/html/2606.25622v1 — §IV Theoretical Framework: MAS Architecture and Experimental Setup`；Evaluation `https://arxiv.org/html/2606.25622v1 — §V Results & Discussion`；未证明边界 `https://arxiv.org/html/2606.25622v1 — §VI Limitations & Future Work`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25760**：Primary `arXiv:2606.25760v1`；Method `https://arxiv.org/html/2606.25760v1 — §3 Benchmark and Evaluation Protocol; 7 Inductive-Conformal Click Disks`；Evaluation `https://arxiv.org/html/2606.25760v1 — §4 UQ Generalizes Selectively; 5 Graded Error and Calibration`；未证明边界 `https://arxiv.org/html/2606.25760v1 — §A4 Out-of-distribution analysis; A5 Methods deferred; A25 vendor protocol details`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25782**：Primary `arXiv:2606.25782v1`；Method `https://arxiv.org/html/2606.25782v1 — §2 Dataset; 3 Adversarial Attack Methodology; 4 Safety Judge Panel`；Evaluation `https://arxiv.org/html/2606.25782v1 — §5 Evaluation Protocol; 6 Results; 6.3 Cost and Latency Trade-offs`；未证明边界 `https://arxiv.org/html/2606.25782v1 — §OOD holdout and multi-turn attack boundary; 0.B Inference Throughput and Latency`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26071**：Primary `arXiv:2606.26071v1`；Method `https://arxiv.org/html/2606.26071v1 — §4 Protocol and Methods; 5 Environments; 7 Methodological Insights`；Evaluation `https://arxiv.org/html/2606.26071v1 — §6 Case Studies; 8 Recommendations`；未证明边界 `https://arxiv.org/html/2606.26071v1 — §10 Limitations and Future Work; negative-results and confounding boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26185**：Primary `arXiv:2606.26185v1`；Method `https://arxiv.org/html/2606.26185v1 — §Temperature-control and reproducibility protocol for LLM-as-judge safety evaluation`；Evaluation `https://arxiv.org/html/2606.26185v1 — §Cross-temperature, repeat-run and judge-agreement evaluation`；未证明边界 `https://arxiv.org/html/2606.26185v1 — §Temperature control is necessary but not sufficient; prompt/model/vendor drift remains`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26300**：Primary `arXiv:2606.26300v1`；Method `https://arxiv.org/html/2606.26300v1 — §Verification Horizon formulation for coding-agent rewards`；Evaluation `https://arxiv.org/html/2606.26300v1 — §Reward-verification experiments across coding horizons`；未证明边界 `https://arxiv.org/html/2606.26300v1 — §No universal reward verifier; longer horizons and hidden environment state remain`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26429**：Primary `arXiv:2606.26429v1`；Method `https://arxiv.org/html/2606.26429v1 — §DualEval joint model-item calibration`；Evaluation `https://arxiv.org/html/2606.26429v1 — §Unified LLM evaluation experiments and calibration analysis`；未证明边界 `https://arxiv.org/html/2606.26429v1 — §Joint calibration assumes the evaluated item/model pool; new distributions require refitting`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26456**：Primary `arXiv:2606.26456v1`；Method `https://arxiv.org/html/2606.26456v1 — §Safety-Aware Mutation Testing proposal and interaction-aware mutant model`；Evaluation `https://arxiv.org/html/2606.26456v1 — §Simulation-based ADS testing protocol and proposed adequacy criterion`；未证明边界 `https://arxiv.org/html/2606.26456v1 — §Vision paper: no completed empirical stop-rule validation; ADS component/fault model is provisional`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-26492**：Primary `arXiv:2606.26492v1`；Method `https://arxiv.org/html/2606.26492v1 — §Within-program versus leave-program-out diagnostic design`；Evaluation `https://arxiv.org/html/2606.26492v1 — §DynFault: 5,542 traces from 38 DL programs; balanced-accuracy gap analysis`；未证明边界 `https://arxiv.org/html/2606.26492v1 — §Fault-injected programs and studied diagnosers do not prove production root-cause validity`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:PLATFORM-EVALUATION-SYSTEM:end -->
-
-<!-- june29-owner:PLATFORM-EVALUATION-SYSTEM:start -->
-## 2026-06-29 约束变化与机制增量
-
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29196`、`SF-2026-ARXIV-2606-29623`）。** 现有 Evaluation 正文管理 dataset/model/evaluator/metric/release 分权，却未把模型识别 evaluation context 的内部 signal 作为 benchmark 污染诊断，并限制其只能触发额外评测。 现有 Evaluation 正文要求 slice、校准与反例，但缺少在零失败观测下以 adaptive rare-event cascade、ruler revision 与 anytime-valid upper envelope持有风险证据。 因此本次把这些增量合并到同一知识 owner：能力评测不能假设模型对 evaluation context 无感；evaluation-awareness probe 必须作为 contamination sensor，按模型尺度和表示深度版本化，并在异常时阻止 pooled score 直接取得 release authority。Probe 迁移失败时回退 blind/held-out protocol 与外部 outcome。 高风险 release 不能用普通 Monte Carlo 的零观察失败推断安全；SCARCE 类 cascade 将 rare-event region、latent ruler、停止条件与概率上界保存为验收证据。Ruler/分布假设失效时恢复更保守采样或保持 Gate Open。 共同代价与回退边界是：SAD 上的线性可恢复性只是一种 operational evaluation-awareness signal；white-box AUROC 与黑盒行为会分离，且 Qwen/Gemma 的深度迁移不构成跨 family scaling law。异常只触发额外 held-out evaluation，不授予直接拒绝权。 MNIST 与 Llama-Guard hidden-state jailbreak fleet 只验证经校准 ruler 的 rare-event estimate；论文明确指出 behavioral fleet 约 2,000 variants 仍不足、Mahalanobis ruler 可结构性失效，跨 corpus 必须重新校准。否则 Gate 保持 Open。
-
-### 2026-06-29 source-specific Review notes
-
-Review note：`SF-2026-ARXIV-2606-29196`；Method `https://arxiv.org/html/2606.29196v1 — §2 Evaluation-Awareness Representations; scale-dependent probe construction`；Evaluation `https://arxiv.org/html/2606.29196v1 — §3 Experimental Setup; 4 Results`；未证明边界 `https://arxiv.org/html/2606.29196v1 — §5 Discussion`。
-
-Review note：`SF-2026-ARXIV-2606-29623`；Method `https://arxiv.org/html/2606.29623v1 — §3 Data-Driven Subset Simulation; 4 Theoretical Guarantees; C Martingale Theory for SCARCE`；Evaluation `https://arxiv.org/html/2606.29623v1 — §5.1 Experiment Setup; 6.1 Experiment Setup; 6.2 Simulation Results`；未证明边界 `https://arxiv.org/html/2606.29623v1 — §7 Conclusion, Limitations, and Extensions; E LLM Transfer Challenges`。
-<!-- june29-owner:PLATFORM-EVALUATION-SYSTEM:end -->
 
 ## Review notes
 
@@ -2201,3 +2564,699 @@ Implementation evidence：
   https://arxiv.org/abs/2607.15263
 - Beyond Semantic Equivalence（implication/incompatibility graph uncertainty sensor；Status: Experimental；受限问答校准，不证明 truth）:
   https://arxiv.org/abs/2607.16868v1
+
+### Daily integration evidence trace
+
+- `2026-05-04 / SF-2026-ARXIV-2605-01771` — exact-v1 `arXiv:2605.01771v1`；正文区分 textual agreement、typed process trace 与 environment outcome，不外推所测任务的遵从率。
+- `2026-05-04 / SF-2026-ARXIV-2605-02038` — exact-v1 `arXiv:2605.02038v1`；正文吸收 prompt-variant spread、raw generation/parser identity 与等价性审计，未保留受限模型排名。
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28013 — primary arXiv:2606.28013v1; exact-v1 URL=https://arxiv.org/html/2606.28013v1; Method=https://arxiv.org/html/2606.28013v1 — §Methods.; 5.1 Per-method cell decomposition; 5.4 A predictive regularity: stratum-rates are method-invariant; Evaluation=https://arxiv.org/html/2606.28013v1 — §4 Experimental Setup; 5 Experimental Results and Analysis; Non-proof=https://arxiv.org/html/2606.28013v1 — §6 Discussion and Limitations; 7 Conclusion。
+- SF-2026-ARXIV-2606-28661 — primary arXiv:2606.28661v1; exact-v1 URL=https://arxiv.org/html/2606.28661v1; Method=https://arxiv.org/html/2606.28661v1 — §Proposition 1 (Design effect of test-time sampling) .; Two-stage design effect.; Evaluation=https://arxiv.org/html/2606.28661v1 — §1 Introduction and roadmap; 2 Test-time sampling is cluster sampling; Non-proof=https://arxiv.org/html/2606.28661v1 — §6 Conclusion。
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-29038 — primary arXiv:2606.29038v1; exact-v1 URL=https://arxiv.org/html/2606.29038v1; Method=https://arxiv.org/html/2606.29038v1 — §2 Pipeline Architecture and Metric Aggregation Divergence; 2.4 Positioning: Pipeline Architecture as Unregistered Degrees of Freedom; Evaluation=https://arxiv.org/html/2606.29038v1 — §3.2 Controlled Aggregation Experiment (EA-2); Appendix A Experiment Parameters; Non-proof=https://arxiv.org/html/2606.29038v1 — §Metric Aggregation Divergence: A Hidden Validity Threat in Agent-Based Policy Optimization and a Contractual Remedy; 6 Discussion; 7 Limitations and Conclusion；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22783` — primary `arXiv:2606.22783v1`; Method=`arXiv:2606.22783v1 — §3 Method; §A.4 The Dilemma of Construction and Verification; §A.4.1 Construction Difficulty`; Evaluation=`arXiv:2606.22783v1 — §Breaking the Evaluation Paradox: Evaluating High-Entropy Search with Computationally Irreducible Constraints; §3.1 Evaluation Paradox; §3.3 Asymptotic Analysis`; non-proof=`arXiv:2606.22783v1 — §5 Conclusion; §A.6 Conclusion: Returning to the Origin of Difficulty; §C.8 Conclusion: Validating Computational Irreducibility`; fallback=该 family 的 failure pressure 是：We break this paradox by shifting the evaluation paradigm from simulating a messy reality to constructing computationally pure challenges. 披露的 evaluation signal 是：Evaluating the exhaustive search capabilities of large language models (LLMs) is plagued by a fundamental paradox: verifying completeness requires complete ground truth, yet high-entropy enumeration tasks make such ground truth impossible for humans to create. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-22826` — primary `arXiv:2606.22826v1`; Method=`arXiv:2606.22826v1 — §3 Method; §3.3 Subset Construction`; Evaluation=`arXiv:2606.22826v1 — §MINCE: Shrinking LLM Evaluation Datasets via Few-Model Monte Carlo Calibration; §Appendix D Threshold Sensitivity Analysis; §Appendix E GPU Evaluation Speedup Breakdown`; non-proof=`arXiv:2606.22826v1 — §6 Conclusion`; fallback=该 family 的 failure pressure 是：Existing subset selection methods reduce this cost but depend on large calibration pools or learned prediction layers. 披露的 evaluation signal 是：Evaluating LLMs across many model variants -- quantized, fine-tuned, or deployment-specific -- requires running large benchmarks repeatedly, a process that can take tens of hours per model on edge hardware such as NPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24074: `arXiv:2606.24074v1`; exact-v1 URL=`https://arxiv.org/html/2606.24074v1`; Method=`https://arxiv.org/html/2606.24074v1 — §3 Reliability Certification Setup; 4 Constructing a Certification SOTM`; Evaluation=`https://arxiv.org/html/2606.24074v1 — §5 A Matching Reliability Certification Lower Bound`; Non-proof=`只证明给定 reliability gap、binary correctness oracle 与 small-error leading order；不证明开放式 judge 标签、分布漂移或任意非独立 query 下仍满足同一界。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24081: `arXiv:2606.24081v1`; exact-v1 URL=`https://arxiv.org/html/2606.24081v1`; Method=`https://arxiv.org/html/2606.24081v1 — §3 PixJail Framework; 3.2 Attack Module; 3.3 Evaluation Pipeline; 3.4 Memory Updates`; Evaluation=`https://arxiv.org/html/2606.24081v1 — §4 Experiments; 4.1 Data, Models and Metrics; 4.3 Main Results`; Non-proof=`11 种 attack、4 个 victim 与论文匹配配置不证明未知 attack 自动复现；prompt/heuristic memory update 及 closed-source safety filter 仍是黑盒边界。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24124: `arXiv:2606.24124v1`; exact-v1 URL=`https://arxiv.org/html/2606.24124v1`; Method=`https://arxiv.org/html/2606.24124v1 — §3 DSL for Reasoning Trace Formalization; 4 Structured Verification`; Evaluation=`https://arxiv.org/html/2606.24124v1 — §5 Evaluation; E Standalone Verification on ProcessBench`; Non-proof=`逐步验证成本随 trace 线性增长，semantic deduction 仍依赖 LLM audit，inference schema library 有限；三类 benchmark 不证明任意开放域推理。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24996: `arXiv:2606.24996v1`; exact-v1 URL=`https://arxiv.org/html/2606.24996v1`; Method=`https://arxiv.org/html/2606.24996v1 — §2 Results: Two Roles for the Certification Protocol`; Evaluation=`https://arxiv.org/html/2606.24996v1 — §A Report-Card and Gate Procedure; C/D Robustness Controls`; Non-proof=`证据来自 forecasting candidate families 与两个 locked interface；不证明所有 task metric 或业务成本可被同一 gate 捕获，underpowered audit 只能给 inconclusive。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25487**：Primary `arXiv:2606.25487v1`；Method `https://arxiv.org/html/2606.25487v1 — §3 Setup; Appendix A Prompts, wrappers, and attack configuration`；Evaluation `https://arxiv.org/html/2606.25487v1 — §4 Results; 4.1 Calibration against human labels; 4.3 white-box attack`；未证明边界 `https://arxiv.org/html/2606.25487v1 — §6 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25622**：Primary `arXiv:2606.25622v1`；Method `https://arxiv.org/html/2606.25622v1 — §IV Theoretical Framework: MAS Architecture and Experimental Setup`；Evaluation `https://arxiv.org/html/2606.25622v1 — §V Results & Discussion`；未证明边界 `https://arxiv.org/html/2606.25622v1 — §VI Limitations & Future Work`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25760**：Primary `arXiv:2606.25760v1`；Method `https://arxiv.org/html/2606.25760v1 — §3 Benchmark and Evaluation Protocol; 7 Inductive-Conformal Click Disks`；Evaluation `https://arxiv.org/html/2606.25760v1 — §4 UQ Generalizes Selectively; 5 Graded Error and Calibration`；未证明边界 `https://arxiv.org/html/2606.25760v1 — §A4 Out-of-distribution analysis; A5 Methods deferred; A25 vendor protocol details`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25782**：Primary `arXiv:2606.25782v1`；Method `https://arxiv.org/html/2606.25782v1 — §2 Dataset; 3 Adversarial Attack Methodology; 4 Safety Judge Panel`；Evaluation `https://arxiv.org/html/2606.25782v1 — §5 Evaluation Protocol; 6 Results; 6.3 Cost and Latency Trade-offs`；未证明边界 `https://arxiv.org/html/2606.25782v1 — §OOD holdout and multi-turn attack boundary; 0.B Inference Throughput and Latency`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26071**：Primary `arXiv:2606.26071v1`；Method `https://arxiv.org/html/2606.26071v1 — §4 Protocol and Methods; 5 Environments; 7 Methodological Insights`；Evaluation `https://arxiv.org/html/2606.26071v1 — §6 Case Studies; 8 Recommendations`；未证明边界 `https://arxiv.org/html/2606.26071v1 — §10 Limitations and Future Work; negative-results and confounding boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26185**：Primary `arXiv:2606.26185v1`；Method `https://arxiv.org/html/2606.26185v1 — §Temperature-control and reproducibility protocol for LLM-as-judge safety evaluation`；Evaluation `https://arxiv.org/html/2606.26185v1 — §Cross-temperature, repeat-run and judge-agreement evaluation`；未证明边界 `https://arxiv.org/html/2606.26185v1 — §Temperature control is necessary but not sufficient; prompt/model/vendor drift remains`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26300**：Primary `arXiv:2606.26300v1`；Method `https://arxiv.org/html/2606.26300v1 — §Verification Horizon formulation for coding-agent rewards`；Evaluation `https://arxiv.org/html/2606.26300v1 — §Reward-verification experiments across coding horizons`；未证明边界 `https://arxiv.org/html/2606.26300v1 — §No universal reward verifier; longer horizons and hidden environment state remain`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26429**：Primary `arXiv:2606.26429v1`；Method `https://arxiv.org/html/2606.26429v1 — §DualEval joint model-item calibration`；Evaluation `https://arxiv.org/html/2606.26429v1 — §Unified LLM evaluation experiments and calibration analysis`；未证明边界 `https://arxiv.org/html/2606.26429v1 — §Joint calibration assumes the evaluated item/model pool; new distributions require refitting`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26456**：Primary `arXiv:2606.26456v1`；Method `https://arxiv.org/html/2606.26456v1 — §Safety-Aware Mutation Testing proposal and interaction-aware mutant model`；Evaluation `https://arxiv.org/html/2606.26456v1 — §Simulation-based ADS testing protocol and proposed adequacy criterion`；未证明边界 `https://arxiv.org/html/2606.26456v1 — §Vision paper: no completed empirical stop-rule validation; ADS component/fault model is provisional`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26492**：Primary `arXiv:2606.26492v1`；Method `https://arxiv.org/html/2606.26492v1 — §Within-program versus leave-program-out diagnostic design`；Evaluation `https://arxiv.org/html/2606.26492v1 — §DynFault: 5,542 traces from 38 DL programs; balanced-accuracy gap analysis`；未证明边界 `https://arxiv.org/html/2606.26492v1 — §Fault-injected programs and studied diagnosers do not prove production root-cause validity`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+#### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29196`；Method `https://arxiv.org/html/2606.29196v1 — §2 Evaluation-Awareness Representations; scale-dependent probe construction`；Evaluation `https://arxiv.org/html/2606.29196v1 — §3 Experimental Setup; 4 Results`；未证明边界 `https://arxiv.org/html/2606.29196v1 — §5 Discussion`。
+
+Review note：`SF-2026-ARXIV-2606-29623`；Method `https://arxiv.org/html/2606.29623v1 — §3 Data-Driven Subset Simulation; 4 Theoretical Guarantees; C Martingale Theory for SCARCE`；Evaluation `https://arxiv.org/html/2606.29623v1 — §5.1 Experiment Setup; 6.1 Experiment Setup; 6.2 Simulation Results`；未证明边界 `https://arxiv.org/html/2606.29623v1 — §7 Conclusion, Limitations, and Extensions; E LLM Transfer Challenges`。
+
+### Source-family integration record
+
+<!-- daily-20260627:PLATFORM-EVALUATION-SYSTEM:start -->
+### Owner-merged minimal durable delta
+
+Evaluation 必须分开 generator 能产生什么，与 release selector 能可靠识别什么。对 formalization，type acceptance 与 semantic equivalence 是两个独立 signal；对 repeated sampling，answer coverage 与 selection accuracy 必须分报，并显式记录 correlation/modal ceiling。增加 sample budget 不能修复无法识别已覆盖答案的 oracle 或 selector。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Semantic judge 与 selector 都可能错误或相关；uncovered/undecidable 必须保持 Unknown，高风险分歧交回独立 verification 或人工。
+
+<!-- daily-20260627:PLATFORM-EVALUATION-SYSTEM:end -->
+
+<!-- daily-20260628:PLATFORM-EVALUATION-SYSTEM:start -->
+### Owner-merged minimal durable delta
+
+同一个 outcome metric 若在 optimizer、evaluator 与 champion selector 中分别重写，候选即使不变也会发生 selection inversion。Evaluation owner 应发布版本化 callable metric contract，让所有阶段消费同一 extraction/aggregation artifact，并保存 raw trajectory、contract revision 与可重算 verdict。
+
+### Trade-off、failure、fallback 与 coexistence
+
+一个 canonical metric 不能修复错误目标或缺失 trajectory；contract migration 也会改变历史可比性。Schema/semantics 不兼容时 Gate 保持 Open，并用旧 revision 对 raw evidence 重算。
+
+<!-- daily-20260628:PLATFORM-EVALUATION-SYSTEM:end -->
+
+<!-- recovered-daily-20260623:PLATFORM-EVALUATION-SYSTEM:start -->
+### 2026-06-23 evidence integration — PLATFORM-EVALUATION-SYSTEM
+
+相邻章 `books/part-06-ai-infrastructure/67-monitoring.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22783**：Breaking the Evaluation Paradox: Evaluating High-Entropy Search with Computationally Irreducible Constraints 的 exact-v1 机制为：We introduce VERITAS (Verifiable Traversal Assessment for Search), a framework built on the principle of computationally irreducible constraints. 因此 把样本、metric、judge、阈值、不确定性和 release authority 分离。 该 family 的 failure pressure 是：We break this paradox by shifting the evaluation paradigm from simulating a messy reality to constructing computationally pure challenges. 披露的 evaluation signal 是：Evaluating the exhaustive search capabilities of large language models (LLMs) is plagued by a fundamental paradox: verifying completeness requires complete ground truth, yet high-entropy enumeration tasks make such ground truth impossible for humans to create. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-22826**：MINCE: Shrinking LLM Evaluation Datasets via Few-Model Monte Carlo Calibration 的 exact-v1 机制为：We introduce MINCE (Monte Carlo Informed N-sizing for Compact Evaluation), which uses Monte Carlo simulation over per-item logs from a small set of calibration models to find the minimum subset size that bounds accuracy drift and then fixes a randomly sampled subset at that size, with no prediction layer needed. 因此 把样本、metric、judge、阈值、不确定性和 release authority 分离。 该 family 的 failure pressure 是：Existing subset selection methods reduce this cost but depend on large calibration pools or learned prediction layers. 披露的 evaluation signal 是：Evaluating LLMs across many model variants -- quantized, fine-tuned, or deployment-specific -- requires running large benchmarks repeatedly, a process that can take tens of hours per model on edge hardware such as NPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；metric、judge 或样本假设失效时保持 release Gate Open 并恢复完整评估。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:PLATFORM-EVALUATION-SYSTEM:end -->
+
+<!-- recovered-daily-20260624:PLATFORM-EVALUATION-SYSTEM:start -->
+### 2026-06-24 evidence integration — PLATFORM-EVALUATION-SYSTEM
+
+相邻章 `books/part-06-ai-infrastructure/67-monitoring.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24074**：把一次性 benchmark 分数改成带双侧错误界、逐 token 成本和停止阈值的 SPRT certification；certifier 持有 query/score/log-likelihood state，跨阈值才发布 reliable/unreliable verdict。 只证明给定 reliability gap、binary correctness oracle 与 small-error leading order；不证明开放式 judge 标签、分布漂移或任意非独立 query 下仍满足同一界。
+- **SF-2026-ARXIV-2606-24081**：把 T2I jailbreak 的 prompt-only 比较升级为 paper-to-pipeline contract：attack module、victim、filter、multimodal judge、配置、日志与版本 artifact 共同成为可复现状态。 11 种 attack、4 个 victim 与论文匹配配置不证明未知 attack 自动复现；prompt/heuristic memory update 及 closed-source safety filter 仍是黑盒边界。
+- **SF-2026-ARXIV-2606-24124**：将自由文本 CoT 编译为 typed dependency/constraint/expression trace；deterministic verifier 拥有可机械化检查，LLM audit 只处理 semantic deduction，失败步骤进入 repair 而非直接接受终局答案。 逐步验证成本随 trace 线性增长，semantic deduction 仍依赖 LLM audit，inference schema library 有限；三类 benchmark 不证明任意开放域推理。
+- **SF-2026-ARXIV-2606-24996**：deployment-facing leaderboard claim 必须经过 interface lock、clean positive anchor、native negative control、power/false-promotion 与 first-failing-gate report card；任一 gate 失败即禁止发布 selection inversion。 证据来自 forecasting candidate families 与两个 locked interface；不证明所有 task metric 或业务成本可被同一 gate 捕获，underpowered audit 只能给 inconclusive。
+
+<!-- recovered-daily-20260624:PLATFORM-EVALUATION-SYSTEM:end -->
+
+<!-- recovered-daily-20260625:PLATFORM-EVALUATION-SYSTEM:start -->
+### 2026-06-25 evidence integration — PLATFORM-EVALUATION-SYSTEM
+
+- **SF-2026-ARXIV-2606-25487**：`3 Setup; Appendix A Prompts, wrappers, and attack configuration` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Limitations` 是 `How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring` 的 source-specific 反例/局限边界；若运行条件离开 `4 Results; 4.1 Calibration against human labels; 4.3 white-box attack` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25622**：`IV Theoretical Framework: MAS Architecture and Experimental Setup` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VI Limitations & Future Work` 是 `Probabilistic Agents in Deterministic Audits: Evaluating Multi-Agent Systems for Automated Audits Based on the German IT-Grundschutz` 的 source-specific 反例/局限边界；若运行条件离开 `V Results & Discussion` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25760**：`3 Benchmark and Evaluation Protocol; 7 Inductive-Conformal Click Disks` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `A4 Out-of-distribution analysis; A5 Methods deferred; A25 vendor protocol details` 是 `Uncertainty Quantification for Computer-Use Agents: A Benchmark across Vision-Language Models and GUI Grounding Datasets` 的 source-specific 反例/局限边界；若运行条件离开 `4 UQ Generalizes Selectively; 5 Graded Error and Calibration` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25782**：`2 Dataset; 3 Adversarial Attack Methodology; 4 Safety Judge Panel` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `OOD holdout and multi-turn attack boundary; 0.B Inference Throughput and Latency` 是 `Do Encoders Suffice? A Systematic Comparison of Encoder and Decoder Safety Judges for LLM Adversarial Evaluation` 的 source-specific 反例/局限边界；若运行条件离开 `5 Evaluation Protocol; 6 Results; 6.3 Cost and Latency Trade-offs` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26071**：`4 Protocol and Methods; 5 Environments; 7 Methodological Insights` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `10 Limitations and Future Work; negative-results and confounding boundary` 是 `Model Forensics: Investigating Whether Concerning Behavior Reflects Misalignment` 的 source-specific 反例/局限边界；若运行条件离开 `6 Case Studies; 8 Recommendations` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26185**：`Temperature-control and reproducibility protocol for LLM-as-judge safety evaluation` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Temperature control is necessary but not sufficient; prompt/model/vendor drift remains` 是 `Necessary but Not Sufficient: Temperature Control and Reproducibility in LLM-as-Judge Safety Evaluations` 的 source-specific 反例/局限边界；若运行条件离开 `Cross-temperature, repeat-run and judge-agreement evaluation` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26300**：`Verification Horizon formulation for coding-agent rewards` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `No universal reward verifier; longer horizons and hidden environment state remain` 是 `The Verification Horizon: No Silver Bullet for Coding Agent Rewards` 的 source-specific 反例/局限边界；若运行条件离开 `Reward-verification experiments across coding horizons` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26429**：`DualEval joint model-item calibration` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Joint calibration assumes the evaluated item/model pool; new distributions require refitting` 是 `DualEval: Joint Model-Item Calibration for Unified LLM Evaluation` 的 source-specific 反例/局限边界；若运行条件离开 `Unified LLM evaluation experiments and calibration analysis` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26456**：`Safety-Aware Mutation Testing proposal and interaction-aware mutant model` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Vision paper: no completed empirical stop-rule validation; ADS component/fault model is provisional` 是 `Towards Safety-Aware Mutation Testing for Autonomous Driving Systems` 的 source-specific 反例/局限边界；若运行条件离开 `Simulation-based ADS testing protocol and proposed adequacy criterion` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26492**：`Within-program versus leave-program-out diagnostic design` 所定义的源特定机制用于把校准、误差分层、停止条件或复现参数提升为 release gate 的显式状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Fault-injected programs and studied diagnosers do not prove production root-cause validity` 是 `Evaluation-Strategy Gap in Fault Diagnosis of Deep Learning Programs` 的 source-specific 反例/局限边界；若运行条件离开 `DynFault: 5,542 traces from 38 DL programs; balanced-accuracy gap analysis` 的验证域，`PLATFORM-EVALUATION-SYSTEM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:PLATFORM-EVALUATION-SYSTEM:end -->
+
+<!-- june29-owner:PLATFORM-EVALUATION-SYSTEM:start -->
+### 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29196`、`SF-2026-ARXIV-2606-29623`）。** 现有 Evaluation 正文管理 dataset/model/evaluator/metric/release 分权，却未把模型识别 evaluation context 的内部 signal 作为 benchmark 污染诊断，并限制其只能触发额外评测。 现有 Evaluation 正文要求 slice、校准与反例，但缺少在零失败观测下以 adaptive rare-event cascade、ruler revision 与 anytime-valid upper envelope持有风险证据。 因此本次把这些增量合并到同一知识 owner：能力评测不能假设模型对 evaluation context 无感；evaluation-awareness probe 必须作为 contamination sensor，按模型尺度和表示深度版本化，并在异常时阻止 pooled score 直接取得 release authority。Probe 迁移失败时回退 blind/held-out protocol 与外部 outcome。 高风险 release 不能用普通 Monte Carlo 的零观察失败推断安全；SCARCE 类 cascade 将 rare-event region、latent ruler、停止条件与概率上界保存为验收证据。Ruler/分布假设失效时恢复更保守采样或保持 Gate Open。 共同代价与回退边界是：SAD 上的线性可恢复性只是一种 operational evaluation-awareness signal；white-box AUROC 与黑盒行为会分离，且 Qwen/Gemma 的深度迁移不构成跨 family scaling law。异常只触发额外 held-out evaluation，不授予直接拒绝权。 MNIST 与 Llama-Guard hidden-state jailbreak fleet 只验证经校准 ruler 的 rare-event estimate；论文明确指出 behavioral fleet 约 2,000 variants 仍不足、Mahalanobis ruler 可结构性失效，跨 corpus 必须重新校准。否则 Gate 保持 Open。
+
+<!-- june29-owner:PLATFORM-EVALUATION-SYSTEM:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-FED-PERSONALIZATION-SILENT-FAILURES:start -->
+- `SF-FED-PERSONALIZATION-SILENT-FAILURES` — Daily `2026-06-01`；primary `arXiv:2606.00947v1`；Books review `books-review:SF-FED-PERSONALIZATION-SILENT-FAILURES`。
+
+  **已吸收的语义增量：** Federated foundation-model personalization makes client-level behavior inaccessible to a central observer, so bias, miscalibration, fairness collapse, adaptation misalignment, out-of-domain degradation, and alignment erosion can pass ordinary aggregate acceptance; the durable delta is a privacy-preserving behavioral-evaluation contract that assigns what may be observed, aggregated, audited, and used for release. 证据边界：This exact-v1 paper is a taxonomy and research vision rather than an implemented monitor or newly executed benchmark; it does not establish complete detectors, production thresholds, or that privacy-preserving statistics can identify every client-local failure without weakening privacy.
+<!-- daily-books-trace:SF-FED-PERSONALIZATION-SILENT-FAILURES:end -->
+
+<!-- daily-books-trace:SF-COMPRESSION-UNCERTAINTY:start -->
+- `SF-COMPRESSION-UNCERTAINTY` — Daily `2026-06-02`；primary `arXiv:2606.01850v1`；Books review `books-review:SF-COMPRESSION-UNCERTAINTY`。
+
+  **已吸收的语义增量：** 压缩评估通常只比较 accuracy/perplexity，却可能遗漏置信集合扩大与 selective-risk 变化。
+<!-- daily-books-trace:SF-COMPRESSION-UNCERTAINTY:end -->
+
+<!-- daily-books-trace:SF-DRIFT-TELBENCH:start -->
+- `SF-DRIFT-TELBENCH` — Daily `2026-06-02`；primary `arXiv:2606.02060v1`；Books review `books-review:SF-DRIFT-TELBENCH`。
+
+  **已吸收的语义增量：** 补 outcome→span→first harmful commitment→claim propagation。
+<!-- daily-books-trace:SF-DRIFT-TELBENCH:end -->
+
+<!-- daily-books-trace:SF-LLMFI-ERROR-PROPAGATION:start -->
+- `SF-LLMFI-ERROR-PROPAGATION` — Daily `2026-06-02`；primary `arXiv:2606.02430v1`；Books review `books-review:SF-LLMFI-ERROR-PROPAGATION`。
+
+  **已吸收的语义增量：** 补 LLM inference 中 layer/operation/token/task 的 propagation chain 与 mitigation evidence boundary。
+<!-- daily-books-trace:SF-LLMFI-ERROR-PROPAGATION:end -->
+
+<!-- daily-books-trace:SF-COLLABORATIVE-DISAGREEMENT-RESOLUTION:start -->
+- `SF-COLLABORATIVE-DISAGREEMENT-RESOLUTION` — Daily `2026-06-03`；primary `arXiv:2607.01251v1`；Books review `books-review:SF-COLLABORATIVE-DISAGREEMENT-RESOLUTION`。
+
+  **已吸收的语义增量：** §3: consultants may revise beliefs and answers, isolate a disputed crux and converge; the weaker judge verifies the terminal consensus/crux instead of arbitrating fixed adversarial positions. Boundary: Results depend on at least one initially correct consultant, generally instruction-following consultants, filtered natural disagreements and API-hosted models; dishonest collusion and both-wrong starts are not solved.
+<!-- daily-books-trace:SF-COLLABORATIVE-DISAGREEMENT-RESOLUTION:end -->
+
+<!-- daily-books-trace:SF-CONTAMINATION-AUDIT-RELIABILITY:start -->
+- `SF-CONTAMINATION-AUDIT-RELIABILITY` — Daily `2026-06-03`；primary `arXiv:2606.03305v1`；Books review `books-review:SF-CONTAMINATION-AUDIT-RELIABILITY`。
+
+  **已吸收的语义增量：** In our experiments, we use the following methods: Post-Hoc Dataset Inference, LLM Dataset Inference, and CoDeC, which are described in this section. This method [ 20 ] builds on membership inference attacks, but shifts the unit of analysis from individual samples to datasets . For LLMs, a single-sample MIA is often too noisy to be reliably useful: many sequences are “easy” (low loss) even if they were never seen during training, and the membership signal for any particular example becomes faint as models scale. Boundary: In this work, we examined the reliability of contamination detection methods by moving from the controlled settings of prior literature to the realistic, "in-the-wild" regime of modern instruction-tuned models 2 2 2 https://anonymous.4open.science/r/reliability-gap-benchmark-auditing/README.md . We stress-tested three leading detection paradigms against the complexities of post-training mixtures and opaque data provenance. Our findings reveal that the transition from academic validation to practical auditing is fraught with challenges: The I.I.D.
+<!-- daily-books-trace:SF-CONTAMINATION-AUDIT-RELIABILITY:end -->
+
+<!-- daily-books-trace:SF-JUDGE-SUBSPACE-ALIGNMENT:start -->
+- `SF-JUDGE-SUBSPACE-ALIGNMENT` — Daily `2026-06-03`；primary `arXiv:2606.03043v1`；Books review `books-review:SF-JUDGE-SUBSPACE-ALIGNMENT`。
+
+  **已吸收的语义增量：** The paper represents judge score matrices geometrically and compares score spread, effective rank, principal angles to the human subspace and stacked judge-human correlations, separating inter-LLM consensus from alignment to human evaluation axes. Boundary: The measured geometry is conditional on the selected community datasets, rubrics, languages, judge prompts and human pools; strong consensus or subspace angle is diagnostic evidence and does not prove general judge bias, causal alignment failure or every deployment's evaluation quality.
+<!-- daily-books-trace:SF-JUDGE-SUBSPACE-ALIGNMENT:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07379:start -->
+- `SF-2026-ARXIV-2606-07379` — Daily `2026-06-06`；primary `arXiv:2606.07379v1`；Books review `books-review:SF-2026-ARXIV-2606-07379`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07379:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07462:start -->
+- `SF-2026-ARXIV-2606-07462` — Daily `2026-06-06`；primary `arXiv:2606.07462v1`；Books review `books-review:SF-2026-ARXIV-2606-07462`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07462:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07783:start -->
+- `SF-2026-ARXIV-2606-07783` — Daily `2026-06-06`；primary `arXiv:2606.07783v1`；Books review `books-review:SF-2026-ARXIV-2606-07783`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07783:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07822:start -->
+- `SF-2026-ARXIV-2606-07822` — Daily `2026-06-06`；primary `arXiv:2606.07822v1`；Books review `books-review:SF-2026-ARXIV-2606-07822`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07822:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07834:start -->
+- `SF-2026-ARXIV-2606-07834` — Daily `2026-06-06`；primary `arXiv:2606.07834v1`；Books review `books-review:SF-2026-ARXIV-2606-07834`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07834:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07874:start -->
+- `SF-2026-ARXIV-2606-07874` — Daily `2026-06-06`；primary `arXiv:2606.07874v1`；Books review `books-review:SF-2026-ARXIV-2606-07874`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07874:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08960:start -->
+- `SF-2026-ARXIV-2606-08960` — Daily `2026-06-09`；primary `arXiv:2606.08960v1`；Books review `books-review:SF-2026-ARXIV-2606-08960`。
+
+  **已吸收的语义增量：** benchmark verifier 应通过 hacker→fixer→solver 的闭环迭代：攻击发现 exploit、修补拒绝 exploit、solver 防止补丁把合法解一并拒绝。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08960:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09809:start -->
+- `SF-2026-ARXIV-2606-09809` — Daily `2026-06-09`；primary `arXiv:2606.09809v1`；Books review `books-review:SF-2026-ARXIV-2606-09809`。
+
+  **已吸收的语义增量：** Evaluation result 需要把 benchmark metadata、run data 与 model metadata 组合成可追踪 record，并按读者呈现 reproducibility、completeness、provenance/risk 与 score comparability。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-09809:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11686:start -->
+- `SF-2026-ARXIV-2606-11686` — Daily `2026-06-11`；primary `arXiv:2606.11686v1`；Books review `books-review:SF-2026-ARXIV-2606-11686`。
+
+  **已吸收的语义增量：** 生产 Agent 的 deterministic scaffold 应按 ontology/intent/routing/decomposition/escalation/safety/memory 分层，用 no-LLM regression-locked slices 阻止 aggregate pass rate 掩盖局部回归。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11686:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13044:start -->
+- `SF-2026-ARXIV-2606-13044` — Daily `2026-06-12`；primary `arXiv:2606.13044v1`；Books review `books-review:SF-2026-ARXIV-2606-13044`。
+
+  **已吸收的语义增量：** AI reviewer release gate 必须加入 evidence-invariant presentation counterfactual，防止固定方法/结果仅靠 framing 改写评分
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13044:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13221:start -->
+- `SF-2026-ARXIV-2606-13221` — Daily `2026-06-12`；primary `arXiv:2606.13221v1`；Books review `books-review:SF-2026-ARXIV-2606-13221`。
+
+  **已吸收的语义增量：** LLM-judge ranking 需要先把 per-battle score difference校准为 win probability，再对 judge-human Elo residual做 split-conformal interval
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13221:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13608:start -->
+- `SF-2026-ARXIV-2606-13608` — Daily `2026-06-12`；primary `arXiv:2606.13608v1`；Books review `books-review:SF-2026-ARXIV-2606-13608`。
+
+  **已吸收的语义增量：** Agent benchmark 应把 task/environment/evaluator protocol做成可部署 assessment contract，并保存run identity、submission与verdict lineage
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13608:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13904:start -->
+- `SF-2026-ARXIV-2606-13904` — Daily `2026-06-12`；primary `arXiv:2606.13904v1`；Books review `books-review:SF-2026-ARXIV-2606-13904`。
+
+  **已吸收的语义增量：** data-lake QA Agent 应通过gold source sequence、sanitized subquestion与idealized tool ablation把search/planning/analysis/action-policy failure分开
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13904:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14000:start -->
+- `SF-2026-ARXIV-2606-14000` — Daily `2026-06-12`；primary `arXiv:2606.14000v1`；Books review `books-review:SF-2026-ARXIV-2606-14000`。
+
+  **已吸收的语义增量：** autoformalization不能以kernel acceptance作为唯一质量gate；还应审计semantic faithfulness、Mathlib reuse与cross-file reuse
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14000:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15122:start -->
+- `SF-2026-ARXIV-2606-15122` — Daily `2026-06-14`；primary `arXiv:2606.15122v1`；Books review `books-review:SF-2026-ARXIV-2606-15122`。
+
+  **已吸收的语义增量：** LLM 只负责为告警构造 analysis harness；harness validation 与 backend formal analysis 才拥有 no-bug discharge authority。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15122:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15153:start -->
+- `SF-2026-ARXIV-2606-15153` — Daily `2026-06-14`；primary `arXiv:2606.15153v1`；Books review `books-review:SF-2026-ARXIV-2606-15153`。
+
+  **已吸收的语义增量：** selective risk control 必须同时审计 confidence-bound tightness 与 exchangeability；group shift 时应按组重校准并显式支付 coverage cost。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15153:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15258:start -->
+- `SF-2026-ARXIV-2606-15258` — Daily `2026-06-14`；primary `arXiv:2606.15258v1`；Books review `books-review:SF-2026-ARXIV-2606-15258`。
+
+  **已吸收的语义增量：** step-level proof evaluation 应遮蔽真实 proof step、保留必要上下文并以重复 judge/人审校验等价性，避免从最终答案反推每步正确。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15258:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15306:start -->
+- `SF-2026-ARXIV-2606-15306` — Daily `2026-06-14`；primary `arXiv:2606.15306v1`；Books review `books-review:SF-2026-ARXIV-2606-15306`。
+
+  **已吸收的语义增量：** 跨任务 experiential learning 需要共享 ground-truth latent 的可控环境，分别测 adaptation neglect、breakdown、miscalibration 与 exploration/exploitation。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15306:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15345:start -->
+- `SF-2026-ARXIV-2606-15345` — Daily `2026-06-14`；primary `arXiv:2606.15345v1`；Books review `books-review:SF-2026-ARXIV-2606-15345`。
+
+  **已吸收的语义增量：** 跨语言 deep-research 评测要把 retriever recall、agent evidence integration、citation precision 与 calibration 分开，避免端到端分数吞掉 bottleneck。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15345:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15385:start -->
+- `SF-2026-ARXIV-2606-15385` — Daily `2026-06-14`；primary `arXiv:2606.15385v1`；Books review `books-review:SF-2026-ARXIV-2606-15385`。
+
+  **已吸收的语义增量：** Agent RL 评测必须分开 observed proxy reward 与 hidden task reward；更强 exploration、credit assignment 或 entropy 不能修复错误规格。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15385:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15474:start -->
+- `SF-2026-ARXIV-2606-15474` — Daily `2026-06-14`；primary `arXiv:2606.15474v1`；Books review `books-review:SF-2026-ARXIV-2606-15474`。
+
+  **已吸收的语义增量：** 持续评测必须用固定人标 anchor 与第二条 anytime-valid e-process 区分 system drift 和 judge drift，并让 anchor race 快于主告警。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15474:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15608:start -->
+- `SF-2026-ARXIV-2606-15608` — Daily `2026-06-15`；primary `arXiv:2606.15608v1`；Books review `books-review:SF-2026-ARXIV-2606-15608`。
+
+  **已吸收的语义增量：** 多模态judge的release gate应包含score-inflation adversary、binary-semantic induction与proxy-manifold transfer测试
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15608:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15610:start -->
+- `SF-2026-ARXIV-2606-15610` — Daily `2026-06-15`；primary `arXiv:2606.15610v1`；Books review `books-review:SF-2026-ARXIV-2606-15610`。
+
+  **已吸收的语义增量：** LLM judge应作为measurement instrument发布datasheet，分别量dark current、surface cross-sensitivity、position false preference、target sensitivity与criterion
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15610:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15834:start -->
+- `SF-2026-ARXIV-2606-15834` — Daily `2026-06-15`；primary `arXiv:2606.15834v1`；Books review `books-review:SF-2026-ARXIV-2606-15834`。
+
+  **已吸收的语义增量：** AI-evolved system promotion必须用baseline-vs-candidate differential oracle搜索correctness/runtime/memory/quality反例，而不能只接受训练/公开workload score
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15834:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15841:start -->
+- `SF-2026-ARXIV-2606-15841` — Daily `2026-06-15`；primary `arXiv:2606.15841v1`；Books review `books-review:SF-2026-ARXIV-2606-15841`。
+
+  **已吸收的语义增量：** budgeted verifier allocation不能假设proxy score跨cost strata可比；需先诊断heteroskedastic discriminability再决定global或stratified threshold
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15841:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15964:start -->
+- `SF-2026-ARXIV-2606-15964` — Daily `2026-06-15`；primary `arXiv:2606.15964v1`；Books review `books-review:SF-2026-ARXIV-2606-15964`。
+
+  **已吸收的语义增量：** prompt/domain shift下conformal risk control需显式检测drift、更新calibration window并在保证失效时abstain，而不能继承旧coverage
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15964:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16000:start -->
+- `SF-2026-ARXIV-2606-16000` — Daily `2026-06-15`；primary `arXiv:2606.16000v1`；Books review `books-review:SF-2026-ARXIV-2606-16000`。
+
+  **已吸收的语义增量：** AutoML Agent pre-deployment gate应以组织内sandbox、hidden executable validators、evaluator-private labels、workflow state与reproducible final artifact共同验收
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16000:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16062:start -->
+- `SF-2026-ARXIV-2606-16062` — Daily `2026-06-15`；primary `arXiv:2606.16062v1`；Books review `books-review:SF-2026-ARXIV-2606-16062`。
+
+  **已吸收的语义增量：** code RL task在进入训练前必须审计hackability，并让generated test先通过gold-sanity gate再交给LLM judge与promotion loop
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16062:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16190:start -->
+- `SF-2026-ARXIV-2606-16190` — Daily `2026-06-16`；primary `arXiv:2606.16190v1`；Books review `books-review:SF-2026-ARXIV-2606-16190`。
+
+  **已吸收的语义增量：** edge-model Agent 的验收对象是 model+firmware+真实硬件闭环；compile/flash/measure 证据不能由模拟器 reward 代替
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16190:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16511:start -->
+- `SF-2026-ARXIV-2606-16511` — Daily `2026-06-16`；primary `arXiv:2606.16511v1`；Books review `books-review:SF-2026-ARXIV-2606-16511`。
+
+  **已吸收的语义增量：** frontier evaluation 的 tail-shape claim 必须先做 threshold/grid/sample-size sensitivity 与 false-positive diagnosis，再允许外推极端风险
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16511:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16541:start -->
+- `SF-2026-ARXIV-2606-16541` — Daily `2026-06-16`；primary `arXiv:2606.16541v1`；Books review `books-review:SF-2026-ARXIV-2606-16541`。
+
+  **已吸收的语义增量：** natural-language 到 formal statement 的 kernel acceptance 只证明语法/可解；release gate 还需双向语义等价证据与 counterexample search
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16541:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16603:start -->
+- `SF-2026-ARXIV-2606-16603` — Daily `2026-06-16`；primary `arXiv:2606.16603v1`；Books review `books-review:SF-2026-ARXIV-2606-16603`。
+
+  **已吸收的语义增量：** data-analytic Agent 应把 query/transform/result 编译成可执行 verification graph，使数值结论可由独立节点重放而非只审 prose
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16603:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16605:start -->
+- `SF-2026-ARXIV-2606-16605` — Daily `2026-06-16`；primary `arXiv:2606.16605v1`；Books review `books-review:SF-2026-ARXIV-2606-16605`。
+
+  **已吸收的语义增量：** world-model robustness benchmark 应冻结 perturbation budget、closed-loop controller 与 horizon，并区分 perception drift、dynamics error 与 return collapse
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16605:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16682:start -->
+- `SF-2026-ARXIV-2606-16682` — Daily `2026-06-16`；primary `arXiv:2606.16682v1`；Books review `books-review:SF-2026-ARXIV-2606-16682`。
+
+  **已吸收的语义增量：** self-evolving multimodal Agent 的 evaluator 会发生 cross-modal preference contagion；promotion 必须保留 modality-specific holdout 与 evaluator version
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16682:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16748:start -->
+- `SF-2026-ARXIV-2606-16748` — Daily `2026-06-16`；primary `arXiv:2606.16748v1`；Books review `books-review:SF-2026-ARXIV-2606-16748`。
+
+  **已吸收的语义增量：** computer-use benchmark 应提供跨应用一致的持久 persona、resettable desktop 与 visible-side-effect rubric，而非空账户单 app task
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16748:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17005:start -->
+- `SF-2026-ARXIV-2606-17005` — Daily `2026-06-16`；primary `arXiv:2606.17005v1`；Books review `books-review:SF-2026-ARXIV-2606-17005`。
+
+  **已吸收的语义增量：** 公开 frontier eval archive 应保存 trial-level uncertainty、selection process 与 decision rule，使 Bayesian update 与发布决策可被重算
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17005:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17029:start -->
+- `SF-2026-ARXIV-2606-17029` — Daily `2026-06-16`；primary `arXiv:2606.17029v1`；Books review `books-review:SF-2026-ARXIV-2606-17029`。
+
+  **已吸收的语义增量：** deep-research RL 的 rubric 应展开为 evidence tree，让 citation support、coverage 与 synthesis 分层给 reward，避免单一 judge score
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17029:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17283:start -->
+- `SF-2026-ARXIV-2606-17283` — Daily `2026-06-16`；primary `arXiv:2606.17283v1`；Books review `books-review:SF-2026-ARXIV-2606-17283`。
+
+  **已吸收的语义增量：** vulnerability benchmark 应绑定可构建 source revision、trigger、oracle 与 reproducible container，使检测/修复结果可重放
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17283:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17383:start -->
+- `SF-2026-ARXIV-2606-17383` — Daily `2026-06-16`；primary `arXiv:2606.17383v1`；Books review `books-review:SF-2026-ARXIV-2606-17383`。
+
+  **已吸收的语义增量：** Agentic AI model validation 应分别检查 belief-state filter、forecast transition 与 policy action，并以 POMDP identity 绑定三层误差
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17383:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20695:start -->
+- `SF-2026-ARXIV-2606-20695` — Daily `2026-06-16`；primary `arXiv:2606.20695v1`；Books review `books-review:SF-2026-ARXIV-2606-20695`。
+
+  **已吸收的语义增量：** MAS coordination gain 必须与 paired single-Agent run 和 noise floor 比较，避免把 sampling variance 当协作收益
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20695:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17546:start -->
+- `SF-2026-ARXIV-2606-17546` — Daily `2026-06-17`；primary `arXiv:2606.17546v1`；Books review `books-review:SF-2026-ARXIV-2606-17546`。
+
+  **已吸收的语义增量：** Self-evolving Agent 的 EvalSpec 应冻结 train/validation/ID-OOD test/replay/cost views、evolution schedule、snapshot 与 update lineage，final snapshot 不得代表 best snapshot。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17546:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17609:start -->
+- `SF-2026-ARXIV-2606-17609` — Daily `2026-06-17`；primary `arXiv:2606.17609v1`；Books review `books-review:SF-2026-ARXIV-2606-17609`。
+
+  **已吸收的语义增量：** 压缩/剪枝模型 release 不能只看 multiple-choice recognition；同一知识 slice 必须加入 open-generation、answerability 与形式变化对照，区分识别保留和生成失效。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17609:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17819:start -->
+- `SF-2026-ARXIV-2606-17819` — Daily `2026-06-17`；primary `arXiv:2606.17819v1`；Books review `books-review:SF-2026-ARXIV-2606-17819`。
+
+  **已吸收的语义增量：** Skill evaluation 必须固定 base agent、skill artifact/version、activation condition、no-skill control 与 task-family slice，才能把 skill value 与模型/任务难度分离。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17819:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17930:start -->
+- `SF-2026-ARXIV-2606-17930` — Daily `2026-06-17`；primary `arXiv:2606.17930v1`；Books review `books-review:SF-2026-ARXIV-2606-17930`。
+
+  **已吸收的语义增量：** Frontier capability 必须报告为 inference-compute curve，并冻结 serial/parallel allocation、submission次数、feedback、compaction 与 matched budget；单点分数不能比较 generations。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17930:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18168:start -->
+- `SF-2026-ARXIV-2606-18168` — Daily `2026-06-17`；primary `arXiv:2606.18168v1`；Books review `books-review:SF-2026-ARXIV-2606-18168`。
+
+  **已吸收的语义增量：** Agent-authored tests 的 verifier strength 不能用“创建 test 文件”代理；release gate 应解析 assertion/oracle signal、执行路径与 failure discriminativeness。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18168:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18356:start -->
+- `SF-2026-ARXIV-2606-18356` — Daily `2026-06-17`；primary `arXiv:2606.18356v1`；Books review `books-review:SF-2026-ARXIV-2606-18356`。
+
+  **已吸收的语义增量：** Agent security EvalSpec 必须分开 semantic compromise、artifact-visible harm evidence 与 sandbox-observed state/tool harm，并保持各自 denominator 和 matched identity。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18356:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18467:start -->
+- `SF-2026-ARXIV-2606-18467` — Daily `2026-06-17`；primary `arXiv:2606.18467v1`；Books review `books-review:SF-2026-ARXIV-2606-18467`。
+
+  **已吸收的语义增量：** Tool/retrieval trajectory release 可把 step risk校准为 trajectory conformal acceptance，并用 supermartingale anytime alarm监测运行中超界；drift时必须重校准或 abstain。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18467:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20708:start -->
+- `SF-2026-ARXIV-2606-20708` — Daily `2026-06-17`；primary `arXiv:2606.20708v1`；Books review `books-review:SF-2026-ARXIV-2606-20708`。
+
+  **已吸收的语义增量：** User simulator不能只匹配对话流畅度；应以真实 consequential outcome校准 decision fidelity，并单独测量disengagement/走开行为，否则模拟用户会系统性过度合作。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20708:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20724:start -->
+- `SF-2026-ARXIV-2606-20724` — Daily `2026-06-17`；primary `arXiv:2606.20724v1`；Books review `books-review:SF-2026-ARXIV-2606-20724`。
+
+  **已吸收的语义增量：** Web Agent 的 finish signal与 correctness必须分离；trace审计需识别 search loop、premature partial termination和cross-source synthesis collapse，并冻结并行探索拓扑。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20724:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19057:start -->
+- `SF-2026-ARXIV-2606-19057` — Daily `2026-06-18`；primary `arXiv:2606.19057v1`；Books review `books-review:SF-2026-ARXIV-2606-19057`。
+
+  **已吸收的语义增量：** 当只有少量确定正例而未标注集混合正负时，evaluation audit 可用 positive-unlabeled inference 估计隐藏错误率，但必须公开 class-prior 与 identifiability assumptions。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19057:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19613:start -->
+- `SF-2026-ARXIV-2606-19613` — Daily `2026-06-18`；primary `arXiv:2606.19613v1`；Books review `books-review:SF-2026-ARXIV-2606-19613`。
+
+  **已吸收的语义增量：** coding-agent evaluation 应把一次长 session 建模为连续 change requests，并观察首次不可恢复失败，而不是把独立 task solve rate 当 stamina。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19613:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20736:start -->
+- `SF-2026-ARXIV-2606-20736` — Daily `2026-06-18`；primary `arXiv:2606.20736v1`；Books review `books-review:SF-2026-ARXIV-2606-20736`。
+
+  **已吸收的语义增量：** 受污染 benchmark 可把 answer-bearing visual key 变成运行时随机生成、human-validated edit slot，并保留 construction-grounded label。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20736:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19704:start -->
+- `SF-2026-ARXIV-2606-19704` — Daily `2026-06-19`；primary `arXiv:2606.19704v1`；Books review `books-review:SF-2026-ARXIV-2606-19704`。
+
+  **已吸收的语义增量：** `Beyond Static Leaderboards: Predictive Validity for the Evaluation of LLM Agents` 路由到 `PLATFORM-EVALUATION-SYSTEM`：它不再用单次 aggregate mean 排名决定发布，而要求 evaluation owner 保存 configuration identity，并以 in-sample/OOD rank correlation、judge-independent trajectory verifier 和持久 benchmark transport 判断配置能否外推；旧 leaderboard 可保留为观测列，不能继续拥有 release 决策。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19704:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19714:start -->
+- `SF-2026-ARXIV-2606-19714` — Daily `2026-06-19`；primary `arXiv:2606.19714v1`；Books review `books-review:SF-2026-ARXIV-2606-19714`。
+
+  **已吸收的语义增量：** `AURA: Adaptive Uncertainty-aware Refinement for LLM-as-a-Judge Auditing` 路由到 `PLATFORM-EVALUATION-SYSTEM`：AURA 把 judge trust 作为可更新隐状态：人类只验证 uncertainty 高的 pair，refinement 将已验证的一致性信号传播到其余比较，再更新下一轮采样；evaluation owner 而非 judge 独占抽样、停止和审计轨迹。其代价是传播错误会放大初始偏差，需保留随机抽检和预算耗尽时的原始 judge/human fallback。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19714:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20536:start -->
+- `SF-2026-ARXIV-2606-20536` — Daily `2026-06-19`；primary `arXiv:2606.20536v1`；Books review `books-review:SF-2026-ARXIV-2606-20536`。
+
+  **已吸收的语义增量：** `The FID Lottery: Quantifying Hidden Randomness in Generative-Model Evaluation` 路由到 `PLATFORM-EVALUATION-SYSTEM`：FID 验收从单次 seed 分数改为显式训练 seed×生成 seed 分布与置信区间；evaluation owner 保存随机性来源，release 依据分布而非最好一次。增加重复成本，预算不足时至少报告 seed sensitivity 而非隐藏。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20536:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20820:start -->
+- `SF-2026-ARXIV-2606-20820` — Daily `2026-06-19`；primary `arXiv:2606.20820v1`；Books review `books-review:SF-2026-ARXIV-2606-20820`。
+
+  **已吸收的语义增量：** `CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes` 路由到 `PLATFORM-EVALUATION-SYSTEM`：Celeus 用 e-process 构造 anytime-valid CI：sampler 依据 uncertainty 选样，surrogate 估计未评样本，evaluation scheduler 可在任意时间按 CI width 停止而保持 coverage；surrogate 失配时回退均匀抽样/有限总体界。代价是 i.i.d./有限池假设与校准开销。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20820:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20873:start -->
+- `SF-2026-ARXIV-2606-20873` — Daily `2026-06-19`；primary `arXiv:2606.20873v1`；Books review `books-review:SF-2026-ARXIV-2606-20873`。
+
+  **已吸收的语义增量：** `SciLens: Multi-modal Scientific Claim Verification with Agentic Entailment and Grounding` 路由到 `PLATFORM-EVALUATION-SYSTEM`：SciLens 将科学 claim 分成 empirical/background atoms，再按 table cell/arithmetic 或 figure panel/axis/legend 建 witness，只有全部核心 atom entail 才支持；verifier 拥有 evidence graph，VLM 不能直接二分类。无法定位 witness 时 abstain。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20873:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21389:start -->
+- `SF-2026-ARXIV-2606-21389` — Daily `2026-06-20`；primary `arXiv:2606.21389v1`；Books review `books-review:SF-2026-ARXIV-2606-21389`。
+
+  **已吸收的语义增量：** 生产 SIEM telemetry 转研究 artifact 时必须保留时间与 entity consistency，同时声明 anonymization 的 privacy-utility boundary 而非声称形式匿名
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21389:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21584:start -->
+- `SF-2026-ARXIV-2606-21584` — Daily `2026-06-20`；primary `arXiv:2606.21584v1`；Books review `books-review:SF-2026-ARXIV-2606-21584`。
+
+  **已吸收的语义增量：** deployment threshold 必须从开发集冻结并在目标分布报告 HTER；test-set oracle EER 会隐藏真实 false-reject/false-accept failure
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21584:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21678:start -->
+- `SF-2026-ARXIV-2606-21678` — Daily `2026-06-20`；primary `arXiv:2606.21678v1`；Books review `books-review:SF-2026-ARXIV-2606-21678`。
+
+  **已吸收的语义增量：** 从 internal representation 可解码出答案不证明 reasoning faithful；diagnostic ladder 要区分 decodability、causal use 与输出行为
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21678:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-02577:start -->
+- `SF-2026-ARXIV-2607-02577` — Daily `2026-07-01`；primary `arXiv:2607.02577v1`；Books review `books-review:SF-2026-ARXIV-2607-02577`。
+
+  **已吸收的语义增量：** 新增证据边界：Tool-calling evaluation must separate typed tool/action checks, outcome state and qualitative judgment. Deterministic gates should own verifiable invariants; a restricted judge may handle residual semantic ambiguity, but only with full trace preservation, repeated-run variance, human adjudication and versioned evaluator artifacts. Neither branch is ground truth by default. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L844`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-02577:end -->
+
+<!-- daily-books-trace:SF-2026-JUDGE-DELTA-VALIDITY:start -->
+- `SF-2026-JUDGE-DELTA-VALIDITY` — Daily `2026-08-26`；primary `arXiv:2608.24419v1`；Books review `books-review:SF-2026-JUDGE-DELTA-VALIDITY`。
+
+  **已吸收的语义增量：** 新增 target-changing sensitivity 与 target-preserving invariance 双臂 contract。
+<!-- daily-books-trace:SF-2026-JUDGE-DELTA-VALIDITY:end -->
+
+<!-- daily-books-trace:SF-2026-UQ-ENSEMBLES:start -->
+- `SF-2026-UQ-ENSEMBLES` — Daily `2026-08-26`；primary `arXiv:2608.24492v1`；Books review `books-review:SF-2026-UQ-ENSEMBLES`。
+
+  **已吸收的语义增量：** 新增 scorer diversity、domain shift、risk-coverage、abstain 与 human escalation 边界。
+<!-- daily-books-trace:SF-2026-UQ-ENSEMBLES:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08200:start -->
+- `SF-2026-ARXIV-2606-08200` — Daily `2026-06-07`；primary `arXiv:2606.08200v1`；Books review `books-review:SF-2026-ARXIV-2606-08200`。
+
+  **已吸收的语义增量：** An in-world evaluator actively creates criterion-relevant situations through native dialogue/action, changing evaluation from passive trajectory scoring to coverage-seeking intervention. 只补这一条机制、non-proof 与旧路径共存边界。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-08200:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21869:start -->
+- `SF-2026-ARXIV-2606-21869` — Daily `2026-06-21`；primary `arXiv:2606.21869v1`；Books review `books-review:SF-2026-ARXIV-2606-21869`。
+
+  **已吸收的语义增量：** 把每语言生成能耗与 accuracy、tokenization expansion 分开记录；evaluation/model card 需声明 per-language energy，而不能用英语平均值代表多语言部署。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21869:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21954:start -->
+- `SF-2026-ARXIV-2606-21954` — Daily `2026-06-21`；primary `arXiv:2606.21954v1`；Books review `books-review:SF-2026-ARXIV-2606-21954`。
+
+  **已吸收的语义增量：** Hardness Adjusted Transfer 以 target performance 相对 source-language ability 校正，避免把 source accuracy 提升误报成 cross-lingual transfer 进步。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-21954:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22179:start -->
+- `SF-2026-ARXIV-2606-22179` — Daily `2026-06-21`；primary `arXiv:2606.22179v1`；Books review `books-review:SF-2026-ARXIV-2606-22179`。
+
+  **已吸收的语义增量：** selective prediction 除 calibration/ranking 还要报告 score granularity：可用阈值数量决定 operator 能选择多少风险工作点；多查询扩大分辨率但增加成本且可能伤害强模型排序。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-22179:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-05721:start -->
+- `SF-2026-ARXIV-2607-05721` — Daily `2026-07-08`；primary `arXiv:2607.05721v1`；Books review `books-review:SF-2026-ARXIV-2607-05721`。
+
+  **已吸收的语义增量：** 新增证据边界：Move uncertainty from token noise or one sequence score to typed semantic spans, distilling multi-sample claim support into a single-pass probe while preserving an explicit external-verification boundary. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L934; books/part-06-ai-infrastructure/66-evaluation-system.md#L996`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-05721:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-05876:start -->
+- `SF-2026-ARXIV-2607-05876` — Daily `2026-07-08`；primary `arXiv:2607.05876v1`；Books review `books-review:SF-2026-ARXIV-2607-05876`。
+
+  **已吸收的语义增量：** 新增证据边界：Replace immediate grid search with a versioned resource vector for weight/KV bytes, FLOPs, communication bytes/messages and capacity; compute optimistic and no-overlap bounds, identify the first binding wall as load changes, compare observed steady-state service time against the bound, and open a profiler only when the residual is material. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L373`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-05876:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06327:start -->
+- `SF-2026-ARXIV-2607-06327` — Daily `2026-07-08`；primary `arXiv:2607.06327v1`；Books review `books-review:SF-2026-ARXIV-2607-06327`。
+
+  **已吸收的语义增量：** 新增证据边界：Make uncertainty calibration slice-aware not only by domain, but by generation language, model scale/family and estimator access contract; method rankings can reverse across these slices. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L979`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-06327:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08017:start -->
+- `SF-2026-ARXIV-2607-08017` — Daily `2026-07-09`；primary `arXiv:2607.08017v1`；Books review `books-review:SF-2026-ARXIV-2607-08017`。
+
+  **已吸收的语义增量：** 新增证据边界：GraphEVAL samples multiple chains of thought, uses a separate deterministic decomposer to turn each into a claimed causal DAG, and compares semantic/structural graph distance. A graph medoid and GRCS features measure agreement and robustness; an adversarial-medoid intervention tests whether the selector merely follows a central but wrong trace. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L953`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08017:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11942:start -->
+- `SF-2026-ARXIV-2607-11942` — Daily `2026-07-12`；primary `arXiv:2607.11942v1`；Books review `books-review:SF-2026-ARXIV-2607-11942`。
+
+  **已吸收的语义增量：** 新增证据边界：Freeze identical models, instances, compression budgets and decoding; vary only whether the query is visible at compression time; compare each method against several trivial start/recent baselines with paired bootstrap; keep the attention backend fixed; run uncompressed and backend controls; quarantine tokenizer-invalid rows; withdraw rankings whose method requires a backend with a measured effect larger than method gaps. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1506`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11942:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11886:start -->
+- `SF-2026-ARXIV-2607-11886` — Daily `2026-07-14`；primary `arXiv:2607.11886v1`；Books review `books-review:SF-2026-ARXIV-2607-11886`。
+
+  **已吸收的语义增量：** 新增证据边界：SpectraReward treats a pretrained MLLM as a zero-shot reward by scoring how likely it is to read the original prompt back from an image; Self-SpectraReward adds self-reconstruction/spectral features without training a dedicated reward model. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-11886:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13705:start -->
+- `SF-2026-ARXIV-2607-13705` — Daily `2026-07-16`；primary `arXiv:2607.13705v1`；Books review `books-review:SF-2026-ARXIV-2607-13705`。
+
+  **已吸收的语义增量：** 新增证据边界：Evaluation identity expands to model × benchmark × harness × environment × scorer with trajectories retained before aggregation. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-13705:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-15263:start -->
+- `SF-2026-ARXIV-2607-15263` — Daily `2026-07-17`；primary `arXiv:2607.15263v1`；Books review `books-review:SF-2026-ARXIV-2607-15263`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: peak security success -> workload-specific success/cost/refusal operating curves with contamination controls 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-15263:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16868:start -->
+- `SF-2026-ARXIV-2607-16868` — Daily `2026-07-19`；primary `arXiv:2607.16868v1`；Books review `books-review:SF-2026-ARXIV-2607-16868`。
+
+  **已吸收的语义增量：** 新增证据边界：Sampled answers are first collapsed into semantic classes, then organized by implication and incompatibility; probability mass at maximal roots yields an uncertainty sensor that distinguishes paraphrase diversity from mutually exclusive hypotheses. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16868:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-19865:start -->
+- `SF-2026-ARXIV-2607-19865` — Daily `2026-07-23`；primary `arXiv:2607.19865v1`；Books review `books-review:SF-2026-ARXIV-2607-19865`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: final-answer judge -> executable artifact-state predicates plus preservation invariants and verifier-fidelity audit 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L778`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-19865:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-20734:start -->
+- `SF-2026-ARXIV-2607-20734` — Daily `2026-07-23`；primary `arXiv:2607.20734v1`；Books review `books-review:SF-2026-ARXIV-2607-20734`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: static single-turn task -> versioned intent-state transitions -> final anchored verifier plus transition-specific diagnostics 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1225`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-20734:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-27231:start -->
+- `SF-2026-ARXIV-2607-27231` — Daily `2026-07-23`；primary `arXiv:2607.27231v1`；Books review `books-review:SF-2026-ARXIV-2607-27231`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: single-source/single-GPU pass rate -> multi-source operator contract -> cross-chip correctness, speed and cost frontier 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L450`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-27231:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21217:start -->
+- `SF-2026-ARXIV-2607-21217` — Daily `2026-07-24`；primary `arXiv:2607.21217v1`；Books review `books-review:SF-2026-ARXIV-2607-21217`。
+
+  **已吸收的语义增量：** 新增证据边界：Verified repositories and tests define GroundPRD; constraints are selectively hidden into User Agent Data; agents may ask bounded clarification questions; generated repositories are evaluated by public/hidden black-box behavior plus structural and interaction diagnostics rather than source-copy similarity. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1479`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21217:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21962:start -->
+- `SF-2026-ARXIV-2607-21962` — Daily `2026-07-25`；primary `arXiv:2607.21962v1`；Books review `books-review:SF-2026-ARXIV-2607-21962`。
+
+  **已吸收的语义增量：** 新增证据边界：Ground-truth facts, validity intervals, provenance and as-of dates become canonical state before conversation rendering, enabling separate write/read audits and tenure-aware architecture comparison. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L736`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21962:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607.25886:start -->
+- `SF-2026-ARXIV-2607.25886` — Daily `2026-07-29`；primary `arXiv:2607.25886v1`；Books review `books-review:SF-2026-ARXIV-2607.25886`。
+
+  **已吸收的语义增量：** 新增证据边界：Direct Evolution: end-to-end agent score -> fixed research substrate -> checkpoint trajectory evidence -> explicit best-checkpoint and stopping policy. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607.25886:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607.27353:start -->
+- `SF-2026-ARXIV-2607.27353` — Daily `2026-07-30`；primary `arXiv:2607.27353v1`；Books review `books-review:SF-2026-ARXIV-2607.27353`。
+
+  **已吸收的语义增量：** 新增证据边界：LayerRAG-Bench injects faults at evidence, tool-contract, authorization and session-state layers and shows schema normalization repairs only schema drift. The result establishes a layer-specific credit rule: grounded output cannot hide stale or wrong-session evidence, and a repair must not be promoted beyond its target layer. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L520`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607.27353:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-15127:start -->
+- `SF-2026-ARXIV-2608-15127` — Daily `2026-08-16`；primary `arXiv:2608.15127v1`；Books review `books-review:SF-2026-ARXIV-2608-15127`。
+
+  **已吸收的语义增量：** AgentSysBench 用十个 Agent 应用和生产 trace 同时刻画模型调用、工具、状态和 orchestration，避免只测纯 LLM decode。它是 workload characterization，不证明十个应用代表所有 Agent；四项 design exploration 只能支持其观测到的压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-15127:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-22510:start -->
+- `SF-2026-ARXIV-2608-22510` — Daily `2026-08-24`；primary `arXiv:2608.22510v1`；Books review `books-review:SF-2026-ARXIV-2608-22510`。
+
+  **已吸收的语义增量：** ClawProBench 要求声明 model+runtime，使用 102 个场景、冻结 holdout、typed trace 与三次运行，试图区分 Agent 能力与 harness/runtime 覆盖。它改进的是评估合同，不是模型智能的独立度量；场景代表性和 evaluator 漏检仍需保留。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-22510:end -->
+
+<!-- daily-books-trace:SF-2026-LOCALIZE-DECIDE:start -->
+- `SF-2026-LOCALIZE-DECIDE` — Daily `2026-08-27`；primary `arXiv:2608.25824v1`；Books review `books-review:SF-2026-LOCALIZE-DECIDE`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：先用 conformal prediction 产生高概率包含 human-preferred answer 的 shortlist，再在 shortlist 内 calibrated decide-or-abstain；并保留边界：保证依赖 exchangeability 与校准分布；不是模型自知，也不覆盖分布漂移或 judge 攻击。 相邻章节对读：books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L132。Scheduler 处理 resource choice，Monitoring 处理 aggregate signals；calibrated uncertainty guarantee 与 abstention contract 属于 Evaluation。
+<!-- daily-books-trace:SF-2026-LOCALIZE-DECIDE:end -->
+
+<!-- daily-books-trace:SF-2026-SKILL-ISSUE:start -->
+- `SF-2026-SKILL-ISSUE` — Daily `2026-08-27`；primary `arXiv:2608.25832v1`；Books review `books-review:SF-2026-SKILL-ISSUE`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：同模型 self-play 固定 game/rules/state/action，仅改变双方界面语言并交换角色；另把 interface language 与 reasoning language 分离；并保留边界：仅小模型与八语言；self-play 测相对强弱而非绝对部署质量，translation/tokenization 仍是混杂因素。 相邻章节对读：books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L18。相邻章不定义 counterfactual benchmark distribution；语言变量隔离与结果边界属于 Evaluation。
+<!-- daily-books-trace:SF-2026-SKILL-ISSUE:end -->
+
+<!-- daily-books-trace:SF-2026-V-RUBRICS:start -->
+- `SF-2026-V-RUBRICS` — Daily `2026-08-27`；primary `arXiv:2608.25580v1`；Books review `books-review:SF-2026-V-RUBRICS`。
+
+  **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：把答案拆成 VF/RC/IF atomic rubrics，并在有证据 span 时进行 component-wise、prefix-localized credit assignment；并保留边界：rubric 由 Gemini-3-Pro 标注且继承其偏差；不外推其他模型、领域或无 reference 的开放任务。 相邻章节对读：books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L18。Scheduler 拥有 placement，Monitoring 拥有 runtime signals；rubric schema、credit assignment 与 evaluator bias 属于 Evaluation。
+<!-- daily-books-trace:SF-2026-V-RUBRICS:end -->
+
+<!-- daily-books-trace:SF-2026-PREDICTION-POWERED-EVAL:start -->
+- `SF-2026-PREDICTION-POWERED-EVAL` — Daily `2026-08-28`；primary `arXiv:2608.26638v1`；Books review `books-review:SF-2026-PREDICTION-POWERED-EVAL`。
+
+  **已吸收的语义增量：** 补足 bias-corrected population estimate 与区间合同。
+<!-- daily-books-trace:SF-2026-PREDICTION-POWERED-EVAL:end -->

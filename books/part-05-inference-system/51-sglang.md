@@ -241,6 +241,12 @@ validity；第 52 章的 distributed selector 只能消费带 generation/freshne
 SGLang v0.5.16 的 typed-state 经验与 Dynamo 的 state-aware selection 连接起来，同时避免
 把“全局看见状态”误写成“全局状态已经可用”。
 
+## 从机制演进到系统设计
+
+SGLang 从语言程序与 Radix cache 演进到异构多模态执行图后，workflow activation、跨角色 tensor/KV identity 与 physical execution 需要由可分离但可提交的 Control Flow、Data Flow、Compute Flow 共同表达。全局 KV takeover 可以复用更多状态，却不能模糊 owner 与 eviction authority。
+
+更强 orchestration 增加 metadata、layout compatibility、atomic eviction、故障恢复与 runtime coupling。跨角色状态无法证明兼容时，应回到阶段内 cache、显式 data edge 或独立 engine；一次 pipeline 成功不能替代受控性能与恢复验证。
+
 ## 自检问题
 
 1. 为什么复杂 LLM 应用会产生大量 prefix reuse 机会？
@@ -282,3 +288,11 @@ Primary-source 校验入口：
   https://github.com/sgl-project/sglang/releases/tag/v0.5.9
 - SGLang PR #15512（LoRA weight-loading overlap）:
   https://github.com/sgl-project/sglang/pull/15512
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-31093:start -->
+- `SF-2026-ARXIV-2606-31093` — Daily `2026-07-01`；primary `arXiv:2606.31093v1`；Books review `books-review:SF-2026-ARXIV-2606-31093`。
+
+  **已吸收的语义增量：** 新增证据边界：多模态 pipeline 不能只把异构模型串成应用 DAG：workflow activation、跨角色 tensor/KV identity 与 physical execution 必须由可分离但可提交的 Control Flow、Data Flow、Compute Flow 共同拥有。框架级 KV takeover 提高跨请求、跨角色和跨层级复用，却新增全局 metadata、layout compatibility、atomic eviction、failure recovery 与 runtime coupling；v1 没有提供受控性能 benchmark。 该 delta 已进入 `books/part-05-inference-system/51-sglang.md#L150`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-31093:end -->

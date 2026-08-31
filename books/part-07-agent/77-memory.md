@@ -102,6 +102,21 @@ binary label 不能恢复唯一 next state，并报告了 typed actions 的改�
 所有生产场景，也没有处理多用户 authority、真实并发和故障恢复。因此正文吸收状态机原则，
 不把论文 taxonomy 或 benchmark 写成平台规范。
 
+### 失败反思先是待审候选，不是可直接复用的程序记忆
+
+在开放式、低风险任务中，把模型对失败的自然语言反思直接写回 procedural memory，是一种便宜且合理的
+Reflexion 基线；问题在于，一次错误诊断会被固化为下一轮的行动先验，并在重复试错中放大。更稳妥的 write
+admission 应消费由环境或工具轨迹产生、可程序化核验的 failure receipt：extractor 把轨迹压成结构化失败信号，
+reflection 只进入 `pending`，writer 只有在信号、目标 slot 与版本条件一致时才 `accept`。环境状态与 tool trace
+拥有事实权威，模型反思只能提出候选，不能凭自述完成事实提交。
+
+这种边界能减少“错误记忆导致再次失败、再次错误归因”的闭环，但要付出领域 extractor、原始轨迹存储与漏检
+成本；反复依赖同一错误线索可以暴露 confabulation，却不能发现所有错误。在低风险且 verifier 缺失的开放任务中，
+仍可保留直接反思分支，但必须绑定来源、有效期、原始 trajectory 与人工纠正入口。当前 exact-v1 证据只覆盖
+ALFWorld、HumanEval 及论文定义的 extractor 和对照实验，不支持通用错误率或任意环境中的可靠写入结论。
+
+<!-- source-family:SF-2026-ARXIV-2605-29463 -->
+
 ### 从 Outcome Reward 到 Content-level Credit：归因只能约束写入，不能成为真值
 
 只用最终 QA reward 训练 memory policy 成本低，也适合短链路、固定 schema 和容易人工检查的任务；但它不能回答某段中间 memory content 是否真正帮助了最终答案。一个实验性分支是固定 retrieval/answer interface，对 memory token 或 span 做 masking/counterfactual scoring，把对 answer score 的变化映射为 local process reward，再与 global outcome reward 合并。它把“这次答对了”推进为“哪些被写入的内容可能贡献了这次答案”，从而给 admission、update、compress 与 discard 更稠密的学习信号。
@@ -250,6 +265,10 @@ Write-time summary 在查询分布稳定、存储或隐私预算严格时合理�
 Late construction 把不可逆信息损失延后，却增加每次查询的计算、judge/calibration 漂移和并发更新一致性；它也没有消除 deletion propagation、ACL 或 freshness 问题。查询重复且 schema 稳定时，预计算 summary 仍可能更便宜；高风险回答还应让最终 claim 回指 raw evidence。现有 LongMemEval/LoCoMo 结果只支持作者 workload 下的 accuracy/context trade-off，不证明更低的全生命周期成本。
 
 ## Consolidation 与 Forgetting
+
+### Memory 粒度必须分层，不能用一个 Summary 同时承担证据与画像
+
+单一 summary 易读且成本低，但会把原始经历、可独立核验事实与用户画像混为同一 authority。更稳健的 memory owner 分别持有 raw episode pointer、atomic fact/provenance 和可撤销 profile，读取时按任务组合；收益是可追溯与局部修复，代价是多级索引、一致性和隐私控制。低风险短会话仍可只保留 summary。<!-- source-family:SF-2026-ARXIV-2605-19952 --> exact-v1 §3–4 与 Appendix C.1 只支持作者的 tri-granularity 机制，不证明自动抽取事实必然正确。
 
 长期 event log 会无限增长。Consolidation 将多个 episodes 转成较高层 summary 或 semantic fact：
 
@@ -621,6 +640,29 @@ advice poisoning 和 credit ambiguity。高风险任务可使用规则化 escala
 SWE-Protégé 的实验支持 learned escalation 与 follow-through 的分解，不证明其 budget、expert pool 或 coding
 stack 可直接成为通用 Agent memory 设计。
 
+### 从固定记忆参数到可扩展 Expert Pool
+
+把 Memory 固定在一个共享参数块里，在领域稳定、知识冲突少时最容易训练和治理；当长期任务不断出现新领域时，持续覆盖同一参数会把容量竞争和遗忘混在一起。另一条演进路线是把 latent memory 组织成可招募的 expert pool：memory policy 根据 routing key 选择 expert，并把 recruitment epoch、domain assignment、router revision 与 forgetting policy 一起写入 memory identity。这样扩容不必重写全部记忆，但 router 只能提出读取路径，事实权威仍由外部 evidence 与 task gate 决定。
+
+选择性容量的代价是路由漂移、expert 冲突、冷门 expert 饥饿，以及“某条事实为何被选中”更难解释。领域稳定或强一致性优先时，共享 memory 仍是更好的基线；只有容量冲突已被观测到，才值得引入 expert recruitment，并保留共享池回退。arXiv:2605.21951v1 的方法与实验只支持论文定义的 latent-memory recruitment 设置，不证明 expert pool 能成为通用事实库或自动消除遗忘。
+
+<!-- source-family:SF-2026-ARXIV-2605-21951 -->
+
+### 从固定 Latent 容量到按 Query 分配读取预算
+
+共享参数块或固定数量 latent slots 在访问模式稳定时容易训练，也便于预估延迟；即使扩展为 expert pool，若每次
+查询仍读取同样多的 latent，容量与成本仍被最坏情况绑定。进一步的机制是让 hidden-state query 先检索外部 latent
+bank，再由 budget policy 为当前 query 选择可变数量的 soft tokens，reasoner 只消费这次获准的读取结果。Bank owner
+维护 key、content、provenance 与版本；retriever 和 budget policy 只拥有读取路径与容量分配权，不能把 latent utility
+升级为事实权威。
+
+按需容量可减少简单查询的 token 与计算，并把更多 latent 留给高信息需求，但也引入不可解释的读取、预算塌缩、
+reward hacking、bank drift 与额外训练成本；“有助于下游 reward”尤其不等于“内容为真”。高风险事实、引用、删除与
+审计仍应回到文本和原始证据，低风险重复模式才适合走 latent fast path。exact-v1 的方法与收益只在论文披露的
+MemorySuite、Qwen2.5 和附录设置中得到支持，不证明跨模型的稳定预算策略或可审计事实存储。
+
+<!-- source-family:SF-2026-ARXIV-2605-30690 -->
+
 ## 派生 Memory 的组织、适用性与验证
 
 形成候选 memory 之后，系统还没有回答三个问题：失败发生在 construction 还是 retrieval，候选是否适用于
@@ -924,7 +966,49 @@ authorized source conversations
 不能由摘要直接授权。OpenAI 2026 年公开的 cross-conversation safety summaries 只证明其声明的产品分支与内部
 scenario evaluation，不证明真实 false-positive prevalence、retention 合理性或通用安全收益。
 
+### Memory Write 也可以留下可验证归属信号
+
+只在最终文本或数据库行上加 watermark，无法证明长期状态是由谁、在何次 write decision 中形成。state-evolution attribution 将 owner-controlled signal 嵌入 latent memory-write policy，并把密钥、写入事件与审计 trace 分开保存，使后续争议可回溯到状态演进。收益是提供 provenance 线索，代价是检测误差、密钥管理和攻击者针对写入策略的规避；高风险系统仍需不可变日志与访问控制，watermark 不能拥有授权。当前证据只覆盖披露 memory backend 与攻击，不能证明跨模型、跨生命周期的不可伪造归属。
+
+<!-- source-family:SF-2026-ARXIV-2605-25002 -->
+
 ## 评估 Memory
+
+### 评估何时写、写什么，需要由隐藏状态可验证的环境提供监督
+
+静态 action trajectory 能教会 Agent “做了什么”，却不能稳定标注何时应写 memory、应读哪个 slot，以及错误读取
+怎样改变后续状态。一个受控分支是在 virtual environment 中把 memory 变量与 encode/read 时机做成隐藏但可核验的
+状态：environment generator 产生带真值的任务与转移，memory policy 提议写入或读取，训练管线只消费 verifier
+生成的 SFT 标签或 RL reward；模型自报的记忆理由不拥有真值。
+
+这使监督能够规模化并把失败定位到具体 memory decision，但代价是 simulator 合成成本、状态泄漏、shortcut 与
+synthetic-to-real gap。若环境真值不可获得，应回退真实日志、人工标注或静态 benchmark；高风险事实仍由权威数据源
+决定，不能由虚拟世界 reward 提交。exact-v1 只支持论文在 mobile GUI、Memory-World 及其 SFT/RL 设置中披露的
+方法和结果，不证明真实手机、开放任务或生产可靠性。
+
+<!-- source-family:SF-2026-ARXIV-2605-29324 -->
+
+### 用干预矩阵定位写入、检索与阅读失败
+
+端到端分数下降不能说明 Memory 哪一层失效。固定 reader 后，可以用 truncated full context、oracle evidence、complete stored memory 与 retrieved memory 四个条件构成干预矩阵：前两者估计 reader ceiling，complete memory 与 oracle 的差距指向 construction/write loss，retrieved 与 complete 的差距指向 retrieval loss。收益是让优化拥有明确对象，代价是需要 oracle evidence 和严格保持 reader、prompt 与任务版本一致；若这些控制变量漂移，差分会被错误归因。资源不足时，至少保留 complete-vs-retrieved 对照。该协议诊断组件边界，不证明某种 Memory 结构普遍最优。
+
+<!-- source-family:SF-2026-ARXIV-2605-24579 -->
+
+### 顺序任务要拆开 Acquisition、Retention、Forgetting 与 Transfer
+
+一次性问答准确率会把“没有写入”“写入后丢失”“被新信息干扰”和“无法迁移到新任务”混成同一个失败。对持续到达的任务，更有诊断力的协议应固定 episode 与版本边界，分别测新知识获得、延迟后保留、旧知识被覆盖、跨任务迁移和冲突消解：
+
+```text
+ordered episodes + explicit write opportunities
+→ acquisition checkpoint
+→ retention / forgetting checkpoint
+→ interference and transfer checkpoint
+→ downstream outcome with memory cost
+```
+
+这种分解能定位状态生命周期的故障，却增加测试时长、顺序敏感性和 judge 依赖；合成 episode 也不能代表开放环境中的真实时间跨度。短会话、无持久状态的系统仍可使用静态 QA 基线，但一旦 Memory 会跨任务影响 action，就不能用最终平均分掩盖灾难性遗忘或错误迁移。
+
+<!-- source-family:SF-2026-ARXIV-2605-15384 -->
 
 ### Verifier 输出必须带着校准边界进入 Memory 生命周期
 
@@ -980,6 +1064,20 @@ caches 与受 retention policy 管理的副本。
 
 ### Provenance 必须进入 read、action 与 repair 路径
 
+只保存一段自然语言理由，无法证明 action 真由已授权证据推出；只保存 source URL，又缺少中间变换和版本身份。高风险路径应把读取、派生、聚合和决策表示为可签名或可校验的 provenance DAG，并让 action gate 验证依赖闭包，而不是只信最终结论：
+
+```text
+authorized source versions
+→ typed derivation edges
+→ decision claim
+→ action justification check
+→ execute | abstain | request evidence
+```
+
+派生图提高审计和选择性修复能力，却增加记录成本、隐私暴露和错误 lineage 被形式化固化的风险。签名只能证明来源与完整性，不能证明语义正确；链路缺失或版本被撤销时应 fail closed 或转人工，而不是由模型补写不存在的依据。低风险、可逆且无需跨会话追责的任务仍可保留更轻量的 trace。
+
+<!-- source-family:SF-2026-ARXIV-2605-14421 -->
+
 只在事后日志里保存 `source_id`，仍不足以阻止一条语义相关、但当前 Agent 无权读取或不应支持高风险
 行动的 Memory。运行时需要把三个问题分开：
 
@@ -1014,6 +1112,61 @@ compensation/reconciliation。相关论文只在 150 个 controlled cases 与 50
 procedural cases 上验证，而且使用已诊断 fault identifiers；它证明的是给定 fault localization 后的选择性
 恢复，不证明系统已经解决在线检测、不可逆 side effect 或生产并发。
 
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19911:start -->
+多 agent 记忆从各自 transcript 变为 transactive directory：agent 保存谁知道什么与证据位置，查询先路由到 memory owner 再取内容；目录过期时回落到广播/共享检索。其收益以额外索引维护、错误 expertise attribution 和隐私边界为代价。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19911:end -->
+
+### 共享 Memory 的 Credit 必须沿状态树回传
+
+多 Agent memory 不是一条扁平日志：某个结论可能来自上游委派、多个中间摘要和最终写入。只给最终回答分配 credit，会让错误或成功回写到错误的记忆节点。系统应保存 parent/child state transition，把 outcome 沿树分配给共享与 delegated change，同时区分 evidence contribution 与 coordination effect。
+
+树状 credit 提高可追责性，却依赖完整 lineage，并可能把相关贡献误当因果。缺少 trace 时应降低写入权重或转人工复核，而不是更新长期 memory。简单单 Agent、单步写入仍可使用线性 provenance。
+
+<!-- source-family:SF-TREE-BASED-CREDIT-ASSIGNMENT-FOR-MULTI-AGENT-MEMORY-SYSTEM -->
+
+### Recall 与 Commitment 必须分开授权
+
+检索到用户偏好或历史承诺，只证明相关信息可读，不代表系统应把它实现为当前行为。低风险个性化可以直接复用已确认偏好；当事实可能过期、与当前请求冲突或会触发外部副作用时，需要在 recall 之后增加 activation、validation 与 bounded commitment：
+
+```text
+authorized recall
+→ context-specific activation
+→ commitment validation
+→ bounded realization | ask | abstain
+```
+
+Memory owner 负责提供带 provenance 的候选事实，commitment policy 才决定它能否约束当前 action。这个分层减少“记住了所以擅自执行”，却增加验证延迟、保守拒绝和 policy 配置；明确、近期、可逆的偏好仍可走轻量路径。作者 payload/commitment 结果只属于其协议与任务，不证明长期记忆普遍优于长 Context。
+
+<!-- source-family:SF-2026-ARXIV-2605-16712 -->
+
+### Temporal Index 可以把生成式整理移出 Write Critical Path
+
+每次写入都让模型重写完整 summary，适合小 memory，却让 freshness latency 随历史增长，并让一次生成错误覆盖大量状态。分层时间索引可以先以低成本 append immutable episode，在后台按时间层级聚合索引；读取根据时间范围和查询只展开必要节点。
+
+这把写路径从 state-dependent generation 变为数据管理问题，却引入 compaction、层级选择、stale summary 和查询放大。Index 只拥有定位，不拥有事实真值；高风险回答仍需回到原 episode/provenance。会话短或写入稀少时，直接 summary 更简单；层级方案的作者 latency/quality 结果不能外推任意 memory workload。
+
+<!-- source-family:SF-2026-ARXIV-2605-23986 -->
+
+### 长程 Memory 要在 Multi-target Interference 下验收
+
+单目标 recall 能验证一条事实是否写入和取回，却避开了多个实体、重复更新与相互矛盾记忆共同存在时的选择问题。更完整的验收要保留 target identity、update history、validity interval 与 provenance，并分别测 retrieve、冲突消解和跨片段 aggregation；最终回答不能仅因检索到相关文本就算通过。
+
+这种压力测试更接近真实长期 Agent，却增加合成场景偏差、标注复杂度和 evaluator 不确定性。短 session 或单实体工作流仍可使用简单 recall；冲突无法可靠裁决时应返回多版本证据并请求确认。exact-v1 只在其构造的 multi-target interference tasks 与所测 memory-augmented agents 中支持结果，不证明开放环境或生产记忆系统的普遍失败率。
+
+<!-- source-family:SF-2026-ARXIV-2605-18565 -->
+
+### Memory IR 把事实、来源与用途分开
+
+把所有记忆保存成自然语言段落，在短会话和人工可读场景下合理；长期 Agent 会把 observation、inference、preference 与 policy 混成不可追踪文本。Memory owner 可以用 typed atom 表达内容类型、source/provenance、validity 与 projection，再按任务生成不同读取视图。收益是 source monitoring 与受控复用，代价是 schema migration 和 extraction error；类型不确定时应保留 raw episodic evidence 而不升级 semantic fact。exact-v1 只支持 MemIR 披露的 benchmark、prompt 与实验，不证明生产部署或自动类型推断完全可靠。<!-- source-family:SF-2026-ARXIV-2605-25869 -->
+
+### Persistent Memory 需要显式状态操作，而不只是 Record
+
+append/get/update/delete 的 record abstraction 适合 CRUD，却无法表达 derived belief、依赖传播与条件 supersession。更强的 memory state owner 应提供带前置条件的 observe、derive、merge、invalidate 与 rollback operator，并以 source identity 维护正确性。收益是让长期状态转移可验证，代价是 operator contract、冲突解析和额外存储；规则不完备会固化错误依赖，应回退 append-only evidence 加人工重建。exact-v1 的 GEM/MemState 是 prototype 与研究议程，没有 production comparison，不能证明通用持久记忆已解决。<!-- source-family:SF-2026-ARXIV-2605-26252 -->
+
 ## 本章在知识树中的位置
 
 Prompt、Context、RAG、Memory 共同构成 Agent 的 information state。下一章引入 action：Tool Calling 如何把模型输出转换为对外部环境的 typed proposal，并由平台决定是否执行。
@@ -1021,6 +1174,17 @@ Prompt、Context、RAG、Memory 共同构成 Agent 的 information state。下�
 第25章的 world state 与本章的 Agent Memory 必须分开：Memory 保存事实、经验与派生策略，World Model 预测 action-conditioned transition。predicted or imagined state 只能作为带 provenance/confidence 的 planning evidence，不能未经新 observation 验证就写回 authoritative fact memory。
 
 在 State 横线上，第 55 章的 KV handoff 仍属于单次生成的 request state，第 75 章拥有单次调用的 working state，本章拥有跨调用保存与遗忘策略，第 81 章再把被批准的行动、事件与恢复点升级为 authoritative workflow state。它们的 durability 和 truth authority 递增，不能用一个通用“Memory”对象代替。
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22338 -->
+把 robot memory 评估从静态问答改为干扰条件下的 construction、retention、retrieval 与 action-use 分离；memory result 必须绑定 interference identity。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；只评一个 released checkpoint/system、单 episode condition，未覆盖多 seed 和真实机器人；不能把 benchmark pass 外推为长期可靠记忆。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+## 从机制演进到系统设计
+
+Agent Memory 从追加历史演进成受治理的持久状态系统。写入前要区分事实、计划、经验和派生摘要；读取要同时考虑 relevance、valid time、provenance、ACL 与版本；更新/删除需要 supersession、before-image、conflict visibility 和可恢复 transaction，而不是静默覆盖旧值。
+
+结构化、共享或可学习 memory 提高长期连续性，却引入污染、相关 evaluator bias、并发 writer、遗忘不完整和 retrieval drift。writer、verifier 与 reader authority 应分离；低置信 transition 保留旧版本和 raw trajectory，跨租户默认隔离。短任务或状态无法可靠验证时，不持久化往往比有损记忆更安全。
 
 ## 自检问题
 
@@ -1041,82 +1205,31 @@ Prompt、Context、RAG、Memory 共同构成 Agent 的 information state。下�
 15. 比较 Graph、summary 与 raw session 时，为什么必须拆开 representation、organization、maintenance 与 retrieval？
 16. 为什么 prerequisite 在 retention 阶段被淘汰后，提升 retriever recall 也无法恢复它？
 
+## Belief State：先保存竞争假设，再决定事实
+
+<!-- semantic-body-binding:SF-BELIEF-MEMORY-AGENT-MEMORY-UNDER-PARTIAL-OBSERVABILITY:start -->
+把每次新 observation 直接合并成单一“当前事实”，在环境稳定、证据一致时最省 token 和治理成本；部分可观测环境却会让一次错误写入自我强化，后续 retrieval 只看见已经合并的结论。更稳健的 memory state 先保留互斥 hypotheses、各自 evidence weight、更新时间与可证伪条件，再让新 observation 调整、合并或淘汰假设。write、retrieval 与 action planning 消费的是同一份 belief state，而不是彼此不可见的自由文本结论。
+
+这种表示减少过早 commit，却增加状态增长、冲突合并、校准漂移与 action policy 复杂度；它也不把 posterior 变成事实。证据少、风险高时回退 raw episodes 与人工确认，低风险且世界近似确定时单一结论 memory 仍更经济。[受限证据：arXiv:2605.05583v1]
+<!-- semantic-body-binding:SF-BELIEF-MEMORY-AGENT-MEMORY-UNDER-PARTIAL-OBSERVABILITY:end -->
+
+## Graph Memory 的 Relation 也需要 Provenance
+
+文本 memory 的 provenance 常绑定到 node 或 source document；图结构写入还会通过 relation canonicalization、anchor merge 与 retrieval edge 改变后续可达内容。攻击者不必伪造单个事实，只要让恶意关系合并到可信 anchor，就可能沿 retrieval channel 扩散。write admission 因而必须验证 node 与 relation 的共同来源，记录 canonicalization/merge decision，并让删除或回滚能追踪派生 edge。
+
+关系级 provenance 改善可审计性，却增加存储、去重冲突和查询开销；schema 稳定、单 writer 且低风险时，node-level provenance 仍可作为简化路径。任何自动 merge 都不能因“图上连通”获得事实权威。[受限证据：arXiv:2605.09033v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-09033 -->
+
 ## 小结
 
-Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多文本。可靠 Memory 保留 provenance、confidence、authorization 和修正路径。下一章从信息状态进入外部行动。
-
-
-### 从局部结果到可执行的系统边界
-
-<!-- body-source:SF-2026-ARXIV-2606-22338 -->
-把 robot memory 评估从静态问答改为干扰条件下的 construction、retention、retrieval 与 action-use 分离；memory result 必须绑定 interference identity。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；只评一个 released checkpoint/system、单 episode condition，未覆盖多 seed 和真实机器人；不能把 benchmark pass 外推为长期可靠记忆。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
-
-<!-- recovered-daily-20260623:AGENT-MEMORY:start -->
-## 2026-06-23 evidence integration — AGENT-MEMORY
-
-相邻章 `books/part-07-agent/78-tool-calling.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22844**：RaMem: Contextual Reinstatement for Long-term Agentic Memory 的 exact-v1 机制为：To address this problem, we propose Contextual Reinstatement for Agentic Memory (RaMem), a framework that turns retrieved memory fragments into contextually verifiable evidence. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：We refer to this failure as context collapse: memories lose the surrounding context needed to judge whether they provide valid evidence for the current query. 披露的 evaluation signal 是：Experiments on long-term memory benchmarks show that RaMem consistently improves performance over strong memory baselines, with average F1 gains of more than 10% across several backbones. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23195**：Memory Contagion: Cross-Temporal Propagation of Evaluator Bias via Agent Memory 的 exact-v1 机制为：Recent work shows that agent memories degrade during continuous consolidation. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：However, existing research assumes memories are derived from unbiased experiences. 披露的 evaluation signal 是：Recent work shows that agent memories degrade during continuous consolidation. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23283**：Towards Root Memories: Benchmarking and Enhancing Implicit Logical Memory Retrieval for Personalized LLMs 的 exact-v1 机制为：Motivated by this challenge, we introduce root memory, a structured, decision-preserving representation that distills reusable personalized logic from long-term user histories. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：However, existing retrieval methods in these systems primarily rely on semantic similarity, potentially missing logically critical memories with limited semantic overlap. 披露的 evaluation signal 是：Current benchmarks remain inadequate for evaluating this problem. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23525**：Self-Compacting Language Model Agents 的 exact-v1 机制为：We propose SelfCompact, a scaffold that allows the model itself to decide when and how to compact. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 披露的 evaluation signal 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23752**：ESAA-Conversational: An Event-Sourced Memory Layer for Continuity, Handoff, and Curation Across Heterogeneous LLM Coding Agents 的 exact-v1 机制为：Each agent, however, persists its conversation in a private and vendor-specific log. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：Each agent, however, persists its conversation in a private and vendor-specific log. 披露的 evaluation signal 是：The result is conversational state drift: goals, decisions, open tasks, and rationales established with one agent are not reliably available when another agent takes over. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-24040**：Towards Version-aware Operations and Transaction Memories for Multi-layer MeMo 的 exact-v1 机制为：We propose a version-aware operation layer in which high-level operations such as replace, obsolete, keep-history, rollback, and trace are compiled into MeMo-native primitive calls over sequences and tokens. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：MeMo proposes language models with explicit multi-layer correlation matrix memories (CMMs), where memorization, retrieval, and forgetting are architectural operations. 披露的 evaluation signal 是：This paper asks how such memories can reduce the need for retraining when knowledge changes. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-
-### Source-specific exact-v1 Review notes
-
-- `SF-2026-ARXIV-2606-22844` — primary `arXiv:2606.22844v1`; Method=`arXiv:2606.22844v1 — §RaMem: Contextual Reinstatement for Long-term Agentic Memory; §3 Method; §3.1 Episodic Memory Anchoring`; Evaluation=`arXiv:2606.22844v1 — §4.3 Context Collapse Analysis; §4.5 Hyper-parameter Analysis; §4.6 Component Analysis`; non-proof=`arXiv:2606.22844v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：We refer to this failure as context collapse: memories lose the surrounding context needed to judge whether they provide valid evidence for the current query. 披露的 evaluation signal 是：Experiments on long-term memory benchmarks show that RaMem consistently improves performance over strong memory baselines, with average F1 gains of more than 10% across several backbones. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-23195` — primary `arXiv:2606.23195v1`; Method=`arXiv:2606.23195v1 — §Memory Contagion: Cross-Temporal Propagation of Evaluator Bias via Agent Memory; §3 Method; §3.2 Memory Store and Consolidation`; Evaluation=`arXiv:2606.23195v1 — §4.4 Results: Phase 4 (Dose-Response Analysis); §A.3 Retrieved Memory Analysis; §A.5 Sensitivity Analysis: Additive Model Assumption`; non-proof=`arXiv:2606.23195v1 — §5 Discussion; §6 Conclusion`; fallback=该 family 的 failure pressure 是：However, existing research assumes memories are derived from unbiased experiences. 披露的 evaluation signal 是：Recent work shows that agent memories degrade during continuous consolidation. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-23283` — primary `arXiv:2606.23283v1`; Method=`arXiv:2606.23283v1 — §Towards Root Memories: Benchmarking and Enhancing Implicit Logical Memory Retrieval for Personalized LLMs; §2 The IMLogic Benchmark: Towards Implicit Logical Memory Retrieval; §2.3 Benchmark Construction`; Evaluation=`arXiv:2606.23283v1 — §2 The IMLogic Benchmark: Towards Implicit Logical Memory Retrieval; §2.3 Benchmark Construction; §4.1.1 Experiment Settings.`; non-proof=`arXiv:2606.23283v1 — §6 Conclusion`; fallback=该 family 的 failure pressure 是：However, existing retrieval methods in these systems primarily rely on semantic similarity, potentially missing logically critical memories with limited semantic overlap. 披露的 evaluation signal 是：Current benchmarks remain inadequate for evaluating this problem. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-23525` — primary `arXiv:2606.23525v1`; Method=`arXiv:2606.23525v1 — §3 Our Approach: SelfCompact; §Summarizer design.; §Learning to compact during post-training.`; Evaluation=`arXiv:2606.23525v1 — §Cost analysis.; §Headroom analysis.; §Appendix C Cost analysis of summarization`; non-proof=`arXiv:2606.23525v1 — §7 Conclusion`; fallback=该 family 的 failure pressure 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 披露的 evaluation signal 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-23752` — primary `arXiv:2606.23752v1`; Method=`arXiv:2606.23752v1 — §ESAA-Conversational: An Event-Sourced Memory Layer for Continuity, Handoff, and Curation Across Heterogeneous LLM Coding Agents; §2.2 Agent Memory; §4 Architecture`; Evaluation=`arXiv:2606.23752v1 — §8 Self-Referential Case Study`; non-proof=`arXiv:2606.23752v1 — §9 Discussion; §Validation Scope; §10 Future Work`; fallback=该 family 的 failure pressure 是：Each agent, however, persists its conversation in a private and vendor-specific log. 披露的 evaluation signal 是：The result is conversational state drift: goals, decisions, open tasks, and rationales established with one agent are not reliably available when another agent takes over. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- `SF-2026-ARXIV-2606-24040` — primary `arXiv:2606.24040v1`; Method=`arXiv:2606.24040v1 — §3 Version-aware Operations; §4 Version and Transaction Correlation Memories`; Evaluation=`arXiv:2606.24040v1 — §5 Examples; §5.1 Direct sequence-level replacement; §5.2 Structured diff-level update`; non-proof=`arXiv:2606.24040v1 — §6 Evaluation Roadmap and Scope; §7 Conclusion`; fallback=该 family 的 failure pressure 是：MeMo proposes language models with explicit multi-layer correlation matrix memories (CMMs), where memorization, retrieval, and forgetting are architectural operations. 披露的 evaluation signal 是：This paper asks how such memories can reduce the need for retraining when knowledge changes. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-<!-- recovered-daily-20260623:AGENT-MEMORY:end -->
-
-<!-- recovered-daily-20260624:AGENT-MEMORY:start -->
-## 2026-06-24 evidence integration — AGENT-MEMORY
-
-相邻章 `books/part-07-agent/76-rag.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24151**：不在设计时固定 text 或 code memory；memory manager 先保存 plan/fact/pitfall 文本，只有重复且验证通过的 plan 才 crystallize 为 callable tool，同时保留构建成本与 provenance。 AppWorld 与同一 experience set 只显示两种表示在 construction cost、execution efficiency、transferability 上互补；不证明生成工具在未知 API、权限变化或污染经验下安全。
-- **SF-2026-ARXIV-2606-24428**：经验写入从同一 agent 自我总结改为 Execute 的异构并行轨迹、第三方 contrastive Distill 与 consensus Verify；只有通过独立验证的经验才能进入 storage/retrieval。 多 agent consensus 仍可能相关失败，且 tau2-Bench/Mind2Web/MMTB 与论文 temperature/retrieval 配置不证明开放任务；不确定时保存 raw trajectories 或拒绝写入。
-- **SF-2026-ARXIV-2606-24535**：多 Agent 共享记忆增加 explicit scope、valid time、provenance graph 与 policy-gated retrieval；矛盾在 write-time resolution，reader 只消费已提交版本，传播由 privilege gate 控制。 self-evaluation、single tenant、focused scope probe、有限 workload 且无 comparand；staleness-after-supersession 与 visibility 延迟未完整测量，冲突时回退 tenant-local memory 或 single writer。
-- **SF-2026-ARXIV-2606-24775**：把 agent memory 评价拆成 logical representation、physical storage/index、extraction、query routing 与 maintenance 五个 ownerable stage，并分别测 retrieval fidelity、evolution robustness、long-horizon stability 和 operation cost。 现有系统/benchmark 比较不证明单一实现普适最优；缺少生产 authorization、deletion SLA、并发一致性或真实 workload 时只能作为 lifecycle checklist。
-- **SF-2026-ARXIV-2606-25115**：一个 value-minus-harm-per-byte score 同时控制 KEEP eviction、SHARE uplink 与 TRUST provenance gate；RAM、energy、uplink budget 与 poison risk 成为 memory lifecycle state。 task-drift benchmark 与 Jetson 两臂/Hub testbed 不证明 score 跨设备、用户或攻击迁移；低校准或高风险 entry 应拒绝共享并回退本地可信 memory。
-- **SF-2026-ARXIV-2606-25161**：memory update 不再只按最终问答 reward；transition verifier 对 coverage、preservation、faithfulness 打分，同一旧 state 下比较候选 write/revise/delete，并用 preference-guided RL 训练 writer。 MemoryAgentBench/HaluMem/Mem-alpha 与 verifier judge 不证明真实用户 consent、并发 writer、poisoning 或 judge drift；低置信 transition 应拒写并保留旧版本。
-
-### Source-specific Review notes
-
-- SF-2026-ARXIV-2606-24151: `arXiv:2606.24151v1`; exact-v1 URL=`https://arxiv.org/html/2606.24151v1`; Method=`https://arxiv.org/html/2606.24151v1 — §3 The Metis System; 3.2 Text Reflection; 3.3 Code Generation; 3.4 Memory Manager`; Evaluation=`https://arxiv.org/html/2606.24151v1 — §4 Experiments; A.1 Profiling Experiments`; Non-proof=`AppWorld 与同一 experience set 只显示两种表示在 construction cost、execution efficiency、transferability 上互补；不证明生成工具在未知 API、权限变化或污染经验下安全。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24428: `arXiv:2606.24428v1`; exact-v1 URL=`https://arxiv.org/html/2606.24428v1`; Method=`https://arxiv.org/html/2606.24428v1 — §3 Self-Confirmation Trap; 4 Execute-Distill-Verify`; Evaluation=`https://arxiv.org/html/2606.24428v1 — §5 Experiments; Memory Quality and Contamination`; Non-proof=`多 agent consensus 仍可能相关失败，且 tau2-Bench/Mind2Web/MMTB 与论文 temperature/retrieval 配置不证明开放任务；不确定时保存 raw trajectories 或拒绝写入。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24535: `arXiv:2606.24535v1`; exact-v1 URL=`https://arxiv.org/html/2606.24535v1`; Method=`https://arxiv.org/html/2606.24535v1 — §3 Fleet-Memory Problem; 5 Governed Shared Memory Architecture`; Evaluation=`https://arxiv.org/html/2606.24535v1 — §7 Evaluation Methodology; 8 Results`; Non-proof=`self-evaluation、single tenant、focused scope probe、有限 workload 且无 comparand；staleness-after-supersession 与 visibility 延迟未完整测量，冲突时回退 tenant-local memory 或 single writer。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-24775: `arXiv:2606.24775v1`; exact-v1 URL=`https://arxiv.org/html/2606.24775v1`; Method=`https://arxiv.org/html/2606.24775v1 — §3 Method Overview; Representation, Extraction, Retrieval, Maintenance`; Evaluation=`https://arxiv.org/html/2606.24775v1 — §4 End-to-End Assessment; 5 Component Comparison`; Non-proof=`现有系统/benchmark 比较不证明单一实现普适最优；缺少生产 authorization、deletion SLA、并发一致性或真实 workload 时只能作为 lifecycle checklist。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-25115: `arXiv:2606.25115v1`; exact-v1 URL=`https://arxiv.org/html/2606.25115v1`; Method=`https://arxiv.org/html/2606.25115v1 — §III System Design; Net-Value-Density; Three Decisions`; Evaluation=`https://arxiv.org/html/2606.25115v1 — §V Evaluation; Trust Under Poisoning; Real Hardware`; Non-proof=`task-drift benchmark 与 Jetson 两臂/Hub testbed 不证明 score 跨设备、用户或攻击迁移；低校准或高风险 entry 应拒绝共享并回退本地可信 memory。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-- SF-2026-ARXIV-2606-25161: `arXiv:2606.25161v1`; exact-v1 URL=`https://arxiv.org/html/2606.25161v1`; Method=`https://arxiv.org/html/2606.25161v1 — §3 Method; Memory Transition Verifier; Transition-Ranked GRPO`; Evaluation=`https://arxiv.org/html/2606.25161v1 — §4 Experiment; HaluMem; Reliability of Consolidation`; Non-proof=`MemoryAgentBench/HaluMem/Mem-alpha 与 verifier judge 不证明真实用户 consent、并发 writer、poisoning 或 judge drift；低置信 transition 应拒写并保留旧版本。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-<!-- recovered-daily-20260624:AGENT-MEMORY:end -->
-
-<!-- recovered-daily-20260625:AGENT-MEMORY:start -->
-## 2026-06-25 evidence integration — AGENT-MEMORY
-
-- **SF-2026-ARXIV-2606-25449**：`3 Brittle Memory and Reclaim Evaluation; 3.2 Reclaim Protocol` 所定义的源特定机制用于把动态记忆写入、回收与失效变成有 owner 的持久状态迁移；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Limitations` 是 `Reclaim Evaluation: A Lossy Memory Is Worse Than an Empty One` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experimental Setup; 5 Results; 5.7 Boundary of the Fix` 的验证域，`AGENT-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25658**：`3 Method; 3.2 Online Semantic Basis; 3.3 Dynamic Visual Memory Bank` 所定义的源特定机制用于把动态记忆写入、回收与失效变成有 owner 的持久状态迁移；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `A Limitations` 是 `Towards a Dynamic and Fixed-budget Memory Bank for Efficient Streaming Video Understanding` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiment; 4.1 Benchmarks and Metrics; 4.2 Implementation` 的验证域，`AGENT-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-### 2026-06-25 source-specific Review notes
-
-- **SF-2026-ARXIV-2606-25449**：Primary `arXiv:2606.25449v1`；Method `https://arxiv.org/html/2606.25449v1 — §3 Brittle Memory and Reclaim Evaluation; 3.2 Reclaim Protocol`；Evaluation `https://arxiv.org/html/2606.25449v1 — §4 Experimental Setup; 5 Results; 5.7 Boundary of the Fix`；未证明边界 `https://arxiv.org/html/2606.25449v1 — §7 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-- **SF-2026-ARXIV-2606-25658**：Primary `arXiv:2606.25658v1`；Method `https://arxiv.org/html/2606.25658v1 — §3 Method; 3.2 Online Semantic Basis; 3.3 Dynamic Visual Memory Bank`；Evaluation `https://arxiv.org/html/2606.25658v1 — §4 Experiment; 4.1 Benchmarks and Metrics; 4.2 Implementation`；未证明边界 `https://arxiv.org/html/2606.25658v1 — §A Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-<!-- recovered-daily-20260625:AGENT-MEMORY:end -->
+Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多文本。可靠 Memory 保留 provenance、confidence、authorization、target identity、update history 和修正路径，并在多目标干扰下分别验收检索、冲突消解与聚合。下一章从信息状态进入外部行动。
 
 ## Review notes
 
 <!-- june30-review:start -->
 - **SF-2026-ARXIV-2606-30788 / arXiv:2606.30788v1**：用 process sidecar 隔离可撤销学习状态，避免撤销私有记忆破坏公共技能。Method=`arXiv:2606.30788v1 — §3 Method; §Safety post-training.; §Sensitivity through training.`；Evaluation=`arXiv:2606.30788v1 — §2 Setting and evaluation; §5 Experiments; §5.1 Setup`，模型为 Qwen-2.5-0.5B/1.5B-Instruct 与 Llama-3.2-1B-Instruct；Non-proof=`arXiv:2606.30788v1 — §6 Discussion and limitations; §7 Conclusion; §B.7 Boundary cases for the second-order frontier`，不证明其他模型、任务或生产 SLO 的完全遗忘；Hardware/Precision/Input length/Output length/Batch/Concurrency/SLO/Evaluator=`Not Disclosed`；Artifact=`Not Disclosed — no later artifact used`。若 provenance、实体边界或 validation-selected edit 不成立，隔离实体并转人工审计，保留原始删除或重训 fallback。
 <!-- june30-review:end -->
-
 
 - `SF-2026-ARXIV-2606-22338` — primary `arXiv:2606.22338v1`；Method=`arXiv:2606.22338v1 §3 The Benchmark; §4 Memory Systems`；Evaluation=`arXiv:2606.22338v1 §5 Results`；Non-proof=`arXiv:2606.22338v1 §6 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
@@ -1213,3 +1326,252 @@ Primary-source 入口：
   https://arxiv.org/abs/2607.22690v1
 - RECON（proof-trace memory benchmark；Status: Experimental；synthetic typed cases，不是生产 Memory 结构证明）:
   https://arxiv.org/abs/2607.16716v1
+
+### Daily integration evidence trace
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22844` — primary `arXiv:2606.22844v1`; Method=`arXiv:2606.22844v1 — §RaMem: Contextual Reinstatement for Long-term Agentic Memory; §3 Method; §3.1 Episodic Memory Anchoring`; Evaluation=`arXiv:2606.22844v1 — §4.3 Context Collapse Analysis; §4.5 Hyper-parameter Analysis; §4.6 Component Analysis`; non-proof=`arXiv:2606.22844v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：We refer to this failure as context collapse: memories lose the surrounding context needed to judge whether they provide valid evidence for the current query. 披露的 evaluation signal 是：Experiments on long-term memory benchmarks show that RaMem consistently improves performance over strong memory baselines, with average F1 gains of more than 10% across several backbones. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23195` — primary `arXiv:2606.23195v1`; Method=`arXiv:2606.23195v1 — §Memory Contagion: Cross-Temporal Propagation of Evaluator Bias via Agent Memory; §3 Method; §3.2 Memory Store and Consolidation`; Evaluation=`arXiv:2606.23195v1 — §4.4 Results: Phase 4 (Dose-Response Analysis); §A.3 Retrieved Memory Analysis; §A.5 Sensitivity Analysis: Additive Model Assumption`; non-proof=`arXiv:2606.23195v1 — §5 Discussion; §6 Conclusion`; fallback=该 family 的 failure pressure 是：However, existing research assumes memories are derived from unbiased experiences. 披露的 evaluation signal 是：Recent work shows that agent memories degrade during continuous consolidation. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23283` — primary `arXiv:2606.23283v1`; Method=`arXiv:2606.23283v1 — §Towards Root Memories: Benchmarking and Enhancing Implicit Logical Memory Retrieval for Personalized LLMs; §2 The IMLogic Benchmark: Towards Implicit Logical Memory Retrieval; §2.3 Benchmark Construction`; Evaluation=`arXiv:2606.23283v1 — §2 The IMLogic Benchmark: Towards Implicit Logical Memory Retrieval; §2.3 Benchmark Construction; §4.1.1 Experiment Settings.`; non-proof=`arXiv:2606.23283v1 — §6 Conclusion`; fallback=该 family 的 failure pressure 是：However, existing retrieval methods in these systems primarily rely on semantic similarity, potentially missing logically critical memories with limited semantic overlap. 披露的 evaluation signal 是：Current benchmarks remain inadequate for evaluating this problem. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23525` — primary `arXiv:2606.23525v1`; Method=`arXiv:2606.23525v1 — §3 Our Approach: SelfCompact; §Summarizer design.; §Learning to compact during post-training.`; Evaluation=`arXiv:2606.23525v1 — §Cost analysis.; §Headroom analysis.; §Appendix C Cost analysis of summarization`; non-proof=`arXiv:2606.23525v1 — §7 Conclusion`; fallback=该 family 的 failure pressure 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 披露的 evaluation signal 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23752` — primary `arXiv:2606.23752v1`; Method=`arXiv:2606.23752v1 — §ESAA-Conversational: An Event-Sourced Memory Layer for Continuity, Handoff, and Curation Across Heterogeneous LLM Coding Agents; §2.2 Agent Memory; §4 Architecture`; Evaluation=`arXiv:2606.23752v1 — §8 Self-Referential Case Study`; non-proof=`arXiv:2606.23752v1 — §9 Discussion; §Validation Scope; §10 Future Work`; fallback=该 family 的 failure pressure 是：Each agent, however, persists its conversation in a private and vendor-specific log. 披露的 evaluation signal 是：The result is conversational state drift: goals, decisions, open tasks, and rationales established with one agent are not reliably available when another agent takes over. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-24040` — primary `arXiv:2606.24040v1`; Method=`arXiv:2606.24040v1 — §3 Version-aware Operations; §4 Version and Transaction Correlation Memories`; Evaluation=`arXiv:2606.24040v1 — §5 Examples; §5.1 Direct sequence-level replacement; §5.2 Structured diff-level update`; non-proof=`arXiv:2606.24040v1 — §6 Evaluation Roadmap and Scope; §7 Conclusion`; fallback=该 family 的 failure pressure 是：MeMo proposes language models with explicit multi-layer correlation matrix memories (CMMs), where memorization, retrieval, and forgetting are architectural operations. 披露的 evaluation signal 是：This paper asks how such memories can reduce the need for retraining when knowledge changes. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+
+#### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24151: `arXiv:2606.24151v1`; exact-v1 URL=`https://arxiv.org/html/2606.24151v1`; Method=`https://arxiv.org/html/2606.24151v1 — §3 The Metis System; 3.2 Text Reflection; 3.3 Code Generation; 3.4 Memory Manager`; Evaluation=`https://arxiv.org/html/2606.24151v1 — §4 Experiments; A.1 Profiling Experiments`; Non-proof=`AppWorld 与同一 experience set 只显示两种表示在 construction cost、execution efficiency、transferability 上互补；不证明生成工具在未知 API、权限变化或污染经验下安全。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24428: `arXiv:2606.24428v1`; exact-v1 URL=`https://arxiv.org/html/2606.24428v1`; Method=`https://arxiv.org/html/2606.24428v1 — §3 Self-Confirmation Trap; 4 Execute-Distill-Verify`; Evaluation=`https://arxiv.org/html/2606.24428v1 — §5 Experiments; Memory Quality and Contamination`; Non-proof=`多 agent consensus 仍可能相关失败，且 tau2-Bench/Mind2Web/MMTB 与论文 temperature/retrieval 配置不证明开放任务；不确定时保存 raw trajectories 或拒绝写入。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24535: `arXiv:2606.24535v1`; exact-v1 URL=`https://arxiv.org/html/2606.24535v1`; Method=`https://arxiv.org/html/2606.24535v1 — §3 Fleet-Memory Problem; 5 Governed Shared Memory Architecture`; Evaluation=`https://arxiv.org/html/2606.24535v1 — §7 Evaluation Methodology; 8 Results`; Non-proof=`self-evaluation、single tenant、focused scope probe、有限 workload 且无 comparand；staleness-after-supersession 与 visibility 延迟未完整测量，冲突时回退 tenant-local memory 或 single writer。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24775: `arXiv:2606.24775v1`; exact-v1 URL=`https://arxiv.org/html/2606.24775v1`; Method=`https://arxiv.org/html/2606.24775v1 — §3 Method Overview; Representation, Extraction, Retrieval, Maintenance`; Evaluation=`https://arxiv.org/html/2606.24775v1 — §4 End-to-End Assessment; 5 Component Comparison`; Non-proof=`现有系统/benchmark 比较不证明单一实现普适最优；缺少生产 authorization、deletion SLA、并发一致性或真实 workload 时只能作为 lifecycle checklist。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25115: `arXiv:2606.25115v1`; exact-v1 URL=`https://arxiv.org/html/2606.25115v1`; Method=`https://arxiv.org/html/2606.25115v1 — §III System Design; Net-Value-Density; Three Decisions`; Evaluation=`https://arxiv.org/html/2606.25115v1 — §V Evaluation; Trust Under Poisoning; Real Hardware`; Non-proof=`task-drift benchmark 与 Jetson 两臂/Hub testbed 不证明 score 跨设备、用户或攻击迁移；低校准或高风险 entry 应拒绝共享并回退本地可信 memory。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25161: `arXiv:2606.25161v1`; exact-v1 URL=`https://arxiv.org/html/2606.25161v1`; Method=`https://arxiv.org/html/2606.25161v1 — §3 Method; Memory Transition Verifier; Transition-Ranked GRPO`; Evaluation=`https://arxiv.org/html/2606.25161v1 — §4 Experiment; HaluMem; Reliability of Consolidation`; Non-proof=`MemoryAgentBench/HaluMem/Mem-alpha 与 verifier judge 不证明真实用户 consent、并发 writer、poisoning 或 judge drift；低置信 transition 应拒写并保留旧版本。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+
+#### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25449**：Primary `arXiv:2606.25449v1`；Method `https://arxiv.org/html/2606.25449v1 — §3 Brittle Memory and Reclaim Evaluation; 3.2 Reclaim Protocol`；Evaluation `https://arxiv.org/html/2606.25449v1 — §4 Experimental Setup; 5 Results; 5.7 Boundary of the Fix`；未证明边界 `https://arxiv.org/html/2606.25449v1 — §7 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25658**：Primary `arXiv:2606.25658v1`；Method `https://arxiv.org/html/2606.25658v1 — §3 Method; 3.2 Online Semantic Basis; 3.3 Dynamic Visual Memory Bank`；Evaluation `https://arxiv.org/html/2606.25658v1 — §4 Experiment; 4.1 Benchmarks and Metrics; 4.2 Implementation`；未证明边界 `https://arxiv.org/html/2606.25658v1 — §A Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+### Source-family integration record
+
+<!-- recovered-daily-20260623:AGENT-MEMORY:start -->
+### 2026-06-23 evidence integration — AGENT-MEMORY
+
+相邻章 `books/part-07-agent/78-tool-calling.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22844**：RaMem: Contextual Reinstatement for Long-term Agentic Memory 的 exact-v1 机制为：To address this problem, we propose Contextual Reinstatement for Agentic Memory (RaMem), a framework that turns retrieved memory fragments into contextually verifiable evidence. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：We refer to this failure as context collapse: memories lose the surrounding context needed to judge whether they provide valid evidence for the current query. 披露的 evaluation signal 是：Experiments on long-term memory benchmarks show that RaMem consistently improves performance over strong memory baselines, with average F1 gains of more than 10% across several backbones. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23195**：Memory Contagion: Cross-Temporal Propagation of Evaluator Bias via Agent Memory 的 exact-v1 机制为：Recent work shows that agent memories degrade during continuous consolidation. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：However, existing research assumes memories are derived from unbiased experiences. 披露的 evaluation signal 是：Recent work shows that agent memories degrade during continuous consolidation. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23283**：Towards Root Memories: Benchmarking and Enhancing Implicit Logical Memory Retrieval for Personalized LLMs 的 exact-v1 机制为：Motivated by this challenge, we introduce root memory, a structured, decision-preserving representation that distills reusable personalized logic from long-term user histories. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：However, existing retrieval methods in these systems primarily rely on semantic similarity, potentially missing logically critical memories with limited semantic overlap. 披露的 evaluation signal 是：Current benchmarks remain inadequate for evaluating this problem. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23525**：Self-Compacting Language Model Agents 的 exact-v1 机制为：We propose SelfCompact, a scaffold that allows the model itself to decide when and how to compact. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 披露的 evaluation signal 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23752**：ESAA-Conversational: An Event-Sourced Memory Layer for Continuity, Handoff, and Curation Across Heterogeneous LLM Coding Agents 的 exact-v1 机制为：Each agent, however, persists its conversation in a private and vendor-specific log. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：Each agent, however, persists its conversation in a private and vendor-specific log. 披露的 evaluation signal 是：The result is conversational state drift: goals, decisions, open tasks, and rationales established with one agent are not reliably available when another agent takes over. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-24040**：Towards Version-aware Operations and Transaction Memories for Multi-layer MeMo 的 exact-v1 机制为：We propose a version-aware operation layer in which high-level operations such as replace, obsolete, keep-history, rollback, and trace are compiled into MeMo-native primitive calls over sequences and tokens. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：MeMo proposes language models with explicit multi-layer correlation matrix memories (CMMs), where memorization, retrieval, and forgetting are architectural operations. 披露的 evaluation signal 是：This paper asks how such memories can reduce the need for retraining when knowledge changes. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
+
+<!-- recovered-daily-20260623:AGENT-MEMORY:end -->
+
+<!-- recovered-daily-20260624:AGENT-MEMORY:start -->
+### 2026-06-24 evidence integration — AGENT-MEMORY
+
+相邻章 `books/part-07-agent/76-rag.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24151**：不在设计时固定 text 或 code memory；memory manager 先保存 plan/fact/pitfall 文本，只有重复且验证通过的 plan 才 crystallize 为 callable tool，同时保留构建成本与 provenance。 AppWorld 与同一 experience set 只显示两种表示在 construction cost、execution efficiency、transferability 上互补；不证明生成工具在未知 API、权限变化或污染经验下安全。
+- **SF-2026-ARXIV-2606-24428**：经验写入从同一 agent 自我总结改为 Execute 的异构并行轨迹、第三方 contrastive Distill 与 consensus Verify；只有通过独立验证的经验才能进入 storage/retrieval。 多 agent consensus 仍可能相关失败，且 tau2-Bench/Mind2Web/MMTB 与论文 temperature/retrieval 配置不证明开放任务；不确定时保存 raw trajectories 或拒绝写入。
+- **SF-2026-ARXIV-2606-24535**：多 Agent 共享记忆增加 explicit scope、valid time、provenance graph 与 policy-gated retrieval；矛盾在 write-time resolution，reader 只消费已提交版本，传播由 privilege gate 控制。 self-evaluation、single tenant、focused scope probe、有限 workload 且无 comparand；staleness-after-supersession 与 visibility 延迟未完整测量，冲突时回退 tenant-local memory 或 single writer。
+- **SF-2026-ARXIV-2606-24775**：把 agent memory 评价拆成 logical representation、physical storage/index、extraction、query routing 与 maintenance 五个 ownerable stage，并分别测 retrieval fidelity、evolution robustness、long-horizon stability 和 operation cost。 现有系统/benchmark 比较不证明单一实现普适最优；缺少生产 authorization、deletion SLA、并发一致性或真实 workload 时只能作为 lifecycle checklist。
+- **SF-2026-ARXIV-2606-25115**：一个 value-minus-harm-per-byte score 同时控制 KEEP eviction、SHARE uplink 与 TRUST provenance gate；RAM、energy、uplink budget 与 poison risk 成为 memory lifecycle state。 task-drift benchmark 与 Jetson 两臂/Hub testbed 不证明 score 跨设备、用户或攻击迁移；低校准或高风险 entry 应拒绝共享并回退本地可信 memory。
+- **SF-2026-ARXIV-2606-25161**：memory update 不再只按最终问答 reward；transition verifier 对 coverage、preservation、faithfulness 打分，同一旧 state 下比较候选 write/revise/delete，并用 preference-guided RL 训练 writer。 MemoryAgentBench/HaluMem/Mem-alpha 与 verifier judge 不证明真实用户 consent、并发 writer、poisoning 或 judge drift；低置信 transition 应拒写并保留旧版本。
+
+<!-- recovered-daily-20260624:AGENT-MEMORY:end -->
+
+<!-- recovered-daily-20260625:AGENT-MEMORY:start -->
+### 2026-06-25 evidence integration — AGENT-MEMORY
+
+- **SF-2026-ARXIV-2606-25449**：`3 Brittle Memory and Reclaim Evaluation; 3.2 Reclaim Protocol` 所定义的源特定机制用于把动态记忆写入、回收与失效变成有 owner 的持久状态迁移；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Limitations` 是 `Reclaim Evaluation: A Lossy Memory Is Worse Than an Empty One` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experimental Setup; 5 Results; 5.7 Boundary of the Fix` 的验证域，`AGENT-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25658**：`3 Method; 3.2 Online Semantic Basis; 3.3 Dynamic Visual Memory Bank` 所定义的源特定机制用于把动态记忆写入、回收与失效变成有 owner 的持久状态迁移；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `A Limitations` 是 `Towards a Dynamic and Fixed-budget Memory Bank for Efficient Streaming Video Understanding` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiment; 4.1 Benchmarks and Metrics; 4.2 Implementation` 的验证域，`AGENT-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+<!-- recovered-daily-20260625:AGENT-MEMORY:end -->
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06090:start -->
+- `SF-2026-ARXIV-2606-06090` — Daily `2026-06-05`；primary `arXiv:2606.06090v1`；Books review `books-review:SF-2026-ARXIV-2606-06090`。
+
+  **已吸收的语义增量：** Treating memory as workflow execution state assigns durable status, decisions and handoff ownership separately from semantic document organization.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06090:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06240:start -->
+- `SF-2026-ARXIV-2606-06240` — Daily `2026-06-05`；primary `arXiv:2606.06240v1`；Books review `books-review:SF-2026-ARXIV-2606-06240`。
+
+  **已吸收的语义增量：** Bitemporal valid-time and transaction-time operators define contradiction resolution and history semantics for persistent Agent memory.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-06240:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07684:start -->
+- `SF-2026-ARXIV-2606-07684` — Daily `2026-06-06`；primary `arXiv:2606.07684v1`；Books review `books-review:SF-2026-ARXIV-2606-07684`。
+
+  **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
+<!-- daily-books-trace:SF-2026-ARXIV-2606-07684:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11806:start -->
+- `SF-2026-ARXIV-2606-11806` — Daily `2026-06-11`；primary `arXiv:2606.11806v1`；Books review `books-review:SF-2026-ARXIV-2606-11806`。
+
+  **已吸收的语义增量：** 生产 experience serving 要按 task cost structure 在 no experience、global injection 与 selective retrieval 间选择，以 quality、prompt cost、latency 与 break-even 联合决策。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-11806:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12329:start -->
+- `SF-2026-ARXIV-2606-12329` — Daily `2026-06-11`；primary `arXiv:2606.12329v1`；Books review `books-review:SF-2026-ARXIV-2606-12329`。
+
+  **已吸收的语义增量：** Coding-agent memory 可用 append-only typed event log 作 authoritative state，并确定性投影摘要；pre-action gate 只消费既有 failure/fragility evidence。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-12329:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13681:start -->
+- `SF-2026-ARXIV-2606-13681` — Daily `2026-06-12`；primary `arXiv:2606.13681v1`；Books review `books-review:SF-2026-ARXIV-2606-13681`。
+
+  **已吸收的语义增量：** evolving environment 的 memory 不应只保存最新摘要，而应保存 patch/update history，让状态变化、evidence capture 与 chain-level recovery可评测
+<!-- daily-books-trace:SF-2026-ARXIV-2606-13681:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14106:start -->
+- `SF-2026-ARXIV-2606-14106` — Daily `2026-06-13`；primary `arXiv:2606.14106v1`；Books review `books-review:SF-2026-ARXIV-2606-14106`。
+
+  **已吸收的语义增量：** GUI memory 不应保存整屏即视为更多证据；应把成功动作压缩成 action-relevant crop，并把正常 retrieval 与错误恢复 memory 分开，以避免视觉上下文把 state error 转成 grounding/hidden-operation error。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14106:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14275:start -->
+- `SF-2026-ARXIV-2606-14275` — Daily `2026-06-13`；primary `arXiv:2606.14275v1`；Books review `books-review:SF-2026-ARXIV-2606-14275`。
+
+  **已吸收的语义增量：** 层级知识库需要 path-indexed KV 原生持有 schema evolution：offline rewrite 以无 read-path lock 的一致性协议提交，budgeted navigation 在同一树上提供 anytime refinement。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-14275:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15405:start -->
+- `SF-2026-ARXIV-2606-15405` — Daily `2026-06-14`；primary `arXiv:2606.15405v1`；Books review `books-review:SF-2026-ARXIV-2606-15405`。
+
+  **已吸收的语义增量：** 长期 memory 应在 write time 生成事实/片段级 retrieval triggers，使未来 query 可通过描述性与联想线索命中，而不只按原文相似度检索。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15405:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15476:start -->
+- `SF-2026-ARXIV-2606-15476` — Daily `2026-06-14`；primary `arXiv:2606.15476v1`；Books review `books-review:SF-2026-ARXIV-2606-15476`。
+
+  **已吸收的语义增量：** 机器人 episodic memory 应保存 object identity、geometry、VLM descriptor 与 viewpoint evidence，并用显式关系谓词约束 retrieval。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15476:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15903:start -->
+- `SF-2026-ARXIV-2606-15903` — Daily `2026-06-15`；primary `arXiv:2606.15903v1`；Books review `books-review:SF-2026-ARXIV-2606-15903`。
+
+  **已吸收的语义增量：** Agent memory forgetting不仅由retriever/model决定，还由extraction、storage、retrieval与injection control-plane placement共同决定，memory topology必须版本化
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15903:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16707:start -->
+- `SF-2026-ARXIV-2606-16707` — Daily `2026-06-16`；primary `arXiv:2606.16707v1`；Books review `books-review:SF-2026-ARXIV-2606-16707`。
+
+  **已吸收的语义增量：** 个性化 memory 可编译为 typed state 与 executable rules，以显式处理冲突、聚合与约束；代码执行权必须和记忆证据分离
+<!-- daily-books-trace:SF-2026-ARXIV-2606-16707:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17591:start -->
+- `SF-2026-ARXIV-2606-17591` — Daily `2026-06-17`；primary `arXiv:2606.17591v1`；Books review `books-review:SF-2026-ARXIV-2606-17591`。
+
+  **已吸收的语义增量：** Verbal RL 的持久状态应分 rules、episode evidence 与 compositional skills，并支持置信更新、冲突处理、停用和重新激活，而非单调追加经验摘要。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-17591:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18144:start -->
+- `SF-2026-ARXIV-2606-18144` — Daily `2026-06-17`；primary `arXiv:2606.18144v1`；Books review `books-review:SF-2026-ARXIV-2606-18144`。
+
+  **已吸收的语义增量：** Embodied memory tiering 要把 flash write endurance 作为随时间耗损的预算，以 shadow price 协调 RAM/NVM/cloud placement、eviction 与 capture fidelity。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-18144:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19847:start -->
+- `SF-2026-ARXIV-2606-19847` — Daily `2026-06-19`；primary `arXiv:2606.19847v1`；Books review `books-review:SF-2026-ARXIV-2606-19847`。
+
+  **已吸收的语义增量：** `AtomMem: Building Simple and Effective Memory System for LLM Agents via Atomic Facts` 路由到 `AGENT-MEMORY`：AtomMem 以 Fact Executor 将长对话压成高价值 atomic facts，按事件层次与 temporal profile 演化，并由 associative graph 在查询时联结；memory owner 控制 extract/update/retrieve，原始对话保留为冲突校验 fallback。代价是事实抽取错误、属性覆盖和图扩散会造成不可逆记忆漂移。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19847:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19911:start -->
+- `SF-2026-ARXIV-2606-19911` — Daily `2026-06-19`；primary `arXiv:2606.19911v1`；Books review `books-review:SF-2026-ARXIV-2606-19911`。
+
+  **已吸收的语义增量：** `Multi-Agent Transactive Memory` 路由到 `AGENT-MEMORY`：多 agent 记忆从各自 transcript 变为 transactive directory：agent 保存谁知道什么与证据位置，查询先路由到 memory owner 再取内容；目录过期时回落到广播/共享检索。其收益以额外索引维护、错误 expertise attribution 和隐私边界为代价。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-19911:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20475:start -->
+- `SF-2026-ARXIV-2606-20475` — Daily `2026-06-19`；primary `arXiv:2606.20475v1`；Books review `books-review:SF-2026-ARXIV-2606-20475`。
+
+  **已吸收的语义增量：** `Marginal Advantage Accumulation for Memory-Driven Agent Self-Evolution` 路由到 `AGENT-MEMORY`：memory self-evolution 不按单轮 reward 覆盖旧记忆，而累计候选记忆相对基线的 marginal advantage，再由 memory owner 决定 promote/retain/evict；低置信时保留旧版本。代价是 delayed credit 与 evaluator bias 会固化错误。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20475:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20529:start -->
+- `SF-2026-ARXIV-2606-20529` — Daily `2026-06-19`；primary `arXiv:2606.20529v1`；Books review `books-review:SF-2026-ARXIV-2606-20529`。
+
+  **已吸收的语义增量：** `LedgerAgent: Structured State for Policy-Adherent Tool-Calling Agents` 路由到 `AGENT-MEMORY`：LedgerAgent 将 policy-relevant state 记录为结构化 append-only ledger，planner 每次工具调用前读取约束并提交可审计 transition；ledger/policy engine 拥有状态，LLM 不能静默改写。解析冲突时拒绝或转人工。代价是 schema 覆盖与写放大。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20529:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20954:start -->
+- `SF-2026-ARXIV-2606-20954` — Daily `2026-06-19`；primary `arXiv:2606.20954v1`；Books review `books-review:SF-2026-ARXIV-2606-20954`。
+
+  **已吸收的语义增量：** `Learning What Not to Forget: Long-Horizon Agent Memory from a Few Kilobytes of Learning` 路由到 `AGENT-MEMORY`：LRE 用几 KB CPU scorer 在未来 query 未知时预测 history unit 是否 load-bearing，按 matched budget 保留原文而非神经压缩；memory manager 拥有 eviction，低置信时 pin credential/path 或回退更大窗口。代价是 scorer drift 与 verbatim 隐私存储。
+<!-- daily-books-trace:SF-2026-ARXIV-2606-20954:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-05708:start -->
+- `SF-2026-ARXIV-2607-05708` — Daily `2026-07-07`；primary `arXiv:2607.05708v1`；Books review `books-review:SF-2026-ARXIV-2607-05708`。
+
+  **已吸收的语义增量：** 新增证据边界：Instead of rewriting full memory or independently summarizing fixed segments, MemAttention compacts one bounded chunk and reconciles it against a small related set before commit. The Memory Manager then observes co-access and physically co-locates likely co-retrieved chunks, using out-of-place relocation and garbage collection to reduce fragmentation without changing logical memory identity. Logical memory units own semantic identity, provenance and revision; the reconciliation policy owns derived cross-chunk updates; retrieval owns the selected evidence set; the storage manager owns physical placement, relocation and GC. Physical moves must not create a second semantic truth or silently change authorization/deletion state. 该 delta 已进入 `books/part-07-agent/77-memory.md#L348`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-05708:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08716:start -->
+- `SF-2026-ARXIV-2607-08716` — Daily `2026-07-10`；primary `arXiv:2607.08716v1`；Books review `books-review:SF-2026-ARXIV-2607-08716`。
+
+  **已吸收的语义增量：** 新增证据边界：Separate memory maintenance from intervention: a memory agent turns trajectory evidence into a structured bank, then owns the control decision to remain silent or inject a concise, grounded reminder when future failure risk justifies Context cost. 该 delta 已进入 `books/part-07-agent/77-memory.md#L130`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-08716:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-22690:start -->
+- `SF-2026-ARXIV-2607-22690` — Daily `2026-07-18`；primary `arXiv:2607.22690v1`；Books review `books-review:SF-2026-ARXIV-2607-22690`。
+
+  **已吸收的语义增量：** 新增证据边界：Memory construction can be deferred until the query: retrieve a broad evidence superset, then construct a small query-specific view in bounded parallel windows. This preserves raw archive authority while making the constructed memory disposable, versioned and recoverable. 该 delta 已进入 `books/part-07-agent/77-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-22690:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16716:start -->
+- `SF-2026-ARXIV-2607-16716` — Daily `2026-07-19`；primary `arXiv:2607.16716v1`；Books review `books-review:SF-2026-ARXIV-2607-16716`。
+
+  **已吸收的语义增量：** 新增证据边界：A deterministic typed case grammar produces an authoritative provenance DAG and proof trace before LLM surface narration, enabling separate measurement of evidence coverage, edge preservation and reasoning correctness across long context, RAG, memory and oracle conditions. 该 delta 已进入 `books/part-07-agent/77-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-16716:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21051:start -->
+- `SF-2026-ARXIV-2607-21051` — Daily `2026-07-24`；primary `arXiv:2607.21051v1`；Books review `books-review:SF-2026-ARXIV-2607-21051`。
+
+  **已吸收的语义增量：** 新增证据边界：The teacher sees accumulated interaction history while the student sees the original state. One-step branches avoid compounding a learned world model; multiple teacher branches are packed into loss-bearing sequences. The resulting parameter update internalizes behavior that otherwise exists only in context. 该 delta 已进入 `books/part-07-agent/77-memory.md#L458`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21051:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21106:start -->
+- `SF-2026-ARXIV-2607-21106` — Daily `2026-07-24`；primary `arXiv:2607.21106v1`；Books review `books-review:SF-2026-ARXIV-2607-21106`。
+
+  **已吸收的语义增量：** 新增证据边界：A memory policy emits intermediate memory contents; a fixed retrieval/answer interface produces the final answer; masking subsets estimates token contributions to answer score, maps them back to memory actions and combines local rewards with global outcome reward. 该 delta 已进入 `books/part-07-agent/77-memory.md#L105`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-21106:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607.26520:start -->
+- `SF-2026-ARXIV-2607.26520` — Daily `2026-07-30`；primary `arXiv:2607.26520v1`；Books review `books-review:SF-2026-ARXIV-2607.26520`。
+
+  **已吸收的语义增量：** 新增证据边界：The memory store separates immutable identity from versioned content and records both valid time and transaction time, enabling time-travel retrieval and supersession. Bitemporal state prevents newest-write-wins from erasing history, but requires conflict policy, index maintenance and explicit authority over retroactive corrections. 该 delta 已进入 `books/part-07-agent/77-memory.md#L850`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607.26520:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-27773:start -->
+- `SF-2026-ARXIV-2607-27773` — Daily `2026-07-31`；primary `arXiv:2607.27773v1`；Books review `books-review:SF-2026-ARXIV-2607-27773`。
+
+  **已吸收的语义增量：** 新增证据边界：Immutable events and whole-memory snapshots form semantic commits; natural-language resolver selects a version, ID rollback restores and advances HEAD. 该 delta 已进入 `books/part-07-agent/77-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-27773:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-27834:start -->
+- `SF-2026-ARXIV-2607-27834` — Daily `2026-07-31`；primary `arXiv:2607.27834v1`；Books review `books-review:SF-2026-ARXIV-2607-27834`。
+
+  **已吸收的语义增量：** 新增证据边界：Ordered PatchTest admits source-supported updates; chronology resolver declares visible version; durable before-image restores complete active map after reopen. 该 delta 已进入 `books/part-07-agent/77-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-27834:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-10509:start -->
+- `SF-2026-ARXIV-2608-10509` — Daily `2026-08-12`；primary `arXiv:2608.10509v1`；Books review `books-review:SF-2026-ARXIV-2608-10509`。
+
+  **已吸收的语义增量：** MAP-Graph 把共享记忆从相似度检索对象提升为带来源、权限、信任与 revocation ancestry 的安全状态：先做 permission filter，再按 path trust 排序，最后由 action-risk gate 决定是否允许高风险动作。作者的三域 synthetic benchmark、ablation 与 backbone transfer 支持该受控合同，但不证明真实组织权限、对抗性 provenance 或并发撤销已经安全。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-10509:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2608-21867:start -->
+- `SF-2026-ARXIV-2608-21867` — Daily `2026-08-23`；primary `arXiv:2608.21867v1`；Books review `books-review:SF-2026-ARXIV-2608-21867`。
+
+  **已吸收的语义增量：** MemGuard 将 verifier 的 reward、confidence、label 与 uncertainty 持久附着在每条 memory 上，并让这些 metadata 参与 admission、retrieval、冲突处理、summary 与 archival。四类 benchmark、四 backbones 和 matched runtime 支持其生命周期治理实例；verifier 偏差会被同样持久化，跨域校准与恶意观测仍未解决。
+<!-- daily-books-trace:SF-2026-ARXIV-2608-21867:end -->
