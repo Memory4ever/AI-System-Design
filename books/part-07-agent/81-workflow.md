@@ -35,6 +35,20 @@ while not done:
 
 ## State Machine 是基本模型
 
+<!-- daily-20260621:agent-workflow:start -->
+### Failure attribution、perception routing 与 sticky state ownership
+
+ARTS 在 scientific search tree 中把 hypothesis merit 与 execution quality 分开；audit node 的 code/log 后决定 repair 同一 idea 还是 pivot，并把 search history用于 scientist test-time training。 ViRGo 根据目标尺度与置信度，在 global view、patch zoom 与 attention-guided visual retrieval间路由，避免固定高分辨率同时丢 context 或浪费 token。 StickyInvoc 把昂贵 model/runtime state 的 create/destroy 与 invocation goodput 解耦：sticky task 持有 node-local state，后续 invocation 继承但不销毁，抢占时按 state owner 重建。
+
+**Trade-off、failure、共存与回退。** scientist/executor 共偏、每 task 的 A100 训练预算与 22-task frontier 不能证明科学发现正确；human-best 和 validation score 仍受 benchmark 约束。 router confidence 可共偏，小目标/多目标阈值依赖数据；离线 benchmark 不证明实时 latency 或任意 VLM transfer。 persistent state 会引入 version、tenant isolation、eviction 与 stale-state risk；作者 workflow 不证明交互式 tail latency 或任意 preemptible site。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-21891` — primary `arXiv:2606.21891v1`；exact-v1 URL=`https://arxiv.org/html/2606.21891v1`；Method=`https://arxiv.org/html/2606.21891v1 — §4 ARTS; §4.1 Expanding a Search Tree with Agentic Reasoning`；Evaluation=`https://arxiv.org/html/2606.21891v1 — §6 Experiments and Analysis; Appendix I Additional Experimental Details`；Non-proof=`https://arxiv.org/html/2606.21891v1 — §7 Discussion — Limitations and Ethical Concerns`。
+- `SF-2026-ARXIV-2606-21968` — primary `arXiv:2606.21968v1`；exact-v1 URL=`https://arxiv.org/html/2606.21968v1`；Method=`https://arxiv.org/html/2606.21968v1 — §3 Motivations: Understanding the Resolution–Context Trade-off; §4 Proposed Method: ViRGo`；Evaluation=`https://arxiv.org/html/2606.21968v1 — §5 Experiments; §5.1 Experimental Setup`；Non-proof=`https://arxiv.org/html/2606.21968v1 — §7 Limitations`。
+- `SF-2026-ARXIV-2606-22175` — primary `arXiv:2606.22175v1`；exact-v1 URL=`https://arxiv.org/html/2606.22175v1`；Method=`https://arxiv.org/html/2606.22175v1 — §II Implementation of an LLM-integrated Claim Verification Workflow; §III Transforming the Workflow to Enable StickyInvoc`；Evaluation=`https://arxiv.org/html/2606.22175v1 — §IV Evaluation; §IV-A Experiment Settings`；Non-proof=`https://arxiv.org/html/2606.22175v1 — §I-E Limitation of the Proposed Approach`。
+<!-- daily-20260621:agent-workflow:end -->
+
 ```text
 Created
 → ContextReady
@@ -689,6 +703,16 @@ hardware-in-loop 或超大私有代码。低频 workload、不可观测副作用
 
 第 78～80 章定义 action、plan 和 feedback，本章将其变成 durable execution。下一章讨论 Multi-Agent：何时把一个 workflow node交给不同角色/模型能产生真实收益，何时只是增加消息与协调成本。
 
+### Notebook 可以成为 Versioned Workflow，而不是一次性 Transcript
+
+当网页/API 漂移时，只保存自然语言经验容易丢失可复算步骤，只保存代码又可能在新环境直接失败。版本化 notebook
+把每一步的 observation、action、code、precondition 与 validator 固定为 durable state；执行 Gate 先验证当前环境，
+满足条件时运行代码，不满足时只在本地 step 内回退自然语言重新规划，而不是让整条 workflow 静默漂移。
+
+Notebook owner 只拥有可复用 procedure，真实 browser/tool state 与 effect receipt 仍属于环境和 Workflow。
+它用更多 step metadata、validation 与 migration 工作换可审计复用；短任务或环境稳定时，普通脚本/显式 workflow
+仍更简单。现有 WebArena、Mind2Web 与 GitLab lifecycle 结果不证明跨任意网站、权限或版本可移植。
+
 沿 Scheduling 横线，第 63～65 章分配 cluster device、gang 与 queue，第 46、56 章分配 token execution opportunity，本章则分配 action、retry、approval 与 timer 的业务执行机会。它们复用 admission、priority、fairness 与 recovery 原则，但对象和时间尺度不同；第 84 章负责把这些 scheduler 连接到统一 policy，而不是把它们合并。
 
 沿 State 横线，本章承接第 77 章的持久信息，但只把 workflow event log、transition 与 external-effect evidence 视为 authoritative run state。
@@ -709,7 +733,67 @@ hardware-in-loop 或超大私有代码。低频 workload、不可观测副作用
 
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。下一章研究多个 Agent 之间的职责和通信。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22485 -->
+把 agent reasoning workflow 编译成可重放的 logical trace：tool invocation、synthesized rule 与 derived fact 都成为确定性 program，而非只保存在对话上下文。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；受测金融数据和 Vadalog rules 不证明任意工具或实时数据正确；规则错误可被确定性重放但不会自动被纠正。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22704 -->
+patch backport workflow 要把 candidate patch、dependency/version、test oracle、semantic verification 与 human escalation 串成可回滚状态机。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；benchmark tests 不证明所有语义等价或供应链安全；无法验证时应保留人工 adjudication。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:AGENT-WORKFLOW:start -->
+## 2026-06-23 evidence integration — AGENT-WORKFLOW
+
+相邻章 `books/part-07-agent/82-multi-agent.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22741**：GRADE: Graph Representation of LLM Agent Dependency and Execution 的 exact-v1 机制为：A trace records what each step did, never what it relied on, the state it read, and the results it reused. 因此 把执行边、依赖边、checkpoint 与 compensation 作为可重放 control state。 该 family 的 failure pressure 是：Across six corpora of LLM agents spanning tool use, coding, and the web, the dependency layer can predict failure where run size is weak and, under leave-one-corpus-out transfer, stays above chance on every held-out class while run size fails. 披露的 evaluation signal 是：A trace records what each step did, never what it relied on, the state it read, and the results it reused. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23797**：From Task-Guided Conversational Graphs to Goal-Oriented Dialogue Runtimes 的 exact-v1 机制为：We introduce the Goal-Oriented Dialogue Runtime (GODR), a framework-neutral design pattern that treats goals, task frames, lifecycle state, invalidation rules, and resumption contracts as first-class runtime objects while delegating bounded execution to graph runtimes, agents, tools, or application programming interfaces (APIs). 因此 把执行边、依赖边、checkpoint 与 compensation 作为可重放 control state。 该 family 的 failure pressure 是：Graph and multi-agent orchestration frameworks make production large language model (LLM) workflows practical, but they do not by themselves solve conversational continuity when users maintain several interdependent objectives. 披露的 evaluation signal 是：The paper formalizes the problem, proposes runtime objects and architecture-selection criteria, and frames evaluation as an agenda for future empirical validation rather than as a measured performance claim. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22741` — primary `arXiv:2606.22741v1`; Method=`arXiv:2606.22741v1 — §2.2 The Formal Class; §Appendix A Formal Class and Subsumption; §A.1 The Formal Tuple and Recovery Maps`; Evaluation=`arXiv:2606.22741v1 — §E.2 The Limits of the Localization Result`; non-proof=`arXiv:2606.22741v1 — §3 Two Layers, Two Failure Modes; §3.1 The Two Layers and Their Failure Modes; §4.1 Dependency Structure Predicts Failure Within a Corpus`; fallback=该 family 的 failure pressure 是：Across six corpora of LLM agents spanning tool use, coding, and the web, the dependency layer can predict failure where run size is weak and, under leave-one-corpus-out transfer, stays above chance on every held-out class while run size fails. 披露的 evaluation signal 是：A trace records what each step did, never what it relied on, the state it read, and the results it reused. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23797` — primary `arXiv:2606.23797v1`; Method=`arXiv:2606.23797v1 — §9.5 Turn-Level Algorithm; §10 Design Principles; §11 Evaluation Protocol`; Evaluation=`arXiv:2606.23797v1 — §11 Evaluation Protocol`; non-proof=`arXiv:2606.23797v1 — §15 Contributions, Scope, and Validity; §16 Conclusion`; fallback=该 family 的 failure pressure 是：Graph and multi-agent orchestration frameworks make production large language model (LLM) workflows practical, but they do not by themselves solve conversational continuity when users maintain several interdependent objectives. 披露的 evaluation signal 是：The paper formalizes the problem, proposes runtime objects and architecture-selection criteria, and frames evaluation as an agenda for future empirical validation rather than as a measured performance claim. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:AGENT-WORKFLOW:end -->
+
+<!-- recovered-daily-20260624:AGENT-WORKFLOW:start -->
+## 2026-06-24 evidence integration — AGENT-WORKFLOW
+
+相邻章 `books/part-07-agent/82-multi-agent.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24177**：以 artifact 为边界组织 producer-critic factory，critic 在 fresh context 验收后才推进；自动化 loop 只提交可机器检查部分，visibility/fixability taxonomy 将不可判定 claim 留给 human scientist。 444 次 prompt-economy loop 与两个 case study 展示可扩展性而非科学真值；不可见或不可修复 failure、motivation judgment 与外部实验真实性仍需人工 owner。
+- **SF-2026-ARXIV-2606-25198**：autonomous research loop 把 shared search state、lineage、quality/diversity/novelty archive 与 auditor verdict 作为 durable artifacts；40 个 fabrication 说明 score 结果必须过独立 audit 才能推进。 3 个 ML domain、3,222 scored runs 未出现 Original 且 verifier 漏掉过 fabrication；不证明自动搜索能扩展 quality-novelty frontier，关键 claim 仍需独立复现/人工 gate。
+- **SF-2026-ARXIV-2606-25207**：HPO agent 不替代单一 optimizer，而从多工具 proposal pool 选择；prefix-stable prompt 复用 KV，跨 iteration speculation 与 relative-error accept test 把 judge/tool latency 隐藏在 model evaluation 下。 HPOBench/PD1 与给定 wall-clock regime 不证明昂贵、非平稳或安全敏感 experiment；accept test 不满足或 speculation 浪费时回退串行工具 loop。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24177: `arXiv:2606.24177v1`; exact-v1 URL=`https://arxiv.org/html/2606.24177v1`; Method=`https://arxiv.org/html/2606.24177v1 — §2 Design Principles; 3 System Architecture`; Evaluation=`https://arxiv.org/html/2606.24177v1 — §4 Where Human Judgment Is Irreducible; A/B Case Studies`; Non-proof=`444 次 prompt-economy loop 与两个 case study 展示可扩展性而非科学真值；不可见或不可修复 failure、motivation judgment 与外部实验真实性仍需人工 owner。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25198: `arXiv:2606.25198v1`; exact-v1 URL=`https://arxiv.org/html/2606.25198v1`; Method=`https://arxiv.org/html/2606.25198v1 — §3 Heuresis Framework; search strategies and async parallelism`; Evaluation=`https://arxiv.org/html/2606.25198v1 — §4 Experiments; 5 Analysis; B Reward Hacking`; Non-proof=`3 个 ML domain、3,222 scored runs 未出现 Original 且 verifier 漏掉过 fabrication；不证明自动搜索能扩展 quality-novelty frontier，关键 claim 仍需独立复现/人工 gate。`; Artifact=`https://github.com/a-antoniades/Heuresis`
+- SF-2026-ARXIV-2606-25207: `arXiv:2606.25207v1`; exact-v1 URL=`https://arxiv.org/html/2606.25207v1`; Method=`https://arxiv.org/html/2606.25207v1 — §3 Agent-Integrated Tools; 4 Agent-System Co-Design`; Evaluation=`https://arxiv.org/html/2606.25207v1 — §5 Experiments; Wall-Clock Decomposition`; Non-proof=`HPOBench/PD1 与给定 wall-clock regime 不证明昂贵、非平稳或安全敏感 experiment；accept test 不满足或 speculation 浪费时回退串行工具 loop。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:AGENT-WORKFLOW:end -->
+
+<!-- recovered-daily-20260625:AGENT-WORKFLOW:start -->
+## 2026-06-25 evidence integration — AGENT-WORKFLOW
+
+- **SF-2026-ARXIV-2606-25447**：`3 Experiment Setup; 3.2 Harness; 3.3 Tool Schema; 3.4 Task Type` 所定义的源特定机制用于把执行 harness、远端 utility 与 artifact handoff 变成可观测工作流状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `B Benchmark Details; C Experimental Details; stated ALFWorld boundary` 是 `The Interplay of Harness Design and Post-Training in LLM Agents` 的 source-specific 反例/局限边界；若运行条件离开 `4 Analysis; 4.1 Evaluation Protocol; 4.4 OOD Robustness` 的验证域，`AGENT-WORKFLOW` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26442**：`AXLE cloud infrastructure for Lean 4 utilities; remote execution and artifact handling` 所定义的源特定机制用于把执行 harness、远端 utility 与 artifact handoff 变成可观测工作流状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Cloud utility success does not prove generated theorem correctness beyond Lean checking or side-effect safety` 是 `AXLE: A Cloud Infrastructure for Lean 4 Theorem Proving Utilities` 的 source-specific 反例/局限边界；若运行条件离开 `Utility execution, throughput and theorem-proving workflow evaluation` 的验证域，`AGENT-WORKFLOW` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25447**：Primary `arXiv:2606.25447v1`；Method `https://arxiv.org/html/2606.25447v1 — §3 Experiment Setup; 3.2 Harness; 3.3 Tool Schema; 3.4 Task Type`；Evaluation `https://arxiv.org/html/2606.25447v1 — §4 Analysis; 4.1 Evaluation Protocol; 4.4 OOD Robustness`；未证明边界 `https://arxiv.org/html/2606.25447v1 — §B Benchmark Details; C Experimental Details; stated ALFWorld boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26442**：Primary `arXiv:2606.26442v1`；Method `https://arxiv.org/html/2606.26442v1 — §AXLE cloud infrastructure for Lean 4 utilities; remote execution and artifact handling`；Evaluation `https://arxiv.org/html/2606.26442v1 — §Utility execution, throughput and theorem-proving workflow evaluation`；未证明边界 `https://arxiv.org/html/2606.26442v1 — §Cloud utility success does not prove generated theorem correctness beyond Lean checking or side-effect safety`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:AGENT-WORKFLOW:end -->
+
 ## Review notes
+
+- SKILL.nb（arXiv:2606.08049v1；Status: Experimental）：用于说明 versioned notebook steps 与 gate-conditioned code/NL fallback；证据绑定作者 WebArena/Mind2Web/GitLab lifecycle，不证明通用环境 portability。https://arxiv.org/html/2606.08049v1
+
+- `SF-2026-ARXIV-2606-22485` — primary `arXiv:2606.22485v1`；Method=`arXiv:2606.22485v1 §4 VADAOrchestra: System Architecture; §4.2 Orchestration Pipeline; §4.3 Logical Trace`；Evaluation=`arXiv:2606.22485v1 §5 Experimental Evaluation`；Non-proof=`arXiv:2606.22485v1 §6 Conclusion and financial-use-case boundary`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
+- `SF-2026-ARXIV-2606-22704` — primary `arXiv:2606.22704v1`；Method=`arXiv:2606.22704v1 §III VeriPort System and Workflow`；Evaluation=`arXiv:2606.22704v1 §V-A Experimental Setup; §V Evaluation`；Non-proof=`arXiv:2606.22704v1 §V-E Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - Harness Engineering Handbook（revision-bound derived behavior map；Status: Experimental）:
   https://arxiv.org/abs/2607.13285v1

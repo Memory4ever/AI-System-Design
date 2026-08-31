@@ -63,6 +63,18 @@ V = X W_V    [B,T,d_h]
 
 ## 从匹配分数到读取权重
 
+<!-- daily-20260621:model-self-attention:start -->
+### Routing representation 与 cache representation 的条件合并
+
+把 query-key 路由改为 query-value 路由，并在 inference 预乘 query factor，只保存 value representation；QVV(3) 保持投影矩阵数同时移除 key cache。
+
+**Trade-off、failure、共存与回退。** 等价定理依赖 value projection 的秩/子空间条件；小模型从头训练不证明可无损转换既有大模型，50% 是 attention-cache tensor 而非端到端显存。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-21848` — primary `arXiv:2606.21848v1`；exact-v1 URL=`https://arxiv.org/html/2606.21848v1`；Method=`https://arxiv.org/html/2606.21848v1 — §2 Method; §3 Value-only Cache in Autoregressive Inference`；Evaluation=`https://arxiv.org/html/2606.21848v1 — §5 Experiments`；Non-proof=`https://arxiv.org/html/2606.21848v1 — §2.2 equivalence conditions; §6 Limitations`。
+<!-- daily-20260621:model-self-attention:end -->
+
 对每个 batch，Query 与转置后的 Key 相乘：
 
 ```text

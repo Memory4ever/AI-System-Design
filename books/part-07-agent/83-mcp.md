@@ -177,6 +177,21 @@ MCP 可以承载 tool/resource connection，却不定义：
 
 ## Tool Catalog 扩大后，Discovery 与 Execution 必须分离
 
+<!-- daily-20260628:AGENT-MCP:start -->
+### Owner-merged minimal durable delta
+
+协议连接层要再向下编译成可执行控制状态。每个 protocol 先 lowering 为可回放的有限状态 IR，组合前检查 transition 与 source/type evidence；一次 tool execution 则必须由 grant、handle、policy 与 audit objects 共同标识。Capability 或连接成功只产生 proposal，只有 host-side invariant 与 effect authorization 才能 commit。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Pairwise finite-state composition 与十个 invariant fixtures 不证明任意多协议、生产 runtime 或 proprietary implementation 安全；IR/handle 不完整时隔离协议并回退单工具人工授权。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28690 — primary arXiv:2606.28690v1; exact-v1 URL=https://arxiv.org/html/2606.28690v1; Method=https://arxiv.org/html/2606.28690v1 — §4. The AgentThread Framework; 4.5. Composition Methodology; Evaluation=https://arxiv.org/html/2606.28690v1 — §Formal Security Analysis of Agent Protocol Composition; 6. Evaluation; 6.1. Evaluation Setup; Non-proof=https://arxiv.org/html/2606.28690v1 — §6.4. RQ3: Composition Failures; 7. Discussion; 9. Threats to Validity；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+<!-- daily-20260628:AGENT-MCP:end -->
+
+
 把所有 tool schemas 在会话开始时注入 Context，目录小且稳定时最简单；当一个 gateway 聚合数百个 servers、数千个 tools 后，它会同时消耗上下文、放大 selection noise，并让用户无法知道能力位于哪个 server。Prompt caching 只能减少重复 prefill，不能释放逻辑 context，也不能改善 discoverability。
 
 一种可扩展分支是只暴露 discovery 与 execution 两个 meta-tools：
@@ -192,6 +207,10 @@ user-scoped catalog
 Catalog/index owner 负责 schema version、refresh 与 deletion ordering；authorization filter 必须在 retrieval 前后都守住 tenant scope；executor 只接受 discovery 返回的精确 identity，不能让模型猜 tool/server 名。Search confidence 也不是授权，低 recall、描述质量差、index staleness 和 workflow-step confusion 都可能让正确工具缺席。
 
 全量注入在工具少、context 富余或 discovery 服务不可用时仍是清晰 fallback。Selective discovery 用额外检索 latency、index lifecycle、embedding dependency 与 observability 换 context 容量；生产 claim 必须绑定 catalog size、query set、top-k、latency 分布、fallback rate 与 client revisions，不能把单个企业目录的 token reduction 写成 MCP 协议常数。
+
+### 从单工具扫描到组合级 Admission
+
+逐个检查工具描述或在单一工具内扫描明文 payload，在攻击局限于单点污染时仍然合理。新的约束是恶意信息可以拆成 threshold secret shares，分别藏在多个看似无害的工具描述中，只在特定组合、trigger 或 update 后重构；此时单工具结论不能代表组合安全。MCP 控制面因此要持有 tool-set identity、share/trigger 组合风险、server/update version 与 effect-time authorization，并把 group-level admission 置于工具调用之前。论文只在四类多工具场景、主流 LLM 与两个 MCP client 上报告平均攻击成功率超过 90%，不证明任意 client/trigger 都可攻破，也不证明组合防御不可能。组合状态未知或更新后证据失效时应 deny/quarantine，并交给独立 reference monitor 逐次授权；原有单工具扫描仍作为第一层共存。
 
 ## Observability
 
@@ -225,6 +244,16 @@ MCP 是 Agent connectivity node，连接 Prompt、Context、RAG、Memory 与 Too
 
 MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用外部能力。它标准化接口，不授予信任。最后一章讨论平台如何在这些连接之上治理完整 Agent lifecycle。
 
+<!-- recovered-daily-20260625:AGENT-MCP:start -->
+## 2026-06-25 evidence integration — AGENT-MCP
+
+- **SF-2026-ARXIV-2606-26211**：`Data Facts metadata schema; provenance, semantics, constraints and exchange contract` 所定义的源特定机制用于以带 provenance、语义和约束的 Data Facts 作为跨 Agent 交换契约；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness` 是 `Data Facts: A Metadata Schema for Structured Data Exchange in the NANDini Multi-Agent Ecosystem` 的 source-specific 反例/局限边界；若运行条件离开 `NANDini multi-agent exchange examples and schema coverage` 的验证域，`AGENT-MCP` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26211**：Primary `arXiv:2606.26211v1`；Method `https://arxiv.org/html/2606.26211v1 — §Data Facts metadata schema; provenance, semantics, constraints and exchange contract`；Evaluation `https://arxiv.org/html/2606.26211v1 — §NANDini multi-agent exchange examples and schema coverage`；未证明边界 `https://arxiv.org/html/2606.26211v1 — §Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:AGENT-MCP:end -->
+
 ## Review notes
 
 本章区分仍广泛部署的 `2025-11-25` session lifecycle 与 `2026-07-28` 最新稳定
@@ -242,3 +271,7 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 - MCP 2026-07-28 changelog: https://modelcontextprotocol.io/specification/2026-07-28/changelog
 - MCP TypeScript SDK migration guide:
   https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/migration/support-2026-07-28.md
+
+### 2026-06-26 source-specific Review notes
+
+- `SF-2026-ARXIV-2606-27027` — ShareLock: A Stealthy Multi-Tool Threshold Poisoning Attack Against MCP; primary=`arXiv:2606.27027v1`; Method=`arXiv:2606.27027v1 — §4. ShareLock: a Multi-Tool Threshold Poisoning Attack Framework; §D.1. System Prompt for Zero-Shot Detection`; Evaluation=`arXiv:2606.27027v1 — §5. Evaluation; §5.1. Experimental Setup; §Appendix D Experimental details of Safety Classification Task`; counterevidence/non-proof locator=`arXiv:2606.27027v1 — §3.3. Threat Model; §6. Discussion and Limitations; §7. Conclusion`; claim boundary=证据限于四类多工具场景、论文测试的主流 LLM 和两个 MCP client；平均攻击成功率超过 90% 不证明任意 client/trigger 都可攻破，也不证明 group-level 防御不可能。; fallback=组合身份或授权证据不完整时 deny/quarantine，并交给独立 reference monitor。

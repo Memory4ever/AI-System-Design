@@ -351,7 +351,41 @@ Prompt 定义软接口，Context 定义本次调用的完整 working state。下
 
 Context 是受约束的运行时 working set，不是无限知识仓库。好的 assembly 在相关性、权威性、位置、成本和隐私之间做可追溯取舍。下一章进入 RAG 的检索链。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22528 -->
+把 context compaction 识别为治理控制面：安全约束、授权与 provenance 在压缩后必须由 constraint pinning/typed state 继续存在，不能依赖普通 summary 自然保留。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；攻击/防护受具体 compactor 与提示结构限制；pinning 不保证约束本身正确，也不替代 effect-time reference monitor。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:AGENT-CONTEXT:start -->
+## 2026-06-23 evidence integration — AGENT-CONTEXT
+
+相邻章 `books/part-07-agent/76-rag.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22906**：From Fragments to Paths: Task-Level Context Recovery for Large Industrial Codebases 的 exact-v1 机制为：We present DeepDiscovery, a task-level repository-understanding method for large industrial codebases. 因此 把 context 恢复、压缩、加载与有效期作为持久化状态而不是 prompt 偶然内容。 该 family 的 failure pressure 是：Existing methods often retrieve only local fragments and fail to recover the broader task-relevant context needed for complex repository-level tasks. 披露的 evaluation signal 是：Large language models have shown strong performance on software engineering (SE) tasks, yet understanding large industrial repositories remains challenging. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-22953**：Plans Don't Persist: Why Context Management Is Load Bearing for LLM Agents 的 exact-v1 机制为：We introduce replay pairing, a diagnostic that runs the same trajectory with and without the plan in history and measures hidden-state cosine distance. 因此 把 context 恢复、压缩、加载与有效期作为持久化状态而不是 prompt 偶然内容。 该 family 的 failure pressure 是：Finally, a compression stress test shows the practical cost: naive plan eviction cuts ALFWorld success by 34.7pp, while probe-gated re-surfacing does not recover it. 披露的 evaluation signal 是：Finally, a compression stress test shows the practical cost: naive plan eviction cuts ALFWorld success by 34.7pp, while probe-gated re-surfacing does not recover it. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22906` — primary `arXiv:2606.22906v1`; Method=`arXiv:2606.22906v1 — §III-B Repository Representation and Overall Framework; §III-E Metadata-First Context Construction; §IV-C Evaluation Protocol`; Evaluation=`arXiv:2606.22906v1 — §Benchmarks and evaluation scenarios.; §IV-C Evaluation Protocol; §IV-F Ablation Study: Where Do the Gains Come From?`; non-proof=`arXiv:2606.22906v1 — §Practical scope of comparison.; §IV-J Discussion of Error Modes and Scope; §V Threats to Validity`; fallback=该 family 的 failure pressure 是：Existing methods often retrieve only local fragments and fail to recover the broader task-relevant context needed for complex repository-level tasks. 披露的 evaluation signal 是：Large language models have shown strong performance on software engineering (SE) tasks, yet understanding large industrial repositories remains challenging. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-22953` — primary `arXiv:2606.22953v1`; Method=`arXiv:2606.22953v1 — §3 Method`; Evaluation=`arXiv:2606.22953v1 — §5.3 Lag Analysis: Early Warning; §A.2 Probe Validity Controls and Leakage Analysis; §A.8 Intervention Sweeps and Head-Level Analysis`; non-proof=`arXiv:2606.22953v1 — §9 Discussion and Limitations`; fallback=该 family 的 failure pressure 是：Finally, a compression stress test shows the practical cost: naive plan eviction cuts ALFWorld success by 34.7pp, while probe-gated re-surfacing does not recover it. 披露的 evaluation signal 是：Finally, a compression stress test shows the practical cost: naive plan eviction cuts ALFWorld success by 34.7pp, while probe-gated re-surfacing does not recover it. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:AGENT-CONTEXT:end -->
+
+<!-- june29-owner:AGENT-CONTEXT:start -->
+## 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29522`）。** 现有 Context 正文区分 raw evidence、derived view 与 compression fidelity，但没有验证 scratchpad register 是否被后续计算因果读取的 intervention contract。 因此本次把这些增量合并到同一知识 owner：Scratchpad 不能仅按可见文本保存；因果干预结果应把其中哪些 register 实际驱动后续输出记录成 request-local diagnostic state。该 probe 只拥有观测/路由权，干预不稳定时回退原始 scratchpad 与外部 verifier，不能据此删除未被识别的约束。 共同代价与回退边界是：只在 Q8/D8 合成 transition task、Qwen2.5-Coder-7B 与 Mistral-7B-v0.3 上证明特定 written state 被因果读取；显式 scratchpad 的其他 token、自然语言推理和真实 Agent memory 均未被证明忠实。probe 不稳定时保留原文本与外部 verifier。
+
+### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.29522v1 — §6 Mechanism and alignment interpretation; scratchpad intervention`；Evaluation `https://arxiv.org/html/2606.29522v1 — §5 Results`；未证明边界 `https://arxiv.org/html/2606.29522v1 — §Conclusion and intervention-identifiability scope`。
+<!-- june29-owner:AGENT-CONTEXT:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22528` — primary `arXiv:2606.22528v1`；Method=`arXiv:2606.22528v1 §3 Compaction-Eviction Attack; §4 Constraint Pinning`；Evaluation=`arXiv:2606.22528v1 §5 Results and Robustness`；Non-proof=`arXiv:2606.22528v1 §6 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - Harness-1（policy-owned semantics / harness-owned recoverable state；Status: Experimental）:
   https://arxiv.org/abs/2606.02373

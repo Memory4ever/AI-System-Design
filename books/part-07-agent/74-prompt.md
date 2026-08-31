@@ -202,6 +202,16 @@ threshold、holdout 与 rollback 都明确时成立，下一阶段压力是处�
 
 Prompt 是概率模型的运行时接口，可以表达任务和软约束，却不能承担确定执行和权限隔离。下一章把它放入完整 Context assembly，研究有限上下文如何成为 Agent 的工作状态。
 
+<!-- recovered-daily-20260625:AGENT-PROMPT:start -->
+## 2026-06-25 evidence integration — AGENT-PROMPT
+
+- **SF-2026-ARXIV-2606-26356**：`Instruction Bleed formulation; prompt-composed module interference` 所定义的源特定机制用于把模块间指令干扰作为可测试的组合边界，而非默认隔离；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Prompt/module families tested do not establish universal isolation or adversarial robustness` 是 `Instruction Bleed: Cross-Module Interference in Prompt-Composed Agentic Systems` 的 source-specific 反例/局限边界；若运行条件离开 `Cross-module interference experiments and mitigations` 的验证域，`AGENT-PROMPT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26356**：Primary `arXiv:2606.26356v1`；Method `https://arxiv.org/html/2606.26356v1 — §Instruction Bleed formulation; prompt-composed module interference`；Evaluation `https://arxiv.org/html/2606.26356v1 — §Cross-module interference experiments and mitigations`；未证明边界 `https://arxiv.org/html/2606.26356v1 — §Prompt/module families tested do not establish universal isolation or adversarial robustness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:AGENT-PROMPT:end -->
+
 ## Review notes
 
 本章承接第 18、20 章的条件生成语义与第 72、73 章的安全/发布契约。Prompt engineering 保持在 runtime input 层，不与 SFT 或模型能力本身混写。

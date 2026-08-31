@@ -208,6 +208,18 @@ vPod 类抽象可以绑定 NPU generation、数量、interconnect、memory、par
 
 ### MoE Decode：从 Queue Length 到 Expert Working Set
 
+<!-- daily-20260621:infer-scheduling:start -->
+### Expert weights 与 KV 的联合 working set
+
+WiSP 把低资源 MoE inference 表述为 expert-weight 与 KV cache 的联合 working set：预测近期 active experts，按相同内存预算在 expert residency、KV 保留与 transfer 间分配。
+
+**Trade-off、failure、共存与回退。** Qwen3/Kimi 的受限设备结果是在 94 GiB H100 上用 gpu-memory-utilization cap 模拟，并非真实小卡；预测错误还会同时触发 expert miss 与 KV pressure，质量保持也不等于 tail SLO。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-21868` — primary `arXiv:2606.21868v1`；exact-v1 URL=`https://arxiv.org/html/2606.21868v1`；Method=`https://arxiv.org/html/2606.21868v1 — §3 Working-Set Predictor and Runtime Integration`；Evaluation=`https://arxiv.org/html/2606.21868v1 — §4 Routing Signal and Decode Throughput; §5 Working-Set Value`；Non-proof=`https://arxiv.org/html/2606.21868v1 — §6 Limitations; simulated-constrained-device disclosure`。
+<!-- daily-20260621:infer-scheduling:end -->
+
 Dense Decode 中，least-queue 或 shortest-load routing 常能近似 worker 的下一轮成本；MoE 改变了 service-time
 来源：同样数量的 requests，若它们共同激活较少 experts，weights 更可能留在近端 cache/HBM；若 expert union 很大，
 即使 queue 一样短也会产生更多 weight traffic。因此 routing state 需要从 request cardinality 扩展为条件服务成本：
@@ -228,6 +240,10 @@ Signature 若与 KV block 同 index 和生命周期，partial prefix hit、evict
 load/locality 冲突；model、domain 或 decoder 数变化都会使旧 centroid 失效。ELDR 的作者结果绑定特定 MoE、
 MI300X/ROCm/vLLM、P/D 拓扑和离线 workload，不能变成普遍吞吐常数。Dense model、domain structure 弱、低负载、
 worker churn 频繁或普通 queue 已满足 SLO 时，least-load routing 仍更简单可靠。
+
+### MoE 并行形态从部署配置演进为运行时状态
+
+当请求并发长期稳定时，部署阶段固定 tensor parallel 或 expert parallel 是合理的：它减少运行时重排并让容量规划可预测。约束变化在于 MoE decode 的并发会连续跨越两种并行方式的优势区间，静态选择会把阶段性通信瓶颈固化。因而调度状态需要增加并行形态、切换阈值、byte-identical expert weight/KV 的固定地址映射和 in-flight request epoch，由运行时只在 decode step 边界提交切换。论文在 8×H200、Qwen3-235B-A22B 上报告 215–434 ms 切换、2.4% memory overhead 与 RL rollout 1.16–1.25× 吞吐收益；这不证明未测模型、互联、并发轨迹或生产 tail latency 下仍安全。切换成本、地址一致性和抖动是新增 failure mode；证据不足或状态校验失败时继续使用静态 TP/EP，旧路径与动态路径按稳定性区间共存。
 
 ### Value Estimation 本身也有成本
 
@@ -327,6 +343,15 @@ Memory estimate 因而需要上/下界和 reserve，pinning 要有 owner、lease
 误差、长期 pinned KV、deadlock、head-of-line blocking 和 workload-specific heuristics。作者证据绑定披露的
 Llama-3.3-70B、vLLM 与 Lotus/Palimpzest workload，不证明任意 semantic UDF、模型、硬件或生产 tail-SLO。
 Operators 独立、pipeline 很短、reuse 很低或故障隔离优先时，普通 request scheduling 仍更合理。
+
+### Semantic Predicate 的 Token Cost 应成为 Query-planner State
+
+含 LLM semantic filter 的 relational plan 不能只按传统 selectivity 估算：谓词顺序既改变进入后续 LLM operator 的
+rows，也改变 token 花费。执行器可以在线学习 selectivity，并在每一行保持精确 predicate ordering，从而把
+`expected surviving rows × expected token cost` 作为可更新的 planner state；模型调用仍只是 operator，不能接管
+query correctness。该分支以额外 profiling、在线估计与重规划换 token 成本，分布漂移会使 estimate 失效。
+在谓词便宜、数据稳定或 LLM filter 很少时，静态 optimizer 仍更可复算。作者三类真实与三类 synthetic workload
+报告的 `3x～19x` token-cost overhead 只说明错误顺序可能昂贵，不是通用硬件、latency 或 SLO 结论。
 
 ### Barrier-synchronized Worker 不能只按 Request Count 均衡
 
@@ -643,7 +668,59 @@ Runtime 仍拥有真实 page、queue 与 completion state，workflow graph 只�
 这条路线用更复杂预测、DAG metadata 和错误估计风险换潜在 makespan/cache 收益；单请求、低共享率、图不可信
 或强 deadline isolation 时，FIFO/EDF 与普通 prefix-aware policy 仍更稳。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22327 -->
+把 online LLM scheduling 建模为带几何长度/剩余工作量的 admission 与排队问题；scheduler 以 workload shape 和 SLO slack 决定队列而非只按到达顺序。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；作者 workload、FP16/BF16、QPS 2–128 与队列模型不能外推到其他 engine、KV tier 或多租户优先级；估计失准需要保守 admission fallback。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:INFER-SCHEDULING:start -->
+## 2026-06-23 evidence integration — INFER-SCHEDULING
+
+相邻章 `books/part-05-inference-system/55-pd-disaggregation.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22983**：LiveServe: Interaction-Aware Serving for Real-Time Omni-Modal LLMs 的 exact-v1 机制为：LiveServe is an interaction-aware serving system for realtime Omni-LM interaction. 因此 把交互到达、thinking budget、thermal/energy slack 与 SLO 共同交给调度器。 该 family 的 failure pressure 是：Realtime omni-modal LMs support speech-centric conversations where users stream inputs, hear generated audio, and interrupt freely. 披露的 evaluation signal 是：On vLLM-Omni, LiveServe improves realtime serving across two Omni-LMs and mixed workloads. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23181**：DART: Draft-Agreement Routing for Training-Free Adaptive Thinking Budgets in Hybrid Reasoning Models 的 exact-v1 机制为：We introduce DART, a training-free routing framework that samples two cheap no-think drafts, accepts direct answering when the drafts agree, and predicts a thinking budget from draft entropy when they disagree. 因此 把交互到达、thinking budget、thermal/energy slack 与 SLO 共同交给调度器。 该 family 的 failure pressure 是：Hybrid reasoning models can answer directly or spend extra tokens on extended thinking. 披露的 evaluation signal 是：Across the main comparisons, DART preserves or improves always-thinking accuracy in most settings while reducing thinking-token use. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23370**：FlexServe: A Fast and Secure LLM Serving System for Mobile Devices with Flexible Resource Isolation 的 exact-v1 机制为：To address these challenges, this paper presents FlexServe, a fast and secure LLM inference system for mobile devices. 因此 把交互到达、thinking budget、thermal/energy slack 与 SLO 共同交给调度器。 该 family 的 failure pressure 是：During LLM inference, both the model weights and the user data are valuable, and attackers may compromise the OS kernel to steal them. 披露的 evaluation signal 是：The results show that FlexServe achieves average TTFT speedups of 10.05X over the strawman and 2.44X over an optimized strawman. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22983` — primary `arXiv:2606.22983v1`; Method=`arXiv:2606.22983v1 — §3. OmniCast Architecture`; Evaluation=`arXiv:2606.22983v1 — §7. Experimental Evaluation; §7.1. Experiment Settings; §7.3. Analysis`; non-proof=`arXiv:2606.22983v1 — §9. Conclusion`; fallback=该 family 的 failure pressure 是：Realtime omni-modal LMs support speech-centric conversations where users stream inputs, hear generated audio, and interrupt freely. 披露的 evaluation signal 是：On vLLM-Omni, LiveServe improves realtime serving across two Omni-LMs and mixed workloads. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23181` — primary `arXiv:2606.23181v1`; Method=`arXiv:2606.23181v1 — §DART: Draft-Agreement Routing for Training-Free Adaptive Thinking Budgets in Hybrid Reasoning Models; §2 Draft-Agreement Routing for Thinking; §2.2 Self-Consistency Routing`; Evaluation=`arXiv:2606.23181v1 — §5 Analysis; §5.2 Error Analysis; §Oracle routing analysis.`; non-proof=`arXiv:2606.23181v1 — §7 Conclusion; §Task scope.; §Appendix F Multiple-Choice Task Scope`; fallback=该 family 的 failure pressure 是：Hybrid reasoning models can answer directly or spend extra tokens on extended thinking. 披露的 evaluation signal 是：Across the main comparisons, DART preserves or improves always-thinking accuracy in most settings while reducing thinking-token use. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23370` — primary `arXiv:2606.23370v1`; Method=`arXiv:2606.23370v1 — §FlexServe: A Fast and Secure LLM Serving System for Mobile Devices with Flexible Resource Isolation; §3.1. Design Goals; §3.2. Threat Model`; Evaluation=`arXiv:2606.23370v1 — §7. Evaluation; §8.1. Security Analysis`; non-proof=`arXiv:2606.23370v1 — §10. Conclusion`; fallback=该 family 的 failure pressure 是：During LLM inference, both the model weights and the user data are valuable, and attackers may compromise the OS kernel to steal them. 披露的 evaluation signal 是：The results show that FlexServe achieves average TTFT speedups of 10.05X over the strawman and 2.44X over an optimized strawman. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:INFER-SCHEDULING:end -->
+
+<!-- recovered-daily-20260624:INFER-SCHEDULING:start -->
+## 2026-06-24 evidence integration — INFER-SCHEDULING
+
+相邻章 `books/part-05-inference-system/46-continuous-batching.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-25040**：I2V scheduler 把相似请求历史 sparse mask 作为 request-conditioned prior，避免每请求 mask prediction；feature reuse 仅可选，并由 downsampled region 与 guidance enhancement 限制 semantic drift。 2.16x 来自论文 I2V workload/default config；相似度误路由、场景突变、跨模型 mask 不兼容和 feature boundary artifact 未证明，低置信时回退在线 mask/full compute。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-25040: `arXiv:2606.25040v1`; exact-v1 URL=`https://arxiv.org/html/2606.25040v1`; Method=`https://arxiv.org/html/2606.25040v1 — §3 Methodology; Sparsity Reuse; Latent Feature Reuse`; Evaluation=`https://arxiv.org/html/2606.25040v1 — §4 Experiments; Mask Quality and Routing Overhead`; Non-proof=`2.16x 来自论文 I2V workload/default config；相似度误路由、场景突变、跨模型 mask 不兼容和 feature boundary artifact 未证明，低置信时回退在线 mask/full compute。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:INFER-SCHEDULING:end -->
+
+<!-- recovered-daily-20260625:INFER-SCHEDULING:start -->
+## 2026-06-25 evidence integration — INFER-SCHEDULING
+
+- **SF-2026-ARXIV-2606-25467**：`III Request-Resource Coupling Model; IV RQ-SAFE Online Orchestration` 所定义的源特定机制用于让在线编排器共同持有请求资源耦合、准入和降级状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `D-B Runtime Boundary and Fallback; G Implementation Scope Clarifications` 是 `RQ-SAFE: Coupled Request-Resource Scheduling for Online Edge SFC-DAGs` 的 source-specific 反例/局限边界；若运行条件离开 `V Experimental Evaluation; V-A Experimental Setup` 的验证域，`INFER-SCHEDULING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25467**：Primary `arXiv:2606.25467v1`；Method `https://arxiv.org/html/2606.25467v1 — §III Request-Resource Coupling Model; IV RQ-SAFE Online Orchestration`；Evaluation `https://arxiv.org/html/2606.25467v1 — §V Experimental Evaluation; V-A Experimental Setup`；未证明边界 `https://arxiv.org/html/2606.25467v1 — §D-B Runtime Boundary and Fallback; G Implementation Scope Clarifications`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:INFER-SCHEDULING:end -->
+
 ## Review notes
+
+- Larch（arXiv:2606.07923v1；Status: Experimental）：用于把 online selectivity 与逐行 semantic-filter ordering 纳入 planner identity；证据限于作者 3 real + 3 synthetic workloads，不证明生产 latency/SLO 或通用 cost model。https://arxiv.org/html/2606.07923v1
+
+- `SF-2026-ARXIV-2606-22327` — primary `arXiv:2606.22327v1`；Method=`arXiv:2606.22327v1 §3 Geometry-Aware Online Scheduling; theoretical bound and system design`；Evaluation=`arXiv:2606.22327v1 §4.1 Evaluation; §4 Experiments`；Non-proof=`arXiv:2606.22327v1 §5 Discussion and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - TOPAS（workflow-aware prefix-state scheduling；Status: Experimental）：
   https://arxiv.org/abs/2608.25523v1
@@ -705,3 +782,7 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2607.17175v1
 - Searching for Plans You Can Actually Build（exact v1；Status: Experimental）：https://arxiv.org/html/2607.18631v1
   - 证据边界：2×RTX4090 与 8×H800 单节点；四个 phase/hardware cell 中 H800 training 未通过作者 0.98 gate；v1 未给公开 artifact URL。
+
+### 2026-06-26 source-specific Review notes
+
+- `SF-2026-ARXIV-2606-26607` — Moebius: Serving Mixture-of-Expert Models with Seamless Runtime Parallelism Switch; primary=`arXiv:2606.26607v1`; Method=`arXiv:2606.26607v1 — §4 System Design; §Appendix B End-to-End Training Projection`; Evaluation=`arXiv:2606.26607v1 — §6 Evaluation; §6.1 Experimental Setup`; counterevidence/non-proof locator=`arXiv:2606.26607v1 — §2.2 Real World Workloads Cross the Boundary; §8 Discussion; §9 Conclusion`; claim boundary=证据来自 8×H200 上的 Qwen3-235B-A22B serving 与 RL rollout；215–434 ms 切换、2.4% memory overhead 和 1.16–1.25× 吞吐收益不外推到未测模型、互联、并发轨迹或生产 tail latency。; fallback=switch epoch、地址映射或阈值证据不足时保持静态 TP/EP。

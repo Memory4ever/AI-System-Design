@@ -75,9 +75,23 @@ The owner chapter and its adjacent chapters were reviewed for existing coverage.
 
 
 VALID_DAILY_V21 = """\
-# Daily V2.1
+# Daily Research — 2026-08-25
 
-Score Schema: V2
+**Research Date:** 2026-08-25
+
+**Timezone:** Asia/Shanghai
+
+**Strict Window:** 2026-08-24 09:00:00 ～ 2026-08-25 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay
+
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed
+
+## Executive Summary
+
+The frozen denominator, evidence review, selection, Books comparison, and semantic audit are complete.
+
+## 1. Coverage
 
 <!-- validator:report-metadata-v2 -->
 | Field | Value |
@@ -104,25 +118,47 @@ Score Schema: V2
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ORG-A | 2026-08-23T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | https://example.com/research; release or paper | checked | 1 | SF-001 | page=1; final_cursor=end | 2026-08-25T09:00:00+08:00 | coverage:ORG-A:2026-08-25 | — |
 
+## 2. Candidate Ledger
+
 <!-- validator:candidate-ledger-v2.1 -->
 | Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-001 | arXiv:2608.00001 | arXiv:2608.00001v1 | 2026-W35 | 2026-08-25 | ORG-A | 3 | 2 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-001 | self | — | new_in_window | INFER-REQUEST-LIFECYCLE | No Change — Existing Coverage | books-review:SF-001 | no |
+
+## 3. Review Completion Receipt
 
 <!-- validator:review-completion-v1 -->
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-001 | RP-1188b619ab6e379d | deep | arXiv:2608.00001v1 | ORG-A@arXiv:2608.00001v1 | arXiv:2608.00001v1#section-3 | arXiv:2608.00001v1#table-2 | arXiv:2608.00001v1#limitations | Not Disclosed — v1 links no artifact | claim:SF-001 | complete |
 
+### Source Reviews
+
+<!-- review:SF-001:start -->
+<!-- claim:SF-001:start -->
+The cited method, evaluation, limitations, and missing artifact define this bounded claim.
+<!-- claim:SF-001:end -->
+<!-- review:SF-001:end -->
+
+## 4. Benchmark Contracts
+
+None — the candidate does not make an empirical benchmark claim.
+
+## 5. Deep Analysis Selection
+
 <!-- validator:deep-analysis-selection-v1 -->
 | Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
 | --- | --- | --- | --- | --- | --- | --- |
 | SF-001 | score_7_9 | selected | DA-001 | — | Highest design delta in the frozen denominator; no competing correction or security override | analysis:DA-001 |
 
+## 6. Books Comparison
+
 <!-- validator:books-comparison-v1 -->
 | Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-001 | INFER-REQUEST-LIFECYCLE | books/example.md#request-lifecycle | books/example-before.md#handoff; books/example-after.md#handoff | existing:SF-001 | delta:SF-001 | Principle Reuse | No Change — Existing Coverage | books-review:SF-001 |
+
+## 7. Semantic Audit
 
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
@@ -136,12 +172,6 @@ Score Schema: V2
 Executed receipt for the declared endpoint, window, watermark, and final cursor.
 <!-- coverage:ORG-A:2026-08-25:end -->
 
-<!-- review:SF-001:start -->
-<!-- claim:SF-001:start -->
-The cited method, evaluation, limitations, and missing artifact define this bounded claim.
-<!-- claim:SF-001:end -->
-<!-- review:SF-001:end -->
-
 <!-- analysis:DA-001:start -->
 The selected narrative compares the prior mechanism, changed constraint, evidence boundary, and trade-off.
 <!-- analysis:DA-001:end -->
@@ -154,6 +184,30 @@ The target chapter already owns the mechanism under the cited proposition.
 The new evidence narrows the boundary but does not change the existing proposition.
 <!-- delta:SF-001:end -->
 <!-- books-review:SF-001:end -->
+
+## 8. Ignored Noise
+
+None.
+
+## 9. Recommended Action
+
+Preserve the existing Books proposition.
+
+## 10. Repository Changes
+
+None.
+
+## 11. Open Questions
+
+None.
+
+## 12. Sources
+
+- [Example primary source](https://example.com/research)
+
+## 13. Final Status
+
+Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.
 """
 
 
@@ -1269,6 +1323,129 @@ class ReportV21ValidationTests(unittest.TestCase):
     def test_valid_v21_report_has_auditable_completion_receipts(self):
         self.assertEqual([], self.validator.validate_report_text(VALID_DAILY_V21, self.registry))
 
+    def test_v21_daily_requires_visible_status_and_canonical_section_order(self):
+        missing_status = VALID_DAILY_V21.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed\n\n",
+            "",
+            1,
+        )
+        errors = self.validator.validate_report_text(missing_status, self.registry)
+        self.assertTrue(any("canonical header" in error and "Status" in error for error in errors))
+
+        reordered = VALID_DAILY_V21.replace(
+            "## 8. Ignored Noise",
+            "## TEMP",
+            1,
+        ).replace(
+            "## 9. Recommended Action",
+            "## 8. Ignored Noise",
+            1,
+        ).replace(
+            "## TEMP",
+            "## 9. Recommended Action",
+            1,
+        )
+        errors = self.validator.validate_report_text(reordered, self.registry)
+        self.assertTrue(any("canonical H2 sequence mismatch" in error for error in errors))
+
+    def test_v21_daily_visible_status_must_match_gate_metadata(self):
+        inconsistent = VALID_DAILY_V21.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open",
+            1,
+        )
+        errors = self.validator.validate_report_text(inconsistent, self.registry)
+        self.assertTrue(any("does not expose Completion Status" in error for error in errors))
+
+        gate_only_mismatch = VALID_DAILY_V21.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** Complete；Coverage=Closed、Evidence=Open、Books=Passed",
+            1,
+        )
+        errors = self.validator.validate_report_text(gate_only_mismatch, self.registry)
+        self.assertTrue(any("Evidence Gate" in error and "Passed" in error for error in errors))
+
+    def test_v21_daily_header_is_unique_ordered_and_metadata_bound(self):
+        moved_status = VALID_DAILY_V21.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed\n\n",
+            "",
+            1,
+        ).replace(
+            "## 13. Final Status\n\n",
+            "## 13. Final Status\n\n**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed\n\n",
+            1,
+        )
+        errors = self.validator.validate_report_text(moved_status, self.registry)
+        self.assertTrue(any("canonical preamble" in error for error in errors))
+
+        misleading_completion = VALID_DAILY_V21.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** In Progress；previous checkpoint Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            1,
+        )
+        errors = self.validator.validate_report_text(misleading_completion, self.registry)
+        self.assertTrue(any("Completion Status" in error for error in errors))
+
+        bad_window = VALID_DAILY_V21.replace(
+            "**Strict Window:** 2026-08-24 09:00:00 ～ 2026-08-25 09:00:00（北京时间，左闭右开）",
+            "**Strict Window:** bananas",
+            1,
+        )
+        errors = self.validator.validate_report_text(bad_window, self.registry)
+        self.assertTrue(any("Strict Window" in error for error in errors))
+
+        bad_contract = VALID_DAILY_V21.replace(
+            "**Contract:** V2.1 Full Replay",
+            "**Contract:** Legacy V1 Delta",
+            1,
+        )
+        errors = self.validator.validate_report_text(bad_contract, self.registry)
+        self.assertTrue(any("Contract" in error for error in errors))
+
+    def test_v21_daily_final_status_must_match_metadata_and_expose_findings(self):
+        inconsistent = VALID_DAILY_V21.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=In Progress；Coverage=Open、Evidence=Open、Books=Open；unresolved findings=4.",
+            1,
+        )
+        errors = self.validator.validate_report_text(inconsistent, self.registry)
+        self.assertTrue(any("Final Status" in error for error in errors))
+
+        missing_findings = VALID_DAILY_V21.replace("；unresolved findings=0.", ".", 1)
+        errors = self.validator.validate_report_text(missing_findings, self.registry)
+        self.assertTrue(any("unresolved finding" in error for error in errors))
+
+    def test_v21_daily_source_reviews_belong_to_review_receipt_section(self):
+        block = """### Source Reviews
+
+<!-- review:SF-001:start -->
+<!-- claim:SF-001:start -->
+The cited method, evaluation, limitations, and missing artifact define this bounded claim.
+<!-- claim:SF-001:end -->
+<!-- review:SF-001:end -->
+
+"""
+        misplaced = VALID_DAILY_V21.replace(block, "", 1).replace(
+            "## 4. Benchmark Contracts\n\n",
+            "## 4. Benchmark Contracts\n\n" + block,
+            1,
+        )
+        errors = self.validator.validate_report_text(misplaced, self.registry)
+        self.assertTrue(any("Source Review" in error and "section 3" in error for error in errors))
+
+        missing_heading = VALID_DAILY_V21.replace("### Source Reviews\n\n", "", 1)
+        errors = self.validator.validate_report_text(missing_heading, self.registry)
+        self.assertTrue(any("Source Reviews heading" in error for error in errors))
+
+    def test_v21_daily_ignores_h2_examples_inside_fences(self):
+        fenced = VALID_DAILY_V21.replace(
+            "## 8. Ignored Noise\n\nNone.",
+            "## 8. Ignored Noise\n\n```text\n## Example only\n```\n\nNone.",
+            1,
+        )
+        errors = self.validator.validate_report_text(fenced, self.registry)
+        self.assertFalse(any("canonical H2 sequence mismatch" in error for error in errors))
+
     def test_coverage_v2_requires_replayable_execution_evidence(self):
         missing_execution = VALID_DAILY_V21.replace(
             "2026-08-25T09:00:00+08:00 | https://example.com/research",
@@ -1440,6 +1617,14 @@ The second source is fully reviewed but remains Weekly Only.
         pending = pending.replace("| Completion Status | Complete |", "| Completion Status | In Progress |")
         pending = pending.replace("| Evidence Gate | Passed |", "| Evidence Gate | Open |")
         pending = pending.replace("| Books Gate | Passed |", "| Books Gate | Open |")
+        pending = pending.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** In Progress；Coverage=Closed、Evidence=Open、Books=Open",
+        )
+        pending = pending.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=In Progress；Coverage=Closed、Evidence=Open、Books=Open；unresolved findings=0.",
+        )
         pending = pending.replace(
             "| SF-001 | INFER-REQUEST-LIFECYCLE | books/example.md#request-lifecycle | books/example-before.md#handoff; books/example-after.md#handoff | existing:SF-001 | delta:SF-001 | Principle Reuse | No Change — Existing Coverage | books-review:SF-001 |\n",
             "",
@@ -1629,6 +1814,16 @@ The second source is fully reviewed but remains Weekly Only.
         report = report.replace("| Completion Status | Complete |", "| Completion Status | In Progress |", 1)
         report = report.replace("| Evidence Gate | Passed |", "| Evidence Gate | Open |", 1)
         report = report.replace("| Books Gate | Passed |", "| Books Gate | Open |", 1)
+        report = report.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** In Progress；Coverage=Closed、Evidence=Open、Books=Open",
+            1,
+        )
+        report = report.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=In Progress；Coverage=Closed、Evidence=Open、Books=Open；unresolved findings=0.",
+            1,
+        )
         self.assertEqual([], self.validator.validate_report_text(report, self.registry))
 
     def test_potential_structural_gap_is_allowed_but_not_inferred_from_blank_owner(self):
@@ -1649,6 +1844,16 @@ The second source is fully reviewed but remains Weekly Only.
         )
         report = report.replace("| Completion Status | Complete |", "| Completion Status | In Progress |", 1)
         report = report.replace("| Books Gate | Passed |", "| Books Gate | Open |", 1)
+        report = report.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** In Progress；Coverage=Closed、Evidence=Passed、Books=Open",
+            1,
+        )
+        report = report.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=In Progress；Coverage=Closed、Evidence=Passed、Books=Open；unresolved findings=0.",
+            1,
+        )
         report = report.replace(
             "| AUD-BOOK-001 | fresh-context:noether | books | books-review:SF-001 | none | Not Required — no unresolved Books finding | passed |",
             "| AUD-BOOK-001 | fresh-context:noether | books | validator:books-comparison-v1 | FINDING-STRUCTURAL-001 — owner comparison remains pending | Pending — compare existing owners before disposition | open |",
@@ -1828,14 +2033,18 @@ The second source is fully reviewed but remains Weekly Only.
         blocked = blocked.replace("| Completion Status | Complete |", "| Completion Status | Conditional |")
         blocked = blocked.replace("| Evidence Gate | Passed |", "| Evidence Gate | Conditional Pass |")
         blocked = blocked.replace("| Books Gate | Passed |", "| Books Gate | Conditional Pass |")
+        blocked = blocked.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** Conditional；Coverage=Closed、Evidence=Conditional Pass、Books=Conditional Pass",
+        )
+        blocked = blocked.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=Conditional；Coverage=Closed、Evidence=Conditional Pass、Books=Conditional Pass；unresolved findings=1.",
+        )
         errors = self.validator.validate_report_text(blocked, self.registry)
         self.assertTrue(any("Materials Request" in error for error in errors))
 
-        blocked = blocked.replace(
-            "| complete |\n\n<!-- validator:deep-analysis-selection-v1 -->",
-            "| blocked |\n\n<!-- validator:deep-analysis-selection-v1 -->",
-            1,
-        )
+        blocked = blocked.replace("| claim:SF-001 | complete |", "| claim:SF-001 | blocked |", 1)
         blocked = blocked.replace(
             "| SF-001 | INFER-REQUEST-LIFECYCLE | books/example.md#request-lifecycle | books/example-before.md#handoff; books/example-after.md#handoff | existing:SF-001 | delta:SF-001 | Principle Reuse | No Change — Existing Coverage | books-review:SF-001 |\n",
             "",
@@ -1854,6 +2063,14 @@ The second source is fully reviewed but remains Weekly Only.
         disputed = disputed.replace("| Completion Status | Complete |", "| Completion Status | Conditional |")
         disputed = disputed.replace("| Evidence Gate | Passed |", "| Evidence Gate | Conditional Pass |")
         disputed = disputed.replace("| Books Gate | Passed |", "| Books Gate | Conditional Pass |")
+        disputed = disputed.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** Conditional；Coverage=Closed、Evidence=Conditional Pass、Books=Conditional Pass",
+        )
+        disputed = disputed.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=Conditional；Coverage=Closed、Evidence=Conditional Pass、Books=Conditional Pass；unresolved findings=1.",
+        )
         disputed = disputed.replace(
             "| SF-001 | INFER-REQUEST-LIFECYCLE | books/example.md#request-lifecycle | books/example-before.md#handoff; books/example-after.md#handoff | existing:SF-001 | delta:SF-001 | Principle Reuse | No Change — Existing Coverage | books-review:SF-001 |\n",
             "",
@@ -1878,6 +2095,16 @@ The primary and counterevidence disagree under the recorded evaluation contracts
         pending = pending.replace("| Completion Status | Complete |", "| Completion Status | In Progress |", 1)
         pending = pending.replace("| Evidence Gate | Passed |", "| Evidence Gate | Open |", 1)
         pending = pending.replace("| Books Gate | Passed |", "| Books Gate | Open |", 1)
+        pending = pending.replace(
+            "**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed",
+            "**Status:** In Progress；Coverage=Closed、Evidence=Open、Books=Open",
+            1,
+        )
+        pending = pending.replace(
+            "Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；unresolved findings=0.",
+            "Completion=In Progress；Coverage=Closed、Evidence=Open、Books=Open；unresolved findings=1.",
+            1,
+        )
         self.assertEqual([], self.validator.validate_report_text(pending, self.registry))
 
         terminal = pending.replace("| Completion Status | In Progress |", "| Completion Status | Complete |", 1)
@@ -2032,6 +2259,53 @@ class CliValidationTests(unittest.TestCase):
             self.assertEqual(0, status)
             self.assertIn("legacy skipped", output.getvalue())
             self.assertIn("semantic completeness not validated", output.getvalue())
+
+    def test_directory_audit_excludes_sources_evidence_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_contract_root(root)
+            papers = root / "papers"
+            owner = papers / "2026" / "08" / "25" / "README.md"
+            snapshot = papers / "2026" / "08" / "_sources" / "daily-20260825" / "before-reopen.md"
+            owner.parent.mkdir(parents=True)
+            snapshot.parent.mkdir(parents=True)
+            owner.write_text(VALID_DAILY_V21, encoding="utf-8")
+            snapshot.write_text(VALID_DAILY_V21, encoding="utf-8")
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = self.validator.main(["--root", str(root), "--audit", str(papers)])
+
+            self.assertEqual(0, status, output.getvalue())
+            self.assertIn("checked 1 V2.1 report(s)", output.getvalue())
+
+            snapshot.write_text("# Historical snapshot without report interfaces\n", encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                strict_status = self.validator.main(
+                    ["--root", str(root), "--report", str(snapshot)]
+                )
+            self.assertEqual(1, strict_status)
+
+    def test_declared_v21_cannot_downgrade_to_v20_interfaces_in_audit_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_contract_root(root)
+            papers = root / "papers"
+            papers.mkdir()
+            report = papers / "declared-v21-old-interface.md"
+            report.write_text(
+                VALID_DAILY.replace(
+                    "| Score Schema | V2 |\n",
+                    "| Contract Version | V2.1 |\n| Score Schema | V2 |\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = self.validator.main(["--root", str(root), "--audit", str(papers)])
+            self.assertEqual(1, status)
+            self.assertIn("V2.1 report is missing marker", output.getvalue())
 
     def test_cli_golden_reports_cover_daily_weekly_historical_full_and_delta(self):
         with tempfile.TemporaryDirectory() as directory:

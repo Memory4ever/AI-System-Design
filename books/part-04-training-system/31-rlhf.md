@@ -167,6 +167,21 @@ KL constraint 只限制这种重写的平均幅度。若它是在某个 prompt d
 
 ## Reward hacking 与 Goodhart's Law
 
+<!-- daily-20260628:TRAIN-RLHF:start -->
+### Owner-merged minimal durable delta
+
+Reward-hacking 防线可以前移到 transition admission：在修改环境或 replay state 前冻结 current policy 与 return evaluator，对 current/modified policy 做 equal-budget counterfactual forecast；只有 evaluator 接受才提交 transition。模型负责 proposal，独立 evaluator 拥有 gate，原始 true-objective evidence 继续保留。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Gate 依赖已能把 hacking trajectory 排低的 evaluator、clean seed 与额外 1.8×–4.2× 成本；evaluator misspecification 时它会接受错误 transition，需回退人工/true-objective review。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28955 — primary arXiv:2606.28955v1; exact-v1 URL=https://arxiv.org/html/2606.28955v1; Method=https://arxiv.org/html/2606.28955v1 — §3 Method; Pretraining.; Pretraining budget.; Evaluation=https://arxiv.org/html/2606.28955v1 — §Theoretical analysis.; 4 Experiments; 4.2 Main results; Non-proof=https://arxiv.org/html/2606.28955v1 — §5 Limitations and Future Work; 7 Conclusion；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+<!-- daily-20260628:TRAIN-RLHF:end -->
+
+
 Reward Model 是人类偏好的有限代理。Policy optimization 比普通 evaluation 更危险，因为 policy 会针对代理的弱点搜索。
 
 可能出现：
@@ -278,6 +293,10 @@ off-policy reuse 的许可证。短 Context、同一 engine 或数值差异远�
 - Synthetic/AI feedback 是否混入。
 
 更准确的名称是“使用特定 feedback process 优化模型”，而不是宣称模型已与抽象的“人类价值”完全对齐。
+
+### Reward Heterogeneity 同时存在于 Rater Identity 与反馈时间
+
+把 reward 当作同尺度、同步到达的标量，在 rater 同质且反馈能在 update 前返回时是合理的；现实约束同时来自身份异质性和时间异步性：不同 rater 的 offset/slope 不同，慢 verifier 或人工反馈又可能晚到数个 gradient step。RLHF 状态因此需要同时持有 rater identity、calibration slice/shrinkage prior/version，以及 pending reward queue、age/kernel、originating policy/importance ratio 与 reinjection mass。每位 rater 的 held-out affine calibration 可用 empirical Bayes 向总体收缩；迟到 reward 则以 clipped residual 进入后续 advantage。论文分别在 PRISM/PluriHarms 与 tabular MDP 上报告 RMSE 改善和最高 47.9× bias reduction，但没有证明非线性或 adversarial rater、online drift、large-scale RLHF 稳定性与生产 queue failure。稀疏 rater 回退总体 calibrator 并抽样审计；delay/mass 假设失效时等待慢反馈或采用 bounded synchronous update。
 
 ### 在线反馈的采样预算应由 Epistemic Uncertainty 驱动
 
@@ -411,7 +430,35 @@ RLHF 把相对偏好拟合为 reward，再在 reference policy 约束下优化�
 当 task generator、validator 与 policy 一同进入反馈循环时，curriculum 本身也成为需要
 版本化和独立评估的训练状态；可自动验证不等于任务分布自然充分。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22600 -->
+on-policy distillation 的 token position 并非等权：teacher/student prefix compatibility 与序列位置共同影响 gradient；修正 bias 必须声明 density proxy 和残余 mismatch。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；prefix compatibility 只是 density correction proxy；4B scale、数据与 DPO 小 10× LR/少 40× rows 构成 confound。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-23740 -->
+offline reasoning training 的方法差异要同时看 weight-space trajectory、data/step/LR matching 与功能结果；几何分离若训练预算不匹配不能归因于 objective。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单 seed/domain/checkpoint，且 DPO 用 10× smaller LR 与 40× fewer rows，构成强 confound；不能形成 objective superiority 结论。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:TRAIN-RLHF:start -->
+## 2026-06-23 evidence integration — TRAIN-RLHF
+
+相邻章 `books/part-04-training-system/32-ppo.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-23038**：EvoRubrics: Dynamic Rubrics as Rewards via Adversarial Co-Evolution for LLM Reinforcement Learning 的 exact-v1 机制为：We propose EvoRubrics, a co-evolutionary RL framework where a Policy LLM and a Rubric Generator jointly improve through adversarial interaction within each training step. 因此 把 rubric/spec 版本、policy 版本、独立 judge 与 reward-hacking 检测隔离。 该 family 的 failure pressure 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 披露的 evaluation signal 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-24004**：Towards Spec Learning: Inference-Time Alignment from Preference Pairs 的 exact-v1 机制为：We propose spec learning, a framework that relies on a brief user instruction and a small set of preference judgments. 因此 把 rubric/spec 版本、policy 版本、独立 judge 与 reward-hacking 检测隔离。 该 family 的 failure pressure 是：Steering a large language model (LLM) toward a desired behavior typically relies on an iterative process of hand-crafting a prompt based on a careful inspection of the model's responses. 披露的 evaluation signal 是：We show that the responses generated based on the compiled specifications often outperform direct preference optimization (DPO) on datasets from specialized domains whose preference signal is dense. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-23038` — primary `arXiv:2606.23038v1`; Method=`arXiv:2606.23038v1 — §4.1 Dual-LoRA Architecture; §4.4 Co-Evolutionary Training; §Appendix A EvoRubrics Algorithm`; Evaluation=`arXiv:2606.23038v1 — §2.2 Dynamic Rubrics and Adaptive Evaluation; §Appendix C Evaluation Details; §C.1 Policy LLM Evaluation`; non-proof=`arXiv:2606.23038v1 — §6 Conclusions and Future Work; §E.3 Discussion`; fallback=该 family 的 failure pressure 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 披露的 evaluation signal 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-24004` — primary `arXiv:2606.24004v1`; Method=`arXiv:2606.24004v1 — §4 Spec Learning Framework; §4.1 Selection Method; §4.4 Judge protocol and selection`; Evaluation=`arXiv:2606.24004v1 — §5 Results; §B Statistical robustness; §C Judge calibration`; non-proof=`arXiv:2606.24004v1 — §6 Discussion; §7 Limitations; §8 Conclusions and Future Work`; fallback=该 family 的 failure pressure 是：Steering a large language model (LLM) toward a desired behavior typically relies on an iterative process of hand-crafting a prompt based on a careful inspection of the model's responses. 披露的 evaluation signal 是：We show that the responses generated based on the compiled specifications often outperform direct preference optimization (DPO) on datasets from specialized domains whose preference signal is dense. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:TRAIN-RLHF:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22600` — primary `arXiv:2606.22600v1`；Method=`arXiv:2606.22600v1 §3 Position-Bias Analysis; §4 Proposed Correction`；Evaluation=`arXiv:2606.22600v1 §5 Experiments; Appendix C Protocol`；Non-proof=`arXiv:2606.22600v1 Appendix E Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
+- `SF-2026-ARXIV-2606-23740` — primary `arXiv:2606.23740v1`；Method=`arXiv:2606.23740v1 §2 Experimental Setup`；Evaluation=`arXiv:2606.23740v1 §3 Results`；Non-proof=`arXiv:2606.23740v1 §4 Discussion; Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - Ring-Zero（large-scale RL numerical identity 与 context-parallel communication；Status: Experimental）:
   https://arxiv.org/abs/2607.12395v1
@@ -432,3 +479,8 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2603.18886
 - DSPA（Status: Experimental；prompt-conditional、token-active preference steering）:
   https://arxiv.org/abs/2603.21461
+
+### 2026-06-26 source-specific Review notes
+
+- `SF-2026-ARXIV-2606-27578` — PEBS: Per-rater Empirical-Bayes Shrinkage for RLHF Reward-Model Calibration; primary=`arXiv:2606.27578v1`; Method=`arXiv:2606.27578v1 — §2 Method; §Base-model training details.`; Evaluation=`arXiv:2606.27578v1 — §2.3 PRISM setup and base reward model; §3 Experiments`; counterevidence/non-proof locator=`arXiv:2606.27578v1 — §3.9 Ablations and failure cases; §4 Discussion; §5 Limitations`; claim boundary=证据来自 PRISM 与 PluriHarms 上的 held-out affine per-rater calibration；RMSE 改善不证明非线性/adversarial rater、极稀疏标注或 online rater drift 下仍校准。; fallback=校准或 delay/mass 假设失效时回到总体 calibrator 或 bounded synchronous update。
+- `SF-2026-ARXIV-2606-27580` — Retroactive Advantage Correction: Closed-Form V-Trace Bias Correction for Delay-Aware RLHF; primary=`arXiv:2606.27580v1`; Method=`arXiv:2606.27580v1 — §2 Method: Retroactive Advantage Correction`; Evaluation=`arXiv:2606.27580v1 — §Setup.; §K = 2 K{=}2 result and cost-quality Pareto.; §Scope of the closed-form result.`; counterevidence/non-proof locator=`arXiv:2606.27580v1 — §4 Conclusion; §Appendix E Limitations and Discussion; §Background and discussion.`; claim boundary=无偏结论要求 clipped importance ratio 无偏且 delay kernel reinject 全部质量，实验为 tabular MDP proof-of-concept；最高 47.9× bias reduction 不证明 large-scale RLHF 稳定性或生产 pending-queue failure 已解决。; fallback=校准或 delay/mass 假设失效时回到总体 calibrator 或 bounded synchronous update。

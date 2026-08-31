@@ -250,6 +250,21 @@ camera/calibration、proprioception、action horizon、backbone/policy revision 
 
 ## State ownership
 
+<!-- daily-20260627:MULTIMODAL-WORLD-MODELS:start -->
+### Owner-merged minimal durable delta
+
+若预测器可以绕过声明的 state 重读原始历史，预测正确也无法识别 state 本身是否有效。应让版本化 belief state 成为 transition/prediction path 的唯一受控输入，再检查它是否保留下游 consumer 所需信息。这样 state representation 才从辅助解释升级为可审计接口。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Strict mediation 增加训练成本，也可能让有损 textual state 成为瓶颈；无需可识别性时，直接 latent/history access 仍是合理旧路径。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27681 — primary arXiv:2606.27681v1; exact-v1 URL=https://arxiv.org/html/2606.27681v1; Method=https://arxiv.org/html/2606.27681v1 — §Proposition 2 (Non-identifiability under leaky architectures) .; Proposition 3 (Training–inference consistency) .; 4.2 Model Architecture; Evaluation=https://arxiv.org/html/2606.27681v1 — §2 Problem Setup: Text Based POMDPs; 5 Experimental Evaluation; 5.3 Evaluation Metrics; Non-proof=https://arxiv.org/html/2606.27681v1 — §7 Conclusion。
+<!-- daily-20260627:MULTIMODAL-WORLD-MODELS:end -->
+
+
 安全的 world-model runtime 至少区分：
 
 - **Environment** 拥有真实物理状态，系统只能观测一部分。
@@ -559,7 +574,41 @@ high-level intent / diagnosis
 当前证据只有小规模 gameplay data 与 qualitative 结果，没有 real-time、causal fidelity 或完整 open-world simulator
 证明；简单动力学或已有 simulator 仍应使用显式环境模型。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22363 -->
+把 world-model video 的 physical-consistency evaluation 从 reference video 相似度拆为结构、接触与时序约束；reference-free score 只能作为 detector，不能成为环境真值。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；指标会漏掉严重结构不一致与 non-contact failure，且未验证 OpenVLA 之外泛化；必须保留真实 environment transition adjudication。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22488 -->
+开放环境 planning 需要把符号 world state 作为可演进、可修订 artifact，并把 observation→symbol update→plan→execution feedback 分开。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；symbol extraction 和 transition update 仍可错，environment coverage 受限；不能把 symbolic state 当作真实环境。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22509 -->
+在 hierarchical RL 执行动作前，用 world model 想象候选 transition 并以 safety constraint 过滤；world model 只提议风险，真实 controller 和 fallback 持有提交权。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；手工 goal mapping、RTX3060 8GB 实验与模拟环境不能外推真实机器人或视觉泛化；model error 会产生 false-safe。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:MULTIMODAL-WORLD-MODELS:start -->
+## 2026-06-23 evidence integration — MULTIMODAL-WORLD-MODELS
+
+相邻章 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22804**：CoVStream: Edge-Cloud Collaboration for Understanding of Long Video Streams 的 exact-v1 机制为：Therefore, we propose CoVStream, the first edge-cloud collaborative framework for understanding long video streams. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：However, they overlook a crucial deployment fact: the stream is often produced by computationally constrained devices. 披露的 evaluation signal 是：Experiments on VideoMME-Long, LVBench, and RTV-Bench show that CoVStream reduces bandwidth usage by 87.6% while retaining 99.2% of the cloud baseline accuracy on LVBench. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-22966**：Attacking the Trusted Imagination: Oracle-Level Integrity Attacks on Imagine-then-Act World Models 的 exact-v1 机制为：A world-action model (WAM) first imagines a short future as a latent trajectory z~, on which the action is then conditioned. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：We identify this trusted imagination, rather than the reactive policy, as the exposed attack surface. 披露的 evaluation signal 是：We evaluate three targets: RynnVLA-002, LingBot-VA, and LaDi-WM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-28385**：RoboGaze: Evaluating Robot World Models via Structured Vision-Language Analysis 的 exact-v1 机制为：We present RoboGaze, a training-free, multi-agent VLM framework that provides structured, interpretable evaluation for generated robot-manipulation videos. 因此 把压缩记忆、transition/rollout identity 与真实观测 fallback 分离。 该 family 的 failure pressure 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 披露的 evaluation signal 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22804` — primary `arXiv:2606.22804v1`; Method=`arXiv:2606.22804v1 — §2.1 System Overview; §2.3 Cloud Server: Decoupled Management and Reasoning Architecture`; Evaluation=`arXiv:2606.22804v1 — §3 Experiment; §3.3 Diagnostic Experiment; §3.4 Qualitative Analysis`; non-proof=`arXiv:2606.22804v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：However, they overlook a crucial deployment fact: the stream is often produced by computationally constrained devices. 披露的 evaluation signal 是：Experiments on VideoMME-Long, LVBench, and RTV-Bench show that CoVStream reduces bandwidth usage by 87.6% while retaining 99.2% of the cloud baseline accuracy on LVBench. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-22966` — primary `arXiv:2606.22966v1`; Method=`arXiv:2606.22966v1 — §3 Threat Model; §4 Method; §6 Mechanism: off-manifold is intrinsic to corrupting imagination`; Evaluation=`arXiv:2606.22966v1 — §5 Experiments; §5.1 Setup: three targets spanning the imagination-action coupling; §5.7 Adaptive attacker: the defense holds`; non-proof=`arXiv:2606.22966v1 — §7 The task-level null, and why it motivates the oracle threat; §8 Limitations`; fallback=该 family 的 failure pressure 是：We identify this trusted imagination, rather than the reactive policy, as the exposed attack surface. 披露的 evaluation signal 是：We evaluate three targets: RynnVLA-002, LingBot-VA, and LaDi-WM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-28385` — primary `arXiv:2606.28385v1`; Method=`arXiv:2606.28385v1 — §3 Method; §4.2 Evaluation Protocol; §A.2.1 Dataset Construction`; Evaluation=`arXiv:2606.28385v1 — §RoboGaze: Evaluating Robot World Models via Structured Vision-Language Analysis; §3.3 Candidate Discovery and Specialist Analysis; §4.2 Evaluation Protocol`; non-proof=`arXiv:2606.28385v1 — §5 Conclusion; §A.4.8 Scope of Learned-Evaluator Comparisons`; fallback=该 family 的 failure pressure 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 披露的 evaluation signal 是：However, evaluating these videos is challenging: visually realistic outputs often violate physical laws, temporal consistency, or task logic, while conventional metrics and monolithic Vision-Language Model (VLM) judges fail to generalize or provide precise diagnostic value. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:MULTIMODAL-WORLD-MODELS:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22363` — primary `arXiv:2606.22363v1`；Method=`arXiv:2606.22363v1 §2 Methods`；Evaluation=`arXiv:2606.22363v1 §3 Experiments`；Non-proof=`arXiv:2606.22363v1 Limitation paragraph; §4 Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
+- `SF-2026-ARXIV-2606-22488` — primary `arXiv:2606.22488v1`；Method=`arXiv:2606.22488v1 §3 Method`；Evaluation=`arXiv:2606.22488v1 §4 Experiments`；Non-proof=`arXiv:2606.22488v1 Appendix A Limitations and Future Discussions`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
+- `SF-2026-ARXIV-2606-22509` — primary `arXiv:2606.22509v1`；Method=`arXiv:2606.22509v1 §3 ITES Method; §4 Hierarchical Safety Integration`；Evaluation=`arXiv:2606.22509v1 §5 Experiments`；Non-proof=`arXiv:2606.22509v1 §6 Limitations and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - LEON（operator-structured latent dynamics + action forcing；Status: Experimental）：
   https://arxiv.org/abs/2608.27259v1

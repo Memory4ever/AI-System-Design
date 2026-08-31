@@ -644,6 +644,38 @@ exactness 结论。压缩器、融合参数与 divergence threshold 都成为版
 高风险请求必须回到 full-context verifier。完整 Context 仍是正确性基线；只有 matched quality、batch、长度、
 硬件与 SLO 证明节省覆盖压缩和 fallback 成本时，asymmetric verifier 才成立。
 
+<!-- recovered-daily-20260623:INFER-SPECULATIVE-DECODING:start -->
+## 2026-06-23 evidence integration — INFER-SPECULATIVE-DECODING
+
+相邻章 `books/part-05-inference-system/49-tensorrt-llm.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22840**：RLM-Cascade: Response-Level Speculative Decoding for Cost-Efficient LLM API Serving 的 exact-v1 机制为：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 因此 把 draft/verify/bypass 路由、质量门槛、成本和 schema-critical fallback 共同验收。 该 family 的 failure pressure 是：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 披露的 evaluation signal 是：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22840` — primary `arXiv:2606.22840v1`; Method=`arXiv:2606.22840v1 — §2.2 LLM Cascade and Routing; §3 System Design; §3.1 Architecture Overview`; Evaluation=`arXiv:2606.22840v1 — §4 Evaluation; §4.6 Extended Engineering Benchmark; §4.7 Case Study: Cost Inversion on mteb-retrieve`; non-proof=`arXiv:2606.22840v1 — §6 Discussion; §6.4 Cross-Provider Failure Modes; §7 Conclusion`; fallback=该 family 的 failure pressure 是：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 披露的 evaluation signal 是：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:INFER-SPECULATIVE-DECODING:end -->
+
+<!-- recovered-daily-20260624:INFER-SPECULATIVE-DECODING:start -->
+## 2026-06-24 evidence integration — INFER-SPECULATIVE-DECODING
+
+相邻章 `books/part-05-inference-system/49-tensorrt-llm.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24957**：speculative verification 的 target KV 不再全读；Dustin 混合历史 attention 与 draft lookahead，semantic retrieval heads 在线估计关键 token，只对稀疏 KV 做 target verification。 静态/动态 budget、memory capacity、SRH identification 与 configuration search 有成本；模型/任务迁移、低 ARR 或长尾输入应回退 dense target attention。
+- **SF-2026-ARXIV-2606-25091**：edge-cloud speculative decoding 的准入由 RTT、edge draft time、acceptance 与 target verification time 共同决定；single-request latency 不再是唯一目标，饱和 server 的 multi-tenant capacity 才可能 justify offload。 这是 closed-form position analysis，不是广泛实测；closed API 无 verifier-only interface 时不可部署，WAN RTT 越界应回退 cloud AR 或 colocated SD。
+- **SF-2026-ARXIV-2606-25097**：speculative decoding 上线前增加 target-aligned invariance screen：byte identity、McNemar、TOST 与 matched target-only arm 分离算法安全差异和 dtype/framework 噪声。 证据绑定列出的 Llama target/draft、<=4,006 samples、temperature/framework 与非 tree-speculation 配置；无 matched arm 的 70B probe 不能算 TAIS pass。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24957: `arXiv:2606.24957v1`; exact-v1 URL=`https://arxiv.org/html/2606.24957v1`; Method=`https://arxiv.org/html/2606.24957v1 — §3 Observation; 4 Dustin Sparse Verification`; Evaluation=`https://arxiv.org/html/2606.24957v1 — §5 Experiment; Accuracy and End-to-End Decode Throughput`; Non-proof=`静态/动态 budget、memory capacity、SRH identification 与 configuration search 有成本；模型/任务迁移、低 ARR 或长尾输入应回退 dense target attention。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25091: `arXiv:2606.25091v1`; exact-v1 URL=`https://arxiv.org/html/2606.25091v1`; Method=`https://arxiv.org/html/2606.25091v1 — §II Background and Setting; III Gain Window`; Evaluation=`https://arxiv.org/html/2606.25091v1 — §III-A/B/C comparisons; IV Pipelining`; Non-proof=`这是 closed-form position analysis，不是广泛实测；closed API 无 verifier-only interface 时不可部署，WAN RTT 越界应回退 cloud AR 或 colocated SD。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-25097: `arXiv:2606.25097v1`; exact-v1 URL=`https://arxiv.org/html/2606.25097v1`; Method=`https://arxiv.org/html/2606.25097v1 — §3 Methods; Serving-stack Configuration; TAIS Screen`; Evaluation=`https://arxiv.org/html/2606.25097v1 — §4 Results; E0/E1/E2/E5; B Reproducibility`; Non-proof=`证据绑定列出的 Llama target/draft、<=4,006 samples、temperature/framework 与非 tree-speculation 配置；无 matched arm 的 70B probe 不能算 TAIS pass。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:INFER-SPECULATIVE-DECODING:end -->
+
 ## Review notes
 
 - Block Drafting Information Floor（realized-prefix information 与 model gap 分解；Status: Experimental）：

@@ -929,6 +929,20 @@ off-policy drift 和“临时状态何时清空”的问题。Tool-R0、EMPO² �
 
 ### 从一个终局标量到 Typed Credit：Reward 必须匹配决策边界
 
+<!-- daily-20260621:train-grpo:start -->
+### Reward 轨迹的可推导性、感知依赖与 decision density
+
+对 deterministic generator 构造 solver-grounded CoT 后，区分 forward-derivable procedure 与 information-free backtracking search；不可忠实前向化的 search 应外置为 catalog/search，再让模型做 bounded verification。 multimodal RLVR 的 answer reward 会先强化语言 shortcut，再在足够视觉证据/奖励强度下发生 watching transition；应监控 visual reliance 并在形成窗口干预。 多轮 RL 的难度由 decision density ρ 而非 raw horizon 单独决定；routine reward-equivalent turns 给 trajectory estimator 增方差但不增期望 signal，低 ρ 时需要 turn-level critic/credit。
+
+**Trade-off、failure、共存与回退。** 竞赛型同生成器 testbed、LoRA 与有限模型族不建立普遍不可学习定理；catalog escape 依赖有限结构并把 search 成本移到外部。 单一模型与 video-QA task 不给出跨模型 reward 阈值；VHS 是 temporal perturbation proxy，回答正确也不证明 grounded reasoning。 推导依赖 critic error 受控与 routine turn 真正 reward-equivalent；受控环境不证明开放 agent 能可靠标出 decision turn。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-21884` — primary `arXiv:2606.21884v1`；exact-v1 URL=`https://arxiv.org/html/2606.21884v1`；Method=`https://arxiv.org/html/2606.21884v1 — §4 Method: Solver-Grounded Synthetic CoT and the Experiment Ladder`；Evaluation=`https://arxiv.org/html/2606.21884v1 — §5 Results; §6 Anatomy of the Failures`；Non-proof=`https://arxiv.org/html/2606.21884v1 — §8.2 Threats to validity; §10 Limitations`。
+- `SF-2026-ARXIV-2606-22043` — primary `arXiv:2606.22043v1`；exact-v1 URL=`https://arxiv.org/html/2606.22043v1`；Method=`https://arxiv.org/html/2606.22043v1 — §2 Setup — Task and model; Visual-hacking diagnostic (VHS); Held-out OOD evaluation; Trajectory fleet`；Evaluation=`https://arxiv.org/html/2606.22043v1 — §3 Onset is real and seed-robust; §4 Reward strength: a monotone dose–response with formation–reversal asymmetry; §5 A critical intervention window; §6 What changes inside: representation probe; Appendix A Reproducibility and diagnostic details`；Non-proof=`https://arxiv.org/html/2606.22043v1 — §8 Discussion and limitations — Limitations`。
+- `SF-2026-ARXIV-2606-22164` — primary `arXiv:2606.22164v1`；exact-v1 URL=`https://arxiv.org/html/2606.22164v1`；Method=`https://arxiv.org/html/2606.22164v1 — §2 Preliminaries; §3 The Signal Dilution Problem`；Evaluation=`https://arxiv.org/html/2606.22164v1 — §4 Experimental Setup; §5 Results`；Non-proof=`https://arxiv.org/html/2606.22164v1 — §7 Discussion; Appendix A assumptions; Appendix B Diluted Doors`。
+<!-- daily-20260621:train-grpo:end -->
+
 同一 prompt、同一 role、单个 final-answer verifier 时，sequence-level reward 简洁且可复算；当 trajectory
 包含多个角色、多个目标、草稿—修订阶段或可迁移中间产物时，把一个标量复制到全部 tokens 会混合不同
 conditional state。演进方向不是无条件增加 reward model，而是先让样本身份跟上真正的决策边界：
@@ -1285,7 +1299,43 @@ GRPO 用同 prompt 多个 responses 的相对 reward 代替 learned critic basel
 从 DAPO 到 Dr. GRPO、CISPO 与 GSPO 的后续分支进一步说明：样本准入、loss reduction、clipping 对象与
 ratio 粒度是彼此独立的设计轴，方法名称不能替代 objective 与 artifact contract。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22570 -->
+LLM reasoning RL 的 update quality 取决于 rollout freshness、update count 与 policy drift；同一 reward 下不能把更多 optimizer steps 当成免费收益。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单模型/任务与固定 1e-6 LR 不证明通用最优 update ratio；更少 drift 以额外 rollout 成本为代价。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- body-source:SF-2026-ARXIV-2606-22716 -->
+效率 RL 不应奖励所有短答案；correct-only adaptive reward 先冻结 correctness，再在正确轨迹中调节效率 credit，避免把错误的短输出当优化方向。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；单 scale/数据与 reward verifier 限制结论；correct-only gate 会牺牲错误样本中的潜在学习信号。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260624:TRAIN-GRPO:start -->
+## 2026-06-24 evidence integration — TRAIN-GRPO
+
+相邻章 `books/part-04-training-system/31-rlhf.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-25178**：多域 RLVR curriculum 不再只追当前 domain learnability；controller 从正在计算的 GRPO projected gradients 估计跨域 transfer，对 bandit arm value 做平滑后决定下一 domain。 六域、Qwen3-1.7B/Llama3.2-3B 与 <1% overhead 不证明更大模型、non-verifiable reward 或 adversarial domain；gradient conflict 不稳定时回退 proportional/hand-designed mix。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-25178: `arXiv:2606.25178v1`; exact-v1 URL=`https://arxiv.org/html/2606.25178v1`; Method=`https://arxiv.org/html/2606.25178v1 — §3 Method; Gradient-Based Transferability; Curriculum Algorithm`; Evaluation=`https://arxiv.org/html/2606.25178v1 — §4 Experiments; B Implementation/Evaluation Details`; Non-proof=`六域、Qwen3-1.7B/Llama3.2-3B 与 <1% overhead 不证明更大模型、non-verifiable reward 或 adversarial domain；gradient conflict 不稳定时回退 proportional/hand-designed mix。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:TRAIN-GRPO:end -->
+
+<!-- recovered-daily-20260625:TRAIN-GRPO:start -->
+## 2026-06-25 evidence integration — TRAIN-GRPO
+
+- **SF-2026-ARXIV-2606-26027**：`4 Method; 4.2 catastrophic collapse; 4.4 supervisory fixes` 所定义的源特定机制用于把崩溃信号与监督修复绑定到策略更新门控；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `B Training Details; C Qwen3 Training; E Training Dynamic` 是 `Why Multi-Step Tool-Use Reinforcement Learning Collapses and How Supervisory Signals Fix It` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiments; 5.1 Dataset and Models; D Detailed Evaluation` 的验证域，`TRAIN-GRPO` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26027**：Primary `arXiv:2606.26027v1`；Method `https://arxiv.org/html/2606.26027v1 — §4 Method; 4.2 catastrophic collapse; 4.4 supervisory fixes`；Evaluation `https://arxiv.org/html/2606.26027v1 — §5 Experiments; 5.1 Dataset and Models; D Detailed Evaluation`；未证明边界 `https://arxiv.org/html/2606.26027v1 — §B Training Details; C Qwen3 Training; E Training Dynamic`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:TRAIN-GRPO:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22570` — primary `arXiv:2606.22570v1`；Method=`arXiv:2606.22570v1 §3 Analysis of Update Factors; §4 Algorithm`；Evaluation=`arXiv:2606.22570v1 §5 Experiments`；Non-proof=`arXiv:2606.22570v1 Appendix N Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
+- `SF-2026-ARXIV-2606-22716` — primary `arXiv:2606.22716v1`；Method=`arXiv:2606.22716v1 §3 Method and Reward Formalism`；Evaluation=`arXiv:2606.22716v1 §3.3 Experimental Setup; §4 Results`；Non-proof=`arXiv:2606.22716v1 §Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - Training Language Models to Cooperate with Inference-Time Controllers（arXiv:2607.23771v1；Status: Experimental）：https://arxiv.org/html/2607.23771v1
   - 证据边界：支持 Llama-3.2-3B、GSM8K/MATH500/AMC23 与作者十二种 controller/composition 下的 controller-aware GRPO；不证明 controller-agnostic、跨任务或任意 protocol shift 的普遍收益。

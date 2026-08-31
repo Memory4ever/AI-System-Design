@@ -344,6 +344,23 @@ failure modes。少量稳定 target、短 Skill 或严格可读审计优先时�
 SkVM 为 target profiling、AOT/JIT compilation 和 runtime adaptation 提供 Experimental system evidence；语言
 “编译”类比不意味着 deterministic semantics，也不允许从 benchmark 外推跨 harness portability。
 
+### Self-evolution Admission 需要 Anytime-valid Acceptor
+
+Agent 反复提出新 prompt、Skill 或 harness，并在同一 validation stream 上“测到满意为止”时，固定样本检验会因
+optional stopping 累积 false commit。平台可以让 incumbent 与 candidate 成对接受相同任务，以 anytime-valid
+sequential test 控制每次 adoption 的错误概率；模型只提出 candidate，acceptor 才拥有版本切换：
+
+```text
+incumbent/candidate paired outcomes
+-> anytime-valid evidence process
+-> accept / continue / reject
+-> versioned promotion and rollback
+```
+
+它允许数据逐步到达而不破坏单次检验，却不能把 per-decision guarantee 外推成整个生命周期零错误；任务相关性、
+evaluator drift、重复 candidate 与长期 alpha allocation 仍需治理。样本固定且评估次数预先确定时，普通 held-out
+test 更简单。
+
 ### Workspace 是长期行动的隔离单元
 
 一次 model call 可以在无状态 sandbox 中结束；长期 Agent run 却会持续持有文件、进程、服务、凭据代理、审批
@@ -446,6 +463,12 @@ catalog drift、错误 cost model 与 exploration risk；生产 query 缺少即�
 因此固定 workflow 在高风险、低流量或 option 差异不清楚时仍是默认分支。Adaptive configuration 只有在 hard mask、
 safe fallback、shadow/canary、per-option evidence 和 tail/fairness guardrails 都存在时才是平台机制，而不是“让模型自己
 挑最强架构”。
+
+<!-- body-source:SF-2026-ARXIV-2606-30616 -->
+
+靠增加参数获得通用能力，在交互 horizon 短且工具面有限时曾经有效。长程 Agent 的瓶颈转为知识—动作轨迹、领域路由 teacher 与 on-policy distillation，平台需持有 atomic ability graph、horizon budget、teacher route 和失败轨迹。收益是小模型以更长执行链覆盖任务，代价是工具成本、错误累积与训练基础设施复杂度。35B 结果不证明参数规模不再重要；预算或校验不足时缩短 horizon 并转交强模型或人工。
+
+<!-- june30-body:end -->
 
 ## Policy 与 Agent Identity
 
@@ -615,7 +638,58 @@ Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加�
 
 到此，七个 Part 形成完整 Draft：从第一性原理理解模型能力，经多模态表示、环境预测与物理行动，再到能力生产、在线交付、平台治理和受控 Agent 行动。后续 refinement 应由 papers、真实系统证据和跨章 Review 驱动，而不是为了扩写而增加内容。
 
+<!-- recovered-daily-20260623:AGENT-PLATFORM:start -->
+## 2026-06-23 evidence integration — AGENT-PLATFORM
+
+相邻章 `books/part-07-agent/83-mcp.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22902**：Agent-as-a-Router: Agentic Model Routing for Coding Tasks 的 exact-v1 机制为：Motivated by this finding, we propose Agent-as-a-Router, a framework that formalizes routing as a C-A-F loop (Context-&gt;Action-&gt;Feedback-&gt;Context). 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：Consequently, routing each task to the most suitable model becomes critical for both performance and cost. 披露的 evaluation signal 是：We instantiate this framework as ACRouter, composed of an Orchestrator, a Verifier, a Memory module, and introduce CodeRouterBench, an evaluation environment comprising ~10K task instances with verified scores from 8 frontier LLMs, enabling regret-based router comparison on streaming tasks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23321**：Tmax: A simple recipe for terminal agents 的 exact-v1 机制为：We present Tmax, the strongest open RL recipe for terminal agents to date, bringing open data recipes closer to the frontier. 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：Terminal-using agents have quickly become the most popular downstream application of language models (LMs). 披露的 evaluation signal 是：While simple, our recipe achieves 27\% on Terminal-Bench 2.0 with only 9B parameters, outperforming much larger models from prior work. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23449**：AOHP: An Open-Source OS-Level Agent Harness for Personalized, Efficient and Secure Interaction 的 exact-v1 机制为：We present AOHP (Android Open Harness Project), an OS-level agent harness built on the Android Open Source Project (AOSP). 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：Most existing end-user operating systems, however, are designed for application-centric workflows and offer little native support for AI agents. 披露的 evaluation signal 是：Based on preliminary experiments on challenging tasks covering key capabilities of OS agents, AOHP shows clear advantages in task completion (+21.12% completion rate), execution cost (-51.55% token cost), and security-policy compliance. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23983**：Maestro Order: A Model-Agnostic Orchestration Harness 的 exact-v1 机制为：We present Maestro Order, a model-agnostic orchestration harness that turns unreliable solvers into reliable problem-solving systems by composing them according to four structural primitives (decompose, ensemble, verify, and recurse) and a budget-aware controller that decides where to spend compute. 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：The harness treats any model as a black-box base solver behind a uniform interface, layers a verifier ensemble whose discrimination is measured online, and allocates verification and voting to the stages with the highest marginal reliability per unit cost. 披露的 evaluation signal 是：We then specify an evaluation methodology (reliability at fixed cost, coverage, calibration, and ablations) and report results from a faithful Monte Carlo simulation of the harness over a parameterized solver/verifier model. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22902` — primary `arXiv:2606.22902v1`; Method=`arXiv:2606.22902v1 — §Agent-as-a-Router: Agentic Model Routing for Coding Tasks; §3.4 Decomposed Routing Policies; §4.1 Benchmark Construction`; Evaluation=`arXiv:2606.22902v1 — §4.1 Benchmark Construction; §5 Empirical Validation; §Appendix B Benchmark and Setup Details`; non-proof=`arXiv:2606.22902v1 — §5.3 Discussion; §6 Conclusion; §Appendix E Discussion`; fallback=该 family 的 failure pressure 是：Consequently, routing each task to the most suitable model becomes critical for both performance and cost. 披露的 evaluation signal 是：We instantiate this framework as ACRouter, composed of an Orchestrator, a Verifier, a Memory module, and introduce CodeRouterBench, an evaluation environment comprising ~10K task instances with verified scores from 8 frontier LLMs, enabling regret-based router comparison on streaming tasks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23321` — primary `arXiv:2606.23321v1`; Method=`arXiv:2606.23321v1 — §2.2 RL training for Terminal Agents; §4 Training Terminal Agents; §Algorithm`; Evaluation=`arXiv:2606.23321v1 — §Evaluation; §Appendix E Additional Evaluation Details`; non-proof=`arXiv:2606.23321v1 — §6 Conclusion`; fallback=该 family 的 failure pressure 是：Terminal-using agents have quickly become the most popular downstream application of language models (LMs). 披露的 evaluation signal 是：While simple, our recipe achieves 27\% on Terminal-Bench 2.0 with only 9B parameters, outperforming much larger models from prior work. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23449` — primary `arXiv:2606.23449v1`; Method=`arXiv:2606.23449v1 — §3 System Design; §8.3 System Safety, Provenance, and Recoverability`; Evaluation=`arXiv:2606.23449v1 — §7 Evaluation; §7.2 Efficiency Analysis; §Appendix A Benchmark Tasks`; non-proof=`arXiv:2606.23449v1 — §9 Conclusion and Future Work`; fallback=该 family 的 failure pressure 是：Most existing end-user operating systems, however, are designed for application-centric workflows and offer little native support for AI agents. 披露的 evaluation signal 是：Based on preliminary experiments on challenging tasks covering key capabilities of OS agents, AOHP shows clear advantages in task completion (+21.12% completion rate), execution cost (-51.55% token cost), and security-policy compliance. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23983` — primary `arXiv:2606.23983v1`; Method=`arXiv:2606.23983v1 — §3. From Algebra to Architecture; §4. Harness Architecture; §5. Design Rationale and System Invariants`; Evaluation=`arXiv:2606.23983v1 — §12. Evaluation Methodology; §Simulation study (this paper).`; non-proof=`arXiv:2606.23983v1 — §15. Discussion: Failure Modes and Guidance; §16. Limitations and Threats to Validity; §17. Conclusion`; fallback=该 family 的 failure pressure 是：The harness treats any model as a black-box base solver behind a uniform interface, layers a verifier ensemble whose discrimination is measured online, and allocates verification and voting to the stages with the highest marginal reliability per unit cost. 披露的 evaluation signal 是：We then specify an evaluation methodology (reliability at fixed cost, coverage, calibration, and ablations) and report results from a faithful Monte Carlo simulation of the harness over a parameterized solver/verifier model. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:AGENT-PLATFORM:end -->
+
+<!-- recovered-daily-20260624:AGENT-PLATFORM:start -->
+## 2026-06-24 evidence integration — AGENT-PLATFORM
+
+相邻章 `books/part-07-agent/83-mcp.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24311**：将 model invocation、tool execution、workspace mutation、rule knowledge 与 execution record 收进同一 runtime boundary；剩余时间成为显式 state，用于在探索、实现、验证之间重配预算。 结果主要绑定 GPT-style tool calling 与 Terminal-Bench；其他 model family、长编译/训练、严格中间验证和 workspace 外 side effect 未证明，应保留人工接管与受限 sandbox。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24311: `arXiv:2606.24311v1`; exact-v1 URL=`https://arxiv.org/html/2606.24311v1`; Method=`https://arxiv.org/html/2606.24311v1 — §3 Method; 3.2 Integrated Execution Framework; 3.5 Structured Tool Boundary`; Evaluation=`https://arxiv.org/html/2606.24311v1 — §4 Experiments; Terminal-Bench 2.0/2.1`; Non-proof=`结果主要绑定 GPT-style tool calling 与 Terminal-Bench；其他 model family、长编译/训练、严格中间验证和 workspace 外 side effect 未证明，应保留人工接管与受限 sandbox。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:AGENT-PLATFORM:end -->
+
+<!-- june29-owner:AGENT-PLATFORM:start -->
+## 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29472`）。** 现有 Agent Platform 正文有 observation/action history 与 replay，却没有把连续 gated capture、audio transcript、persistent narration 与离散动作解耦成版本化 observation interface。 因此本次把这些增量合并到同一知识 owner：Computer-use 平台需要把 gated keyframe、audio transcript、persistent narration 与动作回执定义为版本化 observation interface，而不是让模型任意读取连续桌面流。接口 owner 管理 capture/retention 与 action-state identity；视觉 token 稀释或漏帧时回退高保真 capture/人工确认。 共同代价与回退边界是：只覆盖 DynaCU-Bench 浏览器任务与已测 CU models；Gemini 3 Flash 上 keyframe image-token dilution 已构成反例，因此 AOI 不是固定 bundle，也未证明桌面 OS、权限副作用或持续会议场景安全。退回高保真 capture 与人工确认。
+
+### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29472v1 — §3 Agent-Computer Observation Interface: gated keyframes, audio transcription and persistent narration`；Evaluation `https://arxiv.org/pdf/2606.29472v1 — §4 DynaCU-Bench design; 5 Main results and ablations`；未证明边界 `https://arxiv.org/pdf/2606.29472v1 — §5 per-model component ablation: keyframe regression through image-token dilution`。
+<!-- june29-owner:AGENT-PLATFORM:end -->
+
 ## Review notes
+
+<!-- june30-review:start -->
+- **SF-2026-ARXIV-2606-30616 / arXiv:2606.30616v1**：以更长工具交互 horizon、领域 teacher route 与 on-policy distillation 替代单纯参数扩展。Method=`arXiv:2606.30616v1 — §2 Knowledge-Guided General Agent Training with Specialized Teachers; §4 Three-stage Training Recipe; §4.2 Domain-level Teacher Training`；Evaluation=`arXiv:2606.30616v1 — §5 Experimental Results; §5.1 Evaluation Setting; §5.2 Results and Observations`，主指标 pass@1、每题最多 300 turns，论文同时报告 Qwen3.5-35B-A3B 官方与复现结果；Non-proof=`arXiv:2606.30616v1 — §6 Limitation and Future Work`，不证明参数规模不再重要或其他模型、任务、生产 SLO 可外推；Hardware/Precision/Input length/Output length/Batch/Concurrency/SLO=`Not Disclosed`；Artifact=`Not Disclosed — no later artifact used`。若 horizon budget、teacher identity、工具校验或失败轨迹不完整，则缩短 horizon 并转交强模型或人工。
+<!-- june30-review:end -->
+
+
+- PACE（arXiv:2606.08106v1；Status: Experimental）：用于把 optional-stopping-safe paired acceptor 纳入 self-evolution Gate；保证是 per-candidate/per-decision，不是跨生命周期的全局安全证明。https://arxiv.org/html/2606.08106v1
 
 - P2Skill（cloud-to-local skill distillation with bounded disclosure；Status: Experimental）: https://arxiv.org/abs/2608.14094
 - Repo2Skill-Evo（release-aware skill maintenance；Status: Experimental）: https://arxiv.org/abs/2608.21964

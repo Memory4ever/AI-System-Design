@@ -19,6 +19,22 @@ from multimodal representation through generative paradigms and World Models to
 Embodied/VLA action; former Training, Inference, Infrastructure and Agent chapters
 have moved to Parts IV～VII without changing their durable content.
 
+## 2026-08-28 Conversation Synthetic-Data / MoE Residency Books Integration
+
+Status: `TRAIN-DATA` and `INFER-GPU-MEMORY` refined; chapters remain Draft
+
+- Synthetic data now separates an implicit generator distribution from the finite, filtered and reweighted
+  `q_train` consumed by a student; distillation is justified by changed capacity, cost or supervision, not by an
+  assumption that the exact real distribution was already available.
+- Recursive same-model generation without independent evidence or coverage control is kept as a feedback-loop risk,
+  while teacher/tool/verifier computation can be amortized into a different deployment artifact.
+- Expert paging is explicitly related to GEMM tiling and online softmax by `Principle Reuse`, not mathematical
+  equivalence: prefetch can overlap weight movement but cannot reconstruct a selected Expert from mergeable statistics.
+- MTP/speculative decoding, MoE Expert semantics/router, full-vs-active parameters, expert cache and replica placement
+  received `No Change` because their existing owners already contain the durable mechanisms and boundaries.
+- Product-specific `Flash` naming was not used as evidence of distillation. ROADMAP and DECISIONS remain unchanged;
+  no staging, commit or push was performed.
+
 ## 2026-08-27 July Daily V2.1 Full-Month Closure
 
 Status: 31/31 Daily complete；Coverage、Evidence 与 Books Gates passed

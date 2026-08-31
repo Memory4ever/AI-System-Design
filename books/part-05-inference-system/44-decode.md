@@ -173,6 +173,21 @@ Static batch 会让 A 的空位一直跟随 B；iteration-level scheduling 则�
 
 ## Decode 的结束条件
 
+<!-- daily-20260628:INFER-DECODE:start -->
+### Owner-merged minimal durable delta
+
+Masked-diffusion decode 不必把每一步压成 token-or-mask。Request 可以为每个位置持有连续 x-prediction mixture、异步 progress 与 bounded re-edit state；只有通过 commit rule 的离散 token 才进入 visible frontier。这样 refinement 信息可跨 step 延续，而 cache、step policy 与 commit identity 仍可审计。
+
+### Trade-off、failure、fallback 与 coexistence
+
+连续 mixture 是否被 pretrained MDLM 正确解释只在两组模型/代码任务中验证；它增加 request state、alignment 与 kernel burden，质量或硬件不支持时回退标准 mask/unmask decoder。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-29066 — primary arXiv:2606.29066v1; exact-v1 URL=https://arxiv.org/html/2606.29066v1; Method=https://arxiv.org/html/2606.29066v1 — §Training objective; 4 Training; 4.2 Step-Size Policy Training; Evaluation=https://arxiv.org/html/2606.29066v1 — §5 Experiments; 5.3 Code Generation Evaluation; Setup; Non-proof=https://arxiv.org/html/2606.29066v1 — §7 Conclusion; Limitations.；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+<!-- daily-20260628:INFER-DECODE:end -->
+
+
 模型侧包括 EOS、stop token/sequence、最大输出长度和 grammar state 终止；系统侧包括 client cancellation、deadline、quota 和 worker/transfer failure。
 
 结束条件必须与 sampling、detokenization 和 stream 一致。例如 stop string 可能跨 token boundary，系统不能只检查最后一个 token id。
@@ -234,6 +249,20 @@ Prefill
 Decode 把模型推理变成持续的状态推进问题。每个请求内部必须按 token 顺序执行，但多个请求可以共享每轮模型执行。性能不只取决于 kernel，还取决于谁进入这一轮、携带多长历史以及何时再次获得资格。
 
 下一章聚焦最重要的持久状态：KV Cache 为什么正确、节省了什么，以及它怎样把计算优化转化为显存管理问题。
+
+<!-- recovered-daily-20260623:INFER-DECODE:start -->
+## 2026-06-23 evidence integration — INFER-DECODE
+
+相邻章 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-23521**：Concordia: JIT-Compiled Persistent-Kernel Checkpointing for Fault-Tolerant LLM Inference 的 exact-v1 机制为：We present Concordia, a runtime that uses a device-resident persistent kernel as the substrate for fault-tolerant LLM inference. 因此 把 persistent-kernel checkpoint、恢复位置和重复 token/side-effect 防护绑定。 该 family 的 failure pressure 是：Losing this state after a GPU or communicator failure can discard minutes to hours of work, yet existing recovery mechanisms either restart the whole serving stack or require application-specific checkpoint logic inside every attention and runtime component. 披露的 evaluation signal 是：The persistent kernel consumes a lock-free ring buffer of compute, checkpoint, append-log, and recovery tasks, so the same always-on executor triggers dirty-page detection, stages deltas, and appends committed records to a CPU-visible log in CXL memory or host DRAM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-23521` — primary `arXiv:2606.23521v1`; Method=`arXiv:2606.23521v1 — §3. Design; §Host-mapped memory.; §4.3. Optional Cross-Architecture Execution and GPU-Initiated Networking`; Evaluation=`arXiv:2606.23521v1 — §2.4. Motivating Experiment: Host-Side Dirty Detection; §5. Evaluation`; non-proof=`arXiv:2606.23521v1 — §7. Discussion; §7.5. Limitations and Future Work; §8. Conclusion`; fallback=该 family 的 failure pressure 是：Losing this state after a GPU or communicator failure can discard minutes to hours of work, yet existing recovery mechanisms either restart the whole serving stack or require application-specific checkpoint logic inside every attention and runtime component. 披露的 evaluation signal 是：The persistent kernel consumes a lock-free ring buffer of compute, checkpoint, append-log, and recovery tasks, so the same always-on executor triggers dirty-page detection, stages deltas, and appends committed records to a CPU-visible log in CXL memory or host DRAM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:INFER-DECODE:end -->
 
 ## Review notes
 

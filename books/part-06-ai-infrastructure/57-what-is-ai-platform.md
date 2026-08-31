@@ -167,6 +167,16 @@ Part VI 将逐步展开平台的具体控制面：Kubeflow 展示生命周期组
 
 AI Platform 的本质是统一 identity、state、policy 和 feedback，使模型生命周期从个人操作变成组织能力。下一章以 Kubeflow 为例，观察这组抽象如何建立在 Kubernetes reconciliation 之上，以及为什么一个生态不能自动等同于一个完整平台。
 
+<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:start -->
+## 2026-06-25 evidence integration — PLATFORM-FOUNDATIONS
+
+- **SF-2026-ARXIV-2606-25532**：`Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought` 所定义的源特定机制用于把硬件约束和发现链纳入平台设计候选的验收边界；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Exact-v1 research-prototype and evaluated hardware-design boundary` 是 `Agentic evolution of physically constrained foundation models` 的 source-specific 反例/局限边界；若运行条件离开 `Hardware-compliance evaluation and discovered-system validation` 的验证域，`PLATFORM-FOUNDATIONS` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25532**：Primary `arXiv:2606.25532v1`；Method `https://arxiv.org/html/2606.25532v1 — §Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought`；Evaluation `https://arxiv.org/html/2606.25532v1 — §Hardware-compliance evaluation and discovered-system validation`；未证明边界 `https://arxiv.org/html/2606.25532v1 — §Exact-v1 research-prototype and evaluated hardware-design boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:end -->
+
 ## Review notes
 
 本章负责冻结 Part VI 的总抽象，不列产品功能清单。它承接第 56 章的 runtime/SLO contract，并把平台拆成 control、data 与 evidence planes；具体组件、调度算法和治理机制分别交给后续章节。

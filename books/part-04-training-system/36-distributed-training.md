@@ -475,6 +475,10 @@ SCAPE 的作者实验只在 AdamS、GPT-345M/Llama-500M 的 32 张 GH200 完整�
 尺度或不同互联。因此长期结论不是“梯度可以固定在某个极高稀疏率”，而是：**通信压缩若改变 optimizer 的有效更新，
 support identity 与 optimizer state 必须共同成为 correctness contract，并由 loss、下游能力与系统时间联合验收。**
 
+### 矩阵耦合 Optimizer 必须把更新本身变成 Distributed Operation
+
+以 element-wise optimizer state 做 ZeRO/FSDP 式分片，在更新可按参数局部计算时是合理的。矩阵级 Newton–Schulz optimizer update 却耦合整块矩阵，局部 post-processing 会让相同 checkpoint 在不同 layout 下产生不同语义。训练状态因此必须增加 matrix layout、collective algorithm、worker group 与 optimizer-step identity，把更新本身作为分布式矩阵操作并与 checkpoint 原子提交。论文在 embodied foundation model 与 LLM 训练中报告加速且性能接近 AdamW，但没有证明任意拓扑、矩阵形状或长程收敛与集中式实现等价。collective 中断、layout 漂移或数值分歧时应恢复最近一致 checkpoint，并退回已验证的 AdamW/旧 optimizer 路径；局部优化器与矩阵耦合优化器按更新结构共存。
+
 ## 分布式训练必须保持哪些不变量
 
 **数学不变量：**
@@ -628,6 +632,33 @@ profile drift 和 checkpoint resume 都是新 failure modes。长度分布稳定
 
 ### 从 Phase 串行到依赖驱动的跨 Phase 重排
 
+<!-- daily-20260627:TRAIN-DISTRIBUTED-TRAINING:start -->
+### Owner-merged minimal durable delta
+
+知识蒸馏 runtime 不应强迫 teacher inference 与 student training 共用一份并行方案，而应按两类 workload 分别分片。它们的参数驻留、activation lifetime、batch shape 与通信 critical path 均不同；真正的 handoff 是 student update 消费的版本化 teacher output，而不是共享 rank topology。
+
+### Trade-off、failure、fallback 与 coexistence
+
+非对称方案增加 handoff buffering 与 topology search；teacher/student footprint 相近时，共享方案仍更简单。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27797 — primary arXiv:2606.27797v1; exact-v1 URL=https://arxiv.org/html/2606.27797v1; Method=https://arxiv.org/html/2606.27797v1 — §Optimizing Teacher-Student Partitioning for Scalable Knowledge Distillation on HPC Systems; 2 Background: LLM Training and Parallelism; 2.1 LLM Training; Evaluation=https://arxiv.org/html/2606.27797v1 — §3 Testing Setup; 4 GKD Analysis and Improvements; 4.1 Experimental Results; Non-proof=https://arxiv.org/html/2606.27797v1 — §6 Conclusions。
+<!-- daily-20260627:TRAIN-DISTRIBUTED-TRAINING:end -->
+
+
+<!-- daily-20260621:train-distributed-training:start -->
+### Sampling quality feedback 与通信 freshness
+
+FeLoG 用 embedding-quality feedback 优先 undertrained node；activity-aware sequence compression/选择同步降低 PCIe 与网络通信，round-interleaved pipeline 重叠下一轮 sampling 与当前 training。
+
+**Trade-off、failure、共存与回退。** quality feedback 可能偏置 sampling，选择同步会制造 stale embedding；graph workloads 与硬件不证明 LLM training 或最终收敛等价。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-22180` — primary `arXiv:2606.22180v1`；exact-v1 URL=`https://arxiv.org/html/2606.22180v1`；Method=`https://arxiv.org/html/2606.22180v1 — §5 FeLoG; §5.1 Feedback-coupled Sampling-Training Model; §5.2 Activity-aware Communication`；Evaluation=`https://arxiv.org/html/2606.22180v1 — §6 Experimental Results; §6.1 Experimental Setup`；Non-proof=`https://arxiv.org/html/2606.22180v1 — §7 Conclusions and experimental generalizability boundary`。
+<!-- daily-20260621:train-distributed-training:end -->
+
 同步 RL post-training 通常按 rollout、reference scoring、actor forward/backward、optimizer update 串行执行。
 这种 phase barrier 在文本任务以 Decode 为绝对主耗时时合理：顺序容易验证，旧 policy snapshot 的读写边界也
 清楚。视觉输入或超长 Prompt 让 prefix encode/prefill 变成显著工作后，完整 phase 串行会把本来只依赖输入与
@@ -758,6 +789,52 @@ reuse 换取 cache metadata、跨 worker placement、eviction 与 straggler stat
 update view 频繁变化时，独立 forward 仍更简单。任何吞吐数字都必须绑定 Agent workload、共享率、GPU/
 interconnect、序列长度和并行策略，不能当作普通 pretraining 的通用增益。
 
+<!-- recovered-daily-20260623:TRAIN-DISTRIBUTED-TRAINING:start -->
+## 2026-06-23 evidence integration — TRAIN-DISTRIBUTED-TRAINING
+
+相邻章 `books/part-04-training-system/37-tensor-parallel.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22768**：Factored Gossip DiLoCo: Reducing Blocking Communication in DiLoCo 的 exact-v1 机制为：On up to billion-parameter language models in low-bandwidth settings, our framework substantially improves compute utilization compared to DiLoCo, with training progress ranging from comparable to closely matching it, and is more robust to failures. 因此 把同步拓扑、worker identity、通信阻塞与收敛/分歧界面共同版本化。 该 family 的 failure pressure 是：While DiLoCo communicates infrequently, its outer synchronization remains bandwidth-heavy and brittle to stragglers and transient failures. 披露的 evaluation signal 是：To make large-scale distributed training practical outside high-bandwidth datacenters, we must reduce blocking, high-volume synchronization. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-22932**：FORGE: Fused On-Register Gradient Elimination for Memory-Efficient LLM Training 的 exact-v1 机制为：This two-phase schedule sets the memory ceiling of modern training: at the seam between the phases, every layer's gradient is live at once. 因此 把同步拓扑、worker identity、通信阻塞与收敛/分歧界面共同版本化。 该 family 的 failure pressure 是：Reverse-mode differentiation computes every weight gradient, writes it to memory, and only then lets the optimizer read it back. 披露的 evaluation signal 是：Empirically FORGE more than halves the memory of an optimizer step and, at the small batch sizes typical of fine-tuning and continued pretraining, runs about 1.5x faster; integrated into tensor-parallel Megatron-LM it fits 8B training at four times the micro-batch a standard optimizer allows on the same GPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23017**：Nautilus: A Verifiable Hierarchical Federated Learning Framework for Vehicular-Edge-Cloud Systems 的 exact-v1 机制为：Federated Learning (FL) enables privacy-preserving collaborative learning for Internet of Vehicles (IoV) scenarios, but extreme heterogeneity of vehicular-edge-cloud resources severely limits system efficiency. 因此 把同步拓扑、worker identity、通信阻塞与收敛/分歧界面共同版本化。 该 family 的 failure pressure 是：Dynamic scheduling strategies mitigate this issue but introduce new trust concerns: verifying fair scheduling decisions and faithful client execution of compression instructions without privacy leakage remains an open challenge. 披露的 evaluation signal 是：First, a multi-dimensional resource-aware scheduling algorithm dynamically allocates compression ratios and training tasks based on vehicle bandwidth, latency and computing power, improving training efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22768` — primary `arXiv:2606.22768v1`; Method=`arXiv:2606.22768v1 — §5.1 Training experiments; §Appendix A Factored Gossip DiLoCo: Detailed Algorithm`; Evaluation=`arXiv:2606.22768v1 — §Appendix E Consensus Error Result and Proof`; non-proof=`arXiv:2606.22768v1 — §7 Conclusion and Future Work; §Appendix C Further Discussion`; fallback=该 family 的 failure pressure 是：While DiLoCo communicates infrequently, its outer synchronization remains bandwidth-heavy and brittle to stragglers and transient failures. 披露的 evaluation signal 是：To make large-scale distributed training practical outside high-bandwidth datacenters, we must reduce blocking, high-volume synchronization. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-22932` — primary `arXiv:2606.22932v1`; Method=`arXiv:2606.22932v1 — §FORGE: Fused On-Register Gradient Elimination for Memory-Efficient LLM Training; §Our approach.; §2 Method`; Evaluation=`arXiv:2606.22932v1 — §Appendix E Measurement protocol and variance`; non-proof=`arXiv:2606.22932v1 — §5 Conclusion; §Scope of the optimizer sweep.`; fallback=该 family 的 failure pressure 是：Reverse-mode differentiation computes every weight gradient, writes it to memory, and only then lets the optimizer read it back. 披露的 evaluation signal 是：Empirically FORGE more than halves the memory of an optimizer step and, at the small batch sizes typical of fine-tuning and continued pretraining, runs about 1.5x faster; integrated into tensor-parallel Megatron-LM it fits 8B training at four times the micro-batch a standard optimizer allows on the same GPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23017` — primary `arXiv:2606.23017v1`; Method=`arXiv:2606.23017v1 — §Nautilus: A Verifiable Hierarchical Federated Learning Framework for Vehicular-Edge-Cloud Systems; §3.1 System Architecture and Role Definition; §3.2 Threat Model and Design Objectives`; Evaluation=`arXiv:2606.23017v1 — §5 Experiments and Analysis; §5.1.2 Evaluation Metrics; §5.3 Experimental Results and Analysis`; non-proof=`arXiv:2606.23017v1 — §2.2 Trust Crisis: Failure of the Semi-Honest Assumption; §6 Conclusion`; fallback=该 family 的 failure pressure 是：Dynamic scheduling strategies mitigate this issue but introduce new trust concerns: verifying fair scheduling decisions and faithful client execution of compression instructions without privacy leakage remains an open challenge. 披露的 evaluation signal 是：First, a multi-dimensional resource-aware scheduling algorithm dynamically allocates compression ratios and training tasks based on vehicle bandwidth, latency and computing power, improving training efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:TRAIN-DISTRIBUTED-TRAINING:end -->
+
+<!-- recovered-daily-20260624:TRAIN-DISTRIBUTED-TRAINING:start -->
+## 2026-06-24 evidence integration — TRAIN-DISTRIBUTED-TRAINING
+
+相邻章 `books/part-04-training-system/38-pipeline-parallel.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24143**：将 rollout、teacher scoring、student update 解耦为 queue stages；learner 用 current-student recomputation 修正 reverse-KL stale signal，并以 multi-sample MC 避免 cached top-k support bias。 实验限单节点 8 GPU、sparse/MC estimator；dense full-vocabulary KL、跨节点扩展与更长 staleness 未验证，cache/queue 压力过大时应回退 bounded-staleness 或同步 OPD。
+- **SF-2026-ARXIV-2606-24369**：把 visual diffusion RL 的 generation/training 解耦，并沿 generation 与 timestep 两轴并行；trainer bubble 临时借给 generator，TCSS 以 trajectory-consistent point 控制权重同步。 收益绑定论文 diffusion workload、资源组合与 stale policy 容忍度；异构故障、跨作业隔离和 reward/model drift 未验证，质量偏离时回退同步或 bounded-staleness。
+- **SF-2026-ARXIV-2606-24722**：把 end-to-end backprop 的全局 hidden-target ownership拆成 block-local diffusion objective；edge worker 独立更新 block，coordinator 只按版本/acceptance rule 接收异步 update，同一 block protocol 也支撑分布式 inference。 real-text small model、virtual edge worker 与 WAN smoke test 不证明大模型质量、Byzantine worker、激励或大规模收敛；acceptance 失败时回退同步/集中训练。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24143: `arXiv:2606.24143v1`; exact-v1 URL=`https://arxiv.org/html/2606.24143v1`; Method=`https://arxiv.org/html/2606.24143v1 — §4 Forward- and Reverse-KL OPD Under Staleness; 7 AsyncOPD`; Evaluation=`https://arxiv.org/html/2606.24143v1 — §7 AsyncOPD Experimental Results; G Scheduler Details`; Non-proof=`实验限单节点 8 GPU、sparse/MC estimator；dense full-vocabulary KL、跨节点扩展与更长 staleness 未验证，cache/queue 压力过大时应回退 bounded-staleness 或同步 OPD。`; Artifact=`https://github.com/furiosa-ai/async-opd`
+- SF-2026-ARXIV-2606-24369: `arXiv:2606.24369v1`; exact-v1 URL=`https://arxiv.org/html/2606.24369v1`; Method=`https://arxiv.org/html/2606.24369v1 — §3 DigenRL: System Design; GAP/TSP/TAG/TCSS`; Evaluation=`https://arxiv.org/html/2606.24369v1 — §5 Evaluation; End-to-End Time and TCSS Effectiveness`; Non-proof=`收益绑定论文 diffusion workload、资源组合与 stale policy 容忍度；异构故障、跨作业隔离和 reward/model drift 未验证，质量偏离时回退同步或 bounded-staleness。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-24722: `arXiv:2606.24722v1`; exact-v1 URL=`https://arxiv.org/html/2606.24722v1`; Method=`https://arxiv.org/html/2606.24722v1 — §2 Protocol; Block-Local Diffusion Objective; Decentralized Execution`; Evaluation=`https://arxiv.org/html/2606.24722v1 — §3 Real-Text Experiments; 4 Decentralization and Asynchrony`; Non-proof=`real-text small model、virtual edge worker 与 WAN smoke test 不证明大模型质量、Byzantine worker、激励或大规模收敛；acceptance 失败时回退同步/集中训练。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:TRAIN-DISTRIBUTED-TRAINING:end -->
+
+<!-- recovered-daily-20260625:TRAIN-DISTRIBUTED-TRAINING:start -->
+## 2026-06-25 evidence integration — TRAIN-DISTRIBUTED-TRAINING
+
+- **SF-2026-ARXIV-2606-25759**：`3 System Overview; 4 Operating-Profile Calibration; 5 Runtime Binding and Bucket Routing` 所定义的源特定机制用于把集群运行剖面映射为运行时 bucket 与并行绑定状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `9 Limitations and Future Work; A.4 Evaluation Environment and Measurement Boundary` 是 `NEURON-Fabric: Architecture-Runtime Co-Design for Controlled Low-Bit Gradient Communication` 的 source-specific 反例/局限边界；若运行条件离开 `7 Closed-Loop Cluster Evaluation; 7.1 Evaluation Setup and Scope` 的验证域，`TRAIN-DISTRIBUTED-TRAINING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25759**：Primary `arXiv:2606.25759v1`；Method `https://arxiv.org/html/2606.25759v1 — §3 System Overview; 4 Operating-Profile Calibration; 5 Runtime Binding and Bucket Routing`；Evaluation `https://arxiv.org/html/2606.25759v1 — §7 Closed-Loop Cluster Evaluation; 7.1 Evaluation Setup and Scope`；未证明边界 `https://arxiv.org/html/2606.25759v1 — §9 Limitations and Future Work; A.4 Evaluation Environment and Measurement Boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:TRAIN-DISTRIBUTED-TRAINING:end -->
+
 ## Review notes
 
 - psRL（training-time prefix sharing；Status: Experimental）：https://arxiv.org/abs/2608.25683v1
@@ -803,3 +880,7 @@ Primary-source 校验入口：
 - SCAPE（optimizer-aware sparse support；Status: Experimental）: https://arxiv.org/abs/2607.01678
 - LongStraw（fixed-budget multi-million-token RL state lifetime；Status: Experimental）:
   https://arxiv.org/abs/2607.14952
+
+### 2026-06-26 source-specific Review notes
+
+- `SF-2026-ARXIV-2606-27153` — DMuon: Efficient Distributed Muon Training with Near-Adam Overhead; primary=`arXiv:2606.27153v1`; Method=`arXiv:2606.27153v1 — §DMuon: Efficient Distributed Muon Training with Near-Adam Overhead; §2.2 Sharded Training Abstractions; §3 System Design`; Evaluation=`arXiv:2606.27153v1 — §5 Evaluation; §Setup.`; counterevidence/non-proof locator=`arXiv:2606.27153v1 — §5.3 Limitations; §7 Conclusion`; claim boundary=证据覆盖论文的 embodied foundation model 与 LLM workloads；step-time 加速和 near-AdamW latency 不证明任意 topology、matrix shape、数值误差或长程收敛与集中式更新等价。; fallback=layout/collective 分歧时恢复一致 checkpoint 并退回已验证优化器。

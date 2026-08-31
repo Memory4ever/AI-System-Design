@@ -1,9 +1,14 @@
 # Daily Research — 2026-08-27
 
 **Research Date:** 2026-08-27
+
 **Timezone:** Asia/Shanghai
-**Window:** 2026-08-26 09:00:00 ～ 2026-08-27 09:00:00（北京时间，左闭右开）
-**Status:** Complete；Coverage、Evidence、Books Gate 均通过 fresh-context Semantic Audit；Thursday，不生成 provisional Weekly
+
+**Strict Window:** 2026-08-26 09:00:00 ～ 2026-08-27 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay
+
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
 
@@ -132,44 +137,6 @@
 | SF-2026-HY-MT2-REVISION | commit:ff1903ecaa724e10951a23c16817a2413c752b35 | commit:hy-mt2-ff1903e | 2026-W35 | 2026-08-26 | SRC-TENCENT-HUNYUAN | — | — | — | — | revision | deep_complete | accessible | important_revision | review:SF-2026-HY-MT2-REVISION | self | — | same_window_revision | MODEL-LONG-CONTEXT | Version Fact / Mechanism Not Disclosed | — | no |
 | SF-2026-UNIRL-MAINTENANCE | commit:96747df21c2940b6cd68fe38cfecb93f63cc628d | commit:unirl-branch-sync | 2026-W35 | 2026-08-26 | SRC-TENCENT-HUNYUAN | 0 | 1 | 0 | 1 | closure_only | closure_complete | accessible | none | review:SF-2026-UNIRL-MAINTENANCE | self | — | new_in_window | TRAIN-GRPO | Rejected — Low Durability / Out of Scope | — | no |
 | SF-2026-MINIMAX-FINANCIAL | https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160 | official-post:minimax-financial | 2026-W35 | 2026-08-26 | SRC-MINIMAX | 0 | 1 | 1 | 2 | closure_only | closure_complete | accessible | none | review:SF-2026-MINIMAX-FINANCIAL | self | — | new_in_window | WORLDVIEW-FUTURE | Weekly Only — Context | — | no |
-
-### Benchmark Contracts
-
-所有数字均保持在作者实验合同内；`Not Disclosed` 表示 exact v1 未给出该字段，不用推断值补齐。
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-OPENAI-HF-INCIDENT | 单次内部 cyber-evaluation 事故；不提供普遍发生率 | highly capable internal-only research model；GPT-5.6 Sol | evaluation sandbox；production 与 sandbox controls 明确区分 | Not Disclosed | adversarial task context，exact token length Not Disclosed | agent actions，exact output length Not Disclosed | Not Disclosed | 单次被监控 agent run；并发 Not Disclosed | incident timeline、unauthorized-action scope、containment/control findings；无性能 SLO | OpenAI Creator Primary 证明事故与内部控制；METR/Redwood Independent Evaluator 仅证明行为评估 |
-| SF-2026-GROUNDHOG-BITFLIP | Alpaca target detection；AGNews、SST-2、Samsum、SQuAD2.0；conversation/reasoning/agentic tasks | Mixtral-8x7B、Phi-3.5-MoE、DeepSeek-V2-Lite、Qwen3-30B-A3B、Qwen3-Coder-Next、GPT-OSS-20B | 3×NVIDIA A100 80GB | Not Disclosed | dataset/task dependent；exact prompt length Not Disclosed | max_new_tokens 1024；plan mode 2048 | Not Disclosed | Not Disclosed | token-length inflation、clean accuracy、ROUGE-1、F1、plan steps | paper authors；task-native scorers |
-| SF-2026-METIS-RUNTIME | 30 matched real-I/O pairs；10-case fault matrix；300 tool results；five-model Read-marker protocol | protocol probe uses five named models；runtime timing has no model | Apple M2 Pro，12 CPU cores，16GB；macOS 26.5.2；Go 1.26.1 | Not Applicable for runtime；model precision Not Disclosed | matched calls/results；token length Not Disclosed | 300 tool results；token length Not Disclosed | 5 calls per pair | Safe、Queue、Exclusive declarations；baseline treats all Exclusive | paired elapsed ms、fault closure、authority evidence | paper authors；paired local runtime harness |
-| SF-2026-GIFT-IFC | vLLM/DistServe prototypes across OPT and Qwen2.5 serving | OPT-13B/30B/66B；Qwen2.5-14B/32B/72B | 1–8×A800 or 1×H100，configuration varies by model | Not Disclosed | ShareGPT requests；length distribution Not Disclosed | ShareGPT outputs；length distribution Not Disclosed | batch sizes 8/16/32 in reported sweeps | request rate varied；exact concurrent-request count Not Disclosed | throughput、TTFT、TPOT、IFT overhead | paper authors；prototype instrumentation |
-| SF-2026-FIELD-TIER-MIN | local action-mediation corpus、per-projection leakage analysis 与一次 identifier incident | Not Disclosed — no model is used by this local mediation evaluation | local implementation；hardware Not Disclosed | Not Disclosed — numerical model precision is not part of the local mediation evaluation | structured action fields；length Not Applicable | projection/attestation artifacts；length Not Applicable | corpus aggregate；exact batch Not Disclosed | Not Disclosed | leaked-field count、digest/attestation correctness；无 latency SLO | paper authors；corpus and incident audit |
-| SF-2026-CASKG | ALFWorld ID-140 与 ScienceWorld U211；graph/retrieval ablations | six LLMs in §4.1；Qwen3-Embedding-8B retrieval component | Not Disclosed | Not Disclosed | environment trajectories；token length Not Disclosed | actions until task termination；token length Not Disclosed | Not Disclosed | Not Disclosed | task success/score、environment steps、retrieval quality | paper authors；environment-native evaluators |
-| SF-2026-AGENTIC-GAME-WM | UnitySceneBench and generated-game trajectories；research agenda plus bounded study | continued-pretraining model Not Disclosed；Qwen3.6-35B-A3B judge | 8×A100 workers disclosed for data/training path | Not Disclosed | game trajectories；exact token/frame length Not Disclosed | generated trajectories；exact length Not Disclosed | global batch 4096 | worker parallelism disclosed；serving concurrency Not Disclosed | MLLM-judge score plus human audit；not a matched system benchmark | Qwen3.6-35B-A3B judge and human audit under author protocol |
-| SF-2026-TOPAS | three synthetic DAGs and two MetaGPT workflows on SGLang v0.5.3 | workload model configurations in §V.A；single canonical model Not Applicable | 1×NVIDIA A100 80GB | Not Disclosed | DAG/workflow dependent；exact token length Not Disclosed | query outputs；exact length Not Disclosed | fixed query sets；batch Not Disclosed | ready-agent concurrency varied by DAG/workflow | mean/p99 JCT、request throughput、cache hit/reuse | paper authors；SGLang instrumentation |
-| SF-2026-POLYMEMDB | 221 relationship construction demonstration；no matched benchmark or fault injection | Not Disclosed | Not Disclosed | Not Disclosed | demonstration records；length Not Disclosed | memory graph/records；length Not Disclosed | Not Disclosed | Not Disclosed | interface/relationship construction only；no quantitative SLO | paper authors；demonstration only |
-| SF-2026-V-RUBRICS | 50,248 samples from 17 sources；rubric GRPO versus answer-only GRPO | Qwen3-VL-8B actor；Qwen3-VL-235B-A22B judges | 8 GPUs per node；GPU type and node count Not Disclosed | judge FP8；actor precision Not Disclosed | prompt max 8192 tokens | response max 8192 tokens | rubric 192；answer 480；PPO mini-batch 192/96 | rubric generation concurrent per item；exact worker count Not Disclosed | benchmark task metrics、rubric reward quality、component ablation | paper authors；model judges plus benchmark scorers |
-| SF-2026-RA-VLA | LIBERO and real UR5e tasks；retrieval scale to 10^7 candidates | flow-matching VLA；SigLIP2 retriever | 1×NVIDIA A100 | Not Disclosed | demonstration 128 steps split into 15 segments | action chunk with 4 denoising steps | Not Disclosed | latency averaged over 1000 runs | task success and inference latency | paper authors；LIBERO/real-robot task success |
-| SF-2026-JIT-AGENT | nine benchmarks；OpenCode/Claude Code and other harness comparisons | DeepSeek、GLM、MiMo、Qwen model pairs as listed in §6.1 | Not Disclosed | Not Disclosed | benchmark dependent | benchmark dependent | Not Disclosed | Not Disclosed | task reward、mean latency、monetary cost | benchmark-native scorers under author harness |
-| SF-2026-RETRIEVALROUTER | 11 document-retrieval benchmarks；80/10/10 in-domain split；five retrieval pipelines | frozen Qwen3-0.6B router with LoRA query encoder | 1×NVIDIA H100 80GB；about 40GB combined indexes | Not Disclosed | query/document lengths dataset-dependent | ranked retrieval results；cutoff dataset-dependent | Not Disclosed | one query routed per decision；serving concurrency Not Disclosed | nDCG、MRR、Recall、mean/P95 latency、index footprint | paper authors；standard retrieval metrics |
-| SF-2026-PSRL | production traces and agentic-RL prefix-sharing update workloads | Qwen2.5-1.5B/7B；Qwen3-235B | 4×A100 80GB per node；Xeon；200Gb/s intra-node and 100Gb RDMA | Not Disclosed | prompt/generation lengths per Table 2 | rollout lengths per Table 2 | rollout N and update batches per Table 2 | DP/TP/EP/PP configurations disclosed | update throughput、end-to-end latency、memory；no production tail SLO | paper authors；runtime instrumentation |
-| SF-2026-LMSM | HarmBench、XSTest；SAE/transcoder/dense probes on Transformers/vLLM | Qwen3-4B thinking | 1×NVIDIA H100 | backend-dependent；judge labeling uses bfloat16 where stated | prompts per benchmark；exact length Not Disclosed | max 256 tokens | up to 32 active sequences | 32 active sequences | ASR、FRR、throughput | paper authors；benchmark labels and rule-specific evaluators |
-| SF-2026-REDIR | two agent-safety benchmarks；three model families；eight held-out tool domains | Qwen3.5-9B、Ministral-3-8B-Instruct、Gemma-4-E4B | NVIDIA A100 | Not Disclosed | multi-turn trajectories；exact tokens Not Disclosed | action trajectories；exact tokens Not Disclosed | Not Disclosed | Not Disclosed | ASR、SSR/benign fidelity、FPR、latency/memory overhead | paper authors；benchmark task/safety scorers |
-| SF-2026-TAILSFT | math/code SFT diagnostics and downstream GRPO | OLMo-3 7B | Not Disclosed | Not Disclosed | code 2048；math 4096 | sampled solutions for pass@16/pass@1；exact generation cap Not Disclosed | effective batches disclosed in Appendix D | Not Disclosed | pass@16、pass@1、training loss/coverage diagnostic | paper authors；task execution scorers |
-| SF-2026-TACFORCING | six UniVTAC simulations and three real contact-rich tasks | pi0.5 in simulation；GR00T N1.7 on real tasks | Not Disclosed | Not Disclosed | tactile/vision history；horizon H=40 and K=8 on real setup | streaming action chunks；exact dimensionality task-dependent | global batch 256 | streaming control loop；worker concurrency Not Disclosed | task success rate | paper authors；simulator and real-task completion |
-| SF-2026-SKILLSHIELD | RedCode attacks、two non-adaptive jailbreak families、731 benign prompts | six LLM/coding-agent models listed in §6.1 | Not Disclosed | Not Disclosed | skill cap 10,000 characters, about 2,400 tokens；one skill per session | tool-loop outputs；exact length Not Disclosed | evaluation repetitions per configuration；batch Not Disclosed | Not Disclosed | ASR、average severity、FPR/refusal rate | execution-based benchmark plus Qwen3.6-Plus judge for generation cases |
-| SF-2026-LOCALIZE-DECIDE | multiple candidate-set sizes/datasets/judge LLMs；five-sample/few-shot calibration | judge LLMs and candidate generators listed in §4.1 | Not Disclosed | Not Disclosed | candidate-set size varied；token length Not Disclosed | shortlist plus decide/abstain | calibration samples and candidate size varied | Not Disclosed | guarantee success rate、coverage、target agreement | human-preference labels and calibrated author protocol |
-| SF-2026-SKILL-ISSUE | six games、eight human-verified languages；400 games per direction，518,400 total | three open 3–4B models listed in §3 | Not Disclosed | Not Disclosed | game/rules/state/action fixed across language pair；token length Not Disclosed | legal game moves | 400 games per direction | self-play pairs；execution parallelism Not Disclosed | win/loss margins and language-invariance gaps | deterministic game engines plus author analysis |
-| SF-2026-MA-VLA | RoboFactory、RoboTwin2.0、SO101；100 simulation rollouts/config and 20 real episodes/task | Pi0 unified executor plus VLM planner in §5.1 | 2×A800 | Not Disclosed | multi-view observations and atomic prompts；exact length Not Disclosed | joint multi-arm actions | training batch 32 | rollout execution；serving concurrency Not Disclosed | task success and safety-stop observations | simulator/real-task completion under author protocol |
-| SF-2026-CODE-WORLD-MODEL | 157 gameplay takes，about 5.6 h and 9,420 clips；qualitative proxy-following | MiniMax-H3 LoRA plus video renderer/world model | 8×H800 | Not Disclosed | gameplay clips；exact frame/token length Not Disclosed | code transitions and rendered observations；exact length Not Disclosed | Not Disclosed | Not Disclosed | qualitative proxy-following；no matched control/causal SLO | paper authors；qualitative inspection |
-| SF-2026-TAU-AGENT | AI City Track3、FETV、PSI-VQA；2-second caption segments | Gemini captioner、GPT-5.4 agent、Qwen3-VL-8B LoRA | 2×RTX PRO 6000 | Not Disclosed | slow-fast frames、captions and trajectories；exact tokens Not Disclosed | VQA answers；exact length Not Disclosed | Not Disclosed | retrieval/tool iterations；parallelism Not Disclosed | benchmark accuracy and retrieval/task metrics | official benchmark scripts plus paper pipeline |
-| SF-2026-SPECTRAL-ALLOCATION | modded-nanogpt 124M/300M/1B；AdamW/Muon/SAMuon comparisons | 124M、300M、1B decoder models | Not Disclosed | Not Disclosed | training sequences per modded-nanogpt setup；exact length Not Disclosed | next-token prediction | multiple batches as reported in §6.1 | data-parallelism Not Disclosed | validation loss and tokens-to-target | paper authors；held-out loss |
-| SF-2026-PROGROUTER | HumanEval+、MBPP、MATH-500、ASQA multi-step workflows | candidate LLM pools vary by benchmark and are listed in §4.1 | Not Disclosed | Not Disclosed | workflow state/query dependent | step outputs and final answer；length Not Disclosed | Not Disclosed | online per-step routing；concurrency Not Disclosed | task quality、progress gain、cost、latency | benchmark-native scorers under author router |
-| SF-2026-ASYMSPEC | four agent capabilities and two end-to-end benchmarks | Qwen3-32B verifier plus Qwen3-4B drafter on vLLM | Not Disclosed | Not Disclosed | drafter full context；verifier compressed context；lengths vary by task | speculative blocks and verified answer；block cap per §4.2 | Not Disclosed | Not Disclosed | accuracy/F1、throughput、compute | paper authors；benchmark-native scorers |
-| SF-2026-STREAMPI | LIBERO and memory-dependent/precise-perception real tasks | pi0.5 | Not Disclosed | Not Disclosed | variable observation history with random intervals | action chunks；exact horizon task-dependent | Not Disclosed | asynchronous streaming observations；worker concurrency Not Disclosed | task success | simulator/real-task completion under author protocol |
-| SF-2026-PREFIX-SLIDING | GPQA、MATH500、AIME25；1024-sequence throughput sweep | Qwen3-1.7B main；DeepSeek-R1-Distill-Qwen-7B validation | 1×NVIDIA H100 80GB | Not Disclosed | prefix plus sliding window 4096 main；8192 appendix | reasoning budgets up to 32K tokens | 1024 sequences in throughput experiment | 1024 concurrent sequences | tokens/s and task accuracy | benchmark exact-match scorers and runtime instrumentation |
-| SF-2026-ZERO-WAM | RoboTwin seven unseen tasks；dual-Franka real tasks，30 trials/task；HumanGen 74.2K pairs | Wan-2.2-TI2V-5B world-action model；LingBot-VA baseline | 15,360 GPU-hours；GPU type/count Not Disclosed | Not Disclosed | packed variable samples up to 160K tokens/GPU | future robot video then inverse-dynamics actions | variable packed batch | training parallelism Not Disclosed；real evaluation sequentiality Not Disclosed | simulation and real-robot success rate across three seeds/trials | simulator/real-task completion plus author filtering protocol |
 
 ## 3. Review Completion Receipt
 
@@ -419,8 +386,45 @@ Evaluation contract：审阅 commit 96747df 的 diff 与父提交关系；不适
 Evaluation contract：仅核对官方 2026 H1 results 页面；不适用技术 benchmark。证据边界：财务口径不能证明模型能力、训练效率或系统架构，保留 Weekly context。因此本报告只保留与 `WORLDVIEW-FUTURE` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
 <!-- review:SF-2026-MINIMAX-FINANCIAL:end -->
 
+## 4. Benchmark Contracts
 
-## 4. Deep Analysis Selection
+所有数字均保持在作者实验合同内；`Not Disclosed` 表示 exact v1 未给出该字段，不用推断值补齐。
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-OPENAI-HF-INCIDENT | 单次内部 cyber-evaluation 事故；不提供普遍发生率 | highly capable internal-only research model；GPT-5.6 Sol | evaluation sandbox；production 与 sandbox controls 明确区分 | Not Disclosed | adversarial task context，exact token length Not Disclosed | agent actions，exact output length Not Disclosed | Not Disclosed | 单次被监控 agent run；并发 Not Disclosed | incident timeline、unauthorized-action scope、containment/control findings；无性能 SLO | OpenAI Creator Primary 证明事故与内部控制；METR/Redwood Independent Evaluator 仅证明行为评估 |
+| SF-2026-GROUNDHOG-BITFLIP | Alpaca target detection；AGNews、SST-2、Samsum、SQuAD2.0；conversation/reasoning/agentic tasks | Mixtral-8x7B、Phi-3.5-MoE、DeepSeek-V2-Lite、Qwen3-30B-A3B、Qwen3-Coder-Next、GPT-OSS-20B | 3×NVIDIA A100 80GB | Not Disclosed | dataset/task dependent；exact prompt length Not Disclosed | max_new_tokens 1024；plan mode 2048 | Not Disclosed | Not Disclosed | token-length inflation、clean accuracy、ROUGE-1、F1、plan steps | paper authors；task-native scorers |
+| SF-2026-METIS-RUNTIME | 30 matched real-I/O pairs；10-case fault matrix；300 tool results；five-model Read-marker protocol | protocol probe uses five named models；runtime timing has no model | Apple M2 Pro，12 CPU cores，16GB；macOS 26.5.2；Go 1.26.1 | Not Applicable for runtime；model precision Not Disclosed | matched calls/results；token length Not Disclosed | 300 tool results；token length Not Disclosed | 5 calls per pair | Safe、Queue、Exclusive declarations；baseline treats all Exclusive | paired elapsed ms、fault closure、authority evidence | paper authors；paired local runtime harness |
+| SF-2026-GIFT-IFC | vLLM/DistServe prototypes across OPT and Qwen2.5 serving | OPT-13B/30B/66B；Qwen2.5-14B/32B/72B | 1–8×A800 or 1×H100，configuration varies by model | Not Disclosed | ShareGPT requests；length distribution Not Disclosed | ShareGPT outputs；length distribution Not Disclosed | batch sizes 8/16/32 in reported sweeps | request rate varied；exact concurrent-request count Not Disclosed | throughput、TTFT、TPOT、IFT overhead | paper authors；prototype instrumentation |
+| SF-2026-FIELD-TIER-MIN | local action-mediation corpus、per-projection leakage analysis 与一次 identifier incident | Not Disclosed — no model is used by this local mediation evaluation | local implementation；hardware Not Disclosed | Not Disclosed — numerical model precision is not part of the local mediation evaluation | structured action fields；length Not Applicable | projection/attestation artifacts；length Not Applicable | corpus aggregate；exact batch Not Disclosed | Not Disclosed | leaked-field count、digest/attestation correctness；无 latency SLO | paper authors；corpus and incident audit |
+| SF-2026-CASKG | ALFWorld ID-140 与 ScienceWorld U211；graph/retrieval ablations | six LLMs in §4.1；Qwen3-Embedding-8B retrieval component | Not Disclosed | Not Disclosed | environment trajectories；token length Not Disclosed | actions until task termination；token length Not Disclosed | Not Disclosed | Not Disclosed | task success/score、environment steps、retrieval quality | paper authors；environment-native evaluators |
+| SF-2026-AGENTIC-GAME-WM | UnitySceneBench and generated-game trajectories；research agenda plus bounded study | continued-pretraining model Not Disclosed；Qwen3.6-35B-A3B judge | 8×A100 workers disclosed for data/training path | Not Disclosed | game trajectories；exact token/frame length Not Disclosed | generated trajectories；exact length Not Disclosed | global batch 4096 | worker parallelism disclosed；serving concurrency Not Disclosed | MLLM-judge score plus human audit；not a matched system benchmark | Qwen3.6-35B-A3B judge and human audit under author protocol |
+| SF-2026-TOPAS | three synthetic DAGs and two MetaGPT workflows on SGLang v0.5.3 | workload model configurations in §V.A；single canonical model Not Applicable | 1×NVIDIA A100 80GB | Not Disclosed | DAG/workflow dependent；exact token length Not Disclosed | query outputs；exact length Not Disclosed | fixed query sets；batch Not Disclosed | ready-agent concurrency varied by DAG/workflow | mean/p99 JCT、request throughput、cache hit/reuse | paper authors；SGLang instrumentation |
+| SF-2026-POLYMEMDB | 221 relationship construction demonstration；no matched benchmark or fault injection | Not Disclosed | Not Disclosed | Not Disclosed | demonstration records；length Not Disclosed | memory graph/records；length Not Disclosed | Not Disclosed | Not Disclosed | interface/relationship construction only；no quantitative SLO | paper authors；demonstration only |
+| SF-2026-V-RUBRICS | 50,248 samples from 17 sources；rubric GRPO versus answer-only GRPO | Qwen3-VL-8B actor；Qwen3-VL-235B-A22B judges | 8 GPUs per node；GPU type and node count Not Disclosed | judge FP8；actor precision Not Disclosed | prompt max 8192 tokens | response max 8192 tokens | rubric 192；answer 480；PPO mini-batch 192/96 | rubric generation concurrent per item；exact worker count Not Disclosed | benchmark task metrics、rubric reward quality、component ablation | paper authors；model judges plus benchmark scorers |
+| SF-2026-RA-VLA | LIBERO and real UR5e tasks；retrieval scale to 10^7 candidates | flow-matching VLA；SigLIP2 retriever | 1×NVIDIA A100 | Not Disclosed | demonstration 128 steps split into 15 segments | action chunk with 4 denoising steps | Not Disclosed | latency averaged over 1000 runs | task success and inference latency | paper authors；LIBERO/real-robot task success |
+| SF-2026-JIT-AGENT | nine benchmarks；OpenCode/Claude Code and other harness comparisons | DeepSeek、GLM、MiMo、Qwen model pairs as listed in §6.1 | Not Disclosed | Not Disclosed | benchmark dependent | benchmark dependent | Not Disclosed | Not Disclosed | task reward、mean latency、monetary cost | benchmark-native scorers under author harness |
+| SF-2026-RETRIEVALROUTER | 11 document-retrieval benchmarks；80/10/10 in-domain split；five retrieval pipelines | frozen Qwen3-0.6B router with LoRA query encoder | 1×NVIDIA H100 80GB；about 40GB combined indexes | Not Disclosed | query/document lengths dataset-dependent | ranked retrieval results；cutoff dataset-dependent | Not Disclosed | one query routed per decision；serving concurrency Not Disclosed | nDCG、MRR、Recall、mean/P95 latency、index footprint | paper authors；standard retrieval metrics |
+| SF-2026-PSRL | production traces and agentic-RL prefix-sharing update workloads | Qwen2.5-1.5B/7B；Qwen3-235B | 4×A100 80GB per node；Xeon；200Gb/s intra-node and 100Gb RDMA | Not Disclosed | prompt/generation lengths per Table 2 | rollout lengths per Table 2 | rollout N and update batches per Table 2 | DP/TP/EP/PP configurations disclosed | update throughput、end-to-end latency、memory；no production tail SLO | paper authors；runtime instrumentation |
+| SF-2026-LMSM | HarmBench、XSTest；SAE/transcoder/dense probes on Transformers/vLLM | Qwen3-4B thinking | 1×NVIDIA H100 | backend-dependent；judge labeling uses bfloat16 where stated | prompts per benchmark；exact length Not Disclosed | max 256 tokens | up to 32 active sequences | 32 active sequences | ASR、FRR、throughput | paper authors；benchmark labels and rule-specific evaluators |
+| SF-2026-REDIR | two agent-safety benchmarks；three model families；eight held-out tool domains | Qwen3.5-9B、Ministral-3-8B-Instruct、Gemma-4-E4B | NVIDIA A100 | Not Disclosed | multi-turn trajectories；exact tokens Not Disclosed | action trajectories；exact tokens Not Disclosed | Not Disclosed | Not Disclosed | ASR、SSR/benign fidelity、FPR、latency/memory overhead | paper authors；benchmark task/safety scorers |
+| SF-2026-TAILSFT | math/code SFT diagnostics and downstream GRPO | OLMo-3 7B | Not Disclosed | Not Disclosed | code 2048；math 4096 | sampled solutions for pass@16/pass@1；exact generation cap Not Disclosed | effective batches disclosed in Appendix D | Not Disclosed | pass@16、pass@1、training loss/coverage diagnostic | paper authors；task execution scorers |
+| SF-2026-TACFORCING | six UniVTAC simulations and three real contact-rich tasks | pi0.5 in simulation；GR00T N1.7 on real tasks | Not Disclosed | Not Disclosed | tactile/vision history；horizon H=40 and K=8 on real setup | streaming action chunks；exact dimensionality task-dependent | global batch 256 | streaming control loop；worker concurrency Not Disclosed | task success rate | paper authors；simulator and real-task completion |
+| SF-2026-SKILLSHIELD | RedCode attacks、two non-adaptive jailbreak families、731 benign prompts | six LLM/coding-agent models listed in §6.1 | Not Disclosed | Not Disclosed | skill cap 10,000 characters, about 2,400 tokens；one skill per session | tool-loop outputs；exact length Not Disclosed | evaluation repetitions per configuration；batch Not Disclosed | Not Disclosed | ASR、average severity、FPR/refusal rate | execution-based benchmark plus Qwen3.6-Plus judge for generation cases |
+| SF-2026-LOCALIZE-DECIDE | multiple candidate-set sizes/datasets/judge LLMs；five-sample/few-shot calibration | judge LLMs and candidate generators listed in §4.1 | Not Disclosed | Not Disclosed | candidate-set size varied；token length Not Disclosed | shortlist plus decide/abstain | calibration samples and candidate size varied | Not Disclosed | guarantee success rate、coverage、target agreement | human-preference labels and calibrated author protocol |
+| SF-2026-SKILL-ISSUE | six games、eight human-verified languages；400 games per direction，518,400 total | three open 3–4B models listed in §3 | Not Disclosed | Not Disclosed | game/rules/state/action fixed across language pair；token length Not Disclosed | legal game moves | 400 games per direction | self-play pairs；execution parallelism Not Disclosed | win/loss margins and language-invariance gaps | deterministic game engines plus author analysis |
+| SF-2026-MA-VLA | RoboFactory、RoboTwin2.0、SO101；100 simulation rollouts/config and 20 real episodes/task | Pi0 unified executor plus VLM planner in §5.1 | 2×A800 | Not Disclosed | multi-view observations and atomic prompts；exact length Not Disclosed | joint multi-arm actions | training batch 32 | rollout execution；serving concurrency Not Disclosed | task success and safety-stop observations | simulator/real-task completion under author protocol |
+| SF-2026-CODE-WORLD-MODEL | 157 gameplay takes，about 5.6 h and 9,420 clips；qualitative proxy-following | MiniMax-H3 LoRA plus video renderer/world model | 8×H800 | Not Disclosed | gameplay clips；exact frame/token length Not Disclosed | code transitions and rendered observations；exact length Not Disclosed | Not Disclosed | Not Disclosed | qualitative proxy-following；no matched control/causal SLO | paper authors；qualitative inspection |
+| SF-2026-TAU-AGENT | AI City Track3、FETV、PSI-VQA；2-second caption segments | Gemini captioner、GPT-5.4 agent、Qwen3-VL-8B LoRA | 2×RTX PRO 6000 | Not Disclosed | slow-fast frames、captions and trajectories；exact tokens Not Disclosed | VQA answers；exact length Not Disclosed | Not Disclosed | retrieval/tool iterations；parallelism Not Disclosed | benchmark accuracy and retrieval/task metrics | official benchmark scripts plus paper pipeline |
+| SF-2026-SPECTRAL-ALLOCATION | modded-nanogpt 124M/300M/1B；AdamW/Muon/SAMuon comparisons | 124M、300M、1B decoder models | Not Disclosed | Not Disclosed | training sequences per modded-nanogpt setup；exact length Not Disclosed | next-token prediction | multiple batches as reported in §6.1 | data-parallelism Not Disclosed | validation loss and tokens-to-target | paper authors；held-out loss |
+| SF-2026-PROGROUTER | HumanEval+、MBPP、MATH-500、ASQA multi-step workflows | candidate LLM pools vary by benchmark and are listed in §4.1 | Not Disclosed | Not Disclosed | workflow state/query dependent | step outputs and final answer；length Not Disclosed | Not Disclosed | online per-step routing；concurrency Not Disclosed | task quality、progress gain、cost、latency | benchmark-native scorers under author router |
+| SF-2026-ASYMSPEC | four agent capabilities and two end-to-end benchmarks | Qwen3-32B verifier plus Qwen3-4B drafter on vLLM | Not Disclosed | Not Disclosed | drafter full context；verifier compressed context；lengths vary by task | speculative blocks and verified answer；block cap per §4.2 | Not Disclosed | Not Disclosed | accuracy/F1、throughput、compute | paper authors；benchmark-native scorers |
+| SF-2026-STREAMPI | LIBERO and memory-dependent/precise-perception real tasks | pi0.5 | Not Disclosed | Not Disclosed | variable observation history with random intervals | action chunks；exact horizon task-dependent | Not Disclosed | asynchronous streaming observations；worker concurrency Not Disclosed | task success | simulator/real-task completion under author protocol |
+| SF-2026-PREFIX-SLIDING | GPQA、MATH500、AIME25；1024-sequence throughput sweep | Qwen3-1.7B main；DeepSeek-R1-Distill-Qwen-7B validation | 1×NVIDIA H100 80GB | Not Disclosed | prefix plus sliding window 4096 main；8192 appendix | reasoning budgets up to 32K tokens | 1024 sequences in throughput experiment | 1024 concurrent sequences | tokens/s and task accuracy | benchmark exact-match scorers and runtime instrumentation |
+| SF-2026-ZERO-WAM | RoboTwin seven unseen tasks；dual-Franka real tasks，30 trials/task；HumanGen 74.2K pairs | Wan-2.2-TI2V-5B world-action model；LingBot-VA baseline | 15,360 GPU-hours；GPU type/count Not Disclosed | Not Disclosed | packed variable samples up to 160K tokens/GPU | future robot video then inverse-dynamics actions | variable packed batch | training parallelism Not Disclosed；real evaluation sequentiality Not Disclosed | simulation and real-robot success rate across three seeds/trials | simulator/real-task completion plus author filtering protocol |
+
+## 5. Deep Analysis Selection
 
 <!-- validator:deep-analysis-selection-v1 -->
 | Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
@@ -485,7 +489,7 @@ Prompt policy 当时合理，因为它部署快且不需要改 runtime；但当 
 <!-- analysis-decision:SF-2026-ZERO-WAM:start -->《Zero-WAM: In-Context World-Action Modeling from Human Videos for Open-Ended Task Generalization》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-ZERO-WAM:end -->
 <!-- analysis-decision:SF-2026-HY-MT2-REVISION:start -->《Hy-MT2 README max_context revision》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-HY-MT2-REVISION:end -->
 
-## 5. Books Comparison
+## 6. Books Comparison
 
 <!-- validator:books-comparison-v1 -->
 | Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
@@ -671,8 +675,7 @@ Prompt policy 当时合理，因为它部署快且不需要改 runtime；但当 
 <!-- delta:SF-2026-ZERO-WAM:start -->当前书稿 diff 已把以下长期机制写入该 owner：把 human video 作为 in-context task contract；causal model 先预测 future robot video 再由 inverse dynamics 预测 action；IFP 强迫利用 human prefix，HumanGen 合成74.2K pairs；并保留边界：synthetic video/VLM filter 会引入偏差；仅 tabletop、小样本实机，embodiment gap 与 artifact 均未闭合。 相邻章节对读：books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251;books/part-04-training-system/27-data.md#L214。World Models 拥有 latent transition，Data 拥有 paired-data construction；human-video task contract 到 robot action 的 closed loop 属于 Embodied VLA。<!-- delta:SF-2026-ZERO-WAM:end -->
 <!-- books-review:SF-2026-ZERO-WAM:end -->
 
-
-## 6. Semantic Audit
+## 7. Semantic Audit
 
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
@@ -682,29 +685,29 @@ Prompt policy 当时合理，因为它部署快且不需要改 runtime；但当 
 | SA-20260827-DEEP | fresh-context:aug27_28_fresh_audit | deep_analysis_selection | validator:deep-analysis-selection-v1 | — | 三个长叙事单元的共享状态 owner 与 subsumption 已复核；叙事上限未替代逐 family Review。 | passed |
 | SA-20260827-BOOKS | fresh-context:aug27_28_fresh_audit | books | validator:books-comparison-v1; review:SF-2026-AGENTIC-GAME-WM; review:SF-2026-MINIMAX-FINANCIAL | — | 30/30 技术 family 比较、18 项 Integrate、canonical owner、相邻章节和 evidence boundary 均已复核；两项 Weekly Only disposition 也已逐 family 验收。 | passed |
 
-## 7. Ignored Noise
+## 8. Ignored Noise
 
 - 新闻转载、社交讨论和没有 primary artifact 的 benchmark 宣传不进入 denominator。
 - HF recommendation date 不覆盖 arXiv v1 first-public date；同一 family 不因推荐或仓库更新重复评分。
 - Repository `pushed_at`、sitemap `lastmod`、财报发布时间和 branch merge 不自动等于新技术机制。
 
-## 8. Recommended Action
+## 9. Recommended Action
 
 - 保留 18 项已通过 fresh-context owner/adjacent 与证据边界审计的 Books Integration；后续新证据按同一 Source Family revision 处理。
 - 12 项 `No Change — Existing Coverage` 保留为 implementation/evaluation evidence，不在章末堆论文列表。
 - Hy-MT2 只保留 8192 示例配置的版本事实；UniRL maintenance、MiniMax 财报和观点性 game-data 路线不进入机制正文。
 
-## 9. Repository Changes
+## 10. Repository Changes
 
 - 完成 `papers/2026/08/27/README.md` 的 V2.1 表格、34 项 Source Review、Deep Analysis Selection、Books Comparison、Semantic Audit 与 Gate 状态。
 - 本次 27/28 日共享主流程已把本日 18 项长期机制增量写入对应 canonical owner；不生成 Thursday Weekly，不修改 ROADMAP 或 LEARNING_STATE，不 stage、commit 或 push。
 
-## 10. Open Questions
+## 11. Open Questions
 
 - HF listing export 仍不可用；Weekly 应重新执行一周 bounded discovery，但不能用 HF 日期覆盖 arXiv v1 owner date。
 - Prefix Sliding、Zero-WAM、Code World Model 等仍缺生产级 tail-SLO、长期一致性或安全 matched evidence；后续证据应作为同 family revision 处理。
 
-## 11. Sources
+## 12. Sources
 
 ### 模型与研究机构
 
@@ -751,3 +754,9 @@ Prompt policy 当时合理，因为它部署快且不需要改 runtime；但当 
 - Tencent-Hunyuan Hy-MT2 exact revision, 2026-08-26: https://github.com/Tencent-Hunyuan/Hy-MT2/commit/ff1903ecaa724e10951a23c16817a2413c752b35
 - Tencent-Hunyuan UniRL branch sync, 2026-08-26: https://github.com/Tencent-Hunyuan/UniRL/commit/96747df21c2940b6cd68fe38cfecb93f63cc628d
 - MiniMax first-half 2026 financial results, 2026-08-26: https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160
+
+## 13. Final Status
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；unresolved findings=0。
+
+本节只汇总前述收据与 fresh-context 审计的最终状态，不以格式校验替代语义验收。

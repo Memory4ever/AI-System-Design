@@ -262,6 +262,23 @@ speedup 当作生产常数。FullKV、静态 Top-k 和规则窗口在 correctnes
 
 ### 从统一保留到 workload-aware eviction
 
+### 跨 Turn Eviction 必须保留 Surviving-row Identity
+
+多轮对话若只按当前 turn attention eviction，可能删除后续 intent 仍需要的历史 token；反过来保留全部历史又让
+KV 线性增长。一个受限分支维护跨 turn `QueryMemory` 作为 retention proposal，并用 sentinel/slot map 把 surviving
+K/V rows 重定向到紧凑布局，同时保持 logical position、RoPE phase 与 prefix-cache identity：
+
+```text
+current query + versioned cross-turn intent state
+-> keep/evict proposal
+-> sentinel slot remap
+-> compact physical rows with unchanged logical identity
+```
+
+QueryMemory 不拥有事实或授权，只影响派生 cache retention；误判时必须能回退重算。新增 state 带来 intent drift、
+slot-map correctness、metadata 和 eviction overhead。作者 Qwen3-8B/Qwen2.5-14B、BCP 与 8k budget 只支持所测
+quality/memory slice，`8k` 不是 latency SLO，也不证明任意 prefix sharing 安全。
+
 #### Pre-RoPE Calibration 与 Workload-semantic Selection 是两条正交路线
 
 纯 post-RoPE recent-attention 统计容易把位置旋转与内容重要性混在一起。对特定模型，可在 pre-RoPE Q/K 上
@@ -805,7 +822,51 @@ KV Cache 是 LLM Serving 的核心状态契约：它以显存换取历史 comput
 
 下一章讨论 Continuous Batching：请求长度和结束时间不同，scheduler 怎样在每一轮重新组合这些携带 KV state 的请求。
 
+<!-- recovered-daily-20260623:INFER-KV-CACHE:start -->
+## 2026-06-23 evidence integration — INFER-KV-CACHE
+
+相邻章 `books/part-05-inference-system/46-continuous-batching.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-23581**：Kamera: Unified Position-Invariant Multimodal KV Cache for Training-Free Reuse 的 exact-v1 机制为：We show this recompute is avoidable, and identify exactly what naive KV reuse loses: the cross-chunk conditioning a chunk absorbs from its neighbours. 因此 把 cache position、eviction/quantization policy、跨模态 identity 与 dense recompute fallback 绑定。 该 family 的 failure pressure 是：Blind reuse therefore leaves single-hop recall intact while halving multi-hop accuracy; this is the failure mode prior position-independent caches, designed for single-context or single-image reuse, do not address. 披露的 evaluation signal 是：We show this recompute is avoidable, and identify exactly what naive KV reuse loses: the cross-chunk conditioning a chunk absorbs from its neighbours. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-23961**：Forget Without Compromise: Nexus Sampling for Streaming KV-Cache Eviction Under Fixed Budgets 的 exact-v1 机制为：To address this challenge, we propose Nexus Sampling, a training-free eviction method that pairs Nexus scoring, an iterative walk over direct attention that surfaces bridge tokens, with weighted reservoir sampling, which retains tokens with inclusion probability in place of deterministic top-$K$. 因此 把 cache position、eviction/quantization policy、跨模态 identity 与 dense recompute fallback 绑定。 该 family 的 failure pressure 是：To address this challenge, we propose Nexus Sampling, a training-free eviction method that pairs Nexus scoring, an iterative walk over direct attention that surfaces bridge tokens, with weighted reservoir sampling, which retains tokens with inclusion probability in place of deterministic top-$K$. 披露的 evaluation signal 是：Theoretically, we show that Nexus Sampling dominates deterministic top-$K$ in long-run survival of subtly important tokens. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
+- **SF-2026-ARXIV-2606-24033**：RoPE-Aware Bit Allocation for KV-Cache Quantization 的 exact-v1 机制为：We introduce Block-GTQ, a RoPE-aware bit allocator for key-cache quantization built on TurboQuant-MSE(TQ-MSE). 因此 把 cache position、eviction/quantization policy、跨模态 identity 与 dense recompute fallback 绑定。 该 family 的 failure pressure 是：Under RoPE, however, a key's contribution to a future attention logit decomposes into a position-dependent sum over two-dimensional frequency blocks. 披露的 evaluation signal 是：On a single H800 GPU with Qwen2.5-3B-Instruct, packed K3V3 achieves 3.24x KV-cache compression with fp16-comparable quality, runs 1.34x faster than fp16 FlashAttention2 at 128K context, reduces peak memory from 56.31 GB to 19.85 GB, and remains feasible at 256K and 512K where fp16 OOMs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-23581` — primary `arXiv:2606.23581v1`; Method=`arXiv:2606.23581v1 — §3 The operator: relocate exactly, patch the conditioning; §5 Reuse beyond the window`; Evaluation=`arXiv:2606.23581v1 — §6 Fidelity, deployment, and cost; §C.1 Reuse breaks multi-hop accuracy; the patch restores it; §C.6 Memory cost and bf16-faithful live deployment`; non-proof=`arXiv:2606.23581v1 — §Scope.; §B A menu of cross-chunk reuse operating points and its boundary; §D The reuse safety envelope: when a cached patch survives context drift`; fallback=该 family 的 failure pressure 是：Blind reuse therefore leaves single-hop recall intact while halving multi-hop accuracy; this is the failure mode prior position-independent caches, designed for single-context or single-image reuse, do not address. 披露的 evaluation signal 是：We show this recompute is avoidable, and identify exactly what naive KV reuse loses: the cross-chunk conditioning a chunk absorbs from its neighbours. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-23961` — primary `arXiv:2606.23961v1`; Method=`arXiv:2606.23961v1 — §2 Nexus Sampling; §2.2 Nexus Scoring; §2.3 Weighted Reservoir Block Selection`; Evaluation=`arXiv:2606.23961v1 — §5 Experiments; §5.1 Setup; §5.2–§5.6 Results and Ablations`; non-proof=`arXiv:2606.23961v1 — §7 Conclusion; §A.5 Eviction Quality Under Approximate Future Utility`; fallback=该 family 的 failure pressure 是：To address this challenge, we propose Nexus Sampling, a training-free eviction method that pairs Nexus scoring, an iterative walk over direct attention that surfaces bridge tokens, with weighted reservoir sampling, which retains tokens with inclusion probability in place of deterministic top-$K$. 披露的 evaluation signal 是：Theoretically, we show that Nexus Sampling dominates deterministic top-$K$ in long-run survival of subtly important tokens. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
+- `SF-2026-ARXIV-2606-24033` — primary `arXiv:2606.24033v1`; Method=`arXiv:2606.24033v1 — §RoPE-Aware Bit Allocation for KV-Cache Quantization; §1 Introduction [RoPE-Aware Bit Allocation for KV-Cache Quantization exact-v1 method boundary]`; Evaluation=`arXiv:2606.24033v1 — §6.3 Downstream Evaluation`; non-proof=`arXiv:2606.24033v1 — §7 Conclusion`; fallback=该 family 的 failure pressure 是：Under RoPE, however, a key's contribution to a future attention logit decomposes into a position-dependent sum over two-dimensional frequency blocks. 披露的 evaluation signal 是：On a single H800 GPU with Qwen2.5-3B-Instruct, packed K3V3 achieves 3.24x KV-cache compression with fp16-comparable quality, runs 1.34x faster than fp16 FlashAttention2 at 128K context, reduces peak memory from 56.31 GB to 19.85 GB, and remains feasible at 256K and 512K where fp16 OOMs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:INFER-KV-CACHE:end -->
+
+<!-- recovered-daily-20260624:INFER-KV-CACHE:start -->
+## 2026-06-24 evidence integration — INFER-KV-CACHE
+
+相邻章 `books/part-05-inference-system/47-pagedattention.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24467**：KV eviction 从统一 token score 改为 semantic-retrieval heads 选 token、error-aware controller 按层分配 cache budget；压缩决定属于 cache manager，不修改模型语义 owner。 LongBench/NIAH 与选定模型不证明所有 head 都稳定承载语义检索；head drift、低命中或质量回退时恢复更大 cache/全 KV，与 quantization/prefill acceleration 仅证明可组合。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24467: `arXiv:2606.24467v1`; exact-v1 URL=`https://arxiv.org/html/2606.24467v1`; Method=`https://arxiv.org/html/2606.24467v1 — §3 CompressKV; Retrieval Head Identification; Layer-Adaptive Allocation`; Evaluation=`https://arxiv.org/html/2606.24467v1 — §4 Experiments; LongBench/NIAH; Memory and Latency`; Non-proof=`LongBench/NIAH 与选定模型不证明所有 head 都稳定承载语义检索；head drift、低命中或质量回退时恢复更大 cache/全 KV，与 quantization/prefill acceleration 仅证明可组合。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:INFER-KV-CACHE:end -->
+
+<!-- recovered-daily-20260625:INFER-KV-CACHE:start -->
+## 2026-06-25 evidence integration — INFER-KV-CACHE
+
+- **SF-2026-ARXIV-2606-26472**：`Epiphany score from forward-pass representation change; attention-matrix-free eviction` 所定义的源特定机制用于以表征变化分数驱动逐 token KV 驱逐，并保留完整 KV 回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Model/task transfer and representation-score drift are unproved; quality regression requires full-KV fallback` 是 `Epiphany-Aware KV Cache Eviction Without the Attention Matrix` 的 source-specific 反例/局限边界；若运行条件离开 `Long-reasoning cache/quality evaluation and 16x feasible-context claim` 的验证域，`INFER-KV-CACHE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26472**：Primary `arXiv:2606.26472v1`；Method `https://arxiv.org/html/2606.26472v1 — §Epiphany score from forward-pass representation change; attention-matrix-free eviction`；Evaluation `https://arxiv.org/html/2606.26472v1 — §Long-reasoning cache/quality evaluation and 16x feasible-context claim`；未证明边界 `https://arxiv.org/html/2606.26472v1 — §Model/task transfer and representation-score drift are unproved; quality regression requires full-KV fallback`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:INFER-KV-CACHE:end -->
+
 ## Review notes
+
+- IntentKV（arXiv:2606.09916v1；Status: Experimental）：用于把 QueryMemory 与 sentinel slot-map eviction 纳入跨 turn KV identity；证据限于作者模型/BCP/8k budget，不证明生产 latency、通用 intent 或安全语义保持。https://arxiv.org/html/2606.09916v1
 
 - TwinKV（固定预算内 donor/orphan membership swap；Status: Experimental）：https://arxiv.org/abs/2608.27128v1
   - 证据边界：作者模型与任务支持在既有 pruning 后按 pairwise redundancy 换回部分重要 orphan、换出冗余 donor；不证明该

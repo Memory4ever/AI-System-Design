@@ -90,6 +90,18 @@ LLM 输出非确定性使逐响应完全相等不现实。应比较 schema、saf
 
 ## Capacity、Failure 与 Recovery
 
+<!-- daily-20260621:platform-production:start -->
+### Load test 是 SLO boundary search
+
+ML serving load test 以 adaptive capacity search 而非固定 traffic sweep，联合寻找满足 latency/SLO 的最大 load 与资源点，并保留 warm-up、arrival 和 model artifact identity。
+
+**Trade-off、failure、共存与回退。** 14 个匿名生产模型偏向 recommendation/ranking；P90 七日观测吞吐可能低估真实最大 capacity，且结论不能代表 LLM continuous batching。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-22013` — primary `arXiv:2606.22013v1`；exact-v1 URL=`https://arxiv.org/html/2606.22013v1`；Method=`https://arxiv.org/html/2606.22013v1 — §2 System Design and Methodology; §2.2 Load Testing Strategies; §2.3 Health Assessment Engine`；Evaluation=`https://arxiv.org/html/2606.22013v1 — §3 Experimental Methodology; §4 Results`；Non-proof=`https://arxiv.org/html/2606.22013v1 — §5 Discussion; Threats to Validity`。
+<!-- daily-20260621:platform-production:end -->
+
 上线前应验证：
 
 - steady、burst 与 overload workload；

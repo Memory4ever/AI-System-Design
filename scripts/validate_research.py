@@ -32,6 +32,23 @@ SEMANTIC_AUDIT_MARKER = "<!-- validator:semantic-audit-v1 -->"
 BENCHMARK_MARKER = "<!-- validator:benchmark-contract-v1 -->"
 MATERIALS_REQUEST_MARKER = "<!-- validator:materials-request-v1 -->"
 
+DAILY_PRESENTATION_HEADINGS = [
+    "## Executive Summary",
+    "## 1. Coverage",
+    "## 2. Candidate Ledger",
+    "## 3. Review Completion Receipt",
+    "## 4. Benchmark Contracts",
+    "## 5. Deep Analysis Selection",
+    "## 6. Books Comparison",
+    "## 7. Semantic Audit",
+    "## 8. Ignored Noise",
+    "## 9. Recommended Action",
+    "## 10. Repository Changes",
+    "## 11. Open Questions",
+    "## 12. Sources",
+    "## 13. Final Status",
+]
+
 REGISTRY_COLUMNS = [
     "Source ID",
     "Source Group",
@@ -533,18 +550,26 @@ def _normalized_body_sha256(body: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def validate_markdown_structure(text: str) -> List[str]:
-    """Check heading continuity and balanced fenced code blocks."""
+def _markdown_heading_entries(text: str) -> Tuple[List[Tuple[int, int, str, int]], List[str]]:
+    """Return real Markdown headings and fence errors.
+
+    Each entry is ``(line number, level, heading, character offset)``.
+    Headings shown inside fenced examples are excluded so examples cannot
+    mutate the reader-facing report interface.
+    """
+    headings: List[Tuple[int, int, str, int]] = []
     errors: List[str] = []
     open_fence: Optional[Tuple[str, int, int]] = None
-    previous_heading: Optional[int] = None
+    offset = 0
 
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    for line_number, line_with_ending in enumerate(text.splitlines(keepends=True), start=1):
+        line = line_with_ending.rstrip("\r\n")
         if open_fence is None:
             opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
             if opening:
                 marker = opening.group(1)
                 open_fence = (marker[0], len(marker), line_number)
+                offset += len(line_with_ending)
                 continue
         else:
             closing = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", line)
@@ -552,22 +577,185 @@ def validate_markdown_structure(text: str) -> List[str]:
                 marker = closing.group(1)
                 if marker[0] == open_fence[0] and len(marker) >= open_fence[1]:
                     open_fence = None
-            continue
-        if open_fence is not None:
+            offset += len(line_with_ending)
             continue
 
         heading_match = re.match(r"^(#{1,6})\s+\S", line)
-        if not heading_match:
-            continue
-        level = len(heading_match.group(1))
+        if heading_match:
+            headings.append((line_number, len(heading_match.group(1)), line.strip(), offset))
+        offset += len(line_with_ending)
+
+    if open_fence is not None:
+        errors.append(f"line {open_fence[2]}: unclosed code fence")
+    return headings, errors
+
+
+def validate_markdown_structure(text: str) -> List[str]:
+    """Check heading continuity and balanced fenced code blocks."""
+    headings, errors = _markdown_heading_entries(text)
+    previous_heading: Optional[int] = None
+
+    for line_number, level, _heading, _offset in headings:
         if previous_heading is not None and level > previous_heading + 1:
             errors.append(
                 f"line {line_number}: heading level jumps from H{previous_heading} to H{level}"
             )
         previous_heading = level
+    return errors
 
-    if open_fence is not None:
-        errors.append(f"line {open_fence[2]}: unclosed code fence")
+
+def validate_daily_presentation(text: str, metadata: Mapping[str, str]) -> List[str]:
+    """Keep every V2.1 Daily on one stable reader-facing schema."""
+    if metadata.get("Report Type") != "Daily":
+        return []
+
+    errors: List[str] = []
+    report_date = metadata.get("Window End", "")
+    expected_title = f"# Daily Research — {report_date}"
+    lines = text.splitlines()
+    first_line = lines[0].strip() if lines else ""
+    if first_line != expected_title:
+        errors.append(f"Daily title must be {expected_title!r}; found {first_line!r}")
+
+    heading_entries, _fence_errors = _markdown_heading_entries(text)
+    h2_entries = [entry for entry in heading_entries if entry[1] == 2]
+    first_h2_line = h2_entries[0][0] if h2_entries else len(lines) + 1
+    preamble_lines = [line.strip() for line in lines[1 : first_h2_line - 1] if line.strip()]
+    expected_labels = ["Research Date", "Timezone", "Strict Window", "Contract", "Status"]
+    parsed_preamble: Dict[str, str] = {}
+    observed_labels: List[str] = []
+    for line in preamble_lines:
+        match = re.fullmatch(r"\*\*([^*]+):\*\*\s*(.*)", line)
+        if match:
+            observed_labels.append(match.group(1))
+            parsed_preamble[match.group(1)] = match.group(2).strip()
+        else:
+            observed_labels.append(f"<unexpected:{line}>")
+    if observed_labels != expected_labels:
+        errors.append(
+            "Daily canonical preamble/header must contain exactly one ordered field for "
+            + " -> ".join(expected_labels)
+        )
+        for label in expected_labels:
+            if observed_labels.count(label) != 1:
+                errors.append(
+                    f"Daily canonical header is missing or duplicated in the preamble: {label}"
+                )
+
+    if parsed_preamble.get("Research Date") != report_date:
+        errors.append(
+            f"Daily canonical preamble Research Date must match metadata Window End {report_date!r}"
+        )
+    if parsed_preamble.get("Timezone") != "Asia/Shanghai":
+        errors.append("Daily canonical preamble Timezone must be Asia/Shanghai")
+
+    try:
+        report_day = date.fromisoformat(report_date)
+        expected_start = (report_day - timedelta(days=1)).isoformat()
+        expected_window = f"{expected_start} 09:00:00 ～ {report_date} 09:00:00"
+    except ValueError:
+        expected_window = ""
+    strict_window = parsed_preamble.get("Strict Window", "")
+    if (
+        not expected_window
+        or expected_window not in strict_window
+        or not re.search(r"Asia/Shanghai|北京时间", strict_window)
+    ):
+        errors.append(
+            "Daily canonical preamble Strict Window must expose the exact previous-day "
+            "09:00 to report-day 09:00 Asia/Shanghai window"
+        )
+
+    contract_version = metadata.get("Contract Version", "")
+    contract_text = parsed_preamble.get("Contract", "")
+    if not contract_version or not contract_text.startswith(contract_version):
+        errors.append(
+            f"Daily canonical preamble Contract must start with metadata Contract Version {contract_version!r}"
+        )
+
+    actual_headings = [entry[2] for entry in h2_entries]
+    if actual_headings != DAILY_PRESENTATION_HEADINGS:
+        errors.append(
+            "Daily canonical H2 sequence mismatch; expected "
+            + " -> ".join(DAILY_PRESENTATION_HEADINGS)
+        )
+
+    status_text = parsed_preamble.get("Status", "")
+    if status_text:
+        completion_value = metadata.get("Completion Status", "")
+        if completion_value and not re.match(
+            rf"^{re.escape(completion_value)}(?:\b|[；;,，。])", status_text
+        ):
+            errors.append(
+                f"Daily Status header does not expose Completion Status {completion_value!r}"
+            )
+        for gate_name in ("Coverage", "Evidence", "Books"):
+            gate_value = metadata.get(f"{gate_name} Gate", "")
+            if gate_name not in status_text:
+                errors.append(f"Daily Status header does not summarize {gate_name} Gate")
+            elif gate_value and not re.search(
+                rf"\b{re.escape(gate_name)}\b[^A-Za-z0-9]{{0,8}}{re.escape(gate_value)}\b",
+                status_text,
+            ):
+                errors.append(
+                    f"Daily Status header does not expose {gate_name} Gate {gate_value!r}"
+                )
+
+    h2_bounds = {entry[2]: entry[3] for entry in h2_entries}
+    final_start = h2_bounds.get("## 13. Final Status")
+    if final_start is not None:
+        final_body = text[final_start + len("## 13. Final Status") :]
+        completion_value = metadata.get("Completion Status", "")
+        if completion_value and not re.search(
+            rf"\bCompletion(?: Status)?\s*[=:：]\s*`?{re.escape(completion_value)}`?\b",
+            final_body,
+            flags=re.IGNORECASE,
+        ):
+            errors.append(
+                f"Daily Final Status does not expose Completion Status {completion_value!r}"
+            )
+        for gate_name in ("Coverage", "Evidence", "Books"):
+            gate_value = metadata.get(f"{gate_name} Gate", "")
+            if gate_value and not re.search(
+                rf"\b{re.escape(gate_name)}\s*[=:：]\s*`?{re.escape(gate_value)}`?\b",
+                final_body,
+                flags=re.IGNORECASE,
+            ):
+                errors.append(
+                    f"Daily Final Status does not expose {gate_name} Gate {gate_value!r}"
+                )
+        finding_match = re.search(
+            r"(?:unresolved\s+findings?|未解决\s*findings?)\s*[=:：为]?\s*`?(\d+)`?",
+            final_body,
+            flags=re.IGNORECASE,
+        )
+        if not finding_match:
+            errors.append("Daily Final Status must expose an explicit unresolved finding count")
+        elif (
+            metadata.get("Completion Status") == "Complete"
+            and metadata.get("Coverage Gate") == "Closed"
+            and metadata.get("Evidence Gate") == "Passed"
+            and metadata.get("Books Gate") == "Passed"
+            and int(finding_match.group(1)) != 0
+        ):
+            errors.append("Daily Final Status Complete state requires unresolved findings=0")
+
+    section3_start = h2_bounds.get("## 3. Review Completion Receipt")
+    section4_start = h2_bounds.get("## 4. Benchmark Contracts")
+    if section3_start is not None and section4_start is not None:
+        section3 = text[section3_start:section4_start]
+        review_starts = list(re.finditer(r"<!--\s*review:[^>]+:start\s*-->", text))
+        if review_starts:
+            if len(re.findall(r"^### Source Reviews\s*$", section3, flags=re.MULTILINE)) != 1:
+                errors.append(
+                    "Daily Source Reviews heading must appear exactly once inside section 3"
+                )
+            for match in review_starts:
+                if not (section3_start <= match.start() < section4_start):
+                    errors.append(
+                        "Daily Source Review bodies must belong to section 3 Review Completion Receipt"
+                    )
+                    break
     return errors
 
 
@@ -1670,12 +1858,14 @@ def validate_report_text(
         SEMANTIC_AUDIT_MARKER,
     }
     present_v21 = {marker for marker in v21_markers if marker in text}
-    is_v21 = bool(present_v21)
+    metadata_rows, table_errors = _expect_columns(text, METADATA_MARKER, METADATA_COLUMNS)
+    errors.extend(table_errors)
+    metadata = _metadata(metadata_rows, errors)
+    declared_v21 = metadata.get("Contract Version") == "V2.1"
+    is_v21 = bool(present_v21) or declared_v21
     if is_v21 and present_v21 != v21_markers:
         for marker in sorted(v21_markers - present_v21):
             errors.append(f"V2.1 report is missing marker {marker}")
-    metadata_rows, table_errors = _expect_columns(text, METADATA_MARKER, METADATA_COLUMNS)
-    errors.extend(table_errors)
     coverage_marker = SOURCE_COVERAGE_MARKER if is_v21 else SOURCE_COVERAGE_V1_MARKER
     coverage_columns = SOURCE_COVERAGE_COLUMNS if is_v21 else SOURCE_COVERAGE_V1_COLUMNS
     candidate_marker = CANDIDATE_LEDGER_MARKER if is_v21 else CANDIDATE_LEDGER_V2_MARKER
@@ -1685,7 +1875,6 @@ def validate_report_text(
     candidate_rows, table_errors = _expect_columns(text, candidate_marker, candidate_columns)
     errors.extend(table_errors)
 
-    metadata = _metadata(metadata_rows, errors)
     if is_v21:
         if metadata.get("Contract Version") != "V2.1":
             errors.append("V2.1 report metadata requires Contract Version V2.1")
@@ -1710,6 +1899,8 @@ def validate_report_text(
             errors.append(f"invalid {gate} value {value!r}")
 
     report_type = metadata.get("Report Type", "")
+    if is_v21:
+        errors.extend(validate_daily_presentation(text, metadata))
     books_gate = metadata.get("Books Gate", "")
     if books_gate == "Not Applicable" and report_type != "Historical Weekly":
         errors.append("Books Gate Not Applicable is allowed only for Historical Weekly")
@@ -2747,7 +2938,15 @@ def _iter_markdown(path: Path) -> Iterable[Path]:
     if path.is_file():
         yield path
     elif path.is_dir():
-        yield from sorted(path.rglob("*.md"))
+        # `_sources` stores evidence packets, prior snapshots and audit receipts.
+        # They may deliberately preserve an older report schema or repeat an
+        # owner Source Family, so a recursive report audit must not reinterpret
+        # them as canonical reports.  An explicit --report path remains strict.
+        yield from (
+            candidate
+            for candidate in sorted(path.rglob("*.md"))
+            if "_sources" not in candidate.parts
+        )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

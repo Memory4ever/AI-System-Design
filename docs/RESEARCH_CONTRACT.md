@@ -127,6 +127,24 @@ Report-level Gate 的影响只由 [REPORT_CONTRACTS.md §8](./REPORT_CONTRACTS.m
 → 生成当前 Report 唯一 family ledger
 ```
 
+Coverage recall 与 Candidate admission 是两个不同阶段。全量枚举、Core Daily 逐项 title + abstract
+语义筛选、关键词路由和相邻分类补检，只负责证明“看见并判断过”，不自动把命中项送入候选分母。只有至少
+满足下列一项，family 才能进入 Candidate Ledger 并接受 Score V2：
+
+- 明确改变或补全长期 AI System 机制；
+- 改变 state、data 或 control ownership；
+- 改变可复算的 evaluation / release contract；
+- 改变 Platform、Training 或 Inference 的设计判断与成立边界；
+- 用 primary evidence 修正 Books 的既有认知。
+
+仅仅能映射 ROADMAP、属于 AI 研究、提供单领域方法或 benchmark、改善局部表示/模型指标、或出现
+`agent / memory / world model / inference` 等术语，均不足以入池。此类 family 留在 Coverage screening
+ledger，以 `pre-denominator closure` 逐项记录 identity、日期和 family-specific 理由；不接受 Score V2，
+也不进入 Source Review。Score V2 只决定已经入池候选的审阅深度，绝不能反向承担候选筛选。
+
+冻结前必须由 fresh-context reviewer 同时检查 proposed retained 的 false positive 和 pre-denominator
+closures 的 false negative。审计不得只抽样，也不得以预设保留比例代替逐项判断。
+
 Daily 冻结后若发现 canonical event time 仍落在本轮窗口的新 Source Family，重开当日分母并完成评分和对应
 Review。若 primary first-public 属于更早窗口，只更新独立 delayed-discovery recovery ledger；当前 Daily 保留
 发现来源、primary identity、真实 owner 与恢复状态，但候选分母和三个 Gate 不随之扩张。恢复执行时重开真实 owner

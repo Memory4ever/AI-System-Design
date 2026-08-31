@@ -239,6 +239,18 @@ Agent 可从 interaction history 推断 co-player 的响应策略，并据此调
 
 ## Message 不是 State
 
+<!-- daily-20260621:agent-multi-agent:start -->
+### Pairwise coupling 不能外推 group dynamics
+
+先用 counterfactual neighbor perturbation 测 coupling gain，再以 target-interaction modality-matched group coupling 选择 consensus dynamics；随机初值 slope/bias 区分 genuine averaging 与 model prior。
+
+**Trade-off、failure、共存与回退。** pairwise gamma 不能预测 multi-neighbor 结果且可反向排序；default agents 未自发 backfire，polarization 均为外部诱导，实验舆论任务不等于真实社会。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-22203` — primary `arXiv:2606.22203v1`；exact-v1 URL=`https://arxiv.org/html/2606.22203v1`；Method=`https://arxiv.org/html/2606.22203v1 — §3 The Coupling Gain; §4 Theory`；Evaluation=`https://arxiv.org/html/2606.22203v1 — §5 Experiments and Results`；Non-proof=`https://arxiv.org/html/2606.22203v1 — §6 Limitations; §5.4 context-dependent transfer boundary`。
+<!-- daily-20260621:agent-multi-agent:end -->
+
 Agent-to-agent chat 容易混合事实、建议和控制指令。共享状态应区分：
 
 ```text
@@ -415,6 +427,10 @@ deterministic testing 可能更合理；只有 branch state 可隔离、结果�
 
 绝对 contribution score 难跨场景校准时，可以用 ordered pairwise comparisons 建矩阵，再经 rank aggregation 形成 potential-based shaping proposal。Judge 只能观察可见 multimodal evidence，不能看见力、私有状态或反事实贡献；position bias、non-stationarity 与 shared-model error 会把排名误写成 credit。最终 task outcome 与独立环境证据仍拥有验收权。
 
+### Verification Delay 也是拓扑控制状态
+
+当 verifier/critic 延迟相对任务传播可忽略时，在 agent 输出后统一纠错是合理的。约束变化是错误信念可能在校正到达前沿通信图传播，而过强或过迟的纠正还会造成振荡。多智能体 control state 因此要显式记录 verification dose、delay、corrector placement、graph version 与 belief epoch，把纠错部署视为带稳定性边界的控制问题。论文给出阈值与 greedy placement，并在五个开放模型上实验；它没有证明 signed-belief/delay 假设之外的任意拓扑或 Byzantine 行为，实验也受 grounded factual answering 任务限制。delay 或图版本未知时应序列化关键提交、使用 grounded deterministic verification，旧的事后 critic 只在低延迟区间共存。
+
 ## Evaluation
 
 ### 并行不是一个旋钮：副本并行与结构并行
@@ -458,6 +474,46 @@ Workflow 提供 durable shared state，Multi-Agent 在其上分配责任。下�
 ## 小结
 
 Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，而不是更多对话。稳定系统依赖 typed handoffs、shared workflow state、bounded delegation 和独立 verification。下一章进入连接标准 MCP。
+
+<!-- recovered-daily-20260624:AGENT-MULTI-AGENT:start -->
+## 2026-06-24 evidence integration — AGENT-MULTI-AGENT
+
+相邻章 `books/part-07-agent/81-workflow.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24437**：MoA 不再把所有历史 reasoning 平铺给 aggregator；reviewer 对轨迹排序写入 reasoning memory，router 按 layer/quality/diversity 投影少量 references，使 memory state 随协作层累积。 只测固定 proposer pool、有限 width 与五个 benchmark；reviewer bias/overhead 和同源 proposer correlation 会放大错误，低置信时回退无 memory MoA 或独立 adjudication。
+- **SF-2026-ARXIV-2606-26156**：把 agent 内部 decision logic 与公开 message protocol 分离：decision maker 只能从 valid decisions 选互相兼容 emission set，adapter 隔离 communication service，operational semantics 拥有 protocol compliance。 2023 AAMAS programming model与语义证明不包含 LLM nondeterminism、tool side effect、Byzantine peer 或大规模 runtime benchmark；不兼容时回退显式 typed state machine。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24437: `arXiv:2606.24437v1`; exact-v1 URL=`https://arxiv.org/html/2606.24437v1`; Method=`https://arxiv.org/html/2606.24437v1 — §4 ReM-MoA; Ranked Reasoning Memory; Diversified Routing`; Evaluation=`https://arxiv.org/html/2606.24437v1 — §5 Experiments; Scaling and Ablations`; Non-proof=`只测固定 proposer pool、有限 width 与五个 benchmark；reviewer bias/overhead 和同源 proposer correlation 会放大错误，低置信时回退无 memory MoA 或独立 adjudication。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+- SF-2026-ARXIV-2606-26156: `arXiv:2606.26156v1`; exact-v1 URL=`https://arxiv.org/html/2606.26156v1`; Method=`https://arxiv.org/html/2606.26156v1 — §2 Information Protocols; 3 Kiko Programming Model`; Evaluation=`https://arxiv.org/html/2606.26156v1 — §4 Operational Semantics; protocol-compliance proof`; Non-proof=`2023 AAMAS programming model与语义证明不包含 LLM nondeterminism、tool side effect、Byzantine peer 或大规模 runtime benchmark；不兼容时回退显式 typed state machine。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:AGENT-MULTI-AGENT:end -->
+
+<!-- recovered-daily-20260625:AGENT-MULTI-AGENT:start -->
+## 2026-06-25 evidence integration — AGENT-MULTI-AGENT
+
+- **SF-2026-ARXIV-2606-25514**：`2 Adaptive Multi-Agent Issue Resolution; 2.6 Event-Driven Synchronous Communication` 所定义的源特定机制用于把事件通信、角色分工与失败升级纳入多 Agent 协调状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `5 Threats to Validity` 是 `Unlocking Model Potentials Through Adaptive Multi-Agent Scaffolding for Efficient Issue Resolution` 的 source-specific 反例/局限边界；若运行条件离开 `3 Evaluation; 3.2 Analysis of Exclusive Fixes and Failures` 的验证域，`AGENT-MULTI-AGENT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25514**：Primary `arXiv:2606.25514v1`；Method `https://arxiv.org/html/2606.25514v1 — §2 Adaptive Multi-Agent Issue Resolution; 2.6 Event-Driven Synchronous Communication`；Evaluation `https://arxiv.org/html/2606.25514v1 — §3 Evaluation; 3.2 Analysis of Exclusive Fixes and Failures`；未证明边界 `https://arxiv.org/html/2606.25514v1 — §5 Threats to Validity`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:AGENT-MULTI-AGENT:end -->
+
+<!-- june29-owner:AGENT-MULTI-AGENT:start -->
+## 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29270`、`SF-2026-ARXIV-2606-29601`、`SF-2026-ARXIV-2606-29654`）。** 现有 Multi-Agent 正文有 aggregation 与 independent verification，但缺少在多数错误相关时保存 minority evidence、以预校准 Flip Precision 决定是否推翻 majority commit 的协议状态。 现有 Multi-Agent 正文有 topology、message state 与 delegation，却没有把 attribute sayso、action nono/nogo 编译为可做 safety/liveness 检查的异步协议。 现有 Multi-Agent 正文有 verifier 与 coordination tax，却没有在部署前将 wrong-action budget 分解为校准失败、残余行动风险和 representation gap，并据 local lower bound 决定 act/defer。 因此本次把这些增量合并到同一知识 owner：多数投票不再自动提交；aggregation owner 保存 minority-sentinel evidence、override criterion 与最终 commit receipt，只在少数意见显示独立且校准的反证时推翻多数。相关错误或 sentinel 失准时回退独立 verifier/人工，而不是继续增加同源 Agent。 异步多 Agent 协议应把 attribute-setting priority、action conflict 与禁止组合编译为 sayso/nono/nogo 等声明式状态，再由协议 runtime 决定可提交 transition。规则冲突或编译覆盖不足时回退串行 coordinator/人工仲裁。 多 Agent deliberation 的 automation 权由预先声明的 wrong-action budget 和 local reliability lower bound 决定；controller 记录 act/defer 与预算消耗，低于下界即升级或拒答。校准失效时回退全 defer/人工，不用事后挑阈值美化覆盖率。 共同代价与回退边界是：只证明三异构 Agent、两轮、六 benchmark 的 debate-log classifier 能在已测阈值上安全翻转；共享训练导致的相关错误、换模型和换协议都可能破坏 81.2% Flip Precision。失配时不翻转并交给独立 verifier/人工。 只验证有限 Langshaw examples 到 BSPL tableau 的 safety/liveness 与编译时间；未证明开放网络中的 delivery、identity、Byzantine role 或工具副作用。协议编译/验证超界时回到串行 coordinator 与人工仲裁。 保证依赖 local bias envelope、representation-gap bound 与 calibration split，并非 distribution-free；六个选择题 benchmark 与训练期 difficulty-normalized budget 未证明开放式任务或分布漂移。诊断失败时全 defer/人工。
+
+### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29270`；Method `https://arxiv.org/html/2606.29270v1 — §3 Our Method; 3.3 The Debate Fingerprint; 3.4 Cure Phase: Meta-Classifier and Threshold Strategy`；Evaluation `https://arxiv.org/html/2606.29270v1 — §4 Experiments and Results; 4.1 Datasets and Debate Configuration; 5.5 Multi-Seed Stability`；未证明边界 `https://arxiv.org/html/2606.29270v1 — §6.2 Limitations`。
+
+Review note：`SF-2026-ARXIV-2606-29601`；Method `https://arxiv.org/html/2606.29601v1 — §Approach; sayso, nono and nogo protocol semantics`；Evaluation `https://arxiv.org/html/2606.29601v1 — §6.2 Empirical Results; safety and liveness procedures`；未证明边界 `https://arxiv.org/html/2606.29601v1 — §7 Discussion: Conclusion and Perspectives`。
+
+Review note：`SF-2026-ARXIV-2606-29654`；Method `https://arxiv.org/html/2606.29654v1 — §3 Method; Offline: calibration; Online: k-NN lookup; Stopping rule`；Evaluation `https://arxiv.org/html/2606.29654v1 — §6 Experiments; Benchmarks; Difficulty-normalized deployment budgets; 6.1 Main results`；未证明边界 `https://arxiv.org/html/2606.29654v1 — §7 Discussion and Limitations; H Detailed Assumption Diagnostics; N Failure-case decomposition`。
+<!-- june29-owner:AGENT-MULTI-AGENT:end -->
 
 ## Review notes
 
@@ -504,3 +560,7 @@ Primary-source 入口：
 - CAID（branch-and-merge ownership；Status: Experimental）: https://arxiv.org/abs/2603.21489
 - Emergent Social Intelligence Risks（collective-risk contract；Status: Experimental）:
   https://arxiv.org/abs/2603.27771
+
+### 2026-06-26 source-specific Review notes
+
+- `SF-2026-ARXIV-2606-27409` — Delayed Verification Destabilizes Multi-Agent LLM Belief: Instability Thresholds and Optimal Corrector Placement; primary=`arXiv:2606.27409v1`; Method=`arXiv:2606.27409v1 — §3 Model; §4 Stability and the verification dose; §5 Optimal corrector placement`; Evaluation=`arXiv:2606.27409v1 — §7 Empirical validation; §7.1 Onset at the predicted dose limit (RQ1)`; counterevidence/non-proof locator=`arXiv:2606.27409v1 — §8 Discussion; §10 Limitations`; claim boundary=理论依赖 signed-belief/delay 模型，实验限于五个开放模型的 grounded factual answering；阈值与 greedy placement 不证明任意 topology、Byzantine agent 或非平稳 communication graph 的稳定性。; fallback=delay/graph version 未知时序列化关键提交并使用 deterministic verification。

@@ -633,6 +633,44 @@ bounded KV 和 tile skipping 换取中间证据丢失、tool output 淹没窗口
 回看完整轨迹或 task prefix 会变化时，完整 Context 或 retrieval/compression 仍更合理。Prefix Sliding 的结果
 绑定 Qwen3 1.7B/7B、单 H100 与特定 window，不能外推任意模型或生产 serving。
 
+<!-- recovered-daily-20260623:MODEL-LONG-CONTEXT:start -->
+## 2026-06-23 evidence integration — MODEL-LONG-CONTEXT
+
+相邻章 `books/part-02-model/21-moe.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22874**：SpotAttention: Plug-In Block-Sparse Routing for Pretrained Long-Context Transformers 的 exact-v1 机制为：We present SpotAttention, a lightweight selector that attaches to a frozen pretrained transformer and learns by KL distillation to estimate its attention distribution. 因此 把稀疏选择器、token/KV identity、预算和 dense fallback 纳入请求状态。 该 family 的 failure pressure 是：Sparse attention cuts these costs by attending only to a relevant subset of past tokens, but selecting that subset is itself expensive. 披露的 evaluation signal 是：Quantizing the selector's K-cache to INT4 or FP4 microscale shrinks it 3.5x at no accuracy cost. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22874` — primary `arXiv:2606.22874v1`; Method=`arXiv:2606.22874v1 — §SpotAttention: Plug-In Block-Sparse Routing for Pretrained Long-Context Transformers; §Method; §2.1 Selector architecture`; Evaluation=`arXiv:2606.22874v1 — §Evaluation.; §Analysis and ablations; §Empirical shape gap.`; non-proof=`arXiv:2606.22874v1 — §Conclusion`; fallback=该 family 的 failure pressure 是：Sparse attention cuts these costs by attending only to a relevant subset of past tokens, but selecting that subset is itself expensive. 披露的 evaluation signal 是：Quantizing the selector's K-cache to INT4 or FP4 microscale shrinks it 3.5x at no accuracy cost. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:MODEL-LONG-CONTEXT:end -->
+
+<!-- recovered-daily-20260624:MODEL-LONG-CONTEXT:start -->
+## 2026-06-24 evidence integration — MODEL-LONG-CONTEXT
+
+相邻章 `books/part-02-model/13-position-encoding.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-25156**：长上下文设计从单一 accuracy 目标改为 retrieval、likelihood、short-context quality、decode state 与 kernel cost 的 Pareto；Polar direction/magnitude channel 配 gated-delta recurrent state。 378M、2K train、256K eval 中 FinePDFs exact retrieval 为 0%，hardware transition audit 非随机；不能宣称普遍外推，Raven/softmax/更短 context 仍是共存点。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-25156: `arXiv:2606.25156v1`; exact-v1 URL=`https://arxiv.org/html/2606.25156v1`; Method=`https://arxiv.org/html/2606.25156v1 — §3 Methodology; Polar Attention; Gated-Delta Memory`; Evaluation=`https://arxiv.org/html/2606.25156v1 — §4 Experimental Setup; 5 Results; C Complete Sweep`; Non-proof=`378M、2K train、256K eval 中 FinePDFs exact retrieval 为 0%，hardware transition audit 非随机；不能宣称普遍外推，Raven/softmax/更短 context 仍是共存点。`; Artifact=`https://github.com/kreasof-ai/atma`
+<!-- recovered-daily-20260624:MODEL-LONG-CONTEXT:end -->
+
+<!-- recovered-daily-20260625:MODEL-LONG-CONTEXT:start -->
+## 2026-06-25 evidence integration — MODEL-LONG-CONTEXT
+
+- **SF-2026-ARXIV-2606-25342**：`Parametric Attention and Lifelong In-Context Learning formulation` 所定义的源特定机制用于把跨段记忆从隐式上下文提升为可更新的长期参数状态，并由模型路径决定写入与读取；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Discussion; finite-memory and task-family limitations` 是 `Lifelong In-Context Learning with Transformers Requires Parametric Forms of Attention` 的 source-specific 反例/局限边界；若运行条件离开 `Experiments; Lifelong sequence results` 的验证域，`MODEL-LONG-CONTEXT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25342**：Primary `arXiv:2606.25342v1`；Method `https://arxiv.org/html/2606.25342v1 — §Parametric Attention and Lifelong In-Context Learning formulation`；Evaluation `https://arxiv.org/html/2606.25342v1 — §Experiments; Lifelong sequence results`；未证明边界 `https://arxiv.org/html/2606.25342v1 — §Discussion; finite-memory and task-family limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:MODEL-LONG-CONTEXT:end -->
+
 ## Review notes
 
 - Prefix Sliding（task prefix + recent reasoning window；Status: Experimental）：

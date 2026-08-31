@@ -122,6 +122,10 @@ Historical Weekly 才能执行 Delta Audit。Delta Audit 的 `Previous Denominat
 
 ### 3.3 Candidate Ledger / Score V2
 
+本表只承载已经通过 `RESEARCH_CONTRACT.md §4.2` admission 的候选及其同层级 closure 动作。Coverage
+screening ledger 中的 `pre-denominator closure` 不得复制进本表，不打 Score V2，也不计入 Candidate
+Denominator。`closure_only` 是“已入池后经评分与审阅得到关闭处置”，不是 title/abstract 阶段的拒绝项。
+
 <!-- validator:candidate-ledger-v2.1 -->
 | Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -300,6 +304,53 @@ Books Comparison 得到 `Integrate` 时，该 family 的 Selection 行必须已�
 Candidate Ledger 中每个 `Benchmark Claim = yes` 必须恰有一行合同；每行 benchmark contract 也必须反向对应一个 `yes` 候选。孤立、重复或未绑定的 benchmark 行均不能通过校验。
 
 ## 4. Daily 必填内容
+
+### 4.1 Canonical Daily 展示结构
+
+Daily 的机器接口与读者界面必须使用同一份状态真值。所有 `V2.1 + Report Type = Daily` 报告统一采用
+下列展示结构；日期重建、恢复任务和本地生成器不得另造章节顺序或用引用块代替状态字段：
+
+```text
+# Daily Research — YYYY-MM-DD
+
+Research Date
+Timezone
+Strict Window
+Contract
+Status
+
+## Executive Summary
+## 1. Coverage
+## 2. Candidate Ledger
+## 3. Review Completion Receipt
+   ### Source Reviews
+## 4. Benchmark Contracts
+## 5. Deep Analysis Selection
+## 6. Books Comparison
+## 7. Semantic Audit
+## 8. Ignored Noise
+## 9. Recommended Action
+## 10. Repository Changes
+## 11. Open Questions
+## 12. Sources
+## 13. Final Status
+```
+
+- 标题后的 canonical preamble 必须且只能按 `Research Date → Timezone → Strict Window → Contract → Status`
+  排列五个字段；字段移入正文、重复字段、窗口与报告日不一致或 Contract 降级都属于 schema failure。
+- `Status` 必须概括 metadata 中的 Completion 与三个 Gate，不能用历史 checkpoint 或执行中描述覆盖最终真值。
+- `Review Status`、`Access Status` 与 `Books Disposition` 保留在 Candidate Ledger；顶部 `Status` 不能替代这些逐 family 状态。
+- Source Review 正文归入第 3 节；Deep Analysis 正文归入第 5 节；逐 family Books 处置归入第 6 节。
+- `Materials Request`、恢复收据和其他条件性内容作为相关节的三级标题，不改变 13 节编号。
+- 某节当日无项目时仍保留该节并明确写 `None` 或实际边界，不能删除章节造成 schema 漂移。
+- `Final Status` 必须重述 Completion、Coverage、Evidence、Books 与明确的未解决 finding 数量；Complete 且三个
+  Gate 闭合时该数量必须为 `0`。它与 metadata 不一致时，
+  报告不得标记 Complete。
+- 目录级审计只发现正式 Report，不递归把 `_sources/` 下的 evidence packet、审计收据或历史快照解释成
+  新的 owner Report；需要检查某个证据文件时必须用显式文件路径。这样既保留历史证据，也避免旧 schema
+  与重复 Source Family 污染正式报告集合。
+
+Validator 只证明上述接口与状态自洽；它仍不能替代各 scope 的 fresh-context Semantic Audit。
 
 Daily 必须包含：
 

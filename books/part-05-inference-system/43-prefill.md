@@ -328,6 +328,32 @@ Prefill 利用已知 prompt 的 token-parallelism，高效形成第一个生成�
 
 Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度。下一章进入 Decode，观察瓶颈怎样转向逐 token 访存与调度。
 
+<!-- recovered-daily-20260623:INFER-PREFILL:start -->
+## 2026-06-23 evidence integration — INFER-PREFILL
+
+相邻章 `books/part-05-inference-system/44-decode.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22968**：MOCAP: Wafer-Scale-Chip-Oriented Memory-Orchestrated Chunked Pipelining Framework for Prefill-Only LLM Inference 的 exact-v1 机制为：To address these challenges, we present MOCAP, a memory-orchestrated chunked pipelining framework for prefill-only LLM inference on WSCs. 因此 把 wafer-scale memory orchestration、chunk pipeline 与 prefill-only 边界显式化。 该 family 的 failure pressure 是：For long-context prefill, communication overhead grows with sequence length and quickly becomes a bottleneck on conventional GPU systems, making wafer-scale chips (WSCs) a promising substrate due to their high communication bandwidth and large aggregate compute and memory capacity. 披露的 evaluation signal 是：It further incorporates Latency-Balanced Chunk Partitioning (LBCP) to balance chunk execution cost under both attention-cost growth and KV reallocation overhead, improving pipeline efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22968` — primary `arXiv:2606.22968v1`; Method=`arXiv:2606.22968v1 — §MOCAP: Wafer-Scale-Chip-Oriented Memory-Orchestrated Chunked Pipelining Framework for Prefill-Only LLM Inference; §3.1 Memory Imbalance Limits Feasible Sequence Length; §4 MOCAP Framework`; Evaluation=`arXiv:2606.22968v1 — §5 Evaluation`; non-proof=`arXiv:2606.22968v1 — §7 Conclusion`; fallback=该 family 的 failure pressure 是：For long-context prefill, communication overhead grows with sequence length and quickly becomes a bottleneck on conventional GPU systems, making wafer-scale chips (WSCs) a promising substrate due to their high communication bandwidth and large aggregate compute and memory capacity. 披露的 evaluation signal 是：It further incorporates Latency-Balanced Chunk Partitioning (LBCP) to balance chunk execution cost under both attention-cost growth and KV reallocation overhead, improving pipeline efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:INFER-PREFILL:end -->
+
+<!-- recovered-daily-20260625:INFER-PREFILL:start -->
+## 2026-06-25 evidence integration — INFER-PREFILL
+
+- **SF-2026-ARXIV-2606-25353**：`3 Architecture; 3.1 Weight-Attention Decoupled Organization; 4 Implementation` 所定义的源特定机制用于把权重、attention 与 cache-blocking 路径拆成可独立放置和优化的前缀计算状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Discussion; 7.2 Future Works` 是 `Cache-Resident LLM Inference in GB-Scale Last-Level Caches` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiment Setup; 6 Evaluation` 的验证域，`INFER-PREFILL` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-25426**：`3 Method; 3.1 Three-level cache blocking; 3.2 Weight pre-packing` 所定义的源特定机制用于把权重、attention 与 cache-blocking 路径拆成可独立放置和优化的前缀计算状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusion; Limitations` 是 `Above the Inner Loop: Exceeding Accelerate at LLM Prefill GEMM on the M1 AMX` 的 source-specific 反例/局限边界；若运行条件离开 `4 Evaluation; 4.1 Experimental setup; 4.7 End-to-end prefill GEMM measurement` 的验证域，`INFER-PREFILL` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25353**：Primary `arXiv:2606.25353v1`；Method `https://arxiv.org/html/2606.25353v1 — §3 Architecture; 3.1 Weight-Attention Decoupled Organization; 4 Implementation`；Evaluation `https://arxiv.org/html/2606.25353v1 — §5 Experiment Setup; 6 Evaluation`；未证明边界 `https://arxiv.org/html/2606.25353v1 — §7 Discussion; 7.2 Future Works`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-25426**：Primary `arXiv:2606.25426v1`；Method `https://arxiv.org/html/2606.25426v1 — §3 Method; 3.1 Three-level cache blocking; 3.2 Weight pre-packing`；Evaluation `https://arxiv.org/html/2606.25426v1 — §4 Evaluation; 4.1 Experimental setup; 4.7 End-to-end prefill GEMM measurement`；未证明边界 `https://arxiv.org/html/2606.25426v1 — §6 Conclusion; Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:INFER-PREFILL:end -->
+
 ## Review notes
 
 - Virtual Pipeline Parallelism（prefix-growth-aware virtual stage mapping；Status: Experimental）：

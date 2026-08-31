@@ -487,7 +487,29 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 代价是路由成为模型与系统共同状态。负载均衡、capacity、token dispatch、All-to-All、expert placement 和小 GEMM 效率决定稀疏参数能否转化为真实收益。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22325 -->
+把 MoE collapse 从单一 load-balance 指标提升为 routing dynamics：多种平衡正则最终可进入相似退化吸引域，必须同时观察 expert specialization、token flow 与训练阶段。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；结论受模型规模、数据和 router family 限制；观测到共同吸引域不证明所有 MoE 必然 collapse。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:MODEL-MOE:start -->
+## 2026-06-23 evidence integration — MODEL-MOE
+
+相邻章 `books/part-02-model/22-long-context.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22798**：Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control 的 exact-v1 机制为：Holding the emitted token id fixed at repeated anchors, we find it does not: the experts that produce it still separate task context, trajectory history, and reasoning-effort mode. 因此 把 router state 视为内部诊断/选择信号，而不是未经验证的正确性证明。 该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22798` — primary `arXiv:2606.22798v1`; Method=`arXiv:2606.22798v1 — §Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control; §MoE routing.; §3 Analysis of Anchor-Conditioned Routing`; Evaluation=`arXiv:2606.22798v1 — §3 Analysis of Anchor-Conditioned Routing; §5.3 Analysis`; non-proof=`arXiv:2606.22798v1 — §7 Conclusion; §A.13 Failure case studies`; fallback=该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:MODEL-MOE:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22325` — primary `arXiv:2606.22325v1`；Method=`arXiv:2606.22325v1 §2 Problem Setup; §3 Routing Dynamics and Collapse Analysis`；Evaluation=`arXiv:2606.22325v1 §4 Experiments; §5 Ablations`；Non-proof=`arXiv:2606.22325v1 §6 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - MoX: Efficient MoE Routing on Direct-Connect Topologies（arXiv:2607.20220v1；Status: Experimental）：https://arxiv.org/html/2607.20220v1
   - 证据边界：支持披露 topology/workload 假设下的 routing/tree algorithm 与 simulation/proxy 改善；不证明 deadlock-free 实现、故障行为、真实硬件时序，或相对 switch fabric 的普遍收益。

@@ -106,6 +106,21 @@ artifact 可以用更激进的 TTL、压缩或重算策略；不可重建的用�
 
 ## 利用率与有效利用率
 
+<!-- daily-20260627:PLATFORM-COST:start -->
+### Owner-merged minimal durable delta
+
+能耗归因应先把一次 model run 拆成 layer/operator measurement，再拟合 architecture-level proxy。可复用 cost model 必须把每次测量绑定到 device、precision、batch/shape 与 utilization regime，然后针对目标 graph 重组；否则 whole-model estimate 会隐藏究竟是哪类 layer 改变 operating point。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Layer recomposition 可能遗漏 fusion、memory hierarchy 与 concurrency interaction；生产真值仍由 whole-run meter 持有，漂移时重校 layer model。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27841 — primary arXiv:2606.27841v1; exact-v1 URL=https://arxiv.org/html/2606.27841v1; Method=https://arxiv.org/html/2606.27841v1 — §3 Methodology and Experimental Set-up; 3.2 Layer-Wise Energy Estimation Framework; Evaluation=https://arxiv.org/html/2606.27841v1 — §3 Methodology and Experimental Set-up; 3.1 Experimental Protocol; 4 Results; Non-proof=https://arxiv.org/html/2606.27841v1 — §5 Discussion; 6 Conclusion。
+<!-- daily-20260627:PLATFORM-COST:end -->
+
+
 高 GPU utilization 可能来自：
 
 - useful training/inference；
@@ -183,6 +198,20 @@ Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、mod
 ## 小结
 
 成本是资源时间、结果与约束的关系。平台应优化满足质量和 SLO 的有效结果，而不是孤立追求 GPU busy 或最低 token 单价。下一章为这些归因和政策建立租户边界。
+
+<!-- recovered-daily-20260623:PLATFORM-COST:start -->
+## 2026-06-23 evidence integration — PLATFORM-COST
+
+相邻章 `books/part-06-ai-infrastructure/71-multi-tenant.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-23546**：The Energy Consumption of Transformer Fine-Tuning: A Roofline-Inspired Scaling Model 的 exact-v1 机制为：As training scales in both model size and parallelism, accurately predicting energy consumption has become critical for sustainable and cost-aware system design. 因此 把训练/推理能耗模型、硬件 operating point 与质量边界联合报告。 该 family 的 failure pressure 是：Transformer-based models underpin modern natural language processing but incur rapidly growing computational and energy costs. 披露的 evaluation signal 是：We derive a scaling law model that accurately predicts training energy across heterogeneous configurations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-23546` — primary `arXiv:2606.23546v1`; Method=`arXiv:2606.23546v1 — §2.2 Scale, Architecture, and Efficiency; §3.1 Tasks, Models and Training Protocol; §3.2 Compute, Parameter and Memory Proxies`; Evaluation=`arXiv:2606.23546v1 — §3.5 Hardware Efficiency via Empirical Speedup Models; §Appendix A Pre-Modeling Exploratory Data Analysis`; non-proof=`arXiv:2606.23546v1 — §7 Discussion; §8 Conclusion`; fallback=该 family 的 failure pressure 是：Transformer-based models underpin modern natural language processing but incur rapidly growing computational and energy costs. 披露的 evaluation signal 是：We derive a scaling law model that accurately predicts training energy across heterogeneous configurations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:PLATFORM-COST:end -->
 
 ## Review notes
 

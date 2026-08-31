@@ -162,7 +162,39 @@ raw trace search
 
 Trace 让请求经过多个控制面和数据面时仍保留 causal context。好的 tracing 记录关键边界与决策，而不是最大化 span 数量。下一章将可观测事实转换为成本归因与优化约束。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22698 -->
+black-box agent forensics 需要固定 probe transcript、system-prompt/topic 条件与 attribution threshold，把模型/配置 fingerprint 当 evidence 而非身份真值。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；synthetic transcript 与 threshold/config scope 限制外推；provider 更新、sampling 和 prompt drift 会使 fingerprint 失效。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260624:PLATFORM-TRACE:start -->
+## 2026-06-24 evidence integration — PLATFORM-TRACE
+
+相邻章 `books/part-06-ai-infrastructure/67-monitoring.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24626**：故障诊断不再把全 trajectory 填入一个 context；investigator 用 segment search/read tools 主动取证，并用 persistent STM 保存跨轮 hypothesis/evidence，使 attribution 与原始 trace 长度解耦。 Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24626: `arXiv:2606.24626v1`; exact-v1 URL=`https://arxiv.org/html/2606.24626v1`; Method=`https://arxiv.org/html/2606.24626v1 — §2 Methodology: SAFARI`; Evaluation=`https://arxiv.org/html/2606.24626v1 — §3 Experimental Setup; 4 Results; A/B/C appendices`; Non-proof=`Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:PLATFORM-TRACE:end -->
+
+<!-- recovered-daily-20260625:PLATFORM-TRACE:start -->
+## 2026-06-25 evidence integration — PLATFORM-TRACE
+
+- **SF-2026-ARXIV-2606-26449**：`ProvenAI provenance-native trace schema and evidence links` 所定义的源特定机制用于让证据生产者写入 provenance 链，消费者据此追踪而不把来源等同于真值；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Trace completeness depends on instrumented producers; provenance does not imply source truth` 是 `ProvenAI: Provenance-Native Traces of Evidence in Generated Answers` 的 source-specific 反例/局限边界；若运行条件离开 `Generated-answer trace/evidence evaluation` 的验证域，`PLATFORM-TRACE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26449**：Primary `arXiv:2606.26449v1`；Method `https://arxiv.org/html/2606.26449v1 — §ProvenAI provenance-native trace schema and evidence links`；Evaluation `https://arxiv.org/html/2606.26449v1 — §Generated-answer trace/evidence evaluation`；未证明边界 `https://arxiv.org/html/2606.26449v1 — §Trace completeness depends on instrumented producers; provenance does not imply source truth`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:PLATFORM-TRACE:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22698` — primary `arXiv:2606.22698v1`；Method=`arXiv:2606.22698v1 §3 Approach`；Evaluation=`arXiv:2606.22698v1 §4 Experiments; §4.3 Evaluation`；Non-proof=`arXiv:2606.22698v1 §7 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - Trace success-manifold deviation diagnosis（Status: Experimental）:
   https://arxiv.org/abs/2607.12747v1

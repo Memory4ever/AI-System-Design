@@ -400,7 +400,15 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 
 第56章将收束这些选择：scheduler 怎样在 phase、memory、locality、SLO 与成本之间做分层决策。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22541 -->
+MoE prefill 不应把 attention、expert dispatch 与 communication 绑成同步 barrier；ASAP 以 PD disaggregation 和 asynchronous expert pipeline 重排控制流，但必须保存请求/segment/expert state identity。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；结论绑定 CANN8.3、PyTorch2.1、特定 MoE/硬件与 workload；异步 stale/misroute 或 SLO slack 耗尽时必须退回同步/隔离路径。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22541` — primary `arXiv:2606.22541v1`；Method=`arXiv:2606.22541v1 §3 ASAP Design`；Evaluation=`arXiv:2606.22541v1 §5 Evaluation`；Non-proof=`arXiv:2606.22541v1 §6 Discussion and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript describes the PyTorch 2.1/CANN 8.3 implementation but this review did not use a stable public artifact locator`。
 
 - Selective KV Transfer（arXiv:2607.28150v1；Status: Experimental）：https://arxiv.org/html/2607.28150v1
   - 证据边界：exact-v1 支持 profile-guided proactive exact-KV transfer、decode-demand repair 与 bounded prefetch 的作者实现；不证明 importance 在 workload drift 下稳定，也不证明 metadata、remote-fetch tail 与 wasted transfer 在任意 PD topology 中均优于 full transfer。

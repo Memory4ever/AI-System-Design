@@ -17,6 +17,18 @@ Metrics 能回答哪些平台问题，又会丢失什么？为什么“GPU utili
 
 ## 先定义目标，再选择可测信号
 
+<!-- daily-20260621:platform-monitoring:start -->
+### Context generator 是 pre-failure sensor identity 的一部分
+
+agent identity monitor 以固定 probe 的 next-token distribution、sqrt-JSD geometry 与 magnitude homology 追踪 conditioning；但 diverse-padding 对照推翻了原 repetitive-padding drift trajectory。
+
+**Trade-off、failure、共存与回退。** 作者自评、单模型单 agent、单日采集且无 reconstitution control；几何诊断潜力没有被真实纵向 drift 证实。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
+
+#### Review notes
+
+- `SF-2026-ARXIV-2606-21843` — primary `arXiv:2606.21843v1`；exact-v1 URL=`https://arxiv.org/html/2606.21843v1`；Method=`https://arxiv.org/html/2606.21843v1 — §3.1 Ada: a persistent AI agent; §3.4 The probe battery`；Evaluation=`https://arxiv.org/html/2606.21843v1 — §4 Magnitude Baseline; §5.6 Drift experiment`；Non-proof=`https://arxiv.org/html/2606.21843v1 — §6.3 Limitations — Drift trajectory is a padding artifact`。
+<!-- daily-20260621:platform-monitoring:end -->
+
 容易采集的指标不一定重要。应从用户与平台契约反推：
 
 ```text
@@ -193,6 +205,21 @@ Alert 应指向可执行动作。单个瞬时阈值容易抖动；多窗口 burn
 
 ## Monitoring 也会改变系统
 
+<!-- daily-20260627:PLATFORM-MONITORING:start -->
+### Owner-merged minimal durable delta
+
+Training-instability monitoring 应在 aggregate loss 发散前读取 mechanism-adjacent state：attention spectrum、router/load state 与 update statistic 是分别校准、绑定 checkpoint 的 sensor。它们可以触发暂停、诊断或 rollback，但不能自动拥有 root-cause truth；sensor 漂移或相互冲突时必须 abstain，并保留最近已验证 checkpoint 作为 fallback。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Pre-loss signal 可能噪声大且依赖 family；它们保持 observe-first，缺失校准时 abstain，不能自动干预训练。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28116 — primary arXiv:2606.28116v1; exact-v1 URL=https://arxiv.org/html/2606.28116v1; Method=https://arxiv.org/html/2606.28116v1 — §Mechanism-Driven Monitors for Preemptive Detection of LLM Training Instability; Training-stability monitors.; 5 Designing Module-Specific Monitors from First Principles; Evaluation=https://arxiv.org/html/2606.28116v1 — §Mechanism-Driven Monitors for Preemptive Detection of LLM Training Instability; 1 Introduction; Non-proof=https://arxiv.org/html/2606.28116v1 — §6 Limitations; 7 Conclusion。
+<!-- daily-20260627:PLATFORM-MONITORING:end -->
+
+
 高频 scrape、过细 histogram、昂贵 GPU exporter 和大量 labels 都有成本。控制环消费 metrics 时还要考虑：
 
 - freshness 与 scrape delay；
@@ -247,6 +274,30 @@ zero-trust aggregation 与 Evaluation 是 `Layering / Dependency`，任何一层
 ## 小结
 
 Monitoring 用受控成本提供系统健康的统计视图。它适合发现趋势和驱动控制环，却不能解释某一次失败的完整上下文。下一章用 structured logs 保存事件证据。
+
+<!-- recovered-daily-20260624:PLATFORM-MONITORING:start -->
+## 2026-06-24 evidence integration — PLATFORM-MONITORING
+
+相邻章 `books/part-06-ai-infrastructure/66-evaluation-system.md` 只接收 handoff，不重复拥有机制。
+
+### Owner-merged minimal text
+
+- **SF-2026-ARXIV-2606-24119**：撤销把 denoising top-1 concentration 当 PEFT collapse alarm 的旧路径；monitor 改读 max LoRA gradient norm，并由每个 DLM family 的 held-out calibration 拥有告警阈值。 816 个配置、3 个 DLM family 与 200-step horizon 只支持短程 DLM-LoRA triage；跨 family 阈值失败，不能外推为通用 collapse detector。
+
+### Source-specific Review notes
+
+- SF-2026-ARXIV-2606-24119: `arXiv:2606.24119v1`; exact-v1 URL=`https://arxiv.org/html/2606.24119v1`; Method=`https://arxiv.org/html/2606.24119v1 — §3 Methodology; 3.2 Experimental Setup`; Evaluation=`https://arxiv.org/html/2606.24119v1 — §4 Experiments and Results; 4.1 Calibrated Triage`; Non-proof=`816 个配置、3 个 DLM family 与 200-step horizon 只支持短程 DLM-LoRA triage；跨 family 阈值失败，不能外推为通用 collapse detector。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
+<!-- recovered-daily-20260624:PLATFORM-MONITORING:end -->
+
+<!-- recovered-daily-20260625:PLATFORM-MONITORING:start -->
+## 2026-06-25 evidence integration — PLATFORM-MONITORING
+
+- **SF-2026-ARXIV-2606-26383**：`SOLAR speed-of-light performance model; bottleneck decomposition and bound calculation` 所定义的源特定机制用于以校准后的硬件与 workload 参数分解性能上界和瓶颈；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Analytical bounds depend on calibrated hardware/workload parameters and omit undisclosed runtime effects` 是 `SOLAR: AI-Powered Speed-of-Light Performance Analysis` 的 source-specific 反例/局限边界；若运行条件离开 `Predicted-vs-observed latency and throughput analysis` 的验证域，`PLATFORM-MONITORING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-26383**：Primary `arXiv:2606.26383v1`；Method `https://arxiv.org/html/2606.26383v1 — §SOLAR speed-of-light performance model; bottleneck decomposition and bound calculation`；Evaluation `https://arxiv.org/html/2606.26383v1 — §Predicted-vs-observed latency and throughput analysis`；未证明边界 `https://arxiv.org/html/2606.26383v1 — §Analytical bounds depend on calibrated hardware/workload parameters and omit undisclosed runtime effects`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:PLATFORM-MONITORING:end -->
 
 ## Review notes
 

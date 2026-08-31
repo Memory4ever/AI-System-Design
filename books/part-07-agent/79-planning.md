@@ -270,6 +270,21 @@ Project2Task 的 10 个 research briefs 只为该编译结构提供实验性证�
 
 ## 完成证据与 Verification
 
+<!-- daily-20260627:AGENT-PLANNING:start -->
+### Owner-merged minimal durable delta
+
+语言 planner 可以保留语义 proposal authority，同时由小型 parametric transition model 检查 imagined state delta 是否满足动力学。两者分歧时应开启 targeted revision，而不是静默替换 planner 或提交 action；transition model 只做 bounded verifier，environment/controller 继续拥有最终 authority。
+
+### Trade-off、failure、fallback 与 coexistence
+
+Learned transition verifier 可能与 planner 共享盲点，也不是 physics oracle；分歧或 OOD state 回退 environment validation 或人工复核。
+
+### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-27806 — primary arXiv:2606.27806v1; exact-v1 URL=https://arxiv.org/html/2606.27806v1; Method=https://arxiv.org/html/2606.27806v1 — §Our approach: GILP.; LLM API ecosystem.; 4 Method: Grounded Iterative Language Planning; Evaluation=https://arxiv.org/html/2606.27806v1 — §5 Experiments; Setup.; Cost analysis.; Non-proof=https://arxiv.org/html/2606.27806v1 — §6 Discussion; 7 Limitations; 8 Conclusion。
+<!-- daily-20260627:AGENT-PLANNING:end -->
+
+
 每一步需要 machine-checkable evidence，例如 test pass、resource state、signed response、human approval。模型说“已完成”不是完成条件。
 
 对于无法自动验证的开放任务，可使用 rubric、多样化 reviewers、sampled human review 和 uncertainty escalation，但要标明仍是经验判断。
@@ -297,6 +312,32 @@ Tool Calling 定义单次 action contract，Planning 组织多个可能 action�
 ## 小结
 
 Planning 把 goal 转成带依赖、前置条件和证据的可修正状态图。它的可靠性来自 execution observations 与外部 constraints，而非计划文本的流畅度。下一章进入反馈和修正。
+
+<!-- recovered-daily-20260623:AGENT-PLANNING:start -->
+## 2026-06-23 evidence integration — AGENT-PLANNING
+
+相邻章 `books/part-07-agent/80-reflection.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22948**：ENVS: Environment-Native Verified Search for Long-Horizon GUI Agents 的 exact-v1 机制为：We propose Environment-Native Verified Search (ENVS), a training-time search-and-filter pipeline that uses the environment to construct verified supervision before policy optimization: it branches over behaviorally distinct GUI actions in live OSWorld VMs, verifies successful leaves, and trains from globally balanced step-level supervision. 因此 把搜索环境、承诺点、验证条件与回退分支纳入显式 plan state。 该 family 的 failure pressure 是：As multimodal agents move from interface understanding to real software control, successful trajectory discovery in live desktop environments becomes a key challenge. 披露的 evaluation signal 是：To evaluate robustness under realistic desktop interruptions, we also introduce OSWorld-Noisy, a dynamic benchmark for recoverable desktop interruptions that preserves the original tasks while testing whether agents can refocus, dismiss, wait, or recover under live perturbations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22948` — primary `arXiv:2606.22948v1`; Method=`arXiv:2606.22948v1 — §5.1 Experimental protocol; §Appendix C Evaluation pool construction`; Evaluation=`arXiv:2606.22948v1 — §4.3 Train/evaluation split; §Appendix C Evaluation pool construction`; non-proof=`arXiv:2606.22948v1 — §6 Conclusion`; fallback=该 family 的 failure pressure 是：As multimodal agents move from interface understanding to real software control, successful trajectory discovery in live desktop environments becomes a key challenge. 披露的 evaluation signal 是：To evaluate robustness under realistic desktop interruptions, we also introduce OSWorld-Noisy, a dynamic benchmark for recoverable desktop interruptions that preserves the original tasks while testing whether agents can refocus, dismiss, wait, or recover under live perturbations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:AGENT-PLANNING:end -->
+
+<!-- recovered-daily-20260625:AGENT-PLANNING:start -->
+## 2026-06-25 evidence integration — AGENT-PLANNING
+
+- **SF-2026-ARXIV-2606-25274**：`3 Problem Definition; 4 Method; 4.2 Candidate Expansion; 4.3 UC-Beam` 所定义的源特定机制用于以候选扩展或实时 gate 分配规划预算，并在超时或低置信度时回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Limitations` 是 `UC-Search: Risk-Aware Test-Time Search for Delayed Constrained Time-Series Control` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiments; 5.1 Implemented Evidence; 6 Analysis` 的验证域，`AGENT-PLANNING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26463**：`Variable-delay real-time RL; lightweight gate selects state-dependent planning budget` 所定义的源特定机制用于以候选扩展或实时 gate 分配规划预算，并在超时或低置信度时回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Game planners and timing model do not prove benefit under production tool latency or safety deadlines` 是 `Finding the Time to Think: Learning Planning Budgets in Real-Time RL` 的 source-specific 反例/局限边界；若运行条件离开 `Pac-Man, Tetris, Snake, Speed Hex and Speed Go evaluation` 的验证域，`AGENT-PLANNING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25274**：Primary `arXiv:2606.25274v1`；Method `https://arxiv.org/html/2606.25274v1 — §3 Problem Definition; 4 Method; 4.2 Candidate Expansion; 4.3 UC-Beam`；Evaluation `https://arxiv.org/html/2606.25274v1 — §5 Experiments; 5.1 Implemented Evidence; 6 Analysis`；未证明边界 `https://arxiv.org/html/2606.25274v1 — §7 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26463**：Primary `arXiv:2606.26463v1`；Method `https://arxiv.org/html/2606.26463v1 — §Variable-delay real-time RL; lightweight gate selects state-dependent planning budget`；Evaluation `https://arxiv.org/html/2606.26463v1 — §Pac-Man, Tetris, Snake, Speed Hex and Speed Go evaluation`；未证明边界 `https://arxiv.org/html/2606.26463v1 — §Game planners and timing model do not prove benefit under production tool latency or safety deadlines`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:AGENT-PLANNING:end -->
 
 ## Review notes
 

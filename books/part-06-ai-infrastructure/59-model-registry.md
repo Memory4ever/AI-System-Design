@@ -168,7 +168,29 @@ Chapter 35 checkpoint
 
 Model Registry 让模型从一组文件变成有身份、有来源、有证据、可发布和可回滚的资产。它连接 Part IV 的 checkpoint 与 Part V 的 runtime artifact，但保持 metadata control plane 的被动边界。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-22593 -->
+registry 的 release authority 不是 package presence；必须测量谁能发布、撤回、覆盖 metadata，以及 registry mediator 是否保留身份和审计链。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；公开 registry metadata 只能观察可见 authority，不证明离线凭据、组织流程或未披露 compromise。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260623:PLATFORM-MODEL-REGISTRY:start -->
+## 2026-06-23 evidence integration — PLATFORM-MODEL-REGISTRY
+
+相邻章 `books/part-06-ai-infrastructure/60-training-operator.md#L1` 只消费 handoff，不重复拥有机制。
+
+### Owner-merged minimal body
+
+- **SF-2026-ARXIV-2606-22875**：FedOT: Ownership Verification and Leakage Tracing via Watermarks for Federated LDMs 的 exact-v1 机制为：In this paper, we propose FedOT, the first framework for ownership verification and leakage tracing in federated LDMs. 因此 把 ownership/provenance 证据与 artifact hash、client identity 和泄露追踪绑定。 该 family 的 failure pressure 是：However, FL requires sharing the global model with multiple participants, which risks unauthorized model distribution or resale by malicious clients. 披露的 evaluation signal 是：Extensive experiments demonstrate that FedOT achieves superior performance in both ownership verification and traceability. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22875` — primary `arXiv:2606.22875v1`; Method=`arXiv:2606.22875v1 — §3.1 FedOT Framework; §3.2 Watermark Design and Training; §0.A.1 Federated LDMs and Threat Model`; Evaluation=`arXiv:2606.22875v1 — §0.C.2 Analysis of LVT`; non-proof=`arXiv:2606.22875v1 — §5 Conclusion`; fallback=该 family 的 failure pressure 是：However, FL requires sharing the global model with multiple participants, which risks unauthorized model distribution or resale by malicious clients. 披露的 evaluation signal 是：Extensive experiments demonstrate that FedOT achieves superior performance in both ownership verification and traceability. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+<!-- recovered-daily-20260623:PLATFORM-MODEL-REGISTRY:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-22593` — primary `arXiv:2606.22593v1`；Method=`arXiv:2606.22593v1 §3 Authority Model and Measurement; §3.4 Evaluation`；Evaluation=`arXiv:2606.22593v1 §4 Results`；Non-proof=`arXiv:2606.22593v1 §5 Limitations and Discussion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 本章承接第 35、49、54、56 章的 artifact contract，明确训练 checkpoint、deployment artifact 与 service revision 不能混为一谈。第 66 章定义 Evaluation Run 怎样把 subject、dataset/environment、scorer 与结果绑定，并把 MLflow 作为一种 evidence implementation；本章只索引 evidence 和 promotion state，不定义质量语义。
 

@@ -764,6 +764,16 @@ layer-local gradient/update matrix
 probe 成本、谱估计噪声、层间尺度漂移与更多控制状态。模型规模、数据分布或训练阶段改变后，旧谱先验必须重估；
 当训练稳定、可观测性不足或控制复杂度超过收益时，统一 schedule 仍是更可靠的 baseline。
 
+<!-- june29-owner:TRAIN-PRETRAINING:start -->
+## 2026-06-29 约束变化与机制增量
+
+**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29158`）。** 现有 Pretraining 正文分离 optimizer、schedule、batch/tokens 与 scaling identity，但没有记录普通 LR 对 model/data scale 的非线性以及 effective LR 与 D-axis 外推的不同可靠域。 因此本次把这些增量合并到同一知识 owner：固定比例或单变量外推学习率会把 width、depth、token budget 与 schedule 的非线性交互折叠掉；训练控制面应把这些轴和 optimizer/schedule revision 一起冻结后再外推。额外 sweep 提高成本，超出已测尺度时回退邻近规模校准而非沿幂律盲推。 共同代价与回退边界是：只覆盖 GPT-2-style 22M-707M、FineWeb 5B-100B tokens、WSD 与 AdamW/AdamH；论文明确显示 log-linear LR 仅局部成立，不能外推到其他架构、optimizer 或更大规模。超界时重新 sweep 邻近尺度。
+
+### 2026-06-29 source-specific Review notes
+
+Review note：`SF-2026-ARXIV-2606-29158`；Method `https://arxiv.org/html/2606.29158v1 — §3 Power Laws for Optimal Learning Rates; 6 Explaining Nonlinear Scaling via Implicit Effective Learning Rate Schedule`；Evaluation `https://arxiv.org/html/2606.29158v1 — §4 Experiment Design; 5 Main Results`；未证明边界 `https://arxiv.org/html/2606.29158v1 — §7 Conclusions and Limitations`。
+<!-- june29-owner:TRAIN-PRETRAINING:end -->
+
 ## Review notes
 
 - Skill Pretraining（structured capability artifact as mid-training data；Status: Experimental）：

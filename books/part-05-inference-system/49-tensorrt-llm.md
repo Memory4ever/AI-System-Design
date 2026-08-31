@@ -984,7 +984,29 @@ Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件�
 
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
+
+### 从局部结果到可执行的系统边界
+
+<!-- body-source:SF-2026-ARXIV-2606-23743 -->
+video inference optimization 应把 graph transformation、kernel/execution plan、memory schedule 与 serving config 绑定同一可重建 artifact；agent 只能提出/搜索 plan，validator 才能提交。 这项变化只在 exact-v1 披露的 workload、状态身份和评估合同内成立；收益 instance-specific 于模型、硬件和 serving config，最终 visual quality 仍需人评；不能把单次搜索结果外推通用 engine。 因此旧路径在这些新增约束不存在、证据条件不足或失败回退被触发时仍然成立，不能被新的局部结果静默覆盖。
+
+<!-- recovered-daily-20260625:INFER-TENSORRT-LLM:start -->
+## 2026-06-25 evidence integration — INFER-TENSORRT-LLM
+
+- **SF-2026-ARXIV-2606-25453**：`III EmuGEMM-I; IV EmuGEMM-II` 所定义的源特定机制用于以可验证搜索或 profiling 反馈驱动 kernel 选择，同时保留确定性正确性路径；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `V-G Limitations` 是 `EmuGEMM: Fused Tensor Core Kernels for Precision Emulation in Matrix Multiplication` 的 source-specific 反例/局限边界；若运行条件离开 `V Evaluation; V-B Experimental Setup; V-F Precision-Throughput-Memory Trade-off` 的验证域，`INFER-TENSORRT-LLM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26344**：`Axon synthesizing superoptimizer; tensor-program search and verification` 所定义的源特定机制用于以可验证搜索或 profiling 反馈驱动 kernel 选择，同时保留确定性正确性路径；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Covered tensor operators/hardware only; verifier does not prove arbitrary numerical equivalence` 是 `Axon: A Synthesizing Superoptimizer for Tensor Programs` 的 source-specific 反例/局限边界；若运行条件离开 `Kernel synthesis evaluation and generated-program performance` 的验证域，`INFER-TENSORRT-LLM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+- **SF-2026-ARXIV-2606-26453**：`Micro-profiling tools as expert surrogates for LLM CUDA optimization` 所定义的源特定机制用于以可验证搜索或 profiling 反馈驱动 kernel 选择，同时保留确定性正确性路径；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Evaluated CUDA tasks and toolchain only; profile-guided generation needs deterministic correctness fallback` 是 `Optimizing CUDA like a Human: Micro-Profiling Tools as Expert Surrogates for LLM-Based GPU Kernel Optimization` 的 source-specific 反例/局限边界；若运行条件离开 `Generated-kernel correctness, profiling and speed evaluation` 的验证域，`INFER-TENSORRT-LLM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
+
+### 2026-06-25 source-specific Review notes
+
+- **SF-2026-ARXIV-2606-25453**：Primary `arXiv:2606.25453v1`；Method `https://arxiv.org/html/2606.25453v1 — §III EmuGEMM-I; IV EmuGEMM-II`；Evaluation `https://arxiv.org/html/2606.25453v1 — §V Evaluation; V-B Experimental Setup; V-F Precision-Throughput-Memory Trade-off`；未证明边界 `https://arxiv.org/html/2606.25453v1 — §V-G Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26344**：Primary `arXiv:2606.26344v1`；Method `https://arxiv.org/html/2606.26344v1 — §Axon synthesizing superoptimizer; tensor-program search and verification`；Evaluation `https://arxiv.org/html/2606.26344v1 — §Kernel synthesis evaluation and generated-program performance`；未证明边界 `https://arxiv.org/html/2606.26344v1 — §Covered tensor operators/hardware only; verifier does not prove arbitrary numerical equivalence`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+- **SF-2026-ARXIV-2606-26453**：Primary `arXiv:2606.26453v1`；Method `https://arxiv.org/html/2606.26453v1 — §Micro-profiling tools as expert surrogates for LLM CUDA optimization`；Evaluation `https://arxiv.org/html/2606.26453v1 — §Generated-kernel correctness, profiling and speed evaluation`；未证明边界 `https://arxiv.org/html/2606.26453v1 — §Evaluated CUDA tasks and toolchain only; profile-guided generation needs deterministic correctness fallback`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+<!-- recovered-daily-20260625:INFER-TENSORRT-LLM:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2606-23743` — primary `arXiv:2606.23743v1`；Method=`arXiv:2606.23743v1 §3 Sol Architecture; §4 Agent-Native Optimization`；Evaluation=`arXiv:2606.23743v1 §5 Experiments`；Non-proof=`arXiv:2606.23743v1 §6 Limitations and Future Work`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
 - Launch-Bound and Substitutable（MoE local optimization 与 end-to-end ceiling；Status: Experimental）：
   https://arxiv.org/abs/2608.26612v1

@@ -1,0 +1,3 @@
+# 2026-06-07 source packet
+
+`DEN-20260607-76380553` freezes 261 identities: 23 retained and 238 family-specific closures. Coverage, Evidence, Selection and Books passed. Corrected-contract Selection conserves `23 = 18 eligible + 5 non-eligible`; the groups are disjoint, their union is the retained denominator, and only the 18 eligible families appear in the canonical main table. `2606.08317v1` was recovered from the official 18-page PDF, making Evidence 23/23; its No Change decision did not add a seventh Books write. The six Integrate writebacks were restored and passed the 23-family post-write audit. Completion is Complete.

@@ -1,9 +1,14 @@
 # Daily Research — 2026-08-28
 
-**Research Date:** 2026-08-28  
-**Timezone:** Asia/Shanghai  
-**Window:** 2026-08-27 09:00:00 ～ 2026-08-28 09:00:00（北京时间，左闭右开）  
-**Status:** Complete；Coverage、Evidence、Books Gate 均通过 fresh-context Semantic Audit；Friday，不生成 provisional Weekly
+**Research Date:** 2026-08-28
+
+**Timezone:** Asia/Shanghai
+
+**Strict Window:** 2026-08-27 09:00:00 ～ 2026-08-28 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay
+
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
 
@@ -125,38 +130,6 @@
 | SF-2026-PAWBENCH | arXiv:2608.27345v1 | paper-v1:2608.27345 | 2026-W35 | 2026-08-27 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | knowledge_gap | review:SF-2026-PAWBENCH | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-PAWBENCH | yes |
 | SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING | official:https://openai.com/index/what-students-gain-from-chatgpt-critical-thinking-training/@2026-08-27 | official-study-summary | 2026-W35 | 2026-08-27 | SRC-OPENAI | 1 | 1 | 1 | 3 | closure_only | closure_complete | accessible | none | review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING | self | — | new_in_window | — | Weekly Only — Context | books-review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING | yes |
 
-Benchmark contract 只冻结作者公开的 evaluation 条件；`Not Disclosed` 是逐字段证据边界，不允许从相邻实验或常见默认值补齐。表中“无生产阈值”表示论文报告了研究指标，但没有把它定义为生产 SLO。
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-VPP | 短请求 100 个（4K/8K/16K）；长请求 1 个（64K–1M）；GSM8K 混合 500 请求 | Qwen3-Coder-30B-A3B-Instruct；DeepSeek-V3.1-Terminus；GLM-5.2 | Huawei Atlas 900 A3 SuperPoD；16×Ascend 910C 64GB；HCCS/HCCL | Not Disclosed | 4K、8K、16K、64K–1M；混合请求 7–122,710 tokens | 1 token | TP8+CPP2、DCPP2、VPP2；chunk 8K/16K/24K/32K；未披露统一 batch | 短请求 100；混合请求 16；长请求 1 | TTFT、tokens/s；无生产阈值 | AISBench、PyTorch profiler/timeline；4 次重复取均值 |
-| SF-2026-MULTI-EXPERT-CRC | ESConv、MSC、DREAM：各 100 个对话 context；每个 context 6 个 response pair；合计 1,800 个人工标注 pair | gemma-3-12b-it；Mistral-Nemo-Instruct-2407；Qwen2.5-7B-Instruct；Llama-3.1-8B-Instruct；multi-expert judges | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | CRC risk ≤ α=0.1；acceptance rate、accuracy、AUC；无生产阈值 | 人工 pairwise label；conformal risk metrics |
-| SF-2026-PILOT-LIVE | Terminal-Bench 2.0 的 89 个可运行任务；SWE-bench Multilingual 与 SWE-bench Pro | Kimi-K2.6；GLM-5.1；同模型分别承担 supervisor 与 worker | Not Disclosed | Not Disclosed | Not Disclosed | 最多 32K tokens | 每个配置运行 2 次并取均值 | Not Disclosed | Terminal-Bench 单任务 3 小时 wall-clock；pass rate、平均输出 tokens | 官方 benchmark verifier |
-| SF-2026-SKILL-PRETRAINING | API-Bank、MetaTool、APTBench、ToolEyes；OLMES 的 ARC-C、BoolQ、HellaSwag、PIQA、WinoGrande、MMLU | MeCo-1.6B-DCLM-160B；Instella-3B-Stage1；OLMo-3-1025-7B | 4×NVIDIA A100 80GB | BF16；TF32 enabled | Mid-training 4,096；SFT 2,048 | 任务定义；Not Disclosed 固定最大长度 | Mid-training per-device 1、gradient accumulation 8；SFT per-device 4、gradient accumulation 4 | 离线评测；Not Disclosed | accuracy、function-call metrics 与 general-capability guardrail；无 latency SLO | execution、exact match、likelihood；OLMES 固定 5-shot；5 seeds 均值 |
-| SF-2026-DARD | GSM8K、MATH500、MBPP、Countdown、Sudoku、ARC-C；Flickr30K、AI2D、MATH-Vision、MathVista、MMMU、ScienceQA | LLaDA-8B-Instruct；LLaDA-1.5；MMaDA-8B-MixCoT | NVIDIA RTX A6000 | Not Disclosed | 任务定义 | generation length 256；block length 128 | Not Disclosed | Not Disclosed | task score、平均 decoding steps、TPS；无生产阈值 | accuracy；Flickr30K CIDEr；MBPP pass@1；Sudoku partial score；lmms-eval/rule matching；temperature 0 单次运行 |
-| SF-2026-MOE-INFERENCE-OPT-LIMITS | isolated RMSNorm hidden 512–4,096；router softmax N=64；end-to-end seq 128–1,024；100 个 MMLU prompts、119,952 token positions | OLMoE-1B-7B；DeepSeek-V2-Lite；Qwen3-30B-A3B | 单张 NVIDIA A100 80GB；阶段实验使用 SXM4 或 PCIe | FP16 baseline；INT8、INT4、NF4 variants；router reduction FP32 | 128–1,024 tokens；MMLU prompt 长度按数据集 | forward latency / routing records；非生成式输出长度 | 1–4 | 单 container、单 stage | median/p50 latency、speedup、GB/s、Jaccard drift、ΔNLL；无生产阈值 | PyTorch profiler；isolated 1,000 warmup + 5,000 timed；end-to-end 50 warmup + 200 timed；prompt bootstrap |
-| SF-2026-AGENT-JUDGE-BENCH | 5 generators × 6 judges × 3 difficulty × with/without ground truth；90 cells、321,648 tuples | GPT-5.4；Gemini-2.5-Pro；QwQ-32B；GPT-OSS-120B/20B；其余 roster 见 v1 表格 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | fully crossed 90 cells | Not Disclosed | judge alignment 与 ground-truth lift；无生产阈值 | programmatic task-DAG / ground-truth scorer；human validation |
-| SF-2026-PREDICTION-POWERED-EVAL | WMT22 en-de/en-ru/zh-en、WMT23 en-zh/ja-en、WMT24 cs-uk；1,098–1,955 inputs、11–17 systems、25–35 metrics | MetricX-XXL-20、MetricX-23、MetricX-24；GEMBA；human MQM、DA-SQM、ESA | Not Disclosed | Not Disclosed | labeled L=20–200；unlabeled U=800 | Not Disclosed | 1,000 trials；simulation 10,000 Monte Carlo | Not Disclosed | nominal 95% interval coverage、α=0.05、power、ranking stability；无生产阈值 | finite-population human scores；paired tests；MetricX/GEMBA |
-| SF-2026-BCIT | FinQA/Spider/xLAM → TAT-QA/BIRD/BFCL；IFEval retention；24 matched audit pairs | Qwen3-4B-Instruct | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 6 paired seeds；36 GPU-hour cap；promotion episodes 为顺序执行、非统一 batch | Not Disclosed | target gain；IFEval guardrail −2 pp；utility > 0；budget AUC | benchmark scorers；paired t intervals；exact sign-flip tests |
-| SF-2026-DAYDREAMING-SKILL-THEFT | 7 个 skills；每个 skill 5 个 SkillsBench held-out tasks | Victim: claude-opus-5、gpt-5.6-sol、kimi-k3；attacker: gemini-3.7-flash；deployment evaluator: glm-5.3 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 每个 skill 96 calls（64/12/20）；非训练 batch | Not Disclosed | binary task success、behavioral utility；reconstruction query budget | executable SkillsBench verifiers；held-out tasks |
-| SF-2026-EXPERIMENTAL-FIDELITY-AUDIT | 30 个 distinct reproduction tasks / long-horizon runs，覆盖 12 个 domains | Raw GPT-4o；ARC；Claw-AI-Lab；Claude Code CLI；ABE-Ralph | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 30 distinct tasks / 30 long-horizon runs total；per-task repeat count Not Disclosed | Not Disclosed | weighted composite（design、reliability、rigor、completeness）与 6 dimensions；无生产阈值 | ground-truth specs、runtime logs、verification layers |
-| SF-2026-PRORETRIEVAL | E-commerce 3,000 products、Email 5,000 emails；各 20K train / 3K test queries，覆盖 L1/L2/L3 | Qwen3-4B/8B；frozen Qwen3-Embedding-8B、Qwen3-VL-Embedding-8B；对照含 GPT-5.4、GPT-5.5、Claude Opus 4.7 | 训练 2×RTX PRO 6000 96GB；推理 1×RTX 4090 | Not Disclosed | query/schema；prompted baselines 使用 6–7 DSL exemplars；token length Not Disclosed | executable DSL / search result；token length Not Disclosed | RL batch 32；每个 prompt 4 rollouts | 单 query path；Not Disclosed | Hit@1 primary；Hit@3、MRR、NDCG@3、execution success；约 50ms/query 为描述值而非 SLO | exact retrieval targets 与 DSL execution |
-| SF-2026-DPO-SCALE-SEPARATION | HelpSteer3、UltraFeedback；AlpacaEval 2、IFEval | Qwen3-4B-Instruct-2507 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 关键 SGD sweep batch 24；HelpSteer3 comparison 8 paired seeds | Not Disclosed | matched trajectories、KL、gradient scale 与 downstream score；无生产阈值 | validation curves；AlpacaEval/IFEval；Wilcoxon signed-rank |
-| SF-2026-RIEMANN-WAM | Tianji Marvin 双臂真实环境 4 tasks、每 task 15 demonstrations；另含 simulation 与 multi-embodiment tasks | Riemann-1.0；DreamZero*；τ0-WM；LingBot-VLA；π0.5；LingBot-VA；G0.5 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | SR、PSR；未披露 latency / safety SLO | task milestone/completion；simulation benchmark scorers |
-| SF-2026-FRAMING-GAP | 10 个 prompt-injection attack classes 与对应 reframing；clean/poison matched | gpt-4o；gpt-4o-mini；llama3.1:8b；qwen2.5:7b；gemma2:9b；mistral:7b | API models / Ollama；具体 hardware Not Disclosed | Not Disclosed | prompt 与 web page；token length Not Disclosed | tool/action leakage；length Not Disclosed | primary 20 matched trials；generality sweep 10 trials | Not Disclosed | ASR 与 95% Wilson CI；无生产阈值 | leak iff clean safe 且 poisoned leaks；deterministic task checker |
-| SF-2026-TWINKV | LongBench 16 tasks；LooGLE 4 tasks at 16K；RULER 13 tasks at 4K/8K/16K dev 5%；MMLU-Pro | Qwen3-4B；Llama-3.2-1B；4 eviction policies | Not Disclosed | Not Disclosed | 4K、8K、16K 及 benchmark 官方长度 | task-specific | compression ratio 0.3/0.5/0.7；batch Not Disclosed | Not Disclosed | official task metrics、repair cost / quality；无 latency threshold | official F1、accuracy、ROUGE-L、exact/string match、multiple-choice accuracy；同一 sampled examples |
-| SF-2026-LOOPHARNESS | Agent-SafetyBench 200-audited cohort；N=5/10/20 episodes；Track A 485 episodes/config/horizon、1,746 records；Track B 全 200 | deepseek-chat agent/writer；gpt-4o-mini、gpt-4o verifiers；claude-sonnet-4-6 checker | API；Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | frozen cohort、seed 与 model assignment；非统一 batch | Not Disclosed | ASR、Block、clean goal completion、cumulative safety；无生产阈值 | benchmark simulator / episode labels；paired bootstrap |
-| SF-2026-SARA-AUTHORIZATION | AgentDojo、AgentDyn；authorization defense 对照 | GPT-4o-mini；Gemini-2.5-Flash-Lite；defense baselines | API；Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | ASR、UA、BU、inference cost；无生产阈值 | benchmark utility / security checks |
-| SF-2026-POP-HALLUCINATION | TruthfulQA 817、HaluEval2 10K、FaithDial 5K；70/15/15 split；closed-book QA 与 RAG | Llama-3-8B-Instruct；Qwen2.5-7B-Instruct；Mistral-7B-Instruct-v0.2 | NVIDIA A100 80GB | FP16 / BF16 | 数据集定义；token length Not Disclosed | 最多 256 tokens | Not Disclosed | Not Disclosed | AUROC、AUPRC、P@R90、ECE、Brier、latency、overhead；无生产阈值 | official target + automated NLI；human cross-check |
-| SF-2026-FABRICATED-EVIDENCE-GATE | 11-checkpoint roster；crypto/sports/weather transfer；540 cases；held-out framings | Qwen2.5-3B-Instruct | Not Disclosed | 4-bit QLoRA training；inference precision Not Disclosed | prompt panels；token length Not Disclosed | actions / chain-of-thought；length Not Disclosed | 3 epochs；multiple seeds；batch Not Disclosed | Not Disclosed | Youden J、answer rate、accuracy、over-abstention、predeclared truthfulness metric；无生产阈值 | gold KNOW/DECLINE/action labels；held-out framing；multi-seed ranges |
-| SF-2026-SPA-PERSISTENT-IFC | AgentDojo v1.2.2：97 tasks、949 attacks + 97 baselines = 1,081/config；AgentDojo-MQ；multi-turn persistent episodes | gpt-5.4-nano high-reasoning planner 与 quarantined LLM | API；Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | utility、ASR、pipeline status、reuse；无生产阈值 | AgentDojo task / security checks；final environment aggregation |
-| SF-2026-LEON-WAM | LIBERO/PLUS；RoboTwin 2.0 的 4 tasks，clean / randomized | VLA-JEPA+LEON；LaWAM+LEON；matched baselines | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | closed-loop / category success；未披露 latency / safety SLO | official LIBERO/PLUS 与 RoboTwin task success |
-| SF-2026-HARNESSLENS | τ2 Retail、τ3 Banking、Terminal-Bench 2、challenging BIRD；每项 30 TRAIN tasks + official TEST | OpenCode 1.17.13；Codex CLI 0.144.4；Pi 0.80.10；deepseek-v4-flash-preview | API / benchmark runtime；具体 hardware Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | TRAIN 每 task K=2 trials；TEST pass@1 | Not Disclosed | pass@1；总 evolution budget ≤ 200 units；无 permission/tool expansion；τ2 10 tools/turn、40 turns、60 total，TB 50 steps | benchmark runtime / verifier；blind TEST |
-| SF-2026-BLOCK-DRAFTING-FLOOR | GSM8K、MBPP、Alpaca、ArenaHard；384 anchors / 170 prompts；block size 7 | Qwen3-4B primary；Qwen3-8B/14B、Gemma4-12B、DeepSeek-V4-Pro controls；dflash/dspark drafts | Not Disclosed | Qwen3-4B BF16 target；其余 Not Disclosed | other median ≈440；Arena median 2,250、p90 8,226、max 8,638 | block 7 / target rollouts | anchors / prompts；无统一 batch | Not Disclosed | TV floor/gap、accepted length、serving performance；无生产阈值 | 10K prompt bootstrap；same anchors / frozen IDs |
-| SF-2026-PAWBENCH | PAW-Calibration 与 PAW-Coverage 各 25 scenes；11 video models；每 model/scene K=50 rollouts | HappyHorse、Veo 3.1 Fast、Kling 3 Standard、Seedance 2、Wan 2.7/2.2、LTX 2.3/2.5、Cosmos 3 Super I2V、LingBot-Video-MoE、MiniMax H3 | Not Disclosed | Not Disclosed | 同一 source image / action prompt；length Not Disclosed | video rollout；length Not Disclosed | K=50 rollouts/model/scene | Not Disclosed | scene pass ≥20/50 readable and in-schema；conditional TVD、coverage、SPR；无生产阈值 | frozen PAWEval with Gemini 3.5 Flash + scene rubric；trustworthiness diagnostic separate |
-| SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING | 1,000+ Bocconi 一年级学生；四个 study groups；course tasks | GPT-4o | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 四组 cohort；具体 batch Not Disclosed | Not Disclosed | critical-thinking / task scores；exact threshold Not Disclosed | 官方页面所述 human grading 与 study measures |
-
 ## 3. Review Completion Receipt
 
 `complete` 表示按公开 v1 或官方页面完成 route，不表示独立复现。本表 28 个 arXiv family 均重新打开 exact v1 HTML，并以 exact v1 PDF/本地解析文本交叉核对章节目录；没有用 ar5iv 代替 primary identity。未披露 artifact 保持 `Not Disclosed`。
@@ -256,7 +229,41 @@ Benchmark contract 只冻结作者公开的 evaluation 条件；`Not Disclosed` 
 
 <!-- review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:start --><!-- claim:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:start -->该公告只支持一项受限教育干预研究的公开设计和结果边界，不披露新的模型或 AI-System 机制。<!-- claim:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:end -->官方页面描述一千余名 Bocconi 一年级学生、四组干预、GPT-4o 与人工评分；人群、课程和短期任务限制外推，因此保留为 Weekly context，不进入 Books。<!-- review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:end -->
 
-## 4. Deep Analysis Selection
+## 4. Benchmark Contracts
+
+Benchmark contract 只冻结作者公开的 evaluation 条件；`Not Disclosed` 是逐字段证据边界，不允许从相邻实验或常见默认值补齐。表中“无生产阈值”表示论文报告了研究指标，但没有把它定义为生产 SLO。
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-VPP | 短请求 100 个（4K/8K/16K）；长请求 1 个（64K–1M）；GSM8K 混合 500 请求 | Qwen3-Coder-30B-A3B-Instruct；DeepSeek-V3.1-Terminus；GLM-5.2 | Huawei Atlas 900 A3 SuperPoD；16×Ascend 910C 64GB；HCCS/HCCL | Not Disclosed | 4K、8K、16K、64K–1M；混合请求 7–122,710 tokens | 1 token | TP8+CPP2、DCPP2、VPP2；chunk 8K/16K/24K/32K；未披露统一 batch | 短请求 100；混合请求 16；长请求 1 | TTFT、tokens/s；无生产阈值 | AISBench、PyTorch profiler/timeline；4 次重复取均值 |
+| SF-2026-MULTI-EXPERT-CRC | ESConv、MSC、DREAM：各 100 个对话 context；每个 context 6 个 response pair；合计 1,800 个人工标注 pair | gemma-3-12b-it；Mistral-Nemo-Instruct-2407；Qwen2.5-7B-Instruct；Llama-3.1-8B-Instruct；multi-expert judges | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | CRC risk ≤ α=0.1；acceptance rate、accuracy、AUC；无生产阈值 | 人工 pairwise label；conformal risk metrics |
+| SF-2026-PILOT-LIVE | Terminal-Bench 2.0 的 89 个可运行任务；SWE-bench Multilingual 与 SWE-bench Pro | Kimi-K2.6；GLM-5.1；同模型分别承担 supervisor 与 worker | Not Disclosed | Not Disclosed | Not Disclosed | 最多 32K tokens | 每个配置运行 2 次并取均值 | Not Disclosed | Terminal-Bench 单任务 3 小时 wall-clock；pass rate、平均输出 tokens | 官方 benchmark verifier |
+| SF-2026-SKILL-PRETRAINING | API-Bank、MetaTool、APTBench、ToolEyes；OLMES 的 ARC-C、BoolQ、HellaSwag、PIQA、WinoGrande、MMLU | MeCo-1.6B-DCLM-160B；Instella-3B-Stage1；OLMo-3-1025-7B | 4×NVIDIA A100 80GB | BF16；TF32 enabled | Mid-training 4,096；SFT 2,048 | 任务定义；Not Disclosed 固定最大长度 | Mid-training per-device 1、gradient accumulation 8；SFT per-device 4、gradient accumulation 4 | 离线评测；Not Disclosed | accuracy、function-call metrics 与 general-capability guardrail；无 latency SLO | execution、exact match、likelihood；OLMES 固定 5-shot；5 seeds 均值 |
+| SF-2026-DARD | GSM8K、MATH500、MBPP、Countdown、Sudoku、ARC-C；Flickr30K、AI2D、MATH-Vision、MathVista、MMMU、ScienceQA | LLaDA-8B-Instruct；LLaDA-1.5；MMaDA-8B-MixCoT | NVIDIA RTX A6000 | Not Disclosed | 任务定义 | generation length 256；block length 128 | Not Disclosed | Not Disclosed | task score、平均 decoding steps、TPS；无生产阈值 | accuracy；Flickr30K CIDEr；MBPP pass@1；Sudoku partial score；lmms-eval/rule matching；temperature 0 单次运行 |
+| SF-2026-MOE-INFERENCE-OPT-LIMITS | isolated RMSNorm hidden 512–4,096；router softmax N=64；end-to-end seq 128–1,024；100 个 MMLU prompts、119,952 token positions | OLMoE-1B-7B；DeepSeek-V2-Lite；Qwen3-30B-A3B | 单张 NVIDIA A100 80GB；阶段实验使用 SXM4 或 PCIe | FP16 baseline；INT8、INT4、NF4 variants；router reduction FP32 | 128–1,024 tokens；MMLU prompt 长度按数据集 | forward latency / routing records；非生成式输出长度 | 1–4 | 单 container、单 stage | median/p50 latency、speedup、GB/s、Jaccard drift、ΔNLL；无生产阈值 | PyTorch profiler；isolated 1,000 warmup + 5,000 timed；end-to-end 50 warmup + 200 timed；prompt bootstrap |
+| SF-2026-AGENT-JUDGE-BENCH | 5 generators × 6 judges × 3 difficulty × with/without ground truth；90 cells、321,648 tuples | GPT-5.4；Gemini-2.5-Pro；QwQ-32B；GPT-OSS-120B/20B；其余 roster 见 v1 表格 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | fully crossed 90 cells | Not Disclosed | judge alignment 与 ground-truth lift；无生产阈值 | programmatic task-DAG / ground-truth scorer；human validation |
+| SF-2026-PREDICTION-POWERED-EVAL | WMT22 en-de/en-ru/zh-en、WMT23 en-zh/ja-en、WMT24 cs-uk；1,098–1,955 inputs、11–17 systems、25–35 metrics | MetricX-XXL-20、MetricX-23、MetricX-24；GEMBA；human MQM、DA-SQM、ESA | Not Disclosed | Not Disclosed | labeled L=20–200；unlabeled U=800 | Not Disclosed | 1,000 trials；simulation 10,000 Monte Carlo | Not Disclosed | nominal 95% interval coverage、α=0.05、power、ranking stability；无生产阈值 | finite-population human scores；paired tests；MetricX/GEMBA |
+| SF-2026-BCIT | FinQA/Spider/xLAM → TAT-QA/BIRD/BFCL；IFEval retention；24 matched audit pairs | Qwen3-4B-Instruct | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 6 paired seeds；36 GPU-hour cap；promotion episodes 为顺序执行、非统一 batch | Not Disclosed | target gain；IFEval guardrail −2 pp；utility > 0；budget AUC | benchmark scorers；paired t intervals；exact sign-flip tests |
+| SF-2026-DAYDREAMING-SKILL-THEFT | 7 个 skills；每个 skill 5 个 SkillsBench held-out tasks | Victim: claude-opus-5、gpt-5.6-sol、kimi-k3；attacker: gemini-3.7-flash；deployment evaluator: glm-5.3 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 每个 skill 96 calls（64/12/20）；非训练 batch | Not Disclosed | binary task success、behavioral utility；reconstruction query budget | executable SkillsBench verifiers；held-out tasks |
+| SF-2026-EXPERIMENTAL-FIDELITY-AUDIT | 30 个 distinct reproduction tasks / long-horizon runs，覆盖 12 个 domains | Raw GPT-4o；ARC；Claw-AI-Lab；Claude Code CLI；ABE-Ralph | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 30 distinct tasks / 30 long-horizon runs total；per-task repeat count Not Disclosed | Not Disclosed | weighted composite（design、reliability、rigor、completeness）与 6 dimensions；无生产阈值 | ground-truth specs、runtime logs、verification layers |
+| SF-2026-PRORETRIEVAL | E-commerce 3,000 products、Email 5,000 emails；各 20K train / 3K test queries，覆盖 L1/L2/L3 | Qwen3-4B/8B；frozen Qwen3-Embedding-8B、Qwen3-VL-Embedding-8B；对照含 GPT-5.4、GPT-5.5、Claude Opus 4.7 | 训练 2×RTX PRO 6000 96GB；推理 1×RTX 4090 | Not Disclosed | query/schema；prompted baselines 使用 6–7 DSL exemplars；token length Not Disclosed | executable DSL / search result；token length Not Disclosed | RL batch 32；每个 prompt 4 rollouts | 单 query path；Not Disclosed | Hit@1 primary；Hit@3、MRR、NDCG@3、execution success；约 50ms/query 为描述值而非 SLO | exact retrieval targets 与 DSL execution |
+| SF-2026-DPO-SCALE-SEPARATION | HelpSteer3、UltraFeedback；AlpacaEval 2、IFEval | Qwen3-4B-Instruct-2507 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 关键 SGD sweep batch 24；HelpSteer3 comparison 8 paired seeds | Not Disclosed | matched trajectories、KL、gradient scale 与 downstream score；无生产阈值 | validation curves；AlpacaEval/IFEval；Wilcoxon signed-rank |
+| SF-2026-RIEMANN-WAM | Tianji Marvin 双臂真实环境 4 tasks、每 task 15 demonstrations；另含 simulation 与 multi-embodiment tasks | Riemann-1.0；DreamZero*；τ0-WM；LingBot-VLA；π0.5；LingBot-VA；G0.5 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | SR、PSR；未披露 latency / safety SLO | task milestone/completion；simulation benchmark scorers |
+| SF-2026-FRAMING-GAP | 10 个 prompt-injection attack classes 与对应 reframing；clean/poison matched | gpt-4o；gpt-4o-mini；llama3.1:8b；qwen2.5:7b；gemma2:9b；mistral:7b | API models / Ollama；具体 hardware Not Disclosed | Not Disclosed | prompt 与 web page；token length Not Disclosed | tool/action leakage；length Not Disclosed | primary 20 matched trials；generality sweep 10 trials | Not Disclosed | ASR 与 95% Wilson CI；无生产阈值 | leak iff clean safe 且 poisoned leaks；deterministic task checker |
+| SF-2026-TWINKV | LongBench 16 tasks；LooGLE 4 tasks at 16K；RULER 13 tasks at 4K/8K/16K dev 5%；MMLU-Pro | Qwen3-4B；Llama-3.2-1B；4 eviction policies | Not Disclosed | Not Disclosed | 4K、8K、16K 及 benchmark 官方长度 | task-specific | compression ratio 0.3/0.5/0.7；batch Not Disclosed | Not Disclosed | official task metrics、repair cost / quality；无 latency threshold | official F1、accuracy、ROUGE-L、exact/string match、multiple-choice accuracy；同一 sampled examples |
+| SF-2026-LOOPHARNESS | Agent-SafetyBench 200-audited cohort；N=5/10/20 episodes；Track A 485 episodes/config/horizon、1,746 records；Track B 全 200 | deepseek-chat agent/writer；gpt-4o-mini、gpt-4o verifiers；claude-sonnet-4-6 checker | API；Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | frozen cohort、seed 与 model assignment；非统一 batch | Not Disclosed | ASR、Block、clean goal completion、cumulative safety；无生产阈值 | benchmark simulator / episode labels；paired bootstrap |
+| SF-2026-SARA-AUTHORIZATION | AgentDojo、AgentDyn；authorization defense 对照 | GPT-4o-mini；Gemini-2.5-Flash-Lite；defense baselines | API；Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | ASR、UA、BU、inference cost；无生产阈值 | benchmark utility / security checks |
+| SF-2026-POP-HALLUCINATION | TruthfulQA 817、HaluEval2 10K、FaithDial 5K；70/15/15 split；closed-book QA 与 RAG | Llama-3-8B-Instruct；Qwen2.5-7B-Instruct；Mistral-7B-Instruct-v0.2 | NVIDIA A100 80GB | FP16 / BF16 | 数据集定义；token length Not Disclosed | 最多 256 tokens | Not Disclosed | Not Disclosed | AUROC、AUPRC、P@R90、ECE、Brier、latency、overhead；无生产阈值 | official target + automated NLI；human cross-check |
+| SF-2026-FABRICATED-EVIDENCE-GATE | 11-checkpoint roster；crypto/sports/weather transfer；540 cases；held-out framings | Qwen2.5-3B-Instruct | Not Disclosed | 4-bit QLoRA training；inference precision Not Disclosed | prompt panels；token length Not Disclosed | actions / chain-of-thought；length Not Disclosed | 3 epochs；multiple seeds；batch Not Disclosed | Not Disclosed | Youden J、answer rate、accuracy、over-abstention、predeclared truthfulness metric；无生产阈值 | gold KNOW/DECLINE/action labels；held-out framing；multi-seed ranges |
+| SF-2026-SPA-PERSISTENT-IFC | AgentDojo v1.2.2：97 tasks、949 attacks + 97 baselines = 1,081/config；AgentDojo-MQ；multi-turn persistent episodes | gpt-5.4-nano high-reasoning planner 与 quarantined LLM | API；Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | utility、ASR、pipeline status、reuse；无生产阈值 | AgentDojo task / security checks；final environment aggregation |
+| SF-2026-LEON-WAM | LIBERO/PLUS；RoboTwin 2.0 的 4 tasks，clean / randomized | VLA-JEPA+LEON；LaWAM+LEON；matched baselines | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | closed-loop / category success；未披露 latency / safety SLO | official LIBERO/PLUS 与 RoboTwin task success |
+| SF-2026-HARNESSLENS | τ2 Retail、τ3 Banking、Terminal-Bench 2、challenging BIRD；每项 30 TRAIN tasks + official TEST | OpenCode 1.17.13；Codex CLI 0.144.4；Pi 0.80.10；deepseek-v4-flash-preview | API / benchmark runtime；具体 hardware Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | TRAIN 每 task K=2 trials；TEST pass@1 | Not Disclosed | pass@1；总 evolution budget ≤ 200 units；无 permission/tool expansion；τ2 10 tools/turn、40 turns、60 total，TB 50 steps | benchmark runtime / verifier；blind TEST |
+| SF-2026-BLOCK-DRAFTING-FLOOR | GSM8K、MBPP、Alpaca、ArenaHard；384 anchors / 170 prompts；block size 7 | Qwen3-4B primary；Qwen3-8B/14B、Gemma4-12B、DeepSeek-V4-Pro controls；dflash/dspark drafts | Not Disclosed | Qwen3-4B BF16 target；其余 Not Disclosed | other median ≈440；Arena median 2,250、p90 8,226、max 8,638 | block 7 / target rollouts | anchors / prompts；无统一 batch | Not Disclosed | TV floor/gap、accepted length、serving performance；无生产阈值 | 10K prompt bootstrap；same anchors / frozen IDs |
+| SF-2026-PAWBENCH | PAW-Calibration 与 PAW-Coverage 各 25 scenes；11 video models；每 model/scene K=50 rollouts | HappyHorse、Veo 3.1 Fast、Kling 3 Standard、Seedance 2、Wan 2.7/2.2、LTX 2.3/2.5、Cosmos 3 Super I2V、LingBot-Video-MoE、MiniMax H3 | Not Disclosed | Not Disclosed | 同一 source image / action prompt；length Not Disclosed | video rollout；length Not Disclosed | K=50 rollouts/model/scene | Not Disclosed | scene pass ≥20/50 readable and in-schema；conditional TVD、coverage、SPR；无生产阈值 | frozen PAWEval with Gemini 3.5 Flash + scene rubric；trustworthiness diagnostic separate |
+| SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING | 1,000+ Bocconi 一年级学生；四个 study groups；course tasks | GPT-4o | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | 四组 cohort；具体 batch Not Disclosed | Not Disclosed | critical-thinking / task scores；exact threshold Not Disclosed | 官方页面所述 human grading 与 study measures |
+
+## 5. Deep Analysis Selection
 
 三项长叙事按共同状态责任聚合；被 subsume 的 family 仍保留独立 Review 与评分。标准 route 的两项工作不进入 eligibility 表。
 
@@ -317,7 +324,7 @@ Benchmark contract 只冻结作者公开的 evaluation 条件；`Not Disclosed` 
 <!-- analysis-decision:SF-2026-HARNESSLENS:start -->HarnessLens 比较 task-map-guided selective verification 与 rollout budget；其 evidence contract 已在独立 Review 中闭合，不强行纳入 capability lineage 叙事。<!-- analysis-decision:SF-2026-HARNESSLENS:end -->
 <!-- analysis-decision:SF-2026-PAWBENCH:start -->PAWBench 定义固定 action 下的 repeated-rollout distribution identity；它属于 World Model evaluation，不是可继承能力状态。<!-- analysis-decision:SF-2026-PAWBENCH:end -->
 
-## 5. Books Comparison Queue
+## 6. Books Comparison
 
 Evidence Review 与 29/29 owner/adjacent-chapter 比较已完成：12 项形成最小长期机制增量并已写入，16 项由现有命题完整承载，1 项仅作 Weekly context。未参与写作的 reviewer 已核验 owner、相邻章节、事实边界与叙事连续性，Books Gate 通过。
 
@@ -399,7 +406,7 @@ Evidence Review 与 29/29 owner/adjacent-chapter 比较已完成：12 项形成�
 <!-- books-review:SF-2026-PAWBENCH:start --><!-- existing:SF-2026-PAWBENCH:start -->Ch25 已有 transition 与 policy evaluation。<!-- existing:SF-2026-PAWBENCH:end --><!-- delta:SF-2026-PAWBENCH:start -->补足 repeated-rollout distribution identity。<!-- delta:SF-2026-PAWBENCH:end -->相邻 Ch24 负责生成范式，Ch26 负责控制闭环，均不拥有 World Model transition distribution 的评估 identity。<!-- books-review:SF-2026-PAWBENCH:end -->
 <!-- books-review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:start --><!-- existing:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:start -->Books 只收 AI-System 长期机制。<!-- existing:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:end --><!-- delta:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:start -->教育背景不形成系统机制。<!-- delta:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:end --><!-- books-review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING:end -->
 
-## 6. Semantic Audit
+## 7. Semantic Audit
 
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
@@ -409,30 +416,30 @@ Evidence Review 与 29/29 owner/adjacent-chapter 比较已完成：12 项形成�
 | SA-20260828-SELECTION | fresh-context:aug27_28_fresh_audit | deep_analysis_selection | analysis:DA-RUNTIME-STATE; analysis:DA-EVIDENCE-ACTION; analysis:DA-PERSISTENT-LEARNING | — | 三个长叙事单元与逐 family selection route 已复核；未把不同状态 owner 强行合并。 | passed |
 | SA-20260828-BOOKS | fresh-context:aug27_28_fresh_audit | books | books-review:SF-2026-VPP; books-review:SF-2026-PREDICTION-POWERED-EVAL; books-review:SF-2026-PAWBENCH; books-queue:20260828; review:SF-2026-OPENAI-CHATGPT-CRITICAL-THINKING | — | 29/29 比较、12 项 Integrate、SARA owner、TwinKV 机制边界、Weekly Only disposition 及目标/相邻章节均已复核。 | passed |
 
-## 7. Ignored Noise
+## 8. Ignored Noise
 
 窗口内 434 个 arXiv v1 中有 406 个未进入候选分母，主要是垂直应用、常规模型/数据集增量、无 AI-System contract 变化的局部 benchmark，以及交叉分类重复。该闭合是 identity/date/topic closure，不是全文审阅。组织来源中仅 OpenAI 教育研究具有窗口内明确日期；它因不披露 AI-System 机制按 context 闭合。
 
-## 8. Recommended Action
+## 9. Recommended Action
 
 1. 保留已通过 fresh-context 审计的 12 项 Books Integration；后续新证据按同一 Source Family revision 处理。
 2. Sunday Weekly 聚合时重做跨日去重，尤其检查 08-28 的 runtime state、evaluation contract 与 persistent security 是否与 08-27 family 形成 revision/evolution。
 
-## 9. Repository Changes
+## 10. Repository Changes
 
 - 新建本日报。
 - 冻结六份官方 arXiv OAI-PMH gzip 快照、SHA-256、窗口过滤说明和 Required Daily organization receipt。
 - 完成 29 个候选的 Score V2、Source Review、Evidence boundary、Deep Analysis Selection、Books Comparison 与四项 fresh-context Semantic Audit。
 - 主流程已将 12 项长期机制增量写入 10 个 canonical owner 位置并通过 owner/adjacent 审计；未修改 ROADMAP 或 LEARNING_STATE，未生成 Weekly，未 stage、commit 或 push。
 
-## 10. Open Questions
+## 11. Open Questions
 
 - MoE kernel optimization 在不同 topology、expert placement、batch 与 route stability 下何时真正改变端到端 critical path？
 - prediction-powered evaluation 与 conformal abstention 如何在 correlated metric error 和 deployment drift 下共同校准？
 - persistent Agent state 如何同时满足 provenance、information-flow、rollback 与 human override？
 - repeated-rollout world-model evaluation 能否预测 matched-budget policy improvement，而不只反映生成多样性？
 
-## 11. Sources
+## 12. Sources
 
 访问日期均为 2026-08-28；论文日期使用 arXiv v1。
 
@@ -466,3 +473,9 @@ Evidence Review 与 29/29 owner/adjacent-chapter 比较已完成：12 项形成�
 - https://arxiv.org/abs/2608.27311v1
 - https://arxiv.org/abs/2608.27339v1
 - https://arxiv.org/abs/2608.27345v1
+
+## 13. Final Status
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；unresolved findings=0。
+
+本节只汇总前述收据与 fresh-context 审计的最终状态，不以格式校验替代语义验收。
