@@ -1,0 +1,4210 @@
+Agentic Aggregation for Parallel Scaling of Long-Horizon Agentic Tasks
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Problem Formulation
+
+Existing methods
+
+3 Our Approach: AggAgent
+
+Tool design
+
+Workflow
+
+Cost analysis
+
+4 Experimental Setup
+
+Tasks
+
+Models
+
+Rollout agent tools
+
+Cost and latency
+
+Evaluation
+
+5 Results
+
+5.1 Main Results
+
+5.2 Cost and Latency vs. Performance
+
+6 Analysis and Discussion
+
+6.1 Stronger Models for Aggregation
+
+6.2 Output Design Ablation: Synthesis vs. Selection
+
+6.3 Tool Usage Patterns
+
+6.4 Qualitative Analysis
+
+7 Related Work
+
+Long-horizon agents
+
+Test-time scaling
+
+8 Conclusion
+
+References
+
+A Experimental Details
+
+A.1 Implementation
+
+A.2 Rollout Agent Tools
+
+A.3 Cost Calculation
+
+A.4 Latency Measurement
+
+A.5 Evaluation
+
+A.6 Rollout Trajectory Statistics
+
+B Prompts
+
+Rollout agent
+
+LLM-as-a-Judge
+
+LLM-based aggregation
+
+C Results
+
+C.1 Main Results
+
+C.2 Cost and Latency vs. Performance
+
+C.3 Stronger Models for Aggregation
+
+C.4 Confidence Calibration
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11753v1 [cs.CL] 13 Apr 2026
+
+Agentic Aggregation for Parallel Scaling of Long-Horizon Agentic Tasks
+
+Yoonsang Lee   Howard Yen   Xi Ye   Danqi Chen
+
+Affiliation: Princeton Language and Intelligence, Princeton University
+
+Affiliation: {yoonsang, hyen, danqic}@cs.princeton.edu   xi.ye@princeton.edu
+
+Abstract
+
+We study parallel test-time scaling for long-horizon agentic tasks such as agentic search and deep research, where multiple rollouts are generated in parallel and aggregated into a final response. While such scaling has proven effective for chain-of-thought reasoning, agentic tasks pose unique challenges: trajectories are long, multi-turn, and tool-augmented, and outputs are often open-ended. Aggregating only final answers discards rich information from trajectories, while concatenating all trajectories exceeds the model’s context window. To address this, we propose AggAgent, an aggregation agent that treats parallel trajectories as an environment. We equip it with lightweight tools to inspect candidate solutions and search across trajectories, enabling it to navigate and synthesize information on demand. Across six benchmarks and three model families (GLM-4.7, Qwen3.5, MiniMax-M2.5), AggAgent outperforms all existing aggregation methods---by up to 5.3% absolute on average and 10.3% on two deep research tasks---while adding minimal overhead, as the aggregation cost remains bounded by a single agentic rollout. Our findings establish agentic aggregation as an effective and cost-efficient approach to parallel test-time scaling.11
+1
+
+Our code is available at https://github.com/princeton-pli/AggAgent.
+
+1 Introduction
+
+Scaling test-time compute has emerged as a promising avenue for enhancing the performance of large language models (LLMs) (Wei et al., 2022; Wang et al., 2023; Brown et al., 2024; Welleck et al., 2024; Snell et al., 2025; Muennighoff et al., 2025). This success has largely been demonstrated in standard chain-of-thought (CoT) tasks such as mathematical reasoning and coding (Qi et al., 2025; Zhao et al., 2025). However, long-horizon agentic tasks
+
+Figure 1: AggAgent consistently outperforms existing aggregation methods. We measure the average performance across six long-horizon agentic benchmarks (Section 4) against the number of parallel trajectories. The same model as the rollout agent serves as the aggregator.
+
+(e.g., deep research, software engineering, web navigation) present a fundamentally different challenge: trajectories are multi-turn, spanning hundreds of steps with interleaved tool calls and observations (Yao et al., 2022b).
+
+In this work, we study parallel scaling for long-horizon agentic tasks, an approach proven effective for CoT reasoning tasks yet largely unexplored for agentic search and deep research. Parallel scaling enables simultaneous generation of multiple independent trajectories, offering a natural computational advantage (Zhao et al., 2025). Furthermore, parallel scaling offers substantial improvement over single-agent performance (Wei et al., 2025; Li et al., 2026): for instance, GLM-4.7-Flash (Zeng et al., 2025) improves from 27% to 59% on BrowseComp (Wei et al., 2025) and 25% to 51% on HLE (Phan et al., 2025) when scaling from Pass@1 to Pass@8, confirming that correct solutions frequently exist within the parallel rollouts.
+
+The central question then becomes how to effectively aggregate these trajectories. While voting and solution aggregation methods have proven effective for mathematical reasoning and coding (Wang et al., 2023; Fu et al., 2026; Zhao et al., 2025), long-horizon agentic tasks pose distinct challenges: evidence is sparse and distributed across multi-turn trajectories, demanding reasoning far beyond shallow heuristics and final solutions (Li et al., 2025a). Furthermore, individual trajectories may each capture only partial progress toward a complex task, requiring cross-trajectory synthesis to assemble a complete solution (Chang et al., 2026). However, existing approaches fall short (Table 1): aggregating only final solutions discards the rich information in trajectories, summarizing trajectories is expensive and lossy, and concatenating all trajectories into a single context is infeasible, as each trajectory spans hundreds of thousands of tokens.
+
+Figure 2: Overview of aggregation methods for parallel scaling. (Top) An agent produces independent rollouts on a long-horizon task. (Bottom) Solution Aggregation feeds only final solutions to an LLM, discarding intermediate reasoning. Summary Aggregation compresses each trajectory into a lossy summary. AggAgent (ours) navigates trajectories via tools in an agentic manner, enabling full-fidelity cross-trajectory reasoning at low cost.
+
+To address these challenges, we propose AggAgent, which frames aggregation itself as an agentic task, treating the set of trajectories as an environment to interact with (Figure 2). AggAgent interacts with trajectories on demand through three lightweight tools: get_solution (retrieve final solutions of one or all trajectories), search_trajectory (keyword search within a trajectory), and get_segment (read a specific range of steps). Since these tools operate entirely over an array of completed trajectories—rather than invoking external services like web search or code execution—they incur none of the API cost or latency of such external tools. This agentic aggregation allows for cross-trajectory reasoning and synthesis without the cost of loading all trajectories into context, preserving full fidelity while keeping the aggregation cost bounded by a single agentic rollout.
+
+We evaluate AggAgent on six agentic search and deep research benchmarks across three model families (GLM-4.7, Qwen3.5, MiniMax-M2.5). AggAgent consistently outperforms all baselines (Figure 1), improving performance by up to 5.3 points on average and 10.3 points on deep research tasks. Furthermore, AggAgent is Pareto-optimal in cost and performance (Figure 3), adding only a 5.7% overhead over the cost of running 8 parallel agents—compared to 41% for Summary Aggregation—by selectively reading portions of trajectories rather than loading them entirely into context. Notably, AggAgent even surpasses Pass@8 (Section 6.1), demonstrating that effective aggregation can synthesize correct solutions beyond what any single rollout achieves. To summarize, our results show that agentic aggregation is a scalable and effective paradigm for test-time scaling in long-horizon tasks. We demonstrate that AggAgent is effective with off-the-shelf LLMs, and our framework further opens a promising direction for training aggregator agents.
+
+2 Problem Formulation
+
+Criterion
+MV
+WMV
+BoN
+FewTool
+SolAgg
+SummAgg
+AggAgent (Ours)
+
+Task-agnostic
+✗
+✗
+✓
+✓
+✓
+✓
+✓
+
+Non-heuristic
+✗
+✗
+✗
+✗
+✓
+✓
+✓
+
+Trajectory Info.
+✗
+✗
+✗
+✗
+✗
+✓
+✓
+
+Full Fidelity
+✗
+✗
+✗
+✗
+✗
+✗
+✓
+
+Aggregation Cost
+Zero
+Zero
+Zero
+Zero
+Low
+High
+Low
+
+Table 1: Comparison of aggregation methods. Task-agnostic: not restricted to single short answers, applicable to multi-answer and long-form tasks. Non-heuristic: does not rely on shallow signals such as frequency or confidence. Trajectory Info.: reasons over full trajectories beyond final solutions. Full Fidelity: accesses trajectories without compression or information loss. Aggregation Cost: additional inference cost beyond the rollouts.
+
+We study long-horizon tasks such as agentic search and deep research. Given a problem , the goal is to produce an output , which may be either a short answer, a set of answers, or a long-form report. An agent interacts with an external environment to solve by generating a trajectory , where each step consists of internal thinking , tool call , and resulting observation . In parallel scaling, we run the same agent independently for times, yielding . This setting is natural in production deployments of frontier systems (Anthropic, 2025; Cursor, 2025; Kimi Team et al., 2026), as the latency is determined by the slowest of the rollouts.
+
+The core problem centers around how to aggregate these trajectories and synthesize a better solution . We formalize aggregation as a function , where is the aggregated final solution. For agentic search, is evaluated against the ground-truth answer , while for deep research, it is evaluated against problem-specific rubrics.
+
+Existing methods
+
+We adopt the following aggregation methods from prior works:
+
+•
+
+Majority Voting (MV) (Wang et al., 2023): selects the most frequent solution. However, voting methods do not work for multi-answer or long-form generation tasks.
+
+•
+
+Best-of-N (BoN) (Cobbe et al., 2021; Uesato et al., 2022): selects the solution with the highest self-reported confidence. While reward model scores are commonly used as the weight for CoT reasoning tasks, recent works on agentic tasks have adopted the model’s self-reported confidence as the weight (Wei et al., 2025; Zhu et al., 2026).
+
+•
+
+Weighted Majority Voting (WMV) (Li et al., 2023; Wu et al., 2024): selects the solution with the highest total weight, where each solution is weighted by self-reported confidence.
+
+•
+
+Fewest Tool Calls (FewTool) (Liu et al., 2025; Lu et al., 2025): selects the solution from the trajectory that required the fewest tool calls.
+
+•
+
+Solution Aggregation (SolAgg) (Qi et al., 2025; Zhao et al., 2025; Qiao et al., 2025): concatenates all solutions and prompts an LLM to synthesize a final solution.
+
+•
+
+Summary Aggregation (SummAgg) (Li et al., 2025a; Hu et al., 2026): compresses each trajectory into a summary report, concatenates all reports, and prompts an LLM to generate a final solution.
+
+We classify these baselines into two groups. Heuristic methods (MV, WMV, BoN, FewTool) rely on shallow signals such as answer frequency, confidence scores, or trajectory length, without inspecting trajectory content. LLM-based methods (SolAgg, SummAgg) leverage LLM reasoning for solution synthesis but remain limited: Solution Aggregation aggregates only final solutions, discarding all intermediate evidence, while Summary Aggregation compresses each trajectory into a summary report before aggregation, incurring irreversible information loss and requiring additional LLM calls. Table 1 summarizes these limitations.
+
+3 Our Approach: AggAgent
+
+To address the aforementioned limitations, we propose AggAgent, where the aggregator interacts with directly in an agentic manner. The initial user message provides the problem and trajectory metadata, which consists of the number of steps, total token count, and tool usage statistics for each trajectory . The trajectories themselves are not pre-loaded into the context but reside in the environment and are retrieved on-demand, keeping the aggregation cost bounded by a single context window independent of . This design enables cross-trajectory reasoning at full fidelity and low cost (Table 1).
+
+Tool design
+
+We provide AggAgent with four tools as follows22
+2
+
+We provide the full tool descriptions in Figure 18 in the appendix.:
+
+•
+
+get_solution(traj_id): Retrieves the final solution from each trajectory’s last step. Unless traj_id is specified, returns all solutions by default.
+
+•
+
+search_trajectory(traj_id, query, role, k): Searches for keywords within a single trajectory. Returns the top matching steps ranked by ROUGE-L score (Lin, 2004).
+
+•
+
+get_segment(traj_id, start_step, end_step): Reads the full content of a contiguous range of steps from a single trajectory. Returns raw thinking and tool observations for the specified window.
+
+•
+
+finish(): Submits the final solution along with a reason for the aggregation.
+
+Workflow
+
+The tool design reflects a natural coarse-to-fine investigative workflow. Rather than reading every trajectory in full, the agent first surveys the metadata and solutions loaded by get_solution to identify consensus and disagreements across the rollouts, and to pinpoint trajectories worth closer inspection. It then selectively dives into individual trajectories via search_trajectory and get_segment to verify key claims against thinking blocks and tool observations. After sufficient cross-trajectory validation, it calls finish to submit the final synthesized solution. We provide the full prompts in Appendix B.
+
+Cost analysis
+
+Aggregation cost is measured in additional LLM calls beyond the rollouts. Heuristic methods require zero additional calls, while Solution Aggregation requires a single LLM call to synthesize the solution candidates. Summary Aggregation is the most expensive, as it requires separate LLM calls before aggregation, each of which can be as long as the maximum context window. In contrast, AggAgent’s total context is bounded by a single context window of the model, keeping aggregation cost independent of and comparable to Solution Aggregation. Moreover, as AggAgent’s tools operate entirely over the in-memory trajectory array, they incur none of the latency or cost of external tools like web search and code execution.
+
+4 Experimental Setup
+
+Tasks
+
+We evaluate on six long-horizon agentic tasks broadly in two categories: 1) Agentic search: BrowseComp (Wei et al., 2025) consists of challenging factual questions demanding exhaustive multi-step web browsing; BrowseComp-Plus (Chen et al., 2025) enables controlled evaluation on BrowseComp questions by replacing web search with a local knowledge base; HLE (Phan et al., 2025) covers expert-level questions across diverse academic disciplines, emphasizing rigorous reasoning; DeepSearchQA (Gupta et al., 2026) targets multi-answer queries where completeness across all valid answers is required. 2) Deep research: Healthbench-Hard (Arora et al., 2025) requires generating comprehensive long-form responses to challenging medical queries; ResearchRubrics (Sharma et al., 2025) poses open-ended research tasks evaluated against detailed, multi-criterion rubrics.
+
+Due to high costs of long-horizon rollouts, we randomly sample subsets for evaluation33
+3
+
+We report standard deviation in Appendix C.1.. For HLE, we use 155 search-focused questions (Li et al., 2025a). For ResearchRubrics, we use the full 101 problems. For Healthbench-Hard, we randomly sample 100 instances. For all other tasks, we randomly sample 150 questions following Sun et al. (2025); Zhang et al. (2025a).
+
+Models
+
+We employ three model families of varying sizes for base trajectory rollouts: GLM-4.7-Flash (30B) (Zeng et al., 2025), Qwen3.5-122B-A10B (122B) (Qwen Team, 2026), and MiniMax-M2.5 (229B) (MiniMax, 2026). We adopt Tongyi DeepResearch (Tongyi DeepResearch Team et al., 2025) as the agent scaffold, use native function calling, allow at most 128K context length with 100 tool calls, and sample 8 independent trajectories. For LLM-based aggregation, we use the same model as the rollout agent.
+
+Rollout agent tools
+
+For BrowseComp-Plus, we follow the official implementation and provide search and get_document tools using Qwen3-Embedding-8B (Zhang et al., 2025b) as the retriever. For all other tasks, we provide search and visit tools following prior work (Yen et al., 2025; Li et al., 2025b; Wu et al., 2025; Gao et al., 2026), where search uses Serper API44
+4
+
+https://serper.dev for Google search and visit uses crawl4ai55
+5
+
+https://github.com/unclecode/crawl4ai to scrape a specific web page.
+
+Cost and latency
+
+We report total cost and latency per query. Cost includes rollout, tool calls, and aggregation, while latency includes rollout and aggregation.
+
+Evaluation
+
+We employ LLM-as-a-judge, following the official evaluation setting. Specifically, we use Qwen3.5-397B-A17B for ResearchRubrics and GPT-4.1 (Achiam et al., 2023) for all other datasets. We perform bootstrapped sampling for calculating Metric@. For BrowseComp, BrowseComp-Plus, and HLE, the predicted answer is evaluated against the gold answer . For DeepSearchQA, the predicted answer set is considered correct if it exactly matches the gold answer set. For Healthbench-Hard and ResearchRubrics, the long-form response is evaluated across multiple problem-specific rubrics, and the scores are averaged. The rubrics contain negative scores, hence the total score could also be negative.
+
+We provide further experimental details in Appendix A.
+
+5 Results
+
+\Block2-1Task
+
+\Block
+2-1Pass@1
+
+Heuristic Aggregation@8
+LLM-based Aggregation@8
+
+MV
+
+WMV
+
+BoN
+
+FewTool
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+\Block[fill=red!8]7-1
+
+GLM-4.7-Flash
+
+BrowseComp
+
+27.42
+
+32.67
+
+50.67
+
+51.33
+
+41.33
+
+53.33
+
+55.33
+
+56.00
+
+BrowseComp-Plus
+
+49.08
+
+59.33
+
+68.67
+
+68.67
+
+62.00
+
+70.67
+
+70.67
+
+71.33
+
+HLE
+
+25.00
+
+26.45
+
+27.74
+
+30.97
+
+27.10
+
+32.90
+
+34.84
+
+37.42
+
+DeepSearchQA
+
+32.42
+
+–
+
+–
+
+35.33
+
+33.33
+
+46.00
+
+47.33
+
+49.33
+
+Healthbench-Hard
+
+8.67
+
+–
+
+–
+
+9.91
+
+8.90
+
+15.72
+
+7.35
+
+27.99
+
+ResearchRubrics
+
+37.47
+
+–
+
+–
+
+37.70
+
+35.21
+
+36.84
+
+31.72
+
+45.31
+
+Average
+
+30.01
+
+32.84
+
+37.61
+
+38.99
+
+34.65
+
+42.58
+
+41.21
+
+47.90
+
+\Block[fill=customgreen]7-1
+
+Qwen3.5-122B
+
+BrowseComp
+
+40.25
+
+47.33
+
+60.00
+
+58.67
+
+56.00
+
+61.33
+
+62.00
+
+62.67
+
+BrowseComp-Plus
+
+58.67
+
+66.67
+
+69.33
+
+74.00
+
+70.67
+
+73.33
+
+73.33
+
+74.67
+
+HLE
+
+39.35
+
+43.87
+
+45.16
+
+53.55
+
+41.29
+
+50.97
+
+50.32
+
+54.19
+
+DeepSearchQA
+
+49.25
+
+–
+
+–
+
+57.33
+
+54.67
+
+62.67
+
+64.00
+
+66.00
+
+Healthbench-Hard
+
+12.87
+
+–
+
+–
+
+13.01
+
+12.83
+
+26.30
+
+23.00
+
+28.06
+
+ResearchRubrics
+
+40.50
+
+–
+
+–
+
+42.37
+
+39.58
+
+42.10
+
+37.47
+
+49.36
+
+Average
+
+40.15
+
+43.42
+
+46.19
+
+49.82
+
+45.84
+
+52.78
+
+51.69
+
+55.83
+
+\Block[fill=customblue]7-1
+
+MiniMax-M2.5
+
+BrowseComp
+
+50.17
+
+60.67
+
+66.67
+
+70.67
+
+67.33
+
+70.67
+
+70.00
+
+71.33
+
+BrowseComp-Plus
+
+64.17
+
+68.67
+
+75.33
+
+76.00
+
+74.67
+
+76.67
+
+76.67
+
+77.33
+
+HLE
+
+45.73
+
+53.55
+
+57.42
+
+58.06
+
+46.45
+
+54.19
+
+58.06
+
+60.00
+
+DeepSearchQA
+
+54.42
+
+–
+
+–
+
+64.00
+
+56.00
+
+62.00
+
+61.33
+
+65.33
+
+Healthbench-Hard
+
+9.67
+
+–
+
+–
+
+8.79
+
+5.34
+
+21.84
+
+16.92
+
+24.46
+
+ResearchRubrics
+
+39.97
+
+–
+
+–
+
+39.00
+
+38.44
+
+44.00
+
+40.29
+
+45.42
+
+Average
+
+44.02
+
+47.83
+
+50.58
+
+52.75
+
+48.04
+
+54.90
+
+53.88
+
+57.31
+
+Table 2: AggAgent performs the best across all settings. We evaluate on six long-horizon tasks using three model families, each generating independent rollouts. For LLM-based aggregation methods, the same model is used for both rollout and aggregation. Best metric per row is bolded. – denotes that voting-based methods are not applicable, and we use Pass@1 instead to calculate the average score.
+
+Figure 3: AggAgent achieves a Pareto-optimal performance–efficiency tradeoff. We compare aggregation methods at parallel samples, averaging performance across six benchmarks, with the same model serving as both rollout agent and aggregator. For each model, the top chart plots average cost (USD per query) vs. performance and the bottom chart plots average latency (seconds per query) vs. performance.
+
+5.1 Main Results
+
+We present the main results on in Table 2, and present the full results () in Appendix C.1. AggAgent consistently outperforms all baselines across all three models, improving over Pass@1 by 13.3–17.9 points and over the strongest baseline (SolAgg) by 2.4–5.3 points in average score.
+
+Among the heuristic baselines, Majority Voting performs the worst, while confidence-based methods (WMV, BoN) yield substantial improvements, consistent with prior observations (Wei et al., 2025). However, the gains are less pronounced on DeepSearchQA, Healthbench-Hard, and ResearchRubrics, where the model is poorly calibrated (see Appendix C.4 for details). Notably, voting methods are not applicable to multi-answer or long-form tasks, so their performance gains are limited to single-answer tasks only.66
+6
+
+We use Pass@1 instead to calculate the average score. Fewest Tool Calls has been popular on BrowseComp due to its simplicity (Liu et al., 2025; Lu et al., 2025), but our results show that it also does not generalize well beyond such tasks.
+
+Meanwhile, LLM-based methods consistently outperform heuristic baselines. Summary Aggregation outperforms all other baselines on agentic search tasks, as access to full trajectory evidence aids answer verification. However, it falls significantly behind Solution Aggregation on deep research tasks, as trajectory compression harms the detail and coherence of long-form responses. While no single baseline is universally optimal, AggAgent achieves strong performance by enabling fine-grained reasoning over trajectories without sacrificing detail or coherence.
+
+5.2 Cost and Latency vs. Performance
+
+We compare cost and latency versus performance for different numbers of samples in Figure 3 (full breakdown in Appendix C.2). As increases, all methods become more expensive and slower due to additional rollouts. AggAgent and Solution Aggregation introduce only minimal overhead beyond heuristic baselines—at , their overhead over the rollout cost is 5.7% and 3.7%, respectively—yet substantially outperform them. Interestingly, their overhead does not increase proportionally to , suggesting that having more samples can sometimes make aggregation easier by providing stronger supporting evidence, partially offsetting the extra computation spent on harder instances. In contrast, Summary Aggregation incurs 41% overhead at because it must compress each trajectory before aggregation. Overall, AggAgent achieves Pareto-optimal performance and efficiency across benchmarks, showing that agentic aggregation scales efficiently with test-time compute without incurring substantial additional cost.
+
+6 Analysis and Discussion
+
+Figure 4: Employing a stronger aggregator improves performance on LLM-based aggregation methods. In all cases, GLM-4.7-Flash serves as the rollout agent; blue bars replace the aggregator with the stronger MiniMax-M2.5, while red bars use GLM-4.7-Flash for both roles. Yellow hatched bars denote the Pass@. All methods are evaluated at .
+
+6.1 Stronger Models for Aggregation
+
+Could aggregation benefit from employing a stronger model? We investigate this by replacing the aggregator with MiniMax-M2.5 while keeping GLM-4.7-Flash as the base rollout agent. As shown in Figure 4 (full results in Table 11 in the appendix), using a stronger aggregator generally improves performance, with MiniMax-based AggAgent achieving the highest average score and even surpassing Pass@8 on BrowseComp-Plus. This points to asymmetric model allocation—a stronger model for aggregation, weaker models for parallel rollouts—as a practical strategy for designing multi-agent systems, consistent with prior work employing stronger models as orchestrators over multiple weaker subagents (Qiao et al., 2025; Zhang et al., 2025a; Akay et al., 2026). In our setting, the aggregator plays the orchestrating role, reasoning across parallel trajectories to produce a final solution.
+
+Figure 5: Ablation of solution synthesis vs. best-trajectory selection. AggAgent synthesizes a new solution from the collected trajectories; the selection variant selects the single best trajectory directly. Color indicates model (red: GLM-4.7-Flash, green: Qwen3.5-122B, blue: MiniMax-M2.5); line style and marker indicate method (solid + circle: AggAgent, dashed + diamond: selection variant).
+
+6.2 Output Design Ablation: Synthesis vs. Selection
+
+We ablate the output design of AggAgent by comparing it against a selection variant, which selects the single best trajectory and adopts its solution directly instead of synthesizing a new solution. As shown in Figure 5, AggAgent performs better overall, though the selection variant remains competitive in some settings. Notably, the selection variant performs poorly on deep research benchmarks, where AggAgent outperforms it by a large margin. We attribute this to a mismatch between selection and the nature of open-ended research tasks: quality is distributed across trajectories so no single trajectory dominates, yet selection forces an all-or-nothing commitment. Synthesis mitigates this by making local, compositional judgments about which parts of each trajectory to incorporate, rather than committing to a global winner. This distinction is less pronounced for agentic search, where trajectories tend to be clearly correct or clearly wrong, making selection more straightforward. These results suggest that synthesis is often the preferable output design, consistent with our findings in Section 6.1 and 6.4 that AggAgent can compose a correct solution from individually incorrect trajectories. We leave a more thorough ablation of output design to future work.
+
+Figure 6: Average number of tool calls per query by AggAgent. Numbers above each bar indicate the average total tool calls per query. search_trajectory dominates tool usage, while get_solution and finish are each called approximately once per query. get_segment is used more selectively, reflecting a coarse-to-fine strategy where AggAgent commits to full-content reads only when keyword-level search is insufficient.
+
+6.3 Tool Usage Patterns
+
+In this section, we analyze the tool usage behaviour of AggAgent. As depicted in Figure 6, search_trajectory accounts for the majority of tool calls, while get_solution and finish are each invoked approximately once per query, consistent with the intended workflow: solutions are surveyed once at the start and the agent terminates after the final synthesis. Meanwhile, get_segment is used relatively less than search_trajectory, suggesting that AggAgent reserves full-content reads for cases where keyword-level search alone is insufficient, diving deep only when actually needed. We also observe that stronger models tend to require fewer tool calls overall, suggesting more capable models reach a final solution more efficiently. Deep research tasks similarly exhibit fewer tool calls, potentially due to less need for resolving precise factual conflicts across trajectories.
+
+6.4 Qualitative Analysis
+
+We qualitatively analyze cases where AggAgent succeeds in producing correct answers. AggAgent demonstrates four key behaviours (Figure 7): (1) Minority answer identification: identifying the correct answer from multiple trajectories, even when it is held by only a minority, (2) Disagreement resolution: resolving inconsistencies and conflicts across trajectories to arrive at a coherent answer, (3) Cross-trajectory synthesis: constructing a correct solution by reasoning over trajectories that are all incorrect, and (4) Heuristic interpretation: leveraging heuristic signals such as majority vote and confidence scores to guide aggregation, while not relying on them entirely. Together, these behaviours highlight AggAgent’s capacity for nuanced, evidence-driven reasoning across parallel trajectories beyond simple voting or selection.
+
+Figure 7: Qualitative examples illustrating four key behaviours of AggAgent.
+
+7 Related Work
+
+Long-horizon agents
+
+LLM agents have emerged as a powerful paradigm, extending language models beyond pure parametric generation to interactive problem solving in external environments. ReAct (Yao et al., 2022b) has been the most prominent workflow, interleaving reasoning, action selection, and environment observations. This has enabled a wide range of applications, including agentic RAG (Jin et al., 2025b; Li et al., 2025c; Jin et al., 2025a), software engineering (Jimenez et al., 2024; Yang et al., 2024; Wang et al., 2025), web navigation (Yao et al., 2022a; Chae et al., 2025; Gandhi & Neubig, 2026), and deep research systems (OpenAI, 2025; Anthropic, 2025; Roucher et al., 2025). Recent work has sought to improve agentic capabilities through advances in RL algorithms (Shao et al., 2024; Shao et al., 2025; Ritter et al., 2026), agentic mid-training (Su et al., 2025), and environment scaling (Fang et al., 2025). Our work is complementary to these efforts: we treat these agents as rollout models and study how to aggregate parallel trajectories into a single high-quality solution.
+
+Test-time scaling
+
+Early work on test-time scaling for CoT tasks (Kojima et al., 2022; Wei et al., 2022) such as math reasoning and coding showed clear gains from search-based strategies (Yao et al., 2023), extended thinking budgets (Muennighoff et al., 2025; Guo et al., 2025; Snell et al., 2025), majority voting (Wang et al., 2023; Brown et al., 2024), and learning-based aggregation (Qi et al., 2025; Zhao et al., 2025).
+
+However, test-time scaling for long-horizon agents is more challenging, as trajectories are lengthy, heterogeneous, and difficult to compare using simple surface-level signals (e.g., majority or confidence). Parallel scaling with LLM-based aggregation mitigates this problem by generating multiple independent trajectories and reasoning over them to produce a final solution. WebResearcher (Qiao et al., 2025) concatenates final answers and prompts an LLM to synthesize a solution, while ParallelMuse (Li et al., 2025a) compresses each trajectory into a summary report before aggregation, incurring high cost and information loss. Concurrent with our work, KARL (Chang et al., 2026) feeds final answers back to the rollout agent with the same tools enabled, but it disregards full trajectories, and reusing rollout tools can be costly in practice. In contrast, AggAgent enables the aggregator to interact with trajectories in an agentic manner, supporting cross-trajectory reasoning without lossy compression or excessive cost. While AggAgent is training-free and effective with off-the-shelf LLMs, we leave fine-tuning the aggregator as a promising direction for future work.
+
+Orthogonal to our focus on parallel scaling, several works have studied sequential scaling to extend the effective horizon of a single agent through context management (Wu et al., 2025; Yen et al., 2025; Tang et al., 2025; Zeng et al., 2026), context folding (Sun et al., 2025; Ye et al., 2026), or iterative refinement (Zhu et al., 2026; Xiao et al., 2026).
+
+8 Conclusion
+
+We introduce AggAgent, an aggregation agent for parallel scaling of long-horizon agentic tasks. By treating parallel trajectories as an interactive environment and navigating them via lightweight in-memory tools, AggAgent enables cross-trajectory reasoning at full fidelity, while avoiding both the information loss of compression and the prohibitive cost of loading all trajectories into context. Across six benchmarks and three models, AggAgent consistently outperforms all baselines, achieving Pareto-optimal performance and efficiency. Our findings establish agentic aggregation as a principled and cost-efficient paradigm for parallel test-time scaling.
+
+Acknowledgments
+
+We thank Jeffrey Cheng, Simon Park, and all Princeton NLP members for their helpful discussions and feedback. This work is gratefully supported by an NSF CAREER award (IIS-2239290).
+
+References
+
+Achiam et al. (2023)
+
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+
+GPT-4 technical report.
+
+arXiv preprint arXiv:2303.08774, 2023.
+
+Akay et al. (2026)
+
+Yagiz Can Akay, Muhammed Yusuf Kartal, Esra Alparslan, Faruk Ortakoyluoglu, and Arda Akpinar.
+
+SPD-RAG: Sub-agent per document retrieval-augmented generation.
+
+arXiv preprint arXiv:2603.08329, 2026.
+
+Anthropic (2025)
+
+Anthropic.
+
+How we built our multi-agent research system, June 2025.
+
+URL https://www.anthropic.com/engineering/multi-agent-research-system.
+
+Arora et al. (2025)
+
+Rahul K Arora, Jason Wei, Rebecca Soskin Hicks, Preston Bowman, Joaquin Quiñonero-Candela, Foivos Tsimpourlas, Michael Sharman, Meghan Shah, Andrea Vallone, Alex Beutel, et al.
+
+HealthBench: Evaluating large language models towards improved human health.
+
+arXiv preprint arXiv:2505.08775, 2025.
+
+Brown et al. (2024)
+
+Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V Le, Christopher Ré, and Azalia Mirhoseini.
+
+Large language monkeys: Scaling inference compute with repeated sampling.
+
+arXiv preprint arXiv:2407.21787, 2024.
+
+Chae et al. (2025)
+
+Hyungjoo Chae, Sunghwan Kim, Junhee Cho, Seungone Kim, Seungjun Moon, Gyeom Hwangbo, Dongha Lim, Minjin Kim, Yeonjun Hwang, Minju Gwak, Dongwook Choi, Minseok Kang, Gwanhoon Im, ByeongUng Cho, Hyojun Kim, Jun Hee Han, Taeyoon Kwon, Minju Kim, Beong woo Kwak, Dongjin Kang, and Jinyoung Yeo.
+
+Web-Shepherd: Advancing PRMs for reinforcing web agents.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+
+URL https://openreview.net/forum?id=G2kMroO9UV.
+
+Chang et al. (2026)
+
+Jonathan D Chang, Andrew Drozdov, Shubham Toshniwal, Owen Oertell, Alexander Trott, Jacob Portes, Abhay Gupta, Pallavi Koppol, Ashutosh Baheti, Sean Kulinski, et al.
+
+KARL: Knowledge agents via reinforcement learning.
+
+arXiv preprint arXiv:2603.05218, 2026.
+
+Chen et al. (2025)
+
+Zijian Chen, Xueguang Ma, Shengyao Zhuang, Ping Nie, Kai Zou, Andrew Liu, Joshua Green, Kshama Patel, Ruoxi Meng, Mingyi Su, et al.
+
+BrowseComp-Plus: A more fair and transparent evaluation benchmark of deep-research agent.
+
+arXiv preprint arXiv:2508.06600, 2025.
+
+Cobbe et al. (2021)
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al.
+
+Training verifiers to solve math word problems, 2021.
+
+URL https://arxiv. org/abs/2110.14168, 9, 2021.
+
+Cursor (2025)
+
+Cursor.
+
+Introducing cursor 2.0 and composer, October 2025.
+
+URL https://cursor.com/blog/2-0.
+
+Fang et al. (2025)
+
+Runnan Fang, Shihao Cai, Baixuan Li, Jialong Wu, Guangyu Li, Wenbiao Yin, Xinyu Wang, Xiaobin Wang, Liangcai Su, Zhen Zhang, et al.
+
+Towards general agentic intelligence via environment scaling.
+
+arXiv preprint arXiv:2509.13311, 2025.
+
+Fu et al. (2026)
+
+Yichao Fu, Xuewei Wang, Hao Zhang, Yuandong Tian, and Jiawei Zhao.
+
+Deep think with confidence.
+
+In The Fourteenth International Conference on Learning Representations, 2026.
+
+URL https://openreview.net/forum?id=8LqHs0KIM7.
+
+Gandhi & Neubig (2026)
+
+Apurva Gandhi and Graham Neubig.
+
+Go-Browse: Training web agents with structured exploration.
+
+In The Fourteenth International Conference on Learning Representations, 2026.
+
+URL https://openreview.net/forum?id=IpzRWE52yw.
+
+Gao et al. (2026)
+
+Jiaxuan Gao, Wei Fu, Minyang Xie, Shusheng Xu, Chuyi He, Zhiyu Mei, Banghua Zhu, and Yi Wu.
+
+Unlocking long-horizon agentic search with large-scale end-to-end RL.
+
+In The Fourteenth International Conference on Learning Representations, 2026.
+
+URL https://openreview.net/forum?id=MfPDdPUGKi.
+
+Guo et al. (2025)
+
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al.
+
+DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning.
+
+arXiv preprint arXiv:2501.12948, 2025.
+
+Gupta et al. (2026)
+
+Nikita Gupta, Riju Chatterjee, Lukas Haas, Connie Tao, Andrew Wang, Chang Liu, Hidekazu Oiwa, Elena Gribovskaya, Jan Ackermann, John Blitzer, et al.
+
+DeepSearchQA: Bridging the comprehensiveness gap for deep research agents.
+
+arXiv preprint arXiv:2601.20975, 2026.
+
+Hu et al. (2025)
+
+Chen Hu, Haikuo Du, Heng Wang, Lin Lin, Mingrui Chen, Peng Liu, Ruihang Miao, Tianchi Yue, Wang You, Wei Ji, et al.
+
+Step-DeepResearch technical report.
+
+arXiv preprint arXiv:2512.20491, 2025.
+
+Hu et al. (2026)
+
+Jingcheng Hu, Yinmin Zhang, Shijie Shang, Xiaobo Yang, Yue Peng, Zhewei Huang, Hebin Zhou, Xin Wu, Jie Cheng, Fanqi Wan, et al.
+
+PaCoRe: Learning to scale test-time compute with parallel coordinated reasoning.
+
+arXiv preprint arXiv:2601.05593, 2026.
+
+Jimenez et al. (2024)
+
+Carlos E Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R Narasimhan.
+
+SWE-bench: Can language models resolve real-world github issues?
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+URL https://openreview.net/forum?id=VTF8yNQM66.
+
+Jin et al. (2025a)
+
+Bowen Jin, Jinsung Yoon, Priyanka Kargupta, Sercan O Arik, and Jiawei Han.
+
+An empirical study on reinforcement learning for reasoning-search interleaved LLM agents.
+
+arXiv preprint arXiv:2505.15117, 2025a.
+
+Jin et al. (2025b)
+
+Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan O Arik, Dong Wang, Hamed Zamani, and Jiawei Han.
+
+Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning.
+
+In Second Conference on Language Modeling, 2025b.
+
+URL https://openreview.net/forum?id=Rwhi91ideu.
+
+Kimi Team et al. (2026)
+
+Kimi Team, Tongtong Bai, Yifan Bai, Yiping Bao, SH Cai, Yuan Cao, Y Charles, HS Che, Cheng Chen, Guanduo Chen, et al.
+
+Kimi K2.5: Visual agentic intelligence.
+
+arXiv preprint arXiv:2602.02276, 2026.
+
+Kojima et al. (2022)
+
+Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yutaka Matsuo, and Yusuke Iwasawa.
+
+Large language models are zero-shot reasoners.
+
+Advances in neural information processing systems, 35:22199–22213, 2022.
+
+Kwon et al. (2023)
+
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica.
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th symposium on operating systems principles, pp. 611–626, 2023.
+
+Li et al. (2025a)
+
+Baixuan Li, Dingchu Zhang, Jialong Wu, Wenbiao Yin, Zhengwei Tao, Yida Zhao, Liwen Zhang, Haiyang Shen, Runnan Fang, Pengjun Xie, et al.
+
+ParallelMuse: Agentic parallel thinking for deep information seeking.
+
+arXiv preprint arXiv:2510.24698, 2025a.
+
+Li et al. (2025b)
+
+Kuan Li, Zhongwang Zhang, Huifeng Yin, Liwen Zhang, Litu Ou, Jialong Wu, Wenbiao Yin, Baixuan Li, Zhengwei Tao, Xinyu Wang, et al.
+
+WebSailor: Navigating super-human reasoning for web agent.
+
+arXiv preprint arXiv:2507.02592, 2025b.
+
+Li et al. (2025c)
+
+Xiaoxi Li, Guanting Dong, Jiajie Jin, Yuyao Zhang, Yujia Zhou, Yutao Zhu, Peitian Zhang, and Zhicheng Dou.
+
+Search-o1: Agentic search-enhanced large reasoning models.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, pp. 5420–5438, 2025c.
+
+Li et al. (2023)
+
+Yifei Li, Zeqi Lin, Shizhuo Zhang, Qiang Fu, Bei Chen, Jian-Guang Lou, and Weizhu Chen.
+
+Making language models better reasoners with step-aware verifier.
+
+In Anna Rogers, Jordan Boyd-Graber, and Naoaki Okazaki (eds.), Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 5315–5333, Toronto, Canada, July 2023. Association for Computational Linguistics.
+
+doi: 10.18653/v1/2023.acl-long.291.
+
+URL https://aclanthology.org/2023.acl-long.291/.
+
+Li et al. (2026)
+
+Zhuofeng Li, Dongfu Jiang, Xueguang Ma, Haoxiang Zhang, Ping Nie, Yuyu Zhang, Kai Zou, Jianwen Xie, Yu Zhang, and Wenhu Chen.
+
+OpenResearcher: A Fully Open Pipeline for Long-Horizon Deep Research Trajectory Synthesis.
+
+arXiv preprint arXiv:2603.20278, 2026.
+
+Lin (2004)
+
+Chin-Yew Lin.
+
+ROUGE: A package for automatic evaluation of summaries.
+
+In Text Summarization Branches Out, pp. 74–81, Barcelona, Spain, July 2004. Association for Computational Linguistics.
+
+URL https://aclanthology.org/W04-1013/.
+
+Liu et al. (2025)
+
+Aixin Liu, Aoxue Mei, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu, Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, et al.
+
+DeepSeek-V3.2: Pushing the frontier of open large language models.
+
+arXiv preprint arXiv:2512.02556, 2025.
+
+Lu et al. (2025)
+
+Rui Lu, Zhenyu Hou, Zihan Wang, Hanchen Zhang, Xiao Liu, Yujiang Li, Shi Feng, Jie Tang, and Yuxiao Dong.
+
+DeepDive: Advancing deep search agents with knowledge graphs and multi-turn RL.
+
+arXiv preprint arXiv:2509.10446, 2025.
+
+MiniMax (2026)
+
+MiniMax.
+
+MiniMax-M2.5, February 2026.
+
+URL https://huggingface.co/MiniMaxAI/MiniMax-M2.5.
+
+Muennighoff et al. (2025)
+
+Niklas Muennighoff, Zitong Yang, Weijia Shi, Xiang Lisa Li, Li Fei-Fei, Hannaneh Hajishirzi, Luke Zettlemoyer, Percy Liang, Emmanuel Candès, and Tatsunori B Hashimoto.
+
+s1: Simple test-time scaling.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, pp. 20286–20332, 2025.
+
+OpenAI (2025)
+
+OpenAI.
+
+Introducing deep research, February 2025.
+
+URL https://openai.com/index/introducing-deep-research/.
+
+Phan et al. (2025)
+
+Long Phan, Alice Gatti, Ziwen Han, Nathaniel Li, Josephina Hu, Hugh Zhang, Chen Bo Calvin Zhang, Mohamed Shaaban, John Ling, Sean Shi, et al.
+
+Humanity’s last exam.
+
+arXiv preprint arXiv:2501.14249, 2025.
+
+Qi et al. (2025)
+
+Jianing Qi, Xi Ye, Hao Tang, Zhigang Zhu, and Eunsol Choi.
+
+Learning to reason across parallel samples for LLM reasoning.
+
+arXiv preprint arXiv:2506.09014, 2025.
+
+Qiao et al. (2025)
+
+Zile Qiao, Guoxin Chen, Xuanzhong Chen, Donglei Yu, Wenbiao Yin, Xinyu Wang, Zhen Zhang, Baixuan Li, Huifeng Yin, Kuan Li, et al.
+
+WebResearcher: Unleashing unbounded reasoning capability in long-horizon agents.
+
+arXiv preprint arXiv:2509.13309, 2025.
+
+Qwen Team (2026)
+
+Qwen Team.
+
+Qwen3.5: Towards native multimodal agents, February 2026.
+
+URL https://qwen.ai/blog?id=qwen3.5.
+
+Ritter et al. (2026)
+
+Daniel Ritter, Owen Oertell, Bradley Guo, Jonathan Chang, Kianté Brantley, and Wen Sun.
+
+LLMs can learn to reason via off-policy RL.
+
+arXiv preprint arXiv:2602.19362, 2026.
+
+Roucher et al. (2025)
+
+Aymeric Roucher, Albert Villanova del Moral, Merve Noyan, Thomas Wolf, and Clémentine Fourrier.
+
+Open-source deepresearch - freeing our search agents, February 2025.
+
+URL https://huggingface.co/blog/open-deep-research.
+
+Shao et al. (2025)
+
+Rulin Shao, Akari Asai, Shannon Zejiang Shen, Hamish Ivison, Varsha Kishore, Jingming Zhuo, Xinran Zhao, Molly Park, Samuel G Finlayson, David Sontag, et al.
+
+Dr. Tulu: Reinforcement learning with evolving rubrics for deep research.
+
+arXiv preprint arXiv:2511.19399, 2025.
+
+Shao et al. (2024)
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+
+DeepSeekMath: Pushing the limits of mathematical reasoning in open language models.
+
+arXiv preprint arXiv:2402.03300, 2024.
+
+Sharma et al. (2025)
+
+Manasi Sharma, Chen Bo Calvin Zhang, Chaithanya Bandi, Clinton Wang, Ankit Aich, Huy Nghiem, Tahseen Rabbani, Ye Htet, Brian Jang, Sumana Basu, et al.
+
+ResearchRubrics: A benchmark of prompts and rubrics for evaluating deep research agents.
+
+arXiv preprint arXiv:2511.07685, 2025.
+
+Snell et al. (2025)
+
+Charlie Victor Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar.
+
+Scaling LLM test-time compute optimally can be more effective than scaling parameters for reasoning.
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+URL https://openreview.net/forum?id=4FWAwZtd2n.
+
+Su et al. (2025)
+
+Liangcai Su, Zhen Zhang, Guangyu Li, Zhuo Chen, Chenxi Wang, Maojia Song, Xinyu Wang, Kuan Li, Jialong Wu, Xuanzhong Chen, et al.
+
+Scaling agents via continual pre-training.
+
+arXiv preprint arXiv:2509.13310, 2025.
+
+Sun et al. (2025)
+
+Weiwei Sun, Miao Lu, Zhan Ling, Kang Liu, Xuesong Yao, Yiming Yang, and Jiecao Chen.
+
+Scaling long-horizon llm agent via context-folding.
+
+arXiv preprint arXiv:2510.11967, 2025.
+
+Tang et al. (2025)
+
+Qiaoyu Tang, Hao Xiang, Le Yu, Bowen Yu, Yaojie Lu, Xianpei Han, Le Sun, WenJuan Zhang, Pengbo Wang, Shixuan Liu, et al.
+
+Beyond turn limits: Training deep search agents with dynamic context window.
+
+arXiv preprint arXiv:2510.08276, 2025.
+
+Tongyi DeepResearch Team et al. (2025)
+
+Tongyi DeepResearch Team, Baixuan Li, Bo Zhang, Dingchu Zhang, Fei Huang, Guangyu Li, Guoxin Chen, Huifeng Yin, Jialong Wu, Jingren Zhou, et al.
+
+Tongyi deepresearch technical report.
+
+arXiv preprint arXiv:2510.24701, 2025.
+
+Uesato et al. (2022)
+
+Jonathan Uesato, Nate Kushman, Ramana Kumar, Francis Song, Noah Siegel, Lisa Wang, Antonia Creswell, Geoffrey Irving, and Irina Higgins.
+
+Solving math word problems with process-and outcome-based feedback.
+
+arXiv preprint arXiv:2211.14275, 2022.
+
+Wang et al. (2025)
+
+Xingyao Wang, Boxuan Li, Yufan Song, Frank F. Xu, Xiangru Tang, Mingchen Zhuge, Jiayi Pan, Yueqi Song, Bowen Li, Jaskirat Singh, Hoang H. Tran, Fuqiang Li, Ren Ma, Mingzhang Zheng, Bill Qian, Yanjun Shao, Niklas Muennighoff, Yizhe Zhang, Binyuan Hui, Junyang Lin, Robert Brennan, Hao Peng, Heng Ji, and Graham Neubig.
+
+Openhands: An open platform for AI software developers as generalist agents.
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+URL https://openreview.net/forum?id=OJd3ayDDoF.
+
+Wang et al. (2023)
+
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou.
+
+Self-consistency improves chain of thought reasoning in language models.
+
+In The Eleventh International Conference on Learning Representations, 2023.
+
+URL https://openreview.net/forum?id=1PL1NIMMrw.
+
+Wei et al. (2022)
+
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+Advances in neural information processing systems, 35:24824–24837, 2022.
+
+Wei et al. (2025)
+
+Jason Wei, Zhiqing Sun, Spencer Papay, Scott McKinney, Jeffrey Han, Isa Fulford, Hyung Won Chung, Alex Tachard Passos, William Fedus, and Amelia Glaese.
+
+BrowseComp: A simple yet challenging benchmark for browsing agents.
+
+arXiv preprint arXiv:2504.12516, 2025.
+
+Welleck et al. (2024)
+
+Sean Welleck, Amanda Bertsch, Matthew Finlayson, Hailey Schoelkopf, Alex Xie, Graham Neubig, Ilia Kulikov, and Zaid Harchaoui.
+
+From decoding to meta-generation: Inference-time algorithms for large language models.
+
+Transactions on Machine Learning Research, 2024.
+
+ISSN 2835-8856.
+
+URL https://openreview.net/forum?id=eskQMcIbMS.
+
+Survey Certification.
+
+Wu et al. (2025)
+
+Xixi Wu, Kuan Li, Yida Zhao, Liwen Zhang, Litu Ou, Huifeng Yin, Zhongwang Zhang, Xinmiao Yu, Dingchu Zhang, Yong Jiang, et al.
+
+ReSum: Unlocking long-horizon search intelligence via context summarization.
+
+arXiv preprint arXiv:2509.13313, 2025.
+
+Wu et al. (2024)
+
+Yangzhen Wu, Zhiqing Sun, Shanda Li, Sean Welleck, and Yiming Yang.
+
+Scaling inference computation: Compute-optimal inference for problem-solving with language models.
+
+In The 4th Workshop on Mathematical Reasoning and AI at NeurIPS’24, 2024.
+
+URL https://openreview.net/forum?id=j7DZWSc8qu.
+
+Xiao et al. (2026)
+
+Teng Xiao, Yige Yuan, Hamish Ivison, Huaisheng Zhu, Faeze Brahman, Nathan Lambert, Pradeep Dasigi, Noah A. Smith, and Hannaneh Hajishirzi.
+
+Meta-reinforcement learning with self-reflection for agentic search.
+
+arXiv preprint arXiv:2603.11327, 2026.
+
+Yang et al. (2024)
+
+John Yang, Carlos E Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press.
+
+SWE-agent: Agent-computer interfaces enable automated software engineering.
+
+Advances in Neural Information Processing Systems, 37:50528–50652, 2024.
+
+Yao et al. (2022a)
+
+Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan.
+
+WebShop: Towards scalable real-world web interaction with grounded language agents.
+
+Advances in Neural Information Processing Systems, 35:20744–20757, 2022a.
+
+Yao et al. (2022b)
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao.
+
+ReAct: Synergizing reasoning and acting in language models.
+
+In The eleventh international conference on learning representations, 2022b.
+
+Yao et al. (2023)
+
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik Narasimhan.
+
+Tree of thoughts: Deliberate problem solving with large language models.
+
+Advances in neural information processing systems, 36:11809–11822, 2023.
+
+Ye et al. (2026)
+
+Rui Ye, Zhongwang Zhang, Kuan Li, Huifeng Yin, Zhengwei Tao, Yida Zhao, Liangcai Su, Liwen Zhang, Zile Qiao, Xinyu Wang, Yong Jiang, Pengjun Xie, Fei Huang, Siheng Chen, and Jingren Zhou.
+
+AgentFold: Long-horizon web agents with proactive context folding.
+
+In The Fourteenth International Conference on Learning Representations, 2026.
+
+URL https://openreview.net/forum?id=IuZoTgsUws.
+
+Yen et al. (2025)
+
+Howard Yen, Ashwin Paranjape, Mengzhou Xia, Thejas Venkatesh, Jack Hessel, Danqi Chen, and Yuhao Zhang.
+
+Lost in the maze: Overcoming context limitations in long-horizon agentic search.
+
+arXiv preprint arXiv:2510.18939, 2025.
+
+Zeng et al. (2025)
+
+Aohan Zeng, Xin Lv, Qinkai Zheng, Zhenyu Hou, Bin Chen, Chengxing Xie, Cunxiang Wang, Da Yin, Hao Zeng, Jiajie Zhang, et al.
+
+GLM-4.5: Agentic, reasoning, and coding (ARC) foundation models.
+
+arXiv preprint arXiv:2508.06471, 2025.
+
+Zeng et al. (2026)
+
+Aohan Zeng, Xin Lv, Zhenyu Hou, Zhengxiao Du, Qinkai Zheng, Bin Chen, Da Yin, Chendi Ge, Chengxing Xie, Cunxiang Wang, et al.
+
+GLM-5: from vibe coding to agentic engineering.
+
+arXiv preprint arXiv:2602.15763, 2026.
+
+Zhang et al. (2025a)
+
+Alex L Zhang, Tim Kraska, and Omar Khattab.
+
+Recursive language models.
+
+arXiv preprint arXiv:2512.24601, 2025a.
+
+Zhang et al. (2025b)
+
+Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang, Huan Lin, Baosong Yang, Pengjun Xie, An Yang, Dayiheng Liu, Junyang Lin, et al.
+
+Qwen3 embedding: Advancing text embedding and reranking through foundation models.
+
+arXiv preprint arXiv:2506.05176, 2025b.
+
+Zhao et al. (2025)
+
+Wenting Zhao, Pranjal Aggarwal, Swarnadeep Saha, Asli Celikyilmaz, Jason Weston, and Ilia Kulikov.
+
+The majority is not always right: RL training for solution aggregation.
+
+arXiv preprint arXiv:2509.06870, 2025.
+
+Zhu et al. (2026)
+
+Jialiang Zhu, Gongrui Zhang, Xiaolong Ma, Lin Xu, Miaosen Zhang, Ruiqi Yang, Song Wang, Kai Qiu, Zhirong Wu, Qi Dai, et al.
+
+RE-TRAC: REcursive TRAjectory compression for deep search agents.
+
+arXiv preprint arXiv:2602.02486, 2026.
+
+Appendix A Experimental Details
+
+A.1 Implementation
+
+We serve all models via vLLM (Kwon et al., 2023) and use the Tongyi DeepResearch scaffold (Tongyi DeepResearch Team et al., 2025) for agentic workflow. We enable interleaved reasoning and native function calling, with temperature 1.0, top- 0.95, a 128K context window, 10K max output tokens, and at most 100 tool calls per rollout. Upon exhausting the context limit or tool call budget, the model is given one final opportunity to submit an answer without tool access. All experiments are conducted on 4H100 GPUs.
+
+A.2 Rollout Agent Tools
+
+BrowseComp-Plus The local corpus contains 100,195 documents. search uses Qwen3-Embedding-8B to retrieve the top-5 documents by score, with each snippet truncated to 512 tokens. get_document returns the full text of a document by docid, truncated to 4,096 tokens following Su et al. (2025).
+
+•
+
+search(query): Perform a search on a knowledge source. Returns top-5 hits with docid, score, and snippet. The snippet contains the document’s contents (may be truncated based on token limits).
+
+•
+
+get_document(docid): Retrieve a full document by its docid.
+
+All other datasets We adopt the tool implementation from SLIM (Yen et al., 2025). search queries Google Search via the Serper API (https://serper.dev), returning the top-10 results with snippets of at most 150 characters. visit scrapes a URL via crawl4ai (https://github.com/unclecode/crawl4ai) and extracts the snippet most relevant to a goal, ranked by ROUGE-L score (Lin, 2004).
+
+•
+
+search(query): Performs a web search: supply a string ‘query’; the tool retrieves the top 10 results for the query.
+
+•
+
+visit(url, goal): Visit a webpage and return the relevant content based on the goal.
+
+A.3 Cost Calculation
+
+Let and denote the per-token input and output costs of a language model, and let and denote the per-call costs of search and visit, respectively. The total cost per question is .
+
+Rollout cost (): Following Yen et al. (2025), cached input tokens are excluded from the token count, as caching is standard in long-trajectory settings with shared context. The total rollout cost is , where .
+
+Tool call cost (): For BrowseComp-Plus, which uses a local corpus, . For all other tasks, , where and are the total numbers of search and visit calls.
+
+Aggregation cost (): Only LLM-based aggregation methods incur additional aggregation cost. For Solution Aggregation, is a single LLM call: . For Summary Aggregation, this is summed over calls. For AggAgent, is computed identically to , as it forms an agentic trajectory.
+
+Cost is averaged over all instances for each benchmark. Pricing rates are given in Table 3. Prices are sourced from the respective provider websites: GLM-4.7-Flash (https://docs.z.ai/guides/overview/pricing), Qwen3.5-122B (https://openrouter.ai/qwen/qwen3.5-122b-a10b), MiniMax-M2.5 (https://platform.minimax.io/docs/guides/pricing-paygo), and tool calls (https://www.firecrawl.dev/pricing).
+
+Input
+Output
+
+Language Models (per 1M tokens)
+
+   GLM-4.7-Flash
+$0.07
+$0.40
+
+   Qwen-3.5-122B
+$0.26
+$2.08
+
+   MiniMax-M2.5
+$0.30
+$1.20
+
+Tool Calls (per 1K queries)
+
+   search
+$0.50
+
+   visit
+$0.83
+
+Table 3: Pricing used for cost calculation.
+
+A.4 Latency Measurement
+
+We measure latency by processing one problem at a time, using 2H100 for GLM-4.7-Flash and 4H100 for Qwen3.5-122B and MiniMax-M2.5.
+
+Rollout latency (): Wall-clock time from the first step of the trajectory until termination.
+
+Aggregation latency (): For Solution Aggregation, the time of the single LLM call. For Summary Aggregation, we spawn summarization calls in parallel, wait for all to complete, then issue the final aggregation call; covers the full span. For AggAgent, is measured the same way as .
+
+For latency, we sample 30 instances and report the median for efficiency, as latency must be measured sequentially. All other experiments run with batched generation.
+
+A.5 Evaluation
+
+We evaluate Metric@ over independent trajectories via bootstrapped sampling (Equation 1), where is the dataset, is a bootstrap sample of size , and is the scoring function between the predicted solution and ground truth . For LLM-based aggregation, evaluating all combinations is prohibitively expensive, so we cap the number of combinations to 3.
+
+(1)
+
+A.6 Rollout Trajectory Statistics
+
+We provide the statistics of base rollout trajectories in Table 4.
+
+Task
+
+# Inst.
+
+# Turns
+
+Tokens (K)
+
+Output (K)
+
+# Tool Calls
+
+Uniq. URLs
+
+\Block[fill=red!8]6-1
+
+GLM-4.7-Flash
+
+BrowseComp
+
+150
+
+BrowseComp-Plus
+
+150
+
+HLE
+
+155
+
+DeepSearchQA
+
+150
+
+Healthbench-Hard
+
+100
+
+ResearchRubrics
+
+101
+
+\Block[fill=customgreen]6-1
+
+Qwen3.5-122B
+
+BrowseComp
+
+150
+
+BrowseComp-Plus
+
+150
+
+HLE
+
+155
+
+DeepSearchQA
+
+150
+
+Healthbench-Hard
+
+100
+
+ResearchRubrics
+
+101
+
+\Block[fill=customblue]6-1
+
+MiniMax-M2.5
+
+BrowseComp
+
+150
+
+BrowseComp-Plus
+
+150
+
+HLE
+
+155
+
+DeepSearchQA
+
+150
+
+Healthbench-Hard
+
+100
+
+ResearchRubrics
+
+101
+
+Table 4: Trajectory statistics of base rollouts (8 per problem) across three models and six benchmarks. # Inst.: number of evaluation instances. # Turns: number of agent turns per trajectory. Tokens (K): total input+output tokens in thousands. Output (K): output tokens in thousands. # Tool Calls: total tool calls, broken down into search and visit calls (shown in parentheses; get_document is used instead of visit for BrowseComp-Plus). Uniq. URLs: number of unique URLs visited. All values are averaged over problems and rollouts, and subscripts denote standard deviation across rollout sets.
+
+Appendix B Prompts
+
+Rollout agent
+
+We use the system prompt from Tongyi DeepResearch (Tongyi DeepResearch Team et al., 2025) (Figure 12), with an additional instruction from Dr. Tulu (Shao et al., 2025) appended for deep research tasks (Figure 13). For agentic search tasks, we format the user message following BrowseComp (Wei et al., 2025) (Figure 14).
+
+LLM-as-a-Judge
+
+For BrowseComp, BrowseComp-Plus, and HLE, we find that the original evaluation prompt occasionally produces false judgments, hence we instead use the prompt from Zhu et al. (2026). For ResearchRubrics, we find that the original prompt is unreliable for negative rubrics — consistent with Hu et al. (2025) — so we append a clarifying section to the original prompt (Figure 15). For DeepSearchQA and Healthbench-Hard, we use the official evaluation prompts.
+
+LLM-based aggregation
+
+For Solution Aggregation and Summary Aggregation, we use the prompt from Li et al. (2025a). For AggAgent, we present the prompts in Figure 16 (agentic search) and Figure 17 (deep research), and the full tool descriptions in Figure 18. We vary the solution field description of the finish tool (Figure 19) in the following cases: 1) Deep research tasks: the model is instructed to generate a long-form report. 2) Qwen3.5-122B: instructing the model to output in XML format sometimes causes tool parsing errors, so we use plain text format instead. This applies only to agentic search tasks.
+
+Appendix C Results
+
+C.1 Main Results
+
+We present the full results for Section 5.1 in Tables 5, 6, and 7. AggAgent achieves competitive performance not only at but also at and .
+
+C.2 Cost and Latency vs. Performance
+
+We present the full results for Section 5.2 in Figures 8, 9, and 10. The per-benchmark results are consistent with the averaged figures in the main paper, with AggAgent achieving optimal performance relative to cost and latency.
+
+We also present the cost and latency breakdown in Tables 8, 9, and 10. Across all settings, AggAgent consistently incurs aggregation cost much below Summary Aggregation and comparable to Solution Aggregation.
+
+C.3 Stronger Models for Aggregation
+
+We present the full results for Section 6.1 in Table 11. While a stronger aggregator (MiniMax) generally improves performance across all LLM-based aggregation methods, AggAgent remains the most effective.
+
+C.4 Confidence Calibration
+
+While prior work has demonstrated the effectiveness of confidence-based aggregation strategies such as Weighted Majority Voting and Best-of-N (Wei et al., 2025; Li et al., 2025a), we find that these methods do not consistently generalize across benchmarks. As illustrated in Figure 11, all three models show well-calibrated confidence on BrowseComp-Plus and BrowseComp (large gap), but are less calibrated on HLE and DeepSearchQA. Moreover, on Healthbench-Hard and ResearchRubrics, confidence is essentially uncorrelated with quality (). We hypothesize that this miscalibration explains why confidence-based methods plateau or even degrade as increases on those tasks. In contrast, LLM-based aggregation, and especially AggAgent, scales reliably with across all benchmarks.
+
+Task
+
+Pass
+Heuristic Aggregation
+LLM-based Aggregation
+
+MV
+WMV
+BoN
+FewTool
+SolAgg
+SummAgg
+AggAgent
+
+BrowseComp
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+BrowseComp-Plus
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+HLE
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+DeepSearchQA
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+Healthbench-Hard
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+ResearchRubrics
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+Average
+(GLM-4.7-Flash)
+
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+33.04
+31.43
+38.97
+
+4
+
+38.82
+36.76
+42.59
+
+8
+
+Table 5: Performance comparison across aggregation strategies with GLM-4.7-Flash, with varying . The same model is used for both rollout and aggregation. Bold indicates the best-performing method per row (excluding Pass). Subscripts report standard deviation across runs. ‘-’ denotes not applicable.
+
+Task
+
+Pass
+Heuristic Aggregation
+LLM-based Aggregation
+
+MV
+WMV
+BoN
+FewTool
+SolAgg
+SummAgg
+AggAgent
+
+BrowseComp
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+BrowseComp-Plus
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+HLE
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+DeepSearchQA
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+Healthbench-Hard
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+ResearchRubrics
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+Average
+(Qwen3.5-122B)
+
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+47.69
+
+4
+
+52.19
+
+8
+
+Table 6: Performance comparison across aggregation strategies with Qwen3.5-122B. The table is formatted the same as Table 5.
+
+Task
+
+Pass
+Heuristic Aggregation
+LLM-based Aggregation
+
+MV
+WMV
+BoN
+FewTool
+SolAgg
+SummAgg
+AggAgent
+
+BrowseComp
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+BrowseComp-Plus
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+HLE
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+4
+
+8
+
+DeepSearchQA
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+Healthbench-Hard
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+ResearchRubrics
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+-
+-
+
+4
+
+-
+-
+
+8
+
+-
+-
+
+Average
+(MiniMax-M2.5)
+
+1
+
+-
+-
+-
+-
+-
+-
+-
+
+2
+
+50.66
+
+4
+
+52.10
+51.23
+55.30
+
+8
+
+Table 7: Performance comparison across aggregation strategies with MiniMax-M2.5. The table is formatted the same as Table 5.
+
+Task
+
+Rollout
+
+Cost ()
+
+Tool Call
+
+Cost ()
+
+Aggregation Cost ()
+
+Rollout
+
+Latency ()
+
+Aggregation Latency ()
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+BrowseComp
+1
+
+.0086
+
+.0390
+
+-
+
+-
+
+-
+
+185.10
+
+-
+
+-
+
+-
+
+2
+
+.0171
+
+.0780
+
+.0025
+
+.0143
+
+.0044
+
+211.82
+
+33.97
+
+77.72
+
+22.67
+
+4
+
+.0343
+
+.1560
+
+.0021
+
+.0261
+
+.0048
+
+233.74
+
+21.38
+
+107.27
+
+38.51
+
+8
+
+.0685
+
+.3119
+
+.0019
+
+.0506
+
+.0047
+
+261.41
+
+18.69
+
+139.42
+
+31.65
+
+BrowseComp-Plus
+1
+
+.0067
+
+0
+
+-
+
+-
+
+-
+
+457.47
+
+-
+
+-
+
+-
+
+2
+
+.0134
+
+0
+
+.0026
+
+.0142
+
+.0037
+
+536.31
+
+42.54
+
+84.65
+
+25.30
+
+4
+
+.0268
+
+0
+
+.0021
+
+.0260
+
+.0038
+
+584.04
+
+21.19
+
+83.42
+
+31.56
+
+8
+
+.0536
+
+0
+
+.0020
+
+.0501
+
+.0038
+
+620.15
+
+15.31
+
+128.79
+
+29.88
+
+HLE
+1
+
+.0079
+
+.0190
+
+-
+
+-
+
+-
+
+91.77
+
+-
+
+-
+
+-
+
+2
+
+.0158
+
+.0379
+
+.0037
+
+.0118
+
+.0046
+
+125.04
+
+29.41
+
+54.56
+
+33.55
+
+4
+
+.0316
+
+.0758
+
+.0038
+
+.0202
+
+.0053
+
+178.32
+
+31.07
+
+86.67
+
+34.19
+
+8
+
+.0632
+
+.1517
+
+.0041
+
+.0368
+
+.0055
+
+250.64
+
+35.24
+
+115.87
+
+40.32
+
+DeepSearchQA
+1
+
+.0068
+
+.0311
+
+-
+
+-
+
+-
+
+105.60
+
+-
+
+-
+
+-
+
+2
+
+.0135
+
+.0623
+
+.0018
+
+.0113
+
+.0043
+
+159.65
+
+14.96
+
+55.49
+
+30.48
+
+4
+
+.0271
+
+.1245
+
+.0021
+
+.0210
+
+.0049
+
+225.01
+
+18.22
+
+69.63
+
+33.60
+
+8
+
+.0542
+
+.2490
+
+.0024
+
+.0401
+
+.0052
+
+261.79
+
+21.73
+
+105.53
+
+36.98
+
+Healthbench-Hard
+1
+
+.0037
+
+.0114
+
+-
+
+-
+
+-
+
+41.20
+
+-
+
+-
+
+-
+
+2
+
+.0075
+
+.0228
+
+.0019
+
+.0081
+
+.0028
+
+52.22
+
+22.26
+
+46.47
+
+23.12
+
+4
+
+.0150
+
+.0456
+
+.0023
+
+.0146
+
+.0035
+
+67.15
+
+22.46
+
+58.39
+
+25.51
+
+8
+
+.0299
+
+.0912
+
+.0028
+
+.0276
+
+.0039
+
+88.27
+
+26.84
+
+81.48
+
+27.32
+
+ResearchRubrics
+1
+
+.0070
+
+.0222
+
+-
+
+-
+
+-
+
+112.06
+
+-
+
+-
+
+-
+
+2
+
+.0141
+
+.0444
+
+.0028
+
+.0119
+
+.0044
+
+142.95
+
+28.61
+
+63.13
+
+40.03
+
+4
+
+.0282
+
+.0889
+
+.0034
+
+.0219
+
+.0053
+
+187.43
+
+35.08
+
+84.07
+
+46.80
+
+8
+
+.0563
+
+.1777
+
+.0045
+
+.0412
+
+.0062
+
+243.40
+
+37.83
+
+114.70
+
+50.91
+
+Average
+(GLM-4.7-Flash)
+
+1
+
+.0068
+
+.0204
+
+-
+
+-
+
+-
+
+165.53
+
+-
+
+-
+
+-
+
+2
+
+.0136
+
+.0409
+
+.0025
+
+.0119
+
+.0040
+
+204.67
+
+28.63
+
+63.67
+
+29.19
+
+4
+
+.0272
+
+.0818
+
+.0026
+
+.0216
+
+.0046
+
+245.95
+
+24.90
+
+81.58
+
+35.03
+
+8
+
+.0543
+
+.1636
+
+.0029
+
+.0411
+
+.0049
+
+287.61
+
+25.94
+
+114.30
+
+36.18
+
+Table 8: Cost and latency breakdown with GLM-4.7-Flash. All costs are in USD per query, and all latencies are in seconds per query. ‘-’ denotes not applicable at . BrowseComp-Plus incurs no tool cost.
+
+Task
+
+Rollout
+
+Cost ()
+
+Tool Call
+
+Cost ()
+
+Aggregation Cost ()
+
+Rollout
+
+Latency ()
+
+Aggregation Latency ()
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+BrowseComp
+1
+
+.0409
+
+.0315
+
+-
+
+-
+
+-
+
+182.79
+
+-
+
+-
+
+-
+
+2
+
+.0817
+
+.0629
+
+.0102
+
+.0565
+
+.0213
+
+224.26
+
+21.96
+
+53.60
+
+39.07
+
+4
+
+.1634
+
+.1258
+
+.0103
+
+.1026
+
+.0309
+
+242.48
+
+21.31
+
+69.14
+
+41.04
+
+8
+
+.3268
+
+.2517
+
+.0103
+
+.1952
+
+.0209
+
+305.38
+
+20.93
+
+91.82
+
+36.25
+
+BrowseComp-Plus
+1
+
+.0265
+
+0
+
+-
+
+-
+
+-
+
+564.68
+
+-
+
+-
+
+-
+
+2
+
+.0530
+
+0
+
+.0098
+
+.0544
+
+.0186
+
+690.97
+
+25.55
+
+58.80
+
+36.38
+
+4
+
+.1060
+
+0
+
+.0099
+
+.0977
+
+.0193
+
+743.69
+
+21.32
+
+62.35
+
+32.60
+
+8
+
+.2120
+
+0
+
+.0097
+
+.1893
+
+.0182
+
+831.50
+
+19.99
+
+99.29
+
+41.32
+
+HLE
+1
+
+.0318
+
+.0149
+
+-
+
+-
+
+-
+
+74.53
+
+-
+
+-
+
+-
+
+2
+
+.0637
+
+.0298
+
+.0128
+
+.0418
+
+.0173
+
+99.80
+
+36.98
+
+45.68
+
+25.04
+
+4
+
+.1274
+
+.0597
+
+.0131
+
+.0705
+
+.0197
+
+125.14
+
+24.30
+
+60.16
+
+31.51
+
+8
+
+.2548
+
+.1194
+
+.0127
+
+.1307
+
+.0203
+
+152.97
+
+29.85
+
+74.72
+
+38.28
+
+DeepSearchQA
+1
+
+.0277
+
+.0239
+
+-
+
+-
+
+-
+
+89.32
+
+-
+
+-
+
+-
+
+2
+
+.0553
+
+.0477
+
+.0088
+
+.0437
+
+.0208
+
+110.47
+
+16.71
+
+48.91
+
+39.57
+
+4
+
+.1106
+
+.0954
+
+.0107
+
+.0776
+
+.0244
+
+129.99
+
+22.32
+
+54.54
+
+38.96
+
+8
+
+.2212
+
+.1909
+
+.0116
+
+.1494
+
+.0247
+
+173.43
+
+20.50
+
+65.65
+
+40.28
+
+Healthbench-Hard
+1
+
+.0080
+
+.0045
+
+-
+
+-
+
+-
+
+22.03
+
+-
+
+-
+
+-
+
+2
+
+.0161
+
+.0091
+
+.0092
+
+.0215
+
+.0141
+
+26.67
+
+24.29
+
+32.69
+
+26.68
+
+4
+
+.0321
+
+.0181
+
+.0107
+
+.0376
+
+.0166
+
+29.56
+
+26.96
+
+40.83
+
+28.86
+
+8
+
+.0642
+
+.0363
+
+.0130
+
+.0680
+
+.0175
+
+35.09
+
+30.70
+
+53.77
+
+32.38
+
+ResearchRubrics
+1
+
+.0182
+
+.0093
+
+-
+
+-
+
+-
+
+66.92
+
+-
+
+-
+
+-
+
+2
+
+.0364
+
+.0186
+
+.0183
+
+.0377
+
+.0260
+
+75.28
+
+47.98
+
+51.80
+
+47.75
+
+4
+
+.0728
+
+.0371
+
+.0213
+
+.0632
+
+.0276
+
+84.19
+
+57.39
+
+72.33
+
+54.95
+
+8
+
+.1457
+
+.0743
+
+.0261
+
+.1134
+
+.0301
+
+96.06
+
+47.39
+
+87.53
+
+55.08
+
+Average
+(Qwen3.5-122B)
+
+1
+
+.0255
+
+.0140
+
+-
+
+-
+
+-
+
+166.71
+
+-
+
+-
+
+-
+
+2
+
+.0510
+
+.0280
+
+.0115
+
+.0426
+
+.0197
+
+204.58
+
+28.91
+
+48.58
+
+35.75
+
+4
+
+.1020
+
+.0560
+
+.0127
+
+.0749
+
+.0231
+
+225.84
+
+28.93
+
+59.89
+
+37.99
+
+8
+
+.2041
+
+.1121
+
+.0139
+
+.1410
+
+.0219
+
+265.74
+
+28.23
+
+78.80
+
+40.60
+
+Table 9: Cost and latency breakdown with Qwen3.5-122B. The table is formatted the same as Table 8.
+
+Task
+
+Rollout
+
+Cost ()
+
+Tool Call
+
+Cost ()
+
+Aggregation Cost ()
+
+Rollout
+
+Latency ()
+
+Aggregation Latency ()
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+BrowseComp
+1
+
+.0321
+
+.0301
+
+-
+
+-
+
+-
+
+209.34
+
+-
+
+-
+
+-
+
+2
+
+.0642
+
+.0602
+
+.0055
+
+.0389
+
+.0122
+
+259.73
+
+267.45
+
+300.34
+
+294.52
+
+4
+
+.1285
+
+.1204
+
+.0049
+
+.0715
+
+.0120
+
+292.90
+
+300.42
+
+347.88
+
+319.73
+
+8
+
+.2569
+
+.2409
+
+.0049
+
+.1357
+
+.0118
+
+314.26
+
+323.33
+
+480.36
+
+352.57
+
+BrowseComp-Plus
+1
+
+.0298
+
+0
+
+-
+
+-
+
+-
+
+392.76
+
+-
+
+-
+
+-
+
+2
+
+.0596
+
+0
+
+.0052
+
+.0459
+
+.0114
+
+519.48
+
+528.28
+
+567.93
+
+550.86
+
+4
+
+.1191
+
+0
+
+.0037
+
+.0876
+
+.0111
+
+632.33
+
+639.21
+
+708.68
+
+663.04
+
+8
+
+.2382
+
+0
+
+.0025
+
+.1651
+
+.0111
+
+716.32
+
+723.99
+
+968.27
+
+744.93
+
+HLE
+1
+
+.0358
+
+.0164
+
+-
+
+-
+
+-
+
+165.06
+
+-
+
+-
+
+-
+
+2
+
+.0716
+
+.0327
+
+.0088
+
+.0385
+
+.0116
+
+194.42
+
+217.01
+
+239.92
+
+227.34
+
+4
+
+.1433
+
+.0654
+
+.0087
+
+.0689
+
+.0144
+
+228.92
+
+244.59
+
+304.89
+
+259.10
+
+8
+
+.2865
+
+.1308
+
+.0082
+
+.1294
+
+.0126
+
+264.72
+
+280.52
+
+404.20
+
+310.09
+
+DeepSearchQA
+1
+
+.0282
+
+.0268
+
+-
+
+-
+
+-
+
+149.91
+
+-
+
+-
+
+-
+
+2
+
+.0564
+
+.0536
+
+.0039
+
+.0378
+
+.0141
+
+179.42
+
+189.97
+
+219.72
+
+210.96
+
+4
+
+.1129
+
+.1072
+
+.0039
+
+.0721
+
+.0147
+
+193.99
+
+207.52
+
+247.52
+
+232.83
+
+8
+
+.2257
+
+.2144
+
+.0047
+
+.1412
+
+.0148
+
+227.26
+
+236.98
+
+350.82
+
+261.86
+
+Healthbench-Hard
+1
+
+.0074
+
+.0052
+
+-
+
+-
+
+-
+
+28.86
+
+-
+
+-
+
+-
+
+2
+
+.0148
+
+.0105
+
+.0035
+
+.0143
+
+.0057
+
+33.13
+
+49.61
+
+64.43
+
+58.19
+
+4
+
+.0295
+
+.0209
+
+.0043
+
+.0267
+
+.0070
+
+34.08
+
+52.90
+
+75.92
+
+58.94
+
+8
+
+.0591
+
+.0419
+
+.0058
+
+.0507
+
+.0084
+
+40.55
+
+65.48
+
+95.72
+
+72.02
+
+ResearchRubrics
+1
+
+.0151
+
+.0125
+
+-
+
+-
+
+-
+
+93.25
+
+-
+
+-
+
+-
+
+2
+
+.0302
+
+.0250
+
+.0086
+
+.0257
+
+.0125
+
+109.61
+
+159.09
+
+161.16
+
+166.29
+
+4
+
+.0603
+
+.0499
+
+.0109
+
+.0480
+
+.0149
+
+122.48
+
+177.29
+
+192.37
+
+177.12
+
+8
+
+.1207
+
+.0998
+
+.0151
+
+.0919
+
+.0183
+
+146.17
+
+203.61
+
+270.58
+
+213.30
+
+Average
+(MiniMax-M2.5)
+
+1
+
+.0237
+
+.0152
+
+-
+
+-
+
+-
+
+173.20
+
+-
+
+-
+
+-
+
+2
+
+.0474
+
+.0303
+
+.0059
+
+.0335
+
+.0113
+
+215.97
+
+235.24
+
+258.92
+
+251.36
+
+4
+
+.0949
+
+.0606
+
+.0061
+
+.0625
+
+.0123
+
+250.78
+
+270.32
+
+312.88
+
+285.13
+
+8
+
+.1898
+
+.1213
+
+.0069
+
+.1190
+
+.0128
+
+284.88
+
+305.65
+
+428.33
+
+325.80
+
+Table 10: Cost and latency breakdown with MiniMax-M2.5. The table is formatted the same as Table 8.
+
+Task
+
+Pass
+
+GLM-4.7-Flash
+MiniMax-M2.5
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+SolAgg
+
+SummAgg
+
+AggAgent
+
+BrowseComp
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+39.11
+
+4
+
+46.44
+
+8
+
+56.00
+
+BrowseComp-Plus
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+59.33
+
+4
+
+68.44
+
+8
+
+72.67
+
+HLE
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+31.40
+
+4
+
+33.76
+
+8
+
+38.06
+
+DeepSearchQA
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+42.89
+
+4
+
+43.78
+
+8
+
+52.67
+
+Healthbench-Hard
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+24.45
+
+4
+
+25.36
+
+8
+
+27.99
+
+ResearchRubrics
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+43.42
+
+4
+
+44.76
+
+8
+
+46.07
+
+Average
+1
+
+-
+
+-
+
+-
+
+-
+
+-
+
+-
+
+2
+
+39.50
+
+4
+
+43.56
+
+8
+
+48.59
+
+Table 11: Performance of LLM-based aggregation strategies on GLM-4.7-Flash as the base rollout model, comparing GLM (same model) and MiniMax (stronger model) as the LLM aggregator, across varying . Bold indicates the best-performing method per row (excluding Pass). Results show that using a stronger aggregator leads to better performance. ‘-’ denotes not applicable at .
+
+Figure 8: Performance-efficiency trade-off of aggregation methods across six benchmarks at varying numbers of parallel samples using GLM-4.7-Flash as both the rollout agent and the aggregator. For each group of three benchmarks, the first row shows performance vs. cost (USD per query) and the second row shows performance vs. latency (seconds per query). AggAgent consistently achieves higher performance at comparable or lower cost and latency than existing aggregation strategies.
+
+Figure 9: Performance-efficiency trade-off of aggregation methods using Qwen3.5-122B as both the rollout agent and the aggregator. The figure is formatted the same as Figure 8.
+
+Figure 10: Performance-efficiency trade-off of aggregation methods using MiniMax-M2.5 as both the rollout agent and the aggregator. The figure is formatted the same as Figure 8.
+
+Figure 11: Confidence calibration across all six benchmarks. Each row is a benchmark and each column is a model. For binary-correctness (agentic search) benchmarks, box plots show self-reported confidence by outcome (Wrong vs. Correct). For continuous-score (deep research) benchmarks, scatter plots show confidence vs. rubric score with Pearson . Models are well-calibrated on BrowseComp-Plus and BrowseComp, moderately calibrated on HLE and DeepSearchQA, but poorly calibrated on Healthbench-Hard and ResearchRubrics ().
+
+Figure 12: Rollout agent system prompt for agentic search tasks, from Tongyi DeepResearch Team et al. (2025).
+
+Figure 13: Additional rollout agent system prompt for deep research tasks, from Shao et al. (2025).
+
+Figure 14: Rollout agent user message for agentic search tasks, from Wei et al. (2025).
+
+Figure 15: Additional instruction for evaluating ResearchRubrics.
+
+Figure 16: AggAgent system prompt for agentic search tasks.
+
+Figure 17: AggAgent system prompt for deep research tasks.
+
+Figure 18: AggAgent tool descriptions.
+
+Figure 19: Variants of AggAgent finish tool.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -174,6 +174,16 @@ GPU local links
 
 PyTorch、Megatron 等上层 runtime 可以选择或组合不同 backend。Backend 支持矩阵也具有版本和硬件边界：例如 PyTorch 文档中的 XCCL 指向 Intel XPU backend，并不是可以替换成任意厂商库的通用占位符。
 
+### 单一路径 P2P 到可重放的多路径传输
+
+单一 NVLink 或 PCIe/host 路径在消息小、拓扑稳定或额外调度成本占主导时最简单。单一路径成为瓶颈而另一条链路仍有余量时，可把同一 GPU transfer 拆到多个 transport，并把固定的 launch、copy 与 synchronization 序列捕获为可重放执行图。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22228:start -->
+这里要分开两个增量。多路径调度把 payload 同时放到 NVLink 与 host/PCIe path，收益来自利用闲置链路；CUDA Graph 只把可重复的 launch、copy 与 synchronization 固化为 replay，收益来自减少 host orchestration。新增状态因此包括 topology/route identity、分片、各路径 completion，以及 graph capture 条件、buffer lifetime 与失效规则。通信 runtime 拥有路径与 completion，训练图只能消费已完成的 tensor。
+
+多路径会增加分片、尾部不均和双向 host-path 竞争；Graph 又增加 capture/memory 成本，并要求 shape 与控制流可重复。Exact-v1 显示 Graph 相对 non-Graph multipath 的额外增益有限，主要出现在大消息和重复执行；小消息或 bidirectional host path 可能无益甚至退化。拓扑变化、shape/控制流动态或任一层收益不足时，应分别回退 non-Graph multipath、单路径或显式异步传输。作者只在四 GPU NVLink/PCIe 的 OMB 合同中验证 UCX 集成，不证明其他拓扑、collective 或端到端训练普遍加速。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22228:end -->
+
 框架增加新 communication backend 时，真正需要保护的是上层 collective contract，
 而不是旧 backend 的内部偶然行为。PyTorch 2.13 的 `torchcomms` 接入是一个版本化案例：
 它同时带来 subgroup 创建、命名、错误暴露与 out-of-tree backend 兼容性的调整。这类发布
@@ -231,6 +241,25 @@ portability 成本。PyTorch 2.9 的 Symmetric Memory 是这一分支的版本�
 性能或 failure semantics 已成为跨 runtime 稳定标准。
 
 ## 从 Collective 到 AI State Transfer
+
+### 长 RTT 跨域链路需要显式的远端速率预算
+
+数据中心内部 collective 通常依赖低 RTT、稳定 fabric 和端到端 congestion feedback；跨 OTN 或长距离链路后，反馈环路变慢，sender 继续按本地可见状态注入数据，容易在远端形成 queue 与 burst。此时可以把 transfer protocol 扩展为 pseudo-ACK、segmented control 与 destination rate budget：远端声明可接收速率，sender pacing 只在该预算内推进，而不是等待完整端到端反馈才收敛。
+
+```text
+destination capacity observation
+-> versioned rate budget
+-> segmented pseudo-ACK feedback
+-> sender pacing
+-> queue / completion / loss observation
+-> budget correction or fallback
+```
+
+它以额外 control state、估计误差和 feedback staleness 换取长 RTT 下更稳定的注入速率；错误预算可能造成欠利用或持续拥塞。现有证据来自 ns-3/AICB simulation，不证明 production convergence、故障恢复或异构 NIC/OTN 实现。无法获得可信远端预算或检测到控制不稳定时，应回退标准 end-to-end congestion control，并限制跨域训练流量；低 RTT 单域 fabric 继续使用原 collective transport 即可。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23932:start -->
+跨域 AI state transfer 的 pacing authority 必须绑定可验证的 destination budget，而不能由 sender 单方面推断。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23932:end -->
 
 ### Federated Tensor Type 定义一轮协议能表达什么
 
@@ -326,6 +355,24 @@ DP 增加每步并行样本吞吐，却复制全部 model states。标准 DP 不
 这不是端到端时间公式。实际 latency 还依赖 chunk、collective implementation、topology、contention 和 overlap。
 
 Bucketed gradient reduction 可以在 backward 尚未全部结束时启动 collective，尝试覆盖通信。但 bucket 太小会增加 launch/latency，太大又推迟 overlap。
+
+### Silent Corruption 需要按 Forward、Backward 与 Update 分开防护
+
+Crash、NaN 或 collective timeout 容易被 runtime 观察；偶发 bit flip 或错误算术却可能产生有限数值，并沿残差、
+attention、gradient reduction 和 optimizer state 静默传播。只在 checkpoint 写入时做 checksum 能保护持久对象，
+但无法证明刚刚提交的 optimizer step 来自正确计算；对每个 tensor 做冗余计算又会把训练成本推高到不可接受。
+
+防护应匹配错误进入的位置：forward 中对少量高放大路径做重算或一致性 guard；residual/activation 检查负责阻断
+异常增益；backward 中用 exponent/finite-range 与梯度统计识别会被 collective 扩散的异常；optimizer commit 前再以
+step identity、replica agreement 和 bounded retry 决定接纳、重算 microbatch 或回滚 checkpoint。不同 detector 只拥有
+告警或拒绝提案，optimizer/step coordinator 才拥有全局更新提交权。
+
+这种分层以额外 recompute、metadata、false positive 和 replay 成本换 silent failure 的可定位性。阈值随模型、精度、
+loss scaling 与训练阶段漂移，过度保护会比偶发错误更昂贵；短作业、可靠硬件或可接受重跑时，checkpoint + ordinary
+finite checks 仍是合理基线。TrainSDC 的注入实验覆盖披露的 0.6B/1B 模型、稀疏/稠密错误与给定训练栈，支持
+forward/backward failure mechanism 不同及其有限开销防护，不提供生产硬件自然故障率，也不证明检测完备。
+
+<!-- source-family:SF-2026-ARXIV-2608-30769 -->
 
 ### 从 Layer Collective 到 Minibatch Commit
 
@@ -1126,6 +1173,10 @@ gradient event
 DP 扩展样本吞吐，TP 切 layer 内算子，PP 切深度，CP 切序列，EP 切 experts，ZeRO/FSDP 切 model states。多模态 variable-shape workload 又要求 batch builder 同时拥有 memory/compute 约束，空间复用则把 placement 与 interference budget 带进同一执行合同。每种机制都会把局部压力迁移到通信、同步、拓扑或状态生命周期，最终必须用吞吐、效率、收敛和恢复共同验证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22228`（Status: Experimental）：exact-v1 支持在作者四 GPU NVLink/PCIe OMB 环境中以 UCX 多路径和 CUDA Graph replay 降低部分传输开销；dynamic control flow、graph memory 与跨拓扑外推仍未闭合。https://arxiv.org/abs/2604.22228v1
+
+- `SF-2026-ARXIV-2604-23932`（Status: Experimental）：exact-v1 支持 MatchRDMA 的 pseudo-ACK、segmented control 与 destination rate budget 机制及 ns-3/AICB 仿真；不证明生产收敛、故障恢复或异构 NIC/OTN 行为。https://arxiv.org/abs/2604.23932v1
 
 - psRL（training-time prefix sharing；Status: Experimental）：https://arxiv.org/abs/2608.25683v1
   - 证据边界：支持论文披露的 immutable update view、KV manager 与细粒度调度机制；作者 Agent workload

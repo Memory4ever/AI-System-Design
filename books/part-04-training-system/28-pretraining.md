@@ -696,6 +696,14 @@ data quality and mixture
 
 Pretraining loss 曲线还不能直接解释具体能力。某些能力只在合适 prompting、post-training 或 Evaluation 中显现；另一些平均 loss 改进可能集中在高频简单 tokens。
 
+### Scaling-law Pilot 也是有预算的实验调度
+
+预先跑固定网格再拟合 scaling law，在候选规模少、单次实验便宜且目标区间接近观测区间时最透明。实验成本随规模快速增长后，pilot 本身已经是一项预算分配：不同 run 成本不同，对高成本 target region 的外推信息量也不同。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22753:start -->
+一种条件分支把待跑配置、成本、当前拟合后验与目标区域写成 versioned experiment state，每一步选择最能减少目标区外推不确定性的下一项实验，再用新结果更新选择策略。Scheduler 只拥有实验 proposal；训练结果、拟合模型和独立 holdout 共同决定 scaling-law artifact 是否可用。它能把预算集中到信息量高的 runs，却依赖不确定性校准、候选池与成本 proxy，且一次或近视选择可能错过更好的组合。后验不可信、目标区改变或需要审计可比性时应回退预定义 grid。作者只在其 scaling-law tasks 与 mixture approximation 下展示效果，不证明可安全规划任意大模型训练。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22753:end -->
+
 ### Training Budget 与 Test-time Compute 必须放进同一生命周期目标
 
 传统 early stopping 只观察 validation curve，并隐含假设部署时每个请求只产生一个答案。这个旧方案在
@@ -966,6 +974,8 @@ Pretraining 用大规模 next-token prediction 把数据分布转化为参数更
 固定 recipe 是可复现基线；长程 stress 下可以增加受 safety envelope 约束的控制层，但它只能提出有界动作，不能替代训练目标与人工 override。预训练 checkpoint 是通用能力底座，不是最终产品行为；它是否可靠还需要独立 Evaluation 与后续训练约束。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22753`（Status: Experimental）：exact-v1 支持把 scaling-law fitting 写成 heterogeneous-cost、target-region-aware 的 sequential experiment selection；mixture approximation、one-step policy 与 cost proxy 限制其外推。https://arxiv.org/abs/2604.22753v1
 
 - Skill Pretraining（structured capability artifact as mid-training data；Status: Experimental）：
   https://arxiv.org/abs/2608.26563v1

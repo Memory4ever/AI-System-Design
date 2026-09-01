@@ -1,0 +1,1161 @@
+When Can We Trust LLM Graders? Calibrating Confidence for Automated Assessment
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 Calibration of Neural Networks
+
+2.2 Confidence Estimation in NLP
+
+2.3 Automated Short Answer Grading
+
+3 Methodology
+
+3.1 Task Definition
+
+3.2 Confidence Estimation Methods
+
+Token Probability
+
+Self-Reported Confidence
+
+Self-Consistency
+
+3.3 Evaluation Metrics
+
+Expected Calibration Error (ECE)
+
+Brier Score
+
+AUC-ROC
+
+Coverage at Risk
+
+Statistical Methods
+
+4 Experiments and Results
+
+4.1 Experimental Setup
+
+4.2 Main Results
+
+4.3 Calibration Visualization
+
+4.4 Per-Model Analysis
+
+4.5 Practical Implications
+
+5 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2603.29559v1 [cs.CL] 31 Mar 2026
+
+When Can We Trust LLM Graders? Calibrating Confidence for Automated Assessment
+
+Robinson Vasquez Ferrer
+
+  
+Damla Turgut
+
+  
+Zhongzhou Chen
+
+  
+Shashank Sonkar
+
+Affiliation: University of Central Florida
+
+E-mail {robinson.vasquezferrer, shashank.sonkar}@ucf.edu
+
+Abstract
+
+Large Language Models (LLMs) show promise for automated grading, but their outputs can be unreliable. Rather than improving grading accuracy directly, we address a complementary problem: predicting when an LLM grader is likely to be correct. This enables selective automation where high-confidence predictions are processed automatically while uncertain cases are flagged for human review. We compare three confidence estimation methods (self-reported confidence, self-consistency voting, and token probability) across seven LLMs of varying scale (4B to 120B parameters) on three educational datasets: RiceChem (long-answer chemistry), SciEntsBank, and Beetle (short-answer science). Our experiments reveal that self-reported confidence consistently achieves the best calibration across all conditions (avg ECE 0.166 vs 0.229 for self-consistency). Surprisingly, self-consistency remains 38% worse despite requiring 5 the inference cost. Larger models exhibit substantially better calibration though gains vary by dataset and method (e.g., a 28% ECE reduction for self-reported), with GPT-OSS-120B achieving the best calibration (avg ECE 0.100) and strong discrimination (avg AUC 0.668). We also observe that confidence is strongly top-skewed across methods, creating a “confidence floor” that practitioners must account for when setting thresholds. These findings suggest that simply asking LLMs to report their confidence provides a practical approach for identifying reliable grading predictions. Code is available here.
+
+Keywords: Large Language Models, Automated Grading, Confidence Calibration, Automated Assessment, Human-AI Collaboration, Short Answer Grading, Long Answer Grading
+
+1 Introduction
+
+Large Language Models (LLMs) are increasingly used for automated grading, but their reliability remains questionable. Studies have found that GPT-4 produces scores that differ from human evaluators [20] and makes common arithmetic errors that reduce accuracy to 20% on complex problems [12]. While LLMs can match human agreement on some dimensions, they achieve only fair agreement on others [31], and performance degrades substantially for low-quality student work [32]. These limitations raise a fundamental question: when can we trust an LLM’s grading decision?
+
+Rather than attempting to improve grading accuracy directly, we address a complementary problem: predicting when an LLM grader is likely to be correct. This framing enables selective automation, where high-confidence predictions are processed automatically while uncertain cases are flagged for human review. Such human-AI collaboration can preserve grading quality while reducing instructor workload on the cases where LLMs are reliable.
+
+The key to effective selective automation is confidence calibration: a confidence score of 0.8 should correspond to 80% accuracy among predictions at that confidence level. Well-calibrated confidence enables principled decisions about when to trust automated grading. Unfortunately, modern neural networks tend to be poorly calibrated, often exhibiting systematic overconfidence [14], and this problem persists in LLMs [35]. Recent surveys have catalogued various approaches to confidence estimation and calibration in LLMs [13].
+
+We systematically evaluate three approaches to confidence estimation, each grounded in foundational NLP research: sampling-based consistency checks (self-consistency) [34], prompting the model to verbalize its uncertainty (self-reported confidence) [18], and leveraging internal probability mass over “yes”/“no” verdict tokens (token probability) [21].
+
+We evaluate these methods across seven LLMs spanning two orders of magnitude in scale (4B to 120B parameters): Llama-8B/70B [28], Qwen-4B/80B-A3B variants [29], and GPT-OSS-20B/120B [24]. We test on three established educational datasets: RiceChem for long-answer chemistry grading [27], and SciEntsBank and Beetle for short-answer science assessment [5]. Our primary calibration metrics are Expected Calibration Error (ECE) and the Brier score, which together measure how well confidence scores predict accuracy.
+
+Our experiments yield several findings with practical implications:
+
+•
+
+Self-reported confidence achieves the best calibration. Across all six evaluated conditions, simply prompting the models to state their confidence outperforms sampling-based alternatives. Despite requiring higher inference cost, self-consistency performs worse than self-reported.
+
+•
+
+Model scale boosts accuracy more than calibration. Larger models are consistently more accurate across all three datasets, while calibration gains are mixed and dataset/method-dependent. We report detailed per-dataset calibration changes and per-model comparisons in Results.
+
+•
+
+Confidence is top-skewed across methods. Confidence distributions are heavily concentrated at high values; self-consistency is discrete by construction, while self-reported and token-probability are continuous. These distributions create practical confidence floors, so thresholds should be set relative to each model/method’s observed scores rather than an intuitive midpoint.
+
+These findings suggest that simply asking LLMs to report their confidence provides a practical approach for identifying reliable grading predictions. With appropriate threshold calibration relative to the model’s confidence distribution, selective automation can process high-confidence predictions automatically while flagging uncertain cases for human review.
+
+2 Related Work
+
+2.1 Calibration of Neural Networks
+
+Calibration, the correspondence between predicted confidence and actual accuracy, has been extensively studied in the machine learning literature. Early work established foundational calibration methods: [26] introduced Platt scaling using sigmoid functions to calibrate SVM outputs, while [36] proposed isotonic regression as a non-parametric alternative. [14] demonstrated that modern deep neural networks are poorly calibrated, typically exhibiting overconfidence, and proposed temperature scaling as a simple post-hoc method. [15] showed that maximum softmax probability serves as a baseline for detecting misclassified examples, though it remains imperfect. For language models specifically, [30] demonstrated that RLHF-trained models like GPT-4 produce verbalized confidence that is often better calibrated than internal probabilities. In this work, we focus on eliciting confidence from LLMs rather than applying post-hoc calibration.
+
+2.2 Confidence Estimation in NLP
+
+Several approaches have been proposed for estimating uncertainty in LLM outputs. [34] introduced self-consistency, which samples multiple reasoning paths and takes a majority vote; the agreement level provides a natural confidence measure. [21] proposed semantic entropy, which clusters sampled responses by meaning before computing uncertainty, providing a principled measure that is invariant to paraphrasing.
+
+Ensemble-based methods offer another paradigm: [23] showed that deep ensembles provide well-calibrated uncertainty estimates, while [11] demonstrated that MC Dropout approximates Bayesian inference for uncertainty estimation. However, these methods require multiple forward passes or model copies, which is prohibitive for large language models.
+
+Self-reported confidence, explicitly prompting models to state their confidence, has emerged as a lightweight alternative. [18] demonstrated that language models “mostly know what they know,” exhibiting metacognitive capabilities.
+
+2.3 Automated Short Answer Grading
+
+Automated Short Answer Grading (ASAG) has a rich history in educational data mining. The SciEntsBank and Beetle datasets, introduced by [6] and formalized as a shared task [5], have served as standard benchmarks. [3] provided a comprehensive survey identifying 35 ASAG systems across five temporal eras.
+
+The emergence of LLMs has transformed ASAG research. [17] showed that GPT-4 can achieve substantial agreement with human graders (quadratic weighted kappa of 0.68) without task-specific training. For long-answer grading, the RiceChem dataset formulates the task as rubric entailment [27].
+
+While this prior work focuses on improving grading accuracy, our work addresses the complementary problem of predicting when automated grades are reliable. This confidence-aware perspective enables practical deployment with appropriate human oversight.
+
+3 Methodology
+
+We formalize the grading task and then describe three methods for estimating confidence in LLM grading predictions.
+We consistently prompt the model to emit a JSON dictionary whose ‘"verdict"‘ key holds the yes/no grading decision; all confidence methods operate on that verdict plus derived uncertainty signals.11
+1
+
+Prompt templates, token sets, and code will be released once the codebase is organized for reproducibility.
+
+3.1 Task Definition
+
+Let the binary grading task be defined as:
+
+(1)
+
+where is the question, is the student’s response, and is a rubric item specifying what the response should demonstrate. The output is 1 if the student response satisfies the rubric item, 0 otherwise.
+
+An LLM grader attempts to approximate :
+
+(2)
+
+However, for some inputs due to LLM limitations. Our goal is to design a confidence estimator such that estimates:
+
+(3)
+
+3.2 Confidence Estimation Methods
+
+We compare three approaches that differ in computational cost and the type of uncertainty they capture.
+
+Token Probability
+
+This method directly uses the model’s output probability distribution over verdict tokens.
+
+For a binary grading prompt, we take the top-20 tokens by probability mass and aggregate the probabilities of case-insensitive yes/no variants within that set. Let and denote the top-ranked token sets, and define
+
+(4)
+
+The prediction is determined by the token the LLM actually emitted for the JSON “verdict” field: when that token is exactly “yes” (case-insensitive) and when it is “no”; we aggregate the probability mass over all yes/no variants only for the confidence, i.e.:
+
+(5)
+
+Cost: 1 LLM call.
+
+Self-Reported Confidence
+
+This method prompts the model to explicitly report its confidence alongside the grading decision.
+
+We prompt the model to emit both a verdict and a numeric confidence score, capturing its self-assessed uncertainty.
+
+From the parsed output, we extract the binary decision and raw confidence . The normalized confidence is:
+
+(6)
+
+Cost: 1 LLM call. Captures: Model’s self-assessed uncertainty based on internal reasoning.
+
+Self-Consistency
+
+This method measures agreement across multiple stochastic samples from the model.
+
+Sample outputs from with temperature :
+
+(7)
+
+The self-consistency confidence is the majority vote fraction:
+
+(8)
+
+The final prediction is .
+
+Cost: LLM calls (we use ).
+
+3.3 Evaluation Metrics
+
+Expected Calibration Error (ECE)
+
+[25]
+
+ECE measures the average difference between confidence and accuracy across confidence bins:
+
+(9)
+
+where is the set of predictions in bin , is the accuracy within the bin, and is the mean confidence. Lower ECE indicates better calibration. We use equal-width bins.
+
+Brier Score
+
+[2]
+
+The Brier score measures mean squared error between confidence and binary correctness:
+
+(10)
+
+Lower Brier scores indicate better calibration and discrimination combined.
+
+AUC-ROC
+
+The Area Under the ROC Curve measures ranking quality—whether higher confidence corresponds to higher accuracy. AUC-ROC ranges from 0.5 (random) to 1.0 (perfect ranking). [8]
+
+Coverage at Risk
+
+For practical deployment, we report coverage at fixed risk thresholds: the fraction of predictions that can be automated while maintaining accuracy above a target level.
+
+Statistical Methods
+
+We report 95% confidence intervals for all primary metrics using a student-block bootstrap (1,000 draws, percentile intervals). Each bootstrap sample resamples students with replacement and keeps all of that student’s responses together, preserving within-student dependence.[9, 7] To assess feature–calibration interactions, we fit linear mixed-effects models with random intercepts for students, answers and rubrics, and report standardized coefficients (). Question effects are modeled as fixed effects for small question sets () and as random intercept otherwise. [10, 33, 4] We extract features from rubrics, student answers, LLM responses, and question text. We also run paired bootstrap comparisons on identical instances to test method/model dominance.[19] We control false discovery rate using the Benjamini–Hochberg procedure.[1]
+
+Interpretation. We treat claims supported by paired comparisons and confidence intervals as inferential (expected to generalize to similar ASAG tasks with comparable prompts, rubrics, and response distributions).
+
+4 Experiments and Results
+
+4.1 Experimental Setup
+
+Datasets. We evaluate on three educational datasets covering different domains and answer lengths. RiceChem [27] contains long-answer chemistry questions requiring explanations, with 8,392 student responses across 4 questions and 27 rubric items. SciEntsBank [5] provides short-answer science questions; in our experiments it includes 10,804 responses across 200 questions. Beetle [5] contains short-answer questions about electronics and circuits with 3,559 responses across 56 questions and an average answer length of about 10 words. Each instance consists of a question, student response, rubric item, and binary correctness label.
+
+Models. We evaluate seven LLMs spanning two orders of magnitude in parameter count. Small models (20B parameters) include Llama-3.1-8B-Instruct [28], Qwen3-4B-Thinking [29], and GPT-OSS-20B [24]. Large models (70B parameters) include GPT-OSS-120B [24], Llama-3.3-70B-Instruct [28], Qwen3-Next-80B-A3B-Thinking, and Qwen3-Next-80B-A3B-Instruct [29]. The Qwen3-80B variants allow comparison between standard instruction-following and extended thinking modes within the same architecture.
+
+Implementation Details. All experiments use the vLLM backend with nucleus sampling [16, 22]. Large models run on four NVIDIA A100 GPUs with tensor parallelism, while small models execute on a bench-top GeForce RTX 3090. Sampling parameters follow model card recommendations (temperature 0.6–0.7, top- 0.8–0.95, top- 20 where applicable). We set maximum generation length to 8,192 tokens for large models and 30,000 tokens for small models, and batch sizes to 16 (large) and 128 (small). Models return JSON-formatted verdicts; self-consistency uses and majority vote. We report raw confidence scores throughout.
+
+4.2 Main Results
+
+Tables 1 and 2 summarize results averaged across models within each size category. We compute percentile bootstrap confidence intervals by repeatedly resampling students with replacement; typical CI widths are ECE 0.014–0.057 and Brier 0.010–0.046 (medians 0.021 and 0.019).
+
+Table 1: Calibration metrics averaged across small models (Llama-8B, Qwen-4B, GPT-OSS-20B). Self-reported confidence achieves the lowest ECE across all datasets. Lower ECE and Brier scores indicate better calibration; higher AUC and Coverage indicate better discrimination.
+
+Dataset
+Method
+Acc
+ECE
+Brier
+AUC
+Cov@10%
+
+RiceChem
+self-reported
+72.4
+0.162
+0.229
+0.593
+0.005
+
+RiceChem
+self-consistency
+71.9
+0.229
+0.251
+0.575
+0.000
+
+RiceChem
+token-probability
+72.4
+0.212
+0.243
+0.565
+0.006
+
+SciEntsBank
+self-reported
+74.9
+0.208
+0.255
+0.588
+0.094
+
+SciEntsBank
+self-consistency
+74.4
+0.227
+0.238
+0.561
+0.003
+
+SciEntsBank
+token-probability
+75.4
+0.215
+0.227
+0.577
+0.087
+
+Beetle
+self-reported
+69.9
+0.221
+0.271
+0.570
+0.034
+
+Beetle
+self-consistency
+69.4
+0.264
+0.277
+0.571
+0.001
+
+Beetle
+token-probability
+71.2
+0.251
+0.266
+0.557
+0.001
+
+Table 2: Calibration metrics averaged across large models (GPT-OSS-120B, Llama-70B, Qwen-80B variants). Self-reported confidence consistently achieves the lowest ECE, with substantial improvement over small models.
+
+Dataset
+Method
+Acc
+ECE
+Brier
+AUC
+Cov@10%
+
+RiceChem
+self-reported
+74.2
+0.150
+0.209
+0.612
+0.038
+
+RiceChem
+self-consistency
+75.4
+0.218
+0.228
+0.563
+0.000
+
+RiceChem
+token-probability
+74.4
+0.250
+0.252
+0.644
+0.000
+
+SciEntsBank
+self-reported
+78.3
+0.121
+0.183
+0.639
+0.310
+
+SciEntsBank
+self-consistency
+78.3
+0.198
+0.204
+0.550
+0.004
+
+SciEntsBank
+token-probability
+78.1
+0.215
+0.216
+0.657
+0.198
+
+Beetle
+self-reported
+73.5
+0.156
+0.213
+0.635
+0.166
+
+Beetle
+self-consistency
+72.7
+0.249
+0.258
+0.539
+0.001
+
+Beetle
+token-probability
+73.2
+0.262
+0.264
+0.618
+0.012
+
+Finding 1: Self-reported confidence achieves the best calibration. Across all six conditions (3 datasets 2 model sizes), self-reported confidence consistently achieves the lowest Expected Calibration Error (ECE). Averaged across datasets, self-reported confidence achieves ECE of 0.197 for small models and 0.142 for large models. The corresponding ECE values for self-consistency are 0.240/0.221 and for token probability 0.226/0.242. Overall, self-reported ECE averages 0.166, compared to 0.229 for self-consistency and 0.235 for token probability; overall Brier follows the same ordering (0.223 vs 0.241 and 0.244).
+
+Table 3: Paired dominance summaries from Step 6 (model-level paired bootstrap on identical responses; within-dataset FDR). self-reported comparator (negative favors self-reported). CI is the median model-level paired bootstrap interval across models. B/W/T number of models where self-reported is better/worse/tied; Sig number significant.
+
+Dataset
+Metric
+Comparator
+
+CI
+B/W/T; Sig
+
+RiceChem
+ECE
+self-consistency
+
+7/0/0  7/7
+
+SciEntsBank
+ECE
+self-consistency
+
+6/1/0  7/7
+
+Beetle
+ECE
+token-probability
+
+6/1/0  7/7
+
+RiceChem
+Brier
+token-probability
+
+6/1/0  7/7
+
+SciEntsBank
+Brier
+self-consistency
+
+6/1/0  7/7
+
+Beetle
+Brier
+token-probability
+
+6/1/0  7/7
+
+Paired bootstrap comparisons on identical responses (Table 3) show median deltas favoring self-reported in every dataset. Median paired CIs exclude zero. Model-level tallies show self-reported beats the comparator in 6/7 models for five rows (7/7 for RiceChem ECE), with all six rows significant in 7/7 models. Across datasets, median ECE deltas range from about to and median Brier deltas from about to . Self-consistency is 38% worse despite 5 inference cost. The discrete nature of vote counts (e.g., 3/5 vs 4/5 agreement) provides coarser confidence granularity than continuous self-reported scores. Mixed-effects calibration regressions show the strongest confidence–feature interactions under self-reported confidence (Table 4). (Here measures how much a 1 SD change in a feature shifts the confidence–accuracy slope; Table 4 reports median , IQRs, and significance rates.) Response-level features are most frequently significant (73.3%), while question features are rarer (12.4%) and rubric features show no significant effects.
+
+Table 4: Calibration-regression interactions (confidence feature). Rates are significant interactions (FDR within dataset). Median indicates effect size; larger values indicate stronger shifts in the confidence–accuracy slope.
+
+Dataset
+Method
+med
+IQR [Q1–Q3]
+% sig
+
+RiceChem
+self-reported
+0.246
+0.134–0.396
+43.9
+
+self-consistency
+0.047
+0.036–0.068
+27.1
+
+token-probability
+0.075
+0.056–0.092
+12.4
+
+SciEntsBank
+self-reported
+0.162
+0.056–0.320
+35.3
+
+self-consistency
+0.075
+0.044–0.108
+35.3
+
+token-probability
+0.059
+0.043–0.109
+14.9
+
+Beetle
+self-reported
+0.155
+0.091–0.250
+23.9
+
+self-consistency
+0.068
+0.058–0.083
+15.8
+
+token-probability
+0.076
+0.061–0.077
+9.9
+
+All coefficients are standardized.
+
+Finding 2: Model scale boosts accuracy more than calibration. Larger models are consistently more accurate across all three datasets, but calibration improvements are mixed and depend on the method. For self-reported confidence, the size-averaged ECE drops from 0.197 to 0.142, with Brier decreasing from 0.252 to 0.201 (20%). At the dataset level, SciEntsBank shows the largest gain (ECE 0.208 → 0.121; Brier 0.255 → 0.183), Beetle sees moderate gain (ECE 0.221 → 0.156; Brier 0.271 → 0.213), and RiceChem barely moves (ECE 0.162 → 0.150; Brier 0.229 → 0.209). Counterexamples arise for token probability: ECE worsens with scale in RiceChem (0.212 → 0.250) and Beetle (0.251 → 0.262). Brier shifts only slightly in those cases (RiceChem 0.243 → 0.252; Beetle 0.266 → 0.264). Across all model–method pairs, GPT-OSS-120B self-reported delivers the lowest average ECE (0.100; Brier 0.180), while the highest AUC overall occurs for Qwen3-80B-Instruct token probability on SciEntsBank (AUC 0.728).
+
+Finding 3: Confidence is top-skewed across methods. Pooling self-reported and token-probability outputs, 86% of predictions exceed 0.8; only 0.62% fall below 0.2 (though a few model/dataset runs exceed 1%). Self-consistency is discrete by construction: 89.5% of outputs are 5/5 (1.0), 6.1% are 4/5 (0.8), and 4.5% are 3/5 (0.6). These distributions create practical confidence floors, so thresholds should be set relative to each model/method’s observed scores rather than an intuitive midpoint.
+
+(a) RiceChem: calibration curve
+
+(b) RiceChem: confidence distribution
+
+(c) SciEntsBank: calibration curve
+
+(d) SciEntsBank: confidence distribution
+
+(e) Beetle: calibration curve
+
+(f) Beetle: confidence distribution
+
+Figure 1: Calibration curves and confidence distributions for GPT-OSS-120B with self-reported confidence. Left column: calibration curves where the diagonal indicates perfect calibration and points below the diagonal indicate overconfidence. Right column: histograms showing that confidence scores cluster in the 0.7–0.9 range, with fewer than 1% of predictions below 0.6.
+
+4.3 Calibration Visualization
+
+To visualize calibration behavior, Figure 1 shows calibration curves (left) and confidence histograms (right) for GPT-OSS-120B with self-reported confidence across all three datasets. SciEntsBank tracks the diagonal most closely (lowest ECE/Brier), while RiceChem and Beetle are slightly less calibrated (higher ECE/Brier). The histograms are top-skewed with most mass above 0.8 and virtually none below 0.2, so thresholds should be calibrated to observed confidence distributions rather than a fixed midpoint.
+
+4.4 Per-Model Analysis
+
+Table 5: Individual large model results with self-reported confidence. ECE = Expected Calibration Error, Brier = Brier Score, AUC = AUC-ROC for correctness prediction. Best values per dataset shown in bold.
+
+Model
+RiceChem
+SciEntsBank
+Beetle
+
+Acc
+ECE
+Brier
+AUC
+Acc
+ECE
+Brier
+AUC
+Acc
+ECE
+Brier
+AUC
+
+GPT-OSS-120B
+75.1
+.093
+.182
+.690
+79.1
+.081
+.162
+.656
+74.2
+.125
+.196
+.660
+
+Llama-3.3-70B
+72.4
+.166
+.226
+.527
+79.0
+.117
+.173
+.602
+73.3
+.169
+.218
+.620
+
+Qwen3-80B-Think
+77.5
+.142
+.187
+.636
+76.4
+.161
+.198
+.645
+72.1
+.198
+.233
+.618
+
+Qwen3-80B-Inst
+71.7
+.197
+.240
+.594
+78.7
+.126
+.198
+.655
+74.5
+.132
+.205
+.641
+
+To explain the size-averaged trends, we examine model-specific patterns. Table 5 shows results for individual large models with self-reported confidence.
+
+Qwen3-80B: Thinking vs Instruct tradeoff. Comparing Qwen3-80B-Thinking with Qwen3-80B-Instruct reveals a clear tradeoff between accuracy and calibration. On RiceChem, the thinking variant achieves substantially higher accuracy (77.5% vs 71.7%, a 5.8 percentage point gain) with better calibration (ECE 0.142 vs 0.197; Brier 0.187 vs 0.240), suggesting that extended reasoning helps with complex chemistry explanations. In contrast, on the short-answer datasets the thinking variant’s calibration is weaker (SciEntsBank ECE/Brier 0.161/0.198 vs 0.126/0.198; Beetle 0.198/0.233 vs 0.132/0.205), which might come occasional overconfidence when longer reasoning paths miss simpler cues.
+
+Table 6: GPT-OSS-120B performance across reasoning levels with self-reported confidence. Medium is the default setting used in main experiments. Best values per dataset shown in bold.
+
+Reasoning
+RiceChem
+SciEntsBank
+Beetle
+
+Acc
+ECE
+Brier
+AUC
+Acc
+ECE
+Brier
+AUC
+Acc
+ECE
+Brier
+AUC
+
+High
+74.5
+.099
+.186
+.690
+79.1
+.085
+.162
+.663
+75.4
+.116
+.186
+.674
+
+Medium
+75.1
+.093
+.182
+.690
+79.1
+.081
+.162
+.656
+74.2
+.125
+.196
+.660
+
+Low
+74.3
+.101
+.186
+.698
+79.1
+.085
+.162
+.660
+75.0
+.119
+.189
+.671
+
+GPT-OSS-120B: Best calibration with stable reasoning. Under self-reported confidence, GPT-OSS-120B achieves average ECE of 0.100, average Brier of 0.180, and average AUC of 0.668 across all three datasets, substantially outperforming other large models under self-reported confidence (avg ECE 0.157, avg Brier 0.209, avg AUC 0.615). This represents 36% lower ECE, 14% lower Brier, and 9% higher AUC. Table 6 shows GPT-OSS-120B performance across reasoning levels (high, medium, low). Unlike Qwen’s large variation between thinking modes, GPT-OSS-120B exhibits remarkable stability: accuracy varies by at most 1.2 percentage points and ECE by at most 0.009 across reasoning levels. On SciEntsBank, all three reasoning levels achieve identical accuracy (79.1%) with ECE ranging only from 0.081 to 0.085. This stability suggests that GPT-OSS-120B’s calibration quality is robust to reasoning depth, making it a reliable choice for deployment without careful tuning of reasoning parameters.
+
+4.5 Practical Implications
+
+For deployment, well-calibrated confidence enables selective automation, where high-confidence predictions are processed automatically while uncertain cases are flagged for human review. With GPT-OSS-120B on SciEntsBank, Coverage@10%Risk is about 20% and Coverage@5%Risk is 11.5%; the highest Coverage@5%Risk we observe is 19.5% (Llama-3.3-70B-Instruct, self-reported, SciEntsBank). This also sets a practical limitation: even at 5% risk, only about 11%–20% of predictions qualify in our best-performing runs, so selective automation covers a modest share under strict reliability targets.
+
+5 Conclusion
+
+We evaluated which confidence signal can best tell us when an LLM grader is reliable, comparing self-consistency, self-reported confidence, and token-probability estimates across seven models and three educational datasets. This work keeps experimental conditions (prompts, rubrics, student populations) consistent so the comparisons are directly comparable and the calibration statistics are interpretable.
+Finding 1: Self-reported confidence yields the most calibrated signal within these ASAG settings, outperforming sampling-based alternatives while keeping inference cost low.
+Finding 2: Larger models deliver steadier accuracy gains, but calibration improvements remain dataset- and method-dependent.
+Finding 3: Confidence scores are top-skewed, so thresholds should be set relative to each method’s observed distribution rather than an intuitive midpoint.
+Taken together, these results support using self-reported confidence as the automation gate while recognizing that strict reliability targets cover only a modest share of predictions. Mixed-model and paired-bootstrap analyses provide the statistical backing that makes this practical guidance trustworthy.
+
+References
+
+[1]
+Y. Benjamini and Y. Hochberg (1995)
+
+Controlling the false discovery rate: a practical and powerful approach to multiple testing.
+
+Journal of the Royal Statistical Society. Series B (Methodological) 57 (1), pp. 289–300.
+
+External Links: ISSN 00359246
+
+Cited by: §3.3.
+
+[2]
+G. W. Brier (1950)
+
+Verification of forecasts expressed in terms of probability.
+
+Monthly Weather Review 78 (1), pp. 1–3.
+
+External Links: Document
+
+Cited by: §3.3.
+
+[3]
+S. Burrows, I. Gurevych, and B. Stein (2015)
+
+The eras and trends of automatic short answer grading.
+
+International Journal of Artificial Intelligence in Education 25, pp. 60–117.
+
+Cited by: §2.3.
+
+[4]
+J. E. Dalton (2013)
+
+Flexible recalibration of binary clinical prediction models.
+
+Statistics in Medicine 32 (2), pp. 282–289.
+
+External Links: Document
+
+Cited by: §3.3.
+
+[5]
+M. Dzikovska, R. Nielsen, C. Brew, C. Leacock, D. Giampiccolo, L. Bentivogli, P. Clark, I. Dagan, and H. T. Dang (2013)
+
+SemEval-2013 task 7: the joint student response analysis and 8th recognizing textual entailment challenge.
+
+In Proc. SemEval,
+
+pp. 263–274.
+
+Cited by: §1,
+§2.3,
+§4.1.
+
+[6]
+M. O. Dzikovska, R. D. Nielsen, and C. Brew (2012)
+
+Towards effective tutorial feedback for explanation questions: a dataset and baselines.
+
+In Proc. NAACL-HLT,
+
+pp. 200–210.
+
+Cited by: §2.3.
+
+[7]
+B. Efron and R. J. Tibshirani (1994)
+
+An introduction to the bootstrap.
+
+Chapman & Hall/CRC, New York.
+
+Cited by: §3.3.
+
+[8]
+T. Fawcett (2006)
+
+An introduction to ROC analysis.
+
+Pattern Recognition Letters 27 (8), pp. 861–874.
+
+External Links: Document
+
+Cited by: §3.3.
+
+[9]
+C. A. Field and A. H. Welsh (2007)
+
+Bootstrapping clustered data.
+
+Journal of the Royal Statistical Society: Series B (Statistical Methodology) 69 (3), pp. 369–390.
+
+External Links: Document
+
+Cited by: §3.3.
+
+[10]
+A. Fielding and H. Goldstein (2006)
+
+Cross-classified and multiple membership structures in multilevel models: an introduction and review.
+
+Vol. 791, Department for Education and Skills London.
+
+Cited by: §3.3.
+
+[11]
+Y. Gal and Z. Ghahramani (2016)
+
+Dropout as a Bayesian approximation: representing model uncertainty in deep learning.
+
+In International Conference on Machine Learning (ICML),
+
+Cited by: §2.2.
+
+[12]
+A. Gandolfi (2025)
+
+GPT-4 in education: evaluating aptness, reliability, and loss of coherence in solving calculus problems and grading submissions.
+
+International Journal of Artificial Intelligence in Education.
+
+External Links: Document
+
+Cited by: §1.
+
+[13]
+J. Geng, F. Cai, Y. Wang, H. Koeppl, P. Nakov, and I. Gurevych (2024)
+
+A survey of confidence estimation and calibration in large language models.
+
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics (NAACL),
+
+Cited by: §1.
+
+[14]
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger (2017)
+
+On calibration of modern neural networks.
+
+In Proc. ICML,
+
+pp. 1321–1330.
+
+Cited by: §1,
+§2.1.
+
+[15]
+D. Hendrycks and K. Gimpel (2017)
+
+A baseline for detecting misclassified and out-of-distribution examples in neural networks.
+
+In Proc. ICLR,
+
+Cited by: §2.1.
+
+[16]
+A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi (2020)
+
+The curious case of neural text degeneration.
+
+In Proc. ICLR,
+
+Cited by: §4.1.
+
+[17]
+L. Jiang and N. Bosch (2024)
+
+Short answer scoring with GPT-4.
+
+In Proceedings of the 11th ACM Conference on Learning @ Scale,
+
+pp. 438–442.
+
+Cited by: §2.3.
+
+[18]
+S. Kadavath, T. Conerly, A. Askell, T. Henighan, D. Drain, E. Perez, N. Schiefer, Z. Hatfield-Dodds, N. DasSarma, E. Tran-Johnson, et al. (2022)
+
+Language models (mostly) know what they know.
+
+arXiv preprint arXiv:2207.05221.
+
+Note: Anthropic
+
+Cited by: §1,
+§2.2.
+
+[19]
+P. Koehn (2004)
+
+Statistical significance tests for machine translation evaluation.
+
+In Proceedings of the 2004 Conference on Empirical Methods in Natural Language Processing (EMNLP),
+
+Cited by: §3.3.
+
+[20]
+M. Kostic, H. F. Witschel, K. Hinkelmann, and M. Spahic-Bogdanovic (2024)
+
+LLMs in automated essay evaluation: a case study.
+
+Proceedings of the AAAI Symposium Series 3 (1), pp. 143–147.
+
+External Links: Document
+
+Cited by: §1.
+
+[21]
+L. Kuhn, Y. Gal, and S. Farquhar (2023)
+
+Semantic uncertainty: linguistic invariances for uncertainty estimation in natural language generation.
+
+In International Conference on Learning Representations (ICLR),
+
+Cited by: §1,
+§2.2.
+
+[22]
+W. Kwon, Z. Li, Y. Zhuang, Y. Sheng, N. Zhao, H. Zhang, J. Gonzalez, I. Stoica, W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (20232023)
+
+vLLM: easy, fast, and cheap LLM serving with PagedAttentionvLLM: easy, fast, and cheap LLM serving with PagedAttention.
+
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles,
+
+Cited by: §4.1.
+
+[23]
+B. Lakshminarayanan, A. Pritzel, and C. Blundell (2017)
+
+Simple and scalable predictive uncertainty estimation using deep ensembles.
+
+In Neural Information Processing Systems (NeurIPS),
+
+Cited by: §2.2.
+
+[24]
+OpenAI (2025)
+
+GPT-OSS-120B & GPT-OSS-20B model card.
+
+arXiv preprint arXiv:2508.10925.
+
+Cited by: §1,
+§4.1.
+
+[25]
+M. Pakdaman Naeini, G. Cooper, and M. Hauskrecht (2015)
+
+Obtaining well calibrated probabilities using bayesian binning.
+
+Proceedings of the AAAI Conference on Artificial Intelligence 29.
+
+External Links: Document
+
+Cited by: §3.3.
+
+[26]
+J. C. Platt (1999)
+
+Probabilistic outputs for support vector machines and comparisons to regularized likelihood methods.
+
+In Advances in Large Margin Classifiers,
+
+pp. 61–74.
+
+Cited by: §2.1.
+
+[27]
+S. Sonkar, K. Ni, L. Tran Lu, K. Kincaid, J. S. Hutchinson, and R. G. Baraniuk (2024)
+
+Automated long answer grading with ricechem dataset.
+
+In Artificial Intelligence in Education,
+
+pp. 163–176.
+
+Cited by: §1,
+§2.3,
+§4.1.
+
+[28]
+L. Team (2024)
+
+The llama 3 herd of models.
+
+CoRR abs/2407.21783.
+
+External Links: Document,
+2407.21783
+
+Cited by: §1,
+§4.1.
+
+[29]
+Q. Team (2025)
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §1,
+§4.1.
+
+[30]
+K. Tian, E. Mitchell, A. Zhou, A. Sharma, R. Rafailov, H. Yao, C. Finn, and C. D. Manning (2023)
+
+Just ask for calibration: strategies for eliciting calibrated confidence scores from language models fine-tuned with human feedback.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP),
+
+Cited by: §2.1.
+
+[31]
+X. Tian A. Mannekote et al. (2024)
+
+Examining llm prompting strategies for automatic evaluation of learner-created computational artifacts.
+
+In Proceedings of the 17th International Conference on Educational Data Mining, B. PaaÃŸen and C. D. Epp (Eds.),
+
+pp. 698–706.
+
+External Links: Document,
+ISBN 978-1-7336736-5-5
+
+Cited by: §1.
+
+[32]
+M. Usher and M. Faraon (2025)
+
+Who grades best? comparing chatgpt, peer, and instructor evaluations across varying levels of student project quality.
+
+Assessment & Evaluation in Higher Education 0 (0), pp. 1–20.
+
+External Links: Document,
+https://doi.org/10.1080/02602938.2025.2588682
+
+Cited by: §1.
+
+[33]
+W. Van den Noortgate, P. De Boeck, and M. Meulders (2003)
+
+Cross-classification multilevel logistic models in psychometrics.
+
+Journal of Educational and Behavioral Statistics.
+
+External Links: Document
+
+Cited by: §3.3.
+
+[34]
+X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou (2023)
+
+Self-consistency improves chain of thought reasoning in language models.
+
+In Proc. ICLR,
+
+Cited by: §1,
+§2.2.
+
+[35]
+M. Xiong, Z. Hu, X. Lu, Y. Li, J. Fu, J. He, and B. Hooi (2024)
+
+Can LLMs express their uncertainty? an empirical evaluation of confidence elicitation in LLMs.
+
+In International Conference on Learning Representations (ICLR),
+
+Cited by: §1.
+
+[36]
+B. Zadrozny and C. Elkan (2002)
+
+Transforming classifier scores into accurate multiclass probability estimates.
+
+In Proceedings of the Eighth ACM SIGKDD International Conference on Knowledge Discovery and Data Mining.,
+
+Cited by: §2.1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

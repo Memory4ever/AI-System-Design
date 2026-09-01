@@ -1,0 +1,3270 @@
+MF-QAT: Multi-Format Quantization-Aware Training for Elastic Inference
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background and related work
+
+Quantization and QAT.
+
+Microscaling formats.
+
+Elastic inference serving.
+
+3 Methods
+
+3.1 Models, tasks, and datasets
+
+3.2 Multi-format training scheme
+
+Weight-only quantization.
+
+Training formats and schedule.
+
+Baselines.
+
+Evaluation.
+
+Optimization details.
+
+3.3 Slice-and-Scale MXINT (SSMXINT) format conversion
+
+Notation (used in Sec. –).
+
+MXINT representation.
+
+High-to-low conversion via slice-and-scale.
+
+3.4 Slice-and-Scale MXFP (SSMXFP) format conversion
+
+MXFP representation.
+
+High-to-low conversion via slice-and-scale.
+
+3.5 Training and inference with anchor format storage
+
+Training.
+
+Inference.
+
+4 Results
+
+4.1 Multi-format QAT across MXINT and MXFP
+
+4.2 Multi-format QAT with downstream task
+
+4.3 Effectiveness of Slice-and-Scale conversion
+
+4.4 Multi-format QAT with Slice and Scale
+
+5 Conclusion
+
+References
+
+A Wikitext2 PPL Eval results for all models
+
+A.1 Additional plots for Multi-format QAT across MXINT and MXFP
+
+A.2 Additional plots for Multi-format QAT with Slice and Scale
+
+B Complete results of main result tables
+
+C Tensor-level reconstruction error for Slice-and-Scale
+
+License: CC BY-NC-SA 4.0
+
+arXiv:2604.00529v1 [cs.LG] 01 Apr 2026
+
+MF-QAT: Multi-Format Quantization-Aware Training for
+
+Elastic Inference
+
+Zifei Xu
+
+Affiliation: d-Matrix
+
+Affiliation: Santa Clara, CA 95054
+
+Email: xuzifei@d-matrix.ai
+
+  
+Sayeh Sharify
+
+Affiliation: d-Matrix
+
+Affiliation: Santa Clara, CA 95054
+
+Email: sayehs@d-matrix.ai
+
+  
+Hesham Mostafa
+
+Affiliation: d-Matrix
+
+Affiliation: Santa Clara, CA 95054
+
+Email: hmostafa@d-matrix.ai
+
+Abstract
+
+Quantization-aware training (QAT) is typically performed for a single target numeric format, while practical deployments often need to choose numerical precision at inference time based on hardware support or runtime constraints. We study multi-format QAT, where a single model is trained to be robust across multiple quantization formats. We find that multi-format QAT can match single-format QAT at each target precision, yielding one model that performs well overall across different formats, even formats that were not seen during training. To enable practical deployment, we propose the Slice-and-Scale conversion procedure for both MXINT and MXFP that converts a high-precision representation into lower-precision formats without re-training. Building on this, we introduce a pipeline that (i) trains a model with multi-format QAT, (ii) stores a single anchor format checkpoint (MXINT8/MXFP8), and (iii) allows on-the-fly conversion to lower MXINT or MXFP formats at runtime with negligible-or no-additional accuracy degradation. Together, these components provide a practical path to elastic precision scaling and allow selecting the runtime format at inference time across diverse deployment targets.
+
+1 Introduction
+
+Deep neural networks increasingly rely on quantization to meet the latency,
+throughput, and memory constraints of modern deployment (Jacob et al., 2017; Esser et al., 2020; Dettmers et al., 2022; Xiao et al., 2024; Lin et al., 2024). In many production
+settings, however, the target numeric format is not fixed: different
+accelerators support different formats, and the same device might want to serve at different precisions for different batches based on the current load of the system (Cai et al., 2020; Lee et al., 2025a; Jin et al., 2020; Yi et al., 2025; Chen et al., 2025b). Standard quantization-aware training (QAT) commonly optimizes a model for a single format (Chen et al., 2025a; Ma et al., 2024), which
+creates a brittle dependency between training and deployment.
+
+This paper asks a simple question: can we train one model that is robust across
+multiple quantization formats, and deploy it in a way that supports
+further precision reduction at inference time with minimal loss?
+
+We answer both affirmatively. First, we discover that models trained with
+multi-format QAT perform on par with single-format QAT at the target precisions, so a single model can serve multiple deployment formats effectively.
+
+Second, we design Slice-and-Scale format transformation methods for both MXINT
+and MXFP that produce lower-precision representations from higher-precision
+ones. These transformations enable a practical workflow in which a single stored
+checkpoint can be converted to different precisions efficiently without
+re-expanding to FP32 model weights.
+
+Third, we propose an inference scheme MF-QAT that combines these ideas: we train a model
+with multi-format QAT, store the resulting model in a single anchor microscaling format (MXINT8/MXFP8), and allow it to be further quantized directly to an even lower precision
+at inference time. Empirically, this final step incurs only minimal additional
+accuracy degradation, enabling elastic precision scaling depending on
+runtime constraints.
+
+2 Background and related work
+
+Quantization and QAT.
+
+Post-training quantization and quantization-aware training (QAT) are standard
+approaches to reduce memory footprint and improve throughput (Jacob et al., 2017; Esser et al., 2020; Dettmers et al., 2022; Xiao et al., 2024; Lin et al., 2024; Xu et al., 2025; Saxena et al., 2025). QAT simulates the
+effects of quantization during training, typically via
+straight-through estimators Yin et al. (2019), allowing the model to adapt to the induced noise.
+While effective, most QAT pipelines optimize for a single target format
+(e.g., a fixed bitwidth and quantization scheme) (Chen et al., 2025a; Ma et al., 2024), which can lead to accuracy
+drops when the deployment format differs.
+
+Microscaling formats.
+
+Many modern accelerators support integer microscaling (MXINT) and floating-point microscaling (MXFP), which employ shared scaling factors over blocks of values to achieve efficient computation while retaining sufficient dynamic range. In this framework, a tensor is represented by low-precision elements together with a shared scale for each block. Accordingly, a microscaling format is defined by (i) the scale-factor data type, (ii) the element data type and precision, and (iii) the scaling block size (Rouhani et al., 2023a). From this perspective, MXINT and MXFP share the same block-wise scaling abstraction and differ only in whether the elements are encoded as integers or floating-point numbers. Due to their ability to reduce memory usage and inference latency with negligible accuracy loss, microscaling formats are becoming an increasingly important quantization primitive in modern hardware (Sharify et al., 2024; Rouhani et al., 2023b; Yang et al., 2025b; Lee et al., 2025b).
+
+Elastic inference serving.
+
+Recent work on elastic inference goes beyond single-format quantization by explicitly enabling conversion from a higher-precision checkpoint to lower-precision variants, reducing or eliminating the need to store multiple full model copies. Representative examples include overlay-style and nested parameterizations that expose multiple precision levels from a largely shared memory footprint
+(Park et al., 2024; Lee et al., 2025a; Chen et al., 2025b). This prior work considered clustering-based quantization formats  (Park et al., 2024) or FP16/FP8 formats Lee et al. (2025a), while in the current work we mainly consider MXINT and MXFP formats.
+Other work focuses on training a single model that can tolerate dynamic precision selection under varying runtime constraints, such as latency or throughput requirements. These approaches include training with nested data formats, precision-specific batch normalization, token/layer-level precision switching, and lightweight LoRA adapters tailored to different precisions.
+(Yi et al., 2025; Chen et al., 2025b; Liu et al., 2025; Jin et al., 2020; Bulat and Tzimiropoulos, 2021). Unlike this prior work, we do not change the network architecture through extra normalization layers or LoRA adapters. Instead, we directly quantize the weights to obtain a single high-precision checkpoint that can be efficiently converted to many different low-precision formats during deployment. Our multi-format QAT scheme leads to minimal or no accuracy degradation across the many possible deployment formats, even the formats that were not seen during QAT.
+
+3 Methods
+
+3.1 Models, tasks, and datasets
+
+We conduct experiments on the following pretrained LLMs:
+Llama-2-7b-hf, Llama-3.2-1B, and Llama-3.2-3B from the Llama2 (Touvron et al., 2023) and the Llama-3.2 (Grattafiori et al., 2024) families and Qwen3-0.6B-Base, Qwen3-1.7B-Base, and Qwen3-4B-Base, from the recently released Qwen3 family (Yang et al., 2025a). We also include multimodal language models belonging to Qwen3-VL family: Qwen3-VL-2B-Instruct and Qwen3-VL-4B-Instruct (Bai et al., 2025) for our evaluations.
+
+For quantization-aware finetuning, we use 128 examples from the WikiText-2 train split (Merity et al., 2016), and we evaluate the multiformat QAT approach on a range of tasks which measure the language modeling ability: perplexity on WikiText-2 validation split (Merity et al., 2016), common sense reasoning ability: normalized 0-shot accuracy on HellaSwag (Zellers et al., 2019), language understanding: 0-shot accuracy on MMLU (Hendrycks et al., 2021), and mathematical understanding: normalized 0-shot accuracy on MathQA (Amini et al., 2019). For multimodal vision language models, we use ChartQA (Masry et al., 2022) for visual question answering.
+
+3.2 Multi-format training scheme
+
+Weight-only quantization.
+
+We perform weight-only quantization in the text decoder stack (excluding lm_head). During QAT, only the quantized weight
+parameters are updated, all other parameters are frozen. Similarly, for the full precision finetuning baseline, only these weight parameters are updated.
+
+Training formats and schedule.
+
+We train sequentially on MXINT and MXFP weight formats with bitwidths
+and respectively. We train in increasing bit order (2468),
+because lower-precision weights typically require larger updates to jump out of quantization bin, training in the opposite direction can destabilize the higher-precision quantization settings learned earlier. Each bitwidth is trained for 1 epoch, resulting in 4 epochs total for MXINT multi-format QAT and 3 epochs total for MXFP multi-format QAT. Each epoch contains the same 128 data examples.
+
+Baselines.
+
+For comparison, we (i) finetune the model in full precision, and
+(ii) run single-format QAT for each target format. We use the same number of epochs as the multi-format QAT runs for fair comparison. For models larger than 2B, we observed severe overfitting for single-format QAT models, hence, the number of epochs are reduced to 1 for all runs for these models (each format in multi-format QAT is assigned equal number of steps within the epoch).
+
+Evaluation.
+
+We evaluate on MXINT formats with bitwidths and MXFP formats with bitwidths .
+For each trained variant (full-precision finetune, single-format QAT, and
+multi-format QAT), we apply post-training quantization (PTQ) to convert the resulting checkpoint to the target evaluation format before measuring
+performance on WikiText-2 validation. This isolates the effect of the training procedure on robustness to format changes and ensures that all compared variants are evaluated in the same target format.
+
+Optimization details.
+
+For each model and training variant, we sweep learning rates in
+for MXINT and for MXFP, and report results for the best-performing
+learning rate. We use torch.optim.AdamW with default hyperparameters.
+
+3.3 Slice-and-Scale MXINT (SSMXINT) format conversion
+
+To enable fast conversion between higher-precision and lower-precision
+microscaling integer (MXINT) formats, we propose Slice-and-Scale MXINT (SSMXINT). SSMXINT converts a tensor represented in a higher-precision MXINT format (e.g., MXINT8) into a lower-precision MXINT format by (i) slicing the least-significant bits of the
+elements with rounding and (ii) scaling the shared block scale
+so that the represented real range is preserved.
+
+Notation (used in Sec. 3.3–3.4).
+
+For a block of scalar floats with block size of , MX conversion returns a shared scale and elements . The reconstruction is .
+Let denote the exponent of the largest normal number in
+element format , and let denote conversion to (rounding plus clamping).
+We use for element-wise round-to-nearest.
+Following the MX format conversion algorithm in (Rouhani et al., 2023b),
+
+(1)
+
+(2)
+
+MXINT representation.
+
+For MXINT, the shared scale follows Eq.1 with
+, where is the number of bits for the element format:
+
+(3)
+
+Elements are then computed by
+.
+
+High-to-low conversion via slice-and-scale.
+
+Let be a high-precision MXINT block and
+the target one, with . Since is fixed, the computation of scale for different MXINT precisions only differs in the value of . Hence, it is theoretically equivalent to obtain the low-precision MXINT scale from the high-precision MXINT scale accounting for the difference in versus obtaining the low-precision MXINT scale from the original full precision tensor.
+
+Define
+.
+For signed MXINT, this is equivalent to .
+SSMXINT converts by
+
+(4)
+
+Hence , where the residual error is due to rounding in the low-precision cast. Since the element value is in integer format and is divided by powers of two, this conversion is equivalent to a right shift and round on integer elements:
+for each , divide by (right shift by ), drop the
+least-significant bits, round using the most-significant dropped bit,
+and keep the rounded value in the target element representation. The scale update
+compensates for the element down-scaling so the
+reconstructed block remains numerically close to the high-precision one.
+
+3.4 Slice-and-Scale MXFP (SSMXFP) format conversion
+
+The same idea can be applied to MXFP.
+
+MXFP representation.
+
+Let the MXFP element format be parameterized by exponent bits and
+mantissa bits (total element bits ), with .
+denotes quantizing (including rounding and clamping) to the target MXFP element format.
+Let denote the exponent of the largest normal
+number in this MXFP format.
+Following the same Eq. 1,
+
+(5)
+
+followed by
+.
+
+High-to-low conversion via slice-and-scale.
+
+Let high precision use and low precision use , with and .
+Following the same slice-and-scale rule,
+
+(6)
+
+Unlike MXINT, bit shifting cannot be applied for MXFP elements since it is not an integer format, instead, we do explicit division and quantization to the low-precision element format. Depending on hardware support, this cast can be implemented either directly from the high-precision anchor format to the lower-precision format or through an FP32 intermediate.
+
+3.5 Training and inference with anchor format storage
+
+Let denote the anchor format (MXINT8 or MXFP8), and a runtime target format derived from .
+
+Training.
+
+We maintain full-precision master weights . For each forward pass,
+
+(7)
+
+where quantizes to the anchor format and denotes SSMXINT or SSMXFP conversion. The model runs with , and gradients are propagated through both operators using straight-through estimators (Yin et al., 2019) to update .
+
+Inference.
+
+We store only the anchor checkpoint . At runtime, we generate on demand for any target format . This enables elastic precision selection without retraining.
+
+4 Results
+
+4.1 Multi-format QAT across MXINT and MXFP
+
+We compare multi-format QAT against precision-specific single-format QAT and full-precision fine-tuning followed by post-training quantization across both MXINT and MXFP formats. Figure 1 reports zero-shot WikiText-2 perplexity for Qwen3-4B-Base as a function of evaluation bit-width. Results for all models are provided in Appendix A.1.
+
+Brittleness of single-format QAT.
+As expected, single-format QAT performs best at its target bit-width. However, these models are highly brittle under format mismatch. In the MXINT setting (Figure 1, left), models trained at 4, 6, or 8 bits degrade sharply when evaluated at 2 or 3 bits. Conversely, the 2-bit model performs poorly at higher precisions. This shows that precision-specific QAT tends to over-specialize to its training format.
+
+Robustness of multi-format QAT.
+In contrast, multi-format QAT (purple) closely tracks the best achievable performance across the full precision range. At the explicitly trained bit-widths (), it remains consistently close to the corresponding single-format optimum, while also generalizing well to unseen intermediate bit-widths (). Overall, multi-format QAT removes the need to commit to a single deployment precision, enabling robust performance under dynamic inference-time format selection.
+
+Figure 1: Multi-format QAT on Qwen3-4B-Base, trained for one epoch on 128 WikiText-2 examples. Left: MXINT formats. Right: MXFP formats. For each training variant, we show the result at the best learning rate, chosen as the one with the lowest evaluation loss among the three learning rates in Section 3.2. The x-axis denotes evaluation quantization bit-width, and the y-axis denotes WikiText-2 validation perplexity after post-training quantization to the corresponding bit-width. The horizontal dashed line marks the original high-precision model (FP16/BF16/FP32, depending on pretraining). The black solid line corresponds to full-precision fine-tuning, the purple solid line to multi-format QAT, and the other colored solid lines to single-format QAT.
+
+4.2 Multi-format QAT with downstream task
+
+Tables 1 and 2 present the average 0-shot accuracy across MMLU (Hendrycks et al., 2021), MathQA (Amini et al., 2019), and HellaSwag (Zellers et al., 2019) for six models from the Llama and Qwen families when quantized to MXINT and MXFP formats, respectively.
+Across all six models and both formats, multi-format QAT either outperforms the corresponding single-format QAT baselines or remains within accuracy of the best-performing model. The only exception is the MXINT2 format, where accuracy stays within for all models except Llama-2-7B. This is achieved despite training a single model to handle all precisions simultaneously.
+
+For instance, on Qwen3-1.7B under MXINT (Table 1), multi-format QAT achieves the best or second-best accuracy at six out of seven evaluation precisions, including at unseen precisions such as MXINT5 () and MXINT7 (). A similar trend holds under the MXFP formats (Table 2), where multi-format QAT on Qwen3-1.7B reaches and at MXFP6 and MXFP7-matching or exceeding all single-format baselines. These results confirm that the downstream task performance mirrors the perplexity trends observed in Section 4.1: a single multi-format QAT model can robustly serve diverse deployment precisions with negligible-or no-additional accuracy degradation at individual formats, eliminating the need to train and store separate models for each target precision.
+
+We further evaluate multi-format QAT on the multimodal Qwen3-VL models using ChartQA (Table 3). Despite higher variance inherent to visual reasoning tasks, multi-format QAT remains competitive across precisions-for example, achieving the best accuracy at MXINT6 () on Qwen3-VL-4B and matching the top single-format result at MXFP7 () on Qwen3-VL-2B. These results confirm that the benefits of multi-format QAT extend to multimodal workloads.
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXINT2
+MXINT3∗
+MXINT4
+MXINT5∗
+MXINT6
+MXINT7∗
+MXINT8
+
+Full Precision FT
+22.7
+37.5
+44.4
+44.7
+45.8
+46.0
+46.0
+
+MXINT2 QAT
+29.3
+39.6
+44.4
+44.6
+45.1
+45.6
+45.1
+
+MXINT4 QAT
+22.9
+38.7
+44.6
+44.8
+45.6
+45.9
+46.0
+
+MXINT6 QAT
+22.1
+38.4
+43.7
+44.6
+45.2
+46.1
+46.0
+
+MXINT8 QAT
+21.9
+37.7
+44.2
+44.8
+45.2
+46.0
+46.0
+
+Llama-2-7B
+Multi-format QAT
+23.1
+38.7
+43.9
+44.9
+45.5
+46.2
+46.1
+
+Full Precision FT
+21.9
+25.6
+34.9
+40.9
+41.3
+41.3
+41.2
+
+MXINT2 QAT
+23.6
+26.2
+34.7
+40.2
+41.2
+40.6
+40.8
+
+MXINT4 QAT
+22.8
+28.3
+36.1
+41.1
+41.4
+40.9
+41.5
+
+MXINT6 QAT
+22.4
+25.8
+35.1
+41.3
+41.4
+40.7
+41.5
+
+MXINT8 QAT
+22.1
+25.6
+35.2
+41.4
+41.4
+41.3
+41.6
+
+Llama-3.2-1B
+Multi-format QAT
+23.3
+28.2
+35.2
+40.8
+41.3
+40.8
+41.4
+
+Full Precision FT
+25.2
+35.6
+49.5
+51.1
+52.1
+51.7
+51.8
+
+MXINT2 QAT
+25.5
+36.6
+49.2
+51.4
+52.3
+52.3
+52.0
+
+MXINT4 QAT
+24.5
+36.6
+49.3
+51.4
+52.5
+51.7
+51.6
+
+MXINT6 QAT
+24.1
+35.4
+49.4
+51.5
+52.6
+51.8
+51.9
+
+MXINT8 QAT
+24.9
+35.5
+49.4
+51.4
+52.6
+51.9
+51.8
+
+Llama-3.2-3B
+Multi-format QAT
+23.9
+36.7
+49.7
+51.2
+52.4
+52.0
+52.1
+
+Full Precision FT
+24.0
+25.0
+38.4
+43.5
+45.9
+46.7
+46.9
+
+MXINT2 QAT
+24.4
+24.9
+38.1
+42.3
+45.6
+45.8
+45.9
+
+MXINT4 QAT
+23.3
+25.3
+39.6
+44.1
+47.2
+46.1
+46.5
+
+MXINT6 QAT
+23.6
+24.7
+38.3
+43.8
+46.4
+47.2
+46.8
+
+MXINT8 QAT
+22.6
+25.4
+38.0
+43.7
+46.5
+47.0
+46.8
+
+Qwen3-0.6B
+Multi-format QAT
+22.0
+25.2
+39.6
+43.7
+46.1
+46.9
+46.2
+
+Full Precision FT
+24.1
+29.2
+48.6
+53.1
+54.2
+54.6
+55.2
+
+MXINT2 QAT
+22.7
+28.8
+48.7
+53.4
+54.3
+54.1
+55.5
+
+MXINT4 QAT
+22.7
+29.5
+48.6
+52.9
+55.1
+54.7
+55.4
+
+MXINT6 QAT
+22.5
+29.1
+48.9
+53.7
+54.5
+54.6
+55.1
+
+MXINT8 QAT
+23.9
+28.6
+48.8
+53.2
+54.7
+54.3
+55.1
+
+Qwen3-1.7B
+Multi-format QAT
+22.7
+29.3
+49.4
+53.7
+54.7
+54.7
+55.5
+
+Full Precision FT
+24.6
+31.1
+60.1
+60.5
+60.9
+61.7
+61.7
+
+MXINT2 QAT
+22.7
+31.6
+59.4
+60.2
+60.9
+61.9
+62.0
+
+MXINT4 QAT
+23.3
+32.8
+60.8
+60.5
+61.6
+62.2
+62.0
+
+MXINT6 QAT
+22.2
+31.9
+60.1
+60.6
+61.8
+62.7
+62.9
+
+MXINT8 QAT
+23.0
+31.4
+60.1
+60.5
+61.6
+62.4
+62.8
+
+Qwen3-4B
+Multi-format QAT
+23.9
+31.8
+60.0
+60.4
+61.5
+61.9
+62.4
+
+Table 1: Average 0-shot accuracy (higher is better) on MMLU (Hendrycks et al., 2021), MathQA (Amini et al., 2019), and HellaSwag (Zellers et al., 2019) for the MXINT formats. Each row corresponds to a different QAT/FT training precision, and each column shows the PTQ evaluation precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively. Detailed per-individual task results in Appendix B, Tables 4-6.
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXFP4
+MXFP5∗
+MXFP6
+MXFP7∗
+MXFP8
+
+Full Precision FT
+43.3
+45.5
+45.7
+46.0
+46.2
+
+MXFP4 QAT
+43.7
+46.0
+46.1
+45.9
+45.6
+
+MXFP6 QAT
+43.3
+45.5
+45.8
+45.7
+45.8
+
+MXFP8 QAT
+43.6
+45.4
+45.7
+46.0
+45.8
+
+Llama-2-7B
+Multi-format QAT
+43.5
+45.5
+45.8
+45.8
+45.8
+
+Full Precision FT
+37.4
+41.1
+41.5
+41.5
+41.7
+
+MXFP4 QAT
+38.2
+41.4
+41.2
+42.0
+41.8
+
+MXFP6 QAT
+37.3
+41.1
+41.1
+41.8
+41.4
+
+MXFP8 QAT
+37.8
+41.0
+41.1
+41.8
+41.8
+
+Llama-3.2-1B
+Multi-format QAT
+37.6
+41.5
+41.2
+41.4
+41.5
+
+Full Precision FT
+50.6
+52.5
+51.6
+51.8
+51.6
+
+MXFP4 QAT
+50.2
+51.9
+51.8
+51.9
+51.8
+
+MXFP6 QAT
+50.0
+52.3
+51.9
+52.0
+51.7
+
+MXFP8 QAT
+50.2
+52.5
+52.3
+51.8
+51.7
+
+Llama-3.2-3B
+Multi-format QAT
+49.9
+52.5
+52.2
+51.8
+51.7
+
+Full Precision FT
+44.0
+46.1
+46.3
+45.7
+45.5
+
+MXFP4 QAT
+43.7
+45.9
+46.7
+46.1
+46.2
+
+MXFP6 QAT
+43.7
+46.5
+46.7
+45.6
+45.4
+
+MXFP8 QAT
+43.6
+46.5
+46.8
+45.6
+45.2
+
+Qwen3-0.6B
+Multi-format QAT
+43.5
+46.1
+46.4
+45.6
+45.4
+
+Full Precision FT
+51.8
+53.7
+53.7
+54.3
+54.7
+
+MXFP4 QAT
+52.8
+53.7
+53.9
+54.8
+55.2
+
+MXFP6 QAT
+51.7
+54.0
+54.3
+54.3
+54.7
+
+MXFP8 QAT
+52.3
+54.3
+54.0
+54.4
+54.4
+
+Qwen3-1.7B
+Multi-format QAT
+52.2
+54.1
+54.3
+54.8
+54.7
+
+Full Precision FT
+60.1
+61.2
+61.1
+61.4
+61.4
+
+MXFP4 QAT
+60.3
+62.2
+61.9
+62.3
+62.4
+
+MXFP6 QAT
+60.3
+61.6
+61.5
+62.4
+62.0
+
+MXFP8 QAT
+60.2
+61.9
+62.1
+62.3
+62.2
+
+Qwen3-4B
+Multi-format QAT
+60.3
+61.9
+62.2
+62.4
+62.3
+
+Table 2: Average 0-shot accuracy (higher is better) on MMLU (Hendrycks et al., 2021), MathQA (Amini et al., 2019), and HellaSwag (Zellers et al., 2019) for the MXFP formats. Each row corresponds to a different QAT/FT training precision, and each column shows the PTQ evaluation precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively. Detailed per-individual task results in Appendix B, Table 7.
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXINT4
+MXINT5∗
+MXINT6
+MXINT7∗
+MXINT8
+
+Full Precision FT
+15.0
+52.0
+36.0
+44.0
+35.0
+
+MXINT4 QAT
+23.0
+55.0
+32.0
+39.0
+38.0
+
+MXINT6 QAT
+17.0
+50.0
+37.0
+41.0
+40.0
+
+MXINT8 QAT
+20.0
+47.0
+40.0
+40.0
+32.0
+
+Qwen3-VL-2B
+Multi-format QAT
+15.0
+48.0
+31.0
+34.0
+34.0
+
+Full Precision FT
+23.0
+25.0
+28.0
+23.0
+25.0
+
+MXINT4 QAT
+24.0
+24.0
+30.0
+23.0
+28.0
+
+MXINT6 QAT
+28.0
+21.0
+27.0
+22.0
+24.0
+
+MXINT8 QAT
+27.0
+22.0
+28.0
+22.0
+26.0
+
+Qwen3-VL-4B
+Multi-format QAT
+25.0
+23.0
+30.0
+22.0
+23.0
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXFP4
+MXFP5∗
+MXFP6
+MXFP7∗
+MXFP8
+
+Full Precision FT
+30.0
+33.0
+29.0
+30.0
+27.0
+
+MXFP4 QAT
+42.0
+37.0
+34.0
+39.0
+43.0
+
+MXFP6 QAT
+33.0
+34.0
+31.0
+38.0
+37.0
+
+MXFP8 QAT
+35.0
+35.0
+34.0
+32.0
+28.0
+
+Qwen3-VL-2B
+Multi-format QAT
+32.0
+34.0
+33.0
+39.0
+36.0
+
+Full Precision FT
+18.0
+29.0
+27.0
+23.0
+24.0
+
+MXFP4 QAT
+16.0
+27.0
+24.0
+24.0
+24.0
+
+MXFP6 QAT
+18.0
+27.0
+25.0
+27.0
+20.0
+
+MXFP8 QAT
+18.0
+29.0
+25.0
+24.0
+23.0
+
+Qwen3-VL-4B
+Multi-format QAT
+16.0
+26.0
+24.0
+24.0
+23.0
+
+Table 3: ChartQA (Masry et al., 2022) accuracy for Qwen3-VL (Bai et al., 2025) multi-modal models when quantized to the MXINT and MXFP formats with different precisions. Rows indicate the QAT/FT training precision; columns indicate the PTQ inference precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively.
+
+4.3 Effectiveness of Slice-and-Scale conversion
+
+The previous subsection shows that multi-format QAT is robust across target precisions while requiring only a single full-precision model during training. We now show that storage can be reduced further by replacing this with an 8-bit anchor checkpoint, which is converted on demand to lower-precision MX formats using Slice-and-Scale (SS). The details of the SS algorithm are described in Sections 3.3 and 3.4.
+
+We evaluate SS conversion using two metrics: average layer-wise MSE on 100 random tensors of shape , and zero-shot WikiText-2 perplexity for Llama-3.2-1B. Here, MXINT/MXFP denote direct quantization into target OCP MX formats (Rouhani et al., 2023a), while SSMXINT/SSMXFP denote our conversion from an 8-bit anchor (MXINT8/MXFP8) to lower precisions without access to full-precision weights.
+
+SS closely matches direct quantization at the tensor level across bit precisions and block sizes for both MXINT and MXFP. Full MSE results are provided in Appendix C.
+
+End-to-end language modeling performance.
+Figures 2 and 3 show that SS achieves WikiText-2 perplexity nearly identical to direct target-format quantization across all evaluated settings. These results show that a single higher-precision anchor checkpoint can be down-converted at runtime to lower-precision MX formats with minimal loss.
+
+Figure 2: WikiText-2 perplexity for Llama-3.2-1B, comparing direct MXINT quantization and SSMXINT. Left: Varying bit precision at block size 64. Right: Varying block size at 4-bit precision. Horizontal dashed line denotes the baseline model.
+
+Figure 3: WikiText-2 perplexity for Llama-3.2-1B, comparing direct MXFP quantization and SSMXFP. Left: Varying bit precision at block size 64. Right: Varying block size at 4-bit precision. Horizontal dashed line denotes the baseline model.
+
+4.4 Multi-format QAT with Slice and Scale
+
+We next evaluate the full pipeline combining multi-format QAT with Slice-and-Scale (SS) conversion. Figure 4 shows results for Qwen3-4B-Base. Results for all models are deferred to Appendix A.2. We train this variant using the anchor-storage procedure in Section 3.5, cycling through target formats uniformly during training.
+
+Figure 4 shows that the Slice-and-Scale variant (red) closely matches standard multi-format QAT (purple) across the full precision range. For MXINT, the two curves are nearly indistinguishable; for MXFP, only a small gap appears at intermediate bit-widths, consistent with Section 4.3.
+
+These results show that a single low-precision anchor checkpoint, together with on-the-fly Slice-and-Scale conversion, recovers nearly the same performance as standard multi-format QAT while reducing checkpoint storage overhead.
+
+Figure 4: Multi-format QAT with Slice-and-Scale on Qwen3-4B-Base. Left: MXINT formats. Right: MXFP formats. Plotting conventions match Figure 1.
+
+5 Conclusion
+
+We presented a study of multi-format quantization-aware training (MF-QAT) and showed that training a single model across multiple quantization formats can match the performance of single-format QAT at each target precision, providing a single model that remains effective across formats. To make these benefits deployable, we introduced a Microscaling format transformation method that derives a lower-precision MXINT/MXFP representation from a higher-precision one without retraining. Finally, we proposed an elastic inference scheme that stores a single low-precision checkpoint and enables further on-the-fly quantization to even lower precision at runtime with minimal loss degradation.
+These results suggest a practical path to decoupling training from rigid
+deployment-format choices, improving robustness across heterogeneous hardware, and enabling dynamic precision scaling under varying runtime constraints.
+
+References
+
+Amini et al. (2019)
+A. Amini, S. Gabriel, P. Lin, R. Koncel-Kedziorski, Y. Choi, and H. Hajishirzi
+
+MathQA: Towards Interpretable Math Word Problem Solving with Operation-Based Formalisms.
+
+arXiv.
+
+Note: arXiv:1905.13319 [cs]
+
+External Links: Link,
+Document
+
+Cited by: Table 5,
+Table 7,
+Appendix B,
+§3.1,
+§4.2,
+Table 1,
+Table 2.
+
+Bai et al. (2025)
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, M. Li, K. Li, Z. Lin, J. Lin, X. Liu, J. Liu, C. Liu, Y. Liu, D. Liu, S. Liu, D. Lu, R. Luo, C. Lv, R. Men, L. Meng, X. Ren, X. Ren, S. Song, Y. Sun, J. Tang, J. Tu, J. Wan, P. Wang, P. Wang, Q. Wang, Y. Wang, T. Xie, Y. Xu, H. Xu, J. Xu, Z. Yang, M. Yang, J. Yang, A. Yang, B. Yu, F. Zhang, H. Zhang, X. Zhang, B. Zheng, H. Zhong, J. Zhou, F. Zhou, J. Zhou, Y. Zhu, and K. Zhu
+
+Qwen3-VL Technical Report.
+
+(en).
+
+External Links: Link
+
+Cited by: §3.1,
+Table 3.
+
+Bulat and Tzimiropoulos (2021)
+A. Bulat and G. Tzimiropoulos
+
+Bit-Mixer: Mixed-precision networks with runtime bit-width selection.
+
+arXiv.
+
+Note: arXiv:2103.17267 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §2.
+
+Cai et al. (2020)
+H. Cai, C. Gan, T. Wang, Z. Zhang, and S. Han
+
+Once-for-All: Train One Network and Specialize it for Efficient Deployment.
+
+arXiv.
+
+Note: arXiv:1908.09791 [cs]Comment: ICLR 2020
+
+External Links: Link,
+Document
+
+Cited by: §1.
+
+Chen et al. (2025a)
+M. Chen, W. Shao, P. Xu, J. Wang, P. Gao, K. Zhang, and P. Luo
+
+EfficientQAT: Efficient Quantization-Aware Training for Large Language Models.
+
+arXiv.
+
+Note: arXiv:2407.11062 [cs]Comment: ACL 2025 Main, camera ready version
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Chen et al. (2025b)
+S. Chen, Z. Chen, D. Yang, Z. Yuan, and Q. Wu
+
+OTARo: Once Tuning for All Precisions toward Robust On-Device LLMs.
+
+arXiv.
+
+Note: arXiv:2511.13147 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Dettmers et al. (2022)
+T. Dettmers, M. Lewis, Y. Belkada, and L. Zettlemoyer
+
+LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale.
+
+arXiv.
+
+Note: arXiv:2208.07339 [cs]Comment: Published at NeurIPS 2022. Camera-ready version
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Esser et al. (2020)
+S. K. Esser, J. L. McKinstry, D. Bablani, R. Appuswamy, and D. S. Modha
+
+Learned Step Size Quantization.
+
+arXiv.
+
+Note: arXiv:1902.08153 [cs]Comment: International Conference on Learning Representations (2020)
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+
+The llama 3 herd of models.
+
+External Links: 2407.21783,
+Link
+
+Cited by: §3.1.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+
+Measuring Massive Multitask Language Understanding.
+
+arXiv.
+
+Note: arXiv:2009.03300 [cs]Comment: ICLR 2021; the test and code is available at https://github.com/hendrycks/test
+
+External Links: Link,
+Document
+
+Cited by: Table 4,
+Table 7,
+Appendix B,
+§3.1,
+§4.2,
+Table 1,
+Table 2.
+
+Jacob et al. (2017)
+B. Jacob, S. Kligys, B. Chen, M. Zhu, M. Tang, A. Howard, H. Adam, and D. Kalenichenko
+
+Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference.
+
+arXiv.
+
+Note: arXiv:1712.05877 [cs]Comment: 14 pages, 12 figures
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Jin et al. (2020)
+Q. Jin, L. Yang, and Z. Liao
+
+AdaBits: Neural Network Quantization with Adaptive Bit-Widths.
+
+arXiv.
+
+Note: arXiv:1912.09666 [cs]Comment: CVPR 2020
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Lee et al. (2025a)
+H. Lee, O. Kwon, Y. Park, and J. W. Lee
+
+NestedFP: High-Performance, Memory-Efficient Dual-Precision Floating Point Support for LLMs.
+
+arXiv.
+
+Note: arXiv:2506.02024 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Lee et al. (2025b)
+J. Lee, J. Park, S. Cha, J. Cho, and J. Sim
+
+MX+: pushing the limits of microscaling formats for efficient large language model serving.
+
+External Links: 2510.14557,
+Link
+
+Cited by: §2.
+
+Lin et al. (2024)
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han
+
+AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration.
+
+arXiv.
+
+Note: arXiv:2306.00978 [cs]Comment: MLSys 2024 Best Paper Award. Code available at: https://github.com/mit-han-lab/llm-awq
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Liu et al. (2025)
+F. Liu, Z. Wang, J. Xia, J. Zhao, S. Zhao, J. Li, J. Liu, L. Jiang, and H. Guan
+
+FlexQuant: A Flexible and Efficient Dynamic Precision Switching Framework for LLM Quantization.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2025, C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.),
+
+Suzhou, China, pp. 4152–4161.
+
+External Links: ISBN 979-8-89176-335-7,
+Link,
+Document
+
+Cited by: §2.
+
+Ma et al. (2024)
+S. Ma, H. Wang, L. Ma, L. Wang, W. Wang, S. Huang, L. Dong, R. Wang, J. Xue, and F. Wei
+
+The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits.
+
+arXiv.
+
+Note: arXiv:2402.17764 [cs]Comment: Work in progress
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Masry et al. (2022)
+A. Masry, D. X. Long, J. Q. Tan, S. Joty, and E. Hoque
+
+ChartQA: A Benchmark for Question Answering about Charts with Visual and Logical Reasoning.
+
+arXiv.
+
+Note: arXiv:2203.10244 [cs]Comment: Accepted by ACL 2022 Findings
+
+External Links: Link,
+Document
+
+Cited by: §3.1,
+Table 3.
+
+Merity et al. (2016)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+
+Pointer Sentinel Mixture Models.
+
+arXiv.
+
+Note: arXiv:1609.07843 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §3.1.
+
+Park et al. (2024)
+Y. Park, J. Hyun, S. Cho, B. Sim, and J. W. Lee
+
+Any-Precision LLM: Low-Cost Deployment of Multiple, Different-Sized LLMs.
+
+arXiv.
+
+Note: arXiv:2402.10517 [cs]Comment: To appear at ICML 2024. Code is available at https://github.com/SNU-ARC/any-precision-llm
+
+External Links: Link,
+Document
+
+Cited by: §2.
+
+Rouhani et al. (2023a)
+B. D. Rouhani, N. Garegrat, T. Savell, A. More, K. Han, R. Zhao, M. Hall, J. Klar, E. Chung, Y. Yu, M. Schulte, R. Wittig, I. Bratt, N. Stephens, J. Milanovic, J. Brothers, P. Dubey, M. Cornea, A. Heinecke, A. Rodriguez, M. Langhammer, S. Deng, M. Naumov, P. Micikevicius, M. Siu, and C. Verrilli
+
+OCP Microscaling Formats (MX) Specification.
+
+Open Compute Project (en).
+
+Cited by: §2,
+§4.3.
+
+Rouhani et al. (2023b)
+B. D. Rouhani, R. Zhao, A. More, M. Hall, A. Khodamoradi, S. Deng, D. Choudhary, M. Cornea, E. Dellinger, K. Denolf, S. Dusan, V. Elango, M. Golub, A. Heinecke, P. James-Roxby, D. Jani, G. Kolhe, M. Langhammer, A. Li, L. Melnick, M. Mesmakhosroshahi, A. Rodriguez, M. Schulte, R. Shafipour, L. Shao, M. Siu, P. Dubey, P. Micikevicius, M. Naumov, C. Verrilli, R. Wittig, D. Burger, and E. Chung
+
+Microscaling Data Formats for Deep Learning.
+
+arXiv.
+
+Note: arXiv:2310.10537 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §2,
+§3.3.
+
+Saxena et al. (2025)
+U. Saxena, S. Sharify, K. Roy, and X. Wang
+
+ResQ: Mixed-Precision Quantization of Large Language Models with Low-Rank Residuals.
+
+arXiv.
+
+Note: arXiv:2412.14363 [cs]Comment: 18 pages, 7 figures, 10 tables
+
+External Links: Link,
+Document
+
+Cited by: §2.
+
+Sharify et al. (2024)
+S. Sharify, U. Saxena, Z. Xu, W. Yazar, I. Soloveychik, and X. Wang
+
+Post Training Quantization of Large Language Models with Microscaling Formats.
+
+arXiv.
+
+Note: arXiv:2405.07135 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §2.
+
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes, J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan, M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M. Lachaux, T. Lavril, J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton, J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan, B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur, S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom
+
+Llama 2: Open Foundation and Fine-Tuned Chat Models.
+
+arXiv.
+
+Note: arXiv:2307.09288 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §3.1.
+
+Xiao et al. (2024)
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han
+
+SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models.
+
+arXiv.
+
+Note: arXiv:2211.10438 [cs]Comment: ICML 2023. First two authors contributed equally to this work
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.
+
+Xu et al. (2025)
+Z. Xu, S. Sharify, W. Yazar, T. Webb, and X. Wang
+
+Understanding the Difficulty of Low-Precision Post-Training Quantization for LLMs.
+
+arXiv.
+
+Note: arXiv:2410.14570 [cs]
+
+External Links: Link,
+Document
+
+Cited by: §2.
+
+Yang et al. (2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §3.1.
+
+Yang et al. (2025b)
+H. Yang, S. Deng, A. Nagpal, M. Naumov, M. Janani, T. Liu, and H. Guan
+
+An empirical study of microscaling formats for low-precision llm training.
+
+In 2025 IEEE 32nd Symposium on Computer Arithmetic (ARITH),
+
+Vol. , pp. 1–8.
+
+External Links: Document
+
+Cited by: §2.
+
+Yi et al. (2025)
+K. Yi, Y. Xu, H. Chang, Y. Meng, T. Zhang, and J. Li
+
+One QuantLLM for ALL: Fine-tuning Quantized LLMs Once for Efficient Deployments.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 23057–23066.
+
+External Links: ISBN 979-8-89176-251-0,
+Link,
+Document
+
+Cited by: §1,
+§2.
+
+Yin et al. (2019)
+P. Yin, J. Lyu, S. Zhang, S. Osher, Y. Qi, and J. Xin
+
+Understanding Straight-Through Estimator in Training Activation Quantized Neural Nets.
+
+arXiv.
+
+Note: arXiv:1903.05662 [cs]Comment: in International Conference on Learning Representations (ICLR) 2019
+
+External Links: Link,
+Document
+
+Cited by: §2,
+§3.5.
+
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+
+HellaSwag: Can a Machine Really Finish Your Sentence?.
+
+arXiv.
+
+Note: arXiv:1905.07830 [cs]Comment: ACL 2019. Project page at https://rowanzellers.com/hellaswag
+
+External Links: Link,
+Document
+
+Cited by: Table 6,
+Table 7,
+Appendix B,
+§3.1,
+§4.2,
+Table 1,
+Table 2.
+
+Appendix A Wikitext2 PPL Eval results for all models
+
+A.1 Additional plots for Multi-format QAT across MXINT and MXFP
+
+This appendix contains plots for
+Section 4.1 on all models. Each figure below contains results for one model with left figure for MXINT and right figure for MXFP. Plotting conventions follow Figure 1.
+
+Figure 5: Multi-format QAT results for Llama-3.2-1B.
+
+Figure 6: Multi-format QAT results for Llama-3.2-3B.
+
+Figure 7: Multi-format QAT results for Qwen3-0.6B-Base.
+
+Figure 8: Multi-format QAT results for Qwen3-1.7B-Base.
+
+Figure 9: Multi-format QAT results for
+Qwen3-VL-2B-Instruct.
+
+Figure 10: Multi-format QAT results for
+Qwen3-VL-4B-Instruct.
+
+Figure 11: Multi-format QAT results for llama-2-7b.
+
+A.2 Additional plots for Multi-format QAT with Slice and Scale
+
+This appendix contains plots for
+Section 4.4 on all models. Each figure below contains results for one model with left figure for MXINT and right figure for MXFP. Plotting conventions follow Figure 4.
+
+Figure 12: Multi-format QAT with Slice-and-Scale results for
+Llama-3.2-1B.
+
+Figure 13: Multi-format QAT with Slice-and-Scale results for
+Llama-3.2-3B.
+
+Figure 14: Multi-format QAT with Slice-and-Scale results for
+Qwen3-0.6B-Base.
+
+Figure 15: Multi-format QAT with Slice-and-Scale results for
+Qwen3-1.7B-Base.
+
+Figure 16: Multi-format QAT with Slice-and-Scale results for
+Qwen3-VL-2B-Instruct.
+
+Figure 17: Multi-format QAT with Slice-and-Scale results for
+Qwen3-VL-4B-Instruct.
+
+Figure 18: Multi-format QAT with Slice-and-Scale results for
+llama-2-7b.
+
+Appendix B Complete results of main result tables
+
+Detailed results of Table 1 in the main paper, including task-by-task performance for the MXINT formats, are shown in Table 4 (MMLU accuracy (Hendrycks et al., 2021)), Table 5 (MathQA accuracy (Amini et al., 2019)), and Table 6 (HellaSwag accuracy (Zellers et al., 2019)). Similarly, per-task accuracy for the MXFP formats is indicated in Table 7. Our results show that, across diverse downstream tasks, a single multi-format QAT model can effectively generalize to multiple deployment precisions while maintaining accuracy for each format, avoiding the need to train and store separate models for every target precision.
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXINT2
+MXINT3∗
+MXINT4
+MXINT5∗
+MXINT6
+MXINT7∗
+MXINT8
+
+Full Precision FT
+25.0
+28.1
+39.3
+41.1
+42.3
+42.5
+42.7
+
+MXINT2 QAT
+24.5
+29.4
+39.2
+40.1
+41.2
+41.7
+41.0
+
+MXINT4 QAT
+25.3
+28.6
+39.7
+41.8
+42.7
+42.6
+42.9
+
+MXINT6 QAT
+24.5
+28.0
+38.5
+41.1
+41.9
+42.6
+42.5
+
+MXINT8 QAT
+24.3
+27.1
+39.1
+40.7
+42.1
+42.4
+42.7
+
+Llama-2-7B
+Multi-format QAT
+23.8
+28.3
+39.0
+41.4
+42.9
+43.2
+42.9
+
+Full Precision FT
+23.8
+23.3
+28.8
+37.4
+39.2
+39.6
+39.6
+
+MXINT2 QAT
+25.7
+23.9
+28.2
+37.4
+39.3
+39.5
+39.8
+
+MXINT4 QAT
+24.0
+24.6
+28.4
+38.6
+39.2
+39.0
+39.4
+
+MXINT6 QAT
+23.5
+23.8
+28.2
+37.8
+39.3
+39.0
+39.7
+
+MXINT8 QAT
+22.2
+23.7
+29.1
+37.3
+39.7
+39.8
+40.4
+
+Llama-3.2-1B
+Multi-format QAT
+24.4
+23.9
+27.8
+37.5
+40.1
+39.1
+39.8
+
+Full Precision FT
+26.5
+31.1
+50.2
+55.8
+56.1
+55.7
+55.7
+
+MXINT2 QAT
+25.3
+30.3
+50.5
+55.9
+56.0
+55.9
+56.0
+
+MXINT4 QAT
+26.7
+31.7
+51.4
+56.0
+56.4
+55.7
+56.1
+
+MXINT6 QAT
+26.8
+29.5
+50.6
+55.2
+56.0
+55.6
+55.8
+
+MXINT8 QAT
+26.8
+31.0
+50.3
+55.6
+56.0
+56.0
+55.8
+
+Llama-3.2-3B
+Multi-format QAT
+23.8
+31.4
+50.6
+55.3
+56.5
+55.7
+55.8
+
+Full Precision FT
+25.4
+25.5
+37.7
+48.8
+50.6
+51.4
+52.0
+
+MXINT2 QAT
+23.9
+25.5
+38.1
+48.2
+51.4
+51.3
+52.0
+
+MXINT4 QAT
+25.2
+24.1
+42.0
+49.2
+52.3
+51.4
+52.0
+
+MXINT6 QAT
+25.1
+24.7
+37.6
+49.5
+50.5
+51.8
+52.1
+
+MXINT8 QAT
+25.5
+25.0
+37.4
+49.7
+50.7
+51.7
+52.0
+
+Qwen3-0.6B
+Multi-format QAT
+24.0
+23.4
+40.5
+49.2
+50.7
+51.5
+51.9
+
+Full Precision FT
+24.3
+25.7
+54.5
+61.5
+63.3
+63.4
+63.5
+
+MXINT2 QAT
+24.5
+25.8
+54.6
+61.6
+63.0
+63.6
+64.0
+
+MXINT4 QAT
+24.8
+27.4
+55.1
+61.4
+63.8
+64.0
+64.2
+
+MXINT6 QAT
+24.1
+27.0
+55.7
+62.0
+62.9
+64.1
+64.0
+
+MXINT8 QAT
+24.5
+26.1
+54.7
+61.8
+63.4
+64.0
+64.0
+
+Qwen3-1.7B
+Multi-format QAT
+24.4
+26.4
+55.5
+62.7
+63.2
+63.0
+63.0
+
+Full Precision FT
+24.9
+26.6
+69.9
+73.0
+73.8
+74.4
+74.6
+
+MXINT2 QAT
+23.9
+26.5
+70.1
+72.7
+74.1
+74.0
+74.0
+
+MXINT4 QAT
+24.2
+28.5
+70.1
+73.2
+74.0
+74.5
+74.7
+
+MXINT6 QAT
+24.5
+28.0
+69.8
+73.3
+73.9
+74.6
+74.8
+
+MXINT8 QAT
+23.3
+26.9
+69.9
+73.2
+74.1
+74.5
+74.8
+
+Qwen3-4B
+Multi-format QAT
+25.4
+28.3
+69.8
+72.8
+74.2
+74.6
+74.3
+
+Table 4: MMLU accuracy (Hendrycks et al., 2021) for various models when quantized to the MXINT formats. Each row corresponds to a different QAT/FT training precision, and each column shows the PTQ evaluation precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively.
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXINT2
+MXINT3∗
+MXINT4
+MXINT5∗
+MXINT6
+MXINT7∗
+MXINT8
+
+Full Precision FT
+18.4
+25.0
+27.8
+28.0
+28.8
+28.4
+28.4
+
+MXINT2 QAT
+20.6
+26.4
+28.0
+29.0
+28.2
+28.4
+27.8
+
+MXINT4 QAT
+17.8
+26.4
+27.6
+27.6
+27.8
+28.6
+28.2
+
+MXINT6 QAT
+15.0
+26.8
+26.8
+27.4
+27.2
+28.4
+28.0
+
+MXINT8 QAT
+16.6
+25.6
+27.4
+28.0
+27.4
+28.6
+28.0
+
+Llama-2-7B
+Multi-format QAT
+18.4
+24.8
+26.8
+27.4
+27.6
+28.4
+28.4
+
+Full Precision FT
+17.8
+17.8
+24.4
+28.0
+28.2
+28.0
+27.6
+
+MXINT2 QAT
+18.2
+18.0
+24.0
+26.8
+28.2
+26.2
+26.6
+
+MXINT4 QAT
+18.0
+19.6
+25.2
+28.0
+28.6
+27.6
+28.4
+
+MXINT6 QAT
+17.6
+17.6
+23.8
+28.8
+28.4
+27.6
+27.8
+
+MXINT8 QAT
+18.6
+18.2
+24.0
+28.8
+28.2
+28.0
+28.0
+
+Llama-3.2-1B
+Multi-format QAT
+20.0
+21.2
+25.2
+28.4
+28.6
+27.4
+28.4
+
+Full Precision FT
+23.2
+25.4
+35.4
+33.4
+36.4
+35.0
+34.8
+
+MXINT2 QAT
+21.0
+27.4
+33.8
+33.4
+36.2
+35.2
+35.0
+
+MXINT4 QAT
+19.6
+27.4
+33.4
+33.0
+36.0
+34.6
+33.8
+
+MXINT6 QAT
+18.2
+26.4
+34.2
+34.0
+36.8
+34.2
+34.2
+
+MXINT8 QAT
+19.4
+25.6
+34.8
+33.4
+36.2
+34.4
+34.4
+
+Llama-3.2-3B
+Multi-format QAT
+20.6
+28.0
+35.0
+33.4
+35.8
+34.8
+34.6
+
+Full Precision FT
+18.8
+19.6
+28.6
+33.4
+36.0
+36.0
+35.8
+
+MXINT2 QAT
+19.8
+18.6
+27.6
+29.6
+34.8
+35.0
+35.0
+
+MXINT4 QAT
+20.6
+18.2
+28.6
+33.2
+38.2
+34.8
+35.6
+
+MXINT6 QAT
+19.6
+19.0
+28.6
+31.8
+37.2
+37.0
+35.8
+
+MXINT8 QAT
+17.0
+20.2
+28.6
+33.2
+37.4
+37.0
+35.8
+
+Qwen3-0.6B
+Multi-format QAT
+17.6
+20.6
+28.8
+32.0
+37.0
+36.6
+35.6
+
+Full Precision FT
+19.8
+20.4
+36.8
+40.6
+40.8
+41.2
+42.6
+
+MXINT2 QAT
+18.6
+19.6
+37.2
+41.6
+42.8
+41.0
+43.4
+
+MXINT4 QAT
+15.4
+19.8
+35.8
+40.4
+42.4
+41.0
+42.8
+
+MXINT6 QAT
+19.0
+19.2
+36.2
+40.6
+41.8
+41.0
+42.4
+
+MXINT8 QAT
+16.8
+19.4
+36.8
+40.2
+41.4
+40.6
+42.4
+
+Qwen3-1.7B
+Multi-format QAT
+18.4
+20.4
+37.6
+40.8
+40.8
+40.8
+43.0
+
+Full Precision FT
+21.0
+22.6
+47.2
+47.4
+46.4
+48.4
+48.2
+
+MXINT2 QAT
+19.6
+24.2
+47.8
+49.6
+47.8
+50.4
+51.0
+
+MXINT4 QAT
+19.2
+24.4
+49.6
+48.0
+47.8
+49.4
+49.6
+
+MXINT6 QAT
+16.2
+23.8
+47.6
+48.0
+48.4
+50.6
+51.0
+
+MXINT8 QAT
+20.8
+23.2
+47.8
+47.8
+48.0
+50.0
+51.0
+
+Qwen3-4B
+Multi-format QAT
+19.4
+22.8
+47.2
+47.8
+46.8
+48.6
+50.4
+
+Table 5: MathQA normalized accuracy (Amini et al., 2019) for various models when quantized to the MXINT formats. Each row corresponds to a different QAT/FT training precision, and each column shows the PTQ evaluation precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively.
+
+Model
+QAT/FT Precision
+PTQ Precision
+
+MXINT2
+MXINT3∗
+MXINT4
+MXINT5∗
+MXINT6
+MXINT7∗
+MXINT8
+
+Full Precision FT
+24.8
+59.4
+66.2
+65.0
+66.2
+67.2
+66.8
+
+MXINT2 QAT
+42.8
+63.0
+66.0
+64.8
+65.8
+66.6
+66.6
+
+MXINT4 QAT
+25.6
+61.2
+66.4
+65.0
+66.2
+66.6
+67.0
+
+MXINT6 QAT
+26.8
+60.4
+65.8
+65.2
+66.4
+67.4
+67.4
+
+MXINT8 QAT
+24.8
+60.4
+66.2
+65.6
+66.0
+67.0
+67.2
+
+Llama-2-7B
+Multi-format QAT
+27.0
+60.0
+65.8
+65.8
+66.0
+67.0
+67.0
+
+Full Precision FT
+24.0
+35.6
+51.6
+57.2
+56.4
+56.4
+56.4
+
+MXINT2 QAT
+26.8
+36.8
+52.0
+56.4
+56.2
+56.2
+56.0
+
+MXINT4 QAT
+26.4
+40.8
+54.6
+56.6
+56.4
+56.0
+56.6
+
+MXINT6 QAT
+26.2
+36.0
+53.4
+57.4
+56.6
+55.6
+57.0
+
+MXINT8 QAT
+25.4
+35.0
+52.6
+58.0
+56.2
+56.0
+56.4
+
+Llama-3.2-1B
+Multi-format QAT
+25.4
+39.6
+52.6
+56.4
+55.2
+55.8
+56.0
+
+Full Precision FT
+25.8
+50.2
+63.0
+64.2
+63.8
+64.4
+64.8
+
+MXINT2 QAT
+30.2
+52.0
+63.4
+64.8
+64.8
+65.8
+65.0
+
+MXINT4 QAT
+27.2
+50.8
+63.0
+65.2
+65.0
+64.8
+65.0
+
+MXINT6 QAT
+27.4
+50.2
+63.4
+65.2
+65.0
+65.6
+65.6
+
+MXINT8 QAT
+28.4
+50.0
+63.0
+65.2
+65.6
+65.2
+65.2
+
+Llama-3.2-3B
+Multi-format QAT
+27.2
+50.8
+63.6
+64.8
+65.0
+65.4
+65.8
+
+Full Precision FT
+27.8
+30.0
+49.0
+48.4
+51.0
+52.6
+53.0
+
+MXINT2 QAT
+29.4
+30.6
+48.6
+49.2
+50.6
+51.0
+50.6
+
+MXINT4 QAT
+24.0
+33.6
+48.2
+50.0
+51.0
+52.0
+51.8
+
+MXINT6 QAT
+26.2
+30.4
+48.6
+50.0
+51.6
+52.8
+52.6
+
+MXINT8 QAT
+25.4
+31.0
+48.0
+48.2
+51.4
+52.4
+52.6
+
+Qwen3-0.6B
+Multi-format QAT
+24.4
+31.6
+49.6
+49.8
+50.6
+52.6
+51.2
+
+Full Precision FT
+28.2
+41.4
+54.6
+57.2
+58.4
+59.2
+59.4
+
+MXINT2 QAT
+25.0
+41.0
+54.4
+57.0
+57.2
+57.6
+59.0
+
+MXINT4 QAT
+27.8
+41.4
+54.8
+56.8
+59.0
+59.0
+59.2
+
+MXINT6 QAT
+24.4
+41.2
+54.8
+58.4
+58.8
+58.6
+58.8
+
+MXINT8 QAT
+30.4
+40.4
+54.8
+57.6
+59.2
+58.4
+58.8
+
+Qwen3-1.7B
+Multi-format QAT
+25.4
+41.2
+55.0
+57.6
+60.2
+60.2
+60.4
+
+Full Precision FT
+27.8
+44.2
+63.2
+61.2
+62.6
+62.4
+62.2
+
+MXINT2 QAT
+24.6
+44.0
+60.2
+58.4
+60.8
+61.2
+61.0
+
+MXINT4 QAT
+26.4
+45.6
+62.6
+60.2
+63.0
+62.6
+61.6
+
+MXINT6 QAT
+26.0
+43.8
+62.8
+60.4
+63.0
+62.8
+62.8
+
+MXINT8 QAT
+24.8
+44.2
+62.6
+60.6
+62.8
+62.6
+62.6
+
+Qwen3-4B
+Multi-format QAT
+26.8
+44.4
+63.0
+60.6
+63.4
+62.6
+62.6
+
+Table 6: HellaSwag normalized accuracy (Zellers et al., 2019) for various models when quantized to the MXINT formats. Each row corresponds to a different QAT/FT training precision, and each column shows the PTQ evaluation precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively.
+
+QAT/FT Precision
+PTQ Precision
+
+MXFP4
+MXFP5∗
+MXFP6
+MXFP7∗
+MXFP8
+
+MMLU
+Math
+HellaS
+MMLU
+Math
+HellaS
+MMLU
+Math
+HellaS
+MMLU
+Math
+HellaS
+MMLU
+Math
+HellaS
+
+Llama-2-7B
+
+Full Prec. FT
+37.4
+28.8
+63.6
+42.0
+28.6
+65.8
+42.4
+28.4
+66.4
+42.3
+28.4
+67.4
+42.3
+28.8
+67.4
+
+MXFP4 QAT
+37.8
+29.6
+63.8
+42.5
+28.4
+67.2
+42.5
+28.2
+67.6
+42.6
+28.2
+67.0
+42.1
+27.6
+67.0
+
+MXFP6 QAT
+36.7
+29.0
+64.2
+41.9
+28.6
+66.0
+42.5
+28.4
+66.6
+41.8
+28.4
+67.0
+41.9
+28.4
+67.2
+
+MXFP8 QAT
+36.7
+29.6
+64.4
+42.1
+27.8
+66.2
+42.4
+28.2
+66.4
+42.4
+28.8
+66.8
+42.1
+28.4
+66.8
+
+Multi-format QAT
+37.8
+28.8
+64.0
+41.7
+28.4
+66.4
+42.6
+28.4
+66.4
+42.3
+28.4
+66.8
+42.1
+28.8
+66.6
+
+Llama-3.2-1B
+
+Full Prec. FT
+30.6
+26.6
+55.0
+39.2
+25.8
+58.4
+40.2
+26.0
+58.4
+39.4
+27.6
+57.6
+39.7
+27.6
+57.8
+
+MXFP4 QAT
+31.9
+26.6
+56.2
+40.2
+27.0
+57.0
+38.9
+26.8
+57.8
+40.1
+28.8
+57.0
+39.9
+29.0
+56.4
+
+MXFP6 QAT
+31.1
+24.8
+56.0
+40.2
+25.0
+58.2
+39.5
+26.4
+57.4
+40.2
+28.0
+57.2
+39.8
+27.4
+57.0
+
+MXFP8 QAT
+31.0
+25.6
+56.8
+40.4
+24.8
+57.8
+39.4
+26.0
+57.8
+40.3
+28.2
+56.8
+40.1
+28.0
+57.2
+
+Multi-format QAT
+31.3
+25.4
+56.2
+40.8
+26.0
+57.8
+39.7
+26.4
+57.6
+39.6
+28.0
+56.6
+39.8
+28.4
+56.4
+
+Llama-3.2-3B
+
+Full Prec. FT
+53.7
+33.2
+65.0
+56.2
+36.4
+64.8
+56.1
+35.2
+63.6
+55.8
+35.6
+64.0
+55.7
+35.0
+64.0
+
+MXFP4 QAT
+54.2
+32.4
+64.0
+56.2
+35.2
+64.4
+55.9
+35.2
+64.4
+55.9
+35.2
+64.6
+55.9
+34.4
+65.0
+
+MXFP6 QAT
+53.7
+32.0
+64.2
+56.5
+35.2
+65.2
+55.7
+35.6
+64.4
+55.9
+34.6
+65.6
+56.0
+33.8
+65.2
+
+MXFP8 QAT
+54.0
+32.0
+64.6
+56.3
+36.4
+64.8
+55.9
+36.2
+64.8
+55.7
+34.8
+65.0
+56.3
+33.8
+65.0
+
+Multi-format QAT
+54.0
+31.6
+64.2
+56.3
+35.4
+65.8
+56.3
+35.6
+64.8
+55.7
+34.4
+65.2
+55.9
+34.0
+65.2
+
+Qwen3-0.6B
+
+Full Prec. FT
+48.1
+33.2
+50.6
+49.8
+37.6
+50.8
+50.6
+36.2
+52.0
+51.1
+34.0
+52.0
+50.8
+34.2
+51.6
+
+MXFP4 QAT
+47.6
+32.6
+51.0
+50.1
+36.6
+51.0
+51.2
+36.6
+52.2
+51.4
+35.0
+51.8
+51.2
+35.2
+52.2
+
+MXFP6 QAT
+48.0
+31.6
+51.4
+50.5
+37.4
+51.6
+51.1
+36.4
+52.6
+51.5
+34.4
+51.0
+51.0
+34.0
+51.2
+
+MXFP8 QAT
+47.9
+32.2
+50.8
+50.5
+38.0
+51.0
+51.3
+36.6
+52.4
+51.3
+33.6
+51.8
+51.1
+33.0
+51.4
+
+Multi-format QAT
+47.6
+32.2
+50.6
+50.2
+36.8
+51.2
+51.3
+36.2
+51.8
+51.4
+34.8
+50.6
+51.3
+34.0
+50.8
+
+Qwen3-1.7B
+
+Full Prec. FT
+60.3
+38.8
+56.4
+61.8
+40.4
+59.0
+62.5
+39.2
+59.4
+62.5
+40.6
+59.8
+62.6
+41.4
+60.0
+
+MXFP4 QAT
+59.9
+41.0
+57.4
+63.2
+40.8
+57.2
+63.4
+39.8
+58.6
+64.1
+42.4
+58.0
+63.9
+42.8
+58.8
+
+MXFP6 QAT
+59.8
+38.0
+57.2
+63.4
+40.4
+58.2
+63.6
+40.2
+59.0
+64.0
+40.6
+58.2
+63.7
+41.6
+58.8
+
+MXFP8 QAT
+59.9
+39.4
+57.6
+63.1
+41.0
+58.8
+63.3
+40.0
+58.8
+63.7
+41.2
+58.2
+63.7
+41.2
+58.4
+
+Multi-format QAT
+59.9
+40.0
+56.6
+63.7
+40.2
+58.4
+63.8
+40.2
+58.8
+64.2
+41.2
+59.0
+63.7
+41.6
+58.8
+
+Qwen3-4B
+
+Full Prec. FT
+70.8
+47.8
+61.6
+72.8
+47.4
+63.4
+73.2
+47.6
+62.4
+74.3
+48.0
+62.0
+74.3
+47.8
+62.2
+
+MXFP4 QAT
+72.2
+47.4
+61.2
+73.8
+48.8
+64.0
+74.1
+48.6
+63.0
+74.4
+49.6
+63.0
+74.5
+49.8
+63.0
+
+MXFP6 QAT
+71.4
+48.4
+61.0
+73.2
+48.2
+63.4
+73.2
+48.4
+62.8
+74.5
+49.8
+62.8
+74.5
+48.6
+62.8
+
+MXFP8 QAT
+71.3
+47.8
+61.6
+73.3
+48.6
+63.8
+73.7
+49.6
+63.0
+74.0
+49.8
+63.0
+74.3
+49.4
+62.8
+
+Multi-format QAT
+72.0
+47.6
+61.4
+73.7
+48.8
+63.2
+74.0
+49.8
+62.8
+74.4
+50.2
+62.6
+74.4
+50.0
+62.4
+
+Table 7: Comparison of MMLU (Hendrycks et al., 2021), MathQA (Amini et al., 2019), and HellaSwag (Zellers et al., 2019) accuracies for various models when quantized to the MXFP formats. Each row corresponds to a different QAT/FT training precision, and each column shows the PTQ evaluation precision. Columns marked with ∗ denote precisions not seen during multi-format/QAT training. QAT, PTQ, and FT denote Quantization Aware Training, Post Training Quantization, and Finetuning, respectively.
+
+Appendix C Tensor-level reconstruction error for Slice-and-Scale
+
+Figures 19 and 20 report average layer-wise MSE on 100 random tensors of shape under two sweeps: varying bit precision at fixed block size 64, and varying block size at fixed 4-bit precision. As expected, reconstruction error decreases with higher precision and smaller block size. Across all settings, SS closely matches direct quantization for both MXINT and MXFP. Although SSMXFP exhibits a modestly larger relative gap at intermediate bit-widths, the absolute difference remains small, confirming that SS preserves the numerical behavior of the 8-bit anchor with high fidelity.
+
+Figure 19: Tensor reconstruction MSE for direct MXINT quantization and Slice-and-Scale conversion (SSMXINT) on 100 random tensors. Left: Varying bit precision at block size 64. Right: Varying block size at 4-bit precision.
+
+Figure 20: Tensor reconstruction MSE for direct MXFP quantization and Slice-and-Scale conversion (SSMXFP) on 100 random tensors. Left: Varying bit precision at block size 64. Right: Varying block size at 4-bit precision.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

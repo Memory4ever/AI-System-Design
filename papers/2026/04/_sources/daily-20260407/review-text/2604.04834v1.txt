@@ -1,0 +1,1609 @@
+E-VLA: Event-augmented Vision-Language-Action Model forDark and Blurred Scenes
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 Vision-Language-Action Systems
+
+2.2 Event-Based Perception in Robotics
+
+3 Methods
+
+3.1 Overview
+
+3.2 SmolVLA Baseline
+
+3.3 Event Windowing and Representation
+
+3.4 Event Fusion Strategy
+
+4 Dataset
+
+4.1 Event-Augmented Teleoperation Platform
+
+4.2 RGB-Event-Action Dataset
+
+5 Experiment
+
+5.1 Implementation Details
+
+5.2 Evaluation Protocol
+
+5.3 Low Illumination Performance
+
+5.4 Generalization without Low-light Training
+
+5.5 Motion Blur Performance
+
+5.6 Ablation Studies
+
+5.7 Failure Cases: Color Semantics and Occlusion
+
+6 Conclusions
+
+References
+
+7 Implementation Details
+
+7.1 Illumination Setting
+
+7.2 Dataset Collection
+
+7.3 Network and Training Details
+
+8 Additional Experiments
+
+8.1 Extremely Low Illumination Performance
+
+8.2 Analysis for E2VID
+
+9 Efficiency Analysis
+
+10 Additional Ablations
+
+10.1 Ablations on Event Representation
+
+10.2 Ablation on Training Regularization
+
+11 Additional Visualization
+
+12 Limitations and Potential Solutions
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.04834v1 [cs.CV] 06 Apr 2026
+
+E-VLA: Event-augmented
+Vision-Language-Action Model for
+
+Dark and Blurred Scenes
+
+Jiajun Zhai
+
+  
+Hao Shi
+††thanks: Correspondence.
+  
+Shangwei Guo
+
+  
+Kailun Yang
+
+Affiliation: Zhejiang University, Ant Group, Hunan University
+
+  
+Kaiwei Wang
+
+Abstract
+
+Robotic Vision-Language-Action (VLA) models generalize well for open-ended manipulation, but their perception is fragile under sensing-stage degradations such as extreme low light, motion blur, and black clipping. We present E-VLA, an event-augmented VLA framework that improves manipulation robustness when conventional frame-based vision becomes unreliable. Instead of reconstructing images from events, E-VLA directly leverages motion and structural cues in event streams to preserve semantic perception and perception-action consistency under adverse conditions. We build an open-source teleoperation platform with a DAVIS346 event camera and collect a real-world synchronized RGB-event-action manipulation dataset across diverse tasks and illumination settings. We also propose lightweight, pretrained-compatible event integration strategies and study event windowing and fusion for stable deployment. Experiments show that even a simple parameter-free fusion, i.e., overlaying accumulated event maps onto RGB images, could substantially improve robustness in dark and blur-heavy scenes: on Pick-Place at 20 lux, success increases from 0% (image-only) to 60% with overlay fusion and to 90% with our event adapter; under severe motion blur (1000 ms exposure), Pick-Place improves from 0% to 20-25%, and Sorting from 5% to 32.5%. Overall, E-VLA provides systematic evidence that event-driven perception can be effectively integrated into VLA models, pointing toward robust embodied intelligence beyond conventional frame-based imaging. Code and dataset will be available at E-VLA.
+
+Keywords: Vision-language-action models Event cameras Robotics
+
+1 Introduction
+
+Figure 1:
+Middle: Image-based VLA models degrade under low-light and motion-blurred conditions, leading to failures in object detection and imprecise manipulation. We propose E-VLA, which fuses stable event visual cues with image features within the VLA pipeline, preserving reliable performance under adverse conditions.
+Left: Existing VLA models (e.g., SmolVLA [50]) are pretrained on large-scale text-image datasets and manipulation videos.
+We build a teleoperation system equipped with an event camera and collect synchronized RGB-event-action data for E-VLA training.
+Right: We evaluate our method across gradient low-light and motion-blurred scenes.
+E-VLA consistently achieves higher success rates than RGB baselines.
+
+Vision-Language-Action (VLA) models have recently emerged as a promising paradigm for robotic manipulation, enabling systems to map visual observations and language instructions directly to action sequences. Representative systems such as RT-1 [5], RT-2 [68], the family [4, 27, 26], OpenVLA [28], RDT-1B [37], and Gemini Robotics [59] demonstrate a common trend: leveraging large-scale robot interaction data and pretrained vision-language models to learn versatile, language-conditioned manipulation policies.
+Most existing VLA approaches are built upon frame-based RGB perception, where pretrained visual encoders are coupled with policy learning modules to jointly model perception, reasoning, and control, and have shown strong performance on open-ended manipulation tasks in well-lit laboratory settings [41, 66, 32, 15].
+
+However, real-world deployment exposes a critical weakness of current VLA systems: perceptual robustness under sensing-stage degradations. Recent surveys and benchmarks highlight illumination variation and visual domain shift as major factors limiting stable VLA performance [41, 32, 17]. In particular, low-light conditions substantially reduce signal quality, while increasing exposure time to recover brightness inevitably introduces motion blur and additional latency during fast manipulation. In extreme cases, severe under-exposure can lead to black clipping, where frame images become nearly unusable. Importantly, these failures originate from the limitations of frame-based imaging itself.
+Although image enhancement and data augmentation can improve visual appearance, they operate on already degraded measurements and cannot recover information lost at capture time.
+Event cameras, which asynchronously capture brightness changes with high temporal resolution and wide dynamic range [14, 19], offer a compelling alternative for robust robotic perception under low light and fast motion.
+Yet integrating event sensing into VLA is nontrivial.
+First, event streams are sparse and statistically different from dense RGB images, making them poorly matched to image-domain pretraining that modern VLA models rely on. Second, in manipulation settings, event triggering is tightly coupled with arm motion and control timing, resulting in highly non-stationary temporal distributions. These challenges make it unclear how to incorporate event signals into pretrained VLA architectures while preserving stable perception–action coupling.
+
+To address this gap, we introduce E-VLA, an event-augmented VLA framework for robust manipulation under visually degraded conditions. We build an open-source teleoperation platform equipped with a DAVIS346 event camera and collect a real-world synchronized RGB-event-action dataset across multiple manipulation tasks and illumination conditions, enabling systematic study of event-augmented VLA learning.
+On top of a SmolVLA-style backbone, we design lightweight and pretrained-compatible event integration strategies, including a parameter-free event overlay mechanism and a hierarchical event adapter,
+and investigate event windowing/accumulation schemes to manipulation dynamics.
+
+Extensive experiments show that E-VLA substantially improves robustness in low-light and blur-prone scenarios while preserving performance in normal lighting. Notably, under complete black clipping (an extreme low-light failure mode), E-VLA maintains task success rates above 80%, compared with 0% for the image-only baseline. We further show that event-count-based accumulation yields more stable perception–action coupling than time-based windowing, and that event augmentation improves generalization to unseen degraded conditions without requiring additional low-light training data.
+
+To summarize, our contributions are as follows:
+
+•
+
+We present E-VLA, the first Vision-Language-Action framework that integrates event-based visual sensing for robust robotic manipulation under low-light and motion-blur degradations.
+
+•
+
+We build an open-source event-augmented teleoperation platform and collect a real-world synchronized RGB-event-action manipulation dataset across multiple tasks and illumination conditions, enabling systematic
+validating and training of event-enhanced VLA models.
+
+•
+
+We propose lightweight, pretrained-compatible event integration strategies, including a parameter-free overlay fusion and a hierarchical event adapter, together with a manipulation-aware event windowing design.
+
+•
+
+We conduct extensive experiments and ablations, providing the first systematic empirical evidence and practical design insights for integrating event-driven perception into scalable VLA learning.
+
+2 Related Work
+
+2.1 Vision-Language-Action Systems
+
+Vision-Language-Action (VLA) models learn large-scale policies that directly map visual observations and language instructions to robot actions [41, 66, 32]. Representative systems, including the RT series [5, 68], the family [4, 27, 26], OpenVLA [28], RDT-1B [37], and Gemini Robotics [59], demonstrate that scaling multimodal transformers with large robot datasets enables generalizable language-conditioned manipulation across diverse tasks. Recent efforts further explore enhanced spatial reasoning via 3D representations [31, 51, 56, 16], tactile integration for contact modeling [24, 3, 13], reinforcement learning refinement [23, 38, 12], and efficient deployment strategies [64, 50, 62].
+Despite architectural diversity, existing VLA systems predominantly rely on frame-based RGB cameras as their primary perceptual interface. Frame-based imaging integrates photons over an exposure interval, which inherently limits signal-to-noise ratio in low illumination and induces motion blur during fast movements. Such degradations occur at the sensing stage and propagate through pretrained visual encoders, ultimately affecting policy stability. While geometric or tactile extensions improve spatial reasoning and interaction modeling, they do not fundamentally address the imaging-level limitations of frame-based perception. As a result, the perceptual robustness of VLA models under extreme illumination and high-speed motion remains insufficiently explored.
+
+2.2 Event-Based Perception in Robotics
+
+Event cameras asynchronously record per-pixel brightness changes with microsecond latency and high dynamic range [14, 19]. By avoiding exposure-based temporal integration, event sensing naturally mitigates motion blur and maintains signal fidelity under extreme lighting conditions. These properties have motivated extensive research in event-based perception, including image reconstruction [46, 7], low-light enhancement [35, 11, 53], motion deblurring [45, 49, 54, 39], segmentation [1, 33], detection [60, 10], optical flow [67, 21, 65], and tracking [61, 36]. In robotics, event sensing has been applied to visual servoing and grasping [30, 43, 25], navigation [48, 6], slip detection [47, 22], and visual–tactile perception [58, 18].
+However, most existing event-based robotic systems are designed for specific tasks and rely on modular pipelines with task-dependent representations and predefined control strategies. In contrast, modern VLA models aim to learn general-purpose, language-conditioned manipulation policies through large-scale multimodal pretraining. Despite the complementary sensing advantages of event cameras, their integration into scalable VLA frameworks remains largely unexplored. Bridging event-driven perception with pretrained VLA architectures therefore presents a promising direction for enhancing embodied robustness without sacrificing policy generality.
+
+3 Methods
+
+3.1 Overview
+
+We build upon a SmolVLA-style [50] Vision-Language-Action framework and investigate how event-based visual sensing can be integrated in a lightweight and pretrained-compatible manner. Event streams captured by a DAVIS camera are spatially and temporally aligned with RGB frames and converted into frame-like representations through carefully designed windowing strategies, ensuring compatibility with standard visual encoders.
+To incorporate event information without disrupting the pretrained token distribution, we investigate two alternative fusion designs that operate at different stages of the visual pipeline. The first design adopts a pre-encoding overlay strategy, directly combining accumulated event frames with RGB images before visual encoding, introducing no additional parameters. Instead of overlaying, the second design employs a lightweight hierarchical event adapter to inject event features into intermediate layers of the visual encoder for fine-grained cross-modal interaction. In each case, the resulting visual tokens are processed by the VLM backbone, and an action expert generates control sequences conditioned on the enriched perceptual representations. An overview of our E-VLA framework is depicted in Fig. 2. The following sections detail the baseline architecture, event windowing and representation design, and the proposed fusion strategies.
+
+Figure 2:
+An overview of our proposed E-VLA framework. Our architecture integrates event-based visual sensing with RGB frames and proprioceptive robot states to generate control sequences. We investigate two fusion strategies: (1) a Hierarchical Event Adapter that injects event features into intermediate layers of a frozen ViT encoder through trainable fusion modules, and (2) an Overlay strategy that directly combines events with RGB images prior to encoding via SigLIP. The resulting fusion visual tokens are concatenated with language tokens and state tokens and then processed by a frozen LLM backbone, which conditions an Action Expert to produce normalized robot actions. Snowflakes and flames denote frozen and trainable parameters, respectively.
+
+3.2 SmolVLA Baseline
+
+We adopt SmolVLA [50] as the image-based policy baseline to have a good balance between performance and efficiency. SmolVLA is an open-source lightweight vision-language-action model trained on community-contributed datasets with about 0.5B parameters.
+It offers strong reproducibility compared to larger or closed-source VLA models, while maintaining competitive performance in real-world robot deployment.
+SmolVLA consists of a compact vision-language backbone (SmolVLM [42]) and a lightweight transformer-based action expert. Using SigLIP as its vision encoder, SmolVLM is pretrained on large-scale text-image and video data, encoding multi-view RGB observations, language instructions, and robot states into a unified token representation. The action expert then generates action chunks conditioned on SmolVLM features through the interaction design of interleaved self-attention and cross-attention. SmolVLA supports synchronous and asynchronous inference modes. In synchronous inference, a new policy inference process is only triggered when the current action queue is empty, which has a low perception delay while introducing execution pauses due to inference latency. In contrast, asynchronous mode performs inference in parallel with action execution, eliminating explicit waiting between action chunks while prolonging its perceptual delay. Overall, this established image baseline provides a solid foundation for our event-augmented VLA approach.
+
+3.3 Event Windowing and Representation
+
+Event cameras produce asynchronous and spatially sparse event streams, which record pixel-level brightness changes. The output is formulated as tuples:
+
+(1)
+
+where and denote the pixel coordinates of the event, denotes its timestamp, and is the polarity of the brightness change. The output of this format cannot be directly consumed by standard vision-language models. Prior event-based vision work has explored windowing and representation strategies to convert raw event streams into structured forms, including fixed-duration windows and fixed-count windows for sampling, as well as event frames, voxel grids [67], time surfaces [29], and other specific methods [1, 57] for representation.
+Fixed-duration windowing is widely used in event-based methods [7, 33, 60, 21, 36] to maintain a frame rate or to synchronize with image exposure time.
+
+However, in the VLA setting, the temporal distribution of event streams becomes highly unstable due to the tight coupling between perception and action. The wrist-mounted camera undergoes continuous ego-motion induced by robot actions, and the event rate varies substantially with the frequently changing motion speed across task phases. Under such conditions, event windowing becomes non-trivial: fixed-duration windows may produce inconsistent event responses, leading to perception failure at low speeds and motion blur at high speeds. Since the suitability of fixed-duration versus fixed-count windowing in VLA scenarios remains unclear, we empirically examine these strategies and adopt a recent-count scheme that retains the most recent events, which can be formulated as Eq. 2, where denotes the exposure end time for the current image , denotes the event window corresponding to .
+
+(2)
+
+This model demonstrates better event stability in practice. The DAVIS sensor provides events and RGB images with microsecond-resolution timestamps, enabling precise temporal alignment for implementing this windowing operation.
+
+Compared to large-scale image-text and video datasets, event data remain limited in both scale and diversity, making large-scale pretraining or contrastive learning directly on event modalities impractical. To effectively leverage the knowledge embedded in pretrained VLMs, we adopt an image-like accumulated event representation that closely matches the input distribution of the SigLIP image encoder used in SmolVLA. Within each window, events are accumulated into a dense gray frame via a polarity-agnostic way: the total amount of events is added up at each pixel regardless of polarity. This representation emphasizes event density and the absolute position while discarding the direction of intensity change, resulting in a structurally stable input format. We use a colored DAVIS346 camera equipped with a Bayer filter, enabling the capture of RGB event streams. So the accumulated event frames are first normalized to and then demosaiced to obtain three-channel representations . The whole process can be formulated as Eq. 3, where denotes the 2D Kronecker delta function, denotes the min-max normalization, and denotes the demosaicing operation.
+
+(3)
+
+3.4 Event Fusion Strategy
+
+In the VLA architecture, visual observations are encoded into a sequence of tokens by a ViT-style encoder, then concatenated with language instruction tokens and robot state tokens before being fed into the LLM. Under this formulation, naively introducing additional event tokens would increase the token length and computational cost, and potentially disrupt the pretrained token distribution of the visual encoder. To preserve the original token length and leverage pretrained visual-language knowledge, we fuse event information into the existing visual tokens, rather than adding new event tokens.
+
+We explore two event fusion strategies that operate at different stages of the visual processing pipeline: an overlay-based fusion that combines events and images before visual encoding, and a lightweight hierarchical event adapter that integrates event features within the visual encoder.
+
+Overlay-based fusion.
+Given the spatial alignment between frame images and events provided by the DAVIS camera, a simple pre-encoding fusion can be implemented by directly overlaying the windowed events onto RGB images. Let denotes the events at position within the window:
+
+(4)
+
+The overlay process can be formulated as Eq. 5, where donates the overlay image, donates the polarity-to-color projection.
+
+(5)
+
+This approach directly injects events into the visual input before ViT encoding, enriching the visual information without adding parameters, making it a plug-and-play and computationally efficient implementation.
+
+Hierarchical event adapter.
+To enable progressive and fine-grained fusion of event and image information, we further propose a lightweight hierarchical event adapter that integrates event features into the image encoder during visual encoding. Specifically, accumulated event frames are processed by a compact ViT-style event adapter which consists of a weight-sharing patch embedding layer (sharing weights for closer feature distribution) and four stacked Transformer blocks.
+The outputs of these blocks are progressively fused with the corresponding intermediate features of the original visual encoder. For SigLIP in SmolVLA, we choose , , , and as fusion layers.
+Let denotes the -th layer of the event adapter, denote the -th group of the SigLIP encoder layers, and denote their output features, respectively, and denotes the weight-sharing patch embedding. Initially, we have , . Then the overall hierarchical fusion process can be formulated as Eq. 6, where is implemented as .
+
+(6)
+
+The introduced event adapter and fusion module adopt smaller hidden dimensions and fewer layers, which only introduce 13M additional parameters, less than 3% of the total model, enabling a fine-grained and multi-level event-image fusion while preserving computational efficiency.
+
+4 Dataset
+
+Figure 3:
+Middle: The visualization of the proposed dataset. Events are represented as colored frames following Sec. 3.3. Left: Side and top views of our teleoperation platform based on LeRobot SO100 manipulator [8] and DAVIS346 event camera. Right: Above are the statistics of our dataset. The line chart below shows that even when the image signal rapidly decays with decreasing illumination, the event modality can still maintain a stable event rate ( events per second or KEPS).
+
+4.1 Event-Augmented Teleoperation Platform
+
+To support event-augmented VLA learning and real-world evaluation under visually degraded conditions, we build a unified teleoperation platform on the open-source SO100 6-DoF robotic arm [8] , using structurally identical leader–follower arms for demonstration collection and closed-loop testing. The follower arm is equipped with an angle-driven gripper as the end-effector, and a DAVIS346 event camera is rigidly mounted on the wrist via a custom holder, providing pixel-aligned asynchronous events and RGB frames at resolution with microsecond-level timestamps. Instead of adopting a multi-view setup, we deliberately use a monocular wrist-view camera to preserve system compactness and deployment practicality, while naturally coupling arm motion with event generation, providing an appropriate setting for integrating event cues to explore perception–action robustness under visual degradation.
+In practice, we find that a wide field of view is critical for wrist-view manipulation, as narrow-view lenses frequently miss task-relevant context; we therefore replace the original pinehole lens with a compact wide-angle lens (2.2 mm focal length, F/1.8), achieving a field of view greater than with suitable depth of field for typical manipulation distances. The DAVIS camera operates with fixed hardware gain, all frames are recorded at 30 FPS, and unless otherwise specified, we use a 10 ms exposure time. To reflect realistic edge deployment constraints, both data collection and on-robot inference are conducted on an NVIDIA AGX Orin platform.
+
+4.2 RGB-Event-Action Dataset
+
+Existing event-based datasets [44, 52, 20, 55, 34, 2] mainly focus on perception tasks (e.g., deblurring, optical flow, or reconstruction), while real-world event datasets for imitation learning and VLA-style manipulation remain extremely limited.
+To bridge this gap, we collect a new event-augmented manipulation dataset using the teleoperation system above; to the best of our knowledge, this is among the first real-world datasets designed specifically for studying synchronized RGB–event–action learning in language-conditioned manipulation under challenging illumination.
+Following SmolVLA [50], we include three representative tasks: Pick-Place, Sorting, and Stacking. Pick-Place requires grasping an object from a random location and placing it into a fixed cup; Sorting additionally requires color-based discrimination to place objects into designated cups; and Stacking requires precise placement of one cube on top of another under a constrained gripper-centric field of view. For each task, demonstrations are collected under one normal illumination condition (200 lux) and three lower illumination levels (100, 75, and 40 lux), with both fixed and randomized initial arm configurations to improve diversity and robustness. Due to the low hardware gain of the DAVIS camera, bright scenes under 200 lux still produce slightly dark images with about of grayscale value as shown in Fig. 3. All data are stored in the LeRobot format, where RGB frames and event streams are temporally aligned by camera timestamps and synchronized with robot states and actions.
+In summary, our dataset comprises episodes ( under normal illumination and 419 under three progressively decreasing low-light levels), totaling 339310 frames. Fig. 3 provides an overview of the dataset composition and capture setup.
+
+5 Experiment
+
+5.1 Implementation Details
+
+We compare E-VLA against four representative alternatives: RetinexNet, Retinexformer, EvLight, and E2VID, using official pretrained weights and standard implementations. RetinexNet, Retinexformer, and EvLight are treated as low-light image enhancement baselines, where low-illumination images are enhanced offline for training and processed with the same enhancement pipeline at inference time; E2VID is used as an event-to-image reconstruction baseline, where event streams are first converted into color images and then introduced as additional visual inputs during both training and testing. For fair comparison, the VLM backbone is kept frozen in all settings, and imitation learning updates only the action expert and projection MLP layers. For our event-adapter variant, we also freeze the VLM backbone to preserve pretrained visual-language priors, and train the event branch with a two-stage strategy: we first optimize the newly introduced adapter from scratch, and then jointly fine-tune the adapter together with the action expert and projection layers. To avoid shortcut learning from RGB inputs and encourage effective event utilization, we apply a random dropout to the image branch during training. Unless otherwise specified, all methods are fine-tuned on the same multi-task, multi-illumination dataset for 20k iterations, and training is performed on a single NVIDIA A800 GPU.
+
+5.2 Evaluation Protocol
+
+We evaluate all methods on the same real-world teleoperation platform (SO100 + DAVIS346) over three manipulation tasks (Pick-Place, Sorting, Stacking) under multiple illumination conditions, with policy inference executed on an NVIDIA AGX Orin. For fair comparison, we sample task-specific test configurations once and keep them fixed: Pick-Place uses 10 test locations, and Sorting/Stacking uses 10 paired configurations with randomly swapped object placements. We adopt partial-credit scoring (Pick-Place: pick/place; Sorting: per-object pick/place; Stacking: pick/stack). We use synchronous inference with an action chunk size of 40 at 30 Hz (predicting 1.33 s actions per forward pass). Success is measured within 1 minute for Pick-Place/Stacking and 1.5 minutes for Sorting. Additional implementation details are provided in the supplementary material.
+
+Table 1: Task success rates (%). Higher is better. Results are reported under different illumination levels (lux) on the Pick-Place task.
+
+Method
+75 lux
+40 lux
+35 lux
+30 lux
+25 lux
+20 lux
+Average
+
+Image (10ms exp.)
+100
+80
+70
+35
+0
+0
+
+Image+RetinexNet [63]
+100
+100
+85
+80
+25
+10
+
+Image+Retinexformer [9]
+100
+80
+80
+75
+20
+10
+
+Image+EvLight [35]
+100
+95
+95
+75
+45
+10
+
+Image+E2VID [46]
+80
+60
+55
+10
+5
+5
+
+Ours overlay
+100
+100
+85
+75
+65
+60
+80.8
+
+Ours event adapter
+100
+100
+95
+90
+90
+90
+94.2
+
+Success rates (%):  
+xx (Best)  
+xx  
+xx  
+xx  
+xx  
+xx (Bad)
+
+5.3 Low Illumination Performance
+
+We evaluate task success rates under progressively reduced ambient illumination for image-only policies, image-based enhancement baselines, and the proposed E-VLA models (Pick-Place results in Tab. 1). Under well-lit settings, event integration does not hurt performance: at 75 lux all methods expect E2VID reach 100%, and at 40 lux both overlay fusion and the event adapter achieve 100% (vs. 80% image-only).
+
+Figure 4: Qualitative comparison of visual inputs under different illumination.
+
+As illumination drops, the image-only baseline degrades from 70% (35 lux) to 35% (30 lux) and collapses to 0% (25/20 lux). Image enhancement helps only moderately (e.g., RetinexNet reaches 80% at 30 lux) but deteriorates at lower light (20–45% at 25 lux and 5–10% at 20 lux for several baselines), consistent with Fig. 4. In contrast, E-VLA is markedly more robust: overlay achieves 75% at 30 lux and 65%/60% at 25/20 lux, while the event adapter reaches 90% at 30 lux and maintains 90% at 25/20 lux. When frames are nearly black-clipped (25/20 lux), image-only fails (0%), whereas event-based variants retain substantial success (65–60% overlay; 90% adapter), showing that event streams provide actionable cues even when frames are uninformative. At even lower illumination, performance only drops near 2 lux (Tab. S1, supplementary material), where event noise begins to dominate.
+
+5.4 Generalization without Low-light Training
+
+Table 2: Task success rates (%) for Out-Of-Distribution (OOD) low-light conditions on the Pick-Place task.
+In-Distribution (ID) refers to evaluating on low-light scenes that are included in training, for which the success rates are reported in Tab. 1.
+OOD refers to evaluation on unseen low-light scenes.
+
+100 lux
+75 lux
+40 lux
+30 lux
+20 lux
+Average
+
+Method
+ID
+OOD
+ID
+OOD
+ID
+OOD
+ID
+OOD
+ID
+OOD
+OOD
+
+Image (10ms exp.)
+100
+100
+100
+65
+80
+30
+35
+0
+0
+0
+
+Image+Retinexformer [9]
+100
+100
+100
+70
+80
+50
+75
+10
+10
+0
+
+Image+EvLight [35]
+100
+80
+100
+50
+95
+50
+75
+20
+10
+5
+
+Ours overlay
+100
+100
+100
+95
+100
+55
+75
+10
+60
+10
+54.0
+
+Ours adapter
+100
+100
+100
+85
+100
+75
+90
+70
+90
+45
+75.0
+
+Success rates (%):  
+xx (Best) 
+xx  
+xx  
+xx  
+xx  
+xx (Bad)
+
+We further test OOD illumination generalization by training all models only on well-lit (200 lux) demonstrations and evaluating at lower lux (Tab. 2). The image-only policy drops from 65% (75 lux) to 30% (40 lux) and collapses to 0% (30/20 lux). In contrast, the event adapter remains robust: 85% (75 lux), 75% (40 lux), and 70%/45% (30/20 lux). This shows event-based perception improves robustness to unseen illumination shifts and reduces the need for extensive low-light data collection.
+
+5.5 Motion Blur Performance
+
+Table 3: Task success rates (%). Higher is better. Results are reported under different motion blur levels (represented by exposure time) on Pick-Place and Sorting task.
+
+100 ms
+200 ms
+300 ms
+400 ms
+500 ms
+1000 ms
+Average
+
+Method
+P&P
+Sorting
+P&P
+Sorting
+P&P
+Sorting
+P&P
+Sorting
+P&P
+Sorting
+P&P
+Sorting
+P&P
+Sorting
+
+Image
+100
+77.5
+85
+75
+40
+52.5
+30
+32.5
+15
+20
+0
+5
+
+Ours overlay
+100
+95
+100
+95
+90
+72.5
+60
+70
+60
+55
+20
+32.5
+71.7
+70.0
+
+Ours adapter
+100
+95
+100
+85
+85
+85
+85
+72.5
+50
+45
+25
+32.5
+74.2
+69.2
+
+Success rates (%):  
+xx (Best)  
+xx  
+xx  
+xx  
+xx  
+xx (Bad)
+
+We evaluate robustness under increasing motion blur by jointly adjusting illumination and exposure time (Tab. 3). Under mild blur, methods are comparable. As blur increases, image-only performance drops sharply: at 300 ms, overlay improves Pick-Place from 40% to 90% and Sorting from 52.5% to 72.5%, while the event adapter reaches 85%/85%. Under severe blur (1000 ms), image-only falls to 0% (Pick-Place) and 5% (Sorting), whereas overlay achieves 20%/32.5% and the event adapter further improves Pick-Place to 25% (Sorting: 32.5%). All models are trained without motion-blurred data, indicating gains stem from event sensing (high temporal resolution + recent-count windowing) rather than blur-specific adaptation, and mitigating the low-light/exposure trade-off of frame imaging.
+
+5.6 Ablation Studies
+
+Table 4: Task success rates (%) for different event windows. Higher is better. Results are reported under different illumination levels (lux) on the Pick-Place task.
+
+Event Window
+75 lux
+40 lux
+35 lux
+30 lux
+25 lux
+20 lux
+Average
+
+5 ms window
+80
+70
+65
+55
+50
+45
+
+20 ms window
+100
+85
+85
+80
+75
+70
+
+40 ms window
+100
+90
+90
+75
+50
+45
+
+500 events
+100
+100
+60
+50
+50
+45
+
+2000 events
+100
+100
+95
+90
+90
+90
+94.2
+
+4000 events
+100
+100
+85
+85
+75
+70
+85.8
+
+Success rates (%):  
+xx (Best)  
+xx  
+xx  
+xx  
+xx  
+xx (Bad)
+
+We analyze key design choices for event-based VLA, including event windowing and training recipes.
+
+Event windowing strategy and size. Tab. 4 shows time-based windows (5/20/40 ms) are unreliable under synchronous manipulation due to pauses and speed changes, while event-count windows are more stable. A moderate window performs best: 2000 events yields 95% at 35 lux and 90% at 30/25/20 lux, outperforming 500 events (60% at 35 lux; 45% at 20 lux) and 4000 events (85% at 35 lux; 70% at 20 lux).
+
+Table 5: Task success rates (%) on different training recipes at 30 lux. Higher is better. ‘sharing’ represents weight-sharing for the patch embedding layer.
+
+Strategy
+Action
+Event
+Joint
+Sharing
+Success
+
+ActionJoint
+✓
+✗
+✓
+✓
+
+EventJoint
+✗
+✓
+✓
+✓
+
+Action EventJoint
+✓
+✓
+✓
+✗
+80.0
+
+Ours
+✓
+✓
+✓
+✓
+90.0
+
+Training recipe and weight-sharing. Tab. 5 confirms progressive training is critical: ActionJoint achieves 75%, while EventJoint drops to 50%. Using both Action and Event stages improves to 80% (ActionEventJoint, no sharing), and the full recipe with patch-embedding weight-sharing reaches 90%, supporting stable perception–action alignment and cross-modal integration.
+
+5.7 Failure Cases: Color Semantics and Occlusion
+
+We further investigate Sorting and Stacking, which introduce task-specific perceptual challenges beyond those in Pick-Place.
+
+1) Color-based sorting.
+Unlike the Pick-Place task, the Sorting task additionally requires correct color-based placement. Although grasping remains reliable, failures mainly occur during placement due to the lower color classification accuracy of event-based methods when RGB frames are degraded. This limitation is inherent to event sensing: events encode intensity changes rather than absolute appearance, static object color vanishes after grasp stabilization, and sparse RGB events do not satisfy dense demosaicing assumptions. It suggests that, while event cues are effective for maintaining object-level perception under low illumination, tasks that require reliable color discrimination remain supported by intensity-based visual signals.
+2) Stacking with occlusion.
+In the Stacking task, failures primarily arise during the stack phase due to the viewpoint occlusion caused by the grasped object blocking the wrist-mounted camera [41].
+Therefore, the availability of event information does not substantially alter the perceptual bottleneck.
+Overall, these results indicate that E-VLA is effective for low-light manipulation tasks. Limitations observed in color-driven behaviors point to representation-level challenges that may be addressed with more advanced event-based color reconstruction, whereas failures under strong viewpoint occlusion reflect perceptual constraints that are not directly mitigated by event sensing. More detailed success rate analyses can be found in the supplementary material.
+
+6 Conclusions
+
+We present E-VLA, an event-augmented vision-language-action (VLA) framework that improves VLA robustness under visual degradations, including extreme low light, black clipping, and motion blur. Instead of reconstructing images from events, E-VLA integrates asynchronous event streams into a pretrained VLA architecture in a lightweight, token-compatible manner, enabling robust manipulation without large-scale event pretraining.
+To facilitate systematic study, we build an open-source teleoperation platform with a DAVIS346 event camera and collect a synchronized RGB–event–action manipulation dataset spanning tasks, illumination levels, and motion regimes. Experiments show that even a parameter-free fusion (i.e., overlaying accumulated event maps onto RGB images) improves success when frame inputs become unreliable, while preserving performance in bright scenes. On Pick-Place at 20 lux, success increases from 0% (image-only) to 60% with overlay fusion and to 90% with our event adapter; under severe motion blur (1000 ms exposure), Pick-Place improves from 0% to 20–25%, and Sorting from 5% to 32.5%. Moreover, E-VLA improves out-of-distribution generalization across illumination shifts and blur-heavy dynamics.
+Our ablations provide design insights for coupling event perception with vision-pretrained policy models, highlighting event windowing/accumulation, representation choice, and training balance for stable perception–action alignment. We hope this work encourages adoption of event-driven sensing in VLA learning and inspires robust embodied intelligence beyond frame-based imaging.
+
+References
+
+[1]
+I. Alonso and A. C. Murillo (2019)
+
+EV-SegNet: Semantic segmentation for event-based cameras.
+
+In CVPRW,
+
+Cited by: §2.2,
+§3.3.
+
+[2]
+Y. Bao, L. Sun, Y. Ma, and K. Wang (2024)
+
+Temporal-mapping photography for event cameras.
+
+In ECCV,
+
+Cited by: §12,
+§4.2.
+
+[3]
+J. Bi, K. Y. Ma, C. Hao, M. Z. Shou, and H. Soh (2025)
+
+VLA-Touch: Enhancing vision-language-action models with dual-level tactile feedback.
+
+arXiv preprint arXiv:2507.17294.
+
+Cited by: §2.1.
+
+[4]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, L. X. Shi, J. Tanner, Q. Vuong, A. Walling, H. Wang, and U. Zhilinsky (2024)
+
+: A vision-language-action flow model for general robot control.
+
+arXiv preprint arXiv:2410.24164.
+
+Cited by: §1,
+§2.1.
+
+[5]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan, K. Hausman, A. Herzog, J. Hsu, J. Ibarz, B. Ichter, A. Irpan, T. Jackson, S. Jesmonth, N. J. Joshi, R. Julian, D. Kalashnikov, Y. Kuang, I. Leal, K. Lee, S. Levine, Y. Lu, U. Malla, D. Manjunath, I. Mordatch, O. Nachum, C. Parada, J. Peralta, E. Perez, K. Pertsch, J. Quiambao, K. Rao, M. S. Ryoo, G. Salazar, P. R. Sanketi, K. Sayed, J. Singh, S. Sontakke, A. Stone, C. Tan, H. T. Tran, V. Vanhoucke, S. Vega, Q. Vuong, F. Xia, T. Xiao, P. Xu, S. Xu, T. Yu, and B. Zitkovich (2022)
+
+RT-1: Robotics transformer for real-world control at scale.
+
+In RSS,
+
+Cited by: §1,
+§2.1.
+
+[6]
+I. G. Bugueño-Córdova, J. Ruiz-del-Solar, and R. Verschae (2025)
+
+Human-robot navigation using event-based cameras and reinforcement learning.
+
+In CVPRW,
+
+Cited by: §2.2.
+
+[7]
+P. R. G. Cadena, Y. Qian, C. Wang, and M. Yang (2021)
+
+SPADE-E2VID: Spatially-adaptive denormalization for event-based video reconstruction.
+
+IEEE Transactions on Image Processing.
+
+Cited by: §2.2,
+§3.3.
+
+[8]
+R. Cadene, S. Alibert, A. Soare, Q. Gallouedec, A. Zouitine, S. Palma, P. Kooijmans, M. Aractingi, M. Shukor, D. Aubakirova, M. Russi, F. Capuano, C. Pascal, J. Choghari, J. Moss, and T. Wolf (2024)
+
+LeRobot: State-of-the-art machine learning for real-world robotics in pytorch.
+
+Note: https://github.com/huggingface/lerobot
+
+Cited by: Figure 3,
+Figure 3,
+§4.1.
+
+[9]
+Y. Cai, H. Bian, J. Lin, H. Wang, R. Timofte, and Y. Zhang (2023)
+
+Retinexformer: One-stage retinex-based transformer for low-light image enhancement.
+
+In ICCV,
+
+Cited by: Table 1,
+Table 2.
+
+[10]
+J. Cao, X. Zheng, Y. Lyu, J. Wang, R. Xu, and L. Wang (2024)
+
+Chasing day and night: towards robust and efficient all-day object detection guided by an event camera.
+
+In ICRA,
+
+Cited by: §2.2.
+
+[11]
+K. Chen, G. Liang, Y. Lu, H. Li, and L. Wang (2026)
+
+EvLight++: Low-light video enhancement with an event camera: a large-scale real-world dataset, novel method, and more.
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence.
+
+Cited by: §2.2.
+
+[12]
+Z. Chen, R. Niu, H. Kong, Q. Wang, Q. Xing, and Z. Fan (2025)
+
+TGRPO: Fine-tuning vision-language-action model via trajectory-wise group relative policy optimization.
+
+arXiv preprint arXiv:2506.08440.
+
+Cited by: §2.1.
+
+[13]
+Z. Cheng, Y. Zhang, W. Zhang, H. Li, K. Wang, L. Song, and H. Zhang (2025)
+
+OmniVTLA: Vision-tactile-language-action model with semantic-aligned tactile sensing.
+
+arXiv preprint arXiv:2508.08706.
+
+Cited by: §2.1.
+
+[14]
+T. Delbrück (2008)
+
+Frame-free dynamic digital vision.
+
+In International Symposium on Secure-Life Electronics, Advanced Electronics for Quality Life and Society,
+
+Cited by: §1,
+§2.2.
+
+[15]
+H. Deng, Z. Wu, H. Liu, W. Guo, Y. Xue, Z. Shan, C. Zhang, B. Jia, Y. Ling, and G. Lu (2025)
+
+A survey on reinforcement learning of vision-language-action models for robotic manipulation.
+
+Authorea Preprints.
+
+Cited by: §1.
+
+[16]
+S. Deng, M. Yan, Y. Zheng, J. Su, W. Zhang, X. Zhao, H. Cui, Z. Zhang, and H. Wang (2025)
+
+StereoVLA: Enhancing vision-language-action models with stereo vision.
+
+arXiv preprint arXiv:2512.21970.
+
+Cited by: §2.1.
+
+[17]
+S. Fei, S. Wang, J. Shi, Z. Dai, J. Cai, P. Qian, L. Ji, X. He, S. Zhang, Z. Fei, J. Fu, J. Gong, and X. Qiu (2025)
+
+LIBERO-Plus: In-depth robustness analysis of vision-language-action models.
+
+arXiv preprint arXiv:2510.13626.
+
+Cited by: §1.
+
+[18]
+N. Funk, E. Helmut, G. Chalvatzaki, R. Calandra, and J. Peters (2024)
+
+Evetac: an event-based optical tactile sensor for robotic manipulation.
+
+IEEE Transactions on Robotics.
+
+Cited by: §2.2.
+
+[19]
+G. Gallego, T. Delbrück, G. Orchard, C. Bartolozzi, B. Taba, A. Censi, S. Leutenegger, A. J. Davison, J. Conradt, K. Daniilidis, and D. Scaramuzza (2022)
+
+Event-based vision: a survey.
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence.
+
+Cited by: §1,
+§2.2.
+
+[20]
+M. Gehrig, W. Aarents, D. Gehrig, and D. Scaramuzza (2021)
+
+DSEC: A stereo event camera dataset for driving scenarios.
+
+IEEE Robotics and Automation Letters.
+
+Cited by: §4.2.
+
+[21]
+M. Gehrig, M. Millhäusler, D. Gehrig, and D. Scaramuzza (2021)
+
+E-RAFT: Dense optical flow from event cameras.
+
+In 3DV,
+
+Cited by: §2.2,
+§3.3.
+
+[22]
+Q. Guo, Z. Yu, J. Fu, Y. Lu, Y. Zweiri, and D. Gan (2024)
+
+Force-EvT: A closer look at robotic gripper force measurement with event-based vision transformer.
+
+In ReMAR,
+
+Cited by: §2.2.
+
+[23]
+Y. Guo, J. Zhang, X. Chen, X. Ji, Y. Wang, Y. Hu, and J. Chen (2025)
+
+Improving vision-language-action model with online reinforcement learning.
+
+arXiv preprint arXiv:2501.16664.
+
+Cited by: §2.1.
+
+[24]
+J. Huang, S. Wang, F. Lin, Y. Hu, C. Wen, and Y. Gao (2025)
+
+Tactile-VLA: Unlocking vision-language-action model’s physical knowledge for tactile generalization.
+
+arXiv preprint arXiv:2507.09160.
+
+Cited by: §2.1.
+
+[25]
+X. Huang, M. Halwani, R. Muthusamy, A. Ayyad, D. Swart, L. Seneviratne, D. Gan, and Y. Zweiri (2022)
+
+Real-time grasping strategies using event camera.
+
+Journal of Intelligent Manufacturing.
+
+Cited by: §2.2.
+
+[26]
+P. Intelligence, A. Amin, R. Aniceto, A. Balakrishna, K. Black, K. Conley, G. Connors, J. Darpinian, K. Dhabalia, J. DiCarlo, D. Driess, M. Equi, A. Esmail, Y. Fang, C. Finn, C. Glossop, T. Godden, I. Goryachev, L. Groom, H. Hancock, K. Hausman, G. Hussein, B. Ichter, S. Jakubczak, R. Jen, T. Jones, B. Katz, L. Ke, C. Kuchi, M. Lamb, D. LeBlanc, S. Levine, A. Li-Bell, Y. Lu, V. Mano, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, C. Sharma, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, W. Stoeckle, A. Swerdlow, J. Tanner, M. Torne, Q. Vuong, A. Walling, H. Wang, B. Williams, S. Yoo, L. Yu, U. Zhilinsky, and Z. Zhou (2025)
+
+: A VLA that learns from experience.
+
+arXiv preprint arXiv:2511.14759.
+
+Cited by: §1,
+§2.1.
+
+[27]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, M. Y. Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong, H. Walke, A. Walling, H. Wang, L. Yu, and U. Zhilinsky (2025)
+
+: a vision-language-action model with open-world generalization.
+
+arXiv preprint arXiv:2504.16054.
+
+Cited by: §1,
+§2.1.
+
+[28]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. P. Foster, P. R. Sanketi, Q. Vuong, T. Kollar, B. Burchfiel, R. Tedrake, D. Sadigh, S. Levine, P. Liang, and C. Finn (2024)
+
+OpenVLA: An open-source vision-language-action model.
+
+In CoRL,
+
+Cited by: §1,
+§2.1.
+
+[29]
+X. Lagorce, G. Orchard, F. Galluppi, B. E. Shi, and R. Benosman (2017)
+
+HOTS: A hierarchy of event-based time-surfaces for pattern recognition.
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence.
+
+Cited by: §10.1,
+Table S9,
+§3.3.
+
+[30]
+B. Li, H. Cao, Z. Qu, Y. Hu, Z. Wang, and Z. Liang (2020)
+
+Event-based robotic grasping detection with neuromorphic vision sensor and event-grasping dataset.
+
+Frontiers in Neurorobotics.
+
+Cited by: §2.2.
+
+[31]
+C. Li, J. Wen, Y. Peng, Y. Peng, F. Feng, and Y. Zhu (2025)
+
+PointVLA: Injecting the 3D world into vision-language-action models.
+
+arXiv preprint arXiv:2503.07511.
+
+Cited by: §2.1.
+
+[32]
+H. Li, Y. Chen, W. Cui, W. Liu, K. Liu, M. Zhou, Z. Zhang, and D. Zhao (2025)
+
+Survey of vision-language-action models for embodied manipulation.
+
+arXiv preprint arXiv:2508.15201.
+
+Cited by: §1,
+§1,
+§2.1.
+
+[33]
+H. Li, J. Wang, J. Yuan, Y. Li, W. Weng, Y. Peng, Y. Zhang, Z. Xiong, and X. Sun (2024)
+
+Event-assisted low-light video object segmentation.
+
+In CVPR,
+
+Cited by: §2.2,
+§3.3.
+
+[34]
+Y. Li, Y. Shen, Z. Huang, S. Chen, W. Bian, X. Shi, F. Wang, K. Sun, H. Bao, Z. Cui, G. Zhang, and H. Li (2024)
+
+BlinkVision: A benchmark for optical flow, scene flow and point tracking estimation using rgb frames and events.
+
+In ECCV,
+
+Cited by: §4.2.
+
+[35]
+G. Liang, K. Chen, H. Li, Y. Lu, and L. Wang (2024)
+
+Towards robust event-guided low-light image enhancement: A large-scale real-world event-image dataset and novel approach.
+
+In CVPR,
+
+Cited by: §2.2,
+Table 1,
+Table 2.
+
+[36]
+J. Liu, B. Wang, Z. Tan, J. Zhang, H. Shen, and D. Hu (2025)
+
+Tracking any point with frame-event fusion network at high frame rate.
+
+In IROS,
+
+Cited by: §2.2,
+§3.3.
+
+[37]
+S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu (2024)
+
+RDT-1B: a diffusion foundation model for bimanual manipulation.
+
+arXiv preprint arXiv:2410.07864.
+
+Cited by: §1,
+§2.1.
+
+[38]
+G. Lu, W. Guo, C. Zhang, Y. Zhou, H. Jiang, Z. Gao, Y. Tang, and Z. Wang (2025)
+
+VLA-RL: Towards masterful and general robotic manipulation with scalable reinforcement learning.
+
+arXiv preprint arXiv:2505.18719.
+
+Cited by: §2.1.
+
+[39]
+Y. Lu, G. Liang, Y. Wang, L. Wang, and H. Xiong (2025)
+
+UniINR: Event-guided unified rolling shutter correction, deblurring, and interpolation.
+
+In ECCV,
+
+Cited by: §2.2.
+
+[40]
+Y. Ma, P. Duan, Y. Hong, C. Zhou, Y. Zhang, J. Ren, and B. Shi (2024)
+
+Color4E: event demosaicing for full-color event guided image deblurring.
+
+In ACMMM,
+
+Cited by: §12.
+
+[41]
+Y. Ma, Z. Song, Y. Zhuang, J. Hao, and I. King (2024)
+
+A survey on vision-language-action models for embodied AI.
+
+arXiv preprint arXiv:2405.14093.
+
+Cited by: §1,
+§1,
+§2.1,
+§5.7.
+
+[42]
+A. Marafioti, O. Zohar, M. Farré, M. Noyan, E. Bakouch, P. Cuenca, C. Zakka, L. B. Allal, A. Lozhkov, N. Tazi, V. Srivastav, J. Lochner, H. Larcher, M. Morlon, L. Tunstall, L. von Werra, and T. Wolf (2025)
+
+SmolVLM: Redefining small and efficient multimodal models.
+
+arXiv preprint arXiv:2504.05299.
+
+Cited by: §3.2.
+
+[43]
+R. Muthusamy, A. Ayyad, M. Halwani, D. Swart, D. Gan, L. Seneviratne, and Y. Zweiri (2021)
+
+Neuromorphic eye-in-hand visual servoing.
+
+IEEE Access.
+
+Cited by: §2.2.
+
+[44]
+S. Nah, T. Hyun Kim, and K. Mu Lee (2017)
+
+Deep multi-scale convolutional neural network for dynamic scene deblurring.
+
+In CVPR,
+
+Cited by: §4.2.
+
+[45]
+L. Pan, C. Scheerlinck, X. Yu, R. Hartley, M. Liu, and Y. Dai (2019)
+
+Bringing a blurry frame alive at high frame-rate with an event camera.
+
+In CVPR,
+
+Cited by: §2.2.
+
+[46]
+H. Rebecq, R. Ranftl, V. Koltun, and D. Scaramuzza (2019)
+
+Events-to-video: bringing modern computer vision to event cameras.
+
+In CVPR,
+
+Cited by: §2.2,
+Table 1.
+
+[47]
+T. Reinold, S. Ghosh, and G. Gallego (2025)
+
+Combined physics and event camera simulator for slip detection.
+
+In WACVW,
+
+Cited by: §2.2.
+
+[48]
+S. Sanyal, A. Joshi, A. Kosta, and K. Roy (2025)Real-time neuromorphic navigation: guiding physical robots with event-based sensing and task-specific reconfigurable autonomy stack(Website)
+
+Cited by: §2.2.
+
+[49]
+W. Shang, D. Ren, D. Zou, J. S. Ren, P. Luo, and W. Zuo (2021)
+
+Bringing events into video deblurring with non-consecutively blurry frames.
+
+In ICCV,
+
+Cited by: §2.2.
+
+[50]
+M. Shukor, D. Aubakirova, F. Capuano, P. Kooijmans, S. Palma, A. Zouitine, M. Aractingi, C. Pascal, M. Russi, A. Marafioti, S. Alibert, M. Cord, T. Wolf, and R. Cadène (2025)
+
+SmolVLA: A vision-language-action model for affordable and efficient robotics.
+
+arXiv preprint arXiv:2506.01844.
+
+Cited by: Figure 1,
+Figure 1,
+§2.1,
+§3.1,
+§3.2,
+§4.2.
+
+[51]
+I. Singh, A. Goyal, S. Birchfield, D. Fox, A. Garg, and V. Blukis (2025)
+
+OG-VLA: 3D-aware vision language action model via orthographic image generation.
+
+arXiv preprint arXiv:2506.01196.
+
+Cited by: §2.1.
+
+[52]
+T. Stoffregen, C. Scheerlinck, D. Scaramuzza, T. Drummond, N. Barnes, L. Kleeman, and R. E. Mahony (2020)
+
+Reducing the sim-to-real gap for event cameras.
+
+In ECCV,
+
+Cited by: §4.2.
+
+[53]
+L. Sun, Y. Bao, J. Zhai, J. Liang, Y. Zhang, K. Wang, D. P. Paudel, and L. Van Gool (2025)
+
+Low-light image enhancement using event-based illumination estimation.
+
+In ICCV,
+
+Cited by: §2.2.
+
+[54]
+L. Sun, C. Sakaridis, J. Liang, Q. Jiang, K. Yang, P. Sun, Y. Ye, K. Wang, and L. V. Gool (2022)
+
+Event-based fusion for motion deblurring with cross-modal attention.
+
+In ECCV,
+
+Cited by: §2.2.
+
+[55]
+L. Sun, C. Sakaridis, J. Liang, P. Sun, K. Zhang, J. Cao, Q. Jiang, K. Wang, and L. Van Gool (2023)
+
+Event-based frame interpolation with ad-hoc deblurring.
+
+In CVPR,
+
+Cited by: §4.2.
+
+[56]
+L. Sun, B. Xie, Y. Liu, H. Shi, T. Wang, and J. Cao (2025)
+
+GeoVLA: Empowering 3D representations in vision-language-action models.
+
+arXiv preprint arXiv:2508.09071.
+
+Cited by: §2.1.
+
+[57]
+Z. Sun, X. Fu, L. Huang, A. Liu, and Z. Zha (2024)
+
+Motion aware event representation-driven image deblurring.
+
+In ECCV,
+
+Cited by: §3.3.
+
+[58]
+T. Taunyazov, W. Sng, B. Lim, H. See, J. Kuan, A. F. Ansari, B. C. K. Tee, and H. Soh (2020)
+
+Event-driven visual-tactile sensing and learning for robots.
+
+In RSS,
+
+Cited by: §2.2.
+
+[59]
+G. R. Team, S. Abeyruwan, J. Ainslie, J. Alayrac, M. G. Arenas, T. Armstrong, A. Balakrishna, R. Baruch, M. Bauza, M. Blokzijl, et al. (2025)
+
+Gemini robotics: bringing AI into the physical world.
+
+arXiv preprint arXiv:2503.20020.
+
+Cited by: §1,
+§2.1.
+
+[60]
+A. Tomy, A. Paigwar, K. S. Mann, A. Renzaglia, and C. Laugier (2022)
+
+Fusing event-based and RGB camera for robust object detection in adverse conditions.
+
+In ICRA,
+
+Cited by: §2.2,
+§3.3.
+
+[61]
+X. Wang, H. Yu, L. Yu, W. Yang, and G. Xia (2024)
+
+Towards robust keypoint detection and tracking: a fusion approach with event-aligned image features.
+
+IEEE Robotics and Automation Letters.
+
+Cited by: §2.2.
+
+[62]
+Y. Wang, P. Ding, L. Li, C. Cui, Z. Ge, X. Tong, W. Song, H. Zhao, W. Zhao, P. Hou, S. Huang, Y. Tang, W. Wang, R. Zhang, J. Liu, and D. Wang (2025)
+
+VLA-Adapter: An effective paradigm for tiny-scale vision-language-action model.
+
+arXiv preprint arXiv:2509.09372.
+
+Cited by: §2.1.
+
+[63]
+C. Wei, W. Wang, W. Yang, and J. Liu (2018)
+
+Deep retinex decomposition for low-light enhancement.
+
+arXiv preprint arXiv:1808.04560.
+
+Cited by: Table 1.
+
+[64]
+J. Wen, Y. Zhu, J. Li, M. Zhu, K. Wu, Z. Xu, N. Liu, R. Cheng, C. Shen, Y. Peng, F. Feng, and J. Tang (2025)
+
+TinyVLA: Towards fast, data-efficient vision-language-action models for robotic manipulation.
+
+IEEE Robotics and Automation Letters.
+
+Cited by: §2.1.
+
+[65]
+Y. Ye, H. Shi, K. Yang, Z. Wang, X. Yin, L. Sun, Y. Wang, and K. Wang (2025)
+
+Towards anytime optical flow estimation with event cameras.
+
+Sensors.
+
+Cited by: §2.2.
+
+[66]
+Y. Zhong, F. Bai, S. Cai, X. Huang, Z. Chen, X. Zhang, Y. Wang, S. Guo, T. Guan, K. N. Lui, Z. Qi, Y. Liang, Y. Chen, and Y. Yang (2025)
+
+A survey on vision-language-action models: an action tokenization perspective.
+
+arXiv preprint arXiv:2507.01925.
+
+Cited by: §1,
+§2.1.
+
+[67]
+A. Zihao Zhu, L. Yuan, K. Chaney, and K. Daniilidis (2018)
+
+Unsupervised event-based optical flow using motion compensation.
+
+In ECCVW,
+
+Cited by: §10.1,
+Table S9,
+§2.2,
+§3.3.
+
+[68]
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, Q. Vuong, V. Vanhoucke, H. T. Tran, R. Soricut, A. Singh, J. Singh, P. Sermanet, P. R. Sanketi, G. Salazar, M. S. Ryoo, K. Reymann, K. Rao, K. Pertsch, I. Mordatch, H. Michalewski, Y. Lu, S. Levine, L. Lee, T. E. Lee, I. Leal, Y. Kuang, D. Kalashnikov, R. Julian, N. J. Joshi, A. Irpan, B. Ichter, J. Hsu, A. Herzog, K. Hausman, K. Gopalakrishnan, C. Fu, P. Florence, C. Finn, K. A. Dubey, D. Driess, T. Ding, K. M. Choromanski, X. Chen, Y. Chebotar, J. Carbajal, N. Brown, A. Brohan, M. G. Arenas, and K. Han (2023)
+
+RT-2: Vision-language-action models transfer web knowledge to robotic control.
+
+In CoRL,
+
+Cited by: §1,
+§2.1.
+
+This supplementary document provides additional materials that complement the main paper. First, Sec. 7 describes implementation details, including illumination control, dataset collection, and training procedures. Sec. 8 reports additional experiments under even lower illumination, together with a detailed analysis of the E2VID approach. Sec. 9 compares the computational efficiency of all methods. Sec. 10 provides more ablation studies, and Sec. 11 presents example manipulation processes. Finally, we discuss the limitations of the proposed method and outline potential directions for improvement.
+
+7 Implementation Details
+
+7.1 Illumination Setting
+
+The illumination level is controlled using a tunable light source and measured at the camera location with a lux meter. Additional extremely low-light conditions below  lux are produced by placing neutral density filters in front of the light source. Our main experiments are conducted under  lux. Since the brightness of captured images depends not only on ambient illumination but also on sensor characteristics and the imaging pipeline, we characterize the effective lighting condition using the pixel intensity of captured RGB frames.
+
+Figure S5: Grayscale distribution of images captured under different illumination levels. (a) Cumulative distribution functions (CDFs) of pixel grayscale values for images captured at , , , , , and  lux. The logarithmic x-axis highlights the differences in low-intensity regions. (b) Corresponding RGB images with their average grayscale values indicated.
+
+Fig. S5 presents the grayscale distribution and example RGB images under different illumination levels. Within the selected low-light illumination range (under  lux), the majority of pixels lie in the low-intensity region () in the grayscale range, and objects are barely invisible in corresponding images.
+Statistical analysis and visualization confirm that the selected illumination range constitutes low-light conditions under our imaging configuration.
+
+7.2 Dataset Collection
+
+All training data are collected on the SO100+DAVIS346 platform through teleoperation. During data collection, target object positions are randomized across the workspace with approximately balanced sampling to avoid spatial bias.
+For Pick-Place, three object colors (red, yellow, and green) are used. For Sorting and Stacking, the positions of the red and green objects are swapped with equal probability to prevent fixed color–location associations.
+To improve recovery from off-trajectory states, each task additionally includes episodes in which the robot arm starts from a random pose. These recovery episodes are recorded under normal illumination ( lux).
+In total, the dataset contains teleoperated episodes ( Pick-Place, Sorting, and Stacking), comprising approximately frames.
+Episodes last about seconds for Pick-Place and Stacking, and seconds for Sorting.
+
+7.3 Network and Training Details
+
+The event adapter adopts a ViT-style encoder similar to the image branch. Compared with the image encoder (SigLIP), the feature dimension is reduced from to , and the number of layers is reduced from to . For feature fusion, we also employ a lightweight design based on channel concatenation followed by an MLP with a hidden dimension of . Before concatenation, the event features are projected to to preserve identical dimensions with image features. The fused features are then fed into the next encoder layer.
+
+Image-based methods, E2VID and event overlay. Enhanced images are generated offline and used in place of the original RGB input. For E2VID, the reconstructed image is used together with the RGB image as inputs. Then we freeze the VLM backbone and fine-tune only the action expert and projection layers to adapt the pretrained model to our deployment environment, denoted as Action stage. Training runs for iterations with a learning rate of and a batch size of , while keeping other settings identical to the official implementation.
+
+Event adapter.
+For the event adapter approach, training proceeds in two additional stages.
+We first train the newly introduced event adapter and fusion module from scratch for iterations (learning rate , batch size ) while freezing the remaining components, denoted as Event stage. We then jointly fine-tune the event adapter, fusion module, action expert, and projection layers for another iterations (learning rate , batch size ), denoted as Joint stage.
+For fair comparison, training schedules for all methods are chosen to preserve stable convergence; additional iterations do not further improve performance.
+
+8 Additional Experiments
+
+8.1 Extremely Low Illumination Performance
+
+Tab. S6 reports the success rates of E-VLA under extremely low illumination below 20 lux. In this regime, RGB images are fully black-clipped, causing all image-based methods to fail (approximately success rate), and perception relies almost entirely on events. Nevertheless, E-VLA maintains a stable success rate of down to  lux. Performance only degrades significantly at  lux, where sensor noise begins to dominate the signal.
+These results indicate that event signals alone still provide useful cues for simple manipulation tasks such as Pick-Place, and offer substantially greater robustness and usability in extremely low-light environments compared to image-based approaches.
+
+Table S6: Success rates (%) under detailed lower illumination levels on the Pick-Place task. Higher is better. (Unlisted methods show a near-zero success rate.)
+
+Method
+15 lux
+10 lux
+8 lux
+6 lux
+4 lux
+2 lux
+Average
+
+Ours overlay
+65
+60
+65
+60
+50
+30
+
+Ours adapter
+95
+85
+90
+85
+80
+35
+
+8.2 Analysis for E2VID
+
+E2VID reconstructs images from event streams using a recurrent hidden state that is updated as new events arrive.
+To integrate this process into the E-VLA pipeline, a straightforward implementation is to run E2VID continuously so that the hidden state is always updated. However, this strategy requires high-frequency reconstruction, which significantly slows down the manipulation. An alternative design is to execute E2VID only when the policy requires a new observation, reducing reconstruction frequency and improving runtime efficiency. This on-demand setting leads to two variants: recurrent and non-recurrent.
+In all implementations, the reconstructed image is fed into the VLA backbone as a second-view input, and the VLA model is pretrained by the same way. The success rates of the three implementations are reported in Tab. S7, with corresponding reconstruction results shown in Fig. S6.
+
+Table S7: Success rates (%) for different implementations of E2VID. Results are reported under different illumination levels on the Pick-Place task. Higher is better.
+
+Implementation
+75 lux
+40 lux
+35 lux
+30 lux
+25 lux
+20 lux
+Average
+
+Continuous recurrent
+80
+60
+55
+10
+5
+5
+
+On-demand recurrent
+80
+55
+50
+40
+15
+10
+
+On-demand non-recurrent
+100
+85
+60
+40
+25
+10
+
+Figure S6: Reconstruction results of different E2VID implementations under  lux. Each row shows a continuous temporal sequence () corresponding to six consecutive policy inference steps.
+
+Continuous recurrent reconstruction produces low-contrast and blurry images due to the reduced event rate caused by slow system operation.
+On-demand recurrent variant generates more distinct images, but preserving the recurrent state introduces duplication artifacts between successive inferences, which confuses the policy. Removing the recurrent connection eliminates this artifact and yields the clearest reconstructions among the three variants. However, the absence of temporal accumulation, together with the unstable event rate during manipulation, leads to discontinuities and intermittent signal loss.
+As a result, the three implementations achieve only success rates on average.
+
+These observations suggest that reconstruction-based pipelines introduce additional computational overhead and implicitly assume temporally stable event streams. However, in VLA manipulation, event generation is tightly coupled with robot actions and inference frequency, resulting in irregular event dynamics that reduce the reliability of reconstruction-based event perception.
+
+9 Efficiency Analysis
+
+To analyze the computational overhead, we report the additional parameters and FLOPs introduced by each method compared to the image baseline.
+As shown in Table. S8, the proposed methods (Overlay and Adapter) introduce only a small computational overhead compared to enhancement and reconstruction methods.
+The simple overlay strategy directly fuses events with RGB inputs and therefore introduces no additional parameters and negligible computation.
+Our learnable adapter module is also lightweight, adding only parameters and FLOPs, which is substantially lower than several existing event-based approaches such as EvLight and E2VID.
+These results demonstrate that our methods achieve effective event utilization while maintaining favorable computational efficiency.
+
+Table S8: Additional parameters and FLOPs compared to the image baseline. E2VID is measured on a single inference with 2000 events, while other methods are measured with a input resolution. Lower is better. Abbreviations: R-Net (RetinexNet), R-former (Retinexformer).
+
+Metric
+R-Net
+R-former
+EvLight
+E2VID
+Overlay
+Adapter
+
+Params (M)
+
+FLOPs (G)
+
+10 Additional Ablations
+
+10.1 Ablations on Event Representation
+
+Table S9: Task success rates (%) for various event representation. Results are reported under different illumination levels (lux) on the Pick-Place task. Higher is better.
+
+Event Repr.
+75 lux
+40 lux
+35 lux
+30 lux
+25 lux
+20 lux
+Average
+
+Voxel grid [67]
+90
+80
+85
+80
+60
+35
+
+Time surface [29]
+95
+85
+80
+80
+75
+80
+
+Accu. Sum
+90
+85
+80
+80
+75
+65
+
+Accu. Count
+100
+100
+95
+90
+90
+90
+
+Tab. S9 compares three common event representation schemes: voxel grid [67], time surface [29], and event accumulation (polarity-aware sum and polarity-agnostic count). We observe that the count-based accumulation tends to perform better than the sum variant, likely because it produces clearer and more stable edge structures by avoiding polarity cancellation. In addition, accumulated event representations generally achieve better results than the other approaches, suggesting that frame-like representations could better leverage the pretrained knowledge in the VLM.
+
+10.2 Ablation on Training Regularization
+
+To prevent shortcuts on image cues during event adapter training, we introduce a stochastic image dropout strategy that randomly blocks image inputs with a given probability during training. As shown in Fig. S7, low dropout rates () result in limited event utilization and marginal gains under low-light conditions. Increasing the block rate to strengthens reliance on event features and improves robustness in low illumination range.
+However, an excessively high dropout rate () degrades performance under normal and slightly low lighting, which can be largely attributed to the failure to utilize bright images and distinguish colors in the Sorting task. This result suggests that aggressive dropout can hinder the retention and use of pretrained visual knowledge. We therefore adopt a dropout rate of as a practical trade-off between low-light robustness and well-lit performance.
+
+Figure S7:
+Average success rates of Pick-Place and Sorting, using event adapter method training on different image dropout rates (). Results are reported under different illumination levels (left: normal, right: low-light). Higher is better.
+
+11 Additional Visualization
+
+Figure S8: (a): Pick-Place example sequence. (b) and (c): 300ms and 1000ms motion blur scenes.
+
+As shown in Fig. S8, under low-light conditions, events provide clear edge cues that facilitate task execution. In the presence of severe motion blur, image edges become indistinct, whereas events are inherently insensitive to motion blur and can therefore offer reliable spatial guidance.
+
+12 Limitations and Potential Solutions
+
+Although E-VLA performs well in many low-light and motion-blurred scenarios, several limitations remain. First, event cameras capture intensity changes caused by brightness variation or edge motion and are therefore insensitive to semantic cues with uniform intensity, such as color. Second, the monocular wrist-mounted camera can be partially occluded by manipulated objects, which restricts the observable region. These factors lead to color misclassification in the Sorting task under low illumination and reduced precision in the Stacking task, as shown in Tab. S10.
+A detailed analysis is provided in Sec. 5.7 of the main paper.
+In addition, the current E-VLA mainly responds to motion events induced by robot manipulation, making scene perception and utilization largely passive. Finally, the generalization ability to more complex scenes remains unclear due to the scarcity and diversity of event-based training data.
+
+Table S10: Task success rates (%) on the Sorting and Stacking task. Results are reported under different illumination levels. Higher is better.
+
+75 lux
+40 lux
+35 lux
+30 lux
+25 lux
+20 lux
+
+Method
+Sorting
+Stacking
+Sorting
+Stacking
+Sorting
+Stacking
+Sorting
+Stacking
+Sorting
+Stacking
+Sorting
+Stacking
+
+Image
+
+Ours overlay
+
+Ours adapter
+
+Several potential solutions may help alleviate these issues. Prior studies suggest that specially designed demosaicing methods [40] can improve color reconstruction and provide richer chromatic information. Then, the blind spots of the wrist-mounted camera could be mitigated through improved hardware placement, such as more suitable mounting positions or mirrors near the gripper. Integrating actively modulated perception with a third-person viewpoint could further expand the observable workspace and provide richer scene representations, including depth maps or temporal-mapping images [2].
+Finally, generalization to complex environments may benefit from larger and more diverse datasets, as well as transfer learning or other adaptation strategies.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

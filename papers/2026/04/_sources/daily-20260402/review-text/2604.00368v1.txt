@@ -1,0 +1,1181 @@
+TENT: A Declarative Slice Spraying Engine for Performant and Resilient Data Movement in Disaggregated LLM Serving
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Operational Case Studies with Mooncake TE in Heterogeneous Clusters
+
+2.1 Static Binding in a Mixed-vendor Fleet
+
+2.2 Multi-rail Striping for Non-uniform Fabric
+
+2.3 Fabric Churn and Manual Recovery
+
+3 TENT Architecture
+
+3.1 Segment Representation
+
+Building Segment Metadata.
+
+3.2 Pluggable Transport Backends
+
+3.3 Execution Flow Overview
+
+4 TENT Execution Pipeline
+
+4.1 Phase 1: Dynamic Orchestration
+
+4.2 Phase 2: Telemetry-Driven Slice Spraying
+
+4.3 Phase 3: Proactive Dual-Layer Resilience
+
+4.4 Low-Overhead Datapath
+
+5 Evaluation
+
+Testbed and Baselines.
+
+5.1 Performance
+
+5.1.1 KVCache Reuse with SGLang HiCache
+
+5.1.2 Model Parameter Updates with Moonshot Checkpoint Engine
+
+5.1.3 Microbenchmarks
+
+Host-to-Host.
+
+Device-to-Device.
+
+Sensitivity to Scheduling Parameters.
+
+5.1.4 Concurrency Scaling
+
+Submission Thread.
+
+Batch Size.
+
+5.2 Portability
+
+5.3 Reliability
+
+Production Experience.
+
+Failure Injection in Testbed.
+
+6 Related Works
+
+LLM Communication Frameworks.
+
+Transport Orchestration.
+
+Transport-Level Performance Optimization.
+
+Fault Tolerance.
+
+7 Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.00368v1 [cs.DC] 01 Apr 2026
+
+TENT: A Declarative Slice Spraying Engine for Performant and Resilient Data Movement in Disaggregated LLM Serving
+
+Feng Ren, Ruoyu Qin, Teng Ma, Shangming Cai, Zheng Liu, Chao Lei, Dejiang Zhu,
+            Ke Yang, Zheming Li, Jialei Cui, Weixiao Huang, Yikai Zhao, Yineng Zhang,
+Hao Wu,             Xiang Gao, Yuhao Fu, Jinlei Jiang, Yongwei Wu, Mingxing Zhang
+
+Affiliation: Zhejiang University;
+
+Affiliation: Ant Group;
+
+Affiliation: Approaching.AI;
+
+Affiliation: Independent Researcher
+
+  
+9# AISoft; Tsinghua University; Moonshot AI; Alibaba Cloud Computing
+
+Abstract
+
+Modern GPU clusters are built upon a complex hierarchy of heterogeneous interconnects, ranging from multi-rail RDMA to proprietary fabrics such as Multi-Node NVLink and Ascend UB. Orchestrating these diverse links effectively remains a critical challenge in disaggregated LLM serving. Operating Mooncake TE on thousands of GPUs exposed a critical limitation shared by existing frameworks: imperative, statically bound path selection. This rigidity forces engines to rely on state-blind striping that ignores congestion signals, creating communication silos, wasting multi-rail bandwidth due to head-of-line blocking, and leading to operational fragility where routine faults require manual intervention.
+
+We present TENT, a data-movement engine that decouples transfer intent from physical execution. Instead of locking workloads to fixed backends, TENT unifies heterogeneous interconnects into a single dynamic resource pool. Applications simply declare transfer intents, while TENT dynamically decomposes elephant flows into fine-grained slices and “sprays” them across links based on instantaneous link quality. This telemetry-driven orchestration eliminates head-of-line blocking and enables transparent, sub-50 ms self-healing by rerouting slices around failures without application logic.
+
+TENT serves as the production data plane for LLM inference and RL pipelines at multiple industrial sites. Our evaluation on H800 HGX clusters shows that TENT outperforms state-of-the-art baselines, including Mooncake TE, NIXL, and UCCL. In LLM inference with SGLang HiCache, TENT achieves up to higher throughput and lower P90 TTFT than Mooncake TE. In RL pipelines, TENT accelerates parameter updates in Moonshot Checkpoint Engine by .
+
+††footnotetext: Corresponding author: Mingxing Zhang
+(zhang_mingxing@mail. tsinghua.edu.cn)
+
+1 Introduction
+
+Modern GPU clusters are built atop a tangle of heterogeneous interconnects: PCIe and NUMA hierarchies, multi-rail RDMA, intra-node GPU fabrics such as NVLink [22], and emerging rack-scale fabrics like Multi-Node NVLink (MNNVL) [22] and Ascend UB [9]. These links differ in bandwidth, latency, and control plane, accumulating mixed-vendor and mixed-fabric deployments. In this setting, the dominant challenge of the data plane has shifted from achieving high peak bandwidth in isolation to coordinating all available links into a single, resilient, and programmable data-movement substrate for latency-sensitive, high-volume flows. It must choose transport protocols, decide how to stripe large transfers across multiple rails, and when to orchestrate compound paths that relay data through intermediate devices, etc.
+
+This challenge is especially acute in disaggregated LLM serving, where high-volume, latency-critical “elephant flows” lie directly on the serving critical path. Typical workflows include prefill–decode disaggregation [38, 31, 27, 13, 20, 15], multi-tier KVCache accesses [16, 25], and weight updates in reinforcement-learning loops [29, 35]. In these scenarios, transferring gigabytes of tensors or model parameters between GPUs and hosts dominates end-to-end latency. Production systems therefore rely heavily on advanced point-to-point (P2P) transfer engines such as Mooncake Transfer Engine (TE) [25], NVIDIA NIXL [21], UCCL [39] and DLSlime [5].
+
+However, operating Mooncake TE across heterogeneous clusters revealed that the imperative path-selection model, while effective in homogeneous setups, lacks the flexibility required to fully exploit thousands of mixed-generation GPUs. By forcing applications to explicitly bind to specific transport backends (e.g., NVLink, GDS, or ROCm) at initialization or compilation, these systems tightly couple workloads to hardware. This rigidity precludes dynamic adaptation to heterogeneous connectivity and runtime conditions, leading to three major problems:
+
+Static binding creates communication silos. Each deployment binds to a specific transport stack at initialization, making clusters compiled with different transport backends unable to interoperate. This fragments the fleet into isolated communication domains and forces operators to maintain multiple incompatible stacks.
+
+State-blind striping wastes multi-rail bandwidth. Multi-rail setups increase peak bandwidth, yet the imperative binding model commits transfers to specific transport backends upfront, precluding runtime path selection. Consequently, existing engines default to simple round-robin striping that ignores link state and congestion signals. This causes the slowest rail to dictate end-to-end latency, wasting aggregate bandwidth and inflating tails for KVCache and checkpoint traffic.
+
+Fragile execution demands manual intervention. In production, NICs flap, links degrade, and transport stacks occasionally become unreliable. Imperative transfer engines surface these faults to applications and depend on ad-hoc fallbacks. Once diverted to a degraded path, systems rarely recover high-performance routes automatically, causing prolonged performance loss.
+
+These observations convinced us that the transfer engine must directly own path selection, multi-rail scheduling, and resilience, rather than delegating these decisions to applications or static configuration. It must treat the heterogeneous fabric as a dynamic resource pool that can be programmed declaratively based on runtime state. We present TENT, a next-generation transfer engine that we designed and deployed in response to these operational lessons. TENT makes a paradigm shift from imperative path selection to declarative slice spraying: Applications declare what data to move (segments and endpoints) via a familiar BatchTransfer-style API. TENT decides how to realize each transfer across all available interconnects, continuously adapting choices to runtime conditions.
+Concretely, TENT makes three key shifts:
+
+•
+
+From Static Binding to Dynamic Orchestration. TENT unifies heterogeneous interconnects (memory-direct, storage-direct, and proprietary fabrics) under a single segment abstraction (host memory, accelerator memory, and persistent storage). Instead of Mooncake TE’s committing to a specific transport backend at initialization, TENT performs late binding at runtime. It maintains a dynamic reachability map and routes transfers on a per-request basis, allowing it to adapt to topology changes and utilize any reachable path dynamically (e.g., transparently synthesizing a staged route via host memory when direct P2P is unavailable).
+
+•
+
+From State-Blind Striping to Telemetry-Driven Slice Spraying. To overcome the head-of-line blocking inherent in static striping, TENT decomposes elephant flows into fine-grained slices (e.g., 64 KB) and schedules them based on instantaneous link state. Rather than fixed priorities, it directs slices to rails with the lowest estimated completion time (derived from bandwidth and queued bytes). This continuous feedback loop enforces a declarative slice-level policy that maximizes multi-rail utilization, keeps tail latency low, and supports bandwidth spreading when multiple instances share the same NICs.
+
+•
+
+From Brittle Execution to Resilient Self-Healing. TENT moves error handling from the application into the data plane. It treats transport faults not as exceptions, but as routine routing events: if a slice fails (due to link flapping or timeout), the runtime automatically re-schedules it on an alternative path in sub-milliseconds. This in-band recovery masks transient hardware failures, ensuring reliable delivery without requiring application-level retries or checkpoints.
+
+TENT has been deployed as the common data-movement substrate for both inference and reinforcement-learning pipelines in large industrial environments, serving billions of tokens per day on clusters with up to thousands of GPUs.
+In a leading financial technology company, TENT has been deployed as the enterprise-wide LLM inference infrastructure. It provides explicit SLA guarantees, consistently achieving sub-second time-to-first-token (TTFT) and sub-30 ms time-per-output-token (TPOT) in production.
+At a major AI service provider, TENT handles nearly all production inference traffic, running on a thousand-GPU cluster and processing over 50 million tokens per minute at peak.
+
+Beyond internal deployment, we evaluate TENT using open-source benchmarks and standard H800 HGX nodes to facilitate reproducibility:
+
+End-to-end performance and microbenchmarks. Across two production-style workloads, TENT delivers consistent improvements.
+For LLM serving with SGLang [27], it achieves up to higher throughput and reduces P90 TTFT by up to , accelerating the retrieval of global KVCache blocks.
+For RL pipelines with Moonshot Checkpoint Engine [1], TENT accelerates model weight updates by over Mooncake TE. Host-to-host microbenchmarks on an eight-rail 200 Gbps RDMA fabric confirm that TENT’s slice-spraying policy increases throughput by and reduces P99 latency to of the baseline established by Mooncake TE, NIXL, and UCCL-P2P.
+
+Portability across fabrics and vendors. TENT runs unmodified across heterogeneous fabrics and vendor stacks (RDMA, TCP, NVLink, MNNVL, Ascend UB). Porting between environments requires only backend configuration, as backends are thin ( LOC) wrappers over transport APIs, and our evaluation shows this indirection adds negligible overhead.
+
+Reliability and self-healing. We stress TENT with injected link failures and observe that it masks faulty rails, reroutes traffic, and restores healthy paths within tens of milliseconds, without application-level retries. Across our failure benchmarks, TENT keeps throughput dips brief ( ms), turning transient fabric issues into minor performance perturbations.
+
+As a pivotal component of the Mooncake ecosystem, TENT is open-sourced at https://github.com/kvcache-ai/Mooncake. It serves as the high-performance transfer substrate for various subsystems, including Mooncake Store, Mooncake EP, and Mooncake PG, which have progressively integrated TENT to achieve superior data movement efficiency.
+
+2 Operational Case Studies with Mooncake TE in Heterogeneous Clusters
+
+Figure 1: The complex topology of heterogeneous interconnects (e.g., NVLink, PCIe, RDMA) in modern LLM servers.
+
+As Mooncake TE became the default transfer engine within our LLM serving stack, its deployment expanded to encompass thousands of GPUs spanning multiple generations, vendors, and interconnect technologies. Modern servers in this fleet integrate a complex hierarchy of fabrics: dedicated GPU-to-GPU links (e.g., NVLink [22], AMD Infinity Fabric [3], Ascend UB [14]), CPU-bypass paths (e.g., GPUDirect Storage [18]), and rack-scale fabrics (including Multi-Node NVLink (MNNVL) and multi-rail RDMA), as shown in Figure 1. These links exhibit sharp disparities in bandwidth, latency, reachability, and NUMA affinity. Furthermore, as clusters increasingly mix accelerator generations, not all memory regions are equally reachable from every fabric.
+
+Existing engines (e.g., Mooncake TE [25], NIXL [21], UCCL [39], and DLSlime [5]) were designed for relatively homogeneous environments, adhering to an imperative path-selection model where applications commit to a fixed backend stack at compilation or initialization. As hardware diversity increased, the rigidity of this model manifested as significant operational bottlenecks. This section details three representative challenges that motivated the design of TENT.
+
+2.1 Static Binding in a Mixed-vendor Fleet
+
+The first operational challenge surfaced as communication silos that fragmented the logical cluster. From an operator’s perspective, services within the same LLM stack could not seamlessly share capacity or route around unhealthy components. This fragmentation was exacerbated by the deployment of specialized fabrics available only on specific rack subsets: GPUDirect RDMA and NVLink are exclusive to NVIDIA datacenter GPUs; Multi-Node NVLink (MNNVL) is restricted to systems such as the GB200 NVL72; and HIXL is supported only on Huawei Ascend devices. Even within a single datacenter, connectivity profiles varied: MNNVL is optimized for GPU-to-GPU transfers and cannot handle host-to-host paths, while many older GPUs lack basic P2P support entirely.
+
+Mooncake TE mirrored this hardware heterogeneity in the software layer. Although Mooncake TE (and similar systems like NIXL [21], UCCL [39], or DLSlime [5]) exposes unified APIs, the concrete backend stack is typically committed at compilation or process startup. This forced us to maintain separate container images and configurations for each environment, e.g., “NVLink+RDMA”, “Ascend HIXL+RoCE”, and “legacy TCP-only”. While the cost of this design remained hidden in homogeneous clusters, it became a major bottleneck as heterogeneity increased.
+
+Once a service was statically bound to a backend, its transfers could not opportunistically combine or switch fabrics, even when different segments of a flow would benefit from different links. For instance, optimally serving a request might require using RDMA for host-to-GPU segments while simultaneously exploiting MNNVL for GPU-to-GPU hops. Under the static model, achieving this required manual staging and complex logic, rather than emerging naturally from the engine’s path selection. The same rigidity prevented the runtime from reclaiming capacity on newly provisioned fabrics or transparently steering around temporarily degraded ones.
+
+Operationally, this resulted in backend-specific runbooks, deployment pipelines, and dashboards, forcing operators to reason about capacity and resilience per isolated island rather than at the scale of the entire fleet. The core symptom that services failed to fully exploit available interconnects or adapt to hardware changes, was a direct consequence of treating backend selection as a static initialization decision. TENT addresses this by shifting path selection to a runtime orchestration layer, maintaining a global topology view to decouple workload binaries from the exact hardware configuration beneath them.
+
+2.2 Multi-rail Striping for Non-uniform Fabric
+
+Figure 2: Per-rail average latency. TENT eliminates the HoL blocking spikes observed in Round-Robin (RR).
+
+The second operational challenge concerns the tail latency of large, critical-path transfers. As LLM serving has evolved from small, monolithic deployments to large-scale, disaggregated production systems, workloads are increasingly dominated by elephant flows that directly impact user experience. For instance, prefilling a single 1024-token prompt with the DeepSeek-R1 model generates 1.668 GB of KVCache tensors, and retrieving remote KVCaches routinely involves moving hundreds of megabytes per request. In principle, multi-rail server configurations should accelerate these flows linearly; in practice, operational telemetry revealed aggregate throughput well below the sum of per-rail capacities, along with skewed NIC utilization and sharp tail latency spikes during checkpointing and cache retrieval.
+
+These symptoms stem directly from the state-blind striping policies employed by existing engines. Both Mooncake TE and UCX attempt to exploit multi-rail bandwidth by decomposing large transfers into slices. However, their distribution logic ignores instantaneous link health: UCX relies on static heuristics and coarse-grained segmentation, while Mooncake TE distributes fixed-size 64 KB chunks using round-robin or hashing based solely on static NUMA priorities.
+
+In production, however, rail performance is highly non-uniform and time-varying. Some rails are physically distant from submission threads (cross-NUMA); others contend with noisy neighbors or suffer from transient signal degradation that reduces effective bandwidth without triggering hard failures. When slices of an elephant flow are assigned to such a degraded rail, they become stragglers, forcing the entire transfer to stall. This manifests as classic Head-of-Line (HoL) blocking: end-to-end latency is constrained by the slowest path rather than defined by the aggregate fabric bandwidth.
+
+We reproduced this behavior experimentally on an eight-rail 200 Gbps RDMA fabric. We issued read requests that split into 1 MB slices, from four submission threads capable of posting to any NIC. We compared a baseline round-robin dispatcher against the telemetry-driven scheduler adopted by TENT (§4.2). Under round-robin, rails attached to remote NUMA domains exhibited significantly higher per-slice service times; the resulting queue buildup on those specific rails inflated P99 latency for the entire request, as shown in Figure 2. In contrast, when the scheduler utilized live telemetry (queued bytes and completion latency) to steer slices away from backlogged rails, throughput increased, tail latency dropped, and progress remained balanced across the fabric.
+
+Thus, on the same heterogeneous fabric that exposed static binding issues, state-blind striping turned physical non-uniformity into performance cliffs. TENT addresses this by treating all rails as a unified resource pool, decomposing transfers into fine-grained slices, and scheduling each slice dynamically based on a telemetry-aware cost model.
+
+2.3 Fabric Churn and Manual Recovery
+
+Table 1: Datacenter failure breakdown. T: transient; R: fast-recoverable; H: hard failures.
+
+Failure Event
+Class
+%
+
+GPU: ECC Errors
+H
+40.2
+
+GPU: Device Dropout
+T/R
+24.2
+
+GPU: XID Errors
+T/R
+3.2
+
+GPU: Device Enumeration Failures
+R
+2.4
+
+GPU: Over-Temperature Events
+R
+2.5
+
+Node: Crashes
+R/H
+7.9
+
+Node: Motherboard / PCIe / BMC Failures
+H
+3.9
+
+Network: Cable Fault
+T/R
+3.8
+
+Network: Frequent Link Down Events
+T
+1.6
+
+Network: NIC Hardware Failures
+H
+1.0
+
+Others
+—
+9.3
+
+The third class of issues arose not from steady-state performance but from ordinary hardware churn in large datacenters. Even in well-maintained clusters, components fail and recover continuously. In one representative deployment at a leading fintech company, we observed on average 382 failure events per month with a mean repair time of 160.21 minutes (Table 1). A clear pattern emerged: GPU-side disturbances dominated the failure surface, with soft errors, thermal excursions, and intermittent device dropouts frequently cascading into communication disruptions.
+
+At the level of the transfer engine, these faults rarely present as a clean node down. Instead, they appear as abrupt changes in path availability or quality. A flapping NIC intermittently stops accepting work requests and changes to a degraded state. A faulty cable or congested switch port causes timeouts and long latencies on some rails while others remain healthy. For operators, such partial failures are routine; for an engine that has already committed requests to fixed paths and does not track health continuously, they become fatal exceptions.
+
+Mooncake TE, NCCL, and NIXL with UCX all rely primarily on control-plane mechanisms to handle such events. NCCL typically halts collectives when it encounters a transport error and expects the upper layer to tear down and rebuild the communicator. UCX reports endpoint failures via callbacks and requires user-space code to drive reconnection and path reselection. Mooncake TE permits manual rail selection but does not provide automatic cross-transport failover. In Mooncake TE’s design, a transfer bound to a particular backend and path failed if that path became unusable, and recovery was delegated to orchestration systems and on-call operators; the data plane could neither reroute in-flight slices around a degraded path nor reintegrate a repaired rail automatically.
+
+In practice, many of the faults in Table 1 were transient or short-lived, yet the control-plane recovery cycle often took minutes. During this window, much of the healthy fabric sat underutilized and latency SLOs for inference were frequently violated. Worse, when hardware recovered quickly, services often remained in a degraded configuration: jobs that had fallen back from a fast GPU–GPU fabric to a slower host-mediated path tended to stay there until an operator forced a restart or reconfiguration, because nothing in the data plane actively probed and exploited the restored fabric.
+
+This failure-handling model proved inadequate for disaggregated LLM serving. Small, localized glitches could stall critical paths or silently depress capacity long after the underlying problems had been repaired. Together with the first two case studies, this completes the picture: static binding fragmented the fabric, state-blind striping squandered multi-rail potential, and control-plane-only recovery turned routine churn into major operational events. TENT is designed to invert these assumptions by embedding health monitoring, per-slice failover, and backend substitution directly into the data plane, so that the engine itself absorbs many of these disturbances without requiring manual intervention.
+
+3 TENT Architecture
+
+Mooncake TE exposes a batch transfer interface in which applications register local buffers, allocate batch identifiers, submit groups of transfers, and later query batch completion. Large KVCache blocks are sliced and sent over RDMA, typically across multiple NICs, using topology-aware policies that achieve high throughput and low cross-node latency in relatively homogeneous RDMA clusters.
+
+As discussed in §2, large-scale LLM serving increasingly spans heterogeneous memory tiers and interconnects, making TE’s static-binding assumptions insufficient for modern deployments.
+TENT addresses these challenges by re-architecting the transfer engine around two core abstractions: pluggable transport backends that unify heterogeneous transport mechanisms, and segments that normalize data location and representation. Built on top of these abstractions, TENT applies a suite of runtime scheduling and resilience mechanisms that dynamically adapt data movement to changing hardware capabilities and system conditions.
+
+Figure 3 provides an overview of TENT’s architecture. At a high level, applications describe what data should be moved through a declarative, batch-oriented API, while TENT decides how to realize each transfer over the available fabric.
+Building on this structure, TENT organizes data movement around two core abstractions: segments (§3.1), which provide a unified way to refer to data, and pluggable transports (§3.2), which integrate diverse interconnects under a common execution interface. These components are composed by a runtime orchestrator, whose execution workflow we outline in (§3.3).
+
+Figure 3: TENT’s architecture and execution pipeline.
+
+3.1 Segment Representation
+
+In heterogeneous clusters, both data placement and access mechanisms vary across devices and platforms. Without a unified abstraction, applications must reason explicitly about where data resides and which transport to use, leading to rigid coupling and communication silos. TENT eliminates this complexity by introducing the segment abstraction (Figure 4).
+
+A segment represents a logical data region mapped to one or more contiguous buffers, independent of the underlying storage or memory medium. Segments unify data residing in host DRAMs, GPU HBMs, SSDs, and NVMe-oF targets into a single, transport-agnostic namespace. Applications interact exclusively with segment identifiers, offsets, and lengths, without exposing transport- or device-specific details.
+
+When submitting transfer requests, an application specifies a batched transfer between source and destination segments. Crucially, these requests encode only logical intent—move data from segment to segment —and contain no transport bindings. This strict separation decouples application logic from hardware capabilities, allowing TENT to defer all placement and routing decisions to runtime and to expose a unified completion model across heterogeneous transports, simplifying application-side control flow.
+
+Internally, each segment encapsulates device-specific metadata, such as RDMA keys or GPU memory handles, within a normalized structure. These details are opaque to the core engine and accessed only by the appropriate backend, ensuring that new storage or memory technologies can be integrated without modifying scheduling logic or application interfaces.
+
+Figure 4: Logical and metadata view of a memory segment.
+
+Building Segment Metadata.
+
+At initialization, TENT performs automated topology discovery, enumerating NICs, GPUs, storage devices, and their interconnects. These links are then classified into protocol-independent affinity tiers (Figure 4): tier-1 for optimal paths such as NVLink or GPUDirect RDMA, tier-2 for cross-root connections, and tier-3 for NUMA-crossing fallbacks. The resulting tiered topology graph, incorporated into each segment’s metadata, serves as the global ground truth for routing.
+
+Using this topology from metadata, TENT derives the transport capabilities of each segment and records them in its metadata, enabling the orchestrator to determine feasibility and affinity without examining device-specific details. Throughout a segment’s lifecycle, the segment manager maintains this metadata and retrieves remote metadata on demand, ensuring that the orchestrator always has an up-to-date view of where data resides and which transports remain available.
+
+3.2 Pluggable Transport Backends
+
+To accommodate diverse interconnects, TENT defines a uniform transport backend interface that abstracts physical data movement. Each fabric (for example RDMA, NVLink, MNNVL, Ascend HIXL, TCP, shared memory, or file backed I/O) is implemented as a backend conforming to this interface and loaded dynamically at runtime.
+
+In contrast to Mooncake TE, where each transport maintained its own segment metadata format and therefore constrained an instance to a single transport, TENT generalizes metadata representation while maintaining transport-specific fields (Figure 4). This design isolates transport specific mechanisms from the core engine and allows new fabrics to be integrated simply by implementing the backend interface and declaring their capabilities (such as peer accessibility, device locality, or supported transfer directions). Once registered, backends are incorporated uniformly into TENT’s scheduling and resilience logic without any changes to higher layers.
+
+Most backends are intentionally lightweight. They typically encapsulate only the minimal initialization steps and a small number of data movement primitives. This modularity enables rapid support for emerging interconnects and vendor specific fabrics while maintaining a unified execution framework.
+
+3.3 Execution Flow Overview
+
+We next summarize how TENT’s architectural components interact during the execution of a transfer request, as illustrated in Figure 3.
+
+Initialization.
+Before any transfer occurs, TENT discovers the hardware topology and loads all available transport backends. During memory registration, the engine constructs segment metadata using the discovered topology (§3.1) and stores it for later use by both the orchestrator and the backends. These steps populate the global state on which subsequent execution depends.
+
+Control Flow.
+The control flow governs what actions should execute and when, while leaving all data movement to the data plane. It begins when an application submits a batched transfer specifying logical source and destination segments, offsets, and lengths. The request contains only intent and binds to no specific transport. The core engine forwards this request to the runtime orchestrator, which serves as the control plane. Guided by global topology and backend capabilities, the orchestrator resolves the request into an execution plan that enumerates feasible paths through the heterogeneous fabric. Large transfers are divided into slices, forming the units of scheduling and isolation. Multiple candidate routes and backends are retained so that binding can be deferred and chosen dynamically.
+
+Data Flow.
+The data flow performs the actual movement of bytes and never makes routing or scheduling decisions. Once the orchestrator dispatches a slice, a pluggable transport backend executes it using a uniform slice-execution interface, transferring data along the selected path. Backends report completions and telemetry to the orchestrator, which applies uniform scheduling and resilience policies across all transports. Because all backends conform to the same interface, the orchestrator can treat heterogeneous interconnects as interchangeable execution resources.
+
+Failure Handling.
+The failure-handling loop captures how TENT reacts to errors during execution. If a backend reports a failure or degradation, the orchestrator retries or redirects the affected slice using the remaining candidates from the execution plan. A batched transfer completes once all slices finish, at which point the engine emits a single completion event to the application. These adaptations occur transparently and do not change the API exposed to upper-layer serving and reinforcement-learning pipelines.
+
+4 TENT Execution Pipeline
+
+Based on the above design, TENT proposes the execution pipeline with three phases: dynamic orchestration (§4.1) chooses paths at request time, telemetry-driven slice spraying (§4.2) distributes large transfers across healthy rails, and dual-layer resilience (§4.3) mitigates link and backend failures. We also outline datapath optimizations that make these mechanisms practical at scale (§4.4).
+
+4.1 Phase 1: Dynamic Orchestration
+
+The first phase of TENT’s execution pipeline is dynamic orchestration. Unlike Mooncake TE, which statically binds buffers to fixed backends (§2.1), TENT determines the transport for each submitTransfer at request time.
+
+Given the source and destination segment metadata, the orchestrator enumerates all reachable NICs and device fabrics (§3.1) and constructs the set of feasible transport options. It then intersects the capabilities of both endpoints and applies a tier-aware policy to select the highest-performance direct path available. When a fast fabric is present (such as NVLink for intra-node GPU-to-GPU transfers or tier-1 RDMA for GPUDirect), TENT binds the request to that backend, avoiding the communication silos created by static binding.
+
+When no direct GPU-direct path spans the endpoints (for example, on consumer GPUs without GPUDirect or deployments where inter-GPU links are limited to MNNVL), TENT synthesizes a staged multi-hop route. For GPU-to-GPU transfers on such platforms, the logical operation is decomposed into device-to-host (D2H), host-to-host (H2H) over RDMA or TCP, and host-to-device (H2D) sub-transfers. These stages execute in a pipelined fashion: the transfer is chunked, and D2H, H2H, and H2D overlap so that PCIe copies and network transmission proceed concurrently, largely masking the latency of intermediate staging.
+
+The output of this phase is a transport plan that records the selected route together with a ranked set of alternatives, each annotated with tier information and supported transports. Subsequent phases consult this plan to steer slices away from congested or failing rails and to substitute backends transparently, without requiring applications to modify configuration or resubmit requests.
+
+4.2 Phase 2: Telemetry-Driven Slice Spraying
+
+The second phase tackles the state-blind striping problem (§2.2). Given the transport plan produced by the previous phase, TENT decomposes large transfers into fine-grained slices and schedules each slice across the feasible NICs and device fabrics. Rather than hashing or round-robin placement, TENT schedules each slice to the rail expected to complete it fastest based on live telemetry.
+
+Slice Decomposition.
+For elephant flows, the payload is split into slices with a configurable minimum size (64 KB by default). The granularity is small enough that no single slice holds a rail for long, which helps reduce head-of-line blocking, yet large enough to amortize the enqueue and completion costs. For extremely large requests, we also cap the total number of slices to bound control-plane overhead. Each slice is issued as an independent work request that writes directly to its final destination offset, so slices from the same transfer may complete in any order without requiring CPU-side reordering.
+
+Algorithm 1 Telemetry-Driven Slice Scheduling
+
+1:
+
+request length , source location
+
+2:
+
+chosen device
+
+3:
+
+candidate devices reachable from according to topology
+
+4:
+
+if is empty then return Error(NoEligibleDevice)
+
+5:
+
+6:
+
+for each device do
+
+7:
+
+  
+
+Get queue length , bandwidth , and model
+
+8:
+
+  
+
+9:
+
+  
+
+ Apply topology penalty
+
+10:
+
+  
+
+11:
+
+ Tolerance window
+
+12:
+
+Choose from via Round-Robin
+
+13:
+
+Update local queue:
+
+14:
+
+return
+
+Scheduling.
+TENT uses a predictive cost model to estimate the completion time of a slice on any given device, as described in Algorithm 1.
+For a candidate device , we estimate the completion time for a slice of length using a linear model:
+
+(1)
+
+where is the link bandwidth and is the effective queue length (bytes in flight).
+The coefficients ( and ) act as dynamic correction factors that absorb effects such as incast at the receiver or congestion inside switches.
+
+To reflect the topology asymmetry discovered in Phase 1, TENT applies a topology penalty to device , where and for tiers 1–3.
+
+(2)
+
+This scoring function creates a soft priority: tier-1 NICs are preferred when idle, but if they become saturated (high ), their score will eventually exceed that of an idle tier-2 NIC. This triggers an automatic, load-aware spillover, utilizing the aggregate bandwidth of the entire cluster without trapping traffic on slow paths.
+TENT selects the NIC with the minimal score among all topology-reachable candidates. To avoid overusing a single NIC, we introduce a tolerance window (0.05 by default).
+
+In multi-tenant environments, TENT can optionally enable a global load diffusion mechanism in which processes publish their per-NIC queue depths to shared memory and jointly compute a global load factor . The scheduler then blends with this global factor, controlled by a weight , which is disabled by default but can be activated when cross-process balancing is desired.
+
+Once the local NIC is selected, TENT maps it to a remote endpoint. To minimize switch hops and latency, the orchestrator employs a topology-aligned mapping strategy. By default, it enforces a 1:1 mapping that preserves NUMA and GPU affinity: pairing the chosen local NIC with a remote NIC that shares the same PCIe root complex or NUMA node as the destination buffer.
+Crucially, this mapping is dynamic: unlike static configurations, if the primary affinity-matched remote endpoint becomes unreachable (e.g., due to link failure), the orchestrator automatically falls back to alternative remote NICs reachable via the fabric. This ensures that the logical transfer continues even if the optimal physical path is severed, maintaining the fluid resource pool abstraction.
+
+Feedback.
+Upon slice completion, TENT calculates the prediction error () and updates via an EWMA (Exponential Weighted Moving Average) filter. This allows the model to adapt to persistent fabric changes (e.g., a link degrading from 200 Gbps to 50 Gbps) while remaining robust to transient jitter. To prevent starvation, where a temporarily slow rail would otherwise retain an inflated cost indefinitely, TENT also implements a periodic state reset mechanism. At configurable intervals (e.g., every 30 s), the scheduler resets the learned parameters and accumulated penalties. This guarantees that previously degraded paths are periodically reintegrated into the resource pool once their performance recovers.
+
+4.3 Phase 3: Proactive Dual-Layer Resilience
+
+The third phase focuses on resilience under fabric churn (§2.3). Instead of treating failures as rare, control-plane events that require manual intervention, TENT embeds fault detection and recovery directly into the data plane and operates at two layers: individual links (rails) and whole transport backends.
+
+At the link level, TENT monitors both implicit and explicit signals. The telemetry loop from Phase 2 naturally detects struggling rails as their predicted completion times grow relative to peers; in addition, backends surface explicit errors such as RDMA completion failures, timeouts, or GPU-side events. When a rail crosses a degradation threshold, the scheduler applies soft exclusion by effectively setting its cost to infinity and removing it from the candidate set, without invoking heavyweight reconfiguration. A background prober periodically sends lightweight heartbeat slices to excluded rails; once a rail proves responsive and stable, its cost is reset and it is gradually re-admitted into the scheduling pool.
+
+Failures manifested as slice timeouts or hard errors are handled through idempotent per-slice re-execution. TENT writes each slice to an absolute destination offset, so retrying a slice is safe even if a previous attempt partially succeeded (for instance, data was written but the completion notification was lost). When a slice fails, the orchestrator retries it on an alternative local–remote NIC pair drawn from the topology graph, prioritizing reliability over latency. Although these retries bypass the predictive cost model, their resource consumption is still included in the global queue statistics used by Phase 2, so recovery traffic does not starve unrelated flows.
+
+At the transport level, entire backends may become unusable, e.g., when a driver bug invalidates all NVLink paths on a node. Because Phase 1 already computed a candidate execution plan with multiple transports, TENT can perform backend substitution: when a backend reports a fatal error, the orchestrator promotes the next-best transport (e.g., falling back from NVLink to RDMA or TCP) for subsequent slices of the affected transfers. This transition happens entirely inside the runtime and requires no exception handling or reconfiguration at the application level. From the caller’s perspective, the transfer continues to completion with, at worst, a temporary performance dip.
+
+4.4 Low-Overhead Datapath
+
+These phases are only useful if the engine’s own overhead is negligible compared with the data it moves.
+TENT implements a low-overhead datapath that keeps CPU usage minimal while sustaining high concurrency across large numbers of slices.
+
+When an application thread calls allocateBatch, the orchestrator allocates a lightweight control block for the batch. Subsequent submitTransfer calls invoke the orchestration logic to select the transport and, when needed (e.g., RDMA), divide each logical transfer into slices. These slice descriptors are pushed into lock-free multi-producer, single-consumer ring buffers shared with worker threads, allowing application threads to return immediately without blocking on hardware availability.
+
+Pinned worker threads asynchronously dequeue slices and issue them to the underlying transport. To reduce submission overhead, each worker opportunistically batches multiple slices into a linked list of work requests and posts them with a single transport call (such as a single ibv_post_send for many RDMA writes). Each worker owns its own queue pair or transport context, eliminating doorbell contention and stabilizing high-throughput submission. On the wire, TENT relies on one-sided operations that place data directly into the destination buffer at the slice’s absolute offset, enabling fully zero-copy, CPU-bypass reception even when slices arrive out of order.
+
+To efficiently track large numbers of outstanding slices, TENT uses hierarchical atomic counters. Worker threads poll completion queues in batches and, for each completed slice, atomically decrement a small counter in the corresponding batch’s control block. Applications observe only these coarse-grained counters (e.g., batch has remaining slices) rather than tracking per-slice state. This keeps the completion path simple, cache-efficient, and non-blocking, ensuring that the datapath remains light enough to support TENT’s higher-level orchestration, scheduling, and resilience mechanisms without becoming the bottleneck itself.
+
+5 Evaluation
+
+We examine whether TENT delivers its goals: improving the performance of latency-critical LLM workloads, remaining portable across heterogeneous fabrics/vendor stacks, and providing practical resilience under realistic failures.
+
+Testbed and Baselines.
+
+All experiments run on GPU clusters configured to mirror current large-scale LLM serving deployments. Our primary testbed consists of nodes with eight NVIDIA H800 GPUs (80 GB HBM each), eight 200 Gbps RoCE NICs, and dual-socket Intel Xeon Platinum 8468V CPUs. Within a node, GPUs are connected by NVLink, while NICs attach via a hierarchical PCIe topology spanning NUMA domains. This combination of NVLink, PCIe, and multi-rail RDMA yields exactly the heterogeneous fabric that TENT is designed to orchestrate. For portability experiments, we additionally evaluate TENT on MNNVL clusters, Ascend clusters with UB/HIXL fabrics, and hosts with high-performance NVMe SSDs accessed via io_uring.
+
+Unless otherwise noted, we compare TENT against three P2P engines: Mooncake Transfer Engine (TE) [25], our production predecessor; NIXL [21], NVIDIA’s UCX-based cross-NIC transfer framework; and UCCL-P2P [39], the P2P backend in the UCCL communication framework. All engines run on the same hardware and RDMA configuration. Mooncake TE and UCCL-P2P are configured with their recommended multi-rail setups (uniform striping or per-region NIC pinning), while NIXL uses its default UCX policy, which selects a small set of best
+NICs based on static transport properties.
+
+5.1 Performance
+
+We first evaluate whether TENT improves real workloads that place elephant flows on the serving critical path, then drill down into microbenchmarks to isolate the contributions of slice-level scheduling and multi-rail orchestration.
+
+5.1.1 KVCache Reuse with SGLang HiCache
+
+To quantify the impact of TENT on user-visible latency and throughput for KVCache intensive LLM serving, we integrate TENT as a new backend for SGLang HiCache [27]. HiCache extends RadixAttention into a multi-tier KV hierarchy spanning GPU, CPU, and external storage. Following SGLang’s multi-turn conversation benchmark, we stress KV reuse under long-context, interactive workloads using Qwen3-235B-A22B-Instruct-2507 [34] on an H800 node with tensor parallelism 8 (TP=8). We emulate 60 clients with concurrency 4, each issuing requests with 2048 input tokens and 10 conversational turns.
+
+We study three configurations: a baseline with no HiCache (KVCache restricted to GPU memory), HiCache with Mooncake TE, and HiCache with TENT. Both HiCache variants use a 600 GB KVCache budget and identical cache policies; only the transfer engine differs. We report input-token throughput, average and P90 time-to-first-token (TTFT), and round-specific average TTFT for rounds 1, 5, and 10.
+
+Table 2 summarizes the results. Relative to the baseline without HiCache, TENT improves input-token throughput by and reduces P90 TTFT by . The round-specific TTFTs show that benefits grow with conversation length: by round 10, a large fraction of each prompt can be served from the KVCache, and TENT keeps average TTFT at s compared to s without HiCache. More importantly, TENT also improves substantially over Mooncake TE: throughput increases by , while P90 TTFT decreases by . These differences arise solely from the transport layer, as the caching and model configurations are identical.
+
+The key behavioral change is that TENT treats NVLink as a first-class transport and uses it whenever a direct GPU-to-GPU path exists, resorting to RDMA only when traffic must cross nodes. Mooncake TE, in contrast, always routes GPU-to-GPU transfers through RDMA and uniformly stripes large transfers across NICs without considering topology or instantaneous rail health. TENT’s slice spraying converts NVLink into the preferred path for intra-node KV flows while still aggregating multi-rail RDMA bandwidth for inter-node traffic. The resulting fabric-aware data movement translates directly into lower TTFT and higher throughput for KVCache reusing workloads.
+
+Table 2: Multi-turn conversation benchmark of SGLang Hi-Cache using TENT and Mooncake TE.
+
+Metric
+
+Baseline
+
+Mooncake TE
+
+TENT
+
+Input Throughput (tok/s)
+
+20,757
+
+58,006
+
+78,759
+
+Average TTFT (s)
+
+2.12
+
+0.72
+
+0.53
+
+P90 TTFT (s)
+
+4.02
+
+0.90
+
+0.67
+
+R1 Avg TTFT (s)
+
+0.38
+
+0.45
+
+0.43
+
+R5 Avg TTFT (s)
+
+1.89
+
+0.68
+
+0.52
+
+R10 Avg TTFT (s)
+
+4.09
+
+0.97
+
+0.66
+
+5.1.2 Model Parameter Updates with Moonshot Checkpoint Engine
+
+We next evaluate TENT in the context of frequent model weight updates, as found in RL pipelines, where refresh windows must be short enough not to stall sample rollouts. To this end, we use Moonshot Checkpoint Engine [1, 29], a middleware for in-place model weight updates that supports both cluster-wide broadcast via NCCL and fine-grained P2P weight transfers through a pluggable backend (Mooncake TE or TENT). We run Checkpoint Engine v0.2.0 on an H800 testbed with TP=8 and FP16 weights, configuring the system so that all ranks participate in data transfer during each update.
+
+We compare Mooncake TE and TENT as backends while keeping the checkpoint format, sharding, and update schedule fixed. For each model, we measure the end-to-end checkpoint apply time: the interval between initiating the update and all ranks installing the new weights. Table 3 shows that TENT reduces the update time by and for Qwen3-235B-A22B-Instruct-2507 and GLM-4.5-Air [36] models respectively. Moonshot Checkpoint Engine v0.2.0 already enables all ranks to participate in transfer, so these improvements arise from TENT’s ability to combine intra-node NVLink, inter-node RDMA, and staged routes when necessary, and from its telemetry-driven scheduler that allocates slices across rails to increase effective bandwidth and reduce per-slice latency.
+
+To evaluate scalability, we integrate the Moonshot Checkpoint Engine with TENT and deploy it on a H20 (TP=16) semi-production cluster.
+Across two representative trillion-parameter models, DeepSeek-V3.1 [15] and Kimi-K2-Instruct [29], TENT can reliably refresh model weights across hundreds of GPUs within only tens of seconds, thereby enabling frequent and low-disruption weight updates without requiring any pause in inference.
+
+Table 3: Parameter update time (s) with Moonshot Checkpoint Engine on an H800 (TP8) FP16 testbed.
+
+Model
+Mooncake TE
+TENT
+
+Qwen3-235B-A22B-Instruct-2507
+12.87
+10.34
+
+GLM-4.5-Air
+7.17
+5.30
+
+Figure 5: Host-to-host read/write throughput and P99 latency between two nodes, with memory allocated per socket and transfers issued by per-socket threads.
+
+Figure 6: Write throughput and P99 latency for point-to-point transfers between two GPUs on different nodes.
+
+5.1.3 Microbenchmarks
+
+The end-to-end experiments combine model execution, framework overheads, and data movement. To isolate the data plane and quantify how much of the observed improvements stem from TENT’s scheduling and multi-rail orchestration, we use TEBench, a microbenchmark inspired by NIXLBench [21]. TEBench issues repeated synchronous transfer requests from multiple threads, with configurable block size, batch size, and number of submission threads. For UCCL-P2P, we use its native benchmarking scripts [39] to avoid measurement bias.
+
+Host-to-Host.
+
+We first examine host-to-host transfers between two H800 nodes connected by eight 200 Gbps RoCE NICs. For each CPU socket, we allocate pinned host memory and assign one submission thread, with batch size 1 and block sizes from 4 KB to 64 MB. NIXL and UCCL-P2P follow their default rail-selection logic under this workload.
+
+As shown in Figure 5, Mooncake TE and TENT make full use of all available rails, but TENT delivers up to higher read throughput, higher write throughput, and up to lower P99 latency. For block sizes MB, TENT consistently outperforms NIXL and UCCL-P2P as well. The gap stems from how each engine schedules slices across rails.
+
+UCCL-P2P binds each registered memory region (host or GPU) to a single NIC and performs no cross-NIC aggregation, capping throughput at per-NIC limits. NIXL leverages UCX’s multi-rail but typically selects only a small subset of best NICs (two by default) and stripes large transfers across them based on static bandwidth rankings. Both NIXL and Mooncake TE lack visibility into instantaneous queue depth; when any rail becomes briefly overloaded, that slow rail dominates P99 latency and constrains peak throughput.
+
+TENT avoids these issues by continuously tracking each rail’s queue depth and completion behavior, revealing short-lived congestion and asymmetry that static policies miss. It assigns slices according to observed service time, so large flows are redirected away from slowing rails before queues build up. This keeps all rails busy without creating new bottlenecks. The host-to-host microbenchmarks directly reflect this behavior: steering around momentarily slow rails raises sustained aggregate bandwidth, and shedding transient hotspots produces the P99 gains.
+
+Device-to-Device.
+
+We next ask whether these benefits carry over to GPU-originated flows, where PCIe and NUMA topology introduce strong asymmetries across rails. Each H800 GPU in our testbed has one tier-1 NIC with the closest PCIe/NVLink affinity, and three tier-2 NICs on the same NUMA node. We benchmark one-to-one GPU writes across nodes using block sizes typical of KVCache movement and measure throughput and P99 latency. As shown in Figure 6, TENT improves throughput by over Mooncake TE and reduces P99 latency to of its value, especially for large blocks.
+
+The key reason is how engines react when the block size grows. UCCL-P2P and Mooncake TE fix GPU–NIC mappings and therefore send all GPU traffic through the tier-1 NIC; once the block is large enough, the service time of this single NIC dictates both throughput and latency. TENT, in contrast, evaluates the predicted service time on all NICs and uses topology-dependent penalties to decide when additional rails will shorten completion time. For small blocks, the tier-1 NIC remains dominant; for large blocks, the tier-1 NIC becomes saturated, and TENT begins recruiting tier-2 NICs because the parallel bandwidth outweighs their access penalties.
+
+Per-NIC byte counters confirm this behavior: roughly half of the data is sent on the tier-1 NIC, with the remainder spread across tier-2 NICs. This is neither single-rail execution nor naive striping. Instead, TENT selectively adds rails only when doing so reduces the total service time, which matches the communication characteristics of KVCache and model-update transfers and explains the sharp throughput gains at larger block sizes.
+
+Sensitivity to Scheduling Parameters.
+
+TENT relies on topology-encoded penalties in its scheduler, but it should not require fine-tuning for each deployment. To evaluate sensitivity, we use the same GPU-to-GPU setup as in Figure 6, vary the NUMA-tier penalty in Algorithm 1, and measure P99 read latency across block sizes while keeping all other parameters fixed. Figure 9 shows P99 latency as a function of block size for different values of .
+As block size increases, the impact of becomes more pronounced. When is too large, tier 2 NICs are almost never chosen, and TENT effectively degenerates into a single-rail engine (e.g., Mooncake TE) whose bandwidth matches that of the best NIC. When is too small, TENT overuses tier 2 NICs, increasing end-to-end latency because those rails are more expensive to reach. The best overall performance is obtained around , which we adopt as the default. Crucially, even when is mis-set, the performance degradation is modest: the feedback loop that adjusts estimated completion times based on observed latency steadily pushes the scheduler back toward faster rails. TENT thus benefits from reasonable topology parameters but does not require per-cluster hand-tuning.
+
+5.1.4 Concurrency Scaling
+
+We study how TENT behaves under increasing request-level parallelism, as in multi-tenant serving nodes, by varying the number of submission threads and batch sizes.
+
+Submission Thread.
+
+Figure 7: GPU-to-GPU read performance measured with varied submission threads, with block size 4 MB.
+
+We scale submission threads from 1 to 64 and measure GPU-to-GPU read bandwidth using 4 MB blocks, with each thread bound to a local GPU (Figure 7). When all eight GPUs issue transfers, TENT sustains 144 GB/s—over Mooncake TE and about of hardware peak. Notably, TENT saturates bandwidth with only 16 threads and maintains a wide margin over NIXL even as concurrency grows. This efficiency stems from two properties: TENT actively steers slices away from congested rails, preventing the hot-rail stalls that constrain Mooncake TE, and it achieves high throughput with few backend workers, minimizing submission and polling contention. As a result, TENT reaches peak bandwidth without requiring large thread counts, making it significantly more robust and friendly to elephant flows.
+
+Batch Size.
+
+Figure 8: GPU-to-GPU P99 latency under different values (Fig. 6 setup).
+
+Figure 9: Host-to-host write throughput with 1 thread (4 NICs) and varied batch size.
+
+We also fix a single submission thread and vary batch size from 1 to 128 while holding block size at 4 MB and placing both source and destination buffers in host memory on NUMA node 0 (Figure 9). With four local NICs, the ideal aggregate bandwidth is Gbps if cross-socket traffic is avoided. In this configuration, NIXL uses only a single NIC because 4 MB blocks are too small to trigger its multi-rail mechanism. TENT, however, approaches the hardware limit as batch size grows, providing between 1.16× and 2.72× higher bandwidth than Mooncake TE and reducing P90 latency by an average of 27.06%. Mooncake TE’s randomized selection among tier-1 NICs ignores instantaneous load, so performance is often dictated by the slowest rail, especially at low thread counts—a pathology we have also seen in production. TENT explicitly accounts for queued bytes and recent completion times, thereby avoiding this “slowest rail dominates” behavior.
+
+Overall, these microbenchmarks show that TENT exploits multi-rail fabrics more effectively than existing engines across a wide range of block sizes and concurrency levels, and they explain the end-to-end improvements observed in LLM serving and checkpoint update workloads.
+
+5.2 Portability
+
+Table 4: Peak and theoretical read bandwidth across different transfer modes. indicates peak bandwidth measured by native benchmarks.
+
+Transport
+
+Measured
+
+BW (GB/s)
+
+Theoretical
+
+BW (GB/s)
+
+RDMA: GPUGPU
+44.9
+25.0 / rail
+
+RDMA: GPUHost (Staged)
+14.1
+–
+
+RDMA: GPUGPU (Staged)
+6.6
+–
+
+NVLink: GPUGPU
+172.0
+204.5
+
+io_uring: GPUFile
+6.0
+6.0†
+
+MNNVL: GPUGPU
+781.8
+956.2
+
+Ascend: GPUGPU
+135.0
+196.0
+
+A central design goal of TENT is to expose a unified declarative interface across heterogeneous fabrics and vendor stacks while incurring negligible overhead. We therefore measure peak bandwidth on a variety of transports and ask how close TENT comes to the theoretical limits and native APIs.
+
+Table 4 reports peak read bandwidth for several representative modes: GPU-to-GPU over RDMA (with and without staging), GPU-to-GPU over NVLink, MNNVL, Ascend HIXL, and GPU-to-file via io_uring. TENT implements them as thin backends over vendor APIs; the core engine comprises 31,138 lines of code shared across different backends, and each backend’s implementation is under 800 LOC.
+
+Across all fabrics, TENT tracks native performance closely. For NVLink GPU-to-GPU transfers, where the theoretical bandwidth is GB/s, TENT reaches  GB/s and slightly outperforms NIXL, effectively introducing no measurable overhead compared to native NVLink calls. For RDMA GPU-to-GPU transfers, TENT aggregates multiple GB/s rails to achieve GB/s. When GPUDirect RDMA is unavailable, TENT transparently falls back to staged GPU-to-host and host-to-GPU transfers via internal host buffers, reaching GB/s and GB/s respectively, which still significantly outperform TCP-based alternatives. For GPU-to-file transfers over io_uring, TENT attains  GB/s, matching the results of direct use.
+
+On other fabrics, TENT exhibits similarly low overheads. On MNNVL, TENT achieves GB/s out of a theoretical  GB/s, and on Ascend HIXL, GB/s out of GB/s. In all cases, applications issue same BatchTransfer calls; only the backend configuration differs. The small gap between measured throughput and theoretical baselines confirms that TENT’s abstraction cost is negligible, while its backend structure makes adding new transports straightforward.
+
+5.3 Reliability
+
+We finally evaluate whether TENT’s dual-layer resilience turns common fabric failures into short-lived performance perturbations rather than application-visible errors. We draw on both production experience and targeted fault injection.
+
+Production Experience.
+
+TENT has been deployed on multiple large-scale industrial LLM platforms. At one major AI service provider, TENT handles nearly all production inference traffic on a thousand-GPU cluster and has been running continuously for over a year. During this period, operators observe frequent interconnect churn, including per-rail slowdowns, transient link flaps, and occasional device resets. Despite this, TENT maintains stable throughput and tail latency without requiring any application-level failover logic, and without exposing transport errors to upstream systems.
+
+This experience supports the design choices of TENT: treating transport health as a first-class signal, separating link-level and backend-level resilience, and centralizing error handling in the transfer engine are sufficient to keep production systems operating smoothly through routine fabric disruptions.
+
+Failure Injection in Testbed.
+
+Figure 10: Impact of manual rail shutdown (at 1000 ms) and recovery (at 3000 ms) on instantaneous transfer throughput.
+
+To study failure behavior more systematically, we inject controlled NIC failures on the H800 testbed while continuously issuing MB transfers. In one experiment, we force a failure on NIC 0 at ms and mark it as recovered at ms. Figure 10 shows the resulting throughput over time.
+
+When NIC 0 fails, in-flight transfers on that rail are aborted. TENT immediately marks the rail unavailable, reroutes subsequent slices to other NICs, and re-executes affected slices on healthy rails. This yields a brief but visible throughput dip lasting less than 50 ms during the transition; afterwards, the system continues in a slightly degraded state with reduced aggregate bandwidth. TENT is configured in this experiment to reset link status every second (longer intervals are used in production), and these periodic health checks produce small throughput fluctuations as TENT probes whether previously degraded rails have recovered. When NIC 0 is restored at ms, TENT reintegrates the rail within ms and throughput quickly returns to its original level. At no point does the application observe a failed transfer: all retries, path substitutions, and health checks are handled inside TENT.
+
+Taken together, the production deployments and fault-injection experiments show that TENT provides practical reliability for large-scale LLM clusters: common NIC and link failures manifest as short-lived performance blips rather than persistent outages, and the system recovers high-performance routes automatically without application intervention.
+
+6 Related Works
+
+LLM Communication Frameworks.
+
+Collective communication libraries like NCCL [19, 8], RCCL [2], HCCL [39], and others [7, 28, 24] extend group primitives to GPUs. While efficient for training, they assume homogeneous, static topologies and are often vendor-coupled, limiting their use in disaggregated serving.
+In contrast, Point-to-point (P2P) frameworks such as Mooncake TE [25], NIXL [21], DLSlime [5], NVSHMEM [23], and UCCL-P2P [39] provide direct memory access suited for dynamic workloads like prefill-decode disaggregation [37, 27, 31, 13], KVCache storage [16, 4], and RLHF [29].
+However, as mentioned in §2, existing P2P engines typically rely on static transport binding (e.g., fixed RDMA or NVLink paths) and lack runtime adaptation.
+Separately, Expert Parallelism (EP) frameworks [15, 39] couple communication with computation to optimize MoE routing, prioritizing kernel-level efficiency over the unified abstraction of diverse heterogeneous interconnects.
+
+Transport Orchestration.
+
+UCX [30] offers unified memory-to-memory abstractions over RDMA, TCP, and SHM, selecting paths using established priorities at connection setup. Systems such as NIXL [21] and DLSlime [5] unify remote memory and storage but generally rely on application-directed backend choices.
+In contrast, TENT adopts a declarative interface that decouples intent from execution, enabling dynamic per-request path selection across heterogeneous fabrics, which is beneficial for disaggregated LLM serving where link conditions evolve over time.
+
+Transport-Level Performance Optimization.
+
+While P2P engines (e.g., Mooncake TE [25], NIXL with UCX [21, 30]) support multi-rail RDMA, they often rely on static strategies like round-robin. TENT improves this via telemetry-driven slice scheduling (§4.2).
+Prior works [10, 33, 6, 26] have optimized low-level RDMA efficiency (e.g., doorbell batching).
+Research also identifies performance bottlenecks in multi-tenant NICs [12, 32] and addresses scale-out QP scalability challenges via techniques like eRPC [11], Flock [17], and SMART [26]. TENT leverages these low-level insights within a higher-level declarative runtime.
+
+Fault Tolerance.
+
+Most existing frameworks rely on reactive fault handling.
+UCX [30] uses callbacks to report failures, requiring the application to explicitly close and recreate invalid endpoints.
+NCCL [19] supports asynchronous detection (AER) but halts ongoing operations, requiring global communicator reinitialization.
+NIXL [21] lacks explicit recovery mechanisms, deferring error handling to underlying transports.
+In contrast, TENT integrates dual-layer resilience, enabling proactive link-level failover and transparent transport-level recovery without user intervention.
+
+7 Conclusion
+
+TENT overcomes the operational rigidity of modern GPU clusters by shifting data movement from imperative binding to declarative slice spraying. By unifying heterogeneous interconnects into a dynamic, self-healing resource pool, TENT transparently optimizes multi-rail bandwidth and masks hardware churn. Validated at production scale, it delivers up to higher serving throughput and faster model updates, demonstrating that a resilient, declarative data plane is essential for next-generation disaggregated AI infrastructure.
+
+References
+
+[1]
+M. AI (2025)
+
+Checkpoint engine.
+
+Note: https://github.com/MoonshotAI/checkpoint-engine
+
+Cited by: §1,
+§5.1.2.
+
+[2]
+AMD (2020)
+
+AMD infinity fabric™ link user guide.
+
+Note: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/other/56978.pdf
+
+Cited by: §6.
+
+[3]
+AMD (2025)
+
+ROCm documentation.
+
+Note: https://rocm.docs.amd.com/en/latest/
+
+Cited by: §2.
+
+[4]
+Y. Cheng, Y. Liu, J. Yao, Y. An, X. Chen, S. Feng, Y. Huang, S. Shen, K. Du, and J. Jiang (2025)
+
+LMCache: an efficient kv cache layer for enterprise-scale llm inference.
+
+arXiv preprint arXiv:2510.09665.
+
+Cited by: §6.
+
+[5]
+DeepLink (2025)
+
+DLSlime: flexible & efficient heterogeneous transfer toolkit.
+
+Note: https://github.com/DeepLink-org/DLSlimeBSD-3-Clause License; toolkit for peer-to-peer communication via RDMA, NVLink, NVShmem etc.; supports heterogeneous transfer engines and slicing behaviour
+
+Cited by: §1,
+§2.1,
+§2,
+§6,
+§6.
+
+[6]
+A. Dragojevi’c, D. Narayanan, M. Castro, and O. Hodson (2014)
+
+FaRM: fast remote memory.
+
+In 11th USENIX Symposium on Networked Systems Design and Implementation (NSDI 14),
+
+pp. 401–414.
+
+Cited by: §6.
+
+[7]
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv e-prints, pp. arXiv–2407.
+
+Cited by: §6.
+
+[8]
+Z. Hu, S. Shen, T. Bonato, S. Jeaugey, C. Alexander, E. Spada, J. Dinan, J. Hammond, and T. Hoefler (2025)
+
+Demystifying nccl: an in-depth analysis of gpu communication protocols and algorithms.
+
+arXiv preprint arXiv:2507.04786.
+
+Cited by: §6.
+
+[9]
+Huawei (2025)
+
+Huawei xfer library (hixl).
+
+Note: https://gitcode.com/cann/hixl
+
+Cited by: §1.
+
+[10]
+A. Kalia, M. Kaminsky, and D. G. Andersen (2016)
+
+Design guidelines for high performance rdma systems.
+
+In 2016 USENIX annual technical conference (USENIX ATC 16),
+
+pp. 437–450.
+
+Cited by: §6.
+
+[11]
+A. Kalia, M. Kaminsky, and D. Andersen (2019)
+
+Datacenter rpcs can be general and fast.
+
+In 16th USENIX Symposium on Networked Systems Design and Implementation (NSDI 19),
+
+pp. 1–16.
+
+Cited by: §6.
+
+[12]
+X. Kong, J. Chen, W. Bai, Y. Xu, M. Elhaddad, S. Raindel, J. Padhye, A. R. Lebeck, and D. Zhuo (2023)
+
+Understanding rdma microarchitecture resources for performance isolation.
+
+In 20th USENIX Symposium on Networked Systems Design and Implementation (NSDI 23),
+
+pp. 31–48.
+
+Cited by: §6.
+
+[13]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles,
+
+Cited by: §1,
+§6.
+
+[14]
+H. Liao, B. Liu, X. Chen, Z. Guo, C. Cheng, J. Wang, X. Chen, P. Dong, R. Meng, W. Liu, et al. (2025)
+
+UB-mesh: a hierarchically localized nd-fullmesh datacenter network architecture.
+
+arXiv preprint arXiv:2503.20377.
+
+Cited by: §2.
+
+[15]
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al. (2024)
+
+Deepseek-v3 technical report.
+
+arXiv preprint arXiv:2412.19437.
+
+Cited by: §1,
+§5.1.2,
+§6.
+
+[16]
+LMCache (2025)
+
+LMCache.
+
+Note: https://lmcache.ai/
+
+Cited by: §1,
+§6.
+
+[17]
+S. K. Monga, S. Kashyap, and C. Min (2021)
+
+Birds of a feather flock together: scaling rdma rpcs with flock.
+
+In Proceedings of the ACM SIGOPS 28th Symposium on Operating Systems Principles,
+
+pp. 212–227.
+
+Cited by: §6.
+
+[18]
+NVIDIA (2025)
+
+GPUDirect storage.
+
+Note: https://docs.nvidia.com/gpudirect-storage/
+
+Cited by: §2.
+
+[19]
+NVIDIA (2025)
+
+Nccl (nvidia collective communications library).
+
+Note: https://github.com/NVIDIA/nccl
+
+Cited by: §6,
+§6.
+
+[20]
+NVIDIA (2025)
+
+NVIDIA dynamo.
+
+Note: https://developer.nvidia.com/dynamo
+
+Cited by: §1.
+
+[21]
+NVIDIA (2025)
+
+NVIDIA inference xfer library (nixl).
+
+Note: https://github.com/ai-dynamo/nixl
+
+Cited by: §1,
+§2.1,
+§2,
+§5,
+§5.1.3,
+§6,
+§6,
+§6,
+§6.
+
+[22]
+NVIDIA (2025)
+
+NVLink and nvlink switch.
+
+Note: https://www.nvidia.com/en-us/data-center/nvlink/
+
+Cited by: §1,
+§2.
+
+[23]
+NVIDIA (2025)
+
+NVSHMEM.
+
+Note: https://developer.nvidia.com/nvshmem
+
+Cited by: §6.
+
+[24]
+PyTorch (2025)
+
+Gloo: collective communications library with various primitives for multi-machine training.
+
+Note: https://github.com/pytorch/gloo
+
+Cited by: §6.
+
+[25]
+R. Qin, Z. Li, W. He, J. Cui, F. Ren, M. Zhang, Y. Wu, W. Zheng, and X. Xu (2025)
+
+Mooncake: trading more storage for less computation — a KVCache-centric architecture for serving LLM chatbot.
+
+In 23rd USENIX Conference on File and Storage Technologies (FAST 25),
+
+Santa Clara, CA, pp. 155–170.
+
+External Links: ISBN 978-1-939133-45-8,
+Link
+
+Cited by: §1,
+§2,
+§5,
+§6,
+§6.
+
+[26]
+F. Ren, M. Zhang, K. Chen, H. Xia, Z. Chen, and Y. Wu (2024)
+
+Scaling up memory disaggregated applications with smart.
+
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1,
+
+pp. 351–367.
+
+Cited by: §6.
+
+[27]
+SGLang (2025)
+
+SGLang.
+
+Note: https://github.com/sgl-project/sglang
+
+Cited by: §1,
+§1,
+§5.1.1,
+§6.
+
+[28]
+A. Shah, A. Jangda, B. Li, C. Rocha, C. Hwang, J. Jose, M. Musuvathi, O. Saarikivi, P. Cheng, Q. Zhou, et al. (2025)
+
+MSCCL++: rethinking gpu communication abstractions for cutting-edge ai applications.
+
+arXiv preprint arXiv:2504.09014.
+
+Cited by: §6.
+
+[29]
+K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, et al. (2025)
+
+Kimi k2: open agentic intelligence.
+
+arXiv preprint arXiv:2507.20534.
+
+Cited by: §1,
+§5.1.2,
+§5.1.2,
+§6.
+
+[30]
+UCX (2025)
+
+Unified communication x.
+
+Note: https://openucx.org/
+
+Cited by: §6,
+§6,
+§6.
+
+[31]
+vLLM (2025)
+
+VLLM.
+
+Note: https://github.com/vllm-project/vllm
+
+Cited by: §1,
+§6.
+
+[32]
+Z. Wang, L. Luo, Q. Ning, C. Zeng, W. Li, X. Wan, P. Xie, T. Feng, K. Cheng, X. Geng, et al. (2023)
+
+SRNIC: a scalable architecture for rdma nics.
+
+In 20th USENIX Symposium on Networked Systems Design and Implementation (NSDI 23),
+
+pp. 1–14.
+
+Cited by: §6.
+
+[33]
+X. Wei, X. Xie, R. Chen, H. Chen, and B. Zang (2021)
+
+Characterizing and optimizing remote persistent memory with rdma and nvm.
+
+In 2021 USENIX Annual Technical Conference (USENIX ATC 21),
+
+pp. 523–536.
+
+Cited by: §6.
+
+[34]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. (2025)
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §5.1.1.
+
+[35]
+Z. Yao, R. Y. Aminabadi, O. Ruwase, S. Rajbhandari, X. Wu, A. A. Awan, J. Rasley, M. Zhang, C. Li, C. Holmes, et al. (2023)
+
+Deepspeed-chat: easy, fast and affordable rlhf training of chatgpt-like models at all scales.
+
+arXiv preprint arXiv:2308.01320.
+
+Cited by: §1.
+
+[36]
+A. Zeng, X. Lv, Q. Zheng, Z. Hou, B. Chen, C. Xie, C. Wang, D. Yin, H. Zeng, J. Zhang, et al. (2025)
+
+Glm-4.5: agentic, reasoning, and coding (arc) foundation models.
+
+arXiv preprint arXiv:2508.06471.
+
+Cited by: §5.1.2.
+
+[37]
+L. Zheng, L. Yin, Z. Xie, C. L. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, et al. (2024)
+
+Sglang: efficient execution of structured language model programs.
+
+Advances in neural information processing systems 37, pp. 62557–62583.
+
+Cited by: §6.
+
+[38]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang (2024)
+
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+pp. 193–210.
+
+Cited by: §1.
+
+[39]
+Y. Zhou, Z. Chen, Z. Mao, C. Lao, S. Yang, P. G. Kannan, J. Gao, Y. Zhao, Y. Wu, K. You, et al. (2025)
+
+An extensible software transport layer for gpu networking.
+
+arXiv preprint arXiv:2504.17307.
+
+Cited by: §1,
+§2.1,
+§2,
+§5,
+§5.1.3,
+§6.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

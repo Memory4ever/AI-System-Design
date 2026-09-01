@@ -1,0 +1,973 @@
+Exploring Silent Data Corruption as a Reliability Challenge in LLM Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Motivation and Related Work
+
+II-A Motivation
+
+II-B Related Work
+
+III Methodology
+
+III-A Experimental Setup
+
+III-B Fault Injection
+
+IV Experimental Findings
+
+IV-A Sensitivity of Bit Positions
+
+IV-B Sensitivity of Kernels
+
+IV-C Transient Effects in the Forward Pass
+
+IV-D Severe Effects in the Backward Pass
+
+IV-E Spatial Effects: Lanes and SMs
+
+IV-F Temporal Effects: Fault Rate and Duration
+
+V Harmful Parameter Updates
+
+VI Detection
+
+VII Evaluation
+
+VII-A Impact of the Sensitivity Parameter
+
+VII-B Fault Injection and Recomputation Across Model Scales
+
+VII-C Runtime Overhead
+
+VII-D Limitations
+
+VIII Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.00726v1 [cs.LG] 01 Apr 2026
+
+Exploring Silent Data Corruption as a Reliability Challenge in LLM Training
+
+Anton Altenbernd
+
+Affiliation: 
+Technische Universität Berlin
+
+Berlin, Germany
+
+a.altenbernd@tu-berlin.de
+
+  
+Philipp Wiesner
+
+Affiliation: 
+Technische Universität Berlin
+
+Berlin, Germany
+
+wiesner@tu-berlin.de
+
+  
+Odej Kao
+
+Affiliation: 
+Technische Universität Berlin
+
+Berlin, Germany
+
+odej.kao@tu-berlin.de
+
+Abstract
+
+As Large Language Models (LLMs) scale in size and complexity, the consequences of failures during training become increasingly severe. A major challenge arises from Silent Data Corruption (SDC): hardware-induced faults that bypass system-level detection mechanisms. SDC may behave like benign numerical noise, but can also cause harmful gradient corruption that leads to loss spikes, divergence, or stalled progress.
+
+This work provides a controlled study of how intermittent SDC affects LLM pretraining. Using targeted fault injection at the level of GPU matrix-multiply instructions, we characterize the sensitivity of different bit positions, kernel functions, and execution stages. Our analysis shows that locally originating faults can produce impactful corruption, including NaN propagation, short-lived spikes in loss, gradient norm, and attention logits, as well as persistent parameter divergence. Building on the observed corruption signatures, we propose a lightweight detection method that identifies potentially harmful parameter updates.
+Experiments on LLaMA models with 60M, 350M, and 1.3B parameters demonstrate that recomputing the most recent training step upon detection can effectively mitigate the impact of these events.
+
+Index Terms: Silent Data Corruption, Large Language Models, Reliability, Hardware Faults
+
+AI
+Artificial Intelligence
+SDC
+Silent Data Corruption
+LLM
+Large Language Model
+ECC
+Error-Correction Code
+RDMA
+Remote Direct Memory Access
+MSB
+Most Significant Bit
+DNN
+Deep Neural Networks
+ABFT
+Algorithm-based Fault-Tolerance
+CDF
+Cumulative Distribution Function
+SM
+Streaming Multiprocessor
+HMMA
+Half-Precision Matrix-Multiply Accumulate
+GEMM
+General Matrix Multiply
+RMS
+Root Mean Square
+SASS
+Streaming ASSembler
+
+I Introduction
+
+Since the introduction of the Transformer architecture [1], LLM (LLM) have played a central role in modern artificial intelligence systems.
+These models can contain hundreds of billions of parameters and are trained on massive datasets over weeks or months using thousands of hardware accelerators [2, 3].
+As models scale, so too does the complexity and fragility of their training, with frequent reports of instabilities such as loss spikes, exploding or vanishing gradients, divergence, or subtle degradations in performance [3, 4, 5, 6, 7, 8, 9, 10]. While many of these instabilities stem from model design, training procedures, data quality, or hyperparameter choices, hardware faults remain an underexplored source of disruption [11].
+
+A major challenge arises from SDC (SDC), which silently bypasses system-level detection mechanisms such as ECC [12]. SDC can produce incorrect data, such as bit flips, and may remain undetected for extended periods, potentially compromising critical computations and leading to costly debugging efforts [13].
+
+One source of SDC is transient faults: short-lived errors induced by external factors such as radiation [14, 15, 16]. In terrestrial systems, SDC from transient faults are comparatively rare, but with emerging proposals for deploying data centers in space [17], handling radiation-induced SDC may become increasingly important.
+
+Another root cause is internal hardware faults, such as degradation of aging components or defects introduced during manufacturing [13, 18, 19]. These faults may be permanent or intermittent. Although relatively rare in everyday computing, they are an increasing concern in large-scale systems, where elevated temperatures, workload-induced stress, and the sheer number of devices can significantly increase their likelihood [20, 19].
+
+In the context of LLM (LLM) training, vendors such as Google [21], Meta [22], ByteDance [23], and DeepSeek [24] have highlighted the growing importance of addressing SDC. Google’s Gemini models, for instance, encountered SDC-related disruptions approximately every one to two weeks [21], while Meta reported six such incidents during a 54-day training run [22]. DeepSeek emphasizes that SDC can silently propagate across many training steps and potentially affect model quality [24], while ByteDance notes that a single corrupted gradient can contaminate the global parameter update across all participating workers [23], where NaN propagation can bring training to an abrupt halt.
+
+A typical approach to handling such faults involves pausing training, locating the source of the fault, and reverting to a previous checkpoint, which introduces considerable overhead. As LLM continue to scale and training relies on increasing numbers of hardware accelerators, these interruptions may emerge as a key bottleneck for large-scale training [23]. While such events occur relatively infrequently in practice, their impact can be substantial, as even isolated corruption events may disrupt convergence or degrade model quality.
+
+In this paper, we present a controlled study of SDC during LLM pretraining through targeted fault injection. Our analysis focuses on single-GPU training to isolate the local computational effects of SDC. The implications for distributed training are discussed but not evaluated experimentally. Because training on faulty hardware is rarely feasible and difficult to control, we simulate intermittent faults during computation, representing transient errors that can reoccur under specific environmental or operational conditions such as temperature, workload, or power fluctuations. The contributions of this paper can be summarized as follows:
+
+•
+
+We conduct a controlled study of SDC arising from intermittent faults during LLM pretraining based on LLaMA-based models with 60M, 350M, and 1.3B parameters in a controlled single-GPU setting using a custom fault injection framework based on NVBit [25].
+
+•
+
+We characterize the sensitivity of different bit positions, kernel functions, and execution stages, revealing that locally originating faults can produce impactful corruption of the training process.
+
+•
+
+Building on the observed corruption signatures, we propose a lightweight detection method that identifies potentially harmful parameter updates associated with loss bumps or NaN values. Upon detection, we show that recomputing the most recent training step can effectively mitigate the impact of these events.
+
+The code for this paper is publicly available.11
+1
+
+https://github.com/aaltenbernd/llm-sdc-training
+
+II Motivation and Related Work
+
+II-A Motivation
+
+ECC cannot detect all errors that lead to SDC. Memory systems employ ECC to enhance resilience against errors caused by hardware faults through the addition of redundant bits to stored data, allowing the system to detect and correct a limited number of bit errors. The most common types, single-bit correction and double-bit detection, can correct one-bit errors and detect, but not fix, two-bit errors [26]. While ECC significantly improve system resilience, they are not foolproof. There are several scenarios where ECC fail to detect or correct errors, potentially resulting in SDC [27, 12, 13]. For instance, ECC cannot detect or correct errors that occur during computation nor those arising from unprotected communication paths. Additionally, they are ineffective against errors in memory involving three or more bit flips. As a result, reducing SDC requires not only hardware resiliency but also robust fault-tolerant software architectures [13].
+
+Limitations of ABFT for LLM Training. In contrast to ECC, which protect memory, ABFT (ABFT) provides protection by incorporating invariants directly into computations to detect and correct errors. ABFT for matrix multiplication [28] augments the operation with checksum rows and columns, improving reliability at the cost of additional overhead. Moreover, while effective for linear operations, ABFT does not readily extend to non-linear operations, as suitable invariants are difficult or impossible to define. As a result, applying ABFT comprehensively in large-scale LLM training is challenging, since it typically protects only a limited portion of the overall computation while introducing non-negligible overhead relative to the expected rate of SDC events.
+
+II-B Related Work
+
+SDC during inference. Li et al. [29] were among the first to investigate SDC in hardware accelerators, showing that model sensitivity varies by architecture, datatype, and bit position. Agarwal et al. [30] analyzed SDC in LLM and found that model size and fine-tuning strategy influence vulnerability during inference. Ma et al. [31] monitored deviations in neuron activation distributions as indicators of SDC and proposed mitigation through dynamic clipping and probabilistic correction. Sun et al. [32] demonstrated that LLM are less resilient to random bit flips than previously assumed, revealing significant degradation in output quality across architectures. They further showed that increasing LLM scale does not improve resilience.
+
+SDC during training. Elsen et al. [33] recommend using deterministic training combined with checksumming of parameters and optimizer states to catch hardware-induced issues across replicas. However, they do not address corruption that arises during the forward or backward pass and subsequently propagates across replicas through gradient aggregation.
+
+He et al. [34] present a large-scale study of hardware failures in accelerators during model training, showing that intermittent faults can silently corrupt training and degrade convergence. They propose a rollback recovery mechanism based on out-of-bound gradient detection. However, their study does not explicitly focus SDC in the context of LLM training. Moreover, the proposed detection bound is difficult to justify, as gradient magnitudes during LLM training can vary and may reach extreme values. In addition, their method does not distinguish harmful corruption from benign noise, causing any out-of-bound gradient to trigger an alarm and rollback.
+
+Ma et al. [11] present the first in-depth study of training LLM on unhealthy nodes drawn from a production environment. They show that SDC can silently corrupt gradients and weights, steering models toward different local minima. During fine-tuning, they observe loss spikes of varying severity. The authors experiment with ABFT for matrix multiplication [28] to detect SDC, but their attempts were mostly unsuccessful, suggesting that the underlying hardware faults in this study occurred outside the matrix multiplication units. Overall, they do not provide actionable detection methods or metrics for identifying SDC.
+
+Liang et al. [35] propose ATTNChecker, which uses an ABFT-inspired approach to protect attention. Their method can detect and correct extreme errors within attention with modest overhead, outperforming checkpoint-based recovery. However, ATTNChecker protects only a portion of the model, and its additional runtime cost limits its practicality for LLM training, while most components remain unprotected.
+
+III Methodology
+
+III-A Experimental Setup
+
+Models and dataset. In this study, we adopt the LLaMA-based models [2] used in [36, 37] and experiment with three different model sizes of 60M, 350M, and 1.3B parameters.
+These sizes cover small to moderately large LLM scales while remaining tractable for repeated experiments.
+We used the English subset of the C4 dataset [38] for training.
+
+Hyperparameters. All training runs used a batch size of 512 to ensure stable optimization and practical training throughput22
+2
+
+This effective batch size was achieved via gradient accumulation using micro-batch sizes of 256, 32, and 16 for the different model sizes..
+Following Huang et al. [37], the corresponding maximum learning rates were set to 1e-3, 4e-4, and 2e-4, and we use a learning rate schedule with linear warmup followed by cosine decay.
+The warmup lasted for 1,000 steps, and the schedule spanned 100,000 steps to reflect a realistic pretraining schedule, even though the full duration was not reached. Training was performed in bfloat16 precision with global gradient norm clipping set to 1.0. We used the AdamW optimizer [39] with , , and a weight decay of 0.01. These hyperparameters follow common practice for training transformer-based models and were held fixed across all experiments to study the effect of fault injection under a representative and stable training configuration.
+
+Deterministic training. We fixed all relevant sources of randomness using a fixed seed across the involved machine learning libraries. For each experiment, the same seed was used for the fault-injection run and the corresponding baseline for comparison. The dataset was loaded once without streaming so that batches were presented in a deterministic order within each run.
+
+Hardware. All experiments were conducted on a system equipped with a single NVIDIA L40S GPU.
+
+III-B Fault Injection
+
+We use NVBit [25], a dynamic binary instrumentation framework for NVIDIA GPUs, to perform targeted fault injection. NVBit intercepts kernel launches at runtime and instruments SASS instructions, enabling custom instrumentation before or after specific instructions without requiring access to the application source code. Existing NVBit-based fault injection tools primarily support single transient faults or permanent register faults [40, 41].
+
+To study intermittent computation faults, we implement a custom NVBit instrumentation that targets selected instructions. We insert device-side callbacks before and after the selected instruction. In the pre-instruction callback, we apply a bitmask to the target input register to flip selected bits, and in the post-instruction callback, we restore the original register content to confine the corruption to the computation. We avoid architectural or RTL-level simulation because their runtime overhead [41] makes them impractical for LLM training workloads, and software-level fault injection because such faults do not propagate realistically through the computation. Although this approach does not fully reproduce real intermittent hardware faults, it preserves realistic instruction-level error propagation with low overhead.
+
+Injection control. Fault injection can be enabled or disabled dynamically during training, allowing control without interrupting execution. The injector provides a set of user-configurable parameters that control where and how faults are introduced, including the SM (SM), lane, kernel, instruction, opcode, register, and the bits to flip. Injection behavior is controlled by the training script, which specifies when and where faults are triggered, how frequently they occur, and their duration.
+
+Injection scope. In this study, we restrict our analysis to HMMA (HMMA) instructions, as matrix multiplications account for 42.8%–96.6% of total execution time in LLM workloads [42]. HMMA instructions are executed within GEMM (GEMM) kernels throughout the forward and backward pass. During training, GEMM kernels appear repeatedly and are invoked for distinct roles, such that faults injected into the same instruction type can propagate differently depending on the kernel context.
+
+Fault model. We focus on SDC arising from intermittent faults during computation. Our injection rates exceed those reported for large-scale training systems [21, 22] and should therefore be interpreted as stress tests that enable systematic analysis within a practical timeframe.
+
+IV Experimental Findings
+
+This section characterizes how fault injection affects LLM training, including sensitivity to bit positions and kernels (Sections IV-A and IV-B),
+qualitative differences between faults in the forward and backward pass (Sections IV-C and IV-D),
+spatial effects related to lanes and SM (Section IV-E),
+and temporal effects arising from fault rate and fault duration (Section IV-F), relative to a fault-free baseline with an evaluation loss of obtained from the 60M-parameter model trained for 1,000 steps across ten initialization seeds.
+
+IV-A Sensitivity of Bit Positions
+
+In the first experiment, the objective was to identify relevant bit positions for subsequent analyses. Based on the best performing seed, we conducted a fault injection campaign spanning 1,000 training steps. All experiments were fixed to a single SM and lane, and we varied the bitmask over the set , which correspond to bit positions 0–31. We selected one out of five HMMA instructions in each kernel function and injected faults in one out of every ten training iterations, both chosen at random. Fault injection was applied to the first input register.
+
+Only exponent bits exhibited measurable impact. For bit positions 10, 11, 26, 27, we observed increases in evaluation loss that exceeded the baseline variation. For bit positions 12, 13, 14, 28, 29, 30, the evaluation produced NaN values. Mantissa bits and the sign bit did not show noticeable differences, and therefore only the exponent bits exhibited measurable effects. The effects were nearly symmetric across the input register, which reflects the structure of HMMA instructions, where each register packs two bfloat16 values.
+
+IV-B Sensitivity of Kernels
+
+In the second experiment, we therefore restrict the analysis to the first input value in the first input register, specifically its seven highest exponent bits and its sign bit, the latter included because of its unique characteristics. We conducted again a fault injection campaign for the first 1,000 training steps using the best performing seed. We fixed all experiments to a single SM and lane, and varied the bitmask in the predetermined set . In addition, we limited each fault injection run to a single kernel function. For the 60M model we identified five GEMM kernels in the forward pass and ten GEMM kernels in the backward pass. In the following, we denote these as and , referring to the i-th GEMM kernel in the forward or backward pass, respectively. In this experiment, we injected faults into each HMMA instruction in these kernels and maintained the schedule of injecting faults randomly in one out of ten training iterations.
+
+We evaluate the effect of these faults using four metrics: the evaluation loss, the parameter difference relative to the corresponding baseline, the gradient norm before clipping, and the maximum attention logits. The parameter difference is defined as the L2 norm of the absolute pairwise parameter differences relative to the corresponding baseline [11]. Because we fixed the random seeds of the machine learning libraries in our training environment, the parameter difference remains zero if no fault is injected. The attention logits are the values produced by the attention mechanism before the softmax and can approach one hot attention vectors when extremely large. Maximum attention logits have been used as a signal of training instability in previous work [4, 8].
+
+Figure 1 shows the evaluation loss, the parameter difference, the gradient norm before clipping, and the maximum attention logits for each combination of bit position and kernel function in the forward and backward pass. Both the gradient norm and the maximum attention logits in the figure represent the maximum of all observed values in the training span. For the parameter difference and the evaluation loss, the value was determined after the training span.
+
+Fig. 1: Evaluation loss, parameter difference, gradient norm before clipping, and maximum attention logits for different bit positions and kernels ( and , referring to the i-th GEMM kernel in the forward or backward pass, respectively). Evaluation loss and parameter difference represent the value observed after the training span. The gradient norm and the maximum attention logits represent the maximum values observed over the training span.
+
+Sensitivity of bit positions varies across kernels. For most bit positions the evaluation loss remains close to the baseline, which indicates that many injected faults do not introduce substantial disruptions during training. Certain bit positions, however, lead to clear deviations where the evaluation loss increases above the baseline variation. This indicates localized sensitivity to faults in specific kernels. With regard to NaN propagation, almost all kernels produce NaN values when injecting the MSB (MSB), and some functions show sensitivity even for lower bit positions. Despite NaN values appearing in the forward pass when injecting the MSB, measurable effects on the evaluation loss arise almost exclusively in the backward pass.
+
+Parameter shifts occur in all kernels. Although these events do not always lead to an increase in evaluation loss, SDC can nevertheless lead to unwanted parameter changes, where all runs deviate from their corresponding fault-free baselines. Runs with increased evaluation loss also display relatively large parameter differences. However, larger parameter differences do not necessarily result in larger evaluation loss. This asymmetry is expected, as we assume that the impact depends strongly on which parameters are affected.
+
+Gradient norm exhibits high values. The gradient norm before clipping remains stable at approximately in most runs. Elevated values, ranging from to , appear only when faults are injected into kernels of the backward pass. In some runs, including injections of the MSB in and and the 13th bit in , the gradient norm before clipping even jumps to infinity. The absence of such spikes in the forward pass indicates that corruptions introduced during the forward pass have only limited influence on the subsequent learning dynamics, whereas faults in the backward pass directly lead to gradient corruption and thus have a much stronger impact on the training.
+
+Extreme attention logits. The maximum attention logits behave in a similar manner. Most runs fall within the expected range, but some injections produce extremely large values. Notably, these outliers appear only in a single kernel of the forward pass, , which appears to be responsible for computing the attention logits before softmax. Bit positions 10 to 13 in this kernel result in values between and . Such extreme attention logits are likely to produce near one hot attention vectors and may momentarily disrupt the attention mechanism.
+
+IV-C Transient Effects in the Forward Pass
+
+While the forward pass is generally robust to faults, it can still exhibit transient effects. This section examines spikes in the loss and maximum attention logits.
+
+Transient spikes appear in the loss. Although the forward pass exhibits limited sensitivity to the fault injections, the training loss remains a useful indicator of SDC. For and we occasionally observe small spikes in the training loss for bit positions 9 and 10. However, these spikes return immediately to the previous level. Such spikes may also arise from training dynamics and therefore cannot be distinguished from normal training behavior. Nevertheless, they may indicate corruption events, which must be supported by stronger signals.
+
+Attention logit spikes reveal corruption. In addition, shows abrupt jumps in the maximum attention logits. Under normal conditions, these logits evolve smoothly across training iterations rather than exhibiting sudden and large spikes. Even unusually large updates to the attention parameters would not produce such changes with such high magnitude, as the attention logits depend linearly on the query and key projections. A sharp spike in the maximum attention logits is therefore a strong indicator of corruption. More generally, monitoring sudden changes in other intermediate results may also provide useful information for identifying corruption events.
+
+IV-D Severe Effects in the Backward Pass
+
+Compared to the forward pass, the backward pass is far more sensitive to injected faults. As in the forward pass, sudden spikes in the gradient norm can appear before clipping. Such spikes may also arise from normal training dynamics, so they cannot be used alone to identify corruption. However, faults introduced during the backward pass tend to have much more severe consequences because corrupted gradients directly influence parameter updates.
+
+Clipping mitigates most severe effects.
+If gradient norm clipping is disabled, training may halt completely due to how the second moment is updated in adaptive optimizers. Because the second moment scales with the squared gradient, extremely large gradients can cause it to diverge to infinity, which in turn drives the adaptive update to zero. When this occurs, the optimizer stops updating the affected parameters. As shown in Figure 2, when gradient norm clipping is disabled for at bit position 13 and the fault injection rate is kept unchanged (green curve), training stalls entirely.
+
+Fig. 2: Training loss for fault-injection runs with and without gradient norm clipping, and for the corresponding baseline run (blue). With gradient norm clipping enabled (orange), injected faults create repeated loss spikes but training continues, illustrating that gradient norm clipping mitigates most harmful spikes. Without gradient norm clipping (green), a single corrupted gradient causes the optimizer’s second moment to become infinity, freezing parameter updates and stalling training.
+
+Gradient corruption persists even with clipping.
+Even with gradient norm clipping enabled, we observed loss bumps resulting from faults injected into the backward pass. This is illustrated in Figure 2 for and bit position 13 (orange curve). These faults caused gradient corruption, most notably in the form of gradient spikes. The relationship between gradient spikes and loss bumps has already been discussed in [37], where the authors classify every loss bump as harmful to the overall training progress. Adaptive optimizers such as Adam [43] can exacerbate this effect because accumulated momentum amplifies the influence of corrupted gradients. To mitigate this issue, the authors propose momentum resets for parameters whose gradients exhibit spike behavior. It remains an open question whether momentum reset can serve as a proactive mitigation for SDC, as SDC can cause widespread gradient corruption and may trigger numerous momentum resets.
+
+Infinite gradient norm breaks the clipping.
+Gradient norm clipping typically mitigates the most severe of these events. However, we identified an unintended interaction: when the gradient norm before clipping becomes infinite, the clipped gradient norm collapses to zero. As a result, all gradients are zeroed and the corresponding mini-batch is effectively ignored. This behavior follows directly from the definition of gradient norm clipping. Formally, let denote the global gradient norm before clipping at iteration . Gradient norm clipping defines the clipped gradient as
+
+(1)
+
+where is the threshold for the maximum allowed gradient norm. If , the scaling factor becomes , which forces .
+
+Distributed training amplifies this risk.
+In data-parallel training, where gradients are aggregated across replicas, the interaction with gradient norm clipping may become particularly severe. If one replica produces extremely large gradient values, these values propagate into the gradient aggregation process. As a result, the global gradient norm can become infinite after aggregation. This means that the work of all replicas, including potentially thousands of devices in large-scale training, is effectively discarded for that iteration.
+
+Momentum-only updates.
+Gradient corruption can have consequences for the optimization process, ranging from mild deviations in flat regions of the loss surface to significant disruptions in regions that are highly sensitive to parameter changes. When gradient clipping collapses all gradients to zero, this effect propagates globally, since the optimizer receives no gradient signal for that iteration and therefore performs its update using only accumulated momentum. Such momentum-only updates apply to all parameters and can cause the optimizer to continue moving in a direction that may be outdated. It remains an open question whether this interaction with gradient norm clipping poses an even greater risk to training stability in highly sensitive regions of the loss surface.
+
+IV-E Spatial Effects: Lanes and SMs
+
+To isolate the effect of fault location within the GPU, we conducted an additional experiment in which we fixed the injection site to and the bit position to 13. We examined the impact of varying both the lane and the SM, using the same injection schedule as in previous experiments.
+
+No sensitivity to lane selection. We first examined the impact of varying the lane while keeping the SM fixed. Faults were injected across all 32 lanes. Across all runs, the evaluation loss remained stable at . These results indicate that the sensitivity of to this bit position is largely independent of the specific lane, suggesting that similar fault effects arise across all lanes and that intra-warp variation does not lead to systematically different fault propagation behaviors.
+
+No sensitivity to SM selection. In the second part of the experiment, we varied the SM while fixing the lane. To sample the device uniformly, we evaluated every fourth SM. Similar to the lane experiment, the evaluation loss remained within a narrow range of . This consistency across SM suggests that similar corruption effects occur regardless of which SM executes the kernel, at least for and bit position 13.
+
+IV-F Temporal Effects: Fault Rate and Duration
+
+In this experiment, we examined how the temporal characteristics of a fault influence its impact by varying both the injection rate and the duration for which a fault remains active.
+
+Higher fault rates increase impact.
+To assess the effect of the injection rate, we repeated the fault injection for and bit position 13 using different rates: every step, one out of ten steps, one out of one hundred steps, and one out of one thousand steps. Using all ten seeds, the resulting evaluation losses for these rates were , , , and , respectively. These results show a clear dependence on the fault rate. High rates lead to substantially larger evaluation losses, while lower rates reduce the impact toward the level of fault-free execution. At the highest injection rate, faults affect every parameter update. As a result, the optimizer cannot recover between steps and the training dynamics saturate, leading to a plateau in the observed degradation. Reducing the injection rate allows recovery between injections, explaining the large drop when moving from faults at every step to every ten steps.
+
+Longer fault durations increase deviation.
+To assess the effect of duration, we injected a fault at step 500 and kept it active for 1, 3, 5, 7, or 9 consecutive steps. Again using all ten seeds, the resulting evaluation losses were , , , , and for the respective fault durations. These results show that longer fault durations cause progressively larger deviations. In particular, both the magnitude of the resulting loss bump and the time required for recovery increase with fault duration.
+
+V Harmful Parameter Updates
+
+The preceding analysis shows that injected faults can cause disruptions in gradients, yet the long-term impact of these disruptions depends on how the optimizer transforms gradients into parameter updates. Ultimately, it is the optimizer, not the raw gradients, that determines whether a corruption event meaningfully alters the model’s trajectory. To study this connection, we analyze the parameter update rule of AdamW [39]:
+
+(2)
+
+(3)
+
+(4)
+
+(5)
+
+(6)
+
+Here, and denote exponential moving averages of the first and second moments of the gradient, computed using decay rates and , respectively. The bias-corrected quantities and converge to their uncorrected counterparts after a few iterations. The learning rate is denoted by , controls weight decay, and is a small constant ensuring numerical stability. The parameter at iteration is , and is the updated parameter.
+
+Since the weight decay is independent of the gradient, its contribution is unaffected by gradient corruption. We therefore focus on the adaptive component of the update, which (omitting bias correction for clarity, which is valid after a few iterations) is given for each parameter by
+
+(7)
+
+To quantify the magnitude of these updates, we track the maximum RMS (RMS) update across all parameter groups ,
+
+(8)
+
+which measures the average update magnitude within each group, gives more weight to larger updates, and identifies the group with the largest such update magnitude. The quantity thus serves as a useful indicator of unusually large updates to the parameters.
+
+In the experiments where we varied the fault duration in Subsection IV-F, we observed characteristic changes in following fault injections. In all runs, exhibited a sudden spike immediately after the fault was introduced. Subsequently, the training loss increased gradually, forming a distinct loss bump before stabilizing again at a slightly higher level than before the disturbance. Both the height of the loss bump and the recovery time grew with increasing fault length. Likewise, the fault length determined how long required to decay back to its stable range, with longer fault durations leading to more prolonged deviations. In Figure 3, we show an example for a single injection and a fault length of three.
+
+These experiments indicate that sudden spikes in caused by gradient corruption directly lead to loss bumps. Since loss bumps are considered harmful to the training progress [37], detecting such spikes in is essential for identifying harmful parameter updates induced by SDC.
+
+VI Detection
+
+As previously shown, SDC can lead either to benign noise or to harmful parameter updates. To detect the latter, we measure the absolute change in between consecutive steps,
+
+(9)
+
+We compute the empirical mean of observed during the warm-up phase and use this as a baseline for comparison:
+
+(10)
+
+where and denotes the warm-up length.
+
+To detect deviations from this baseline, we can flag a jump in as anomalous whenever
+
+(11)
+
+where is a configurable sensitivity parameter. Larger values of make the detector more sensitive to deviations, while smaller values make it more conservative.
+
+The choice of inherently presents a tradeoff between sensitivity and specificity. Besides jumps in , we also observe jumps in the global gradient norm when injecting faults. To better navigate this tradeoff, we account for positive jumps in the gradient norm by defining
+
+(12)
+
+where denotes the gradient norm before clipping.
+
+Since gradient norm jumps provide useful context but are not sufficient on their own to indicate harmful parameter updates, we use them as an auxiliary signal in the detection and refine Equation (11):
+
+(13)
+
+Incorporating modulates the detector’s sensitivity by adjusting how strongly changes in contribute to anomaly decisions. When is small, the detector becomes less responsive to avoid false positives, while larger increases responsiveness. The division by reflects that is an RMS quantity that scales with the square root of the underlying parameter update magnitudes.
+
+Additionally, we flag the current training step as anomalous if is not finite. As shown in Section IV, a gradient norm of infinity causes the clipped gradient norm to collapse to zero, and NaN values halt training. Both indicate failure states and are therefore flagged as anomalous.
+
+While SDC can be the cause of harmful parameter updates, such updates may also originate from other sources. In practical training environments, the proposed detection mechanism should therefore be integrated with system-level metrics such as temperature, utilization, and power consumption in order to provide a broader view. These system-level metrics could enable context-aware modulation of the sensitivity parameter , allowing the detector to adapt its sensitivity to changing hardware conditions.
+
+When a harmful parameter update is detected, we recompute the current training step to verify whether the detection was valid and to mitigate the effect. Under healthy training conditions, this recomputation should produce the same value of , since identical input data and an unchanged model state yield the same output. If the original computation was corrupted, the recomputed will most likely differ because hardware scheduling is nondeterministic.
+
+The proposed detection mechanism is compatible with distributed training. The detection metric can be computed locally from gradients and optimizer statistics on each worker, allowing corrupted steps to be detected and recomputed before gradients propagate and enabling localization of the faulty device. Alternatively, the metric can be evaluated after gradient aggregation, yielding identical detection decisions across workers and avoiding independent false positives across devices that could otherwise lead to frequent recomputations at large scale.
+
+Fig. 3: Effect of a single fault injection with a fault length of three on the training loss and the parameter update magnitude . The injected fault triggers a sharp spike in , after which the training loss exhibits a bump before gradually stabilizing at a slightly elevated level. This example illustrates how gradient corruption propagates through the optimizer and leads to harmful parameter updates.
+
+Fig. 4:
+Effect of the detector sensitivity parameter on recomputation behavior over 2,000 training steps for the 60M-parameter model. Results are shown per bit position and averaged across all bit positions (in black).
+Left: Recompute precision, indicating how often recomputation corresponds to true corruption. Increasing raises the false alarm rate, leading to unnecessary recomputation.
+Center: Detection rate, showing increased sensitivity as increases.
+Right: Evaluation loss, which exhibits an increase for smaller relative to the baseline variation (, after 2,000 steps).
+
+VII Evaluation
+
+This section evaluates the proposed detection mechanism with respect to its ability to distinguish harmful parameter updates from benign noise and to limit training progress loss through selective recomputation.
+
+VII-A Impact of the Sensitivity Parameter
+
+We study the effect of the sensitivity parameter on detection behavior using the 60M model trained for 2,000 steps with three seeds, evaluating recompute precision, detection rate, and evaluation loss.
+
+We define recompute precision as the fraction of detected anomalies for which recomputation is justified, and thus as an indirect measure of the false alarm rate. The detection rate captures the fraction of injected faults that are successfully identified and thus the fraction that triggers recomputation. While we report the detection rate, we do not report conventional metrics such as recall or F1-score, as many SDC are masked during training and do not result in observable degradation. Consequently, such metrics provide limited insight into the effectiveness of detection and recomputation.
+
+We evaluate discrete values of on a logarithmic scale. During training, faults are injected once every ten steps on average, with the target kernel selected at random. This analysis is restricted to kernels in the backward pass and to bit positions 9 to 12. Higher bit positions are more likely to produce NaN values. While easier to detect, they are less informative for evaluating detector sensitivity. Conversely, lower bit positions are less likely to have a measurable impact. Together, these bit positions provide a representative range for assessing the effect of .
+
+Figure 4 summarizes the results. Larger values of increase detector sensitivity, improving detection rates but raising the false alarm rate and resulting in unnecessary recomputations. Smaller values reduce false positives but miss a larger fraction of injected faults. The evaluation loss increases slightly as decreases, indicating that overly conservative recomputation fails to fully mitigate harmful updates. These results highlight the trade-off between detector sensitivity and recomputation overhead. provides a favorable balance between detector sensitivity and recomputation overhead, preventing divergence while avoiding unnecessary recomputations.
+
+VII-B Fault Injection and Recomputation Across Model Scales
+
+We next evaluate the effectiveness of detection and recomputation across model scales. Experiments were repeated across multiple initialization seeds: twelve runs for the 60M model, six for the 350M model, and three for the 1.3B model, reflecting the increased computational cost at larger scales. All models were trained for 10,000 steps, and evaluation loss was recorded every 1,000 steps. Final evaluation losses are reported in Table I. For all experiments in this section, we set , for which no false positives were observed during baseline training.
+
+While our experiments focus on LLaMA-based architectures, the evaluated models span more than an order of magnitude in parameter count, allowing us to study the behavior of the proposed method across different training scales. Because the detection mechanism operates on optimizer statistics rather than model-specific structure, it is expected to generalize to other transformer-based architectures.
+
+We repeated all experiments with fault injection enabled. In these runs, we restricted the fault configuration to and , as these settings produce the most pronounced impact. Faults were injected once every 100 training steps on average, with a randomly sampled duration between 1 and 5 steps. For each fault, the target kernel was selected at random. To ensure consistent fault targeting across model sizes, we had to map kernel names, as the 350M and 1.3B models expose a different set of kernel launches than the 60M model.
+
+The bit position was fixed within each run to match the behavior of intermittent faults. For the 60M and the 350M model, faults were injected at bit position 11 for half of the seeds and at bit position 12 for the remaining seeds. These bit positions yield substantial numerical impact while keeping the probability of NaN values low. Avoiding NaNs is important both for efficient use of computational resources and for maintaining interpretability of the results. For the 1.3B model, we used two seeds with bit position 12 and one seed with bit position 11.
+
+Finally, we repeated all experiments with fault injection enabled while recomputing the most recent training step whenever an anomaly was detected. For simplicity, fault injection was not reactivated during recomputation, although this scenario is possible in practice.
+
+Across all model sizes, fault injection led to a substantial increase in evaluation loss after 10,000 steps, as shown in Table I. In contrast, recomputation effectively mitigated the impact of injected faults, and the evaluation loss remained close to the fault-free baseline.
+
+TABLE I: Evaluation Loss and Runtime Overhead
+
+Model Size
+60M
+350M
+1.3B
+
+(12 seeds)
+(6 seeds)
+(3 seeds)
+
+Baseline Runs
+
+Runs with Fault Injection
+
+Runs with Recomputation
+
+Runtime w/o Detection
+0.98 s/it
+3.93 s/it
+11.61 s/it
+
+Runtime w Detection
+0.99 s/it
+3.95 s/it
+11.68 s/it
+
+VII-C Runtime Overhead
+
+Table I also shows the runtime overhead when detection is enabled, accounting for roughly of the training throughput. This overhead must be weighed against the training progress lost under undetected fault injection. Comparing the evaluation loss of fault-free baselines at earlier steps shows that the final loss under fault injection corresponds to the loss observed approximately 3,000 to 4,000 steps earlier in baseline runs, indicating a substantial and persistent loss of training progress. The fault injection rates used in our experiments are intended as stress tests rather than to reflect realistic fault frequencies in production systems. Nevertheless, these experiments illustrate that even isolated corruption events can lead to lasting deviations in the training trajectory. On average, each injected fault resulted in a loss of approximately 30 to 40 training steps.
+
+Importantly, the cost of detection and the cost of faults scale differently. Detection introduces a fixed per-iteration overhead that is predictable and independent of fault frequency. In contrast, the impact of undetected faults can be amplified by the training process itself. Under data-parallel training, a single corrupted gradient can propagate through gradient aggregation and affect all replicas, while corruption of optimizer state may persist across multiple subsequent steps. As model size and system parallelism increase, the resulting loss of training progress may therefore grow disproportionately.
+
+In practice, faults are commonly handled by reverting training to an earlier checkpoint, which can discard substantial training progress. In contrast, recomputing the most recent training step upon detection instead restores the fault-free training trajectory at the cost of a bounded overhead. This trade-off makes detection and recomputation a practical and effective mechanism for mitigating SDC during LLM training. In the presence of frequent faults, however, the overhead of repeated recomputation may become prohibitive, making device replacement unavoidable.
+
+VII-D Limitations
+
+Our study uses controlled fault-injection experiments in a single-GPU setting to isolate how computation-level corruption propagates through training. However, it does not capture all effects that may arise in large-scale distributed environments, where gradient aggregation and system-level fault handling may influence how corruption propagates across replicas.
+
+While the proposed detection metric can be computed either locally on each worker or after gradient aggregation, we do not experimentally evaluate these scenarios in a distributed setting. Studying how faults propagate across replicas and how recomputation interacts in large-scale systems remains an important direction for future work.
+
+Furthermore, although our experiments span models from 60M to 1.3B parameters, evaluating even larger models would strengthen the empirical validation of the proposed method. In addition, our experiments focus solely on LLaMA-based models trained with the AdamW [39] optimizer. Evaluating other architectures and optimization methods would further validate the generality of the approach.
+
+Finally, our fault model focuses on GEMM kernels. While matrix multiplications dominate LLM workloads, faults in other operations or hardware components may also influence training behavior.
+
+VIII Conclusion
+
+In this paper, we presented a controlled study of SDC during LLM pretraining and demonstrated that intermittent hardware faults can induce harmful parameter updates that lead to loss bumps and substantial degradation of training progress.
+Based on these observations, we proposed a lightweight detection mechanism that identifies harmful parameter updates and demonstrated experimentally that recomputing corrupted steps can effectively mitigate their impact.
+Our results highlight SDC as a significant reliability challenge in large-scale LLM training, and we hope to motivate the development of practical detection, localization, and mitigation techniques.
+
+A promising direction for future work is the integration of system-level metrics, such as temperature, utilization, and power consumption, with model-level metrics to enable more accurate detection and attribution of faults. In distributed training, further research is needed to characterize how failures propagate through gradient aggregation and to design mitigation strategies that prevent system-wide degradation. Future work should also explore proactive mitigation methods, such as momentum resets [37], which may reduce the need for recomputation and help maintain stable training progress. Finally, incorporating low-cost invariant checks could provide lightweight, continuous validation of system and model behavior, enabling earlier and more precise fault localization.
+
+References
+
+[1]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+
+Attention is all you need.
+
+Advances in neural information processing systems 30.
+
+Cited by: §I.
+
+[2]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al. (2023)
+
+Llama: open and efficient foundation language models.
+
+arXiv preprint arXiv:2302.13971.
+
+Cited by: §I,
+§III-A.
+
+[3]
+A. Chowdhery, S. Narang, J. Devlin, M. Bosma, G. Mishra, A. Roberts, P. Barham, H. W. Chung, C. Sutton, S. Gehrmann, et al. (2023)
+
+Palm: scaling language modeling with pathways.
+
+Journal of Machine Learning Research 24 (240), pp. 1–113.
+
+Cited by: §I.
+
+[4]
+M. Dehghani, J. Djolonga, B. Mustafa, P. Padlewski, J. Heek, J. Gilmer, A. P. Steiner, M. Caron, R. Geirhos, I. Alabdulmohsin, et al. (2023)
+
+Scaling vision transformers to 22 billion parameters.
+
+In International Conference on Machine Learning,
+
+pp. 7480–7512.
+
+Cited by: §I,
+§IV-B.
+
+[5]
+S. Zhang, S. Roller, N. Goyal, M. Artetxe, M. Chen, S. Chen, C. Dewan, M. Diab, X. Li, X. V. Lin, et al. (2022)
+
+Opt: open pre-trained transformer language models.
+
+arXiv preprint arXiv:2205.01068.
+
+Cited by: §I.
+
+[6]
+H. Touvron, M. Cord, A. Sablayrolles, G. Synnaeve, and H. Jégou (2021)
+
+Going deeper with image transformers.
+
+In Proceedings of the IEEE/CVF international conference on computer vision,
+
+pp. 32–42.
+
+Cited by: §I.
+
+[7]
+I. Molybog, P. Albert, M. Chen, Z. DeVito, D. Esiobu, N. Goyal, P. S. Koura, S. Narang, A. Poulton, R. Silva, et al. (2023)
+
+A theory on adam instability in large-scale machine learning.
+
+arXiv preprint arXiv:2304.09871.
+
+Cited by: §I.
+
+[8]
+M. Wortsman, P. J. Liu, L. Xiao, K. E. Everett, A. A. Alemi, B. Adlam, J. D. Co-Reyes, I. Gur, A. Kumar, R. Novak, J. Pennington, J. Sohl-Dickstein, K. Xu, J. Lee, J. Gilmer, and S. Kornblith (2024)
+
+Small-scale proxies for large-scale transformer training instabilities.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §I,
+§IV-B.
+
+[9]
+M. Wortsman, T. Dettmers, L. Zettlemoyer, A. Morcos, A. Farhadi, and L. Schmidt (2023)
+
+Stable and low-precision training for large-scale vision-language models.
+
+Advances in Neural Information Processing Systems 36, pp. 10271–10298.
+
+Cited by: §I.
+
+[10]
+S. Zhai, T. Likhomanenko, E. Littwin, D. Busbridge, J. Ramapuram, Y. Zhang, J. Gu, and J. M. Susskind (2023)
+
+Stabilizing transformer training by preventing attention entropy collapse.
+
+In International Conference on Machine Learning,
+
+pp. 40770–40803.
+
+Cited by: §I.
+
+[11]
+J. Ma, H. Pei, L. Lausen, and G. Karypis (2025)
+
+Understanding silent data corruption in llm training.
+
+arXiv preprint arXiv:2502.12340.
+
+Cited by: §I,
+§II-B,
+§IV-B.
+
+[12]
+G. Papadimitriou, D. Gizopoulos, H. D. Dixit, and S. Sankar (2023)
+
+Silent data corruptions: the stealthy saboteurs of digital integrity.
+
+In 2023 IEEE 29th International Symposium on On-Line Testing and Robust System Design (IOLTS),
+
+pp. 1–7.
+
+Cited by: §I,
+§II-A.
+
+[13]
+H. D. Dixit, S. Pendharkar, M. Beadon, C. Mason, T. Chakravarthy, B. Muthiah, and S. Sankar (2021)
+
+Silent data corruptions at scale.
+
+arXiv preprint arXiv:2102.11245.
+
+Cited by: §I,
+§I,
+§II-A.
+
+[14]
+J. F. Ziegler (1996)
+
+Terrestrial cosmic rays.
+
+IBM journal of research and development 40 (1), pp. 19–39.
+
+Cited by: §I.
+
+[15]
+S. S. Mukherjee, J. Emer, and S. K. Reinhardt (2005)
+
+The soft error problem: an architectural perspective.
+
+In 11th International Symposium on High-Performance Computer Architecture,
+
+pp. 243–247.
+
+Cited by: §I.
+
+[16]
+R. C. Baumann (2005)
+
+Radiation-induced soft errors in advanced semiconductor technologies.
+
+IEEE Transactions on Device and materials reliability 5 (3), pp. 305–316.
+
+Cited by: §I.
+
+[17]
+(2025)
+
+Starcloud: why data centers should move to space.
+
+Note: Accessed: December, 2025https://www.starcloud.com/
+
+Cited by: §I.
+
+[18]
+P. H. Hochschild, P. Turner, J. C. Mogul, R. Govindaraju, P. Ranganathan, D. E. Culler, and A. Vahdat (2021)
+
+Cores that don’t count.
+
+In Proceedings of the Workshop on Hot Topics in Operating Systems,
+
+pp. 9–16.
+
+Cited by: §I.
+
+[19]
+S. Wang, G. Zhang, J. Wei, Y. Wang, J. Wu, and Q. Luo (2023)
+
+Understanding silent data corruptions in a large production cpu population.
+
+In Proceedings of the 29th Symposium on Operating Systems Principles,
+
+pp. 216–230.
+
+Cited by: §I.
+
+[20]
+H. D. Dixit, L. Boyle, G. Vunnam, S. Pendharkar, M. Beadon, and S. Sankar (2022)
+
+Detecting silent data corruptions in the wild.
+
+arXiv preprint arXiv:2203.08989.
+
+Cited by: §I.
+
+[21]
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican, et al. (2023)
+
+Gemini: a family of highly capable multimodal models.
+
+arXiv preprint arXiv:2312.11805.
+
+Cited by: §I,
+§III-B.
+
+[22]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §I,
+§III-B.
+
+[23]
+B. Wan, G. Liu, Z. Song, J. Wang, Y. Zhang, G. Sheng, S. Wang, H. Wei, C. Wang, W. Lou, et al. (2025)
+
+Robust llm training infrastructure at bytedance.
+
+In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles,
+
+pp. 186–203.
+
+Cited by: §I,
+§I.
+
+[24]
+C. Zhao, C. Deng, C. Ruan, D. Dai, H. Gao, J. Li, L. Zhang, P. Huang, S. Zhou, S. Ma, et al. (2025)
+
+Insights into deepseek-v3: scaling challenges and reflections on hardware for ai architectures.
+
+In Proceedings of the 52nd Annual International Symposium on Computer Architecture,
+
+pp. 1731–1745.
+
+Cited by: §I.
+
+[25]
+O. Villa, M. Stephenson, D. Nellans, and S. W. Keckler (2019)
+
+Nvbit: a dynamic binary instrumentation framework for nvidia gpus.
+
+In Proceedings of the 52nd Annual IEEE/ACM International Symposium on Microarchitecture,
+
+pp. 372–383.
+
+Cited by: 1st item,
+§III-B.
+
+[26]
+R. W. Hamming (1950)
+
+Error detecting and error correcting codes.
+
+The Bell system technical journal 29 (2), pp. 147–160.
+
+Cited by: §II-A.
+
+[27]
+J. Meza, Q. Wu, S. Kumar, and O. Mutlu (2015)
+
+Revisiting memory errors in large-scale production data centers: analysis and modeling of new trends from the field.
+
+In 2015 45th Annual IEEE/IFIP International Conference on Dependable Systems and Networks,
+
+pp. 415–426.
+
+Cited by: §II-A.
+
+[28]
+K. Huang and J. A. Abraham (1984)
+
+Algorithm-based fault tolerance for matrix operations.
+
+IEEE transactions on computers 100 (6), pp. 518–528.
+
+Cited by: §II-A,
+§II-B.
+
+[29]
+G. Li, S. K. S. Hari, M. Sullivan, T. Tsai, K. Pattabiraman, J. Emer, and S. W. Keckler (2017)
+
+Understanding error propagation in deep learning neural network (dnn) accelerators and applications.
+
+In Proceedings of the international conference for high performance computing, networking, storage and analysis,
+
+pp. 1–12.
+
+Cited by: §II-B.
+
+[30]
+U. K. Agarwal, A. Chan, and K. Pattabiraman (2023)
+
+Resilience assessment of large language models under transient hardware faults.
+
+In 2023 IEEE 34th International Symposium on Software Reliability Engineering (ISSRE),
+
+pp. 659–670.
+
+Cited by: §II-B.
+
+[31]
+D. Ma, F. Lin, A. Desmaison, J. Coburn, D. Moore, S. Sankar, and X. Jiao (2024)
+
+Dr. dna: combating silent data corruptions in deep learning using distribution of neuron activations.
+
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3,
+
+pp. 239–252.
+
+Cited by: §II-B.
+
+[32]
+Y. Sun, Z. Coalson, S. Chen, H. Liu, Z. Zhang, S. Hong, B. Fang, and L. Yang (2025)
+
+Demystifying the resilience of large language model inference: an end-to-end perspective.
+
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+pp. 1127–1144.
+
+Cited by: §II-B.
+
+[33]
+E. Elsen, C. Hawthorne, and A. Somani (2023)
+
+The adventure of the errant hardware.
+
+External Links: Link
+
+Cited by: §II-B.
+
+[34]
+Y. He, M. Hutton, S. Chan, R. De Gruijl, R. Govindaraju, N. Patil, and Y. Li (2023)
+
+Understanding and mitigating hardware failures in deep learning training systems.
+
+In Proceedings of the 50th Annual International Symposium on Computer Architecture,
+
+pp. 1–16.
+
+Cited by: §II-B.
+
+[35]
+Y. Liang, X. Li, J. Ren, A. Li, B. Fang, and J. Chen (2025)
+
+ATTNChecker: highly-optimized fault tolerant attention for large language model training.
+
+In Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming,
+
+pp. 252–266.
+
+Cited by: §II-B.
+
+[36]
+J. Zhao, Z. Zhang, B. Chen, Z. Wang, A. Anandkumar, and Y. Tian (2024)
+
+GaLore: memory-efficient LLM training by gradient low-rank projection.
+
+In 5th Workshop on practical ML for limited/low resource settings,
+
+Cited by: §III-A.
+
+[37]
+T. Huang, Z. Zhu, G. Jin, L. Liu, Z. Wang, and S. Liu (2025)
+
+SPAM: spike-aware adam with momentum reset for stable LLM training.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §III-A,
+§III-A,
+§IV-D,
+§V,
+§VIII.
+
+[38]
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu (2020)
+
+Exploring the limits of transfer learning with a unified text-to-text transformer.
+
+Journal of machine learning research 21 (140), pp. 1–67.
+
+Cited by: §III-A.
+
+[39]
+I. Loshchilov and F. Hutter (2019)
+
+Decoupled weight decay regularization.
+
+In 7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019,
+
+Cited by: §III-A,
+§V,
+§VII-D.
+
+[40]
+T. Tsai, S. K. S. Hari, M. Sullivan, O. Villa, and S. W. Keckler (2021)
+
+Nvbitfi: dynamic fault injection for gpus.
+
+In 2021 51st Annual IEEE/IFIP International Conference on Dependable Systems and Networks (DSN),
+
+pp. 284–291.
+
+Cited by: §III-B.
+
+[41]
+J. D. Guerrero Balaguera, J. E. Rodriguez Condia, and M. Sonza Reorda (2025)
+
+Effective fault effects evaluation for permanent faults in gpus executing dnns.
+
+ACM Transactions on Design Automation of Electronic Systems 30 (2), pp. 1–33.
+
+Cited by: §III-B,
+§III-B.
+
+[42]
+R. Karami, S. Kao, and H. Kwon (2025)
+
+Understanding the performance horizon of the latest ml workloads with nongemm workloads.
+
+In 2025 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS),
+
+pp. 1–14.
+
+Cited by: §III-B.
+
+[43]
+D. P. Kingma and J. Ba (2014)
+
+Adam: a method for stochastic optimization.
+
+International Conference on Learning Representations.
+
+Cited by: §IV-D.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

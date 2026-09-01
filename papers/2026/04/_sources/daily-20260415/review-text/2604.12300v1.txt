@@ -1,0 +1,1442 @@
+TierBPF: Page Migration Admission Control for Tiered Memory via eBPF
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background
+
+3 Motivation
+
+3.1 THP Migration Dilemma
+
+3.2 There is No One Ideal Page Size
+
+3.3 Architecture-Agnostic Migration
+
+4 Key Ideas in TierBPF
+
+5 TierBPF Design
+
+5.1 Lightweight Memory Profiling
+
+5.1.1 Global Subpage Histogram in mTHP Splitting
+
+5.1.2 eBPF-Based Kernel Profiling
+
+5.1.3 R/W Classification in Migration Admission
+
+5.2 mTHP Splitting
+
+5.2.1 THP Splitting Decision
+
+5.2.2 Kernel-Side Enforcement
+
+5.3 Duplex-Aware Migration Admission Control
+
+6 Evaluation
+
+6.1 Evaluation Methodology
+
+6.2 Evaluation of THP Splitting
+
+6.2.1 Analysis by Workload
+
+6.2.2 Analysis by Memory Tiering Software
+
+6.2.3 How Does TierBPF Split Pages?
+
+6.3 Why does Splitting Help? Further Analysis from the Perspective of Page Migration
+
+6.4 Evaluation with Memory Bandwidth Contention
+
+6.5 Evaluation on PMEM
+
+6.6 Evaluation with Traffic Balancing
+
+7 Related Work
+
+8 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.12300v1 [cs.OS] 14 Apr 2026
+
+TierBPF: Page Migration Admission Control for Tiered Memory via eBPF
+
+Xi Wang
+
+Affiliation: University of California, Merced, USA
+
+,
+Tal Zussman
+
+Affiliation: Columbia University, USA
+
+,
+Yuang Xu
+
+Affiliation: University of California, Merced, USA
+
+,
+Bin Ma
+
+Affiliation: University of California, Merced, USA
+
+,
+Asaf Cidon
+
+Affiliation: Columbia University, USA
+
+and
+Dong Li
+
+Affiliation: University of California, Merced, USA
+
+Abstract.
+
+Existing software-based memory tiering systems decide which pages to place on the slower or faster tier. However, they do not take into account two important factors that greatly influence application performance: the size of the migrated pages, and the underlying hardware device and tiering topology. We introduce TierBPF, a software mechanism that can be plugged into existing memory tiering systems to take
+these factors into account,
+by making simple binary page admission decisions. TierBPF is implemented as a set of eBPF hooks, which allow users to define their own custom policies.
+In order to make its decisions, TierBPF utilizes a lightweight tracking mechanism for page profiling which is not dependent on the application’s working set size. TierBPF, integrated into three memory tiering systems and evaluated with 17 workloads, achieves geomean throughput gains of up to 17.7% with improvements of up to 75% for individual workloads.
+
+1. Introduction
+
+As the number of cores available in modern processors grows faster than local DRAM server capacity (Maruf et al., 2023; Zhong et al., 2024), datacenter operators are deploying tiered-memory architectures that pair fast, capacity-limited local DRAM with a slower, higher-capacity memory tier. Memory tiering systems are responsible for migrating pages across these tiers.
+
+Memory tiering systems are typically designed around a high-level abstraction: a heterogeneous memory architecture composed of slow memory and fast memory. This abstraction simplifies the page migration decision based on page access frequency and recency (Maruf et al., 2023; Vuppalapati et al., 2024; Xiang et al., 2024; Song et al., 2025; Ren et al., 2024; Xu et al., 2024).
+That is, migrating hot (frequently or recently accessed) pages to the fast tier, and keeping cold (infrequently used) pages in the slow tier. Albeit simple to reason about, this high-level abstraction causes two problems.
+
+Problem 1: The abstraction ignores the interaction between page size and migration. Many production systems enable Transparent Huge Pages (THP), allocating memory in 2 MB pages to reduce the TLB miss overhead. However, page migration in memory tiering systems is intertwined with the page size. When the kernel migrates a 2 MB THP, it must copy the entire page, even if only a small subset of its constituent base pages are frequently accessed. This behavior wastes migration bandwidth and may squander
+scarce fast-tier capacity with cold data. Splitting the THP into 512 base pages and migrating only the hot ones avoids this waste, but at the price of increased TLB overhead.
+
+The problem of granular hot memory regions in THP is not specific to migration. Indeed, Linux v6.8 attempted to address this by introducing multi-size THP (mTHP) (Roberts and Linux Kernel Community, 2024), which supports intermediate page sizes from 16 KB to 1 MB, but the page size is determined only at allocation time. As such, no existing tiering system exploits splitting pages into intermediate sizes during page migration. In existing tiered memory systems, a page originally allocated as a 1 MB page can only be migrated in one big chunk.
+
+Problem 2: The fast-slow tier abstraction hides deployment specific properties.
+Tiering deployments are heterogeneous, both in terms of the types of devices and in terms of the deployment topology. CXL-attached memory expansion connects over a PCIe link, Intel Optane PMEM is integrated via the DDR bus, while emerging substrates, such as CXL-attached flash (Yang et al., 2023; Li et al., 2025) and disaggregated memory pools (Li et al., 2023; Yang et al., 2025b; Wang et al., 2025b), further broaden the design space. These deployment configurations differ not only in latency and bandwidth, but also in architectural properties such as memory duplex mode (i.e., read-write interference), persistence, and cache coherence. As a result, there is no one-size-fits-all policy that works for any deployment configuration. For example, a policy that improves performance on a CXL-based memory expansion may have little benefit—or even incur overhead—on persistent memory-based platforms (§3.3).
+
+These two problems share a common root cause: there is no existing mechanism for tiered memory systems to take page size or the tiered memory’s deployment configuration into account. To this end, we introduce TierBPF, a system that interfaces with existing tiered memory systems, making them adaptable to factors like page size granularity and tiering architecture. TierBPF sits between the memory tiering system’s migration decision-making and the page migration mechanism. Our key insight is TierBPF makes
+existing tiered memory systems aware of their broader context by applying page migration admission control. When the tiering system decides that a page should be migrated, TierBPF applies two filters before the migration proceeds: a granularity filter that determines the right page size for migration, and an architecture filter that determines whether the migration actually benefits the deployed hardware. These two filters transform a coarse migrate-or-not decision into a fine-grained one that accounts for subpage access patterns, runtime conditions (i.e., memory bandwidth contention), and hardware characteristics (i.e., memory duplex mode).
+
+The granularity filter addresses Problem 1. Instead of migrating the full 2 MB THP or splitting it all the way to 4 KB, this filter selects an intermediate mTHP size that is large enough to preserve TLB benefits yet small enough to avoid migrating cold data. The choice is contention-aware: under low slow-tier bandwidth contention, the filter keeps pages at 2 MB for maximum TLB coverage; under high contention—common in multi-tenant cloud environments—it selects a smaller mTHP size (e.g., 64 KB or 128 KB), so each migration moves less data, wastes less bandwidth, and occupies less fast-tier capacity (§3.2).
+
+The architecture filter addresses Problem 2. The specific device hardware affects the effectiveness of page migration. For example, CXL memory uses full-duplex links where reads and writes proceed on independent channels (Yang et al., 2025c), while Intel Optane PMEM uses half-duplex DDR where reads and writes share the same bus. Hence, on a CXL system with read-dominant memory traffic, selectively holding back write-heavy pages from page promotion can improve bandwidth utilization by keeping the full-duplex channels balanced. The same policy on PMEM would merely prevent hot pages from reaching fast memory, with no bandwidth benefit. The page migration admission control allows memory tiering to customize migration decisions based on the duplex mode.
+
+The critical obstacle in supporting these filters is accurate and low-overhead memory profiling. Building and maintaining per-page profiling
+(as in MEMTIS (Lee et al., 2023)) is not scalable in terms of runtime and memory overhead. Instead, TierBPF introduces lightweight eBPF-based profiling. In particular, TierBPF processes hardware memory-access samples entirely in-kernel using eBPF, avoiding the context switches and data copying suffered by the user-space profiling. In addition, TierBPF uses a lightweight, compact global subpage histogram (using only 4 KB per process) instead of per-page tracking structures, enabling lightweight profiling with overhead independent of the workload’s working set size.
+
+To make page-migration admission control deployable across different tiering systems and adaptable to evolving memory architectures, we implement all policy logic as user-customizable eBPF programs. We expose three hooks along the kernel’s NUMA migration path: one for split-size selection, one for subpage hot/cold classification, and one for migration admission. This design cleanly separates policy (i.e., which page to migrate and at what granularity) from mechanism (i.e., how to migrate), allowing the admission control to easily plug into existing memory tiering systems.
+
+Our paper’s major contributions are:
+
+•
+
+We identify two problems in existing memory tiering systems caused by the fast-vs-slow memory abstraction: the lack of both migration-time page-granularity awareness and architecture-aware page migration filtering.
+
+•
+
+We present TierBPF, the first system to support dynamic, contention-aware mTHP-size selection and memory duplex mode-aware page migration. TierBPF implements all migration policies as eBPF programs, allowing operators to adapt migration policies to hardware topologies.
+
+•
+
+We evaluate TierBPF on two memory platforms: (a) CXL memory expansion, and (b) Intel PMEM. We integrate TierBPF with three memory tiering systems: AutoNUMA (Corbet, ), TPP (Maruf et al., 2023), and Colloid (Vuppalapati et al., 2024). Our results demonstrate that TierBPF significantly improves both adaptability and performance across architectures, consistently outperforming prior approaches under diverse workloads: TierBPF achieves geomean throughput gains of 7.4-17.7%, with improvements of up to 75% for individual workloads, and outperforms MEMTIS by up to 26%.
+
+2. Background
+
+Multi-size transparent huge pages. Virtual-to-physical address translation depends heavily on the TLB. Using 4 KB pages significantly limits TLB reach (e.g., a few hundred kilobytes per TLB), increasing TLB miss rates for modern memory-intensive workloads. Since each TLB miss can invoke a multi-level page-table walk that may cost tens to hundreds of cycles depending on cache residency, address-translation overheads alone have been shown to reduce application performance by up to 30% (Weisberg and Wiseman, 2009; McCalpin, 2012; Lustig et al., 2013).
+THPs alleviate this by using 2 MB pages, reducing translation frequency and improving TLB hit rates.
+
+However, 2 MB THPs introduce their own challenges. Allocating physically contiguous 2 MB regions becomes costly when memory is fragmented. To address this, Linux 6.8 introduced mTHP, which supports anonymous page allocation at intermediate sizes (16 KB, 32 KB, 64 KB, 128 KB, 256 KB, 512 KB, and 1 MB) alongside the traditional 4 KB and 2 MB options. Each size can be enabled or disabled independently via sysfs. mTHP provides a practical middle ground: smaller huge-page sizes are easier to allocate, reduce memory waste, and still improve TLB efficiency compared to 4 KB pages. Internally, the Linux kernel represents each (m)THP as a folio; we use folio and page interchangeably in this paper.
+
+However, current mTHP support is limited to allocation. The kernel does not consider page sizes when migrating pages across memory tiers.
+MEMTIS (Lee et al., 2023) improves on this by making a binary choice:
+migrating the entire 2 MB page or splitting it into 512 individual 4 KB base pages for selective migration, with no consideration of other mTHP sizes. However, splitting a 2 MB page all the way down to 4 KB pages loses the TLB performance benefits entirely, even when a 64 KB or 128 KB split would have been sufficient.
+
+Furthermore, MEMTIS’s design cannot scale to support intermediate mTHP sizes, for three reasons. First, MEMTIS relies on per-page metadata tracking, which is not scalable: MEMTIS maintains per-subpage access metadata for every 4 KB subpage within each huge page,
+which grows linearly with the working set size of the workload (e.g., tens of GB on a TB-scale server). The metadata is typically placed in fast memory because of its high access frequency, taking most of the fast memory capacity (tens of GBs (Li et al., 2023)) in a data-center server. This leaves little space in the fast tier for workload pages that could improve performance.
+
+Second, MEMTIS can lead to large runtime overhead. MEMTIS decides whether to split a huge page by comparing the measured fast-tier hit ratio against an estimated base-page hit ratio. That means that supporting candidate mTHP sizes in MEMTIS would need to build and maintain separate emulated histograms and hit-ratio estimates, multiplying both memory footprint and splitting-decision computation. Evaluating with memory-intensive benchmarks (LU.D and SP.D shown in Table 3), we observe that MEMTIS leads to up to 15% runtime overhead because of the above computation and metadata management.
+
+Third, MEMTIS is architecture-dependent. In order to calculate fast-tier hit ratio to decide page size, MEMTIS relies on specific hardware counters to determine from which tier a memory access comes. This limits the generality of MEMTIS on diverse memory architectures.
+
+This motivates supporting multi-size THP during page migration in a scalable and architecture-independent manner.
+
+eBPF for kernel customization. Extended Berkeley Packet Filter (eBPF) is a Linux kernel technology that enables user-defined programs to run safely inside the kernel in a sandboxed environment, without requiring kernel source modifications or custom kernel modules. The eBPF verifier enforces strict safety guarantees: programs cannot crash the kernel, access arbitrary memory, or execute unbounded loops.
+Originally designed for network packet filtering, eBPF has evolved into a general-purpose mechanism for extending kernel functionality. Recent work highlights its versatility in customizing core kernel subsystems (Meta and Google, 2024; Zussman and others, 2025; Mores and others, 2024).
+Collectively, these systems illustrate a broader trend: eBPF is making kernel memory management programmable.
+
+3. Motivation
+
+Despite recent advances in tiered memory architecture, THP support, and eBPF programmability, today’s memory tiering stack suffers from three fundamental limitations.
+
+3.1. THP Migration Dilemma
+
+When THP is enabled, the kernel manages memory in 2 MB pages by default. Consider a 2 MB THP where only a small cluster of subpages is frequently accessed.
+Existing memory tiering systems face two suboptimal choices.
+
+Option 1 (Linux default): migrate the full 2 MB THP. This wastes migration bandwidth—the system copies 2 MB of data even if only 64 KB is hot—and consumes scarce fast-tier capacity by allocating 2 MB of DRAM for cold data.
+Moreover, migrating a 2 MB page requires a contiguous 2 MB free region on the destination node, which is often unavailable under memory fragmentation, causing migrations to fail (§6.3).
+
+Option 2 (e.g., MEMTIS (Lee et al., 2023)): split the THP into 4 KB base pages and migrate the hot ones. While this preserves bandwidth and fast-tier space, it destroys TLB coverage. After splitting, the application experiences more TLB misses, which can offset the performance gains of page migration.
+
+Figure 1. Hot subpage distribution within 2 MB THPs. We use workloads summarized in Table 3.
+
+Figure 1 shows the distribution of hot 4 KB subpages within 2 MB THPs across representative workloads. Access patterns are rarely uniform: most THPs contain a concentrated hot region spanning tens to hundreds of kilobytes—far larger than a single 4 KB page but far smaller than the full 2 MB. This suggests that intermediate mTHP sizes (e.g., 64 KB or 256 KB) could more precisely capture the hot region, migrating only what is necessary while preserving TLB coverage for the migrated portion.
+
+3.2. There is No One Ideal Page Size
+
+Deciding the mTHP size is challenging. With different levels of memory contention, the same application prefers different page sizes to improve performance.
+
+Figure 2. The optimal mTHP size shifts under memory contention, as per §6.1. Stars indicate the best performance.
+
+When an application runs alone and the slow tier is not under bandwidth pressure, larger THP sizes are generally preferable. In this setting, the slow tier can offer relatively low memory-access latency (Vuppalapati et al., 2024),
+so the cost of migrating huge pages is small, and the bandwidth consumed by such migrations does not meaningfully affect performance. As a result, the TLB benefits of 2 MB pages dominate. However, in cloud environments where multiple workloads share the same machine and memory tiers, the trade-offs shift. Under contention in the slow tier, migrating 2 MB pages becomes more expensive: misidentified hot pages waste migration bandwidth, and truly hot pages left in the slow tier suffer greater performance penalties due to increased access latency. In these scenarios, smaller mTHP sizes reduce both slow-tier bandwidth consumption and fast-tier capacity usage per migration, allowing more distinct hot regions to reside in fast memory simultaneously.
+
+Figure 2 shows the optimal mTHP size under memory contention. The results show that there is no one-size-fits-all size: the optimal page size is different when varying the workloads and memory contention level. This implies that any static page-size policy—whether configured system-wide via sysfs or defined per application—will be suboptimal in a dynamic, multi-tenant environment. The system must instead adapt its mTHP size selection at runtime, guided by the memory architecture and prevailing memory pressure.
+
+Linux mTHP (Roberts and Linux Kernel Community, 2024) allows administrators to enable or disable specific mTHP sizes via sysfs, but this is a static, manual configuration. It does not adapt to runtime conditions. eBPF-mm (Mores and others, 2024) uses eBPF to select page sizes at allocation time, but it relies on pre-defined application profiles and does not consider page migration. Neither system provides dynamic, contention-aware mTHP size selection for page migration.
+
+3.3. Architecture-Agnostic Migration
+
+Figure 3. Memory bandwidth differs on different memory tiering architectures.
+
+Existing tiered memory systems apply the same migration policy without considering the underlying memory architecture.
+To explain why this is problematic, we use a case study of CXL memory and Optane persistent memory.
+CXL memory provides full-duplex links where reads and writes use independent channels (Yang et al., 2025c).
+The migration policy can take advantage of this property by actively rebalancing the read/write traffic across the full-duplex channels. In contrast, an PMEM system has half-duplex DDR interfaces where read and write traffics compete for the same link. As a result, rebalancing read/write traffic does not improve bandwidth utilization but merely shifts contention from one direction to the other. Worse, selectively holding back read- or write-heavy pages from promotion prevents genuinely hot pages from reaching the fast tier, degrading overall performance.
+
+As a result, a traffic-rebalancing policy that performs well on a CXL platform can lose effectiveness on a PMEM platform. Memory-tiering systems must therefore be tailored to the memory architecture. Figure 3 illustrates this discrepancy: CXL reaches 149% and 125% of the read-only peak bandwidth on PCIe4 and PCIe5, respectively, with the mixed read/write pattern by leveraging its full-duplex link, whereas PMEM, constrained by its half-duplex DDR interface, experiences substantial bandwidth degradation (only 17% of the read-only peak bandwidth) under the same traffic pattern.
+
+Despite this, most memory tiering systems (e.g., AutoNUMA (Corbet, ), TPP (Maruf et al., 2023), Nimble (Yan et al., 2019), MEMTIS (Lee et al., 2023), Colloid (Vuppalapati et al., 2024), and Nomad (Xiang et al., 2024))
+do not fully consider architectural differences and cannot flexibly customize the policy for the hardware deployment.
+
+4. Key Ideas in TierBPF
+
+TierBPF addresses the three gaps identified in §3. First, it splits 2 MB THPs into optimal mTHP sizes based on hot subpage distribution, avoiding both bandwidth waste and unnecessary TLB misses (§3.1). Second, it activates the THP splitting policy based on runtime memory contention (§3.2). Third, it customizes migration decisions based on memory architecture characteristics (§3.3). The three policies are implemented as eBPF programs, making them safe, low-overhead, and deployable without further kernel modifications.
+
+Lightweight memory profiling. Each policy decision in TierBPF—which mTHP size to split into, which subpages are hot, and whether to admit a migration—relies on knowing page access patterns. TierBPF maintains a global subpage histogram—a fixed 512-entry array (4 KB) per application—that maps hardware-sampled accesses from all THPs to their subpage offset. This constant-size structure does not grow with the working set of the workload. The profiling logic runs as an eBPF program attached to hardware performance events, aggregating samples directly in interrupt context and avoiding context switches and data copies between kernel and user space (§5.1). This lightweight profiling builds a foundation to guide three policy decisions, described below.
+
+Contention-aware mTHP splitting. TierBPF dynamically selects the largest mTHP size that captures most of the hot subpages within a dense memory region. The mTHP size is not a static configuration. Because the optimal size changes as memory contention varies (Observation 3.2), TierBPF activates THP splitting only when the slow-tier bandwidth is under pressure. Beyond reducing bandwidth waste, splitting also reduces migration failures: a smaller subfolio requires far less contiguous free space than a 2 MB THP, so migrations succeed more often under memory fragmentation.
+
+Architecture-aware migration policy. Even when a page is hot enough to merit promotion, migrating it does not always help. On a CXL system with full-duplex channels, reads and writes proceed independently. If CXL read bandwidth is the bottleneck, promoting read-heavy pages alleviates pressure, but promoting write-heavy pages offers little benefit, because the write channel is typically uncongested (Observation 3.3). On a half-duplex PMEM system, however, the same selective policy would be counterproductive: reads and writes share a single channel, so all hot pages benefit equally from promotion.
+
+TierBPF adds an architecture-aware migration-admission hook. Before a page is promoted, an eBPF program evaluates its read/write ratio in the context of real-time CXL traffic. Write-heavy pages are deferred unless the CXL write channel is genuinely saturated. This hook is enabled only on CXL platforms and becomes a no-op on PMEM (or other half-duplex memory architectures), or single-tier systems.
+
+eBPF as the policy layer. TierBPF uses eBPF to decouple migration policy from migration mechanism. It exposes three hooks along the kernel’s NUMA migration path as eBPF attachment points: one for split-size selection, one for subpage hot/cold classification, and one for migration admission. When no eBPF program is loaded, the kernel falls back to safe defaults (no splitting and unconditional migration).
+
+Figure 4 illustrates the architecture of TierBPF, which spans three layers. In the kernel, an eBPF program attached to hardware performance events profiles memory accesses and aggregates them into BPF maps. User-space daemons derive policy decisions from the profiling data and publish them to the pinned BPF maps. On the kernel’s NUMA migration path, three eBPF hooks serving as page migration admission control enforce these decisions at migration time: (1) mTHP Splitting Size selects the target mTHP granularity, (2) Hot/Cold Subfolio Classify determines which subfolios to promote or not, and (3) Migration Admission accepts or defers a migration based on the current CXL traffic pattern.
+
+Figure 4. TierBPF architecture overview.
+
+5. TierBPF Design
+
+Table 1. Three eBPF hooks in TierBPF.
+
+Hook
+
+Location
+
+Default
+
+bpf_thp_pick_
+
+split_order
+
+mm/migrate.c
+
+2MB (no split)
+
+bpf_subpage_
+
+is_cold
+
+mm/migrate.c
+
+0 (all hot)
+
+bpf_thp_numa_
+
+migrate_admission
+
+kernel/sched/
+
+fair.c
+
+0 (allow)
+
+We describe the three core mechanisms in TierBPF. First, we describe the lightweight memory profiling subsystem (§5.1), which combines a fixed-size global subpage histogram, a dual blocked counting Bloom filter (bCBF), and eBPF-based in-kernel sampling to collect access patterns with minimal overhead. Second, we present the mTHP splitting algorithm (§5.2), which uses normalized Shannon entropy to detect skewed access distributions and selects the largest mTHP size whose heat density is sufficient to capture hot regions, ensuring that only hot subfolios are migrated. Third, we describe the duplex-aware migration admission control (§5.3), which classifies each page’s read/write ratio and admits or defers migrations based on real-time memory traffic.
+
+TierBPF realizes its policies through three eBPF hooks inserted into the kernel’s NUMA-migration path (Table 1). All three follow the same design pattern: a noinline kernel function annotated with ALLOW_ERROR_INJECTION that returns a safe default when no eBPF program is attached, but whose return value can be overridden by an fmod_ret eBPF program. These hooks enable the three core mechanisms. We discuss the design in detail in this section.
+
+5.1. Lightweight Memory Profiling
+
+Every policy decision in TierBPF—which mTHP size to split to, which subfolios to promote, whether to admit a migration—relies on access profiles collected from hardware event sampling. The profiling must be both effective and cheap.
+
+5.1.1. Global Subpage Histogram in mTHP Splitting
+
+For mTHP splitting, what matters is not the exact access count of each individual page, but the access distribution pattern within a 2 MB THP region (i.e., which subpages are hot and which are cold). Instead of creating a subpage histogram of 512 entries per huge page, TierBPF captures hot subpage distribution with a global subpage histogram: an array of 512 entries (representing 512 subpage offsets) per application, where each hardware event sample is mapped to a slot by: page_addr % 511. This single modulo operation maps accesses from all 2 MB THPs of an application into one 512-slot array, requiring only per application regardless of working set size.
+
+Why can a global histogram work? Folding all THPs into one histogram loses access distribution patterns for individual THPs.
+However, the key insight is that with sampling-based profiling, the hardware sampler naturally focuses on frequently accessed pages. The global histogram is therefore dominated by the subpage distribution of hot THPs—precisely the ones that are candidates for migration. Cold THPs contribute few samples and have little influence on the histogram. Since cold THPs should remain in slow memory and are not to be migrated, their subpage distribution is irrelevant to splitting decisions.
+In other words, the global histogram is not a low-quality approximation to access distribution patterns. Rather, it is a direct representation of the THPs that matter for migration.
+
+5.1.2. eBPF-Based Kernel Profiling
+
+Prior tiering systems such as MEMTIS (Lee et al., 2023) and HeMem (Raybuck et al., 2021b) process hardware event samples in user-space. As shown in Figure 5, the user-space approach follows a multi-step data path: the kernel serializes each sample into a perf ring buffer, wakes up a user-space thread, and the thread reads and parses each sample before updating its own metadata. This path incurs substantial overhead from multiple sources.
+
+First, each raw sample gets copied multiple times: the kernel serializes a perf_record_sample into the perf ring buffer, the user-space thread reads it from the ring buffer, deserializes each field, and writes the extracted result into its own hash table.
+Second, delivering these samples requires context switches: the kernel must wake up the user-space thread, and the thread returns to sleep after processing each batch. Third, processing individual samples in user-space also forces the CPU to alternate between ring buffer pages and hash table pages, causing CPU cache pollution as profiling metadata competes with application data for cache capacity. At high sampling rates (e.g., – samples/sec), these costs compound and become significant.
+
+TierBPF avoids all these overheads by running the profiling logic inside the kernel as an eBPF program attached to perf events (as shown in Figure 5). When a hardware event sampling interrupt fires, the eBPF program executes directly in the interrupt context.
+It reads the sampled address, computes the update, and writes to a BPF map—all without entering user-space.
+The ring buffer is bypassed entirely: the raw sample never leaves the kernel, requiring no serialization, no parsing, and no cross-boundary data transfer.
+User-space only reads the BPF maps when it needs to make a policy decision, and at that point it reads aggregated results (hundreds of entries), not raw samples (potentially millions).
+
+Figure 5. Comparison of profiling data paths.
+
+5.1.3. R/W Classification in Migration Admission
+
+For duplex-aware migration admission (§5.3), TierBPF must classify each page’s read/write ratio. This is inherently a per-page query that the global histogram cannot serve. Explicitly maintaining per-page counters is not scalable (§2). To address this problem, TierBPF introduces a blocked counting Bloom filter (bCBF) inspired by HybridTier (Song et al., 2025). A counting Bloom filter (CBF) provides space-efficient approximate count estimation; a blocked CBF further improves cache efficiency by partitioning counters into cache-line-sized blocks, so each lookup touches exactly one cache line. Concretely, a bCBF maps each page address via hashing to counters within a single block. A Get returns the minimum of the counters; an Update increments only the counters at the current minimum (Song et al., 2025).
+
+TierBPF extends this mechanism with a dual-bCBF design, one for reads and one for writes. The write ratio of a page is computed as , where and are the Get results from the write and read bCBFs respectively.
+
+TierBPF allocates the dual bCBF only when CXL memory is present and duplex-aware admission is active.
+On PMEM or single-tier systems, TierBPF does not need this counting mechanism, because the half-duplex interface does not benefit from read/write traffic rebalancing (§3.3).
+
+5.2. mTHP Splitting
+
+Given the subpage histogram from §5.1, TierBPF must decide what mTHP size to split into, which subfolios are hot, and which subfolios to migrate. We do not change the Linux kernel’s inherent page merging mechanism.
+
+5.2.1. THP Splitting Decision
+
+When slow-tier bandwidth is contended and THP splitting is activated, a background user-space analyzer reads the global subpage histogram for each application and computes the target mTHP size. Let denote the sampled access count of the -th 4 KB subpage within a 2 MB THP region (), and let .
+The algorithm to split THP has four stages.
+
+Stage 1: hot threshold determination.
+This stage separates hot subpages from cold ones. TierBPF sorts subpages by their access counts () and finds the smallest so that the cumulative sum of top- subpages reaches a target coverage ratio (default 80%):
+
+(1)
+
+The hot threshold is then .
+This coverage-based threshold adapts automatically to workload skew and varying access distributions, ensuring that the most frequently accessed subpages are consistently classified as hot.
+
+Stage 2: hot subfolio classification.
+Each subpage is classified using the threshold :
+
+(2)
+
+producing a binary hot/cold map for 512 subpages in a THP.
+
+Stage 3: mTHP size selection via heat density.
+The goal of this stage is to select the largest mTHP size that still tightly captures a hot region. For each candidate size (2 MB, 1 MB, 512 KB, 256 KB, 128 KB, 64 KB), the THP is partitioned into aligned subfolios of contiguous subpages, where equals the candidate size divided by 4 KB (e.g., for a 512 KB subfolio). The heat density of a subfolio is defined as the fraction of its subpages classified as hot:
+
+(3)
+
+TierBPF selects the largest mTHP size for which at least one aligned subfolio achieves a heat density of at least . A lower would admit subfolios with excessive cold data, wasting fast-tier capacity; a higher would force unnecessarily small splits, sacrificing TLB coverage. By default , keeping selected subfolios predominantly hot while still favoring larger mTHP sizes for less TLB pressure.
+
+Stage 4: migration target selection.
+After splitting, TierBPF does not migrate all subfolios. A subfolio is added to the migration list if it satisfies either of two conditions: (1) it is classified as hot based on heat density, or
+(2) it contains the NUMA-faulted address that triggered the migration. The NUMA fault reflects a recent locality mismatch that the hardware event sampler may not yet have observed. By combining these two signals, TierBPF selects subfolios using both frequency-based information (from the subpage histogram) and recency-based information (from the NUMA fault). Subfolios that are cold and do not contain the faulting address remain in slow memory.
+
+Flat distribution detection.
+Before executing the stages above, TierBPF first checks whether the access distribution is nearly uniform using normalized Shannon entropy () (Pielou, 1966), an information-theoretic measure that quantifies the spread of a probability distribution as a single scalar in . Applied here, it captures how evenly accesses are distributed across the 512 subpages. 0 means all accesses hit one subpage, 1 means perfectly uniform:
+
+(4)
+
+If , the distribution is essentially uniform—there is no hot region to isolate, so splitting provides no benefit.
+In this case, TierBPF falls back to the default NUMA fault behavior: the entire THP is migrated without splitting, following the recency-based signal from the fault.
+
+Table 2. Memory duplex mode-aware migration admission policy on the CXL memory. R=read and W=write.
+
+R-dominant
+Balanced
+W-dominant
+
+CXL traffic
+CXL traffic
+CXL traffic
+
+R-heavy page
+Allow
+Allow
+Prevent
+
+W-heavy page
+Prevent
+Allow
+Allow
+
+5.2.2. Kernel-Side Enforcement
+
+When a NUMA fault triggers migration of a THP and splitting is enabled, the kernel calls the first eBPF hook (bpf_thp_pick_split_order) to obtain the target mTHP splitting size.
+It then splits the THP into subfolios of that order and calls the second hook (bpf_subpage_is_cold) for each subfolio to detect hot subfolios.
+Hot subfolios and the faulting subfolio are added to the migration list; cold subfolios are left in place.
+
+5.3. Duplex-Aware Migration Admission Control
+
+The splitting pipeline above determines how to migrate (sub)pages. We also determine whether to migrate or not.
+
+A user-space daemon monitors the CXL read/write traffic by hardware event counters and stores a sliding window of measurements in a BPF map. On each NUMA fault, the admission eBPF hook (bpf_thp_numa_ migrate_admission) classifies the faulting page as read-heavy or write-heavy using the dual bCBF (§5.1.3), and checks the current CXL traffic pattern. The admission control policy is summarized in Table 2: TierBPF migrates pages whose type matches the dominant traffic, and holds back the rest. The admission control runs before the splitting stage: the eBPF hook decides whether to admit the page for migration and only admitted pages proceed to the splitting pipeline.
+
+6. Evaluation
+
+TierBPF comprises 6,800 lines of user-space code (eBPF programs, loaders, daemons, and analyzers) and 540 lines of kernel modifications to Linux v6.12 for eBPF hooks and page splitting. Since neither TPP nor Colloid support mTHP, we re-implemented both on Linux v6.12, requiring 270 and 1,160 lines of kernel changes, respectively.
+
+6.1. Evaluation Methodology
+
+Evaluation platforms.
+To evaluate TierBPF, we use two servers with different memory architectures.
+
+•
+
+A server with CXL memory expansion with dual-socket AMD EPYC 9555s (64 cores per socket). Each socket has 832 GB DDR5 DRAM as local memory. Socket 0 connects to a CXL Type-3 Memory Expansion device (128 GB DDR4) over PCIe 5.0, providing a full-duplex link.
+
+•
+
+A server with Intel Optane PMEM with dual-socket Intel Xeon Gold 6252 (24 cores per socket). Each socket has 616 GB DDR4 DRAM as the fast tier and 6128 GB Intel Optane PMEM as the slow tier.
+
+By default, we use the CXL server. To isolate the impact of page migration from cross-socket NUMA effects, we use Socket 0 only, following prior efforts in (Lee et al., 2023; Maruf et al., 2023; Xu et al., 2024).
+For hardware event sampling, the sampling rate is 4,000 samples/sec per CPU.
+
+System integration. To evaluate the portability of TierBPF, we integrate TierBPF into three kernel-level memory tiering systems: AutoNUMA, TPP, and Colloid. For AutoNUMA, we use the vanilla Linux kernel v6.12. For TPP, we change AutoNUMA’s hotness detection from NUMA hint fault latency to an LRU active-list check and add TPP’s asynchronous background demotion mechanism (Maruf et al., 2023). For Colloid, we use its TPP-based implementation (Vuppalapati et al., 2024) and replace Intel CHA-based memory tier latency monitoring with AMD Data Fabric performance counters.
+
+For each system, we set
+/proc/sys/kernel/numa_balan cing=2 to enable promotion and
+/sys/kernel/mm/numa/demotion_enabled=1 to enable demotion.
+For THP, under /sys/kernel/mm, we set
+(i) /transparent_hugepage/ena bled=always,
+(ii) /transparent_hugepage/defrag=always, and
+(iii) /transparent_hugepage/hugepages-2048kB/ena bled=inherit.
+
+Baselines.
+On the CXL server, we integrate TierBPF into AutoNUMA, TPP, and Colloid, and compare against each system’s unmodified baseline.
+On the PMEM-enabled server, we additionally compare TierBPF-enhanced AutoNUMA against MEMTIS (Lee et al., 2023), the state-of-the-art system for huge-page-aware page migration. We cannot evaluate MEMTIS on the CXL platform because MEMTIS relies on Intel PEBS events to distinguish memory access sources (i.e., local DRAM or remote DRAM) at the hardware level. AMD IBS, used on our CXL server, does not provide equivalent hardware performance counters.
+
+Table 3. Benchmarks used for evaluation.
+
+Suite
+Benchmark
+Input / Configuration
+Footprint
+
+GAP (Beamer et al., 2015)
+BC
+Twitter / Uniform Random / Web
+12–24 GB
+
+BFS
+
+CC
+
+PR
+
+NPB (Bailey et al., 1992)
+LU.D
+Lower-Upper Gauss-Seidel solver
+58 GB
+
+SP.D
+Scalar Penta-diagonal solver
+76 GB
+
+CG.D
+Conjugate Gradient
+16 GB
+
+MG.D
+Multigrid
+28 GB
+
+Silo (Tu et al., 2013)
+YCSB
+YCSB, scale factor 200K
+29 GB
+
+Workloads. We evaluate TierBPF on 17 memory-intensive benchmarks, summarized in Table 3.
+The benchmarks span three categories:
+(1) 12 graph-processing workloads from the GAP Benchmark Suite (GAPBS) (Beamer et al., 2015), consisting of four algorithms (betweenness centrality, breadth-first search, connected components, and PageRank) run on three input graphs (Twitter, uniform random, and Web);
+(2) an in-memory database engine (Silo-YCSB (Tu et al., 2013)); and
+(3) four high-performance computing benchmarks (LU, SP, CG, and MG) from the NAS Parallel Benchmarks (NPB) (Bailey et al., 1992). These workloads have been used extensively in related work (Wang et al., 2025b; Lee et al., 2023; Raybuck et al., 2021a; Maruf et al., 2023; Ren et al., 2024; Liu et al., 2025b; Vuppalapati et al., 2024). All GAPBS and NPB benchmarks run with 12 threads; Silo-YCSB runs with 8 threads since it crashes with 12 threads. All experiments use cgroup-based resource isolation; each benchmark runs within a dedicated cgroup with controlled CPU and memory limits to ensure reproducibility.
+
+Memory contention. To emulate the bandwidth pressure commonly observed in virtualized environments, we run a memory stressor on the slow tier alongside benchmarks. The stressor spawns antagonist threads that issue sequential, non-temporal memory accesses using movntdqa/movntdq instructions over a buffer allocated and pinned in the slow tier. By bypassing the CPU cache hierarchy, these accesses maximize memory bus utilization. The antagonist threads are pinned to dedicated CPU cores separate from the benchmark to avoid direct CPU contention. We vary the number of antagonist threads to generate sustained background traffic of approximately 0, 5, 10, and 20 GB/s.
+
+6.2. Evaluation of THP Splitting
+
+Figure 6. Performance of TierBPF (mTHP splitting) integrated into three tiering systems on the CXL platform, normalized to the performance of vanilla tiering systems.
+
+Figure 6 shows the end-to-end performance of TierBPF integrated into AutoNUMA, TPP, and Colloid on the CXL-based server. All results are normalized to each system’s unmodified baseline (i.e., 2 MB THP without splitting). Across all 17 workloads, TierBPF improves the geomean throughput of AutoNUMA by 12.3%, TPP by 17.7%, and Colloid by 7.4%.
+
+6.2.1. Analysis by Workload
+
+Graph workloads benefit the most. For example, on AutoNUMA, bc-twitter improves by 30%, cc-web by 24%, cc-twitter by 23%, and bfs-web by 21%. These workloads exhibit highly skewed intra-THP access: only a fraction of subpages within each 2 MB THP are frequently accessed. By splitting THPs and migrating only the hot subfolios, TierBPF avoids wasting scarce fast-tier capacity on cold data. The effect is strongest on Twitter and Web graphs, whose power-law degree distributions concentrate accesses on a small set of high-degree vertices. The uniform random graphs (bc-urand, bfs-urand, etc.) show smaller but consistent gains, demonstrating that even they develop access hotspots when using iterative algorithms.
+
+Silo consistently improves across all three systems (13% on AutoNUMA, 19% on TPP, and 20% on Colloid). This improvement stems from YCSB’s Zipfian access distribution, which induces well-defined hot and cold regions within THPs. With this highly concurrent transaction workload, frequent NUMA faults arise and trigger THP splitting.
+
+NPB workloads show consistent improvements on AutoNUMA (up to 9%),
+and larger gains on TPP for CG (29%) and SP (18%). These array-based scientific kernels exhibit intra-THP access skew due to indirect indexing (CG), strided multi-dimensional array traversals (SP), and non-uniform access frequency across data grids (MG).
+
+6.2.2. Analysis by Memory Tiering Software
+
+TPP benefits the most among the three memory tiering systems, with a 17.7% geometric-mean improvement. Unlike AutoNUMA, which infers page hotness from hint fault latency (i.e., the time between unmapping a page and the subsequent access fault), TPP relies on an LRU-based heuristic: a page is deemed hot if it resides on the kernel’s active LRU list (Maruf et al., 2023). However, for a 2 MB THP comprising 512 subpages, a single access to any subpage causes the entire folio to be referenced and promoted to the active list. Consequently, TPP’s LRU check is rendered ineffective at THP granularity—nearly all THPs are set to be promoted regardless of how little of the folio is actually accessed. This behavior leads TPP to over-promote cold data into the fast tier, populating it with folios that are only sparsely utilized. Splitting restores the discriminative power of the LRU filter. A 64 KB subfolio, for example, contains only 16 subpages, allowing cold subfolios to age into the inactive list and be correctly classified as cold. As a result, TPP experiences the largest performance gains.
+
+Colloid shows the smallest improvement (7.4% geometric mean) because its access-latency–balanced promotion policy already selects pages more judiciously. Nevertheless, TierBPF still yields meaningful gains: silo_ycsb improves by 20%, bc-web by 20%, and cc-web by 18%. These results highlight that even a well-tuned page selection policy cannot fully avoid bandwidth waste when migration is constrained to coarse-grained 2 MB pages—moving an entire page incurs unnecessary data movement when only a fraction is hot.
+
+Table 4. Page splitting for four workloads with the largest improvement on AutoNUMA.
+Split target columns show the number of split events for each mTHP size;
+Hot Subfolios is the fraction of resulting subfolios classified as hot.
+
+Split target (count)
+
+Workload
+64KB
+128KB
+256KB
+512KB
+1MB
+Hot Subfolios (%)
+
+cc-twitter
+4,101
+21
+0
+0
+0
+9.1%
+
+cc-web
+0
+6,013
+147
+1,470
+0
+21.9%
+
+bc-twitter
+1,998
+186
+1,907
+1,103
+0
+22.5%
+
+bfs-web
+0
+0
+422
+1,170
+881
+53.2%
+
+6.2.3. How Does TierBPF Split Pages?
+
+Table 4 reports the split-size distribution and the fraction of hot subfolios after splitting for four workloads that benefit most from AutoNUMA. Two key observations emerge.
+
+First, no single mTHP size fits all workloads. For instance, bc-twitter distributes its splits across four mTHP sizes (64 KB – 512 KB), reflecting that the THP’s hot region extent varies across execution phases. This underscores that a static, one-size-fits-all splitting granularity would leave substantial performance untapped; the dynamic size selection is essential.
+
+Second, hot subfolios are typically a minority. Across the workloads, the fraction of hot subfolios ranges from just 9.1% (cc-twitter) to 53.2% (bfs-web). Without splitting, the kernel would promote entire 2 MB THPs, wasting up to 91% of migration bandwidth and fast-tier capacity on cold data.
+
+6.3. Why does Splitting Help? Further Analysis from the Perspective of Page Migration
+
+Table 5. Page migration statistics: NoSplit vs. THP Split.
+
+Page Demotion
+Page Promotion Fail
+Page Promotion Success
+
+Workload
+NoSplit
+THP Split
+NoSplit
+THP Split
+NoSplit
+THP Split
+
+bc-twitter
+1.10 M
+1.34 M
+18.01 M
+0.08 M
+1.26 M
+2.44 M
+
+bc-urand
+1.61 M
+1.96 M
+8.46 M
+0.01 M
+2.32 M
+3.34 M
+
+bc-web
+1.44 M
+2.20 M
+6.58 M
+1.18 M
+1.94 M
+3.79 M
+
+bfs-twitter
+1.48 M
+1.07 M
+4.53 M
+2.18 M
+1.63 M
+1.71 M
+
+bfs-urand
+1.81 M
+2.02 M
+7.03 M
+1.60 M
+2.19 M
+3.25 M
+
+bfs-web
+1.54 M
+1.82 M
+2.66 M
+0.08 M
+2.09 M
+2.77 M
+
+cc-twitter
+1.07 M
+2.20 M
+7.66 M
+0.69 M
+1.24 M
+3.80 M
+
+cc-urand
+1.81 M
+2.19 M
+1.28 M
+0.004 M
+2.31 M
+2.91 M
+
+cc-web
+1.56 M
+2.54 M
+6.00 M
+0.44 M
+1.94 M
+4.28 M
+
+pr-twitter
+1.07 M
+1.12 M
+5.69 M
+2.95 M
+1.37 M
+1.80 M
+
+pr-urand
+1.71 M
+1.71 M
+0.53 M
+0.19 M
+2.08 M
+2.17 M
+
+pr-web
+1.49 M
+1.49 M
+1.58 M
+1.23 M
+2.02 M
+1.92 M
+
+To understand why mTHP splitting improves performance, we analyze page migration statistics collected from kernel vmstat counters on AutoNUMA. Table 5 compares migration with and without splitting across the 12 GAP workloads.
+
+The most pronounced change is the reduction in migration failures. Without splitting, the kernel attempts to migrate entire 2 MB THPs; when the destination node cannot provide a contiguous 2 MB free region, the migration fails. For bc-twitter, 18 million migration attempts fail without splitting, whereas with splitting only 80 thousand fail—a 224 reduction. Similar trends hold across all workloads: bc-urand drops from 8.5 M to 11 K failures (777), bfs-web from 2.7 M to 83 K (32), and cc-twitter from 7.7 M to 694 K (11).
+
+The underlying reason is clear. Splitting a 2 MB THP into, for example, 64 KB mTHP subfolios reduces migration’s allocation requirement to just 64 KB of contiguous free space on the destination node—an order of magnitude easier constraint to satisfy. As a result, far fewer migrations fail, allowing AutoNUMA to effectively relocate hot data.
+
+This sharp reduction in failures translates directly into more successful migrations. For bc-twitter, the number of successful migrations nearly doubles, increasing from 1.26 M to 2.44 M (1.9). For cc-web, successful migrations grow from 1.94 M to 4.28 M (2.2), and for cc-twitter from 1.24 M to 3.80 M (3.1). As a result, a larger fraction of hot data is successfully placed in the fast tier, while cold subpages remain in the slow tier. Across all 12 workloads, splitting increases the number of successful migrations by 1.0–3.1 while reducing migration failures by up to 777.
+
+In summary, splitting improves performance through two reinforcing effects: it lowers the bar for migration success by reducing allocation size requirements, and it improves migration precision by ensuring that only hot subfolios are moved. Together, these effects enable AutoNUMA to migrate hot data more reliably and more selectively.
+
+6.4. Evaluation with Memory Bandwidth Contention
+
+Figure 7. Effects of CXL memory bandwidth contention on splitting benefit (AutoNUMA). The performance is normalized to that of the baselines without THP splitting.
+
+TierBPF activates THP splitting only when slow-tier bandwidth becomes contended (§5.2). To validate this design choice and motivate the contention level used in our main evaluation (§6.2), we run the 12 GAP workloads on AutoNUMA under four levels of CXL memory bandwidth pressure: 0, 5, 10, and 20 GB/s of sustained background traffic, generated by a memory-streaming process on the CXL device.
+
+Figure 7 presents the results. Under no contention (0 GB/s), splitting provides little benefit: the geometric-mean improvement is only 3.4%, and just 7 of the 12 workloads see speedups. When bandwidth is abundant, migrating cold subpages alongside hot ones within a 2 MB THP incurs negligible cost—the additional data does not displace useful traffic. In this regime, the increased TLB pressure introduced by splitting often offsets any savings in migration bandwidth.
+
+At 5 GB/s of memory contention, splitting still fails to consistently pay off. The geometric-mean improvement is effectively zero (-0.1%), and only 6 of the 12 workloads improve. At this moderate contention level, the bandwidth savings from less cold-data migration are not yet sufficient to reliably outweigh TLB overhead introduced by smaller page sizes.
+
+At 10 GB/s of memory contention, splitting begins to provide measurable benefits, but the gains remain uneven. The geometric-mean improvement rises to 7.0%; however, only 9 of the 12 workloads improve, and most see only single-digit speedups. The benefits are concentrated among workloads with highly skewed access patterns—for example, bc-twitter (18%), bc-web (20%), and cc-web (31%)—while workloads with more uniform access patterns remain flat or even regress. At this level of contention, the bandwidth savings enabled by splitting are still insufficient to make it broadly effective.
+
+At 20 GB/s of memory contention—the highest contention level—splitting delivers clear and consistent improvements. The geometric mean increases to 14.1%, and all 12 workloads improve, including bc-twitter (30%), cc-web (24%), cc-twitter (23%), and bfs-web (21%). Under this level of pressure, migrating a 2 MB page that is only 20% hot wastes 1.6 MB of scarce bandwidth; splitting eliminates this waste, and the resulting bandwidth savings decisively outweigh the TLB penalty. We therefore use this contention level in our end-to-end evaluation (§6.2), as it reflects a realistic scenario in which multiple memory-intensive workloads share a CXL device and bandwidth becomes the primary performance bottleneck.
+
+Together, these results validate TierBPF ’s contention-aware activation policy. Under low contention, TierBPF preserves 2 MB THPs to maximize TLB coverage. As contention increases and bandwidth efficiency becomes more critical, TierBPF selectively enables splitting, activating it only when its bandwidth savings outweigh the associated TLB costs.
+
+Figure 8. Performance of TierBPF and MEMTIS on the PMEM platform, normalized to that of AutoNUMA.
+
+Table 6. L2 DTLB misses per 1K instructions on the PMEM platform. MEMTIS’s 4 KB splitting incurs the highest TLB miss rates; TierBPF’s mTHP splitting reduces TLB overhead.
+
+Workload
+AutoNUMA
+TierBPF
+MEMTIS
+
+MG.D
+0.12
+0.18
+0.21
+
+LU.D
+2.22
+2.90
+3.26
+
+6.5. Evaluation on PMEM
+
+To demonstrate that TierBPF’s design generalizes beyond CXL, we evaluate mTHP splitting on the PMEM platform. We only enable the THP splitting policy, because maintaining mixed read and write traffic does not benefit performance given PMEM’s half-duplex DDR interface.
+
+Figure 8 presents the results. FlexTier-enhanced AutoNUMA outperforms the AutoNUMA baseline by 7.1% in geometric mean across 15 workloads. The largest gains occur for the graph workloads with highly skewed access patterns: bc-twitter improves by 36%, pr-twitter by 26%, cc-twitter by 14%, bfs-twitter by 11%, and cc-web by 10%. The performance trends on PMEM closely mirror those observed with CXL, confirming that THP splitting addresses a fundamental limitation of THP-based migration—namely, the mismatch between the coarse 2 MB migration granularity and fine-grained, sub-page access skew.
+
+Comparison with MEMTIS.
+Figure 8 also compares against MEMTIS, a state-of-the-art system for huge page-aware tiered memory. MEMTIS relies on a background thread to split THPs, but supports only two page sizes: the original 2 MB THP or 4 KB base pages. It cannot generate intermediate mTHP sizes (e.g., 64 KB or 256 KB). This all-or-nothing splitting granularity incurs excessive loss of TLB coverage once splitting is applied.
+
+The impact is most evident on NPB workloads, which traverse large arrays and are particularly sensitive to TLB coverage. Relative to the AutoNUMA baseline, MEMTIS degrades MG.D by 7% and LU.D by 8%. In contrast, TierBPF improves MG.D by 11% while maintaining LU.D’s performance, as mTHP splitting preserves sufficient TLB coverage to avoid the penalties incurred by aggressive 4 KB splitting.
+
+TLB misses.
+Table 6 confirms the above observations with the measurement of L2 DTLB misses. MEMTIS consistently causes the highest TLB miss rate across the workloads. For LU.D, MEMTIS’s L2 DTLB misses reach 3.26 per 1K instructions—12% higher than TierBPF (2.90) and 47% higher than AutoNUMA (2.22). For MG.D, the same trend holds: MEMTIS’s L2 DTLB misses (0.21) exceed TierBPF ’s (0.18) by 17%. For workloads with large working sets, this TLB penalty outweighs the migration-precision gains.
+
+Overall, TierBPF outperforms MEMTIS on 11 of 15 workloads. These results underscore that splitting granularity matters: while splitting to 4 KB base pages—as MEMTIS does—recovers migration precision, it does so at the cost of TLB efficiency. In contrast, the mTHP splitting in TierBPF strikes a better balance, preserving TLB coverage while still enabling fine-grained migration.
+
+6.6. Evaluation with Traffic Balancing
+
+This section evaluates the duplex-aware migration admission policy (§5.3), which exploits CXL’s full-duplex channels by selectively admitting or deferring page migrations based on each page’s read/write classification and the instantaneous CXL traffic pattern (Table 2). We refer to this policy as BalanceTraffic. We evaluate BalanceTraffic under two memory-contention regimes: high contention at 20 GB/s and moderate contention at 10 GB/s.
+
+Figure 9. Performance under 20 GB/s CXL contention, normalized to (a) AutoNUMA and (b) TPP baselines.
+
+High contention (20 GB/s).
+As shown in Figure 9,
+BalanceTraffic does not complement splitting under high contention. On AutoNUMA, enabling Split alone improves geomean performance by 12.3%, while Split+BalanceTraffic reduces the gain to 6.6%. The effect is more pronounced on TPP: Split alone achieves 17.7% geomean throughput improvement, whereas Split+BalanceTraffic yields only 1.8%.
+
+This is due to the following: Under 20 GB/s contention, aggregate bandwidth is already the dominant bottleneck, and performance is primarily determined by whether hot pages are placed in the fast tier. In this regime, rebalancing read and write traffic across CXL’s full-duplex channels provides little additional benefit—the limiting factor is total bandwidth, not directional imbalance. Moreover, BalanceTraffic’s selective admission policy can be counterproductive: by deferring migrations of hot pages whose R/W classification does not match the dominant traffic direction (Table 2), it prevents them from reaching the fast tier, where they are most needed.
+
+When applied alone (without Split), BalanceTraffic yields a modest improvement. On TPP in particular, only 7 workloads see improvements while 10 workloads degrade, and the overall geomean gain is only 3.2%.
+
+Moderate contention (10 GB/s).
+The results improve: BalanceTraffic achieves a geomean improvement of 5.2% on AutoNUMA and 4.7% on TPP, with 13 of 17 workloads improved (Figure 10). With more bandwidth headroom, the full-duplex rebalancing has room to take effect without starving hot pages of fast-tier placement. As such, selectively deferring promotions that would add traffic to the non-bottleneck CXL channel shows benefits.
+
+Figure 10. Performance under 10 GB/s CXL contention, normalized to (a) AutoNUMA and (b) TPP baselines.
+
+7. Related Work
+
+Memory tiering systems.
+AutoNUMA (Corbet, ) is the default system in Linux to manage tiered memory based on access recency. TPP (Maruf et al., 2023) extends AutoNUMA with proactive page demotion and LRU active-list-based hot page promotion. HeMem (Raybuck et al., 2021a), MEMTIS (Lee et al., 2023), MTM (Ren et al., 2024), and FlexMem (Xu et al., 2024) migrate pages based on access frequency. Memstrata (Zhong et al., 2024) utilizes Intel Flat Memory mode to build cache-level data migration. NOMAD (Xiang et al., 2024) builds non-exclusive memory tiering, aiming to mitigate memory thrashing when fast memory is under pressure. Colloid (Vuppalapati et al., 2024) decides page migration by balancing access latencies across memory tiers. HybridTier (Song et al., 2025) tracks long-term access frequency and short-term access momentum simultaneously to adapt to shifting hotness distributions. AOL (Liu et al., 2025b) considers the impact of memory-level parallelism to avoid unnecessary page migration. TierBPF is different from those efforts in terms of page size selection and memory traffic distribution.
+
+There are application semantics-guided tiering systems, including Unimem (Wu et al., 2017), Xmem (Dulloor et al., 2016), memkind (29), HM-ANN (Ren et al., 2020), and WarpX-HM (Ren et al., 2021). Some efforts (Angeles et al., 2021; Meswani et al., 2015; Ramos et al., 2011) enable memory tiering using specialized hardware. In contrast, TierBPF is application-transparent and requires no hardware changes.
+
+CXL memory can increase memory scalability and simplify software stacks (Sharma et al., 2023). From the perspective of CXL applications, Wang et al. (Wang et al., 2025b) and Xu et al. (Xu et al., 2026) leverage CXL memory sharing for point-to-point and collective communications; Wang et al. (Wang et al., 2025a), Liu et al. (Liu et al., 2025a), Tang et al. (Tang et al., 2024), Mao et al. (Mao et al., 2024) and Ji et al. (Sun et al., 2023) characterize the performance of real CXL hardware; CXL memory is also used for tensor offloading for AI workloads (Kim et al., 2026; Wang et al., 2025a; Yang et al., 2025a) and database (Yang et al., 2025b).
+
+From the perspective of CXL system software, TPP (Maruf et al., 2023) refines system software for page migration to accommodate CXL. Pond (Li et al., 2023) introduces a CXL memory pooling system to hold cold data. Apta (Patil et al., 2023) is designed for function-as-a-service over CXL. HydraRPC (Ma et al., 2024) utilizes CXL HDM for data transmission. ReScure (Song et al., 2026) focuses on reliable and secure CXL memory. There are also recent efforts to support CXL memory pooling/sharing across hosts through innovation in memory allocation (Ni et al., 2026), formal method-based checking (Guo et al., 2026), programming model (Assa et al., 2026), and CXL bridges (Lefort et al., 2026). Lupin (Zhu et al., 2024) is designed to tolerate partial failures for distributed applications using a shared CXL pod for replication. TierBPF works on CXL memory and provides new optimizations considering page size and memory duplex mode.
+
+eBPF for memory optimization.
+eBPF is used to customize memory management policies, such as huge page placement, page fault handling, and page table designs (Mores et al., 2024; Zussman et al., 2024). P2Cache (Lee et al., 2026), cache_ext (Zussman and others, 2025), PageFlex (Yelam et al., 2025), and FetchBPF (Cao et al., 2024) use eBPF to customize page cache, prefetching, and swapping policies. TierBPF leverages eBPF to provide policy flexibility for new scenarios of memory management.
+
+8. Conclusion
+
+Memory tiering architectures are rapidly diversifying, which calls for consideration of page-migration interactions with other system components and memory architecture details.
+This paper discusses how to improve the memory tiering system to accommodate emerging changes in the memory architecture, especially from the perspectives of page size and memory access distribution. TierBPF enables sufficient flexibility to develop novel policies in diverse environments, such as more than two memory tiers or CXL-SSD, which could be implemented in the future.
+
+References
+
+Angeles et al. (2021)
+J. T. Angeles, M. Hildebrand, V. Akella, and J. Lowe-Power
+
+Investigating Hardware Caches for Terabyte-scale NVDIMMs.
+
+In Annual Non-Volatile Memories Workshop,
+
+Cited by: §7.
+
+Assa et al. (2026)
+G. Assa, M. Lumme, L. Bürgi, M. Friedman, and O. Lahav
+
+A programming model for disaggregated memory over cxl.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2,
+
+Cited by: §7.
+
+Bailey et al. (1992)
+D. H. Bailey, L. Dagum, E. Barszcz, and H. D. Simon
+
+NAS parallel benchmark results.
+
+In Supercomputing ’92: Proceedings of the 1992 ACM/IEEE
+conference on Supercomputing,
+
+Los Alamitos, CA, USA, pp. 386–393.
+
+External Links: ISBN 0-8186-2630-5
+
+Cited by: §6.1,
+Table 3.
+
+Beamer et al. (2015)
+S. Beamer, K. Asanović, and D. Patterson
+
+The GAP Benchmark Suite.
+
+In arXiv preprint arXiv:1508.03619,
+
+Cited by: §6.1,
+Table 3.
+
+Cao et al. (2024)
+X. Cao, S. Patel, S. Y. Lim, X. Han, and T. Pasquier
+
+fetchbpf: Customizable prefetching policies in linux with ebpf.
+
+In 2024 USENIX Annual Technical Conference (USENIX ATC 24),
+
+pp. 369–378.
+
+Cited by: §7.
+
+[6]
+J. Corbet
+
+AutoNUMA: the Other Approach to NUMA Scheduling.
+
+Note: http://lwn.net/Articles/488709
+
+Cited by: 3rd item,
+§3.3,
+§7.
+
+Dulloor et al. (2016)
+S. R. Dulloor, A. Roy, Z. Zhao, N. Sundaram, N. Satish, R. Sankaran, J. Jackson, and K. Schwan
+
+Data tiering in heterogeneous memory systems.
+
+In Proceedings of the Eleventh European Conference on Computer Systems,
+
+pp. 15.
+
+Cited by: §7.
+
+Guo et al. (2026)
+S. Guo, C. Truong, and B. Demsky
+
+CXLMC: model checking cxl shared memory programs.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2,
+
+Cited by: §7.
+
+Kim et al. (2026)
+H. Kim, Q. Xia, J. Huang, N. Wang, Y. Lee, J. H. Ahn, W. K. Feghali, R. Wang, and N. S. Kim
+
+LiLo: harnessing the on-chip accelerators in intel cpus for compressed llm inference acceleration.
+
+In IEEE International Symposium on High Performance Computer Architecture (HPCA),
+
+Cited by: §7.
+
+Lee et al. (2026)
+D. Lee, I. Choi, C. Lee, H. Jung, and J. Kim
+
+P2Cache: enhancing data-centric applications via application-guided management of os page caches.
+
+ACM Transactions on Storage 22 (1), pp. 1–33.
+
+Cited by: §7.
+
+Lee et al. (2023)
+T. Lee, S. K. Monga, C. Min, and Y. I. Eom
+
+MEMTIS: Efficient Memory Tiering with Dynamic Page Classification and Page Size Determination.
+
+In Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP),
+
+pp. 17–34.
+
+Cited by: §1,
+§2,
+§3.1,
+§3.3,
+§5.1.2,
+§6.1,
+§6.1,
+§6.1,
+§7.
+
+Lefort et al. (2026)
+A. Lefort, J. Pritzi, N. Carpentieri, D. Schall, S. Dittrich, S. Chakraborty, N. Oswald, and P. Bhatotia
+
+VCXLGen: automated synthesis and verification of cxl bridges for heterogeneous architectures.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §7.
+
+Li et al. (2023)
+H. Li, D. S. Berger, L. Hsu, D. Ernst, P. Zardoshti, S. Novakovic, M. Shah, S. Rajadnya, S. Lee, I. Agarwal, M. D. Hill, M. Fontoura, and R. Bianchini
+
+Pond: CXL-Based Memory Pooling Systems for Cloud Platforms.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Cited by: §1,
+§2,
+§7.
+
+Li et al. (2025)
+S. Li, Y. (. Zhou, H. Ren, and J. Huang
+
+ByteFS: system support for (cxl-based) memory-semantic solid-state drives.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §1.
+
+Liu et al. (2025a)
+J. Liu, H. Hadian, Y. Wang, D. S. Berger, M. Nguyen, X. Jian, S. H. Noh, and H. Li
+
+Systematic cxl memory characterization and performance analysis at scale.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §7.
+
+Liu et al. (2025b)
+J. Liu, H. Hadian, H. Xu, and H. Li
+
+Tiered Memory Management Beyond Hotness.
+
+In Proceedings of USENIX Conference on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §6.1,
+§7.
+
+Lustig et al. (2013)
+D. Lustig, A. Bhattacharjee, and M. Martonosi
+
+TLB improvements for chip multiprocessors.
+
+ACM Transactions on Architecture and Code Optimization 10 (2), pp. 1–31.
+
+Cited by: §2.
+
+Ma et al. (2024)
+T. Ma, Z. Liu, C. Wei, J. Huang, Y. Zhuo, H. Li, N. Zhang, Y. Guan, D. Niu, M. Zhang, et al.
+
+hydrarpc:rpc In the cxl era.
+
+In USENIX Annual Technical Conference,
+
+Cited by: §7.
+
+Mao et al. (2024)
+S. Mao, J. Luo, Y. Li, J. Zhou, W. Zhang, Z. Liu, T. Ma, and S. Deng
+
+CXL-interference: analysis and characterization in modern computer systems.
+
+External Links: 2411.18308,
+Link
+
+Cited by: §7.
+
+Maruf et al. (2023)
+H. A. Maruf, H. Wang, A. Dhanotia, J. Weiner, N. Agarwal, P. Bhattacharya, C. Petrov, P. Chalapathi, M. Chaudhry, and R. Cranney
+
+TPP: Transparent Page Placement for CXL-Enabled Tiered-Memory.
+
+In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+pp. 742–755.
+
+Cited by: 3rd item,
+§1,
+§1,
+§3.3,
+§6.1,
+§6.1,
+§6.1,
+§6.2.2,
+§7,
+§7.
+
+McCalpin (2012)
+J. D. McCalpin
+
+Measuring TLB miss handling cost in x86-64.
+
+Note: Technical report and Intel performance counter analysis
+
+Cited by: §2.
+
+Meswani et al. (2015)
+M. R. Meswani, S. Blagodurov, D. Roberts, J. Slice, M. Ignatowski, and G. H. Loh
+
+Heterogeneous memory architectures: A HW/SW approach for mixing die-stacked and off-package memories.
+
+In International Symposium on High Performance Computer Architecture (HPCA),
+
+Cited by: §7.
+
+Meta and Google (2024)
+Meta and Google
+
+sched_ext: Extensible Scheduler Class with BPF.
+
+Note: https://docs.kernel.org/scheduler/sched-ext.htmlLinux kernel feature, merged in Linux 6.12
+
+Cited by: §2.
+
+Mores et al. (2024)
+K. Mores et al.
+
+eBPF-mm: Userspace-guided Memory Management in Linux with eBPF.
+
+Note: arXiv preprint arXiv:2404.xxxxx
+
+Cited by: §2,
+§3.2.
+
+Mores et al. (2024)
+K. Mores, S. Psomadakis, and G. Goumas
+
+EBPF-mm: userspace-guided memory management in linux with ebpf.
+
+arXiv preprint arXiv:2409.11220.
+
+Cited by: §7.
+
+Ni et al. (2026)
+N. Ni, Y. Sun, Z. Zhu, and E. Witchel
+
+Cxlalloc: safe and efficient memory allocation for a cxl pod.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §7.
+
+Patil et al. (2023)
+A. Patil, V. Nagarajan, N. Nikoleris, and N. Oswald
+
+Āpta: fault-tolerant object-granular cxl disaggregated memory for accelerating faas.
+
+In 2023 53rd Annual IEEE/IFIP International Conference on Dependable Systems and Networks (DSN),
+
+Cited by: §7.
+
+Pielou (1966)
+E. C. Pielou
+
+The measurement of diversity in different types of biological collections.
+
+Journal of Theoretical Biology 13, pp. 131–144.
+
+Cited by: §5.2.1.
+
+[29]
+pmem.io. memkind..
+
+Note: https://pmem.io/memkind/
+
+Cited by: §7.
+
+Ramos et al. (2011)
+L. Ramos, E. Gorbatov, and R. Bianchini
+
+Page Placement in Hybrid Memory Systems.
+
+In International Conference on Supercomputing,
+
+Cited by: §7.
+
+Raybuck et al. (2021a)
+A. Raybuck, T. Stamler, W. Zhang, M. Erez, and S. Peter
+
+HeMem: Scalable Tiered Memory Management for Big Data Applications and Real NVM.
+
+In Proceedings of the ACM SIGOPS 28th Symposium on Operating Systems Principles,
+
+Cited by: §6.1,
+§7.
+
+Raybuck et al. (2021b)
+A. Raybuck, T. Stamler, W. Zhang, M. Zhong, T. Palit, J. Sherry, G. Epping, A. Phan, and H. Weatherspoon
+
+HeMem: Scalable Tiered Memory Management for Big Data Applications and Real NVM.
+
+In Proceedings of the 28th ACM Symposium on Operating Systems Principles (SOSP),
+
+pp. 392–407.
+
+Cited by: §5.1.2.
+
+Ren et al. (2021)
+J. Ren, J. Luo, I. Peng, K. Wu, and D. Li
+
+Optimizing Large-Scale Plasma Simulations on Persistent Memory-based Heterogeneous Memory with Effective Data Placement Across Memory Hierarchy.
+
+In International Conference on Supercomputing (ICS),
+
+Cited by: §7.
+
+Ren et al. (2024)
+J. Ren, D. Xu, J. Ryu, K. Shin, D. Kim, and D. Li
+
+MTM: Rethinking Memory Profiling and Migration for Multi-Tiered Large Memory Systems.
+
+In European Conference on Computer Systems,
+
+Cited by: §1,
+§6.1,
+§7.
+
+Ren et al. (2020)
+J. Ren, M. Zhang, and D. Li
+
+HM-ANN: Efficient Billion-Point Nearest Neighbor Search on Heterogeneous Memory.
+
+In Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §7.
+
+Roberts and Linux Kernel Community (2024)
+R. Roberts and Linux Kernel Community
+
+Multi-size THP (mTHP).
+
+Note: https://docs.kernel.org/admin-guide/mm/transhuge.htmlLinux kernel feature, merged in Linux 6.8
+
+Cited by: §1,
+§3.2.
+
+Sharma et al. (2023)
+D. D. Sharma, R. Blankenship, and D. S. Berger
+
+An Introduction to the Compute Express Link (CXL) Interconnect.
+
+External Links: 2306.11227
+
+Cited by: §7.
+
+Song et al. (2026)
+C. Song, A. A. Cruz, M. J. Kim, M. Wi, G. Ye, K. Kim, S. Lee, J. H. Ahn, and N. S. Kim
+
+ReScue: reliable and secure cxl memory.
+
+In IEEE International Symposium on High Performance Computer Architecture (HPCA),
+
+Cited by: §7.
+
+Song et al. (2025)
+K. Song, J. Yang, Z. Wang, J. Zhao, S. Liu, and G. Pekhimenko
+
+HybridTier: an Adaptive and Lightweight CXL-Memory Tiering System.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §1,
+§5.1.3,
+§7.
+
+Sun et al. (2023)
+Y. Sun, Y. Yuan, Z. Yu, R. Kuper, C. Song, J. Huang, H. Ji, S. Agarwal, J. Lou, I. Jeong, R. Wang, J. H. Ahn, T. Xu, and N. S. Kim
+
+Demystifying CXL Memory with Genuine CXL-Ready Systems and Devices.
+
+In IEEE/ACM International Symposium on Microarchitecture,
+
+Cited by: §7.
+
+Tang et al. (2024)
+Y. Tang, P. Zhou, W. Zhang, H. Hu, Q. Yang, H. Xiang, T. Liu, J. Shan, R. Huang, C. Zhao, C. Chen, H. Zhang, F. Liu, S. Zhang, X. Ding, and J. Chen
+
+Exploring Performance and Cost Optimization with ASIC-Based CXL Memory.
+
+In Proceedings of the European Conference on Computer Systems,
+
+Cited by: §7.
+
+Tu et al. (2013)
+S. Tu, W. Zheng, E. Kohler, B. Liskov, and S. Madden
+
+Speedy Transactions in Multicore In-Memory Databases.
+
+In Proceedings of the 24th ACM Symposium on Operating Systems Principles (SOSP),
+
+pp. 18–32.
+
+Cited by: §6.1,
+Table 3.
+
+Vuppalapati et al. (2024)
+M. Vuppalapati, R. Fonseca, and H. Weatherspoon
+
+Colloid: A Latency-Aware Tiered Memory Management System.
+
+In Proceedings of the 30th ACM Symposium on Operating Systems Principles (SOSP),
+
+Cited by: 3rd item,
+§1,
+§3.2,
+§3.3,
+§6.1,
+§6.1,
+§7.
+
+Wang et al. (2025a)
+X. (. Wang, J. Liu, J. Wu, S. Yang, J. Ren, B. Shankar, and D. Li
+
+Performance Characterization of CXL Memory and Its Use Cases.
+
+In International Parallel and Distributed Processing Symposium,
+
+Cited by: §7.
+
+Wang et al. (2025b)
+X. Wang, B. Ma, J. Kim, B. Koh, H. Kim, and D. Li
+
+CMPI: using cxl memory sharing for mpi one-sided and two-sided inter-node communications.
+
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+Cited by: §1,
+§6.1,
+§7.
+
+Weisberg and Wiseman (2009)
+P. Weisberg and Y. Wiseman
+
+Using 4KB page size for virtual memory is obsolete.
+
+In Proceedings of the 8th IEEE International Symposium on Network Computing and Applications (NCA),
+
+pp. 262–265.
+
+Cited by: §2.
+
+Wu et al. (2017)
+K. Wu, Y. Huang, and D. Li
+
+Unimem: Runtime Data Management on Non-Volatile Memory-based Heterogeneous Main Memory.
+
+In International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+Cited by: §7.
+
+Xiang et al. (2024)
+L. Xiang, Z. Lin, A. Basu, and R. Lv
+
+Nomad: Non-Exclusive Memory Tiering via Transactional Page Migration.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §1,
+§3.3,
+§7.
+
+Xu et al. (2026)
+D. Xu, H. Meng, X. Chen, D. Zhu, W. Tang, F. Liu, L. Xie, W. Xiang, R. Shi, Y. Li, H. Hu, H. Zhang, J. Jiang, and D. Li
+
+CCCL: node-spanning gpu collectives with cxl memory pooling.
+
+External Links: 2602.22457,
+Link
+
+Cited by: §7.
+
+Xu et al. (2024)
+D. Xu, J. Ryu, J. Baek, K. Shin, P. Su, and D. Li
+
+FlexMem: Adaptive Page Profiling and Migration for Tiered Memory.
+
+In 30th USENIX Annual Technical Conference (ATC),
+
+Cited by: §1,
+§6.1,
+§7.
+
+Yan et al. (2019)
+Z. Yan, D. Lustig, D. Nellans, and A. Bhattacharjee
+
+Nimble Page Management for Tiered Memory Systems.
+
+In Proceedings of the 24th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+pp. 331–345.
+
+Cited by: §3.3.
+
+Yang et al. (2023)
+S. Yang, M. Kim, S. Nam, J. Park, J. Choi, E. H. Nam, E. Lee, S. Lee, and B. S. Kim
+
+Overcoming the memory wall with cxl-enabled ssds.
+
+In USENIX Annual Technical Conference,
+
+Cited by: §1.
+
+Yang et al. (2025a)
+X. Yang, Q. Hu, J. Li, F. Li, Y. Zhu, Y. Zhou, Q. Lin, J. Dai, Y. Kong, J. Zhang, et al.
+
+Beluga: a cxl-based memory architecture for scalable and efficient llm kvcache management.
+
+arXiv preprint arXiv:2511.20172.
+
+Cited by: §7.
+
+Yang et al. (2025b)
+X. Yang, Y. Zhang, H. Chen, F. Li, G. Fan, Y. Kong, B. Wang, J. Fang, Y. Wang, T. Huang, W. Hu, J. Kao, and J. Jiang
+
+Unlocking the potential of cxl for disaggregated memory in cloud-native databases.
+
+In Companion of the 2025 International Conference on Management of Data,
+
+Cited by: §1,
+§7.
+
+Yang et al. (2025c)
+Y. Yang, Y. Zheng, Y. Chen, Z. Liang, K. Chu, Z. Zhou, A. Quinn, and W. Zhang
+
+CXLAimPod: cxl memory is all you need in ai era.
+
+External Links: 2508.15980,
+Link
+
+Cited by: §1,
+§3.3.
+
+Yelam et al. (2025)
+A. Yelam, K. Wu, Z. Guo, S. Yang, R. Shashidhara, W. Xu, S. Novaković, A. C. Snoeren, and K. Keeton
+
+pageflex: Flexible and efficient user-space delegation of linux paging policies with ebpf.
+
+In 2025 USENIX Annual Technical Conference (USENIX ATC 25),
+
+pp. 291–306.
+
+Cited by: §7.
+
+Zhong et al. (2024)
+Y. Zhong, D. S. Berger, C. Waldspurger, R. Wee, I. Agarwal, R. Agarwal, F. Hady, K. Kumar, M. D. Hill, M. Chowdhury, and A. Cidon
+
+Managing memory tiers with cxl in virtualized environments.
+
+In Proceedings of the 18th USENIX Conference on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §1,
+§7.
+
+Zhu et al. (2024)
+Z. Zhu, N. Ni, Y. Huang, Y. Sun, Z. Jia, N. S. Kim, and E. Witchel
+
+Lupin: tolerating partial failures in a cxl pod.
+
+In Proceedings of the 2nd Workshop on Disruptive Memory Systems,
+
+Cited by: §7.
+
+Zussman et al. (2024)
+T. Zussman, T. Jiang, and A. Cidon
+
+Custom page fault handling with ebpf.
+
+In Proceedings of the ACM SIGCOMM 2024 Workshop on eBPF and Kernel Extensions,
+
+Cited by: §7.
+
+Zussman et al. (2025)
+T. Zussman et al.
+
+cache_ext: Customizing the Page Cache with eBPF.
+
+In Proceedings of the 30th ACM Symposium on Operating Systems Principles (SOSP),
+
+Cited by: §2,
+§7.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

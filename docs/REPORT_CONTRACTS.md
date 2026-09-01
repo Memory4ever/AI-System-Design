@@ -11,6 +11,9 @@ Daily、Sunday Weekly 与 Historical Weekly 使用同一 [研究合同](./RESEAR
 Daily
   及时发现并完成当日证据闭环
 
+用户明确重建的 Historical Daily
+  按原始来源独立重放当日窗口；不得以既有 Weekly 为输入
+
 Sunday Weekly
   聚合七天收据，补齐 Weekly 来源，并重建跨日演进
 
@@ -32,6 +35,14 @@ Historical Weekly
   canonical primary event 的 first-public time 是否落入该实际窗口决定。discovery feed 在本轮首次暴露的更早
   family 进入独立 delayed-discovery recovery ledger，不进入当前分母，也不阻塞当前 Gate；真正的评分、Review 与
   Books Decision 在真实 owner Report 的恢复任务中完成。
+
+### 用户明确重建的 Historical Daily
+
+- 使用与 Live Daily 相同的 Coverage、Candidate、Review、Books 与 Semantic Audit 合同，并按用户指定的历史日窗口执行 `Full Replay`。
+- 既有 Weekly 是 Daily 的下游聚合产物，不能作为历史 Daily 的发现 seed、候选清单、漏项基线、评分依据、Review 证据、Books disposition 或语义审计依据。
+- 允许的跨日去重输入只有 canonical primary identity、原始来源 metadata，以及已经按本规则独立重建的其他 Daily；ISO `Owner Week` 只是日期派生字段，不表示读取了 Weekly。
+- 历史 Daily 全部闭环后，才能由这些 Daily 重新生成或修复 Weekly。Weekly 中已有的结论、缺口或 Source Review 不得反向改变 Daily。
+- 如果旧 Daily 或生成脚本含有 Weekly 路径、Weekly seed、Weekly Review 复用或 Weekly-derived disposition，必须从 strict-window raw inventory 重新执行 denominator screening 与 primary-source Review。只删除引用文字不构成独立重建。
 
 ### Sunday Weekly
 
@@ -100,7 +111,7 @@ Historical Weekly 才能执行 Delta Audit。Delta Audit 的 `Previous Denominat
 
 - Daily 至少覆盖所有到期 `Required Daily` 来源。
 - Sunday Weekly 与 Historical `Full Replay` 至少覆盖 `Required Daily + Required Weekly`。
-- Live Daily、Sunday Weekly 与用户明确重建的历史 Daily 以 `Window End` 和来源 `Effective Date` 计算到期来源；后来加入注册表的来源不反推为更早 Daily 的 Required。新生成的 Historical Weekly 属于当前合同 Full Replay，仍执行当前注册表的 Required Daily + Required Weekly。
+- Live Daily、Sunday Weekly 与用户明确重建的 Historical Daily 以 `Window End` 和来源 `Effective Date` 计算到期来源；后来加入注册表的来源不反推为更早 Daily 的 Required。Historical Daily 的 Receipt 必须由本次原始来源重放产生，不能继承 Weekly receipt。新生成的 Historical Weekly 属于当前合同 Full Replay，仍执行当前注册表的 Required Daily + Required Weekly。
 - Historical `Delta Audit` 的当前 Receipt 只执行 Changed Source IDs；其 effective coverage 是可解析 baseline
   的 effective receipts 加上本轮 changed-source receipts。新增到期来源必须进入 Changed Source IDs，不能仅因
   baseline 不含它而略过。
@@ -263,6 +274,10 @@ Deep Analysis eligibility 与 Books Decision。
 | `SF-EXAMPLE` | `INFER-...`；Structural 时写 `considered:<Node IDs>` | 当前 owner 或实际审阅过的 owner 候选章节路径与定位 | 前后章或交接章定位 | `existing:<Family ID>` | `delta:<Family ID>` | 五类演进关系；确无技术关系时写 `Not Applicable — <具体原因>` | `Integrate`、`No Change — Existing Coverage` 或 `Structural Candidate` | `books-review:<Family ID>` |
 
 `Integrate`、`No Change — Existing Coverage` 与 `Structural Candidate` 必须恰好有一行。
+`Target Chapter Ref` 和每个 `Adjacent Chapter Ref` 必须解析到当前 Books 中真实存在的 Markdown 文件与
+真实标题锚点；`#canonical-owner`、`#chapter-boundary`、文件级占位符、关键词命中或自动截取的一段文本
+都不构成“已审阅现有命题”。`Existing Proposition` 必须引用 reviewer 实际读过、且能承担本 family
+机制/边界的具体命题；引用无法解析时 books Semantic Audit 必须为 `open`，写回队列不得释放。
 `Structural Candidate` 在 Candidate Ledger 中仍没有 canonical Stable Node，写 `—`；但 Books Comparison
 必须以 `considered:<Node IDs>` 列出实际排查过的现有 owner，并保存对应 Target / Adjacent Chapter Ref、
 现有命题、新证据差异和有界 Books Review。Evolution Relation 只能使用 `Direct Evolution`、

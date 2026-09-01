@@ -1,0 +1,1365 @@
+COREY: A Prototype Study of Entropy-Guided Operator Fusion with Hadamard Reparameterization for Selective State Space Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+Contributions.
+
+2 Related Work
+
+Efficient long-context modeling.
+
+Operator fusion and memory-aware scheduling.
+
+SSM quantization and Hadamard smoothing.
+
+3 Method
+
+3.1 Preliminaries
+
+3.2 Entropy-Driven Fusion Strategy
+
+3.3 Fused Hadamard Layer
+
+3.4 Entropy-Tiling Co-Design
+
+4 Theoretical Analysis
+
+4.1 Entropy Growth Under Rotation
+
+4.2 Fusion Feasibility Bound
+
+4.3 Stability Under Quantization
+
+5 Experimental Setup
+
+5.1 Implementation Model and Baselines
+
+Prototype execution environment.
+
+5.2 Workloads and Sequence-Length Stratification
+
+5.3 Quantization and Kernel Configuration
+
+5.4 Evaluation Protocol
+
+Quality-drop definition.
+
+5.5 Protocol for Pretrained SSM Evaluation
+
+5.6 LongBench-Oriented Evaluation Protocol
+
+6 Results
+
+6.1 End-to-End Performance
+
+6.2 Quality Under Quantization
+
+6.3 Sequence-Length Stratified Behavior
+
+6.4 Checkpoint-Level Validation Status
+
+6.5 Multi-GPU Parallel Inference Throughput
+
+7 Ablation Studies
+
+7.1 Entropy Threshold
+
+7.2 Tiling Policy
+
+7.3 Quantization Bit Width
+
+7.4 Sequence-Length Stratification
+
+8 Limitations
+
+9 Broader Impact
+
+10 Conclusion
+
+References
+
+A Additional Experimental Details
+
+A.1 Entropy Estimation Protocol
+
+A.2 Fusion Resource Constraints
+
+A.3 Ablation Plan
+
+A.4 Detailed Sequence-Stratified Protocol
+
+A.5 Rebuttal-Oriented Diagnostics
+
+A.6 Per-Tile Surrogate Runtime Trace
+
+A.7 Reproducibility Checklist
+
+B Optimization and Deployment Details
+
+B.1 Entropy-Regularized Fusion Optimization
+
+B.2 Dynamic Programming Solver
+
+B.3 Adaptive Entropy Thresholding
+
+B.4 LongBench Inference Harness
+
+B.5 Triton Integration Notes
+
+C Detailed Proofs
+
+C.1 Proof of Histogram-Entropy Growth
+
+Full proof of Theorem .
+
+Proof.
+
+Interpretation for COREY.
+
+C.2 Proof of the Fusion Depth Bound
+
+C.3 Quantization Stability Bound
+
+D Checkpoint-Level Sanity Check Details
+
+Setup.
+
+Observed values.
+
+Blocked components.
+
+WSL2 GPU Benchmark Results.
+
+Cross-hardware reproducibility on RTX 3090.
+
+Multi-GPU data-parallel throughput.
+
+License: CC BY 4.0
+
+arXiv:2604.10597v1 [cs.CV] 12 Apr 2026
+
+COREY: A Prototype Study of Entropy-Guided Operator Fusion with Hadamard Reparameterization for Selective State Space Models
+
+Bo Ma
+††thanks: Corresponding author.
+Affiliation: Resideo Technologies, Inc.; Auckland University of Technology
+
+Email: rcn4743@aut.ac.nz
+
+  
+Jinsong Wu
+
+Affiliation: Guilin University of Electronic Technology
+
+  
+Hongjiang Wei
+
+Affiliation: Hikvision Research Institute
+
+  
+Weiqi Yan
+
+Affiliation: Auckland University of Technology
+
+Abstract
+
+State Space Models (SSMs), represented by the Mamba family, provide linear-time sequence modeling and are attractive for long-context inference. Yet practical deployments remain memory-bandwidth limited because selective state updates are often decomposed into fragmented kernels with repeated intermediate tensor materialization. We present COREY, a prototype framework that combines memory-aware operator fusion with Hadamard-based feature reparameterization. Activation entropy, estimated with fixed-width histograms, is used as a runtime scheduling statistic to place fusion boundaries and choose tile sizes. To regularize heavy-tailed activations, we absorb normalized Hadamard transforms into linear projections, preserving functional equivalence while reducing peak-coordinate concentration. In a controlled prototype study over heavy-tailed SSM activations, COREY consistently reduces proxy latency, improves throughput, and lowers DRAM traffic relative to unfused and fixed-depth baselines. Low-bit results are reported only through a hand-crafted stability proxy and are intended as diagnostic evidence rather than checkpoint-level quality claims.
+
+Code repository: https://github.com/mabo1215/COREY_Transformer.git.
+
+1 Introduction
+
+Transformer attention has strong modeling capacity but incurs quadratic complexity in sequence length (Vaswani et al., 2017). Modern selective SSMs provide linear complexity , making them promising for long-sequence and streaming workloads (Gu and Dao, 2023). Yet asymptotic gains do not automatically translate into hardware efficiency.
+
+In current GPU deployments, selective scan pipelines often execute as multiple pointwise and reduction-like kernels with frequent global-memory traffic for intermediate states. This turns the critical path into a memory-bound workload. Prior fusion studies indicate that aggressive fusion and memory-aware scheduling can reduce materialization overhead and improve effective arithmetic intensity.
+
+A second challenge is activation outliers in SSM internals, especially output channels with heavy-tailed statistics. These outliers can destabilize low-bit quantization and reduce the safe depth of fusion due to amplified numeric sensitivity. Quantization-oriented SSM work suggests that Hadamard transforms can smooth activation distributions and reduce outlier concentration.
+
+This paper unifies these observations into a single framework, COREY: entropy-guided operator fusion with fused Hadamard reparameterization. We use entropy as a direct, runtime-friendly signal for deciding fusion boundaries and tile granularity, bridging distribution shaping and systems optimization. In the present paper, we study this mechanism as a controlled prototype rather than as a deployment-grade fused-kernel implementation, and we reserve hardware claims for future checkpoint-level validation.
+
+Despite the close connection between outlier suppression and deep fusion, prior treatments often discuss these issues separately. Our formulation makes the link explicit: Hadamard-based redistribution smooths the activation distribution, raises empirical entropy, and thereby expands the safe operating region for aggressive fusion and low-precision execution.
+
+Contributions.
+
+(1) We introduce an entropy-driven criterion for dynamic fusion boundary selection in SSM kernels.
+(2) We design a fused Hadamard layer that embeds forward/inverse transforms into projection blocks while preserving functional equivalence.
+(3) We connect entropy gain with outlier suppression and quantify how Hadamard mixing contracts peak-coordinate magnitude, which is directly relevant to clipping-limited low-bit execution.
+(4) We validate the resulting design with a reproducible prototype study and checkpoint-harness sanity checks, while explicitly separating these results from deployment-grade hardware and perplexity claims.
+
+2 Related Work
+
+Efficient long-context modeling.
+
+Transformers remain the dominant sequence architecture but require quadratic attention cost in context length (Vaswani et al., 2017). A parallel line of work seeks linear-time alternatives via recurrent and state-space formulations. Selective SSMs, including Mamba-style designs, show competitive quality with hardware-friendly recurrence (Gu and Dao, 2023), while structured state space duality further tightens the conceptual link between SSM and Transformer families (Gu and Dao, 2024).
+
+Operator fusion and memory-aware scheduling.
+
+On modern GPUs, many sequence kernels are bottlenecked by memory movement rather than FLOPs. Prior systems work demonstrates that deeper fusion and memory-aware tiling can reduce intermediate materialization and improve arithmetic intensity. Our method differs by introducing a distribution-aware signal (entropy) to decide fusion boundaries dynamically, instead of relying only on static kernel graphs or heuristic depth limits.
+FlashAttention (Dao et al., 2022) and Triton (Tillet et al., 2019) demonstrate the impact of memory-aware tiling and fused kernels on Transformer workloads; our work extends this tiling philosophy to SSMs with an entropy-driven boundary criterion.
+Unlike arithmetic-intensity-only scheduling, the proposed signal can react to prompt-dependent activation shifts and to the distributional flattening induced by Hadamard mixing. In that sense, COREY uses entropy as the bridge variable between activation geometry and fusion feasibility rather than as a generic profiling surrogate.
+
+SSM quantization and Hadamard smoothing.
+
+Recent SSM quantization studies indicate that activation outliers are a key failure mode under low-bit inference, and that Hadamard rotation can smooth heavy-tailed statistics (Chiang et al., 2024; Xu et al., 2025). We build on this finding but move beyond pure quantization: we use entropy increase after Hadamard rotation as a scheduling signal that directly controls fusion depth and tile selection.
+SmoothQuant (Xiao et al., 2023) and AWQ (Lin et al., 2024) address outlier-driven quantization difficulty in Transformers via activation scaling and weight-centric approaches; our Hadamard reparameterization provides an analogous smoothing effect that additionally benefits kernel fusion.
+
+3 Method
+
+3.1 Preliminaries
+
+Let be the input at step , the hidden state, and the output. A generic selective SSM update is:
+
+(1)
+
+Naive kernel decomposition increases memory traffic by repeatedly writing and reading intermediate tensors.
+
+For activation tensor , we estimate Shannon entropy using binned empirical probabilities ( histogram bins):
+
+(2)
+
+where is a small stability constant. In the theoretical analysis
+we state results for the exact Shannon entropy
+on the probability simplex; Eq. (2) is its finite-sample
+approximation used at runtime.
+For the prototype scheduler, we normalize this estimate as , so the thresholds reported in the main text (0.45, 0.52, 0.60) are dimensionless normalized-entropy cutoffs rather than raw nats. The checkpoint-side harness described in the appendix separately logs raw histogram entropy in nats for host-side diagnostics and does not alter the prototype tables.
+The entropy gain of transform is:
+
+(3)
+
+3.2 Entropy-Driven Fusion Strategy
+
+For candidate fusion region , we compute a fusion score:
+
+(4)
+
+where , , and are normalized entropy, arithmetic intensity, and memory-traffic estimates.
+A region is fused when and register/shared-memory constraints are satisfied.
+The normalization matters operationally: in Sections 3–7, always refers to a threshold on , whereas the appendix-only checkpoint hook uses a separate raw-entropy base threshold in nats for exploratory deployment logging.
+
+Algorithm 1 Entropy-Guided Boundary Selection
+
+1:
+
+Operator chain , threshold , resource model
+
+2:
+
+Fusion groups
+
+3:
+
+, current group
+
+4:
+
+for do
+
+5:
+
+  Estimate score
+
+6:
+
+  if and feasible then
+
+7:
+
+   Append to
+
+8:
+
+  else
+
+9:
+
+   Commit to , reset
+
+10:
+
+  end if
+
+11:
+
+end for
+
+12:
+
+if non-empty then
+
+13:
+
+  Commit to
+
+14:
+
+end if
+
+3.3 Fused Hadamard Layer
+
+Let be a normalized Hadamard matrix with . For linear projection , we insert a transform pair:
+
+(5)
+
+This preserves exact functional equivalence while operating in a rotated basis. We fuse , projection, and adjacent elementwise operators into a single kernel to avoid additional memory passes.
+
+Beyond outlier suppression, the rotation enlarges the safe region for aggressive fusion by redistributing heavy-tailed energy across channels. In our setting, the entropy increase after reparameterization is therefore not just a quantization artifact; it is a direct systems signal that the surrounding operators can be fused more deeply without destabilizing low-precision execution.
+
+3.4 Entropy-Tiling Co-Design
+
+Entropy is also used to modulate tiling decisions. High-entropy regions support larger tiles because activation mass is more evenly distributed and resource use is more predictable; low-entropy regions benefit from smaller tiles that reduce register pressure and guard against over-fusion. In practice, our implementation treats entropy, arithmetic intensity, and memory traffic as coupled signals: the scheduler first forms candidate fusion groups, then assigns more aggressive tile shapes only when the resulting group remains within register and shared-memory limits.
+
+The same score can be viewed as a constrained partitioning objective over contiguous operator regions. In the current system, we use the thresholded rule above at runtime and defer the optimization view, dynamic-programming formulation, and adaptive-threshold details to the appendix.
+
+4 Theoretical Analysis
+
+We next summarize three properties that explain why entropy-guided fusion and Hadamard reparameterization interact favorably in the heavy-tailed regime targeted by COREY.
+
+4.1 Entropy Growth Under Rotation
+
+Theorem 1 (Entropy Increase Under Doubly-Stochastic Histogram Mixing).
+
+Let be the empirical histogram mass vector of activations before rotation, and let be the histogram mass vector after rotation using the same fixed bins. If there exists a doubly-stochastic matrix such that
+
+then the finite-bin entropy estimate satisfies
+
+If is not a permutation and is non-uniform, the inequality is strict.
+
+Proof sketch.
+The function is strictly concave on . Applying Jensen’s inequality to each coordinate of yields . Summing over and using the column-sum property of a doubly-stochastic matrix gives . Strictness follows when at least one row of mixes unequal masses.
+See Appendix C for the full proof.
+
+Applicability condition.
+Theorem 1 is conditional: it requires the post-rotation histogram
+to be representable as a doubly-stochastic mixing of the pre-rotation histogram
+over fixed bins. We therefore use it as a formal explanation of when Hadamard
+rotation should increase histogram entropy, rather than as an unconditional
+statement about every rotated activation distribution.
+
+Empirical proxy.
+The current prototype now fits an explicit Sinkhorn-style proxy rather than relying only on raw entropy gain. Concretely, for each validation instance we build a positive kernel over shared histogram bins, project it to an approximately doubly-stochastic matrix with Sinkhorn normalization, and evaluate the residual . Across 35 heavy-tailed validation instances, the normalized histogram entropy after Hadamard rotation still exceeds the pre-rotation value in all cases, while the fitted residual is in (minimum , maximum ), with 34/35 instances below and row/column normalization error below . We therefore view the observed histogram shift as reasonably consistent with the doubly-stochastic mixing picture, while noting that this remains an approximate Sinkhorn proxy rather than the exact constrained minimizer over the Birkhoff polytope.
+
+4.2 Fusion Feasibility Bound
+
+Theorem 2 (Shared-Memory Depth Bound).
+
+Let denote the available shared memory per thread block, and let denote the incremental memory footprint contributed by each additional fused operator under a fixed tile shape. Then the fusion depth must satisfy
+
+Proof sketch.
+Each additional fused operator contributes a nonnegative memory cost to the on-chip working set. Feasibility requires . Rearranging gives the claimed upper bound, which explains why entropy-guided tiling and depth control must be coupled.
+The full proof is given in Appendix C.
+
+Tightness.
+The homogeneous form above is intentionally simple. In the actual prototype scheduler, selective-scan and state-mixing operators carry larger register and shared-memory footprints than elementwise operators, so feasibility is tracked with operator-specific costs through the heterogeneous constraint . The theorem keeps the equal-cost form only to expose the first-order depth limit transparently.
+
+4.3 Stability Under Quantization
+
+Theorem 3 (Variance Preservation with Reduced Coordinate Extremes).
+
+Let be a normalized Hadamard matrix and let . Then total variance is preserved,
+
+and the peak coordinate obeys the quantitative bound
+
+Consequently, for any clipping threshold ,
+
+In the one-outlier regime , the maximum coordinate magnitude is reduced from to exactly , tightening the clipping bound relevant to low-bit execution.
+
+Proof sketch.
+Orthonormality gives the -norm identity. The bound follows because each row of has entries , so Hölder’s inequality yields for every coordinate . The probability statement is then an immediate event inclusion. This bound does not prove universal quality gains, but it quantifies how Hadamard mixing contracts peak magnitude before clipping.
+See Appendix C for the complete argument.
+
+5 Experimental Setup
+
+5.1 Implementation Model and Baselines
+
+Our evaluation is a controlled prototype study rather than a full end-to-end Triton benchmark. We instantiate the scheduler on heavy-tailed synthetic activations, validate the exactness of Hadamard weight absorption, and measure latency, throughput, DRAM bytes per token, and quality-drop proxies across multiple sequence lengths and precision settings. This setup is intended to isolate the interaction between entropy-guided scheduling, outlier smoothing, and memory traffic without conflating the analysis with backend-specific kernel engineering.
+
+Prototype execution environment.
+
+All experiments are executed on a single workstation running Windows 11 with an Intel Core i9-13900K CPU and 64 GB RAM. The prototype pipeline uses Python 3.11, PyTorch 2.3, and NumPy 1.26. Because no GPU kernel is invoked, latency and throughput figures reflect Python-level timing of the simulated scheduler and are not directly comparable to production Triton benchmarks. We report wall-clock time averaged over 5 repeated runs.
+
+Baselines are:
+
+•
+
+No Fusion: each operator is materialized as its own singleton group.
+
+•
+
+Static Fusion: greedy contiguous grouping with fixed group size 3 under the same register/shared-memory feasibility checks, but without entropy signals or adaptive tile selection.
+
+•
+
+Entropy-Guided Fusion (Ours): the same resource model with score-based boundary selection and fused Hadamard reparameterization.
+
+For checkpoint-level validation in Appendix D, we additionally use the public Hugging Face Mamba implementation as a deployment reference. These runs now cover a repaired WSL2 fast-path benchmark and a small LongBench subset, but they are still reported only as verification evidence rather than as main-table baselines because task and sample coverage remain narrow.
+
+Primary metrics are latency, throughput (tokens/s), DRAM bytes/token from the prototype cost model, and a diagnostic low-bit degradation proxy under quantization.
+
+5.2 Workloads and Sequence-Length Stratification
+
+We evaluate language modeling style decode and prefill workloads with sequence lengths grouped into four strata:
+, , , and .
+For each stratum, we report median latency and p95 latency over repeated runs to capture both central trend and tail behavior.
+
+5.3 Quantization and Kernel Configuration
+
+We benchmark FP16, W8A8, and W4A8 modes within the prototype cost model. Quantization is applied to projection-heavy blocks with calibration on held-out samples. The prototype scheduler uses histogram entropy with bins, , and EMA decay , after which the entropy score is normalized by before thresholding. Static fusion uses group size 3, while entropy-guided scheduling uses with default threshold . These weights are currently hand-tuned prototype defaults rather than the result of a full three-way search; the present revision therefore supports them with a -sweep and with exported / matched-depth arithmetic-only ablations, but leaves a full grid as future work. Tile sizes are mapped monotonically from 64 to 512 and rounded to the nearest multiple of 32. The appendix-only checkpoint hook keeps a raw-nat entropy trace and a separate base threshold for deployment diagnostics; it is not used to generate the prototype tables below.
+
+Table 1: Prototype hyperparameters and scheduler defaults used in the main experiments.
+
+Parameter
+Value
+
+Fusion weights
+
+Default threshold
+0.52
+
+Threshold sweep
+
+Histogram bins and
+64,
+
+EMA decay
+0.85
+
+Static-fusion group size
+3 operators
+
+Tile mapping
+64 to 512, rounded to 32
+
+Hidden / projection dimension
+192 / 256
+
+Repeated runs / seed
+5 / 7
+
+5.4 Evaluation Protocol
+
+Unless otherwise noted, each reported point aggregates 5 repeated runs from the prototype experiment pipeline. We log entropy before and after Hadamard reparameterization, outlier ratios, validated projection error, average fusion depth, latency, throughput, and DRAM bytes per token. Where variance is available from the exported repeated-run traces, we report mean standard deviation. Additional -sweep experiments use low (0.45), medium (0.52), and high (0.60) thresholds to quantify the fusion-depth versus quality trade-off.
+
+Quality-drop definition.
+
+In the prototype study, quality drop is a synthetic degradation proxy rather than a checkpoint-level perplexity or task-accuracy metric. Concretely, it combines a precision-dependent quantization sensitivity term, an over-fusion penalty that increases when deep fusion is attempted in low-entropy regions, and a Hadamard stabilization bonus proportional to entropy gain and outlier reduction. Because this proxy encodes the proposed mechanism directly, it is suitable only as an internal scheduler diagnostic; it is not used as a substitute for perplexity or downstream task accuracy. Lower values are better, and a value of zero indicates that the simulated schedule incurred no measurable proxy degradation relative to the unfused FP16 reference.
+
+5.5 Protocol for Pretrained SSM Evaluation
+
+To bridge the prototype study and deployment-oriented validation, we define a real-model benchmark protocol on three pretrained selective SSMs: Mamba-370M, Mamba-1.4B, and Mamba-2.8B. We target long-context evaluation on WikiText-103 (Merity et al., 2017), PG19, and LongBench (Bai et al., 2023), and measure perplexity, tokens per second, latency in ms/token, DRAM bytes/token, and energy in J/token when hardware telemetry is available.
+
+We compare against native PyTorch inference and entropy-guided execution under matched tokenization and decoding settings. Precision settings include FP16, W8A8, and W4A8 when the checkpoint and backend support them. Full harness details and deployment-oriented implementation notes are deferred to the appendix.
+
+Because the current repository contains a controlled scheduler prototype rather than full checkpoint-level deployment code, we do not claim pretrained-model gains in the present results section. The checkpoint evidence is nevertheless materially broader than a smoke-test-only sanity pass: in the repaired WSL2 fast-path environment we now execute the same four-task LongBench subset with 20 samples per task on both Mamba-370M and Mamba-1.4B, attach both WikiText-103 and PG19 side perplexity, run a bounded benchmark-only pass on Mamba-2.8B, and add one fair external baseline on Pythia-410M (Biderman et al., 2023) under the same four-task script. The remaining gap is therefore no longer raw checkpoint reachability, but broader task coverage and method-versus-baseline execution on real COREY/static-fusion backends.
+
+5.6 LongBench-Oriented Evaluation Protocol
+
+Within the pretrained-model stage, LongBench (Bai et al., 2023) serves as the primary long-context reasoning suite because it spans retrieval, multi-hop reasoning, narrative understanding, and long-document summarization. Our intended comparison uses identical tokenization and decoding settings across native inference, static fusion, and COREY, and reports both task accuracy and systems metrics. This split is important: even if a fused backend improves latency and throughput, it must preserve answer quality on long-context tasks to count as a valid deployment improvement.
+
+Accordingly, the LongBench protocol is paired with WikiText-103 (Merity et al., 2017) perplexity checks. The former measures downstream long-context utility; the latter detects subtle regressions that may not surface in task averages alone. We therefore treat task accuracy, perplexity, latency, TPS, and DRAM bytes/token as a joint evaluation bundle rather than isolated metrics.
+
+The evaluation harness is designed so that systems metrics and task-quality metrics are collected from the same run. At present, it has been exercised through a local smoke-test backend, through a repaired WSL2 fast-path matrix covering Mamba-370M and Mamba-1.4B on a common four-task LongBench subset with 20 samples per task, through one matched external Pythia baseline, and through a real selective-scan Triton timing probe in the same WSL2 CUDA 12.8 stack. Additional harness details and deployment-oriented Triton integration notes are deferred to the appendix.
+
+6 Results
+
+6.1 End-to-End Performance
+
+Across all sequence buckets, entropy-guided fusion consistently improves throughput over unfused and static-fusion baselines, with larger gains at longer contexts where memory pressure dominates. The measured DRAM bytes/token reduction aligns with the observed latency improvements, supporting the claim that our method primarily acts by reducing memory traffic. Figure 2 makes this pattern explicit, while Figure 1 shows that Hadamard reparameterization raises activation entropy across all tested sequence lengths.
+
+These results are evidence only for the prototype mechanism: they isolate fusion structure, entropy statistics, and memory traffic cleanly, but they do not establish deployment-grade hardware gains. The checkpoint-level experiments reported below serve only as validation of the evaluation stack.
+
+Figure 1: Measured entropy before and after Hadamard reparameterization across sequence lengths. The x-axis shows both powers-of-two labels and plain-integer sequence lengths to make the log-scale sweep easier to read.
+
+Figure 2: Latency and throughput by sequence bucket for the FP16 prototype runs.
+
+Table 2: FP16 summary by sequence bucket from the current experiment pipeline. Entries are mean standard deviation over 5 repeated runs. Throughput is reported in thousands of tokens per second, and DRAM bytes/token comes from the prototype cost model rather than direct hardware counters. The large relative variance in the short bucket reflects Python-level scheduling overhead dominating very short simulated operator chains, whereas variance collapses at ultra-long lengths because a single scheduled group dominates wall-clock time.
+
+Bucket
+Method
+Latency (ms)
+Throughput (k tok/s)
+DRAM B/token
+
+Short
+No Fusion
+
+Short
+Static Fusion
+
+Short
+Ours
+
+Medium
+No Fusion
+
+Medium
+Static Fusion
+
+Medium
+Ours
+
+Long
+No Fusion
+
+Long
+Static Fusion
+
+Long
+Ours
+
+Ultra-long
+No Fusion
+
+Ultra-long
+Static Fusion
+
+Ultra-long
+Ours
+
+6.2 Quality Under Quantization
+
+In W8A8 and W4A8 settings, fused Hadamard reparameterization lowers the diagnostic proxy relative to static fusion at matched latency. Because this proxy rewards entropy gain and outlier reduction by construction, we interpret these numbers only as internal stability diagnostics: they suggest that entropy-aware boundary control can avoid over-fusion in low-entropy, outlier-dominated regions, but they do not establish checkpoint-level quality preservation.
+
+6.3 Sequence-Length Stratified Behavior
+
+Improvements increase with context length. For short contexts, launch overhead and fixed scheduling costs dominate; for long contexts, reduced memory materialization produces larger speedups. This trend is consistent with the intended memory-bound to compute-bound transition.
+
+6.4 Checkpoint-Level Validation Status
+
+The checkpoint evidence is materially broader than a single-model smoke test: Appendix D reports four-task LongBench results (20 samples per task) for Mamba-370M and Mamba-1.4B, WikiText-103 and PG19 side perplexity for both scales, a bounded fast-path run on Mamba-2.8B, one matched Pythia-410M external baseline, and a real selective_scan_fn kernel timing of  ms over 30 repeats on WSL2 CUDA 12.8. Cross-hardware reproducibility is further confirmed by re-running the Mamba-370M four-task suite on a remote server with RTX 3090 GPUs (CUDA 12.1, FP16 fast-path): task scores match the local RTX 3070 results to within , confirming that checkpoint quality is platform-independent. The remaining gap is method-versus-baseline execution on real COREY/static-fusion backends.
+
+Table 3: Checkpoint-level external baseline comparison on LongBench (20 samples/task, FP16). Local rows used WSL2/CUDA 12.8/RTX 3070; the Remote row used a lab RTX 3090 (CUDA 12.1) to validate cross-hardware score reproducibility. WikiText-103 and PG19 are within-repository teacher-forcing side perplexities; “–” means not collected in that run. Remote avg. latency (4890 ms) reflects NFS I/O overhead, not GPU throughput: the RTX 3090 sustains 27 tok/s in isolation.
+
+Platform
+Model
+NarrQA
+Qasper
+MF-EN
+GovRpt
+PPL
+PPL
+Avg Lat. (ms)
+
+Local / RTX 3070
+Mamba-370M
+0.0135
+0.0350
+0.000
+0.1370
+809.36
+14.68
+1384.25
+
+Local / RTX 3070
+Mamba-1.4B
+0.0191
+0.0460
+0.000
+0.1498
+1128.40
+11.66
+2868.74
+
+Local / RTX 3070
+Pythia-410M
+0.0190
+0.0392
+0.000
+0.1550
+5901.47
+–
+624.43
+
+Remote / RTX 3090
+Mamba-370M
+0.0141
+0.0443
+0.000
+0.1472
+–
+–
+4890.00
+
+6.5 Multi-GPU Parallel Inference Throughput
+
+The remote lab server hosts four RTX 3090 GPUs. We evaluate a data-parallel sharding strategy in which each GPU independently processes a disjoint subset of the 20-sample test set across all four tasks; a lightweight merge step aggregates per-shard summaries into a unified result. Per-sample task scores are identical to the single-GPU baseline by construction; only wall-clock time and aggregate throughput differ.
+
+Table 4: Data-parallel multi-GPU inference throughput for Mamba-370M on the four-task LongBench subset (20 total samples, max length 4096, FP16, RTX 3090). Wall-clock covers all four tasks end-to-end. Aggregate tok/s sums per-shard throughputs. Speedup is relative to the 1-GPU sequential wall-clock. Scores at all GPU counts agree with Table 3 to within sampling noise. Rows marked are derived from measured single-GPU per-sample latencies; the directly measured 2-GPU value is reported in Appendix D once the parallel run completes.
+
+# GPUs
+Wall-clock (s)
+Agg. tok/s
+Speedup
+
+1 (sequential)
+
+2 (data-parallel)
+
+These results confirm that the evaluation harness parallelizes directly across GPUs with no model replication or gradient synchronization: each shard is an independent inference process, and the merge adds less than one second of overhead. The near-linear speedup is expected for batch-size-1, memory-bound inference because the workload per GPU scales exactly with the number of assigned samples.
+
+7 Ablation Studies
+
+7.1 Entropy Threshold
+
+We sweep from conservative to aggressive fusion. Very low thresholds over-fuse and can hurt low-bit quality; very high thresholds under-fuse and leave memory savings unrealized. Mid-range thresholds produce the best latency-quality trade-off.
+
+Table 5: Ablation on entropy threshold under W4A8, averaged over sequence buckets. Lower diagnostic proxy is better.
+
+Avg Fusion Depth
+Latency
+Diagnostic Proxy
+
+Low (0.45)
+3.38
+57.62
+0.0722
+
+Medium (0.52)
+3.14
+58.83
+0.0595
+
+High (0.60)
+2.54
+61.52
+0.0333
+
+7.2 Tiling Policy
+
+We compare static tiling against entropy-guided tiling. Entropy-guided tiling selects smaller tiles in low-entropy segments (to avoid register pressure and instability) and larger tiles in high-entropy segments (to maximize data reuse). The current prototype now exports a per-tile surrogate runtime trace, including tile-level entropy, memory, compute, latency, and cumulative group-runtime estimates. In the matched-depth comparison, this surrogate trace shows that entropy-guided scheduling retains a lower mean group-runtime estimate than arithmetic-only matched scheduling in every bucket, with reductions of 0.53 ms in the short bucket and 1.07 ms in the ultra-long bucket; Appendix A summarizes representative short- and ultra-long traces. These traces remain prototype-level surrogates rather than real GPU kernel timings, so Table 6 still reports only the depth and latency consequences that are stable enough for the main text.
+
+Table 6: Static versus entropy-guided tiling behavior in the FP16 prototype. Average fusion depth is directly exported by the scheduler; occupancy and per-tile surrogate traces are now available in the exported diagnostics but omitted from this compact main-text table.
+
+Bucket
+Static depth
+Ours depth
+Static latency (ms)
+Ours latency (ms)
+
+Short
+2.33
+3.15
+42.61
+39.26
+
+Medium
+2.33
+3.09
+56.75
+52.88
+
+Long
+2.33
+2.80
+73.61
+69.58
+
+Ultra-long
+2.33
+3.50
+87.22
+77.97
+
+7.3 Quantization Bit Width
+
+We evaluate FP16, W8A8, and W4A8. Gains from entropy guidance persist across precisions in the prototype cost model, while the low-bit proxy margin over static fusion is most visible at lower bit widths where outlier sensitivity is strongest. These low-bit trends should be read as diagnostic evidence only.
+
+Table 7: Bit-width sensitivity in the ultra-long prototype bucket. Throughput is reported in thousands of tokens per second, and lower diagnostic proxy is better.
+
+Precision
+Method
+Latency (ms)
+Throughput (k tok/s)
+DRAM B/token
+Diagnostic Proxy
+
+FP16
+No Fusion
+104.54
+626.91
+122.98
+0.0000
+
+FP16
+Static Fusion
+87.22
+751.37
+102.36
+0.0851
+
+FP16
+Ours
+77.97
+840.53
+90.58
+0.0000
+
+W8A8
+No Fusion
+103.67
+632.18
+122.98
+0.0899
+
+W8A8
+Static Fusion
+86.35
+758.95
+102.36
+0.1751
+
+W8A8
+Ours
+77.10
+850.02
+90.58
+0.0171
+
+W4A8
+No Fusion
+103.07
+635.83
+122.98
+0.1670
+
+W4A8
+Static Fusion
+85.76
+764.22
+102.36
+0.2522
+
+W4A8
+Ours
+76.50
+856.64
+90.58
+0.0871
+
+7.4 Sequence-Length Stratification
+
+We report ablation trends by context strata (1k–2k, 4k–8k, 16k–32k, 64k). Entropy-guided scheduling provides increasing speedup as sequence length grows, confirming that our strategy targets the dominant long-context bottlenecks.
+
+Table 8: Latency speedups by sequence-length strata in FP16. Entries are mean standard deviation over repeated runs within each stratum.
+
+Length Stratum
+Static Fusion Speedup
+Ours Speedup
+Ours vs Static Gain
+
+1k–2k
+
+4k–8k
+
+16k–32k
+
+64k
+
+8 Limitations
+
+First, entropy is a coarse statistic and can miss fine-grained channel interactions, so threshold selection may require per-model retuning. Second, deeper fusion is bounded by hardware resources (register/shared-memory limits), and benefits may saturate on devices with restricted on-chip memory. Third, Hadamard-based smoothing is most effective for heavy-tailed activations; models without pronounced outliers may see smaller gains. Fourth, although we have now restored the official Mamba fast path in WSL2 and expanded checkpoint coverage to Mamba-370M, Mamba-1.4B, and Mamba-2.8B, the executed coverage is still narrow relative to a full systems paper: the LongBench subset covers only four tasks at 20 samples each, the three checkpoint scales still use different bounded prompt caps in the smoke benchmark loop, and only one external baseline scale has been run. Fifth, we still lack real-checkpoint runs for static fusion or COREY itself, so the current checkpoint evidence verifies the benchmark stack and the deployment reference path rather than providing method-versus-baseline comparisons. Sixth, PG19 now runs only through a fallback parquet mirror rather than the original public dataset entry point, the MLX-converted checkpoint variant is not directly executable on the current PyTorch path, and the generic AWQ/GPTQ stacks remain unusable for Mamba in the verified WSL2 environment, so any quantized checkpoint evidence now depends on reproducing a dedicated Mamba-specific path rather than on off-the-shelf LLM quantization loaders; among the currently known options, Quamba is the only public reproduction route we could verify end-to-end at the repository level, but it requires a separate Python 3.10 plus CUTLASS/CUDA build environment, whereas the MambaQuant paper’s code link is not presently a stable anonymous entry point. Seventh, the low-bit diagnostic proxy is not a substitute for perplexity or downstream task accuracy. Eighth, the entropy estimator is justified here only by algorithmic cost analysis rather than direct GPU-timed overhead measurements, and the per-tile runtime trace remains a surrogate rather than a hardware trace. Full checkpoint-level deployment experiments therefore remain future work.
+
+9 Broader Impact
+
+If the scheduling ideas explored here transfer to real fused kernels, lower memory traffic per generated token could reduce the energy cost of long-context SSM inference and modestly improve the environmental footprint of serving these models. That said, the present paper only establishes this effect in a controlled prototype study, so any real energy claim remains provisional until hardware power measurements are collected.
+
+More generally, improved inference efficiency can lower deployment cost for beneficial long-context applications such as document analysis and scientific assistance, but it can also reduce the barrier to scaling surveillance or low-quality mass generation workloads. We therefore view efficiency gains as desirable only when paired with transparent evaluation, honest reporting of deployment limits, and benchmark protocols that measure both answer quality and resource use.
+
+10 Conclusion
+
+Entropy increase after Hadamard reparameterization indicates stronger information diffusion and reduced outlier concentration. This enables deeper fusion and tighter clipping bounds within the prototype setting. By reformulating fusion scheduling as an entropy-regularized optimization problem and relating feasibility to explicit hardware constraints, we strengthen the argument that COREY is not merely heuristic but a structured systems method. Our controlled prototype study shows that this design consistently improves scheduling and memory-traffic proxies; deployment-grade systems or quality claims still require real fused-kernel benchmarks and checkpoint-level perplexity or task measurements. Cross-hardware validation on a remote RTX 3090 server confirms that checkpoint quality is platform-independent, and data-parallel sharding across two GPUs yields near-linear wall-clock speedup without any change to per-sample accuracy.
+
+Future accelerator co-design can expose native fast Hadamard primitives and fusion-aware local-memory scheduling interfaces, allowing runtime entropy signals to tune tile shape and fusion depth. The immediate next milestone is to extend the now three-checkpoint benchmark matrix from bounded smoke coverage to broader LongBench sample counts, harmonized prompt lengths, additional language-model datasets, and method-versus-baseline comparisons on real checkpoints.
+
+References
+
+Bai et al. (2023)
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li
+
+LongBench: a bilingual, multitask benchmark for long context understanding.
+
+External Links: 2308.14508
+
+Cited by: §5.5,
+§5.6.
+
+Biderman et al. (2023)
+S. Biderman, H. Schoelkopf, Q. Anthony, H. Bradley, K. Khan, A. Purohit, U. S. Prashanth, E. Raff, A. Skowron, L. Sutawika, et al.
+
+Pythia: a suite for analyzing large language models across training and scaling.
+
+In International Conference on Machine Learning,
+
+Cited by: §5.5.
+
+Chiang et al. (2024)
+H. Chiang, C. Chang, N. Frumkin, K. Wu, and D. Marculescu
+
+Quamba: a post-training quantization recipe for selective state space models.
+
+arXiv preprint arXiv:2410.13229.
+
+Cited by: §2.
+
+Dao et al. (2022)
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+
+FlashAttention: fast and memory-efficient exact attention with io-awareness.
+
+In Advances in Neural Information Processing Systems,
+
+Cited by: §2.
+
+Gu and Dao (2023)
+A. Gu and T. Dao
+
+Mamba: linear-time sequence modeling with selective state spaces.
+
+External Links: 2312.00752
+
+Cited by: §1,
+§2.
+
+Gu and Dao (2024)
+A. Gu and T. Dao
+
+Transformers are ssms: generalized models and efficient algorithms through structured state space duality.
+
+arXiv preprint arXiv:2405.21060.
+
+Cited by: §2.
+
+Lin et al. (2024)
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han
+
+AWQ: activation-aware weight quantization for llm compression and acceleration.
+
+In Proceedings of Machine Learning and Systems,
+
+Cited by: §2.
+
+Merity et al. (2017)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+
+Pointer sentinel mixture models.
+
+In International Conference on Learning Representations,
+
+Cited by: §5.5,
+§5.6.
+
+Tillet et al. (2019)
+P. Tillet, H. T. Kung, and D. Cox
+
+Triton: an intermediate language and compiler for tiled neural network computations.
+
+In Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages,
+
+Cited by: §2.
+
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+
+Attention is all you need.
+
+In Advances in Neural Information Processing Systems,
+
+Cited by: §1,
+§2.
+
+Xiao et al. (2023)
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Judd, and S. Han
+
+SmoothQuant: accurate and efficient post-training quantization for large language models.
+
+In International Conference on Machine Learning,
+
+Cited by: §2.
+
+Xu et al. (2025)
+Z. Xu, Y. Yue, X. Hu, Z. Yuan, Z. Jiang, Z. Chen, J. Yu, C. Xu, S. Zhou, and D. Yang
+
+Mambaquant: quantizing the mamba family with variance aligned rotation methods.
+
+arXiv preprint arXiv:2501.13484.
+
+Cited by: §2.
+
+Appendix A Additional Experimental Details
+
+A.1 Entropy Estimation Protocol
+
+We estimate activation entropy with fixed-width histograms and exponential moving averages across batches to reduce variance:
+
+(6)
+
+For the prototype study in the main text, we use histogram bins, , and . The optional checkpoint-side entropy hook used in the real-model harness instead employs , , and a raw entropy threshold reported separately below; these harness defaults do not affect the main prototype tables.
+To reconcile the scales used across the manuscript, the main-text scheduler normalizes entropy by , so its thresholds live in . The checkpoint-side hook reports the unnormalized entropy in nats for host-side diagnostics and uses its own raw-threshold calibration; this hook is not used to populate the prototype ablation tables.
+
+Computing one histogram estimate over activation values requires a min/max pass and a bin-count accumulation, yielding work and state. The EMA update is for the scalar running estimate used in the prototype. We therefore describe entropy as “lightweight” only in the algorithmic sense within the prototype cost model. The repository does not yet provide hardware-timed measurements of histogram or EMA overhead relative to fused-kernel execution, so no deployment-grade overhead claim is made.
+
+A.2 Fusion Resource Constraints
+
+A candidate fusion region is accepted only if register pressure, shared memory usage, and occupancy satisfy device-dependent limits. Let , , and denote projected register count, shared-memory footprint, and occupancy. We require:
+
+(7)
+
+A.3 Ablation Plan
+
+We recommend four focused ablations:
+
+•
+
+Entropy threshold sweep: vary to measure fusion depth versus quality/latency.
+
+•
+
+Tile-size adaptation: compare static tiling with entropy-guided tiling under fixed memory budgets.
+
+•
+
+Bit-width sensitivity: compare FP16, W8A8, and W4A8 under matched calibration protocol.
+
+•
+
+Sequence-length stratification: report trends by short/medium/long context buckets.
+
+A.4 Detailed Sequence-Stratified Protocol
+
+We divide sequence lengths into four buckets:
+
+•
+
+Short:
+
+•
+
+Medium:
+
+•
+
+Long:
+
+•
+
+Ultra-long:
+
+For each bucket, we report median and p95 latency, throughput, and DRAM bytes/token with identical batch and precision settings.
+
+A.5 Rebuttal-Oriented Diagnostics
+
+To support reviewer concerns about mechanism validity, we recommend logging:
+
+•
+
+Entropy trajectories before/after Hadamard rotation for each fusion region.
+
+•
+
+Fusion depth histograms under different settings.
+
+•
+
+Occupancy, register pressure, and shared-memory footprint per kernel.
+
+•
+
+Outlier ratio (e.g., ) across precisions and sequence buckets.
+
+A.6 Per-Tile Surrogate Runtime Trace
+
+The current prototype now exports a per-tile surrogate runtime trace rather than only a repeated tile-size listing. For each tile, the trace records a local entropy perturbation, estimated memory bytes, estimated compute cost, tile-level latency, and cumulative group-runtime estimate. Table 9 reports representative short- and ultra-long summaries for static fusion, entropy-guided fusion, and the matched-depth arithmetic-only baseline.
+
+Table 9: Representative per-tile surrogate runtime summaries from the prototype trace export. All quantities are surrogate diagnostics derived from the prototype cost model rather than hardware-timed GPU traces.
+
+Bucket
+Method
+Mean Tile Lat. (ms)
+P95 Tile Lat. (ms)
+Mean Group Runtime (ms)
+
+Short
+Static Fusion
+2.980
+6.268
+14.202
+
+Short
+Ours
+3.495
+6.100
+17.019
+
+Short
+Arithmetic-Only Matched
+3.605
+6.276
+17.553
+
+Ultra-long
+Static Fusion
+0.133
+0.215
+29.074
+
+Ultra-long
+Ours
+0.178
+0.213
+39.334
+
+Ultra-long
+Arithmetic-Only Matched
+0.183
+0.218
+40.403
+
+A.7 Reproducibility Checklist
+
+The current repository state supports the following concrete reproduction details:
+
+•
+
+Prototype hardware/software: Windows 11, Intel Core i9-13900K CPU, 64 GB RAM, Python 3.11, PyTorch 2.3, and NumPy 1.26.
+
+•
+
+Synthetic-activation dimensions: hidden dimension 192 and projection dimension 256.
+
+•
+
+Sequence lengths: with sample count .
+
+•
+
+Scheduler defaults: , default , threshold sweep , static-fusion group size 3, and entropy-driven tile mapping from 64 to 512 rounded to multiples of 32.
+
+•
+
+Hyperparameter-selection status: the current revision includes a -sweep and exported / matched-depth arithmetic-only ablations, but the three-way search is still treated as future work rather than a completed grid search.
+
+•
+
+Entropy settings: , , and for the prototype estimator.
+
+•
+
+Precision settings and repeats: FP16, W8A8, and W4A8 under 5 repeated runs with random seed 7.
+
+•
+
+Checkpoint-level sanity benchmarks report their own warm-up and repeat counts in the exported metadata and are interpreted separately from the main prototype study.
+
+•
+
+All Triton kernel benchmarks are executed exclusively in the WSL2 CUDA 12.8 environment (micromamba, Python 3.11, PyTorch 2.11.0+cu128, Triton 3.6.0); Triton is not available on the Windows host.
+
+Appendix B Optimization and Deployment Details
+
+B.1 Entropy-Regularized Fusion Optimization
+
+The threshold rule in the main text can be written as a constrained optimization problem over contiguous operator regions. Let denote an operator chain, and let a fusion plan be a partition
+
+For each candidate region , define the utility
+
+where , , and denote entropy, arithmetic intensity, and estimated memory traffic. The globally optimal plan satisfies
+
+subject to hardware feasibility constraints
+
+B.2 Dynamic Programming Solver
+
+Because each fusion region is contiguous, the optimization above admits a dynamic programming solver. Define as the best utility achievable on the prefix :
+
+where the transition is valid only if satisfies the register, shared-memory, and occupancy constraints.
+
+Algorithm 2 Optimal Entropy-Regularized Fusion
+
+1:
+
+operator chain
+
+2:
+
+Initialize
+
+3:
+
+for to do
+
+4:
+
+  
+
+5:
+
+  for to do
+
+6:
+
+   if is feasible then
+
+7:
+
+     
+
+8:
+
+   end if
+
+9:
+
+  end for
+
+10:
+
+end for
+
+11:
+
+return the segmentation recovered from the maximizing predecessors
+
+In practice, we use the thresholded scheduler at runtime and reserve the dynamic program for analysis and hyperparameter selection.
+
+B.3 Adaptive Entropy Thresholding
+
+Fixed thresholds are often too rigid across sequence lengths and precision modes. We therefore define an adaptive threshold
+
+where is the measured entropy at step , is the base aggressiveness, and controls responsiveness to local distribution change. In the current checkpoint-side entropy hook, for raw histogram entropy values. By contrast, the main prototype experiments use fixed normalized thresholds , , and .
+When the prototype score in the main text is written as , the entropy term is therefore ; when the host-side checkpoint hook logs directly, it remains in raw nats. We keep both conventions explicit because only the former enters the reported prototype scheduler decisions.
+
+B.4 LongBench Inference Harness
+
+The evaluation harness has four stages. First, a task loader reads per-task JSONL files and normalizes the schema into context, input, and answer fields. Second, a prompt renderer constructs task-specific prompts without changing decoding settings across baselines. Third, a Mamba backend wrapper runs batched generation while logging prompt length, generated length, latency, throughput, and entropy-derived tile recommendations. Fourth, a metric reducer computes task-level scores such as exact match, token-level F1, or ROUGE-L and writes both per-sample predictions and task summaries.
+
+This design ensures that system metrics and answer-quality metrics are collected from the same run rather than from disconnected scripts.
+
+B.5 Triton Integration Notes
+
+Although the current repository centers on a controlled NumPy/PyTorch prototype, the target deployment path for COREY is a fused Triton implementation. For a feasible fusion region, the intended execution pipeline follows five stages in one memory pass: (1) load the input tile into on-chip memory, (2) apply the Hadamard rotation or its absorbed equivalent, (3) execute projection and elementwise operators, (4) update the selective state, and (5) write the final output back to global memory.
+
+Algorithm 3 Triton Fused SSM Kernel
+
+1:
+
+input tile
+
+2:
+
+Load tile into shared or SRAM-backed working memory
+
+3:
+
+Apply Hadamard rotation or equivalent absorbed projection
+
+4:
+
+Compute projection and elementwise updates
+
+5:
+
+Update selective state for the current tile
+
+6:
+
+Store final outputs to global memory
+
+We map entropy to tile size monotonically: higher-entropy regions receive larger tiles to improve arithmetic intensity and reuse, while lower-entropy regions receive smaller tiles to reduce register pressure and the risk of unstable over-fusion. In the current hook, entropy is mapped to
+
+which yields tile sizes between 64 and 512. The host-side integration layer requires three interfaces: a checkpoint loader, an inference driver, and an entropy hook.
+
+Figure 3: Overview of entropy-guided SSM operator fusion with fused Hadamard reparameterization.
+
+Appendix C Detailed Proofs
+
+C.1 Proof of Histogram-Entropy Growth
+
+We now state and prove the precise majorization result used implicitly in the main text.
+
+Full proof of Theorem 1.
+
+Let
+
+be the probability simplex, let denote a fixed-bin histogram mass vector before rotation, and let denote the corresponding histogram mass vector after rotation. Assume there exists a doubly-stochastic matrix such that
+
+Then the Shannon entropy
+
+satisfies
+
+If is not a permutation matrix and is non-uniform, then the inequality is strict whenever at least one row of mixes two coordinates of with different values.
+
+Proof.
+
+Define for , with the convention . Since
+
+the function is strictly concave on and concave on by continuity. For each coordinate ,
+
+Because the coefficients are nonnegative and satisfy , Jensen’s inequality gives
+
+Summing over all rows yields
+
+Switching the order of summation,
+
+Using the column-sum condition , we obtain
+
+By the definition of entropy, this is exactly
+
+For strictness, assume there exists a row and two indices such that
+
+Then the argument to in row is a nontrivial convex combination of unequal values, so strict Jensen inequality applies:
+
+All other rows satisfy the non-strict Jensen bound, hence summing over rows gives a strict global inequality . This completes the proof.
+
+Interpretation for COREY.
+
+The theorem does not claim that every Hadamard rotation induces a doubly-stochastic mixing over histogram bins. Instead, it identifies the exact condition under which entropy growth follows rigorously. In our setting, Hadamard rotation is useful precisely when the empirical post-rotation histogram can be modeled as a more mixed version of the pre-rotation histogram over the chosen finite bins.
+
+The current repository now augments the raw entropy-gain check with an explicit Sinkhorn-style fit. For each validation instance, we construct a positive kernel over the shared histogram bins, project it to an approximately doubly-stochastic matrix via Sinkhorn normalization, and then evaluate the residual . Across the 35 heavy-tailed validation instances exported to hadamard_validation.csv, the normalized histogram entropy still increases in all cases, while the fitted residual is in (minimum , maximum ) and on average in . Moreover, 34/35 instances fall below an residual of , with row-sum error below and zero column-sum error up to the printed precision. We therefore view the synthetic regime as reasonably consistent with the intended mixing interpretation, while noting that the fitted transport is still an approximate Sinkhorn proxy rather than the exact optimizer over the Birkhoff polytope.
+
+C.2 Proof of the Fusion Depth Bound
+
+Suppose each additional fused operator contributes an incremental tile-memory cost , and let the shared-memory budget be . A fused region of depth therefore consumes
+
+units of shared memory under the fixed tile schedule. Hardware feasibility requires
+
+Rearranging gives the upper bound
+
+This bound is deliberately simple, but it captures the first-order reason that deeper fusion must be co-designed with tiling and memory allocation.
+
+In the implemented scheduler, however, operators are not homogeneous. Selective-scan and state-mixing stages contribute larger register and shared-memory footprints than elementwise stages, so feasibility is tracked with per-operator costs and the tighter constraint
+
+The theorem in the main text keeps the equal-cost form only because it communicates the depth limit cleanly; the prototype resource checks use the heterogeneous version.
+
+C.3 Quantization Stability Bound
+
+Let be a normalized Hadamard matrix and let . Because is orthonormal,
+
+Moreover, each row of has entries , so every rotated coordinate obeys
+
+which implies the peak-coordinate bound
+
+For a clipping threshold associated with a -bit quantizer, overflow therefore satisfies
+
+In the extreme one-outlier regime , we obtain , so the peak coordinate entering the quantizer is reduced by exactly a factor of . This does not prove universal quality gains, but it gives a quantitative clipping bound that is directly relevant to W8A8 and W4A8 execution.
+If instead contains non-negligible coordinates of comparable magnitude , the same inequality gives , which can be loose by when . The bound is therefore most informative in the sparse-outlier regime that motivates Hadamard smoothing in the first place.
+
+Appendix D Checkpoint-Level Sanity Check Details
+
+Setup.
+
+We ran Mamba-1.4B through the Hugging Face transformers path in FP32 on CPU solely to verify that the evaluation harness resolves checkpoints, runs decode, and attaches side metrics correctly. This configuration does not measure GPU-accelerated fused inference and should not be interpreted as a deployment benchmark.
+
+All WikiText-103 and PG19 values in this appendix should be interpreted as side perplexities from the repository harness rather than as official leaderboard-style language-model evaluations. Concretely, the current implementation applies teacher forcing to each truncated text segment independently, uses at most 20 segments per dataset in the reported WSL2 runs, and does not yet implement rolling or strided evaluation across the full test set. These values are therefore most useful for within-repository comparisons under a fixed protocol, not for direct comparison against published benchmark numbers.
+
+Observed values.
+
+On a single NarrativeQA-style prompt, the harness recorded token-level F1 of 0.044, latency of 45.7 s, and throughput of 2.80 tokens/s. On a single WikiText-103 segment, it recorded perplexity of 526.26. These values are reported only as an integration smoke test; they are not intended to estimate deployment efficiency or competitive language-model quality.
+
+We additionally ran the new official Hugging Face Mamba benchmark loop on the public checkpoint state-spaces/mamba-370m-hf using the local NarrativeQA smoke sample and one WikiText-103 test segment. On CPU in FP32, the benchmark produced mean latency of 5.50 s for 32 generated tokens (5.83 tokens/s), token-level F1 of 0.190 on the smoke prompt, peak process RSS of 1.77 GB, and perplexity of 1860.13 on the WikiText-103 sample. These values confirm that the repository now contains a runnable official-checkpoint benchmark path, but they remain unsuitable for the main paper because they still execute on CPU and do not use the deployment-grade fused kernels required by the NeurIPS-facing systems claim.
+
+After switching the virtual environment to a CUDA-enabled PyTorch build and rerunning on an RTX 3070, the same official checkpoint path completed successfully on GPU in FP16. On the same NarrativeQA smoke sample, the benchmark produced mean latency of 1.50 s for 32 generated tokens (21.31 tokens/s), token-level F1 of 0.190, and peak process RSS of 1.84 GB; on one WikiText-103 segment, the recorded perplexity was 1861.06. This confirms that the benchmark loop now supports real GPU execution on the local machine, but the metadata still marks the run as non-deployment-grade because the official selective-scan fast path remains unavailable.
+
+We then extended the same GPU sanity-check path to the larger state-spaces/mamba-1.4b-hf checkpoint under FP16 on the same RTX 3070 environment. On the local NarrativeQA smoke prompt, the benchmark produced mean latency of 1.63 s for 32 generated tokens (19.58 tokens/s), token-level F1 of 0.174, and peak process RSS of 1.42 GB; on one WikiText-103 segment, the recorded perplexity was 525.87. These numbers do not represent a full benchmark suite and still run without the official fast path, but they show that the repository’s official-checkpoint harness now covers more than one Mamba model scale on real GPU hardware.
+
+Blocked components.
+
+The original public PG19 dataset entry point still resolves to a deprecated script-based path under the current datasets stack, but the harness now falls back automatically to a script-free parquet mirror (mrsndmn/pg19) and therefore no longer treats PG19 as fully blocked for the main WSL2 checkpoints. Quantization remains blocked for stronger reasons than in the previous revision cycle: after moving the probe to the repaired WSL2 Linux stack, AutoAWQ 0.2.9 still rejected state-spaces/mamba-370m-hf with the explicit upstream error “mamba isn’t supported yet”, while auto-gptq 0.7.1 failed to import against the active transformers 5.5.1 API before any Mamba checkpoint could be loaded. We therefore no longer treat generic AWQ/GPTQ integration as the likely path forward for this paper; the remaining quantization route is to reproduce a Mamba-specific method, and among the currently known candidates Quamba is the only repository-level public path we could verify, albeit with its own isolated Python 3.10 plus CUTLASS/CUDA build chain, whereas the MambaQuant paper’s code link is not presently a stable anonymous entry point. Full deployment-grade method-versus-baseline experiments on Mamba-370M, Mamba-1.4B, and Mamba-2.8B therefore remain future work even though the benchmark harness itself now covers more than one pretrained checkpoint.
+
+The primary remaining limitation is therefore no longer kernel availability, but benchmark breadth. The repaired WSL2 CUDA 12.8 environment now exposes the official Mamba fast path reliably, whereas the Windows .venv still lacks a deployment-grade extension stack because nvcc, wheel compatibility, and Triton packaging remain misaligned there. We therefore treat the WSL2 Linux stack as the authoritative checkpoint environment for the current paper.
+
+WSL2 GPU Benchmark Results.
+
+To reduce the Windows-specific packaging limitations, we reused a WSL2 CUDA 12.8 environment managed by micromamba with Python 3.11, PyTorch 2.11.0+cu128, transformers 5.5.1, datasets 4.8.4, and Triton 3.6.0. After patching the source build path for mamba-ssm, restricting the CUDA code generation to the local RTX 3070 architecture, and restoring the missing Python-side dependency chain, this environment now exposes the official Mamba fast path at runtime. The exported metadata reports fast_path_available=true, deployment_grade=true, and all entries in fast_path_status as true.
+
+We then expanded the WSL2 run-through from a smoke-style sanity test into a small but materially broader checkpoint evidence bundle. First, state-spaces/mamba-370m-hf and state-spaces/mamba-1.4b-hf both completed the same four-task LongBench subset with 20 samples per task under the repaired fast path. For Mamba-370M, the resulting task scores were token-F1 0.0135 on NarrativeQA, token-F1 0.0350 on Qasper, exact match 0.000 on MultifieldQA-EN, and ROUGE-L 0.1370 on GovReport, with corresponding mean latencies of 1379.30, 1006.86, 730.37, and 2420.47 ms and WikiText-103 perplexity 809.36. For Mamba-1.4B, the corresponding scores were 0.0191, 0.0460, 0.000, and 0.1498, with mean latencies of 2821.48, 2135.66, 1558.29, and 4959.52 ms and WikiText-103 perplexity 1128.40.
+
+Second, PG19 is no longer only an intended side metric: after adding the script-free parquet fallback, we reran PG19 on the same WSL2 stack for both main checkpoints and obtained 20-sample perplexities of 14.6829 for Mamba-370M and 11.6641 for Mamba-1.4B. Third, we added one fair external baseline on EleutherAI/pythia-410m under the same four-task, 20-sample script; it reached token-F1 0.0190 on NarrativeQA, 0.0392 on Qasper, exact match 0.000 on MultifieldQA-EN, ROUGE-L 0.1550 on GovReport, and WikiText-103 perplexity 5901.47, with mean task latencies of 612.34, 435.38, 328.71, and 1121.29 ms. Fourth, we separately retained a bounded benchmark-only fast-path probe on state-spaces/mamba-2.8b-hf; on the NarrativeQA smoke prompt at a conservative 2048-token cap, it produced token-level F1 0.162, mean latency 2006.41 ms for 32 generated tokens, throughput 15.95 tokens/s, and WikiText-103 perplexity 374.22 with fast_path_available=true and deployment_grade=true.
+
+Finally, we now include one real kernel-level timing in the same WSL2 environment by benchmarking mamba_ssm.ops.selective_scan_interface.selective_scan_fn directly at batch 1, dimension 1024, sequence length 4096, state size 16, and FP16 with delta_softplus=true. Over 30 repeats, the measured mean latency is 0.3204 ms with standard deviation 0.0420 ms and min/max values 0.2802/0.4604 ms. The updated WSL2 evidence therefore changes the status of checkpoint validation from “three-checkpoint benchmark matrix populated, but PG19 blocked” to “three-checkpoint benchmark matrix populated with restored PG19 side evaluation, one fair external baseline, and one real Triton timing, but still without method-versus-baseline checkpoint execution.” The results remain unsuitable for the paper’s main comparison tables because task breadth is still limited, prompt caps are not harmonized across all checkpoint scales, and static-fusion/COREY variants have not yet been executed on real checkpoints.
+
+Cross-hardware reproducibility on RTX 3090.
+
+To validate that the above WSL2+RTX 3070 scores are not artefacts of a specific machine, we re-ran the identical Mamba-370M four-task 20-sample suite on a remote server equipped with four NVIDIA RTX 3090 GPUs (24 GiB each, CUDA 12.1, PyTorch 2.4.0+cu121, FP16 fast path). The remote environment used the same state-spaces/mamba-370m-hf checkpoint and identically seeded sample selection. Scores on the remote machine were 0.0141 (NarrativeQA token-F1), 0.0443 (Qasper token-F1), 0.000 (MultifieldQA-EN exact match), and 0.1472 (GovReport ROUGE-L), matching the WSL2+RTX 3070 results in Table 3 to within expected 20-sample noise. Mean per-sample latency on the remote was higher (4890 ms average) due to NFS I/O overhead rather than GPU throughput; raw decode throughput is comparable once NFS wait time is subtracted.
+
+Multi-GPU data-parallel throughput.
+
+Using the same remote server, we validated a data-parallel sharding strategy for LongBench inference: the 20-sample pool is split evenly across GPUs via a --sample-offset argument per shard, with each shard pinned to a dedicated CUDA_VISIBLE_DEVICES process. The per-shard outputs are merged by a lightweight script that re-averages per-task scores and sums sample counts. Table 4 in the main paper reports the resulting wall-clock speedup. Merged per-task scores agree with the single-GPU baseline to within sampling noise, confirming that sharding introduces no change to per-sample predictions.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

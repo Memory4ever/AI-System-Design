@@ -1,0 +1,1212 @@
+AsyncTLS: Efficient Generative LLM Inference with Asynchronous Two-level Sparse Attention
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Works
+
+3 Preliminary
+
+4 Method
+
+4.1 Two-Level Sparse Attention
+
+Coarse-grained Block Selection.
+
+Fine-grained Token Selection.
+
+4.2 Hierarchical KV Cache Management
+
+Prefetching with Temporal Overlap.
+
+Incremental Block Transmission.
+
+4.3 Complexity Analysis
+
+5 Experiments
+
+Experiment Setup.
+
+In-Context Retrieval.
+
+Long Context Understanding.
+
+Experiment Results.
+
+Efficiency.
+
+6 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.07815v1 [cs.CL] 09 Apr 2026
+
+AsyncTLS: Efficient Generative LLM Inference with Asynchronous Two-level Sparse Attention
+
+Yuxuan Hu
+
+Affiliation: School of Information, Renmin University of China, Beijing, China
+
+Affiliation: Meituan, Beijing, China
+
+Email: huyuxuan1999@ruc.edu.cn
+
+  
+Jianchao Tan
+
+Affiliation: Meituan, Beijing, China
+
+Email: zhang-jing@ruc.edu.cn
+
+  
+Jiaqi Zhang
+
+Affiliation: Meituan, Beijing, China
+
+  
+Wen Zan
+
+Affiliation: Meituan, Beijing, China
+
+  
+Pingwei Sun
+
+Affiliation: Meituan, Beijing, China
+
+  
+Yifan Lu
+
+Affiliation: Meituan, Beijing, China
+
+  
+Yerui Sun
+
+Affiliation: Meituan, Beijing, China
+
+  
+Yuchen Xie
+
+Affiliation: Meituan, Beijing, China
+
+  
+Xunliang Cai
+
+Affiliation: Meituan, Beijing, China
+
+  
+Jing Zhang
+††thanks: Corresponding author.
+Affiliation: School of Information, Renmin University of China, Beijing, China
+
+Abstract
+
+Long-context inference in LLMs faces the dual challenges of quadratic attention complexity and prohibitive KV cache memory. While token-level sparse attention offers superior accuracy, its indexing overhead is costly; block-level methods improve efficiency but sacrifice precision. We propose AsyncTLS, a hierarchical sparse attention system that combines coarse-grained block filtering with fine-grained token selection to balance accuracy and efficiency, coupled with an asynchronous offloading engine that overlaps KV cache transfers with computation via temporal locality exploitation. Evaluated on Qwen3 and GLM-4.7-Flash across GQA, and MLA architectures, AsyncTLS achieves accuracy comparable to full attention while delivering - operator speedups and - end-to-end throughput improvements on 48k–96k contexts.
+
+1 Introduction
+
+Large Language Models (LLMs) DeepSeek-AI et al. (2025a); Kimi et al. (2026); Meituan-LongCat et al. (2025) have demonstrated remarkable capabilities across diverse natural language processing tasks, from conversational AI to complex reasoning and code generation. However, deploying these models at scale remains severely constrained by the self-attention mechanism’s quadratic computational complexity and linear memory growth. This bottleneck becomes particularly acute during the decoding phase, where the Key-Value (KV) cache storage dominates memory consumption. As sequence lengths extend to hundreds of thousands of tokens, the KV cache footprint grows proportionally, frequently exceeding high-bandwidth GPU memory capacity and necessitating expensive offloading to slower memory tiers.
+
+Sparse attention mechanisms have emerged as a practical solution to mitigate the quadratic computational and memory costs inherent in long-context modeling. Existing approaches can be systematically categorized along two principal dimensions: granularity of sparsity (token-level versus block-level) and selection strategy (static versus dynamic). Static and token-level methods, such as H2O Zhang et al. (2023), StreamingLLM Xiao et al. (2023), and SnapKV Li et al. (2024), employ fixed patterns to retain individual tokens. While these approaches enable fine-grained control over token participation and allow precise preservation of semantically salient information, they inherently fail to adapt to evolving attention patterns during generation, rendering them suboptimal when contextual relevance shifts dynamically. Conversely, dynamic and block-level methods, including Quest Tang et al. (2024) and InfLLM Xiao et al. (2024a), utilize dynamic selection strategies that operate on contiguous token chunks to reduce indexing overhead and improve hardware efficiency. However, the coarse-grained nature of block-level aggregation inevitably compromises attention precision by incorporating irrelevant tokens within selected blocks while potentially discarding critical information in unselected regions, thereby introducing retrieval noise and degrading model fidelity.
+
+Recent advances, including Double-Sparsity Yang et al. (2024) and Deepseek Sparse Attention (DSA) DeepSeek-AI et al. (2025b), have demonstrated that token-level sparse attention achieves superior accuracy compared to block-level approaches under equivalent token budgets. By identifying and retaining individual important tokens rather than entire blocks, these methods more precisely capture long-range dependencies and critical contextual information scattered throughout sequences. However, this accuracy improvement entails significant overhead: the runtime indexing cost for token-level selection substantially exceeds that of block-level methods. Each query token requires computing importance scores across all candidate tokens and selecting top-k elements, operations that become performance bottlenecks when executed at every decoding step.
+
+Figure 1: Illustration of Two-Level Sparse Attention. We construct hierarchical indices for KV blocks at two granularities (Block-level and Token-level). The decoding process first selects Top- blocks via block-level indexing, then selects Top- tokens within these blocks via token-level indexing for sparse attention computation.
+
+This fundamental tension between accuracy and efficiency motivates our first contribution: a hierarchical two-level sparse attention architecture that synthesizes the strengths of both paradigms. Our approach employs block-level indexing as a coarse-grained filtering stage to rapidly eliminate sequence regions unlikely to contain relevant tokens, followed by token-level indexing to precisely select the most salient tokens within retained blocks for actual attention computation. This hierarchical design dramatically reduces the search space for fine-grained token selection while preserving the accuracy benefits of token-level sparsity.
+
+Beyond the high computational overhead of attention mechanisms, the storage requirements of key-value caches may also exceed the limited capacity of high-bandwidth GPU memory. Consequently, KV cache offloading becomes essential when serving long-context workloads that risk surpassing GPU memory bounds. Prior work, including FlexGen Sheng et al. (2023), InfiniGen Lee et al. (2024), ShadowKV Sun et al. (2025), and RetroInfer Chen et al. (2025), has primarily focused on block-level sparsity patterns, transferring entire KV cache blocks between GPU and CPU memory. While effective for coarse-grained eviction, these approaches overlook optimization opportunities when combined with token-level sparse attention, particularly regarding fine-grained data movement and temporal locality exploitation.
+
+Our second contribution addresses this gap by extending token-level sparse attention to the KV offloading scenario through an asynchronous prefetching mechanism. The key insight is that block-level filtering results from the current timestep serve as reliable predictors for token-level selection requirements in subsequent timesteps. Specifically, we employ a staggered execution strategy: at each decoding step, second-level token selection utilizes block filtering results from the previous step, while simultaneously prefetching KV blocks for the next step based on the current step’s block filtering results. This design enables overlapping of KV transfer with attention computation, effectively hiding memory movement latency.
+
+Figure 2: Workflow of AsyncTLS. During prefilling, we first construct hierarchical indices for the input sequence. Based on the query representation of the final token, we retain critical KV pairs in the GPU resident cache and offload the remaining KV cache to the host (CPU) memory. During decoding, we perform sparse attention by retrieving KV pairs from the resident cache using token-level indexing. Concurrently, we asynchronously prefetch additional KV blocks from host memory via block-level indices to update the resident cache.
+
+Furthermore, we exploit temporal locality in token importance across adjacent timesteps. As critical token sets typically evolve gradually during decoding, we adopt an incremental KV block transfer strategy that transmits only blocks exhibiting selection divergence between consecutive steps. This approach eliminates redundant data movement while maximizing effective bandwidth utilization on the PCIe interconnect.
+
+We evaluate AsyncTLS on state-of-the-art models, including Qwen3-8B, Qwen3-14B Yang et al. (2025), and GLM-4.7-Flash Team et al. (2025), across comprehensive benchmarks spanning long-context retrieval and understanding tasks. Our evaluation spans Multi-Head Attention (MHA) Vaswani et al. (2023) and Grouped-Query Attention (GQA) Shazeer (2019) architectures, and we further extend validation to Multi-head Latent Attention (MLA) DeepSeek-AI et al. (2024), which employs compressed latent representations for KV caching, to demonstrate the broad architectural compatibility of our method. Under practical token budgets, AsyncTLS achieves accuracy nearly indistinguishable from full attention while outperforming existing baselines. Furthermore, end-to-end inference measurements demonstrate – operator speedups and - throughput improvements compared to Full Attention (FA) across context lengths ranging from 32k to 128k tokens.
+
+In summary, this paper makes the following contributions:
+
+•
+
+Hierarchical Sparse Attention Architecture. We propose AsyncTLS, a two-level sparse attention mechanism combining coarse-grained block-level filtering with fine-grained token-level selection. This design achieves the accuracy benefits of token-level sparsity while mitigating prohibitive indexing overhead through hierarchical pruning.
+
+•
+
+AsyncTLS Offloading Engine. We extend token-level sparse attention to the KV offloading setting through asynchronous prefetching and incremental block transfer, enabling efficient overlap of memory movement with computation while minimizing redundant data transmission across the memory hierarchy.
+
+•
+
+Comprehensive Evaluation across Attention Paradigms. While existing sparse attention methods have primarily focused on MHA and GQA, our results demonstrate that training-free token-level sparsity maintains consistent effectiveness on MLA, achieving accuracy comparable to full attention under practical token budgets while delivering substantial inference speedups.
+
+2 Related Works
+
+In the domain of long-context inference optimization with static sparse pattern, H2O Zhang et al. (2023) introduces an eviction-based KV cache compression strategy via Heavy-Hitter Oracle. SnapKV Li et al. (2024) further proposes an observation-window mechanism that identifies and compresses critical key-value pairs prior to generation. PyramidKV Cai et al. (2025) introduces dynamic compression based on pyramidal information funneling, allocating larger cache budgets to lower layers where syntactic information concentrates. DynamicKV Zhou et al. (2025) observes that different tasks exhibit distinct activation patterns across layers, proposing a task-aware adaptive allocation. DuoAttention Xiao et al. (2024b) distinguishes between retrieval heads and streaming heads, applying full attention only to the former while maintaining rolling caches for the latter.
+
+Regarding static pattern sparse attention mechanisms, QUEST Tang et al. (2024) proposes query-aware dynamic sparsity that adaptively selects salient KV pairs based on attention distributions. (Yang et al., 2024) present a post-training double-sparsity framework combining channel and token sparsity, enabling efficient inference without fine-tuning. Twilight Lin et al. (2025) designs hierarchical Top-p pruning with fine-grained gating to adjust per-head sparsity ratios dynamically. Star Attention Acharya et al. (2025) introduces a two-phase block-sparse mechanism that shards context processing across hosts with blockwise-local attention followed by sequence-global attention. For sampling and storage architectures, MagicPIG Chen et al. () employs Locality-Sensitive Hashing (LSH) sampling to approximate attention computation with linear complexity. FlexGen Sheng et al. (2023), InfiniGen Lee et al. (2024), ShadowKV Sun et al. (2025), and RetroInfer Sun et al. (2025) combine sparse attention with a CPU-GPU hierarchical storage architecture that offloads secondary KV caches to host memory with asynchronous prefetching.
+
+Despite these advances, existing approaches incur prohibitive indexing costs for fine-grained selection and lack specialized offloading mechanisms for token-level sparsity, thereby failing to simultaneously achieve the accuracy of precise attention and the hardware efficiency required for practical ultra-long context deployment. To address these limitations, this paper presents AsyncTLS, a hierarchical sparse attention framework that bridges the granularity-efficiency gap through a two-level selection architecture, coupled with an asynchronous offloading engine optimized for dynamic token-level sparsity patterns.
+
+3 Preliminary
+
+Multi-Head Attention and Its Variants. The Transformer architecture relies on Multi-Head Attention (MHA), which computes scaled dot-product attention as:
+
+where denotes the sequence length, the number of attention heads, and the dimension per head. Here, are projected from the input via learned matrices . MHA employs parallel heads, where the -th head computes , and concatenates them as . During decoding, this requires caching key and value tensors, incurring memory.
+
+To reduce this overhead, Multi-Query Attention (MQA) shares single key and value heads across all query heads, compressing the cache to . Grouped-Query Attention (GQA) generalizes this by grouping query heads to share KV heads, balancing efficiency and expressiveness. Multi-head Latent Attention (MLA) further compresses the cache via low-rank projections, and reconstructs keys/values during attention. During decoding, MLA effectively operates as a special case of MQA. By absorbing the projection matrices and utilizing the compressed latent representation, the multi key-value heads collapse into a single key-value head, minimizing memory while preserving representational capacity.
+
+As sequences scale to hundreds of thousands of tokens, dense attention’s quadratic complexity becomes prohibitive. Sparse attention reduces this complexity by restricting each query to attend only to a selected subset of keys and values. Formally, for the -th query , an indexing function selects a subset of KV pairs, yielding . The sparse attention is then computed as:
+
+where the softmax is applied over the selected indices , reducing computational complexity from to . The indexing strategy can be static or dynamic, trading off between hardware efficiency and model fidelity.
+
+4 Method
+
+We now present our method AsyncTLS, an efficient sparse attention mechanism designed for long-context inference with KV cache offloading. The core insight of AsyncTLS is twofold: (1) hierarchical sparsity that combines the efficiency of block-level indexing with the precision of token-level selection, and (2) asynchronous prefetching that overlaps KV cache transmission with attention and feed-forward network computation by exploiting temporal locality across decoding steps.
+
+Given an input sequence of length , we process the KV cache through a two-level selection pipeline. At each decoding timestep , we first identify relevant blocks using coarse-grained scoring, then apply fine-grained token pruning within selected blocks. To hide memory transfer latency during offloading, we asynchronously prefetch KV blocks based on predictions from previous timesteps and transmit only incremental differences between consecutive selections.
+
+4.1 Two-Level Sparse Attention
+
+Coarse-grained Block Selection.
+
+Following Quest, we partition the KV cache into blocks of size , where . For query head , Quest computes block importance scores using each block’s compressed representation:
+
+where the number of query heads sharing the same key, denotes the -th block and , represents compressed block representations.
+
+While Quest achieves effective block-level selection, its importance scoring computation resists efficient mapping to dense matrix multiplication (GEMM) primitives. Although this inefficiency incurs only modest overhead on architectures with independent KV projections (e.g., MHA and GQA), it severely undermines compute unit utilization, particularly Tensor Cores, for shared-KV architectures such as MQA and MLA. To address this architectural mismatch, we reformulate Quest’s scoring mechanism into standard GEMM operations, thereby fully exploiting the computational capabilities of modern accelerators. Concretely, for block , the importance score can also be computed as:
+
+which can be expressed compactly for all blocks via matrix multiplication:
+
+where and denote the aggregated max/min query and key representations across all heads and blocks, respectively. We select the top- blocks with the highest scores at timestamp for each key-value group, forming a coarse candidate set that retains tokens.
+
+Fine-grained Token Selection.
+
+Within the selected blocks , we apply Double Sparsity to perform token-level selection. To identify the most informative channels for attention score approximation, we first perform calibration on a held-out dataset . Let denote the number of query heads sharing the same key for each channel , we compute its importance score by aggregating the maximum absolute values across all heads:
+
+where and denote the query and the corresponding key for the -th head. We then select the top- channels with the highest scores to form the representative channel set .
+
+We compress the query and key vectors by projecting them onto these selected channels. Additionally, considering the substantial GPU memory overhead associated with token-level indexing, we further combined quantization with channel selection to compress the key vectors:
+
+where denotes the compressed query vector of the -th head within the group. We approximate the attention score by averaging across the query heads sharing the same key:
+
+We then select the top- tokens based on these approximate scores:
+
+Finally, the attention output for each head is computed using the full-dimensional KV pairs indexed by :
+
+where denote the full-dimensional KV pairs indexed by .
+
+   
+   
+Single-Doc QA    
+Multi-Doc QA    
+Summarization    
+Few-shot    
+Synthetic    
+Code    
+Avg.
+
+   
+   
+NQA
+QQA
+MFQ    
+HQA
+2WM
+Mus    
+GvR
+QMS
+MNs    
+TQA    
+PRetr    
+LCC
+RBP    
+
+Qwen3-8B
+
+(32k)
+   
+Full    
+25.61
+44.17
+53.40
+53.48
+38.29
+32.14
+33.17
+23.53
+24.93
+90.71
+100.0
+67.56
+64.92    
+50.14
+
+   
+Quest    
+20.64
+40.13
+51.01
+45.74
+38.46
+27.25
+32.13
+22.21
+24.95
+87.55
+98.5
+66.86
+61.95    
+47.49
+
+   
+DS    
+22.50
+44.76
+54.05
+54.22
+36.26
+33.13
+33.51
+23.47
+24.65
+90.06
+100.0
+68.85
+65.94    
+50.10
+
+   
+AsyncTLS    
+24.77
+44.35
+52.67
+53.59
+38.02
+31.1
+33.58
+23.67
+24.72
+89.88
+99.5
+67.67
+65.17    
+49.90
+
+Qwen3-14B
+
+(32k)
+   
+Full    
+27.77
+44.58
+49.53
+60.93
+48.9
+36.02
+33.29
+23.59
+24.89
+92.25
+100.0
+69.75
+66.63    
+52.16
+
+   
+Quest    
+23.15
+43.01
+47.88
+54.93
+44.56
+32.43
+32.03
+22.68
+24.83
+90.41
+99.5
+67.53
+58.31    
+49.33
+
+   
+DS    
+26.44
+44.03
+49.93
+61.35
+45.52
+27.25
+33.83
+24.06
+24.93
+92.75
+100.0
+69.83
+64.40    
+51.10
+
+   
+AyncTLS    
+25.07
+43.95
+49.87
+60.97
+47.86
+35.16
+33.34
+24.16
+24.87
+92.25
+100.0
+70.26
+65.65    
+51.80
+
+GLM-4.7-Flash
+
+(128k)
+   
+Full    
+26.8
+36.17
+56.74
+57.86
+43.88
+31.04
+32.87
+23.4
+26.87
+92.07
+99.0
+69.79
+64.28    
+50.83
+
+   
+Quest    
+25.01
+33.77
+52.21
+44.99
+36.83
+23.03
+31.29
+21.87
+26.29
+89.29
+96.0
+65.4
+61.77    
+46.75
+
+   
+DS    
+26.68
+35.53
+55.68
+60.03
+45.91
+30.66
+32.77
+23.04
+26.56
+91.09
+98.5
+68.33
+64.75    
+50.73
+
+   
+AsyncTLS    
+27.24
+36.71
+56.15
+56.03
+44.28
+30.37
+32.55
+22.96
+26.67
+91.84
+99.0
+68.22
+65.55    
+50.58
+
+Table 1: Experiment results of AsyncTLS and baseline methods on LongBench.
+
+   
+   
+S1
+S2
+MK1
+MK2
+MQ
+MV
+QA-1
+QA-2
+VT
+FWE    
+Avg.
+
+Qwen3-8B
+   
+Full    
+100.0
+100.0
+99.60
+98.20
+99.75
+99.60
+49.00
+60.90
+99.80
+97.67    
+90.45
+
+   
+Quest    
+100.0
+30.20
+28.00
+4.00
+11.25
+5.40
+32.60
+39.35
+50.48
+87.87    
+38.92
+
+   
+DS    
+100.0
+100.0
+99.60
+98.20
+99.65
+99.75
+49.20
+62.92
+99.76
+95.27    
+90.44
+
+   
+AsyncTLS    
+100.0
+100.0
+99.80
+98.60
+99.70
+99.45
+52.20
+59.62
+99.80
+96.27    
+90.54
+
+Qwen3-14B
+   
+Full    
+100.0
+100.0
+99.80
+99.60
+99.95
+100.0
+57.80
+66.60
+100.0
+38.67    
+86.24
+
+   
+Quest    
+100.0
+34.60
+41.00
+5.00
+17.85
+10.20
+35.60
+44.37
+40.24
+50.00    
+37.89
+
+   
+DS    
+100.0
+34.60
+100.0
+99.80
+99.95
+99.85
+55.60
+65.70
+99.92
+16.60    
+77.20
+
+   
+AsyncTLS    
+100.0
+100.0
+99.80
+99.60
+99.80
+99.65
+58.40
+64.75
+100.0
+50.13    
+87.21
+
+Table 2: Experiment results of AsyncTLS and baseline methods on RULER for Qwen3 models.
+
+   
+MQ
+MV
+QA-1
+QA-2
+VT
+FWE    
+Avg.
+
+Full    
+99.55
+99.75
+53.60
+66.25
+100.0
+95.20    
+85.73
+
+Quest    
+57.45
+42.25
+30.40
+45.80
+60.84
+83.20    
+53.32
+
+DS    
+92.90
+99.75
+49.00
+59.40
+100.0
+93.20    
+82.38
+
+AsyncTLS    
+95.10
+98.80
+48.20
+59.50
+99.88
+87.53    
+81.50
+
+Table 3: Experiment results of AsyncTLS and baseline methods on RULER for GLM-4.7-Flash.
+
+Figure 3: Performance of AsyncTLS and baseline methods under various token budgets on Qwen3-14B.
+
+Figure 4: Latency comparison of full attention (FA), token-level sparse attention (DS), block-level sparse attention (Quest), and two-level sparse attention (AsyncTLS) kernels across varying batch sizes and sequence lengths.
+
+Figure 5: End-to-end latency comparison of Qwen3-8B and GLM4.7-Flash with different attention methods across varying sequence lengths.
+
+Figure 6: Throughput comparison of Qwen3-8B and GLM4.7-Flash with full attention (FA) and AsyncTLS across varying sequence lengths.
+
+4.2 Hierarchical KV Cache Management
+
+Prefetching with Temporal Overlap.
+
+Although sparse attention alleviates computational costs in long-context scenarios, it does not mitigate the prohibitive memory footprint of the KV cache. Consequently, recent studies have explored combining sparse attention with KV cache offloading to jointly optimize computation and storage. Meanwhile, constrained by the limited CPU-GPU bandwidth, recent efforts have centered on minimizing data transfer volumes and overlapping memory access with computation to hide latency. In AsyncTLS, to enable efficient token-level sparse attention under KV cache offloading, we exploit the temporal stability of attention patterns across consecutive decoding steps. The key observation is that block-level selections exhibit high locality: .
+
+At timestep , while computing attention using the fine-grained set derived from previous coarse selection , we simultaneously:
+
+1.
+
+Execute the coarse block selection to determine for the next timestep;
+
+2.
+
+Initiate asynchronous prefetch of blocks in that are not present in local GPU memory.
+
+This pipelining creates a one-step lag between coarse selection and fine-grained computation, formally:
+
+where the coarse selection from timestep guides the token-level pruning at . The block selection is computed in parallel with attention over and following a feed-forward network.
+
+Incremental Block Transmission.
+
+To minimize PCIe bandwidth consumption, we exploit the similarity between consecutive coarse selections. Instead of transferring entire blocks, we maintain a resident cache on the GPU and transfer only the difference between and . The incremental transfer set contains only new blocks required for timestep :
+
+This strategy reduces bandwidth requirements from to per step, where due to temporal locality in attention patterns.
+
+4.3 Complexity Analysis
+
+At each decoding step, AsyncTLS incurs three components: (i) for coarse-grained block scoring, (ii) for fine-grained token-level Top- selection, and (iii) for sparse attention computation. The total complexity is substantially lower than full attention () and token-level sparse attention ( under a long-context scenario.
+
+The KV cache transfer overhead is , where denotes the number of blocks with changed selection status between consecutive steps. Exploiting temporal locality ( with ), this is significantly reduced compared to block-level offloading baselines requiring per step.
+
+5 Experiments
+
+We evaluate AsyncTLS following standard protocols in the literature, benchmarking it on in-context retrieval and long-context understanding tasks against both full attention and representative sparse attention baselines: block-level methods (e.g., Quest Tang et al. (2024)) and token-level approaches (e.g., Double-Sparsity Yang et al. (2024)).
+
+Experiment Setup.
+
+We conduct extensive experiments to validate AsyncTLS using Qwen3-8B, Qwen3-14B, and GLM-4.7-Flash. Following prior work on sparse attention, we configure the block-level index with a block size of 64 and retrieve 128 blocks (equivalent to 8,192 tokens) per query. For token-level indexing, we set the dimension to 32 for GQA models and 128 for MLA architectures, applying INT4 quantization to compress the index footprint. To investigate the impact of retrieval granularity on model performance, we vary the token budget across three settings: 512, 1024, and 2048 tokens.
+
+In-Context Retrieval.
+
+For in-context retrieval tasks, we employ a subset from RULER Hsieh et al. (2024) benchmark, which comprises 10 tasks: niah-single-1 (S1), niah-single-2 (S2), niah-multikey-1 (MK1), niah-multikey-2 (MK2), niah-multiquery (MQ), niah-multivalue (MV), RULER-QA-Hoptpot (QA1), RULER-QA-SQuAD (QA1), RULER-VT (VT), RULER-FWE (FWE).
+
+Long Context Understanding.
+
+To evaluate long context understanding, we use 14 tasks from the LongBench Bai et al. (2024). These tasks cover various aspects, including narrative comprehension Kočiský et al. (2017) (Narrative QA), scientific understanding Dasigi et al. (2021) (QasperQA), multi-hop reasoning (MultiField QA, Hotpot QA Yang et al. (2018), 2WikiMulti QA Ho et al. (2020), Musique Trivedi et al. (2022)), document summarization (GovReport Huang et al. (2021), QMSum Zhong et al. (2021), MultiNews Fabbri et al. (2019)), as well as specialized tasks such as TRec Li and Roth (2002), Trivia QA Joshi et al. (2017), SAMSum Gliwa et al. (2019), LCC Mohler et al. (2016), and RepoBench-P Liu et al. (2023).
+
+Experiment Results.
+
+We present the evaluation results of AsyncTLS and baseline methods on LongBench and RULER in Table 1, 2, and 311
+1
+
+We excluded S1, S2, MK1, and MK2 from the RULER evaluation for GLM models due to abnormal performance metrics of GLM-4.7-flash under the default lm-eval-harness Gao et al. (2024) configuration., respectively. For RULER, the token budget for sparse attention is set to 512, and the context length is set to 32k, while for LongBench, the token budget is set to 1024. It can be seen that, under identical token budget constraints, AsyncTLS consistently achieves superior performance compared to block-level sparse attention methods such as Quest, while maintaining results on par with the Full Attention baseline.
+
+To investigate the impact of varying token budgets on sparse attention efficacy, we conduct experiments on a subset of LongBench tasks with token budgets configured at 512, 1024, and 2048. The results are presented in Figure 3, which demonstrate that AsyncTLS outperforms Quest while achieving comparable performance to DS under the same token budget.
+
+Efficiency.
+
+To assess the efficiency of AsyncTLS, we evaluate both operator-level performance and end-to-end inference latency and throughput.
+
+We conduct kernel-level benchmarking for attention mechanisms, configuring GQA and MLA with 32 attention heads (with a group size of 4 for GQA). Using TileLang Wang et al. (2026), we implement four attention variants: two-level sparse attention (AsyncTLS), token-level sparse attention (DS), block-level sparse attention (QUEST) and full attention (FA). We evaluate inference latency across batch sizes of 1–8 and context lengths of 32K–128K. As illustrated in Figure 5, TLS delivers substantial speedups: - over FA and - over DS for GQA, while achieving - and - improvements over FA and DS, respectively, for MLA. Meanwhile, compared to QUEST, AsyncTLS also achieves 54% and 68% of its inference speed for GQA and MLA, respectively.
+
+To evaluate end-to-end latency and throughput, we conducted benchmark tests on Qwen3-8B and GLM4.7-Flash across sequence lengths ranging from 32K to 96K. First, we measured the end-to-end latency of the models without enabling cache offloading. As shown in Figure 5, AsyncTLS achieves superior inference speed compared to DS and approaches that of QUEST, delivering 2.3 and 2.7 improvements over FA on Qwen3-8B and GLM4.7-Flash, respectively. Second, we evaluated the end-to-end throughput with cache offloading enabled. Leveraging the reduced KV cache footprint achieved through offloading techniques, AsyncTLS supports larger batch processing (batch size of 6), whereas the full attention mechanism is constrained to a batch size of 1. As illustrated in Figure 6, at a sequence length of 96K, AsyncTLS achieves 1.84 and 4.70 higher throughput than FA on Qwen3-8B and GLM4.7-Flash, respectively, highlighting its efficiency advantages in long-context scenarios.
+
+6 Conclusion
+
+Long-context LLM inference faces a fundamental tension between the accuracy of fine-grained token selection and the efficiency of coarse-grained block processing. We present AsyncTLS, a hierarchical sparse attention system that bridges this gap through a two-level architecture combining coarse block filtering with precise token-level attention. By staggering block selection and token computation across timesteps, our asynchronous offloading engine exploits temporal locality to overlap KV cache transfers with computation, minimizing PCIe bandwidth bottlenecks.
+
+Extensive evaluation across GQA and MLA architectures demonstrates that AsyncTLS achieves accuracy comparable to full attention while delivering substantial efficiency gains: – operator speedups and – end-to-end throughput improvements on contexts up to 96k tokens. These results establish that training-free token-level sparsity can be practically deployed with hardware-efficient indexing and hierarchical memory management, offering a scalable solution for ultra-long sequence generation.
+
+References
+
+Acharya et al. (2025)
+S. Acharya, F. Jia, and B. Ginsburg
+
+Star attention: efficient llm inference over long sequences.
+
+External Links: 2411.17116,
+Link
+
+Cited by: §2.
+
+Bai et al. (2024)
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li
+
+LongBench: a bilingual, multitask benchmark for long context understanding.
+
+External Links: 2308.14508,
+Link
+
+Cited by: §5.
+
+Cai et al. (2025)
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, Y. Li, T. Liu, K. Lu, W. Xiong, Y. Dong, J. Hu, and W. Xiao
+
+PyramidKV: dynamic kv cache compression based on pyramidal information funneling.
+
+External Links: 2406.02069,
+Link
+
+Cited by: §2.
+
+Chen et al. (2025)
+Y. Chen, J. Zhang, B. Lu, Q. Zhang, C. Zhang, J. Luo, D. Liu, H. Jiang, Q. Chen, J. Liu, B. Ding, X. Yan, J. Jiang, C. Chen, M. Zhang, Y. Yang, F. Yang, and M. Yang
+
+RetroInfer: a vector-storage approach for scalable long-context llm inference.
+
+External Links: 2505.02922,
+Link
+
+Cited by: §1.
+
+[5]
+Z. Chen, R. Sadhukhan, Z. Ye, Y. Zhou, J. Zhang, N. Nolte, Y. Tian, M. Douze, L. Bottou, Z. Jia, et al.
+
+MagicPIG: lsh sampling for efficient llm generation.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §2.
+
+Dasigi et al. (2021)
+P. Dasigi, K. Lo, I. Beltagy, A. Cohan, N. A. Smith, and M. Gardner
+
+A dataset of information-seeking questions and answers anchored in research papers.
+
+External Links: 2105.03011,
+Link
+
+Cited by: §5.
+
+DeepSeek-AI et al. (2024)
+DeepSeek-AI, A. Liu, B. Feng, B. Wang, B. Wang, B. Liu, C. Zhao, C. Dengr, C. Ruan, D. Dai, D. Guo, et al.
+
+DeepSeek-v2: a strong, economical, and efficient mixture-of-experts language model.
+
+External Links: 2405.04434,
+Link
+
+Cited by: §1.
+
+DeepSeek-AI et al. (2025a)
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, et al.
+
+DeepSeek-v3 technical report.
+
+External Links: 2412.19437,
+Link
+
+Cited by: §1.
+
+DeepSeek-AI et al. (2025b)
+DeepSeek-AI, A. Liu, A. Mei, B. Lin, B. Xue, B. Wang, B. Xu, B. Wu, B. Zhang, C. Lin, C. Dong, C. Lu, C. Zhao, C. Deng, C. Xu, C. Ruan, D. Dai, D. Guo, D. Yang, D. Chen, E. Li, F. Zhou, F. Lin, F. Dai, G. Hao, G. Chen, G. Li, H. Zhang, H. Xu, H. Li, H. Liang, H. Wei, H. Zhang, H. Luo, H. Ji, H. Ding, H. Tang, H. Cao, H. Gao, H. Qu, H. Zeng, J. Huang, J. Li, J. Xu, J. Hu, J. Chen, J. Xiang, J. Yuan, J. Cheng, J. Zhu, J. Ran, J. Jiang, J. Qiu, J. Li, J. Song, K. Dong, K. Gao, K. Guan, K. Huang, K. Zhou, K. Huang, K. Yu, L. Wang, L. Zhang, L. Wang, L. Zhao, L. Yin, L. Guo, L. Luo, L. Ma, L. Wang, L. Zhang, M. S. Di, M. Y. Xu, M. Zhang, M. Zhang, M. Tang, M. Zhou, P. Huang, P. Cong, P. Wang, Q. Wang, Q. Zhu, Q. Li, Q. Chen, Q. Du, R. Xu, R. Ge, R. Zhang, R. Pan, R. Wang, R. Yin, R. Xu, R. Shen, R. Zhang, S. H. Liu, S. Lu, S. Zhou, S. Chen, S. Cai, S. Chen, S. Hu, S. Liu, S. Hu, S. Ma, S. Wang, S. Yu, S. Zhou, S. Pan, S. Zhou, T. Ni, T. Yun, T. Pei, T. Ye, T. Yue, W. Zeng, W. Liu, W. Liang, W. Pang, W. Luo, W. Gao, W. Zhang, X. Gao, X. Wang, X. Bi, X. Liu, X. Wang, X. Chen, X. Zhang, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yu, X. Li, X. Yang, X. Li, X. Chen, X. Su, X. Pan, X. Lin, X. Fu, Y. Q. Wang, Y. Zhang, Y. Xu, Y. Ma, Y. Li, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Qian, Y. Yu, Y. Zhang, Y. Ding, Y. Shi, Y. Xiong, Y. He, Y. Zhou, Y. Zhong, Y. Piao, Y. Wang, Y. Chen, Y. Tan, Y. Wei, Y. Ma, Y. Liu, Y. Yang, Y. Guo, Y. Wu, Y. Wu, Y. Cheng, Y. Ou, Y. Xu, Y. Wang, Y. Gong, Y. Wu, Y. Zou, Y. Li, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Z. F. Wu, Z. Z. Ren, Z. Zhao, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Gou, Z. Ma, Z. Yan, Z. Shao, Z. Huang, Z. Wu, Z. Li, Z. Zhang, Z. Xu, Z. Wang, Z. Gu, Z. Zhu, Z. Li, Z. Zhang, Z. Xie, Z. Gao, Z. Pan, Z. Yao, B. Feng, H. Li, J. L. Cai, J. Ni, L. Xu, M. Li, N. Tian, R. J. Chen, R. L. Jin, S. S. Li, S. Zhou, T. Sun, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Song, X. Zhou, Y. X. Zhu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Z. Huang, Z. Xu, Z. Zhang, D. Ji, J. Liang, J. Guo, J. Chen, L. Xia, M. Wang, M. Li, P. Zhang, R. Chen, S. Sun, S. Wu, S. Ye, T. Wang, W. L. Xiao, W. An, X. Wang, X. Sun, X. Wang, Y. Tang, Y. Zha, Z. Zhang, Z. Ju, Z. Zhang, and Z. Qu
+
+DeepSeek-v3.2: pushing the frontier of open large language models.
+
+External Links: 2512.02556,
+Link
+
+Cited by: §1.
+
+Fabbri et al. (2019)
+A. R. Fabbri, I. Li, T. She, S. Li, and D. R. Radev
+
+Multi-news: a large-scale multi-document summarization dataset and abstractive hierarchical model.
+
+External Links: 1906.01749,
+Link
+
+Cited by: §5.
+
+Gao et al. (2024)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou
+
+The language model evaluation harness.
+
+Zenodo.
+
+External Links: Document,
+Link
+
+Cited by: footnote 1.
+
+Gliwa et al. (2019)
+B. Gliwa, I. Mochol, M. Biesek, and A. Wawer
+
+SAMSum corpus: a human-annotated dialogue dataset for abstractive summarization.
+
+In Proceedings of the 2nd Workshop on New Frontiers in Summarization, L. Wang, J. C. K. Cheung, G. Carenini, and F. Liu (Eds.),
+
+Hong Kong, China, pp. 70–79.
+
+External Links: Link,
+Document
+
+Cited by: §5.
+
+Ho et al. (2020)
+X. Ho, A. D. Nguyen, S. Sugawara, and A. Aizawa
+
+Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps.
+
+External Links: 2011.01060,
+Link
+
+Cited by: §5.
+
+Hsieh et al. (2024)
+C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg
+
+RULER: what’s the real context size of your long-context language models?.
+
+External Links: 2404.06654,
+Link
+
+Cited by: §5.
+
+Huang et al. (2021)
+L. Huang, S. Cao, N. Parulian, H. Ji, and L. Wang
+
+Efficient attentions for long document summarization.
+
+External Links: 2104.02112,
+Link
+
+Cited by: §5.
+
+Joshi et al. (2017)
+M. Joshi, E. Choi, D. S. Weld, and L. Zettlemoyer
+
+TriviaQA: a large scale distantly supervised challenge dataset for reading comprehension.
+
+External Links: 1705.03551,
+Link
+
+Cited by: §5.
+
+Kimi et al. (2026)
+Kimi, Y. Bai, Y. Bao, Y. Charles, C. Chen, G. Chen, H. Chen, H. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding, M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, C. Gao, H. Gao, P. Gao, T. Gao, Y. Ge, S. Geng, Q. Gu, X. Gu, L. Guan, H. Guo, J. Guo, X. Hao, T. He, W. He, W. He, Y. He, C. Hong, H. Hu, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin, X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, E. Lu, H. Lu, L. Lu, Y. Luo, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng, R. Qin, Z. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, L. Sui, X. Sun, F. Sung, Y. Tai, H. Tang, J. Tao, Q. Teng, C. Tian, C. Wang, D. Wang, F. Wang, H. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, S. Wang, X. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, H. Wu, W. Wu, X. Wu, Y. Wu, C. Xiao, J. Xie, X. Xie, W. Xiong, B. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Xu, J. Xu, J. Yan, Y. Yan, H. Yang, X. Yang, Y. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, S. Yuan, H. Zhan, D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, H. Zhao, Y. Zhao, Z. Zhao, H. Zheng, S. Zheng, L. Zhong, J. Zhou, X. Zhou, Z. Zhou, J. Zhu, Z. Zhu, W. Zhuang, and X. Zu
+
+Kimi k2: open agentic intelligence.
+
+External Links: 2507.20534,
+Link
+
+Cited by: §1.
+
+Kočiský et al. (2017)
+T. Kočiský, J. Schwarz, P. Blunsom, C. Dyer, K. M. Hermann, G. Melis, and E. Grefenstette
+
+The narrativeqa reading comprehension challenge.
+
+External Links: 1712.07040,
+Link
+
+Cited by: §5.
+
+Lee et al. (2024)
+W. Lee, J. Lee, J. Seo, and J. Sim
+
+infinigen: Efficient generative inference of large language models with dynamic kv cache management.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+pp. 155–172.
+
+Cited by: §1,
+§2.
+
+Li and Roth (2002)
+X. Li and D. Roth
+
+Learning question classifiers.
+
+In International Conference on Computational Linguistics,
+
+External Links: Link
+
+Cited by: §5.
+
+Li et al. (2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+
+Snapkv: llm knows what you are looking for before generation.
+
+Advances in Neural Information Processing Systems 37, pp. 22947–22970.
+
+Cited by: §1,
+§2.
+
+Lin et al. (2025)
+C. Lin, J. Tang, S. Yang, H. Wang, T. Tang, B. Tian, I. Stoica, S. Han, and M. Gao
+
+Twilight: adaptive attention sparsity with hierarchical top- pruning.
+
+External Links: 2502.02770,
+Link
+
+Cited by: §2.
+
+Liu et al. (2023)
+T. Liu, C. Xu, and J. McAuley
+
+RepoBench: benchmarking repository-level code auto-completion systems.
+
+External Links: 2306.03091,
+Link
+
+Cited by: §5.
+
+Meituan-LongCat et al. (2025)
+Meituan-LongCat, Bayan, B. Li, B. Lei, B. Wang, B. Rong, C. Wang, C. Zhang, C. Gao, C. Zhang, C. Sun, et al.
+
+LongCat-flash technical report.
+
+External Links: 2509.01322,
+Link
+
+Cited by: §1.
+
+Mohler et al. (2016)
+M. Mohler, M. Brunson, B. Rink, and M. Tomlinson
+
+Introducing the LCC metaphor datasets.
+
+In Proceedings of the Tenth International Conference on Language Resources and Evaluation (LREC’16), N. Calzolari, K. Choukri, T. Declerck, S. Goggi, M. Grobelnik, B. Maegaard, J. Mariani, H. Mazo, A. Moreno, J. Odijk, and S. Piperidis (Eds.),
+
+Portorož, Slovenia, pp. 4221–4227.
+
+External Links: Link
+
+Cited by: §5.
+
+Shazeer (2019)
+N. Shazeer
+
+Fast transformer decoding: one write-head is all you need.
+
+External Links: 1911.02150,
+Link
+
+Cited by: §1.
+
+Sheng et al. (2023)
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, D. Y. Fu, Z. Xie, B. Chen, C. Barrett, J. E. Gonzalez, P. Liang, C. Ré, I. Stoica, and C. Zhang
+
+FlexGen: high-throughput generative inference of large language models with a single gpu.
+
+External Links: 2303.06865,
+Link
+
+Cited by: §1,
+§2.
+
+Sun et al. (2025)
+H. Sun, L. Chang, W. Bao, S. Zheng, N. Zheng, X. Liu, H. Dong, Y. Chi, and B. Chen
+
+ShadowKV: kv cache in shadows for high-throughput long-context llm inference.
+
+In International Conference on Machine Learning,
+
+pp. 57355–57373.
+
+Cited by: §1,
+§2.
+
+Tang et al. (2024)
+J. Tang, Y. Zhao, K. Zhu, G. Xiao, B. Kasikci, and S. Han
+
+QUEST: query-aware sparsity for efficient long-context llm inference.
+
+In International Conference on Machine Learning,
+
+pp. 47901–47911.
+
+Cited by: §1,
+§2,
+§5.
+
+Team et al. (2025)
+G. Team, A. Zeng, X. Lv, Q. Zheng, Z. Hou, B. Chen, C. Xie, C. Wang, D. Yin, H. Zeng, J. Zhang, K. Wang, L. Zhong, M. Liu, R. Lu, S. Cao, X. Zhang, X. Huang, Y. Wei, Y. Cheng, Y. An, Y. Niu, Y. Wen, Y. Bai, Z. Du, Z. Wang, Z. Zhu, B. Zhang, B. Wen, B. Wu, B. Xu, C. Huang, C. Zhao, C. Cai, C. Yu, C. Li, C. Ge, C. Huang, C. Zhang, C. Xu, C. Zhu, C. Li, C. Yin, D. Lin, D. Yang, D. Jiang, D. Ai, E. Zhu, F. Wang, G. Pan, G. Wang, H. Sun, H. Li, H. Li, H. Hu, H. Zhang, H. Peng, H. Tai, H. Zhang, H. Wang, H. Yang, H. Liu, H. Zhao, H. Liu, H. Yan, H. Liu, H. Chen, J. Li, J. Zhao, J. Ren, J. Jiao, J. Zhao, J. Yan, J. Wang, J. Gui, J. Zhao, J. Liu, J. Li, J. Li, J. Lu, J. Wang, J. Yuan, J. Li, J. Du, J. Du, J. Liu, J. Zhi, J. Gao, K. Wang, L. Yang, L. Xu, L. Fan, L. Wu, L. Ding, L. Wang, M. Zhang, M. Li, M. Xu, M. Zhao, M. Zhai, P. Du, Q. Dong, S. Lei, S. Tu, S. Yang, S. Lu, S. Li, S. Li, Shuang-Li, S. Yang, S. Yi, T. Yu, W. Tian, W. Wang, W. Yu, W. L. Tam, W. Liang, W. Liu, X. Wang, X. Jia, X. Gu, X. Ling, X. Wang, X. Fan, X. Pan, X. Zhang, X. Zhang, X. Fu, X. Zhang, Y. Xu, Y. Wu, Y. Lu, Y. Wang, Y. Zhou, Y. Pan, Y. Zhang, Y. Wang, Y. Li, Y. Su, Y. Geng, Y. Zhu, Y. Yang, Y. Li, Y. Wu, Y. Li, Y. Liu, Y. Wang, Y. Li, Y. Zhang, Z. Liu, Z. Yang, Z. Zhou, Z. Qiao, Z. Feng, Z. Liu, Z. Zhang, Z. Wang, Z. Yao, Z. Wang, Z. Liu, Z. Chai, Z. Li, Z. Zhao, W. Chen, J. Zhai, B. Xu, M. Huang, H. Wang, J. Li, Y. Dong, and J. Tang
+
+GLM-4.5: agentic, reasoning, and coding (arc) foundation models.
+
+External Links: 2508.06471,
+Link
+
+Cited by: §1.
+
+Trivedi et al. (2022)
+H. Trivedi, N. Balasubramanian, T. Khot, and A. Sabharwal
+
+MuSiQue: multihop questions via single-hop question composition.
+
+External Links: 2108.00573,
+Link
+
+Cited by: §5.
+
+Vaswani et al. (2023)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+
+Attention is all you need.
+
+External Links: 1706.03762,
+Link
+
+Cited by: §1.
+
+Wang et al. (2026)
+L. Wang, Y. Cheng, Y. Shi, Z. Mo, Z. Tang, W. Xie, T. Wu, L. Ma, Y. Xia, J. Xue, F. Yang, and Z. Yang
+
+TileLang: bridge programmability and performance in modern neural kernels.
+
+In The Fourteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §5.
+
+Xiao et al. (2024a)
+C. Xiao, P. Zhang, X. Han, G. Xiao, Y. Lin, Z. Zhang, Z. Liu, and M. Sun
+
+Infllm: training-free long-context extrapolation for llms with an efficient context memory.
+
+Advances in Neural Information Processing Systems 37, pp. 119638–119661.
+
+Cited by: §1.
+
+Xiao et al. (2024b)
+G. Xiao, J. Tang, J. Zuo, S. Yang, H. Tang, Y. Fu, S. Han, et al.
+
+DuoAttention: efficient long-context llm inference with retrieval and streaming heads.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §2.
+
+Xiao et al. (2023)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+
+Efficient streaming language models with attention sinks.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §1.
+
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §1.
+
+Yang et al. (2024)
+S. Yang, Y. Sheng, J. E. Gonzalez, I. Stoica, and L. Zheng
+
+Post-training sparse attention with double sparsity.
+
+External Links: 2408.07092,
+Link
+
+Cited by: §1,
+§2,
+§5.
+
+Yang et al. (2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning
+
+HotpotQA: a dataset for diverse, explainable multi-hop question answering.
+
+External Links: 1809.09600,
+Link
+
+Cited by: §5.
+
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, et al.
+
+H2o: heavy-hitter oracle for efficient generative inference of large language models.
+
+Advances in Neural Information Processing Systems 36, pp. 34661–34710.
+
+Cited by: §1,
+§2.
+
+Zhong et al. (2021)
+M. Zhong, D. Yin, T. Yu, A. Zaidi, M. Mutuma, R. Jha, A. H. Awadallah, A. Celikyilmaz, Y. Liu, X. Qiu, and D. Radev
+
+QMSum: a new benchmark for query-based multi-domain meeting summarization.
+
+External Links: 2104.05938,
+Link
+
+Cited by: §5.
+
+Zhou et al. (2025)
+X. Zhou, W. Wang, M. Zeng, J. Guo, X. Liu, L. Shen, M. Zhang, and L. Ding
+
+DynamicKV: task-aware adaptive kv cache compression for long context llms.
+
+External Links: 2412.14838,
+Link
+
+Cited by: §2.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

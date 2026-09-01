@@ -1,0 +1,924 @@
+KAIJU: An Executive Kernel for Intent-Gated Execution of LLM Agents
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Running Example
+
+ReAct with parallel function calling — 9 turns, 14 tools, 64.5s.
+
+IGX (DAG, Reflect) — 4 LLM calls, 10 nodes, 41.8s.
+
+4 System Model
+
+4.1 Node Types
+
+4.2 Node Lifecycle
+
+4.3 Edges: Ordering and Data Flow
+
+4.4 Iterative Final Reflection
+
+4.5 Preemption
+
+4.6 Failure Recovery
+
+4.7 The Execution Layer Abstraction
+
+5 Execution Modes
+
+Reflect — reflection gates between dependency waves.
+
+Orchestrator — per-node observer with injection capability.
+
+6 Execution Gate
+
+6.1 Three Layers of Scope Enforcement
+
+6.2 Structural Isolation from the LLM
+
+6.3 Delegated Clearance
+
+6.4 Trust Model
+
+6.5 Gate Pipeline Walkthrough
+
+7 Evaluation
+
+7.1 Complexity Analysis
+
+7.2 Theoretical Comparison
+
+7.3 Measured Comparison: DAG Modes vs ReAct
+
+7.4 Structural Differences Affecting Latency
+
+7.5 Structured Execution vs Conversational Shortcuts
+
+7.6 Failure Mode: Deferred Execution
+
+7.7 Case Study: Computational Astronomy Benchmark
+
+7.8 GAIA Benchmark (127 Text-Only Questions)
+
+8 Conclusions
+
+8.1 Future Work
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.02375v1 [cs.SE] 31 Mar 2026
+
+KAIJU: An Executive Kernel for Intent-Gated Execution of LLM Agents
+
+Cormac Guerin
+
+Affiliation: Compdeep
+
+Correspondence to: cormac@compdeep.com
+
+  
+Frank Guerin
+
+Affiliation: School of Computer Science and Electronic Engineering, University of Surrey, UK
+
+Correspondence to: f.guerin@surrey.ac.uk
+
+Abstract
+
+Tool-calling autonomous agents based on large language models
+using ReAct
+exhibit three limitations: serial latency, quadratic context growth, and vulnerability to prompt injection and hallucination. Recent work moves towards separating planning from execution but in each case the model remains coupled to the execution mechanics. We introduce a system-level abstraction for LLM agents which decouples the execution of agent workflows from the LLM reasoning layer. We define two first-class abstractions: (1) Intent-Gated Execution (IGX), a security paradigm that enforces intent at execution, and (2) an Executive Kernel that manages scheduling, tool dispatch, dependency resolution, failures and security.
+In KAIJU, the LLM plans upfront, optimistically scheduling tools in parallel with dependency-aware parameter injection.
+Tools are authorised via IGX based on four independent variables: scope, intent, impact, and clearance (external approval).
+KAIJU supports three adaptive execution modes (Reflect, nReflect, and Orchestrator), providing progressively finer-grained execution control apt for complex investigation and deep analysis or research.
+Empirical evaluation against a ReAct baseline shows that KAIJU has a latency penalty on simple queries due to planning overhead, convergence at moderate complexity, and a structural advantage on computational queries requiring parallel data gathering. Beyond latency, the separation enforces behavioural guarantees that ReAct cannot match through prompting alone.
+
+Code available at github.com/compdeep/kaiju
+
+Keywords: Agentic AI
+
+1 Introduction
+
+LLM-based agents that invoke external tools (APIs, shell commands, databases, web services) have become a dominant paradigm for grounding language models in real-world action. The foundational execution model is ReAct (Yao et al., 2023): the model reasons about which tool to call, executes it, observes the result, and repeats. Modern implementations in production systems such as OpenAI’s Assistants API, Anthropic’s Claude Code, and OpenClaw extend this with native parallel function calling; the model can return multiple tool calls per turn, significantly reducing the number of reasoning round-trips. On straightforward queries, this approach is fast and effective.
+
+Three problems emerge as task complexity grows. First, each reasoning turn still carries the full conversation history. Turn transmits tokens, where is the system context and is the average tool result size. Total cost across turns is ; for typical values of K tokens, a 7-tool task transmits approximately 63K tokens; an 18-tool task approximately 250K. On multi-step computational queries, this cumulative context can exhaust the effective processing window, producing empty or degraded outputs. Second, the model retains unilateral authority over tool use at every turn. When a tool call fails or returns partial results, the model can abandon the task, defer to parametric knowledge, or ask the user for guidance; behaviour that is rational per-turn but undermines reliability across the full query. Prompt instructions to persist (“never give up, always retry”) partially mitigate this but cannot guarantee it; the model may comply or not on each turn. Third, tool safety is enforced via prompt instructions (“do not call destructive tools”), which the model can ignore through hallucination, prompt injection, or context overflow. There is no structural failsafe. Nasr et al. (2025) demonstrate that LLM-level defenses whether training-based, prompt-based, or filter-based are systematically defeated by adaptive adversaries who modify their attack strategy against the defense’s observable behaviour.
+
+Prior systems address these problems partially. LLM Compiler (Kim et al., 2024) introduced parallel DAG execution but evaluates results only after the entire graph completes, with no mid-execution adaptation and no safety gating. LangGraph (LangChain Inc., 2024; Biju, 2025) models workflows as state machines but keeps the LLM in the execution loop at every routing decision, with safety limited to human-in-the-loop breakpoints. Multi-agent frameworks (CrewAI (2024), AgentArch (Bogavelli et al., 2026)) add coordination overhead that degrades both performance and reliability; Bogavelli et al. (2026) found that even the best configurations achieved only 35.3% success on complex enterprise tasks with 6.3% reproducibility. In each case, the model remains coupled to execution semantics.
+
+We introduce KAIJU, with a strict execution abstraction consisting of two layers: a reasoning layer handling user interaction, and an execution layer responsible for dependency resolution, tool dispatch, failure recovery, safety enforcement, and result synthesis. In the execution layer the LLM is a stateless resource invoked at discrete points (to plan, to reflect, and to aggregate) with no visibility into execution mechanics. The execution layer invokes the reasoning model once to produce a dependency graph of tool calls, then schedules, gates, and dispatches tools independently, constituting the first graph node. At structured leaf nodes, a lightweight reflector evaluates the evidence gathered so far against the original query and decides whether to continue, conclude, or replan with targeted follow-up nodes. An execution gate (IGX) enforces authorisation via four independent variables (scope, intent, impact, and clearance), each governed by a separate authority outside the model.
+
+The LLM does not observe gate decisions within the execution layer, removing the possibility of adaptive probing of the safety policy. In conversational loops (ReAct, LangGraph), blocked tool calls feed back into the model’s context, enabling adversarial probing; our architecture removes the feedback channel. Critically, data are only input to the execution layer from the reasoning layer at call time and fed back only at return time, creating a closed execution loop, except for preemption as described in Section 4.5. The execution layer persists through tool failures via automatic replanning rather than deferring to the user. It does not ask for permission or silently substitute parametric knowledge; when a tool fails, the micro-planner retries with alternative approaches before the reflector evaluates whether sufficient evidence has been gathered. The graph is processed optimistically (execute first, adapt on failure via reflection checkpoints) across three adaptive modes.
+
+A structured graph-based LLM workflow enables composable, verifiable execution units, providing a foundation for enforcing guarantees such as security and content policy and service level agreements. Nodes can be added or removed to improve or alter the graph mid-flight enabling custom and controlled outcomes. In our system, three execution modes provide progressively finer-grained mid-execution adaptation: structural phase boundaries (Reflect), periodic batch checkpoints (nReflect), and per-node observers (Orchestrator).
+
+Contributions of IGX:
+
+1.
+
+Separation + bounded context reduced token scaling. The planner and per-node observers operate on bounded context. Reflections see cumulative evidence within the execution layer but not the full conversational history. Token complexity reduces from to in Reflect mode or in Orchestrator mode, where is dependency depth.
+
+2.
+
+Separation + parallelism schedulable. The execution graph fires tools on dependency resolution, not LLM decision. Three adaptive modes (Reflect, nReflect, Orchestrator) reduce latency to where is dependency depth, compared to for sequential dispatch or for parallel function calling (where is reasoning turns, but structurally unbounded).
+
+3.
+
+Separation + enforcement structurally enforced safety. A four-variable gate (scope, intent, impact, clearance) enforces authorisation deterministically in compiled code. Gate decisions do not reach the model; it does not distinguish a blocked tool from a failed one, preventing adaptive iteration against the policy.
+
+4.
+
+Separation + dataflow structural dependency injection. A param_refs mechanism expresses data flow between steps at plan time; concrete values resolve at execution time from upstream outputs. This removes the need for a sequential reasoning loop to pass data between tool calls.
+
+5.
+
+Delegated resource clearance. Resource-level authorisation delegates to external HTTP endpoints, enabling deployment across cybersecurity, robotics, enterprise, and healthcare environments without domain-specific logic in the agent.
+
+The remainder of this paper is organised as follows. Section 2 surveys related work. Section 3 introduces an example illustrating key properties. Section 4 defines the system model and graph structure. Section 5 describes the three execution modes. Section 6 presents the execution gate. Section 7 reports experimental results. Section 8 concludes with limitations and future directions.
+
+2 Related Work
+
+We give an overview of the principal related works in Table 1.
+ReAct (Yao et al., 2023) established sequential think-act-observe with token complexity. In its original formulation, latency is with one tool per turn; modern implementations with parallel function calling (OpenAI, Anthropic) reduce this to reasoning turns, though token complexity remains quadratic. Each turn appends tool results to a growing context, degrading both cost and attention quality on longer tasks. AutoGPT (AutoGPT Project, 2023) and BabyAGI (Yohei Nakajima, 2023) extended this with persistent memory but retained the conversational execution model. All enforce safety through prompt instructions only.
+
+LLM Compiler (Kim et al., 2024) is the closest prior work on parallel execution. It generates a DAG and dispatches tool calls in parallel, reporting up to 3.7 speedup compared to sequential ReAct. In our testing against squential ReAct we observe the same gain however on complex queries 7x and on highly complex queries up to 18x increase. LLM Compiler evaluates results only after the entire graph completes (no mid-execution adaptation), using whole-output substitution rather than field-level dependency injection, provides no safety gating is limited to human-in-the-loop breakpoints. By contrast our system extends this four degrees; dependency injection (vs. whole-output substitution), mid-execution adaptation via three modes (vs. post-completion Joiner only), structural safety gating (vs. none), and scoped failure recovery (vs. full replanning).
+
+•
+
+LLM Compiler: all tools execute → Joiner evaluates → if insufficient, replan entire graph → execute again. Adaptation is synchronous and epoch-based. Nothing changes while tools are running.
+
+•
+
+KAIJU Executive Kernel: tools execute in waves → reflection can fire between waves while other branches may still be pending → micro-planner can graft new nodes onto a live graph → observers (Orchestrator mode) evaluate individual results as they arrive and inject follow-up nodes immediately. The graph is mutable during execution.
+
+CrewAI (2024) and AgentArch (Bogavelli et al., 2026)
+organise agents by role. Bogavelli et al. (2026) found that multi-agent configurations “consistently underperformed” single-agent function calling, achieving only 35.3% success on complex enterprise tasks with 6.3% reproducibility. The system achieves specialisation through the tool interface rather than agent personas, avoiding the coordination overhead that degrades multi-agent reliability.
+
+Most agent safety approaches operate within the LLM’s own processing: safety training, input/output filtering, guardrail prompts, or fine-tuned refusal behaviour. Nasr et al. (2025) systematically evaluate 12 such defenses against adaptive adversaries and breach all with % success rates, demonstrating that defenses observable to the model are fundamentally vulnerable to iteration. With KAIJU IGX operates outside the LLM’s control and observation surface; the model produces a plan but never sees whether its tool calls were permitted, denied, or gated.
+
+CaMeL (Debenedetti et al., 2025) addresses prompt injection by separating control flow from data flow, preventing untrusted inputs from influencing program execution. It achieves provable guarantees on 77% of AgentDojo tasks. CaMeL focuses on data exfiltration prevention (what information flows where); our work focuses on tool execution control (which tools execute at what impact level). The two are complementary and composable.
+
+Progent (Shi et al., 2025) provides programmable privilege control via argument-level condition matching, achieving 0% attack success on AgentDojo. Policies are expressed as boolean conditions over tool arguments (regex, comparisons, membership). Key differences: Progent operates within the conversational loop (blocked calls feed back to the agent as messages, enabling probing of the policy boundary), requires manual or LLM-generated policy authoring per tool argument, and does not support dynamic per-invocation impact classification or external authorisation. Our gate uses four scalar variables rather than arbitrary boolean expressions, and is structurally isolated from the LLM’s observation.
+
+Table 1: Comparison of agent execution systems.
+
+System
+Execution
+Safety mechanism
+LLM sees rejection?
+
+ReAct
+Sequential
+Prompt instructions
+Yes
+
+LangGraph
+State machine
+Human-in-loop
+Yes
+
+LLM Compiler
+DAG
+None
+N/A
+
+CaMeL
+Sequential
+Data flow sep.
+No (ctrl plane)
+
+Progent
+Sequential
+Arg. cond. matching
+Yes (feedback)
+
+IGX (ours)
+DAG (3 modes)
+4-variable intent gate
+No (structural separation)
+
+3 Running Example
+
+We illustrate with the following query: “Check disk usage, list open ports, find git repos under /home, search for CVEs affecting our kernel version, and check environment variables for leaked secrets.” This requires five independent data-gathering operations, a dependency chain (kernel version must be discovered before searching for CVEs), and cross-domain synthesis. Both queries were run through the same system instance with identical tools.
+
+ReAct with parallel function calling — 9 turns, 14 tools, 64.5s.
+
+Modern parallel function calling batches 5 tools on turn 0, reducing the original 12-turn sequential baseline to 9 turns. However, each subsequent turn still carries the full conversation history; by turn 8 the context exceeds 6K tokens. The model decides per-turn whether to continue researching or conclude; turns 1–7 show it pursuing CVE details across multiple sequential search-fetch cycles. Total: 9 LLM calls, 14 tool executions, 64.5 seconds.
+
+IGX (DAG, Reflect) — 4 LLM calls, 10 nodes, 41.8s.
+
+The planner under-planned on this query, producing only one node initially. The reflection loop compensated: three reflections identified gaps and replanned with targeted follow-ups across two additional waves. Despite this, the DAG completed in 41.8 seconds versus ReAct’s 64.5 seconds because each wave executed tools in parallel and each reflection saw only the current wave’s results (bounded context) rather than the full conversation history. The CVE search in wave 3 used the kernel version discovered in wave 2. Total: 4 LLM calls (planner + 3 reflections), 10 tool executions, 41.8 seconds. The final reflection produced the verdict directly, skipping the aggregator.
+
+4 System Model
+
+The IGX system executes discrete operations as nodes within a directed acyclic graph. Every node carries a unique identifier, a type, a lifecycle state, upstream dependencies, a parameter map, and a result slot populated upon completion. Nodes are connected by directed edges through depends_on references: a node will not fire until every dependency has reached a terminal state.
+
+The planner LLM produces the initial graph from the task description. During execution, the graph is live; reflection checkpoints, observers, and failure-repair calls may graft additional nodes at any point. Every state transition is emitted as a streaming event, making the full execution trace observable in real time. This liveness is central to the system’s adaptive capability: the graph at completion may differ substantially from the graph the planner originally produced.
+
+4.1 Node Types
+
+The system defines six node types:
+
+•
+
+Tool. Executes a registered tool with declared parameters. Subject to the execution gate. The primary node type.
+
+•
+
+Reflection. LLM checkpoint that evaluates completed results. Can continue, conclude early, or replan by grafting new nodes.
+
+•
+
+Observer. Lightweight per-node LLM call (Orchestrator mode). Evaluates a single result; can inject nodes, cancel pending work, or trigger reflection.
+
+•
+
+Micro-Planner. Scoped failure-repair call. Evaluates a failed node and produces replacement nodes: retry with different parameters, substitute an alternative tool, or skip.
+
+•
+
+Interjection. Human-triggered checkpoint. The operator’s message gates all pending nodes, giving the ability to redirect or halt an active execution.
+
+•
+
+Aggregator. Optional final LLM call. Synthesises all gathered results into a structured output. Fires only after all other nodes complete and the final reflection concludes. Can be disabled (the reflection verdict is used directly), run on the executor model for speed, or on the reasoning model for quality. Disabled for all benchmarks in this paper.
+
+4.2 Node Lifecycle
+
+A node remains pending until all dependencies reach a terminal state. It then transitions to running, at which point parameter injections are resolved and the operation executes. Terminal states are final; a node is not re-executed. If a node fails, the micro-planner may graft replacement nodes rather than retrying the original. This immutability simplifies reasoning about the graph: once a node reaches a terminal state, its result is stable and available to all downstream consumers.
+
+4.3 Edges: Ordering and Data Flow
+
+depends_on establishes execution ordering. A node will not fire until all referenced nodes have completed. Nodes without dependencies execute immediately and in parallel. This creates a natural wave structure: all root nodes (those with no dependencies) fire concurrently in the first wave, and subsequent waves fire as their dependencies resolve.
+
+param_refs establishes data flow. Each entry maps a parameter name to a source node, a dot-path field selector into that node’s JSON result, and an optional template string. At fire time, the scheduler extracts the value, applies the template if present, and injects the result into the parameter map. Any node referenced in param_refs is automatically added to depends_on, ensuring that data dependencies are always respected even if the planner omits the explicit ordering edge.
+
+⬇
+Example: meeting booking with dependency injection
+
+step 0 check_calendars
+
+params: {team: "engineering"}
+
+step 1 create_event
+
+params: {title: "Sync"}
+
+param_refs: {start: {step:0, field:"slots.0.start"}}
+
+depends_on: [0]
+
+step 2 send_invites
+
+param_refs: {event_id: {step:1, field:"event_id"},
+
+attendees: {step:0, field:"members"}}
+
+depends_on: [0, 1]
+
+Each value materialises exactly when it becomes available. The planner declared the complete three-step workflow upfront without knowing any concrete values; it only specified where each value would come from. The mechanism is structural (the scheduler enforces dependency ordering), fails fast (missing fields produce immediate diagnostic errors), and composable (a single step may reference multiple source nodes). This bridges the gap between upfront planning and runtime data availability without collapsing to sequential execution.
+
+4.4 Iterative Final Reflection
+
+A structural guarantee ensures that a reflection evaluates results after every batch of tool completions. When all planned nodes complete, if skill work has occurred since the last reflection, the system injects a new reflection node into the graph. If the reflection replans, the new nodes execute through the normal scheduler loop, and the process repeats. This continues until the reflection concludes, the budget is exhausted, or the wall clock expires. The aggregator fires only after the final reflection approves.
+
+This mechanism enables completion of multi-phase tasks. Without it, the system would complete the first wave of tool calls, skip deeper follow-ups, and hand incomplete evidence to the aggregator. With it, the reflection loop drives the task to completion: search fetch reflect need more data fetch again reflect sufficient aggregate.
+
+4.5 Preemption
+
+A consequence of graph-based execution is that the node structure can be altered at runtime: new nodes can be appended, branches grafted, or pending work cancelled. This property enables preemptive queries. An operator may inject a message into the active graph at any point. The scheduler creates a gating reflection node with the operator’s message as input. All pending nodes are blocked behind it. Running nodes complete normally, but no new nodes fire until the interjection reflection resolves. The operator’s guidance may continue the plan, conclude early, or replan entirely. This provides a human override mechanism that respects in-flight work while preventing new actions until the operator has weighed in.
+
+Allowing user input directly into the execution layer runs against the separation principle laid out in this paper, and the feature should be used with caution. However, the interjection is mediated rather than direct: the user does not talk to the LLM during execution; the message enters as a reflection checkpoint, the same execution layer construct used for wave boundaries and replanning; the reflection decides what to do (continue, conclude, or replan) using the same logic as any other reflection; and the LLM does not know whether the message came from a user or from the system. The separation is narrowed rather than broken: the reasoning layer can signal the execution layer, but the execution layer’s own control flow mediates the response.
+
+4.6 Failure Recovery
+
+When a tool node fails, the micro-planner evaluates the error alongside sibling results and produces a replacement subgraph: retry with different parameters, substitute an alternative tool, or skip. Failed nodes are not retried; the replacement is a new node grafted onto the graph with a spawned_by reference to the failed original. This preserves the audit trail and maintains the immutability invariant: every node reaches a terminal state exactly once. The micro-planner is scoped to the failed node’s immediate context, keeping its LLM call cheap and focused.
+
+4.7 The Execution Layer Abstraction
+
+The LLM is not informed that it is part of a pipeline. It receives a task, a set of tools, and evidence gathered so far. It produces a plan, evaluates progress, or synthesises results. Each LLM call is self-contained: the planner does not know there will be a reflection; the reflection does not know how many parallel steps ran; the aggregator does not know which mode was used. The execution layer surfaces inputs and outputs, including tool results, error messages, and evidence summaries, while managing scheduling, dependency resolution, and adaptation internally.
+
+5 Execution Modes
+
+The planner produces a dependency graph. Nodes without dependencies execute immediately and in parallel. The system then diverges into one of three modes, which differ only in how they evaluate results after each node completes. The choice of mode determines the balance between execution speed, token cost, and the granularity of mid-execution oversight.
+
+Reflect. Reflection checkpoints are injected between dependency waves. At each boundary, the system evaluates all completed results and may replan. Execution pauses only at wave boundaries. Lowest LLM call count. Most predictable.
+
+nReflect. Reflection fires after every node completions regardless of graph structure. Decouples evaluation frequency from dependency depth. Balanced throughput and oversight. Suited to throughput-sensitive scenarios.
+
+Orchestrator. A lightweight observer evaluates each completed node. Observers can inject follow-ups, cancel pending work, or trigger full reflections. Per-result reactivity at parallel speed. Highest quality output.
+
+Reflect — reflection gates between dependency waves.
+
+⬇
+planner
+
+|
+
+|-- tool A -+
+
+|-- tool B -|
+
++-- tool C -+
+
+v
+
+reflect evaluates A, B, C;
+
+may replan
+
+|
+
+|-- tool D -+
+
++-- tool E -+
+
+v
+
+reflect conclude
+
+or replan again
+
+|
+
+aggregator
+
+Orchestrator — per-node observer with injection capability.
+
+⬇
+
+planner
+
+|
+
+|-- tool A obs "continue"
+
+|-- tool B obs "inject" --+
+
+|-- tool C obs "cancel E" |
+
++-- tool D obs "continue" |
+
+|
+
+tool F (injected) ------+
+
+|
+
++-- obs "reflect"
+
+|
+
+reflect
+
+|
+
+aggregator
+
+6 Execution Gate
+
+The gate evaluates four independent concerns before every tool execution; these are illustrated in Table 2. This applies uniformly whether the tool call was planned, replanned by reflection, or injected by an observer. No single entity, including the LLM, controls more than one. This separation of authority is the gate’s core design property: compromise of any single variable does not compromise the gate as a whole.
+
+Table 2: Execution gate variables.
+
+Variable
+Question
+Set by
+
+Description
+
+Scope
+Which?
+Policy
+
+A composable permission boundary determining which tools the agent may invoke. Defined as allowlists with optional per-tool impact ceilings. Default deny: absent tools are invisible to the planner and rejected by the scheduler. Multiple scopes merge by union (tools) and minimum (caps).
+
+Intent
+Who?
+Caller
+
+The operational ceiling for the current task. An integer set by the trigger source; not by the LLM. A routine scheduler invokes at intent 0 (observe); a human operator at intent 1 (operate); an explicit override at intent 2.
+
+Impact
+What?
+Tool author
+
+Declared per-tool at compile time. A read-only query is 0; a write is 1; a deletion is 2. Parameter-aware: the same tool may return different impact depending on its arguments.
+
+Clearance
+Where?
+External auth.
+
+Resource-level authorisation delegated to an external HTTP endpoint. The gate sends tool name, parameters, and caller identity; the endpoint returns allow/deny. Unreachable or timed-out endpoints result in denial. The agent framework holds no domain-specific authorisation logic.
+
+6.1 Three Layers of Scope Enforcement
+
+Layer 1: Planner visibility. The planner receives only tools in scope. It does not plan with tools it has not been shown.
+
+Layer 2: Scheduler rejection. Even if a tool name appears through hallucination or prompt injection, the scheduler rejects it before the gate.
+
+Layer 3: Impact cap enforcement. A tool in scope may still be capped. A shell tool capped at impact 1 permits diagnostic commands but blocks destructive operations.
+
+These three layers create defense in depth. The first layer prevents most out-of-scope tool usage by construction (the LLM does not reference tools it was not shown). The second catches hallucinated or injected tool names. The third provides fine-grained control even for tools that are permitted in principle. Together, they ensure that the planner’s output is constrained at every stage of the pipeline.
+
+6.2 Structural Isolation from the LLM
+
+In conversational agent loops (ReAct, Progent), blocked tool calls produce error messages that feed back into the model’s context. The model observes the rejection reason and can adapt; rephrasing commands, trying alternative tools, or probing policy boundaries. This is the adaptive attack surface identified by Nasr et al. (2025).
+
+Under this abstraction, the planner fires once and produces a graph. The gate runs after the planner is finished. If a tool is blocked, the node fails with a generic error. The reflection sees “node failed” but not “your rm command was blocked because the regex matched a destructive pattern.” There is no information leakage about the gate’s decision criteria. The LLM does not learn the policy boundary because it does not observe the boundary’s behaviour.
+
+6.3 Delegated Clearance
+
+Resource-level authorisation depends on domain knowledge the agent framework cannot possess. A drone needs geofence boundaries. An enterprise needs Active Directory group policies. Rather than encoding domain logic, the gate delegates: it sends a structured request to an external endpoint and respects the boolean response unconditionally. This design keeps the agent framework domain-agnostic while enabling arbitrarily complex authorisation policies at the resource level.
+
+⬇
+Clearance protocol:
+
+Gate --> POST endpoint {tool:"navigate",
+
+params: {zone:"zone_3"}, user:"alpha"}
+
+<-- {allow: false, reason: "zone_3 outside
+
+authorized airspace"}
+
+The design is domain-agnostic (the framework asks, not reasons), fail-secure (unreachable endpoints deny), and parameter-aware (the same tool can be approved for some invocations and denied for others). For latency-sensitive deployments, the endpoint runs on localhost with sub-millisecond overhead.
+
+6.4 Trust Model
+
+Two trust boundaries define the gate’s security posture. The tool author declares impact at compile time; the gate enforces the contract. The clearance authority decides resource access; the gate respects the decision. The LLM is trusted with neither. This makes the gate robust to prompt injection: even if adversarial input manipulates the planner into requesting a high-impact tool, the structurally assigned scope, intent, and clearance reject the call. The separation of authority means that no single point of compromise, whether a manipulated prompt, a rogue tool declaration, or a hijacked clearance endpoint, can bypass all four gate variables simultaneously.
+
+6.5 Gate Pipeline Walkthrough
+
+The following diagram traces a single tool invocation from LLM output to execution or rejection. The LLM produces a tool name and parameters; either as a JSON plan step (structured mode) or a function call (native mode). The execution layer receives this as data and evaluates it through the gate. At no point does the LLM participate in the gate decision.
+
+Example: user requests “delete /tmp/test.txt” at intent = operate (1). The gate blocks at the intent check; tool.Execute() is never called.
+
+The same pipeline applies identically regardless of how the plan was produced. Whether the planner wrote a JSON array in its text response or called a plan() function via native tool calling, the gate receives the same input: a tool name and a parameter map. The structural separation between LLM output and tool execution is absolute. The LLM imagines the command; the gate decides whether it runs.
+
+7 Evaluation
+
+7.1 Complexity Analysis
+
+Let = tool calls, = dependency depth, = average result size (tokens), = base context, = batch size (nReflect). The dominant cost is total tokens transmitted to the LLM.
+
+ReAct: Turn carries tokens. Total: . With strict sequential dispatch, latency is . Modern implementations with parallel function calling reduce this to where is the number of reasoning turns; the model batches multiple tool calls per turn. In practice (our measurements show 3–9 turns for 6–14 tool calls). Token complexity remains regardless of batching because all results accumulate in context across turns.
+
+Reflect: Planner sees . Each of reflections sees all results resolved up to that point (cumulative, not phase-local). Reflection receives approximately results at tokens each. Total reflection cost: . Aggregator sees all results. When , the dominant term approaches . Latency: .
+
+Orchestrator: Each observer sees exactly one result ( tokens). Total: ; strictly linear. More LLM calls () but each individually cheap.
+
+7.2 Theoretical Comparison
+
+Table 3: Theoretical complexity comparison. =tool calls, =dependency depth, =mean result size, =batch size, =reasoning turns.
+
+ReAct
+Refl.
+nRefl.
+Orch.
+
+Tokens
+
+Lat. (seq.)
+
+Lat. (par.)
+
+7.3 Measured Comparison: DAG Modes vs ReAct
+
+Figure 1 plots per-query latency across 40 identical queries (10 per category) spanning four complexity levels. All modes run through the same system with identical tools, IGX, scope resolution, and audit logging. DAG modes use GPT-4.1 for planning and GPT-4.1-mini for reflection; ReAct uses GPT-4.1 for all calls. The computational category consists of real-time astronomical queries requiring current planetary data, multi-step computation, and cross-source synthesis; these cannot be answered from parametric knowledge.
+
+Figure 1: Per-query latency across 40 queries (10 per category) at four complexity levels. Small markers: individual queries. Large markers: category mean. All modes run through the same system with identical tools, IGX, and audit. Computational queries require real-time astronomical data and multi-step computation.
+
+Table 4: Observed latency across 40 queries (10 per category).
+
+Reflect
+nReflect
+Orchestrator
+ReAct
+
+Simple (10)
+
+Mean latency
+4.6 s
+3.9 s
+5.1 s
+3.6 s
+
+Targeted (10)
+
+Mean latency
+14.9 s
+6.3 s
+17.8 s
+11.3 s
+
+Complex (10)
+
+Mean latency
+18.9 s
+9.5 s
+33.5 s
+28.9 s
+
+Computational (10)
+
+Mean latency
+30.7 s
+25.2 s
+45.5 s
+43.7 s
+
+Completion
+10/10
+10/10
+10/10
+8/10
+
+nReflect is the fastest mode across all four categories, outperforming both other DAG modes and ReAct on targeted (6.3s vs 11.3s), complex (9.5s vs 28.9s), and computational (25.2s vs 43.7s) queries. On simple queries, ReAct is marginally faster (3.6s vs 3.9s) due to the absence of planner overhead. All three DAG modes complete every query including the computational set; ReAct fails on 2 of 10 computational queries due to context exhaustion after accumulating too many sequential tool results. Orchestrator produces the most thorough results at the highest cost, executing 2–4 more tool operations than other modes.
+
+7.4 Structural Differences Affecting Latency
+
+The comparison exposes a structural asymmetry between the two architectures that affects both latency and cost per query. In ReAct, the reasoning model handles every stage: tool selection, parameter construction, result interpretation, and answer synthesis all occur within the same LLM call sequence. Each call must include the full tool schemas in the API function-calling array so the model can construct valid tool invocations; this context is carried and grows cumulatively across turns. A ReAct agent cannot delegate intermediate stages to a cheaper model because reasoning and execution are interleaved in the same conversation.
+
+The DAG architecture separates planning from execution, which enables two optimisations unavailable to ReAct. First, the planner sees a compiled tool index (name and one-line description per tool; tokens each) rather than full parameter schemas ( tokens each), reducing planner input by 85%. Full schemas are only resolved at execution time when the dispatcher validates parameters. Second, post-execution stages (reflection, aggregation) run on the executor model (GPT-4.1-mini) rather than the reasoning model (GPT-4.1), reducing per-call cost and latency for stages that evaluate evidence rather than generate plans. ReAct does not naturally support this split because every turn may require both reasoning and tool invocation within the same conversation thread; delegating intermediate evaluation to a cheaper model would require context handoffs that largely recreate the separation this architecture provides.
+
+Both modes in this comparison run through the same production system with identical overhead: IGX checks, scope resolution, audit logging, and tool execution. The ReAct mode uses the same tool implementations and rate limits as the DAG modes. The only variable is the dispatch strategy. To produce a fair comparison, we augmented the ReAct system prompt with explicit instructions to persist through tool failures, never defer to parametric knowledge, and never ask the user for guidance. These instructions partially mitigate shortcut behaviour but cannot eliminate it; the model retains the option to comply or not on each turn. The DAG system requires no such prompting because persistence is enforced structurally.
+
+7.5 Structured Execution vs Conversational Shortcuts
+
+Latency comparisons alone do not capture a critical behavioural difference between the two dispatch strategies. When both architectures are presented with a query requiring current data; for example, “measure the distance from the Moon to the Sun right now, in parsecs” they diverge in how they handle tool use.
+
+The DAG planner decomposed this into two parallel searches (“current distance from Moon to Sun” and “parsec to kilometer conversion”), retrieved 1.5 KB and 1.4 KB of evidence respectively, reflected on the gathered data, and produced a step-by-step calculation grounded in fetched results. Total: 6.1 seconds, 2 tool calls, 3 LLM calls.
+
+The ReAct agent called one web search on its first turn (forced by the tool-use constraint), encountered a rate limit on that single attempt, and immediately abandoned tool use. It then produced a numerically similar answer entirely from parametric knowledge, prefacing it with “I can’t fetch the current real-time distance due to a search limit, but I can provide a very accurate estimate.” Total: 3.6 seconds, 1 tool call, 2 LLM calls.
+
+The ReAct answer is faster because it did less work; not because its dispatch strategy is more efficient. In a conversational loop, the model retains full authority over whether to persist with tool use or fall back to stored knowledge. When a tool call fails or returns partial results, the model can unilaterally decide that its parametric knowledge is “good enough” and stop researching. This is a rational optimisation from the model’s perspective but it undermines the reliability guarantee that tool use is meant to provide. For queries where the answer changes over time (planetary positions, asset prices, live event data), a parametric fallback silently returns stale information with no signal to the user that the answer is unverified.
+
+The DAG architecture eliminates this failure mode structurally. The planner commits to a research plan before execution begins; the execution layer fires all planned tool calls regardless of intermediate failures; and the reflection stage evaluates evidence completeness before concluding. If a search fails, the micro-planner retries with alternative parameters rather than abandoning the research. The model never has the opportunity to short-circuit tool use because tool execution happens outside the conversational loop. This is not a prompting difference; it is a consequence of separating planning from execution. The planner cannot skip tools it has already committed to, and the reflector cannot conclude without evaluating the evidence that was gathered.
+
+To produce a fair latency comparison, we augmented the ReAct system prompt with explicit instructions: never fall back to parametric knowledge, never ask the user for permission, always find alternative tools when one fails, and always show working. These instructions partially mitigate the shortcut behaviour but cannot eliminate it; the model retains the option to comply or not on each turn. The DAG system requires no such prompting because the behaviour is enforced structurally. This asymmetry is itself a finding: achieving equivalent reliability in a ReAct agent requires ongoing prompt engineering that can regress with model updates, while the DAG architecture guarantees it by construction.
+
+7.6 Failure Mode: Deferred Execution
+
+A second behavioural divergence emerges when the agent encounters a tooling obstacle. Given the query “compute the heliocentric positions of all planets in Cartesian coordinates, filter to those with a positive Z-component, compute pairwise Euclidean distances, and return the standard deviation in kilometers,” the ReAct agent attempted to use Python’s astropy library, discovered it was not installed, and returned the following after 12 seconds and 3 tool calls:
+
+“The required Python package astropy is not installed on this system, so I cannot directly compute the heliocentric positions and distances as requested. If you want to proceed, you can either: authorise me to install astropy, provide another method, or let me guide you through running this calculation on your own machine. How would you like to proceed?”
+
+The agent deferred to the user rather than finding an alternative path. In a conversational loop, this is rational: the model preserves user agency by asking before taking additional action. However, it means the query goes unanswered until the user responds with a decision.
+
+The DAG system completed the same query in 31.7 seconds with 7 nodes and produced 2,198 bytes of computed results. When the planner’s initial approach fails, the micro-planner automatically retries with alternative tools (web search for current ephemeris data, bash with standard Python math libraries, or direct computation from fetched orbital elements). The execution layer does not have a “ask the user” option; it must either solve the problem with available tools or declare a capability gap in the final output. This forces the system to exhaust alternative approaches before concluding, which in practice produces answers to queries that a conversational agent would abandon.
+
+7.7 Case Study: Computational Astronomy Benchmark
+
+To evaluate both architectures on queries that cannot be answered from parametric knowledge, we constructed a 10-question benchmark requiring real-time astronomical data, multi-step computation, and cross-source synthesis. Questions include computing SHA-256 hash-weighted averages of planetary radial velocities, transforming equatorial coordinates to galactic frames, and sampling heliocentric distances at 5-minute intervals to compute variance ratios. Every question demands tool use; the model cannot shortcut to stored knowledge because the answers depend on current planetary positions.
+
+Table 5: Computational astronomy benchmark (10 questions).
+
+Reflect
+nReflect
+Orch.
+ReAct
+
+Mean latency
+30.7 s
+25.2 s
+45.5 s
+43.7 s
+
+Completion
+10/10
+10/10
+10/10
+8/10
+
+Mean nodes/tools
+6.8
+6.9
+23.5
+10.6
+
+Mean LLM calls
+4.0
+3.8
+4.5
+8.6
+
+Mean verdict (bytes)
+2,081
+1,676
+799
+1,264
+
+All three DAG modes complete every question. ReAct fails on two (empty verdict after exhausting 15 LLM turns; context window exceeded on accumulated tool results). nReflect is fastest (25.2s) with the fewest LLM calls (3.8); Reflect produces the most detailed output (2,081 bytes mean). Orchestrator executes the most tool operations (23.5 nodes) but does not proportionally improve output quality on these computational queries.
+
+Qualitative comparison. The following query was presented to both DAG Reflect and ReAct through the same system:
+
+“Compute the position of each planet at 10-minute intervals over the next 2 hours, then identify which planet exhibits the largest change in angular velocity over that period.”
+
+DAG Reflect — 38.5s, 8 nodes, 3,374 bytes. Produced a structured analysis: (1) defined the methodology (13 sample points per planet using JPL Horizons), (2) computed position vectors and angular velocities between consecutive intervals, (3) identified the planet with maximum angular velocity change, (4) presented results in a summary table. The planner fired parallel searches for planetary ephemeris data and a bash computation node; the reflector verified evidence completeness before concluding.
+
+ReAct — 60s (dead), 15 turns, 0 bytes. Attempted to install the ephem Python library, failed, then tried astropy, failed, then attempted manual computation across 15 sequential LLM turns. The cumulative context from 15 turns of tool results exceeded the model’s effective processing capacity. The final turn produced an empty response. Total tool calls: 15. Verdict: empty.
+
+This pattern recurs across the benchmark: ReAct’s sequential accumulation of tool results creates a context growth problem that manifests as degraded output quality or complete failure on multi-step computational queries. DAG’s bounded context windows (each reflection sees only the current wave’s evidence, not all prior turns) avoid this failure mode structurally.
+
+7.8 GAIA Benchmark (127 Text-Only Questions)
+
+We evaluate on the GAIA validation set (Mialon et al., 2023); a benchmark of 466 real-world questions requiring multi-step tool use, web research, and reasoning. We report on the 127 text-only questions (excluding 38 requiring multimodal input). Both DAG Reflect and ReAct run through the same system with GPT-4.1 as the reasoning model, GPT-4.1-mini as the executor model (DAG only), and identical tools and safety gates.
+
+Table 6: GAIA benchmark results (127 text-only questions).
+
+GPT-4 + plugins
+DAG Reflect
+ReAct
+
+Level 1 (42)
+47%
+21.4%
+19.0%
+
+Level 2 (66)
+15%
+10.6%
+12.1%
+
+Level 3 (19)
+5%
+21.1%
+0.0%
+
+Average
+15%
+15.7%
+12.6%
+
+Avg latency
+ s
+10.7 s
+17.0 s
+
+Errors
+—
+1
+5
+
+DAG Reflect achieves higher overall accuracy (15.7% vs 12.6%) at lower latency (10.7s vs 17.0s) with fewer errors (1 vs 5). The most striking difference is Level 3 (the hardest questions requiring multi-hop reasoning): DAG scores 21.1% while ReAct scores 0%. This mirrors the pattern observed in the computational astronomy benchmark; on queries requiring sustained multi-step research, ReAct’s cumulative context degrades output quality while DAG’s bounded context and reflection-driven persistence maintain effectiveness.
+
+ReAct edges DAG on Level 2 (12.1% vs 10.6%), where many questions require a single focused search rather than parallel data gathering. Both systems underperform the published GPT-4 + plugins baseline on Levels 1 and 2; the published baseline used a different model (GPT-4) with purpose-built plugins, while our evaluation uses general-purpose tools (web search, URL fetch, bash) through a production system with safety gating overhead. The accuracy ceiling reflects the underlying model’s reasoning capability and the specificity of the tool set, not the execution architecture.
+
+We run this evaluation live against our system without altering the execution process. GAIA expects bare factoid values (a name, a number, a date); the system produces reasoned responses with context and working. Exact-match scoring penalises this; many “incorrect” answers contain the correct value embedded in a longer response. The execution layer completes all 127 questions for DAG (1 error) and 122 for ReAct (5 errors); failures are predominantly format mismatches, not architectural faults.
+
+8 Conclusions
+
+We presented a strict execution abstraction that separates the LLM from tool dispatch, safety enforcement, and result synthesis. Three findings stand out.
+
+Speed through parallelism. ReAct with parallel function calling is faster on simple queries (3.6s vs 3.9s) due to the absence of planner overhead. As complexity increases, the DAG architecture overtakes: nReflect outperforms ReAct at 9.5s vs 28.9s on complex queries and 25.2s vs 43.7s on computational queries requiring real-time astronomical data, both through the same system with identical tools and safety gates. The advantage comes from executing independent tool calls in parallel dependency waves with bounded context per LLM call, while ReAct accumulates results across sequential reasoning turns. All three DAG modes complete every computational query; ReAct fails on 2 of 10 due to context exhaustion.
+
+Safety at no cost. The four-variable execution gate (scope, intent, impact, clearance) enforces tool authorisation deterministically in compiled code on every tool call. Gate evaluation adds sub-millisecond overhead. Because the gate runs after the planner and its decisions do not feed back into the model’s context, there is no adaptive attack surface; the model cannot probe or learn the policy boundary. Delegated clearance extends this to domain-specific resource authorisation via external HTTP endpoints without any domain logic in the agent.
+
+Output quality. On a 10-question computational astronomy benchmark requiring real-time data, multi-step computation, and cross-source synthesis, DAG Reflect produced a mean verdict of 2,081 bytes per query with full intermediate calculations, source citations, and structured tables. On the most demanding query (SHA-256 hash-weighted radial velocity averages), the system produced 6,153 bytes of step-by-step computation. ReAct through the same system produced shorter verdicts (mean 1,264 bytes) and failed entirely on 2 of 10 queries. The quality difference is structural: bounded context windows prevent the cumulative degradation that accompanies large multi-turn conversations, and the reflection loop drives tasks to completion rather than allowing the model to conclude prematurely.
+
+Limitations. The planner is only as good as its prompt and the model’s decomposition ability. If the plan under-specifies the task (too few steps) or over-specifies it (unnecessary tool calls), latency increases. In practice we did not observe degraded output quality even when the planner under-planned, because the reflection loop compensated by identifying gaps and launching targeted follow-up waves; however, increased latency was observed in these cases. A dual-model architecture (stronger reasoning model for planning, cheaper executor model for reflections) reduces cost and latency but introduces a quality ceiling on reflection and aggregation stages. Dynamic impact classification for general-purpose tools (e.g. shell commands) relies on pattern matching, which provides granular control when a tool is permitted at elevated impact levels; the default policy blocks tools that exceed the intent ceiling regardless of pattern matching. Finally, the DAG architecture incurs a fixed planning overhead that makes it slower than ReAct on simple queries requiring few or no tool calls; an adaptive mechanism that bypasses the planner for straightforward queries would eliminate this penalty.
+
+8.1 Future Work
+
+•
+
+Adaptive planning bypass. ReAct outperforms on simple queries because it skips planning entirely and leverages the model’s parametric knowledge to answer directly. The DAG architecture currently pays a fixed planner cost on every query regardless of complexity. An adaptive mechanism that detects simple queries and bypasses the planner (routing directly to the model as in ReAct) would eliminate this overhead where it is not needed, combining the low-latency response of conversational dispatch with the structural guarantees of graph execution for complex tasks.
+
+•
+
+Procedural memory. Agent self-modification of its own prompts and planning strategies based on accumulated experience, following the procedural memory framework from cognitive architectures. This would enable the planner to improve its decomposition quality over time without retraining the underlying model.
+
+•
+
+Semantic skill routing. Embedding-based tool selection to reduce planner context when the tool registry is large, presenting only semantically relevant tools for each query. This addresses a scaling limitation: as the number of available tools grows, the planner’s context becomes dominated by tool descriptions rather than task reasoning.
+
+•
+
+Cross-agent coordination. Extending the DAG model to distributed multi-agent execution via gossip-based peer-to-peer mesh networking, where each agent maintains its own execution gate and clearance authority. The four-variable gate structure naturally extends to federated settings where different agents operate under different scope and clearance constraints.
+
+Acknowledgments
+
+The authors thank Vjaceslavs Klimovs for valuable discussions and feedback.
+
+Impact Statement
+
+This paper presents work whose goal is to advance the field of Agentic AI. The system described enforces structural safety constraints on autonomous agent tool execution, which we believe reduces risk relative to existing conversational safety mechanisms. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here beyond noting that the safety properties described depend on correct implementation of the execution gate and are not formally verified.
+
+Cost estimates assume Sonnet-class pricing ($3/M input, $15/M output) and local tool execution ( ms per call). Benchmark: 40 queries 4 modes (3 DAG + 1 ReAct), single pass, no selection or post-hoc filtering.
+
+References
+
+AutoGPT Project (2023)
+AutoGPT Project
+
+Auto-gpt: an autonomous gpt-4 agent.
+
+Note: https://github.com/Significant-Gravitas/Auto-GPTAccessed: 2026-03-31
+
+Cited by: §2.
+
+Biju (2025)
+S. M. Biju
+
+Implementing multi-agent systems using langgraph: a comprehensive study.
+
+In ICRAARI,
+
+Cited by: §1.
+
+Bogavelli et al. (2026)
+T. Bogavelli, R. Sharma, and H. Subramani
+
+AgentArch: a comprehensive benchmark to evaluate agent architectures in enterprise.
+
+arXiv preprint arXiv:2509.10769.
+
+External Links: 2509.10769,
+Link
+
+Cited by: §1,
+§2.
+
+CrewAI (2024)
+CrewAI
+
+CrewAI: framework for orchestrating role-playing autonomous ai agents.
+
+Note: https://github.com/crewAIInc/crewAIAccessed: 2026-03-31
+
+Cited by: §1,
+§2.
+
+Debenedetti et al. (2025)
+E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tramèr
+
+Defeating prompt injections by design.
+
+arXiv preprint arXiv:2503.18813.
+
+External Links: 2503.18813,
+Link
+
+Cited by: §2.
+
+Kim et al. (2024)
+S. Kim, S. Moon, R. Tabrizi, N. Lee, M. W. Mahoney, K. Keutzer, and A. Gholami
+
+An LLM compiler for parallel function calling.
+
+In Proceedings of the 41st International Conference on Machine Learning, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 235, pp. 24370–24391.
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+LangChain Inc. (2024)
+LangChain Inc.
+
+LangGraph.
+
+Note: https://github.com/langchain-ai/langgraph
+
+Cited by: §1.
+
+Mialon et al. (2023)
+G. Mialon, C. Fourrier, C. Swift, T. Wolf, Y. LeCun, and T. Scialom
+
+GAIA: a benchmark for general AI assistants.
+
+arXiv preprint arXiv:2311.12983.
+
+Cited by: §7.8.
+
+Nasr et al. (2025)
+M. Nasr, N. Carlini, C. Sitawarin, S. V. Schulhoff, J. Hayes, M. Ilie, J. Pluto, S. Song, H. Chaudhari, I. Shumailov, A. Thakurta, K. Y. Xiao, A. Terzis, and F. Tramèr
+
+The attacker moves second: stronger adaptive attacks bypass defenses against LLM jailbreaks and prompt injections.
+
+arXiv preprint arXiv:2510.09023.
+
+External Links: 2510.09023,
+Link
+
+Cited by: §1,
+§2,
+§6.2.
+
+Shi et al. (2025)
+T. Shi, J. He, Z. Wang, H. Li, L. Wu, W. Guo, and D. Song
+
+Progent: programmable privilege control for LLM agents.
+
+arXiv preprint arXiv:2504.11703.
+
+External Links: 2504.11703,
+Link
+
+Cited by: §2.
+
+Yao et al. (2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+
+ReAct: synergizing reasoning and acting in language models.
+
+In International Conference on Learning Representations (ICLR),
+
+Cited by: §1,
+§2.
+
+Yohei Nakajima (2023)
+Yohei Nakajima
+
+BabyAGI: task-driven autonomous agent.
+
+Note: https://github.com/yoheinakajima/babyagiAccessed: 2026-03-31
+
+Cited by: §2.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

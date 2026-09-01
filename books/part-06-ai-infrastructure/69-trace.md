@@ -69,6 +69,14 @@ HTTP headers 可传播 trace context；queue、batch、PD handoff 和 tool workf
 
 可以让 runtime iteration span 通过 links 关联多个 request spans，同时把 request-level queue/phase durations记录在各自 span。Links 表达相关性，不应伪装成唯一父子因果。
 
+### 跨节点时间戳不是天然的因果顺序
+
+单机或时钟误差远小于阶段间隔时，按 wall-clock timestamp 排序最简单，也足以定位大多数延迟问题。流水线跨越多个节点后，系统可以在吞吐与输出都正常的同时，让 clock skew 把后发生的事件排到前面；此时 trace 仍“看起来完整”，因果解释却已经错误。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-21361:start -->
+因此 span 不能只保存时间值，还要保存 clock domain、同步方式、误差/新鲜度界限以及可验证的依赖边。能够携带 request sequence、message ID、queue handoff 或逻辑时钟时，应优先用这些关系重建 happens-before；无法证明顺序的事件要明确标为不可排序，而不是强制拼成时间线。这样把可观测状态从“一个 timestamp”扩展为“时间读数 + 因果约束”，代价是更多 metadata、同步开销与不完全排序。受控多节点实验只显示作者流水线在数毫秒级偏移下出现因果违例，不提供生产通用阈值；在单机、已验证同步或只关心聚合吞吐时，普通 timestamp trace 仍是合理旧路径。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-21361:end -->
+
 ## Sampling 的偏差
 
 Head sampling 在请求开始时决定，成本低，却可能错过后来变慢或出错的 trace；tail sampling 在看到完整结果后选择，更能保留错误和 tail，但 collector 需要暂存更多状态。
@@ -103,6 +111,16 @@ Span attributes 同样不能默认包含 prompt/context/output。Trace backend �
 Instrumentation overhead 应被度量：serialization、context propagation、collector queue、export failures 与 storage cost。Trace 系统故障不应阻塞普通请求，但高风险 action 的 audit 要另有可靠路径。
 
 ## 从 Linear Trace 到 Root-cause Graph
+
+### 从单一 Monitor Score 到多维、分权的运行证据
+
+单一安全分数在 observer 可信、风险维度相关且只需粗粒度 gate 时便于部署；monitor 与 Agent 同源、可能共享盲点甚至串谋后，一个 scalar 会隐藏“目标一致但违反约束”或“推理看似连贯但 action trace 不一致”的结构。Trace owner 应保留 goal alignment、constraint adherence、reasoning coherence、safety awareness 与 action-trace consistency 等分维 observation，以及每个 observer 的身份和分歧。
+
+这些 signal 可以由不同模型与 deterministic heuristic 分权产生，最终 gate 只组合有 provenance 的证据。分权降低单一 observer 控制全部判断的风险，却增加调用、阈值校准和相关失败；维度也不是安全真值。观察者意见不一致、输入超出校准域或高副作用 action 到来时，应回退最小权限、隔离执行和人工升级。
+
+该结构为后续 root-cause graph 提供可追溯 observation，而不是直接宣称因果。作者 519 样本协议支持其 attack/honest separation 与 separation-of-duties 结果，不证明开放生产环境的安全率。
+
+<!-- source-family:SF-2026-ARXIV-2604-03968 -->
 
 分布式请求与 Agent workflow 往往包含并行 branch、共享 tool、retry 和异步回调。按时间读取完整 trace 能恢复
 “发生过什么”，却容易把靠近失败的 span 误认成原因；只让 LLM 总结所有日志又会把噪声、Prompt 长度和不可
@@ -144,6 +162,24 @@ raw trace search
 写入诊断状态。Deviation 只定位异常，不证明因果；新版本产生的合法路径也可能被旧 manifold 误报。因而结果
 只能缩小调查范围，必须回到日志、artifact、复现和 regression test。低频新故障或 judge 无法校准时，规则与
 人工 full-trace review 仍是正确基线。
+
+### Trace Optimization 必须把成本与规则决策写入同一证据对象
+
+完整保存原始 trajectory 在规则少、成本低或审计风险高时最可靠；当 Agent run 变长后，仅凭最终成功与总成本去删除步骤，会混淆“补回缺失依赖的必要 repair”和“对结果无影响的昂贵绕路”。一种受限演进是把 child trace、逐步 billed cost 与 rule type 固化为同一 TraceCard，再让 preserve、prune 与 repair rule 对这个版本化对象提出变换：
+
+```text
+immutable parent trajectory
+-> child trace + per-step cost + rule type
+-> preserve | prune | repair proposal
+-> replayed task outcome and cost receipt
+-> accept rule revision or retain parent
+```
+
+这让成本优化拥有可回滚 lineage，但 rule 命中不是因果证明。现有实验只有 30+30 tasks、单一 model/seed；在 17 个 baseline-success held-out tasks 中，只有 2 个匹配两条 learned prune rules，preserve rules 还出现 3 个跨 benchmark 回归，部分 heuristics 没有得到验证。没有稳定 child trace 或 cost attribution 时，不应自动蒸馏、剪枝或把失败归因给某一步，而应回退原 trajectory 与人工 rule review。低成本 preserve path 与 cost-aware prune 因此是并存分支，不是后者对前者的替代。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23853:start -->
+TraceCard 只有在变换前后同时保存行为与成本 receipt 时，才足以承载可审计的 trajectory optimization。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23853:end -->
 
 ### 条件化机制分支与共存边界
 
@@ -204,6 +240,12 @@ Trace 从请求 spans 演进到跨 model、tool、workflow 和 environment 的�
 Trace 让请求经过多个控制面和数据面时仍保留 causal context。好的 tracing 记录关键边界与决策，而不是最大化 span 数量。下一章将可观测事实转换为成本归因与优化约束。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-21361`（Status: Experimental）：exact-v1 支持“功能与吞吐正常而 timestamp 因果顺序已错误”的受控多节点案例；作者观察到的具体 skew 转折绑定其 pipeline、同步与 instrumentation，不是生产告警常数。https://arxiv.org/abs/2604.21361v1
+
+- `SF-2026-ARXIV-2604-23853`（Status: Experimental）：exact-v1 支持 child trace、逐步成本与 rule type 组成 TraceCard，并在作者 30+30 task contract 中评估 preserve/prune/repair；不证明启发式规则具有跨模型、跨 benchmark 的稳定因果有效性。https://arxiv.org/abs/2604.23853v1
+
+- **TraceGuard（arXiv:2604.03968v1；Status: Experimental）**：exact-v1 支持多维 observer evidence 与 separation-of-duties 在 519 样本设置中的结果；不证明 observer 独立、攻击覆盖完备或生产安全率。https://arxiv.org/abs/2604.03968v1
 
 - `SF-2026-ARXIV-2606-22698` — primary `arXiv:2606.22698v1`；Method=`arXiv:2606.22698v1 §3 Approach`；Evaluation=`arXiv:2606.22698v1 §4 Experiments; §4.3 Evaluation`；Non-proof=`arXiv:2606.22698v1 §7 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

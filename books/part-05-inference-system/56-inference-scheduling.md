@@ -256,6 +256,16 @@ Routing 选择已有 endpoints，考虑 queue、KV locality、adapter 与 topolo
 
 把三者混成“调度”会导致错误控制。例如 EPP 把请求路由到某 Pod，不能替代 Kubernetes GPU scheduler 为 Pod 找节点；engine scheduler 让 token 进入下一 iteration，也不能创建新 GPU capacity。
 
+### 低带宽拓扑要联合预算 Hops、Bytes 与 Steps
+
+单数据中心、高带宽互联中，固定 pipeline placement 与局部通信优化通常足够，稳定拓扑也让故障和 tail latency 更容易解释。GPU 分散在低带宽、跨地域节点后，只看空闲显存或单跳带宽会失真：少放一个 transformer block 可能增加每个 decode step 的跨节点 hops；为了减少 hops 而 offload KV，又会引入 host-memory traffic；lossless compression 改变每跳 bytes，speculative decoding 则可能改变完成同样输出所需的串行 decode steps。
+
+因此 placement planner 应在同一 GPU-memory constraint 下联合选择 block consolidation、KV residency/offload、pipeline hops、micro-batch overlap、lossless communication representation 与 speculative-work budget。Planner 只提出 versioned plan；cache owner 确认 KV location，communicator 确认 payload/epoch，runtime 才在 plan boundary commit，autoscaler仍负责未来 capacity。第 48 章仍拥有 draft、verify、acceptance 与 committed-token correctness；本章只把已定义的 speculative work 纳入低带宽全局计划，不能把这些 authority 合并成一个吞吐分数。
+
+联合优化可以在低带宽环境减少通信暴露，却把 host CPU memory、压缩/解压、dynamic-program cost、拓扑漂移和故障恢复带进 serving contract。高带宽同构集群、KV offload 反而更慢、压缩收益不足或 topology/SLO 无法准确建模时，固定 placement 与普通 pipeline 仍更可验证。论文结果只绑定其 internet-scale testbed、模型和公开配置，不证明通用去中心化服务优势。
+
+<!-- source-family:SF-2026-ARXIV-2604-21072 -->
+
 ### 从经验 confidence threshold 到有条件的 Risk Contract
 
 多层模型 cascade 的 routing 可以从经验 confidence threshold 演进为带假设的 risk contract。每个 tier 用 held-out calibration 把 response frequency 或 logprob 转成 conformal prediction set；只有集合足够小才 commit，否则升级到更强模型。这样把误差预算与预计 cascade cost 放进同一调度状态。
@@ -849,6 +859,8 @@ Part V 最终把 inference 还原为一个受状态与约束驱动的调度系�
 推理调度负责在这些机制之上兑现 SLO，而不是让某个局部指标最大化。下一部分进入 AI Infrastructure，继续讨论模型、服务和 GPU capability 怎样被平台统一治理。
 
 ## Review notes
+
+- **BloomBee（arXiv:2604.21072v1；Status: Experimental）**：支持在 GPU-memory constraint 下联合优化 inter-node hops、per-hop volume 与 decode execution 的 communication-centric design。其结果限于作者低带宽环境、模型与系统配置，不证明跨地域生产 SLO、故障恢复或任意拓扑下的普遍收益。https://arxiv.org/abs/2604.21072v1
 
 - Larch（arXiv:2606.07923v1；Status: Experimental）：用于把 online selectivity 与逐行 semantic-filter ordering 纳入 planner identity；证据限于作者 3 real + 3 synthetic workloads，不证明生产 latency/SLO 或通用 cost model。https://arxiv.org/html/2606.07923v1
 

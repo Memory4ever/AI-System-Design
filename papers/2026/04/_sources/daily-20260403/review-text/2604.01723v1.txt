@@ -1,0 +1,1119 @@
+Causal Scene Narration with Runtime Safety Supervisionfor Vision-Language-Action Driving
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 VLA Models and Text Structure for Driving
+
+2.2 Runtime Safety for Autonomous Driving
+
+2.3 Training-Time Safety Alignment
+
+3 Theoretical Foundations
+
+3.1 Text Structure as a Performance Bottleneck
+
+3.2 Three Principles of CSN
+
+3.3 Empirical Decomposition of Text Utility
+
+3.4 Taxonomy of Text Structure Approaches
+
+4 Methodology
+
+4.1 System Architecture Overview
+
+4.2 Causal Scene Narration Pipeline
+
+4.2.1 Environmental Data Extraction
+
+4.2.2 Causal Narration Generation
+
+4.3 Runtime Safety Supervision
+
+4.3.1 Simplex Architecture for VLA Driving
+
+4.3.2 Safety Specifications
+
+4.3.3 Fallback Policy and Recovery
+
+4.4 Training-Time Safety Alignment (Experimental Condition)
+
+4.4.1 Preference Data
+
+4.4.2 Objective Function
+
+4.4.3 Training Configuration
+
+5 Experiments
+
+5.1 Experimental Setup
+
+5.2 Main Results
+
+5.2.1 Preference Training Generalization
+
+5.2.2 CSN Robustness Across Configurations
+
+5.2.3 Safety Monitor Comparison
+
+5.2.4 Component Interaction Analysis
+
+5.3 Decomposition Results
+
+5.4 Discussion
+
+5.4.1 Why Does Causal Structure Help?
+
+5.4.2 Privileged Information and Deployment Considerations
+
+5.4.3 Choice of Evaluation Platform
+
+5.4.4 Robustness Across Weight Configurations
+
+5.4.5 Benchmark Difficulty and Weather Effects
+
+6 Conclusion
+
+Ethics Statement.
+
+Reproducibility Statement.
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.01723v1 [cs.RO] 02 Apr 2026
+
+Causal Scene Narration with Runtime Safety Supervision
+
+for Vision-Language-Action Driving
+
+Yun Li
+
+  
+Yidu Zhang
+
+  
+Simon Thompson
+
+Affiliation: TIER IV, Inc.*Equal contribution
+
+  
+Ehsan Javanmardi
+
+Affiliation: Graduate School of Information Science and Technology, The University of Tokyo
+
+  
+Manabu Tsukada
+
+Affiliation: Graduate School of Information Science and Technology, The University of Tokyo
+
+Abstract
+
+Vision-Language-Action (VLA) models for autonomous driving must integrate diverse textual inputs, including navigation commands, hazard warnings, and traffic state descriptions, yet current systems often present these as disconnected fragments, forcing the model to discover on its own which environmental constraints are relevant to the current maneuver. We introduce Causal Scene Narration (CSN), which restructures VLA text inputs through intent-constraint alignment, quantitative grounding, and structured separation, at inference time with zero GPU cost. We complement CSN with Simplex-based runtime safety supervision and training-time alignment via Plackett-Luce DPO with negative log-likelihood (NLL) regularization. A multi-town closed-loop CARLA evaluation shows that CSN improves Driving Score by +31.1% on original LMDrive and +24.5% on the preference-aligned variant. A controlled ablation reveals that causal structure accounts for 39.1% of this gain, with the remainder attributable to information content alone. A perception noise ablation confirms that CSN’s benefit is robust to realistic sensing errors. Semantic safety supervision improves Infraction Score, while reactive Time-To-Collision monitoring degrades performance, demonstrating that intent-aware monitoring is needed for VLA systems.
+
+1 Introduction
+
+Figure 1: Three-stage framework overview. CSN (Stage 2) restructures driving-environment information into structured text, while the runtime safety supervisor (Stage 3) monitors VLA waypoints against . Both modules operate on CPU.
+
+Vision-Language-Action (VLA) models combine visual perception with language-conditioned action prediction for end-to-end autonomous driving (Shao et al., 2024; Tian et al., 2024; Mao et al., 2023). In these systems, camera images and LiDAR point clouds are encoded by vision backbones, while natural language provides navigation goals and scene context. Recent results show that text input quality affects driving performance. TLS-Assist (Schmidt et al., 2025) improved LMDrive’s driving score by 14.1% simply by injecting structured traffic light messages, and GraphPilot (Schmidt et al., 2026) achieved 15.6% through scene graph serialization, both without any retraining.
+
+These results are typically attributed to the text carrying more information. We argue instead that the operative variable is causal structure: whether the text explicitly links what the agent intends to do with what the environment requires it to consider. In causal inference (Pearl, 2009), observing that two variables co-vary does not tell us whether intervening on one will change the other. Similarly, presenting “Turn left” and “Pedestrian ahead” as co-occurring fragments does not tell the model whether the pedestrian is relevant to the turn. Current VLA systems have three related weaknesses.
+
+First, existing systems generate navigation commands and hazard notices as causally unrelated fragments. LMDrive (Shao et al., 2024), for example, presents ‘Turn left’ and ‘Pedestrians ahead’ separately. The model must independently discover that the pedestrian is relevant because the left turn will cross its trajectory. A human instructor would instead say: ‘Turn left, but yield to the pedestrian at 12 m.’ This causally structured utterance links intent to constraint, which is the same structure that DriveVLM (Tian et al., 2024), DriveLM (Sima et al., 2024), and SteerVLA (Gao et al., 2026) each provide through different mechanisms.
+
+Second, VLA models offer no runtime safety guarantees. They operate as open-loop predictors at each timestep, and once an unsafe action is predicted, there is no mechanism to intercept and correct it before execution. Training-time alignment alone cannot guarantee safety across the full distribution of deployment scenarios, particularly in rare or adversarial situations that are underrepresented in the training data. The Simplex architecture (Sha, 2001), applied in safety-critical systems such as the Boeing 777 flight controller, provides a well-studied solution: use a simple, verifiable controller to guard against failures of a complex one.
+
+Third, preference-aligned models suffer from distribution shift. Preference optimization methods such as DPO (Rafailov et al., 2023) and Multi-PrefDrive (Li et al., 2025) improve in-distribution driving but can overfit to the training environment, hurting generalization to unseen towns. Because inference-time text enrichment leaves model weights unchanged, it sidesteps this failure mode and can complement or even replace training-time alignment.
+
+We address these limitations at three stages of the VLA pipeline. At inference time, Causal Scene Narration (CSN, §4.2) restructures VLA text inputs around intent-constraint causal alignment, quantitative physical grounding, and structured information separation. The resulting text mirrors the perception-prediction-planning reasoning chain rather than presenting disconnected observations, and the entire pipeline runs on CPU with no additional GPU memory. Also at inference time, a Runtime Safety Supervisor (§4.3) monitors VLA outputs against classical planner trajectories and intervenes when potentially unsafe actions are detected, providing safety guarantees that training-time alignment alone cannot offer. At training time, PL-DPO-NLL (§4.4) combines Plackett-Luce multi-preference ranking with NLL regularization for safety alignment, though our multi-town evaluation reveals that this adaptation introduces distribution shift, which motivates CSN as an alternative that does not modify model weights.
+
+We test this hypothesis through an empirical decomposition (§3.3) showing that when intent and constraints appear as isolated text fragments, the model must discover their relationship through implicit cross-attention, whereas explicitly encoding this relationship via causal connectives lets the model condition on richer structure without any weight change. Our ablation on both weight configurations confirms that 39.1% of CSN’s improvement on original LMDrive stems from causal structure rather than information quantity alone, and that this ratio decreases on the preference-aligned variant where the model has already internalized some causal reasoning through training.
+
+Our contributions are:
+
+1.
+
+Causal Scene Narration framework: We identify the absence of intent-constraint links as a key limitation of VLA text inputs, organize existing approaches in a taxonomy (L0–L3) by their level of structured linking, and propose CSN, a zero-VRAM text enrichment pipeline built on intent-constraint alignment, quantitative physical grounding, and structured information separation, justified by a controlled ablation.
+
+2.
+
+Multi-town evaluation: A ten-configuration ablation (16 routes, 8 towns, repetitions, 95% bootstrap confidence intervals [CIs]) shows that CSN benefits both tested weight configurations with overlapping CIs, that semantic safety supervision outperforms reactive TTC on both configurations, and that causal structure accounts for 39.1% of CSN’s gain on original LMDrive but only 13.5% on the preference-aligned variant, revealing an interaction between explicit text structure and learned causal reasoning.
+
+2 Related Work
+
+2.1 VLA Models and Text Structure for Driving
+
+End-to-end autonomous driving increasingly uses VLA models for closed-loop control. GPT-Driver (Mao et al., 2023) reformulated motion planning as language modeling, and showed that autoregressive language models can generate plausible driving trajectories from text-encoded scene states. DriveVLM (Tian et al., 2024) introduced a three-stage Chain-of-Thought (CoT) pipeline consisting of scene description, scene analysis, and hierarchical planning, showing that when text mirrors the causal reasoning process, long-tail scenario handling improves substantially. DriveLM (Sima et al., 2024) employed graph-structured visual question answering to create logical dependency chains between perception, prediction, and planning nodes, explicitly encoding causal relationships.
+
+LMDrive (Shao et al., 2024) achieves closed-loop control via Q-Former alignment of visual tokens with text, using LLaVA-v1.5 as backbone. Its template-based instruction planner generates navigation commands and hazard notices as causally disconnected fragments, representing the minimal end of the text structure spectrum. SteerVLA (Gao et al., 2026) showed that replacing sparse routing commands with fine-grained meta-actions improved driving score by 4.77 points on Bench2Drive, with meta-actions carrying implicit causal structure.
+
+Among text-enrichment approaches, those that outperform LMDrive consistently provide text with richer causal structure, whether through CoT decomposition, graph-structured QA, multi-channel separation, or fine-grained meta-actions.
+
+Several studies demonstrate that text enrichment works even without retraining. TLS-Assist (Schmidt et al., 2025) achieved +14.1% DS on LMDrive by injecting structured traffic light messages without retraining, showing that LMDrive’s pre-trained LLaMA backbone can use structured text never seen during fine-tuning. GraphPilot (Schmidt et al., 2026) achieved +15.6% through scene graph serialization, where relational structure (‘pedestrian is-crossing ego-lane conflicts-with intended left turn’) supports the causal structure hypothesis. SimLingo (Renz et al., 2025) found no improvement from post-hoc CoT narration. One possible explanation is that their CoT narrated intended actions without connecting environmental observations to action decisions, though other factors may also contribute.
+
+2.2 Runtime Safety for Autonomous Driving
+
+Existing runtime safety approaches occupy two categories. Formal frameworks include Responsibility-Sensitive Safety (RSS) (Shalev-Shwartz et al., 2017), which defines safe distance envelopes and triggers proper responses (braking) when violated; Control Barrier Functions (CBFs) (Ames et al., 2019), which enforce forward invariance of safe sets; and Simplex switching (Sha, 2001; Phan et al., 2020), where a verified safety controller runs alongside an unverified high-performance controller. Runtime verification methods include STL monitoring (Desai et al., 2017) and shield synthesis (Alshiekh et al., 2018), which check controller behavior against temporal logic specifications.
+
+All these methods operate on physical state (distances, velocities) and are not designed to detect semantic-level VLA failures such as direction misinterpretation or hallucinated scene elements. Leading E2E driving methods lack explicit runtime safety layers. UniAD (Hu et al., 2023) jointly optimizes perception through planning but errors propagate unchecked. VAD (Jiang et al., 2023) introduces planning constraints that are training-time loss functions not enforced at inference. Chen et al. (Chen et al., 2022) and Jaeger et al. (Jaeger et al., 2023) document that waypoint predictions fail specifically at junctions due to a “target point shortcut” where models steer toward the nearest GPS waypoint rather than following road geometry. Our semantic monitor addresses one instance of this failure mode, specifically direction inconsistency during junction approach.
+
+Our runtime supervisor instantiates the Simplex architecture (Sha, 2001) with a safety envelope reformulated for the semantic domain (§4.3), targeting direction consistency and liveness rather than physical distance maintenance.
+
+2.3 Training-Time Safety Alignment
+
+DPO (Rafailov et al., 2023) and its variants optimize policies on preference data but face probability collapse, where chosen action likelihoods decrease during optimization (Pang et al., 2024; Razin et al., 2024). Multi-PrefDrive (Li et al., 2025) applied multi-preference tuning to LLM-based autonomous driving, demonstrating improved in-distribution performance through Plackett-Luce ranking (Plackett, 1975) over multiple candidate actions. NLL regularization provides an explicit likelihood floor against probability collapse. We combine both in our PL-DPO-NLL objective (§4.4).
+
+3 Theoretical Foundations
+
+3.1 Text Structure as a Performance Bottleneck
+
+In structural causal models (Pearl, 2009), the presence or absence of a directed arrow between two variables encodes a causal assumption. An arrow from to asserts that influences , while a missing arrow asserts independence. The same logic applies to VLA text inputs. Let denote the navigation intent (e.g., “turn left”) and the environmental constraints (e.g., pedestrians, vehicles, traffic lights). The correct driving action depends not on and separately, but on their causal interaction, i.e., which constraints are relevant given the current intent. A left-turn intent makes a crossing pedestrian safety-critical; the same pedestrian is irrelevant during straight driving.
+
+Template systems present and as independent text fragments, with no link connecting them. Conceptually, this is equivalent to omitting the edge from a dependency graph: the text encodes both variables but not their relationship. The LLM must recover the missing dependency internally through multi-layer cross-attention (Vaswani et al., 2017), without any explicit signal indicating which constraints are relevant to the current intent. Prior work supports the broader claim that text acts as a reasoning scaffold. LMDrive’s own ablation on the LangAuto benchmark (Shao et al., 2024) showed that adding notice instructions significantly reduces collisions, even though the visual information was always available. TLS-Assist (Schmidt et al., 2025) showed the same pattern: the model could always see traffic lights in the image, but without explicit textual mention, those visual features were insufficiently weighted. These results suggest that text directs the model’s attention (Wei et al., 2022) rather than just adding information. Whether causal structure within the text provides additional benefit beyond information content is the specific question our CSN vs. Flat Text ablation addresses (§5.2).
+
+CSN restores the missing link by explicitly encoding which constraints are relevant given the current intent, using linguistic causal connectives to express this conditional relationship, as illustrated in Fig. 2. With constraints, the model must evaluate potential pairings to discover which ones matter for the current intent, whereas CSN pre-selects the relevant ones.
+
+Figure 2: The text structure bottleneck. (a) Template text presents intent and constraints as independent fragments with no link. (b) CSN restores the causal link via explicit connectives (BUT, BEFORE).
+
+3.2 Three Principles of CSN
+
+CSN transforms standard template text through three operations, each targeting a specific weakness of flat VLA text inputs. Fig. 3 illustrates the full pipeline on a left-turn scenario.
+
+Figure 3: CSN pipeline illustrated on a left-turn scenario. Each principle progressively transforms flat template text into quantitative, structured, and causally linked input.
+
+(1) Quantitative physical grounding. Template terms like ‘ahead’ and ‘watch out’ carry no physical dimensions. The LLM cannot tell whether a threat is 10 m or 50 m away, yet this difference dictates the required response (Shalev-Shwartz et al., 2017). CSN replaces all vague qualifiers with exact metric values: distances in meters, speeds in km/h, and timing in seconds. For instance, translating “watch out for pedestrians” into “Pedestrian at 12 m, crossing at 1.5 m/s” allows the model to estimate a 4-second safety window.
+
+(2) Structured information separation. Following findings that structured representation outperforms flat descriptions (Tian et al., 2024; Schmidt et al., 2026), CSN organizes the environment state into a four-part sequence (denoted for ordered concatenation) mirroring the perception-prediction-planning chain:
+
+(1)
+
+Here, encodes ego-state ; describes road topology and weather ; and details traffic signals . These first three components act as independent observation encoders. The final component, , is where the reasoning occurs: it fuses the navigation intent with a filtered set of relevant constraints , selecting which detections matter for the current maneuver.
+
+(3) Intent-constraint causal alignment. The third operation links intent to constraints using explicit causal connectives. Human instructors use connectives to reveal the nature of a conflict (e.g., “Turn left, but…” vs. “Reduce speed because…”). CSN mechanizes this by classifying each relevant constraint into one of three conflict types () and assigning a connective via a selection function :
+
+(2)
+
+To determine , let denote the spatial zone of the constraint , and denote the conflict-side zones for the ego-intent (e.g., ). The classification follows spatial-temporal rules:
+
+•
+
+Blocking (): A stationary obstacle occupies the intended path (). Example: a stopped vehicle directly ahead.
+
+•
+
+Temporal (): A moving actor intersects the intended path (). The conflict has a time dimension and may resolve if the ego yields. Example: a crossing pedestrian during a left turn.
+
+•
+
+Explanatory (): The constraint lies outside the immediate conflict zone () but provides necessary context. Example: a speed limit reduction or a vehicle in an adjacent, non-conflicting lane.
+
+When a constraint satisfies multiple conditions, priority is assigned as blocking temporal explanatory. By embedding these connectives, CSN provides the LLM with explicit causal cues that it is already optimized to process from its natural language pre-training.
+
+3.3 Empirical Decomposition of Text Utility
+
+A central question underlies CSN’s design: does the model benefit simply from receiving more environmental information, or specifically from the causal organization of that information? To answer this, we introduce an intermediate baseline by setting in Eq. (1), so provides the same quantitative facts as CSN (distances, speeds, states) but presents them as disconnected fragments without causal connectives. This yields a clean three-way comparison: template disconnected CSN. The total driving-score gain over the baseline decomposes as:
+
+(3)
+
+Here, captures the gain from quantitative grounding and structured separation alone, while isolates the additional gain from explicitly aligning intent with constraints. A positive demonstrates that VLA performance is bottlenecked not merely by information quantity, but by the model’s ability to infer causal dependencies from flat text. Our ablation (§5.2) finds on original LMDrive, confirming that causal structure contributes independently of information quantity.
+
+3.4 Taxonomy of Text Structure Approaches
+
+We organize existing VLA text approaches by their causal structure level (Table 1), where L denotes the level of causal linking: L0 provides isolated commands with no environmental context; L1 adds structured factual information; L2 introduces entity-level relationships, scene graphs, or fine-grained action decomposition; and L3 explicitly models the causal dependence between navigation intent and environmental constraints.
+
+Table 1: Taxonomy of VLA text approaches by causal structure level. DS Gain values are from each work’s own evaluation setup and are not directly comparable across rows due to differing routes, weather, and CARLA versions.
+
+Approach
+Level
+VRAM
+Retrain
+DS Gain
+Key Mechanism
+
+LMDrive template (Shao et al., 2024)
+L0
+0
+–
+baseline
+Isolated instruction + notice
+
+TLS-Assist (Schmidt et al., 2025)
+L1
+0
+No
++14.1%
+Structured signal messages
+
+GraphPilot (Schmidt et al., 2026)
+L2
+0
+No
++15.6%
+Entity-relationship graph text
+
+SteerVLA (Gao et al., 2026)
+L2
+0
+Yes
++4.77 pts
+Fine-grained meta-actions
+
+DriveVLM CoT (Tian et al., 2024)
+L3
+High
+Yes
+–
+3-stage causal chain
+
+DriveLM graph QA (Sima et al., 2024)
+L3
+High
+Yes
+–
+Graph dependency chains
+
+CSN (ours)
+L3
+0
+No
++31.1%
+Intent-constraint alignment
+
+Since DS Gain values come from different evaluation setups, we do not claim a strict correlation between level and performance. However, all Level 3 approaches share the property of explicitly modeling the conditional dependence between constraints and navigation intent, as formalized in §3.1. To our knowledge, CSN is the first L3 approach to achieve this intent-constraint alignment entirely at inference time without additional VRAM or model retraining.
+
+4 Methodology
+
+4.1 System Architecture Overview
+
+Our framework operates at three stages of the VLA pipeline, as shown in Fig. 1. At training time, PL-DPO-NLL (§4.4) fine-tunes the base LLaMA-7B model on preference data for safety alignment. At inference time, Causal Scene Narration (§4.2) restructures text inputs from driving-environment data, and a runtime safety supervisor (§4.3) monitors VLA outputs via direction-conflict detection. Both inference modules operate at zero GPU cost.
+
+4.2 Causal Scene Narration Pipeline
+
+The CSN pipeline converts driving-environment information into structured natural language following the three principles established in §3.2.
+
+4.2.1 Environmental Data Extraction
+
+We extract four categories of environmental data from CARLA’s Python API, all computed on CPU: (1) dynamic actor states, including all vehicles and pedestrians within 50 m forward and 15 m lateral, with position and velocity in the ego-vehicle frame, and spatial zone classification (ahead/behind/left/right, near/mid/far); (2) traffic infrastructure, including light state, elapsed timing, and speed limits; (3) road topology, including junction proximity, lane availability, and curvature; and (4) environmental conditions, including precipitation, fog density, wetness, and sun altitude. In this work, we use CARLA’s privileged API to isolate and evaluate the impact of text structure independently of perception noise. Replacing this with a vision-based perception stack is discussed in §6.
+
+4.2.2 Causal Narration Generation
+
+Given the navigation command and detected constraints , the algorithm first filters for relevance to via conflict-side analysis, following GraphPilot (Schmidt et al., 2026). Constraints on the conflict side of the intended maneuver (e.g., ahead-left, ahead, and left for a left turn) receive higher priority than those on non-conflict sides. The filtered constraints are then ranked by urgency based on proximity and dynamic state. Finally, each relevant constraint is linked to with a causal connective selected by the function defined in Eq. (2). The entire pipeline runs in 1 ms per frame on CPU.
+
+Table 2 contrasts the three text conditions used in our ablation.
+
+Table 2: Text input comparison for a left-turn scenario. Causal connectives shown in bold.
+
+(a) Template (LMDrive original)
+
+Instruction
+
+Turn left at intersection.
+
+Notice
+
+Watch out for pedestrians.
+
+(b) +Flat Text (same facts, no causal links)
+
+Instruction
+
+Turn left. Speed 25 km/h. Pedestrian 5m right crossing left. Sedan 12m ahead 30 km/h. RED light. Junction 20m.
+
+(c) CSN (causal structure)
+
+Instruction
+
+Turn left at intersection, BUT yield to pedestrian crossing from right at 5m BEFORE executing turn. Maintain distance from sedan ahead.
+
+Notice
+
+[EGO] 25/30 km/h. [ROAD] Junction 20m, R-lane open. [SIGNAL] RED. [ACTORS] Sedan 12m ahead 30 km/h. Ped 5m R, crossing L.
+
+4.3 Runtime Safety Supervision
+
+The Simplex architecture (Sha, 2001) embodies the principle of using simplicity to control complexity: a simple, verifiable controller guards against failures of a complex, high-performance one. We instantiate this principle for VLA driving, with safety properties formulated in Signal Temporal Logic (STL) (Desai et al., 2017) and monitored online via lightweight counter-based evaluation.
+
+4.3.1 Simplex Architecture for VLA Driving
+
+The runtime supervisor monitors whether the VLA’s output remains inside a semantic safety envelope (Shalev-Shwartz et al., 2017) and triggers a controller switch when violations are detected. We define:
+
+(4)
+
+where enforces direction consistency with junction-aware gating and enforces liveness, both formalized below. This is realized through a Simplex switching architecture (Sha, 2001) with three components. In the original Simplex terminology, the High-Performance Controller (HPC) is the complex but hard-to-verify subsystem, while the High-Assurance Controller (HAC) is the simple, conservative fallback. Our instantiation maps these as follows: the Advanced Controller (AC), corresponding to the HPC, is the VLA model (LMDrive + PL-DPO-NLL LoRA), which outputs waypoint trajectories in the ego-vehicle frame. The Baseline Controller (BC), corresponding to the HAC, is CARLA’s Traffic Manager, a rule-based planner with access to the HD map and ground-truth actor positions that provides a reliable fallback when the VLA fails. The Decision Module (DM) evaluates safety envelope membership and switches control authority to the BC when the current state exits the envelope.
+
+The switching logic follows bidirectional Simplex (Phan et al., 2020). Upon exiting , control transfers from AC to BC for a minimum intervention period of 20 steps, approximately 1 s at 20 FPS. The BC maintains control until the semantic safety envelope is re-entered, at which point authority returns to the AC. Unlike classical safety envelopes that monitor physical distances between vehicles, our DM monitors the semantic consistency between the VLA’s predicted actions and the intended navigation command.
+
+4.3.2 Safety Specifications
+
+We define two safety properties targeting the dominant VLA failure modes identified by Chen et al. (Chen et al., 2022) and Jaeger et al. (Jaeger et al., 2023).
+
+Property : Direction consistency (approach phase). When the route planner issues a turn command , the VLA’s predicted waypoints must be consistent with the intended direction. Let denote the bearing angle of the last predicted waypoint relative to the ego frame. Since predicted waypoints always lie ahead of the ego vehicle (), suffices without the full atan2 range:
+
+(5)
+
+The direction consistency specification, expressed in Signal Temporal Logic (Desai et al., 2017) where denotes “always,” requires:
+
+(6)
+
+and symmetrically for . The threshold separates straight-ahead predictions from turning predictions and was selected empirically based on typical CARLA intersection geometries.
+
+is evaluated only during the approach phase, before the vehicle enters the junction. Once inside the junction, the VLA’s predicted waypoints naturally flatten in the rotated ego frame because the model correctly predicts ‘go forward’ relative to its current heading during mid-turn execution. Without junction-aware gating, this flattening triggers false-positive direction conflicts: the monitor infers Straight from flattened waypoints while the route command remains Left/Right, causing unnecessary takeovers. Junction boundaries are queried from the CARLA HD map.
+
+Property : Stuck detection. When throttle is applied, the vehicle must eventually move. Here denotes “eventually within steps”:
+
+(7)
+
+where , m/s, and frames ( s). A typical stuck situation occurs when the VLA predicts forward motion into a stopped vehicle: the PID controller applies throttle, but the vehicle cannot move.
+
+4.3.3 Fallback Policy and Recovery
+
+Upon violation, the DM activates the BC with conservative parameters selected to prioritize safety during intervention: auto lane-change disabled, 5 m following distance, 40% speed reduction. The BC’s waypoints replace the VLA output for steps, after which control returns to the AC. During takeover, steering limits are relaxed to the normal maximum to enable trajectory correction, while throttle is capped at the normal limit to reduce speed during the intervention.
+
+This architecture provides a semantic-level safety guarantee. Conditioned on correct envelope classification by the DM, the system does not execute a VLA action that violates or . This conditional guarantee is absent from all surveyed E2E driving methods (§2.2). The total computational overhead is negligible, under 0.1 ms per step for map query and angle computation.
+
+4.4 Training-Time Safety Alignment (Experimental Condition)
+
+We employ PL-DPO-NLL as an experimental condition that provides a second weight configuration for ablation, not as a standalone contribution. It combines Plackett-Luce multi-preference ranking (Plackett, 1975) with NLL regularization to address probability collapse during preference optimization (Rafailov et al., 2023; Pang et al., 2024).
+
+4.4.1 Preference Data
+
+We collect 51,124 Plackett-Luce preference samples from CARLA Town01 across 67 route configurations. Each sample contains one expert (chosen) action and 2–3 rejected actions ranked by risk severity. Scene-type distribution: turns (40.2%), normal driving (27.8%), braking scenarios (14.7%), speed adjustment (6.0%), junctions (5.6%), pedestrian interactions (3.1%), and red-light scenarios (2.7%).
+
+4.4.2 Objective Function
+
+The PL-DPO loss generalizes binary DPO to full rankings over candidates. Let denote the multimodal context (visual features and text input):
+
+(8)
+
+where is the implicit reward, is the chosen action, and are rejected actions ranked by increasing risk. The temperature is scene-adaptive, with higher values for safety-critical scenes to sharpen the preference distribution: for turns, pedestrians, and red lights; for braking; – for junctions and speed adjustment; and for normal driving. These values were selected via grid search on a held-out validation set from Town01.
+
+The full PL-DPO-NLL objective adds explicit likelihood preservation:
+
+(9)
+
+where prevents the absolute probability of correct actions from decreasing during preference optimization. We set based on ablation (higher values cause NLL to dominate the preference signal).
+
+4.4.3 Training Configuration
+
+We apply LoRA adapters (, ) to all attention and MLP projections (q, k, v, o, gate, down, up) of LLaMA-7B. Training uses AdamW-8bit with learning rate , batch size 4 per device with 8 gradient accumulation steps (effective batch 32), 3 epochs, warmup ratio 0.03, and BF16 mixed precision with gradient checkpointing. Training was conducted on 3 NVIDIA RTX 6000 Ada GPUs.
+
+5 Experiments
+
+5.1 Experimental Setup
+
+Our experiments aim to answer three questions. First, does CSN improve driving performance, and is the improvement robust across different weight configurations? Second, how much of CSN’s gain comes from causal structure versus additional information? Third, does semantic safety supervision outperform reactive approaches?
+
+We evaluate on CARLA 0.9.10 (Dosovitskiy et al., 2017) in closed-loop mode using LMDrive with a LLaMA-7B (Touvron et al., 2023) backbone and ResNet-50 (He et al., 2016) vision encoder, trained with PL-DPO-NLL LoRA on a single NVIDIA RTX 3090 Ti. The benchmark spans 16 routes across 8 towns drawn from the official Leaderboard route set, including 4 night-time routes, 5 rain routes, 3 dense fog routes, and 4 clear daytime routes. This diversity tests generalization across urban layouts, traffic densities, road topologies, and weather conditions absent from single-town benchmarks. Each configuration is evaluated over independent repetitions with distinct random seeds. We report the mean and 95% bootstrap CI; non-overlapping CIs between two configurations suggest a meaningful difference.
+
+We evaluate ten configurations organized hierarchically (Table 3). On the original LMDrive without LoRA, we test (1) original only, (2) +CSN, (3) +Flat Text, and (4) +Semantic Safety. On the PL-DPO-NLL variant with LoRA, we test (5) baseline, (6) +TTC Safety, (7) +Semantic Safety, (8) +CSN, (9) +CSN+Safety, and (10) +Flat Text. Flat Text provides the same factual content as CSN but without causal connectives, enabling the decomposition in Eq. (3) on both weight configurations.
+
+We follow the CARLA Leaderboard metrics. Driving Score (DS) measures route completion weighted by infraction penalty and serves as the primary metric. Route Completion (RC) measures the percentage of route distance completed. Infraction Score (IS) is a cumulative penalty multiplier where means no infractions. Fig. 4 shows representative evaluation environments.
+
+Figure 4: Evaluation environments. (a) Town01, clear day. (b) Town03, heavy rain. (c) Town05, night. (d) Town07, dense fog.
+
+5.2 Main Results
+
+Table 3 presents the main results across ten configurations and four dimensions: preference training generalization, CSN robustness, safety monitor comparison, and component interaction.
+
+Table 3: Multi-town ablation (16 routes, 8 towns, ). Values are mean 95% bootstrap CI. Best bold, second underlined; ties share marking.
+
+Configuration
+DS ()
+RC ()
+IS ()
+DS
+DS
+
+LMDrive (original)
+32.543.00
+48.32.6%
+0.7290.034
+—
+—
+
+   + CSN
+42.672.74
+56.51.7%
+0.7870.028
++31.1%
+—
+
+   + Flat Text
+38.711.44
+48.71.9%
+0.8280.025
++18.9%
+—
+
+   + Semantic Safety
+34.102.25
+45.52.1%
+0.7850.038
++4.8%
+—
+
+   + PL-DPO-NLL
+32.493.34
+44.92.7%
+0.7540.021
+0.1%
+—
+
+    + TTC Safety
+22.024.07
+33.73.4%
+0.6580.037
+32.3%
+32.2%
+
+    + Semantic Safety
+33.171.42
+44.52.5%
+0.7870.022
++1.9%
++2.1%
+
+    + CSN
+40.453.79
+51.94.3%
+0.7890.026
++24.3%
++24.5%
+
+    + CSN+Safety
+35.741.37
+48.62.1%
+0.7540.020
++9.8%
++10.0%
+
+    + Flat Text
+39.382.66
+49.01.3%
+0.8230.047
++21.0%
++21.2%
+
+Figure 5: Driving Score comparison across all ten configurations (). Left and center: mean DS with 95% bootstrap CI. Right: raincloud plot showing KDE density (shaded), individual runs (dots), mean (diamond), and 95% CI (whisker). Dotted line: original LMDrive baseline.
+
+5.2.1 Preference Training Generalization
+
+With , PL-DPO-NLL and the original LMDrive have nearly identical mean DS (32.49 vs. 32.54) with heavily overlapping CIs (Table 3), so preference training neither helps nor hurts on aggregate across towns. Since PL-DPO-NLL is trained on 51,124 preference samples collected exclusively from CARLA Town01, the lack of improvement on unseen towns is consistent with the distribution shift documented in DPO literature (Lin et al., 2024), where preference-optimized models overfit to training-distribution patterns at the expense of out-of-distribution generalization. Any gains on Town01 are offset by losses on the remaining seven towns.
+
+We include PL-DPO-NLL not as a standalone contribution but as an experimental condition that provides a second weight configuration for ablation. Because CSN operates on the input side without modifying model weights, it does not introduce distribution shift.
+
+5.2.2 CSN Robustness Across Configurations
+
+CSN improves DS by +31.1% on the original LMDrive and +24.5% on PL-DPO-NLL (Table 3). The overlapping 95% CIs between the two CSN-enhanced configurations (42.672.74 vs. 40.453.79) suggest that CSN provides comparable benefits regardless of LoRA adaptation. IS also improves on both variants, indicating fewer safety violations in novel environments. We note that Flat Text achieves higher IS than CSN despite lower DS (0.828 vs. 0.787 on original LMDrive); this is consistent with Flat Text’s lower RC (48.7% vs. 56.5%), as completing fewer route segments naturally reduces infraction opportunities.
+
+5.2.3 Safety Monitor Comparison
+
+The reactive TTC monitor, which triggers emergency braking when Time-To-Collision falls below 2.0 s, achieves the lowest DS and IS among all configurations (Table 3). The failure mode is systematic, as frequent false-positive emergency braking causes the vehicle to repeatedly stop and restart, leading to “Agent got blocked” timeout failures. Its wide CIs reflect high variance across repetitions, with performance degrading further as CARLA’s stochastic traffic amplifies the over-braking pathology.
+
+In contrast, our semantic supervisor improves IS on both weight configurations: from 0.729 to 0.785 on original LMDrive and from 0.754 to 0.787 on PL-DPO-NLL (Table 3). Its narrow CIs demonstrate that intent-aware monitoring produces consistently better outcomes across repetitions. The semantic monitor detects direction conflicts between VLA waypoints and the navigation plan rather than reacting to proximity, avoiding the over-braking pathology entirely. For VLA systems, physics-only safety monitors that ignore driving intent degrade rather than improve performance.
+
+5.2.4 Component Interaction Analysis
+
+CSN and semantic safety represent two potentially conflicting safety paradigms. CSN provides proactive safety by improving scene understanding so the VLA produces inherently safer decisions, while the semantic supervisor provides reactive safety by monitoring outputs and overriding unsafe ones. Their interaction is not additive.
+
+When applied to the unenhanced PL-DPO-NLL baseline, the semantic supervisor has a small positive effect on DS (, Table 3). However, when layered on top of CSN, the same supervisor degrades DS by points in the main evaluation (40.45 vs. 35.74, Table 3), a finding confirmed in a separate replication (CSN alone , CSN+Safety , ). The tight CI of the CSN+Safety configuration () confirms that the degradation is systematic rather than stochastic.
+
+To diagnose the mechanism, we logged per-frame intervention frequencies across all safety-enabled runs ( per config, 16 routes each). The direction-conflict detector () triggered zero interventions across all 96 route-checks in both baseline+Safety and CSN+Safety. Stuck detection () likewise never triggered. The degradation therefore does not arise from explicit safety interventions.
+
+Instead, the cause is passive control clamping. The safety supervisor applies per-frame steering and throttle limits (steer , throttle ) on every timestep regardless of whether an intervention is triggered. Without CSN, the VLA produces conservative waypoints with small steering angles, so the clamp rarely binds. With CSN, the VLA receives structured context about upcoming hazards and produces larger anticipatory steering adjustments—early lane changes, preemptive deceleration curves—that exceed the steer limit. The clamp truncates these evasive maneuvers, converting them into incomplete corrections that produce worse trajectories than no correction at all. This asymmetric clamping effect explains why safety supervision helps the baseline (clamp does not bind) but hurts CSN (clamp truncates beneficial evasive actions). Relaxing or removing the passive clamp when CSN is active would likely resolve this conflict.
+
+5.3 Decomposition Results
+
+The +Flat Text ablation provides the same factual content as CSN but without causal connectives (BUT, YIELD BEFORE, BECAUSE), enabling an empirical decomposition of the total performance gain into information quantity () and structural organization () per Eq. (3). Because we run this ablation on both weight configurations, we can test whether the decomposition ratio generalizes.
+
+Original LMDrive ():
+
+PL-DPO-NLL variant ():
+
+Figure 6: Decomposition of CSN’s DS improvement into information content and causal structure contributions on both weight configurations.
+
+On original LMDrive, causal structure accounts for 39.1% of the total DS improvement as shown in Fig. 6, showing that CSN’s benefit is not reducible to providing more information. On PL-DPO-NLL, this drops to 13.5%. Information content contributes comparably in both cases (+6.17 vs. +6.88), but causal structure contributes much less on the preference-aligned variant (+3.96 vs. +1.08). A plausible explanation is that preference learning on 51k ranked driving samples partially internalizes causal reasoning about intent-constraint relationships, reducing the marginal benefit of explicit causal connectives in the text. The original LMDrive, having never seen preference-ranked actions, benefits more from the explicit causal scaffolding that CSN provides.
+
+On both configurations, +Flat Text outperforms the respective baseline with non-overlapping CIs, showing that scene information alone is valuable regardless of weight configuration.
+
+5.4 Discussion
+
+5.4.1 Why Does Causal Structure Help?
+
+Why does reorganizing the same facts into structured sentences help? Consider a speed reduction scenario. Template text presents ‘Reduce speed’ and ‘Wet road’ as unrelated fragments, leaving the LLM to infer whether the wet road is relevant. CSN writes ‘Reduce speed BECAUSE wet road reduces braking effectiveness at current 45 km/h,’ and the connective ‘BECAUSE’ acts as a direct attention cue. LLaMA has seen millions of such constructions during pre-training on natural text and already knows how to process them. The structured text offloads part of the reasoning from the model’s weights to the input.
+
+5.4.2 Privileged Information and Deployment Considerations
+
+As noted in §4.2, CSN currently uses privileged simulation data. To test whether the improvement survives under realistic perception errors, we inject calibrated noise into CSN’s inputs: Gaussian noise on distance measurements ( m), multiplicative noise on speed readings (), and random actor miss rates (0–20%). Table 4 shows the results.
+
+Table 4: Perception noise ablation on Original LMDrive + CSN (). We inject Gaussian noise on distance, multiplicative noise on speed, and random actor miss rates. All noise-level CIs overlap with the clean baseline, indicating no statistically significant degradation.
+
+Noise Level
+Dist. 
+Speed
+Miss Rate
+DS
+95% CI
+
+Clean (privileged)
+0 m
+0%
+0%
+
+Mild
+1 m
+10%
+0%
+
+Moderate
+2 m
+20%
+0%
+
+Severe
+5 m
+20%
+10%
+
+Extreme
+5 m
+30%
+20%
+
+The clean baseline in Table 4 uses the same Original+CSN runs from Table 3; the wider CI ( vs. ) reflects the standard deviation rather than bootstrap CI to enable direct comparison with the noise conditions at . All four noise conditions produce CIs that overlap fully with the clean baseline, confirming that CSN’s benefit does not depend on privileged information precision. Even under the extreme condition (5 m distance error, 30% speed noise, 20% actor miss rate), DS remains at 45.1 versus 42.7 for clean inputs. The noisy conditions yield slightly higher mean DS than clean, but all CIs overlap, so this difference is attributable to sampling variance at rather than a systematic effect. These results are consistent with the hypothesis that CSN’s value lies in how information is organized through causal connectives, not in the accuracy of the underlying measurements. The linking algorithm is agnostic to the data source, and these results suggest that replacing privileged data with a vision-based perception pipeline would preserve CSN’s effectiveness.
+
+5.4.3 Choice of Evaluation Platform
+
+Our experiments use a single VLA architecture (LMDrive with LLaMA-7B). LMDrive is currently the only open-source VLA that satisfies three requirements simultaneously: (1) it accepts free-form text input that CSN can modify, (2) it supports closed-loop CARLA evaluation with the standard Leaderboard protocol, and (3) its training pipeline is publicly available, enabling the PL-DPO-NLL ablation condition. Other VLA models such as DriveVLM (Tian et al., 2024) and Bench2Drive (Jia et al., 2024) either lack open-source training code, do not accept free-form text, or use proprietary evaluation setups that prevent controlled comparison. CSN’s mechanism—restructuring text with causal connectives that LLMs already understand from pretraining—is architecture-agnostic in principle, but validating this claim requires additional open-source VLA platforms with closed-loop evaluation capabilities.
+
+5.4.4 Robustness Across Weight Configurations
+
+As established in §5.2, the overlapping CIs between the original and preference-aligned CSN configurations suggest that CSN’s overall benefit does not depend on the specific weight configuration. However, the empirical decomposition reveals an interesting asymmetry: causal structure accounts for 39.1% of CSN’s gain on original LMDrive but only 13.5% on PL-DPO-NLL. We note that on PL-DPO-NLL, the CSN vs. Flat Text CIs overlap substantially ( vs. ), so the 13.5% figure is not statistically distinguishable from zero. On original LMDrive the overlap is marginal ( vs. ), supporting a meaningful structural contribution in that setting. This suggests that preference learning internalizes some of the causal reasoning that explicit text structure otherwise provides. CSN should be compatible with other LMDrive-family checkpoints without further weight updates, though the balance between information and structural contributions may vary. We have not tested whether this transfers to other architectures such as DriveVLM.
+
+5.4.5 Benchmark Difficulty and Weather Effects
+
+The benchmark includes 4 night routes, 5 rain routes, and 3 dense fog routes alongside clear daytime conditions. Baseline DS values (32.54 for original LMDrive, 32.49 for PL-DPO-NLL) are well below the 50–60 DS typical of single-town clear-weather evaluations. CSN’s +31.1% improvement holds under these harder conditions.
+
+6 Conclusion
+
+We introduced Causal Scene Narration (CSN), a framework that restructures VLA text inputs around intent-constraint causal alignment at zero GPU cost. Through a multi-town CARLA evaluation (16 routes across 8 towns, independent repetitions with 95% bootstrap confidence intervals), we establish four findings.
+
+First, CSN substantially improves DS on both the original LMDrive (+31.1%) and the preference-aligned variant (+24.5%), with overlapping CIs consistent with benefits robust across the two weight configurations tested. Second, a controlled ablation on both configurations shows that causal structure accounts for 39.1% of CSN’s gain on original LMDrive but only 13.5% on PL-DPO-NLL, suggesting that preference learning partially internalizes causal reasoning and reduces the marginal benefit of explicit text structure. Third, semantic safety supervision improves IS on both weight configurations, while reactive TTC monitoring degrades both DS and IS; VLA safety monitors that rely on physical proximity alone hurt performance, and intent-aware monitoring is needed.
+
+Fourth, a perception noise ablation shows that CSN’s benefit is robust to distance errors up to 5 m, speed noise up to 30%, and 20% actor miss rates, indicating that the improvement derives from text structure rather than information precision.
+
+An additional observation is that combining CSN with the safety supervisor hurts rather than helps. Intervention logging reveals that the degradation arises not from explicit safety interventions (which never trigger) but from passive control clamping that truncates CSN-guided evasive steering. Relaxing the clamp when CSN is active would likely resolve this conflict.
+
+Limitations. (1) Our evaluation is simulation-based; while noise injection experiments (§5.4.2) show CSN is robust to perception errors, real-world deployment requires integration with an actual perception pipeline. (2) Experiments use a single model architecture and scale (LMDrive with LLaMA-7B). (3) The safety supervisor uses fixed direction-conflict thresholds that do not adapt to CSN-enhanced context quality.
+
+Future Work. (1) Integrating CSN with a vision-based perception pipeline for real-world validation. (2) Extending CSN to other VLA architectures and model scales. (3) Developing adaptive safety thresholds that modulate intervention sensitivity based on CSN context quality. (4) Extending the empirical decomposition to token-level VLA architectures, where action distributions are directly measurable, enabling a strict information-theoretic validation of .
+
+Ethics Statement.
+
+CSN aims to improve VLA driving safety through better text conditioning and runtime monitoring. Our safety supervisor provides an additional layer of protection but is not a substitute for comprehensive safety validation. The system is evaluated exclusively in simulation; real-world deployment would require extensive additional testing. All experiments use the open CARLA simulator with no human subjects involved.
+
+Reproducibility Statement.
+
+All experiments use the publicly available CARLA 0.9.10 simulator and the open-source LMDrive codebase. Evaluation follows the standard CARLA Leaderboard protocol with 16 routes across 8 towns. Each configuration is run times with fixed random seeds; we report bootstrap 95% CIs throughout. The CSN text generation pipeline, safety supervisor implementation, evaluation scripts, and all trained LoRA weights will be released upon acceptance.
+
+References
+
+Alshiekh et al. (2018)
+M. Alshiekh, R. Bloem, R. Ehlers, B. Könighofer, S. Niekum, and U. Topcu
+
+Safe reinforcement learning via shielding.
+
+Proc. Conf. AAAI Artif. Intell. 32 (1).
+
+External Links: Link,
+Document
+
+Cited by: §2.2.
+
+Ames et al. (2019)
+A. D. Ames, S. Coogan, M. Egerstedt, G. Notomista, K. Sreenath, and P. Tabuada
+
+Control barrier functions: Theory and applications.
+
+In 2019 18th European Control Conference (ECC),
+
+pp. 3420–3431.
+
+External Links: Link,
+Document
+
+Cited by: §2.2.
+
+Chen et al. (2022)
+L. Chen, X. Jia, H. Li, Y. Qiao, P. Wu, and J. Yan
+
+Trajectory-guided control prediction for end-to-end autonomous driving: A simple yet strong baseline.
+
+In Advances in Neural Information Processing Systems 35,
+
+pp. 6119–6132.
+
+External Links: Link
+
+Cited by: §2.2,
+§4.3.2.
+
+Desai et al. (2017)
+A. Desai, T. Dreossi, and S. A. Seshia
+
+Combining model checking and runtime verification for safe robotics.
+
+In Runtime Verification,
+
+pp. 172–189.
+
+External Links: Link,
+Document
+
+Cited by: §2.2,
+§4.3.2,
+§4.3.
+
+Dosovitskiy et al. (2017)
+A. Dosovitskiy, G. Ros, F. Codevilla, A. Lopez, and V. Koltun
+
+CARLA: An Open Urban Driving Simulator.
+
+In Proceedings of the 1st Annual Conference on Robot Learning,
+
+Vol. 78, pp. 1–16.
+
+External Links: Link
+
+Cited by: §5.1.
+
+Gao et al. (2026)
+T. Gao, C. Tan, C. Glossop, T. Gao, J. Sun, K. Stachowicz, S. Wu, O. Mees, D. Sadigh, S. Levine, and C. Finn
+
+SteerVLA: Steering vision-language-action models in long-tail driving scenarios.
+
+arXiv preprint arXiv:2602.08440.
+
+External Links: Link
+
+Cited by: §1,
+§2.1,
+Table 1.
+
+He et al. (2016)
+K. He, X. Zhang, S. Ren, and J. Sun
+
+Deep residual learning for image recognition.
+
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+
+pp. 770–778.
+
+External Links: Link
+
+Cited by: §5.1.
+
+Hu et al. (2023)
+Y. Hu, J. Yang, L. Chen, K. Li, C. Sima, X. Zhu, S. Chai, S. Du, T. Lin, W. Wang, and Others
+
+Planning-oriented autonomous driving.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 17853–17862.
+
+External Links: Link
+
+Cited by: §2.2.
+
+Jaeger et al. (2023)
+B. Jaeger, K. Chitta, and A. Geiger
+
+Hidden Biases of End-to-End Driving Models.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 8240–8249.
+
+External Links: Link
+
+Cited by: §2.2,
+§4.3.2.
+
+Jia et al. (2024)
+X. Jia, Q. Li, J. Yan, Z. Yang, and Z. Zhang
+
+Bench2Drive: Towards multi-ability benchmarking of closed-loop end-to-end autonomous driving.
+
+In Advances in Neural Information Processing Systems 37,
+
+Vol. 37, pp. 819–844.
+
+External Links: Link,
+Document
+
+Cited by: §5.4.3.
+
+Jiang et al. (2023)
+B. Jiang, S. Chen, Q. Xu, B. Liao, J. Chen, H. Zhou, Q. Zhang, W. Liu, C. Huang, and X. Wang
+
+VAD: Vectorized Scene Representation for Efficient Autonomous Driving.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 8340–8350.
+
+External Links: Link
+
+Cited by: §2.2.
+
+Li et al. (2025)
+Y. Li, E. Javanmardi, S. Thompson, K. Katsumata, A. Orsholits, and M. Tsukada
+
+Multi-PrefDrive: Optimizing Large Language Models for Autonomous Driving Through Multi-Preference Tuning.
+
+In 2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+
+pp. 4347–4354.
+
+External Links: Link
+
+Cited by: §1,
+§2.3.
+
+Lin et al. (2024)
+Y. Lin, S. Seto, M. Ter Hoeve, K. Metcalf, B. Theobald, X. Wang, Y. Zhang, C. Huang, and T. Zhang
+
+On the limited generalization capability of the implicit reward model induced by direct preference optimization.
+
+In Findings of the Association for Computational Linguistics: EMNLP
+2024,
+
+Stroudsburg, PA, USA, pp. 16015–16026.
+
+External Links: Link,
+Document
+
+Cited by: §5.2.1.
+
+Mao et al. (2023)
+J. Mao, Y. Qian, J. Ye, H. Zhao, and Y. Wang
+
+GPT-Driver: Learning to Drive with GPT.
+
+In NeurIPS 2023 Foundation Models for Decision Making Workshop,
+
+External Links: Link
+
+Cited by: §1,
+§2.1.
+
+Pang et al. (2024)
+R. Y. Pang, W. Yuan, H. He, K. Cho, S. Sukhbaatar, and J. E. Weston
+
+Iterative Reasoning Preference Optimization.
+
+In Advances in Neural Information Processing Systems 37,
+
+pp. 116617–116637.
+
+External Links: Link
+
+Cited by: §2.3,
+§4.4.
+
+Pearl (2009)
+J. Pearl
+
+Causality: Models, Reasoning, and Inference.
+
+Cambridge University Press, Cambridge.
+
+External Links: Document,
+ISBN 9780521895606
+
+Cited by: §1,
+§3.1.
+
+Phan et al. (2020)
+D. T. Phan, R. Grosu, N. Jansen, N. Paoletti, S. A. Smolka, and S. D. Stoller
+
+Neural Simplex Architecture.
+
+In Lecture Notes in Computer Science,
+
+pp. 97–114.
+
+External Links: Link,
+Document
+
+Cited by: §2.2,
+§4.3.1.
+
+Plackett (1975)
+R. L. Plackett
+
+The analysis of permutations.
+
+Journal of the Royal Statistical Society Series C: Applied Statistics 24 (2), pp. 193–202.
+
+External Links: Link
+
+Cited by: §2.3,
+§4.4.
+
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+
+Direct Preference Optimization: Your Language Model is Secretly a Reward Model.
+
+In Thirty-seventh Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §1,
+§2.3,
+§4.4.
+
+Razin et al. (2024)
+N. Razin, S. Malladi, A. Bhaskar, D. Chen, S. Arora, and B. Hanin
+
+Unintentional unalignment: Likelihood displacement in direct Preference Optimization.
+
+arXiv preprint arXiv:2410.08847.
+
+External Links: Link
+
+Cited by: §2.3.
+
+Renz et al. (2025)
+K. Renz, L. Chen, E. Arani, and O. Sinavski
+
+SimLingo: Vision-Only Closed-Loop Autonomous Driving with Language-Action Alignment.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 11993–12003.
+
+External Links: Link
+
+Cited by: §2.1.
+
+Schmidt et al. (2026)
+F. Schmidt, M. Enzweiler, and A. Valada
+
+GraphPilot: Grounded scene graph conditioning for language-based autonomous driving.
+
+arXiv preprint arXiv:2511.11266.
+
+External Links: Link
+
+Cited by: §1,
+§2.1,
+§3.2,
+Table 1,
+§4.2.2.
+
+Schmidt et al. (2025)
+F. Schmidt, N. M. K. A. Nazar, M. Enzweiler, and A. Valada
+
+Enhancing LLM-based autonomous driving with modular traffic light and sign recognition.
+
+arXiv preprint arXiv:2511.14391.
+
+External Links: Link
+
+Cited by: §1,
+§2.1,
+§3.1,
+Table 1.
+
+Sha (2001)
+L. Sha
+
+Using simplicity to control complexity.
+
+IEEE Softw. 18 (4), pp. 20–28.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.2,
+§2.2,
+§4.3.1,
+§4.3.
+
+Shalev-Shwartz et al. (2017)
+S. Shalev-Shwartz, S. Shammah, and A. Shashua
+
+On a formal model of safe and scalable self-driving cars.
+
+arXiv preprint arXiv:1708.06374.
+
+External Links: Link
+
+Cited by: §2.2,
+§3.2,
+§4.3.1.
+
+Shao et al. (2024)
+H. Shao, Y. Hu, L. Wang, S. L. Waslander, Y. Liu, and H. Li
+
+LMDrive: Closed-Loop End-to-End Driving with Large Language Models.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§2.1,
+§3.1,
+Table 1.
+
+Sima et al. (2024)
+C. Sima, K. Renz, K. Chitta, L. Chen, H. Zhang, C. Xie, J. Beißwenger, P. Luo, A. Geiger, and H. Li
+
+DriveLM: Driving with Graph Visual Question Answering.
+
+In European Conference on Computer Vision 2024,
+
+External Links: Link
+
+Cited by: §1,
+§2.1,
+Table 1.
+
+Tian et al. (2024)
+X. Tian, J. Gu, B. Li, Y. Liu, Y. Wang, Z. Zhao, K. Zhan, P. Jia, X. Lang, and H. Zhao
+
+DriveVLM: The convergence of autonomous driving and large Vision-Language Models.
+
+In 2024 Conference on Robot Learning,
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§2.1,
+§3.2,
+Table 1,
+§5.4.3.
+
+Touvron et al. (2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample
+
+LLaMA: Open and efficient foundation language models.
+
+arXiv preprint arXiv:2302.13971.
+
+External Links: Link
+
+Cited by: §5.1.
+
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+
+Attention is all you need.
+
+Adv. Neural Inf. Process. Syst. 30.
+
+External Links: Link
+
+Cited by: §3.1.
+
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. Le, and D. Zhou
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+In Advances in Neural Information Processing Systems 35,
+
+External Links: Link
+
+Cited by: §3.1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

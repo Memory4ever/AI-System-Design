@@ -238,6 +238,16 @@ compiler 可把结构、typed state、quality floor、latency/cost budget 编译
 组合爆炸和错误 cost model；动态环境或不可预测 tool path 下应回退保守模板和在线 guard。
 <!-- semantic-body-binding:SF-FLOWCOMPILE-AN-OPTIMIZING-COMPILER-FOR-STRUCTURED-LLM-WORKFLOWS:end -->
 
+### 搜索分支必须连同权威外部状态一起分支
+
+只复制 prompt、代码或中间 artifact，适合候选之间不修改共享外部状态的搜索；一旦候选会改变数据库 schema 与数据，后续 evaluator 看到的结果就取决于它究竟运行在哪个 state revision 上。每次都做完整 dump/restore 或数据库副本，在分支少、状态小、隔离优先时边界最清楚；Agentic search 同时创建大量 branch、mutate、evaluate、prune 循环后，复制成本和切换延迟会吞掉搜索预算。
+
+Workflow 因而要把外部状态 branch 提升为一等对象：search controller 拥有候选 lineage、预算和 prune/commit 决策，数据库只拥有 branch identity、copy-on-write data/schema state、隔离与 durable commit。Evaluator 必须绑定候选 artifact 与同一 database revision，不能在主分支或另一个候选状态上复算后仍沿用原分数。选中结果也不是“保留一段 transcript”，而是显式 promotion 一个可追溯状态，并回收其余分支。
+
+零复制并非免费。把 copy-on-write 放在 filesystem、storage、page、table 或 transaction 层，会形成不同的 branch creation、switch、mutation amplification、后台聚合和隔离成本；嵌套 transaction 也未必覆盖 schema change、长生命周期和跨会话恢复。分支很少、mutation 很重、安全域要求物理隔离，或底层不能证明 snapshot consistency 时，完整副本或受限 transaction 仍是合理回退。
+
+<!-- source-family:SF-2026-ARXIV-2604-17180 -->
+
 ### Cold-start Prior 与 Run-derived Lesson 必须分成两层 Memory
 
 开放式 search 在昂贵训练、代码修改或科学实验中需要先验来减少无效候选；但把 literature heuristic、人工
@@ -904,6 +914,8 @@ Coding Agent 生成 compiler optimization 时，还要分开两种证明责任�
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。执行者可以提出下一步或完成，但只有携带 versioned evidence 的独立 admission path 能提交终态。下一章研究多个 Agent 之间的职责和通信。
 
 ## Review notes
+
+- **BranchBench（arXiv:2604.17180v1；Status: Experimental）**：支持 agentic workload 中 `branch → mutate → evaluate → prune` 的数据库状态合同，以及 copy-on-write 所在层次带来的资源取舍。论文评估的是所披露五类 workflow 与系统配置，不证明某种 branching layer、生产隔离、长期恢复或跨环境收益普遍最优。https://arxiv.org/abs/2604.17180v1
 
 - SKILL.nb（arXiv:2606.08049v1；Status: Experimental）：用于说明 versioned notebook steps 与 gate-conditioned code/NL fallback；证据绑定作者 WebArena/Mind2Web/GitLab lifecycle，不证明通用环境 portability。https://arxiv.org/html/2606.08049v1
 

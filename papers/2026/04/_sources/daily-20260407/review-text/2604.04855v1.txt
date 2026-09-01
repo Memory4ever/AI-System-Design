@@ -1,0 +1,1744 @@
+The Role of Generator Access in Autoregressive Post-Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Setup
+
+2.1 Prompt-conditioned autoregressive generators
+
+2.2 Prefix trees and generator access
+
+2.3 KL-regularized outcome-reward post-training
+
+3 The no-reset regime
+
+4 Escaping the barrier with weak local reset
+
+5 Observation matters after control
+
+6 Implications for KL-regularized post-training
+
+7 Related work
+
+8 Conclusion
+
+References
+
+A Proofs for Section 
+
+A.1 The canonical no-reset experiment
+
+A.2 Agreement outside a prefix set
+
+A.3 One-query indistinguishability
+
+A.4 Adaptive interaction
+
+B Proofs for Section 
+
+B.1 No-reset hardness on hidden paths
+
+B.2 Recovery from chosen-prefix samples
+
+B.3 Exact teacher-forced sequence scores
+
+C Proofs for Section 
+
+C.1 Basic properties of the leader-trie family
+
+C.2 Top-token access is useless
+
+C.3 Recovery from chosen-prefix logits
+
+C.4 Recovery from chosen-prefix samples
+
+C.5 Summary corollary
+
+D Proofs for Section 
+
+D.1 The hard family
+
+D.2 The hard-prompt objective
+
+D.3 Proof of the upper bound
+
+D.4 A posterior-symmetry lemma for the lower bound
+
+D.5 Proof of the lower bound
+
+E Extended discussion of related work
+
+License: CC BY 4.0
+
+arXiv:2604.04855v1 [cs.LG] 06 Apr 2026
+
+The Role of Generator Access in Autoregressive Post-Training
+
+Amit Kiran Rege
+
+Affiliation: Department of Computer Science
+
+Affiliation: University of Colorado Boulder
+
+Affiliation: Boulder, Colorado 80309
+
+Email: amit.rege@colorado.edu
+
+Abstract
+
+We study how generator access constrains autoregressive post-training. The central question is whether the learner is confined to fresh root-start rollouts or can return to previously built prefixes and query the next-token rule there. In the root-start regime, output sampling, generated-token log probabilities, top- reports, and full next-token distributions along sampled trajectories all reduce to one canonical experiment, limited by the on-policy probability of reaching informative prefixes. Weak prefix control breaks this barrier, and once control is available, richer observations such as conditional sampling or logits can outperform top- access. Changing only the generator interface creates an exponential gap for KL-regularized outcome-reward post-training.
+
+1 Introduction
+
+Large language models have transformed modern AI, and recent reasoning-oriented systems push that progress further through post-training, reinforcement learning, and inference-time search OpenAI (2024); Guo et al. (2025); Huang et al. (2025). At the same time, a recurring empirical theme is that standard post-training often sharpens trajectories that are already present in the base model, rather than uncovering genuinely new ones Yue et al. (2025); Karan and Du (2025); Tan et al. (2026). That raises a basic question which is easy to state but has not been cleanly separated in existing theory. When post-training runs into a barrier, how much of that barrier comes from the base distribution itself, and how much comes from the way the learner is allowed to interrogate the generator?
+
+A simple thought experiment already shows why this matters. Imagine a reasoning task whose successful solution requires a long chain of correct intermediate decisions. Along the one correct chain, the base model gives the right next token only a mild advantage over its competitors. After a single wrong turn, however, the distribution becomes uninformative. In that situation, ordinary sampling has to survive the entire chain on policy. Generated-token log probabilities, top- reports, or even full next-token distributions on visited prefixes do not change that basic geometry: they still reveal information only along whatever trajectory the model happened to generate. By contrast, if the learner can return to a partially constructed prefix and inspect the next-token rule there, then it can test the th step directly instead of re-earning the first steps every time. This gap is about the interface to the generator and not about a more sophisticated optimizer.
+
+This paper studies that interface through two notions. Prefix control asks which prefixes the learner may place the generator at before making a query. Prefix observation asks what the learner sees once that prefix has been fixed. The first distinction is about where the learner may look; the second is about what the learner sees there. Our main claim is that, for autoregressive post-training, these two distinctions do not sit on equal footing. Prefix control is the first boundary. Observation richness becomes the second boundary only after control has been granted.
+
+Limited observation
+
+Rich observation
+
+No prefix control
+
+Output-only sampling
+
+Generated-token log probabilities, top-log-probability lists, or full next-token distributions on visited prefixes
+
+Prefix control
+
+Top token at a chosen prefix
+
+Chosen-prefix sampling, chosen-prefix logits, or teacher-forced sequence scores
+
+Table 1: The taxonomy studied in this paper. The main point is that the horizontal distinction comes first. Once the learner is confined to root-start rollouts, richer trajectory-local observations do not overcome the need to reach informative prefixes on policy.
+
+The paper develops this point in four steps. First, we characterize the no-reset regime, where each generator query begins with a fresh rollout from the root and may depend only on the sampled trajectory and the next-token distributions encountered along that trajectory. In this regime there is a single canonical experiment. Output-only sampling, generated-token log probabilities, top- reports on sampled tokens, and even full next-token distributions on sampled prefixes are all just randomized post-processings of the same object. Second, once the learner is allowed even weak local reset, meaning that it may revisit previously queried prefixes and extend them one token at a time, the picture changes sharply: the universal no-reset barrier disappears on a hidden-path family. Third, after control has been supplied, observation richness becomes meaningful again. On a branching family, top- access can be much weaker than chosen-prefix sampling or logits. Fourth, this generator-side distinction can be lifted into the standard post-training objective. Holding the reward model, the KL regularizer, and the policy class fixed, changing only generator access can create an exponential gap in the number of generator queries required for outcome-reward post-training.
+
+This perspective complements two lines of recent work. One line fixes the access model and shows that coverage of good responses under the base model governs the difficulty of sampling-style alignment and inference-time selection Foster et al. (2025); Huang et al. (2025); Chen et al. (2025); Huang et al. (2024). Another line fixes generator access and studies the feedback channel, showing for example that process feedback can avoid outcome-reward barriers Mousavi-Hosseini and Erdogdu (2026). Our contribution is to isolate the remaining axis. We ask what changes when the reward and update class are held fixed and only the generator-side interface is allowed to vary.
+
+The rest of the paper is organized as follows. Section 2 formalizes prompt-conditioned autoregressive generators, the prefix-tree view, and the access models studied here. Section 3 proves the collapse of the no-reset regime and the resulting reachability barrier. Later sections show how weak local reset breaks that barrier, why branching makes observation matter again once control is available, and how the same boundary reappears in KL-regularized post-training.
+
+2 Setup
+
+2.1 Prompt-conditioned autoregressive generators
+
+Let be a prompt space with prompt distribution . Fix a finite vocabulary with and a horizon . For , let denote the set of strings of length , write and , and let denote the unique element of .
+
+A prompt-conditioned autoregressive generator is a family of next-token distributions
+
+Given a prompt , a response is generated sequentially by drawing for . Equivalently,
+
+The structural results hold at a fixed prompt; the prompt distribution enters only in the last section, where we study a prompt-averaged post-training objective. The single-hard-prompt case corresponds to being a point mass.
+
+2.2 Prefix trees and generator access
+
+For a fixed prompt , autoregressive generation can be viewed as a depth- tree whose internal nodes are prefixes in . From a prefix , each token leads to the child , and the generator attaches to the next-token distribution . In this picture, a complete response is a root-to-leaf path.
+
+This viewpoint makes the access distinctions concrete. A learner might only be allowed to start at the root, sample a rollout, and inspect whatever prefixes that rollout happened to visit. Or it might be allowed to return to a previously constructed prefix and ask for the next-token rule there. The first kind of interaction is the analogue of ordinary episodic access in reinforcement learning; the second is the analogue of reset-like access Mhammedi et al. (2024); Rohatgi and Foster (2025). For autoregressive models, the natural state space is the prefix tree itself.
+
+We separate generator access into two parts. Prefix control asks which prefixes the learner may interrogate. Prefix observation asks what the learner receives once the relevant prefix has been fixed. A standard API that returns output tokens together with generated-token log probabilities has richer observation than plain sampling, but no extra control: both are tied to a single root-start rollout. A chosen-prefix sampling oracle and a chosen-prefix logit oracle have the same control but different observations. Teacher-forced sequence scoring is score-like, but it lies on the control-rich side because the learner is allowed to choose the entire completion whose probability is evaluated.
+
+The weakest regime studied in the paper is no-reset access. Informally, one query chooses a parameter , draws a fresh root-start rollout , forms the visited-prefix distributions , and returns a reply that may depend on , on the sampled trajectory , and on the visited-prefix distributions , but not on any unvisited prefix. This covers output-only sampling, generated-token log probabilities, sampled-token top- reports, and even full next-token distributions on sampled prefixes.
+
+The stronger regime used later is weak local reset. A sequence of queried prefixes obeys the local-reset discipline if and, for every round , the new query is either a previously queried prefix or a one-token extension of a previously queried prefix. The learner is not allowed to teleport to an unrelated deep node, but it is allowed to build a prefix one token at a time and to revisit prefixes it has already constructed.
+
+Once local reset is available, we consider three concrete chosen-prefix interfaces. Under , a query prefix returns an independent draw . Under , a query prefix returns the unique most likely next token under when that maximizer is unique, and returns a distinguished symbol otherwise. Under , a query prefix returns a vector satisfying . We write for the exact case .
+
+We also include teacher-forced sequence scoring. Under , a query completion returns a number satisfying
+
+Operationally, this is just teacher forcing followed by reading off the sequence log-likelihood. It is not a literal chosen-prefix oracle, but it still lies on the control-rich side of the taxonomy because the learner is allowed to evaluate a counterfactual completion of its choice rather than waiting for that completion to arise on policy.
+
+These interfaces are close to what current systems expose. Generated-token log probabilities and top-log-probability lists appear in widely used APIs, while open-weight causal language models expose next-token logits and sequence scores through ordinary forward passes OpenAI (2026b); OpenAI (2026a); Hugging Face (2026c); Hugging Face (2026a); Hugging Face (2026b). The point of the taxonomy is not to invent exotic oracles. It is to organize access patterns that already appear in practice.
+
+In practical terms, weak local reset corresponds to a very modest form of counterfactual control. The learner does not get to jump to an arbitrary deep prefix. It can only keep a partial continuation, revisit it, and extend it one token at a time. This is the prefix-tree analogue of stepping back to a previously constructed partial solution and resuming from there, rather than resampling the entire trajectory from the beginning.
+
+2.3 KL-regularized outcome-reward post-training
+
+The last part of the paper returns from access models to a standard post-training objective. Let be an outcome reward, let be the base generator, and let be a prompt-conditioned policy. For , define
+
+The final theorem keeps this reward model, this KL-regularized objective, and the policy class fixed, and varies only the generator-side interface. The resulting separation shows that the access taxonomy is not merely a statement about synthetic search problems. It already changes the complexity of a standard post-training objective.
+
+3 The no-reset regime
+
+The no-reset regime is the root-start side of the taxonomy. Each query begins with a fresh rollout from the root, and whatever the learner sees is constrained to the prefixes visited by that rollout. At first sight, this leaves many different interfaces: the sampled completion, generated-token log probabilities, a top- list, or even the full next-token distributions on sampled prefixes. Statistically, however, these are all equivalent.
+
+Throughout this section we fix a prompt . Prompt-distributed versions follow by averaging over .
+
+Definition 1.
+
+A generator experiment at prompt is called no-reset if one query is answered as follows. The learner chooses a query parameter . The oracle then draws a fresh rollout , forms the visited-prefix distributions for , and returns a reply drawn from a kernel that may depend on , on , and on , but not on any unvisited prefix.
+
+Definition 1 is deliberately broad. It allows arbitrary measurable summaries of the sampled trajectory and of the next-token distributions encountered along that trajectory, including arbitrary internal randomization. What it forbids is counterfactual inspection of prefixes that the rollout did not visit.
+
+The canonical experiment in this regime simply returns everything that a no-reset interface is ever allowed to depend on.
+
+Definition 2.
+
+For a fixed prompt , let denote the experiment that returns
+
+where and for .
+
+Theorem 1.
+
+Fix a prompt . An experiment is no-reset if and only if it is a randomized post-processing of . In the usual comparison-of-experiments sense, is therefore the maximal no-reset experiment.
+
+Once the learner is confined to one root-start rollout per query, there is no deeper hierarchy among trajectory-local interfaces. Output-only sampling, generated-token log probabilities, sampled-token top- reports, and full next-token distributions on sampled prefixes all sit inside the same experiment class; richer replies simply retain more information from the same trajectory.
+
+This means that a lower bound on applies simultaneously to every trajectory-local interface. The key quantity governing that bound is on-policy reachability.
+
+Definition 3.
+
+For a prefix set , define the reachability event
+
+and the corresponding prefix reachability
+
+The interpretation is immediate: is the probability that an on-policy rollout ever visits the informative region .
+
+Now suppose two generators and agree outside a prefix set , meaning that for every . If a rollout never enters , then the two models generate exactly the same transitions along that rollout, and the canonical no-reset reply is identical in the two worlds. The only way to tell the models apart is to reach on policy.
+
+Theorem 2.
+
+Fix a prompt and a prefix set . Let and agree outside . Let be any randomized adaptive algorithm that makes at most queries to any no-reset experiment at prompt , and let denote its full transcript under . Then
+
+The same reachability value appears for both models because agreement outside implies .
+
+Theorem 2 is the core lower bound on the no-reset side. It says that the real bottleneck is not whether the API reveals text, scores, or full distributions along a sampled path. The bottleneck is that the learner cannot inspect prefixes that the base model fails to reach on its own.
+
+A direct consequence is that the standard trajectory-local interfaces used in practice all obey the same barrier.
+
+Corollary 1.
+
+Under the assumptions of Theorem 2, the same bound holds for output-only sampling, for output together with generated-token log probabilities, for output together with sampled-token top-log-probability lists or top- reports, and for replies that include the full next-token distributions on sampled prefixes.
+
+This corollary is worth pausing over. Generated-token log probabilities are often treated as substantially stronger than sampling, and in a narrow sense they are. They reveal more about the prefixes that were actually visited. The point of Theorem 2 is that this extra information does not change the need to reach the informative part of the prefix tree in the first place.
+
+The next sections confirm that this is indeed a control barrier. On the hidden-path family, every no-reset interface faces the same exponential bottleneck, while weak local reset breaks it. Once that boundary is crossed, a second distinction emerges: on a branching family, richer observations such as conditional sampling or logits outperform top- access even at chosen prefixes.
+
+4 Escaping the barrier with weak local reset
+
+The previous section shows that every no-reset interface is governed by the same on-policy reachability quantity. The question is whether this bottleneck comes from the absence of prefix control specifically, or reflects a more general hardness. The hidden-path family answers this by isolating the long-horizon cost as directly as possible.
+
+We use a hidden path. This family is meant to model a fragile chain of reasoning: there is one long sequence of mildly favored correct steps, and once the rollout leaves that sequence the model stops providing useful guidance. Ordinary sampling then has to survive the whole chain on policy, while local reset lets the learner inspect one step at a time. In this section and the next, all witness families are conditioned on a single fixed prompt, which we suppress from the notation.
+
+Fix a signal parameter and define
+
+Thus and .
+
+Definition 4.
+
+For each hidden string , the hidden-path generator is defined by
+
+Along the hidden path, the correct next token is only mildly preferred. Away from the hidden path, the model is uniform and carries no information about . That is exactly the feature we want: the family isolates the cost of repeatedly re-reaching a useful prefix from the root.
+
+Theorem 3.
+
+Fix , , and . Let satisfy and . Let be any randomized adaptive algorithm that makes at most queries to any no-reset experiment at the fixed prompt. Then
+
+Consequently, any such algorithm that distinguishes from with worst-case success probability at least must satisfy
+
+The reason is simple. The two models differ only at the depth- prefix . A root-start rollout reaches that prefix only if it follows the hidden path correctly for consecutive steps, which happens with probability . The reachability barrier from Section 3 then applies immediately. For fixed and , this is exponential in the horizon.
+
+The point of the family is that weak local reset breaks this exponential barrier. The learner does not need arbitrary teleportation to deep nodes. It is enough to build the prefix one token at a time and revisit prefixes it has already constructed. The next algorithm does exactly that with chosen-prefix next-token samples.
+
+Algorithm 1 Recovering a hidden path with chosen-prefix samples
+
+1:
+
+ Initialize
+
+2:
+
+ for to do
+
+3:
+
+  for to do
+
+4:
+
+   Query and receive
+
+5:
+
+  end for
+
+6:
+
+  for each do
+
+7:
+
+   Set
+
+8:
+
+  end for
+
+9:
+
+  Set
+
+10:
+
+ end for
+
+11:
+
+ Return
+
+The algorithm starts at the root and keeps a running reconstruction of the hidden prefix. At stage , it repeatedly queries the next-token distribution at the current reconstructed prefix . If the reconstruction so far is correct, then the true next token appears with probability while every rival appears with probability . The empirical majority therefore identifies once is large enough. The next round moves to the one-token extension that was just recovered. No deep jump is ever made, so the procedure obeys the local-reset discipline exactly as defined in Section 2.
+
+Theorem 4.
+
+Fix , , , and . Let
+
+Then Algorithm 1 recovers the hidden path with probability at least using at most chosen-prefix samples. The queried prefixes obey the local-reset discipline.
+
+For fixed and , the gap is a positive constant, so the query complexity is
+
+On the same family, no-reset interaction requires exponentially many queries on some pair of models, while weak local reset with conditional next-token samples already gives a polynomial reconstruction.
+
+The hidden path is the right family for the first axis, but not for the second. Once control is available, even top- access is enough on this family, because each informative prefix has a unique best child. To see a genuine observation gap after control has been granted, we need branching.
+
+5 Observation matters after control
+
+The hidden path shows that prefix control is the first boundary. It says little about what richer observations add once control is available, since there is only one informative continuation at each useful prefix. To isolate the observation boundary, we need a family where the top token is unique at every prefix yet still reveals nothing about the branching structure.
+
+We work with a family of prefix trees in which one continuation is a stable default suggestion, shared across all models, while the genuinely informative branch is encoded in the lower-ranked coordinates. This is still a branching family, but it is branching in a way that does not disappear under a unique top token.
+
+Assume , and let token play the role of a distinguished leader token.
+
+Definition 5.
+
+A leader trie of depth is a prefix-closed set such that , every leaf of has depth exactly , and every internal node has exactly two children in , namely the leader child and one additional child for some .
+
+Thus every internal node has a common leader child and one hidden child. The tree is still branching, but the identity of the leader is the same everywhere.
+
+Now define four probabilities
+
+These satisfy
+
+The associated generator is chosen so that the leader token is always the unique top token, whether or not the queried prefix is informative.
+
+Definition 6.
+
+Given a leader trie , the generator is defined as follows. If , then
+
+If , then
+
+At an internal node, the leader token is uniquely best, but one nonleader token is also elevated. At an off-trie prefix, the leader remains uniquely best and all nonleaders sit at the same lower baseline. The informative part of the model is therefore not the top token. It is the identity of the elevated nonleader.
+
+Theorem 5.
+
+Assume . For every leader trie and every queried prefix , the oracle returns the token . Consequently, for any adaptive algorithm interacting only with , the full transcript law is the same for every leader trie of depth . In particular, no such algorithm can distinguish two different leader tries with success probability greater than .
+
+The theorem is stronger than the tie-based example because it does not rely on any ambiguity in the maximizer. The top token is unique everywhere. It is simply the wrong statistic.
+
+The hidden branch, however, can be recovered from richer observations. The relevant margins are
+
+The probability margin separates the hidden child from every nonhidden nonleader. The log-probability margin is the corresponding gap in log space.
+
+The first recovery result uses chosen-prefix logits and a breadth-first traversal of the trie.
+
+Algorithm 2 Recovering a leader trie with chosen-prefix logits
+
+1:
+
+ Initialize and queue
+
+2:
+
+ while is nonempty do
+
+3:
+
+  Pop the first prefix from
+
+4:
+
+  Query and receive
+
+5:
+
+  Set
+
+6:
+
+  if is a singleton then
+
+7:
+
+   Add and to
+
+8:
+
+   if then
+
+9:
+
+    Append and to
+
+10:
+
+   end if
+
+11:
+
+  end if
+
+12:
+
+ end while
+
+13:
+
+ Return
+
+The queue stores prefixes whose children still need to be inspected. At a queried prefix , line asks for the full next-token score vector. Line looks only at nonleader coordinates and checks which of them lie above the fixed threshold halfway between and . If exactly one nonleader coordinate clears that threshold, then is an internal node and the corresponding token is the hidden child. Lines through then add both active children, the common leader child and the hidden child, and place them in the queue if they have not yet reached depth . If no nonleader clears the threshold, then is not an internal node and the algorithm stops expanding it.
+
+Theorem 6.
+
+Let be a leader trie. If , then Algorithm 2 recovers exactly from chosen-prefix logit queries. The queried prefixes obey the local-reset discipline.
+
+The same breadth-first idea works with chosen-prefix samples. At each queried prefix, instead of reading the logit vector once, the learner takes repeated conditional samples and identifies the hidden child from empirical frequencies.
+
+Theorem 7.
+
+Let be a leader trie and write . Suppose the learner knows an upper bound . Fix , and set
+
+Then the local-reset algorithm obtained by replacing each query in Algorithm 2 with calls to and replacing line by the empirical test
+
+recovers with probability at least using at most chosen-prefix samples.
+
+Once control is available, the observation model matters. The branching structure is invisible to top- access but recoverable from conditional samples or logits.
+
+One score-based interface deserves separate mention. Teacher-forced sequence scoring lies on the control-rich side of the taxonomy for the same reason: it evaluates a completion chosen by the learner rather than one generated on policy.
+
+Corollary 2.
+
+In the hidden-path family, exact recovers the hidden path using chosen-completion score queries.
+
+At stage , one simply fixes an arbitrary suffix of length , compares the scores of the one-token extensions of the current prefix followed by that suffix, and keeps the best extension. This is just teacher forcing. It is not a literal chosen-prefix oracle, but it belongs on the same side of the control boundary.
+
+The two witness families can now be summarized in one statement.
+
+Corollary 3.
+
+Fix and . On the hidden-path family, every no-reset generator interface requires exponentially many queries on some pair of models by Theorem 3, while chosen-prefix sampling recovers the hidden path with
+
+local-reset queries by Theorem 4. On the leader-trie family, chosen-prefix top-token access is useless by Theorem 5, while chosen-prefix logits and chosen-prefix sampling recover the trie efficiently under the local-reset discipline by Theorems 6 and 7. Prefix control is therefore the first boundary in autoregressive generator access, and observation richness becomes a second boundary only after control is available.
+
+The next section shows that the same distinction changes the complexity of a standard post-training objective. The reward model and the KL regularizer stay fixed. Only the generator-side interface changes.
+
+6 Implications for KL-regularized post-training
+
+The same boundary that separates the identification regimes also appears in a standard post-training objective. The reward is outcome-only, the objective is KL-regularized, and the policy class is the full family of prompt-conditioned policies; only the generator access changes.
+
+Fix a prompt distribution on , and let be a designated hard prompt with mass . Choose integers and set . Let be a known scaffold, and let be two distinct terminal tokens. The hidden state of the instance consists of a suffix and a reward bit . Write
+
+for the target completion.
+
+On the hard prompt , the base generator behaves like the hidden-path family from Section 4 along the string : for the first steps it mildly favors the next token that stays on that path, and once the full prefix has been reached the final next-token distribution is uniform. On every prompt , the base generator is a fixed easy model, identical across the whole family. The outcome reward is concentrated on the single target completion:
+
+The scaffold is known, the hidden suffix determines where the informative subtree lies, and the reward bit is hidden even after is known, because the final token is uniform under the base generator.
+
+We evaluate policies with the KL-regularized objective from Section 2,
+
+As before, a reward query chooses a prompt and a policy, samples a completion from that policy, and observes the resulting outcome reward.
+
+The exact optimizer on each instance has the standard Gibbs form. On every easy prompt , the reward is zero and the optimizer agrees with the base generator. At the hard prompt,
+
+So once the hidden state has been identified, the optimal policy can be written down exactly.
+
+The upper bound is straightforward once chosen-prefix sampling is available.
+
+Theorem 8.
+
+Fix , and let
+
+For the family above, there is an algorithm with chosen-prefix next-token sampling access to the base generator and one outcome-reward query that outputs the exact maximizer of with probability at least . The algorithm uses at most generator queries and one reward query.
+
+The algorithm first walks down the known scaffold one token at a time so that the queried prefixes obey the local-reset discipline. It then treats the hidden suffix as a length- hidden path and recovers it with Algorithm 1. Once is known, one reward query to the deterministic policy concentrated on identifies the reward bit . At that point both the base generator and the rewarded completion are known, so the Gibbs formula gives the exact optimizer.
+
+The lower bound shows that no-reset access leaves the problem exponentially hard on some instance, even though the reward model and objective have not changed.
+
+Let be the base-model mass of the rewarding completion, and choose
+
+Also write for the number of possible target completions .
+
+Theorem 9.
+
+Assume the reward scale above. Consider any algorithm that may interleave at most no-reset generator queries with at most outcome-reward queries and then outputs a prompt-conditioned policy . Then there exists a choice of hidden suffix and reward bit such that
+
+Each term has a clear meaning. The factor is the chance that one of the no-reset generator queries even reaches the scaffold and enters the informative part of the tree. If that never happens, then generator interaction reveals nothing about the hidden suffix. The term is the chance that an outcome-reward query simply guesses the rewarded completion by brute force. If that never happens either, then the remaining reward queries can do no more than rule out candidates one by one, which leads to the last term .
+
+All of the hardness is concentrated on a single prompt , so this is already a prompt-distributed post-training lower bound rather than a separate single-prompt phenomenon. The average-regret threshold scales with the prompt mass .
+
+The cleanest summary comes from keeping the number of reward queries constant.
+
+Corollary 4.
+
+Fix , , , and any constant . There exists a constant such that for every sufficiently large horizon and every prompt distribution with a designated prompt of mass , there is a family of KL-regularized outcome-reward post-training instances of horizon with the following property. With chosen-prefix next-token sampling access, one reward query and
+
+generator queries suffice to output the exact optimizer with probability at least . With only no-reset generator access, any algorithm that uses at most reward queries and succeeds with probability at least in outputting a policy of average regret at most must make
+
+generator queries.
+
+The reward, KL objective, and policy class are identical across the two access regimes. Changing only the generator interface turns a polynomial problem into an exponentially hard one.
+
+7 Related work
+
+Recent theory already clarifies two adjacent parts of the picture. Under fixed sampling-style access, coverage of good responses under the base model governs the complexity of exploration, inference-time alignment, and sharpening-style self-improvement Foster et al. (2025); Huang et al. (2025); Chen et al. (2025); Huang et al. (2024). Our no-reset theorem fits naturally into that line of work. It identifies the generator-side reason those coverage quantities appear there: once interaction is confined to root-start rollouts, all trajectory-local APIs collapse to a single experiment whose power is controlled by on-policy reachability.
+
+A second line of work studies stronger access models in RL and related sequential settings. Reset-style interaction changes what can be learned or planned efficiently in reinforcement learning Mhammedi et al. (2024); Rohatgi and Foster (2025), while conditional queries can make otherwise hard sequential distributions learnable Mahajan et al. (2023); Liu and Moitra (2024). Our prefix-tree formalism is the autoregressive analogue of that distinction. For generators, the first distinction is not about the richness of observations but about whether the learner can return to a chosen prefix at all.
+
+The paper is also complementary to work on richer feedback and richer intermediate signals. Mousavi-Hosseini and Erdogdu show that process rewards can avoid outcome-reward barriers under fixed generator access Mousavi-Hosseini and Erdogdu (2026). Botta et al., Amani et al., and Tuyls et al. study verifier guidance, partial rationale exposure, and hidden-state-based exploration Botta et al. (2025); Amani et al. (2025); Tuyls et al. (2025). Our KL theorem keeps the reward model fixed and varies only generator access, while the structural results operate on the distributional generator side, without hidden states or external verifiers.
+
+Recent empirical work on reasoning post-training points to the same tension between support, exploration, and intermediate control Yue et al. (2025); Karan and Du (2025); Tan et al. (2026). The present paper does not explain all of those phenomena, but it gives one reason they should be expected: root-start interaction and reset-like prefix control are genuinely different computational regimes.
+
+8 Conclusion
+
+The main lesson is that generator access is part of the computational problem. If interaction is confined to root-start rollouts, then output sampling, generated-token log probabilities, top- reports, and full visited-prefix distributions all collapse to one experiment governed by on-policy reachability. Weak local reset crosses that boundary, and once across it, richer observations become genuinely useful. That distinction is already strong enough to create an exponential gap for KL-regularized outcome-reward post-training.
+
+References
+
+[1]
+M. H. Amani, A. Lotfi, N. M. Baldwin, S. Bengio, M. Farajtabar, E. Abbe, and R. West (2025)
+
+RL for reasoning by adaptively revealing rationales.
+
+Note: arXiv:2506.18110
+
+External Links: 2506.18110
+
+Cited by: Appendix E,
+§7.
+
+[2]
+E. Botta, Y. Li, A. Mehta, J. T. Ash, C. Zhang, and A. Risteski (2025)
+
+On the query complexity of verifier-assisted language generation.
+
+Note: arXiv:2502.12123
+
+External Links: 2502.12123
+
+Cited by: Appendix E,
+§7.
+
+[3]
+F. Chen, A. Huang, N. Golowich, S. Malladi, A. Block, J. T. Ash, A. Krishnamurthy, and D. J. Foster (2025)
+
+The coverage principle: how pre-training enables post-training.
+
+Note: arXiv:2510.15020
+
+External Links: 2510.15020
+
+Cited by: Appendix E,
+§1,
+§7.
+
+[4]
+D. J. Foster, Z. Mhammedi, and D. Rohatgi (2025)
+
+Is a good foundation necessary for efficient reinforcement learning? the computational role of the base model in exploration.
+
+In Proceedings of the 38th Conference on Learning Theory,
+
+Proceedings of Machine Learning Research, Vol. 291, pp. 2026–2142.
+
+External Links: Link
+
+Cited by: Appendix E,
+§1,
+§7.
+
+[5]
+D. Guo, D. Yang, H. Zhang, et al. (2025)
+
+DeepSeek-R1: incentivizing reasoning capability in LLMs via reinforcement learning.
+
+Note: arXiv:2501.12948
+
+External Links: 2501.12948
+
+Cited by: §1.
+
+[6]
+A. Huang, A. Block, D. J. Foster, D. Rohatgi, C. Zhang, M. Simchowitz, J. T. Ash, and A. Krishnamurthy (2024)
+
+Self-improvement in language models: the sharpening mechanism.
+
+Note: arXiv:2412.01951
+
+External Links: 2412.01951
+
+Cited by: Appendix E,
+§1,
+§7.
+
+[7]
+A. Huang, A. Block, Q. Liu, N. Jiang, A. Krishnamurthy, and D. J. Foster (2025)
+
+Is Best-of-N the best of them? coverage, scaling, and optimality in inference-time alignment.
+
+In Proceedings of the 42nd International Conference on Machine Learning,
+
+Proceedings of Machine Learning Research, Vol. 267, pp. 25075–25126.
+
+External Links: Link
+
+Cited by: Appendix E,
+§1,
+§1,
+§7.
+
+[8]
+Hugging Face (2026)
+
+GPT-2 model documentation.
+
+Note: https://huggingface.co/docs/transformers/model_doc/gpt2Official documentation. Accessed April 6, 2026
+
+Cited by: §2.2.
+
+[9]
+Hugging Face (2026)
+
+Perplexity of fixed-length models.
+
+Note: https://huggingface.co/docs/transformers/perplexityOfficial documentation. Accessed April 6, 2026
+
+Cited by: §2.2.
+
+[10]
+Hugging Face (2026)
+
+Transformers text generation documentation.
+
+Note: https://huggingface.co/docs/transformers/main_classes/text_generationOfficial documentation. Accessed April 6, 2026
+
+Cited by: §2.2.
+
+[11]
+A. Karan and Y. Du (2025)
+
+Reasoning with sampling: your base model is smarter than you think.
+
+Note: arXiv:2510.14901
+
+External Links: 2510.14901
+
+Cited by: Appendix E,
+§1,
+§7.
+
+[12]
+A. Liu and A. Moitra (2024)
+
+Model stealing for any low-rank language model.
+
+Note: arXiv:2411.07536
+
+External Links: 2411.07536
+
+Cited by: Appendix E,
+§7.
+
+[13]
+G. Mahajan, S. M. Kakade, A. Krishnamurthy, and C. Zhang (2023)
+
+Learning hidden Markov models using conditional samples.
+
+In Proceedings of the 36th Conference on Learning Theory,
+
+Proceedings of Machine Learning Research, Vol. 195, pp. 2014–2066.
+
+External Links: Link
+
+Cited by: Appendix E,
+§7.
+
+[14]
+Z. Mhammedi, D. J. Foster, and A. Rakhlin (2024)
+
+The power of resets in online reinforcement learning.
+
+Note: arXiv:2404.15417
+
+External Links: 2404.15417
+
+Cited by: Appendix E,
+§2.2,
+§7.
+
+[15]
+A. Mousavi-Hosseini and M. A. Erdogdu (2026)
+
+Post-training with policy gradients: optimality and the base model barrier.
+
+Note: arXiv:2603.06957
+
+External Links: 2603.06957
+
+Cited by: Appendix E,
+§1,
+§7.
+
+[16]
+OpenAI (2024)
+
+OpenAI o1 System Card.
+
+Note: https://openai.com/index/openai-o1-system-card/Official system card. Accessed April 6, 2026
+
+Cited by: §1.
+
+[17]
+OpenAI (2026)
+
+Chat completions API reference.
+
+Note: https://platform.openai.com/docs/api-reference/chatOfficial API documentation. Accessed April 6, 2026
+
+Cited by: §2.2.
+
+[18]
+OpenAI (2026)
+
+Responses API reference.
+
+Note: https://developers.openai.com/api/reference/resources/responses/methods/create/Official API documentation. Accessed April 6, 2026
+
+Cited by: §2.2.
+
+[19]
+D. Rohatgi and D. J. Foster (2025)
+
+Necessary and sufficient oracles: toward a computational taxonomy for reinforcement learning.
+
+Note: arXiv:2502.08632
+
+External Links: 2502.08632
+
+Cited by: Appendix E,
+§2.2,
+§7.
+
+[20]
+W. Tan, F. Parascandolo, E. Sangineto, J. Ju, Z. Luo, Q. Cao, R. Cucchiara, R. Song, and J. Luan (2026)
+
+Restoring exploration after post-training: latent exploration decoding for large reasoning models.
+
+Note: arXiv:2602.01698
+
+External Links: 2602.01698
+
+Cited by: Appendix E,
+§1,
+§7.
+
+[21]
+J. Tuyls, D. J. Foster, A. Krishnamurthy, and J. T. Ash (2025)
+
+Representation-based exploration for language models: from test-time to post-training.
+
+Note: arXiv:2510.11686
+
+External Links: 2510.11686
+
+Cited by: Appendix E,
+§7.
+
+[22]
+Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, Y. Yue, S. Song, and G. Huang (2025)
+
+Does reinforcement learning really incentivize reasoning capacity in LLMs beyond the base model?.
+
+Note: arXiv:2504.13837
+
+External Links: 2504.13837
+
+Cited by: Appendix E,
+§1,
+§7.
+
+Appendix A Proofs for Section 3
+
+The vocabulary and horizon are finite, so all path spaces here are finite as well. The definitions are nonetheless phrased with measurable kernels to preserve the generality of the main-text statements.
+
+A.1 The canonical no-reset experiment
+
+Fix a prompt . Let be a standard Borel query space and a standard Borel reply space.
+
+Definition 7.
+
+A generator experiment at prompt is no-reset if there exists a measurable probability kernel
+
+from to such that one query is answered by first drawing , then setting for , and finally drawing the reply from .
+
+Definition 8.
+
+For the fixed prompt , let . The experiment ignores its query parameter, draws
+
+and returns
+
+Definition 9.
+
+Let be an experiment with query space and reply space . A randomized post-processing of is specified by a measurable kernel from to another reply space . On query , the post-processed experiment first draws the reply of and then draws its final reply from .
+
+Theorem 10.
+
+Fix a prompt . An experiment at prompt is no-reset if and only if it is a randomized post-processing of .
+
+Proof.
+
+Assume first that the experiment is no-reset. By Definition 7, there is a kernel
+
+such that one query to is answered by drawing
+
+and then drawing the final reply from that kernel. If we define
+
+then is a randomized post-processing of .
+
+Conversely, suppose is a randomized post-processing of . Then there exists a kernel such that one query to is answered by drawing and then sampling from . Writing , this is exactly Definition 7 with
+
+So is no-reset.
+∎
+
+A.2 Agreement outside a prefix set
+
+Fix a prefix set . We say that two prompt-conditioned generators and agree outside if
+
+The first lemma shows that, under this assumption, both generators assign the same probability to ever entering .
+
+Lemma 1.
+
+If and agree outside , then
+
+Proof.
+
+For each prefix , let be its length and define the event
+
+with the convention . The event says that the rollout enters for the first time at the prefix .
+
+The events are pairwise disjoint, and their union is exactly the reachability event . It therefore suffices to show that for every .
+
+Fix of length . On the event , every proper prefix of lies outside . Since the two generators agree outside ,
+
+Multiplying these transition probabilities gives
+
+Summing over all yields
+
+∎
+
+A.3 One-query indistinguishability
+
+We now show that, for the canonical experiment, the two models can differ only on rollouts that reach .
+
+Lemma 2.
+
+Let and agree outside . Let
+
+denote one reply of under and , respectively. Then
+
+Proof.
+
+Let be the event that the rollout under reaches , and let be the corresponding event under . By Lemma 1,
+
+We claim that the conditional laws of and agree on the complements of these events:
+
+To see this, fix any trajectory such that none of its visited prefixes lies in . Along that trajectory, every prefix lies outside , so
+
+Therefore the trajectory has the same probability under both models. The same observation gives
+
+so the full reply is identical in the two worlds. Summing over all trajectories that avoid proves the claim.
+
+Write
+
+and define
+
+Then
+
+and
+
+Subtracting the two measures gives
+
+Taking total variation and using yields
+
+∎
+
+The same one-query bound holds for every no-reset experiment by data processing.
+
+Corollary 5.
+
+Let be any no-reset experiment at prompt . If the two generators agree outside , then for every fixed query parameter the reply laws under and satisfy
+
+Proof.
+
+By Theorem 10, the experiment is a randomized post-processing of . Therefore the reply is obtained by applying the same Markov kernel to that produces from . Total variation cannot increase under a common Markov kernel, so Lemma 2 gives
+
+∎
+
+A.4 Adaptive interaction
+
+We now pass from one query to a fully adaptive transcript.
+
+Definition 10.
+
+Fix a query space and a reply space . A randomized adaptive algorithm that makes at most queries consists of a random seed together with measurable decision rules that, at each round, either stop or submit a new query based on the previous transcript. If the algorithm stops early, the remaining rounds are padded with a distinguished symbol . The padded transcript is written as
+
+Theorem 11.
+
+Let be any no-reset experiment at prompt . Suppose and agree outside . Then every randomized adaptive algorithm that makes at most queries satisfies
+
+Proof.
+
+We first treat the case in which is deterministic. We construct a coupling of the two transcript laws round by round.
+
+Let and be the th padded transcript entries under and . At round , the deterministic algorithm either stops immediately or chooses the same first query in both worlds. If it stops immediately, the two transcripts are identical and there is nothing to prove. Otherwise, Corollary 5 shows that the reply laws to this common query differ in total variation by at most . By the coupling characterization of total variation, the two first replies can therefore be coupled so that
+
+Now suppose the coupling has been defined through round . On the event that the first transcript entries agree, the deterministic algorithm is in the same state in the two worlds, so it either stops in both or chooses the same round- query in both. If it stops, we couple the remaining padded symbols identically. If it continues, Corollary 5 again shows that the two reply laws to the common query differ in total variation by at most , so we can choose the conditional coupling so that
+
+Let
+
+be the event that the two transcripts have diverged by round , and set . Then
+
+Taking probabilities and using the conditional bound above gives
+
+Summing over yields
+
+By the coupling characterization of total variation,
+
+It remains to handle randomized algorithms. Let denote the algorithm’s random seed. Conditional on , the algorithm becomes deterministic, so the bound above gives
+
+for every seed value . The unconditional transcript laws are mixtures of these conditional laws with the same mixing distribution, because the seed is sampled independently of the model. Convexity of total variation under common mixing then gives the same inequality without conditioning on .
+∎
+
+The testing lower bound used later is an immediate corollary.
+
+Corollary 6.
+
+Suppose an algorithm makes at most adaptive queries to a no-reset experiment at prompt and then outputs a guess in . If its worst-case success probability is at least , then
+
+Proof.
+
+Let
+
+For any decision rule based on the transcript, the average success probability under the uniform prior on is at most
+
+By Theorem 11,
+
+If the worst-case success probability is at least , then the average success probability under the uniform prior is also at least . Hence
+
+which rearranges to the claimed lower bound.
+∎
+
+Appendix B Proofs for Section 4
+
+B.1 No-reset hardness on hidden paths
+
+Recall the hidden-path family from Definition 4. For convenience, we repeat the transition rule:
+
+Theorem 12.
+
+Fix , , and . Let satisfy and . Let be any randomized adaptive algorithm that makes at most queries to any no-reset generator experiment. Then
+
+Consequently, any such algorithm that distinguishes from with worst-case success probability at least must satisfy
+
+Proof.
+
+Let
+
+We first show that and agree outside the singleton set
+
+Fix any prefix with . If is not a prefix of , then because and agree through depth , it is also not a prefix of . In that case both models are uniform at . If instead is a prefix of , then since and and agree on their first symbols, the same prefix is also a prefix of , and the favored next token is the same under both models. Thus
+
+So the two generators agree outside .
+
+We next compute the reachability of . A rollout reaches the prefix if and only if its first tokens are exactly . Under either model, each of those transitions follows the hidden path and therefore has conditional probability . Hence
+
+Theorem 11 from Appendix A now gives
+
+The testing lower bound then follows from Corollary 6.
+∎
+
+B.2 Recovery from chosen-prefix samples
+
+We now prove the upper bound for Algorithm 1.
+
+Theorem 13.
+
+Fix , , , and . Let
+
+Then Algorithm 1 recovers the hidden path with probability at least using at most chosen-prefix samples. The queried prefixes obey the local-reset discipline.
+
+Proof.
+
+For each stage , let
+
+be the event that the algorithm has reconstructed the hidden path correctly through depth .
+
+Fix a stage and condition on . Then the query prefix at stage is the true hidden prefix . Therefore the replies
+
+are independent samples from the next-token distribution at . In particular,
+
+Fix any competing token . For each sample index , define
+
+Conditional on , the variables are independent, each lies in the interval , and
+
+By definition of the empirical counts,
+
+Therefore
+
+Subtracting the mean from each summand gives
+
+Hoeffding’s inequality for independent variables in yields
+
+There are competitors. A union bound therefore gives
+
+where the last inequality follows from the choice of .
+
+We now propagate the stagewise guarantee. Since
+
+we have
+
+Because is the sure event, . Iterating the inequality from to gives
+
+But is exactly the event . Hence
+
+The algorithm makes exactly chosen-prefix queries at each of the stages, so the total number of queries is .
+
+Finally, the local-reset discipline holds because the first queried prefix is , every repeated query at stage revisits the same already queried prefix , and the first new query at stage is the one-token extension of a previously queried prefix.
+∎
+
+B.3 Exact teacher-forced sequence scores
+
+We also prove the sequence-scoring corollary from the main text.
+
+Corollary 7.
+
+In the hidden-path family, exact recovers the hidden path using chosen-completion score queries.
+
+Proof.
+
+Fix any rule that assigns an arbitrary suffix to each stage . The recovery procedure maintains a current prefix and, at stage , queries the exact scores of the completions
+
+It then sets to the token with the largest score.
+
+We prove by induction on that for every stage. The base case is immediate. Assume now that . Let , and fix any incorrect token . We compare the probabilities of the completions
+
+The completion leaves the hidden path immediately at time , so every later transition is uniform. Hence
+
+The completion stays on the hidden path for at least one additional step. Suppose it remains on the hidden path for exactly consecutive steps after time , where may be any value in . Then
+
+where is either if the suffix eventually leaves the hidden path, or if the suffix coincides with the true remaining suffix all the way to the end. In either case,
+
+Therefore
+
+Since
+
+this ratio is strictly larger than . Thus has strictly larger probability than every with .
+
+Because returns the exact log probability of the queried completion, the correct token is the unique maximizer at stage . Hence , which completes the induction.
+
+There are score queries at each of the stages, so the total number of queries is .
+∎
+
+Appendix C Proofs for Section 5
+
+C.1 Basic properties of the leader-trie family
+
+Recall the leader-trie model from Definitions 5 and 6. The useful inequalities are
+
+so
+
+The relevant margins are
+
+and
+
+C.2 Top-token access is useless
+
+Theorem 14.
+
+Assume . For every leader trie and every queried prefix , the oracle returns the token . Consequently, for any adaptive algorithm interacting only with , the full transcript law is the same for every leader trie of depth . In particular, no such algorithm can distinguish two different leader tries with success probability greater than .
+
+Proof.
+
+Fix a leader trie and a queried prefix .
+
+If , then by Definition 6,
+
+Since , the unique maximizer is the token .
+
+If instead , then
+
+Again the unique maximizer is the token .
+
+So every query to returns the same deterministic reply, namely , regardless of the trie and regardless of the queried prefix.
+
+Now let be any adaptive algorithm. At every round, the distribution of the next query depends only on the previous transcript and the algorithm’s internal randomness. Since the reply is always the constant token , the transcript distribution is the same for every leader trie. Therefore any decision rule based on the transcript receives identically distributed data under any two candidate tries. Under the uniform prior on a pair of different tries, no such rule can have average success probability above , and hence no rule can have worst-case success probability above either.
+∎
+
+C.3 Recovery from chosen-prefix logits
+
+We now prove that the hidden branch can be recovered from chosen-prefix logit access.
+
+Theorem 15.
+
+Let be a leader trie. If , then Algorithm 2 recovers exactly from chosen-prefix logit queries. The queried prefixes obey the local-reset discipline.
+
+Proof.
+
+We first show that, at every queried prefix, the thresholding rule in line of Algorithm 2 behaves exactly as intended.
+
+Fix a prefix .
+
+Suppose first that . Then the hidden child is . For that token,
+
+Since the returned vector satisfies
+
+we have
+
+Because and ,
+
+So the hidden child belongs to .
+
+Now fix any other nonleader token . Its true log probability is , so
+
+Since and ,
+
+Thus no other nonleader belongs to , and we conclude that
+
+Suppose next that . Then every nonleader token has true log probability , so for every ,
+
+Hence
+
+We now prove that the queue-based procedure reconstructs the trie exactly. We argue by induction over the order in which prefixes are popped from the queue.
+
+At initialization, the queue contains only . Since every leaf of a leader trie has depth exactly and , the root is an internal node. So the first queried prefix is correct.
+
+Assume inductively that every prefix previously popped from the queue was a true internal node of , and that whenever such a prefix was processed, the algorithm recovered the correct singleton and therefore added exactly the two true children and to and, if they were not yet at depth , to the queue.
+
+Let be the next prefix popped from the queue. By construction of the queue, was added earlier as one of the two children of a previously processed internal node. Hence . Since only prefixes of depth at most are ever appended to the queue, we also have . Because every node of of depth strictly less than is internal, it follows that . Thus every queried prefix is indeed a true internal node.
+
+Conversely, every internal node is eventually queried. This is proved by induction on depth. The root is queried first. Now fix any internal node , and let be its parent. By prefix-closure, , and since , it is also an internal node. By the induction hypothesis, is eventually queried. When it is processed, the algorithm adds both of its true children to the queue, including . Therefore is eventually queried.
+
+We have shown that the algorithm queries exactly the internal nodes of . At each such node it recovers the correct hidden child, and therefore it adds exactly the correct children. Thus the returned set is exactly .
+
+The number of queries is one per internal node, namely .
+
+Finally, the queried prefixes obey the local-reset discipline. The first query is . Every later queried prefix was added to the queue only after its parent had been queried, so when it is first queried it is a one-token extension of a previously queried prefix. This is exactly the local-reset condition from Section 2.
+∎
+
+C.4 Recovery from chosen-prefix samples
+
+For completeness we write the sample-based breadth-first procedure explicitly.
+
+Algorithm 3 Recovering a leader trie with chosen-prefix samples
+
+1:
+
+ Initialize , queue , and counter
+
+2:
+
+ while is nonempty and do
+
+3:
+
+  Pop the first prefix from and set
+
+4:
+
+  for to do
+
+5:
+
+   Query and receive
+
+6:
+
+  end for
+
+7:
+
+  for each do
+
+8:
+
+   Set
+
+9:
+
+  end for
+
+10:
+
+  Set
+
+11:
+
+  if is a singleton then
+
+12:
+
+   Add and to
+
+13:
+
+   if then
+
+14:
+
+    Append and to
+
+15:
+
+   end if
+
+16:
+
+  end if
+
+17:
+
+ end while
+
+18:
+
+ if is empty then
+
+19:
+
+  Return
+
+20:
+
+ else
+
+21:
+
+  Return
+
+22:
+
+ end if
+
+Theorem 16.
+
+Let be a leader trie and write . Suppose the learner knows an upper bound . Fix , and set
+
+Then Algorithm 3 recovers with probability at least using at most chosen-prefix samples. The queried prefixes obey the local-reset discipline.
+
+Proof.
+
+Fix once and for all a breadth-first ordering of the true internal nodes of :
+
+For each , let be the event that after exactly processed prefixes, the following three conditions hold simultaneously:
+
+and
+
+The event holds deterministically at initialization.
+
+Fix and condition on . Then the next processed prefix is the true internal node .
+
+For each nonleader token , the empirical frequency
+
+is the average of independent Bernoulli random variables with mean .
+
+There are two cases. If is the hidden child, then
+
+If , then
+
+In either case, the distance from the mean to the threshold is at least . Indeed, for the hidden child,
+
+and for every other nonleader,
+
+Hoeffding’s inequality therefore gives
+
+for the hidden child, and
+
+for every nonhidden nonleader .
+
+A union bound over the nonleader tokens yields
+
+By the definition of ,
+
+Thus
+
+Whenever the good event occurs, the algorithm processes correctly and preserves the breadth-first invariant. Therefore
+
+We now propagate the invariant:
+
+so
+
+Starting from and iterating gives
+
+On the event , the algorithm has processed exactly the internal nodes of , reconstructed the trie correctly, and emptied the queue after at most iterations. In that case the algorithm returns .
+
+To finish the proof, we note that the bound above already controls all possible classification mistakes on true internal nodes. Since the queue only receives children of correctly processed internal nodes, the event also guarantees that no off-trie prefix is ever processed. Thus
+
+The query count is at most per processed prefix and at most processed prefixes, so the total number of chosen-prefix samples is at most .
+
+The local-reset discipline holds for the same reason as in the logit-based procedure: the first query is , and every later queried prefix is a one-token extension of a previously queried prefix.
+∎
+
+C.5 Summary corollary
+
+Corollary 8.
+
+Fix and . On the hidden-path family, every no-reset generator interface requires exponentially many queries on some pair of models, while chosen-prefix sampling recovers the hidden path in local-reset queries. On the leader-trie family, chosen-prefix top-token access is useless, while chosen-prefix logits and chosen-prefix sampling recover the trie efficiently under the local-reset discipline. Prefix control is therefore the first boundary, and observation richness becomes a second boundary only after control is available.
+
+Proof.
+
+The hidden-path statement is exactly the combination of Theorems 12 and 13. For fixed and , the gap is a positive constant, so the upper bound
+
+is .
+
+The leader-trie statement is exactly the combination of Theorems 14, 15, and 16. The final sentence is the summary of these two witness-family statements.
+∎
+
+Appendix D Proofs for Section 6
+
+D.1 The hard family
+
+Fix a prompt distribution on and a designated hard prompt with mass . Fix integers and set . Let be a known scaffold, and let be two distinct terminal tokens.
+
+For each hidden suffix , define the hard-prompt base generator as follows. Let
+
+For every prefix , set
+
+Thus follows the hidden path for its first steps and is uniform at the final step.
+
+For every prompt , fix once and for all an easy generator , the same for all instances. The full prompt-conditioned base generator is
+
+Now fix a reward scale . For each bit , define the target completion
+
+and the outcome reward
+
+All prompts other than therefore have zero reward.
+
+The candidate target set at the hard prompt is
+
+whose size is
+
+The base-model mass of the rewarding completion is
+
+which does not depend on either or .
+
+D.2 The hard-prompt objective
+
+For a policy , define the hard-prompt objective
+
+The exact optimizer at the hard prompt has the usual Gibbs form.
+
+Lemma 3.
+
+Fix an instance . Let
+
+and define
+
+Then for every policy ,
+
+In particular, is the unique maximizer of the hard-prompt objective, and the optimal value is .
+
+Proof.
+
+Fix any policy . By definition of ,
+
+Rearranging,
+
+Taking expectation with respect to gives
+
+Since KL divergence is always nonnegative and vanishes only when the two distributions agree, the stated optimality properties follow.
+∎
+
+We next show that a policy which places only small mass on the target completion must be far from optimal on the hard prompt once the reward scale has been chosen appropriately.
+
+Lemma 4.
+
+Assume
+
+Let be any policy, and write
+
+If , then
+
+Proof.
+
+Let denote the target completion. By Lemma 3,
+
+Since the reward is nonzero only at and equals there,
+
+Hence
+
+We now upper bound the value of an arbitrary policy with target mass . By data processing for KL divergence under the map that records whether , we have
+
+where
+
+Therefore
+
+Substituting gives
+
+where is the binary entropy in nats.
+
+Define
+
+For ,
+
+Hence whenever . In particular, is increasing on , so
+
+Using the elementary bound with gives
+
+and therefore
+
+So every policy with satisfies
+
+Combining the lower bound on the optimal value with the upper bound above, we obtain
+
+Since , the right-hand side is strictly larger than .
+∎
+
+The hard-prompt gap lifts immediately to the prompt-distributed objective.
+
+Corollary 9.
+
+Assume
+
+Let be any prompt-conditioned policy. If
+
+then
+
+Proof.
+
+At every prompt , the reward is zero. Therefore the contribution of such a prompt to the objective is at most , with equality attained by matching the base generator. The exact optimizer does exactly that on all easy prompts, so
+
+For an arbitrary policy ,
+
+Applying Lemma 4 to the hard-prompt component and multiplying by gives the claim.
+∎
+
+D.3 Proof of the upper bound
+
+Theorem 17.
+
+Fix , and let
+
+For the hard family above, there is an algorithm with chosen-prefix next-token sampling access to the base generator and one outcome-reward query that outputs the exact maximizer of with probability at least . The algorithm uses at most generator queries and one reward query.
+
+Proof.
+
+The algorithm works in three stages.
+
+In the first stage, it walks down the known scaffold in order to respect the local-reset discipline. It queries the prefixes
+
+These are generator queries. Their replies are irrelevant, since the scaffold is known in advance; the only point of the stage is to build the prefix legally.
+
+In the second stage, it treats the hidden suffix as a length- hidden-path problem. More precisely, consider any prefix of the form
+
+If , then by construction of the next-token distribution at satisfies
+
+If is not a prefix of , then the queried prefix lies off the hidden path and the next-token distribution is uniform. So below the known scaffold , the unknown suffix behaves exactly like a hidden path of length .
+
+The algorithm therefore applies Algorithm 1 from Section 4 starting at the prefix . By Theorem 13, after chosen-prefix sampling queries, it recovers the hidden suffix with probability at least .
+
+In the third stage, once has been recovered, the algorithm identifies the reward bit with one reward query. It queries the hard prompt using the deterministic policy concentrated on the completion . The observed reward equals if and only if , and equals otherwise. So one reward query determines exactly.
+
+At that point the hidden state is known, and therefore the exact optimizer is known as well. On easy prompts it agrees with the base generator, while at the hard prompt it is given by the Gibbs formula from Lemma 3.
+
+The algorithm fails only if the suffix-recovery stage fails, which occurs with probability at most . The total number of generator queries is
+
+because . The number of reward queries is one.
+∎
+
+D.4 A posterior-symmetry lemma for the lower bound
+
+We now prepare the no-reset lower bound. The hidden state is
+
+where is uniform on and is uniform on , independently. Equivalently, the target completion
+
+is uniform on the candidate set of size .
+
+Consider an arbitrary algorithm that may interleave generator and reward queries. Define the event that at least one no-reset generator query made at the hard prompt reaches the scaffold prefix in its internal rollout.
+
+Lemma 5.
+
+For any algorithm that makes at most no-reset generator queries,
+
+Proof.
+
+Fix one no-reset generator query made at the hard prompt . Its internal rollout reaches the scaffold if and only if its first sampled tokens match the scaffold exactly. Under every generator in the family, each of those transitions has conditional probability . Hence the probability that this query reaches is .
+
+Generator queries made at prompts other than are irrelevant for the event . Since there are at most generator queries in total, the union bound gives
+
+∎
+
+The next lemma is the key symmetry statement. It handles arbitrary interleaving by tracking only transcripts that remain on the event and have not yet received positive reward.
+
+A safe partial transcript is an interaction history in which no generator query has reached the scaffold and no reward query has yet produced positive reward. For a safe transcript , define the surviving candidate set
+
+Generator queries do not change ; a negative reward query at the hard prompt removes at most one candidate.
+
+Lemma 6.
+
+For every safe partial transcript , there exists a nonnegative number such that
+
+for every hidden state whose target completion lies in , and
+
+for every hidden state whose target completion does not lie in .
+
+Consequently, conditional on any safe transcript , the posterior on is uniform over the surviving candidate set .
+
+Proof.
+
+We prove the claim by induction on the length of the safe transcript.
+
+For the empty transcript, take . Since is uniform over the possible hidden states, the claim holds.
+
+Now suppose the claim holds for a safe transcript , and consider one additional query chosen by the algorithm after observing .
+
+If the next query is a generator query, there are two possibilities. Some replies correspond to an internal rollout that reaches the scaffold; those replies do not extend the transcript safely and need not be considered. For a reply that does extend the transcript safely, the internal rollout has avoided the scaffold. Along such a rollout, every visited prefix lies outside the informative subtree below , and all generators agree there. Therefore the conditional probability of observing , given the current safe transcript , is the same for every surviving hidden state . Call this common probability . Then
+
+for every surviving , while the nonsurviving states remain at probability zero. So the claim holds for the extended safe transcript with
+
+If the next query is a reward query at a prompt , then the observed reward is always zero, and the distribution of the sampled completion depends only on the chosen policy and not on the hidden state. Hence the same argument applies: the reply distribution is common to all surviving hidden states, so the claim is preserved and the surviving set does not change.
+
+If the next query is a reward query at the hard prompt , let be the policy chosen after observing , and let be the sampled completion.
+
+If , then the reward is again zero for every hidden state, and the reply distribution is common to all surviving states. So the same argument applies and is unchanged.
+
+If and the reward is positive, then the transcript is no longer safe and there is nothing to prove.
+
+If and the reward is zero, then the transcript remains safe. For a surviving hidden state with target completion different from , the probability of this reply is , which again does not depend on . For the unique hidden state whose target completion equals , the joint probability becomes zero because that state would have produced positive reward. Therefore the new safe transcript satisfies the same formula with
+
+and the new surviving set is .
+
+This completes the induction.
+∎
+
+The symmetry lemma implies that reward queries can only locate the target by direct hits, and that every negative reward at the hard prompt eliminates at most one candidate.
+
+Lemma 7.
+
+Let and . Consider a state in which the hidden target is uniform over a surviving candidate set of size , and the learner has at most reward queries remaining. Then, regardless of how it may interleave future generator queries with those reward queries, the probability of ever receiving positive reward is at most .
+
+Proof.
+
+We prove the claim by induction on .
+
+If , there are no reward queries left, so the probability of ever receiving positive reward is . This is exactly .
+
+Now suppose and that the claim holds for . Condition on the current state, where the target is uniform over a set with .
+
+Before the next reward query, the algorithm may make any number of generator queries. On the event , such generator queries never reach the scaffold and therefore do not change the posterior-symmetry structure from Lemma 6: the hidden target remains uniform over the same surviving set . So only the next reward query matters.
+
+Let the next reward query at the hard prompt sample a completion according to some policy. Write for the probability of sampling candidate , and let
+
+be the total probability of sampling a completion outside .
+
+If the sampled completion lies outside , then the reward is certainly zero and no candidate is eliminated. The learner still has at most reward queries remaining, and by the induction hypothesis the future chance of success is at most
+
+If the sampled completion is some , then there are two possibilities. With probability , the hidden target is exactly , and the learner receives positive reward immediately. With the complementary probability , the hidden target lies in , the reward is zero, and the candidate is eliminated. At that point there are at most reward queries remaining and surviving candidates, so the induction hypothesis bounds the future success probability by
+
+Combining the two cases gives
+
+This completes the induction.
+∎
+
+Lemma 8.
+
+Conditional on the event , the probability that some reward query ever receives positive reward is at most .
+
+Proof.
+
+On the event , every generator query avoids the scaffold. By Lemma 6, after every safe transcript the hidden target remains uniform over the current surviving candidate set. At the start of the reward phase, the surviving set is the full set of size .
+
+Now ignore the generator queries and look only at the evolution of the surviving candidate set across reward queries. Since the target is initially uniform over candidates and there are at most reward queries in total, Lemma 7 applied with and gives
+
+∎
+
+Lemma 9.
+
+Conditional on the event and on the event that no reward query ever receives positive reward, we have
+
+Proof.
+
+Fix any final safe transcript . By Lemma 6, the posterior on given is uniform over the surviving set . Each negative reward query at the hard prompt can eliminate at most one candidate from , and generator queries eliminate none. Hence
+
+Let be the policy output by the algorithm after observing . Conditional on , the posterior expected mass that this policy assigns to the true target is
+
+Markov’s inequality therefore implies
+
+Since the bound is uniform over all final safe transcripts , averaging over gives the claimed inequality.
+∎
+
+D.5 Proof of the lower bound
+
+Theorem 18.
+
+Assume
+
+Consider any algorithm that may interleave at most no-reset generator queries with at most outcome-reward queries and then outputs a prompt-conditioned policy . Then there exists a choice of hidden suffix and reward bit such that
+
+Proof.
+
+Run the algorithm against a uniformly random hidden state
+
+and let be the corresponding exact optimizer. Define the success event
+
+By Corollary 9, on every instance the event implies
+
+Therefore
+
+Taking probabilities and applying the union bound gives
+
+We now bound the three terms. By Lemma 5,
+
+By Lemma 8,
+
+By Lemma 9,
+
+Combining the three bounds yields
+
+This is the average success probability of the algorithm under the uniform prior on the hidden state. Therefore there exists at least one fixed instance whose success probability is at most the same quantity. That instance is the one claimed in the theorem.
+∎
+
+Corollary 10.
+
+Let be any prompt distribution with . There is a family of KL-regularized outcome-reward post-training instances that is trivial on every prompt and satisfies the lower bound from Theorem 18. In particular, any guarantee of average regret below must solve the hard prompt .
+
+Proof.
+
+This is exactly the hard family defined at the start of the appendix section. Theorem 18 applies directly, and the final statement is just Corollary 9 restated in prompt-distributed language.
+∎
+
+Corollary 11.
+
+Fix , , , and any constant . There exists a constant such that for every sufficiently large horizon and every prompt distribution with a designated prompt of mass , there is a family of KL-regularized outcome-reward post-training instances of horizon with the following property. With chosen-prefix next-token sampling access, one reward query and
+
+generator queries suffice to output the exact optimizer with probability at least . With only no-reset generator access, any algorithm that uses at most reward queries and succeeds with probability at least in outputting a policy of average regret at most must make
+
+generator queries.
+
+Proof.
+
+Fix the horizon , and choose
+
+Then both and are , and the hard family above has exactly horizon .
+
+The upper bound follows directly from Theorem 17. Since and depends only on ,
+
+For the lower bound, recall that . Since is fixed and , we have
+
+So for all sufficiently large ,
+
+Now suppose an algorithm succeeds with probability at least while using at most reward queries. By Theorem 18, there exists an instance for which
+
+Hence
+
+Since and , the quantity grows exponentially in . For example, with
+
+we have
+
+Therefore
+
+which proves the corollary.
+∎
+
+Appendix E Extended discussion of related work
+
+We expand here on the related work from Section 7.
+
+The closest theoretical precursor is the recent line of work that makes coverage central under fixed sampling-style access. Foster, Mhammedi, and Rohatgi study exploration with language models when the learner interacts through a sampling oracle, and show that insufficient coverage of near-optimal responses lower-bounds computational efficiency [4]. Huang et al. analyze inference-time alignment and again find that coverage governs the quality-compute tradeoff of sampling-based alignment methods [7]. Chen et al. elevate this into a broader coverage principle for understanding why pre-training enables post-training and inference-time scaling [3]. Huang et al. study sharpening-style self-improvement under a fixed access model and ask when expensive verification can be amortized into a stronger policy [6]. Our results agree with these papers where the access model overlaps with ours. The difference is the question: we vary the generator interface itself and show that on-policy reachability is the governing quantity of the no-reset class rather than a universal law of post-training.
+
+The second conceptual precursor comes from reinforcement learning and conditional-access models for sequential distributions. Reset-style interaction can change what is learnable or plannable in RL [14, 19]. Conditional queries can likewise make otherwise hard sequential models tractable to learn [13, 12]. The prefix-tree formalism in the present paper is the autoregressive version of the same distinction. Root-start interaction corresponds to ordinary episodic access. Chosen-prefix interaction corresponds to reset-like access. The point of the paper is that, for generators, this distinction should be native rather than imported only by analogy.
+
+There is also a substantial literature on richer intermediate signals that are not generator-side in our sense. Botta et al. study verifier-guided generation with prefix-level feasibility signals [2]. Amani et al. study adaptive partial rationale exposure [1]. Tuyls et al. study hidden-state-based exploration bonuses [21]. These papers all support the broader intuition that intermediate access matters, but the channel is different. The present paper isolates the stochastic generator itself and asks what can be learned from distributional queries without hidden states or external verifiers.
+
+Finally, the KL bridge theorem is meant to be complementary to feedback-side theory. Mousavi-Hosseini and Erdogdu show that process rewards can avoid outcome-reward barriers under fixed generator access [15]. The theorem in Section 6 holds the feedback model fixed and varies only the generator interface. In that sense it fills a missing quadrant: fixed generator access with varying feedback has one kind of barrier, while fixed feedback with varying generator access has another.
+
+The empirical literature points in the same direction. Yue et al. argue that RL with verifiable rewards often sharpens trajectories already present in the base model [22]. Karan and Du show that stronger sampling can sometimes match or exceed RL post-training while preserving diversity [11]. Tan et al. identify entropy collapse in the final-layer posterior of reasoning models and recover exploration from intermediate-layer uncertainty [20]. These papers do not prove the taxonomy in this paper, but they reinforce its premise: support, exploration, and intermediate control should be treated as part of the problem rather than as implementation details.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

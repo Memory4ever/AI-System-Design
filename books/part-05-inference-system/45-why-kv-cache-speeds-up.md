@@ -693,6 +693,21 @@ miss 则可先并行计算相对独立的 segment，再按确定顺序提交 com
 可使用这种组合；operator 不可分解、seam 误差不可控或 correctness 优先时仍应顺序 recompute。HYPIC 的单节点
 作者实验只证明所测 hybrid model 与 segment contract 的可行性，不证明任意 linear-attention family 都可安全组合。
 
+并非所有 recurrent transition 都能被压缩成稳定、可组合的 operator。此时最保守的旧方案是从 prefix 起点顺序
+重算，正确性清楚，却会让 prefix cache 在 hybrid model 中失去主要价值。若 full-attention 层仍保留逐 token KV，
+可以把它在 replay suffix 上产生的 output hidden states 一并缓存；命中 prefix 时，linear/recurrent group 不读取一个
+并不存在的中间 checkpoint，而是从零状态消费这段 hidden-state suffix，重建 prefix 边界的 recurrent state。只有
+重建完成后，Runtime 才用该 state 与 full-attention KV 继续未命中的 suffix 和 Decode。
+
+这条 `Alternative Branch` 用额外 replay compute 与 hidden-state residency 换取“不保存每个 recurrent checkpoint”下的
+任意 prefix 命中。较短 replay 降低 TTFT，却可能没有充分恢复历史信息；较长 replay 提高恢复质量，但逐渐退化为顺序
+重算。Cache identity 因而至少绑定 model/revision、full-attention KV 与 output-hidden layout、replay ratio/window、
+precision、position semantics 和质量门槛；验证失败时回退完整 prefill，而不是提交未经证明的 recurrent state。
+Tail-Replay 的作者实验只覆盖三种披露的 hybrid models、LongBench/RULER、NVIDIA H100 与 8K/16K/32K 输入，不能把
+其 5%～10% replay 比例或 TTFT 改善外推成通用配置。
+
+<!-- source-family:SF-2026-ARXIV-2608-30310 -->
+
 #### Video Ingestion State 与 Decode KV 是两个不同 Cache Object
 
 逐帧保留全部 visual KV，在视频较短、质量优先或内存足够时最容易保证每个 frame token 可被生成阶段访问；长视频让

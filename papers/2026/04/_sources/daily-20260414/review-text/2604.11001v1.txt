@@ -1,0 +1,867 @@
+Flow-Controlled Scheduling for LLM Inference with Provable Stability Guarantees
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+1.1 Related Work
+
+LLM Inference.
+
+Queueing Theory.
+
+2 Model and Problem Formulation
+
+2.1 Problem Formulation
+
+2.2 Evaluation Metrics
+
+Throughput.
+
+Latency.
+
+3 Methodology
+
+3.1 Flow-Control for LLM Inference
+
+3.2 Known Output Length
+
+3.3 Unknown Output Length
+
+4 Numerical Simulations
+
+4.1 Synthetic Data Simulations
+
+4.1.1 Results
+
+4.2 Real-World Data Simulations
+
+4.2.1 Results
+
+5 Discussion
+
+References
+
+A Proofs
+
+A.1 Proof of Proposition
+
+A.2 Proof of Theorem
+
+A.3 Proof of Proposition
+
+A.4 Proof of Theorem
+
+B Additional Numerical Results
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11001v1 [cs.LG] 13 Apr 2026
+
+Flow-Controlled Scheduling for LLM Inference with Provable Stability Guarantees
+
+Zhuolun Dong
+††thanks: Department of Information, Risk, and Operations Management,
+The University of Texas at Austin. Email: dongzhuolun@utexas.edu.
+  
+Junyu Cao
+††thanks: Corresponding author. Department of Information, Risk, and
+Operations Management, The University of Texas at Austin.
+Email: junyu.cao@mccombs.utexas.edu.
+
+Abstract
+
+Large language models (LLMs) have been widely adopted due to their great performance across a wide range of applications. ChatGPT and Gemini now serve hundreds of millions of active users and handle billions of user requests per day, which puts optimizing LLM inference into the spotlight. A key challenge in LLM inference is that decode lengths are unknown. The memory usage for each request grows with generated tokens, which may lead to overflow and cause system instability. To address this concern, we propose a simple flow-control framework that controls the rate at which prompts join the active set. We derive a necessary condition that any stable system must satisfy and establish sufficient conditions under which our algorithm provably achieves stability. Experiments show that, compared to commonly used strategies in practice, our approach achieves higher token and request throughput, lower average and tail latency, and more stable KV cache utilization.
+
+1 Introduction
+
+Large Language Models (LLMs) have become a core component of modern AI applications, enabling a wide range of capabilities, from creative writing and translation to code generation and reasoning. Built on the transformer architecture [26], these models have rapidly scaled in both size and performance. For instance, Llama 3 [11] has 405 B parameters, and DeepSeek [19] has 701 B parameters. This rapid growth has brought unprecedented serving demand: Chatterji et al. [7] documented that, by July 2025, 700 million users were sending 18 billion requests per week on ChatGPT. Therefore, the efficiency and reliability of LLM inference (serving) are critical bottlenecks for both cost and user experience. Characterized by its autoregressive generation behavior, LLM inference systems process customer requests in two distinct stages: a prefill stage that processes the input prompt, followed by a decode stage that generates output tokens sequentially. This complex serving mechanism, combined with latency and throughput requirements, poses challenges for inference systems.
+
+To improve GPU utilization, modern inference systems apply a batch policy, where requests are batched and handled simultaneously. Under this batching paradigm, a central challenge is the efficient management of the GPU memory, specifically the Key-Value (KV) cache. During inference, the system caches the key and value computed from the previously generated prefill and decode tokens to generate the subsequent tokens. The memory footprint of a request grows accordingly during token generation and is released only when the request is completed, introducing dynamic memory consumption. In addition, real-world request arrivals are highly stochastic, with variable input and output lengths. Therefore, the aggregate memory usage under the batching policy may exhibit significant fluctuation. When memory usage approaches the limit, the system may be forced to preempt or drop requests, which degrades the latency performance and user experience. Further, the system needs to make instantaneous decisions, which introduces additional challenges.
+
+To mitigate these challenges, researchers in computer systems have proposed inference engines with continuous batching scheduling mechanisms (e.g., Orca, vLLM) that allow token-level batching [29, 17]. These strategies prioritize the prefill tokens for incoming requests to maximize throughput and reduce latency. Subsequently, [2] employed chunked-prefills, splitting a prefill request into chunks of equal size. This approach efficiently prevents head-of-line blocking due to requests with long prefill lengths and results in good empirical performance.
+
+While recent LLM serving systems have substantially improved throughput and latency, their scheduling logic is often motivated by heuristic intuition. A theoretical framework for assessing the performance of scheduling algorithms under varying workload and resource conditions remains underdeveloped. Meanwhile, the operations research community has developed a rich body of theory and algorithms for resource allocation and scheduling problems, with impactful applications in cloud and distributed systems [23, 20, 27, 4], service operation systems [13, 5, 15, 12], and healthcare [14, 9, 6]. LLM inference systems form a new class of scheduling problems in which request arrivals are stochastic with heterogeneous process times. These features create opportunities for applying queueing analysis, as argued by [22]. Currently, LLM inference studies driven by operations research techniques remain in their early stages. Examples include [16, 18, 3, 28].
+
+Motivated by this gap, we study LLM inference through the lens of queueing theory. We model the inference engine as a stochastic service system in which the GPU memory is the main constraint. Our key insight is to focus on request admission (i.e., when a request enters the active set and begins to be prefilling). When many requests are processed simultaneously, their memory usage tends to increase simultaneously, leading to concentrated memory peaks. Under a high workload, this may trigger preemption or dropping, thereby affecting the system performance.
+
+Building on this insight, we propose a simple scheduling strategy, where we control the rate at which requests are activated. By doing so, we aim to avoid bursty admissions, which allows the memory usage to vary more smoothly. We develop a queueing model of LLM inference and derive a necessary condition that any stable system must satisfy (i.e., when violated, latency explodes over time) under any scheduling policy. Meanwhile, we establish sufficient conditions for stability and characterize an easy-to-implement algorithm to achieve it. Our contributions are as follows.
+
+•
+
+We propose a queueing-theoretic model to analyze the operations of LLM inference systems. In particular, we discretize the LLM serving system to the token level. At each time step, the decision-maker can assign a batch of active requests and generate an additional token for them. This model transforms a complex inference system into a queueing model, enabling us to derive useful technical results.
+
+•
+
+Our theoretical analysis reveals a necessary condition that any stable system must satisfy: when the expected workload exceeds the KV cache capacity, no scheduling algorithm can prevent latency from growing unboundedly.
+
+•
+
+We establish a new scheduling algorithm that activates new requests smoothly. We show that our algorithm can be stable under a particular load condition. These results offer practical implications for LLM inference.
+
+•
+
+We conduct comprehensive experiments using both synthetic and real-world datasets from [30]. Our method has good empirical performance across both high-load and low-load conditions. In particular, our scheduling algorithm outperforms benchmark algorithms in both token throughput and request completion rate.
+
+1.1 Related Work
+
+LLM Inference.
+
+Modern LLM inference engines improve throughput and tail latency under tight GPU memory constraints. Early systems such as FasterTransformer [24] allow request-level scheduling while prioritizing the decoding stage. Recent engines enable continuous batching that prioritizes the prefill stage to maximize token throughput [29]. [17] proposes PagedAttention, which divides requests’ KV cache into blocks to improve concurrency. Subsequent work further improved the KV usage by employing chunked prefills to reduce head-of-line blocking [2]. These engines are proved to have good empirical evidence in practical workloads. Moreover, these works colocate both stages on the same GPU and batch the computation of prefill and decoding across all requests. By contrast, some other engines (e.g., [25, 32]) split the two phases on separate machines and achieve good throughput with lower costs.
+
+Queueing Theory.
+
+The queueing community has established an immense body of works on studying the behavior of stochastic service systems under resource constraints. This line of literature characterizes when such systems can operate stably and analyzes the system performance (e.g., throughput or delay) with multiple request types [8, 14, 9]. These results are translated and applied into broad application domains, including service systems [12, 33], healthcare [14], and cloud systems [20].
+
+LLM inference systems are related to stochastic service systems because the customer requests arrive stochastically, with heterogeneous input and output lengths. Due to the complex nature of inference systems, they offer unique challenges to the queueing community, as highlighted by [22]. Recent works develop formalized models for the LLM inference and establish theoretical guarantees [3, 18, 16, 28]. [18] proves that a class of work-conserving scheduling algorithms are throughput-optimal. [3] proposes a new batch policy with provable guarantees. Numerical experiments suggest that their algorithm achieves competitive performance with the state-of-the-art schedulers. [16, 28] propose polynomial-time algorithms that are shown to be robust. Complementary to these efforts, our work focuses on mitigating system instability under variable prefill and decode lengths.
+
+2 Model and Problem Formulation
+
+2.1 Problem Formulation
+
+We study an online LLM inference problem on a single computational worker (e.g., GPU) with a limited key-value (KV) cache budget . This budget represents the maximum amount of GPU memory that can be used to store KV cache states, which depends on the model and the hardware. We consider a discrete-time framework. Time is slotted and indexed by . Each request (prompt) is characterized by a triplet , where denotes the prompt length (in tokens), denotes the length of output tokens to be generated, and denotes the arrival time. The decision-maker observes a request only when it arrives. Upon arrival at time , the prompt length is revealed, while the output length may not be known in advance.
+
+At the beginning of each time step , a collection of new prompts arrives (denoted by ). In particular, is sampled from a known distribution with mean . These newly arrived requests first join a waiting queue, denoted by , waiting to be activated. For any request , the decision-maker chooses a starting time (). Once activated, the request joins the active set and begins to admit to KV cache memory. A request remains in the active set until it either completes generating all output tokens or is evicted. Once a request is evicted, it is refreshed and will return to the waiting queue. Define the active set at as . For each active request , let denote the number of output tokens that have been generated at the end of time slot . The decision-maker specifies a subset to decode, where each request in generates exactly one additional output token during the time slot. Therefore, the memory usage of the prompt at time is . Note that the overall KV cache usage cannot exceed the limit , we have
+
+When the request is generating its last token (i.e., ), the memory footprint reaches during that slot, and the request then completes and immediately releases its KV cache at the end of the same slot.
+
+2.2 Evaluation Metrics
+
+We now define evaluation metrics along two complementary dimensions: efficiency, and responsiveness. These metrics measure the efficiency and the responsiveness of the LLM inference systems.
+
+Throughput.
+
+Throughput captures the system’s ability of prefilling and decoding, quantifying the system efficiency. We consider two notions of throughput:
+
+•
+
+Token Throughput: The number of tokens generated per unit time.
+
+•
+
+Prompt Throughput: The number of prompts completed per unit time.
+
+These metrics capture different aspects of the system performance and are not equivalent. A policy that prioritizes requests with longer prefill or decode lengths may sustain high token throughput but perform poorly in prompt throughput because fewer requests are completed per unit of time.
+
+Latency.
+
+The second metric is the end-to-end latency, equivalent to the time from arrival to completion. Latency accounts for both waiting time (before activation) and the decoding time, measuring the responsiveness of the system.
+
+In this work, we use these metrics to evaluate the system more comprehensively. Throughput reflects the system’s efficiency in utilizing the GPU to generate tokens and complete prompts. Latency captures the responsiveness of the service from the user’s perspective.
+
+3 Methodology
+
+In the previous section, we introduce an LLM inference framework and evaluation metrics. In this section, we now present a unified inference approach that controls the rate at which incoming requests are admitted into the active set. This flow-control design resolves a trade-off between throughput and system stability under memory constraints while incurring only small impact on latency. We also develop theoretical guarantees for the proposed approach.
+
+3.1 Flow-Control for LLM Inference
+
+The core principle of our flow-control design is to control the activation rate. Specifically, at each time step, we impose an activation budget and allow only a limited number of prompts to join the active set. This mechanism prevents transient surges in memory usage, which could inflate KV cache usage and destabilize the system. Moreover, the flow-control design also smooths the memory usage: when the system admits many prompts in a short interval, it may follow a burst of simultaneous completions, leading to a drop of memory and causing volatility. In contrast, controlling the activation rate stabilizes the inference system, yields a more predictable KV cache usage trajectory, and improves stability.
+
+3.2 Known Output Length
+
+We begin with a simplified setting, where the decision-maker observes both the prefill and decode lengths of a request upon arrival. While the autoregressive nature of LLM response generation implies stochastic decode lengths, recent studies [31] have shown significant progress in output length prediction. This assumption is also adopted in [16]. By analyzing this scenario, we are able to derive sharper results. In the following Section 3.3, we will relax this assumption.
+
+We classify requests into classes according to their prefill and decode lengths. For each class , requests share the same prefill length and decode length . This is practically meaningful because real-world requests typically exhibit input and output lengths with hundreds of tokens [30] despite their heterogeneity. We can further coarsen the classification by binning requests with similar lengths. At each time step, the arrival of requests of class is according to a distribution with (finite) expectation . Here we impose the following assumption.
+
+Assumption 3.1.
+
+The distribution has a finite second moment for any .
+
+In this framework, we are able to derive the following results.
+
+Proposition 3.2.
+
+The system cannot be stable when the following inequality holds:
+
+(1)
+
+Proposition 3.2 characterizes a sufficient condition for system instability, or equivalently, a necessary condition that any stable system must satisfy. In Equation (1), represents the (minimum) overall KV cache consumed by a request of type , measuring the workload. When the inequation holds, the request arrival load exceeds the service capacity, meaning that no LLM inference scheduling algorithms can keep the system stable. This proposition bounds the system’s ability to complete requests from above.
+
+Algorithm 1 Flow-Controlled LLM Inference Policy with Known Output Length
+
+Input: KV cache capacity ; time horizon ; arrival stream .
+
+Initialize waiting queue , active set . Initialize
+
+for do
+
+    add new arrivals
+
+    requests upon activated at time
+
+   for do
+
+    while and do
+
+      Pick a candidate request of type from following the FIFO rule
+
+       activate requests when available
+
+      
+
+    end while
+
+     activate selected requests
+
+   end for
+
+   Process all requests in
+
+   Remove completed requests from
+
+end for
+
+In LLM serving, the KV cache usage of each request grows during decoding and is released upon completion. This behavior creates fluctuations in memory utilization. In what follows, we provide a sufficient condition for our flow-controlled LLM inference scheduling policy to achieve stability.
+
+Theorem 3.3.
+
+Assume Assumption 3.1 holds. Then our flow-controlled LLM inference scheduling policy can achieve stability when the following inequality holds:
+
+(2)
+
+where are integers. Pseudocode is given in Algorithm 1.
+
+The design principle of Algorithm 1 is to control the rate at which requests join the active queue. At each time period, the system allows up to requests of type to join the active set. By doing so, we can make sure that the memory usage at any time remains below the available KV cache capacity. Moreover, since the (maximum) admission rate is larger than the request arrival rate, we can show that the system can be stable. The proof is provided in Appendix A.
+
+3.3 Unknown Output Length
+
+In this section, we consider a more realistic setting, where the output length is unknown upon request arrival. For any request , we now assume that the input and output lengths are stochastic and are i.i.d. draws from a distribution . Upon arrival, is observed while is unknown. The system needs to make decisions based on the knowledge of and the distribution of . To facilitate our analysis, we impose the following assumption, which assumes that all input and output lengths are bounded:
+
+Assumption 3.4.
+
+There exists a universal constant such that holds for any drawn from the distribution .
+
+This assumption is mild in practice because the input and output lengths are typically bounded by the architectural limits of the model.
+
+We first establish the following results that provide a sufficient condition for instability.
+
+Proposition 3.5.
+
+Assume Assumption 3.4 holds. Then the system cannot be stable when the following inequality holds:
+
+(3)
+
+where is the request arrival rate, and .
+
+Proposition 3.5 implies that the queue of waiting requests will explode if the average request arrival rate exceeds a threshold. In what follows, we formally propose our policy Algorithm 2 for the scenario where the output length is unknown. This algorithm builds upon Algorithm 1 by incorporating an additional (heuristic) eviction rule to handle the overflow event. In our paper, when overflow occurs, we choose to evict active requests following the last-in, first-out (LIFO) mechanism until the memory usage does not exceed the limit. Intuitively, LIFO eviction prioritizes keeping requests that have been decoding the longest, which have already consumed significant KV cache resources during their decoding. Thus, evicting them would waste substantial computational effort. Moreover, requests that are close to their completion will soon release their entire memory footprint. By contrast, recently activated requests have generated few tokens. Evicting them can incur minimal wasted work. This makes LIFO a natural choice for balancing overflow recovery with resource efficiency. We then present the following theoretical guarantees for this policy, which demonstrates that the probability of memory overflow decays with the slack between the expected memory usage and the limit.
+
+Algorithm 2 Flow-Controlled LLM Inference Policy with Unknown Output Length
+
+Input: KV cache capacity ; time horizon ; activation budget ; arrival stream .
+
+Initialize waiting queue , active set . Initialize
+
+for do
+
+    add new arrivals
+
+    requests upon activated at time
+
+   while and do
+
+    Pick a candidate request from following the FIFO rule
+
+     activate requests when available
+
+    
+
+   end while
+
+    activate selected requests (enter active set)
+
+   if Overflow then
+
+     select which requests to evict
+
+     eviction when the memory usage exceeds the budget
+
+    
+
+   end if
+
+   Process all requests in
+
+   Remove completed requests from
+
+end for
+
+Theorem 3.6.
+
+Assume Assumption 3.4 holds, and there exists , such that
+
+(4)
+
+holds for . Let be i.i.d. nonnegative integer-valued random variables that are independent of the requests and satisfy
+
+holds for any . Then under our proposed Algorithm 2, the expected number of overflow events is less than for some .
+
+In practice, the performance of our algorithm can be sensitive to the choice of . When is small, the algorithm is conservative and may limit the memory usage. When is large, the algorithm gradually degenerates to a greedy algorithm with a LIFO eviction rule. We can perform a grid search to find a proper , allowing for that does not satisfy Inequality (4).
+
+4 Numerical Simulations
+
+In this section, we evaluate our proposed flow-controlled algorithm through numerical simulations. We measure its performance using the two performance metrics we discussed in Section 2.2: throughput, and latency. We consider two simulation settings. In Section 4.1, we conduct simulations on synthetic data and compare the performance of our algorithm against some baseline heuristic scheduling algorithms. In Section 4.2, we conduct simulations on a large-scale real-world dataset.
+
+4.1 Synthetic Data Simulations
+
+We first evaluate the performance of our algorithm on synthetic datasets. We consider a simulation setting where the simulated prompts can be classified into types according to the input and output lengths:
+
+These classes share the same input length but differ in output length. Each type of request arrives as an independent Poisson process with the same intensity . We allow the time horizon to vary with , and let . We simulate a single-GPU inference system with a hard KV cache capacity . We set , which matches the deployment scale for Llama2-70B on two A100 GPUs. In this scenario, we set so that Inequality (2) is met. This choice makes sure that the memory usage will never exceed the limit.
+
+Figure 1: (Up) Performance metrics across scheduling algorithms when the request type is known upon arrival. (Down) Performance metrics across scheduling algorithms when the request type is unknown upon arrival. The performance metrics (from left to right) are average latency, 95% latency, request throughput, and token throughput.
+
+4.1.1 Results
+
+To begin with, we assume that the request type is known upon request arrival. We compare our algorithm against a set of baselines that capture widely used scheduling heuristics under KV cache constraints and compute the performance metrics, i.e., average end-to-end latency, 95% latency, request throughput, and token throughput.
+
+•
+
+-protection greedy algorithms ([16]). This class of algorithms maintains a protection memory threshold of . The algorithm prioritizes existing token jobs. For a new prompt , if adding it with its initial memory would not cause the memory usage to exceed the allowable limit , then the algorithm will add it in the active set. Otherwise, this prompt will not be added. The algorithm evicts all active requests and sends them back to the waiting queue upon overflow. Here, we perform a grid search on the -protection greedy heuristic and take a proper value of .
+
+•
+
+MC benchmark. This is an FCFS-style heuristic algorithm, in which the algorithm only activates requests if the future memory usage remains within the memory limit.
+
+•
+
+MC-SF. This algorithm is proposed by [16]. This algorithm prioritizes adding requests with smaller decoding lengths to allow more requests to be packed into batches. The algorithm activates requests when the future memory usage is within the limit.
+
+Moreover, to obtain the hindsight-optimal value for each performance metric, we formulate a separate integer programming model and solve it using Gurobi. Since each integer programming model optimizes a different objective, the resulting optimal solutions differ across metrics (i.e., no single schedule is simultaneously optimal for all metrics). The results are presented in the first line of Figure 1. Notably, our method outperforms the three benchmarks across all metrics.
+
+Next, we consider the setting in which the output length of each request is unknown upon arrival. In this setting, the MC-SF algorithm becomes less applicable because we do not have access to the decoding length of each request. To this end, we benchmark against the Amin algorithm proposed by [10]. Concretely, the Amin algorithm treats the decoding length of each request as the shortest possible value and greedily activates requests. Upon overflow, the algorithm removes requests according to the ascending order of the output length predictions and updates the predictions for the evicted requests. By contrast, our strategy is more conservative. Rather than aggressively filling the batch, our method proactively limits the number of activated requests for stability and robustness under output-length uncertainty. Moreover, we also adapt the MC benchmark algorithm to this setting by treating the output lengths of requests as the longest possible value. The results are reported in the second row of Figure 1. We observe that our method again outperforms the benchmarks across all metrics and achieves performance close to the hindsight optimal. This demonstrates the strength of our algorithm because it achieves good performance whether the request output length is known or unknown.
+
+4.2 Real-World Data Simulations
+
+In this section, we evaluate the performance of our algorithm on a real-world dataset from [30], which contains over 210000 prompts. We randomly select 50000 prompts from this dataset and treat each as an inference request: the prompt serves as an input, and the response serves as an output. We use word count as a proxy for token length, where each word is defined as a token. The requests are simulated to arrive according to a Poisson process with intensity . We allow to vary with (requests per second) to simulate both high- and low-demand settings. Moreover, in our previous model, we discretize the process time of a batch into a time period. However, in practical LLM serving, it depends on the batch composition (e.g., the number of prefill and decode tokens). Therefore, in our numerical results, we simulate a continuous-time serving system and adopt Microsoft Vidur [1] to calculate the process time. Figure 2 displays the distribution of input and output lengths of the requests.
+
+Figure 2: Distribution of prefill and decode lengths in the real-world dataset.
+
+4.2.1 Results
+
+As observed in Figure 3, our algorithm shows competitive performance with the benchmarks, which demonstrates the benefit of controlling the rate that requests are activated. By controlling activation rates, our policy avoids overly aggressive admissions that can trigger overflows, leading to frequent evictions and waste. We also observe that the performance gap narrows compared to the synthetic data. A plausible explanation is that the workload of real-world datasets is larger (i.e., the prefill and output lengths are longer than the synthetic data), which requires a smaller activation budget . This induces larger fluctuations in instantaneous memory occupancy, causing increased variability and diminishing the advantage of activation flow control.
+
+Figure 3: (Up) Performance metrics across scheduling algorithms under the low demand setting. (Down) Performance metrics across scheduling algorithms under the high demand setting. The performance metrics (from left to right) are average latency, 95% latency, request throughput, and token throughput.
+
+5 Discussion
+
+In this paper, we study the LLM serving system with stochastic and heterogeneous request arrivals. Motivated by the results in queueing theory, we propose an easy-to-implement flow-controlled scheduling algorithm, which limits the rate that requests are activated. We identify a sufficient condition under which no scheduling policy can achieve stability and prove that our algorithm can achieve low overflow probability under certain criteria. Numerical experiments on both synthetic and practical requests indicate that our algorithm achieve competitive throughput and latency relative to the benchmarks. These results suggest that controlling the activation rate can be beneficial for the inference serving system.
+
+There are several directions that merit future work. Firstly, incorporating the output length predictions [31] with LLM serving can potentially improve the performance of the serving system and allows for more informative decision-making. A second direction is to design an adaptive scheduling policy that combines both our flow-control mechanism with aggressive greedy heuristics. While our numerical results suggest that a greedy policy can frequently overflow in high-traffic regimes, it may outperform our algorithm under low-traffic scenarios because our activation mechanism is conservative. This motivates dynamic policies that switch the mechanism according to the traffic and real-time system conditions. Finally, extending our framework to multi-turn interaction systems presents an intriguing direction. In practice, consecutive prompts within a chat are correlated and share context. This allows prompt caching to become a critical strategy for improving the efficiency of the LLM inference. To more accurately reflect real-world deployments, future work could study the inference system with multi-turn requests. In addition, our discrete-time model does not explicitly account for the computational cost of the prefill stage, where the entire input prompt is processed in one (or a few chunked) forward passes. Incorporating prefill computation time into the theoretical framework could yield tighter performance characterizations.
+
+References
+
+[1]
+A. Agrawal, N. Kedia, J. Mohan, A. Panwar, N. Kwatra, B. S. Gulavani, R. Ramjee, and A. Tumanov (2024)
+
+Vidur: a large-scale simulation framework for llm inference.
+
+Proceedings of Machine Learning and Systems 6, pp. 351–366.
+
+Cited by: §4.2.
+
+[2]
+A. Agrawal, A. Panwar, J. Mohan, N. Kwatra, B. S. Gulavani, and R. Ramjee (2023)
+
+Sarathi: efficient llm inference by piggybacking decodes with chunked prefills.
+
+arXiv preprint arXiv:2308.16369.
+
+Cited by: §1.1,
+§1.
+
+[3]
+R. Ao, G. Luo, D. Simchi-Levi, and X. Wang (2025)
+
+Optimizing llm inference: fluid-guided online scheduling with memory constraints.
+
+arXiv preprint arXiv:2504.11320.
+
+Cited by: §1.1,
+§1.
+
+[4]
+S. Banerjee, A. Budhiraja, and B. Estevez (2025)
+
+Load balancing in parallel queues and rank-based diffusions.
+
+Mathematics of Operations Research.
+
+Cited by: §1.
+
+[5]
+N. Bansal and M. Harchol-Balter (2001)
+
+Analysis of srpt scheduling: investigating unfairness.
+
+In Proceedings of the 2001 ACM SIGMETRICS International conference on Measurement and modeling of computer systems,
+
+pp. 279–290.
+
+Cited by: §1.
+
+[6]
+C. Bauerhenne, R. Kolisch, and A. S. Schulz (2026)
+
+Robust appointment scheduling with waiting time guarantees.
+
+Manufacturing & Service Operations Management.
+
+Cited by: §1.
+
+[7]
+A. Chatterji, T. Cunningham, D. J. Deming, Z. Hitzig, C. Ong, C. Y. Shan, and K. Wadman (2025)
+
+How people use chatgpt.
+
+Technical report
+
+National Bureau of Economic Research.
+
+Cited by: §1.
+
+[8]
+H. Chen and D. D. Yao (2001)
+
+Fundamentals of queueing networks: performance, asymptotics, and optimization.
+
+Vol. 46, Springer Science & Business Media.
+
+Cited by: §1.1.
+
+[9]
+J. Chen, J. Dong, and P. Shi (2025)
+
+Optimal routing under demand surges: the value of future arrival rates.
+
+Operations Research 73 (1), pp. 510–542.
+
+Cited by: §1.1,
+§1.
+
+[10]
+Z. Chen, Y. Ye, and Z. Zhou (2025)
+
+Adaptively robust llm inference optimization under prediction uncertainty.
+
+arXiv preprint arXiv:2508.14544.
+
+Cited by: §4.1.1.
+
+[11]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §1.
+
+[12]
+P. Guo, M. Haviv, Z. Luo, and Y. Wang (2023)
+
+Signaling service quality through queue disclosure.
+
+Manufacturing & Service Operations Management 25 (2), pp. 543–562.
+
+Cited by: §1.1,
+§1.
+
+[13]
+I. Gurvich and W. Whitt (2009)
+
+Scheduling flexible servers with convex delay costs in many-server service systems.
+
+Manufacturing & Service Operations Management 11 (2), pp. 237–253.
+
+Cited by: §1.
+
+[14]
+Y. Hu, C. W. Chan, and J. Dong (2022)
+
+Optimal scheduling of proactive service with customer deterioration and improvement.
+
+Management Science 68 (4), pp. 2533–2578.
+
+Cited by: §1.1,
+§1.
+
+[15]
+R. Iyer, M. Unal, M. Kogias, and G. Candea (2023)
+
+Achieving microsecond-scale tail latency efficiently with approximate optimal scheduling.
+
+In Proceedings of the 29th Symposium on Operating Systems Principles,
+
+pp. 466–481.
+
+Cited by: §1.
+
+[16]
+P. Jaillet, J. Jiang, K. Mellou, M. Molinaro, C. Podimata, and Z. Zhou (2025)
+
+Online scheduling for llm inference with kv cache constraints.
+
+arXiv preprint arXiv:2502.07115.
+
+Cited by: §1.1,
+§1,
+§3.2,
+1st item,
+3rd item.
+
+[17]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica (2023)
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th symposium on operating systems principles,
+
+pp. 611–626.
+
+Cited by: §1.1,
+§1.
+
+[18]
+Y. Li, J. Dai, and T. Peng (2025)
+
+Throughput-optimal scheduling algorithms for llm inference and ai agents.
+
+arXiv preprint arXiv:2504.07347.
+
+Cited by: §1.1,
+§1.
+
+[19]
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al. (2024)
+
+Deepseek-v3 technical report.
+
+arXiv preprint arXiv:2412.19437.
+
+Cited by: §1.
+
+[20]
+Y. Lu, Q. Xie, G. Kliot, A. Geller, J. R. Larus, and A. Greenberg (2011)
+
+Join-idle-queue: a novel load balancing algorithm for dynamically scalable web services.
+
+Performance Evaluation 68 (11), pp. 1056–1071.
+
+Cited by: §1.1,
+§1.
+
+[21]
+S. P. Meyn and R. L. Tweedie (2012)
+
+Markov chains and stochastic stability.
+
+Springer Science & Business Media.
+
+Cited by: §A.2.
+
+[22]
+M. Mitzenmacher and R. Shahout (2025)
+
+Queueing, predictions, and large language models: challenges and open problems.
+
+Stochastic Systems 15 (3), pp. 195–219.
+
+Cited by: §1.1,
+§1.
+
+[23]
+M. Mitzenmacher (2002)
+
+The power of two choices in randomized load balancing.
+
+IEEE Transactions on Parallel and Distributed Systems 12 (10), pp. 1094–1104.
+
+Cited by: §1.
+
+[24]
+NVIDIA (2024)
+
+Fastertransformer.
+
+External Links: Link
+
+Cited by: §1.1.
+
+[25]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini (2024)
+
+Splitwise: efficient generative llm inference using phase splitting.
+
+In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA),
+
+pp. 118–132.
+
+Cited by: §1.1.
+
+[26]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+
+Attention is all you need.
+
+Advances in neural information processing systems 30.
+
+Cited by: §1.
+
+[27]
+A. Verma, L. Pedrosa, M. Korupolu, D. Oppenheimer, E. Tune, and J. Wilkes (2015)
+
+Large-scale cluster management at google with borg.
+
+In Proceedings of the tenth european conference on computer systems,
+
+pp. 1–17.
+
+Cited by: §1.
+
+[28]
+M. Wang, Y. Ye, and Z. Zhou (2025)
+
+Llm serving optimization with variable prefill and decode lengths.
+
+arXiv preprint arXiv:2508.06133.
+
+Cited by: §1.1,
+§1.
+
+[29]
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun (2022)
+
+Orca: a distributed serving system for transformer-based generative models.
+
+In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22),
+
+pp. 521–538.
+
+Cited by: §1.1,
+§1.
+
+[30]
+L. Zheng, W. Chiang, Y. Sheng, T. Li, S. Zhuang, Z. Wu, Y. Zhuang, Z. Li, Z. Lin, E. P. Xing, et al. (2023)
+
+Lmsys-chat-1m: a large-scale real-world llm conversation dataset.
+
+arXiv preprint arXiv:2309.11998.
+
+Cited by: 4th item,
+§3.2,
+§4.2.
+
+[31]
+Z. Zheng, X. Ren, F. Xue, Y. Luo, X. Jiang, and Y. You (2023)
+
+Response length perception and sequence scheduling: an llm-empowered llm inference pipeline.
+
+Advances in Neural Information Processing Systems 36, pp. 65517–65530.
+
+Cited by: §3.2,
+§5.
+
+[32]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang (2024)
+
+distserve: Disaggregating prefill and decoding for goodput-optimized large language model serving.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+pp. 193–210.
+
+Cited by: §1.1.
+
+[33]
+Y. Zhong, J. R. Birge, and A. R. Ward (2025)
+
+Learning to schedule in multiclass many-server queues with abandonment.
+
+Operations Research 73 (6), pp. 3085–3103.
+
+Cited by: §1.1.
+
+Appendix A Proofs
+
+In this section, we provide proofs of technical results in the main text that are omitted.
+
+A.1 Proof of Proposition 3.2
+
+For notational convenience, we define
+
+as the overall number of requests arrived during the time period , and denotes the number of type requests arrived during the same period. For each request of type , we note that the minimal KV cache workload to complete would be
+
+As a result, the (minimum) number of tokens required to complete these requests would be:
+
+with expectation:
+
+Since the maximum KV cache budget is . The system can only utilize up to tokens at each time step for prefilling or decoding. Thus, the cumulative available KV cache budget is at most . Let be the number of type requests completed by the end of , and let . Therefore, summing all the completed requests by time yields the following inequality:
+
+Define the additional tokens required to complete all requests arrived during the time period would be as follows.
+
+(5)
+
+Taking the expectation on both sides yield
+
+where we define .
+
+Next, we define . Define the total number of unfinished
+arrived requests by time as
+
+Since each unfinished request contributes at most to , we have ,
+and therefore
+
+By the laws of large numbers, as goes to infinity,
+
+holds almost surely, and thus
+
+Recall that , we have
+
+holds almost surely. This completes the proof because we can see that the number of unfinished requests would explode over time.
+
+A.2 Proof of Theorem 3.3
+
+Under Algorithm 1, at each slot , the system activates at most waiting requests of each type and then processes all active requests and removes completed ones. Therefore, the memory usage (at any ) would not exceed
+
+(6)
+
+meaning that the KV cache constraint is always satisfied. That is, no eviction would ever happen. It then suffices to show that the system would be stable under this algorithm.
+
+Let denote the number of type requests in the waiting queue at the end of slot , is the number of newly arrived requests of type . Under Algorithm 1, the system admits
+
+type requests at slot , hence the waiting queue evolves as
+
+Since Algorithm 1 manages each request type independently using a dedicated budget , the dynamics of the waiting queue for each type are decoupled from other types. We can consider them separately.
+
+For the type requests, consider the following quadratic Lyapunov function: . Then we can bound the drift as follows:
+
+(7)
+
+Let . Then the first term in Inequality (7) simplifies to:
+
+Note that the arrival process has a bounded second moment, i.e., . The drift inequality becomes:
+
+(8)
+
+When the queue length is sufficiently large (e.g., ), the drift is strictly negative.
+According to the Foster-Lyapunov criterion (Theorem 11.3.4 in [21]), we can see that the queue is positive recurrent for all . Hence, the entire system is stable.
+
+A.3 Proof of Proposition 3.5
+
+We follow the same notations we used in Appendix A.1. We index the requests by according to their order of arrival. Given the number of requests arrived by time , , we are able to obtain the following equation:
+
+where is the minimum number of tokens required to complete these requests. Taking the expectation on both sides yield the following
+
+Here . Next, we define . Let . This gives us
+
+As a result, following the same proof technique we used in Appendix A.1, we find that
+
+and completes the proof.
+
+A.4 Proof of Theorem 3.6
+
+Following Algorithm 2, we can see that the number of newly activated requests is up to . For any , define the number of requests that join the active set as at slot (). Without loss of generality, let for any . Note that any activated requests will keep decoding unless being evicted or completed. As a result, the overall KV cache usage at time would be
+
+where we define as the requests that join the active set at time . Recall that , we obtain the following:
+
+In the above inequality, we (potentially) define some fictitious requests: for any , we add the active set with fictitious requests. These requests are also i.i.d. sampled from the distribution . Taking the expectation on the right hand side yields:
+
+Next, note that , we attempt to bound by its upper bound :
+
+By Assumption 3.4,
+
+and
+
+Then McDiarmid’s inequality yields
+
+Consequently, for all ,
+
+(9)
+
+Here, . Putting the above together,
+
+This completes the proof.
+
+Appendix B Additional Numerical Results
+
+We further compare our algorithm against two hindsight solutions: hindsight1, which minimizes tail latency, and hindsight2, which minimizes other performance metrics. Notably, these two hindsight solutions themselves yield different optimal decisions. The results are presented in Figure 4.
+
+Figure 4: Performance of our scheduling algorithm against the two benchmarks. (Up) The performance metrics (from left to right) are average latency and 95% latency. (Down) The performance metrics (from left to right) are request throughput and token throughput.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

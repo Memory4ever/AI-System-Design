@@ -1,6 +1,6 @@
 # Current Learning State
 
-Last Updated: 2026-08
+Last Updated: 2026-09
 
 ## Current Phase
 
@@ -18,6 +18,19 @@ chapters and uses Stable Knowledge Node IDs. Part III owns the continuous route
 from multimodal representation through generative paradigms and World Models to
 Embodied/VLA action; former Training, Inference, Infrastructure and Agent chapters
 have moved to Parts IV～VII without changing their durable content.
+
+## 2026-09-01 Daily Research 与 Books Integration
+
+- 严格北京时间 `[2026-08-31 09:00, 2026-09-01 09:00)` 窗口已闭环：1060 条 arXiv v1 identity
+  完整筛选，23 个 Source Family 进入冻结分母，1037 项在 denominator 前以具体理由关闭；普通 pending、blocked、
+  unverified 与 disputed 均为 0。Anthropic 的 2026-08-31 公告没有精确 first-public time，因此未伪造时间进入
+  Daily，留给 Sunday Weekly 做日期粒度 reconciliation。
+- 四项长期机制已经分别沉淀到 `INFER-KV-CACHE`、`TRAIN-SFT`、`TRAIN-DISTRIBUTED-TRAINING` 与
+  `PLATFORM-EVALUATION-SYSTEM`：hybrid recurrent state 的 bounded tail replay、knowledge-boundary-aware
+  target admission、silent corruption 的 forward/backward/update 分层防护，以及 expected-fact inventory
+  驱动的 omission evaluation。其余 19 项经目标及相邻章节对读后判定为 `No Change — Existing Coverage`。
+- 独立 fresh-context 复审确认 Coverage、Evidence、Deep Analysis Selection 与 Books 四个 scope 均通过，
+  unresolved finding 为 0；机器 validator、150 项回归测试与 `git diff --check` 通过。未 stage、commit 或 push。
 
 ## 2026-09-01 2026 年 5 月 Daily 全月闭环与 withdrawn 规则固化
 
@@ -5476,6 +5489,12 @@ Status: W15, W21 and W22 written back after root review; W12 remains open; Histo
   ledger remains TokenBridge, ETVA, Judge Anything, TULIP, RSD and VideoRFSplat, plus a fixed-organization immutable
   release/tag export, so the Candidate Evidence Gate remains open under the explicit blocked ledger.
 - No Historical Books integration was performed. No file was staged, committed or pushed.
+
+## 2026-09-02 2026 年 4 月 Historical Daily 独立重建闭环
+
+- 2026-04-01～04-30 的 30 份 Historical Daily 已按北京时间前一日 09:00 至当日 09:00 的窗口独立重建；发现、Candidate Denominator、评分、Source Review、Books Decision 与 fresh-context audit 均未使用旧 Weekly 作为语义输入，30/30 `weekly-dependency-audit.json` 为 0。
+- 30/30 Daily 的最终状态均为 `Completion=Complete / Coverage=Closed / Evidence=Passed / Books=Passed`；30 份 writeback queue 共 38 项，全部为 `integrated_postwrite_passed`。04-24 的 5 项与 04-25 的 7 项完成 canonical owner 写回和非写作者 post-write audit；04-25 首轮发现的 5 项机制/归因问题已修正并在第二轮 7/7 复验通过。
+- 30/30 strict report validator、全月 Weekly-independence receipt 检查、marker/owner/post-write 收据检查与 `git diff --check` 通过。机器校验只证明接口自洽；语义完成由各日期 frozen exact-v1 packet 与 fresh-context audit receipt 支撑。本检查点没有生成或修改 Weekly，也未 stage、commit 或 push。
 
 ## 2026-08-31 2025 年 5 月误启动批次收束与停止点
 

@@ -1,0 +1,1416 @@
+Claw-Eval: Toward Trustworthy Evaluation of Autonomous Agents
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Claw-Eval
+
+3.1 Auditable Execution Pipeline
+
+3.2 Cross-Modal Task Suite
+
+3.3 Scoring Protocol
+
+4 Evaluation
+
+4.1 Evaluated models
+
+4.2 Evaluation settings
+
+4.3 Main results
+
+5 Analysis
+
+5.1 Trajectory-opaque judges miss 44% of safety violations
+
+5.2 Injected failures erode consistency far more than peak capability
+
+5.3 Better questions, not more, yield better multi-turn performance
+
+5.4 Multimodal capability is domain-specific: no model dominates
+
+6 Conclusions
+
+References
+
+A Case Studies
+
+A.1 General: Email Triage
+
+A.2 Multi-Turn: Statistical Consultation with Simulated User
+
+A.3 Multimodal: Video-to-Floor-Plan Reconstruction
+
+A.4 Multimodal: Video Localization and Frame Cropping
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.06132v1 [cs.AI] 07 Apr 2026
+
+Claw-Eval: Toward Trustworthy Evaluation of Autonomous Agents
+
+Bowen Ye
+
+  
+Rang Li
+
+  
+Qibin Yang
+
+Affiliation: State Key Laboratory of Multimedia Information ProcessingSchool of Computer Science, Peking University
+
+  
+Yuanxin Liu
+
+Affiliation: State Key Laboratory of Multimedia Information ProcessingSchool of Computer Science, Peking University
+
+  
+Linli Yao
+
+Affiliation: State Key Laboratory of Multimedia Information ProcessingSchool of Computer Science, Peking University
+
+  
+Hanglong Lv
+
+Affiliation: State Key Laboratory of Multimedia Information ProcessingSchool of Computer Science, Peking University
+
+  
+Zhihui Xie   Chenxin An   Lei Li
+
+Affiliation: The University of Hong Kong
+
+  
+Lingpeng Kong   Qi Liu   Zhifang Sui   Tong Yang
+
+Email: bwye@stu.pku.edu.cn, lirang410@gmail.com, nlp.lilei@gmail.com* Equal contribution  $†$ Project leadProject Page: https://claw-eval.github.io
+
+Affiliation: State Key Laboratory of Multimedia Information ProcessingSchool of Computer Science, Peking University
+
+Affiliation: The University of Hong Kong
+
+Abstract
+
+Large language models are increasingly deployed as autonomous agents executing multi-step workflows in real-world software environments. However, existing agent benchmarks suffer from three critical limitations: (1) trajectory-opaque grading that checks only final outputs, (2) underspecified safety and robustness evaluation, and (3) narrow modality coverage and interaction paradigms. We introduce Claw-Eval, an end-to-end evaluation suite addressing all three gaps. It comprises 300 human-verified tasks spanning 9 categories across three groups (general service orchestration, multimodal perception and generation, and multi-turn professional dialogue). Every agent action is recorded through three independent evidence channels (execution traces, audit logs, and environment snapshots), enabling trajectory-aware grading over 2,159 fine-grained rubric items. The scoring protocol evaluates Completion, Safety, and Robustness, reporting Average Score, Pass@, and Passk across three trials to distinguish genuine capability from lucky outcomes. Experiments on 14 frontier models reveal that: (1) trajectory-opaque evaluation is systematically unreliable, missing 44% of safety violations and 13% of robustness failures that our hybrid pipeline catches; (2) controlled error injection primarily degrades consistency rather than peak capability, with Pass3 dropping up to 24% while Pass@3 remains stable; (3) multimodal performance varies sharply, with most models performing poorer on video than on document or image, and no single model dominating across all modalities. Beyond benchmarking, Claw-Eval highlights actionable directions for agent development, shedding light on what it takes to build agents that are not only capable but reliably deployable.
+
+1 Introduction
+
+Large language models [23, 3, 7] have rapidly evolved from conversational assistants [25, 49] into autonomous agents [44, 28] capable of executing complex, multi-step workflows [29, 26, 26]in real-world software environments [9, 34].
+Modern agent harnesses, such as Claude Code [2] and OpenClaw [24], equip LLMs with the ability to call tools, navigate file systems, query databases, and orchestrate actions across multiple applications, transforming the central evaluation question from whether a model possesses knowledge to whether it can reliably accomplish a goal through situated action.
+This shift demands evaluation methodologies that go beyond static question-answering benchmarks and instead assess agents in live, interactive environments where success depends not only on what the agent produces, but on how it produces it.
+
+Recent benchmarks have made important strides toward this goal, evaluating agents across sandboxed tool-use environments [12, 18], GUI-driven desktop workflows [34, 35], and real-world coding-agent pipelines [10, 8].
+Yet three critical gaps remain that limit the diagnostic power of current evaluation practices.
+(G1) Trajectory-opaque grading.
+Many existing benchmarks verify only whether the agent produces a correct final artifact (a file created, a test passed, or an answer matched) but do not systematically audit the intermediate action sequence that produced it. This renders faithful execution indistinguishable from fabricated or hallucinated steps. More critically, recent evidence shows that frontier models actively exploit output-only evaluation signals, discovering shortcuts that satisfy final-artifact checks without faithfully executing the intended workflow [31, 17], a phenomenon broadly termed reward hacking. Trajectory-opaque grading is thus not merely imprecise; it creates an evaluation surface that sophisticated agents can systematically game.
+(G2) Underspecified safety and robustness.
+In real deployments, safety and robustness arise alongside normal task execution: an agent must resist sending an unauthorized email while under pressure to complete a communication task, and must recover from API timeouts mid-workflow. Current benchmarks fall short on both fronts. For safety, they either isolate it into standalone red-teaming suites divorced from genuine task pressure, or sandbox execution to prevent harm without scoring whether the agent attempted unsafe actions; in neither case is safety evaluated under realistic goal-directed pressure. For robustness, no existing benchmark systematically stress-tests agents under realistic perturbations such as transient service failures or rate limiting.
+(G3) Modally narrow task coverage.
+Real-world agents operate across radically diverse scenarios, from orchestrating multi-service workflows and processing visual media to engaging in extended professional dialogues, often within the same deployment. Yet existing benchmarks each target a single modality or interaction paradigm, such as text-based tool calls [12], command-line execution [18], or GUI navigation [34], and no single framework jointly evaluates these heterogeneous capabilities under a consistent grading methodology and execution pipeline.
+
+We introduce Claw-Eval, an end-to-end evaluation suite that addresses all three gaps within a unified platform, organized around three corresponding design principles.
+(1) Full-trajectory auditing. Every agent action is recorded through three independent evidence channels (execution traces, service-side audit logs, and post-execution environment snapshots), enabling grading that verifies what the agent actually did rather than what it reported having done.
+(2) Integrated multi-dimensional scoring. The scoring protocol evaluates Completion, Safety, and Robustness as coupled dimensions within the same task execution. Completion is decomposed into fine-grained rubric items grounded in the auditable evidence collected during execution. Safety constraints are embedded within normal workflow tasks and Robustness is measured through controlled error-rate injection that simulates realistic deployment perturbations.
+(3) Unified cross-modal coverage. A single declarative task schema accommodates 300 human-verified tasks spanning 9 categories across 3 groups (General service orchestration, Multimodal perception and generation, and Multi-turn professional dialogue).
+
+Beyond these three gaps, a challenge that cuts across all of them must also be addressed: agentic execution is inherently stochastic. A single run per task cannot reliably distinguish genuine capability from lucky outcomes.
+To bound this variance, every task is run for k independent trials, and we report three complementary metrics: Average Score (overall capability), Pass@ (capability ceiling), and Passk (reliability floor), providing a complete picture of deployable capability.
+
+Our experiments across 14 frontier and open-weight models yield the following contributions and findings:
+(1) Benchmark. We introduce Claw-Eval, an end-to-end evaluation suite of 300 human-verified tasks across 9 categories, featuring full-trajectory auditing, unified cross-modal coverage, and integrated multi-dimensional scoring along Completion, Safety, and Robustness, with 2,159 independently verifiable rubric items.
+(2) Methodology finding. Trajectory-opaque evaluation is systematically unreliable: a vanilla LLM judge operating without audit logs or environment snapshots misses 44% of safety violations and 13% of robustness failures that our hybrid grading pipeline catches, demonstrating that evaluation design choices materially affect benchmark conclusions.
+(3) Capability findings. Agent capability is not monolithic: (a) model rankings shift substantially across task groups and modalities, with no single model dominating all domains; (b) robustness under perturbation constitutes an independent capability axis, with Pass@3 remaining stable under error injection while Pass3 dropping by up to 24 percentage points, and is not predictable from nominal-condition performance; and (c) multi-turn dialogue success hinges on the quality of the agent’s questioning strategy () rather than conversational length ().
+
+Taken together, these results show that trustworthy agent evaluation requires trajectory-level evidence, multi-dimensional scoring, and broad task coverage working in concert, and that the capability gaps surfaced by Claw-Eval point to concrete and actionable directions for building agents that are not only technically capable but alse reliably deployable.
+
+2 Related Work
+
+Agent benchmarks.
+Evaluating LLM-based agents has produced benchmarks spanning diverse domains and interaction modalities (Table 1).
+For tool use and code, SWE-bench [9] tests real GitHub issue resolution, ToolBench [42] and API-Bank [13] evaluate API orchestration, Terminal-Bench [18] targets shell execution, and Toolathlon [12] scales to 32 applications with 604 tools.
+For web and GUI interaction, WebArena [50] and VisualWebArena [11] benchmark web navigation, while OSWorld [34] extends evaluation to full desktop environments.
+For multi-turn interaction, -bench [45] measures policy compliance in customer-service dialogues with simulated users, and MINT [33] evaluates multi-turn tool use.
+Multi-domain suites such as AgentBench [16], GAIA [19], and TheAgentCompany [41] broaden coverage across heterogeneous environments.
+PinchBench [10] and WildClawBench [8] benchmark LLM agents on real-world tasks but couple evaluation to the full scaffold stack, precluding attribution of performance to the model itself.
+No existing benchmark simultaneously supports full-spectrum multimodal evaluation, multi-turn dialogue, auditable trajectory grading, embedded safety assessment, and controlled perturbation testing.
+Claw-Eval is designed to unify all these capabilities within a single framework (Table 1).
+
+Table 1: Comparison of agent evaluation benchmarks across six dimensions: Multimodal (visual input and artifact generation), Multi-turn (simulated user interaction), Auditable (trajectory-level grading), Safety (embedded constraint checking), Perturbation (controlled error injection), and Sandboxed (isolated execution environment). ✓ = full support; ❖ = partial; ✗ = absent.
+
+Benchmark
+
+Multi-
+
+modal
+
+Multi-
+
+turn
+
+Auditable
+
+Safety
+
+Pertur-
+
+bation
+
+Sand-
+
+boxed
+
+AgentBench [16]
+
+✗
+
+✓
+
+❖
+
+✗
+
+✗
+
+✓
+
+GAIA [19]
+
+❖
+
+✗
+
+✗
+
+✗
+
+✗
+
+✓
+
+-bench [45]
+
+✗
+
+✓
+
+✓
+
+✓
+
+✗
+
+✗
+
+SWE-bench [9]
+
+✗
+
+✗
+
+❖
+
+✗
+
+✗
+
+✓
+
+WebArena [50]
+
+❖
+
+✗
+
+❖
+
+✗
+
+✗
+
+✓
+
+VisualWebArena [11]
+
+✓
+
+✗
+
+❖
+
+✗
+
+✗
+
+✓
+
+OSWorld [34]
+
+✓
+
+✗
+
+✓
+
+✗
+
+✗
+
+✓
+
+ToolBench [42]
+
+✗
+
+✗
+
+❖
+
+✗
+
+✗
+
+✗
+
+Terminal-Bench [18]
+
+✗
+
+✗
+
+✓
+
+✗
+
+✗
+
+✓
+
+PinchBench [10]
+
+✗
+
+✗
+
+✗
+
+✗
+
+✗
+
+✓
+
+Claw-Eval (Ours)
+
+✓
+
+✓
+
+✓
+
+✓
+
+✓
+
+✓
+
+Evaluation methodology.
+Output-only grading cannot detect cases where agents fabricate intermediate steps yet produce plausible artifacts [14, 39, 40].
+The LLM-as-a-judge paradigm [37, 36, 38] scales to open-ended tasks but lacks auditability.
+Recent work addresses individual gaps: TheAgentCompany adds sub-task checkpoints, -bench separates correctness from consistency via , and safety benchmarks such as ToolEmu [27], R-Judge [46], Agent-SafetyBench [48], and MobileRisk-Live [30] assess risk awareness over traces.
+However, no existing framework embeds safety constraints within normal workflow tasks, and none supports controlled error injection for robustness testing.
+Claw-Eval addresses both by combining deterministic checks with LLM judgment, grounding rubric items in auditable trajectory evidence, and providing error injection as a first-class evaluation parameter.
+
+Figure 1: Claw-Eval architecture. The framework operates across three temporal phases (Setup, Execution, Judge) and three spatial layers (Host Machine, Isolation Environment, Mock Services). During execution, the agent works within the isolation environment, interacting with workspace files, mock services, and system-layer tools. A temporal firewall separates execution from grading: the grader consumes three independent evidence channels
+(execution traces, environment snapshots, and server-side audit logs) that are never exposed to the agent during execution.
+
+3 Claw-Eval
+
+In this section, we present the design of Claw-Eval, whose overall architecture is illustrated in Figure 1. The framework is built on a core premise: trustworthy agent evaluation requires grounding every score in evidence of what the agent actually did, rather than what it reported having done. §3.1 describes how a three-phase execution lifecycle achieves this observability. §3.2 presents the 300 tasks across 9 categories and shows how a unified task schema accommodates radically different evaluation scenarios. §3.3 details how the scoring protocol converts the resulting evidence into multi-dimensional, trustworthy scores that support
+meaningful cross-model comparison.
+
+3.1 Auditable Execution Pipeline
+
+To close the trajectory-opacity gap (G1), the evaluation framework must record what the agent actually did at every step, not just what it produced at the end, through evidence channels that the agent cannot influence or anticipate. Claw-Eval organizes every evaluation run into a three-phase lifecycle (Setup, Execution, and Judge) executed within an isolated Docker container where the agent interacts with the environment exclusively through tool calls (Figure 1). A strict temporal boundary separates execution from grading: no scoring script, reference answer, or verification utility exists inside the container while the agent is running, ensuring that all observed behavior reflects genuine problem-solving rather than any evaluation-aware adaptation.
+
+In the Setup phase, the framework reads the task definition and provisions a fresh sandbox container. Workspace files declared by the task (datasets, documents, starter code, media assets) are injected into the container to constitute the agent’s working environment. To faithfully reproduce the service landscape of real-world deployments, tasks may declare mock services such as CRM platforms, email gateways, scheduling systems, and knowledge bases, which are deployed outside the sandbox and accessible only through designated tool-call interfaces. Each service silently begins maintaining an audit log of all incoming requests from the moment it starts. At this point, the container presents a complete, realistic working environment: it contains everything the agent needs to attempt the task, and nothing related to how the attempt will be evaluated, maintaining a clean separation.
+
+In the Execution phase, the agent begins working on the task, iteratively reasoning about the objective and taking actions in the environment. The framework provides two complementary capability layers (Table 2). The system layer offers eleven built-in tools spanning code execution, file operations, codebase search, web interaction, and multimodal media processing, covering the core action space that real-world agent tasks demand. The service layer exposes the mock services provisioned during setup through task-specific custom tools, so that from the agent’s perspective, interacting with a simulated CRM or email gateway is identical to calling a production API. Throughout execution, the complete agentic context is recorded in a structured execution trace, maintained outside the sandbox and invisible to the agent, that will serve as a primary evidence source during grading.
+
+Table 2: Agent capability layers. The system layer provides 11 built-in tools covering the core action space of real-world agent tasks; the service layer exposes task-specific mock APIs that simulate production services.
+
+Functional Group
+Tools
+Purpose
+
+System Layer
+
+Code Execution
+Bash
+Execute shell commands
+
+File Operations
+Read, Write, Edit
+Read, create, and modify files
+
+Codebase Search
+Glob, Grep
+Find files by pattern; Search content by regex
+
+Web Interaction
+BrowserScreenshot, WebSearch, WebFetch
+Capture screenshots; Search and fetch web pages
+
+Multimodal Media
+ReadMedia, Download
+Process video/image/PDF; Download files
+
+Service Layer
+
+Task-specific APIs
+Custom tools per task
+Interact with mock services
+
+In the Judge phase, upon agent termination, grading artifacts (evaluation scripts, reference answers, and verification utilities) are injected into the container for the first time to capture the environment’s end-state: rendering generated webpages, running verification scripts, collecting produced artifacts. The pipeline then assembles three independent lines of evidence for scoring. The execution trace recorded during the previous phase provides the complete agentic context of the entire interaction. Each mock service’s audit log, accumulated silently from the moment the service started, records every API request actually received along with its full parameters. The environment snapshot captures the physical end-state produced by the post-hoc commands, providing direct evidence of what the agent actually produced rather than what it claimed to produce. This triangulation of what the agent said, what the services observed, and what the environment contains is what transforms evaluation from trusting the agent’s self-report into verifying its actual behavior.
+
+3.2 Cross-Modal Task Suite
+
+Real-world agents encounter radically diverse scenarios, from executing practical work to processing visual media and conducting multi-turn dialogues, often within the same deployment. A benchmark that covers only one modality or interaction paradigm cannot predict how an agent will perform in the others. The three-phase lifecycle of §3.1 is deliberately domain-agnostic: it provisions environments and collects evidence without interpreting what any task means. The 300 tasks built on this lifecycle target three complementary capability dimensions (practical workflow execution, active multimodal engagement, and proactive information acquisition), instantiated as General (161 tasks), Multimodal (101 tasks), and Multi-turn Dialogue (38 tasks) spanning 9 fine-grained categories (Table 3).
+
+Table 3: Benchmark composition. 300 tasks span three groups testing complementary capabilities: practical workflow execution (General), visual perception and generation (Multimodal), and proactive information
+acquisition (Multi-turn Dialogue), across 9 fine-grained categories.
+
+Group
+Category
+Description
+#
+
+General
+(161)
+
+Easy
+Single-service queries, Basic scheduling
+71
+
+Medium
+Cross-service coordination, Data retrieval
+47
+
+Hard
+Multi-system orchestration, Financial compliance, Ops
+43
+
+Multimodal
+(101)
+
+Video
+Simple QA, Video localization
+53
+
+Doc & Image
+Chart interpretation, Cross-page reasoning
+22
+
+Code
+Webpage generation, SVG animation, Video editing
+26
+
+Multi-turn
+Dialogue (38)
+
+STEM
+Data analysis, Scientific reasoning
+10
+
+Social Science
+Law, Education, Public policy
+13
+
+Business
+Finance, Investment, Corporate strategy
+15
+
+Total
+300
+
+General tasks evaluate an agent’s ability to accomplish practical workflow objectives, progressing from single-service queries at the Easy level, through cross-service coordination at Medium, to multi-system workflows at Hard. These tasks cover both service-orchestration scenarios, where the agent coordinates across mock services (CRM, email, scheduling) through task-specific custom tools, for instance retrieving a customer record, composing a policy-compliant response, and routing it through the correct channel, and standalone analytical scenarios such as financial compliance, document analysis, code debugging, and server diagnostics, where the agent works primarily with injected data and the built-in sandbox tools. 43 tasks further embed safety constraints: actions the agent must not take, such as sending an email during a triage-only task or exposing credentials, testing whether agents respect policy boundaries under genuine task-completion pressure. At judging, evidence comes from audit logs accumulated by mock services, environment snapshots capturing verification outputs and generated files, or both, all independent of the agent’s self-reporting (§3.1).
+
+Multimodal tasks evaluate perceptual and generative capabilities over rich media. These tasks require the agent to actively engage with visual content through a perceive–reason–act loop: for Video and Document & Image tasks, the agent must decide which video segments to examine, how many frames to extract, or which document pages to inspect, then reason over the retrieved visual information to answer questions or locate specific content. Code tasks go further, requiring the agent to produce visual artifacts such as dynamic webpages, SVG animations, and edited video clips, where the output must satisfy functional specifications. All multimodal tasks work with media assets injected as workspace files using the built-in sandbox tools; no mock services are declared. At judging, the framework collects produced artifacts which are evaluated through ground-truth matching, visual fidelity comparison via LLM judge, or both.
+
+Multi-turn dialogue tasks assess an agent’s ability to conduct professional consultations through sustained, multi-round conversations across STEM, social science, and business domains. The key design element is a simulated user: each task configures a detailed persona with domain expertise, a latent intent, and an information-revealing strategy that withholds key details unless the agent asks the right questions. The agent must therefore actively probe, clarify ambiguities, and synthesize partial information across turns; the quality of its questions matters as much as the quality of its final answers. The framework configures the simulated user persona, and the dialogue trace itself constitutes the complete evaluation record. At judging, an LLM judge rubric scores both questioning effectiveness and answer quality against the persona’s ground-truth intent.
+
+Though these three groups test radically different capabilities, they all instantiate the same three-phase lifecycle of §3.1, and in every case the evidence that determines the score is obtained without the agent’s awareness: service audit logs accumulate silently during execution, output artifacts are rendered and collected only after termination, and dialogue traces are scored against ground-truth intents the agent never sees. This shared structure, a declarative task schema interpreted by a domain-agnostic pipeline with all evaluation criteria invisible to the agent throughout execution, is what makes the benchmark extensible: covering a new domain requires only a task definition and a grader script, with no modifications to the framework’s core infrastructure.
+
+3.3 Scoring Protocol
+
+The execution architecture of §3.1 produces complete behavioral traces and three independent lines of evidence; the 300 tasks of §3.2 span service workflows, multimodal processing, and multi-turn professional dialogue. The remaining challenge is converting this rich evidentiary record into scores that are comprehensive, precise, and reliable. Claw-Eval addresses each requirement through a corresponding mechanism: a multi-dimensional scoring structure defines what to measure, a fine-grained rubric system grounds each measurement in verifiable evidence, and a multi-metric evaluation protocol ensures that conclusions withstand stochastic variance.
+
+Multi-dimensional scoring. Rather than reducing each task attempt to a single pass/fail verdict, Claw-Eval evaluates three orthogonal dimensions: Completion measures the degree to which the agent fulfilled the task objective; Safety assesses whether the agent respected policy constraints throughout execution; and Robustness quantifies how effectively the agent recovers from transient environmental failures. These combine into a final task score:
+
+where controls the relative importance of task completion and error recovery. We set and throughout our experiments, reflecting that completion is the primary objective while robustness remains an important secondary signal.
+
+Completion is aggregated from task-specific rubric weights that reflect the relative importance of each sub-goal, as detailed in the rubric discussion below.
+
+Safety acts as a multiplicative gate rather than an additive term: a policy violation pulls the entire score toward zero regardless of completion quality. An agent that brilliantly completes a task but leaks confidential data has not succeeded. Critically, safety evaluation is not confined to a separate task: the majority of safety constraints are embedded within normal workflow tasks as actions the agent must not take, such as executing a destructive operation during a read-only analysis task or exposing credentials in a response. The core design insight is that safety can only be meaningfully assessed while under genuine pressure to complete the task.
+
+Robustness is measured through controlled error injection: the framework allows any mock service to return errors at a configurable rate, simulating realistic deployment perturbations such as API timeouts and malformed responses. The relevant question is not how many times the agent retried a failed call, but whether it found a recovery strategy for each type of failure it encountered. An agent that retries the same broken call ten times demonstrates persistence, not robustness. The robustness score therefore captures the breadth of recovery:
+
+where is the set of tool types that encountered at least one injected error and the subset for which the agent subsequently obtained a successful response.
+
+Fine-grained rubrics. A single score per dimension still risks conflating distinct sub-capabilities. Claw-Eval graders therefore decompose each task into a set of independently verifiable rubric items, each corresponding to a concrete behavioral criterion. Rubric items fall into two categories. Deterministic checks verify objective conditions: a required file exists with expected fields, a specific API was invoked with correct parameters, a forbidden action never appears in the audit log. Judgment-based assessments employ an LLM judge to score text quality, reasoning coherence, or visual fidelity against a reference. Both categories are anchored in the independent evidence sources described in §3.1 (execution traces, service audit logs, and environment snapshots) rather than the agent’s own account of its behavior. Every item records the raw artifact that justified its verdict establishing an end-to-end audit trail from any numeric score, through the dimension breakdown and individual rubric items, down to the behavioral evidence that produced it. Across the full benchmark, 300 tasks yield 2,159 rubric items
+(mean 7.2 per task),
+providing an
+evaluation surface substantially richer than the task
+count alone.
+
+Evaluation metrics. Even with precise per-run scoring, single evaluation runs remain subject to stochastic variance: an agent may pass a task by fortunate tool-call sequencing and fail the next two attempts. Reporting only a single-run pass rate systematically overstates deployable capability. Claw-Eval therefore reports three complementary metrics across independent runs, each answering a distinct question:
+Let denote the score of task on trial , for tasks and independent trials, with pass threshold :
+
+•
+
+Average Score: the mean task score across all runs, measuring overall capability level.
+
+•
+
+Pass@: the fraction of tasks passed at least once in runs, measuring the capability ceiling.
+
+•
+
+Passk: the fraction of tasks passed on every trial, measuring the reliability floor.
+
+Pass@ and Passk bound capability from above and below respectively: a large gap between them exposes tasks the model can sometimes complete but cannot reliably reproduce.
+
+These three mechanisms map directly onto the evaluation gaps identified in §1. The rubric system, grounded in the independent evidence lines of §3.1, replaces trajectory-opaque output-only evaluation with fully auditable behavioral assessment. The multi-dimensional structure prevents high task completion from masking unsafe or brittle behavior. And the multi-trial protocol guards against the stochastic variance inherent in agentic execution, ensuring that reported capability reflects what an agent can reliably deliver, not what it occasionally achieves.
+
+4 Evaluation
+
+Having established the framework design in §3, we now turn to empirical evaluation. §4.1 describes the 14 evaluated models spanning seven model families. §4.2 details the
+experimental configuration. §4.3 presents the main results across all three task groups, followed by targeted analyses in §5.
+
+4.1 Evaluated models
+
+We evaluate 14 frontier models spanning seven model families:
+Claude-Opus-4.6 [3] and Claude-Sonnet-4.6 [4],
+GPT-5.4 [23],
+Gemini-3.1-Pro [7] and Gemini-3-Flash [6],
+Qwen3.5-397B-A17B [43],
+MiMo-V2-Pro [21] and MiMo-V2-Omni [20],
+GLM-5-Turbo [47] and GLM-5V-Turbo [1],
+DeepSeek-V3.2 [15],
+MiniMax-M2.7 [22],
+Kimi-K2.5 [32],
+and Nemotron-3-Super [5].
+All 14 models are evaluated on General (161 tasks) and Multi-turn dialogue (38 tasks).
+For the Multimodal group (101 tasks), evaluation is restricted to the 9 models that support visual input: Claude Opus 4.6, Sonnet 4.6, GPT-5.4, Gemini-3.1-Pro, Gemini-3-Flash, Qwen3.5-397B-A17B, MiMo-V2-Omni, Kimi-K2.5, and GLM-5V-Turbo.
+Each model is evaluated under identical scaffold and tool configurations to ensure that performance differences reflect model capability rather than integration artifacts.
+
+4.2 Evaluation settings
+
+All evaluated models are accessed with default parameters, temperature set to 0, and extended thinking enabled where supported.
+Each task is executed in an isolated Docker sandbox with error injection rate set to 0, and every task is run for 3 independent trials to support both Pass@3 and Pass^3 computation.
+For General and Multimodal tasks, Gemini-3-Flash (temperature = 0) serves as the LLM judge for rubric items that require open-ended assessment.
+For Multi-turn dialogue tasks, Claude Opus-4.6 (temperature = 0.7) serves as both the simulated user agent and the LLM judge, with the elevated temperature producing more natural and varied user behavior across trials.
+We report three metrics: Score (average task score), Pass@3 (fraction of tasks where at least one of three trials exceeds the 0.75 threshold), and Pass^3 (fraction where all three trials pass).
+
+4.3 Main results
+
+Table 4: Main evaluation results. Score = average task score (%), Pass@3 = pass@3 rate (%, any trial passes), Pass^3 = pass^3 rate (%, all trials pass). Best results per column are bolded; second best are underlined. Models are sorted by Pass^3, then by Pass@3 for tied cases.
+
+Model
+General
+Multi-turn
+Overall
+
+Score
+Pass@3
+Pass^3
+Score
+Pass@3
+Pass^3
+Score
+Pass@3
+Pass^3
+
+Claude Opus 4.6
+80.6
+80.8
+70.8
+79.6
+89.5
+68.4
+80.4
+82.4
+70.4
+
+Claude Sonnet 4.6
+81.3
+81.4
+68.3
+81.9
+89.5
+65.8
+81.4
+82.9
+67.8
+
+GPT 5.4
+78.3
+75.8
+60.2
+79.0
+89.5
+60.5
+78.4
+78.4
+60.3
+
+Gemini 3.1 Pro
+76.6
+80.8
+55.9
+80.2
+92.1
+65.8
+77.3
+82.9
+57.8
+
+MiMo V2 Pro
+76.0
+72.7
+57.1
+81.0
+92.1
+60.5
+77.0
+76.4
+57.8
+
+Qwen 3.5 397A17B
+73.8
+70.8
+57.8
+75.6
+76.3
+52.6
+74.2
+71.9
+56.8
+
+GLM 5 Turbo
+73.8
+73.9
+57.1
+77.2
+84.2
+50.0
+74.4
+75.9
+55.8
+
+GLM 5V Turbo
+73.2
+73.3
+52.8
+77.4
+86.8
+57.9
+74.0
+75.9
+53.8
+
+Gemini 3 Flash
+71.0
+67.1
+48.4
+77.5
+84.2
+52.6
+72.3
+70.4
+49.2
+
+MiniMax M2.7
+71.8
+72.0
+49.7
+75.9
+84.2
+44.7
+72.6
+74.4
+48.7
+
+MiMo V2 Omni
+74.1
+75.2
+52.2
+65.4
+63.2
+15.8
+72.4
+72.9
+45.2
+
+DeepSeek V3.2
+68.3
+71.4
+42.2
+64.0
+60.5
+31.6
+67.5
+69.3
+40.2
+
+Kimi K2.5
+66.6
+67.1
+36.6
+75.4
+76.3
+39.5
+68.3
+68.8
+37.2
+
+Nemotron 3 Super
+41.7
+34.8
+6.8
+56.2
+13.2
+0.0
+44.4
+30.7
+5.5
+
+Table 4 reports results on General and Multi-turn tasks. We highlight three findings:
+(1) Consistency and peak performance do not align: Claude-Opus-4.6 leads Pass^3 (70.4%) while Claude-Sonnet-4.6 leads Score (81.4%), showing that optimizing for average quality does not guarantee reliable execution.
+(2) The two task groups test distinct capabilities: Gemini-3.1-Pro places 2nd in Multi-turn Pass^3 (65.8%) but only 7th in General Pass^3 (55.9%), confirming that neither group subsumes the other.
+(3) The benchmark retains headroom: even the strongest model achieves only 70.4% Overall Pass^3, and a dense middle tier of five models clusters within a 5-point range (55.8–60.3%), indicating that the benchmark discriminates across capability levels without saturating at the top.
+
+Figure 2 breaks down Pass^3 by difficulty level on General tasks.
+(1) All models degrade monotonically from Easy to Hard, as increasing service count demands longer tool-call chains and more complex cross-service coordination, while domain-expert tasks require specialized quantitative reasoning that models may find challenging.
+(2) The difficulty range provides effective discrimination: Pass^3 on Easy spans from 14% to 75% across six models, and the top-ranked Claude-Opus-4.6 retains only 65.1% on Hard. The benchmark is neither trivially solved nor impossibly hard.
+
+Table 5 reports Multimodal results for the 9 models that support visual input:
+(1) Multimodal tasks are substantially harder: the highest Pass^3 is only 25.7% (GPT-5.4), far below the 70.8% that Claude-Opus-4.6 achieves on General, incicating that current models handle text-based tool use far more reliably than visual perception and generation.
+(2) Rankings shift across modalities: Claude-Opus-4.6 leads General but ranks second in Multimodal, while GPT-5.4 ranks third in General but first in Multimodal. Multimodal capability is a distinct axis not predictable from text-based performance.
+
+Figure 2: Pass^3 rate by difficulty level. All models degrade from Easy to Hard.
+
+Model
+Score
+Pass@3
+Pass^3
+
+GPT 5.4
+54.4
+55.5
+25.7
+
+Claude Opus 4.6
+54.7
+52.5
+24.8
+
+Claude Sonnet 4.6
+50.9
+43.6
+23.8
+
+Qwen 3.5 397A17B
+50.2
+37.6
+20.8
+
+Gemini 3.1 Pro
+45.7
+39.6
+15.8
+
+MiMo V2 Omni
+44.4
+34.6
+15.8
+
+Gemini 3 Flash
+50.4
+37.6
+14.8
+
+Kimi K2.5
+50.2
+36.6
+14.8
+
+GLM 5V Turbo
+47.0
+34.6
+13.9
+
+Table 5: Multimodal task evaluation results sorted by Pass^3. Score = average task score (%), Pass@3 = pass@3 rate (%), Pass^3 = pass^3 rate (%). Best results per column are bolded; second best are underlined.
+
+5 Analysis
+
+We now present four targeted analyses that collectively probe all three evaluation gaps motivating Claw-Eval’s
+design. §5.1 compares our hybrid grading pipeline against a vanilla LLM judge to measure the cost of trajectory-opaque evaluation (G1). §5.2 stress-tests agents under controlled error injection to quantify the capability–reliability divide that single-metric evaluation obscures (G2). §5.3 and §5.4 leverage Claw-Eval’s unified cross-modal
+coverage (G3), examining what factors drive multi-turn dialogue success and how multimodal capability distributes across domains.
+
+5.1 Trajectory-opaque judges miss 44% of safety violations
+
+We investigate whether a single vanilla LLM judge call can match the hybrid grading pipeline.
+To ensure a fair comparison, we provide the vanilla judge (Gemini-3-Flash) with the full conversation transcript including every tool call, together with the complete grader source code.
+The only information withheld is server-side audit logs and post-execution environment snapshots.
+
+(a) Safety violations: per-model count of tasks where the hybrid pipeline detects a violation, split into jointly detected and missed by the vanilla judge.
+
+(b) Robustness issues: per-model count of tasks where the hybrid pipeline detects robustness issues, split into jointly detected and missed by the vanilla judge.
+
+Figure 3: Comparison of a vanilla LLM judge against the hybrid grading pipeline across five models. The vanilla judge receives the full conversation transcript and complete grader source code; only server-side audit logs and post-execution environment snapshots are withheld.
+
+Across five models and 2,000+ traces, the vanilla judge systematically underdetects issues that the hybrid pipeline catches (Figure 3):
+(1) Safety: 12 out of 27 task-level violations are missed (44% miss rate). The hybrid grader detects these through deterministic string matching on tool-call parameters; the LLM reads the same code but cannot reliably execute substring matching mentally, and in some cases rationalizes the agent’s behavior rather than mechanically applying the rule.
+(2) Robustness: 15 out of 118 task-level issues are missed (13% miss rate). The lower rate reflects that robustness issues produce visible error codes in the conversation, whereas safety violations require parameter-level inspection.
+(3) The miss rate may depend on how explicit the evidence is: safety violations are missed at 3 the rate of robustness issues, and neither rate is acceptable for trustworthy evaluation.
+These results validate the hybrid design: rule-based checks handle deterministic, safety-critical criteria, while LLM judges remain valuable for open-ended assessment where no deterministic rule exists.
+
+5.2 Injected failures erode consistency far more than peak capability
+
+(a) Pass@3 (solid) and Pass^3 (dashed) as the error injection rate increases from 0.0 to 0.6.
+
+(b) The Pass@3 – Pass^3 gap widens monotonically for every model, quantifying growing inconsistency.
+
+Figure 4: Effect of error injection on agent performance. Three models are evaluated on General tasks at error rates 0.0–0.6. Pass@3 remains largely stable while Pass^3 drops sharply.
+
+To understand how agents behave when tool calls intermittently fail, we evaluate three models on General tasks at error injection rates of 0.0, 0.2, 0.4, and 0.6 (Figure 4). At each rate, every mock-service call independently fails with that probability; when a failure is triggered, it is randomly drawn from three types: HTTP 429 rate-limit error (35% of injected failures), HTTP 500 internal server error (35%), or a 2–4 s latency spike that returns a normal response (30%). The central finding is that error injection primarily degrades consistency, not peak capability:
+(1) Pass@3 (solid lines) remains largely stable: from rate 0.0 to 0.6, Claude-Opus-4.6 drops only 3.7% and GLM-5-Turbo actually rises by 1.2%, indicating that models can almost always find at least one successful execution path across three trials.
+(2) Pass^3 (dashed lines) declines sharply over the same range: Gemini-3.1-Pro loses 24.2%, Claude-Opus-4.6 loses 14.3%, and GLM-5-Turbo loses 12.4%. The pattern across all three models suggests that consistency is more vulnerable to perturbation than peak capability.
+
+The divergence between the two metrics is captured by their gap, which widens monotonically for every model (Figure 4(b)), quantifying a divide between capability and reliability:
+(1) Claude-Opus-4.6 is the most resilient, maintaining the highest absolute Pass^3 at every error rate (56.5% even at rate 0.6) with the smallest gap expansion (9.9%  20.5%).
+(2) Resilience does not track baseline performance: GLM-5-Turbo exhibits a moderate Pass^3 drop (12.4%) while Gemini-3.1-Pro suffers nearly twice the degradation (24.2%) from a higher starting point, indicating that resilience is a distinct capability axis that error-free evaluation cannot predict.
+(3) Evaluating only with Pass@3 yields an optimistic conclusion that agents are highly resilient; Pass^3 reveals that deployment-grade reliability degrades substantially, motivating multi-metric evaluation as a first-class design choice.
+
+5.3 Better questions, not more, yield better multi-turn performance
+
+(a) Average rounds vs. Pass^3. Near-zero correlation is shown (, ). Darker shading indicates more desirable regions.
+
+(b) Question precision vs. Pass^3. Question precision explains 76% of Pass^3 variance (, ). Shaded region shows the 95% confidence band.
+
+Figure 5: Multi-turn dialogue analysis across 13 models. A simulated user progressively reveals information over up to 8 rounds; the agent must ask clarifying questions before composing its answer.
+
+The 38 multi-turn dialogue tasks simulate professional consultations in which a user persona progressively reveals critical information; the agent must elicit this information through clarifying questions before delivering its final answer. Figure 5(a) plots each model’s average round count against Pass^3 across 13 models. Round count shows near-zero correlation with performance (, ), as most models average 3–5 rounds yet span the full range from 15.8% to 68.4% Pass^3.
+
+The stronger predictor is the quality of questions asked (Figure 5(b)). We define question precision as the mean of two grading dimensions, clarification (how targeted the questions are) and trajectory (how logically the information-gathering sequence unfolds).
+(1) Question precision correlates strongly with Pass^3 (, ); all 13 models fall within or near the 95% confidence band.
+(2) The contrast is stark: round count explains under 1% of performance variance while question precision explains 76%. What separates high-performing from low-performing agents is not how many questions they ask, but how well they ask them.
+(3) This is consistent with the task design: critical information is deliberately withheld behind progressive revelation, so the quality of the questioning strategy, not its length, determines how much context the model receives before composing its answer.
+
+5.4 Multimodal capability is domain-specific: no model dominates
+
+The 101 multimodal tasks span three domains, Video (53 tasks), Doc & Image (22), and Code (26), evaluated across 9 models. Table 6 reports Pass^3 broken down by domain:
+(1) No single model dominates: each domain has a different leader. Video is led by Claude-Opus-4.6/Claude-Sonnet-4.6 (15.4%), Doc & Image by GPT-5.4 (54.5%), and Code by MiMo-V2-Omni (33.3%).
+(2) Rank shifts are substantial: GPT-5.4 leads overall (25.7%) and dominates Doc & Image but scores only 11.5% on Video, while MiMo-V2-Omni leads Code (33.3%) despite ranking lower overall.
+These shifts demonstrate that domain-level breakdown is necessary for meaningful evaluation.
+
+Model
+
+Video
+
+(53)
+
+Doc
+
+(22)
+
+Code
+
+(26)
+
+Overall
+
+GPT 5.4
+11.5
+54.5
+29.6
+25.7
+
+Claude Opus 4.6
+15.4
+45.5
+25.9
+24.8
+
+Claude Sonnet 4.6
+15.4
+40.9
+25.9
+23.8
+
+Qwen 3.5 397A17B
+13.5
+31.8
+25.9
+20.8
+
+Gemini 3.1 Pro
+3.8
+40.9
+18.5
+15.8
+
+MiMo V2 Omni
+5.8
+18.2
+33.3
+15.8
+
+Gemini 3 Flash
+7.7
+27.3
+18.5
+14.8
+
+Kimi K2.5
+13.5
+9.1
+22.2
+14.8
+
+GLM 5V Turbo
+9.6
+22.7
+14.8
+13.9
+
+Table 6: Pass^3 (%) by model and multimodal domain. Best per column in bold; second best underlined. Each domain has a different leader.
+
+Figure 6: Pass@3 (dashed) vs. Pass^3 (solid) across multimodal domains. The ratio indicates the consistency conversion rate.
+
+Looking beyond individual models, Figure 6 aggregates across all 9 models to reveal domain-level patterns. We report the conversion ratio , i.e., the fraction of solvable tasks that are solved reliably:
+(1) Model capability is unevenly distributed across domains: Video Pass^3 averages only 10.7%, significantly below Doc & Image (32.3%) and Code (23.9%). Video understanding involving frame sampling, temporal reasoning, and OCR remains the hardest multimodal challenge for current agents.
+(2) Consistency also varies by domain: Video has the lowest conversion ratio (), meaning only about one-third of solvable tasks are solved reliably, while Doc & Image achieves and Code , suggesting that tasks with higher perceptual uncertainty exhibit greater run-to-run variance.
+Together, the two panels reveal orthogonal findings: which domain a model excels at is model-specific, while how reliably it excels is domain-specific. Both dimensions are necessary for a complete picture of multimodal agent capability.
+
+6 Conclusions
+
+In this paper, we present Claw-Eval, a transparent evaluation suite for LLM-based agents that combines full trajectory auditing, cross-modal task coverage, and controlled perturbation mechanisms to assess agents along three dimensions: completion, robustness, and safety. Our experiments across 14 models yield three key findings.
+(1) Trajectory-opaque evaluation is unreliable. A vanilla LLM judge with access to the full conversation transcript and grader source code still misses 44% of safety violations and 13% of robustness issues that the hybrid pipeline catches, confirming that rule-based checks on structured evidence are necessary rather than optional for trustworthy agent evaluation.
+(2) Capability does not imply consistency. Under controlled error injection, Pass@3 remains largely stable while Pass3 drops by up to 24 percentage points. The magnitude of degradation does not track baseline performance, indicating that robustness to deployment perturbations is an
+independent capability axis that error-free evaluation cannot predict.
+(3) Aggregate metrics mask structured capability gaps. In multi-turn dialogue, question quality explains 76% of Pass3 variance () while round count explains under 1% () indicating that what separates high-performing agents is not how many questions they ask but how well they ask them. In multimodal tasks, no single model dominates across all domains: each of Video, Document, and Code is led by a different model, and overall rankings obscure substantial rank shifts at the domain level.
+These findings suggest that future agent development should prioritize consistent error recovery over peak performance, domain-targeted multimodal perception over uniform scaling, and information acquisition strategies that maximize the quality rather than the quantity of interactions.
+
+References
+
+[1]
+
+Z. AI.
+
+Glm-5v-turbo.
+
+https://docs.z.ai/guides/vlm/glm-5v-turbo, 2026.
+
+[2]
+
+Anthropic.
+
+Claude code.
+
+https://www.anthropic.com/product/claude-code, 2025.
+
+[3]
+
+Anthropic.
+
+Introducing claude opus 4.6.
+
+https://www.anthropic.com/news/claude-opus-4-6, 2026a.
+
+[4]
+
+Anthropic.
+
+Introducing claude sonnet 4.6.
+
+https://www.anthropic.com/news/claude-sonnet-4-6, 2026b.
+
+[5]
+
+A. Blakeman, A. Grattafiori, A. Basant, A. Gupta, A. Khattar, A. Renduchintala, A. Vavre, A. Shukla, A. Bercovich, A. Ficek, et al.
+
+Nvidia nemotron 3: Efficient and open intelligence.
+
+arXiv preprint arXiv:2512.20856, 2025.
+
+[6]
+
+G. DeepMind.
+
+Gemini 3 flash.
+
+https://deepmind.google/models/gemini/flash/, 2025.
+
+[7]
+
+G. DeepMind.
+
+Gemini 3.1 pro.
+
+https://deepmind.google/models/gemini/pro/, 2026.
+
+[8]
+
+S. Ding, X. Dai, L. Xing, S. Ding, Z. Liu, J. Yang, P. Yang, Z. Zhang, X. Wei, Y. Ma, H. Duan, J. Shao, J. Wang, D. Lin, K. Chen, and Y. Zang.
+
+Wildclawbench.
+
+https://github.com/InternLM/WildClawBench, 2026.
+
+GitHub repository.
+
+[9]
+
+C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. R. Narasimhan.
+
+SWE-bench: Can language models resolve real-world github issues?
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+URL https://openreview.net/forum?id=VTF8yNQM66.
+
+[10]
+
+Kilo AI team.
+
+Pinchbench, 2026.
+
+URL https://github.com/pinchbench/skill.
+
+Benchmarking system for evaluating LLM models as OpenClaw agents.
+
+[11]
+
+J. Y. Koh, R. Lo, L. Jang, V. Duvvur, M. Lim, P.-Y. Huang, G. Neubig, S. Zhou, R. Salakhutdinov, and D. Fried.
+
+Visualwebarena: Evaluating multimodal agents on realistic visual web tasks.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 881–905, 2024.
+
+[12]
+
+J. Li, W. Zhao, J. Zhao, W. Zeng, H. Wu, X. Wang, R. Ge, Y. Cao, Y. Huang, W. Liu, et al.
+
+The tool decathlon: Benchmarking language agents for diverse, realistic, and long-horizon task execution.
+
+arXiv preprint arXiv:2510.25726, 2025a.
+
+[13]
+
+M. Li, Y. Zhao, B. Yu, F. Song, H. Li, H. Yu, Z. Li, F. Huang, and Y. Li.
+
+Api-bank: A comprehensive benchmark for tool-augmented llms.
+
+In Proceedings of the 2023 conference on empirical methods in natural language processing, pages 3102–3116, 2023.
+
+[14]
+
+R. Li, L. Li, S. Ren, H. Tian, S. Gu, S. Li, Z. Yue, Y. Wang, W. Ma, Z. Yang, et al.
+
+Groundingme: Exposing the visual grounding gap in mllms through multi-dimensional evaluation.
+
+arXiv preprint arXiv:2512.17495, 2025b.
+
+[15]
+
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al.
+
+Deepseek-v3 technical report.
+
+arXiv preprint arXiv:2412.19437, 2024.
+
+[16]
+
+X. Liu, H. Yu, H. Zhang, Y. Xu, X. Lei, H. Lai, Y. Gu, H. Ding, K. Men, K. Yang, et al.
+
+Agentbench: Evaluating llms as agents.
+
+In The Twelfth International Conference on Learning Representations.
+
+[17]
+
+M. MacDiarmid, B. Wright, J. Uesato, J. Benton, J. Kutasov, S. Price, N. Bouscal, S. Bowman, T. Bricken, A. Cloud, et al.
+
+Natural emergent misalignment from reward hacking in production rl.
+
+arXiv preprint arXiv:2511.18397, 2025.
+
+[18]
+
+M. A. Merrill, A. G. Shaw, N. Carlini, B. Li, H. Raj, I. Bercovich, L. Shi, J. Y. Shin, T. Walshe, E. K. Buchanan, et al.
+
+Terminal-bench: Benchmarking agents on hard, realistic tasks in command line interfaces.
+
+arXiv preprint arXiv:2601.11868, 2026.
+
+[19]
+
+G. Mialon, C. Fourrier, T. Wolf, Y. LeCun, and T. Scialom.
+
+Gaia: a benchmark for general ai assistants.
+
+In The Twelfth International Conference on Learning Representations, 2023.
+
+[20]
+
+X. MiMo.
+
+Xiaomi mimo-v2-omni.
+
+https://mimo.xiaomi.com/mimo-v2-omni, 2026a.
+
+[21]
+
+X. MiMo.
+
+Xiaomi mimo-v2-pro.
+
+https://mimo.xiaomi.com/mimo-v2-pro, 2026b.
+
+[22]
+
+MiniMax.
+
+Minimax m2.7.
+
+https://www.minimax.io/models/text/m27, 2026.
+
+[23]
+
+OpenAI.
+
+Introducing gpt-5.4.
+
+https://openai.com/index/introducing-gpt-5-4, 2026.
+
+[24]
+
+OpenClaw.
+
+Openclaw.
+
+https://github.com/openclaw/openclaw, 2026.
+
+GitHub repository.
+
+[25]
+
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. F. Christiano, J. Leike, and R. Lowe.
+
+Training language models to follow instructions with human feedback.
+
+In Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022, 2022.
+
+[26]
+
+B. Qiao, L. Li, X. Zhang, S. He, Y. Kang, C. Zhang, F. Yang, H. Dong, J. Zhang, L. Wang, et al.
+
+Taskweaver: A code-first agent framework.
+
+arXiv preprint arXiv:2311.17541, 2023.
+
+[27]
+
+Y. Ruan, H. Dong, A. Wang, S. Pitis, Y. Zhou, J. Ba, Y. Dubois, C. J. Maddison, and T. Hashimoto.
+
+Identifying the risks of lm agents with an lm-emulated sandbox.
+
+arXiv preprint arXiv:2309.15817, 2023.
+
+[28]
+
+T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, E. Hambro, L. Zettlemoyer, N. Cancedda, and T. Scialom.
+
+Toolformer: Language models can teach themselves to use tools.
+
+Advances in neural information processing systems, 36:68539–68551, 2023.
+
+[29]
+
+Y. Shen, K. Song, X. Tan, D. Li, W. Lu, and Y. Zhuang.
+
+Hugginggpt: Solving ai tasks with chatgpt and its friends in hugging face.
+
+Advances in Neural Information Processing Systems, 36:38154–38180, 2023.
+
+[30]
+
+Q. Sun, M. Li, Z. Liu, Z. Xie, F. Xu, Z. Yin, K. Cheng, Z. Li, Z. Ding, Q. Liu, et al.
+
+Os-sentinel: Towards safety-enhanced mobile gui agents via hybrid validation in realistic workflows.
+
+arXiv preprint arXiv:2510.24411, 2025.
+
+[31]
+
+E. B. Sydney Von Arx, Lawrence Chan.
+
+Recent frontier models are reward hacking.
+
+https://metr.org/blog/2025-06-05-recent-reward-hacking/, 06 2025.
+
+[32]
+
+K. Team, T. Bai, Y. Bai, Y. Bao, S. Cai, Y. Cao, Y. Charles, H. Che, C. Chen, G. Chen, et al.
+
+Kimi k2. 5: Visual agentic intelligence.
+
+arXiv preprint arXiv:2602.02276, 2026.
+
+[33]
+
+X. Wang, Z. Wang, J. Liu, Y. Chen, L. Yuan, H. Peng, and H. Ji.
+
+Mint: Evaluating llms in multi-turn interaction with tools and language feedback.
+
+In The Twelfth International Conference on Learning Representations.
+
+[34]
+
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, et al.
+
+Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments.
+
+Advances in Neural Information Processing Systems, 37:52040–52094, 2024.
+
+[35]
+
+T. Xie, M. Yuan, D. Zhang, X. Xiong, Z. Shen, Z. Zhou, X. Wang, Y. Chen, J. Deng, J. Chen, B. Wang, H. Wu, J. Chen, J. Wang, D. Lu, H. Hu, and T. Yu.
+
+Introducing osworld-verified.
+
+xlang.ai, Jul 2025.
+
+URL https://xlang.ai/blog/osworld-verified.
+
+[36]
+
+T. Xiong, Y. Ge, M. Li, Z. Zhang, P. Kulkarni, K. Wang, Q. He, Z. Zhu, C. Liu, R. Chen, et al.
+
+Multi-crit: Benchmarking multimodal judges on pluralistic criteria-following.
+
+arXiv preprint arXiv:2511.21662, 2025a.
+
+[37]
+
+T. Xiong, X. Wang, D. Guo, Q. Ye, H. Fan, Q. Gu, H. Huang, and C. Li.
+
+Llava-critic: Learning to evaluate multimodal models.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 13618–13628, 2025b.
+
+[38]
+
+T. Xiong, S. Wang, G. Liu, Y. Dong, M. Li, H. Huang, J. Kautz, and Z. Yu.
+
+Phycritic: Multimodal critic models for physical ai.
+
+arXiv preprint arXiv:2602.11124, 2026.
+
+[39]
+
+W. Xiong, Y. Song, X. Zhao, W. Wu, X. Wang, K. Wang, C. Li, W. Peng, and S. Li.
+
+Watch every step! llm agent learning via iterative step-level process refinement.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pages 1556–1572, 2024.
+
+[40]
+
+W. Xiong, Y. Song, Q. Dong, B. Zhao, F. Song, X. Wang, and S. Li.
+
+Mpo: Boosting llm agents with meta plan optimization.
+
+arXiv preprint arXiv:2503.02682, 5(6):7, 2025c.
+
+[41]
+
+F. F. Xu, Y. Song, B. Li, Y. Tang, K. Jain, M. Bao, Z. Z. Wang, X. Zhou, Z. Guo, M. Cao, et al.
+
+Theagentcompany: Benchmarking llm agents on consequential real world tasks.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track.
+
+[42]
+
+Q. Xu, F. Hong, B. Li, C. Hu, Z. Chen, and J. Zhang.
+
+On the tool manipulation capability of open-source large language models.
+
+arXiv preprint arXiv:2305.16504, 2023.
+
+[43]
+
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388, 2025.
+
+[44]
+
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao.
+
+React: Synergizing reasoning and acting in language models.
+
+In The eleventh international conference on learning representations, 2022.
+
+[45]
+
+S. Yao, N. Shinn, P. Razavi, and K. Narasimhan.
+
+-bench: A benchmark for tool-agent-user interaction in real-world domains, 2024.
+
+URL https://arxiv.org/abs/2406.12045.
+
+[46]
+
+T. Yuan, Z. He, L. Dong, Y. Wang, R. Zhao, T. Xia, L. Xu, B. Zhou, F. Li, Z. Zhang, et al.
+
+R-judge: Benchmarking safety risk awareness for llm agents.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2024, pages 1467–1490, 2024.
+
+[47]
+
+A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Huang, C. Xie, et al.
+
+Glm-5: from vibe coding to agentic engineering.
+
+arXiv preprint arXiv:2602.15763, 2026.
+
+[48]
+
+Z. Zhang, S. Cui, Y. Lu, J. Zhou, J. Yang, H. Wang, and M. Huang.
+
+Agent-safetybench: Evaluating the safety of llm agents.
+
+arXiv preprint arXiv:2412.14470, 2024.
+
+[49]
+
+W. X. Zhao, K. Zhou, J. Li, T. Tang, X. Wang, Y. Hou, Y. Min, B. Zhang, J. Zhang, Z. Dong, et al.
+
+A survey of large language models.
+
+arXiv preprint arXiv:2303.18223, 1(2):1–124, 2023.
+
+[50]
+
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, et al.
+
+Webarena: A realistic web environment for building autonomous agents.
+
+In The Twelfth International Conference on Learning Representations.
+
+Appendix A Case Studies
+
+We present four case studies to illustrate that our evaluation rubrics are fine-grained, reliable, and produce accurate scores. Each case shows the complete rubric decomposition for one task, with per-criterion judgments that can be independently verified. The four cases span the three task categories in our benchmark: general (A.1—tool-based information retrieval and classification), multi-turn (A.2—LLM-simulated dialogue where Claude Opus 4.6 acts as the user), and multimodal (A.3, A.4—video understanding with visual artifact generation and verification).
+
+A.1 General: Email Triage
+
+Table 7: Email triage rubric evaluation. Four scoring components—safety gate (deterministic dispatch check), classification accuracy (LLM judge extracts per-email labels), tool usage and coverage (dispatch audit)—combine to produce 0.84 completion. The right column shows the full 3-turn agent trace and its output.
+
+A.2 Multi-Turn: Statistical Consultation with Simulated User
+
+Table 8: Statistical analysis SPSS multi-turn evaluation. Claude Opus 4.6 simulates an impatient professor who progressively reveals information, pushes back on generic advice, and naturally exposes misconceptions—the high-level traits and information structure are specified in the persona prompt, while the concrete conversational behaviors (natural phrasing, when to push back, how to expose misconceptions without self-awareness) emerge from the LLM’s interpretation. The 4-component rubric separately evaluates information gathering (0.55), diagnostic reasoning (0.88), numerical accuracy (0.72), and content quality (0.88).
+
+A.3 Multimodal: Video-to-Floor-Plan Reconstruction
+
+Table 9: Video-to-floor-plan reconstruction rubric evaluation. The LLM judge examines the rendered floor plan image—not the agent’s source code—to score object coverage (8/9 found) and spatial accuracy (4/10 correct) independently. Criteria marked with † can be visually verified in the generated artifact (right).
+
+A.4 Multimodal: Video Localization and Frame Cropping
+
+Table 10: LVB machine operation localization and dog frame crop rubric evaluation. The temporal rubric uses IoU between predicted and ground-truth intervals (visualized above), yielding continuous partial credit. The visual rubric examines the cropped image (right) for subject visibility and centering.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

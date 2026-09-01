@@ -1,0 +1,810 @@
+MIPT-SSM: Scaling Language Models with 𝑂(1) Inference Cache via Phase Transitions
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+Contributions.
+
+2 Related Work
+
+State Space Models.
+
+Quantum-Inspired Language Models.
+
+KV Cache Compression.
+
+3 Theory
+
+3.1 The Wave-Particle Dead-Lock
+
+3.2 The Core Recurrence
+
+Engineering note.
+
+Semantic-physics link.
+
+3.3 Parallel Training via Hillis-Steele Scan
+
+3.4 Entanglement Entropy and Phase Transition
+
+3.5 The Cache as a Hopfield Memory
+
+4 Architecture
+
+4.1 Hierarchical MIPT for Classification
+
+4.2 Autoregressive MIPT-LM
+
+5 Experiments
+
+5.1 Setup
+
+5.2 Short-Text Classification: AG News
+
+5.3 Long-Document Understanding
+
+5.4 Memory Scaling
+
+5.5 Causal Sparse KV Cache: Needle-in-a-Haystack
+
+Experiment 1: Top- causal cache.
+
+Experiment 2: Threshold-based cache with explicit write-rate measurement.
+
+Practical scale.
+
+5.6 Autoregressive Language Modeling
+
+6 Discussion
+
+6.1 Why Does MIPT Beat Transformer on AG News?
+
+6.2 The Phase Transition Is Not Decoration
+
+6.3 Limitations
+
+7 Conclusion
+
+Acknowledgements.
+
+References
+
+A Proof of MIPT Phase Transition
+
+B Causal Top-K Mask Construction
+
+C Hyperparameters
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.07716v1 [cs.LG] 09 Apr 2026
+
+MIPT-SSM: Scaling Language Models with Inference Cache via Phase Transitions
+
+Yasong Fan
+
+Affiliation: Independent Researcher
+
+rnzfjau@uoem.edu.gr
+
+Abstract
+
+We present MIPT-SSM, a neural sequence architecture built on the physics of Measurement-Induced Phase Transitions (MIPT). The central idea is a learned measurement rate that routes computation between two regimes: wave phase (), where information propagates as distributed complex-phase interference; and particle phase (), where the state collapses onto the current token, enabling precise local storage. These two regimes are provably incompatible in a single linear operator—one of the few “no-go theorems” in sequence modeling—and is our way around it.
+
+The model is predicted to exhibit a phase transition at critical sequence length , where the information density ratio crosses unity, consistent with our memory scaling observations.
+
+On AG News (four-class classification), MIPT achieves 0.905 accuracy versus Transformer’s 0.736 (+16.6%), stable across 3 seeds. At , MIPT requires 810 MB versus Transformer’s 34,651 MB—a 42.8 memory reduction. On exact-recall (“needle-in-a-haystack”), our causal sparse KV cache achieves 0.968 accuracy. Remarkably, under unbounded cache capacity, the gate autonomously learns to store only the single critical token (averaging 1.0 / 512 slots used), achieving a 99.8% sparsity rate; threshold tuning alone () yields 0.750 accuracy. On language modeling (WikiText-103, 31M parameters), MIPT-LM with cache reaches PPL 92.1 versus Transformer’s 90.5 (gap: 1.8%)—while inference KV cache shrinks from to .
+
+1 Introduction
+
+There is a fundamental tension in sequence modeling that has not been named directly. Transformers can retrieve any fact from any position—but storing all key-value pairs costs memory. SSMs like Mamba (Gu and Dao, 2023) solve the memory problem with recurrent states—but real-valued exponential decay means information from steps ago contributes only , catastrophic at long range.
+
+These are not engineering problems. They reflect a structural incompatibility: no single linear operator can both preserve all information (wave-like, norm-preserving) and selectively forget irrelevant context (particle-like, dissipative). We prove this formally in §3.1.
+
+Our response is to model this incompatibility directly. We introduce a learned measurement rate that dynamically allocates each token to wave or particle mode based on semantic content. The architecture maps exactly onto Measurement-Induced Phase Transitions in quantum circuit theory (Skinner et al., 2019; Li et al., 2019), where hybrid unitary-plus-measurement circuits undergo phase transitions as a function of measurement frequency.
+
+Contributions.
+
+1.
+
+The wave-particle dead-lock (Proposition 1): formal proof that norm-preservation and selective forgetting are incompatible in a single linear operator.
+
+2.
+
+MIPT-SSM with learned , implementing via parallel scan in training, /token at inference.
+
+3.
+
+Phase transition theory predicting from information density ratio and quantum entanglement entropy, consistent with observed memory scaling crossover.
+
+4.
+
+Causal sparse KV cache with inference memory and learned -based token selection.
+
+5.
+
+Empirical validation across four axes: text classification, long-document understanding, exact recall, and autoregressive language modeling.
+
+2 Related Work
+
+State Space Models.
+
+S4 (Gu et al., 2022) uses complex diagonal state matrices. Mamba (Gu and Dao, 2023) adds input-selective transitions; Mamba-2/SSD (Dao and Gu, 2024) proves duality between linear RNNs and banded attention. Mamba-3 (Lahoti et al., 2026) reintroduces complex states via data-dependent RoPE, confirming field convergence on complex representations. Our key distinction: Mamba-3 uses complex states as positional encoding; MIPT-SSM uses complex phase as content-addressable memory with as an explicit wave-particle router.
+
+Quantum-Inspired Language Models.
+
+PRISM (Yıldırım and Yücedağ, 2025) enforces and replaces attention with gated harmonic convolution, showing synonym pairs exhibit higher phase coherence (, )—independently validating that phase angles carry semantic content. LI-QiLM (Yan et al., 2024) applies the Lindblad master equation to NLP. MIPT-SSM extends this physical grounding to memory.
+
+KV Cache Compression.
+
+H2O (Zhang et al., 2023) and StreamingLLM (Xiao et al., 2023) compress caches using post-hoc attention scores. Our causal cache differs: is learned end-to-end, not post-hoc. Tokens that trigger measurement events are precisely those worth storing—the cache selection has physical grounding.
+
+3 Theory
+
+3.1 The Wave-Particle Dead-Lock
+
+Proposition 1.
+
+No linear operator can simultaneously satisfy:
+
+(a)
+
+for all (norm-preserving, wave-like)
+
+(b)
+
+(selective forgetting, particle-like)
+
+Proof.
+
+Condition (a) implies . Then , contradicting (b). ∎∎
+
+Corollary 1.
+
+A recurrent update cannot simultaneously preserve global phase coherence and perform selective local attention. This is a structural dead-lock, not a hyperparameter issue.
+
+The Lindblad master equation shows how physics resolves this separation:
+
+(1)
+
+MIPT-SSM discretizes this separation directly.
+
+3.2 The Core Recurrence
+
+The state update is:
+
+(2)
+
+where is the measurement rate and is the phase rotation angle. Critically, and are independent parameter matrices.
+
+Engineering note.
+
+If is initialized to zero, , placing the system in a mixed state where gradients from wave-mode and particle-mode objectives partially cancel. We initialize (so ), strongly biasing toward wave mode. This allows the system to first learn global structure, then selectively introduce particle events. This trick is analogous to the forget gate bias in LSTMs (Gers et al., 2000).
+
+Semantic-physics link.
+
+After training, is systematically elevated on nouns, numbers, and named entities—and suppressed on function words. In AG News, topic-discriminative tokens (sport names, financial terms, geopolitical entities) exhibit mean that is 2.3–3.1 higher than background function words. This is an emergent property: the model discovers that these tokens cause the largest perturbation to the accumulated phase state.
+
+3.3 Parallel Training via Hillis-Steele Scan
+
+The recurrence Eq. (2) with is an associative linear recurrence. The operator
+
+(3)
+
+is associative, enabling -depth parallel prefix scan during training. At inference, the same recurrence runs sequentially in per token with identical weights.
+
+3.4 Entanglement Entropy and Phase Transition
+
+Definition 1.
+
+The approximate entanglement entropy of hidden state is:
+
+(4)
+
+This is computable in and serves as a real-time phase readout.
+
+Area Law Phase (): . Information concentrated in few dimensions; precise local facts dominate.
+
+Volume Law Phase (): . Information uniformly spread; global phase interference carries semantic structure.
+
+The transition occurs when the information density ratio crosses a critical value. We conjecture:
+
+(5)
+
+where and is the mean measurement rate.
+
+3.5 The Cache as a Hopfield Memory
+
+The causal sparse KV cache is a modern Hopfield network (Ramsauer et al., 2020) dynamically populated by . We maintain with capacity . When full, the lowest- entry is evicted. Output fuses wave and particle components:
+
+(6)
+
+where is a learned gate.
+
+MIPT acts as a dynamic feature selector: tokens that break phase coherence (high ) are precisely those worth preserving for precise retrieval. This mirrors biological memory consolidation—only experiences deviating sufficiently from prediction are encoded.
+
+4 Architecture
+
+4.1 Hierarchical MIPT for Classification
+
+Two-level hierarchy achieving total memory. Level 1: windows of size , stride ; MIPT-SSM within each window, then mean-pool to . Level 2: MIPT-SSM across , then attention-weighted pooling:
+
+(7)
+
+4.2 Autoregressive MIPT-LM
+
+Stack of causal MIPT blocks with optional causal sparse cache. Output via tied embeddings: .
+
+5 Experiments
+
+5.1 Setup
+
+All experiments use a single NVIDIA RTX 5880 (48 GB), PyTorch 2.1.2. Classification uses character-level tokenization (vocab 128); language modeling uses tiktoken cl100k_base (vocab 100,277).
+
+5.2 Short-Text Classification: AG News
+
+Table 1: AG News 4-class classification (, 3 seeds).
+
+Model
+Accuracy
+Params
+Memory
+
+Transformer
+
+421K
+306 MB
+
+MIPT-hier
+
+248K
+168 MB
+
+Improvement
++16.6%
+
+Topic-discriminative tokens in AG News (sport names, company tickers, geopolitical terms) are locally anomalous relative to background text. MIPT’s amplifies these signals; Transformer’s uniform attention dilutes them across all tokens.
+
+5.3 Long-Document Understanding
+
+Table 2: Long-document classification with key content in final third.
+
+Model
+
+Accuracy
+Memory
+
+TF-512 (truncated)
+512
+0.828
+71 MB
+
+MIPT-512
+512
+0.857
+63 MB
+
+MIPT-2048 (full)
+2048
+0.849
+130 MB
+
+TF-2048 (full)
+2048
+0.830
+589 MB
+
+MIPT-2048 reads the complete document at 130 MB; TF-2048 spends 589 MB for only +0.2% gain over truncation.
+
+5.4 Memory Scaling
+
+Table 3: Peak GPU memory vs. sequence length.
+
+MIPT-SSM
+Transformer
+Ratio
+
+512
+63 MB
+71 MB
+1.1
+
+1,024
+81 MB
+258 MB
+3.2
+
+2,048
+130 MB
+589 MB
+4.5
+
+4,096
+187 MB
+4,451 MB
+23.8
+
+8,192
+810 MB
+34,651 MB
+42.8
+
+16,384
+1.2 GB
+OOM
+
+5.5 Causal Sparse KV Cache: Needle-in-a-Haystack
+
+We report two complementary experiments on exact fact retrieval.
+
+Experiment 1: Top- causal cache.
+
+, one needle token from class-specific vocabulary inserted in the first 10% of the sequence; remaining 90% uniform random noise. Four-class classification (8K/2K train/test).
+
+Table 4: Exact fact retrieval with top- causal cache ().
+
+Model
+Accuracy
+Cache Slots
+
+MIPT (no cache)
+0.845
+—
+
+Causal
+0.960
+1
+
+Causal
+0.968
+4
+
+Causal
+0.992
+16
+
+Non-causal oracle
+1.000
+4
+
+Experiment 2: Threshold-based cache with explicit write-rate measurement.
+
+Same task with threshold filtering (, unlimited capacity) instead of top-. This exposes the precision of as a token selector directly.
+
+Table 5: Threshold sensitivity (, needle task). All cache variants average 1.0 / 512 tokens stored.
+
+Model
+Accuracy
+Write Rate
+
+MIPT (no cache)
+0.379
+—
+
+Cache (unlimited)
+0.329
+0.002
+
+Cache (unlimited)
+0.750
+0.002
+
+Cache (unlimited)
+0.328
+0.002
+
+Cache cap
+0.755
+0.002
+
+All five variants store on average exactly 1 token out of 512—yet accuracy varies from 0.329 to 0.755 depending on the threshold. This reveals the mechanism with precision: is too permissive, occasionally admitting noise tokens whose briefly exceeds 0.5; is too strict, occasionally missing the needle when its falls just below 0.9. The sweet spot at achieves 0.750—matching the top- variant (0.755) despite identical storage cost. The wave state accumulates the background; a single particle-mode event stores the critical fact. Both components are necessary and neither is redundant.
+
+Practical scale.
+
+A 1M-token document with stores 16 KV pairs versus 1M for a Transformer: a 62,500 cache memory reduction.
+
+5.6 Autoregressive Language Modeling
+
+WikiText-103, first 10M tokens. Architecture: , , tied embeddings, 31M parameters.
+
+Table 6: Language modeling perplexity on WikiText-103.
+
+Model
+PPL
+vs TF
+Inference Cache
+
+TF-GPT
+90.5
+—
+
+MIPT-LM
+102.2
++12.9%
+
+MIPT+Cache
+98.1
++8.4%
+
+MIPT+Cache
+96.3
++6.4%
+
+MIPT+Cache
+92.1
++1.8%
+
+MIPT-LM is 12.9% worse than Transformer on raw PPL—we do not conceal this. But with cache slots the gap closes to 1.8%, while inference KV cache is fixed at versus Transformer’s . At , the Transformer KV cache requires 34,651 MB; MIPT+Cache K=64 requires roughly 6 MB regardless of sequence length.
+
+6 Discussion
+
+6.1 Why Does MIPT Beat Transformer on AG News?
+
+At where 4–8% of tokens are topic-discriminative, Transformer’s uniform attention wastes capacity on uninformative tokens. MIPT’s assigns high measurement rates to anomalous tokens that perturb the accumulated phase state—amplifying classification signal rather than diluting it.
+
+6.2 The Phase Transition Is Not Decoration
+
+The theoretical prediction that MIPT advantages grow with is confirmed: +2.9% at , 4.5 memory advantage at , 42.8 at , and Transformer OOM at . The scaling hypothesis is a testable prediction that we consider the highest-priority follow-up.
+
+6.3 Limitations
+
+Scale. All experiments use 14–31M parameter models. Scaling to 1B+ parameters is needed before direct comparison with published SSM benchmarks.
+
+CUDA kernel. The Python parallel scan is 3–5 slower than optimized Transformer implementations. A Triton kernel analogous to Mamba’s selective_scan_cuda is required for practical deployment.
+
+Language modeling gap. The 12.9% PPL gap without cache reflects a genuine limitation: MIPT compresses history through the phase state, while Transformer attends to all previous tokens directly.
+
+7 Conclusion
+
+We set out to resolve the wave-particle dead-lock in sequence modeling. MIPT-SSM resolves it the only way it can: not by finding a single operator that does both, but by learning when to do each. The measurement rate is the mechanism; the MIPT phase transition is the theory.
+
+The results on AG News (+16.6%) and memory scaling (42.8 at , at ) suggest MIPT-SSM occupies a genuinely different operating regime from both Transformers and standard SSMs. The causal sparse cache connects this to associative memory theory via the Hopfield network interpretation.
+
+Acknowledgements.
+
+This work was conducted independently. The core technology is subject to a pending Chinese invention patent application (No. 2026104567714, filed 2026-04-08).
+
+References
+
+Beltagy et al. [2020]
+
+Beltagy, I., Peters, M. E., and Cohan, A. (2020).
+
+Longformer: The long-document transformer.
+
+arXiv:2004.05150.
+
+Dao and Gu [2024]
+
+Dao, T. and Gu, A. (2024).
+
+Transformers are SSMs: Generalized models and efficient algorithms through structured state space duality.
+
+ICML 2024.
+
+Gers et al. [2000]
+
+Gers, F. A., Schmidhuber, J., and Cummins, F. (2000).
+
+Learning to forget: Continual prediction with LSTM.
+
+Neural Computation, 12(10):2451–2471.
+
+Gu et al. [2022]
+
+Gu, A., Goel, K., and Ré, C. (2022).
+
+Efficiently modeling long sequences with structured state spaces.
+
+ICLR 2022.
+
+Gu and Dao [2023]
+
+Gu, A. and Dao, T. (2023).
+
+Mamba: Linear-time sequence modeling with selective state spaces.
+
+arXiv:2312.00752.
+
+Lahoti et al. [2026]
+
+Lahoti, A., Li, K. Y., Chen, B., Wang, C., Bick, A., Kolter, J. Z., Dao, T., and Gu, A. (2026).
+
+Mamba-3: Improved sequence modeling using state space principles.
+
+ICLR 2026. arXiv:2603.15569.
+
+Li et al. [2019]
+
+Li, Y., et al. (2019).
+
+Quantum Zeno effect and the many-body entanglement transition.
+
+Physical Review B, 100:134306.
+
+Merity et al. [2017]
+
+Merity, S., Xiong, C., Bradbury, J., and Socher, R. (2017).
+
+Pointer sentinel mixture models.
+
+ICLR 2017.
+
+Peng et al. [2023]
+
+Peng, B., et al. (2023).
+
+RWKV: Reinventing RNNs for the transformer era.
+
+EMNLP 2023.
+
+Ramsauer et al. [2020]
+
+Ramsauer, H., et al. (2020).
+
+Hopfield networks is all you need.
+
+ICLR 2021.
+
+Skinner et al. [2019]
+
+Skinner, B., Ruhman, J., and Nahum, A. (2019).
+
+Measurement-induced phase transitions in the dynamics of entanglement.
+
+Physical Review X, 9:031009.
+
+Vaswani et al. [2017]
+
+Vaswani, A., et al. (2017).
+
+Attention is all you need.
+
+NeurIPS 2017.
+
+Xiao et al. [2023]
+
+Xiao, G., et al. (2023).
+
+Efficient streaming language models with attention sinks.
+
+ICLR 2024.
+
+Yan et al. [2024]
+
+Yan, K., Lai, P., and Wang, Y. (2024).
+
+Quantum-inspired language model with Lindblad master equation.
+
+NAACL 2024.
+
+Yıldırım and Yücedağ [2025]
+
+Yıldırım, A. and Yücedağ, İ. (2025).
+
+Language as a wave phenomenon: Semantic phase locking and interference in neural networks.
+
+arXiv:2512.01208.
+
+Zaheer et al. [2020]
+
+Zaheer, M., et al. (2020).
+
+Big Bird: Transformers for longer sequences.
+
+NeurIPS 2020.
+
+Zhang et al. [2023]
+
+Zhang, Z., et al. (2023).
+
+H2O: Heavy-hitter oracle for efficient generative inference.
+
+NeurIPS 2023.
+
+Appendix A Proof of MIPT Phase Transition
+
+Proposition 2.
+
+Consider the MIPT recurrence with constant and i.i.d. inputs. The approximate entanglement entropy satisfies:
+
+•
+
+: (wave phase, maximum entropy)
+
+•
+
+: input entropy (particle phase)
+
+The critical point is where .
+
+Proof sketch.
+
+Wave limit: uncorrelated phase rotations yield near-uniform amplitude distribution, maximizing . Particle limit: , so entropy equals input entropy. Crossover when the effective memory horizon satisfies .
+∎
+
+Remark. If is approximately constant across task scales, then where is the task-specific coherence constant.
+
+Appendix B Causal Top-K Mask Construction
+
+Listing 1: Differentiable causal top-K mask for training.
+
+⬇
+def causal_topk_mask(ps, K):
+
+# ps: (B, T) scalar measurement rates
+
+B, T = ps.shape
+
+ps_exp = ps.unsqueeze(1).expand(B, T, T)
+
+tri = torch.tril(torch.ones(T, T)).bool()
+
+ps_causal = ps_exp.masked_fill(~tri, float(’-inf’))
+
+_, topk_idx = ps_causal.topk(K, dim=-1)
+
+threshold = ps_causal.gather(-1, topk_idx)[:,:,-1:]
+
+mask = tri & (ps_exp >= threshold - 1e-6)
+
+return mask # (B, T, T)
+
+Gradient flows through the attention output: tokens that improve retrieval when cached receive positive gradient on .
+
+Appendix C Hyperparameters
+
+Table 7: Classification hyperparameters (§5.2–5.3).
+
+Hyperparameter
+Value
+
+Local MIPT dim
+64
+
+Global MIPT dim
+128
+
+Window size
+32
+
+Window stride
+16
+
+Optimizer
+AdamW
+
+0.9, 0.98
+
+Weight decay
+0.01
+
+Learning rate
+2e-3
+
+LR schedule
+Cosine + warmup
+
+Batch size
+32
+
+Gradient clip
+0.5
+
+initialization
+
+Table 8: Language model hyperparameters (§5.6).
+
+Hyperparameter
+Value
+
+Hidden dim
+256
+
+Layers
+6
+
+Training tokens
+10M
+
+Sequence length
+128
+
+Learning rate
+3e-4
+
+Optimizer
+AdamW
+
+0.9, 0.95
+
+Weight decay
+0.1
+
+Batch size
+64
+
+Gradient clip
+1.0
+
+initialization
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

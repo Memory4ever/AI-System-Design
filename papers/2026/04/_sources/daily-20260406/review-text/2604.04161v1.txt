@@ -1,0 +1,1600 @@
+Adaptive Action Chunking at Inference-time for Vision-Language-Action Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related work
+
+2.1 Vision-Language-Action models
+
+2.2 Action Chunking
+
+3 Preliminaries
+
+3.1 GR00T N1.5
+
+3.2 Action Entropy
+
+4 Adaptive Action Chunking
+
+5 Experiments
+
+5.1 Simulation Experiments
+
+5.1.1 Benchmarks
+
+LIBERO.
+
+5.1.2 Training and Evaluation Details
+
+5.1.3 Quantitative Results
+
+Baseline.
+
+Comparison with Vanilla GR00T.
+
+Comparison with Fixed-size GR00T.
+
+5.1.4 Qualitative Results
+
+Distribution of Chunk Size Decision.
+
+5.1.5 Scalability and Efficiency
+
+Different Backbones
+
+Out of Distribution Scenarios
+
+Different Number of Samples.
+
+Computational Efficiency.
+
+5.2 Real-world Experiments
+
+5.2.1 Setup
+
+5.2.2 Tasks
+
+5.2.3 Results
+
+AAC improves real-world task success rates.
+
+AAC improves action accuracy and safety.
+
+6 Conclusion
+
+References
+
+A Minimum Action Magnitude
+
+B Complete Experiment Results in RoboCasa
+
+License: CC BY 4.0
+
+arXiv:2604.04161v1 [cs.RO] 05 Apr 2026
+
+Adaptive Action Chunking at Inference-time for Vision-Language-Action Models
+
+Yuanchang Liang
+
+Affiliation: National University of Singapore
+
+Email: liangyuanchang@u.nus.edu
+
+  
+Xiaobo Wang
+
+Affiliation: Shenzhen University of Advanced Technology
+
+Affiliation: Sangfor Technologies Inc.
+
+Email: wangxiaobo@suat-sz.edu.cn
+
+  
+Kai Wang
+
+Affiliation: National University of Singapore
+
+  
+Shuo Wang
+
+Affiliation: Mininglamp Technology
+
+  
+Xiaojiang Peng
+
+Affiliation: Shenzhen Technology University
+
+  
+Haoyu Chen
+
+Affiliation: City University of Hong Kong
+
+  
+David Kim Huat Chua
+
+Affiliation: National University of Singapore
+
+  
+Prahlad Vadakkepat
+
+Affiliation: National University of Singapore
+
+Abstract
+
+In Vision-Language-Action (VLA) models, action chunking (i.e., executing a sequence of actions without intermediate replanning) is a key technique to improve robotic manipulation abilities. However, a large chunk size reduces the model’s responsiveness to new information, while a small one increases the likelihood of mode-jumping, jerky behavior resulting from discontinuities between chunks. Therefore, selecting the optimal chunk size is an urgent demand to balance the model’s reactivity and consistency. Unfortunately, a dominant trend in current VLA models is an empirical fixed chunk length at inference-time, hindering their superiority and scalability across diverse manipulation tasks. To address this issue, we propose a novel Adaptive Action Chunking (AAC) strategy, which exploits action entropy as the cue to adaptively determine the chunk size based on current predictions. Extensive experiments on a wide range of simulated and real-world robotic manipulation tasks have demonstrated that our approach substantially improves performance over the state-of-the-art alternatives. The videos and source code are publicly available at https://lance-lot.github.io/adaptive-chunking.github.io/.
+
+††
+
+✉ Corresponding author. This work was supported by the Innovative Team Project in Guangdong Province under Grant 2025KCXTD040.
+
+1 Introduction
+
+Vision-Language-Action (VLA) models have shown great potential to improve robotic manipulation abilities by generating robotic control actions from a variety of data modalities [26, 2, 4, 33, 41, 43, 13, 39, 20, 24, 14, 32]. Usually, they map basic information such as vision, language instructions, and robotic proprioception states, or additional information like tactile [13, 1], force [41], and 3D information [42, 47, 31, 19, 44, 34] into executable actions. Beyond that, earlier studies in imitation learning, such as ACT [46] and Diffusion Policy [9] have shown that executing a sequence of actions at each observation point, known as action chunking, can effectively improve the success rates as it reduces compounding errors. Therefore, the action chunking technique is employed as a standard paradigm for VLA models. Jointly, the action chunk is simply set as a fixed length by empirical experiments. For instance, in GR00T N1.5 [2], the chunk size is set as 16 at inference-time for the RoboCasa Kitchen [28] benchmark.  [4] sets the inference chunk size as 16 or 25 for different benchmarks. Differently, SmolVLA [33] suggests a chunk size of 10 for the LIBERO [23] benchmark. In summary, determining a proper chunk size is non-trivial as it is not consistent for different policies. Moreover, it is intuitive that the best chunk size for different manipulation tasks is also different. To demonstrate this, we performed experiments with GR00T N1.5 [2] across multiple tasks in RoboCasa Kitchen [28].
+As shown in Fig. 1, the success rates of different tasks exhibit a strong dependency on the action chunk size.
+
+Figure 1: Effects of action chunk sizes. At inference-time, the success rates of the GR00T N1.5 [2] on different tasks of RoboCasa Kitchen [28] are highly related to the action chunk size. It can be observed that it is difficult and sub-optimal to empirically set a fixed value for various manipulation tasks.
+
+To mitigate this dilemma at inference-time, ACT [46] integrates current and past predicted actions using Exponential Moving Average (EMA) to enhance temporal consistency. BID [25] employs a search strategy to select the optimal full action chunk from multiple candidates, where backward coherence and forward contrast scores are used to balance the policy’s consistency and reactivity. TV-BID [15] further extends BID [25] by adapting the backward coherence and forward contrast scores according to the Total Variation Distance (TVD) between consecutive action chunk distributions. SGAC [35] selectively updates action chunks by comparing the cosine similarity between the first action of the previous planned chunk and the newly generated action. Nevertheless, all these methods set a fixed chunk size throughout a whole episode, relying on extensive empirical tuning for the action chunk size selection. Recent studies [11, 8] have begun to adaptively select the chunk size by reinforcement learning. Gou et al. [11] determine whether to choose a single action or an entire action chunk based on a regret value function. However, this handcrafted value function fails to generalize across various tasks. Chen et al. [8] introduce a learnable module that predicts chunk size, but this approach depends on task-specific reward signals available only in simulation, exhibiting limited applicability in real-world deployment. Consequently, adaptively selecting the optimal action chunk size at inference-time remains a challenging problem in practice.
+
+In this paper, we propose a simple yet effective Adaptive Action Chunking (AAC) strategy, which exploits action entropy as the cue to determine the optimal chunk size at each inference timestep dynamically. Specifically, as action entropy reflects the uncertainty level of the predicted action, a lower entropy implies higher action reliability during task execution. Inspired by this, AAC tries to adaptively determine the optimal action chunk size by maintaining a lower action entropy. In detail, we compute the maximum differential point of average action entropy across different chunk sizes meanwhile ensuring minimum action magnitude. In high-entropy cases, where the predicted actions are of low quality, AAC executes smaller chunks and replans more frequently to improve the model’s reactivity. Conversely, when the entropy is low, longer action chunks are executed to enhance temporal consistency and inference efficiency. Notably, AAC performs action entropy computation and chunk-size adaptation only at inference-time, without additional training or architectural modifications. Therefore, it ensures the robustness and scalability of our method to various manipulation tasks. To sum up, the main contributions of this paper can be summarized as follows:
+
+•
+
+We analyze existing action chunking methods and highlight the importance of adaptive action chunking at inference-time for diffusion-based VLA models.
+
+•
+
+We propose AAC, a simple yet effective algorithm that exploits action entropy as the cue to dynamically select the action chunk size at inference-time.
+
+•
+
+We conduct extensive experiments on a wide range of simulated and real-world robotic manipulation benchmarks, demonstrating the superiority of our approach over the state-of-the-art alternatives.
+
+2 Related work
+
+2.1 Vision-Language-Action models
+
+Inspired by the success of large pre-trained vision-language models (VLMs), Vision-Language-Action (VLA) models have shown great promise in robotic policy learning by leveraging diverse, robot-specific datasets. One line of VLA models [17, 30, 5, 51, 6, 37] discretizes the continuous action space and predicts actions as tokens, showing that pre-trained VLMs can be effectively adapted to low-level action predictions. In contrast, a growing body of studies [4, 2, 33, 21, 45, 16, 48, 7, 3, 36, 18, 49, 12] leverage action experts to predict continuous actions via diffusion or flow-matching, enabling more accurate predictions. For instance, GR00T N1.5 [2] conditions a flow-matching head on VLM features to generate action chunks. CogVLA [21] systematically compares action modules and finds that diffusion action transformers scale favorably when conditioned on VLM representations. CoT-VLA [45] incorporates explicit visual chain-of-thought (CoT) reasoning into VLM by autoregressively predicting future image frames as visual goals. In this paper, we propose an adaptive action chunking strategy that operates at inference-time for VLA models, without requiring additional training or architectural modifications. Therefore, without loss of generality, this work adopts GR00T N1.5 [2] as the baseline.
+
+2.2 Action Chunking
+
+Action chunking plays an important role in recent pre-trained VLA models with diffusion-based action heads. At training-time, action chunking enables the policy to learn a sequence of future actions across multiple timesteps. At inference-time, however, action chunks can be executed differently to balance the policy’s consistency and reactivity. For example, ACT [46] generates a new action chunk at every timestep and preserves temporal consistency by assembling actions across different timesteps. In GR00T N1.5 [2], it adopts the same chunk size at training-time and inference-time. In contrast, [4] uses a larger chunk size (50) during training, but executes smaller chunks (16 or 25) at inference-time, depending on different embodiment setups. SmolVLA [33] follows a similar paradigm, referred to as an asynchronous inference mechanism. Recently, DeepConf [10] exploits model output confidence as a signal to address the Best-of-N selection problem, but it is limited to large Language Models (LLMs). Similarly, BID [25] proposes to select the best action chunk from multiple candidates based on the designed backward coherence and forward contrast scores. However, it is still required to set a fixed chunk size, which limits the reactivity and efficiency of a policy. Complementary to these fixed action chunking methods, in this paper, we investigate the adaptive selection of the optimal action chunk size at inference-time.
+
+3 Preliminaries
+
+3.1 GR00T N1.5
+
+GR00T N1.5 [2] is a typical Vision-Language-Action foundation model with a flow-matching action head. It consists of two systems, a Vision-Language Model (VLM) to extract vision-language features as condition, and a Diffusion Transformer (DiT) module as the action head for flow-matching. Specifically, given a ground-truth action chunk at timestep , a flow-matching timestep and sampled noise , where denotes the action degrees of freedom and is the action horizon, the noised action chunk is computed as . Together with the robot state embedding , the action head prediction aims to approximate the flow vector field by minimizing the following loss:
+
+(1)
+
+which is also known as flow-matching loss in popular VLA models. At inference-time, action chunk is generated by -step iterative denoising from random noise with forward Euler integration: . For more details, one can refer to the work [2]. Note that our proposed Adaptive Action Chunking (AAC) algorithm is applicable to all VLA models with a diffusion-based action head. In this study, we use GR00T N1.5 [2] as the baseline of implementation.
+
+3.2 Action Entropy
+
+Generally, entropy is computed to quantify the degree of disorder, randomness, or uncertainty. In robotics, the action space may consist of discrete controls (e.g., gripper) or continuous controls (e.g., translation and rotation). Discrete control involves selecting from a finite set of actions, such as choosing a specific gear in a vehicle. Continuous control, on the other hand, involves actions that can take on any value within a certain range, such as adjusting the robot’s velocity. Therefore, as described by the works [29, 38, 40], for a discrete control , its action entropy can be calculated using the following formula:
+
+(2)
+
+where is the discrete action space and is the probability of a certain action output from the policy network. For continuous control of -dimensional actions, we use the Gaussian Differential entropy as follows:
+
+(3)
+
+where is the determinant of the covariance matrix.
+
+Figure 2: An overview of AAC. The proposed Adaptive Action Chunking (AAC) algorithm operates solely at inference-time, without any extra training or architectural changes. Specifically, we exploit the action entropy of continuous and discrete values as the cue to adaptively determine the optimal chunk size in each action chunk at the current observation. Therefore, we can achieve a favorable trade-off between consistency and reactivity in the entire episode, and substantially improve success rates across a variety of manipulation tasks.
+
+4 Adaptive Action Chunking
+
+Typically, existing VLA models with diffusion-based action heads are trained with an action horizon , and executing a sequence of () actions at each inference timestep [2, 4, 33]. A large fixed chunk size at inference-time reduces the model’s reactivity, whereas a small one compromises its temporal consistency and computational efficiency. Moreover, it is impractical to determine a single fixed chunk size that fits across diverse manipulation tasks. To this end, we seek to adaptively determine the optimal action chunk size to achieve a better balance between consistency and reactivity.
+
+Intuitively, if the model exhibits high uncertainty in its predictions, the action chunk size should be reduced at inference-time. Conversely, when the model is more confident, the action chunk size should be increased. To quantify this uncertainty, we exploit action entropy as a cue to adaptively select the optimal chunk size. Specifically, consider a 7-DOF robotic arm equipped with a gripper as an example, where the predicted action at the -th timestep is denoted as . It consists of three components: 3-DOF translation offsets (), 3-DOF rotation offsets () and 1-DOF gripper control . For continuous control of 3-dimensional translations and rotations, the corresponding action entropy and at the -th timestep are computed according to Eq. 3. For the discrete gripper control, its action entropy is computed by Eq. 2. To estimate the probability in Eq. 2 and the covariance matrix in Eq. 3, we sample candidate action chunks in parallel. The probability of predicting a gripper-close state is then estimated as , where denotes the number of close-state occurrences among all samples. Finally, the average action entropy with a chunk size is as follows:
+
+(4)
+
+The optimal chunk size in each action chunk can be adaptively determined by
+
+(5)
+
+where is the maximum difference point of average action chunk. is a lower bound of chunk size, ensuring a minimum action magnitude to balance temporal consistency and computational efficiency. Since the action spaces of different robot embodiments (e.g., single-arm, bimanual, and humanoid configurations) can be modeled as either continuous or discrete domains, the formulation of action entropy in Eq. 4 naturally generalizes across them. For brevity, we omit the detailed derivations in this paper.
+
+Algorithm 1 Adaptive Action Chunking
+
+Input: candidate action chunks predicted in parallel. Each chunk includes actions of future timesteps.
+
+Output: Optimal chunk size at current timestep .
+
+1:
+
+ for to do
+
+2:
+
+  Compute the action entropy of continuous translations and rotations at each timestep and by Eq. 3.
+
+3:
+
+  Compute the action entropy of the discrete gripper control at each timestep by Eq. 2.
+
+4:
+
+ end for
+
+5:
+
+ for to do
+
+6:
+
+  Get average action entropy with different chunk size by Eq. 4.
+
+7:
+
+ end for
+
+8:
+
+ Find maximum difference point and compute the optimal chunk size by Eq. 5.
+
+9:
+
+ return Optimal chunk size .
+
+We summarize the above solution as the proposed Adaptive Action Chunking (AAC) algorithm. After selecting the optimal chunk size by AAC, the first actions will be executed at inference-time. For clarity, the whole scheme of our adaptive action chunking is detailed in Algorithm 1. Moreover, the difference between our method and the typical baseline GR00T N1.5 [2] is shown in Fig. 2. In consequence, we can achieve a good balance between consistency and reactivity throughout each episode, and substantially improve the success rates on various manipulation tasks.
+
+5 Experiments
+
+In this section, to validate the effectiveness of the proposed AAC, we conduct extensive experiments across various manipulation tasks, ranging from simulation benchmarks and real-world applications.
+
+Table 1: Main Results on RoboCasa and LIBERO Benchmarks. We report the success rate (%) for various subsets and the overall average. Our AAC achieves the best or competitive results across both benchmarks. Bolded entries indicate the highest success rates.
+
+RoboCasa
+LIBERO
+
+Method
+
+Relo.
+
+Cont.
+
+Rot.
+
+Button
+
+Avg.
+
+Spatial
+
+Long
+
+Object
+
+Goal
+
+Avg.
+
+GR00T (Default =16)
+
+42.1
+
+80.3
+
+57.6
+
+80.3
+
+59.7
+
+93.6
+
+88.8
+
+97.2
+
+96.8
+
+94.1
+
+GR00T (=2)
+
+29.6
+
+57.0
+
+59.4
+
+64.7
+
+47.0
+
+93.6
+
+81.8
+
+93.6
+
+91.6
+
+90.2
+
+GR00T (=4)
+
+37.9
+
+71.3
+
+61.2
+
+78.7
+
+56.2
+
+94.0
+
+85.8
+
+95.4
+
+95.2
+
+92.6
+
+GR00T (=8)
+
+42.8
+
+80.3
+
+62.6
+
+81.7
+
+61.2
+
+92.0
+
+93.4
+
+97.8
+
+95.4
+
+94.7
+
+GR00T (=12)
+
+42.9
+
+79.5
+
+60.0
+
+79.3
+
+60.2
+
+93.0
+
+91.0
+
+97.6
+
+95.2
+
+94.2
+
+GR00T+AAC (Ours)
+
+44.4
+
+82.2
+
+61.4
+
+81.3
+
+62.0
+
+94.4
+
+92.8
+
+98.6
+
+94.2
+
+95.0
+
+5.1 Simulation Experiments
+
+5.1.1 Benchmarks
+
+RoboCasa Kitchen. RoboCasa [28] is a simulation benchmark comprising 24 kitchen manipulation tasks. For clarity, 24 RoboCasa tasks are categorized into 4 groups: Relocation (10 pick-and-place tasks), Container (6 tasks of opening or closing doors and drawers), Rotation (5 rotational-affordance tasks such as turning a sink facet or stove knob), and Button (3 tasks involving button pressing on appliances such as a microwave or a coffee machine). Additional details are provided in the supplementary material.
+
+LIBERO.
+
+LIBERO [23] is a robot simulation benchmark that consists of four distinct task suites: LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, and LIBERO-Long. Each suite contains 10 diverse tasks with 50 human-teleoperated demonstrations per task, designed to evaluate a robot’s ability to understand spatial relationships, object interactions, and task-specific
+objectives.
+
+5.1.2 Training and Evaluation Details
+
+Our model is fine-tuned from the publicly available GR00T N1.5 checkpoint [2], which was trained on a large-scale data pyramid. We fine-tune the diffusion head of GR00T N1.5 on eight NVIDIA A800 GPUs with mixed-precision training, while keeping the Eagle-2 VLM [22] backbone and vision projector frozen. The updated parameters in the diffusion head comprise DiT backbone, state encoder, state decoder, action encoder, and action decoder. For RoboCasa, we fine-tune 100 demo trajectories generated by MimicGen [27] for 90 epochs. For LIBERO, all four task suites (40 tasks in total) are jointly trained for 90 epochs. In this paper, we use the pre-processed dataset provided by OpenVLA [17] and [4]. We evaluate AAC using 100 rollouts per task in RoboCasa and 50 per task in LIBERO.
+
+5.1.3 Quantitative Results
+
+Baseline.
+
+As illustrated in Sec. 3.1, this paper adopts the vanilla GR00T N1.5 [2] as the baseline, which uses a fixed and consistent action horizon of 16 for both training and action execution. For the compared approaches, inspired by previous studies [9, 4, 33], we set a fixed inference action chunk size with different values for GR00T. In contrast, our AAC adaptively determines the optimal chunk size at each inference step.
+
+Figure 3: Rollout of chunk sizes from AAC. The derived chunk sizes align with human intuitions with respect to different semantic phases: a large chunk size is observed during the transportation stage, while a small chunk size appears at the critical manipulation stage.
+
+Comparison with Vanilla GR00T.
+
+Experimental results on the adopted two simulation benchmarks, Robocasa [28] and LIBERO [23], are presented in Tab. 1. In Robocasa, AAC improves the task success rate for most tasks, achieving an average gain of across 24 tasks. In particular, the success rate on the Rotation task set increases from to , indicating a substantial performance boost. This improvement can be attributed to AAC’s ability to handle tasks requiring fine-grained control, such as manipulating a rotational switch on a sink facet or a stove. In contrast, the improvement on the Button task set is relatively modest (from to ) e.g., pressing a button on microwaves or coffee machines, since these tasks mainly involve simple pressing actions that demand less precise gripper control. For LIBERO, AAC improves the average task success rate across the four task suites by (i.e., from to ). The pick-and-place tasks in LIBERO exhibit higher overall success rates compared to those in RoboCasa, likely due to the limited diversity in object positions within the LIBERO testing environments. Nonetheless, a notable gain of 4% is achieved on the most challenging LIBERO-Long suite. Each episode in LIBERO-Long involves multiple subtasks requiring precise operation over a longer action trajectory. The proposed adaptive action chunking strategy effectively addresses this challenge by executing high-confidence action chunks and replanning upon new observations, thereby yielding consistent improvements on complex, long-horizon manipulation tasks.
+
+Comparison with Fixed-size GR00T.
+
+Besides the baseline, vanilla GR00T, we further compare our AAC with GR00T using different chunk sizes. Specifically, we evaluate the task success rates by varying the fixed chunk size at inference-time. As shown in Tab. 1, the results indicate that using a fixed chunk size leads to suboptimal performance. For instance, the task set LIBERO-Spatial performs best with a chunk size of 4, whereas LIBERO-Goal achieves the highest success rate with a chunk size of 16. This observation reveals the potential to improve the task success rate by adaptively changing chunk size within or across different tasks. Inspired by this, AAC adaptively determines the chunk size by leveraging action entropy as a cue, thereby eliminating the need for manual and time-consuming chunk-size tuning. Consequently, AAC consistently outperforms all fixed-size baselines on average. Detailed results for each fixed-size configuration and individual tasks are provided in the Appendix.
+
+Figure 4: Distribution of chunk size decisions from AAC. We show the
+chunk size distribution of episodes on the first task of LIBERO-Spatial: ”Pick up the black bowl next to the cookie box and place it on the plate”. The heatmap indicates the frequency of different chunk sizes at different decision timesteps. The red curve shows the mean chunk size at different observation timesteps.
+
+5.1.4 Qualitative Results
+
+Distribution of Chunk Size Decision.
+
+To qualitatively analyze the performance of the proposed AAC, we present a representative example illustrating the chunk size decision process in Fig. 3. The corresponding distribution of chunk sizes across simulation timesteps is visualized in Fig. 4. As shown in the heatmap and the average curve, the chunk sizes predicted by AAC closely follow the semantic phases of the task. Initially (around ), when the gripper is far away from the object, AAC tends to predict a large chunk size. When the gripper approaches the object (around ), small chunk sizes are predicted. After successfully grasping the object (), AAC again increases the chunk size to efficiently transport the object to the target location. This adaptive pattern mirrors human intuition: larger chunks enable fast, coarse movements when approaching the target or transporting the lifted object, while smaller chunks with high-frequency observations ensure precise, fine control during the critical grasping and manipulation phases.
+
+5.1.5 Scalability and Efficiency
+
+Different Backbones
+
+We apply our AAC to different VLA backbones (i.e., GR00T and 11
+1
+
+gs://openpi-assets/checkpoints/pi05_libero/[3]) on LIBERO and LIBERO Pro [50] benchmarks. From the results in Tab. 2, we can observe that AAC generalizes well on backbone. We highlight that AAC is designed for the flow-matching action head, and it can be easily adapted to different backbones.
+
+Table 2: Success rates (%) with backbone on LIBERO.
+
+Method
+Spatial
+Long
+Object
+Goal
+Avg.
+
+98.5
+92.5
+98.7
+98.1
+97.0
+
++AAC (Ours)
+99.1
+95.2
+99.2
+98.0
+97.9
+
+Out of Distribution Scenarios
+
+We evaluate the robustness of AAC on OOD tasks by using the position perturbation subset of LIBERO-Pro [50] benchmark. The quantitative results are reported in Tab. 3, from which we can summarize that as the perturbation level increases, the success rates of both the baseline methods and AAC decrease. Nevertheless, our AAC demonstrates its effectiveness by leveraging the action entropy to dynamically modulate the execution horizon.
+
+Table 3: Success rates (%) on LIBERO-Pro [50].
+
+Perturbation level
+0.2
+0.3
+0.4
+Avg.
+
+GR00T
+11.3
+0.4
+0.0
+3.9
+
+GR00T+AAC (Ours)
+17.9
+0.9
+0.0
+6.3
+
+53.2
+29.9
+9.5
+30.9
+
++AAC (Ours)
+57.4
+35.3
+11.8
+34.8
+
+Different Number of Samples.
+
+As illustrated in Sec. 4, AAC is based on the distribution of action entropy, which is derived from multiple candidate predicted action chunks. Therefore, we investigate the impact of varying the number of samples. From the results in Tab. 4, we can conclude that the success rate can be continuously improved with a larger number of samples. When the number of samples increases from 1 to 20, the success rate continuously improves , from to . However, the improvement is marginal when the samples are enough (e.g, 20) to estimate the action entropy. In consequence, we use 20 samples to balance the tradeoff between computational efficiency and success rate in all benchmarks.
+
+Computational Efficiency.
+
+The calculation of action entropy requires multiple action chunk candidates. Thus, AAC inevitably involves additional computational cost compared to the fixed-size competitors. Fortunately, as the multiple action chunk candidates can be generated through batched parallel computation, the computational cost is negligible. The inference time for different sample sizes on a single A800 GPU is shown in Tab. 4. From the results, we can see that the influence on the inference speed is negligible when the number of samples is smaller than 10. The default sample size used in this paper is 20, which will introduce about 20 ms inference delay according to the testing results in the last row of Tab. 4. Higher-end GPUs can further close the computational gap.
+
+Table 4: Success rates (%) on LIBERO and inference-time under different numbers of samples for estimating action entropy.
+
+#Samples
+1
+5
+10
+20
+30
+40
+
+Succ. (%)
+94.1
+94.7
+94.4
+95.0
+95.0
+95.5
+
+Time (ms)
+83.0
+83.5
+84.3
+106.0
+136.5
+157.0
+
+Figure 5: Execution examples for real-world tasks using AAC. Videos of complete execution trajectories will be publicly available.
+
+5.2 Real-world Experiments
+
+5.2.1 Setup
+
+We further evaluate the performance of the proposed AAC with different desktop applications in the real world. We use a Realman single-arm robot with a Mycobot gripper. A SpaceMouse is also used for collecting 50 human-teleoperated demonstrations per task. The visual observation includes a wrist RGB view and a side RGB view on a tripod. The state and action space are consistent with the configuration in Robocasa and LIBERO benchmarks. We finetune GR00T N1.5 [2] checkpoint on each of the tasks with 8 NVIDIA A800 GPUs for 300 epochs. The batch size on each GPU is set to 32. For each task, we evaluate the success rate on 20 trials with a limitation of 600 action execution steps for each trial.
+
+5.2.2 Tasks
+
+We design 3 real-world tasks to evaluate the proposed method: (1) a banana pick-and-place task, (2) an emergency button pressing task, and (3) a long-horizon task that involves picking and placing the toy, then closing the drawer. Specifically, the first task requires picking up a banana and placing it into a rattan fruit basket. Both the banana and the basket are randomly positioned on a round table with a diameter of 0.6 m. For evaluation, 20 different combinations of banana and basket locations are tested, as the position and orientation of the gripper critically influence grasping success. The second task involves pressing an emergency button (E-Button), demanding higher localization accuracy than the banana pick-and-place task. During data collection, the E-Button positions cover only the upper half of the table. Therefore, this task is challenging because some button positions in the evaluation are unseen during training. The third task is a long-horizon task, where the robot must pick up a randomly placed toy, place it into a drawer, and subsequently close the drawer. To complete this task, the policy needs to ensure precision along the whole trajectory.
+
+Table 5: Success rates (%) on real-world applications.
+
+Task
+Banana
+Button
+Drawer
+Avg.
+
+GR00T
+70.0
+65.0
+65.0
+67.0
+
+GR00T+AAC
+90.0
+75.0
+80.0
+82.0
+
+5.2.3 Results
+
+AAC improves real-world task success rates.
+
+We present the quantitative results in Tab. 5. The results demonstrate that AAC consistently outperforms the baseline GR00T across all three real-world tasks. On average, AAC achieves a performance gain, increasing the success rate from to . The performance improvement arises from multiple aspects. For the banana pick-and-place task, AAC allows the robot to better align the gripper orientation with respect to the target banana, resulting in more precise grasping. In the E-Button pressing task, both the baseline GR00T and the proposed AAC can successfully complete the task under familiar conditions. However, when the E-button appears at locations that lie near but outside the location distribution of human-teleoperated demonstrations, AAC shows better generalization ability and achieves more robust performance. For the long-horizon toy manipulation task, although the drawer-closing stage is relatively easy due to its lower precision requirements, AAC achieves a higher success rate in the toy-picking stage, benefiting from adaptive chunk sizes.
+
+AAC improves action accuracy and safety.
+
+In this part, we illustrate that the proposed AAC has the ability to localize more precisely, thanks to the adaptive chunk size strategy that ensures higher action quality. As shown in Fig. 6, the baseline vanilla GR00T tends to collide with the tabletop due to the low-quality actions predicted at the earlier observation point. In contrast, AAC is able to smoothly stop at an appropriate lowest point by filtering high-entropy or uncertain actions through the dynamically selected chunk size. This phenomenon demonstrates the potential of AAC for high-precision robot manipulation tasks, thus improving safety and robustness in practice.
+
+(a) Execution process of GR00T.
+
+(b) Execution process of AAC.
+
+Figure 6: AAC improves action accuracy and safety. Left: the gripper collided with the table. Right: the gripper reached an appropriate lowest point.
+
+6 Conclusion
+
+In this work, we have analyzed that the action chunk size is important for robot manipulation tasks. Based on this observation, we propose Adaptive Action Chunking (AAC), an inference-time strategy that exploits action entropy as the cue to adaptively select action chunk size. It aligns with human intuitions that a large chunk size is used at the transportation stage, while a small chunk size appears at the critical manipulation stage. Consequently, we achieve a good balance between reactivity and consistency. Extensive experiments on a variety of simulation benchmarks and real-world applications have validated the effectiveness of our approach over the baseline and state-of-the-art alternatives.
+
+References
+
+[1]
+J. Bi, K. Y. Ma, C. Hao, M. Z. Shou, and H. Soh (2025)
+
+VLA-Touch: Enhancing vision-language-action models with dual-level tactile feedback.
+
+arXiv preprint arXiv:2507.17294.
+
+Cited by: §1.
+
+[2]
+J. Bjorck, F. Castañeda, N. Cherniadev, X. Da, R. Ding, L. Fan, Y. Fang, D. Fox, F. Hu, S. Huang, et al. (2025)
+
+GR00T N1: An open foundation model for generalist humanoid robots.
+
+arXiv preprint arXiv:2503.14734.
+
+Cited by: Figure 1,
+Figure 1,
+§1,
+§2.1,
+§2.2,
+§3.1,
+§3.1,
+§4,
+§4,
+§5.1.2,
+§5.1.3,
+§5.2.1.
+
+[3]
+K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, et al. (2025)
+
+: A vision-language-action model with open-world generalization.
+
+arXiv preprint arXiv:2504.16054.
+
+Cited by: §2.1,
+§5.1.5.
+
+[4]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, et al. (2024)
+
+: A vision-language-action flow model for general robot control.
+
+arXiv preprint arXiv:2410.24164.
+
+Cited by: §1,
+§2.1,
+§2.2,
+§4,
+§5.1.2,
+§5.1.3.
+
+[5]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan, K. Hausman, A. Herzog, J. Hsu, et al. (2023)
+
+RT-1: Robotics Transformer for real-world control at scale.
+
+Robotics: Science and Systems XIX.
+
+Cited by: §2.1.
+
+[6]
+J. Cen, C. Yu, H. Yuan, Y. Jiang, S. Huang, J. Guo, X. Li, Y. Song, H. Luo, F. Wang, et al. (2025)
+
+WorldVLA: Towards autoregressive action world model.
+
+arXiv preprint arXiv:2506.21539.
+
+Cited by: §2.1.
+
+[7]
+H. Chen, J. Liu, C. Gu, Z. Liu, R. Zhang, X. Li, X. He, Y. Guo, C. Fu, S. Zhang, et al. (2025)
+
+Fast-in-Slow: A dual-system foundation model unifying fast manipulation within slow reasoning.
+
+arXiv preprint arXiv:2506.01953.
+
+Cited by: §2.1.
+
+[8]
+R. Chen K. Wang et al. (2025)
+
+Adaptive action chunk selector.
+
+Stanford University.
+
+Note: Stanford CS224R 2025 Final Report
+
+External Links: Link
+
+Cited by: §1.
+
+[9]
+C. Chi, Z. Xu, S. Feng, E. Cousineau, Y. Du, B. Burchfiel, R. Tedrake, and S. Song (2023)
+
+Diffusion policy: Visuomotor policy learning via action diffusion.
+
+The International Journal of Robotics Research 44, pp. 1684–1704.
+
+Cited by: §1,
+§5.1.3.
+
+[10]
+Y. Fu, X. Wang, Y. Tian, and J. Zhao (2025)
+
+Deep think with confidence.
+
+In NeurIPS 2025 Workshop on Efficient Reasoning,
+
+External Links: Link
+
+Cited by: §2.2.
+
+[11]
+R. Gou (2024)
+
+Learning temporal action chunking for motor control.
+
+Ph.D. Thesis, University of British Columbia.
+
+Cited by: §1.
+
+[12]
+Z. Hou, T. Zhang, Y. Xiong, H. Duan, H. Pu, R. Tong, C. Zhao, X. Zhu, Y. Qiao, J. Dai, et al. (2025)
+
+Dita: Scaling diffusion transformer for generalist vision-language-action policy.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 7686–7697.
+
+Cited by: §2.1.
+
+[13]
+J. Huang, S. Wang, F. Lin, Y. Hu, C. Wen, and Y. Gao (2025)
+
+Tactile-VLA: Unlocking vision-language-action model’s physical knowledge for tactile generalization.
+
+arXiv preprint arXiv:2507.09160.
+
+Cited by: §1.
+
+[14]
+Y. Jiang, S. Huang, S. Xue, Y. Zhao, J. Cen, S. Leng, K. Li, J. Guo, K. Wang, M. Chen, et al. (2025)
+
+RynnVLA-001: using human demonstrations to improve robot manipulation.
+
+arXiv preprint arXiv:2509.15212.
+
+Cited by: §1.
+
+[15]
+S. Khan and E. Tanimura (2025)
+
+Test-time stochasticity estimation for adaptive action chunk selection.
+
+Stanford University.
+
+Note: Stanford CS224R 2025 Final Report
+
+External Links: Link
+
+Cited by: §1.
+
+[16]
+M. J. Kim, C. Finn, and P. Liang (2025)
+
+Fine-tuning vision-language-action models: Optimizing speed and success.
+
+arXiv preprint arXiv:2502.19645.
+
+Cited by: §2.1.
+
+[17]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. P. Foster, P. R. Sanketi, Q. Vuong, et al. (2025)
+
+OpenVLA: An open-source vision-language-action model.
+
+In Conference on Robot Learning,
+
+Cited by: §2.1,
+§5.1.2.
+
+[18]
+M. Koo, D. Choi, T. Kim, K. Lee, C. Kim, Y. Seo, and J. Shin (2025)
+
+HAMLET: switch your vision-language-action model into a history-aware policy.
+
+arXiv preprint arXiv:2510.00695.
+
+Cited by: §2.1.
+
+[19]
+C. Li, J. Wen, Y. Peng, Y. Peng, and Y. Zhu (2026)
+
+PointVLA: Injecting the 3D world into vision-language-action models.
+
+IEEE Robotics and Automation Letters 11 (3), pp. 2506–2513.
+
+Cited by: §1.
+
+[20]
+P. Li, Y. Chen, H. Wu, X. Ma, X. Wu, Y. Huang, L. Wang, et al. (2025)
+
+BridgeVLA: input-output alignment for efficient 3D manipulation learning with vision-language models.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §1.
+
+[21]
+W. Li R. Zhang et al. (2025)
+
+CogVLA: Cognition-aligned vision-language-action models via instruction-driven routing & sparsification.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §2.1.
+
+[22]
+Z. Li, G. Chen, S. Liu, S. Wang, V. VS, Y. Ji, S. Lan, H. Zhang, Y. Zhao, et al. (2025)
+
+Eagle 2: Building post-training data strategies from scratch for frontier vision-language models.
+
+arXiv preprint arXiv:2501.14818.
+
+Cited by: §5.1.2.
+
+[23]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, et al. (2023)
+
+LIBERO: Benchmarking knowledge transfer for lifelong robot learning.
+
+Advances in Neural Information Processing Systems.
+
+Cited by: §1,
+§5.1.1,
+§5.1.3.
+
+[24]
+J. Liu, H. Chen, P. An, Z. Liu, R. Zhang, C. Gu, X. Li, Z. Guo, S. Chen, M. Liu, et al. (2025)
+
+HybridVLA: Collaborative diffusion and autoregression in a unified vision-language-action model.
+
+arXiv preprint arXiv:2503.10631.
+
+Cited by: §1.
+
+[25]
+Y. Liu, J. Han, X. Yao, S. Khan, H. Cholakkal, R. M. Anwer, N. Liu, and F. S. Khan (2024)
+
+Bidirectional reciprocative information communication for few-shot semantic segmentation.
+
+In Proceedings of the 41st International Conference on Machine Learning,
+
+Cited by: §1,
+§2.2.
+
+[26]
+Y. Ma, Z. Song, Y. Zhuang, J. Hao, and I. King (2024)
+
+A survey on vision-language-action models for embodied ai.
+
+arXiv preprint arXiv:2405.14093.
+
+Cited by: §1.
+
+[27]
+A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D. Fox (2023)
+
+MimicGen: A data generation system for scalable robot learning using human demonstrations.
+
+In Conference on Robot Learning,
+
+Cited by: §5.1.2.
+
+[28]
+S. Nasiriany, A. Maddukuri, L. Zhang, A. Parikh, A. Lo, A. Joshi, A. Mandlekar, and Y. Zhu
+
+RoboCasa: large-scale simulation of everyday tasks for generalist robots.
+
+In RSS 2024 Workshop: Data Generation for Robotics,
+
+Cited by: Figure 1,
+Figure 1,
+§1,
+§5.1.1,
+§5.1.3.
+
+[29]
+S. Niu, J. Wu, Y. Zhang, Y. Chen, S. Zheng, P. Zhao, and M. Tan (2022)
+
+Efficient test-time model adaptation without forgetting.
+
+In International Conference on Machine Learning,
+
+Cited by: §3.2.
+
+[30]
+K. Pertsch, K. Stachowicz, B. Ichter, D. Driess, S. Nair, Q. Vuong, O. Mees, C. Finn, and S. Levine (2025)
+
+FAST: Efficient action tokenization for vision-language-action models.
+
+arXiv preprint arXiv:2501.09747.
+
+Cited by: §2.1.
+
+[31]
+D. Qu, H. Song, Q. Chen, Y. Yao, X. Ye, Y. Ding, Z. Wang, J. Gu, B. Zhao, D. Wang, et al. (2025)
+
+SpatialVLA: Exploring spatial representations for visual-language-action model.
+
+arXiv preprint arXiv:2501.15830.
+
+Cited by: §1.
+
+[32]
+A. Shah, W. Chen, A. Godbole, F. Mora, S. A. Seshia, and S. Levine (2025)
+
+Learning affordances at inference-time for vision-language-action models.
+
+arXiv preprint arXiv:2510.19752.
+
+Cited by: §1.
+
+[33]
+M. Shukor, D. Aubakirova, F. Capuano, P. Kooijmans, S. Palma, A. Zouitine, M. Aractingi, C. Pascal, M. Russi, et al. (2025)
+
+SmolVLA: A vision-language-action model for affordable and efficient robotics.
+
+arXiv preprint arXiv:2506.01844.
+
+Cited by: §1,
+§2.1,
+§2.2,
+§4,
+§5.1.3.
+
+[34]
+I. Singh, A. Goyal, S. Birchfield, D. Fox, A. Garg, and V. Blukis (2025)
+
+OG-VLA: 3D-aware vision language action model via orthographic image generation.
+
+arXiv preprint arXiv:2506.01196.
+
+Cited by: §1.
+
+[35]
+J. So, C. Lee, S. Lee, et al. (2025)
+
+Improving generative behavior cloning via self-guidance and adaptive chunking.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §1.
+
+[36]
+H. Song, D. Qu, Y. Yao, Q. Chen, Q. Lv, Y. Tang, M. Shi, G. Ren, M. Yao, et al. (2025)
+
+Hume: introducing system-2 thinking in visual-language-action model.
+
+arXiv preprint arXiv:2505.21432.
+
+Cited by: §2.1.
+
+[37]
+W. Song, J. Chen, P. Ding, H. Zhao, W. Zhao, Z. Zhong, Z. Ge, J. Ma, and H. Li (2025)
+
+Accelerating vision-language-action model integrated with action chunking via parallel decoding.
+
+arXiv preprint arXiv:2503.02310.
+
+Cited by: §2.1.
+
+[38]
+D. Wang, E. Shelhamer, S. Liu, B. Olshausen, and T. Darrell (2021)
+
+Tent: fully test-time adaptation by entropy minimization.
+
+In International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §3.2.
+
+[39]
+Y. Wang, P. Ding, L. Li, C. Cui, Z. Ge, X. Tong, W. Song, H. Zhao, W. Zhao, P. Hou, et al. (2026)
+
+VLA-Adapter: An effective paradigm for tiny-scale vision-language-action model.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Cited by: §1.
+
+[40]
+S. Xu, Z. Lian, M. Tan, L. Liu, Z. Zhang, and P. Zhao (2025)
+
+Test-time adapted reinforcement learning with action entropy regularization.
+
+In International Conference on Machine Learning,
+
+Cited by: §3.2.
+
+[41]
+J. Yu, H. Liu, Q. Yu, J. Ren, C. Hao, H. Ding, G. Huang, G. Huang, Y. Song, P. Cai, W. Zhang, and C. Lu (2025)
+
+ForceVLA: Enhancing VLA models with a force-aware MoE for contact-rich manipulation.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §1.
+
+[42]
+T. Yuan, Y. Liu, C. Lu, Z. Chen, T. Jiang, and H. Zhao (2025)
+
+DepthVLA: Enhancing vision-language-action models with depth-aware spatial reasoning.
+
+arXiv preprint arXiv:2510.13375.
+
+Cited by: §1.
+
+[43]
+Y. Ze, G. Zhang, K. Zhang, C. Hu, M. Wang, and H. Xu (2024)
+
+3D diffusion policy: Generalizable visuomotor policy learning via simple 3D representations.
+
+In ICRA 2024 Workshop on 3D Visual Representations for Robot Manipulation,
+
+Cited by: §1.
+
+[44]
+J. Zhang, Y. Chen, Y. Xu, Z. Huang, Y. Zhou, Y. Yuan, X. Cai, G. Huang, X. Quan, H. Xu, et al. (2025)
+
+4D-VLA: Spatiotemporal vision-language-action pretraining with cross-scene calibration.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+Cited by: §1.
+
+[45]
+Q. Zhao, Y. Lu, M. J. Kim, Z. Fu, Z. Zhang, Y. Wu, Z. Li, Q. Ma, S. Han, et al. (2025)
+
+CoT-VLA: Visual chain-of-thought reasoning for vision-language-action models.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+
+Cited by: §2.1.
+
+[46]
+T. Zhao, V. Kumar, S. Levine, and C. Finn (2023)
+
+Learning fine-grained bimanual manipulation with low-cost hardware.
+
+Robotics: Science and Systems XIX.
+
+Cited by: §1,
+§1,
+§2.2.
+
+[47]
+H. Zhen, X. Qiu, P. Chen, J. Yang, X. Yan, Y. Du, Y. Hong, and C. Gan (2024)
+
+3D-VLA: A 3D vision-language-action generative world model.
+
+In International Conference on Machine Learning,
+
+Cited by: §1.
+
+[48]
+J. Zheng, J. Li, Z. Wang, D. Liu, X. Kang, Y. Feng, Y. Zheng, J. Zou, Y. Chen, J. Zeng, et al. (2025)
+
+X-VLA: Soft-prompted Transformer as scalable cross-embodiment vision-language-action model.
+
+arXiv preprint arXiv:2510.10274.
+
+Cited by: §2.1.
+
+[49]
+Y. Zhong, X. Huang, R. Li, C. Zhang, Z. Chen, T. Guan, F. Zeng, K. N. Lui, Y. Ye, Y. Liang, et al. (2026)
+
+DexGraspVLA: A vision-language-action framework towards general dexterous grasping.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Cited by: §2.1.
+
+[50]
+X. Zhou, Y. Xu, G. Tie, Y. Chen, G. Zhang, D. Chu, P. Zhou, and L. Sun (2025)
+
+LIBERO-PRO: Towards robust and fair evaluation of vision-language-action models beyond memorization.
+
+arXiv preprint arXiv:2510.03827.
+
+Cited by: §5.1.5,
+§5.1.5,
+Table 3,
+Table 3.
+
+[51]
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, et al. (2023)
+
+RT-2: Vision-language-action models transfer web knowledge to robotic control.
+
+In Conference on Robot Learning,
+
+Cited by: §2.1.
+
+Supplementary Material
+
+Appendix A Minimum Action Magnitude
+
+To further guarantee temporal consistency and computational efficiency, we impose a minimum action magnitude constraint on the optimal action chunk size, thereby defining a dynamic threshold in Eq. 6:
+
+(6)
+
+where the action magnitude is defined as the sum of the component magnitudes of translation , rotation , and gripper motion , as illustrated in Eq. 7. The parameter denotes the minimum movement energy of the robot arm, which we set to 3 in our experiments.
+
+(7)
+
+Specifically, the translational action magnitude is defined as the Euclidean norm of the translation vector from the start point of an action chunk to the end point of a selected chunk size , as illustrated in Eq. 8. The rotational action magnitude is obtained by accumulating the rotational offsets through sequential quaternion composition, as shown in Eq. 9. For the gripper action magnitude, we set it to when the gripper state changes (e.g., from open to closed or vice versa), and to otherwise, as presented in Eq. 10. Here, denotes an indicator function that returns if the condition is satisfied and otherwise.
+
+(8)
+
+(9)
+
+(10)
+
+Appendix B Complete Experiment Results in RoboCasa
+
+The complete experimental results for all 24 tasks in RoboCasa are presented in Tab. 6 and Tab. 7. On average, AAC demonstrates the best overall performance across these tasks. Nevertheless, there remains room for improvement in optimizing the chunk size selection for future work, as the optimal performance for each task has not yet been fully achieved.
+
+Table 6: Success rates (%) on RoboCasa.
+
+Task Group
+
+Task Name
+
+GR00T
+GR00T + AAC
+
+Relocation
+
+Counter to Cab
+
+57.0
+59.0
+
+Counter to Stove
+
+41.0
+40.0
+
+Sink to Counter
+
+46.0
+52.0
+
+Stove to Counter
+
+60.0
+63.0
+
+Counter to Sink
+
+26.0
+28.0
+
+Counter to Microwave
+
+33.0
+30.0
+
+Cab to Counter
+
+26.0
+25.0
+
+Microwave to Counter
+
+27.0
+36.0
+
+Coffee Setup Mug
+
+38.0
+39.0
+
+Coffee Serve Mug
+
+67.0
+72.0
+
+Container
+
+Open Single Door
+
+62.0
+73.0
+
+Close Single Door
+
+94.0
+92.0
+
+Close Double Door
+
+56.0
+62.0
+
+Open Double Door
+
+89.0
+88.0
+
+Open Drawer
+
+81.0
+80.0
+
+Close Drawer
+
+100.0
+98.0
+
+Rotation
+
+Turn Sink Spout
+
+69.0
+66.0
+
+Turn on Sink facet
+
+85.0
+91.0
+
+Turn off Sink Facet
+
+74.0
+80.0
+
+Turn on Stove
+
+39.0
+49.0
+
+Turn off Stove
+
+21.0
+21.0
+
+Button
+
+Coffee Press Button
+
+94.0
+93.0
+
+Turn on Microwave
+
+66.0
+68.0
+
+Turn off Microwave
+
+81.0
+83.0
+
+Relocation Average
+
+42.1
+44.4
+
+Container Average
+
+80.3
+82.2
+
+Rotation Average
+
+57.6
+61.4
+
+Button Average
+
+80.3
+81.3
+
+24 Tasks Average
+
+59.7
+62.0
+
+Table 7: Success rates (%) with Different Chunk Sizes.
+
+Task Group
+Task Name
+Fixed-2
+Fixed-4
+Fixed-8
+Fixed-12
+Fixed-16
+
+Relocation
+Counter to Cab
+51.0
+68.0
+61.0
+57.0
+57.0
+
+Counter to Stove
+31.0
+40.0
+46.0
+45.0
+41.0
+
+Sink to Counter
+35.0
+44.0
+56.0
+50.0
+46.0
+
+Stove to Counter
+59.0
+62.0
+69.0
+64.0
+60.0
+
+Counter to Sink
+6.0
+10.0
+15.0
+19.0
+26.0
+
+Counter to Microwave
+7.0
+12.0
+29.0
+23.0
+33.0
+
+Cab to Counter
+18.0
+18.0
+23.0
+23.0
+26.0
+
+Microwave to Counter
+27.0
+42.0
+28.0
+36.0
+27.0
+
+Coffee Setup Mug
+31.0
+39.0
+40.0
+46.0
+38.0
+
+Coffee Serve Mug
+31.0
+44.0
+61.0
+66.0
+67.0
+
+Container
+Open Single Door
+15.0
+41.0
+61.0
+62.0
+62.0
+
+Close Single Door
+84.0
+89.0
+87.0
+95.0
+94.0
+
+Close Double Door
+53.0
+62.0
+73.0
+58.0
+56.0
+
+Open Double Door
+44.0
+73.0
+81.0
+84.0
+89.0
+
+Open Drawer
+51.0
+64.0
+81.0
+79.0
+81.0
+
+Close Drawer
+95.0
+99.0
+99.0
+99.0
+100.0
+
+Rotation
+Turn Sink Spout
+70.0
+69.0
+69.0
+67.0
+69.0
+
+Turn on Sink facet
+84.0
+87.0
+85.0
+83.0
+85.0
+
+Turn off Sink Facet
+82.0
+78.0
+85.0
+80.0
+74.0
+
+Turn on Stove
+42.0
+52.0
+52.0
+47.0
+39.0
+
+Turn off Stove
+19.0
+20.0
+22.0
+23.0
+21.0
+
+Button
+Coffee Press Button
+76.0
+89.0
+98.0
+98.0
+94.0
+
+Turn on Microwave
+47.0
+51.0
+61.0
+60.0
+66.0
+
+Turn off Microwave
+71.0
+96.0
+86.0
+80.0
+81.0
+
+Relocation Average
+29.6
+37.9
+42.8
+42.9
+42.1
+
+Container Average
+57.0
+71.3
+80.3
+79.5
+80.3
+
+Rotation Average
+59.4
+61.2
+62.6
+60.0
+57.6
+
+Button Average
+64.7
+78.7
+81.7
+79.3
+80.3
+
+24 Tasks Average
+47.0
+56.2
+61.2
+60.2
+59.7
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

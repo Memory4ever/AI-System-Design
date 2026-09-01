@@ -1,0 +1,1985 @@
+EdgeFlow: Fast Cold Starts for LLMs on Mobile Devices
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background
+
+2.1 Mobile NPUs for LLM Inference
+
+2.2 Post-Training Quantization
+
+3 Motivation and Challenges
+
+3.1 Analysis of the Cold-Start Issue
+
+3.2 Challenges of Adaptive Quantization
+
+4 The EdgeFlow Design
+
+4.1 NPU-Aware Adaptive Quantization
+
+4.2 SIMD-Friendly Packing Format
+
+4.3 Synergistic Granular Pipeline
+
+5 Evaluation
+
+5.1 Experimental Setup
+
+5.2 End-to-End Performance
+
+5.3 Ablation Study
+
+5.4 In-Depth Analyses
+
+5.4.1 Analyses of NPU-Aware Adaptive Quantization
+
+5.4.2 Analyses of SIMD-Friendly Packing Format
+
+5.4.3 Analyses of Synergistic Granular Pipeline
+
+5.5 Deployment Efficiency
+
+5.5.1 Decoding Efficiency
+
+5.5.2 Resource Consumption
+
+6 Related Work
+
+7 Conclusion
+
+References
+
+A Relative Error Derivation
+
+B Operator-Level Placement
+
+C Adaptive Quantization Evaluation
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.09083v1 [cs.OS] 10 Apr 2026
+
+EdgeFlow: Fast Cold Starts for LLMs on Mobile Devices
+
+884
+
+Yongsheng Yan
+
+Affiliation: College of Computer Science and Artificial Intelligence, Fudan University, China
+
+email: ysyan24@m.fudan.edu.cn
+
+,
+Jiacheng Shen
+
+Affiliation: Duke Kunshan University, China
+
+email: jc.shen@dukekunshan.edu.cn
+
+,
+Xuchuan Luo
+
+Affiliation: College of Computer Science and Artificial Intelligence, Fudan University, China
+
+email: xcluo23@m.fudan.edu.cn
+
+and
+Yangfan Zhou
+
+Affiliation: College of Computer Science and Artificial Intelligence, Fudan University, China
+
+email: zyf@fudan.edu.cn
+
+Abstract.
+
+Deploying large language models (LLMs) on mobile devices is an emerging trend to enable data privacy and offline accessibility of LLM applications.
+Modern mobile neural processing units (NPUs) make such deployment increasingly feasible.
+However, existing mobile LLM inference frameworks suffer from high start-up latency due to their inevitable cold starts, i.e., launching LLM inferences when the model is not hosted in device memory.
+In this paper, we identify the key bottleneck of mobile LLM cold starts as the waste of flash bandwidth on unimportant model parameters.
+We design EdgeFlow, a mobile LLM inference framework that mitigates the cold start issue by adaptively adjusting the precisions of LLM parameters.
+Specifically, EdgeFlow leverages
+1) an NPU-aware adaptive quantization algorithm that assigns different precisions to weights in a finer granularity according to their importance and NPU constraints,
+2) an SIMD-friendly packing format that accelerates the transformation of various-precision weights into fixed-sized NPU-native data types, and
+3) a synergistic granular pipeline that coordinates CPU and NPU computation in a fine-grained and dynamic manner.
+Experimental results show that EdgeFlow reduces cold-start latency by up to compared with three state-of-the-art mobile LLM inference frameworks, i.e., llama.cpp, MNN, and llm.npu, under comparable model accuracy.
+
+1. Introduction
+
+With the increasing adoption of large language models (LLMs) in everyday applications, e.g., personal assistants (Wang et al., 2024b; Wang et al., 2024a; Zhang et al., 2025a), smart home control (King et al., 2024; Birkmose et al., 2025), and healthcare (Cosentino et al., 2024; Fang et al., 2024), there is a growing trend towards deploying LLM inference directly on mobile devices to ensure data privacy and
+offline accessibility (Ggerganov, 2023; Li et al., 2024; Lu et al., 2025).
+Many LLM inference frameworks are proposed to improve the execution efficiency of LLMs on resource-constrained mobile devices (Xu et al., 2025; Chen et al., 2025; Wang et al., 2024c).
+
+However, the cold start issue is largely overlooked in existing mobile LLM inference frameworks.
+Cold start is a critical performance bottleneck for mobile applications (Joo et al., 2011; Son et al., 2021; Ryu et al., 2023; Li et al., 2025a; Li et al., 2025b; Liang et al., 2025; Liang et al., 2020).
+It happens when an application is invoked, but the required data are not loaded into device memory.
+This issue is exacerbated in mobile LLM applications, e.g., conversational agents and UI automation tasks (Zheng et al., 2023; Wen et al., 2024), where a huge amount of model weights have to be loaded into memory.
+Our preliminary experiments show that llm.npu (Xu et al., 2025), the state-of-the-art mobile LLM inference framework, suffers from a 9.1-second time to first token (TTFT) during a cold start of executing the Llama3 8B (, 2024) model under 128 input tokens.
+Such latency is an order of magnitude greater than the cold start of conventional mobile applications (Xiaochen et al., 2026; Lim et al., 2023), which significantly degrade user experiences (Nielsen, 1993; Arapakis et al., 2021).
+Even worse, cold starts of LLM frameworks frequently occur since mobile operating systems can not always keep the massive model parameters in limited device memory (Huang et al., 2024; Android Open Source Project, 2023; Apple Developer Documentation, 2024).
+
+In this paper, we identify the primary cause of long cold-start latency as suboptimal utilization of flash bandwidth when loading LLMs.
+Specifically, existing LLM inference frameworks typically quantize model weights into lower precisions to reduce model sizes (Frantar et al., 2022; Xiao et al., 2023).
+However, conventional quantization techniques uniformly quantize all weights into the same precision, e.g., INT8, to align with hardware-supported data types.
+Such an approach overlooks that different weights have different contributions to model accuracy (Lin et al., 2024).
+Flash bandwidths are hence wasted on transferring unimportant weights that are under-quantized.
+
+To address this problem, we propose to employ adaptive quantization to achieve a better trade-off between model accuracy and flash bandwidth utilization.
+The key idea is to determine and assign the required precision of each weight based on its importance to model accuracy.
+Nevertheless, this approach presents several challenges that call for a co-design of inference systems and quantization algorithms.
+
+(1) Precision assignments under NPU constraints.
+Existing mobile LLM inference frameworks leverage NPUs to accelerate inference efficiency (Xu et al., 2025; Xue et al., 2024; Chen et al., 2025; Hao et al., 2025).
+Production mobile NPUs, e.g., Qualcomm Hexagon NPU (Inc., 2025c), only accelerate matrix multiplications (matmuls) for tensors under uniform and coarse-grained quantization.
+Such constraints impede the adaptive assignment of precisions to individual weights and hinder the execution of existing importance-aware quantization methods that adopt non-uniform, fine-grained quantization on CPUs and GPUs (Lin et al., 2024; Chen et al., 2024).
+
+(2) Costly unpacking for variable-precision weights.
+Low-bit quantized model weights have to be unpacked into NPU-native data types, e.g., INT8 and FP16, by the CPU before computation.
+Existing approaches store quantized models in an unpack-friendly format to reduce the computational overhead during unpacking (Ggerganov, 2023; Lin et al., 2024).
+However, these formats are designed for weights quantized with the same precision.
+Naively storing variable-precision weights in these formats incurs significant overhead due to the excessive memory accesses during unpacking computation.
+
+(3) Imbalanced workloads between CPU and NPU.
+Unpacking weights and conducting prefill computation require the collaboration between the CPU and NPU.
+Existing approaches schedule computational tasks to the two processors in a coarse-grained and static manner (Xu et al., 2025; Xue et al., 2024).
+Unfortunately, such scheduling results in significant bubbles in the computation pipeline.
+This would make the long computation time another bottleneck for cold-starts.
+
+We design EdgeFlow, a system that co-designs a quantization algorithm with system-level optimizations to reduce cold-start latencies for mobile LLM inferences.
+First, we design an NPU-aware adaptive quantization algorithm to differentiate the importance of weights and assign fine-grained precisions under NPU constraints, enabling fast model loading with comparable accuracy.
+Second, we develop an SIMD-friendly packing format with an SIMD-optimized unpacking algorithm to facilitate rapid transformation of adaptively quantized weights into NPU-native data types.
+Finally, we propose a synergistic granular pipeline that balances CPU and NPU computation in a dynamic, fine-grained manner to maximize compute resource utilization during cold starts.
+
+We implement EdgeFlow from scratch and evaluate it with various LLMs (, 2024; , 2023; , 2024; , 2023) and datasets (Paperno et al., 2016; Sakaguchi et al., 2020; Mihaylov et al., 2018; Hendrycks et al., 2021; Zellers et al., 2019; Merity et al., 2017).
+We compare EdgeFlow with two open-source approaches, i.e., llama.cpp (Ggerganov, 2023) and MNN (Wang et al., 2024c), and a state-of-the-art NPU-accelerated mobile LLM inference framework, i.e., llm.npu (Xu et al., 2025).
+Our evaluation results show that with the same model accuracy, EdgeFlow reduces cold-start latency, i.e., TTFT, by and compared with llama.cpp and MNN.
+Compared with llm.npu, EdgeFlow achieves speedup in TTFT and up to improvements in accuracy.
+We plan to open source EdgeFlow in the near future.
+
+Our contributions are summarized as follows:
+
+•
+
+We break down the cold-start issue of mobile LLM deployments, and show that the inefficient flash bandwidth utilization significantly deteriorates TTFT.
+
+•
+
+We propose EdgeFlow that co-designs the NPU-aware adaptive quantization algorithm with the SIMD-friendly packing format and the synergistic granular pipeline to collaboratively reduce cold-start latencies.
+
+•
+
+We implement EdgeFlow and show that it significantly reduces cold-start latency while preserving inference accuracy under multiple models and workloads.
+
+2. Background
+
+2.1. Mobile NPUs for LLM Inference
+
+NPUs are widely adopted in smartphones due to their energy-efficient computing capabilities under AI workloads, e.g., Qualcomm Hexagon NPU (Inc., 2025c) and Apple Neural Engine (Inc., 2025a).
+In this paper, we focus on system design with Qualcomm Hexagon NPU, which is one of the most widely adopted NPUs on Android phones.
+The proposed techniques can also be adapted to other platforms with engineering efforts.
+
+Hexagon NPU provides developers with QNN SDK (Inc., 2025b) to leverage various hardware accelerators inside NPUs.
+QNN offers a toolchain to quantize and compile models into NPU executables, and a runtime to efficiently execute models over NPUs.
+Specifically, to deploy a model on NPU, users first need to assemble a computation graph with high-level operators provided by QNN.
+The computation graph is then compiled into an execution graph, i.e., NPU executables, before being loaded into NPU with QNN runtime APIs.
+During the whole process, the computation graph compilation is the most time-consuming step since QNN needs to conduct a series of NPU-specific optimizations, e.g., fusing operators, scheduling tiles and loops, and reordering weights according to the memory layout of NPUs (Xu et al., 2025; Hao et al., 2025).
+
+Table 1. Existing post-training quantization approaches.
+
+Dimensions
+Categories
+
+Target
+Weight Tensors / Activation Tensors
+
+Timing
+Static / Dynamic
+
+Mapping Type
+Uniform / Non-uniform
+
+Granularity
+Per-tensor / Per-channel / Per-block
+
+2.2. Post-Training Quantization
+
+Post-training quantization is widely adopted in mobile LLM deployments to reduce model sizes and runtime memory footprint.
+The key idea is to map tensors into low-precision data types with some metadata and dequantize, i.e., map back to high-precision tensors, during or after computation to maintain model accuracy.
+As shown in Table 1, existing quantization techniques can be classified in terms of quantization target, timing, mapping types, and granularity.
+In terms of target, there are two types of tensors during LLM inference, i.e., weight tensors storing static model parameters and activation tensors storing intermediate results, e.g., KV caches.
+Both types of tensors are considered as targets for quantization.
+In terms of timing, static approaches quantize tensors offline, while dynamic approaches quantize them during inference.
+In terms of mapping types, uniform approaches quantize tensors with linear transformations, i.e., one high-precision value in a tensor can be mapped to a low-precision one with a scale and a bias.
+Uniform quantization can be further classified into symmetric and asymmetric methods based on whether the bias is or not.
+Non-uniform approaches quantize tensors with non-linear transformations, e.g., codebooks (Liu et al., 2024).
+Finally, the granularity refers to how many weights share the same mapping metadata.
+Per-tensor approaches share metadata for an entire tensor, per-channel ones share metadata for a row or a column, and per-block ones share metadata among fixed-size groups.
+
+Existing quantization schemes quantize tensors into a single precision (Frantar et al., 2022; Lin et al., 2024; Ashkboos et al., 2024) or a limited group of precisions, e.g., INT4 and INT8 (Chen et al., 2024; Li et al., 2023).
+This results in inefficient bandwidth utilization during cold starts.
+The essential reason is that mobile accelerators only contain arithmetic units to compute tensors with a limited set of data types, e.g., INT8, INT16, and INT32.
+Mixed-precision tensors have to be transformed into tensors with native data types before computation, which incurs additional transformation overhead.
+
+3. Motivation and Challenges
+
+Figure 1. Breakdown of the cold-start latencies of llm.npu and two straightforward optimizations, i.e., materialization and overlapping.
+
+Figure 2. TTFT v.s. pre-loaded data size for llm.npu, including user-acceptable latency region and EdgeFlow measurements.
+
+This section first breaks down the cold-start process with both theoretical and experimental analyses, motivating the need to adopt adaptive quantization (§ 3.1).
+We then discuss the challenges of integrating adaptive quantization to mobile LLM inference systems (§ 3.2).
+All experiments are conducted on a Xiaomi 15 Pro with Hexagon NPU, 16 GB of RAM, and 512 GB of flash storage.
+
+3.1. Analysis of the Cold-Start Issue
+
+We use llm.npu (Xu et al., 2025), the state-of-the-art NPU-based mobile LLM inference framework, to showcase the cold start process of NPU-based mobile LLM inference.
+As shown in Figure 1, the cold start process of llm.npu can be summarized into steps, i.e., setup environments, load weights, prepare execution graphs, and execute.
+According to our experiments on Llama3 8B with a 128-token prompt, llm.npu exhibits a cold-start latency of up to 51.2 seconds.
+Its cold-start latency is mainly dominated by the overhead of on-the-fly graph preparation and weight loading.
+
+Two methods can be adopted to reduce the pure cold-start latency, i.e., materialization and overlap.
+First, materialization stores the optimized computation graph offline and directly loads the graph during cold starts.
+As shown in Figure 1, such an approach eliminates the graph optimization overhead from the critical path and reduces cold-start latency from 51.2s to 10.5s.
+Second, we can overlap graph loading with prefill computation between consecutive layers by decomposing the graph into multiple subgraphs, one for each layer.
+Figure 1 illustrates that the overlapping method further reduces the cold-start latency to 9.1s.
+Unfortunately, even with these optimizations, the latency remains unacceptable for interactive mobile applications, as users typically lose patience if the wait time exceeds 7s (Arapakis et al., 2021).
+
+The key bottleneck of existing approaches lies in the weight loading overhead, as indicated by the 7.4s pipeline bubble.
+Many mobile systems prefetch application data from flash to reduce data loading latency during cold starts (Son et al., 2021; Ryu et al., 2023; Xiaochen et al., 2026; Yan et al., 2012).
+However, as shown in Figure 2, 4 GB of data must be prefetched and reserved in memory to achieve a satisfactory cold-start latency.
+The consumed memory accounts for 25% of total memory in our high-end testbed, which is a significant overhead for resource-constrained mobile devices.
+
+In contrast, EdgeFlow focuses on reducing the pure cold start latency, which can meet the latency requirement without reserving memory in advance.
+To achieve this, we propose an adaptive quantization strategy to relieve the flash bandwidth bottleneck on the critical path of cold starts.
+Our opportunity is that not all weights are equally important to the model accuracy (Lin et al., 2024; Chen et al., 2024; Li et al., 2023).
+Less precision, i.e., bits, can be assigned to unimportant weights to optimize flash bandwidth utilization.
+
+3.2. Challenges of Adaptive Quantization
+
+In this section, we introduce three challenges when applying adaptive quantization in a mobile LLM inference system.
+
+Challenge 1: Precision assignments under NPU constraints.
+NPUs only accelerate a limited set of quantized matmuls, which imposes two constraints on quantization algorithms.
+First, all tensors, i.e., weight and activation tensors, have to be quantized in a static, uniform, and symmetric manner.
+Second, activations can only be quantized in per-tensor granularity, while weights can be quantized in per-channel granularity only on output channels, i.e., columns.
+Such constraints result in poor matmul efficiency for tensors quantized by existing importance-aware quantization approaches since they often require more fine-grained quantization.
+
+Table 2. Comparison between NPU constraints and existing importance-aware quantization approaches.
+
+Method
+
+Target
+
+Mapping Type
+
+Granularity
+
+AWQ (Lin et al., 2024)
+
+Weights
+
+Uniform (Asym.)
+
+Per-block
+
+CMPQ (Chen et al., 2024)
+
+Weights
+
+Non-uniform
+
+Per-channel (in)
+
+NPU
+
+Constraints
+
+Weights
+
+Uniform (Sym.)
+
+Per-channel (out)
+
+Activations
+
+Per-tensor
+
+Figure 3. The execution times of NPU matmuls on tensors quantized by AWQ and CMPQ compared with the pure INT8 matmul (INT8) operator and optimized INT8 matmul (Opt INT8) operator.
+
+We evaluate the execution latency of matmul operators on tensors quantized by AWQ (Lin et al., 2024) and CMPQ (Chen et al., 2024), two state-of-the-art importance-aware quantization algorithms.
+We measure the NPU execution time of matmul on two representative tensor shapes in the inference process of Llama3 8B.
+As shown in Table 2, both approaches only quantize weight tenors.
+AWQ employs asymmetric per-block quantization to quantize all weights into INT4.
+CMPQ adopts non-uniform per-channel quantization on input channels and quantizes weights to the range of 2 to 4 bits with an average 3-bit precision.
+However, neither approach can be directly accelerated by the NPU due to the incompatible mapping type and quantization granularity.
+When being executed on NPU, quantized weights need to be dynamically dequantized into INT8 with extra arithmetic operations.
+As shown in Figure 3, AWQ and CMPQ incur and overhead compared with INT8 matmul on NPUs.
+Moreover, during the computation graph optimization phase, the QNN toolchain optimizes the storage layout for static weight tensors to further improve execution efficiency.
+The static graph optimization approach cannot be applied to accelerate the two approaches since their tensors must be dynamically dequantized.
+As a result, compared with the statically optimized INT8 matmul (Opt INT8), an additional slowdown is introduced.
+
+Challenge 2: Costly unpacking for variable-precision weights.
+NPUs only support a few native data types, e.g., INT8 and FP16, which can be executed directly by their tensor accelerators (Inc., 2025b).
+When weights are quantized into various precisions, they must first be unpacked into one of these native types, incurring extra computation overhead.
+
+There are two ways to pack and unpack weight tensors, both of which exhibit a trade-off between read amplification and unpacking computation.
+First, we can adopt an INT4/INT8 mixed format to pack data by fitting and padding mixed-precision weights into INT4 and INT8 data types.
+The unpacking overhead of this format is minimal since weights are already aligned.
+Nevertheless, such an approach incurs substantial read amplifications, as padding causes the system to fetch much more data from flash.
+
+The second approach is adopting the K-Quant (Ggerganov, 2023) format in different weight groups.
+K-Quant designs a format for storing single-precision weight tensors with unaligned precisions, e.g., INT3.
+It decouples the weights into 1-, 2-, and 4-bit components and stores them separately in a compact file.
+While such an approach eliminates read amplification, it introduces significant unpacking overhead.
+
+(a)
+
+(b)
+
+Figure 4. The weight loading and unpacking times of three weight packing schemes for Llama3 8B.
+
+We measure the overhead of the two approaches for unpacking Llama3 8B quantized by our adaptive precision allocation algorithm.
+Figure 4(a) shows the precision distribution of the quantized model, and Figure 4(b) illustrates their corresponding unpacking overheads.
+We use two threads to load the model in a layer-by-layer manner and one thread to unpack the loaded weights.
+Each block in the figure represents the loading time or the unpacking time of a single layer.
+A number inside a block denotes the layer being loaded or unpacked.
+The INT4/INT8 mixed format reduces model loading from 3.03s to 2.90s compared with naively padding all weights into INT8.
+K-Quant decreases loading latency to 1.60s due to its compact storage.
+However, the unpacking computation takes 5.53s, which becomes a new bottleneck on the critical path of cold starts.
+
+Challenge 3: Imbalance workloads between the CPU and the NPU.
+Prefill computation constitutes another bottleneck on the critical path of cold starts.
+The main challenge is to balance the computation workload between the CPU and NPU while keeping minimal idle time.
+Nevertheless, due to the heterogeneous nature of operators during the LLM inference computation and their varying computational characteristics, achieving such a balance is challenging.
+
+The state-of-the-art approach, i.e., llm.npu (Xu et al., 2025), partitions the LLM computation graph in a coarse-grained and static manner among the NPU and the CPU.
+We evaluate llm.npu with a 256-token prefill on Llama3 8B for all subgraphs and measure its CPU and NPU computation time, as shown in Figure 5.
+llm.npu adopts chunked prefill (Agrawal et al., 2024) and parallelizes the computation of two adjacent chunks on the CPU and NPU in the granularity of statically partitioned subgraphs.
+Only attention computations are placed on the CPU side, while the remaining operators between layers run on the NPU.
+As shown in Figure 5(a), such a design leaves substantial pipeline bubbles for two main reasons.
+First, coarse-grained partitioning assigns many NPU-inefficient operators to the NPU, i.e., operators with low arithmetic intensity, which causes high NPU execution time.
+Figure 5(b) shows the CPU and NPU execution time of three representative operators that llm.npu assigns to the NPU, i.e., RMSNorm, SwiGLU, and quantization.
+The NPU execution time is on average longer than that on the CPU.
+Second, static scheduling prevents dynamic adjustment based on runtime status.
+Figure 5(c) illustrates the CPU and NPU execution time and the bubble rate of the entire pipeline across different sequence lengths.
+The bubble rate is calculated as the proportion of idle time to the execution time.
+The NPU execution time is consistently longer than the CPU execution time, resulting in up to 91% bubble rates across the pipeline.
+Moreover, this imbalance varies with the prompt length, making static scheduling incapable of maintaining balanced utilization.
+
+(a) A fragment of the measured pipeline of llm.npu.
+
+(b) Execution times of NPU-inefficient operators on the NPU and CPU, respectively.
+
+(c) The prefill computation time of the NPU and CPU, respectively, and the bubble rate of the entire pipeline.
+
+Figure 5. Analyses of the pipeline of llm.npu during the prefill stage of Llama3 8B.
+
+4. The EdgeFlow Design
+
+We design EdgeFlow to address all of the above challenges and reduce the cold-start latency of mobile LLM inferences.
+As illustrated in Figure 6, EdgeFlow consists of two phases, i.e., an offline phase and an online phase.
+The offline phase performs weight quantization to accelerate model loading on the critical path of cold starts.
+We introduce an NPU-aware adaptive quantization method to achieve a better trade-off between the loading time and the model accuracy under NPU constraints (Challenge 1).
+
+Figure 6. The overview of EdgeFlow.
+
+The online phase is responsible for preparing the execution graph and conducting the prefill computation.
+To accelerate the process, data loading, weight unpacking, and prefill computation are executed in parallel.
+The quantized model is loaded asynchronously from flash and unpacked to NPU-native formats layer by layer.
+An SIMD-friendly packing format is proposed to store weights, and an SIMD-based unpacking algorithm is adopted to accelerate the unpacking process (Challenge 2).
+Moreover, a synergistic granular pipeline is employed during prefill computation to balance workloads between the CPU and the NPU and alleviate the computation bottleneck of cold starts (Challenge 3).
+
+4.1. NPU-Aware Adaptive Quantization
+
+As mentioned in Section 3.2, NPUs only accelerate matmuls for per-output-channel quantized weight tensors and coarse-grained per-tensor quantized activation tensors.
+Our quantization scheme complies with these restrictions and achieves a better trade-off between model size and accuracy with two design choices:
+1) We assign different precisions in the granularity of output channels on weight tensors to satisfy the restrictions of NPUs on weights.
+Each output channel is quantized into integers with different bit-widths.
+A relative error metric is defined to guide the precision assignment on each channel.
+In addition, a greedy bit-width allocation algorithm is proposed to derive an optimal assignment of precisions across all channels.
+2) We transfer the quantization difficulty of both input and output activations to weights to respect the NPUs’ restrictions on activation tensors.
+An NPU-aware smoothing scheme is adopted to achieve this goal without additional runtime overhead.
+
+The Relative Error Metric.
+We design a relative error metric to estimate the amount of quantization error a weight channel introduces when quantized to a specific bit-width.
+Channels with higher metric values are granted more bits.
+Formally, for channel with dimensions, we define the relative error under -bit quantization, i.e., , as the cosine distance between the original weight channel and its dequantized version  (Banner et al., 2018; Zhang et al., 2019):
+
+However, computing the cosine distance for all channels under all candidate bit-widths is expensive, which results in high quantization overheads.
+Particularly, before computing the cosine distance, we first need to get by uniformly quantizing into bits and dequantizing it back to FP16.
+Two linear transformations and one cosine distance computation are involved in the process of calculating RE for one channel under a single bit-width.
+We reduce the computation overhead by modeling RE with random variables so that it can be efficiently estimated with simple statistics over and instead of calculating the precise values.
+
+To achieve this, we approximate RE with the absolute error and model as a random variable.
+We skip the detailed derivation in Appendix A.
+The RE can be represented as a function of the mathematical expectations of and :
+
+We further adopt a uniform rounding approximation (Lin et al., 2024) to simplify the calculation of .
+Formally, we model , i.e., the absolute error of the -th element in , with , where is the scale of channel under uniform quantization.
+The rationale is that the absolute error always falls in the range and is usually small.
+We can use a uniform distribution to approximate the real distribution in a small range.
+By applying the uniform estimation to , we obtain the final form:
+
+The advantage of this expression is that it can be calculated with simple statistics, i.e., mean squared values, which greatly simplifies the computation.
+
+Greedy Bit-Width Allocation.
+For a weight tensor with output channels , we need to find the optimal per-channel bit-widths that minimizes the total RE.
+Two constraints need to be satisfied.
+First, the assignable bit-widths for each channel should be in the range 1 to 8 bits.
+Second, the average bit-width of all channels should not exceed a given value to indicate the flash bandwidth budget.
+We formulate the optimization problem as follows:
+
+We leverage two properties of this optimization problem to design our bit-width allocation algorithm.
+First, the total RE in our formulation is additive across channels, meaning the RE of one channel is determined solely by its own bit-width and statistics, independent of others.
+While end-to-end model accuracy is indeed a complex combinatorial function of all quantizations, we use this additive RE as a local proxy metric to make the optimization tractable.
+Second, the reduction in RE for a channel is strictly decreasing with more bit-width assigned to it.
+These two properties guarantee that we can greedily assign a bit to one channel that reduces the total RE most without sacrificing the global optimality.
+
+Therefore, we develop a greedy algorithm that yields the optimal solution.
+As shown in Algorithm 1, we first initialize all channels to 1 bit and then compute the remaining bit budget (Line 1).
+We build a max heap using the RE gain of adjacent bit-widths for each channel as key (Line 2), i.e., .
+We then iteratively pop the channel that reduces its relative error the most from the heap, increment its bit-width by one, update the heap, and adjust the remaining bit-width budget (Lines 3-7).
+The process continues until the total bit-width budget is exhausted.
+This approach efficiently finds an optimal bit-width allocation for weight channels in time.
+
+Algorithm 1 Greedy Bit-Width Allocation
+
+Input : 
+: The weight with channels
+
+: The expected average bit-width
+
+Output : 
+: The allocated bit-width array
+
+// Initialize all channels to 1 bit and calculate expected gains
+
+1
+
+2
+
+3
+while do
+
+    // Greedily allocate 1 more bit to the max-gain channel
+
+    
+4
+
+    
+5
+
+    
+6
+if then // Update the gain of channel
+
+        
+7
+
+8
+return
+
+NPU-Aware Smoothing.
+NPUs’ coarse-grained per-tensor quantization degrades accuracy severely on high-variance LLM activations (Xu et al., 2025; Liu et al., 2025).
+Meanwhile, our bit-width allocation algorithm on weights is input-unaware, making it insufficient to address activation-induced errors.
+To tackle these issues, we propose NPU-aware smoothing, which statically transfers inter-channel variance from activations to weights without runtime overhead.
+
+We use a calibration dataset to profile per-channel variance and for the input and output , respectively.
+The variance for each channel is defined as the maximum absolute value in the channel.
+We then divide inputs and outputs by and so that their variances are smoothed.
+and are hyperparameters controlling the degree of smoothing.
+The variances are then restored in a transformed weight tensor .
+The resulting quantized matmul becomes:
+
+Performing bit-width allocation on the restored weight tensor is implicitly guided by activation statistics, making the overall scheme input-aware, similar in spirit to AWQ (Lin et al., 2024).
+
+We perform a grid search to find the optimal over the interval of that minimizes quantization error.
+We set to 1 to shift most of the inter-channel variance of outputs to weights.
+Moreover, the scaling factors do not introduce additional runtime overhead, as the input-side scaling can be fused into the preceding normalization or linear operators, while the output-side scaling can be absorbed by the subsequent dequantization step.
+
+4.2. SIMD-Friendly Packing Format
+
+Figure 7. The SIMD-friendly packing format. The number denoted in each weightlet is the index of its corresponding weight.
+
+The unpacking process converts low-bit weights into INT8 tensors for NPU execution.
+EdgeFlow accelerates this process with SIMD-based unpacking.
+SIMD (Single Instruction Multiple Data) provides wide registers, e.g., 128-bit registers in Arm Neon (Developer, 2025), to apply the same operation to multiple elements in parallel.
+
+However, SIMD unpacking faces two challenges.
+First, irregular bit-widths such as 3-bit or 5-bit do not align naturally with byte boundaries.
+We address this issue by decomposing each weight into a combination of primitive weightlets with bit-widths 1, 2, or 4, so that unpacking reduces to handling only byte-divisible primitives.
+Second, SIMD manipulates data at byte granularity, which makes it inefficient to directly access logically adjacent weightlets stored contiguously.
+We therefore store weightlets in an interleaved layout.
+For an -bit SIMD register, this layout allows processing up to weightlets in parallel and reconstructing consecutive weights simultaneously.
+
+Figure 7 illustrates the resulting storage format of a quantized model that contains layers, each with multiple weight tensors.
+Each tensor is a matrix, where is the number of output channels and is the number of weights per channel.
+Within each channel, weights are partitioned into groups of consecutive weights.
+After decomposition, weightlets of the same bit-width in a group are stored into one or more -bit blocks, each directly loadable into an SIMD register.
+For example, a group of 7-bit weights is decomposed into four 4-bit blocks, two 2-bit blocks, and one 1-bit block.
+To match SIMD byte-wise execution, weightlets belonging to logically consecutive weights (defined as a stripe), are interleaved with a stride for bit-width .
+Since different channels may use different bit-widths, each packed tensor is prepended with per-channel bit-width metadata, stored as a compact INT3 array representing eight precision levels from 1 to 8 bits.
+
+Figure 8. The SIMD-based unpacking algorithm.
+
+EdgeFlow further designs an SIMD-based unpacking algorithm for efficient weight unpacking.
+The process is also conducted in a channel-wise, group-wise manner.
+First, EdgeFlow checks the metadata of the current channel to determine its bit-width, which indicates the number of blocks per group.
+Figure 8 illustrates the unpacking procedure exemplified by a 3-bit weight group, which consists of one 1-bit block and two 2-bit blocks, each mapped to a wide register.
+
+For each stripe, unpacking proceeds in three steps.
+Taking the first stripe as an example:
+\footnotesize1⃝ Mask. Valid bits are extracted via bitwise ANDs: the leading bit of each byte in the 1-bit block and the leading two bits in the first 2-bit block.
+\footnotesize2⃝ Align. The extracted bits are shifted to their target positions: the 1-bit block is right-shifted by 5 bits to form the MSB, while the 2-bit block is right-shifted by 6 bits to form the lower bits.
+\footnotesize3⃝ Merge. The aligned blocks are combined via bitwise ORs to form 3-bit weights, then cast to INT8.
+
+This process is repeated across all stripes (e.g., 8 per group) until the entire group is unpacked and stored for NPU execution.
+With this SIMD-based design, unpacking requires only 0.48 SIMD instructions per weight on average.
+
+4.3. Synergistic Granular Pipeline
+
+Figure 9. The synergistic granular pipeline with fine-grained operator placement and dynamic operator scheduling. Each block represents an operator, and the numbers inside indicate chunk IDs.
+
+As mentioned in Section 3.2, the key problems with existing pipeline scheduling approaches originate from their coarse-grained and static nature.
+EdgeFlow attacks the issue by first designing a fine-grained operator placement scheme that enables operator scheduling with more flexibility.
+Then, a dynamic operator scheduling mechanism is adopted to further reduce the pipeline bubbles.
+
+Fine-Grained Operator Placement.
+EdgeFlow performs scheduling at the granularity of individual operators, e.g., matmuls and layer normalizations.
+Compared with scheduling at subgraph granularity, such an approach enables finer-grained control over computation.
+In addition, we derive an initial placement of all operators among the NPU and the CPU to serve as the static backbone for the subsequent dynamic scheduling.
+We place all INT8 matmul operators on the NPU, i.e., Q/K/V/O projections for attentions and Gate/Up/Down projections for feedforward networks (FFNs), since NPUs are efficient in executing integer matmuls.
+Other operators are assigned to the CPU in FP16.
+To respect operator dependencies, we offline order operators topologically within a transformer layer.
+We maintain separate operator queues for the CPU and the NPU, and dispatch operators according to their topological order during runtime.
+Detailed placement is provided in Appendix B.
+
+Dynamic Operator Scheduling.
+To further optimize resource utilization, EdgeFlow proposes to dynamically schedule operators between the CPU and the NPU.
+Specifically, we adopt a position-guided operator priority to reduce NPU bubbles and a task-stealing scheme to reduce CPU bubbles.
+
+The position-guided operator priority reduces NPU bubbles caused by the suboptimal operator execution order.
+Specifically, existing approaches serialize the operator execution of input sequence chunks and parallelize chunk execution on the CPU and NPU.
+As shown in Figure 9, the NPU first executes the Q/K/V projections for all chunks.
+Once the Q/K/V tensors are produced for a chunk, the CPU then computes the attention of the chunk in parallel.
+The O projection is then executed in parallel on the NPU when the corresponding attention score is ready for the chunk.
+Since the computation time of attentions grows linearly with the number of chunks, O projections on NPUs cannot overlap with attention computations on the CPU as the chunk count increases.
+NPU time is thus wasted on waiting for the CPU attention computation, even though the subsequent FFN projection of previous chunks can be executed first.
+
+The root cause of this issue lies in the lack of a decent tie-breaking mechanism when scheduling operators under the topological order of models’ execution graphs, e.g., the case when inputs of both O projection for later chunks and FNN projections for earlier chunks are ready.
+EdgeFlow breaks the tie by assigning operators a positional-guided priority.
+As shown in Figure 9, for each operator, we assign a priority based on its chunk position, where earlier chunks in the prompt receive higher priority.
+This strategy effectively breaks the tie by executing CPU operators in earlier chunks and helps unlock downstream NPU operators earlier.
+
+Moreover, we find that the CPU remains idle for 65% of the end-to-end pipeline execution time.
+We thus implement a CPU task-stealing mechanism to enhance CPU utilization.
+As shown in Figure 9, when the CPU is idle and the length of the NPU task queue exceeds a threshold, the CPU proactively takes and executes the top task from the NPU task queue.
+The threshold is adopted to avoid excessive CPU preemption that may leave the NPU idle.
+We determine the threshold according to the ratio between the execution time of CPU and NPU matmul operators and set it to 5 in our experiments.
+
+5. Evaluation
+
+5.1. Experimental Setup
+
+Implementations.
+We implement EdgeFlow from scratch with about 8K lines of code.
+EdgeFlow is composed of 1) a set of Python utilities that quantize models and pack weights in the SIMD-friendly packing format, and 2) a C++ runtime that unpacks weights and conducts inference computation.
+The current runtime is implemented with QNN and supports mobile devices with Arm CPUs and Hexagon NPUs.
+QNN embeds weights into compiled execution graphs in a proprietary storage format during the graph compilation phase.
+There is no interface for dynamically loading weights into a compiled execution graph.
+However, EdgeFlow stores quantized weights in an SIMD-friendly unpacking format.
+Weights need to be dynamically unpacked into execution graphs before computation.
+We reverse-engineer the proprietary execution graph format of QNN to enable dynamic loading and execution of weights by the NPU.
+
+Testbed.
+All experiments are conducted on a Xiaomi 15 Pro (Xiaomi., 2024) equipped with a Qualcomm Snapdragon 8 Elite SoC, 16 GB of RAM, and 512 GB of flash storage.
+Inside the Snapdragon SoC, there is an Arm CPU with 8 cores, a Hexagon NPU, and an Adreno GPU.
+
+Table 3. Datasets used in our evaluation. "OBQA" is OpenBookQA.
+
+Datasets
+LAMBADA
+WinoGrande
+OBQA
+MMLU
+HellaSwag
+
+#shots
+–
+3
+4
+5
+6
+
+#token range
+59–97
+131–144
+190–230
+243–699
+883–1086
+
+Models and Datasets.
+We evaluate EdgeFlow under models with sizes that are widely used on mobile devices, i.e., Llama3 8B (, 2024), Mistral 7B (, 2023), Phi3 3.8B (, 2024), and Qwen1.5 1.8B (, 2023).
+As shown in Table 3, we utilize five datasets, i.e., LAMBADA (Paperno et al., 2016), WinoGrande (Sakaguchi et al., 2020), OpenBookQA (Mihaylov et al., 2018), MMLU (Hendrycks et al., 2021), and HellaSwag (Zellers et al., 2019), like prior works (Xu et al., 2025; Hao et al., 2025; Frantar et al., 2022), to evaluate the model accuracy and the cold start latency of EdgeFlow under various prompt lengths.
+We adopt multi-shot prompting to generate prompt lengths in a more flexible manner.
+The summarized prompt lengths are shown in Table 3.
+
+Baselines.
+We evaluate EdgeFlow against llama.cpp (Ggerganov, 2023), MNN (Wang et al., 2024c), and llm.npu (Xu et al., 2025).
+llama.cpp and MNN are popular open-source mobile LLM frameworks.
+llama.cpp maps model weights into memory with mmap and loads weights with on-demand paging during cold starts.
+MNN loads weights sequentially before the inference computation.
+Due to the bandwidth-bound nature during cold starts and the lack of NPU support in these two frameworks, we use the more widely adopted CPU backend for both baselines.
+llm.npu is the state-of-the-art NPU-based mobile LLM framework.
+It constructs and optimizes computation graphs on the critical paths of cold starts, which incur substantial graph compilation overhead.
+We augment llm.npu with materialization and overlapping as mentioned in Section 3.2 for more fair comparisons.
+
+Figure 10. The cold start latency (i.e., TTFT) and accuracy of different methods on various models and datasets. Bars show the average TTFT (the lower is better). Lines show accuracy. Prompt length is shown beneath each dataset label. "EF" represents EdgeFlow. "llm.npu+" represents llm.npu enhanced with materialization and overlapping techniques; the same notation is used throughout.
+
+5.2. End-to-End Performance
+
+Figure 10 presents the cold start latency (TTFT) of EdgeFlow and all baseline systems under different models and datasets.
+For EdgeFlow, we present both TTFT and model accuracy when the model is quantized to an average of 4 to 7 bits and discuss the results from two perspectives.
+
+The Cold-Start Latency.
+As the bit-width decreases from 7 bits to 4 bits, EdgeFlow progressively achieves higher speedups.
+Specifically, at 7 bits, it reduces TTFT by , , and compared with llama.cpp, MNN, and llm.npu, respectively.
+While at 4 bits, the speedups increase to , , and .
+In datasets with short prompts, i.e., under LAMBADA and WinoGrande datasets, TTFT is reduced since flash bandwidth is utilized more efficiently.
+This improvement comes from adaptive quantization, which maintains comparable model accuracy while minimizing the amount of data being loaded.
+When prompts are long, i.e., under MMLU and HellaSwag datasets, the prefill computation becomes the bottleneck.
+The TTFT of EdgeFlow outperforms llm.npu with speedups ranging from to due to our fine-grained and dynamic pipeline design.
+
+The Model Accuracy.
+All baselines adopt INT8 quantization on model weights, which results in larger model sizes than EdgeFlow.
+Specifically, llama.cpp adopts per-block quantization only on weights.
+MNN applies static per-channel quantization on weights and dynamic per-channel quantization on activations.
+Finally, llm.npu adopts per-tensor INT8 quantization with a shadow outlier scheme.
+Specifically, it first quantizes weights and activations uniformly in the per-tensor granularity and executes the quantized matmuls on the NPU.
+For activations with abnormal magnitudes, i.e., outliers, llm.npu executes them in FP16 on the CPU.
+
+As shown in the figure, when quantized to an average of 4 to 7 bits, EdgeFlow gets an accuracy drop of 22.48%, 6.36%, 1.91%, and -0.03%, respectively, compared with three baselines.
+We use 5-bit as the default configuration of EdgeFlow since it delivers substantial TTFT improvements under comparable accuracy with the NPU-based baseline, i.e., llm.npu.
+
+5.3. Ablation Study
+
+Figure 11. The model accuracy and the normalized TTFT of INT4, INT8, and different techniques in EdgeFlow.
+
+We conduct a comprehensive ablation study to evaluate the contributions of each technique to EdgeFlow’s overall performance with Llama3 8B and Phi3 3.8B over all datasets.
+The results are shown in Figure 11.
+We use INT8 and INT4 per-tensor quantization with NPU-aware smoothing as our baselines, i.e., INT8 and INT4 in the figure.
+EF 5bits denotes EdgeFlow with only NPU-aware adaptive quantization (Section 4.1) with an average bit-width of 5 bits.
+The quantized weights are stored with the INT4/INT8 mixed packing format.
+Pack and Pipeline indicate the incorporation of the SIMD-friendly packing format (Section 4.2) and the synergistic granular pipeline (Section 4.3), respectively.
+We observe that each design component contributes significantly to reducing TTFT or maintaining high accuracy, as detailed below.
+
++ NPU-Aware Adaptive Quantization.
+Compared with INT4, the NPU-aware adaptive quantization scheme improves model accuracy by an average of 35.6%.
+Compared with INT8, model accuracy only drops by 6.6% on average.
+These results show the effectiveness of the NPU-aware adaptive quantization scheme.
+Specifically, with just a 1-bit increase in average bit-width, model accuracy can be significantly enhanced.
+However, the reduction in TTFT compared with INT8 is only 3.3% due to the lack of an efficient packing format.
+Over 88% of weights are padded to 8 bits, leading to severe read amplifications during model loading.
+
++ SIMD-Friendly Packing Format.
+After adopting our packing format, TTFT decreases by up to and compared with EF 5bits under Llama3 8B and Phi3 3.8B, respectively.
+This effect is particularly pronounced under short-prompt conditions, where weight loading is the key bottleneck, i.e., under LAMBADA and WinoGrande datasets.
+
++ Synergistic Granular Pipeline.
+Introducing the synergistic granular pipeline further reduces the idle time and improves workload balance of the prefill computation during cold starts.
+This reduction is particularly pronounced on longer datasets.
+Specifically, for datasets with long prompts, i.e., MMLU and HellaSwag, the average TTFT decreases by 12.7%.
+Meanwhile, for datasets with short prompts, the TTFT also decreases by an average of 3.5%.
+
+5.4. In-Depth Analyses
+
+We further conduct in-depth analyses to evaluate the effectiveness of the three key design components of EdgeFlow.
+
+Figure 12. Accuracy of quantization schemes across precisions on Llama3 8B. The horizontal dotted line represents the FP16 accuracy.
+
+Table 4. Quantized perplexities on WikiText-2 for Llama3-8B (FP16 perplexity: 14.59). The bold is the best. "SO" means shadow outlier.
+
+Llama3-8B
+SmoothQuant
+SO
+CMPQ
+EdgeFlow
+
+4bits
+410.67
+10k+
+103.52
+30.96
+
+5bits
+99.68
+10k+
+18.22
+17.27
+
+6bits
+97.31
+814.51
+15.83
+15.63
+
+7bits
+75.00
+21.62
+15.11
+15.09
+
+5.4.1. Analyses of NPU-Aware Adaptive Quantization
+
+We evaluate the accuracy and perplexity of the NPU-aware adaptive quantization against three state-of-the-art quantization methods, i.e., SmoothQuant (Xiao et al., 2023), llm.npu’s shadow outlier (Xu et al., 2025), and CMPQ (Chen et al., 2024).
+We adapt SmoothQuant and CMPQ to comply with NPU constraints.
+For SmoothQuant, we apply the NPU smoothing technique to satisfy the NPU’s per-tensor output quantization constraint.
+For CMPQ, we modify its precision allocation strategy from input-channel-wise to output-channel-wise, and replace its allocation metric with our relative error accordingly.
+
+Tables 4 report perplexities of quantized models in the Wikitext-2 (Merity et al., 2017) dataset.
+EdgeFlow steadily yields lower perplexities than all baselines in various precisions.
+Figure 12 shows the accuracy in different datasets and integer precisions for Llama3 8B.
+As the results across different models are similar, the remaining results are provided in Appendix C.
+
+EdgeFlow consistently outperforms previous methods across all settings.
+Specifically, compared with SmoothQuant, shadow outlier, and CMPQ, respectively, EdgeFlow achieves average accuracy improvements of 16.55%–38.23%, 13.72%–63.13%, and 0.67%–13.55% across 4 to 7 bits.
+Notably, at lower precisions, i.e., 4 and 5 bits, SmoothQuant and shadow outlier exhibit significant accuracy degradation.
+This indicates that treating all weights equally fails to capture the importance of different channels.
+Moreover, EdgeFlow exceeds CMPQ by 13.55%, 2.47%, 0.67%, and 0.90% at 4 to 7 bits, showing the effectiveness of our precision assignment strategy.
+
+Figure 13.
+Performance comparison of different storage formats.
+
+5.4.2. Analyses of SIMD-Friendly Packing Format
+
+We evaluate the performance of EdgeFlow’s SIMD-friendly weight packing format against an INT4/INT8 mixed storage format and the K-Quant format.
+We use Llama3-8B and quantize it into varying bit-widths, i.e., 5, 6, and 7 bits.
+
+Figure 13 shows the unpacking and weight loading times of the three approaches.
+Compared with the INT4/INT8 mixed format, EdgeFlow speeds up model loading by since it eliminates read amplification incurred by padding weights.
+The additional overhead on unpacking is less than 0.65s due to our efficient SIMD-based unpacking algorithm.
+Compared with the K-Quant format, EdgeFlow has identical load times since both approaches store weights in a compact format.
+However, the unpacking time is reduced by thanks to the SIMD-based unpacking.
+
+Figure 13 presents the end-to-end latency under the same configuration.
+EdgeFlow consistently outperforms baselines across all bit-widths, achieving an average and latency reduction compared with K-Quant and INT4/INT8 mixed formats, respectively.
+Both results indicate that our SIMD-friendly storage format achieves a better trade-off between read amplification and unpacking efficiency.
+
+5.4.3. Analyses of Synergistic Granular Pipeline
+
+We analyze the pipeline of EdgeFlow to show the effectiveness of the fine-grained operator placement, the position-guided priority, and the task stealing scheme.
+We use a sequence length of 512 for Llama3 8B and Phi3 3.8B.
+The baseline is the static and coarse-grained pipeline of llm.npu.
++ Place adopts the fine-grained operator placement scheme without dynamic scheduling.
++ Priority incorporates the position-guided priority and + Steal enables CPU task stealing.
+
+Figure 14 shows the single-layer execution latency and the bubble rates of the CPU and NPU.
+Figure 14 presents the execution times of CPU and NPU.
+Compared with llm.npu, + Place decreases total latency by 4.2%, and NPU execution time is reduced by 7.7% with nearly unchanged CPU time.
+This improvement mainly arises from offloading NPU-inefficient operators to the CPU, which distributes the workload more appropriately.
+However, + Place employs a static CPU–NPU scheduling, which almost doubles the NPU bubble rate and leads to significant idle periods.
+
++ Priority further reduces latency by 5.2% and lowers the NPU bubble rate by 82.2%.
+This is achieved by ordering operator executions according to their positions in the prompt, allowing downstream NPU tasks to be unlocked sooner.
+Enabling task stealing, i.e., + Steal, further decreases execution time by 11.3% and reduces the CPU bubble rate by 61.6%.
+The CPU and NPU execution time also becomes more balanced.
+This gain results from better CPU utilization through opportunistic execution of NPU-assigned tasks.
+In particular, the NPU bubble rate stays roughly unchanged.
+This is attributed to the task-stealing threshold, which avoids task-stealing becoming so aggressive that it could make the NPU idle.
+
+Figure 14.
+Analyses of the synergistic granular pipeline.
+
+5.5. Deployment Efficiency
+
+We finally compare EdgeFlow with llm.npu in terms of decoding efficiency and resource consumption.
+
+5.5.1. Decoding Efficiency
+
+We break down the end-to-end completion process of Mistral 7B and Qwen1.5 1.8B (512 input tokens, 512 generated tokens) on EdgeFlow and llm.npu, as shown in Figure 15.
+Since llm.npu performs decoding on the CPU, we adopt the same setup for EdgeFlow to ensure a fair comparison.
+llm.npu adds a 2.9s overhead between cold start and decoding when switching to a CPU decoding graph, while EdgeFlow avoids this transition and enters decoding seamlessly.
+Isolating the impact on decoding itself, EdgeFlow achieves a speedup of 1.13 on Qwen1.5 1.8B and 1.00 on Mistral 7B compared with llm.npu.
+This shows that despite introducing additional processing during cold start, EdgeFlow does not degrade decoding efficiency.
+Instead, it preserves comparable decoding performance while reducing overall latency through better cold start design.
+
+5.5.2. Resource Consumption
+
+Figure 16 shows the memory footprint of EdgeFlow and llm.npu during cold start.
+Ideally, the memory footprint of both approaches should be the summation of model size under INT8 quantization and the KV cache size ( GB in total) since both approaches need to dequantize model weights to INT8 before computation.
+Initially, the memory usage of both approaches increases gradually since weights are loaded in a layer-by-layer manner.
+When it comes to the stable stage, llm.npu has higher memory consumption ( 8 GB) than the ideal case since it maintains separate computation graphs for CPU and NPU.
+The footprint of EdgeFlow is close to ideal since the weights in the computation graph are shared among CPU and NPU.
+
+Figure 16 reports the power and energy consumption during the same cold start process.
+EdgeFlow exhibits a 17.6% higher average power than llm.npu.
+This is because EdgeFlow offloads more lightweight operators to the CPU and opportunistically steals operators from the NPU.
+Since CPU execution generally incurs higher power than NPU, this leads to increased average power.
+Nevertheless, EdgeFlow achieves lower total energy consumption, i.e., reducing by 12.9%.
+This is due to reduced redundant data loading from flash storage and a more efficient execution pipeline, resulting in a shorter cold start time.
+
+Figure 15. Breakdown of end-to-end completion latency.
+
+Figure 16.
+Comparison of resource consumption during the cold start phase of Mistral 7B with 512 tokens.
+
+6. Related Work
+
+LLM Inference on Mobile Devices.
+Existing works on mobile LLM inference can be categorized into computation and storage optimizations.
+Computation-oriented approaches improve the execution efficiency of the prefill computation.
+llm.npu (Xu et al., 2025) executes attention on the CPU while running the remaining parts on the NPU.
+HeteroInfer (Chen et al., 2025) places dense kernels on the NPU and offloads remaining operations to the GPU based on NPU sensitivity profiling.
+Moreover, ShadowAttn (Yin et al., 2025) approximates important tokens in low-precision on the NPU and performs high-precision sparse attention on the CPU.
+Storage-oriented approaches offload weights and activations on the flash to execute larger models and reduce I/O overhead during offloading.
+LLM in a Flash (Alizadeh et al., 2024) bundles co-activated FFN neurons to avoid fragmented flash reads.
+ELMS (Yin et al., 2024) permutes weights by importance so that latency-critical prefixes can be loaded consecutively.
+Finally, PowerInfer-2 (Xue et al., 2024) keeps hot FFN neurons resident in memory and loads cold neurons on demand.
+
+Compared with existing approaches, EdgeFlow is the first to optimize cold inferences for mobile LLMs.
+Moreover, techniques proposed in EdgeFlow are also complementary to existing approaches.
+Specifically, the NPU-aware adaptive quantization algorithm and the SIMD-friendly packing format can be adopted together with existing storage-oriented works to further reduce I/O overhead during model offloading.
+The synergistic granular pipeline further improves the compute efficiency of existing compute-oriented approaches with its dynamic and fine-grained design.
+
+Mixed-Precision LLM Quantization.
+These algorithms leverage the varying importance of model weights by assigning different bit-widths to achieve a better accuracy and efficiency trade-off.
+LLM-MQ (Li et al., 2023) uses first-order loss sensitivity to guide tensor-level precision assignment, while keeping sparse outlier weights in FP16.
+SliM-LLM (Huang et al., 2025) allocates bits based on reconstruction error, and performs group-wise calibration of quantization parameters.
+ResQ (Saxena et al., 2025) uses principal component analysis to identify high-variance subspaces and performs rotation to mitigate outliers.
+CMPQ (Chen et al., 2024) profiles per-channel input magnitudes to estimate weight importance, and assigns bit-widths heuristically with non-uniform quantization.
+Compared with these approaches, EdgeFlow accounts for NPU-specific quantization constraints and delivers superior model accuracy under these constraints.
+
+Cold Start for Model Serving Systems.
+Existing cold-start mitigation techniques can be classified into cloud-based and mobile-based techniques.
+Cold-start mitigation techniques on the cloud are designed for GPU-based inference systems.
+Specifically, ServerlessLLM (Fu et al., 2024) leverages a multi-tier checkpoint caching and a GPU-aware formatting to reduce the provisioning latency of an inference instance.
+Medusa (Zeng et al., 2025) and PhoenixOS (Wei et al., 2025) materialize and load GPU execution states to enable faster initialization.
+ParaServe (Lou et al., 2025) and BLITZSCALE (Zhang et al., 2025b) aggregate bandwidth across GPU servers to parallelize model loading.
+Compared with these approaches, EdgeFlow tackles cold starts for mobile LLM inference, which cannot adopt these GPU-based approaches.
+
+For mobile devices, NNV12 (Yi et al., 2023) reduces cold-start latency by selecting startup-friendly kernels, which is complementary to EdgeFlow.
+There are also OS-level optimizations to reduce cold start latency for general applications, which can be broadly categorized into data prefetching (Joo et al., 2011; Son et al., 2021; Xiaochen et al., 2026), memory paging and swapping management (Liang et al., 2025; Li et al., 2025a), and faster memory reclamation (Liang et al., 2020; Li et al., 2025b).
+These works are orthogonal to EdgeFlow since we focus on reducing the pure cold-start latency with algorithm and system co-design.
+
+7. Conclusion
+
+In this paper, we identify that the inefficient flash bandwidth utilization significantly deteriorates the cold start latency of mobile LLM inferences.
+We design EdgeFlow and show that the cold start latency can be mitigated by assigning precisions to weights adaptively according to their importance.
+EdgeFlow achieves this idea with three techniques, i.e., an NPU-aware adaptive quantization, an SIMD-friendly packing format, and a synergistic granular pipeline.
+Our evaluation results show that EdgeFlow significantly reduces cold-start latency up to compared with state-of-the-art baselines while maintaining comparable model accuracy.
+
+References
+
+Agrawal et al. (2024)
+A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. S. Gulavani, A. Tumanov, and R. Ramjee
+
+Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation,
+OSDI 2024, Santa Clara, USA,
+
+pp. 117–134.
+
+External Links: Link
+
+Cited by: §3.2.
+
+Alizadeh et al. (2024)
+K. Alizadeh, I. Mirzadeh, D. Belenko, S. Khatamifard, M. Cho, C. C. del Mundo, M. Rastegari, and M. Farajtabar
+
+LLM in a Flash: Efficient Large Language Model Inference with Limited Memory.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand,
+
+pp. 12562–12584.
+
+External Links: Link
+
+Cited by: §6.
+
+Android Open Source Project (2023)
+Android Open Source Project
+
+Low memory killer daemon.
+
+Note: https://source.android.com/docs/core/perf/lmkd
+
+Cited by: §1.
+
+Apple Developer Documentation (2024)
+Apple Developer Documentation
+
+Reducing terminations in your app.
+
+Note: https://developer.apple.com/documentation/xcode/reduce-terminations-in-your-app
+
+Cited by: §1.
+
+Arapakis et al. (2021)
+I. Arapakis, S. Park, and M. Pielot
+
+Impact of Response Latency on User Behaviour in Mobile Web Search.
+
+In CHIIR ’21: ACM SIGIR Conference on Human Information Interaction
+and Retrieval, Canberra, ACT, Australia, March 14-19, 2021, F. Scholer, P. Thomas, D. Elsweiler, H. Joho, N. Kando, and C. Smith (Eds.),
+
+pp. 279–283.
+
+External Links: Link
+
+Cited by: §1,
+§3.1.
+
+Ashkboos et al. (2024)
+S. Ashkboos, A. Mohtashami, M. L. Croci, B. Li, P. Cameron, M. Jaggi, D. Alistarh, T. Hoefler, and J. Hensman
+
+QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs.
+
+In Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, Canada,
+
+External Links: Link
+
+Cited by: §2.2.
+
+Banner et al. (2018)
+R. Banner, I. Hubara, E. Hoffer, and D. Soudry
+
+Scalable Methods for 8-bit Training of Neural Networks.
+
+In Advances in Neural Information Processing Systems 31: Annual Conference
+on Neural Information Processing Systems 2018, NeurIPS 2018, Montréal, Canada,
+
+pp. 5151–5159.
+
+External Links: Link
+
+Cited by: §4.1.
+
+Birkmose et al. (2025)
+R. Birkmose, N. M. Reece, E. H. Norvin, J. Bjerva, and M. Zhang
+
+On-Device LLMs for Home Assistant: Dual Role in Intent Detection and Response Generation.
+
+pp. 57–67.
+
+External Links: Link
+
+Cited by: §1.
+
+Chen et al. (2025)
+L. Chen, D. Feng, E. Feng, Y. Wang, R. Zhao, Y. Xia, P. Xu, and H. Chen
+
+Characterizing Mobile SoC for Accelerating Heterogeneous LLM Inference.
+
+In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems
+Principles, SOSP 2025, Lotte Hotel World, Seoul, Republic of Korea,
+
+pp. 359–374.
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§6.
+
+Chen et al. (2024)
+Z. Chen, B. Xie, J. Li, and C. Shen
+
+Channel-Wise Mixed-Precision Quantization for Large Language Models.
+
+CoRR abs/2410.13056.
+
+External Links: Link
+
+Cited by: §1,
+§2.2,
+§3.1,
+§3.2,
+Table 2,
+§5.4.1,
+§6.
+
+Cosentino et al. (2024)
+J. Cosentino, A. Belyaeva, X. Liu, N. A. Furlotte, Z. Yang, C. Lee, E. Schenck, Y. Patel, J. Cui, L. D. Schneider, R. Bryant, R. G. Gomes, A. Jiang, R. Lee, Y. Liu, J. P. Matos, J. K. Rogers, C. Speed, S. A. Tailor, M. Walker, J. Yu, T. Althoff, C. Heneghan, J. Hernandez, M. Malhotra, L. Stern, Y. Matias, G. S. Corrado, S. N. Patel, S. Shetty, J. Zhan, S. Prabhakara, D. McDuff, and C. Y. McLean
+
+Towards a Personal Health Large Language Model.
+
+CoRR abs/2406.06474.
+
+External Links: Link
+
+Cited by: §1.
+
+Developer (2025)
+A. Developer
+
+Arm Neon.
+
+Note: https://developer.arm.com/Architectures/NeonReferenced December 2025.
+
+Cited by: §4.2.
+
+Fang et al. (2024)
+C. M. Fang, V. Danry, N. Whitmore, A. Bao, A. Hutchison, C. Pierce, and P. Maes
+
+PhysioLLM: Supporting Personalized Health Insights with Wearables and Large Language Models.
+
+In IEEE EMBS International Conference on Biomedical and Health Informatics,
+BHI 2024, Houston, USA,
+
+pp. 1–8.
+
+External Links: Link
+
+Cited by: §1.
+
+Frantar et al. (2022)
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh
+
+GPTQ: Accurate Post-Training Quantization for Generative Pre-Trained Transformers.
+
+CoRR abs/2210.17323.
+
+External Links: Link
+
+Cited by: §1,
+§2.2,
+§5.1.
+
+Fu et al. (2024)
+Y. Fu, L. Xue, Y. Huang, A. Brabete, D. Ustiugov, Y. Patel, and L. Mai
+
+ServerlessLLM: Low-Latency Serverless Inference for Large Language Models.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation,
+OSDI 2024, Santa Clara, USA,
+
+pp. 135–153.
+
+External Links: Link
+
+Cited by: §6.
+
+Ggerganov (2023)
+Ggerganov
+
+Llama.cpp - LLM Inference in C/C++.
+
+Note: Referenced November 2025https://github.com/ggerganov/llama.cpp
+
+Cited by: §1,
+§1,
+§1,
+§3.2,
+§5.1.
+
+Hao et al. (2025)
+Z. Hao, J. Wei, T. Wang, M. Huang, H. Jiang, S. Jiang, T. Cao, and J. Ren
+
+Scaling LLM Test-Time Compute with Mobile NPU on Smartphones.
+
+CoRR abs/2509.23324.
+
+External Links: Link
+
+Cited by: §1,
+§2.1,
+§5.1.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+
+Measuring Massive Multitask Language Understanding.
+
+In Proceedings of the 9th International Conference on Learning Representations, ICLR 2021,
+Virtual Event, Austria,
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+Huang et al. (2024)
+J. Huang, Y. Zhang, J. Qiu, Y. Liang, R. Ausavarungnirun, Q. Li, and C. J. Xue
+
+More Apps, Faster Hot-Launch on Mobile Devices via Fore/Background-aware GC-Swap Co-design.
+
+In Proceedings of the 29th ACM International Conference on Architectural
+Support for Programming Languages and Operating Systems, Volume 3,
+ASPLOS 2024, La Jolla, CA, USA, 27 April 2024- 1 May 2024,
+
+pp. 654–670.
+
+External Links: Link
+
+Cited by: §1.
+
+Huang et al. (2025)
+W. Huang, H. Qin, Y. Liu, Y. Li, Q. Liu, X. Liu, L. Benini, M. Magno, S. Zhang, and X. Qi
+
+SliM-LLM: Salience-Driven Mixed-Precision Quantization for Large Language Models.
+
+In Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025,
+
+Proceedings of Machine Learning Research.
+
+External Links: Link
+
+Cited by: §6.
+
+Inc. (2025a)
+A. Inc.
+
+Apple A19: Specs and Benchmarks.
+
+Note: https://nanoreview.net/en/soc/apple-a19Referenced November 2025.
+
+Cited by: §2.1.
+
+Inc. (2025b)
+Q. T. Inc.
+
+Qualcomm AI Engine Direct SDK.
+
+Note: https://developer.qualcomm.com/software/qualcomm-ai-engine-direct-sdkReferenced November 2025
+
+Cited by: §2.1,
+§3.2.
+
+Inc. (2025c)
+Q. T. Inc.
+
+Qualcomm Hexagon NPU - Powering the Generative AI Revolution.
+
+Note: https://www.qualcomm.com/processors/hexagonReferenced November 2025.
+
+Cited by: §1,
+§2.1.
+
+Joo et al. (2011)
+Y. Joo, J. Ryu, S. Park, and K. G. Shin
+
+FAST: Quick Application Launch on Solid-State Drives.
+
+In 9th USENIX Conference on File and Storage Technologies, San Jose,
+CA, USA, February 15-17, 2011,
+
+pp. 259–272.
+
+External Links: Link
+
+Cited by: §1,
+§6.
+
+King et al. (2024)
+E. King, H. Yu, S. Lee, and C. Julien
+
+Sasha: Creative Goal-Oriented Reasoning in Smart Homes with Large Language Models.
+
+Proc. ACM Interact. Mob. Wearable Ubiquitous Technol. 8 (1), pp. 12:1–12:38.
+
+External Links: Link
+
+Cited by: §1.
+
+Li et al. (2025a)
+C. Li, Z. Zhu, C. Wang, F. Liu, F. Xu, E. H.-M. Sha, and X. Zhou
+
+Archer: Adaptive Memory Compression with Page-Association-Rule Awareness for High-Speed Response of Mobile Devices.
+
+In 23rd USENIX Conference on File and Storage Technologies, FAST
+2025, Santa Clara, CA, February 25-27, 2025,
+
+pp. 497–511.
+
+External Links: Link
+
+Cited by: §1,
+§6.
+
+Li et al. (2024)
+L. Li, S. Qian, J. Lu, L. Yuan, R. Wang, and Q. Xie
+
+Transformer-Lite: High-Efficiency Deployment of Large Language Models on Mobile Phone GPUs.
+
+CoRR abs/2403.20041.
+
+External Links: Link,
+Document,
+2403.20041
+
+Cited by: §1.
+
+Li et al. (2023)
+S. Li, X. Ning, K. Hong, T. Liu, L. Wang, X. Li, K. Zhong, G. Dai, H. Yang, and Y. Wang
+
+LLM-Mq: Mixed-Precision Quantization for Efficient LLM Deployment.
+
+In The Efficient Natural Language and Speech Processing Workshop with NeurIPS,
+
+Vol. 9, pp. 3.
+
+Cited by: §2.2,
+§3.1,
+§6.
+
+Li et al. (2025b)
+W. Li, L. Chang, Y. Mao, and L. Shi
+
+PMR: Fast Application Response via Parallel Memory Reclaim on Mobile Devices.
+
+In Proceedings of the 2025 USENIX Annual Technical Conference, USENIX
+ATC 2025, Boston, USA,
+
+pp. 1569–1584.
+
+External Links: Link
+
+Cited by: §1,
+§6.
+
+Liang et al. (2020)
+Y. Liang, J. Li, R. Ausavarungnirun, R. Pan, L. Shi, T. Kuo, and C. J. Xue
+
+Acclaim: Adaptive Memory Reclaim to Improve User Experience in Android Systems.
+
+In Proceedings of the 2020 USENIX Annual Technical Conference, USENIX
+ATC 2020, July 15-17, 2020,
+
+pp. 897–910.
+
+External Links: Link
+
+Cited by: §1,
+§6.
+
+Liang et al. (2025)
+Y. Liang, A. Shen, C. J. Xue, R. Pan, H. Mao, N. Mansouri-Ghiasi, Q. Jiang, R. Nadig, L. Li, R. Ausavarungnirun, M. Sadrosadati, and O. Mutlu
+
+Ariadne: A Hotness-Aware and Size-Adaptive Compressed Swap Technique for Fast Application Relaunch and Reduced CPU Usage on Mobile Devices.
+
+In IEEE International Symposium on High Performance Computer Architecture,
+HPCA 2025, Las Vegas, NV, USA, March 1-5, 2025,
+
+pp. 1588–1602.
+
+External Links: Link
+
+Cited by: §1,
+§6.
+
+Lim et al. (2023)
+G. Lim, D. Kang, M. Ham, and Y. I. Eom
+
+SWAM: Revisiting Swap and OOMK for Improving Application Responsiveness on Mobile Devices.
+
+In Proceedings of the 29th Annual International Conference on Mobile
+Computing and Networking, ACM MobiCom 2023, Madrid, Spain,
+
+pp. 16:1–16:15.
+
+External Links: Link
+
+Cited by: §1.
+
+Lin et al. (2024)
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han
+
+AWQ: Activation-Aware Weight Quantization for On-Device LLM Compression and Acceleration.
+
+In Proceedings of the Seventh Annual Conference on Machine Learning and
+Systems, MLSys 2024, Santa Clara, USA,
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§1,
+§2.2,
+§3.1,
+§3.2,
+Table 2,
+§4.1,
+§4.1.
+
+Liu et al. (2025)
+L. Liu, L. Cheng, H. Ren, Z. Xu, Y. Pan, M. Wang, X. Li, Y. Han, and Y. Wang
+
+COMET: Towards Practical W4A4KV4 LLMs Serving.
+
+In Proceedings of the 30th ACM International Conference on Architectural
+Support for Programming Languages and Operating Systems, Volume 2,
+ASPLOS 2025, Rotterdam, Netherlands,
+
+pp. 131–146.
+
+External Links: Link
+
+Cited by: §4.1.
+
+Liu et al. (2024)
+Y. Liu, J. Wen, Y. Wang, S. Ye, L. L. Zhang, T. Cao, C. Li, and M. Yang
+
+VPTQ: Extreme Low-Bit Vector Post-Training Quantization for Large Language Models.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2024, Miami, USA,
+
+pp. 8181–8196.
+
+External Links: Link
+
+Cited by: §2.2.
+
+[36]
+(2024)
+
+Llama 8B.
+
+Note: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§5.1.
+
+Lou et al. (2025)
+C. Lou, S. Qi, C. Jin, D. Nie, H. Yang, X. Liu, and X. Jin
+
+Towards Swift Serverless LLM Cold Starts with ParaServe.
+
+CoRR abs/2502.15524.
+
+External Links: Link
+
+Cited by: §6.
+
+Lu et al. (2025)
+X. Lu, Y. Chen, C. Chen, H. Tan, B. Chen, Y. Xie, R. Hu, G. Tan, R. Wu, Y. Hu, Y. Zeng, L. Wu, L. Bian, Z. Wang, L. Liu, Y. Yang, H. Xiao, A. Zhou, Y. Wen, X. Chen, S. Ren, and H. Li
+
+BlueLM-V-3B: Algorithm and System Co-Design for Multimodal Large Language Models on Mobile Devices.
+
+In IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2025, Nashville, USA,
+
+pp. 4145–4155.
+
+External Links: Link
+
+Cited by: §1.
+
+Merity et al. (2017)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+
+Pointer Sentinel Mixture Models.
+
+In Procedings of the 5th International Conference on Learning Representations, ICLR 2017,
+Toulon, France,
+
+External Links: Link
+
+Cited by: Appendix C,
+§1,
+§5.4.1.
+
+Mihaylov et al. (2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+
+Can a Suit of Armor Conduct Electricity? A New Dataset for Open Book Question Answering.
+
+In Proceedings of the 2018 Conference on Empirical Methods in Natural
+Language Processing, Brussels, Belgium,
+
+pp. 2381–2391.
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+[41]
+(2023)
+
+Mistral 7B.
+
+Note: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+Nielsen (1993)
+J. Nielsen
+
+Response Times: the Three Important Limits.
+
+Usability Engineering.
+
+Cited by: §1.
+
+Paperno et al. (2016)
+D. Paperno, G. Kruszewski, A. Lazaridou, Q. N. Pham, R. Bernardi, S. Pezzelle, M. Baroni, G. Boleda, and R. Fernández
+
+The LAMBADA Dataset: Word Prediction Requiring a Broad Discourse Context.
+
+In Proceedings of the 54th Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2016, Berlin, Germany,
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+[44]
+(2024)
+
+Phi3 3.8B.
+
+Note: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+[45]
+(2023)
+
+Qwen1.5 1.8B.
+
+Note: https://huggingface.co/Qwen/Qwen1.5-1.8B-Chat
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+Ryu et al. (2023)
+J. Ryu, D. Lee, K. G. Shin, and K. Kang
+
+Fast Application Launch on Personal Computing/Communication Devices.
+
+In Proceedings of the 21st USENIX Conference on File and Storage Technologies, FAST
+2023, Santa Clara, USA,
+
+pp. 425–440.
+
+External Links: Link
+
+Cited by: §1,
+§3.1.
+
+Sakaguchi et al. (2020)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+
+WinoGrande: An Adversarial Winograd Schema Challenge at Scale.
+
+In The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI
+2020, New York, USA,
+
+pp. 8732–8740.
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+Saxena et al. (2025)
+U. Saxena, S. Sharify, K. Roy, and X. Wang
+
+ResQ: Mixed-Precision Quantization of Large Language Models with Low-Rank Residuals.
+
+In Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025,
+
+Proceedings of Machine Learning Research.
+
+External Links: Link
+
+Cited by: §6.
+
+Son et al. (2021)
+S. Son, S. Y. Lee, Y. Jin, J. Bae, J. Jeong, T. J. Ham, J. W. Lee, and H. Yoon
+
+ASAP: Fast Mobile Application Switch via Adaptive Prepaging.
+
+In Proceedings of the 2021 USENIX Annual Technical Conference, USENIX
+ATC 2021,
+
+pp. 365–380.
+
+External Links: Link
+
+Cited by: §1,
+§3.1,
+§6.
+
+Wang et al. (2024a)
+J. Wang, H. Xu, H. Jia, X. Zhang, M. Yan, W. Shen, J. Zhang, F. Huang, and J. Sang
+
+Mobile-Agent-v2: Mobile Device Operation Assistant with Effective Navigation via Multi-Agent Collaboration.
+
+In Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, Canada,
+
+External Links: Link
+
+Cited by: §1.
+
+Wang et al. (2024b)
+J. Wang, H. Xu, J. Ye, M. Yan, W. Shen, J. Zhang, F. Huang, and J. Sang
+
+Mobile-Agent: Autonomous Multi-Modal Mobile Device Agent with Visual Perception.
+
+CoRR abs/2401.16158.
+
+External Links: Link
+
+Cited by: §1.
+
+Wang et al. (2024c)
+Z. Wang, J. Yang, X. Qian, S. Xing, X. Jiang, C. Lv, and S. Zhang
+
+MNN-LLM: A Generic Inference Engine for Fast Large Language Model Deployment on Mobile Devices.
+
+In Proceedings of the 6th ACM International Conference on Multimedia in Asia Workshops,
+
+MMAsia ’24 Workshops.
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§5.1.
+
+Wei et al. (2025)
+X. Wei, Z. Huang, T. Sun, Y. Hao, R. Chen, M. Han, J. Gu, and H. Chen
+
+PhoenixOS: Concurrent OS-Level GPU Checkpoint and Restore with Validated Speculation.
+
+In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems
+Principles, SOSP 2025, Lotte Hotel World, Seoul, Republic of Korea,
+
+pp. 996–1013.
+
+External Links: Link
+
+Cited by: §6.
+
+Wen et al. (2024)
+H. Wen, Y. Li, G. Liu, S. Zhao, T. Yu, T. J. Li, S. Jiang, Y. Liu, Y. Zhang, and Y. Liu
+
+AutoDroid: LLM-Powered Task Automation in Android.
+
+In Proceedings of the 30th Annual International Conference on Mobile
+Computing and Networking, ACM MobiCom 2024, Washington D.C., USA,
+
+pp. 543–557.
+
+External Links: Link
+
+Cited by: §1.
+
+Xiao et al. (2023)
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han
+
+SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models.
+
+In International Conference on Machine Learning, ICML 2023, Honolulu, USA,
+
+Proceedings of Machine Learning Research, Vol. 202, pp. 38087–38099.
+
+External Links: Link
+
+Cited by: §1,
+§5.4.1.
+
+Xiaochen et al. (2026)
+L. Xiaochen, L. Sicong, G. Bin, O. Yu, W. Fengmin, X. Yuan, and Y. Zhiwen
+
+AppFlow: Memory Scheduling for Cold Launch of Large Apps on Mobile and Vehicle Systems.
+
+In Proceedings of the 32th Annual International Conference on Mobile
+Computing and Networking, ACM MobiCom 2026, Austin, Texas, USA,
+
+External Links: Link
+
+Cited by: §1,
+§3.1,
+§6.
+
+Xiaomi. (2024)
+Xiaomi.
+
+Xiaomi 15 Pro Full Specifications.
+
+Note: Xiaomitime.comReferenced November 2025.
+
+External Links: Link
+
+Cited by: §5.1.
+
+Xu et al. (2025)
+D. Xu, H. Zhang, L. Yang, R. Liu, G. Huang, M. Xu, and X. Liu
+
+Fast On-Device LLM Inference with NPUs.
+
+In Proceedings of the 30th ACM International Conference on Architectural
+Support for Programming Languages and Operating Systems,
+ASPLOS 2025, Rotterdam, The Netherlands,
+
+pp. 445–462.
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§1,
+§1,
+§1,
+§2.1,
+§3.1,
+§3.2,
+§4.1,
+§5.1,
+§5.1,
+§5.4.1,
+§6.
+
+Xue et al. (2024)
+Z. Xue, Y. Song, Z. Mi, L. Chen, Y. Xia, and H. Chen
+
+PowerInfer-2: Fast Large Language Model Inference on a Smartphone.
+
+CoRR abs/2406.06282.
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§6.
+
+Yan et al. (2012)
+T. Yan, D. Chu, D. Ganesan, A. Kansal, and J. Liu
+
+Fast app launching for mobile devices using predictive user context.
+
+In The 10th International Conference on Mobile Systems, Applications,
+and Services, MobiSys’12, Ambleside, United Kingdom - June 25 - 29,
+2012,
+
+pp. 113–126.
+
+External Links: Link
+
+Cited by: §3.1.
+
+Yi et al. (2023)
+R. Yi, T. Cao, A. Zhou, X. Ma, S. Wang, and M. Xu
+
+Boosting DNN Cold Inference on Edge Devices.
+
+In Proceedings of the 21st Annual International Conference on Mobile
+Systems, Applications and Services, MobiSys 2023, Helsinki, Finland,
+
+pp. 516–529.
+
+External Links: Link
+
+Cited by: §6.
+
+Yin et al. (2025)
+W. Yin, D. Xu, M. Xu, G. Huang, and X. Liu
+
+Dynamic Sparse Attention on Mobile SoCs.
+
+CoRR abs/2508.16703.
+
+External Links: Link
+
+Cited by: §6.
+
+Yin et al. (2024)
+W. Yin, R. Yi, D. Xu, G. Huang, M. Xu, and X. Liu
+
+ELMS: Elasticized Large Language Models on Mobile Devices.
+
+CoRR abs/2409.09071.
+
+External Links: Link
+
+Cited by: §6.
+
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+
+HellaSwag: Can a Machine Really Finish Your Sentence?.
+
+In Proceedings of the 57th Conference of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2019, Florence, Italy,
+
+pp. 4791–4800.
+
+External Links: Link
+
+Cited by: §1,
+§5.1.
+
+Zeng et al. (2025)
+S. Zeng, M. Xie, S. Gao, Y. Chen, and Y. Lu
+
+Medusa: Accelerating Serverless LLM Inference with Materialization.
+
+In Proceedings of the 30th ACM International Conference on Architectural
+Support for Programming Languages and Operating Systems, Volume 1,
+ASPLOS 2025, Rotterdam, The Netherlands,
+
+pp. 653–668.
+
+External Links: Link
+
+Cited by: §6.
+
+Zhang et al. (2025a)
+C. Zhang, E. Feng, X. Zhao, Y. Zhao, W. Gong, J. Sun, D. Du, Z. Hua, Y. Xia, and H. Chen
+
+MobiAgent: A Systematic Framework for Customizable Mobile Agents.
+
+CoRR abs/2509.00531.
+
+External Links: Link
+
+Cited by: §1.
+
+Zhang et al. (2025b)
+D. Zhang, H. Wang, Y. Liu, X. Wei, Y. Shan, R. Chen, and H. Chen
+
+BlitzScale: Fast and Live Large Model Autoscaling with O(1) Host Caching.
+
+In Proceedings of the 19th USENIX Symposium on Operating Systems Design and Implementation,
+OSDI 2025, Boston, USA,
+
+pp. 275–293.
+
+External Links: Link
+
+Cited by: §6.
+
+Zhang et al. (2019)
+T. Zhang, L. Zhu, Q. Zhao, and K. Shin
+
+Neural Networks Weights Quantization: Target None-Retraining Ternary (TNT).
+
+In Fifth Workshop on Energy Efficient Machine Learning and Cognitive
+Computing - NeurIPS Edition, EMC2@NeurIPS 2019, Vancouver, Canada,
+
+pp. 62–65.
+
+External Links: Link
+
+Cited by: §4.1.
+
+Zheng et al. (2023)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica
+
+Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena.
+
+In Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans, USA,
+
+External Links: Link
+
+Cited by: §1.
+
+Appendix A Relative Error Derivation
+
+We derive the relationship between the cosine distance and the expected squared quantization error for weight vectors. Let denote a weight vector and its quantized-and-dequantized version. We define the quantization error vector as a random variable.
+
+where each represents the quantization error of a component of .
+
+The cosine similarity between and is
+
+We analyze this by substituting :
+
+(1)
+
+First, we analyze the numerator:
+
+(2)
+
+Second, we analyze the norm of in the denominator:
+
+To simplify, we adopt two standard assumptions in quantization analysis:
+
+(1)
+
+Small error energy: .
+
+(2)
+
+Uncorrelated error: is approximately uncorrelated with , i.e., .
+
+Under these assumptions, the denominator can be expanded using a first-order Taylor approximation:
+
+Substituting back, the cosine similarity becomes
+
+Since are modeled as i.i.d. random variables with zero mean and finite variance, we can connect the squared L2 norm to the expected squared error:
+
+Similarly, the L2 norm of the weights can be written in terms of the mean squared value:
+
+where denotes the mean square of the weight components.
+
+Finally, substituting these into the cosine distance approximation, we obtain
+
+This justifies the use of the expected squared error as a tractable approximation for the cosine distance between a weight vector and its quantized version.
+
+Figure 17. Transformer layer operator placement: CPU vs. NPU.
+
+Figure 18. Accuracy of quantization schemes across precisions on Phi3 3.8B. The horizontal dotted line represents the FP16 accuracy.
+
+Appendix B Operator-Level Placement
+
+We provide a detailed operator-level execution flow of a transformer layer under EdgeFlow, including device placement, precision transitions, and data dependencies.
+
+EdgeFlow assigns all INT8 matrix multiplications to the NPU, including the Q/K/V/O projections in attention and the Gate/Up/Down projections in feedforward networks (FFNs).
+This design is motivated by the architecture of the Hexagon NPU, which is equipped with dedicated HMX units optimized for high-throughput matrix operations.
+In particular, INT8 matrix multiplications achieve significantly higher throughput compared to FP16 on the NPU.
+
+In contrast, the remaining operators are predominantly element-wise or low arithmetic-intensity operations, such as normalization, activation functions, and residual additions.
+Offloading these operators to the NPU would not yield meaningful speedup due to limited hardware specialization and potential overheads. Therefore, they are executed on the CPU in FP16 precision, which provides better efficiency for such workloads.
+
+As illustrated in Figure 17, each block represents an individual operator that is scheduled as a task and inserted into either the CPU or NPU task queue based on its placement.
+The annotated edges form a topological backbone that captures the data dependencies among operators within a transformer layer.
+During execution, operators are dispatched in a dependency-aware manner.
+While respecting the topological order, EdgeFlow further optimizes execution using position-guided priority scheduling and task stealing, enabling dynamic load balancing across devices.
+
+Table 5. Quantized perplexities on WikiText-2 for Phi3-3.8B (FP16 perplexity: 10.01). The bold is the best. "SO" means shadow outlier.
+
+Phi3-3.8B
+SmoothQuant
+SO
+CMPQ
+EdgeFlow
+
+4bits
+338.62
+10k+
+35.87
+25.88
+
+5bits
+93.34
+10k+
+15.54
+14.24
+
+6bits
+77.49
+42.17
+11.90
+11.65
+
+7bits
+77.27
+13.82
+10.98
+10.93
+
+Appendix C Adaptive Quantization Evaluation
+
+We further evaluate adaptive quantization on Phi3 3.8B, with detailed results reported in this section.
+Similar to Llama3 8B, Table 5 presents the perplexities on the Wikitext-2 (Merity et al., 2017) dataset, where EdgeFlow consistently achieves lower perplexities than all baselines across different precisions.
+Figure 18 illustrates the accuracy under various integer precisions on multiple datasets.
+
+Overall, EdgeFlow maintains clear advantages over prior methods in all evaluated settings.
+Compared with SmoothQuant, shadow outlier, and CMPQ, EdgeFlow improves accuracy by 44.07%–55.87%, 8.15%–67.06%, and 0.82%–11.29%, respectively, across 4 to 7 bits.
+Consistent with observations on Llama3, SmoothQuant and shadow outlier suffer from notable accuracy degradation at lower precisions (e.g., 4–5 bits), suggesting that uniform treatment of weights is insufficient to capture channel-wise importance.
+
+In contrast, EdgeFlow demonstrates stable performance across all bit-widths, outperforming CMPQ by 11.29%, 3.54%, 1.05%, and 0.82% at 4 to 7 bits, respectively.
+These results further validate the effectiveness of our adaptive precision assignment strategy and demonstrate that the benefits of EdgeFlow generalize well across different model architectures.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

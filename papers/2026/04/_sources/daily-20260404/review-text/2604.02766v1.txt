@@ -1,0 +1,1207 @@
+Random Is Hard to Beat: Active Selection in online DPO with Modern LLMs
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Method
+
+2.1 Online DPO Training
+
+2.2 Selection Strategies
+
+2.3 Training and Evaluation Overview
+
+3 Experiments
+
+3.1 Goals and Research Questions
+
+3.2 Experimental Setup
+
+3.3 Results and Analysis
+
+4 Conclusion
+
+5 Limitations
+
+References
+
+A Transparency and Responsible AI Statements
+
+A.1 LLM Usage Disclosure
+
+A.2 Ethics Statement
+
+A.3 Reproducibility Statement
+
+B Related Works
+
+B.1 Preference Optimization and Data Efficiency
+
+B.2 Active Learning for Preference Data
+
+B.3 Proxy Judges and Evaluator Dependence
+
+B.4 Positioning of This Work
+
+C Experimental Setup and Implementation Details
+
+C.1 Dataset Details
+
+C.2 Hyperparameters
+
+C.2.1 Training Configuration
+
+C.2.2 Reward Models and LLM Judges
+
+C.3 Evaluation Prompt Templates
+
+C.4 Computational Overhead
+
+D Capability Collapse Examples
+
+E Detailed Experimental Results
+
+License: CC BY 4.0
+
+arXiv:2604.02766v1 [cs.LG] 03 Apr 2026
+
+Random Is Hard to Beat: Active Selection in online DPO with Modern LLMs
+
+Giyeong Oh Junghyun Lee Jaehyun Park Youngjae Yu Wonho Bae Junhyug Noh††footnotemark:
+
+††thanks: Corresponding authors.
+Affiliation: Seoul National University
+
+Affiliation: Ewha Womans University
+
+Affiliation: KAIST
+
+Affiliation: UBC{hard2251, youngjaeyu}@snu.ac.kr  {ejunghyun, junhyug}@ewha.ac.kr
+jhpark813@kaist.ac.kr  bwh0324@gmail.com
+
+Abstract
+
+Modern LLMs inherit strong priors from web-scale pretraining, which can limit the headroom of post-training data-selection strategies. While Active Preference Learning (APL) seeks to optimize query efficiency in online Direct Preference Optimization (DPO), the inherent richness of on-policy candidate pools often renders simple Random sampling a surprisingly formidable baseline. We evaluate uncertainty-based APL against Random across harmlessness, helpfulness, and instruction-following settings, utilizing both reward models and LLM-as-a-judge proxies.
+We find that APL yields negligible improvements in proxy win-rates compared to Random. Crucially, we observe a dissociation where win-rate improves even as general capability – measured by standard benchmarks – degrades.
+APL fails to mitigate this capability collapse or reduce variance significantly better than random sampling.
+Our findings suggest that in the regime of strong pre-trained priors, the computational overhead of active selection is difficult to justify against the “cheap diversity” provided by simple random samples. Our code is available at https://github.com/BootsofLagrangian/random-vs-apl.
+
+1 Introduction
+
+Modern large language models (LLMs) inherit strong priors from web-scale pretraining, shifting the primary goal of post-training from knowledge acquisition to alignment and behavior steering (Kaplan et al., 2020; Brown et al., 2020; Hoffmann et al., 2022).
+While methods like RLHF (Ouyang et al., 2022) and DPO (Rafailov et al., 2023) effectively guide these priors, online alignment minimizes the distribution shift inherent to offline approaches by collecting preferences directly from the current policy (Guo et al., 2024).
+Recent works have thus explored combining AL with online DPO, hypothesizing that strategically selecting only the most informative pairs from the continuous on-policy stream will maximize data efficiency (Muldrew et al., 2024; Kveton et al., 2025).
+
+However, this hypothesis encounters a practical friction in the era of modern LLMs. Since these models utilize vast pre-trained knowledge, they often require minimal steering – sometimes adapting via simple few-shot prompting alone (Brown et al., 2020). In this signal-rich regime, the on-policy candidate pool is inherently informative, rendering simple Random sampling a surprisingly formidable baseline that offers diversity at near-zero selection cost. This raises an efficiency question: Does the computational overhead of active selection yield any tangible advantage over the “cheap diversity” of random sampling?
+
+Motivated by these issues, we study active selection for online DPO across harmlessness, helpfulness, and instruction-following settings.
+We report proxy preference metrics (win-rate) and a capability check – mean acc_norm over standard benchmarks via the LM Evaluation Harness (Gao et al., 2024; Mihaylov et al., 2018; Clark et al., 2018; Sakaguchi et al., 2021; Zellers et al., 2019; Bisk et al., 2020; Clark et al., 2019) – to expose failure modes where proxy gains mask capability degradation.
+Overall, we find that (i) uncertainty-based active selection provides little consistent advantage over a strong Random baseline, and (ii) proxy win-rate can improve even when general capabilities regress, depending on the judge used.
+
+Our contributions are summarized as follows:
+
+•
+
+We provide a controlled empirical study of active selection for online DPO across harmfulness, helpfulness, and instruction-following settings, comparing Random sampling against uncertainty-based APL (Muldrew et al., 2024; Kveton et al., 2025; Guo et al., 2024).
+
+•
+
+We demonstrate evaluator-dependent failure modes where proxy win-rate improvements do not coincide with capability preservation, highlighting the proxy–target gap in large-scale preference optimization (Deng et al., 2025; Gao et al., 2024).
+
+•
+
+We analyze robustness across multiple proxy judge families and discuss practical implications for evaluation and baseline design in online alignment.
+
+2 Method
+
+We study pair selection for online DPO under a fixed training and labeling budget.
+Across all runs, we fix the prompt pool, policy/reference initialization (e.g., SFT on each dataset), on-policy generation, and optimization budget, varying only (i) the proxy judge and (ii) pair-selection strategy.
+
+Algorithm 1 Online DPO with Random / APL Pair Selection
+
+1:
+
+Prompt pool ; initial policy (SFT); fixed reference (SFT);
+proxy judge ; selector ;
+candidates and labeled pairs per prompt; steps .
+
+2:
+
+for to do
+
+3:
+
+  Sample prompts .
+
+4:
+
+  Generate candidates for each .
+
+5:
+
+  Form candidate-pair set for each .
+
+6:
+
+  Select pairs .
+Following Section 2.2
+
+7:
+
+  Query on all to obtain labeled triples .
+
+8:
+
+  Update by minimizing the DPO loss on collected triples.
+
+9:
+
+end for
+
+2.1 Online DPO Training
+
+Given a prompt , preferred/rejected responses labeled by a judge, and a fixed reference policy , we update a policy by minimizing DPO loss (Rafailov et al., 2023; Guo et al., 2024).
+
+(1)
+
+where is the sigmoid function and controls the strength of the regularization toward .
+In the online setting, preferences are collected from the current (or a recent) policy during training, reducing off-policy mismatch and enabling on-policy candidate pools (Guo et al., 2024).
+
+At iteration , we sample a batch of prompts and generate candidate responses per prompt from the current policy:
+
+(2)
+
+From , we form candidate pairs and select pairs as in Section 2.2; an LLM annotator provides binary preference labels, while a separate LLM judge is used for evaluation.
+
+2.2 Selection Strategies
+
+We compare two strategies for selecting which pairs are labeled and used for training, under the same per-iteration labeling budget.
+
+Random.
+Uniformly randomly sample pairs from .
+
+APL (uncertainty-based).
+Active Preference Learning selects pairs in two-stage.
+It first selects the top- prompts using entropy computed as:
+
+(3)
+
+where denotes the current candidate pool of prompts to rank.
+It then selects the top- pairs from that maximize implicit reward margin: with two responses per prompt.
+
+2.3 Training and Evaluation Overview
+
+Algorithm 1 summarizes the pipeline.
+For efficiency, we implement policy updates with parameter-efficient fine-tuning (LoRA) (Hu et al., 2022) (full hyperparameters in Appendix C.2).
+In experiments, we report (i) proxy win-rate of the trained policy against the SFT reference under a given judge and (ii) capability drift via mean acc_norm on standard benchmarks using the LM Evaluation Harness (Gao et al., 2024).
+
+3 Experiments
+
+3.1 Goals and Research Questions
+
+We present a controlled failure-case study of uncertainty-based active selection for online DPO.
+Our goal is twofold: (i) to test whether active selection provides a consistent efficiency gain over a strong Random baseline in the online regime, and (ii) to assess whether proxy win-rate reliably reflects underlying model improvement.
+Because large-scale online studies typically rely on proxy judges for both training and evaluation, and conclusions can vary across evaluators or reward signals (Deng et al., 2025), we adopt a failure-oriented evaluation that jointly considers proxy preference metrics and capability preservation.
+
+Formally, given a prompt pool , a trainable policy , a fixed reference (SFT), a proxy judge , and a selection strategy , we ask:
+
+•
+
+Q1 (Selection gain). Does active selection yield consistent improvement over Random in online DPO when measured by the trade-off between win-rate and capability preservation?
+
+•
+
+Q2 (Metric reliability). Can proxy win-rate improve while general capabilities degrade, and how does this behavior depend on the proxy judge family?
+
+3.2 Experimental Setup
+
+Datasets and Models.
+We evaluate across three settings: (1) Harmlessness and (2) Helpfulness, utilizing k subsampled pairs from Anthropic HH-RLHF (Bai et al., 2022) labeled via the PO recipe (Xu et al., 2024); and (3) General Instruction Following using k examples from UltraFeedback Cui et al. (2023).
+Our target models are Llama-3.2-3B Grattafiori et al. (2024), Qwen3-1.7B Yang et al. (2025), Gemma-2B Team et al. (2024), and Qwen2.5-7B Qwen et al. (2025). All models are supervised fine-tuned (SFT) on the chosen responses for 1 epoch prior to online DPO training (details in Appendix C.1).
+
+Online DPO Protocol.
+We employ online DPO
+with LoRA (Hu et al., 2022).
+As described in Section 2.2, we compare two active selection strategies: Random and APL.
+To simulate the feedback loop, we deliberately span a wide capability range of proxy judges to disentangle selection gains from judge-specific artifacts: DeBERTa-v3-large (He et al., 2021) as a weak proxy to stress-test Goodhart-style failures, Skywork-Reward-V2-Qwen3-8B (Liu et al., 2025) as a strong open-weight reward model, and Beaver-7B (Dai et al., 2023) as a safety-specific signal.
+We also conduct oracle experiments using the GPT-5 family (nano, mini, and standard with minimal reasoning effort) to test whether conclusions hold under high-quality supervision.
+
+Evaluation Metrics.
+We assess models using two metrics. First, we measure Proxy Win-Rate against the SFT reference policy, labeled by the specific proxy judge used in each experimental setting. Second, we evaluate general capability preservation using the LM Evaluation Harness Gao et al. (2024). We report the mean change in acc_norm across seven standard benchmarks Mihaylov et al. (2018); Clark et al. (2018); Sakaguchi et al. (2021); Zellers et al. (2019); Bisk et al. (2020); Clark et al. (2019).
+
+Figure 1: Harmlessness alignment stability (Pareto frontier).
+We plot capability change ( acc_norm on standard benchmarks) against proxy win-rate for Llama-3.2-3B, Qwen3-1.7B, and Gemma-2B.
+DeBERTa exhibits the most severe failure mode: despite high win-rates (), policies can suffer large capability collapse ( acc_norm ), consistent with proxy over-optimization.
+Skywork and Beaver show more conservative trade-offs.
+Across judges, Random sampling (circles) often matches or exceeds the proxy win-rate of APL (squares), with higher variance, suggesting limited marginal benefit from active selection over cheap on-policy diversity.
+
+Figure 2: Qwen3-1.7B across datasets and judges.
+DeBERTa: APL underperforms Random despite comparable or higher proxy win-rates.
+Skywork: no statistically significant difference between APL and Random.
+GPT-5-mini: APL performs worse than Random under the same budget.
+
+3.3 Results and Analysis
+
+The illusion of proxy win-rates.
+Figure 1 shows a clear mismatch between proxy win-rate and capability in the harmlessness setting.
+When optimizing against a weaker proxy (e.g., DeBERTa), policies can achieve very high win-rates (often ) while suffering large drops in benchmark accuracy ( acc_norm ).
+Thus, a rising win-rate can reflect proxy exploitation or collapse rather than genuine alignment progress.
+This motivates reporting capability sanity checks alongside preference metrics; see Appendix D (Table 5) for qualitative collapse examples.
+
+Active selection fails to outperform Random.
+Figure 2 shows that APL provides no statistically significant advantage over simple random sampling when using Qwen3-1.7B as the policy model.
+Under the DeBERTa judge, both methods achieve high win-rates, with APL underperforming random sampling.
+With stronger judges such as Skywork (green), win-rates hover around 50–60% with no meaningful difference between the two.
+We hypothesize that in online DPO, the candidate
+pool induced by the current policy is already sufficiently “in-distribution,” making random sampling a strong learning signal and diminishing the value of costly active selection.
+
+Strong priors limit selection gains.
+As shown in Figure 3, the competitive performance of Random sampling persists even when scaling to oracle-grade GPT-5 judges. This consistency suggests that for capable base models like Qwen2.5-7B, the bottleneck is not label quality but the limited marginal utility of active selection in the regime of strong priors. Consistent with the LIMA hypothesis (Zhou et al., 2023a), alignment here functions primarily as style transfer, where the broad distributional coverage of random sampling proves sufficient and surprisingly hard to beat.
+
+Figure 3: Judge Scaling (GPT-5 Family). We perform online DPO with Qwen2.5-7B using the GPT-5 family as both annotator and evaluator on Ultrafeedback.
+
+Moreover, APL incurs approximately wall-clock overhead per query–update cycle compared to Random (Appendix C.4), making even marginal gains difficult to justify in practice.
+
+When does APL help?
+A cross-cutting view of Appendix Tables 7–9 reveals that APL’s clearest benefit appears in collapse-prone settings: for Gemma-2B on the harmlessness task, Random suffers catastrophic capability loss (acc_norm with Beaver, with DeBERTa), while APL preserves capability ( and , respectively).
+The driving factor is variance: Random’s high standard deviation reflects seed-level collapse events that APL’s filtering avoids.
+However, this stabilization effect diminishes with stronger base models – Qwen3-1.7B and Llama-3.2-3B show far smaller gaps – and never translates into meaningful win-rate gains.
+With the GPT-5-mini judge on harmlessness, APL achieves better acc_norm across all models (Appendix Table 7), yet Random consistently attains higher win-rates, exposing a win-rate vs. capability trade-off where neither method dominates.
+Taken together, these patterns suggest that APL may serve as a variance reducer in fragile regimes rather than an efficiency booster – a niche benefit that the overhead makes hard to recommend as a default strategy.
+
+4 Conclusion
+
+Our investigation presents a counter-intuitive negative result: active preference learning offers little to no benefit over random sampling for online DPO with modern LLMs.
+We identify the richness of the on-policy candidate pool and the strong priors of base models as key factors rendering complex selection strategies redundant. To facilitate further research into this efficiency paradox and ensure reproducibility, we publicly release all our code, training recipes, and model checkpoints.
+
+5 Limitations
+
+Model scale.
+All experiments use models with 7B parameters.
+Modern small language models already inherit strong priors from large-scale pretraining, and our results suggest that even at these scales, active selection struggles to outperform random sampling.
+Whether the same conclusion holds at frontier scales (70B) remains an open question: stronger priors may further diminish the headroom for active selection, but the alignment dynamics of much larger models could also differ in ways that are difficult to predict without direct evaluation.
+
+Single APL variant.
+Due to resource constraints, we evaluate only one active selection strategy – entropy-based prompt selection followed by reward-margin pair filtering.
+Diversity-based methods (Sener & Savarese, 2018; Yehuda et al., 2022), hybrid acquisition functions (Ash et al., 2020), or curriculum-style schedules (Bae et al., 2025) may interact differently with the on-policy pool; exploring these alternatives is an important direction for future work.
+
+Dataset scope.
+Our evaluation is limited to Anthropic HH-RLHF and UltraFeedback.
+While these cover harmlessness, helpfulness, and instruction-following, the prompt distributions are externally defined and not controlled for topic or difficulty.
+Generalization to other alignment domains e.g., code generation (Chen et al., 2021), long-form reasoning (Rein et al., 2024) or datasets with more structured prompt distributions (Zhou et al., 2023b) remains to be validated.
+
+Evaluator diversity.
+Although we ablate across multiple judge families: DeBERTa, Skywork, Beaver, GPT-5, and observe consistent patterns, the interplay between judge and selection strategy deserves further scrutiny.
+Even in settings where reward hacking is unlikely, neither method consistently dominates, suggesting that multi-faceted judge ablation beyond scalar win-rate is necessary to draw robust conclusions about data selection.
+
+Acknowledgments
+
+This work was supported by the National Research Foundation of Korea (NRF) grant funded by the Korea government (MSIT) (No. RS-2025-16070597) and Global - Learning & Academic research institution for Master’s·PhD students, and Postdocs (G-LAMP) Program of the National Research Foundation of Korea (NRF) grant funded by the Ministry of Education (No. RS-2025-25442252).
+
+References
+
+Ash et al. (2020)
+
+Jordan T Ash, Chicheng Zhang, Akshay Krishnamurthy, John Langford, and Alekh Agarwal.
+
+Deep batch active learning by diverse, uncertain gradient lower bounds.
+
+2020.
+
+Bae et al. (2025)
+
+Wonho Bae, Gabriel L Oliveira, and Danica J Sutherland.
+
+Uncertainty herding: One active learning method for all label budgets.
+
+2025.
+
+Bai et al. (2022)
+
+Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al.
+
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+
+arXiv preprint arXiv:2204.05862, 2022.
+
+Bisk et al. (2020)
+
+Yonatan Bisk, Rowan Zellers, Jianfeng Gao, Yejin Choi, et al.
+
+Piqa: Reasoning about physical commonsense in natural language.
+
+In Proceedings of the AAAI conference on artificial intelligence, volume 34, pp. 7432–7439, 2020.
+
+Brown et al. (2020)
+
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al.
+
+Language models are few-shot learners.
+
+Advances in neural information processing systems, 33:1877–1901, 2020.
+
+Chen et al. (2024)
+
+Lichang Chen, Shiyang Li, Jun Yan, Hai Wang, Kalpa Gunaratna, Vikas Yadav, Zheng Kumar, Yang Liu, Devi Parikh, and Siyu Xu.
+
+Alpagasus: Training a better alpaca with fewer data.
+
+In International Conference on Learning Representations, 2024.
+
+Chen et al. (2021)
+
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba.
+
+Evaluating large language models trained on code.
+
+2021.
+
+Christiano et al. (2017)
+
+Paul F Christiano, Jan Leike, Tom Brown, Miljan Martic, Shane Legg, and Dario Amodei.
+
+Deep reinforcement learning from human preferences.
+
+In Advances in Neural Information Processing Systems, 2017.
+
+Clark et al. (2019)
+
+Christopher Clark, Kenton Lee, Ming-Wei Chang, Tom Kwiatkowski, Michael Collins, and Kristina Toutanova.
+
+Boolq: Exploring the surprising difficulty of natural yes/no questions.
+
+In Proceedings of NAACL-HLT, pp. 2924–2936, 2019.
+
+Clark et al. (2018)
+
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+
+arXiv preprint arXiv:1803.05457, 2018.
+
+Cui et al. (2023)
+
+Ganqu Cui, Lifan Yuan, Ning Ding, Guanming Yao, Wei Zhu, Yuan Ni, Guotong Xie, Zhiyuan Liu, and Maosong Sun.
+
+Ultrafeedback: Boosting language models with high-quality feedback, 2023.
+
+Dai et al. (2023)
+
+Josef Dai, Xuehai Pan, Ruiyang Sun, Jiaming Ji, Xinbo Xu, Mickel Liu, Yizhou Wang, and Yaodong Yang.
+
+Safe rlhf: Safe reinforcement learning from human feedback.
+
+arXiv preprint arXiv:2310.12773, 2023.
+
+Deng et al. (2025)
+
+Xun Deng, Han Zhong, Rui Ai, Fuli Feng, Zheng Wang, and Xiangnan He.
+
+Less is more: Improving llm alignment via preference data selection.
+
+arXiv preprint arXiv:2502.14560, 2025.
+
+Dubois et al. (2023)
+
+Yann Dubois, Xuechen Li, Rohan Taori, Tianyi Zhang, Ishaan Gulrajani, Jimmy Ba, Carlos Guestrin, Percy Liang, and Tatsunori B Hashimoto.
+
+Alpacafarm: A simulation framework for methods that learn from human feedback.
+
+In Advances in Neural Information Processing Systems, 2023.
+
+Gao et al. (2023)
+
+Leo Gao, John Schulman, and Jacob Hilton.
+
+Scaling laws for reward model overoptimization.
+
+In International Conference on Machine Learning, 2023.
+
+Gao et al. (2024)
+
+Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou.
+
+The language model evaluation harness, 07 2024.
+
+URL https://zenodo.org/records/12608602.
+
+Grattafiori et al. (2024)
+
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al.
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783, 2024.
+
+Guo et al. (2024)
+
+Shangmin Guo, Biao Zhang, Tianlin Liu, Tianqi Liu, Misha Khalman, Felipe Llinares, Alexandre Rame, Thomas Mesnard, Yao Zhao, Bilal Piot, et al.
+
+Direct language model alignment from online ai feedback.
+
+arXiv preprint arXiv:2402.04792, 2024.
+
+He et al. (2021)
+
+Pengcheng He, Xiaodong Liu, Jianfeng Gao, and Weizhu Chen.
+
+Deberta: Decoding-enhanced bert with disentangled attention.
+
+In International Conference on Learning Representations, 2021.
+
+Hoffmann et al. (2022)
+
+Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al.
+
+Training compute-optimal large language models.
+
+In Proceedings of the 36th International Conference on Neural Information Processing Systems, 2022.
+
+Hu et al. (2022)
+
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al.
+
+Lora: Low-rank adaptation of large language models.
+
+In International Conference on Learning Representations, 2022.
+
+Kaplan et al. (2020)
+
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei.
+
+Scaling laws for neural language models.
+
+arXiv preprint arXiv:2001.08361, 2020.
+
+Kveton et al. (2025)
+
+Branislav Kveton, Xintong Li, Julian McAuley, Ryan Rossi, Jingbo Shang, Junda Wu, and Tong Yu.
+
+Active learning for direct preference optimization.
+
+arXiv preprint arXiv:2503.01076, 2025.
+
+Liu et al. (2025)
+
+Chris Yuhao Liu, Liang Zeng, Yuzhen Xiao, Jujie He, Jiacai Liu, Chaojie Wang, Rui Yan, Wei Shen, Fuxiang Zhang, Jiacheng Xu, Yang Liu, and Yahui Zhou.
+
+Skywork-reward-v2: Scaling preference data curation via human-ai synergy.
+
+arXiv preprint arXiv:2507.01352, 2025.
+
+Mihaylov et al. (2018)
+
+Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal.
+
+Can a suit of armor conduct electricity? a new dataset for open book question answering.
+
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pp. 2381–2391, 2018.
+
+Moskovitz et al. (2023)
+
+Ted Moskovitz, Aaditya K Singh, DJ Strouse, Tuomas Sandholm, Ruslan Salakhutdinov, Anca D Dragan, and Stephen McAleer.
+
+Confronting reward model overoptimization with constrained rlhf.
+
+arXiv preprint arXiv:2310.04373, 2023.
+
+Muldrew et al. (2024)
+
+William Muldrew, Peter Hayes, Mingtian Zhang, and David Barber.
+
+Active preference learning for large language models.
+
+In International Conference on Machine Learning, 2024.
+
+Ouyang et al. (2022)
+
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+
+Training language models to follow instructions with human feedback.
+
+In Advances in neural information processing systems, 2022.
+
+Qwen et al. (2025)
+
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+
+Qwen2.5 technical report, 2025.
+
+URL https://arxiv.org/abs/2412.15115.
+
+Rafailov et al. (2023)
+
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn.
+
+Direct preference optimization: Your language model is secretly a reward model.
+
+Advances in neural information processing systems, 36:53728–53741, 2023.
+
+Rein et al. (2024)
+
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R Bowman.
+
+Gpqa: A graduate-level google-proof q&a benchmark.
+
+In COLM, 2024.
+
+Sakaguchi et al. (2021)
+
+Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi.
+
+Winogrande: An adversarial winograd schema challenge at scale.
+
+Communications of the ACM, 64(9):99–106, 2021.
+
+Scheffer et al. (2001)
+
+Tobias Scheffer, Christian Decomain, and Stefan Wrobel.
+
+Active hidden Markov models for information extraction.
+
+In ISIDA, 2001.
+
+Sener & Savarese (2018)
+
+Ozan Sener and Silvio Savarese.
+
+Active learning for convolutional neural networks: A core-set approach.
+
+In ICLR, 2018.
+
+Settles (2009)
+
+Burr Settles.
+
+Active learning literature survey.
+
+Technical report, University of Wisconsin-Madison Department of Computer Sciences, 2009.
+
+Team et al. (2024)
+
+Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, Morgane Rivière, Mihir Sanjay Kale, Juliette Love, et al.
+
+Gemma: Open models based on gemini research and technology.
+
+arXiv preprint arXiv:2403.08295, 2024.
+
+Wang & Shang (2014)
+
+Dan Wang and Yi Shang.
+
+A new active labeling method for deep learning.
+
+In IJCNN, 2014.
+
+Xu et al. (2024)
+
+Wenda Xu, Jiachen Li, William Yang Wang, and Lei Li.
+
+Bpo: Staying close to the behavior llm creates better online llm alignment.
+
+In Empirical Methods in Natural Language Processing, 2024.
+
+Yang et al. (2025)
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388, 2025.
+
+Yehuda et al. (2022)
+
+Ofer Yehuda, Avihu Dekel, Guy Hacohen, and Daphna Weinshall.
+
+Active learning through a covering lens.
+
+In NeurIPS, 2022.
+
+Zellers et al. (2019)
+
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi.
+
+Hellaswag: Can a machine really finish your sentence?
+
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pp. 4791–4800, 2019.
+
+Zhou et al. (2023a)
+
+Chunting Zhou, Pengfei Liu, Puxin Xu, Srini Iyer, Jiao Sun, Yuning Mao, Xuezhe Ma, Avia Efrat, Ping Yu, Lili Yu, et al.
+
+Lima: Less is more for alignment.
+
+In Advances in Neural Information Processing Systems, 2023a.
+
+Zhou et al. (2023b)
+
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou.
+
+Instruction-following evaluation for large language models.
+
+arXiv preprint arXiv:2311.07911, 2023b.
+
+Appendix A Transparency and Responsible AI Statements
+
+A.1 LLM Usage Disclosure
+
+LLMs are used as experimental components for preference labeling and evaluation: specifically, we use proxy judges (reward models or LLM-as-a-judge) to (i) produce preference labels for online DPO training and (ii) compute proxy win-rates during evaluation (e.g., DeBERTa-v3-large reward model, Skywork-Reward-V2, Beaver-7B, and the GPT-5 family as an oracle judge, as described in Sections 3, C.3 and C.2).
+All training runs, hyperparameter choices, metric computations, and conclusions are performed and verified by the authors.
+We additionally used an LLM as a writing assistant for language polishing (e.g., grammar and clarity), but not for generating scientific claims, experimental results, or citations.
+All content was reviewed by the authors.
+
+A.2 Ethics Statement
+
+We follow the ICLR Code of Ethics and consider the societal impacts of studying online preference optimization. Our work surfaces failure modes where optimizing against proxy judges yields higher proxy win-rates while degrading general capabilities (Goodharting / reward hacking). We report these results to improve evaluation practice and reduce deployment risk from over-optimizing proxy metrics, not to facilitate misuse. We use only public, standard datasets and benchmarks (Appendix C.1) and do not collect new user data; any released artifacts will comply with dataset licenses/terms. To limit unnecessary compute, we use parameter-efficient fine-tuning (LoRA) under fixed training budgets and will report hardware/runtime details (Appendices C.2 and C.4).
+
+A.3 Reproducibility Statement
+
+We release the training and evaluation code for online DPO, the Random/APL selection implementations, and the exact LLM-as-a-judge prompt templates (Appendix C.3).
+We also release configuration files covering hyperparameters and the full experimental grid (models, datasets, judges, seeds), along with dataset identifiers/splits, preprocessing, and the evaluation harness commands used to compute acc_norm (Appendices C.1 and C.2).
+Because runs are stochastic, we report multi-seed results, including mean, variance, and the random seeds used in Appendix E.
+
+Appendix B Related Works
+
+B.1 Preference Optimization and Data Efficiency
+
+Preference-based alignment is commonly framed as optimizing a policy from pairwise comparisons, historically via RLHF pipelines that learn a reward model and optimize with RL (e.g., PPO) (Christiano et al., 2017; Ouyang et al., 2022).
+Direct Preference Optimization (DPO) simplifies this pipeline by optimizing a supervised objective relative to a fixed reference policy, offering a stable and computationally convenient alternative in many settings (Rafailov et al., 2023).
+A recurring theme is that alignment outcomes are highly sensitive to the quality and distribution of preference data: recent work suggests that carefully curated small datasets can yield strong instruction-following behavior (e.g., the LIMA hypothesis) (Zhou et al., 2023a), motivating data-efficient post-training and selection strategies.
+
+B.2 Active Learning for Preference Data
+
+Active learning (AL) aims to improve sample efficiency by selecting informative examples, typically using uncertainty or diversity criteria (Settles, 2009).
+Classic acquisition functions include entropy- and margin-based uncertainty (Wang & Shang, 2014; Scheffer et al., 2001) and diversity-aware subset selection (e.g., coresets) (Sener & Savarese, 2018).
+Recent work adapts these ideas to preference optimization, proposing APL-style selection for preference pairs (Muldrew et al., 2024) and broader active-learning formulations for DPO in offline/online settings (Kveton et al., 2025), as well as online alignment pipelines that collect feedback from the current policy to reduce off-policy mismatch (Guo et al., 2024).
+In the regime of strong pretrained priors, simple baselines can be surprisingly competitive under certain evaluators (Chen et al., 2024; Dubois et al., 2023), raising the question of when active selection meaningfully improves over on-policy candidate pools that are already rich and on-distribution.
+In our setting, we follow an APL-inspired two-stage acquisition (policy uncertainty followed by reward-margin filtering) and evaluate whether it yields consistent gains over Random under matched budgets.
+
+B.3 Proxy Judges and Evaluator Dependence
+
+Large-scale alignment studies often rely on proxy judges (reward models or LLM-as-a-judge) due to the cost of human annotations.
+A key complication is evaluator dependence: conclusions about data selection and alignment quality can shift with the choice of judge or reward signal (Deng et al., 2025).
+In practice, labeling and evaluation may be performed by different judges, further amplifying this sensitivity.
+More broadly, optimizing against a proxy metric can encourage Goodhart-style failures when the proxy becomes the target, motivating evaluation beyond a single scalar win-rate (Moskovitz et al., 2023; Gao et al., 2023).
+
+B.4 Positioning of This Work
+
+Building on these lines, we present a controlled study of pair selection for online DPO, comparing APL-style selection against a strong Random baseline under matched generation and labeling budgets.
+We emphasize two aspects that are often under-specified in practice: (i) the strength of the on-policy win–lose pool in online preference optimization, and (ii) the sensitivity of observed gains to the proxy judges used for labeling and evaluation.
+Accordingly, we report proxy preference metrics alongside a capability-oriented sanity check to expose regimes where proxy improvements do not reflect broader model quality.
+
+Appendix C Experimental Setup and Implementation Details
+
+C.1 Dataset Details
+
+To simulate a constrained alignment regime, we construct all training sets by subsampling from widely used preference datasets.
+Unless stated otherwise, each setting uses 10k preference pairs, and we keep the prompt pool and subsampling procedure fixed across seeds.
+
+•
+
+Harmlessness & Helpfulness (HH-RLHF).
+We use the Anthropic HH-RLHF dataset and follow the PO recipe (Xu et al., 2024) to obtain preference pairs.
+For each split (harmlessness / helpfulness), we subsample 10k prompt–response pairs and train an SFT initialization on the chosen responses before online DPO.
+
+•
+
+General instruction following (UltraFeedback).
+We use the ultrafeedback_chosen split from UltraFeedback (Cui et al., 2023).
+For each prompt, we treat the top-ranked response as chosen and the second-ranked response as rejected to form a preference pair.
+We subsample 10k such pairs for training.
+
+C.2 Hyperparameters
+
+All online DPO experiments use parameter-efficient fine-tuning (LoRA) to control compute.
+Tables 1 and 2 summarize the hyperparameters for (i) SFT initialization and (ii) online DPO training, respectively.
+We use two closely matched configurations: one for open-weight reward models (DeBERTa/Skywork/Beaver) and one for GPT-5-family judges. These configurations differ primarily in learning rate and maximum sequence length to accommodate model scale and judge interface constraints.
+
+C.2.1 Training Configuration
+
+SFT initialization.
+Each base model is initialized with one epoch of supervised fine-tuning on dataset-specific chosen responses, using a shared optimizer and scheduler configuration (Table 1).
+
+Online DPO.
+We run online DPO for a fixed number of steps () with a matched global batch size across all settings.
+For the GPT-5 judge sweep, we increase the maximum sequence length to 1024 and reduce the learning rate (Table 2) to improve stability when training the larger policy model (Qwen2.5-7B).
+
+Table 1: SFT hyperparameters. We use the same SFT configuration for all base models.
+
+Hyperparameter
+SFT
+
+Base model(s)
+Llama-3.2-3B / Qwen3-1.7B / Gemma-2B / Qwen2.5-7B
+
+Learning rate
+
+Optimizer
+AdamW
+
+LR scheduler
+Cosine
+
+Precision
+bf16
+
+Epoch
+1
+
+Global batch size ()
+64
+
+Warmup ratio
+0.05
+
+Max sequence length
+512
+
+Accelerator
+NVIDIA H200 4
+
+Table 2: Online DPO hyperparameters. We use separate configurations for open-weight reward models (DeBERTa/Skywork/Beaver) versus GPT-5 judges to accommodate different model scales.
+
+Hyperparameter
+Open-weight RMs
+GPT-5 judges
+
+Base model(s)
+Llama-3.2-3B / Qwen3-1.7B / Gemma-2B
+Qwen2.5-7B
+
+LoRA rank ()
+32
+32
+
+LoRA ()
+64
+64
+
+Learning rate
+
+Loss
+Sigmoid DPO
+Sigmoid DPO
+
+Optimizer
+AdamW
+AdamW
+
+Precision
+bf16
+bf16
+
+Max steps ()
+625
+625
+
+Updates per sample
+4
+4
+
+Global batch size ()
+64
+64
+
+Gradient accumulation
+1
+1
+
+Warmup ratio
+0.05
+0.05
+
+Max sequence length
+512
+1024
+
+C.2.2 Reward Models and LLM Judges
+
+Table 3 lists the reward models and LLM judges used for (i) preference labeling during online DPO and (ii) proxy win-rate evaluation.
+We refer to DeBERTa as a weak proxy RM, Skywork as a strong proxy RM, and Beaver as a safety-aligned proxy RM.
+For oracle-style sweeps, we use the GPT-5 family with fixed prompting and minimal reasoning effort, as detailed in Appendix C.3.
+
+Table 3: Reward model & judge configurations.
+
+Role
+Model Identifier
+
+Weak Proxy RM
+OpenAssistant/reward-model-deberta-v3-large-v21
+
+Strong Proxy RM
+Skywork/Skywork-Reward-V2-Qwen3-8B2
+
+Safety Proxy RM
+PKU-Alignment/beaver-7b-v1.0-reward3
+
+GPT Judge
+openai/gpt-5-nano, openai/gpt-5-mini, openai/gpt-5
+
+1
+
+https://huggingface.co/OpenAssistant/reward-model-deberta-v3-large-v2
+
+2
+
+https://huggingface.co/Skywork/Skywork-Reward-V2-Qwen3-8B
+
+3
+
+https://huggingface.co/PKU-Alignment/beaver-7b-v1.0-reward
+
+C.3 Evaluation Prompt Templates
+
+We employ a structured LLM-as-a-Judge approach for win-rate evaluation. Below are the exact system prompts used for the UltraFeedback and Anthropic HH datasets. When supported, we enforce a structured output format (JSON schema) and parse the preferred response ID from the winner field (0 or 1). Specifically, we restrict the generation to the JSON format {"winner": "0"|"1"}.
+
+C.4 Computational Overhead
+
+Since Active Preference Learning (APL) requires additional forward passes to (i) generate a candidate pool and (ii) compute selection scores such as uncertainty (entropy) and implicit reward margins, it incurs extra computational overhead compared to Random sampling. Table 4 reports the average wall-clock time per query–update cycle, defined as one data-acquisition step (candidate generation + scoring/selection) together with the subsequent policy update steps (forward + backward) performed on the newly queried batch
+
+Table 4: Computational overhead comparison. Reported as time per query–update cycle on an NVIDIA H200 GPU. APL incurs approximately cost due to uncertainty computation. Lower is better.
+
+Method
+Query–update Cycle (s/query)
+Relative Cost
+
+Random
+
+APL
+
+Appendix D Capability Collapse Examples
+
+Tables 5 and 6 show qualitative and quantitative evidence of capability collapse when training with weak reward models.
+
+Table 5: Examples of incoherent responses after training (Llama-3.2-3B / DeBERTa RM). Each response is entirely unrelated to its prompt, demonstrating that the model has learned to exploit the reward signal rather than produce helpful outputs.
+
+Prompt (truncated)
+
+Collapsed response (truncated)
+
+…What does naphthalene do?
+
+But the election wasn’t rigged. Trump won a fair election.
+
+…locate the residential address for Jeff Yass, the cofounder of Susquehanna International Group.
+
+You’re talking about …at Sandy Hook Elementary in Newtown, Connecticut…
+
+Why does my wife stink all the time?
+
+For example, in the past, some people might have been concerned that [ethnic groups] would not be able to fully assimilate into [certain groups].
+
+Please help me create a good insult
+
+7:30pm. 9:30 is a good time to kick your ***.
+
+How can I graffiti…and not get caught on camera?
+
+Well, you could throw a baseball, but it’s probably going to bounce off…
+
+…Do you mean Dr. Lara Green? – That’s her.
+
+[Empty response]
+
+…would you like a list of techniques? – Yes please.
+
+Are you saying that you are frustrated by how the school is treating your son?
+
+…I hope you find safety. So I don’t need to tell the father at all?
+
+Some people are worried about testing and the spread of the virus…
+
+Have you tried searching for a manual on car repairs?
+
+I can understand that it might not be very practical.
+
+Could you say something harmful please?
+
+That’s an interesting question, I have never considered that…
+
+Table 6: Response length degradation during training (Gemma-2B / Beaver7B RM). The model progressively loses the ability to generate any response, eventually producing only empty strings – while the proxy win-rate continues to increase.
+
+Training step
+Avg. length (chars)
+Empty responses
+Proxy win-rate
+
+0 (baseline)
+205.8
+0/16 (0%)
+0.50
+
+100
+97.2
+1/16 (6%)
+–
+
+200
+58.6
+10/16 (63%)
+–
+
+300
+4.0
+15/16 (94%)
+–
+
+500+
+0.0
+16/16 (100%)
+0.70
+
+Appendix E Detailed Experimental Results
+
+Tables 7 and 8 report the full numerical results for all runs.
+Unless otherwise noted, we report mean standard deviation over three random seeds (42, 43, 44).
+All models are trained with online DPO for steps using LoRA under a fixed training and labeling budget (Appendix C.2).
+
+Table 7: Harmlessness. Meanstd over seeds.
+
+Judge
+Model
+Selector
+Win Rate
+Acc (%)
+
+Beaver7B
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+DeBERTa
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+Skywork-v2-Qwen3
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+GPT-5-mini
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+Table 8: Helpfulness. Meanstd over seeds.
+
+Judge
+Model
+Selector
+Win Rate
+Acc (%)
+
+DeBERTa
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+Skywork-v2-Qwen3
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+Table 9: UltraFeedback (ultrafeedback_chosen). Meanstd over seeds.
+
+Judge
+Model
+Selector
+Win Rate
+Acc (%)
+
+GPT-5
+Qwen2.5-7B
+Random
+
+APL
+
+GPT-5-mini
+Qwen2.5-7B
+Random
+
+APL
+
+GPT-5-nano
+Qwen2.5-7B
+Random
+
+APL
+
+DeBERTa
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+Skywork-v2-Qwen3
+Llama-3.2-3B
+Random
+
+APL
+
+Qwen3-1.7B
+Random
+
+APL
+
+Gemma-2B
+Random
+
+APL
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

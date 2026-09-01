@@ -1,0 +1,781 @@
+Comparative Characterization of KV Cache Management Strategies for LLM Inference
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Background and Motivation
+
+II-A LLM Architecture and Inference
+
+II-B KV Cache Management Strategies and Representative Frameworks
+
+II-C Diverse Paradigms of KV Cache Frameworks.
+
+II-D Motivation
+
+III Experimental Setup
+
+III-A Hardware environment
+
+III-B Models and Datasets
+
+III-C Framework Configurations and Instrumentation
+
+IV Overall Performance Analysis
+
+IV-A Time-to-First-Token (TTFT) Analysis
+
+IV-A1 Baseline TTFT Comparison
+
+IV-A2 Extending Context Range: FlashAttention-2 vs. Chunked Prefill
+
+InfiniGen
+
+H2O
+
+IV-B Resource Utilization and Batch Scaling
+
+IV-B1 Memory Utilization
+
+IV-B2 Throughput Analysis
+
+IV-B3 Latency Breakdown
+
+IV-C Decode Scaling with Output Length
+
+IV-C1 Throughput Sustainability
+
+IV-C2 Walltime Breakdown
+
+V Accuracy Impact of Attention Sparsification
+
+V-A Accuracy Evaluation
+
+V-B Retention Ability
+
+VI Discussion
+
+VII Related Work
+
+VIII Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.05012v1 [cs.AR] 06 Apr 2026
+
+Comparative Characterization of KV Cache Management Strategies for LLM Inference
+
+Oteo Mamo,
+Olga Kogiou,
+Hyunjin Yi,
+Weikuan Yu
+
+Affiliation: Florida State University
+
+Tallahassee, FL, USA
+
+{om21d, ok22b, hy22c, wyu3}@fsu.edu
+
+Abstract
+
+Efficient inference with Large Language Models (LLMs) increasingly relies on Key-Value (KV) caches to store previously computed key and value vectors at each layer. These caches are essential to minimize redundant computation during autoregressive token generation, lowering computational complexity from quadratic to linear. However, the growth of KV caches has posed significant system-level challenges, particularly as model sizes increase, context lengths grow, and concurrent requests compete for limited memory resources. Even though several recent frameworks for KV cache management have emerged, their comparative trade-offs in memory consumption and inference performance have not been fully understood, especially under varying request sizes and model configurations. In this work, we conduct an empirical study of three state-of-the-art KV cache management frameworks: vLLM, InfiniGen, and H2O. These frameworks employ techniques such as tensor offloading, token eviction heuristics, and speculative scheduling to balance memory usage and performance. We evaluate their performance in terms of a range of metrics such as latency, throughput, and memory usage across a spectrum of key parameters including request rates, model sizes, and sparsity levels. Our results pinpoint the conditions for each framework to perform the best, revealing the most suitable selection and configuration of KV cache strategies under memory and performance constraints.
+
+Index Terms: KV-cache, large language models, attention mechanism, GPU memory optimization, inference.
+
+I Introduction
+
+Large Language Models (LLMs) derive their expressive power from the Transformer architecture [1], which generates text by attending over previously seen tokens using a multi-head self-attention mechanism. During inference, this mechanism incurs quadratic computational cost if past activations are repeatedly recomputed [2]. To mitigate this issue, LLMs use the Key-Value (KV) cache to store the computed tensors, i.e., keys and values, at each layer for every input or prior decoded token. Instead of recomputing these tensors at every decoding step, LLMs reuses them from KV cache to compute attention scores for newly generated tokens, reducing computational complexity and substantially accelerating inference, particularly for long sequences and autoregressive generation. However, this efficiency gain comes at the cost of increasing memory consumption from the KV cache, which grows multi-linearly with respect to sequence length, layer depth, and head width [3]. As a result, KV cache memory requirements can quickly surpass that of model parameters, especially when handling batches of requests or serving long-context models [4, 5].
+
+In response to these challenges, multiple frameworks have emerged recently, to address the growing demands of memory efficiency, resource sharing, and scalability in LLM inference. For instance, some frameworks [6, 7] have tried optimizing memory allocation to reduce internal fragmentation during inference. Other techniques focus on addressing the growth of KV cache memory, applying hierarchical placement of KV cache across GPU and CPU memory [8], or even to disk, to alleviate GPU memory pressure [9, 10]. In addition, attention sparsification [10, 11] is important to identify, prioritize and cache only important KV cache entries. Furthermore, there are techniques that alleviate the computation complexity caused by long-context lengths during inference such as
+KV cache quantization  [5, 12], compression and budgeted KV replacement [13, 14]. While each having their benefits, these techniques create a complex repertoire of tools for system administrators and practitioners to juggle with because their comparative performance trade-offs and effectiveness to KV cache managements are not yet fully deciphered. In fact, the success of KV cache management depends on various factors, including available GPU memory, the LLM size and the request rate and scale. It is imperative for the users to be equipped with more insights on these factors in order to gauge which frameworks can provide better balance, achieving desired inference outcomes under the constraints of their system configurations.
+
+Toward this direction, we perform a comparative characterization of three state-of-the-art frameworks: vLLM [7], InfiniGen [11], and H2O [10] to understand their trade-offs and provide empirically-grounded guidance for practitioners. Our key contributions are as follows:
+
+•
+
+We evaluate three representative KV cache frameworks across Time-to-First-Token, decode throughput, end-to-end latency, and memory consumption (GPU and CPU) under varying batch sizes and output lengths.
+
+•
+
+We characterize performance bottlenecks and scalability limits across different batch sizes, context lengths, and model scales, identifying the conditions under which each paradigm excels or degrades.
+
+•
+
+We quantify the accuracy impact of KV cache sparsification across standard benchmarks and a custom retention task, identifying sparsity configurations that can balance memory efficiency against accuracy.
+
+While prior work has characterized individual frameworks or specific aspects of KV caching [3, 7], this work provides a comparative evaluation and analysis across three distinct KV cache management paradigms.
+
+II Background and Motivation
+
+Now we review the current state-of-the-art strategies for the management of KV cache and how several representative frameworks have implemented these strategies.
+
+II-A LLM Architecture and Inference
+
+Modern LLMs are built by stacking dozens to hundreds of Transformer layers, each comprising a multi-head self-attention (MHA) module followed by a position-wise feed-forward network (FFN) and wrapped in residual connections with pre-layer-norm scaling [1]. However, this stack introduces significant computational and memory burdens during inference due to the sequential nature of token generation.
+
+Transformer LLM inference consists of two distinct stages [1]: in the prefill stage, the model processes the input prompt of length in parallel, storing the resulting key and value vectors in the KV cache for future use. In the decode stage, the model generates output tokens one at a time, reusing cached KV entries rather than recomputing attention over the full prompt, reducing complexity from quadratic to linear. The KV cache thus plays a pivotal role in enabling scalable and low-latency inference. However, this efficiency comes at a cost: KV cache memory grows multilinearly with sequence length, layer depth, and head width:
+
+where is the layer count, the number of key/value heads, the per-head dimension, the number of tokens generated so far, and the
+factor 2 accounts for both keys and values. For OPT-6.7B (, , ) at FP16/BF16, this yields 1.0 GB per sequence at 2,048 tokens, reaching 8 GB for a batch of 8. Optimizing the storage, access, and reuse of the KV cache has therefore become a central focus in modern LLM inference frameworks.
+
+II-B KV Cache Management Strategies and Representative Frameworks
+
+Many strategies have been proposed to cope with the growing memory consumption of KV cache, including (1) optimized memory allocation to reduce the fragmentation of KV cache memory, (2) hierarchical placement of KV cache that makes use of CPU memory and even storage media, (3) sparsification techniques that identify important tokens and prioritize caching their KV entries, and (4) quantization techniques that reduce the precision of KV entries and other tensors (e.g., from FP16 to INT8 or INT4), achieving 2–4 memory reduction at the cost of potential accuracy degradation [9]. These strategies are often complementary to each other and can be combined within a single framework.
+
+Modern architectures have started to mitigate KV cache overhead through strategies such as Grouped Query Attention (GQA) [15], which shares key-value heads across multiple query heads. For example, Llama-3.1-8B [16] uses GQA with 32 query heads but only 8 KV heads, reducing the KV cache size by compared to the standard MHA. This architectural optimization has become prevalent in recent models, however, the benefits of GQA are often offset by the dramatic growth in context lengths. Contemporary applications routinely process inputs that would have been infeasible just two years ago, e.g., the use of entire codebases for repository-level code analysis, complete legal contracts or academic papers for summarization, full novels for literary analysis, and extensive conversation histories for multi-turn dialogue systems. Context windows have expanded from 2K–4K tokens in early models to 128K tokens in Llama-3.1. At these scales, even with GQA, the KV cache for Llama-3.1-8B reaches a substantial fraction of available GPU memory. Consequently, the KV cache management techniques discussed above remain essential for efficient LLM inference.
+
+TABLE I: Representative KV-Cache Management Frameworks
+
+Representative Frameworks
+
+Shared Characteristics
+
+vLLM, ORCA, vTensor
+
+Paged memory, continuous batching, no sparsification
+
+H2O, Scissorhands, StreamingLLM, ALISA, SnapKV
+
+Permanent eviction, attention-score selection, static or sliding-window
+
+InfiniGen, InfLLM, Quest, PQCache, RetrievalAttention
+
+Hierarchical storage, decode-time selection, recoverable eviction
+
+II-C Diverse Paradigms of KV Cache Frameworks.
+
+Existing KV cache management frameworks can be broadly categorized into three paradigms based on their primary optimization strategy and eviction policy. Table I summarizes representative frameworks within each category:
+
+1.
+
+Memory Management frameworks optimize allocation and scheduling without modifying attention computation or evicting cache entries. These frameworks retain the complete KV cache on GPU, focusing on reducing fragmentation and improving batching efficiency.
+
+2.
+
+Static Sparsification frameworks reduce cache size through permanent token eviction based on attention scores computed during prefill. Once evicted, tokens cannot be recovered, trading potential accuracy loss for aggressive memory reduction.
+
+3.
+
+Dynamic Selection frameworks retain the full KV cache in CPU memory and selectively transfer entries to GPU at each decode step. This approach enables recovery of previously offloaded tokens, preserving accuracy while reducing GPU memory pressure.
+
+We select one representative framework from each paradigm for our comparative study: vLLM (memory management), H2O (static sparsification), and InfiniGen (dynamic selection). These categories reflect primary optimization strategies rather than strict boundaries. Each of these frameworks has significantly influenced subsequent work within its paradigm and provides a well-documented, reproducible implementation. We elaborate on each below.
+
+vLLM. Kwon et al. [7] developed vLLM, a framework that uses PagedAttention, an algorithm that partitions the KV cache into fixed-size blocks, allowing them to be stored in non-contiguous GPU memory and significantly reducing fragmentation. This management of KV cache blocks allows vLLM to batch more sequences, as common prefix tokens are not duplicated but stored once and shared across requests via copy-on-write semantics. vLLM also integrates FlashAttention-2 [2] to address inefficiencies in attention computation by fusing small blocks of attention computation into a single GPU kernel for efficient data accesses within GPU SRAM, reducing traffic to GPU global memory and improving GPU utilization. While vLLM supports various KV cache optimization add-ons, we maintain default configuration, retaining the complete KV cache, as our baseline for full-accuracy inference.
+
+H2O. Zhang et al. proposed Heavy Hitter Oracle (H2O) [10], a framework that exploits the observation that attention weights are highly skewed toward a small subset of tokens. H2O identifies these “Heavy Hitters”, tokens that accumulate the highest attention scores, and retain only their KV vectors. It also forms a sliding window of recent tokens, permanently evicting all others. This approach frames KV cache eviction as a dynamic submodular maximization problem, providing theoretical guarantees on approximation quality. The selection occurs during prefill and remains static throughout decoding. This aggressive sparsification reduces the size of KV cache while maintaining reasonable accuracy.
+
+InfiniGen. Lee et al. [11] proposed InfiniGen, a framework that takes a fundamentally different approach by offloading the full KV cache from GPU to CPU memory while dynamically selecting which entries to transfer to GPU at each decode step. InfiniGen employs an offline skewing phase, Singular Value Decomposition (SVD) to the query and key weight matrices, identifying dimensions that dominate attention computations. At runtime, InfiniGen maintains compact partial key matrices on GPU that capture these dominant dimensions. At each decode step, the framework uses these partial matrices to speculate on which tokens will receive high attention scores in the next layer, then selectively prefetches only those KV entries from CPU to GPU. This approach enables InfiniGen to adapt to changing attention patterns throughout generation.
+
+II-D Motivation
+
+While substantial progresses have been made in developing KV cache management techniques, current understandings are typically gained from the assessment of individual frameworks or by comparing techniques within a single paradigm. A significant gap remains in understanding the trade-offs in KV cache management across different paradigms, e.g., memory management without sparsification, static eviction based on prefill-time importance, and dynamic selection with recoverable entries. Our work addresses this gap by providing a comparative and empirical evaluation across the different approaches. By systematically varying model size, batch size, context length, and sparsity budget, we pinpoint the conditions under which each paradigm performs the best, offering practical guidance for framework selection under various memory and performance constraints.
+
+III Experimental Setup
+
+III-A Hardware environment
+
+All experiments were run on a compute node equipped with 4 NVIDIA H100 GPUs (80GB HBM3 each) and dual Intel Sapphire Rapids processors (56 cores per socket, 2 sockets per node), interconnected via NVLink and PCIe 5.0.
+
+III-B Models and Datasets
+
+We evaluate three models spanning different parameter scales: Llama-3.1-8B, Llama-3.1-70B [16], and GPT-OSS-20B [17]. All models employ GQA, reflecting the shift in both open-source and academic communities away from MHA toward more memory-efficient attention architectures.
+For Time-To-First-Token (TTFT) and accuracy evaluation, we use the LMSYS-Chat-1M[18] dataset, which provides realistic conversational workloads with diverse prompt lengths. For stress testing under extreme sequence lengths, we stream the input from the English Wikipedia dataset (20220301.en split) [19]. For accuracy evaluation, we employ six reasoning benchmarks via the lm_eval harness: PIQA [20] and HellaSwag [21] (physical and commonsense reasoning), COPA [22] (causal inference), WinoGrande [23] (pronoun resolution), OpenBookQA [24] and BoolQ [25] (knowledge-intensive question answering).
+
+III-C Framework Configurations and Instrumentation
+
+For vLLM, we use version 0.15.0 with FlashAttention-2 and continuous batching enabled. vLLM’s inference engine automatically applies chunked prefill for long prompts. For InfiniGen, we configure a KV budget of 0.3 and FlashAttention-2 integration is evaluated separately where noted. For H2O, we have implemented the algorithm on top of FlexGen following the original methodology, which enables sparsification across batched decoding. We configure a Heavy-Hitter ratio (HH) of 0.3. For InfiniGen and H2O, the prefill stage requires full attention score matrix computation, which exhausts GPU memory when processing multiple prompts concurrently. Our implementation therefore performs sequential prefill: prompts are processed one at a time during the prefill phase, with batched decoding enabled after all prompts have been prefilled. The configuration choices for H2O and InfiniGen are made because both achieve comparable accuracy on the benchmark suite, maintaining performance within 10% of baseline vLLM for most datasets. This calibration ensures a fair comparison of system-level metrics under equivalent accuracy constraints. Detailed accuracy results are presented in Section V.
+
+IV Overall Performance Analysis
+
+We evaluate the performance of vLLM, InfiniGen, and H2O in managing the KV cache for LLM inference across three experimental dimensions: Time-to-First-Token (TTFT) for long-context prefill behavior, Batch Scaling and Resource Utilization for concurrent workload performance, and Decode Scaling with Output Length for sustained generation efficiency.
+
+IV-A Time-to-First-Token (TTFT) Analysis
+
+TTFT measures the latency from request submission to the generation of the first output token. At long context lengths, TTFT is dominated by the prefill phase, where the model processes the entire input prompt and populates the KV cache. This metric is critical for user-perceived responsiveness in interactive applications.
+
+IV-A1 Baseline TTFT Comparison
+
+vLLM maintains the lowest TTFT across all prompt lengths, successfully scaling to the full 128K context window (Figure 1(a)). In contrast, baseline H2O and InfiniGen encounter out-of-memory failures at approximately 10K tokens, less than 10% of the model’s supported context length. Such an order-of-magnitude gap in prompt size reveals that prefill memory requirements, not KV cache capacity, impose a constraint to support long-context inputs for LLM sparsification frameworks.
+
+These patterns hold across model scales (Figures 1(c), 1(d)), with a counterintuitive finding: OOM failures occur earlier on multi-GPU configurations despite greater aggregate memory. Under tensor parallelism, model parameters are distributed across devices, but attention score computation remains localized to a single GPU. The per-device memory available for the attention matrix therefore decreases as model distribution increases, causing OOM at shorter contexts than single-GPU configurations.
+
+(a) TTFT (Llama-3.1-8B, 1xH100)
+
+(b) TTFT Extended (Llama-3.1-8B, 1xH100)
+
+(c) TTFT (GPT-OSS-20B, 2H100)
+
+(d) TTFT (Llama-3.1-70B, 4H100)
+
+Fig. 1: TTFT scaling with prompt length. (a) Baseline comparison showing OOM boundaries for H2O and InfiniGen. (b) Extended TTFT with FA and CP optimizations. (c,d) Multi-GPU scaling on larger models.
+
+IV-A2 Extending Context Range: FlashAttention-2 vs. Chunked Prefill
+
+Two complementary strategies address prefill memory bottlenecks: FlashAttention-2 (FA) and Chunked Prefill (CP). FA fuses attention operations into a single GPU kernel that computes attention incrementally within SRAM tiles, avoiding materialization of the attention matrix and reducing memory complexity to . Chunked Prefill partitions the input prompt into sequential segments of size , reducing peak memory from to per chunk at the cost of additional kernel launch overhead and reduced parallelism. vLLM natively integrates FA and CP automatically, which contributes to its superior long-context performance as our evaluation will show. For InfiniGen and H2O, which rely on standard attention in their baseline implementations, we evaluate both FA and CP as mitigation strategies.
+
+InfiniGen
+
+FlashAttention-2 integration transforms InfiniGen’s long-context viability. At 15K tokens, where baseline InfiniGen fails, FlashAttention-2 reduces prefill memory by 85% (Figure 2(a)) and latency by 77% compared to chunked prefill (Figure 2(b)). More importantly, FlashAttention-2 enables InfiniGen to scale to the full 128K context window with near-linear latency growth, matching vLLM’s operational
+range albeit at lower throughput.
+
+(a) GPU Memory Breakdown
+
+(b) Latency Breakdown
+
+Fig. 2: InfiniGen memory and latency breakdown across optimization strategies
+(Llama-3.1-8B). (a) GPU memory at 10K–100K token contexts.
+(b) Prefill and decode latency at equivalent context lengths. Hatched bars
+indicate OOM. Percentages show reduction relative to the comparison baseline.
+
+H2O
+
+Unlike InfiniGen, H2O does not benefit from FlashAttention-2 integration. While FlashAttention-2 can be used for the attention computation itself, H2O’s Heavy-Hitter selection mechanism independently requires materializing the full attention score matrix to accumulate token importance statistics for eviction decisions. This negates FlashAttention’s memory savings, as the matrix must still be computed and stored regardless of how the attention output is calculated. H2O can instead leverage Chunked Prefill with a chunk size of up to 6k tokens, large enough to amortize chunking overhead, yet small enough to avoid OOM during per-chunk attention computation. This configuration successfully scales to the full context window (Figure 1(b)). However, this approach introduces a fundamental algorithmic limitation: H2O’s Heavy-Hitter selection relies on computing attention across the entire prompt to identify important tokens. With Chunked Prefill, tokens in different chunks do not attend to each other during prefill, meaning H2O’s eviction decisions are based on incomplete attention information. This disconnect between chunks can result in the eviction of potentially important tokens that would have been identified as Heavy Hitters had full cross-prompt attention been computed. One potential approach to addressing this limitation would be to accumulate attention statistics across chunks during prefill, though the specific implementation strategy would depend on the deployment requirements and performance trade-offs acceptable for the particular workload.
+
+IV-B Resource Utilization and Batch Scaling
+
+We evaluate resource utilization and performance across batch sizes from 16 to 96 on Llama-3.1-8B (300 Wikipedia-derived prompts, lengths uniformly distributed 1K-10K tokens), revealing fundamental trade-offs in how each paradigm balances memory consumption against throughput.
+
+(a) GPU Memory Usage
+
+(b) CPU Memory Usage
+
+Fig. 3: GPU and CPU memory breakdown by component across batch sizes (Llama-3.1-8B, prompt lengths 1 to 10K tokens). Memory is decomposed into model weights, activations, KV cache, and runtime overhead.
+
+IV-B1 Memory Utilization
+
+GPU and CPU memory utilization reveal distinct resource trade-offs across paradigms (Figure 3). vLLM pre-allocates GPU memory for the full context window, maintaining a constant 72GB footprint regardless of batch size, a strategy that sacrifices memory flexibility for computational efficiency. H2O takes the opposite approach: aggressive sparsification yields the lowest GPU footprint (under 40GB even at batch 96), scaling at roughly 2 lower memory than vLLM across all batch sizes. InfiniGen’s hierarchical KV placement shifts the memory burden from GPU to CPU. While its GPU memory consumption is similar to H2O, CPU memory grows substantially with batch size, exceeding 100GB at batch 96, more than 2.5 the CPU memory required by either alternative. This overhead stems not only from the offloaded KV cache itself, but also from pinned memory buffers required for asynchronous CPU-GPU transfers and memory pools that facilitate rapid data movement. H2O’s CPU usage primarily comes from temporarily holding evicted KV cache entries.
+
+IV-B2 Throughput Analysis
+
+Decode throughput varies significantly across paradigms (Figure 4(a)). vLLM and H2O both scale linearly with batch size, reaching similar peak throughput. InfiniGen, however, exhibits an order-of-magnitude lower throughput consistently across all batch sizes. This throughput gap of InfiniGen stems from per-decode-step CPU-to-GPU KV transfers, which serialize batch computation: increasing batch size adds more transfers rather than amortizing fixed overhead. When normalized by GPU memory consumption (Figure 4(b)), H2O emerges as the most memory-efficient option, achieving approximately 3 higher throughput per GB than vLLM. After factoring the memory consumption, InfiniGen shows poor and decreasing normalized throughput despite its reduced GPU memory footprint.
+
+(a) Decode Throughput
+
+(b) Memory Efficiency
+
+Fig. 4: Decode throughput (a) and memory efficiency (b) across batch sizes. Efficiency computed as throughput divided by GPU memory consumption. Error bars and shaded regions indicate variance across runs.
+
+(a) Walltime Breakdown
+
+(b) Total Latency
+
+Fig. 5: End-to-end latency analysis across batch sizes. (a) Walltime decomposed into prefill, cache operations, and decode phases. (b) Total latency scaling.
+
+IV-B3 Latency Breakdown
+
+Latency scaling results with increasing batch sizes further differentiate the three frameworks (Figure 5(b)). vLLM maintains near-constant latency across all batch sizes, approximately 20 seconds. H2O exhibits moderate growth, which is due to the increasing KV cache management overhead for larger batches.
+InfiniGen’s latency, however, grows superlinearly, reaching 14 higher than vLLM at batch 96. The walltime breakdown in Figure 5(a) confirms that the time for decode-phase transfers dominates, while the prefill time remains stable.
+
+IV-C Decode Scaling with Output Length
+
+While Section IV-B examined batch scaling with fixed output length, many applications require generating extended outputs, long-form articles, detailed code implementations, or multi-step reasoning chains. This section characterizes how throughput and latency evolve as output length increases from 512 to 8,192 tokens, using a fixed 10K-token input prompt.
+
+IV-C1 Throughput Sustainability
+
+(a) Decode Throughput
+
+(b) Walltime Breakdown
+
+Fig. 6: Decode scaling with output length (10K-token input prompt, Llama-3.1-8B). (a) Decode throughput. (b) Walltime breakdown; logarithmic scale used to visualize both prefill and decode components.
+
+The throughput results differ significantly between frameworks across different output lengths (Figure 6(a)). vLLM maintains approximately 15 higher throughput than InfiniGen, which remains consistent even with longer output tokens being generated. This persistence confirms that InfiniGen’s bottleneck is per-token transfer overhead rather than the startup cost that can be amortized by longer output tokens.
+
+Both vLLM and H2O exhibit slight throughput improvements at longer outputs as fixed overheads amortize across more tokens. H2O’s bounded cache size additionally prevents attention computation costs from growing with sequence length, partially offsetting its cache management overhead. InfiniGen’s throughput, however, remains flat at approximately 8 tokens/second: each decode step requires speculative attention computation and selective KV prefetching, creating per-token overhead that dominates
+regardless of generation length.
+
+IV-C2 Walltime Breakdown
+
+End-to-end latency differences compound dramatically over long generations (Figure 6(b)). Prefill time remains constant across output lengths as expected given the fixed input prompt. Decode time, however, scales linearly with output length at vastly different rates across frameworks. At 8,192 output tokens, InfiniGen requires over 16 minutes compared to vLLM’s one minute: a 17 slowdown. H2O occupies the middle ground at approximately 3 minutes, its GPU-resident computation avoiding InfiniGen’s transfer overhead while cache management adds modest latency compared to vLLM. This disparity underscores that serialized CPU-GPU transfers fundamentally limit InfiniGen’s decode performance regardless of generation length.
+
+Decode scaling confirms that the performance gaps observed in batch scaling compound over extended generations. GPU-local KV cache operations remain the primary determinant of throughput sustainability, making InfiniGen’s hierarchical approach viable only when GPU memory constraints are severe and latency requirements are relaxed.
+
+V Accuracy Impact of Attention Sparsification
+
+V-A Accuracy Evaluation
+
+The previous sections demonstrate that sparsification frameworks achieve substantial memory and throughput benefits compared to full-cache approaches. However, these gains are only meaningful if accuracy remains acceptable. This section evaluates the accuracy implications of H2O’s permanent eviction and InfiniGen’s dynamic selection strategies across standard benchmarks and a custom retention task, using vLLM as the full-accuracy baseline.
+Using Llama-3.1-8B, we evaluate six log-likelihood ranking benchmarks: PIQA, HellaSwag, WinoGrande, COPA, OpenBookQA, and BoolQ. The budget parameter specifies the fraction of KV pairs each layer may retain; for example, a budget of 0.1 permits only one-tenth of the cache entries to reside in GPU memory. Figure 7 summarizes accuracy across all six tasks.
+At moderate sparsity (budget=0.5), both methods recover near-baseline accuracy. Reducing budget to 0.1 reveals a divergent behavior. InfiniGen degrades gracefully, losing approximately 6 percentage points (pp) on average, though knowledge-intensive tasks (PIQA, OpenBookQA) suffer larger drops of 17-20 pp. H2O exhibits steeper sensitivity: HellaSwag drops 23 pp and BoolQ drops 16 pp, indicating that permanent eviction disproportionately harms tasks requiring broader context. At extreme sparsity (2-4% budget), both methods approach random-guess performance on semantic reasoning tasks. These results demonstrate a tunable trade-off: moderate sparsity (budget 0.3) preserves accuracy within 10 pp of baseline across most datasets while substantially reducing memory, whereas aggressive sparsity maximizes memory savings at task-dependent accuracy cost.
+
+(a) PIQA
+
+(b) COPA
+
+(c) WinoGrande
+
+(d) HellaSwag
+
+(e) OpenBookQA
+
+(f) BoolQ
+
+Fig. 7: Accuracy comparison of InfiniGen, H2O, and vLLM
+
+V-B Retention Ability
+
+Standard benchmarks evaluate general reasoning, but sparsification may disproportionately affect retention of specific early-context information. We design a retention test using multi-turn conversations from the LMSYS-Chat-1M dataset, with both InfiniGen and H2O configured at budget of 0.3.
+
+(a) Accuracy by context-length bucket.
+
+(b) Accuracy evolution across conversation turns.
+
+Fig. 8: Retention accuracy for early-context facts (Llama-3.1-8B, LMSYS-Chat-1M). (a) Accuracy by context-length bucket. (b) Accuracy evolution across conversation turns.
+
+We partition conversations into four context-length buckets: 1K-2K, 2K-4K, 4K-8K, and 8K-16K tokens. At the beginning of each conversation, we inject a verifiable fact (e.g., ”My dog’s name is Barkley”) as a user message, followed by an assistant acknowledgment. This placement ensures the fact appears early in the context, maximizing the distance between injection and retrieval. We then process the conversation turn-by-turn, generating model responses at each exchange. At predetermined query points (turns 2, 4, 6, 8, 10, 12), we pause to ask a retention question corresponding to the injected fact. This progressive querying measures how retention degrades as context grows and the fact recedes further into the KV cache. Across 50 conversations per bucket, this yields several hundred retention tests per method, with the exact count depending on conversation lengths. We evaluate correctness by checking whether the model’s response contains the expected answer, directly comparing retention across compression strategies.
+
+Figure 8 presents retention accuracy across context lengths and conversation turns. As shown in Figure 8(a), vLLM maintains consistently high retention (94-96%) across all context buckets, serving as our baseline. InfiniGen closely tracks vLLM, achieving 92-94% accuracy with only 1-4% degradation relative to the baseline. In contrast, H2O exhibits substantial accuracy loss, retaining only 70-78% of injected facts, a 17-27% reduction compared to vLLM. Notably, H2O’s degradation worsens with increasing context length, dropping from 17% below the baseline at 1K-2K tokens to 27% below at 4K-8K tokens. Figure 8(b) reveals how retention evolves as conversations progress. While vLLM and InfiniGen maintain overlapping accuracy bands throughout (85-98%), H2O consistently underperforms by 20-30 pp across all query turns. The shaded regions represent variance across context buckets, with all methods showing increased variance at later turns. These results demonstrate that InfiniGen’s selective compression preserves critical early-context information, whereas H2O’s eviction strategy can discard essential tokens.
+
+VI Discussion
+
+Our evaluation reveals that KV cache management involves navigating a three-way trade-off between GPU memory consumption, throughput, and accuracy with no single framework dominating across all dimensions.
+
+When to choose vLLM. For deployments where GPU memory is sufficient and throughput paramount, vLLM remains the clear choice. Its native FlashAttention-2 integration delivers the lowest TTFT, highest decode throughput, and flat latency scaling across batch sizes. The pre-allocated full cache eliminates management overhead entirely, making vLLM ideal for latency-sensitive applications.
+
+When to choose H2O. When GPU memory is constrained but throughput requirements remain high, H2O offers an attractive trade-off. H2O achieves 70% memory reduction while maintaining throughput comparable to vLLM, and substantially higher than InfiniGen. However, practitioners should be aware of H2O’s accuracy limitations: permanent eviction disproportionately affects knowledge-intensive tasks and retention of early-context information. H2O is better suited for applications where occasional fact retrieval errors are tolerable.
+
+When to choose InfiniGen. InfiniGen occupies a specialized niche: deployments requiring sparsification with minimal accuracy degradation, where latency constraints are relaxed. Its dynamic selection preserves early-context retention equally well as the full cache, a significant advantage for multi-turn conversations or applications requiring reliable fact recall. However, the throughput penalty of an order of magnitude from CPU-GPU transfers limits its practicality for high-throughput scenarios. InfiniGen becomes more attractive as interconnect technology improves; NVLink-C2C’s 7 bandwidth improvement over PCIe Gen 5 could substantially narrow the performance gap.
+
+VII Related Work
+
+We organize related KV cache management frameworks according to the three paradigms evaluated in this study.
+
+Memory Management Frameworks (vLLM Paradigm):
+This paradigm optimizes memory allocation and scheduling without evicting cache entries. ORCA [26] enables continuous batching at individual decoding steps, improving GPU utilization by allowing new requests to join ongoing batches. vTensor [27] extends virtual memory abstractions to GPU tensors, enabling dynamic defragmentation without interrupting computation.
+
+Static Sparsification Frameworks (H2O Paradigm):
+These frameworks reduce cache size through permanent token eviction based on attention scores. Scissorhands [12] retains “pivotal” tokens with high cumulative attention scores. StreamingLLM [28] exploits the “attention sink” phenomenon, maintaining only initial tokens and a sliding window for theoretically infinite sequence lengths. ALISA [13] combines dynamic token selection with optional CPU offloading, while SnapKV [29] performs one-time compression after prefill using an observation window.
+
+Dynamic Selection Frameworks (InfiniGen Paradigm):
+This paradigm retains full KV caches (typically on CPU) and dynamically selects entries to load at each decode step. InfLLM [8] uses block-level indexing across CPU-GPU hierarchy. Quest [14] refines block selection using min-max key representations, while PQCache [30] applies Product Quantization for sub-linear retrieval. SqueezedAttention [31] employs K-means clustering to load semantically relevant key groups.
+
+Other Complementary Techniques:
+Orthogonal approaches include KV cache quantization like KVQuant [5]) and system-level scheduling (Llumnix [6] for live migration, VTC [32] for fairness). These techniques can be layered atop the paradigms we evaluate.
+
+Characterization Efforts:
+Since KV cache management for LLM inference is a relatively new area, only a few works have systematically explored trade-offs between frameworks. Ye et al. [4] analyzed performance bottlenecks arising from KV cache contention under concurrent workloads, finding that chunking during prefill can degrade throughput when forward passes are fast, and exact eviction strategies depend on model size, memory pressure, and workload characteristics.
+Prior work has analyzed individual frameworks: Ye et al. [4] studied KV cache contention under concurrency, Kwon et al. [7] compared vLLM against ORCA, and Li et al. [3] provided a theoretical taxonomy, but do not offer evaluation across fundamentally different management paradigms.
+
+VIII Conclusion
+
+This work provides a comparative characterization of three KV cache management frameworks representing distinct paradigms: vLLM (memory management), H2O (static sparsification), and InfiniGen (dynamic selection). We analyze their performance across time-to-first-token, throughput, latency, memory utilization, and accuracy under varying batch sizes, context lengths, and sparsity budgets.
+
+Our findings yield actionable guidance for practitioners. vLLM delivers the highest throughput and lowest latency, making it optimal when GPU memory is sufficient. H2O achieves the best memory efficiency, reducing GPU consumption by up to 70% while maintaining competitive throughput, though at the cost of accuracy on retention-sensitive tasks. InfiniGen preserves accuracy most effectively among sparsification approaches but incurs significant throughput penalties due to the costly CPU-GPU transfers with its hierarchical placement design. For applications requiring reliable early-context retention, InfiniGen substantially outperforms H2O. As CPU-GPU bandwidth improves with better interconnect technologies, hierarchical approaches may become increasingly viable for throughput-sensitive configurations.
+
+References
+
+[1]
+A. Vaswani et al. (2017)
+
+Attention is all you need.
+
+Advances in Neural Information Processing Systems 30.
+
+Cited by: §I,
+§II-A,
+§II-A.
+
+[2]
+T. Dao (2023)
+
+FlashAttention-2: faster attention with better parallelism and work partitioning.
+
+arXiv preprint arXiv:2307.08691.
+
+Cited by: §I,
+§II-C.
+
+[3]
+H. Li et al. (2024)
+
+A survey on large language model acceleration based on kv cache management.
+
+arXiv preprint arXiv:2412.19442.
+
+Cited by: §I,
+§I,
+§VII.
+
+[4]
+J. Ye, J. Cernuda, A. Maurya, X.-H. Sun, A. Kougkas, and B. Nicolae (2025)
+
+Characterizing the behavior and impact of kv caching on transformer inferences under concurrency.
+
+In Proceedings of the IEEE International Parallel and Distributed Processing Symposium (IPDPS),
+
+pp. 1191–1202.
+
+Cited by: §I,
+§VII.
+
+[5]
+C. Hooper et al. (2024)
+
+KVQuant: towards 10 million context length llm inference with kv cache quantization.
+
+Advances in Neural Information Processing Systems 37, pp. 1270–1303.
+
+Cited by: §I,
+§I,
+§VII.
+
+[6]
+B. Sun et al. (2024)
+
+Llumnix: dynamic scheduling for large language model serving.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+pp. 173–191.
+
+Cited by: §I,
+§VII.
+
+[7]
+W. Kwon et al. (2023)
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP),
+
+pp. 611–626.
+
+Cited by: §I,
+§I,
+§I,
+§II-C,
+§VII.
+
+[8]
+C. Xiao et al. (2024)
+
+InfLLM: training-free long-context extrapolation for llms with an efficient context memory.
+
+Advances in Neural Information Processing Systems 37, pp. 119638–119661.
+
+Cited by: §I,
+§VII.
+
+[9]
+Y. Sheng et al. (2023)
+
+FlexGen: high-throughput generative inference of large language models with a single gpu.
+
+In Proceedings of the 40th International Conference on Machine Learning (ICML),
+
+pp. 1–23.
+
+Note: Article no. 1288
+
+Cited by: §I,
+§II-B.
+
+[10]
+Z. Zhang et al. (2023)
+
+H2O: heavy-hitter oracle for efficient generative inference of large language models.
+
+Advances in Neural Information Processing Systems 36, pp. 34661–34710.
+
+Cited by: §I,
+§I,
+§II-C.
+
+[11]
+W. Lee, J. Lee, J. Seo, and J. Sim (2024)
+
+InfiniGen: efficient generative inference of large language models with dynamic kv cache management.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+pp. 155–172.
+
+Cited by: §I,
+§I,
+§II-C.
+
+[12]
+Z. Liu et al. (2023)
+
+Scissorhands: exploiting the persistence of importance hypothesis for llm kv cache compression at test time.
+
+Advances in Neural Information Processing Systems 36, pp. 52342–52364.
+
+Cited by: §I,
+§VII.
+
+[13]
+Y. Zhao, D. Wu, and J. Wang (2024)
+
+Alisa: accelerating large language model inference via sparsity-aware kv caching.
+
+In Proceedings of the 51st International Symposium on Computer Architecture (ISCA),
+
+pp. 1005–1017.
+
+Cited by: §I,
+§VII.
+
+[14]
+J. Tang et al. (2024)
+
+QUEST: query-aware sparsity for efficient long-context llm inference.
+
+arXiv preprint arXiv:2406.10774.
+
+Cited by: §I,
+§VII.
+
+[15]
+J. Ainslie et al. (2023)
+
+GQA: training generalized multi-query transformer models from multi-head checkpoints.
+
+arXiv preprint arXiv:2305.13245.
+
+Cited by: §II-B.
+
+[16]
+A. Dubey et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv e-prints.
+
+Note: arXiv:2407.xxxxx
+
+Cited by: §II-B,
+§III-B.
+
+[17]
+S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao, et al. (2025)
+
+Gpt-oss-120b & gpt-oss-20b model card.
+
+arXiv preprint arXiv:2508.10925.
+
+Cited by: §III-B.
+
+[18]
+L. Zheng et al. (2023)
+
+LMSYS-chat-1m: a large-scale real-world llm conversation dataset.
+
+arXiv preprint arXiv:2309.11998.
+
+Cited by: §III-B.
+
+[19]
+Wikimedia Foundation (2022)
+
+English wikipedia dump (20220301.en).
+
+Note: https://dumps.wikimedia.org/enwiki/20220301/
+
+Cited by: §III-B.
+
+[20]
+Y. Bisk et al. (2020)
+
+PIQA: reasoning about physical commonsense in natural language.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+pp. 7432–7439.
+
+Cited by: §III-B.
+
+[21]
+R. Zellers et al. (2019)
+
+HellaSwag: can a machine really finish your sentence?.
+
+In Proceedings of the ACL,
+
+Cited by: §III-B.
+
+[22]
+M. Roemmele, C. A. Bejan, and A. S. Gordon (2011)
+
+Choice of plausible alternatives: an evaluation of commonsense causal reasoning.
+
+In Proceedings of the AAAI Spring Symposium,
+
+Cited by: §III-B.
+
+[23]
+K. Sakaguchi et al. (2020)
+
+WinoGrande: an adversarial winograd schema challenge at scale.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+pp. 8732–8740.
+
+Cited by: §III-B.
+
+[24]
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal (2018)
+
+Can a suit of armor conduct electricity? a new dataset for open-book question answering.
+
+In Proceedings of EMNLP,
+
+Cited by: §III-B.
+
+[25]
+C. Clark et al. (2019)
+
+BoolQ: exploring the surprising difficulty of natural yes/no questions.
+
+In Proceedings of NAACL-HLT,
+
+Cited by: §III-B.
+
+[26]
+G.-I. Yu, J. S. Jeong, G.-W. Kim, S. Kim, and B.-G. Chun (2022)
+
+Orca: a distributed serving system for transformer-based generative models.
+
+In Proceedings of the 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+pp. 521–538.
+
+Cited by: §VII.
+
+[27]
+J. Xu et al. (2024)
+
+Vtensor: flexible virtual tensor management for efficient llm serving.
+
+arXiv preprint arXiv:2407.15309.
+
+Cited by: §VII.
+
+[28]
+G. Xiao et al. (2023)
+
+Efficient streaming language models with attention sinks.
+
+arXiv preprint arXiv:2309.17453.
+
+Cited by: §VII.
+
+[29]
+Y. Li et al. (2024)
+
+SnapKV: llm knows what you are looking for before generation.
+
+Advances in Neural Information Processing Systems 37, pp. 22947–22970.
+
+Cited by: §VII.
+
+[30]
+H. Zhang et al. (2025)
+
+PQCache: product quantization-based kv cache for long-context llm inference.
+
+Proceedings of the ACM on Management of Data 3 (3), pp. 1–30.
+
+Cited by: §VII.
+
+[31]
+C. R. C. Hooper et al. (2025)
+
+Squeezed attention: accelerating long context length llm inference.
+
+In Proceedings of ACL,
+
+Cited by: §VII.
+
+[32]
+Y. Sheng et al. (2024)
+
+Fairness in serving large language models.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+pp. 965–988.
+
+Cited by: §VII.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

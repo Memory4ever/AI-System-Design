@@ -1,0 +1,1379 @@
+MemRerank: Preference Memory for Personalized Product Reranking
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Works
+
+2.1 LLM-based Rerankers
+
+2.2 Memory in Agentic Systems
+
+3 Methodology
+
+3.1 Dataset Construction
+
+3.2 MemRerank Framework
+
+3.3 RL Training with GRPO
+
+4 Experimental Setup
+
+4.1 Baselines
+
+No memory.
+
+Product-context baselines.
+
+LLM-extracted memory baselines.
+
+External memory baselines.
+
+Our method.
+
+4.2 Implementation Details
+
+5 Experimental Results and Analysis
+
+5.1 Main Results
+
+5.2 Ablation Study
+
+5.3 The Impact of Different Memory Extraction Prompts
+
+5.4 The Impact of Purchase History Length
+
+6 Conclusion
+
+References
+
+A Appendix
+
+A.1 Prompts
+
+A.2 Dataset
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2603.29247v1 [cs.CL] 31 Mar 2026
+
+MemRerank: Preference Memory for Personalized Product Reranking
+
+Zhiyuan Peng
+
+Affiliation: Santa Clara University
+
+  
+Xuyang Wu
+
+Affiliation: Independent Researcher
+
+  
+Huaixiao Tou
+
+Affiliation: Independent Researcher
+
+  
+Yi Fang
+
+Affiliation: Santa Clara University
+
+  
+Yu Gong
+††thanks: Correspondence: gy910210@gmail.com
+Affiliation: Independent Researcher
+
+Abstract
+
+LLM-based shopping agents increasingly rely on long purchase histories and multi-turn interactions for personalization, yet naively appending raw history to prompts is often ineffective due to noise, length, and relevance mismatch. We propose MemRerank, a preference memory framework that distills user purchase history into concise, query-independent signals for personalized product reranking. To study this problem, we build an end-to-end benchmark and evaluation framework centered on an LLM-based 1-in-5 selection task, which measures both memory quality and downstream reranking utility. We further train the memory extractor with reinforcement learning (RL), using downstream reranking performance as supervision. Experiments with two LLM-based rerankers show that MemRerank consistently outperforms no-memory, raw-history, and off-the-shelf memory baselines, yielding up to +10.61 absolute points in 1-in-5 accuracy. These results suggest that explicit preference memory is a practical and effective building block for personalization in agentic e-commerce systems.
+
+1 Introduction
+
+Recommender systems (RS) have long served as critical tools for guiding users through vast item collections in domains such as e-commerce, entertainment, and social media. Classical approaches, from collaborative filtering to deep neural models, learn from historical interactions to predict a user’s preferences and rank candidates accordingly. While effective in specific contexts, they give users little way to inspect or correct what the system thinks they want.
+
+With the advent of large language models (LLMs), recommender systems are evolving beyond static candidate lists toward agentic behaviour. LLMs have progressed from passive text generators to agents capable of planning, remembering, and invoking tools, enabling interactive and adaptive recommendation scenarios Sumers et al. (2024). Recent perspective papers on multi-agent recommender systems argue that the next generation of RS will be agentic: driven by a language core, a suite of tools, and a hierarchical memory that captures short-term context, episodic experiences, and semantic knowledge Maragheh and Deldjoo (2025); Huang et al. (2025a). Within this framework, memory is not merely a cache but a structured repository: working memory retains the current turn, episodic memory stores past events, and semantic memory distils general user preferences. Such memory-augmented agents can recall prior recommendations and infer latent tastes even when the user does not explicitly state them.
+
+LLM-based recommendation agents must also integrate domain-specific knowledge and external tools. Recent systems, such as the Recommender AI Agent framework, position the LLM as the “brain” and conventional ranking modules as tools that consume long-term and short-term user profiles to personalise resultsHuang et al. (2025c). These architectures enable interactive planning and reflection, but note that naively injecting entire histories into the prompt introduces noise and quickly saturates the context window. Broader surveys on agentic recommender systems emphasise that balancing autonomy with controllability, incorporating external knowledge, and evaluating dynamic multimodal settings remain open challengesHuang et al. (2025a).
+
+Despite the growing excitement around agentic recommender systems, simply appending purchase histories or multi-turn conversation transcripts to an LLM prompt often yields only marginal benefits and can even degrade performance. Recent memory frameworks such as Mem0 Chhikara et al. (2025) show that retrieving large chunks of raw history can introduce noise relative to compact, salient memory representations, while MemAgent Yu et al. (2025) further highlights the importance of selectively retaining important information and discarding irrelevant details in long-context settings. These motivate the need for preference memory: a compact and structured representation of user preferences that captures both within-category and cross-category shopping patterns and can be directly consumed by downstream ranking models.
+
+In this paper, we address this gap by focusing on the product reranking stage, where personalised signals can be measured and acted upon directly in shopping assistants. We propose MemRerank, a preference-memory module that distills a user’s purchase history into structured shopping preferences. Specifically, the module produces complementary signals for within-category and cross-category behaviour, and we train an LLM-based extractor with an RL-style post-training objective to maximise utility for a setwise LLM reranker. To support this study, we construct a benchmark consisting of purchase histories, candidate product sets, and relevance labels, and show that MemRerank improves reranking accuracy by up to 10.61 percentage points over strong baselines that either inject raw history directly or rely on untrained extractors.
+
+Our contributions are threefold:
+
+•
+
+We introduce a benchmark for personalised product reranking that contains users’ purchase histories, candidate sets, and human-annotated relevance labels. We further adopt a 1-in-5 evaluation protocol to measure the quality of preference memory in downstream reranking.
+
+•
+
+We design a preference-memory extractor that maps long purchase histories into structured within-category and cross-category preference memory. The extractor is post-trained with an RL-style objective to directly optimise reranking accuracy.
+
+•
+
+Extensive experiments show that naive history injection and untrained extractors yield limited or even negative gains, whereas MemRerank consistently delivers substantial improvements, making it a practical building block for agentic e-commerce systems.
+
+2 Related Works
+
+2.1 LLM-based Rerankers
+
+LLM-based rerankers fall into three paradigms. Pointwise models compute a relevance score for each query–document pair using generative or discriminative scoring techniquesPonte and Croft (2017); Zhuang and Zuccon (2021); Zhuang et al. (2021); Peng et al. (2024); Liang et al. (2023); Nogueira et al. (2020). Pairwise (and setwise) approaches compare documents against each other and use sorting or sampling algorithms to aggregate wins into a final rankingQin et al. (2024); Gienapp et al. (2022); Mikhailiuk et al. (2020); Zhuang et al. (2024). Listwise methods produce a complete ranking in a single prompt and typically rely on zero- or few-shot prompting, sliding windows or tournament-style evaluationMa et al. (2023); Sun et al. (2023); Pradeep et al. (2023); Sun et al. (2023); Chen et al. (2025), while recent work fine-tunes LLMs via reinforcement learning to jointly generate reasoning and ranking for complex tasksZhang et al. (2025); Su et al. (2025). We adopt a setwise reranker for efficiency  Peng et al. (2025) and focus on improving its input via a concise preference memory rather than altering the ranker itself.
+
+2.2 Memory in Agentic Systems
+
+Memory is a core component of LLM-based agents. Cognitive architectures propose a hierarchy of working, episodic and semantic memories to enable long-horizon reasoning and reduce hallucinationsSumers et al. (2024). General memory frameworks such as Mem0 Chhikara et al. (2025) and MemAgent Yu et al. (2025) implement these ideas for broad LLM applications: Mem0 acts as a universal memory layer that dynamically extracts, consolidates, and retrieves salient user information across sessions, while MemAgent equips an LLM with a fixed-length memory that is selectively updated via reinforcement learning when processing long text, summarising critical details for later reasoning. Agentic recommender frameworks such as MR.Rec Huang et al. (2025b) trains the LLM via reinforcement learning to optimise both memory utilisation and recommendation reasoning. Memory-R1 Yan et al. (2025) adopts RL methods to further optimise memory controllers to decide what to store and retrieve. MAP Chen (2025) maintains external memory banks of user embeddings for retrieval. Memento Zhou et al. (2025) adapts memory modules without updating the base LLM weights. Long-term dialogue benchmarks reveal that LLM agents struggle to recall information over hundreds of turns Maharana et al. (2024), and recent work explores reflective or timeline-based memory management for Personalized dialogue agents Tan et al. (2025); Li et al. (2025); Ong et al. (2025). Most of these systems aim to preserve coherence or support general reasoning. In contrast, we design a preference memory tailored to downstream product ranking.
+
+3 Methodology
+
+3.1 Dataset Construction
+
+We construct our benchmark from Amazon-Review-2023 and Amazon-C4 Hou et al. (2024). The Amazon-Review-2023 dataset comprises over 570 million reviews and 48 million items from 33 categories spanning from May 1996 to September 2023. For each review, the product metadata and the user ID are both available. The Amazon-C4 dataset is a product search dataset created by prompting ChatGPT to rewrite 5-star-rated user reviews from Amazon-Review-2023, each at least 100 words long, into complex contextual queries. For each rewritten query, the associated product is the positive product, and 50 negative products are sampled in the same category as the positive product. Amazon-C4 contains 21,223 queries and about one million products. We collect the purchase history for each query in Amazon-C4 from Amazon-Review-2023. Specifically, we first use the user ID to filter all products the user interacted with in Amazon-Review-2023, then restrict the products to those before the user’s search for the query to obtain the user’s purchase history before .
+
+Following MR.Rec Huang et al. (2025b), we adopt the same query rewrite prompt as shown in Figure 6 to further rewrite Amazon-C4 queries with o3-mini to preserve the original shopping intent and constraints while removing unnecessary details, making them more suitable for a personalized product reranking setting. Following Amazon-C4, we use the product title and product description to represent each product. For each query, we construct a candidate set containing one positive product and four hard negatives. The four negatives are retrieved by Qwen3-8B-Embedding from the same category as the positive product, and we keep the top-4 negative products. This same-category hard-negative design makes the task challenging while keeping the candidate set controlled. Finally, each example is built around a target positive product, its associated query, 4 negative products, and the user’s historical purchases. The task is to prompt the LLM to find the most relevant product among the 5 candidate products. This 1-in-5 task is the basic operation of the setwise reranking algorithm Zhuang et al. (2024).
+
+Figure 12(a) shows the number of instances in each target category. The distribution is imbalanced, with some categories such as Industrial_and_Scientific, Clothing_Shoes_and_Jewelry, and Electronics containing substantially more examples than others. We choose Electronics as our main testbed because it has enough data for both training and evaluation. We split the data into training, development, and test sets with a ratio of 70:15:15, resulting in 905 training instances, 194 development instances, and 194 test instances.
+
+For each instance, we treat the user’s previously purchased products from the same category as the positive product as the within-category purchase history, and previously purchased products from different categories as the cross-category purchase history. Figure 12(b) reports the average lengths of within-category and cross-category purchase histories. Across nearly all categories, cross-category history is much longer than within-category history. Based on these histories, our task is to generate query-independent shopping preference memory that can be reused across reranking instances.
+
+3.2 MemRerank Framework
+
+Our framework contains two stages: preference memory extraction and downstream reranking. Given a user’s purchase history, the memory extractor, e.g., an LLM, generates a compact textual summary of stable shopping preferences. The input is purchase history, and the output is structured shopping preference memory enclosed in predefined tags. We study two extraction settings: (1) extracting only within-category shopping preference memory, and (2) extracting both within-category and cross-category shopping preference memory.
+
+The extracted memory is then inserted into an LLM reranking prompt as shown in Figure 7 together with the user query and the candidate product set. The reranker must select the most relevant product from five candidates. We use this 1-in-5 task as the downstream training and evaluation objective because it is the basic operation in setwise reranking: once the model can reliably choose the best item from a small set, the same operation can be repeatedly applied to larger candidate pools. In the current work, we focus only on this controlled 1-in-5 setting and do not yet study ranking more retrieved products end-to-end.
+
+Compared with directly appending raw purchase history into the reranking prompt, our framework explicitly compresses long and noisy historical behavior into a concise, query-independent preference memory.
+
+3.3 RL Training with GRPO
+
+We train the memory extractor using GRPO, treating preference memory generation as a policy optimization problem. For each training example, the model receives the user purchase history and generates shopping preference memory. The generated memory is then scored by a reward function designed to encourage both valid formatting and the performance of the downsteaming 1-in-5 task.
+
+Our reward has two components. The first is a format reward, which checks whether the generated output follows the required structure, e.g., whether the memory is enclosed by the correct tags such as <within_memory> and </within_memory>. This reward encourages the model to produce well-formed outputs that can be reliably consumed by the reranker.
+
+The second is a reranking reward. We insert the generated memory into the downstream 1-in-5 reranking prompt and use an LLM reranker to select the best candidate product. The reward is positive if the reranker selects the ground-truth positive product and negative otherwise. To make the reward smooth, we sample 5 responses and average the accuracy. In this way, the memory extractor is optimized not merely to generate fluent summaries, but to produce memories that are directly useful for personalized reranking.
+
+Formally, let denote the purchase history, denote the generated memory, and denote the total reward. GRPO updates the extractor policy to maximize expected reward:
+
+(1)
+
+Here, combines the format reward and the reranking reward. The format term ensures structural correctness, while the reranking term aligns the extracted memory with the downstream task objective.
+
+This training setup has two advantages. First, it avoids requiring gold preference-memory annotations, which are difficult and expensive to collect at scale. Second, it directly optimizes the extractor for its actual role in the pipeline: helping the reranker pick the correct product under personalized constraints.
+
+4 Experimental Setup
+
+4.1 Baselines
+
+We compare our method against several types of baselines that differ in how user preference information is provided to the reranker.
+
+No memory.
+
+This setting performs direct personalized product reranking without any explicit extracted preference memory. As shown in Figure 7, we input the empty <within_memory> and </cross_memory>, so the reranker receives only the query and candidate products and serves as the primary reference point for assessing the benefit of memory augmentation.
+
+Product-context baselines.
+
+We first consider simple retrieval-based context augmentation baselines.
+Within-category products augments the reranker with additional products sampled from the same category as the target candidate set, aiming to provide local preference evidence.
+Within + cross-category products further includes products from other categories, allowing the reranker to access broader behavioral signals beyond the current category.
+
+LLM-extracted memory baselines.
+
+We compare against preference memories directly extracted by off-the-shelf LLMs.
+Base-extractor memory uses the base memory extractor, Qwen2.5-7B-Instruct, with the original extraction prompt but without any RL training.
+GPT-5.2 memory replaces the extractor with GPT-5.2, testing whether a stronger proprietary LLM can produce more useful preference memory under the same general setup.
+For both settings, we also evaluate a think tag variant, which prompts the reranker to explicitly reason before making the final decision.
+
+External memory baselines.
+
+We further compare with two recently published strong memory-based methods, MR.Rec and Mem0. These methods provide alternative ways of constructing memory, allowing us to compare our approach against prior memory-centric personalization strategies. For MR.Rec, we first adopt the prompt, as shown in Figure 4, to extract the shopping preference for each category and then apply the prompt, as shown in Figure 4
+to summarize all category-wise shopping preferences into a user profile. At the reranking stage, we use the user profile as the <cross_memory> and the preference for the positive product category as the <within_memory>. For Mem0, we treat each product in the purchase history as a message, and apply the prompt, as shown in Figure 3 to extract the corresponding shopping preferences. For the history purchased product with the same category as the positive product, the extracted shopping preferences will be <within_memory>, otherwise <cross_memory>.
+
+Our method.
+
+MemRerank uses our RL-trained memory extractor to produce preference memory tailored for personalized reranking. We additionally evaluate MemRerank + think tag, which combines our extracted memory with explicit reasoning at inference time.
+
+4.2 Implementation Details
+
+We consider two memory extraction settings: extracting only within-category shopping preference memory, and extracting both within- and cross-category shopping preference memory. The maximum generation length of the memory extractor is set to 512 tokens for the former and 1024 tokens for the latter.
+
+For GPT-4.1-mini reranking, we use temperature=0.0 and top_p=1.0. Under standard reranking, the maximum output length is 64 tokens. When think tags are enabled for interpretability, the maximum output length is increased to 1024 tokens for within-category shopping preference memory and 2048 tokens for within- and cross-category shopping preference memory.
+
+For o4-mini reranking, we use temperature=1.0, top_p=1.0, and reasoning_effort=low. Under standard reranking, the maximum output length is 512 tokens for within-category shopping preference memory and 1024 tokens for within- and cross-category shopping preference memory. With think tags enabled, the maximum output length is set to 1024 and 2048 tokens, respectively.
+
+Overall, think tags require larger output budgets to accommodate explicit reasoning, and within- and cross-category shopping preference memory requires a larger token budget than within-category shopping preference memory because it contains richer and longer preference information.
+
+5 Experimental Results and Analysis
+
+Reranker
+
+Method
+
+Acc.
+
+GPT-4.1-mini
+
+No memory
+
+32.47
+–
+
++ Within-category products
+
+32.58
++0.11
+
++ Within + cross-category products
+
+34.02
++1.55
+
++ Base-extractor memory
+
+31.96
+-0.51
+
++ Base-extractor memory + think tag
+
+33.30
++0.83
+
++ GPT-5.2 memory
+
+33.92
++1.45
+
++ MemRerank
+
+38.14
++5.67
+
++ MemRerank + think tag
+
+39.07
++6.60
+
+MR.Rec
+
+32.47
++0.00
+
+Mem0
+
+30.72
+-1.75
+
+o4-mini
+
+No memory
+
+31.86
+–
+
++ Within-category products
+
+34.02
++2.16
+
++ Within + cross-category products
+
+34.85
++2.99
+
++ Base-extractor memory
+
+36.29
++4.43
+
++ Base-extractor memory + think tag
+
+38.66
++6.80
+
++ GPT-5.2 memory
+
+35.77
++3.91
+
++ MemRerank
+
+40.72
++8.86
+
++ MemRerank + think tag
+
+42.47
++10.61
+
+MR.Rec
+
+36.08
++4.22
+
+Mem0
+
+35.88
++4.02
+
+Table 1: Main results of personalized product reranking on “Electronics” category data. “Within-category products” adds products from the same category as auxiliary context, while “Within + cross-category products” further includes products from other categories. “Base-extractor memory” uses the base extractor (Qwen2.5-7B-Instruct) without RL training, “GPT-5.2 memory” uses GPT-5.2 for memory extraction, and “MemRerank” uses our RL-trained Qwen2.5-7B-Instruct as memory extractor. “think tag” prompts explicit reasoning before final selection. Within-category and cross-category product pools are both set to 10.
+
+5.1 Main Results
+
+Table 1 reports the main results on personalized product reranking in the Electronics category. Overall, our method consistently achieves the best performance across both rerankers, and adding the think tag further improves the results.
+
+For GPT-4.1-mini, the no-memory baseline achieves 32.47 accuracy. Adding raw product context yields only limited gains: within-category products improve accuracy by +0.11, and adding both within- and cross-category products improves it by +1.55. In contrast, our RL-trained memory extractor improves accuracy to 38.14 (+5.67), and further to 39.07 (+6.60) with the think tag. This shows that distilled preference memory is substantially more effective than directly appending raw product context.
+
+For o4-mini, the same trend holds but with larger gains. The no-memory baseline starts at 31.86, while within-category products and within + cross-category products improve performance by +2.16 and +2.99, respectively. Our method reaches 40.72 (+8.86), and 42.47 (+10.61) with the think tag, giving the best overall result. Thus, although o4-mini is generally better at utilizing auxiliary information, our RL-trained memory remains the most effective form of augmentation.
+
+Comparing memory construction strategies shows that training the extractor is crucial. For GPT-4.1-mini, base-extractor memory slightly hurts performance (-0.51), while GPT-5.2 memory yields a modest gain (+1.45). For o4-mini, base-extractor memory is stronger (+4.43), and improves further to +6.80 with the think tag, but still remains below our method. These results indicate that stronger off-the-shelf extractors help, but RL training aligned with the reranking objective is substantially more effective.
+
+Our method also outperforms external memory baselines. MR.Rec and Mem0 are weak for GPT-4.1-mini, and while they provide moderate gains for o4-mini, they still trail our method by a large margin. Finally, the think tag consistently improves extracted-memory settings, especially for our method, suggesting that explicit reasoning and high-quality memory are complementary.
+
+Overall, the results show that explicitly extracted shopping preference memory is more effective than raw product-context augmentation, and that RL-trained memory extraction provides the most useful preference signals for personalized product reranking.
+
+5.2 Ablation Study
+
+5.3 The Impact of Different Memory Extraction Prompts
+
+We next study how different memory extraction prompts affect downstream personalized product reranking. For brevity, we denote the three prompt variants for within-category memory extraction as M_W_v1, M_W_v2, and M_W_v3, as shown in Figure 9,  10 and  11. Their corresponding within- and cross-category variants, denoted as M_WC_v1, M_WC_v2, and M_WC_v3, follow the same design philosophy. Prompt v1 uses a fixed set of suggested aspects, such as brand, feature priorities, style, quality level, price range, and usage scenarios. Prompt v2 removes this fixed checklist and gives the LLM more freedom to discover the most relevant aspects directly from the purchase history. Prompt v3 takes a middle ground: it provides several common aspects as examples, but does not require them, and explicitly allows the model to identify new aspects when they are better supported by the evidence. In addition, v3 imposes stronger structural constraints, including concise outputs, actionable preferences, non-duplicated aspect names, and explicit evidence snippets copied from the purchase history.
+
+(a) Memory extractor prompt comparison with GPT-4.1-mini as the reranker.
+
+(b) Memory extractor prompt comparison with o4-mini as the reranker.
+
+Figure 1: Impact of different memory extraction prompts on downstream personalized product reranking accuracy. “Within-category” denotes extracting only within-category shopping preference memory, while “Within- and cross-category” denotes extracting both within-category and cross-category shopping preference memory. For each setting, v1 uses a fixed set of suggested aspects, v2 allows the extractor to freely discover aspects from purchase history, and v3 combines light aspect guidance with flexible aspect discovery and explicit evidence grounding. Blue bars show the base extractor without training, and red bars show our trained extractor.
+
+Figure 1 shows that prompt design has a clear impact on downstream reranking. The fully fixed prompt (v1) is not consistently effective. For GPT-4.1-mini, M_W_v1 performs slightly below M_W_v2 and M_W_v3, while M_WC_v1 is clearly weaker than M_WC_v3. For o4-mini, v1 is more competitive, especially in the within- and cross-category setting, but it still does not match v3. These results suggest that a fully predefined aspect schema can be too rigid: although it provides structure, it may force the extractor to organize memory around pre-defined categories without flexibility.
+
+Prompt v2, which gives the extractor greater freedom to discover aspects, performs better than v1 in some settings, especially for within-category memory. For example, without training, M_W_v2 slightly outperforms M_W_v1 for both rerankers. However, v2 remains noticeably below v3, especially in the within- and cross-category setting. With GPT-4.1-mini, trained M_WC_v2 reaches 33.20, far below trained M_WC_v3 at 38.14. With o4-mini, trained M_WC_v2 reaches 39.07, again below trained M_WC_v3 at 40.72. This indicates that complete freedom alone is not enough; without stronger output constraints, the extracted memory may become less focused, less actionable, or less aligned with the downstream reranking objective.
+
+Prompt v3 achieves the best overall performance, especially after training. For GPT-4.1-mini, the most striking gain appears in the within- and cross-category setting, where trained M_WC_v3 reaches 38.14, compared with 34.64 for M_WC_v1 and 33.20 for M_WC_v2. For o4-mini, v3 is also the strongest variant in both settings: trained M_W_v3 reaches 37.94 and trained M_WC_v3 reaches 40.72, both higher than their v1 and v2 counterparts. This pattern suggests that the most effective prompt is neither fully fixed nor fully unconstrained. Instead, the extractor benefits from having some guidance about what kinds of preferences may matter, while still retaining the flexibility to identify new task-relevant aspects supported by the purchase history.
+
+Another clear pattern in Figure 1 is that training amplifies the benefit of better prompt design. Without training, differences among prompt versions are often small or inconsistent. For example, with GPT-4.1-mini, the untrained within- and cross-category prompt M_WC_v1 actually outperforms M_WC_v3 (35.36 vs. 31.96). However, after training, M_WC_v3 becomes the strongest variant by a large margin (38.14 vs. 34.64). A similar effect appears with o4-mini, where training yields the largest improvements for v3, especially in the within- and cross-category setting. This suggests that prompt design and training are complementary: a better prompt provides a more suitable output structure and stronger inductive bias, while training further aligns the extractor with the downstream reranking objective.
+
+Finally, the gains of v3 are larger in the within- and cross-category setting than in the within-category-only setting. This is intuitive, because extracting both within-category and cross-category memory is a more difficult generation problem: the model must identify not only category-specific preferences but also broader shopping tendencies that remain useful for ranking products in the current category. In this setting, stronger prompt constraints, concise formatting, and evidence grounding become more important. Overall, these results show that memory extraction prompt design matters substantially, and that a semi-structured, evidence-grounded prompt provides a stronger foundation than either a rigid fixed-aspect prompt or a fully unconstrained prompt.
+
+5.4 The Impact of Purchase History Length
+
+We next study how the length of purchase history affects downstream personalized product reranking. In this experiment, we vary the number of within-category products and cross-category products provided as input context to the reranker, without using explicit extracted memory. Figure 2 shows the resulting 1-in-5 accuracy for GPT-4.1-mini and o4-mini.
+
+(a) Performance of GPT-4.1-mini under different purchase history lengths.
+
+(b) Performance of o4-mini under different purchase history lengths.
+
+Figure 2: Impact of purchase history length on downstream personalized product reranking accuracy without explicit memory extraction. The vertical axis varies the number of within-category products, and the horizontal axis varies the number of cross-category products.
+
+Figure 2 shows that simply increasing the amount of raw purchase history does not always improve reranking performance. Instead, the effect depends on both the reranker and the balance between within-category and cross-category context.
+
+For GPT-4.1-mini, moderate amounts of cross-category context appear more helpful than very large amounts. The best result, 35.26, is achieved with 40 within-category products and 10 cross-category products. Performance also remains relatively strong for 30 within-category and 10 cross-category products (35.05), as well as 10 within-category and 20 cross-category products (34.95). In contrast, configurations with 30 cross-category products consistently perform worse across all within-category settings, with accuracy dropping to around 31.55-32.06. This suggests that GPT-4.1-mini can benefit from additional purchase history, but too much cross-category information may introduce noise or distract the reranker from the current category.
+
+For o4-mini, the pattern is different. The best performance, 37.32, is obtained with 10 within-category products and 40 cross-category products. More broadly, o4-mini performs well under several relatively large-context settings, including 20 within-category and 40 cross-category products (36.29), 30 within-category and 30 cross-category products (36.29), and 40 within-category and 20 cross-category products (36.08). Compared with GPT-4.1-mini, o4-mini appears more capable of exploiting larger history context, especially when substantial cross-category evidence is available.
+
+Another notable pattern is that the optimal purchase history length is not monotonic in either dimension. For example, with GPT-4.1-mini, increasing cross-category products from 10 to 30 often hurts performance, while for o4-mini, increasing cross-category history can be beneficial when combined with an appropriate amount of within-category history. Similarly, more within-category products do not always lead to better results. These findings indicate that raw purchase history has a complex interaction with the reranker’s reasoning capacity, and that simply appending more products is not a reliable strategy for improving personalization.
+
+Overall, the results support two conclusions. First, the usefulness of raw purchase history depends strongly on how much history is provided and how it is distributed between within-category and cross-category products. Second, stronger rerankers such as o4-mini are better able to exploit longer purchase histories, while weaker rerankers such as GPT-4.1-mini are more sensitive to noisy or excessive context. This also helps explain why explicit memory extraction is useful: instead of forcing the reranker to process a large amount of raw history directly, memory extraction can compress the most informative user preference signals into a more focused and reusable representation.
+
+6 Conclusion
+
+We present a memory-based framework for personalized product reranking. Instead of directly feeding long raw purchase histories to the reranker, we first extract query-independent shopping preference memory from user purchase metadata, and then use this memory to support product selection. Experiments show that extracted preference memory is consistently more effective than direct reranking, raw product-context augmentation, and external memory baselines. Our RL-trained memory extractor further outperforms both the base extractor and GPT-5.2-based extraction. We also find that prompt design matters: a semi-structured, evidence-grounded extraction prompt works better than either a rigid fixed-aspect prompt or a fully unconstrained prompt. In addition, think tags further improve performance, indicating that better memory and explicit reasoning are complementary. Overall, the results suggest that explicit shopping preference memory is a promising way to convert historical user behavior into actionable signals for personalized e-commerce search.
+
+Limitations
+
+This work has two main limitations. First, we evaluate only on the Electronics category and use only product metadata for memory extraction, so generalization to other domains and richer signals remains unclear. Second, we focus on offline 1-in-5 reranking and do not study larger-scale retrieval settings, like reranking the top 100 retrieved products.
+
+References
+
+Chen (2025)
+J. Chen
+
+Memory assisted LLM for personalized recommendation system.
+
+CoRR abs/2505.03824.
+
+External Links: Link,
+Document,
+2505.03824
+
+Cited by: §2.2.
+
+Chen et al. (2025)
+Y. Chen, Q. Liu, Y. Zhang, W. Sun, X. Ma, W. Yang, D. Shi, J. Mao, and D. Yin
+
+TourRank: utilizing large language models for documents ranking with a tournament-inspired strategy.
+
+In Proceedings of the ACM on Web Conference 2025, WWW 2025, Sydney,
+NSW, Australia, 28 April 2025- 2 May 2025, G. Long, M. Blumestein, Y. Chang, L. Lewin-Eytan, Z. H. Huang, and E. Yom-Tov (Eds.),
+
+pp. 1638–1652.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Chhikara et al. (2025)
+P. Chhikara, D. Khant, S. Aryan, T. Singh, and D. Yadav
+
+Mem0: building production-ready AI agents with scalable long-term memory.
+
+CoRR abs/2504.19413.
+
+External Links: Link,
+Document,
+2504.19413
+
+Cited by: §1,
+§2.2.
+
+Gienapp et al. (2022)
+L. Gienapp, M. Fröbe, M. Hagen, and M. Potthast
+
+Sparse pairwise re-ranking with pre-trained transformers.
+
+In ICTIR ’22: The 2022 ACM SIGIR International Conference on the
+Theory of Information Retrieval, Madrid, Spain, July 11 - 12, 2022, F. Crestani, G. Pasi, and É. Gaussier (Eds.),
+
+pp. 72–80.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Hou et al. (2024)
+Y. Hou, J. Li, Z. He, A. Yan, X. Chen, and J. J. McAuley
+
+Bridging language and items for retrieval and recommendation.
+
+CoRR abs/2403.03952.
+
+External Links: Link,
+Document,
+2403.03952
+
+Cited by: §3.1.
+
+Huang et al. (2025a)
+C. Huang, J. Wu, Y. Xia, Z. Yu, R. Wang, T. Yu, R. Zhang, R. A. Rossi, B. Kveton, D. Zhou, J. J. McAuley, and L. Yao
+
+Towards agentic recommender systems in the era of multimodal large language models.
+
+CoRR abs/2503.16734.
+
+External Links: Link,
+Document,
+2503.16734
+
+Cited by: §1,
+§1.
+
+Huang et al. (2025b)
+J. Huang, X. Zou, L. Xia, and Q. Li
+
+MR.rec: synergizing memory and reasoning for personalized recommendation assistant with llms.
+
+CoRR abs/2510.14629.
+
+External Links: Link,
+Document,
+2510.14629
+
+Cited by: §2.2,
+§3.1.
+
+Huang et al. (2025c)
+X. Huang, J. Lian, Y. Lei, J. Yao, D. Lian, and X. Xie
+
+Recommender AI agent: integrating large language models for interactive recommendations.
+
+ACM Trans. Inf. Syst. 43 (4), pp. 96:1–96:33.
+
+External Links: Link,
+Document
+
+Cited by: §1.
+
+Li et al. (2025)
+H. Li, C. Yang, A. Zhang, Y. Deng, X. Wang, and T. Chua
+
+Hello again! llm-powered personalized agent for long-term dialogue.
+
+In Proceedings of the 2025 Conference of the Nations of the Americas
+Chapter of the Association for Computational Linguistics: Human Language
+Technologies, NAACL 2025 - Volume 1: Long Papers, Albuquerque, New
+Mexico, USA, April 29 - May 4, 2025, L. Chiruzzo, A. Ritter, and L. Wang (Eds.),
+
+pp. 5259–5276.
+
+External Links: Link,
+Document
+
+Cited by: §2.2.
+
+Liang et al. (2023)
+P. Liang, R. Bommasani, T. Lee, D. Tsipras, D. Soylu, M. Yasunaga, Y. Zhang, D. Narayanan, Y. Wu, A. Kumar, B. Newman, B. Yuan, B. Yan, C. Zhang, C. Cosgrove, C. D. Manning, C. Ré, D. Acosta-Navas, D. A. Hudson, E. Zelikman, E. Durmus, F. Ladhak, F. Rong, H. Ren, H. Yao, J. Wang, K. Santhanam, L. J. Orr, L. Zheng, M. Yüksekgönül, M. Suzgun, N. Kim, N. Guha, N. S. Chatterji, O. Khattab, P. Henderson, Q. Huang, R. Chi, S. M. Xie, S. Santurkar, S. Ganguli, T. Hashimoto, T. Icard, T. Zhang, V. Chaudhary, W. Wang, X. Li, Y. Mai, Y. Zhang, and Y. Koreeda
+
+Holistic evaluation of language models.
+
+Trans. Mach. Learn. Res. 2023.
+
+External Links: Link
+
+Cited by: §2.1.
+
+Ma et al. (2023)
+X. Ma, X. Zhang, R. Pradeep, and J. Lin
+
+Zero-shot listwise document reranking with a large language model.
+
+CoRR abs/2305.02156.
+
+External Links: Link,
+Document,
+2305.02156
+
+Cited by: §2.1.
+
+Maharana et al. (2024)
+A. Maharana, D. Lee, S. Tulyakov, M. Bansal, F. Barbieri, and Y. Fang
+
+Evaluating very long-term conversational memory of LLM agents.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand,
+August 11-16, 2024, L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+pp. 13851–13870.
+
+External Links: Link,
+Document
+
+Cited by: §2.2.
+
+Maragheh and Deldjoo (2025)
+R. Y. Maragheh and Y. Deldjoo
+
+The future is agentic: definitions, perspectives, and open challenges of multi-agent recommender systems.
+
+CoRR abs/2507.02097.
+
+External Links: Link,
+Document,
+2507.02097
+
+Cited by: §1.
+
+Mikhailiuk et al. (2020)
+A. Mikhailiuk, C. Wilmot, M. Pérez-Ortiz, D. Yue, and R. K. Mantiuk
+
+Active sampling for pairwise comparisons via approximate message passing and information gain maximization.
+
+In 25th International Conference on Pattern Recognition, ICPR 2020,
+Virtual Event / Milan, Italy, January 10-15, 2021,
+
+pp. 2559–2566.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Nogueira et al. (2020)
+R. Nogueira, Z. Jiang, R. Pradeep, and J. Lin
+
+Document ranking with a pretrained sequence-to-sequence model.
+
+In Findings of the Association for Computational Linguistics: EMNLP
+2020, Online Event, 16-20 November 2020, T. Cohn, Y. He, and Y. Liu (Eds.),
+
+Findings of ACL, Vol. EMNLP 2020, pp. 708–718.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Ong et al. (2025)
+K. T. Ong, N. Kim, M. Gwak, H. Chae, T. Kwon, Y. Jo, S. Hwang, D. Lee, and J. Yeo
+
+Towards lifelong dialogue agents via timeline-based memory management.
+
+In Proceedings of the 2025 Conference of the Nations of the Americas
+Chapter of the Association for Computational Linguistics: Human Language
+Technologies, NAACL 2025 - Volume 1: Long Papers, Albuquerque, New
+Mexico, USA, April 29 - May 4, 2025, L. Chiruzzo, A. Ritter, and L. Wang (Eds.),
+
+pp. 8631–8661.
+
+External Links: Link,
+Document
+
+Cited by: §2.2.
+
+Peng et al. (2025)
+Z. Peng, T. Wei, T. Song, and Y. Zhao
+
+Efficiency-effectiveness reranking flops for llm-based rerankers.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2025 - Industry Track, Suzhou, China,
+November 4-9, 2025, S. Potdar, L. M. Rojas-Barahona, and S. Montella (Eds.),
+
+pp. 2782–2791.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Peng et al. (2024)
+Z. Peng, X. Wu, Q. Wang, S. Rajanala, and Y. Fang
+
+Q-PEFT: query-dependent parameter efficient fine-tuning for text reranking with large language models.
+
+CoRR abs/2404.04522.
+
+External Links: Link,
+Document,
+2404.04522
+
+Cited by: §2.1.
+
+Ponte and Croft (2017)
+J. M. Ponte and W. B. Croft
+
+A language modeling approach to information retrieval.
+
+SIGIR Forum 51 (2), pp. 202–208.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Pradeep et al. (2023)
+R. Pradeep, S. Sharifymoghaddam, and J. Lin
+
+RankVicuna: zero-shot listwise document reranking with open-source large language models.
+
+CoRR abs/2309.15088.
+
+External Links: Link,
+Document,
+2309.15088
+
+Cited by: §2.1.
+
+Qin et al. (2024)
+Z. Qin, R. Jagerman, K. Hui, H. Zhuang, J. Wu, L. Yan, J. Shen, T. Liu, J. Liu, D. Metzler, X. Wang, and M. Bendersky
+
+Large language models are effective text rankers with pairwise ranking prompting.
+
+In Findings of the Association for Computational Linguistics: NAACL
+2024, Mexico City, Mexico, June 16-21, 2024, K. Duh, H. Gómez-Adorno, and S. Bethard (Eds.),
+
+pp. 1504–1518.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Su et al. (2025)
+H. Su, H. Yen, M. Xia, W. Shi, N. Muennighoff, H. Wang, H. Liu, Q. Shi, Z. S. Siegel, M. Tang, R. Sun, J. Yoon, S. Ö. Arik, D. Chen, and T. Yu
+
+BRIGHT: A realistic and challenging benchmark for reasoning-intensive retrieval.
+
+In The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025,
+
+External Links: Link
+
+Cited by: §2.1.
+
+Sumers et al. (2024)
+T. R. Sumers, S. Yao, K. Narasimhan, and T. L. Griffiths
+
+Cognitive architectures for language agents.
+
+Trans. Mach. Learn. Res. 2024.
+
+External Links: Link
+
+Cited by: §1,
+§2.2.
+
+Sun et al. (2023)
+W. Sun, L. Yan, X. Ma, S. Wang, P. Ren, Z. Chen, D. Yin, and Z. Ren
+
+Is chatgpt good at search? investigating large language models as re-ranking agents.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2023, Singapore, December 6-10, 2023, H. Bouamor, J. Pino, and K. Bali (Eds.),
+
+pp. 14918–14937.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Tan et al. (2025)
+Z. Tan, J. Yan, I. Hsu, R. Han, Z. Wang, L. T. Le, Y. Song, Y. Chen, H. Palangi, G. Lee, A. R. Iyer, T. Chen, H. Liu, C. Lee, and T. Pfister
+
+In prospect and retrospect: reflective memory management for long-term personalized dialogue agents.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria,
+July 27 - August 1, 2025, W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+pp. 8416–8439.
+
+External Links: Link
+
+Cited by: §2.2.
+
+Yan et al. (2025)
+S. Yan, X. Yang, Z. Huang, E. Nie, Z. Ding, Z. Li, X. Ma, H. Schütze, V. Tresp, and Y. Ma
+
+Memory-r1: enhancing large language model agents to manage and utilize memories via reinforcement learning.
+
+CoRR abs/2508.19828.
+
+External Links: Link,
+Document,
+2508.19828
+
+Cited by: §2.2.
+
+Yu et al. (2025)
+H. Yu, T. Chen, J. Feng, J. Chen, W. Dai, Q. Yu, Y. Zhang, W. Ma, J. Liu, M. Wang, and H. Zhou
+
+MemAgent: reshaping long-context LLM with multi-conv rl-based memory agent.
+
+CoRR abs/2507.02259.
+
+External Links: Link,
+Document,
+2507.02259
+
+Cited by: §1,
+§2.2.
+
+Zhang et al. (2025)
+L. Zhang, B. Wang, X. Qiu, S. Reddy, and A. Agrawal
+
+REARANK: reasoning re-ranking agent via reinforcement learning.
+
+arXiv preprint arXiv:2505.20046.
+
+Cited by: §2.1.
+
+Zhou et al. (2025)
+H. Zhou, Y. Chen, S. Guo, X. Yan, K. H. Lee, Z. Wang, K. Y. Lee, G. Zhang, K. Shao, L. Yang, and J. Wang
+
+Memento: fine-tuning LLM agents without fine-tuning llms.
+
+CoRR abs/2508.16153.
+
+External Links: Link,
+Document,
+2508.16153
+
+Cited by: §2.2.
+
+Zhuang et al. (2021)
+S. Zhuang, H. Li, and G. Zuccon
+
+Deep query likelihood model for information retrieval.
+
+In Advances in Information Retrieval - 43rd European Conference on IR
+Research, ECIR 2021, Virtual Event, March 28 - April 1, 2021, Proceedings,
+Part II, D. Hiemstra, M. Moens, J. Mothe, R. Perego, M. Potthast, and F. Sebastiani (Eds.),
+
+Lecture Notes in Computer Science, Vol. 12657, pp. 463–470.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Zhuang et al. (2024)
+S. Zhuang, H. Zhuang, B. Koopman, and G. Zuccon
+
+A setwise approach for effective and highly efficient zero-shot ranking with large language models.
+
+In Proceedings of the 47th International ACM SIGIR Conference on
+Research and Development in Information Retrieval, SIGIR 2024, Washington
+DC, USA, July 14-18, 2024, G. H. Yang, H. Wang, S. Han, C. Hauff, G. Zuccon, and Y. Zhang (Eds.),
+
+pp. 38–47.
+
+External Links: Link,
+Document
+
+Cited by: §2.1,
+§3.1.
+
+Zhuang and Zuccon (2021)
+S. Zhuang and G. Zuccon
+
+TILDE: term independent likelihood model for passage re-ranking.
+
+In SIGIR ’21: The 44th International ACM SIGIR Conference on Research
+and Development in Information Retrieval, Virtual Event, Canada, July
+11-15, 2021, F. Diaz, C. Shah, T. Suel, P. Castells, R. Jones, and T. Sakai (Eds.),
+
+pp. 1483–1492.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Appendix A Appendix
+
+A.1 Prompts
+
+⬇
+You are a memory extraction system for personalized recommendation.
+
+You will receive individual purchase items from a user’s shopping history, one at a time.
+
+Each item may include:
+
+- Category information (e.g., [Electronics])
+
+- Product metadata (title, description, features)
+
+- Optional user review text
+
+Your task:
+
+Extract the most important shopping preferences or decision drivers from each purchase item that may help future purchase decisions.
+
+Rules:
+
+- Only extract what is directly supported by the input
+
+- Create atomic, generalizable statements useful for future recommendations
+
+- Avoid copying long descriptions; abstract into preference facts
+
+- Skip product IDs, order details, timestamps
+
+- Update or consolidate memories as you see patterns across multiple items
+
+- Return at most 3 most important preference facts
+
+- If nothing meaningful can be extracted, return empty list
+
+Output format:
+
+You MUST return ONLY raw JSON without any markdown formatting, code blocks, or extra text.
+
+Format: {"facts": ["preference 1", "preference 2", …]}
+
+Do NOT wrap the JSON in “‘json or “‘ markers.
+
+Do NOT add any explanation before or after the JSON.
+
+Example valid output:
+
+{"facts": ["User prefers wireless headphones", "User values noise cancellation features"]}
+
+Figure 3: Mem0 prompt
+
+⬇
+You are given the following information about a user’s purchase history in a specific category:
+
+- Category: {category}
+
+- User’s purchased items in this category, each with its metadata and the user’s review:
+
+{meta_reviews}
+
+Your task:
+
+Analyze the items (including their metadata and the user’s reviews) and summarize the user’s preferences in this category.
+
+The summary should capture consistent patterns across items and reviews (e.g., favored brands, preferred price range, styles, features, quality expectations).
+
+Be as detailed as possible, but do not fabricate information that is not supported by the input.
+
+Directly output the preference summary (string) below:
+
+Figure 4: MR.Rec Preference Patterns Extraction Prompt
+
+⬇
+You are given the following information about a user’s preferences across different categories or aspects:
+
+{preference_patterns}
+
+Your task:
+
+Based on these preferences, infer the user’s overall profile.
+
+The profile should summarize general traits, patterns, and tendencies that can be reasonably inferred from the given preferences
+
+(e.g., spending habits, brand inclination, style choices, feature priorities, quality expectations, lifestyle hints).
+
+Do not fabricate information that is not supported by the input.
+
+Directly output the profile (string) below:
+
+Figure 5: MR.Rec User Profile Extraction Prompt
+
+⬇
+system:
+
+Rewrite the "Original Query" into a single, casual, conversational query. Rules:
+
+- Keep: 1 core item + 1 core use case (e.g., "a laptop for gaming").
+
+- Delete: All other details (including brand, specs, price, personal preferences, etc.).
+
+- Tone: Natural and conversational.
+
+- Format: Must be a single sentence.
+
+user:
+
+Original Query: {query}
+
+Rewritten Query:
+
+Figure 6: Query Rewrite Prompt
+
+⬇
+system:
+
+You are an intelligent shopping assistant specialized in selecting the most relevant product from a list of candidates based on a customer’s search query.
+
+user:
+
+Given a customer search query "{query}", which of the following products is the most relevant to the query?
+
+Below is user preference memory that has been precomputed from the user’s historical behavior.
+
+Some memory blocks may be empty or omitted; if a block is not present, you should simply ignore it.
+
+WITHIN-CATEGORY PREFERENCE MEMORY (optional, may be based on M, R, or M+R)
+
+Category: {category_name}
+
+——————————
+
+{within_memory}
+
+CROSS-CATEGORY PREFERENCE MEMORY (optional, may be based on M, R, or M+R)
+
+——————————
+
+{cross_memory}
+
+Candidate products:
+
+{passages}
+
+When choosing the most relevant product:
+
+- First, make sure the product matches the customer’s query.
+
+- If preference memory is provided:
+
+* Use the within-category memory (if present) to judge how well each candidate aligns with the user’s stable preferences for this type of product.
+
+* Use the cross-category memory (if present) to ensure the choice fits the user’s general shopping style (e.g., budget, quality expectations, brand preferences) and to break ties.
+
+- However, the query relevance must remain the primary criterion.
+
+Output ONLY the product label (e.g., A, B, C) of the most relevant product wrapped in <answer> tags, like <answer>A</answer>. Do not output any other text.
+
+Figure 7: Reranking Prompt with Memory
+
+⬇
+system:
+
+You are an intelligent shopping assistant specialized in selecting the most relevant product from a list of candidates based on a customer’s search query.
+
+user:
+
+Given a customer search query "{query}", which of the following products is the most relevant to the query?
+
+Below is user preference memory that has been precomputed from the user’s historical behavior.
+
+Some memory blocks may be empty or omitted; if a block is not present, you should simply ignore it.
+
+WITHIN-CATEGORY PREFERENCE MEMORY (optional, may be based on M, R, or M+R)
+
+Category: {category_name}
+
+——————————
+
+{within_memory}
+
+CROSS-CATEGORY PREFERENCE MEMORY (optional, may be based on M, R, or M+R)
+
+——————————
+
+{cross_memory}
+
+Candidate products:
+
+{passages}
+
+When choosing the most relevant product:
+
+- First, make sure the product matches the customer’s query.
+
+- If preference memory is provided:
+
+* Use the within-category memory (if present) to judge how well each candidate aligns with the user’s stable preferences for this type of product.
+
+* Use the cross-category memory (if present) to ensure the choice fits the user’s general shopping style (e.g., budget, quality expectations, brand preferences) and to break ties.
+
+- However, the query relevance must remain the primary criterion.
+
+In <think></think> tags, provide a concise explanation:
+
+- State which product best matches the query and why (maximum 3-4 sentences).
+
+- If preference memory is provided:
+
+* Quote the specific relevant memory text verbatim first.
+
+* Then explain how it supports your choice (maximum 3-4 sentences excluding the quoted memory).
+
+- Focus only on essential reasoning.
+
+Then, output ONLY the product label (e.g., A, B, C) of the most relevant product wrapped in <answer> tags.
+
+Expected format:
+
+<think>
+
+[Your concise reasoning here]
+
+</think>
+
+<answer>[Product Label]</answer>
+
+Figure 8: Reranking Prompt with Memory and Think Tag
+
+⬇
+system:
+
+You are a user preference memory extractor for an e-commerce recommendation system.
+
+Your goal is to summarize a user’s stable preferences for ONE product category
+
+based ONLY on metadata (M) of their past purchases in that category.
+
+Definition:
+
+- M (meta-data) = product TITLE + product DESCRIPTION.
+
+The summary must be independent of any specific search query, so it can be reused
+
+for future tasks for the same user.
+
+user:
+
+Below is this user’s purchase history in category "{category_name}".
+
+Each entry contains:
+
+- [M]: product metadata (TITLE + DESCRIPTION)
+
+==============================
+
+WITHIN-CATEGORY HISTORY (META ONLY)
+
+Category: {category_name}
+
+——————————
+
+{within_M_history}
+
+==============================
+
+Using ONLY the provided metadata (M) for these past purchases:
+
+- Infer the user’s stable preferences specifically for this category.
+
+- Focus on recurring aspects such as:
+
+- typical brands
+
+- feature priorities
+
+- style / aesthetics
+
+- quality level
+
+- price range or budget level
+
+- common usage scenarios
+
+The memory must be query-independent: describe what the user generally likes
+
+or dislikes in this category, not what they might want in a single session.
+
+Output your summary in the following format:
+
+<within_memory>
+
+- Aspect: <aspect_1>; Preference: <user’s preference for this aspect>
+
+- Aspect: <aspect_2>; Preference: <user’s preference for this aspect>
+
+…
+
+</within_memory>
+
+Do NOT output anything outside the <within_memory> tags.
+
+Figure 9: Within-category Shopping Preference Memory Extraction Prompt v1
+
+⬇
+system:
+
+You are a user preference memory extractor for an e-commerce recommendation system.
+
+Your goal is to summarize a user’s stable preferences for ONE product category
+
+based ONLY on metadata (M) of their past purchases in that category.
+
+Definition:
+
+- M (meta-data) = product TITLE + product DESCRIPTION.
+
+The summary must be independent of any specific search query, so it can be reused
+
+for future tasks for the same user.
+
+user:
+
+Below is this user’s purchase history in category "{category_name}".
+
+Each entry contains:
+
+- [M]: product metadata (TITLE + DESCRIPTION)
+
+==============================
+
+WITHIN-CATEGORY HISTORY (META ONLY)
+
+Category: {category_name}
+
+——————————
+
+{within_M_history}
+
+==============================
+
+Using ONLY the provided metadata (M) for these past purchases:
+
+- Identify and infer the user’s stable preferences specifically for this category.
+
+- Discover the most relevant aspects from the purchase history that reveal consistent patterns.
+
+- Focus on recurring characteristics that distinguish this user’s preferences.
+
+The memory must be query-independent: describe what the user generally likes
+
+or dislikes in this category, not what they might want in a single session.
+
+Output your summary in the following format:
+
+<within_memory>
+
+- Aspect: <aspect_1>; Preference: <user’s preference for this aspect>
+
+- Aspect: <aspect_2>; Preference: <user’s preference for this aspect>
+
+…
+
+</within_memory>
+
+Do NOT output anything outside the <within_memory> tags.
+
+Figure 10: Within-category Shopping Preference Memory Extraction Prompt v2
+
+⬇
+system:
+
+You are a user preference memory extractor for an e-commerce recommendation system.
+
+Your goal is to summarize a user’s stable preferences for ONE product category
+
+based ONLY on metadata (M) of their past purchases in that category.
+
+Definition:
+
+- M (meta-data) = product TITLE + product DESCRIPTION.
+
+The summary must be independent of any specific search query, so it can be reused
+
+for future tasks for the same user.
+
+user:
+
+Below is this user’s purchase history in category "{category_name}".
+
+Each entry contains:
+
+- [M]: product metadata (TITLE + DESCRIPTION)
+
+==============================
+
+WITHIN-CATEGORY HISTORY (META ONLY)
+
+Category: {category_name}
+
+——————————
+
+{within_M_history}
+
+==============================
+
+Using ONLY the provided metadata (M) for these past purchases:
+
+- Infer the user’s stable preferences specifically for category "{category_name}".
+
+- Discover 3-6 aspects that are most strongly supported by the purchase history and most useful for distinguishing this user’s preferences in this category.
+
+- The aspect names are NOT fixed. You may include common aspects (e.g., typical brands, feature priorities, style/aesthetics, quality level, price range or budget level, common usage scenarios), but these are examples-not a required checklist. Do NOT output an aspect unless it is clearly evidenced in the history.
+
+- Avoid generic headings like "features" or "style" unless you specify what features/style (e.g., "noise cancelling", "USB-C", "wireless", "minimalist design").
+
+- Each bullet MUST include an Evidence field:
+
+* Evidence must be copied verbatim from the provided purchase history metadata (TITLE/DESCRIPTION fragments).
+
+* Provide 1-2 short evidence snippets, each $\leq$ 10 words.
+
+* Format Evidence as a JSON-like list of quoted snippets: ["snippet1"] or ["snippet1", "snippet2"].
+
+- Make each Preference actionable for ranking products in "{category_name}" (state what to prefer/avoid).
+
+- Keep the memory concise:
+
+* Output 3-6 bullets total (output fewer if evidence is weak; do NOT pad).
+
+* Each bullet must be a single line.
+
+* Each Preference should be $\leq$ 20 words.
+
+- Do NOT repeat the same aspect name across bullets. Use short aspect labels (2-4 words) and avoid near-duplicates (e.g., "Brand" vs "Brands").
+
+- If the history does not strongly support an aspect, omit it rather than guessing.
+
+- If evidenced, you may also include aspects like compatibility/ecosystem, portability/travel, durability/warranty, or bundle/kit preferences.
+
+The memory must be query-independent: describe what the user generally likes
+
+or dislikes in this category, not what they might want in a single session.
+
+Output your summary in the following format:
+
+<within_memory>
+
+- Aspect: <aspect_1>; Preference: <user’s preference for this aspect>; Evidence: ["<snippet1>", "<snippet2>"]
+
+- Aspect: <aspect_2>; Preference: <user’s preference for this aspect>; Evidence: ["<snippet1>"]
+
+…
+
+</within_memory>
+
+Do NOT output anything outside the <within_memory> tags.
+
+Figure 11: Within-category Shopping Preference Memory Extraction Prompt v3
+
+A.2 Dataset
+
+(a) Number of positive instances per category in the constructed benchmark.
+
+(b) Average numbers of within-category and cross-category purchases per user.
+
+Figure 12: Dataset statistics. The top figure shows the number of benchmark instances for each target category. The bottom figure compares the average lengths of within-category and cross-category purchase histories. Cross-category history is consistently much longer, motivating separate modeling of within-category and cross-category preference memory.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

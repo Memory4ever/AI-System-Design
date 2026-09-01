@@ -1,0 +1,1008 @@
+Reasoning Graphs: Deterministic Agent Accuracy through Evidence-Centric Chain-of-Thought Feedback
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+Retrieval-Augmented Generation.
+
+Agent Memory and Self-Improvement.
+
+Case-Based Reasoning.
+
+Agent Behavioral Consistency.
+
+3 Method
+
+3.1 Problem Formalization
+
+3.2 Reasoning Graphs
+
+Write Protocol.
+
+Evidence-Centric Context Injection.
+
+Why This Requires Graph Structure.
+
+Selection Policy.
+
+Traversal Directions.
+
+Properties.
+
+3.3 Retrieval Graphs
+
+Pipeline Planner.
+
+Query Type Definition.
+
+Cost Reduction.
+
+3.4 The Feedback Loop
+
+Running Example.
+
+Convergence.
+
+Why the Ceiling Is High.
+
+Variance Collapse.
+
+4 Proposed Evaluation
+
+4.1 Benchmarks and Protocol
+
+Benchmarks.
+
+Sequential Cluster Protocol.
+
+Passage Deduplication.
+
+Outcome Signal.
+
+4.2 Baselines and Configurations
+
+Composition Experiments.
+
+Correct-Outcome Filter Ablation.
+
+4.3 Metrics
+
+4.4 Key Hypotheses
+
+4.5 Additional Experiments
+
+Noisy Outcome Robustness.
+
+Cross-Model Transfer.
+
+Corpus Scale.
+
+5 Limitations
+
+6 Broader Impact and Ethics
+
+7 Conclusion and Future Work
+
+References
+
+A Algorithm Pseudocode
+
+B Suggested Hyperparameters
+
+C Graph Store Schema
+
+License: CC BY 4.0
+
+arXiv:2604.07595v1 [cs.AI] 08 Apr 2026
+
+Reasoning Graphs: Deterministic Agent Accuracy
+
+through Evidence-Centric Chain-of-Thought Feedback
+
+Matthew Penaroza
+
+Abstract
+
+Language model agents reason from scratch on every query: each time an agent retrieves evidence and deliberates, the chain of thought is discarded and the next similar query starts with no prior insight. This produces lower accuracy and high variance, as the same type of query can succeed or fail unpredictably. We introduce reasoning graphs, a graph structure that persists an agent’s per-evidence chain of thought as structured edges connected to the evidence items they evaluate. Unlike prior memory mechanisms that store distilled strategies as flat records indexed by query similarity or appended by recency, reasoning graphs enable evidence-centric feedback: given a new candidate set, the system traverses all incoming evaluation edges for each evidence item across all prior runs, surfacing how that specific item has been judged before. This backward traversal from evidence inward is a structurally different capability from query-similarity retrieval, because the feedback is tied to the specific evidence the agent is currently examining, not to the query. We further introduce retrieval graphs, a complementary structure that feeds a pipeline planner to tighten the candidate funnel over successive runs. Together, both graphs form a self-improving feedback loop: accuracy rises and variance collapses over successive runs, with every decision fully traceable through the graph. This improvement requires no retraining; the base model remains frozen and all gains come from context engineering via graph traversal. We formalize the graph structure, traversal algorithms, and feedback mechanisms, and describe a sequential cluster evaluation protocol for measuring accuracy convergence and variance collapse on multi-hop question answering benchmarks.
+
+1 Introduction
+
+Every language model agent follows the same loop: retrieve context from a knowledge base, reason over the retrieved evidence, and produce an action or answer (Yao et al., 2023). The quality of the action is bounded by the quality of the reasoning, which is in turn bounded by the quality of the retrieved context. At each step, the agent’s chain of thought (its evaluation of each piece of evidence, why it used or rejected it, and how it connected evidence to its conclusion) is discarded. The next similar query starts from scratch. In this work, we address this problem through reasoning graphs, which persist per-evidence chain of thought as graph edges, enabling evidence-centric feedback that drives agent accuracy toward consistent, convergent behavior, what we call deterministic accuracy (identical verdicts on the same evidence across runs, not identical token sequences), without retraining.
+
+Discarding reasoning produces two distinct problems. First, accuracy is lower than it needs to be: the agent repeatedly encounters the same evidence items and must re-derive how to evaluate them, with no benefit from prior correct evaluations. Second, and less commonly recognized, variance remains high: the same type of query can succeed or fail unpredictably across runs because the agent’s reasoning is unconstrained by prior experience. Recent work has quantified this problem directly: on HotpotQA, ReAct-style agents produce 2.0–4.2 distinct action sequences per 10 runs on identical inputs, and behavioral consistency is the dominant predictor of task success: tasks with consistent agent behavior achieve 80–92% accuracy, while inconsistent tasks achieve only 25–60% (Mehta, 2026a).
+
+Prior work on agent memory addresses the first problem but not the second. Reflexion (Shinn et al., 2023) stores verbal self-reflections in a flat text buffer, retrieved by recency, so the agent receives its most recent self-critiques regardless of the current evidence. ReasoningBank (Ouyang et al., 2026) distills generalizable reasoning strategies from agent experiences, retrieved by embedding the new query and finding similar past strategies. While effective at improving accuracy, neither approach connects feedback to the specific evidence items the agent is currently examining. The feedback is disconnected from the evidence by construction.
+
+We propose a structurally different mechanism: evidence-centric feedback. Instead of asking “what strategies worked on similar queries?”, we ask “what does the system already know about these specific evidence items?” Given a new candidate set, our system starts from each evidence item and traverses all incoming evaluation edges across all prior runs, constructing an evidence profile that summarizes how that item has been judged before: its typical verdict, the reasoning patterns associated with correct decisions, and its reliability signal. The feedback is automatically relevant because it is attached to the specific evidence, not dependent on query embedding similarity. Figure 1 illustrates the architecture.
+
+Architecture Overview
+
+Agent Loop
+
+Query
+
+Candidate Set
+
+Action
+
+evidence profiles
+
+observe
+
+Reasoning Graph
+
+Retrieval Graph
+
+evidence evaluated edges
+
+retrieved_via edges pipeline planner
+
+After each run: decided, evaluated, and retrieved_via edges are written atomically.
+
+Reasoning graph feeds evidence profiles into agent context (evidence-centric, not query-centric).
+
+Retrieval graph feeds pipeline planner to tighten candidate funnel.
+
+Both graphs self-improve with every run; base model remains frozen.
+
+Figure 1: Architecture overview. The agent loop (retrieve, reason, act) is augmented with two feedback graphs. The reasoning graph feeds evidence profiles into the agent’s context by traversing from each evidence item inward across all past evaluations (evidence-centric feedback). The retrieval graph feeds a pipeline planner that excludes consistently-rejected items from future candidate sets. Both graphs are updated atomically after each run. Unlike approaches that retrieve past strategies by query similarity or recency, evidence-centric feedback starts from the specific evidence items in the current candidate set.
+
+We formalize this mechanism through two complementary graph structures:
+
+1.
+
+Reasoning graphs persist the agent’s per-evidence chain of thought as structured edges connecting agents to the evidence items they evaluate. Each edge carries the verdict (used or rejected) and the natural language reasoning. Backward traversal from evidence inward across all evaluations enables cross-run pattern discovery, which is the core mechanism. Forward traversal from agent through its edges supports auditability. This is the primary contribution.
+
+2.
+
+Retrieval graphs capture retrieval pipeline metadata as graph edges, feeding a pipeline planner that excludes consistently-rejected evidence items from future candidate sets. This tightens the candidate funnel over successive runs.
+
+Together, these structures produce three properties that no prior agent memory mechanism achieves simultaneously:
+
+•
+
+Accuracy convergence: task accuracy is non-decreasing in expectation over successive runs as evidence profiles become richer and the candidate funnel tightens.
+
+•
+
+Variance collapse: decision consistency increases as the agent’s verdicts align with the majority signal in the evidence profiles, producing deterministic behavior on well-characterized evidence.
+
+•
+
+Full auditability: every decision is a graph traversal away from its complete chain of thought, enabling systematic failure diagnosis.
+
+These properties emerge with zero gradient updates; the base model remains frozen and all improvement comes from context engineering via graph traversal. The system self-improves as a side effect of normal operation, with net inference cost expected to decrease over time as funnel tightening removes entire passages, offsetting the token cost of injected evidence profiles (Section 3.3). At cold start, with no evaluation edges, the agent reasons from scratch (identical to vanilla RAG), so the system degrades gracefully to the baseline when graph history is absent.
+
+Our contributions are:
+
+1.
+
+Reasoning graphs: a graph structure capturing per-evidence chain of thought with evidence-centric backward traversal for feedback and forward traversal for auditability (Section 3.2).
+
+2.
+
+Retrieval graphs: a complementary structure for pipeline self-optimization via retrieval metadata edges (Section 3.3).
+
+3.
+
+Deterministic accuracy: a feedback architecture where both graphs compound to make accuracy convergent, variance-collapsing, and fully auditable, without retraining (Section 3.4).
+
+4.
+
+Evaluation protocol: a sequential cluster protocol for measuring accuracy convergence and variance collapse over successive runs of the same query type, along with metrics, baselines, and ablation configurations for rigorous evaluation (Section 4).
+
+2 Related Work
+
+Retrieval-Augmented Generation.
+
+RAG (Lewis et al., 2020) augments language model inputs with retrieved passages, improving factuality on knowledge-intensive tasks. However, each query is processed independently: the retrieval pipeline and the agent’s reasoning start from scratch every time, with no mechanism to learn from past retrieval or evaluation outcomes. Our work addresses this by persisting the agent’s per-evidence reasoning as graph structure that feeds back into future runs.
+
+Agent Memory and Self-Improvement.
+
+Reflexion (Shinn et al., 2023) stores verbal self-reflections in an episodic memory buffer and retrieves them by recency, demonstrating that agents can improve through linguistic feedback without weight updates. ReasoningBank (Ouyang et al., 2026) distills generalizable reasoning strategies from agent experiences, storing them as structured records retrieved by embedding the new query and finding similar past strategies.
+
+Neither approach connects feedback to specific evidence items. Reflexion retrieves reflections by recency, so the agent receives its most recent self-critiques regardless of the current query or evidence. ReasoningBank retrieves strategies by query similarity; it embeds the new query and finds similar past strategies. Both are disconnected from the specific evidence the agent is currently examining: ReasoningBank cannot answer “how has evidence item been evaluated across all past runs?” because the connection between strategy and evidence is lost during distillation. Reasoning graphs are evidence-centric: given a new candidate set, the system starts from each evidence item and traverses all incoming evaluation edges, constructing a profile of how that specific item has been judged before. The feedback is automatically relevant because it is attached to the evidence, not dependent on recency or query embedding similarity.
+
+Case-Based Reasoning.
+
+Case-based reasoning (CBR) retrieves past problem-solution pairs to inform new decisions, indexed by problem features and retrieved by similarity (Aamodt and Plaza, 1994). The conceptual parallel to our work is clear: both systems reuse past reasoning experience. The structural difference is in the retrieval key. CBR is query-centric: it matches the new problem to similar past problems and reuses their solutions. Reasoning graphs are evidence-centric: they start from each specific evidence item the agent is currently examining and retrieve all past evaluations of that item, with no similarity matching required. This distinction means CBR cannot answer “how has this particular passage been judged across all past runs?” because its index is organized by problem description, not by evidence item.
+
+Agent Behavioral Consistency.
+
+Recent empirical work has quantified behavioral inconsistency in language model agents (Mehta, 2026a), finding that ReAct-style agents produce 2.0–4.2 distinct action sequences per 10 runs on identical HotpotQA inputs, with a 32–55 percentage point accuracy gap between consistent and inconsistent tasks. Follow-up work (Mehta, 2026b) demonstrated that consistency can amplify both correct and incorrect interpretations; 71% of failures in one model stem from “consistent wrong interpretation.” Our evidence profiles address this by filtering for correct outcomes only: the agent receives evaluation history from decisions that were verified as correct, avoiding the amplification of incorrect reasoning patterns.
+
+3 Method
+
+3.1 Problem Formalization
+
+Consider an agent operating over a knowledge base of evidence items (passages). At each timestep , given a query , the agent executes three steps:
+
+1.
+
+Retrieve: , producing a candidate set of evidence items.
+
+2.
+
+Reason: , where is the action or answer and is the structured chain of thought: for each evidence item in the candidate set, the agent produces a verdict and a natural language reason explaining the verdict. The system requires exhaustive evaluation: the agent must produce a verdict for every item in , not just the items it uses for its answer, so that rejection signal accumulates in the graph alongside usage signal.
+
+3.
+
+Observe: outcome , determined by ground truth or a downstream signal.
+
+We define task accuracy as the success rate over a sequence of queries of type , processed in order: , where all belong to type .
+
+Standard agents exhibit two structural limitations:
+
+•
+
+Cold-start reasoning: is independent of . The agent reasons from scratch on every query, even when it has previously evaluated the same evidence items correctly.
+
+•
+
+Static retrieval: is fixed across all timesteps. The retrieval pipeline does not adapt based on the outcomes of past decisions.
+
+Reasoning graphs address the first limitation; retrieval graphs address the second.
+
+3.2 Reasoning Graphs
+
+Definition 1 (Reasoning Graph).
+
+A reasoning graph is a directed labeled property graph where:
+
+•
+
+comprises agent nodes, decision nodes, and evidence item nodes.
+
+•
+
+are decided edges, where . The outcome field is populated after a downstream signal is received.
+
+•
+
+are evaluated edges, where . The decision_ref field links each evaluated edge to its associated decision node, enabling outcome-based filtering.
+
+Reasoning Graph Anatomy
+
+Forward traversal (reconstruct chain of thought):
+
+   agent decision [confidence: 0.91, outcome: correct]
+
+   agent passage [step: 1, verdict: used, reason: “names the Palme d’Or winner”]
+
+   agent passage [step: 2, verdict: rejected, reason: “different film, similar title”]
+
+   agent passage   [step: 3, verdict: used, reason: “confirms director biography”]
+
+Backward traversal (cross-run evidence profile, filtered to correct outcomes):
+
+   passage 14 evaluated edges from correct-outcome decisions
+
+     verdict distribution: rejected 13/14, used 1/14
+
+     top rejection reason: “different film with similar title” (11/13)
+
+     reliability score
+
+Figure 2: Reasoning graph anatomy. Forward traversal (top): from an agent through its decided and evaluated edges, reconstruct the complete chain of thought for a past run, used for auditability. Backward traversal (bottom): from an evidence item inward, aggregate evaluations from correct-outcome decisions across runs to discover cross-run patterns. This is the core operation that constructs evidence profiles and cannot be replicated with flat strategy stores.
+
+Write Protocol.
+
+After the language model finishes reasoning and produces action with structured chain of thought , all edges are written atomically: one decided edge and evaluated edges , where each contains a decision_ref pointing to . The agent framework prompts the language model to produce structured output (via tool calling, JSON mode, or a structured output schema) with per-evidence reasoning. Each structured object maps to one evaluated edge. The outcome field on the decided edge is populated when a downstream signal becomes available.
+
+Evidence-Centric Context Injection.
+
+This is the core mechanism that differentiates reasoning graphs from prior agent memory approaches. Given a new candidate set , the system constructs an evidence profile for each item:
+
+1.
+
+For each , traverse all incoming evaluated edges: .
+
+2.
+
+Follow each edge’s decision_ref to its associated decision node; retain only edges where the decision has . Let denote this filtered set.
+
+3.
+
+Construct the evidence profile : aggregate the verdict distribution over , extract the most representative reasoning for each verdict, and compute the reliability score , i.e., the use-rate among correct-outcome evaluations.
+
+4.
+
+Inject into the language model’s prompt alongside the raw evidence.
+
+The language model receives both the evidence item and its evaluation history. It does not reason from scratch about items that have been evaluated before.
+
+Why This Requires Graph Structure.
+
+The traversal starts from each evidence item and walks inward along all incoming evaluated edges, a reverse edge traversal with outcome-based filtering. A flat store of distilled strategies indexed by query embedding cannot support this operation because the strategies are disconnected from the specific evidence items. The evidence-centric approach guarantees that the feedback is pertinent whenever the same evidence item reappears in a candidate set, without relying on embedding similarity thresholds.
+
+Selection Policy.
+
+To bound context size:
+
+•
+
+If , no profile is injected; the agent reasons from scratch for .
+
+•
+
+If , sample the most recent evaluations from .
+
+•
+
+Total injected context is bounded by a token budget . If the sum of profiles exceeds , prioritize evidence items with the highest .
+
+Traversal Directions.
+
+The core mechanism is backward traversal: from evidence item , traverse all incoming evaluated edges across all runs to discover cross-run patterns (e.g., “ is rejected 94% of the time for queries of type with reason ‘different product line’ ”). This is the operation that constructs evidence profiles. The graph also supports forward traversal: from agent through its decided and evaluated edges, reconstruct the complete chain of thought for any past run. Forward traversal serves auditability (Section 3.2, Auditability above) rather than the feedback loop.
+
+Properties.
+
+Beyond the core injection mechanism, reasoning graphs exhibit several properties that emerge from the graph structure without additional design.
+
+Auditability. Every decision is fully traceable: given any decision , traverse its decided edge to obtain confidence and outcome, then traverse all associated evaluated edges to see every evidence item considered, the verdict, and the reasoning. This supports structured queries such as “show all decisions where was used and the outcome was incorrect.” Failure diagnosis becomes a graph traversal rather than an unstructured log search.
+
+Graceful degradation. At cold start ( for all ), the agent receives no evidence profiles and reasons from scratch, identical to vanilla RAG. As the graph accumulates correct-outcome edges, profiles provide additional signal that the agent can use but is not forced to follow. By construction, the system defaults to baseline behavior whenever the graph lacks relevant history. We conjecture that in expectation for all , under the assumption that outcome signals are correct and evidence profiles from correct decisions are non-misleading on average. Like Reflexion and ReasoningBank, the system requires no retraining; the base model remains frozen and all improvement comes from context engineering. Unlike those approaches, the improvement signal is tied to specific evidence items rather than general reflections or distilled strategies.
+
+3.3 Retrieval Graphs
+
+Definition 2 (Retrieval Graph).
+
+A retrieval graph augments the reasoning graph with retrieved_via edges: , connecting each decision node to the evidence items that were retrieved for it. The edge properties capture retrieval metadata, including which query initiated the retrieval.
+
+Pipeline Planner.
+
+Given query type , the pipeline planner tightens the candidate funnel by excluding consistently-rejected evidence items:
+
+1.
+
+Query for all evidence items that have been evaluated in decisions of type .
+
+2.
+
+For each item , let be the subset of evaluated edges originating from decisions classified as type . Compute the rejection rate across these edges (not filtered to correct outcomes; the planner uses the raw rejection signal to identify broadly unhelpful items): .
+
+3.
+
+Exclude items where and from the candidate set before the agent sees them.
+
+Query Type Definition.
+
+We define query type as a categorical label assigned by a lightweight classifier. In practice, dataset-provided categories can be used where available (e.g., HotpotQA bridge vs. comparison questions) and embedding-based -means clustering where not.
+
+Cost Reduction.
+
+As the retrieval graph tightens the candidate funnel, fewer evidence items reach the agent, reducing the base token count in the prompt. Evidence profiles add tokens (bounded by budget ), but the funnel removes entire passages and their associated tokens. For typical candidate sets, the savings from exclusion exceed the cost of profiles, so net inference cost decreases as accuracy increases. The selection policy (Section 3.2) ensures profile overhead remains bounded.
+
+3.4 The Feedback Loop
+
+Both graphs compose into a self-improving system. On each run, the retrieval graph informs the pipeline planner (what to retrieve), while the reasoning graph informs the agent’s context (how to reason about what was retrieved). After the run, new edges are written to both graphs, making the next run better.
+
+Running Example.
+
+Consider a cluster of multi-hop questions about award-winning films (e.g., “Who directed the film that won the Palme d’Or in 2019?”, requiring retrieval of passages about the award ceremony and the winning director):
+
+•
+
+Runs 1–3: The agent retrieves 12 candidate passages and reasons from scratch each time (no profiles yet). A passage about a similarly-titled but different film () appears in all three candidate sets. The agent correctly rejects it in 2 of the 3 runs (with reason: “different film, similar title”) and incorrectly uses it once. All three runs produce correct final answers. Evaluated edges accumulate: now has 3 entries in : rejected twice, used once.
+
+•
+
+Run 4: A related question is posed. The evidence profile for is injected: “rejected 2/3 times in correct decisions; top reason: different film with similar title.” The agent sees this signal alongside the raw passage and correctly rejects .
+
+•
+
+Runs 5+: As edges accumulate past the min_support threshold, the pipeline planner identifies and other consistently-rejected passages for exclusion (rejection rate ). The candidate funnel tightens (). Evidence profiles become richer. The agent consistently identifies the correct director without being misled by similarly-titled passages.
+
+Convergence.
+
+We provide a semi-formal argument that is non-decreasing in expectation. The pipeline planner monotonically excludes evidence items with high rejection rates, reducing over time. The reasoning graph monotonically increases the information available per evidence item, reducing the probability of incorrect evaluation. Both effects compound under the assumption that outcome signals are correct and the query type classifier is stable.
+
+Why the Ceiling Is High.
+
+Define evidence profile coverage as the fraction of items in with at least one correct-outcome evaluation (i.e., ) after runs. As grows, because the same items recur across queries of the same type. Once , the agent never reasons from scratch on any evidence item. The remaining error rate is bounded by: (a) novel items (), which shrinks over time; (b) misleading evaluation histories, which are rare because profiles aggregate across many runs; and (c) irreducible query ambiguity, the task-specific floor. For well-defined tasks, source (c) is small, and sources (a) and (b) shrink as the graph densifies.
+
+Variance Collapse.
+
+Define decision consistency as the fraction of evidence items in for which the agent’s verdict matches the majority verdict in the evidence profile. As profiles become richer, the majority signal strengthens and the agent’s decisions align with it more consistently. The variance of decreases as increases. This is what we mean by “deterministic”: not identical tokens, but identical verdicts on the same evidence, producing consistent outcomes.
+
+4 Proposed Evaluation
+
+We describe an evaluation protocol designed to test the core claims of the reasoning graph framework: accuracy convergence, variance collapse, and the superiority of evidence-centric over query-centric feedback. This section provides a complete experimental blueprint that enables reproduction and extension.
+
+4.1 Benchmarks and Protocol
+
+Benchmarks.
+
+We target two multi-hop question answering datasets that require reasoning over multiple evidence items:
+
+•
+
+HotpotQA (Yang et al., 2018): multi-hop questions requiring reasoning over two Wikipedia passages, using the distractor setting where each question comes with 10 passages (2 gold + 8 distractors). We target the dev set (7.4K questions).
+
+•
+
+MuSiQue (Trivedi et al., 2022): multi-hop questions requiring 2–4 reasoning steps, with explicit decomposition into single-hop sub-questions.
+
+These datasets are well-suited because they feature substantial passage reuse across questions, a prerequisite for evidence-centric feedback to accumulate meaningful signal.
+
+Sequential Cluster Protocol.
+
+Standard benchmarks evaluate each query independently, which cannot measure cross-run improvement. We propose a sequential cluster protocol:
+
+1.
+
+Cluster the dataset into query types using dataset-provided labels (HotpotQA: bridge vs. comparison, sub-clustered via -means to total clusters) or embedding-based -means clustering (MuSiQue: ).
+
+2.
+
+Within each cluster, process queries sequentially: . Reasoning and retrieval graph edges accumulate across queries within each cluster.
+
+3.
+
+Measure accuracy at checkpoints (runs 1, 5, 10, 25, 50, 100) within each cluster.
+
+4.
+
+Report mean and standard deviation across clusters.
+
+This protocol directly measures whether the feedback loop produces accuracy convergence and variance collapse, which standard i.i.d. evaluation cannot capture.
+
+Passage Deduplication.
+
+For evidence-centric feedback to work, the same passage must be recognized when it appears across different questions. Passages should be deduplicated by content hash (e.g., SHA-256) so that a shared Wikipedia paragraph maps to a single node in the graph store. Deduplication statistics (total passage instances vs. unique passages, number appearing in 2+ questions) should be reported to verify that evidence profiles have material to accumulate.
+
+Outcome Signal.
+
+For HotpotQA: exact match against the ground truth answer. For MuSiQue: token-level F1 . Outcomes are computed automatically without human annotation.
+
+4.2 Baselines and Configurations
+
+A rigorous evaluation should compare the following configurations, each using a separate graph namespace to prevent interference:
+
+•
+
+Vanilla RAG: vector retrieval with no cross-run feedback. Accuracy should be flat across runs, establishing the baseline.
+
+•
+
+Reflexion (Shinn et al., 2023): verbal self-reflection stored as flat text, retrieved by recency. Adapted to the sequential cross-query setting (the original retries the same query; here, different queries are processed in sequence).
+
+•
+
+ReasoningBank (Ouyang et al., 2026): distilled strategy triples, retrieved by embedding similarity. A faithful re-implementation of the mechanism applied to the multi-hop QA setting.
+
+•
+
+Query-centric injection (Ours-QC): same reasoning graph structure, but context injection embeds the query and retrieves similar past evaluation chains by query embedding similarity (unlike ReasoningBank, which retrieves distilled strategy triples, Ours-QC retrieves the raw structured edges). This isolates the effect of the evidence-centric injection mechanism from the graph structure itself.
+
+•
+
+Reasoning graph only (Ours-RG): evidence-centric injection, no retrieval graph.
+
+•
+
+Retrieval graph only (Ours-RetG): pipeline planner exclusion enabled, but evidence profiles are not injected into the agent’s context. Evaluated edges are still written so the pipeline planner can compute rejection rates.
+
+•
+
+Full system (Ours): both graphs with evidence-centric injection and pipeline planner.
+
+Composition Experiments.
+
+To test whether reasoning graphs stack with existing approaches (rather than replacing them), additional configurations should combine reasoning graphs with Reflexion and with ReasoningBank. If the combined configurations outperform both individual components, this demonstrates that evidence-centric feedback is complementary to prior memory mechanisms.
+
+Correct-Outcome Filter Ablation.
+
+An unfiltered variant of the full system, where evidence profiles include evaluations from both correct and incorrect outcomes, tests whether the correct-outcome filter is necessary. Mehta (2026b) showed that behavioral consistency can amplify wrong interpretations; if the filtered system outperforms the unfiltered variant, this confirms the filter’s importance.
+
+4.3 Metrics
+
+•
+
+Task accuracy: exact match (HotpotQA) or F1 (MuSiQue), averaged across clusters.
+
+•
+
+Accuracy over runs: at each checkpoint, the convergence curve.
+
+•
+
+Accuracy variance: standard deviation across clusters at each checkpoint, the determinism curve.
+
+•
+
+Decision consistency : fraction of evidence items for which the agent’s verdict matches the majority verdict in the evidence profile.
+
+•
+
+Evidence profile coverage : fraction of items in with at least one correct-outcome evaluation (), measuring how much of the candidate set receives feedback.
+
+•
+
+Candidate set size : averaged across clusters, measuring funnel tightening.
+
+•
+
+Token cost: total tokens consumed per query, including evidence and profiles.
+
+•
+
+Behavioral consistency: following Mehta (2026a), running a subset of queries multiple times and counting unique action sequences to directly measure variance collapse.
+
+4.4 Key Hypotheses
+
+The evaluation protocol is designed to test the following hypotheses:
+
+1.
+
+Accuracy convergence: the full system achieves monotonically increasing accuracy over successive runs, while vanilla RAG remains flat.
+
+2.
+
+Variance collapse: the full system achieves monotonically decreasing variance over successive runs.
+
+3.
+
+Evidence-centric query-centric: Ours-RG outperforms Ours-QC, demonstrating that evidence-centric traversal is superior to query-similarity retrieval within the same graph structure.
+
+4.
+
+Component independence: both the reasoning graph and retrieval graph contribute independently (Ours Ours-RG Vanilla RAG and Ours Ours-RetG Vanilla RAG).
+
+5.
+
+Composability: reasoning graphs stack with Reflexion and ReasoningBank, producing gains on top of either baseline.
+
+6.
+
+Filter necessity: the correct-outcome filter prevents error amplification (filtered unfiltered).
+
+7.
+
+Robustness: accuracy degrades gracefully under noisy outcome signals (outcome labels flipped with probability ), remaining above baseline for moderate noise levels.
+
+8.
+
+Cross-model transfer: a reasoning graph accumulated by a capable model benefits a less capable model, since evidence profiles are model-agnostic context that any language model can consume.
+
+4.5 Additional Experiments
+
+Noisy Outcome Robustness.
+
+To test sensitivity to outcome signal quality, the full system should be evaluated under artificial noise by flipping the outcome label with probability before writing to the graph store. The majority signal in evidence profiles should dominate over moderate noise levels.
+
+Cross-Model Transfer.
+
+Using a strong model to accumulate reasoning graph edges for an initial set of runs, then swapping in a weaker model that continues using the same graph, tests whether evidence profiles transfer across model capabilities. This has practical implications for cost reduction in deployment.
+
+Corpus Scale.
+
+The gap between reasoning graphs and baselines should widen as corpus size grows, because retrieval noise increases with corpus size while evidence profiles compensate by providing stable, previously-verified evaluation signal. Testing at multiple corpus scales (e.g., 15K, 100K, 500K passages) would validate this hypothesis.
+
+5 Limitations
+
+Cold start. No feedback is available on the first runs for a new query type. Performance equals vanilla RAG until the graph accumulates edges. As discussed in Section 3.2, the system defaults to baseline behavior when graph history is absent, but the improvement requires a warmup period whose length depends on passage reuse within the query type.
+
+Storage growth. Evaluated edges accumulate linearly with runs. At scale, the graph grows large. Mitigation strategies include retaining only edges from correct outcomes and aging out edges older than a threshold.
+
+Error reinforcement. If the outcome signal is noisy or systematically biased, the feedback loop could reinforce incorrect patterns. Mehta (2026b) showed that behavioral consistency can amplify wrong interpretations; 71% of failures in one model stemmed from consistently applying the same incorrect reasoning. Our correct-outcome filter mitigates this (evidence profiles only include evaluations from verified correct decisions). Further mitigation includes confidence thresholds and minimum support requirements before acting on edge statistics.
+
+Distribution shift. If query types change over time, past reasoning edges may become stale. The system does not currently detect or adapt to distribution shift. Future work could incorporate temporal decay on edge weights.
+
+Context window limits. Evidence profiles consume tokens. For large candidate sets with rich evaluation histories, profiles may exceed the context budget. The selection policy (Section 3.2) bounds this, but aggressive truncation may lose useful signal.
+
+Cross-type edge contamination. When the same evidence item accumulates evaluations from semantically diverse query types, recency-based selection may surface contextually irrelevant reasoning; relevance-based edge selection using stored query embeddings is a natural extension that preserves evidence-centric traversal while filtering for question-relevant edges.
+
+Outcome signal availability. The system requires an outcome signal for each run. In production settings where ground truth is unavailable, this requires a proxy such as user satisfaction or downstream task success. The feedback loop quality is bounded by the proxy quality.
+
+Evidence identity. The system depends on recognizing when the same evidence item appears across different queries. This requires deduplication by content hash or equivalent, which works for exact passage matches. If the same fact appears in two differently-worded passages, the system treats them as separate items and cannot accumulate a shared profile. The mechanism operates on passage identity, not semantic equivalence.
+
+Empirical validation. This paper presents the framework, formal definitions, and evaluation protocol, but does not include experimental results. The hypotheses in Section 4 remain to be validated empirically. We commit to releasing the full experimental harness alongside the framework implementation.
+
+6 Broader Impact and Ethics
+
+Reasoning graphs produce more accurate agents with fully traceable reasoning, as every decision can be replayed via graph traversal. This is a safety and alignment benefit: organizations can audit agent decisions and identify systematic failures. The no-retraining property reduces compute costs and eliminates catastrophic forgetting risk.
+
+On the negative side, reasoning graphs store detailed evaluation traces that may surface sensitive information from the underlying knowledge base. Deployments must implement data governance policies and access controls on the reasoning graph, particularly when the knowledge base contains personal or proprietary data. The feedback loop could amplify biases present in the outcome signal; if certain evidence items are systematically misjudged early, the system may reinforce those misjudgments. We encourage practitioners to audit evidence profiles for systematic bias before production deployment.
+
+7 Conclusion and Future Work
+
+We introduced reasoning graphs, a graph structure that persists per-evidence chain of thought as structured edges, enabling evidence-centric feedback through backward traversal from evidence items inward across all past evaluations. Combined with retrieval graphs for pipeline self-optimization, the architecture forms a self-improving feedback loop where accuracy rises, variance collapses, and every decision is fully auditable. The system improves as a side effect of normal operation, with no gradient updates, no manual memory curation, and net inference cost expected to decrease over time as funnel tightening offsets the cost of evidence profiles.
+
+We have formalized the graph structure, traversal algorithms, and feedback mechanisms, and described an evaluation protocol with concrete benchmarks, baselines, ablations, and metrics. We commit to releasing the full implementation and experimental harness to enable reproduction and extension.
+
+Several directions remain for future work. Multi-agent knowledge sharing: if multiple agents share the same reasoning graph, each agent’s evaluations benefit all others, creating shared institutional knowledge. Distribution shift detection: temporal decay on edge weights and anomaly detection when evidence profile distributions diverge. Active knowledge base maintenance: using evidence reliability scores to flag stale or misleading content. Hierarchical reasoning graphs: abstracting patterns across evidence items and query types into higher-level strategic nodes, bridging toward distillation-based approaches while preserving evidence-centric structure. Cross-model transfer: accumulating reasoning graphs with capable models and deploying them with less expensive models, since evidence profiles are model-agnostic context.
+
+References
+
+Aamodt and Plaza [1994]
+
+Agnar Aamodt and Enric Plaza.
+
+Case-based reasoning: Foundational issues, methodological variations,
+and system approaches.
+
+In AI Communications, volume 7, pages 39–59, 1994.
+
+Lewis et al. [2020]
+
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir
+Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim
+Rocktäschel, et al.
+
+Retrieval-augmented generation for knowledge-intensive NLP tasks.
+
+Advances in Neural Information Processing Systems,
+33:9459–9474, 2020.
+
+Mehta [2026a]
+
+Aman Mehta.
+
+When agents disagree with themselves: Measuring behavioral
+consistency in LLM-based agents.
+
+arXiv preprint arXiv:2602.11619, 2026a.
+
+Mehta [2026b]
+
+Aman Mehta.
+
+Consistency amplifies: How behavioral variance shapes agent accuracy.
+
+arXiv preprint arXiv:2603.25764, 2026b.
+
+Ouyang et al. [2026]
+
+Siru Ouyang, Jun Yan, I-Hung Hsu, Yanfei Chen, Ke Jiang, Zifeng Wang, Rujun
+Han, Long Le, Samira Daruki, Xiangru Tang, Vishy Tirumalashetty, George Lee,
+Mahsan Rofouei, Hangfei Lin, Jiawei Han, Chen-Yu Lee, and Tomas Pfister.
+
+ReasoningBank: Scaling agent self-evolving with reasoning memory.
+
+In International Conference on Learning Representations, 2026.
+
+Shinn et al. [2023]
+
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu
+Yao.
+
+Reflexion: Language agents with verbal reinforcement learning.
+
+Advances in Neural Information Processing Systems, 36, 2023.
+
+Trivedi et al. [2022]
+
+Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal.
+
+MuSiQue: Multihop questions via single hop question composition.
+
+Transactions of the Association for Computational Linguistics,
+10:539–554, 2022.
+
+Yang et al. [2018]
+
+Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W Cohen, Ruslan
+Salakhutdinov, and Christopher D Manning.
+
+HotpotQA: A dataset for diverse, explainable multi-hop question
+answering.
+
+In Proceedings of the 2018 Conference on Empirical Methods in
+Natural Language Processing, pages 2369–2380, 2018.
+
+Yao et al. [2023]
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+and Yuan Cao.
+
+ReAct: Synergizing reasoning and acting in language models.
+
+International Conference on Learning Representations, 2023.
+
+Appendix A Algorithm Pseudocode
+
+Algorithm 1 Evidence-Centric Context Injection
+
+0:
+
+ Candidate set , Reasoning graph , Token budget , Sampling threshold , Sample size
+
+0:
+
+ Augmented prompt with evidence profiles
+
+1:
+
+ 
+
+2:
+
+ for each do
+
+3:
+
+  
+
+4:
+
+   filter via decision_ref for
+
+5:
+
+  if then
+
+6:
+
+   continue {Cold start: agent reasons from scratch for }
+
+7:
+
+  end if
+
+8:
+
+  if then
+
+9:
+
+   Sample most recent evaluations from
+
+10:
+
+  end if
+
+11:
+
+  Compute verdict distribution over , representative reasons,
+
+12:
+
+  
+
+13:
+
+ end for
+
+14:
+
+ Rank profiles by descending
+
+15:
+
+ Truncate to fit within token budget
+
+16:
+
+ Inject profiles into prompt alongside raw evidence
+
+17:
+
+ return augmented prompt
+
+Algorithm 2 Pipeline Planner (Retrieval Graph Exclusion)
+
+0:
+
+ Query type , Reasoning graph , Min support,
+
+0:
+
+ Exclusion list
+
+1:
+
+ 
+
+2:
+
+ Collect all evidence items with evaluated edges for type
+
+3:
+
+ for each evidence item do
+
+4:
+
+  
+
+5:
+
+  
+
+6:
+
+  if and min_support then
+
+7:
+
+   
+
+8:
+
+  end if
+
+9:
+
+ end for
+
+10:
+
+ return exclusion list
+
+Algorithm 3 Edge Write Protocol
+
+0:
+
+ Agent , Query , Candidate set , Action , Structured CoT
+
+0:
+
+ Graphs updated atomically
+
+1:
+
+ Create decision node
+
+2:
+
+ Write decided edge: with
+
+3:
+
+ for each do
+
+4:
+
+  Write evaluated edge: with
+
+5:
+
+ end for
+
+6:
+
+ for each do
+
+7:
+
+  Write retrieved_via edge: with retrieval metadata (rank, similarity, query source)
+
+8:
+
+ end for
+
+9:
+
+ {Outcome field on decided edge populated when signal arrives}
+
+Appendix B Suggested Hyperparameters
+
+Table 1: Suggested hyperparameters for experimental evaluation.
+
+Symbol
+Value
+
+Description
+
+50
+
+Max evaluations per evidence item before sampling
+
+20
+
+Number of recent evaluations to sample when
+
+2000 tokens
+
+Token budget for injected evidence profiles
+
+0.7
+
+Rejection rate threshold for pipeline planner exclusion list
+
+min_support
+3
+
+Minimum observations before optimizing filter
+
+(sub-clustering)
+15 per type
+
+Number of -means sub-clusters within each query type
+
+Appendix C Graph Store Schema
+
+We provide a concrete graph store schema suitable for implementation with a graph database (e.g., SurrealDB, Neo4j, or any labeled property graph system):
+
+•
+
+Node tables: agent (agent identity), decision (action, confidence, outcome, query text, query type, latency, token cost, candidate counts, timestamp), passage (content, title, content hash for deduplication, embedding vector).
+
+•
+
+Edge tables: decided (agent decision; confidence, timestamp), evaluated (agent passage; decision reference, step number, verdict, reason, timestamp), retrieved_via (decision passage; rank, similarity score, query source, timestamp).
+
+The backward traversal for evidence-centric injection queries all evaluated edges pointing to a given passage node, filtered by the outcome field on the associated decision node. A vector index on the passage embedding field supports retrieval-time similarity search.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

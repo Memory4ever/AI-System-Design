@@ -1,0 +1,3059 @@
+AgentOpt v0.1 Technical Report:Client-Side Optimization for LLM-Based Agent
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Client-Side Optimization
+
+3 Model Selection in Agent
+
+3.1 Model Selection in Agentic Workflows as Black-Box Optimization
+
+4 AgentOpt Package Design
+
+4.1 Design Goals
+
+4.2 User-Facing API
+
+4.3 Framework-Agnostic Interception and Attribution
+
+4.4 Caching and Parallel Evaluation
+
+4.5 Results, Export, and Role in the Optimization Stack
+
+5 Sample-Efficient Search for Model Selection
+
+5.1 Bandit Formulation for Adaptive Elimination Methods
+
+5.2 Algorithms
+
+Brute-force search.
+
+Random search.
+
+Arm Elimination.
+
+Epsilon-LUCB.
+
+Threshold Successive Elimination.
+
+Hill Climbing.
+
+Bayesian Optimization.
+
+LM Proposal.
+
+5.3 Discussion
+
+6 Experiment
+
+6.1 Experimental Setup
+
+Models.
+
+Benchmarks.
+
+Agent implementation.
+
+Evaluation protocol.
+
+6.2 Results
+
+Cross-benchmark summary.
+
+Best combination does not equal best individual model.
+
+Algorithm comparison.
+
+Arm Elimination versus Bayesian Optimization.
+
+Sensitivity of Hill Climbing to topology.
+
+Failure of prior-based LM proposal.
+
+7 Related Work
+
+7.1 Agent Frameworks and Applications
+
+7.2 Server-Side Agent Serving Systems
+
+7.3 LLM Routing and Model Selection
+
+7.4 Bandit Methods and Configuration Search
+
+8 Conclusion
+
+References
+
+A Full Benchmark Results
+
+A.1 Selector Comparison by Benchmark
+
+License: CC BY 4.0
+
+arXiv:2604.06296v1 [cs.LG] 07 Apr 2026
+
+AgentOpt v0.1 Technical Report:
+
+Client-Side Optimization for LLM-Based Agent
+
+Wenyue Hua
+
+  
+Sripad Karne
+
+Affiliation:  Columbia University* Equal contribution
+
+  
+Qian Xie
+
+Affiliation:  Cornell University
+
+  
+Armaan Agrawal
+
+Affiliation:  Columbia University* Equal contribution
+
+  
+Nikos Pagonas
+
+Affiliation:  Columbia University* Equal contribution
+
+  
+Kostis Kaffes
+
+Affiliation:  Columbia University* Equal contribution
+
+  
+Tianyi Peng
+††thanks: Correspondence: wenyuehua@microsoft.com, kkaffes@cs.columbia.edu, tianyi.peng@columbia.edu
+
+Affiliation:  Microsoft Research, AI Frontiers
+
+Abstract
+
+AI agents are increasingly deployed in real-world applications, including systems such as Manus, OpenClaw, and coding agents. Existing research has primarily focused on server-side efficiency, proposing methods such as caching, speculative execution, traffic scheduling, and load balancing to reduce the cost of serving agentic workloads. However, as users increasingly construct agents by composing local tools, remote APIs, and diverse models, an equally important optimization problem arises on the client side. Client-side optimization asks how developers should allocate the resources available to them, including model choice, local tools, and API budget across pipeline stages, subject to application-specific quality, cost, and latency constraints. Because these objectives depend on the task and deployment setting, they cannot be determined by server-side systems alone. We introduce AgentOpt, the first framework-agnostic Python package for client-side agent optimization. We first study model selection, a high-impact optimization lever in multi-step agent pipelines. Given a pipeline and a small evaluation set, the goal is to find the most cost-effective assignment of models to pipeline roles. This problem is consequential in practice: at matched accuracy, the cost gap between the best and worst model combinations can reach 13–32 in our experiments. To efficiently explore the exponentially growing combination space, AgentOpt implements eight search algorithms, including Arm Elimination, Epsilon-LUCB, Threshold Successive Elimination, and Bayesian Optimization. Across four benchmarks, Arm Elimination recovers near-optimal accuracy while reducing evaluation budget by 24–67% relative to brute-force search on three of four tasks.
+
+Code and benchmarks: https://agentoptimizer.github.io/agentopt/
+
+1 Introduction
+
+AI agents have rapidly evolved from research prototypes into widely deployed systems. Open-source frameworks such as Langgraph (Wang and Duan, 2024), AutoGen (Wu et al., 2024), and OpenClaw (Shan et al., 2026; Wang et al., 2026), as well as commercial systems such as Manus and ClaudeCode (Chatlatanagulchai et al., 2025), are increasingly used in research and practice. This adoption has motivated substantial interest in improving the efficiency of agent execution. Recent work has largely approached this problem from the server side, developing techniques such as request scheduling (Ni et al., 2026; Song et al., 2025; Li et al., 2025b), load balancing (Coviello et al., 2025; Deng et al., 2025), speculative execution (Hua et al., 2024; Guan et al., 2025; Ye et al., 2025), and cache reuse (Chillara et al., 2026; Begum et al., 2026; Zhang et al., 2025b) to reduce the cost and latency of serving agentic workloads. Systems such as Autellix (Luo et al., 2025), ThunderAgent (Kang et al., 2026), Continuum (Li et al., 2025a), and AIOS (Mei et al., 2024) exemplify this trend. Compared with traditional LLM serving systems such as vLLM (Kwon et al., 2023) and SGLang (Zheng et al., 2024), which optimize individual model calls, these agent-serving systems target end-to-end execution over multi-step reasoning and tool-use trajectories.
+
+Despite this progress, server-side optimization captures only part of the efficiency problem. Increasingly, users are not merely API consumers but agent builders: they compose pipelines from heterogeneous components, including local tools, remote APIs, and multiple candidate models. In this setting, many critical resources and decisions lie on the client side. Developers choose which model to assign to each role, how to allocate API budget across steps, when to invoke local tools, and which quality-cost-latency tradeoff is acceptable for a particular application. These decisions depend on task requirements, budget constraints, and service-level objectives that are specific to the deployment setting and are often unavailable to the model provider. As a result, client-side optimization exposes an efficiency surface that is fundamentally different from the one addressed by server-side systems.
+
+This distinction is practically important. A provider may optimize for throughput, tail latency, or cluster utilization across many users, whereas an individual developer may care about a very different objective. A startup building a coding assistant may accept a modest drop in accuracy for a large reduction in cost, while a high-stakes clinical decision-support system may prioritize reliability over all other considerations. Such choices cannot be determined centrally, because they are inseparable from application-specific utility. Client-side optimization is therefore the layer at which a developer’s own objectives can be directly and transparently optimized.
+
+Among the optimization levers available on the client side, we argue that model selection has the largest empirical impact. Choices such as caching, routing, and scheduling matter only after a model assignment has been fixed. By contrast, selecting the wrong model combination can dominate all downstream efficiency improvements. In our experiments, the cost gap between the best and worst model combinations at matched accuracy ranges from 13 to 32 across benchmarks. On BFCL, for example, Qwen3 Next 80B matches Claude Opus 4.6 in accuracy while reducing cost by 32. Gaps of this magnitude cannot be closed by serving optimizations alone.
+
+At a high level, our problem can be viewed as LLM routing (Hu et al., 2024; Mei et al., 2025; Zhang et al., 2025c) in an end-to-end agent pipeline, but it is fundamentally different from standard routing. In conventional LLM routing, each query is assigned to a stronger or cheaper model based on its estimated difficulty, and decisions are typically made at the level of individual calls. In multi-step agent pipelines, by contrast, routing decisions are coupled across stages. When multiple candidate models are available for multiple pipeline roles, the search space grows combinatorially, and the utility of any local assignment depends on its downstream effect on the overall trajectory. For example, a planner agent should be evaluated not in isolation, but by whether its output enables the solver agent and tool calls to proceed effectively. Agent model routing is therefore better understood as an end-to-end sequential decision problem, naturally formulated as a Markov decision process, in which each routing choice influences future states and final utility through cross-step interactions. As a result, optimizing each step independently is generally insufficient; effective optimization must operate over full model combinations or pipeline-level routing policies.
+
+Our empirical results illustrate the huge impact of model selection in agentic pipeline. On HotpotQA (Yang et al., 2018), Claude Opus 4.6, the strongest model in our benchmark by standalone capability, is the worst planner across all 81 model combinations. When used as planner, it often answers directly from parametric knowledge and bypasses the solver’s search tools, preventing the downstream system from executing the intended reasoning process. By contrast, Ministral 3 8B, the cheapest planner in the benchmark, more reliably delegates to the solver. Paired with Opus as solver, this combination achieves 74.27% accuracy, whereas using Opus for both roles yields only 31.71%. The key point is that neither model can be judged in isolation: the relevant object of evaluation is the combination. Agent model selection is therefore a combination-level optimization problem rather than a sequence of independent routing decisions.
+
+To address this problem, we present AgentOpt, an open-source Python package for client-side optimization and the first functionality supported is model combination selection for agentic workflows. AgentOpt is framework-agnostic and operates by intercepting LLM calls at the HTTP transport layer, allowing it to support existing agent implementations with minimal integration overhead. Given an agent pipeline, a candidate model pool, and a labeled evaluation set, AgentOpt searches the space of model assignments and returns the Pareto frontier over accuracy, cost, and latency. To make this search practical, it implements eight algorithms, including multi-armed bandit methods and Bayesian optimization, for efficient exploration of a combinatorial space that grows exponentially with the number of pipeline roles (Figure 1).
+
+Our contributions are threefold. First, we formalize client-side optimization as a distinct systems problem for AI agents and identify model combination selection as a first-class optimization target. Second, we show why multi-step agent optimization must be performed at the level of full model combinations rather than individual calls, and introduce the combo abstraction as the appropriate unit of evaluation. Third, we implement and evaluate eight search algorithms for sample-efficient exploration of the combination space, showing that Arm Elimination (Wen et al., 2025; Shahrampour et al., 2017; Qian and Yang, 2016) recovers near-optimal combinations while reducing evaluation cost by 24–67% relative to brute-force search on three of four benchmarks.
+
+The remainder of the technical report is organized as follows. Section 2 defines the client-side optimization problem and the associated tradeoff space. Section 3 motivates model selection as the dominant optimization lever. Section 3.1 distinguishes agent model selection from standard LLM routing and introduces the combo abstraction. Section 5 presents the search algorithms used to make combination-level evaluation tractable. Section 6 reports empirical results across four benchmarks. Section 7 reviews related work, and Section 8 concludes.
+
+Figure 1: Overview of AgentOpt. (a) A model combination assigns one model per pipeline role. The full trajectory is evaluated end-to-end. (b) The optimization loop iteratively selects, executes, and measures combinations, returning the Pareto frontier over performance, cost, and latency.
+
+2 Client-Side Optimization
+
+Recent systems work on agent efficiency has focused primarily on the server side: improving the deployment of agentic workloads through scheduling, caching, speculative execution, and load balancing. These techniques are important, but they optimize the provider’s infrastructure rather than the developer’s application. As AI agents become increasingly customizable, a complementary optimization problem emerges on the client side, where the agent developer decides how to assemble and run a pipeline using the resources directly available to them.
+
+Client-side optimization refers to improving an agentic workflow using resources and decisions under the user’s control. These include the set of candidate foundation models accessible through APIs or local deployment, the assignment of models to different roles in a pipeline, the invocation of local and remote tools, the allocation of API budget across steps, and operational choices such as batching, caching, and scheduling within the application itself. Unlike server-side systems, which optimize shared infrastructure across many users, client-side optimization operates at the level of a specific workflow and a specific utility function. It is therefore the natural layer for optimizing an agent according to the developer’s own requirements.
+
+This perspective is increasingly important because modern agent pipelines are no longer monolithic. Developers routinely compose planners, solvers, critics, retrievers, and external tools into multi-stage workflows, and many of the relevant resources now sit outside provider control. Some resources are financial, such as per-query API budget; some are computational, such as local model execution or tool latency; and some are structural, such as which tools or sub-agents are available in the workflow. The central question is therefore no longer only how providers can serve agents efficiently, but how users can configure their own agent systems efficiently given the resources they actually possess.
+
+Client-side optimization also differs from server-side optimization in a second and more fundamental way: the objective is inherently personalized. The utility of an agent depends on application-specific preferences over quality, latency, and monetary cost, and these preferences vary widely across deployments. A coding assistant used in an interactive setting may accept some loss in task performance in exchange for lower latency or lower API spend. A medical or legal assistant may instead prioritize quality almost exclusively. These choices depend on the developer’s task, budget, and service requirements, and cannot be inferred by the provider from system-level signals alone. Client-side optimization is therefore the layer at which application-specific objectives can be expressed directly.
+
+We formalize this setting through a general performance-latency-cost tradeoff. Consider an agent pipeline with roles and a candidate model set . A model combination is an assignment specifying which model is used for each role. More broadly, one may view a client-side configuration as specifying not only model assignment but also other controllable decisions such as tool routing or scheduling policy. Each such configuration induces three quantities of practical interest: task performance, execution latency, and monetary cost. The developer’s goal is not to optimize any one of these in isolation, but to identify configurations that best match the desired tradeoff among them.
+
+Formally, let denote a labeled evaluation set, and let denote the pipeline instantiated under a client-side configuration . We write
+
+for the resulting end-to-end task performance, latency, and cost. The developer then seeks configurations on the Pareto frontier, or equivalently optimizes a user-defined utility
+
+possibly under explicit constraints on latency or budget. This formulation is intentionally general: different applications may use exact-match accuracy, pass rate, or LLM-as-judge metrics for performance, while weighting latency and cost according to deployment-specific requirements.
+
+3 Model Selection in Agent
+
+Among the many levers available on the client side, we argue that model selection is the first-class optimization problem. The reason is structural. Most other optimizations available to developers, such as caching, request scheduling, speculative execution, or tool-level heuristics, operate conditional on a model assignment. They improve the efficiency of a pipeline once the participating models have already been chosen. Model selection instead determines the computational substrate on which all subsequent optimizations act. In this sense, it is upstream of the rest.
+
+This distinction is not merely conceptual; it is empirically large. Across our benchmarks, the gap between the best and worst model combinations at comparable task quality ranges from 13 to 32 in cost. On BFCL, Qwen3 Next 80B matches Claude Opus 4.6 in accuracy at 32 lower cost. On MathQA, the gap between expensive and budget-efficient combinations reaches 24 while maintaining similar accuracy. These differences are too large to be recovered by infrastructure improvements alone. A pipeline built on the wrong model assignment can be dominated by one built on the right assignment even before any additional systems optimization is applied.
+
+A second reason model selection must be treated as first-class is that performance rankings do not transfer cleanly across roles. In multi-step agents, the quality of a model is not a context-free property; it depends on how that model behaves in a particular role and how its behavior interacts with downstream components. A strong standalone model may be an excellent solver yet a poor planner, or vice versa. Our HotpotQA experiments illustrate this clearly: Claude Opus 4.6 is the strongest model in absolute capability, yet performs worst as a planner in our two-stage setup, while a much smaller model, Ministral 3 8B, is the best planner because it more reliably delegates to the downstream solver and tool chain. The resulting best-performing combination pairs a weak planner with a strong solver, demonstrating that model choice must be evaluated at the level of the workflow rather than the model in isolation.
+
+These results motivate a shift in viewpoint. The relevant optimization object is not the “best model” in the abstract, nor even the best model for each role considered independently, but the best combination of models for a particular agentic workflow under a particular utility function. Model selection in agents is therefore a combinatorial optimization problem over pipeline-level assignments.
+
+3.1 Model Selection in Agentic Workflows as Black-Box Optimization
+
+At a high level, this problem can be viewed as LLM routing for agentic pipelines. However, its mathematical structure differs substantially from standard single-call routing. In conventional LLM routing, a router selects among candidate models for an individual query based on estimated difficulty or expected utility. The optimization unit is a single model call. In multi-step agentic workflows, by contrast, model choices interact across stages: assigning a model to one role changes the intermediate computation encountered by later roles, and the value of any local assignment depends on its downstream effect on the overall trajectory.
+
+This dependence makes agent model selection naturally a black-box optimization problem (Kumagai and Yasuda, 2023; Golovin et al., 2017) over full pipeline configurations. Consider a pipeline with roles and a candidate model set . A model combination is a tuple
+
+where denotes the model assigned to role . Given an input query, executing the pipeline under combination induces an end-to-end trajectory , including all intermediate model outputs, tool interactions, latency, and monetary cost. Since these cross-stage interactions are generally complex and task-dependent, the resulting utility is most naturally treated as an unknown black-box function of the full combination.
+
+A convenient formulation is
+
+where is a user-specified utility function. Equivalently, one may write
+
+for task-dependent weights . The client-side optimization problem then becomes
+
+Under this view, the key consequence is that the value of assigning a model at stage cannot in general be evaluated independently of the downstream assignments, because it affects later computation, future tool usage, and the final end-to-end utility. As a result, optimizing each step independently is generally insufficient; effective optimization must operate over full model combinations or pipeline-level routing strategies.
+
+4 AgentOpt Package Design
+
+The formulation above defines client-side model selection as an end-to-end optimization problem over agentic workflows. To make this problem practical for real systems, we build AgentOpt, a framework-agnostic Python package that exposes model-combination optimization through a simple evaluation API while transparently handling LLM interception, metric collection, caching, and parallel execution.
+
+4.1 Design Goals
+
+AgentOpt is designed around three requirements. First, it should be framework-agnostic: developers should be able to optimize agents written using different LLM libraries and orchestration frameworks without rewriting the agent itself. Second, it should be non-intrusive: optimization should not require proxy servers, custom wrappers around each SDK, or manual instrumentation of every LLM call. Third, it should provide a unified execution substrate for model selection, so that different search algorithms can operate on the same measured quantities of task performance, latency, and cost.
+
+These goals motivate a separation of concerns between selection policy and execution infrastructure. The selector decides which model combinations to evaluate; the package runtime is responsible for executing those combinations, attributing the resulting LLM calls to the correct datapoints and combinations, and aggregating end-to-end statistics. This separation is important for the rest of the paper: the algorithms in Section 5 differ in how they explore the combination space, but they all rely on the same system substrate for evaluation.
+
+4.2 User-Facing API
+
+At the API level, AgentOpt treats model selection as optimization over an existing agent implementation rather than as a new programming framework. The developer supplies an agent class, a candidate model set for each role, a labeled evaluation dataset, and a task-specific evaluation function. A selector then searches over model combinations and returns a structured result object containing ranked combinations and their associated metrics.
+
+Concretely, the agent interface is intentionally minimal: the package expects an agent class with a constructor that accepts a model assignment and a run() method that executes the workflow on a datapoint. Candidate models are provided as a dictionary mapping role names to model lists. The evaluation function maps an expected output and an actual output to a score, allowing developers to use exact match, task-specific metrics, or LLM-as-judge scoring depending on the application. The same interface is shared across all selectors, which enables direct substitution of brute-force search, bandit methods, hill climbing, Bayesian optimization, and other search strategies without changing the surrounding code.
+
+A typical usage pattern is:
+
+Listing 1: Model selection main API.
+
+⬇
+selector = ArmEliminationModelSelector(
+
+agent=MyAgent,
+
+models={
+
+"planner": [...],
+
+"solver": [...],
+
+"critic": [...],
+
+},
+
+eval_fn=eval_fn,
+
+dataset=dataset,
+
+model_prices=model_prices,
+
+)
+
+results = selector.select_best(parallel=True, max_concurrent=20)
+
+The output is a SelectionResults object that exposes both human-readable summaries and programmatic access to the optimized configuration. In particular, the package can print ranked tables, return the top-performing combination, export all evaluated results to CSV, and export the selected configuration as a YAML file for downstream deployment. This design makes AgentOpt usable both as an interactive development tool and as part of a reproducible optimization pipeline.
+
+4.3 Framework-Agnostic Interception and Attribution
+
+The main systems challenge is to observe and control LLM calls across diverse agent frameworks without requiring framework-specific adapters. AgentOpt addresses this by intercepting requests at the HTTP transport layer, patching httpx.Client.send() and httpx.AsyncClient.send() so that LLM calls can be tracked uniformly regardless of the upstream framework. Attribution is handled with Python contextvars, which associates each intercepted call with the current datapoint and model combination.
+
+Listing 2 shows a simplified version of the mechanism.
+
+Listing 2: Simplified HTTP-layer interception and attribution in AgentOpt.
+
+⬇
+import contextvars
+
+import httpx
+
+from agentopt.proxy import LLMTracker
+
+tracker = LLMTracker(cache=True)
+
+_current_data_id = contextvars.ContextVar("data_id", default=None)
+
+_current_combo_id = contextvars.ContextVar("combo_id", default=None)
+
+_original_send = httpx.Client.send
+
+_original_async_send = httpx.AsyncClient.send
+
+def patched_send(self, request, *args, **kwargs):
+
+data_id = _current_data_id.get()
+
+combo_id = _current_combo_id.get()
+
+with tracker.track(data_id=data_id, combo_id=combo_id):
+
+return _original_send(self, request, *args, **kwargs)
+
+async def patched_async_send(self, request, *args, **kwargs):
+
+data_id = _current_data_id.get()
+
+combo_id = _current_combo_id.get()
+
+with tracker.track(data_id=data_id, combo_id=combo_id):
+
+return await _original_async_send(self, request, *args, **kwargs)
+
+httpx.Client.send = patched_send
+
+httpx.AsyncClient.send = patched_async_send
+
+This transport-layer design provides two benefits. First, it makes the package broadly compatible with heterogeneous developer stacks. Second, it allows AgentOpt to collect metrics uniformly across frameworks. For each intercepted call, the runtime records the model name, input and output token counts, wall-clock latency, whether the response was served from cache, and metadata identifying which datapoint and which model combination triggered the call. These low-level call records are then aggregated into per-datapoint and per-combination statistics that form the basis of the end-to-end optimization objective.
+
+In addition, agent code remains unchanged. Any framework that ultimately issues LLM requests through httpx is automatically covered by the interception layer, while the tracker records model name, token usage, latency, cache status, and the datapoint/combination identifiers needed for end-to-end evaluation.
+
+4.4 Caching and Parallel Evaluation
+
+Because model selection requires repeated execution of similar workflows, the runtime includes two mechanisms to reduce wall-clock overhead and redundant API spend: HTTP-level response caching and bounded parallel evaluation.
+
+The caching layer stores responses keyed by a hash of the request payload, so identical LLM calls arising across different combinations or repeated runs are reused rather than re-issued. This is particularly valuable in agent pipelines where different model combinations often share some calls exactly. For example, two combinations that use the same planner model will typically induce identical planner requests on the same datapoint. AgentOpt therefore maintains an in-memory cache during execution and optionally persists cache entries to SQLite on disk, enabling cheap re-runs and recovery from interrupted optimization jobs. Importantly, cached entries retain their original latency measurements, so that downstream latency comparisons remain faithful to the original execution rather than being artificially biased by cache hits.
+
+Parallel execution is controlled through the parallel=True and max_concurrent arguments to select_best(). Rather than launching all combinations and all datapoints simultaneously, which would quickly exceed API rate limits, AgentOpt uses a two-level concurrency scheme. One semaphore controls how many combinations are evaluated at once, and another controls how many datapoints are processed concurrently within each combination. This design preserves a global bound on in-flight API calls while still exploiting available parallelism. It also adapts naturally to different search strategies: full-dataset methods such as brute-force search benefit from datapoint-level parallelism within each combination, whereas bandit-style methods that evaluate small batches benefit more from running many combinations concurrently.
+
+4.5 Results, Export, and Role in the Optimization Stack
+
+The final output of a selector run is not just a single winning combination, but a structured record of the explored design space. Each evaluated combination is represented by a result object containing aggregate accuracy, latency, token usage, and estimated price, together with a pareto-frontier diagram. This structure is useful for more than ranking alone. It enables a transparent Pareto analysis, cost-quality tradeoff inspection, and export of optimized configurations into downstream applications.
+
+From the perspective of the overall package design, this output layer completes the abstraction boundary. The execution substrate intercepts and measures LLM calls, the selector determines which combinations to explore, and the results object exposes the optimized frontier back to the developer. This separation lets the package support multiple search algorithms without changing the user-facing workflow. In the next section, we build on this substrate and study how to explore the exponentially large combination space efficiently.
+
+5 Sample-Efficient Search for Model Selection
+
+The main practical challenge in client-side model selection is the cost of evaluating the black-box objective introduced in Section 3.1. Recall that each model combination corresponds to a full pipeline configuration, and its utility can only be estimated by executing the agent end-to-end on a labeled dataset. Let a pipeline contain roles, and let denote the candidate model set for role . The resulting search space is
+
+with cardinality
+
+When all roles share the same candidate pool , this reduces to . Evaluating a single combination requires running the full pipeline across the dataset, making the total cost of exhaustive search scale as , where is the dataset size. This quickly becomes prohibitive even for moderate pipeline sizes.
+
+The goal of sample-efficient search is therefore to identify a near-optimal combination while minimizing the number of full pipeline evaluations. Different algorithms in AGENTOPT approach this problem with different assumptions about the structure of : some treat combinations as independent candidates and adaptively allocate samples across them, while others exploit structure in the search space or fit surrogate models to guide exploration.
+
+5.1 Bandit Formulation for Adaptive Elimination Methods
+
+For elimination-style methods, model selection can be viewed as a pure-exploration multi-armed bandit problem (Slivkins, 2019; Vermorel and Mohri, 2005; Kuleshov and Precup, 2014). Each combination is an arm. Pulling arm once means evaluating on one datapoint and observing reward
+
+After pulls, the empirical mean is
+
+Adaptive search methods then allocate additional evaluations based on the uncertainty of each , seeking either the best arm, an -optimal arm, or all arms above a quality threshold.
+
+This bandit view motivates our use of three bandit algorithms: Arm Elimination, Epsilon-LUCB (Garivier and Moulines, 2011; Garivier and Moulines, 2008), and Threshold Successive Elimination (Huang et al., 2006). It does not cover all search strategies in the package, for which we also consider two additional black-box algorithms. Hill Climbing (Chinnasamy et al., 2022; Selman and Gomes, 2006) instead assumes a neighborhood structure over combinations, while Bayesian Optimization (Frazier, 2018) fits a surrogate model over the search space.
+
+5.2 Algorithms
+
+Brute-force search.
+
+Brute-force search evaluates every combination on the full dataset and returns the exact optimum within the candidate pool. It serves as the gold-standard baseline but scales poorly with search-space size.
+
+Random search.
+
+Random search samples a subset of combinations uniformly at random and evaluates only those combinations. It is a simple baseline for budget-limited settings.
+
+Arm Elimination.
+
+Arm Elimination is the default adaptive method in AgentOpt. It proceeds in rounds, evaluates surviving combinations on progressively larger batches, and removes combinations whose upper confidence bounds fall below the lower confidence bounds of current leaders. This design is effective when the quality distribution is skewed and many combinations can be ruled out after a small number of evaluations.
+
+Algorithm 1 Arm Elimination for model-combination search
+
+1:
+
+Combination set , dataset , batch schedule
+
+2:
+
+3:
+
+for do
+
+4:
+
+  for all do
+
+5:
+
+   Evaluate on the next batch of datapoints
+
+6:
+
+   Update empirical mean and confidence interval
+
+7:
+
+  end for
+
+8:
+
+  Let
+
+9:
+
+  Eliminate all such that
+
+10:
+
+  
+
+11:
+
+  if then
+
+12:
+
+   return the remaining combination
+
+13:
+
+  end if
+
+14:
+
+end for
+
+15:
+
+return
+
+Epsilon-LUCB.
+
+Epsilon-LUCB targets -optimal best-arm identification. At each round, it maintains the empirical leader and its strongest challenger under upper confidence bounds, and allocates additional samples to the most ambiguous pair. It stops once the leader is separated from the challenger by at least .
+
+Algorithm 2 Epsilon-LUCB for model-combination search
+
+1:
+
+Combination set , tolerance
+
+2:
+
+Initialize all combinations with a small number of evaluations
+
+3:
+
+repeat
+
+4:
+
+  Compute empirical means and confidence bounds
+
+5:
+
+   current leader
+
+6:
+
+   most competitive challenger
+
+7:
+
+  if then
+
+8:
+
+   return
+
+9:
+
+  end if
+
+10:
+
+  Evaluate and on additional datapoints
+
+11:
+
+until budget exhausted
+
+12:
+
+return
+
+Threshold Successive Elimination.
+
+Threshold SE is designed for settings where the user wants all combinations whose quality exceeds a target threshold , rather than the single best combination. It classifies combinations as above threshold, below threshold, or uncertain based on confidence intervals, and removes combinations once their status is clear.
+
+Hill Climbing.
+
+Hill Climbing treats the search space as a discrete topology over model combinations. Starting from an initial combination, it repeatedly proposes neighboring combinations obtained by changing one role assignment at a time and moves to an improved neighbor when one is found. Multiple random restarts help escape poor local optima.
+
+Algorithm 3 Hill Climbing with random restarts
+
+1:
+
+Combination space , neighborhood function , restarts
+
+2:
+
+3:
+
+for do
+
+4:
+
+  Sample initial combination
+
+5:
+
+  repeat
+
+6:
+
+   Evaluate neighbors
+
+7:
+
+   
+
+8:
+
+   if then
+
+9:
+
+     
+
+10:
+
+   else
+
+11:
+
+     stop local search
+
+12:
+
+   end if
+
+13:
+
+  until local optimum reached
+
+14:
+
+  if or then
+
+15:
+
+   
+
+16:
+
+  end if
+
+17:
+
+end for
+
+18:
+
+return
+
+Bayesian Optimization.
+
+Bayesian Optimization (Frazier, 2018) is useful when each end-to-end pipeline evaluation is especially expensive. It fits a surrogate model over the discrete combination space and selects the next combination via an acquisition function such as (Log) Expected Improvement (Močkus, 1974; Jones et al., 1998; Ament et al., 2023). In AgentOpt, this corresponds to the surrogate-based search family documented alongside the other selectors.
+Our implementation builds on BoTorch (Balandat et al., 2020).
+
+Algorithm 4 Bayesian Optimization for model-combination search
+
+1:
+
+Search space , initial design size , total budget
+
+2:
+
+Evaluate initial combinations and collect dataset
+
+3:
+
+for do
+
+4:
+
+  Fit surrogate model on
+
+5:
+
+  Select next combination
+
+where is an acquisition function
+
+6:
+
+  Evaluate and append result to
+
+7:
+
+end for
+
+8:
+
+return the best observed combination in
+
+LM Proposal.
+
+LM Proposal uses a strong language model to propose a shortlist of promising combinations before empirical evaluation. This is appealing when semantic priors about model behavior are informative, but its reliability depends on whether those priors transfer to the role-specific interactions of the target workflow.
+
+5.3 Discussion
+
+These algorithms reflect different assumptions about the search space and evaluation process. Bandit-based methods assume that many combinations are clearly suboptimal and can be pruned quickly using partial evaluations (e.g., subsets of the data). Hill Climbing assumes that local improvements correlate with global improvement under a chosen topology and typically relies on full evaluations of each combination. Bayesian Optimization assumes enough regularity in the combination space for a surrogate model to generalize across unevaluated combinations, also based on full evaluations. In practice, this diversity is useful: it allows AgentOpt to support both exact search for small spaces and approximate search for larger or more expensive workflows.
+
+6 Experiment
+
+6.1 Experimental Setup
+
+Models.
+
+We evaluate nine models served through AWS Bedrock Application Inference Profiles using on-demand pricing from March 2026: Claude Opus 4.6 ($5.00/$25.00 per million input/output tokens), Claude Haiku 4.5 ($1.00/$5.00), Claude 3 Haiku ($0.25/$1.25), gpt-oss-120b ($0.15/$0.60), gpt-oss-20b ($0.07/$0.30), Kimi K2.5 ($0.60/$3.00), Qwen3 Next 80B A3B ($0.15/$1.20), Qwen3 32B ($0.15/$0.60), and Ministral 3 8B ($0.15/$0.15).
+
+Benchmarks.
+
+We evaluate on four tasks chosen to span different workflow structures and optimization regimes. HotpotQA (199 examples) is a multi-hop question answering benchmark in the distractor setting, instantiated as a two-stage planner–solver pipeline with search tools, yielding 81 model combinations. GPQA Diamond (198 examples) is a graduate-level science multiple-choice benchmark evaluated with a single answering model, yielding 9 combinations. MathQA (200 examples) is a mathematical reasoning task instantiated as a two-stage answerer–critic pipeline with up to three retry iterations, yielding 81 combinations. BFCL v3 Multi-Turn (200 examples) evaluates multi-turn function calling with live backend state transitions and is instantiated as a single-model agent, yielding 9 combinations.
+
+Agent implementation.
+
+All agents are implemented in LangGraph. For BFCL, models without native function-calling support, namely Qwen3 32B, Kimi K2.5, and Ministral 3 8B, are evaluated through a text-based prompting fallback. AgentOpt intercepts all LLM requests at the httpx transport layer and applies model overrides through Python contextvars, so no benchmark-specific agent code needs to be modified.
+
+Evaluation protocol.
+
+We measure exact-match accuracy on HotpotQA and MathQA, multiple-choice accuracy on GPQA Diamond, and end-to-end tool-execution correctness on BFCL. For algorithmic comparisons, we report averages over 50 random seeds in order to estimate variance in search behavior.
+
+6.2 Results
+
+Cross-benchmark summary.
+
+Table 1 summarizes the best-performing combination under exhaustive search together with the cost of brute-force evaluation for each benchmark.
+
+Benchmark
+Tuple
+Combos
+Best Combination
+Acc.
+BF Cost
+
+GPQA Diamond
+1
+9
+Claude Opus 4.6
+74.75%
+$4.71
+
+BFCL
+1
+9
+Claude Opus 4.6 (tied; Qwen3 Next: cheaper)
+70.00%
+$84.80
+
+HotpotQA
+2
+81
+Ministral 3 8B + Claude Opus 4.6
+74.27%
+$51.90
+
+MathQA
+2
+81
+Claude Opus 4.6 + Claude Haiku 4.5
+98.84%
+$123.87
+
+Table 1: Cross-benchmark summary of exhaustive search. “Tuple” denotes the number of pipeline roles jointly optimized, “Combos” is the total number of model combinations, “Acc.” is the best observed task accuracy, and “BF Cost” is the total API cost of brute-force evaluation over the full combination space.
+
+Two patterns are immediately visible. First, exhaustive evaluation is already nontrivial in cost even for modest workflow sizes, especially for the two-role pipelines. Second, the best-performing combination is often not the one suggested by naive capability-based reasoning. This discrepancy is most pronounced in the multi-step settings, where role interactions determine the final outcome. Full brute force rankings for all benchmarks, including all 81 combinations for the two-role pipelines, are provided in Appendix.
+
+Best combination does not equal best individual model.
+
+Our central empirical finding is that individual model capability does not reliably predict combination-level performance. Table 2 highlights the most salient examples.
+
+Benchmark
+
+Best Combo
+
+Interpretation
+
+HotpotQA
+
+Ministral 3 8B (planner) + Opus 4.6 (solver)
+
+The weakest and cheapest planner performs best. When Opus is used as planner, it often bypasses the downstream solver and its search tools, leading to consistently poor end-to-end accuracy.
+
+MathQA
+
+Opus 4.6 (answer) + Haiku 4.5 (critic)
+
+Critic identity has limited effect once the answer model is sufficiently strong. With Opus as answerer, all nine critics lie within a narrow 2.9-point range.
+
+BFCL
+
+Opus 4.6 / Kimi / Qwen3 Next (tied)
+
+Three models achieve identical 70% accuracy. Qwen3 Next costs 32 less than Opus, making model selection purely a cost decision at this accuracy level.
+
+GPQA
+
+Opus 4.6 (single)
+
+This is the one setting where raw standalone capability remains predictive, and the strongest model is also the best end-to-end choice.
+
+Table 2: Representative cases in which the optimal model combination differs from naive capability-based expectations. The table illustrates that model quality is role-dependent and must be evaluated at the level of the full workflow rather than inferred from standalone model rankings.
+
+The HotpotQA result is especially revealing. Claude Opus 4.6 is the strongest model in the benchmark by standalone capability, yet it is systematically ineffective in the planner role. All nine combinations that use Opus as planner fall in ranks 71–81 out of 81 total combinations. In seven of these nine cases, the raw execution logs carry the annotation role2_never_called, indicating that the solver is never invoked. In other words, the planner is too capable in the wrong way: it answers directly instead of delegating to the search-enabled solver. This converts model strength into a pipeline-level failure mode.
+
+Rank
+Planner
+Solver
+Acc.
+Avg. Lat. (s)
+Cost
+
+71
+Claude Opus 4.6
+Kimi K2.5
+31.96%
+4.72
+$2.02
+
+72
+Claude Opus 4.6
+Ministral 3 8B
+31.96%
+4.72
+$2.02
+
+73
+Claude Opus 4.6
+Qwen3 32B
+31.96%
+4.72
+$2.02
+
+74
+Claude Opus 4.6
+Qwen3 Next 80B A3B
+31.96%
+4.72
+$2.02
+
+75
+Claude Opus 4.6
+gpt-oss-120b
+31.95%
+4.60
+$2.02
+
+76
+Claude Opus 4.6
+gpt-oss-20b
+31.88%
+4.57
+$2.03
+
+77
+Claude Opus 4.6
+Claude 3 Haiku
+31.78%
+4.22
+$2.02
+
+78
+Claude Opus 4.6
+Claude Haiku 4.5
+31.77%
+4.16
+$2.03
+
+79
+Claude Opus 4.6
+Claude Opus 4.6
+31.71%
+4.19
+$2.02
+
+80
+Qwen3 32B
+Claude Haiku 4.5
+26.63%
+3.47
+$0.69
+
+81
+Claude Haiku 4.5
+Claude Haiku 4.5
+26.49%
+3.40
+$0.79
+
+Table 3: Bottom 11 combinations on HotpotQA. Most of these configurations use Claude Opus 4.6 as planner and cluster near 32% accuracy regardless of the solver, illustrating that a strong model can be systematically mismatched to a particular pipeline role.
+
+Taken together, these results support the core motivation of AgentOpt: model quality must be evaluated in context, at the level of the full workflow, rather than inferred from standalone model rankings.
+
+Algorithm comparison.
+
+We next compare search algorithms under a fixed evaluation budget. The full results are reported in Appendix A.1 (Tables 4–7) as 50-seed averages. Overall, Arm Elimination provides the strongest accuracy–efficiency tradeoff and is the most consistently effective method across benchmarks.
+
+Three observations are particularly important.
+
+Arm Elimination versus Bayesian Optimization.
+
+In the larger combination spaces, the two methods show complementary strengths. On HotpotQA, Bayesian Optimization achieves slightly higher accuracy than Arm Elimination (73.33% versus 73.19%) with fewer evaluations (3,996 versus 4,283). On MathQA, however, Arm Elimination is substantially more accurate (98.83% versus 95.41%) with fewer evaluations (3,356 versus 3,666). The likely explanation is that Gaussian-process surrogates can be effective when the accuracy landscape has smooth structure, but struggle in settings where quality is concentrated in a narrow region of the combination space. Across all four benchmarks, Arm Elimination offers a more consistent accuracy–efficiency tradeoff overall.
+
+Sensitivity of Hill Climbing to topology.
+
+Hill Climbing performs well when the neighborhood structure is informative or the accuracy surface is flat. It excels on BFCL (100% find rate, where three models tie at the top) and GPQA (where capability rankings track performance), but drops to 52% find rate on HotpotQA, where the optimal combination is counter-intuitive and local search terminates in suboptimal regions. Arm Elimination achieves comparable mean accuracy to Hill Climbing across all four benchmarks (78.9% versus 79.1%) while saving modestly more evaluation budget on average (40% versus 37%), making it the more reliable default when the accuracy landscape is unknown in advance.
+
+Failure of prior-based LM proposal.
+
+LM Proposal uses a strong language model to recommend combinations from model descriptions without sufficient empirical evaluation. This works on GPQA, where the best answer is intuitive and raw model capability dominates, but fails badly on HotpotQA and BFCL, where the optimal configuration depends on non-obvious role interactions. This result reinforces a central theme of the paper: in multi-step agent pipelines, reliable model selection must be empirical rather than purely inferential.
+
+7 Related Work
+
+We review related work along four axes: agent frameworks and applications, server-side serving systems for agentic workloads, LLM routing and model selection, and bandit-based search methods for configuration optimization.
+
+7.1 Agent Frameworks and Applications
+
+The rapid maturation of LLM-based agents has been enabled by a proliferation of open-source orchestration frameworks. LangChain (Mavroudis, 2024) and its graph-based successor LangGraph (Wang and Duan, 2024) provide modular abstractions for chains, tools, memory, and retrieval, and remain the most widely adopted frameworks with over 133k GitHub stars. AutoGen (Wu et al., 2024), now evolving into Microsoft Agent Framework, supports multi-agent conversation patterns and flexible role-based interaction. CrewAI (Venkadesh et al., 2024) emphasizes role-based collaboration that mirrors human team structures, while MetaGPT (Hong et al., 2023) uses standardized operating procedures to coordinate specialized agents in software engineering workflows. On the commercial side, systems like Manus and ClaudeCode (Chatlatanagulchai et al., 2025) demonstrate that agentic capabilities have moved well beyond research prototypes into production use.
+
+These frameworks share a common architectural pattern: an LLM serves as the cognitive controller that orchestrates planning, tool use, and multi-step reasoning over extended trajectories. Recent surveys (Xi et al., 2023) provide broad taxonomies of agent architectures, decomposing them into perception, memory, planning, and action modules. More recent work (Masterman et al., 2024) further classifies agents by interaction topology, such as chain, star, mesh, and explicit workflow graphs, highlighting the growing diversity of multi-agent designs. The transition from single-agent loops to multi-agent systems has been dramatic: Gartner reported a 1,445% surge in multi-agent system inquiries from Q1 2024 to Q2 2025.
+
+A key insight from this literature is that agent performance depends critically on the interplay between the orchestration logic and the underlying model capabilities. Belcak et al. (2025) argue that small language models can replace LLMs in roughly 60% of agent queries in frameworks like MetaGPT, suggesting that heterogeneous model assignment across agent roles is both natural and economically motivated. Our work builds directly on this observation: rather than treating model selection as a fixed design choice, AgentOpt treats it as an optimization problem over the combinatorial space of role-to-model assignments.
+
+7.2 Server-Side Agent Serving Systems
+
+As agentic workloads have scaled, a new class of serving systems has emerged to optimize their execution on the provider side. These systems extend traditional LLM serving engines such as vLLM (Kwon et al., 2023) and SGLang (Zheng et al., 2024), which optimize individual inference requests, to reason about the multi-turn, tool-interleaved structure of agent programs.
+
+Autellix (Luo et al., 2025) was among the first to treat agentic programs as first-class scheduling citizens. It intercepts LLM calls submitted by agent programs and enriches schedulers with program-level context, proposing scheduling algorithms for both single-threaded and distributed programs that preempt and prioritize calls based on cumulative service time. Autellix demonstrates 4–15 throughput improvements over vanilla vLLM by reducing head-of-line blocking at both the request and program levels.
+
+Continuum (Li et al., 2025a) addresses a different bottleneck: KV cache management during tool-call pauses. In multi-turn agent workflows, each tool invocation creates a pause that can trigger KV cache eviction, forcing expensive recomputation on subsequent turns. Continuum introduces a KV cache time-to-live (TTL) mechanism that predicts tool-call durations and selectively pins KV caches in GPU memory, combined with program-level first-come-first-serve scheduling to prevent scheduling bubbles.
+
+ThunderAgent (Kang et al., 2026) unifies the treatment of heterogeneous resources, including KV caches, system states, and external tool assets such as Docker containers and network ports, under a single program abstraction. Its program-aware scheduler maximizes KV cache hit rates while a tool resource manager handles lifecycle management, preventing resource leaks from zombie tool environments. ThunderAgent reports 1.5–3.6 throughput improvements for agentic serving and up to 4.2 disk memory savings.
+
+AIOS (Mei et al., 2024) takes a broader systems perspective, proposing an operating-system-like architecture that isolates LLM-specific services (scheduling, context management, memory management, access control) into a dedicated kernel layer. AIOS supports agents built from diverse frameworks including ReAct (Yao et al., 2022), Reflexion (Shinn et al., 2023), AutoGen, and MetaGPT (Hong et al., 2023), providing a unified runtime for concurrent agent execution.
+
+Other systems address complementary aspects of the agentic serving stack. InferCept (Abhyankar et al., 2024) introduces selective KV cache preservation during tool calls. Parrot (Lin et al., 2024) and Alto (Santhanam et al., 2024) optimize for static workflow structures. Tempo (Zhang et al., 2025d) proposes SLO-aware scheduling that differentiates between chat, agent, and reasoning request types.
+
+All of these systems optimize the execution of a fixed agent pipeline: given a model assignment, they minimize latency, maximize throughput, or improve resource utilization on the server side. AgentOpt operates on a fundamentally different axis. Rather than optimizing how a given model assignment is served, it optimizes which model assignment to use in the first place. The two approaches are complementary: server-side serving improvements apply regardless of model choice, while client-side model selection determines the quality-cost-latency frontier that serving systems operate within.
+
+7.3 LLM Routing and Model Selection
+
+LLM routing assigns incoming queries to the most suitable model from a candidate pool, balancing performance against cost and latency. RouterBench (Hu et al., 2024) established standardized evaluation for routing systems, providing over 405K inference outcomes across representative LLMs. RouterEval (Huang et al., 2025) scaled this effort to over 8,500 LLMs and 200 million performance records, revealing a model-level scaling phenomenon where capable routers can surpass the performance of any individual model in the pool.
+
+Routing methods span several paradigms. Semantic and intent-based routers use query embeddings to predict model suitability: RouteLLM (Ong et al., 2024) leverages human preference data, while others employ retrieval-based patterns or lightweight encoders such as DeBERTa. More recent work explores mechanistic routing using internal hidden states, showing that LLMs encode accuracy predictions within the residual stream during prefill. OmniRouter (Mei et al., 2025) and hybrid approaches combine multiple routing signals for improved selection.
+
+Router-R1 (Zhang et al., 2025a) moves beyond single-round, one-to-one routing by formulating multi-LLM routing as a sequential decision process. Using reinforcement learning, it interleaves reasoning with dynamic model invocation and aggregates responses across models, representing an important step toward multi-step routing. However, Router-R1 still operates at the level of individual queries rather than optimizing over full pipeline trajectories.
+
+The critical distinction between existing LLM routing and our work is the unit of optimization. Standard routing methods make per-query, per-call decisions: given a single input, select the best model. In multi-step agent pipelines, however, model assignments are coupled across stages. A planner’s output conditions the solver’s effectiveness, and a solver’s behavior depends on the tools and context established by upstream agents. As we show empirically, the optimal model for one role depends on which models occupy other roles, making per-call routing fundamentally insufficient. AgentOpt addresses this by optimizing over full model combinations, treating each assignment of models to pipeline roles as an atomic unit of evaluation.
+
+7.4 Bandit Methods and Configuration Search
+
+The problem of selecting the best model combination from a combinatorial space connects to a rich literature on multi-armed bandits and automated machine learning. Hyperband (Li et al., 2018) formulates hyperparameter optimization as a pure-exploration bandit problem, using adaptive resource allocation and early stopping to achieve order-of-magnitude speedups over Bayesian optimization. Successive Halving (Jamieson and Talwalkar, 2016) provides the algorithmic foundation, progressively eliminating poorly performing configurations by allocating increasing budgets to surviving candidates. Recent work has also applied bandit algorithms (e.g., UCB variants) to model selection for large language models (Zhou et al., 2024), though these approaches focus on selecting among individual models rather than optimizing full agent workflows.
+
+In the AutoML literature, the Combined Algorithm Selection and Hyperparameter optimization (CASH) problem (Guo et al., 2019) jointly searches over model classes and their hyperparameters.
+Our setting differs from classical CASH in two important ways. First, each “arm” in our formulation corresponds to a full model combination rather than a single algorithm with hyperparameters. The reward of each arm is the end-to-end pipeline performance, which can only be observed after executing the complete agent trajectory, not incrementally as in iterative training. Second, our objective is multi-dimensional: we seek the Pareto frontier over accuracy, cost, and latency, rather than optimizing a single scalar metric. These differences motivate the use of arm elimination methods (Wen et al., 2025; Shahrampour et al., 2017; Qian and Yang, 2016) in our setting, which are well-suited to high-variance, fixed-budget regimes and lead to substantial empirical improvements in evaluation efficiency.
+
+8 Conclusion
+
+As AI agents become increasingly customizable and widely deployed, efficiency optimization can no longer be treated solely as a server-side systems problem. Developers now construct agentic workflows from heterogeneous models, tools, and APIs, and many of the most important optimization decisions are made on the client side. These decisions are inherently application-dependent, reflecting task-specific preferences over performance, latency, and monetary cost. This makes client-side optimization a distinct and necessary layer of the agent systems stack.
+
+In this report, we introduced AgentOpt, a framework-agnostic Python package for client-side optimization of agentic workflows, with model selection as its first focus. We argued that model selection is a first-class optimization problem because it determines the computational substrate on which all other optimizations operate, and because the empirical differences between model combinations can be dramatic. Across our benchmarks, the cost gap between near-equivalent combinations ranges from 13 to 32, while the best end-to-end configuration often differs sharply from what standalone model rankings would suggest. These results show that model quality must be evaluated in context, at the level of the full workflow.
+
+We further framed agent model selection as an end-to-end sequential decision problem, naturally connected to MDP-style reasoning, and showed that practical optimization requires efficient search over a combinatorial space of model assignments. To make this feasible, AgentOpt combines a lightweight, framework-agnostic execution substrate with multiple search strategies, including elimination-based methods, local search, and surrogate-based optimization. Among these, Arm Elimination provides the most consistent tradeoff between search cost and solution quality across benchmarks.
+
+More broadly, the package is intended as a foundation for a wider class of client-side optimizations beyond static model assignment, including adaptive routing, tool selection, scheduling, and personalized utility-aware policies. We view this as the next stage of agent systems research: not only serving agents efficiently at scale, but giving developers direct and principled control over how their own agents trade off quality, latency, and cost in deployment.
+
+The framework is available as an open-source Python library at https://github.com/AgentOptimizer/agentopt.
+
+References
+
+Abhyankar et al. (2024)
+R. Abhyankar, Z. He, V. Srivatsa, H. Zhang, and Y. Zhang
+
+Infercept: efficient intercept support for augmented large language model inference.
+
+arXiv preprint arXiv:2402.01869.
+
+Cited by: §7.2.
+
+Ament et al. (2023)
+S. Ament, S. Daulton, D. Eriksson, M. Balandat, and E. Bakshy
+
+Unexpected improvements to expected improvement for bayesian optimization.
+
+Advances in neural information processing systems 36, pp. 20577–20612.
+
+Cited by: §5.2.
+
+Balandat et al. (2020)
+M. Balandat, B. Karrer, D. Jiang, S. Daulton, B. Letham, A. G. Wilson, and E. Bakshy
+
+BoTorch: a framework for efficient monte-carlo bayesian optimization.
+
+Advances in neural information processing systems 33, pp. 21524–21538.
+
+Cited by: §5.2.
+
+Begum et al. (2026)
+F. Begum, C. Scott, K. Nyarko, M. Jeihani, and F. Khalifa
+
+Hierarchical caching for agentic workflows: a multi-level architecture to reduce tool execution overhead.
+
+Machine Learning and Knowledge Extraction 8 (2), pp. 30.
+
+Cited by: §1.
+
+Belcak et al. (2025)
+P. Belcak, G. Heinrich, S. Diao, Y. Fu, X. Dong, S. Muralidharan, Y. C. Lin, and P. Molchanov
+
+Small language models are the future of agentic ai.
+
+arXiv preprint arXiv:2506.02153.
+
+Cited by: §7.1.
+
+Chatlatanagulchai et al. (2025)
+W. Chatlatanagulchai, K. Thonglek, B. Reid, Y. Kashiwa, P. Leelaprute, A. Rungsawang, B. Manaskasemsak, and H. Iida
+
+On the use of agentic coding manifests: an empirical study of claude code.
+
+In International Conference on Product-Focused Software Process Improvement,
+
+pp. 543–551.
+
+Cited by: §1,
+§7.1.
+
+Chillara et al. (2026)
+V. Chillara, D. Kline, C. Alvares, E. Wooten, H. Yang, S. Khetan, C. Bauer, T. Guillory, T. Shah, Y. Dhariwal, et al.
+
+SemanticALLI: caching reasoning, not just responses, in agentic systems.
+
+arXiv preprint arXiv:2601.16286.
+
+Cited by: §1.
+
+Chinnasamy et al. (2022)
+S. Chinnasamy, M. Ramachandran, M. Amudha, and K. Ramu
+
+A review on hill climbing optimization methodology.
+
+Recent trends in management and commerce 3 (1), pp. 1–7.
+
+Cited by: §5.1.
+
+Coviello et al. (2025)
+G. Coviello, K. Rao, M. A. Khojastepour, and S. Chakradhar
+
+Bifröst: peer-to-peer load-balancing for function execution in agentic ai systems.
+
+In European Conference on Parallel Processing,
+
+pp. 279–291.
+
+Cited by: §1.
+
+Deng et al. (2025)
+S. Deng, H. Zhao, Z. Wang, G. Cheng, P. Chen, W. Qian, Z. Ling, J. Yin, A. Y. Zomaya, and S. Dustdar
+
+Agentic services computing.
+
+arXiv preprint arXiv:2509.24380.
+
+Cited by: §1.
+
+Frazier (2018)
+P. I. Frazier
+
+A tutorial on bayesian optimization.
+
+arXiv preprint arXiv:1807.02811.
+
+Cited by: §5.1,
+§5.2.
+
+Garivier and Moulines (2008)
+A. Garivier and E. Moulines
+
+On upper-confidence bound policies for non-stationary bandit problems.
+
+arXiv preprint arXiv:0805.3415.
+
+Cited by: §5.1.
+
+Garivier and Moulines (2011)
+A. Garivier and E. Moulines
+
+On upper-confidence bound policies for switching bandit problems.
+
+In International conference on algorithmic learning theory,
+
+pp. 174–188.
+
+Cited by: §5.1.
+
+Golovin et al. (2017)
+D. Golovin, B. Solnik, S. Moitra, G. Kochanski, J. Karro, and D. Sculley
+
+Google vizier: a service for black-box optimization.
+
+In Proceedings of the 23rd ACM SIGKDD international conference on knowledge discovery and data mining,
+
+pp. 1487–1495.
+
+Cited by: §3.1.
+
+Guan et al. (2025)
+Y. Guan, Q. Lan, S. Fei, D. Ding, D. Acharya, C. Wang, W. Y. Wang, and W. Hua
+
+Dynamic speculative agent planning.
+
+arXiv preprint arXiv:2509.01920.
+
+Cited by: §1.
+
+Guo et al. (2019)
+X. Guo, B. van Stein, and T. Bäck
+
+A new approach towards the combined algorithm selection and hyper-parameter optimization problem.
+
+In 2019 IEEE Symposium Series on Computational Intelligence (SSCI),
+
+pp. 2042–2049.
+
+Cited by: §7.4.
+
+Hong et al. (2023)
+S. Hong, X. Zheng, J. Chen, Y. Cheng, J. Wang, C. Zhang, Z. Wang, S. K. S. Yau, Z. Lin, L. Zhou, et al.
+
+Metagpt: meta programming for multi-agent collaborative framework.
+
+arXiv preprint arXiv:2308.00352.
+
+Cited by: §7.1,
+§7.2.
+
+Hu et al. (2024)
+Q. J. Hu, J. Bieker, X. Li, N. Jiang, B. Keigwin, G. Ranganath, K. Keutzer, and S. K. Upadhyay
+
+Routerbench: a benchmark for multi-llm routing system.
+
+arXiv preprint arXiv:2403.12031.
+
+Cited by: §1,
+§7.3.
+
+Hua et al. (2024)
+W. Hua, M. Wan, S. Vadrevu, R. Nadel, Y. Zhang, and C. Wang
+
+Interactive speculative planning: enhance agent efficiency through co-design of system and user interface.
+
+arXiv preprint arXiv:2410.00079.
+
+Cited by: §1.
+
+Huang et al. (2006)
+S. Huang, Y. Lee, R. Wang, and Y. Chen
+
+Threshold-based successive elimination algorithm for block motion estimation.
+
+Optical Engineering 45 (2), pp. 027002–027002.
+
+Cited by: §5.1.
+
+Huang et al. (2025)
+Z. Huang, G. Ling, Y. Lin, Y. Chen, S. Zhong, H. Wu, and L. Lin
+
+Routereval: a comprehensive benchmark for routing llms to explore model-level scaling up in llms.
+
+arXiv preprint arXiv:2503.10657.
+
+Cited by: §7.3.
+
+Jamieson and Talwalkar (2016)
+K. Jamieson and A. Talwalkar
+
+Non-stochastic best arm identification and hyperparameter optimization.
+
+In Artificial intelligence and statistics,
+
+pp. 240–248.
+
+Cited by: §7.4.
+
+Jones et al. (1998)
+D. R. Jones, M. Schonlau, and W. J. Welch
+
+Efficient global optimization of expensive black-box functions.
+
+Journal of Global optimization 13 (4), pp. 455–492.
+
+Cited by: §5.2.
+
+Kang et al. (2026)
+H. Kang, Z. Li, X. Yang, W. Xu, Y. Chen, J. Wang, B. Chen, T. Krishna, C. Xu, and S. Arora
+
+ThunderAgent: a simple, fast and program-aware agentic inference system.
+
+arXiv preprint arXiv:2602.13692.
+
+Cited by: §1,
+§7.2.
+
+Kuleshov and Precup (2014)
+V. Kuleshov and D. Precup
+
+Algorithms for multi-armed bandit problems.
+
+arXiv preprint arXiv:1402.6028.
+
+Cited by: §5.1.
+
+Kumagai and Yasuda (2023)
+W. Kumagai and K. Yasuda
+
+Black-box optimization and its applications.
+
+Innovative systems approach for facilitating smarter world, pp. 81–100.
+
+Cited by: §3.1.
+
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. Yu, and I. Stoica
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles,
+
+Cited by: §1,
+§7.2.
+
+Li et al. (2025a)
+H. Li, Q. Mang, R. He, Q. Zhang, H. Mao, X. Chen, H. Zhou, A. Cheung, J. Gonzalez, and I. Stoica
+
+Continuum: efficient and robust multi-turn llm agent scheduling with kv cache time-to-live.
+
+arXiv preprint arXiv:2511.02230.
+
+Cited by: §1,
+§7.2.
+
+Li et al. (2018)
+L. Li, K. Jamieson, G. DeSalvo, A. Rostamizadeh, and A. Talwalkar
+
+Hyperband: a novel bandit-based approach to hyperparameter optimization.
+
+Journal of machine learning research 18 (185), pp. 1–52.
+
+Cited by: §7.4.
+
+Li et al. (2025b)
+Y. Li, J. Dai, and T. Peng
+
+Throughput-optimal scheduling algorithms for llm inference and ai agents.
+
+arXiv preprint arXiv:2504.07347.
+
+Cited by: §1.
+
+Lin et al. (2024)
+C. Lin, Z. Han, C. Zhang, Y. Yang, F. Yang, C. Chen, and L. Qiu
+
+Parrot: efficient serving of llm-based applications with semantic variable.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+pp. 929–945.
+
+Cited by: §7.2.
+
+Luo et al. (2025)
+M. Luo, X. Shi, C. Cai, T. Zhang, J. Wong, Y. Wang, C. Wang, Y. Huang, Z. Chen, J. E. Gonzalez, et al.
+
+Autellix: an efficient serving engine for llm agents as general programs.
+
+arXiv preprint arXiv:2502.13965.
+
+Cited by: §1,
+§7.2.
+
+Masterman et al. (2024)
+T. Masterman, S. Besen, M. Sawtell, and A. Chao
+
+The landscape of emerging ai agent architectures for reasoning, planning, and tool calling: a survey.
+
+arXiv preprint arXiv:2404.11584.
+
+Cited by: §7.1.
+
+Mavroudis (2024)
+V. Mavroudis
+
+LangChain.
+
+Cited by: §7.1.
+
+Mei et al. (2025)
+K. Mei, W. Xu, M. Guo, S. Lin, and Y. Zhang
+
+Omnirouter: budget and performance controllable multi-llm routing.
+
+ACM SIGKDD Explorations Newsletter 27 (2), pp. 107–116.
+
+Cited by: §1,
+§7.3.
+
+Mei et al. (2024)
+K. Mei, X. Zhu, W. Xu, W. Hua, M. Jin, Z. Li, S. Xu, R. Ye, Y. Ge, and Y. Zhang
+
+Aios: llm agent operating system.
+
+arXiv preprint arXiv:2403.16971.
+
+Cited by: §1,
+§7.2.
+
+Močkus (1974)
+J. Močkus
+
+On bayesian methods for seeking the extremum.
+
+In IFIP Technical Conference on Optimization Techniques,
+
+pp. 400–404.
+
+Cited by: §5.2.
+
+Ni et al. (2026)
+K. Ni, W. Hua, X. Shi, J. Guo, S. Chang, and T. Chen
+
+Chimera: latency-and performance-aware multi-agent serving for heterogeneous llms.
+
+arXiv preprint arXiv:2603.22206.
+
+Cited by: §1.
+
+Ong et al. (2024)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+
+Routellm: learning to route llms with preference data.
+
+arXiv preprint arXiv:2406.18665.
+
+Cited by: §7.3.
+
+Qian and Yang (2016)
+W. Qian and Y. Yang
+
+Randomized allocation with arm elimination in a bandit problem with covariates.
+
+Cited by: §1,
+§7.4.
+
+Santhanam et al. (2024)
+K. Santhanam, D. Raghavan, M. S. Rahman, T. Venkatesh, N. Kunjal, P. Thaker, P. Levis, and M. Zaharia
+
+Alto: an efficient network orchestrator for compound ai systems.
+
+In Proceedings of the 4th Workshop on Machine Learning and Systems,
+
+pp. 117–125.
+
+Cited by: §7.2.
+
+Selman and Gomes (2006)
+B. Selman and C. P. Gomes
+
+Hill-climbing search.
+
+Encyclopedia of cognitive science 81 (333-335), pp. 10.
+
+Cited by: §5.1.
+
+Shahrampour et al. (2017)
+S. Shahrampour, M. Noshad, and V. Tarokh
+
+On sequential elimination algorithms for best-arm identification in multi-armed bandits.
+
+IEEE Transactions on Signal Processing 65 (16), pp. 4281–4292.
+
+Cited by: §1,
+§7.4.
+
+Shan et al. (2026)
+Z. Shan, J. Xin, Y. Zhang, and M. Xu
+
+Don’t let the claw grip your hand: a security analysis and defense framework for openclaw.
+
+arXiv preprint arXiv:2603.10387.
+
+Cited by: §1.
+
+Shinn et al. (2023)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+
+Reflexion: language agents with verbal reinforcement learning.
+
+Advances in neural information processing systems 36, pp. 8634–8652.
+
+Cited by: §7.2.
+
+Slivkins (2019)
+A. Slivkins
+
+Introduction to multi-armed bandits.
+
+Foundations and Trends® in Machine Learning 12 (1-2), pp. 1–286.
+
+Cited by: §5.1.
+
+Song et al. (2025)
+X. Song, Z. Wang, S. Wu, T. Shi, and L. Ai
+
+Gradientsys: a multi-agent llm scheduler with react orchestration.
+
+arXiv preprint arXiv:2507.06520.
+
+Cited by: §1.
+
+Venkadesh et al. (2024)
+P. Venkadesh, S. Divya, and K. S. Kumar
+
+Unlocking ai creativity: a multi-agent approach with crewai.
+
+Journal of Trends in Computer Science and Smart Technology 6 (4), pp. 338–356.
+
+Cited by: §7.1.
+
+Vermorel and Mohri (2005)
+J. Vermorel and M. Mohri
+
+Multi-armed bandit algorithms and empirical evaluation.
+
+In European conference on machine learning,
+
+pp. 437–448.
+
+Cited by: §5.1.
+
+Wang and Duan (2024)
+J. Wang and Z. Duan
+
+Agent ai with langgraph: a modular framework for enhancing machine translation using large language models.
+
+arXiv preprint arXiv:2412.03801.
+
+Cited by: §1,
+§7.1.
+
+Wang et al. (2026)
+Y. Wang, X. Chen, X. Jin, M. Wang, and L. Yang
+
+Openclaw-rl: train any agent simply by talking.
+
+arXiv preprint arXiv:2603.10165.
+
+Cited by: §1.
+
+Wen et al. (2025)
+Y. Wen, Y. Han, and Z. Zhou
+
+Optimal arm elimination algorithms for combinatorial bandits.
+
+arXiv preprint arXiv:2510.23992.
+
+Cited by: §1,
+§7.4.
+
+Wu et al. (2024)
+Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S. Zhang, J. Liu, et al.
+
+Autogen: enabling next-gen llm applications via multi-agent conversations.
+
+In First conference on language modeling,
+
+Cited by: §1,
+§7.1.
+
+Xi et al. (2023)
+Z. Xi, W. Chen, X. Guo, W. He, Y. Ding, B. Hong, M. Zhang, J. Wang, S. Jin, E. Zhou, et al.
+
+The rise and potential of large language model based agents: a survey.
+
+arXiv preprint arXiv:2309.07864.
+
+Cited by: §7.1.
+
+Yang et al. (2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. Cohen, R. Salakhutdinov, and C. D. Manning
+
+HotpotQA: a dataset for diverse, explainable multi-hop question answering.
+
+In Proceedings of the 2018 conference on empirical methods in natural language processing,
+
+pp. 2369–2380.
+
+Cited by: §1.
+
+Yao et al. (2022)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+
+React: synergizing reasoning and acting in language models.
+
+In The eleventh international conference on learning representations,
+
+Cited by: §7.2.
+
+Ye et al. (2025)
+N. Ye, A. Ahuja, G. Liargkovas, Y. Lu, K. Kaffes, and T. Peng
+
+Speculative actions: a lossless framework for faster agentic systems.
+
+arXiv preprint arXiv:2510.04371.
+
+Cited by: §1.
+
+Zhang et al. (2025a)
+H. Zhang, T. Feng, and J. You
+
+Router-r1: teaching llms multi-round routing and aggregation via reinforcement learning.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+Cited by: §7.3.
+
+Zhang et al. (2025b)
+Q. Zhang, M. Wornow, G. Wan, and K. Olukotun
+
+Agentic plan caching: test-time memory for fast and cost-efficient llm agents.
+
+arXiv preprint arXiv:2506.14852.
+
+Cited by: §1.
+
+Zhang et al. (2025c)
+T. Zhang, A. Mehradfar, D. Dimitriadis, and S. Avestimehr
+
+Leveraging uncertainty estimation for efficient llm routing.
+
+arXiv preprint arXiv:2502.11021.
+
+Cited by: §1.
+
+Zhang et al. (2025d)
+W. Zhang, Z. Wu, Y. Mu, B. Liu, M. Lee, and F. Lai
+
+Tempo: application-aware llm serving with mixed slo requirements.
+
+arXiv e-prints, pp. arXiv–2504.
+
+Cited by: §7.2.
+
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, et al.
+
+Sglang: efficient execution of structured language model programs.
+
+Advances in neural information processing systems 37, pp. 62557–62583.
+
+Cited by: §1,
+§7.2.
+
+Zhou et al. (2024)
+J. P. Zhou, C. K. Belardi, R. Wu, T. Zhang, C. P. Gomes, W. Sun, and K. Q. Weinberger
+
+On speeding up language model evaluation.
+
+arXiv preprint arXiv:2407.06172.
+
+Cited by: §7.4.
+
+Appendix A Full Benchmark Results
+
+A.1 Selector Comparison by Benchmark
+
+All selector results averaged over 50 random seeds.
+
+Table 4: GPQA Diamond selector comparison (198 samples, 9 models).
+
+Selector
+Mean Acc
+Mean Evals
+Mean Cost
+Cost Savings
+
+Brute Force (ref)
+74.75%
+1,782
+$4.71
+0.0%
+
+LM Proposal
+74.75%
+198
+$2.47
+47.6%
+
+Hill Climbing
+74.55%
+1,501
+$4.03
+14.4%
+
+Arm Elimination
+74.10%
+666
+$3.57
+24.3%
+
+Epsilon-LUCB
+73.14%
+380
+$2.51
+46.7%
+
+Bayesian Opt
+72.43%
+990
+$2.59
+45.0%
+
+Random Search
+68.57%
+594
+$1.73
+63.3%
+
+Threshold SE
+57.83%
+252
+$1.80
+61.8%
+
+Table 5: BFCL v3 selector comparison (200 samples, 9 models).
+
+Selector
+Mean Acc
+Mean Evals
+Mean Cost
+Cost Savings
+
+Brute Force (ref)
+70.00%
+1,800
+$84.80
+0.0%
+
+Hill Climbing
+70.00%
+1,664
+$72.12
+15.0%
+
+Epsilon-LUCB
+69.90%
+399
+$40.03
+52.8%
+
+Arm Elimination
+69.37%
+912
+$74.39
+12.3%
+
+Bayesian Opt
+69.27%
+1,000
+$50.64
+40.3%
+
+Random Search
+67.13%
+600
+$31.39
+63.0%
+
+Threshold SE
+58.19%
+186
+$18.82
+77.8%
+
+LM Proposal
+44.03%
+200
+$3.39
+96.0%
+
+Table 6: HotpotQA selector comparison (199 samples, 81 combinations).
+
+Selector
+Mean Acc
+Mean Evals
+Mean Cost
+Cost Savings
+
+Brute Force (ref)
+74.27%
+16,168
+$51.90
+0.0%
+
+Bayesian Opt
+73.33%
+3,996
+$12.29
+76.3%
+
+Arm Elimination
+73.19%
+4,283
+$16.92
+67.4%
+
+Hill Climbing
+73.13%
+4,635
+$19.39
+62.6%
+
+Random Search
+72.25%
+4,192
+$13.37
+74.2%
+
+Epsilon-LUCB
+69.71%
+478
+$1.75
+96.6%
+
+Threshold SE
+65.42%
+1,642
+$6.45
+87.6%
+
+LM Proposal
+34.13%
+200
+$1.84
+96.5%
+
+Table 7: MathQA selector comparison (200 samples, 81 combinations).
+
+Selector
+Mean Acc
+Mean Evals
+Mean Cost
+Cost Savings
+
+Brute Force (ref)
+98.84%
+14,961
+$123.87
+0.0%
+
+Arm Elimination
+98.83%
+3,356
+$51.86
+58.1%
+
+Hill Climbing
+98.76%
+3,926
+$54.22
+56.2%
+
+Random Search
+98.17%
+3,880
+$31.77
+74.4%
+
+Epsilon-LUCB
+96.99%
+447
+$6.10
+95.1%
+
+LM Proposal
+95.82%
+158
+$5.61
+95.5%
+
+Bayesian Opt
+95.41%
+3,666
+$35.56
+71.3%
+
+Threshold SE
+74.52%
+1,355
+$6.90
+94.4%
+
+Table 8: GPQA Diamond brute force results (198 samples, 9 models).
+
+Rank
+Model
+Accuracy
+Avg. Lat. (s)
+Cost
+
+1
+Claude Opus 4.6
+74.75%
+9.16
+$2.47
+
+2
+Kimi K2.5
+72.73%
+16.41
+$1.13
+
+3
+gpt-oss-120b
+68.18%
+6.46
+$0.19
+
+4
+Claude Haiku 4.5
+59.60%
+3.70
+$0.52
+
+5
+Qwen3 Next 80B A3B
+51.01%
+10.33
+$0.13
+
+6
+gpt-oss-20b
+50.00%
+6.21
+$0.13
+
+7
+Qwen3 32B
+46.97%
+1.54
+$0.07
+
+8
+Ministral 3 8B
+36.87%
+0.25
+$0.007
+
+9
+Claude 3 Haiku
+34.85%
+1.79
+$0.056
+
+Table 9: BFCL v3 brute force results (200 samples, 9 models).
+
+Rank
+Model
+Accuracy
+Avg. Lat. (s)
+Avg Calls
+Cost
+
+1
+Claude Opus 4.6
+70.00%
+42.35
+12.2
+$60.13
+
+2
+Kimi K2.5
+70.00%
+21.30
+12.0
+$3.85
+
+3
+Qwen3 Next 80B A3B
+70.00%
+60.54
+15.3
+$1.90
+
+4
+Claude Haiku 4.5
+65.00%
+20.90
+11.1
+$11.98
+
+5
+gpt-oss-120b
+58.50%
+20.01
+14.5
+$1.16
+
+6
+Qwen3 32B
+47.00%
+10.78
+11.9
+$1.01
+
+7
+Claude 3 Haiku
+43.50%
+17.96
+16.4
+$3.42
+
+8
+gpt-oss-20b
+42.00%
+10.03
+9.8
+$0.43
+
+9
+Ministral 3 8B
+34.00%
+29.03
+9.7
+$0.93
+
+Table 10: HotpotQA brute force results (199 samples, 81 planner–solver combinations).
+
+Rank
+Planner
+Solver
+Acc
+Avg. Lat. (s)
+Cost
+
+1
+Ministral 3 8B
+Claude Opus 4.6
+74.27%
+4.97
+$2.64
+
+2
+Claude 3 Haiku
+Claude Opus 4.6
+73.25%
+4.52
+$2.79
+
+3
+Qwen3 32B
+Claude Opus 4.6
+73.02%
+4.26
+$2.65
+
+4
+Qwen3 Next 80B A3B
+Claude Opus 4.6
+72.10%
+4.67
+$2.67
+
+5
+Qwen3 Next 80B A3B
+gpt-oss-120b
+71.83%
+3.07
+$0.13
+
+6
+Qwen3 32B
+gpt-oss-120b
+70.04%
+2.66
+$0.13
+
+7
+Kimi K2.5
+Claude Opus 4.6
+69.96%
+4.49
+$2.43
+
+8
+Claude 3 Haiku
+gpt-oss-120b
+69.86%
+3.21
+$0.17
+
+9
+Ministral 3 8B
+gpt-oss-20b
+69.34%
+5.66
+$0.09
+
+10
+Claude 3 Haiku
+Qwen3 Next 80B A3B
+69.27%
+3.00
+$0.16
+
+11
+Qwen3 Next 80B A3B
+gpt-oss-20b
+68.89%
+2.82
+$0.09
+
+12
+Ministral 3 8B
+gpt-oss-120b
+68.70%
+3.65
+$0.12
+
+13
+Qwen3 Next 80B A3B
+Qwen3 Next 80B A3B
+68.15%
+2.69
+$0.11
+
+14
+Ministral 3 8B
+Qwen3 Next 80B A3B
+67.98%
+3.85
+$0.11
+
+15
+Qwen3 32B
+Qwen3 Next 80B A3B
+67.53%
+3.51
+$0.11
+
+16
+Qwen3 32B
+gpt-oss-20b
+66.95%
+2.48
+$0.09
+
+17
+Claude 3 Haiku
+Ministral 3 8B
+65.98%
+3.73
+$0.14
+
+18
+Ministral 3 8B
+Kimi K2.5
+65.24%
+3.27
+$0.26
+
+19
+gpt-oss-120b
+Qwen3 Next 80B A3B
+64.93%
+4.68
+$0.10
+
+20
+Ministral 3 8B
+Ministral 3 8B
+64.89%
+3.55
+$0.09
+
+21
+Claude 3 Haiku
+gpt-oss-20b
+64.79%
+2.90
+$0.13
+
+22
+Kimi K2.5
+gpt-oss-120b
+64.70%
+4.16
+$0.29
+
+23
+gpt-oss-120b
+Claude Opus 4.6
+64.59%
+4.57
+$1.61
+
+24
+gpt-oss-120b
+Claude Haiku 4.5
+64.11%
+4.26
+$0.38
+
+25
+Kimi K2.5
+Qwen3 Next 80B A3B
+63.99%
+4.39
+$0.30
+
+26
+Kimi K2.5
+Ministral 3 8B
+63.95%
+6.42
+$0.28
+
+27
+Claude 3 Haiku
+Kimi K2.5
+63.85%
+2.89
+$0.31
+
+28
+gpt-oss-120b
+Ministral 3 8B
+63.70%
+7.37
+$0.09
+
+29
+Qwen3 Next 80B A3B
+Kimi K2.5
+63.69%
+2.89
+$0.27
+
+30
+Kimi K2.5
+gpt-oss-20b
+63.35%
+6.80
+$0.26
+
+31
+Qwen3 32B
+Kimi K2.5
+63.17%
+3.26
+$0.28
+
+32
+gpt-oss-120b
+Claude 3 Haiku
+62.72%
+3.72
+$0.13
+
+33
+Kimi K2.5
+Kimi K2.5
+62.28%
+4.56
+$0.44
+
+34
+gpt-oss-120b
+gpt-oss-120b
+62.15%
+4.59
+$0.10
+
+35
+Qwen3 Next 80B A3B
+Ministral 3 8B
+62.11%
+4.27
+$0.10
+
+36
+gpt-oss-120b
+gpt-oss-20b
+61.51%
+2.71
+$0.08
+
+37
+Qwen3 32B
+Ministral 3 8B
+61.17%
+2.89
+$0.09
+
+38
+gpt-oss-120b
+Kimi K2.5
+60.85%
+4.09
+$0.18
+
+39
+gpt-oss-120b
+Qwen3 32B
+58.80%
+4.06
+$0.10
+
+40
+Claude 3 Haiku
+Qwen3 32B
+56.02%
+2.87
+$0.15
+
+41
+Claude 3 Haiku
+Claude 3 Haiku
+55.91%
+2.41
+$0.21
+
+42
+gpt-oss-20b
+Claude Opus 4.6
+55.86%
+2.84
+$1.04
+
+43
+Ministral 3 8B
+Qwen3 32B
+55.02%
+3.63
+$0.11
+
+44
+Kimi K2.5
+Claude 3 Haiku
+54.90%
+3.42
+$0.34
+
+45
+Qwen3 32B
+Qwen3 32B
+54.82%
+2.53
+$0.11
+
+46
+Kimi K2.5
+Qwen3 32B
+54.73%
+4.57
+$0.30
+
+47
+gpt-oss-20b
+Claude Haiku 4.5
+54.28%
+2.19
+$0.26
+
+48
+gpt-oss-20b
+Ministral 3 8B
+54.25%
+4.35
+$0.05
+
+49
+Qwen3 Next 80B A3B
+Qwen3 32B
+54.13%
+2.83
+$0.11
+
+50
+gpt-oss-20b
+Qwen3 Next 80B A3B
+53.89%
+2.11
+$0.06
+
+51
+gpt-oss-20b
+Claude 3 Haiku
+52.66%
+2.04
+$0.08
+
+52
+gpt-oss-20b
+gpt-oss-120b
+52.17%
+2.11
+$0.06
+
+53
+Ministral 3 8B
+Claude 3 Haiku
+51.33%
+4.10
+$0.16
+
+54
+gpt-oss-20b
+Kimi K2.5
+51.01%
+1.96
+$0.12
+
+55
+gpt-oss-20b
+gpt-oss-20b
+50.09%
+2.12
+$0.05
+
+56
+Qwen3 Next 80B A3B
+Claude 3 Haiku
+49.98%
+2.56
+$0.17
+
+57
+gpt-oss-20b
+Qwen3 32B
+49.16%
+2.05
+$0.06
+
+58
+Qwen3 32B
+Claude 3 Haiku
+48.77%
+2.23
+$0.16
+
+59
+Claude 3 Haiku
+Claude Haiku 4.5
+46.50%
+3.35
+$0.71
+
+60
+Claude Haiku 4.5
+Claude Opus 4.6
+43.54%
+4.06
+$1.80
+
+61
+Claude Haiku 4.5
+gpt-oss-20b
+41.49%
+3.03
+$0.45
+
+62
+Claude Haiku 4.5
+gpt-oss-120b
+41.20%
+3.14
+$0.47
+
+63
+Claude Haiku 4.5
+Qwen3 Next 80B A3B
+41.17%
+2.95
+$0.46
+
+64
+Claude Haiku 4.5
+Ministral 3 8B
+41.09%
+3.75
+$0.45
+
+65
+Claude Haiku 4.5
+Kimi K2.5
+41.00%
+6.16
+$0.54
+
+66
+Kimi K2.5
+Claude Haiku 4.5
+37.19%
+4.23
+$0.88
+
+67
+Claude Haiku 4.5
+Qwen3 32B
+36.13%
+2.89
+$0.46
+
+68
+Claude Haiku 4.5
+Claude 3 Haiku
+34.34%
+2.63
+$0.49
+
+69
+Ministral 3 8B
+Claude Haiku 4.5
+32.42%
+4.14
+$0.70
+
+70
+Qwen3 Next 80B A3B
+Claude Haiku 4.5
+32.19%
+3.92
+$0.72
+
+71
+Claude Opus 4.6
+Kimi K2.5
+31.96%
+4.72
+$2.02
+
+72
+Claude Opus 4.6
+Ministral 3 8B
+31.96%
+4.72
+$2.02
+
+73
+Claude Opus 4.6
+Qwen3 32B
+31.96%
+4.72
+$2.02
+
+74
+Claude Opus 4.6
+Qwen3 Next 80B A3B
+31.96%
+4.72
+$2.02
+
+75
+Claude Opus 4.6
+gpt-oss-120b
+31.95%
+4.60
+$2.02
+
+76
+Claude Opus 4.6
+gpt-oss-20b
+31.88%
+4.57
+$2.03
+
+77
+Claude Opus 4.6
+Claude 3 Haiku
+31.78%
+4.22
+$2.02
+
+78
+Claude Opus 4.6
+Claude Haiku 4.5
+31.77%
+4.16
+$2.03
+
+79
+Claude Opus 4.6
+Claude Opus 4.6
+31.71%
+4.19
+$2.02
+
+80
+Qwen3 32B
+Claude Haiku 4.5
+26.63%
+3.47
+$0.69
+
+81
+Claude Haiku 4.5
+Claude Haiku 4.5
+26.49%
+3.40
+$0.79
+
+Table 11: MathQA brute force results (200 samples, 81 answer–critic combinations).
+
+Rank
+Answer Model
+Critic Model
+Acc
+Avg. Lat. (s)
+Cost
+
+1
+Claude Opus 4.6
+Claude Haiku 4.5
+98.84%
+16.15
+$6.19
+
+2
+Claude Opus 4.6
+Qwen3 Next 80B A3B
+98.82%
+14.30
+$5.77
+
+3
+Claude Opus 4.6
+Ministral 3 8B
+98.72%
+14.03
+$5.26
+
+4
+Claude Opus 4.6
+gpt-oss-20b
+98.28%
+16.50
+$5.93
+
+5
+Claude Opus 4.6
+gpt-oss-120b
+97.77%
+15.40
+$6.30
+
+6
+Claude Opus 4.6
+Qwen3 32B
+97.28%
+15.05
+$6.68
+
+7
+Claude Opus 4.6
+Claude Opus 4.6
+97.24%
+15.94
+$6.97
+
+8
+Claude Opus 4.6
+Kimi K2.5
+97.24%
+18.37
+$6.58
+
+9
+Claude Opus 4.6
+Claude 3 Haiku
+95.95%
+14.85
+$5.37
+
+10
+gpt-oss-20b
+Claude Opus 4.6
+94.57%
+6.81
+$0.97
+
+11
+gpt-oss-20b
+Kimi K2.5
+94.57%
+12.45
+$0.26
+
+12
+gpt-oss-20b
+gpt-oss-20b
+94.54%
+4.04
+$0.08
+
+13
+Claude Haiku 4.5
+Qwen3 32B
+94.50%
+12.68
+$2.51
+
+14
+gpt-oss-20b
+Claude Haiku 4.5
+94.05%
+6.19
+$0.37
+
+15
+gpt-oss-20b
+gpt-oss-120b
+94.02%
+4.94
+$0.11
+
+16
+gpt-oss-20b
+Qwen3 Next 80B A3B
+94.02%
+8.67
+$0.14
+
+17
+Claude Haiku 4.5
+Claude Haiku 4.5
+94.00%
+14.31
+$2.59
+
+18
+gpt-oss-20b
+Ministral 3 8B
+93.99%
+8.27
+$0.10
+
+19
+gpt-oss-120b
+Claude Opus 4.6
+93.81%
+9.10
+$1.25
+
+20
+Claude Haiku 4.5
+gpt-oss-20b
+93.50%
+12.51
+$2.20
+
+21
+Claude Haiku 4.5
+Claude Opus 4.6
+93.50%
+15.82
+$3.77
+
+22
+Claude Haiku 4.5
+Ministral 3 8B
+93.50%
+14.70
+$2.57
+
+23
+Claude Haiku 4.5
+Kimi K2.5
+93.50%
+17.50
+$2.60
+
+24
+gpt-oss-20b
+Qwen3 32B
+93.48%
+4.30
+$0.09
+
+25
+gpt-oss-20b
+Claude 3 Haiku
+93.44%
+6.10
+$0.15
+
+26
+gpt-oss-120b
+Ministral 3 8B
+93.26%
+10.42
+$0.19
+
+27
+gpt-oss-120b
+Qwen3 32B
+93.26%
+5.53
+$0.16
+
+28
+Claude Haiku 4.5
+gpt-oss-120b
+93.00%
+14.65
+$2.90
+
+29
+Claude Haiku 4.5
+Qwen3 Next 80B A3B
+93.00%
+20.98
+$7.81
+
+30
+gpt-oss-120b
+Claude Haiku 4.5
+92.82%
+7.77
+$0.47
+
+31
+gpt-oss-120b
+gpt-oss-20b
+92.78%
+6.45
+$0.18
+
+32
+gpt-oss-120b
+gpt-oss-120b
+92.78%
+6.94
+$0.19
+
+33
+gpt-oss-120b
+Kimi K2.5
+92.78%
+12.09
+$0.32
+
+34
+gpt-oss-120b
+Qwen3 Next 80B A3B
+92.78%
+10.98
+$0.23
+
+35
+gpt-oss-120b
+Claude 3 Haiku
+92.75%
+6.42
+$0.20
+
+36
+Claude Haiku 4.5
+Claude 3 Haiku
+92.50%
+13.43
+$2.46
+
+37
+Claude 3 Haiku
+Claude Opus 4.6
+89.66%
+13.32
+$2.26
+
+38
+Qwen3 32B
+Qwen3 Next 80B A3B
+88.83%
+8.02
+$0.24
+
+39
+Ministral 3 8B
+Claude 3 Haiku
+88.15%
+10.24
+$0.05
+
+40
+Qwen3 32B
+gpt-oss-120b
+87.83%
+7.11
+$0.47
+
+41
+Ministral 3 8B
+Qwen3 Next 80B A3B
+87.82%
+9.22
+$0.03
+
+42
+Qwen3 32B
+Claude Opus 4.6
+87.56%
+12.33
+$3.43
+
+43
+Ministral 3 8B
+Kimi K2.5
+87.04%
+14.43
+$0.09
+
+44
+Ministral 3 8B
+gpt-oss-120b
+86.63%
+10.58
+$0.07
+
+45
+Claude 3 Haiku
+Claude Haiku 4.5
+86.55%
+9.32
+$0.69
+
+46
+Ministral 3 8B
+Ministral 3 8B
+86.52%
+7.29
+$0.03
+
+47
+Ministral 3 8B
+Claude Opus 4.6
+86.47%
+11.46
+$0.93
+
+48
+Qwen3 32B
+Claude Haiku 4.5
+86.46%
+7.47
+$0.90
+
+49
+Ministral 3 8B
+Claude Haiku 4.5
+86.23%
+11.66
+$0.30
+
+50
+Ministral 3 8B
+gpt-oss-20b
+86.13%
+12.33
+$0.05
+
+51
+Qwen3 32B
+Ministral 3 8B
+86.10%
+17.57
+$0.21
+
+52
+Qwen3 32B
+Kimi K2.5
+85.94%
+13.50
+$0.78
+
+53
+Qwen3 32B
+gpt-oss-20b
+85.86%
+6.43
+$0.49
+
+54
+Ministral 3 8B
+Qwen3 32B
+85.80%
+9.41
+$0.04
+
+55
+Qwen3 32B
+Qwen3 32B
+84.82%
+5.98
+$0.62
+
+56
+Kimi K2.5
+Claude 3 Haiku
+80.41%
+35.09
+$0.98
+
+57
+Qwen3 32B
+Claude 3 Haiku
+80.00%
+7.86
+$0.67
+
+58
+Qwen3 Next 80B A3B
+Claude 3 Haiku
+80.00%
+35.17
+$0.59
+
+59
+Qwen3 Next 80B A3B
+Claude Opus 4.6
+78.00%
+31.01
+$2.96
+
+60
+Kimi K2.5
+Ministral 3 8B
+77.84%
+40.79
+$0.97
+
+61
+Kimi K2.5
+Qwen3 Next 80B A3B
+77.20%
+37.64
+$1.00
+
+62
+Qwen3 Next 80B A3B
+Ministral 3 8B
+77.00%
+38.55
+$0.55
+
+63
+Qwen3 Next 80B A3B
+Claude Haiku 4.5
+76.50%
+32.33
+$1.21
+
+64
+Qwen3 Next 80B A3B
+gpt-oss-120b
+76.50%
+34.72
+$0.52
+
+65
+Qwen3 Next 80B A3B
+Qwen3 32B
+76.00%
+30.64
+$0.42
+
+66
+Qwen3 Next 80B A3B
+Qwen3 Next 80B A3B
+76.00%
+36.44
+$0.54
+
+67
+Qwen3 Next 80B A3B
+Kimi K2.5
+75.50%
+36.37
+$0.79
+
+68
+Qwen3 Next 80B A3B
+gpt-oss-20b
+75.00%
+32.70
+$0.48
+
+69
+Kimi K2.5
+gpt-oss-120b
+74.49%
+32.23
+$0.95
+
+70
+Kimi K2.5
+gpt-oss-20b
+74.09%
+25.65
+$0.77
+
+71
+Kimi K2.5
+Kimi K2.5
+73.58%
+44.39
+$1.34
+
+72
+Kimi K2.5
+Claude Opus 4.6
+73.33%
+28.62
+$2.79
+
+73
+Kimi K2.5
+Claude Haiku 4.5
+73.20%
+26.98
+$1.36
+
+74
+Claude 3 Haiku
+gpt-oss-120b
+72.19%
+8.39
+$0.32
+
+75
+Kimi K2.5
+Qwen3 32B
+72.16%
+30.32
+$0.92
+
+76
+Claude 3 Haiku
+gpt-oss-20b
+71.43%
+8.42
+$0.32
+
+77
+Claude 3 Haiku
+Qwen3 Next 80B A3B
+71.07%
+17.12
+$0.39
+
+78
+Claude 3 Haiku
+Kimi K2.5
+71.01%
+14.23
+$0.53
+
+79
+Claude 3 Haiku
+Ministral 3 8B
+69.28%
+12.40
+$0.32
+
+80
+Claude 3 Haiku
+Qwen3 32B
+59.30%
+6.29
+$0.29
+
+81
+Claude 3 Haiku
+Claude 3 Haiku
+54.37%
+7.28
+$0.30
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

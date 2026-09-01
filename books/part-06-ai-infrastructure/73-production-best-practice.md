@@ -62,6 +62,26 @@ immutable artifact identity
 
 这些字段必须引用同一个 service/model revision。若评估的是 A、部署的是 alias 当前指向的 B、监控只记录 model name，所有 gate 都失去意义。
 
+### 从远程批处理后端到统一生命周期控制面
+
+把 HPC 集群作为外部 batch backend，在训练任务长、服务状态少、交付以 checkpoint 为终点时是合理边界：批调度器负责昂贵计算，模型注册、API 服务和业务控制面留在集群之外。Fine-tuning、持续评估、高可用 inference 与大量数据/模型版本同时进入同一设施后，这条边界会把一次模型生命周期拆成互不共享身份、policy 和 evidence 的多个系统；训练完成不再等于 artifact 已治理，更不等于服务已达到发布条件。
+
+混合架构可以让 Kubernetes 统一承载生命周期对象与服务状态，同时把 diskless GPU supercomputer、virtualized commodity infrastructure 和各自调度语义保留为不同 execution substrate。关键不是用 Kubernetes 抹平 HPC，而是让同一个 artifact identity、访问政策、evaluation evidence 和 rollout/rollback contract 穿过训练、注册与在线服务；底层 fabric、batch scheduler、storage 和 failure domain 仍由各自 owner 管理。
+
+统一控制面减少跨系统 handoff，却增加共同存储、网络、scheduler interoperability、stateful-service HA、权限治理和故障域耦合。若 common storage、真实 inference workload、跨租户隔离与目标 SLO 尚未闭合，只能把它视为 evolving pilot，而不能宣称比“batch HPC + 独立 serving plane”普遍优越。训练仍以静态长任务为主，或平台无法证明跨 substrate 的 identity 与 recovery semantics 时，保留分离架构更安全。
+
+<!-- source-family:SF-2026-ARXIV-2604-12599 -->
+
+### 从一次性全局验证到可组合 Control-plane Proof
+
+组件少、协议固定时，把整个控制面交给单体模型检查能够直接证明目标 property；组件独立演进后，全局状态空间随组合增长，而且失败很难归因到具体接口。更可维护的路径是先声明最终稳定状态之间必须满足的先后关系，再让每个组件通过局部 interface obligation，共同推出全局 eventual property。
+
+Verification owner 需要版本化 property、converges-before graph、组件抽象、interface obligation、solver 与证明结果；组件变更会使相关证明失效并触发重验。它获得模块化变更和更清楚的责任边界，代价是抽象可能遗漏环境行为、CHC 求解成本以及“模型成立但实现偏离”的风险。形式 proof 只能成为 Readiness Gate 的一类 evidence，不能替代运行时 invariant、canary 和 rollback。
+
+环境持续变化、接口无法表达真实副作用，或 property 超出验证模型时，应缩小结论并回退更窄的模型检查与运行时 gate。公开结果只支持论文所建模的网络控制面和 benchmarks，不证明任意 AI 平台生产控制面正确。
+
+<!-- source-family:SF-2026-ARXIV-2604-03539 -->
+
 ## Readiness Gates
 
 可以按阶段组织，而不是一个巨型审批：
@@ -231,6 +251,10 @@ Production 从固定 traffic sweep 与人工配置演进到 telemetry→proposal
 Production readiness 是持续运行的证据与控制闭环，不是上线前一次 checklist。Part VI 到此完成从工具到平台的推导：统一对象、治理 workload 与 GPU、交付服务、建立 evidence，再用成本、租户和安全约束平台行为。
 
 ## Review notes
+
+- **CB-VER（arXiv:2604.03539v1；Status: Experimental）**：exact-v1 支持 converges-before graph、组件 interface composition 与 CHC-based synthesis 在其 benchmarks 中的可行性；不证明未建模环境、实际实现或一般 AI 平台控制面的端到端正确性。https://arxiv.org/abs/2604.03539v1
+
+- **Beyond Pre-Training: The Full Lifecycle of Foundation Models on HPC Systems（arXiv:2604.12599v1；Status: Experimental）**：exact-v1 记录 CSCS 将 diskless HPE Cray EX 节点与虚拟化通用基础设施纳入 Kubernetes 生命周期控制面的 evolving architecture 和 pilot adoption。它没有证明通用生产优势；Slurm/Kubernetes common storage 与 realistic inference scenarios 仍未完成，也未披露可迁移的 SLO、多租户或跨设施 benchmark。https://arxiv.org/abs/2604.12599v1
 
 本章只收束前 16 章已推导的机制，没有引入新的产品清单。自检答案回填把 demo 成功转换为 identity、quality、capacity、reliability、governance、economics 与 evolution 七类 proof obligations。它明确向 Part VII 交付第 66 章的 evaluation evidence/decision contract，以及 identity、policy、trace、budget、security 与 recovery contracts，避免 Agent 平台另起一套治理系统。
 

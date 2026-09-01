@@ -1,0 +1,2770 @@
+Think Before You Score: Reasoning Rewards Scale Visual Generation Both Training and Test Time
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 introduction
+
+2 Method
+
+2.1 Variational Framework: The Hindsight-Foresight Decomposition
+
+2.2 From Evaluator to Optimizer: Tuning in Parameter Space and Prompt Space
+
+3 Experiments
+
+Training Data.
+
+3.1 Accuracy in Preference Modeling
+
+3.2 Optimization in Dual Spaces
+
+4 Related Work
+
+5 Conclusions
+
+References
+
+A Extended Experimental Results
+
+Full Text-to-Image Results on UniGenBench++
+
+Full Image Editing Results
+
+Full PICA-Bench Results
+
+Training Curves and Visualizations
+
+Reward Hacking and Visualizations.
+
+Critique Visualization.
+
+B ELBO Derivation and Theoretical Details
+
+B.1 Full ELBO Derivation
+
+Tightness of the Bound.
+
+Mapping ELBO Terms to Pipeline Phases.
+
+Factorization Assumption.
+
+B.2 Justification for Pointwise Projection
+
+Shared Evaluation Principles.
+
+Role of Pairwise Rationales as Reference Hints.
+
+Potential Failure Modes.
+
+C Prompt Templates
+
+C.1 Phase 1: Pairwise Rationale Generation Prompt
+
+Text-to-Image Variant.
+
+C.2 Phase 2: Consistency Check Prompt
+
+C.3 Pointwise Projection Prompt
+
+C.4 Generate–Critique–Refine (GCR) Loop Prompts
+
+GCR Loop Logic.
+
+D Scoring Rubrics
+
+D.1 Text Faithfulness
+
+D.2 Image Faithfulness (Editing Only)
+
+D.3 Physical and Visual Quality
+
+D.4 Text Rendering
+
+E Implementation Details
+
+E.1 RL Fine-Tuning Setup
+
+Algorithm Overview.
+
+Integration with RationalRewards.
+
+RL Hyperparameters.
+
+RL Training Data.
+
+E.2 GCR Loop Configuration
+
+F Dataset and Benchmark Details
+
+F.1 Training Data Statistics
+
+F.2 Consistency Filtering Analysis
+
+F.3 Evaluation Benchmark Summary
+
+G Limitations and Broader Impact
+
+G.1 Limitations
+
+G.2 Broader Impact
+
+Positive impacts.
+
+Negative impacts and mitigations.
+
+License: CC BY 4.0
+
+arXiv:2604.11626v1 [cs.AI] 13 Apr 2026
+
+Think Before You Score: Reasoning Rewards Scale Visual Generation Both Training and Test Time
+
+Haozhe Wang
+
+Affiliation:  HKUST
+
+  
+Cong Wei
+
+Affiliation:  University of Waterloo
+
+  
+Weiming Ren
+
+Affiliation:  University of Waterloo
+
+  
+Jiaming Liu
+
+Affiliation:  Alibaba
+
+  
+Fangzhen Lin
+
+Affiliation:  HKUST
+
+  
+Wenhu Chen
+
+Affiliation:  University of Waterloo
+
+Abstract
+
+Most reward models for visual generation reduce rich human judgments to a single unexplained score, discarding the reasoning that underlies preference. We show that teaching reward models to produce explicit, multi-dimensional critiques before scoring transforms them from passive evaluators into active optimization tools—improving generators in two complementary ways: at training time, structured rationales provide interpretable, fine-grained rewards for reinforcement learning; at test time, a Generate–Critique–Refine loop turns critiques into targeted prompt revisions that improve outputs without any parameter updates. To train such a model without costly rationale annotations, we introduce Preference-Anchored Rationalization (PARROT), a principled framework that recovers high-quality rationales from readily available preference data through anchored generation, consistency filtering, and distillation. The resulting model, RationalRewards (8B), achieves state-of-the-art preference prediction among open-source reward models—competitive with Gemini-2.5-Pro—while using 10–20× less training data than comparable baselines. As an RL reward, it consistently improves text-to-image and image-editing generators beyond scalar alternatives. Most strikingly, its test-time critique-and-refine loop matches or exceeds RL-based fine-tuning on several benchmarks, suggesting that structured reasoning can unlock latent capabilities in existing generators that suboptimal prompts fail to elicit.
+Models and Code are available at
+
+Project Page.
+
+Figure 1: Train-Time RL and Test-Time PromptTuning (PT) with RationalRewards on text and image-to-image generation benchmarks. (Left) Comparison on image editing benchmarks. RL with RationalRewards outperforms prior open-source generators. Crucially, we find that test-time PT with RationalRewards alone can surpass expensive RL. (Right) Breakdown results on text-to-image benchmark UniGenBench++.
+
+1 introduction
+
+As visual generation advances toward photorealistic, instruction-following outputs (Google DeepMind, 2025; OpenAI, 2025; Wu et al., 2025b; Esser et al., 2024), reward models that evaluate these outputs have become the binding constraint on further progress. Yet most reward models remain scalar black boxes: they compress multi-dimensional human judgments—perceptual quality, instruction faithfulness, physical plausibility, text rendering—into a single unexplained number (Xu et al., 2023; Wu et al., 2025e; Liu et al., 2025b; Wei et al., 2024; Hu et al., 2025). This discards the structured reasoning underlying human preference, leaving generators to exploit shortcut correlations rather than learn principled evaluation criteria (Li et al., 2025). This paper asks: can reward models be made to reason—and can their structured critiques not only evaluate but actively improve visual generation?
+
+Figure 2: RationalRewards is a reasoning-based reward model that produces structured rationales before assigning scores, enabling dual-space optimization for image generation.
+(a) As a reward model, it improves RL-based fine-tuning of generators over scalar baselines;
+(b) as a test-time optimizer, its Generate–Critique–Refine loop matches or surpasses RL-based optimization on multiple benchmarks without parameter updates.
+
+We introduce RationalRewards, a reasoning-based reward model that
+generates structured, multi-dimensional critiques before deriving scores.
+We argue that this shift from scalar outputs to structured reasoning transforms the reward model from a passive evaluator into a versatile optimization interface for
+visual generation. By producing explicit reasoning, RationalRewards unlocks
+optimization in two complementary spaces:
+
+•
+
+Parameter Space: Multi-dimensional structured rationales provide semantically grounded, dense feedback for reinforcement learning—replacing opaque scalar gradients prone to reward hacking (Fig. 3), with explanations of what to improve and why.
+
+•
+
+Prompt Space: Beyond serving as a reward signal, RationalRewards functions as a post-generation prompt optimizer. It critiques a generated image, identifies concrete deficiencies, and
+translates them into targeted prompt revisions in a
+Generate–Critique–Refine loop. Unlike prompt enhancers that
+rewrite inputs blindly before synthesis (Wang et al., 2025g),
+this approach is post-hoc and reactive, trading test-time compute for
+improved fidelity without parameter
+updates (Snell et al., 2024; Wang et al., 2025c).
+
+Realizing this vision requires a reward model that produces high-quality
+structured rationales (Mahan et al., 2024; Guo et al., 2025; Zelikman et al., 2022; Wang et al., 2025d), yet human rationale annotations are prohibitively
+expensive at scale. We observe, however, that pairwise preference data is
+widely available from online AIGC platforms. Leveraging this, we propose
+Preference-Anchored Rationalization (PARROT), a variational training framework
+that treats rationales as latent variables and derives an evidence lower
+bound (ELBO) on observed preferences. The terms of this ELBO map directly onto a simple, scalable pipeline: (1) a teacher VLM generates candidate rationales anchored to known preference labels, (2) a consistency filter rejects hallucinations and retains rationales that are genuinely predictive, and (3) a student model is trained to produce rationales without seeing the answer. This tight theory–practice correspondence (Fig. 4) converts existing preference datasets into high-quality reasoning supervision using 10–20 less data than comparable scalar reward baselines.
+
+Figure 3: RL (LoRA) training on Qwen-Image using scalar rewards encounter reward hacking (bottom row): as training reward continues to grow, generation quality starts to degenerate, because black box rewards mislead visual generators with biases. In contrast, RationalRewards (top row) sustains generation quality with stable reward growth. See Fig. 10 and 11 for more details.
+
+Key results. Instantiated via PARROT on Qwen3-VL-Instruct-8B backbone, RationalRewards achieves state-of-the-art preference prediction among open-source reward models, competitive with
+Gemini-2.5-Pro (Table 1). As an RL reward, it consistently improves generators beyond scalar baselines across both text-to-image and image editing tasks (Tables 2–3). Most interestingly, RationalRewards’s Generate–Critique–Refine loop—requiring no parameter updates—matches or exceeds RL-based fine-tuning on several benchmarks, suggesting that structured critiques can unlock latent generator capabilities that suboptimal prompts fail to elicit. We envision that RationalRewards empower more than four compelling use cases demonstrated in Fig. 8
+
+2 Method
+
+We introduce Preference-Anchored Rationalization (PARROT), a framework that trains reward models to produce explicit, multi-dimensional rationales before scores (Zelikman et al., 2022; Wang et al., 2025d). Assessment dimensions—text faithfulness, physical/visual quality, text rendering, and (for editing) image faithfulness—follow the taxonomy of Hu et al. (2025), chosen for coverage of the primary failure modes in current generators.
+
+Since ground-truth rationales are prohibitively expensive to annotate at scale, we formulate rationales as latent variables inferred from pairwise preference data via a variational objective. The resulting ELBO (Eq. 1) decomposes into three terms, each corresponding to a concrete pipeline phase (Fig. 4): (1) generate rationales anchored to known preferences, (2) filter for predictive consistency, and (3) distill into a student model. Readers primarily interested in the practical pipeline may consult Fig. 4 and return to the derivation for justification.
+
+2.1 Variational Framework: The Hindsight-Foresight Decomposition
+
+Let denote a comparison tuple comprising two generated images and a conditioning user request (which includes text instructions and, for editing tasks, a source image). Let denote the ground-truth human preference. Unlike reward models that model directly, PARROT introduces a latent natural language rationale that explains preference .
+
+We treat the rationale as the explanatory mechanism underlying the preference. We use “explanatory” in the sense of predictive sufficiency: is a valid rationale if it contains sufficient information to predict preference from evaluation task . Our goal is to learn a evaluator reward model (the Student) capable of generating the rationale and predicting the preference for downstream tasks. To learn this from preference data alone, we maximize the Evidence Lower Bound (ELBO):
+
+(1)
+
+Figure 4: We implement Preference-Anchored Rationalization as a practical three-phase pipeline.
+
+This derivation reveals a natural “Teacher-Student” structure, decomposing the learning process into two complementary modes:
+
+•
+
+Hindsight (Posterior ): Inferring the rationale when the ground-truth preference is known—analogous to how human experts articulate evidence after forming an initial judgment.
+
+•
+
+Foresight (Prior ): Predicting both rationale and preference from the input alone—our target rationalized reward model.
+
+Phase 1: Rationale Generation (Constructing ).  A naive approach prompts a teacher VLM to compare images without guidance, sampling from the prior . This is suboptimal: even strong VLMs frequently misjudge subtle visual details (e.g., Table 1 shows even Gemini-3-Pro has 30% disagreement with human preferences). Instead, we use preference anchoring: the Teacher (Qwen3-VL-32B-Instruct) generates rationales conditioned on the known preference label , collapsing generation from open-ended evaluation to focused justification. This concentrates probability mass on rationales consistent with the observed label, yielding higher-quality posterior samples than unconditioned generation—confirmed empirically in Table 1. Prompt templates are shown below with complete version in the appendix.
+
+Phase 2. Predictive Consistency Filtering: Maximizing Term 1, .
+
+While Phase 1 produces rationales that are linguistically plausible, plausibility does not guarantee predictive sufficiency. A rationale contributes to the ELBO only if it successfully explains ; otherwise, is low and the corresponding sample degrades the bound. For instance, a VLM might generate a rationale that sounds correct in isolation (e.g., “Image B has distorted text”) but does not align with the visual content, or it may ignore the provided preference label altogether.
+
+Figure 5: Example pointwise scores rated by RationalRewards for image/text-to-image generations (rationales omitted). RationalRewards evaluates each result across multiple dimensions.
+
+Figure 6: Qualitative results on image/text-to-image tasks optimized with reinforcement learning (RL) and prompt tuning (PT) using RationalRewards.
+
+To enforce predictive sufficiency and thereby maximize Term 1, We enforce that rationales actually explain the preference via a consensus check: the Teacher is re-queried with without the preference label, verifying that alone suffices to recover :
+
+(2)
+
+We retain only if , yielding filtered dataset . This approximates maximizing by restricting ’s support to the high-likelihood region, discarding hallucinated or insufficiently informative rationales.
+
+Phase 3. Foresight Learning: Minimizing Term 2
+
+We train the Student to generate rationales without the preference label via SFT on filtered posterior samples. Since is fixed, minimizing the KL reduces to maximizing —precisely the standard SFT objective on filtered samples.
+
+Bridging Pairwise Training and Pointwise Deployment. While we derive the ELBO from pairwise data (which is easier to collect), downstream applications require pointwise feedback, e.g., scalar scores for RL training, critiques on individual images for test-time prompt refinement, visual grounding for diagnostic and dense visual rewards. A model trained solely on pairwise comparisons often fails to critique a single image in isolation, as it overfits to the presence of a contrastive candidate.
+
+We address this with a Pointwise Projection Strategy, based on the assumption that pairwise and pointwise assessment share common evaluation principles. We prompt the Teacher to assess each image in isolation, providing the validated pairwise rationale as a reference hint to guide attention toward identified defects. The Teacher articulates absolute scores on a 1–4 scale (with float granularity) across four dimensions: Text Faithfulness, Image Faithfulness, Physical Quality, and Text Rendering. Detailed rubrics are in the appendix. This projection extends beyond the strict pairwise ELBO, but the projected rationales inherit their quality from the ELBO-filtered pairwise rationales and maintain the same predictive relationship between reasoning and scores.
+
+This induces a pointwise dataset . We train the Student jointly on both datasets to enable both pointwise and pairwise assessments:
+
+(3)
+
+2.2 From Evaluator to Optimizer: Tuning in Parameter Space and Prompt Space
+
+The rationalized reward model enables optimization in two complementary spaces, each suited to various deployment scenarios.
+
+•
+
+Parameter Space (SFT/RL Fine-Tuning). Multi-dimensional scores provide semantically decomposed reward signals for reinforcement learning, enabling fine-grained feedback across quality dimensions rather than optimization against a single opaque scalar. The structured rationales further serve as natural-language explanations for reward assignments, aiding interpretability and reducing reward hacking (see Section 3).
+
+•
+
+Prompt Space (Test-Time Refinement). Natural-language rationales identify concrete deficiencies in generated images, which we leverage to construct a Generate–Critique–Refine loop (Fig. 7): RationalRewards critiques an initial generation, and its critique is used to produce a targeted prompt revision for re-generation. This performs guided by language rather than numerical gradients, trading test-time compute for quality without parameter updates (Snell et al., 2024). We note that this post-hoc prompt refinement dataset also enables distillation for pre-hoc prompt enhancement models.
+
+This dual-space formulation connects to test-time compute scaling (Snell et al., 2024): prompt-space optimization offers an axis for improving generation quality orthogonal to parameter-space training and applicable to any frozen generator. We hypothesize that it is particularly effective when the generator possesses latent capabilities under-elicited by suboptimal prompts—a working hypothesis we examine empirically in Section 3.
+
+Figure 7: Test-Time Prompt Refinement via “Generate-Critique-Refine” loop with RationalRewards.
+
+3 Experiments
+
+Training Data.
+
+We evaluate RationalRewards on both image generation and image editing tasks. Our training data derives from existing preference datasets: 30K query-preference pairs from EditReward (Wu et al., 2025e) for image editing, and 50K pairs from HPDv3 and RapidData (Ma et al., 2025) for text-to-image generation. These datasets provide only binary or ranked preference labels without explanations. We apply the PARROT pipeline (§ 2.1) with Qwen3-VL-32B-Instruct as the teacher model to transform these raw preference pairs into reasoning-annotated training data. Our data scale is deliberately small: 30K for editing is 15% of EditReward’s 200K pairs, and 50K for generation is less than 5% of UnifiedReward’s 1M pairs (Wang et al., 2025h). We note that part of this efficiency stems from the teacher model’s pre-trained knowledge, which PARROT distills through structured rationales rather than raw labels; the ablation in § 3.1 isolates this factor. During Phase 2 (consistency filtering), approximately 72% of generated rationales survive the predictive consistency check, indicating that preference anchoring produces largely coherent rationales while the filter removes a meaningful fraction of hallucinated or insufficiently informative samples. Full implementation details (training hyperparameters, hardware configuration, RL setup) are provided in Appendix. All code, data, and models are released at
+
+Project Page to facilitate reproducibility and further research.
+
+3.1 Accuracy in Preference Modeling
+
+Table 1: Comparison of reward models as evaluators. We include Multimodal Reward Bench 2 (MMRB2), EditReward-Bench, and GenAI-Bench. T2I and Edit means text-to-image and image-to-image respectively.
+
+Judge
+MMRB2
+EditReward
+GenAI-Bench
+
+T2I
+Edit
+T2I
+Edit
+
+Qwen2.5-VL-7B (Bai et al., 2025)
+50.4
+57.1
+52.69
+–
+40.48
+
+Qwen2.5-VL-72B
+59.1
+64.6
+63.9
+66.6
+74.3
+
+Qwen3-VL-8B (Yang et al., 2025)
+59.4
+61.7
+51.9
+55.1
+50.1
+
+Qwen3-VL-32B
+64.1
+67.3
+64.2
+66.9
+76.3
+
+EditReward-7B (Wu et al., 2025e)
+–
+67.2
+56.99
+–
+65.72
+
+UnifiedReward-7B (Wang et al., 2025h)
+59.8
+–
+–
+67.9
+–
+
+RationalRewards (Qwen2.5-VL-7B)
+62.3
+68.5
+63.6
+66.4
+75.7
+
+RationalRewards (Qwen3-VL-8B)
+64.2
+70.3
+66.2
+69.8
+80.1
+
+Qwen3-VL-32B-Instruct Distillation
+57.4
+65.6
+56.8
+59.3
+62.8
+
+Commercial Models
+
+GPT-4.1
+65.8
+68.2
+58.3
+60.5
+69.3
+
+Gemini 2.5 Flash (Comanici et al., 2025)
+63.1
+66.5
+58.6
+65.8
+73.0
+
+Gemini 2.5 Pro
+70.5
+71.3
+71.3
+66.2
+78.9
+
+Gemini 3 Pro (DeepMind, 2025)
+74.4
+74.9
+72.2
+73.1
+80.5
+
+We first evaluate whether RationalRewards produces human-aligned preference judgments. We report pairwise comparison accuracy on three established benchmarks: Multimodal Reward Bench 2 (Hu et al., 2025) and GenAI-Bench (Jiang et al., 2024) and EditReward Bench (Wu et al., 2025e) for both text- and image-to-image generation.
+
+Main Results.
+As shown in Table 1, our 8B-parameter RationalRewards surpasses all open-source scalar reward models by a substantial margin across all three benchmarks, without requiring complex loss designs to handle label noise or annotation ambiguities. Notably, RationalRewards outperforms commercial models including Gemini-2.5-Flash and approaches the performance of GPT-5/Gemini-2.5-Pro on preference prediction, offering a cost-effective alternative for quality assessment and evaluation in visual generation.
+
+Ablation of PARROT versus Direct Distillation.
+To isolate the contribution of PARROT from generic knowledge distillation, we include a baseline that performs direct SFT distillation from Qwen3-VL-32B-Instruct to the same 8B backbone, using the same data volume but without preference-anchored rationalization (marked “Qwen3-VL-32B-Instruct Distillation” in Table 
+1). This baseline underperforms RationalRewards on all benchmarks—by 6.8 points on MMRB2 (T2I) and 17.3 points on GenAI (Edit)—confirming that the structured rationalization process, not simply access to a larger teacher, drives the performance gains. We also replace the backbone with Qwen2.5-VL-7B-Instruct; the results still exceed prior scalar reward models, clarifying that improvements are attributable to PARROT rather than the specific choice of backbone.
+
+3.2 Optimization in Dual Spaces
+
+Given the strong discriminative performance of RationalRewards, we now investigate its utility for improving downstream generation. We explore two complementary optimization strategies: parameter-space tuning via RL and prompt-space tuning via test-time critique-and-refinement. We evaluate on ImgEdit-Bench (Ye et al., 2025a) and GEdit-Bench-EN (Liu et al., 2025c) for image editing, the UniGen benchmark for text-to-image generation. We also include in the appendix a physics-centric PICA-Bench (Pu et al., 2025) for out-of-distribution stress testing, following each benchmark’s prescribed evaluation protocol.
+
+Parameter Space Tuning (RL).
+We experiment with the recent Diffusion RL approach, DiffusionNFT (Zheng et al., 2025), which samples a group of generations for the same user prompt and optimizes with a weighted diffusion loss. For reproducibility, we include the algorithm and implementation details in the appendix.
+We use RationalRewards to provide dense, per-dimension reward signals for RL fine-tuning and systematically compare against alternative reward models spanning two axes: scalar vs. reasoning-based and generic vs. preference-trained:
+
+1.
+
+Scalar reward models: EditReward (Wu et al., 2025e) for image editing and MultiReward (used by DiffusionNFT (Zheng et al., 2025)) for text-to-image generation. These output a single scalar score without natural language reasoning.
+
+2.
+
+Generic reasoning model: Qwen3-VL-32B-Instruct used directly as a judge. This model can produce natural language critiques but has not been trained on preference data via PARROT, isolating the contribution of our training pipeline from raw model scale.
+
+Table 2: Ablation of RationalRewards for Text-to-image RL on UniGenBench++. We compare scalar reward model MultiReward and generic reasoning reward  Qwen3-VL-32B.
+
+Model
+Action
+Attribute
+Compound
+Layout
+Grammar
+Logic
+Relation
+Style
+Text
+World Know.
+Overall
+
+FLUX.1-dev
+62.24
+67.20
+45.75
+70.84
+62.30
+29.77
+66.88
+85.00
+32.18
+87.50
+60.97
+
++MultiReward
+59.78
+68.23
+44.21
+74.37
+59.33
+28.25
+68.35
+76.05
+36.21
+86.03
+60.12
+
++Qwen3-VL-32B
+65.47
+72.68
+53.28
+71.82
+60.78
+33.24
+71.85
+85.53
+42.15
+89.47
+66.53
+
++RationalRewards
+67.40
+76.36
+57.67
+72.15
+60.29
+40.53
+74.59
+87.20
+52.57
+90.61
+70.34
+
+SD-3.5-Medium
+60.41
+66.99
+53.35
+70.31
+59.89
+37.73
+68.78
+89.80
+15.23
+84.34
+60.71
+
++RationalRewards
+64.36
+81.49
+67.98
+75.88
+58.68
+42.37
+75.60
+89.60
+10.05
+91.77
+70.56
+
++MultiReward
+57.03
+66.67
+51.03
+75.37
+57.22
+34.86
+67.51
+77.60
+21.84
+86.71
+62.55
+
++Qwen3-VL-32B
+61.23
+74.48
+63.85
+75.34
+59.67
+31.23
+72.84
+84.73
+14.87
+88.86
+66.71
+
+Qwen-Image
+82.49
+87.93
+72.94
+86.56
+60.96
+51.59
+80.08
+94.70
+72.13
+94.15
+78.36
+
++MultiReward
+79.52
+86.45
+70.91
+88.53
+58.43
+48.62
+80.55
+83.75
+67.18
+92.17
+75.61
+
++Qwen3-VL-32B
+81.95
+87.45
+76.42
+87.73
+62.93
+51.14
+81.55
+95.20
+75.67
+95.63
+80.17
+
++RationalRewards
+82.11
+87.82
+78.82
+88.07
+66.21
+52.88
+82.21
+96.60
+79.76
+96.57
+82.60
+
+As shown in Tables 3 and 2, RL with RationalRewards yields consistent improvements over both base models across nearly all subcategories, surpassing both scalar reward baselines and the generic reasoning baseline. For image editing, RationalRewards-guided RL improves Flux.1 Kontext from 3.52 to 3.84 overall on ImgEdit-Bench, outperforming EditReward-guided RL (3.66) by a clear margin. For text-to-image generation, RationalRewards lifts FLUX.1-dev from 60.97 to 70.34 on UniGen (+9.37 points), substantially exceeding both MultiReward (62.55) and the direct Qwen3-VL-32B judge (66.71). Notably, the 8B RationalRewards outperforms Qwen3-VL-32B used as a direct judge, confirming that PARROT’s structured preference training provides value beyond raw model capacity.
+
+Table 3: Ablation of RationalRewards as dual-space optimizer on editing tasks. For prompt space tuning, we compare pre-generation PromptEnhance (Wang et al., 2025g). For parameter space tuning, we compare SFT and RL with different rewards. We include OOD physics-aware editing, PICA-Bench with representative aspects (Left), and generic editing benchmarks (Right).
+
+Model
+Representative Aspects
+Overall
+
+Light
+Reflec.
+Deform.
+
+Flux.1 Kontext [dev]
+53.64
+43.84
+33.74
+41.07
+
++PromptEnhance
+55.53
+45.87
+38.14
+45.28
+
++PT (RationalRewards)
+56.87
+51.43
+41.08
+48.12
+
++PICA SFT
+51.21
+47.22
+33.99
+41.93
+
++RL (RationalRewards)
+51.75
+54.81
+39.36
+44.25
+
+Qwen-Image-Edit
+52.02
+49.07
+38.14
+49.71
+
++PromptEnhance
+58.49
+50.42
+42.30
+50.97
+
++PT (RationalRewards)
+63.34
+61.55
+43.28
+55.65
+
++PICA SFT
+60.47
+55.19
+40.99
+52.06
+
++RL (RationalRewards)
+63.07
+60.71
+41.32
+54.11
+
+Model
+ImgEdit
+GEdit-Bench-EN
+
+Overall
+G_SC
+G_PQ
+G_O
+
+Flux.1 Kontext [dev]
+3.52
+7.16
+7.37
+6.51
+
++RL (EditReward)
+3.66
+7.38
+7.53
+6.88
+
++RL (Qwen3-VL-32B)
+3.67
+7.42
+7.48
+6.82
+
++RL (RationalRewards)
+3.84
+7.75
+8.24
+7.37
+
++PT (RationalRewards)
+4.01
+7.77
+7.61
+7.23
+
+Qwen-Image-Edit
+4.27
+8.00
+7.86
+7.56
+
++RL (EditReward)
+4.25
+8.36
+7.91
+7.77
+
++RL (Qwen3-VL-32B)
+4.25
+8.42
+7.83
+7.79
+
++RL (RationalRewards)
+4.38
+8.74
+8.43
+8.29
+
++PT (RationalRewards)
+4.43
+8.94
+8.20
+8.33
+
+Test-Time Prompt Space Tuning.
+We leverage the generative nature of RationalRewards in a Generate–Critique–Refine protocol: the generator produces an initial image; RationalRewards evaluates it across four dimensions with natural language critique and refinement suggestions; if any dimension score falls below a threshold of 3.0, the refined request is fed back to the generator. This single-iteration loop adds approximately 0.4 seconds of VLM inference overhead per image (via vLLM prefix caching and paged attention), compared to 384 GPU-hours for RL fine-tuning of a single base model.
+
+Prompt Tuning Matches or Exceeds RL.
+A striking finding emerges from Table 
+3: inference-time prompt tuning frequently yields improvements comparable to or exceeding computationally expensive RL. On ImgEdit-Bench, prompt tuning boosts the RL-tuned Flux model from 3.84 to 4.01 overall. For Qwen-Image-Edit, prompt tuning applied on top of RL yields the best overall score of 4.43, with the two methods proving complementary. On GEdit-Bench-EN Overall, prompt tuning (8.33) slightly exceeds RL alone (8.29).
+
+The RL performance ceiling is partly structural: LoRA-based fine-tuning constrains parameter update capacity, and the RL query distribution may not fully cover the evaluation distribution. In contrast, prompt tuning performs per-instance optimization without risk of catastrophic forgetting. More fundamentally, these results suggest a latent capability hypothesis: generators already possess the capacity for high-quality outputs, but this capacity is under-elicited by suboptimal prompts. RationalRewards’s critique bridges user intent and model capability without weight modification. We note this remains a hypothesis requiring representation-level validation.
+
+4 Related Work
+
+Reward Models for Visual Generation. The standard paradigm in visual generation relies heavily on scalar reward models trained on large-scale human preference datasets. Models such as ImageReward (Xu et al., 2023),VideoReward (Liu et al., 2025b), PickScore (Kirstain et al., 2023), UnifiedReward (Wang et al., 2025h) and EditReward (Wu et al., 2025e) typically function as opaque discriminators, mapping pixel inputs directly to a scalar score. Our work provides an alternative path for reward modeling, shifting the paradigm from scalar regression to rationalization (Zelikman et al., 2022). Generative reward models have also been studied in verifiable domains (Mahan et al., 2024; Guo et al., 2025; Chen et al., 2026).
+
+Training and Test-Time Scaling in Visual Generation. Recent efforts, such as FlowGRPO (Liu et al., 2025a), DanceGRPO (Xue et al., 2025), Blip3o-Next (Chen et al., 2025), and DiffusionNFT (Zheng et al., 2025; Li et al., 2025), successfully integrated RL into visual generation, demonstrating significant gains in compositional reasoning and text rendering. While effective, RL is bottlenecked by the quality of the reward model, often suffering from reward hacking when the proxy reward diverges from human preference. Recent works have pivoted toward trading test-time compute for enhanced generation quality. ReflectionFLow (Zhuo et al., 2025) and PromptEnhancer (Wang et al., 2025g) utilizes a Chain-of-Thought (CoT) rewriter to expand user prompts into detailed specifications prior to generation. For image editing, Reason-Edit (Yin et al., 2025) introduces a thinking–editing–reflection loop. Most recently, several approaches have begun leveraging the multimodal CoT capabilities of Unified Multimodal Models to iteratively improve visual synthesis at test time (Qin et al., 2025; Wu et al., 2025d; Deng et al., 2025a; Jiang et al., 2025; Ye et al., 2025b; Li et al., 2025). Our work highlights the importance of preference calibration and rationalization in reward models, revealing the fundamental mechanism of trading test-time compute for better generation.
+
+5 Conclusions
+
+Figure 8: RationalRewards (a) enables explainable quality control for data curation;
+(b) serves as a multi-dimensional reward model driven by transparent rationales;
+(c) serves as a preference-calibrated test-time prompt tuner that trades compute for better generation quality; (d) fuels regional flaw grounding and dense visual rewards.
+
+We presented RationalRewards, a reasoning-based reward model that replaces opaque scalar scoring with structured, multi-dimensional chain-of-thought critiques, and PARROT, a variational framework that makes this tractable by treating rationales as latent variables recoverable from readily available preference data. Our work yields three principal findings. First, structured rationalization acts as a powerful inductive bias: by requiring the model to articulate why one image is preferred, an 8B-parameter model achieves preference-prediction accuracy competitive with Gemini-2.5-Pro and approaching GPT-5, while consuming 10–20× less training data than scalar baselines. Second, the multi-dimensional rationales produced by RationalRewards serve as semantically grounded RL rewards that consistently outperform both scalar reward models and generic VLM judges of larger scale across text-to-image and image-editing benchmarks. Third, and most notably, the Generate–Critique–Refine loop – a purely test-time intervention requiring no parameter updates – matches or exceeds RL-based fine-tuning on several benchmarks, lending empirical support to the hypothesis that current generators harbor latent capabilities that suboptimal prompts fail to elicit.
+
+References
+
+Bai et al. (2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+
+Qwen2. 5-vl technical report.
+
+arXiv preprint arXiv:2502.13923.
+
+Cited by: Table 1.
+
+Chen et al. (2025)
+J. Chen, L. Xue, Z. Xu, X. Pan, S. Yang, C. Qin, A. Yan, H. Zhou, Z. Chen, L. Huang, et al.
+
+Blip3o-next: next frontier of native image generation.
+
+arXiv preprint arXiv:2510.15857.
+
+Cited by: §4.
+
+Chen et al. (2026)
+X. Chen, G. Li, Z. Wang, B. Jin, C. Qian, Y. Wang, H. Wang, Y. Zhang, D. Zhang, T. Zhang, H. Tong, and H. Ji
+
+RM-r1: reward modeling as reasoning.
+
+External Links: 2505.02387,
+Link
+
+Cited by: §4.
+
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al.
+
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+
+arXiv preprint arXiv:2507.06261.
+
+Cited by: Table 1.
+
+DeepMind (2025)
+G. DeepMind
+
+Google gemini-3 system card.
+
+Cited by: Table 1.
+
+Deng et al. (2025a)
+C. Deng, D. Zhu, K. Li, C. Gou, F. Li, Z. Wang, S. Zhong, W. Yu, X. Nie, Z. Song, et al.
+
+Emerging properties in unified multimodal pretraining.
+
+arXiv preprint arXiv:2505.14683.
+
+Cited by: §4.
+
+Deng et al. (2025b)
+C. Deng, D. Zhu, K. Li, C. Gou, F. Li, Z. Wang, S. Zhong, W. Yu, X. Nie, Z. Song, G. Shi, and H. Fan
+
+Emerging properties in unified multimodal pretraining.
+
+arXiv preprint arXiv:2505.14683.
+
+Cited by: Table 5.
+
+Esser et al. (2024)
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, et al.
+
+Scaling rectified flow transformers for high-resolution image synthesis.
+
+In Forty-first international conference on machine learning,
+
+Cited by: §E.1,
+§1.
+
+Google DeepMind (2025)
+Google DeepMind
+
+Gemini 2.5 flash image (nano banana).
+
+Note: https://ai.google.dev/gemini-api/docs/image-generationGoogle’s AI image generation and editing model, officially Gemini 2.5 Flash Image, known by its nickname “Nano Banana”. Accessed September 2025.
+
+Cited by: §1.
+
+Guo et al. (2025)
+J. Guo, Z. Chi, L. Dong, Q. Dong, X. Wu, S. Huang, and F. Wei
+
+Reward reasoning model.
+
+External Links: 2505.14674,
+Link
+
+Cited by: §1,
+§4.
+
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+
+Lora: low-rank adaptation of large language models..
+
+ICLR 1 (2), pp. 3.
+
+Cited by: §E.1.
+
+Hu et al. (2025)
+Y. Hu, R. Askari-Hemmat, M. Hall, E. Dinan, L. Zettlemoyer, and M. Ghazvininejad
+
+Multimodal rewardbench 2: evaluating omni reward models for interleaved text and image.
+
+arXiv preprint arXiv:2512.16899.
+
+Cited by: Table 13,
+Table 13,
+§1,
+§2,
+§3.1.
+
+Jiang et al. (2024)
+D. Jiang, M. Ku, T. Li, Y. Ni, S. Sun, R. Fan, and W. Chen
+
+GenAI arena: an open evaluation platform for generative models.
+
+arXiv preprint arXiv:2406.04485.
+
+Cited by: Table 13,
+Table 13,
+§3.1.
+
+Jiang et al. (2025)
+D. Jiang, Z. Guo, R. Zhang, Z. Zong, H. Li, L. Zhuo, S. Yan, P. Heng, and H. Li
+
+T2i-r1: reinforcing image generation with collaborative semantic-level and token-level cot.
+
+arXiv preprint arXiv:2505.00703.
+
+Cited by: §4.
+
+Jin et al. (2025)
+D. Jin, R. Xu, J. Zeng, R. Lan, Y. Bai, L. Sun, and X. Chu
+
+Semantic context matters: improving conditioning for autoregressive models.
+
+arXiv preprint arXiv:2511.14063.
+
+Cited by: §E.1.
+
+Kirstain et al. (2023)
+Y. Kirstain, A. Polyak, U. Singer, S. Matiana, J. Penna, and O. Levy
+
+Pick-a-pic: an open dataset of user preferences for text-to-image generation.
+
+Advances in Neural Information Processing Systems 36, pp. 36652–36663.
+
+Cited by: §4.
+
+Lan et al. (2025)
+R. Lan, Y. Bai, X. Duan, M. Li, D. Jin, R. Xu, L. Sun, and X. Chu
+
+Flux-text: a simple and advanced diffusion transformer baseline for scene text editing.
+
+arXiv preprint arXiv:2505.03329.
+
+Cited by: §E.1.
+
+Li et al. (2025)
+Z. Li, Z. Liu, Q. Zhang, B. Lin, F. Wu, S. Yuan, Z. Yan, Y. Ye, W. Yu, Y. Niu, et al.
+
+Uniworld-v2: reinforce image editing with diffusion negative-aware finetuning and mllm implicit feedback.
+
+arXiv preprint arXiv:2510.16888.
+
+Cited by: §1,
+§4.
+
+Liu et al. (2025a)
+J. Liu, G. Liu, J. Liang, Y. Li, J. Liu, X. Wang, P. Wan, D. Zhang, and W. Ouyang
+
+Flow-grpo: training flow matching models via online rl.
+
+arXiv preprint arXiv:2505.05470.
+
+Cited by: §4.
+
+Liu et al. (2025b)
+J. Liu, G. Liu, J. Liang, Z. Yuan, X. Liu, M. Zheng, X. Wu, Q. Wang, M. Xia, X. Wang, et al.
+
+Improving video generation with human feedback.
+
+arXiv preprint arXiv:2501.13918.
+
+Cited by: §1,
+§4.
+
+Liu et al. (2025c)
+S. Liu, Y. Han, P. Xing, F. Yin, R. Wang, W. Cheng, J. Liao, Y. Wang, H. Fu, C. Han, et al.
+
+Step1x-edit: a practical framework for general image editing.
+
+arXiv preprint arXiv:2504.17761.
+
+Cited by: Table 5,
+§3.2.
+
+Ma et al. (2025)
+Y. Ma, X. Wu, K. Sun, and H. Li
+
+Hpsv3: towards wide-spectrum human preference score.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 15086–15095.
+
+Cited by: §3.
+
+Mahan et al. (2024)
+D. Mahan, D. V. Phung, R. Rafailov, C. Blagden, N. Lile, L. Castricato, J. Fränken, C. Finn, and A. Albalak
+
+Generative reward models.
+
+External Links: 2410.12832,
+Link
+
+Cited by: §1,
+§4.
+
+OpenAI (2025)
+OpenAI
+
+GPT-image-1.
+
+Note: https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1OpenAI’s image generation model. Accessed September 2025.
+
+Cited by: Table 5,
+§1.
+
+Pu et al. (2025)
+Y. Pu, L. Zhuo, S. Han, J. Xing, K. Zhu, S. Cao, B. Fu, S. Liu, H. Li, Y. Qiao, et al.
+
+PICABench: how far are we from physically realistic image editing?.
+
+arXiv preprint arXiv:2510.17681.
+
+Cited by: §3.2.
+
+Qin et al. (2025)
+L. Qin, J. Gong, Y. Sun, T. Li, M. Yang, X. Yang, C. Qu, Z. Tan, and H. Li
+
+Uni-cot: towards unified chain-of-thought reasoning across text and vision.
+
+arXiv preprint arXiv:2508.05606.
+
+Cited by: §4.
+
+Snell et al. (2024)
+C. Snell, J. Lee, K. Xu, and A. Kumar
+
+Scaling llm test-time compute optimally can be more effective than scaling model parameters.
+
+External Links: 2408.03314,
+Link
+
+Cited by: 2nd item,
+2nd item,
+§2.2.
+
+Wang et al. (2025a)
+C. Wang, H. Wang, X. Chen, J. Liu, T. Xue, C. Peng, D. Qi, F. Lin, and Y. Yan
+
+From illusion to intention: visual rationale learning for vision-language reasoning.
+
+arXiv preprint arXiv:2511.23031.
+
+Cited by: §B.1,
+§E.1.
+
+Wang et al. (2025b)
+G. Wang, S. Zhao, X. Zhang, L. Cao, P. Zhan, L. Duan, S. Lu, M. Fu, J. Zhao, Y. Li, and Q. Chen
+
+Ovis-u1 technical report.
+
+arXiv preprint arXiv:2506.23044.
+
+Cited by: Table 5.
+
+Wang et al. (2025c)
+H. Wang, C. Qu, Z. Huang, W. Chu, F. Lin, and W. Chen
+
+Vl-rethinker: incentivizing self-reflection of vision-language models with reinforcement learning.
+
+arXiv preprint arXiv:2504.08837.
+
+Cited by: §E.1,
+2nd item.
+
+Wang et al. (2025d)
+H. Wang, H. Que, Q. Xu, M. Liu, W. Zhou, J. Feng, W. Zhong, W. Ye, T. Yang, W. Huang, et al.
+
+Reverse-engineered reasoning for open-ended generation.
+
+arXiv preprint arXiv:2509.06160.
+
+Cited by: §1,
+§2.
+
+Wang et al. (2025e)
+H. Wang, A. Su, W. Ren, F. Lin, and W. Chen
+
+Pixel reasoner: incentivizing pixel-space reasoning with curiosity-driven reinforcement learning.
+
+arXiv preprint arXiv:2505.15966.
+
+Cited by: §E.1.
+
+Wang et al. (2025f)
+H. Wang, Q. Xu, C. Liu, J. Wu, F. Lin, and W. Chen
+
+Emergent hierarchical reasoning in llms through reinforcement learning.
+
+arXiv preprint arXiv:2509.03646.
+
+Cited by: §E.1.
+
+Wang et al. (2020)
+H. Wang, J. Zhou, and X. He
+
+Learning context-aware task reasoning for efficient meta-reinforcement learning.
+
+arXiv preprint arXiv:2003.01373.
+
+Cited by: §B.1.
+
+Wang et al. (2025g)
+L. Wang, X. Xing, Y. Cheng, Z. Zhao, D. Li, T. Hang, J. Tao, Q. Wang, R. Li, C. Chen, et al.
+
+Promptenhancer: a simple approach to enhance text-to-image models via chain-of-thought prompt rewriting.
+
+arXiv preprint arXiv:2509.04545.
+
+Cited by: 2nd item,
+Table 3,
+§4.
+
+Wang et al. (2025h)
+Y. Wang, Y. Zang, H. Li, C. Jin, and J. Wang
+
+Unified reward model for multimodal understanding and generation.
+
+arXiv preprint arXiv:2503.05236.
+
+Cited by: §3,
+Table 1,
+§4.
+
+Wei et al. (2024)
+C. Wei, Z. Xiong, W. Ren, X. Du, G. Zhang, and W. Chen
+
+OmniEdit: building image editing generalist models through specialist supervision.
+
+arXiv preprint arXiv:2411.07199.
+
+Cited by: §1.
+
+Wu et al. (2025a)
+B. Wu, C. Zou, C. Li, D. Huang, F. Yang, H. Tan, J. Peng, J. Wu, J. Xiong, J. Jiang, et al.
+
+Hunyuanvideo 1.5 technical report.
+
+arXiv preprint arXiv:2511.18870.
+
+Cited by: §E.1.
+
+Wu et al. (2025b)
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu
+
+Qwen-image technical report.
+
+External Links: 2508.02324,
+Link
+
+Cited by: §1.
+
+Wu et al. (2025c)
+C. Wu, P. Zheng, R. Yan, S. Xiao, X. Luo, Y. Wang, W. Li, X. Jiang, Y. Liu, J. Zhou, Z. Liu, Z. Xia, C. Li, H. Deng, J. Wang, K. Luo, B. Zhang, D. Lian, X. Wang, Z. Wang, T. Huang, and Z. Liu
+
+OmniGen2: exploration to advanced multimodal generation.
+
+arXiv preprint arXiv:2506.18871.
+
+Cited by: Table 5.
+
+Wu et al. (2025d)
+C. Wu, P. Zheng, R. Yan, S. Xiao, X. Luo, Y. Wang, W. Li, X. Jiang, Y. Liu, J. Zhou, et al.
+
+OmniGen2: exploration to advanced multimodal generation.
+
+arXiv preprint arXiv:2506.18871.
+
+Cited by: §4.
+
+Wu et al. (2025e)
+K. Wu, S. Jiang, M. Ku, P. Nie, M. Liu, and W. Chen
+
+Editreward: a human-aligned reward model for instruction-guided image editing.
+
+arXiv preprint arXiv:2509.26346.
+
+Cited by: Figure 11,
+Table 13,
+§1,
+item 1,
+§3,
+§3.1,
+Table 1,
+§4.
+
+Xu et al. (2023)
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong
+
+Imagereward: learning and evaluating human preferences for text-to-image generation.
+
+Advances in Neural Information Processing Systems 36, pp. 15903–15935.
+
+Cited by: §1,
+§4.
+
+Xu et al. (2025)
+R. Xu, D. Jin, Y. Bai, R. Lan, X. Duan, L. Sun, and X. Chu
+
+Scalar: scale-wise controllable visual autoregressive learning.
+
+arXiv preprint arXiv:2507.19946.
+
+Cited by: §E.1.
+
+Xue et al. (2025)
+Z. Xue, J. Wu, Y. Gao, F. Kong, L. Zhu, M. Chen, Z. Liu, W. Liu, Q. Guo, W. Huang, et al.
+
+DanceGRPO: unleashing grpo on visual generation.
+
+arXiv preprint arXiv:2505.07818.
+
+Cited by: §4.
+
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: Table 1.
+
+Ye et al. (2025a)
+Y. Ye, X. He, Z. Li, B. Lin, S. Yuan, Z. Yan, B. Hou, and L. Yuan
+
+ImgEdit: a unified image editing dataset and benchmark.
+
+External Links: 2505.20275,
+Link
+
+Cited by: §3.2.
+
+Ye et al. (2025b)
+Z. Ye, Q. Liu, C. Wei, Y. Zhang, X. Wang, P. Wan, K. Gai, and W. Luo
+
+Visual-aware cot: achieving high-fidelity visual consistency in unified models.
+
+arXiv preprint arXiv:2512.19686.
+
+Cited by: §4.
+
+Yin et al. (2025)
+F. Yin, S. Liu, Y. Han, Z. Wang, P. Xing, R. Wang, W. Cheng, Y. Wang, A. Li, Z. Yin, et al.
+
+ReasonEdit: towards reasoning-enhanced image editing models.
+
+arXiv preprint arXiv:2511.22625.
+
+Cited by: §4.
+
+Yu et al. (2025)
+Q. Yu, W. Chow, Z. Yue, K. Pan, Y. Wu, X. Wan, J. Li, S. Tang, H. Zhang, and Y. Zhuang
+
+Anyedit: mastering unified high-quality image editing for any idea.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+
+pp. 26125–26135.
+
+Cited by: Table 5.
+
+Zelikman et al. (2022)
+E. Zelikman, Y. Wu, J. Mu, and N. Goodman
+
+Star: bootstrapping reasoning with reasoning.
+
+Advances in Neural Information Processing Systems 35, pp. 15476–15488.
+
+Cited by: §1,
+§2,
+§4.
+
+Zhao et al. (2024)
+H. Zhao, X. Ma, L. Chen, S. Si, R. Wu, K. An, P. Yu, M. Zhang, Q. Li, and B. Chang
+
+UltraEdit: instruction-based fine-grained image editing at scale.
+
+arXiv preprint arXiv:2407.05282.
+
+Cited by: Table 5.
+
+Zheng et al. (2025)
+K. Zheng, H. Chen, H. Ye, H. Wang, Q. Zhang, K. Jiang, H. Su, S. Ermon, J. Zhu, and M. Liu
+
+Diffusionnft: online diffusion reinforcement with forward process.
+
+arXiv preprint arXiv:2509.16117.
+
+Cited by: Figure 11,
+§E.1,
+§E.1,
+item 1,
+§3.2,
+§4.
+
+Zhuo et al. (2025)
+L. Zhuo, L. Zhao, S. Paul, Y. Liao, R. Zhang, Y. Xin, P. Gao, M. Elhoseiny, and H. Li
+
+From reflection to perfection: scaling inference-time optimization for text-to-image diffusion models via reflection tuning.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 15329–15339.
+
+Cited by: §4.
+
+Appendix A Extended Experimental Results
+
+Full Text-to-Image Results on UniGenBench++
+
+Table 4 provides the complete UniGenBench++ results across all categories and model variants.
+
+Table 4: Text-to-image generation results on UniGen benchmark. We report category-level scores and overall performance. Action is the average of Hand, Full Body, Animal, Non Contact, Contact, and State. Layout is the average of 2D and 3D.
+
+Model
+Action
+Attribute
+Compound
+Layout
+Grammar
+Logic
+Relation
+Style
+Text
+World Know.
+Overall
+
+Open-source / Commercial Models
+
+Nano Banana Pro
+91.30
+91.95
+92.91
+93.30
+89.59
+80.24
+95.43
+99.30
+95.65
+97.47
+92.72
+
+Seedream-4-5-251128
+88.06
+91.03
+90.08
+92.55
+84.09
+73.17
+90.61
+99.20
+91.67
+96.35
+89.70
+
+UniWorld-V1
+66.94
+70.62
+54.51
+68.96
+63.77
+38.41
+67.13
+91.10
+26.44
+82.91
+63.11
+
+OmniGen2
+62.68
+72.12
+56.31
+71.54
+59.89
+32.50
+68.27
+91.90
+29.02
+86.39
+63.09
+
+Show-o2
+68.27
+69.87
+63.79
+73.10
+60.83
+39.55
+68.78
+87.40
+1.15
+85.44
+61.90
+
+Bagel
+61.89
+67.73
+56.86
+76.59
+65.85
+23.85
+70.64
+90.08
+0.00
+85.42
+59.91
+
+BLIP3-o
+64.25
+64.77
+54.57
+67.23
+69.05
+36.78
+65.99
+92.81
+0.00
+79.97
+59.57
+
+Emu3
+40.21
+50.11
+36.21
+43.87
+50.67
+19.32
+48.60
+87.50
+1.15
+76.42
+45.42
+
+MMaDA
+37.32
+48.93
+32.35
+30.23
+55.75
+17.95
+50.25
+82.40
+1.15
+56.65
+41.35
+
+SDXL
+34.44
+44.66
+26.68
+30.70
+48.48
+10.34
+46.37
+87.45
+0.00
+72.28
+40.22
+
+Train-Time Scaling w/ RationalRewards
+
+FLUX.1-dev
+62.24
+67.20
+45.75
+70.84
+62.30
+29.77
+66.88
+85.00
+32.18
+87.50
+60.97
+
++MultiReward
+59.78
+68.23
+44.21
+74.37
+59.33
+28.25
+68.35
+76.05
+36.21
+86.03
+60.12
+
++Qwen3-VL-32B
+65.47
+72.68
+53.28
+71.82
+60.78
+33.24
+71.85
+85.53
+42.15
+89.47
+66.53
+
++RationalRewards
+67.40
+76.36
+57.67
+72.15
+60.29
+40.53
+74.59
+87.20
+52.57
+90.61
+70.34
+
+SD-3.5-Medium
+60.41
+66.99
+53.35
+70.31
+59.89
+37.73
+68.78
+89.80
+15.23
+84.34
+60.71
+
++RationalRewards
+64.36
+81.49
+67.98
+75.88
+58.68
+42.37
+75.60
+89.60
+10.05
+91.77
+70.56
+
++MultiReward
+57.03
+66.67
+51.03
+75.37
+57.22
+34.86
+67.51
+77.60
+21.84
+86.71
+62.55
+
++Qwen3-VL-32B
+61.23
+74.48
+63.85
+75.34
+59.67
+31.23
+72.84
+84.73
+14.87
+88.86
+66.71
+
+Qwen-Image
+82.49
+87.93
+72.94
+86.56
+60.96
+51.59
+80.08
+94.70
+72.13
+94.15
+78.36
+
++MultiReward
+79.52
+86.45
+70.91
+88.53
+58.43
+48.62
+80.55
+83.75
+67.18
+92.17
+75.61
+
++Qwen3-VL-32B
+81.95
+87.45
+76.42
+87.73
+62.93
+51.14
+81.55
+95.20
+75.67
+95.63
+80.17
+
++RationalRewards
+82.11
+87.82
+78.82
+88.07
+66.21
+52.88
+82.21
+96.60
+79.76
+96.57
+82.60
+
+Full Image Editing Results
+
+Table 5 provides the complete results on generic image editing benchmarks.
+
+Table 5: We perform RL tuning and test-time prompt tuning to test RationalRewards on image editing. On ImgEdit-Bench and GEdit-Bench-EN, trading test-time evaluation for better generation yields surprising gains.
+
+Model
+ImgEdit-Bench
+GEdit-Bench-EN
+
+Add
+Adjust
+Extract
+Replace
+Remove
+Background
+Style
+Compose
+Action
+Overall
+G_SC
+G_PQ
+G_O
+
+AnyEdit (Yu et al., 2025)
+3.18
+2.95
+1.88
+2.47
+2.23
+2.23
+2.85
+1.56
+2.65
+2.45
+3.18
+5.82
+3.21
+
+UltraEdit (Zhao et al., 2024)
+3.44
+2.81
+2.13
+2.96
+1.45
+2.86
+3.76
+1.91
+2.98
+2.70
+-
+-
+-
+
+Step1X-Edit (Liu et al., 2025c)
+3.88
+3.14
+1.76
+3.40
+2.41
+3.16
+4.63
+2.64
+2.52
+3.06
+7.66
+7.35
+6.97
+
+BAGEL (Deng et al., 2025b)
+3.56
+3.31
+1.70
+3.30
+2.62
+3.24
+4.49
+2.38
+4.17
+3.20
+7.36
+6.83
+6.52
+
+OmniGen2 (Wu et al., 2025c)
+3.57
+3.06
+1.77
+3.74
+3.20
+3.57
+4.81
+2.52
+4.68
+3.44
+7.16
+6.77
+6.41
+
+Ovis-U1 (Wang et al., 2025b)
+4.13
+3.62
+2.98
+4.45
+4.06
+4.22
+4.69
+3.45
+4.61
+4.00
+-
+-
+6.42
+
+GPT-Image-1 (OpenAI, 2025)
+4.61
+4.33
+2.90
+4.35
+3.66
+4.57
+4.93
+3.96
+4.89
+4.20
+7.85
+7.62
+7.53
+
+Train/Test Time Scaling /w RationalRewards
+
+Flux.1 Kontext [dev]
+3.76
+3.45
+2.15
+3.98
+2.94
+3.78
+4.38
+2.96
+4.26
+3.52
+7.16
+7.37
+6.51
+
++RL (EditReward)
+3.91
+3.83
+2.39
+4.15
+2.99
+3.99
+4.56
+2.73
+4.11
+3.66
+7.38
+7.53
+6.88
+
++RL (Qwen3-VL-32B)
+3.95
+3.90
+2.41
+4.12
+2.95
+3.96
+4.45
+2.82
+4.30
+3.67
+7.42
+7.48
+6.82
+
++RL (RationalRewards)
+4.21
+4.34
+2.68
+4.33
+2.92
+4.05
+4.37
+3.09
+4.41
+3.84
+7.75
+8.24
+7.37
+
++PT (RationalRewards)
+3.96
+4.16
+3.37
+4.38
+3.84
+4.12
+4.55
+2.70
+4.29
+4.01
+7.77
+7.61
+7.23
+
+Qwen-Image-Edit
+4.38
+4.16
+3.43
+4.66
+4.14
+4.38
+4.81
+3.18
+4.69
+4.27
+8.00
+7.86
+7.56
+
++RL (EditReward)
+4.34
+4.22
+3.87
+4.67
+4.18
+4.20
+4.83
+3.36
+4.54
+4.25
+8.36
+7.91
+7.77
+
++RL (Qwen3-VL-32B)
+4.40
+4.18
+3.35
+4.60
+4.10
+4.35
+4.80
+3.10
+4.72
+4.25
+8.42
+7.83
+7.79
+
++RL (RationalRewards)
+4.41
+4.32
+4.09
+4.63
+4.26
+4.25
+4.91
+3.44
+4.52
+4.38
+8.74
+8.43
+8.29
+
++ PT (RationalRewards)
+4.46
+4.40
+4.18
+4.63
+4.27
+4.40
+4.88
+3.27
+4.54
+4.43
+8.94
+8.20
+8.33
+
+Full PICA-Bench Results
+
+Table 6 provides the complete PICA-Bench results across all physics-aware aspects, extending the representative results shown in Table 3 (left panel) of the main text.
+
+Table 6: We test OOD Generalization of RationalRewards on physics-aware editing tasks (PICABench).
+
+Model
+LightProp
+LightSrcEff
+Reflection
+Refraction
+Deformation
+Causality
+GlobalStateTrans
+LocalStateTrans
+Overall
+
+Nano Banana
+53.27
+54.45
+55.99
+56.58
+47.68
+58.93
+58.17
+52.81
+55.40
+
+GPT-Image-1
+59.56
+61.99
+52.61
+61.84
+44.99
+53.16
+70.53
+51.56
+57.83
+
+Nano Banana Pro
+59.32
+64.69
+61.38
+60.09
+53.55
+64.70
+72.08
+63.41
+63.29
+
+Seedream 4.0
+58.84
+66.04
+58.85
+62.72
+50.12
+67.09
+77.37
+63.62
+64.91
+
+GPT-Image-1.5
+62.95
+71.43
+61.21
+62.28
+57.18
+67.23
+76.93
+66.11
+67.01
+
+Uniworld-V1
+37.77
+34.50
+37.44
+30.70
+30.32
+34.18
+28.81
+38.67
+33.80
+
+Bagel
+54.48
+63.34
+55.28
+55.70
+42.05
+52.32
+68.43
+54.05
+56.44
+
+Bagel-Think
+42.86
+52.29
+43.17
+48.25
+40.10
+38.40
+53.86
+46.99
+45.91
+
+OmniGen2
+51.09
+47.98
+48.74
+45.18
+42.79
+48.24
+52.76
+42.41
+48.18
+
+Step1X-Edit
+43.10
+52.29
+47.05
+47.37
+40.34
+46.69
+57.95
+47.19
+48.83
+
+Flux.1 Kontext [dev]
+48.43
+53.64
+43.84
+43.86
+33.74
+34.04
+41.06
+37.01
+41.07
+
++PromptEnhance
+48.91
+55.53
+45.87
+43.86
+38.14
+44.30
+44.15
+43.87
+45.28
+
++PT (RationalRewards)
+53.27
+56.87
+51.43
+40.35
+41.08
+43.60
+55.30
+43.04
+48.12
+
++PICA SFT
+49.64
+51.21
+47.22
+46.49
+33.99
+35.44
+39.29
+40.75
+41.93
+
++RL (RationalRewards)
+50.85
+51.75
+54.81
+41.23
+39.36
+36.99
+43.27
+35.76
+44.25
+
+Qwen-Image-Edit
+52.54
+52.02
+49.07
+57.46
+38.14
+42.62
+57.73
+47.82
+49.71
+
++PromptEnhance
+54.24
+58.49
+50.42
+49.12
+42.30
+43.46
+57.40
+50.31
+50.97
+
++PT (RationalRewards)
+61.26
+63.34
+61.55
+55.70
+43.28
+46.27
+57.28
+56.55
+55.65
+
++PICA SFT
+52.89
+60.47
+55.19
+56.12
+40.99
+46.24
+55.25
+51.27
+52.06
+
++RL (RationalRewards)
+59.56
+63.07
+60.71
+55.26
+41.32
+45.85
+56.40
+49.69
+54.11
+
+Training Curves and Visualizations
+
+This section provides training curves referenced in Section 3.2 of the main text, demonstrating that RationalRewards provides stable reward gradients with reduced reward hacking, as shown in Fig. 9. Qualitative Results throughout RL training are visualized in Fig. 10.
+
+Figure 9:
+RL with RationalRewards on Qwen-Image (text-to-image generator) and Flux-Kontext [dev] (image-to-image editing). The reward standard-deviation gradually decays as training proceeds. Crucially, the evaluation reward curve on held-out eval-set align well with the score curve on target test benchmarks.
+
+Figure 10: The evolution of generation quality of RL using RationalRewards
+
+Reward Hacking and Visualizations.
+
+Fig. 11 compares RationalRewards with representative scalar reward models used in text-to-image and image-to-image generation RL. RationalRewards demonstrates nice properties of smooth, converging reward curve and standard-deviation curve. In contrast, EditReward remains high variances, leading to unstable reward curve. MultiReward exhibits low variances because it does not suffice to differantiate generations of high-capability generators. Fig. 12 shows clear visual evidence of reward hacking.
+
+Figure 11: Training curves comparison between RationalRewards and scalar reward model, EditReward (Wu et al., 2025e) and MultiReward used in DiffusionNFT Zheng et al. (2025).
+
+Figure 12: Text-to-Image RL using scalar reward model demonstrates reward hacking – while the reward increases, the visual quality of generations degrades notably.
+
+Critique Visualization.
+
+We provide additional example use case of RationalRewards, which visualizes problematic regions and grounds its scoring in the image.
+Specifically, RationalRewards is further fine-tuned to generate structured referring expressions that describe problematic regions.
+These expressions are used by GroundingDINO to localize the regions, and the resulting bounding boxes are then used by SAM to produce segmentation masks as show in Figure 13.
+
+Figure 13: Illustration of Critique Visualization.RationalRewards first analyzes the image and provides critique rationales, then summarizes them and generates referring expressions for GroundingDINO and SAM to produce segmentation masks for problematic regions.
+
+Appendix B ELBO Derivation and Theoretical Details
+
+This appendix provides the complete derivation of the Evidence Lower Bound (ELBO) presented in Eq. 1 of the main text (Section 2.1) and discusses the theoretical assumptions underlying the pointwise projection strategy.
+
+B.1 Full ELBO Derivation
+
+We begin from the log marginal likelihood of the observed preference given input , where are two generated images and is the conditioning user request. We introduce a latent natural language rationale that explains the preference:
+
+(4)
+
+Since this marginal is intractable (the integral is over all possible natural-language rationales), we introduce a variational distribution —the posterior over rationales given both the input and the known preference. Multiplying and dividing inside the integral:
+
+(5)
+
+Applying Jensen’s inequality (, since is concave):
+
+(6)
+
+We now decompose the joint using the chain rule :
+
+(7)
+
+(8)
+
+(9)
+
+which yields Eq. 1 in the main text.
+
+Tightness of the Bound.
+
+The gap between the ELBO and the true log-likelihood is given exactly by the KL divergence between the variational posterior and the true posterior:
+
+(10)
+
+This follows directly from the definition of KL divergence:
+
+(11)
+
+(12)
+
+(13)
+
+Since and is fixed with respect to , maximizing the ELBO is equivalent to minimizing the KL divergence between the variational posterior and the true posterior .
+
+Mapping ELBO Terms to Pipeline Phases.
+
+The three terms of the decomposition correspond directly to the three phases of the PARROT pipeline (Figure 3):
+
+1.
+
+Phase 1 (Rationale Generation) constructs the variational posterior by prompting a teacher VLM with preference-anchored instructions. The preference label is provided as a hint, focusing generation on rationales consistent with the observed preference.
+
+2.
+
+Phase 2 (Consistency Filtering) maximizes Term 1, , by retaining only rationales for which the preference can be recovered from alone (Eq. 2). This restricts ’s effective support to the high-likelihood region, ensuring predictive sufficiency.
+
+3.
+
+Phase 3 (Foresight Distillation) minimizes Term 2, , by training the student model to generate rationales without access to . Since is fixed, this reduces to maximizing , which is precisely the standard supervised fine-tuning (SFT) objective on the filtered posterior samples.
+
+Factorization Assumption.
+
+The derivation assumes the joint factorizes as , i.e., the model first generates a rationale given the input , then predicts the preference conditioned on both. This autoregressive factorization is natural for language models, where (the rationale) is generated token-by-token before the preference prediction . The factorization encodes the causal assumption that the rationale mediates the preference judgment—the model must “show its work” before committing to a decision (Wang et al., 2025a; Wang et al., 2020).
+
+B.2 Justification for Pointwise Projection
+
+The pointwise projection strategy (Section 2.1, main text) extends the pairwise ELBO framework to absolute scoring of individual images. We discuss the assumptions underlying this extension.
+
+Shared Evaluation Principles.
+
+The core assumption is that the evaluation criteria underlying pairwise preference (e.g., “Image A has better text faithfulness than Image B because…”) are transferable to absolute assessment (e.g., “This image has a text faithfulness score of 3.2 because…”). This is grounded in the observation that the same rubric dimensions—text faithfulness, image faithfulness, physical quality, and text rendering—apply in both settings, differing only in whether the assessment is relative or absolute.
+
+Role of Pairwise Rationales as Reference Hints.
+
+During pointwise projection, the validated pairwise rationale serves as a reference hint to guide the teacher’s attention toward specific defects or qualities already identified in the pairwise comparison. This anchoring reduces the variance of pointwise assessments by providing concrete evidence (e.g., “as noted in the comparison, the text rendering in this image has minor misspellings”) rather than requiring the teacher to identify all issues from scratch. The quality of pointwise rationales thus inherits from the ELBO-filtered pairwise rationales.
+
+Potential Failure Modes.
+
+We acknowledge two potential failure modes: (1) calibration drift, where the relative ranking between two images is correct but the absolute scores are miscalibrated (e.g., both images receive high scores despite one being clearly inferior); and (2) context dependence, where the teacher’s absolute assessment is influenced by the identity of the comparison partner in the pairwise rationale, rather than being truly absolute. We mitigate (1) through float-valued scoring with detailed rubric anchors (Appendix D) and (2) by instructing the teacher to assess “as if by your own judgement” independently of the reference hint.
+
+Appendix C Prompt Templates
+
+This appendix provides the complete prompt templates used across all phases of the PARROT pipeline and the Generate–Critique–Refine (GCR) loop, referenced in Section 2.1 of the main text.
+
+C.1 Phase 1: Pairwise Rationale Generation Prompt
+
+The following prompt is used to query the teacher VLM (Qwen3-VL-32B-Instruct) for pairwise rationale generation with preference anchoring. The main text (Section 2.1) shows an abbreviated version; below is the complete template.
+
+Text-to-Image Variant.
+
+For text-to-image generation, the prompt is modified as follows: (1) only two images are provided (Generated Image A and Generated Image B) without a source image; (2) the “Image Faithfulness” dimension is replaced with N/A since there is no source image to preserve; and (3) the task description is adjusted to “compare two generated images against the User Instruction.”
+
+C.2 Phase 2: Consistency Check Prompt
+
+The following prompt is used to re-query the teacher VLM without the preference label to verify that the generated rationale alone suffices to recover the preference (Eq. 2).
+
+The rationale is presented in its entirety (including per-dimension justifications, scores, and summary). The teacher must predict the preference from the rationale alone. If the predicted preference matches the ground-truth label , the sample passes the consistency check ( in Eq. 2).
+
+C.3 Pointwise Projection Prompt
+
+The following prompt is used to obtain pointwise (absolute) assessments from the teacher VLM, guided by the validated pairwise rationale as a reference hint.
+
+C.4 Generate–Critique–Refine (GCR) Loop Prompts
+
+The GCR loop at test time (Section 2.2, Figure 6) uses the trained RationalRewards model in two stages. First, the critique prompt evaluates a single generated image across four dimensions with natural language justification. Then, the model generates a refinement including a summary of deficiencies and a revised user prompt.
+
+GCR Loop Logic.
+
+At test time, RationalRewards generates the full critique and refinement output in a single forward pass. If any dimension score falls below the threshold of 3.0, the refined request is extracted and fed back to the generator for re-generation. If all scores are , the original generation is accepted. In our experiments, we use a single-iteration loop (i.e., at most one refinement per image).
+
+Appendix D Scoring Rubrics
+
+This appendix provides the detailed scoring rubrics for the four assessment dimensions used in pointwise evaluation, referenced in Section 2.1 of the main text. Scores are on a 1–4 integer scale with float-valued interpolation (e.g., 2.5) permitted for fine-grained assessment.
+
+D.1 Text Faithfulness
+
+Evaluates how accurately the generated or edited image follows the text instruction.
+
+Score
+
+Description
+
+4 (Full match)
+
+All key elements (objects, colors, actions) are represented exactly as described. No hallucinations or unrequested changes.
+
+3 (Minor mismatch)
+
+Most key elements are present, but minor details are missing, incorrect, or slightly inaccurate.
+
+2 (Some mismatch)
+
+Some key elements are missing, altered, or interpreted incorrectly.
+
+1 (Major deviations)
+
+Key elements are completely missing, altered, or contradicted. Instruction is ignored.
+
+Table 7: Scoring rubric for Text Faithfulness.
+
+Note: Float-valued scores (e.g., 2.5) interpolate between adjacent anchor descriptions to reflect fine-grained quality distinctions.
+
+D.2 Image Faithfulness (Editing Only)
+
+Evaluates how well the edited image preserves elements of the source image that should remain unchanged.
+
+Score
+
+Description
+
+4 (Uses input fully)
+
+All relevant elements from the input (background, style, lighting, identity) are accurately preserved or transformed as instructed.
+
+3 (Minor mismatch)
+
+Most relevant elements are preserved, but a few aspects (e.g., background details, lighting consistency) are missing or incorrectly handled.
+
+2 (Partial mismatch)
+
+Some elements are carried over, but key aspects of the original image are lost or distorted.
+
+1 (Fails to use input)
+
+Key elements of the input image are ignored, misinterpreted, or destroyed.
+
+Table 8: Scoring rubric for Image Faithfulness.
+
+Scored as N/A for text-to-image generation tasks where no source image is provided.
+
+D.3 Physical and Visual Quality
+
+Evaluates the physical plausibility and overall visual quality of the generated image.
+
+Score
+
+Description
+
+4 (No noticeable flaws)
+
+The image is physically plausible (correct lighting, shadows, geometry, anatomy). No visible artifacts (seams, blurring, noise).
+
+3 (Minor flaws)
+
+Small inaccuracies that are noticeable but not strongly disruptive (e.g., slight lighting mismatch, minor texture issues).
+
+2 (Some flaws)
+
+Clear physical or visual errors that disrupt the image (e.g., incorrect perspective, “floating” objects, wrong shadow direction, obvious seams).
+
+1 (Severe flaws)
+
+Major physical/visual errors (e.g., impossible geometry, distorted anatomy, garbled objects, severe artifacts).
+
+Table 9: Scoring rubric for Physical and Visual Quality.
+
+D.4 Text Rendering
+
+Evaluates the quality and accuracy of any text rendered within the generated image.
+
+Score
+
+Description
+
+4 (Full match)
+
+Text is correct, legible, and integrated well into the image.
+
+3 (Mostly match)
+
+Minor misspellings or inconsistent capitalization.
+
+2 (Partial match)
+
+Major misspellings or distorted text.
+
+1 (Major deviations)
+
+Text is unreadable, severely distorted, or missing.
+
+Table 10: Scoring rubric for Text Rendering.
+
+Scored as N/A when the instruction does not require text rendering.
+
+Appendix E Implementation Details
+
+This appendix provides the training hyperparameters, hardware configuration, and RL algorithm details referenced in Section 3 of the main text.
+
+E.1 RL Fine-Tuning Setup
+
+We employ DiffusionNFT (Zheng et al., 2025) for RL-based parameter-space optimization. DiffusionNFT is an online RL framework that operates on the forward diffusion process via flow matching, avoiding the need for likelihood estimation, solver restrictions, or classifier-free guidance (CFG) required by reverse-process approaches such as FlowGRPO (Xu et al., 2025; Jin et al., 2025; Wu et al., 2025a; Lan et al., 2025; Esser et al., 2024).
+
+Algorithm Overview.
+
+DiffusionNFT (Zheng et al., 2025) frames RL for diffusion models as a supervised contrastive learning problem (Wang et al., 2025e; Wang et al., 2025a). At each iteration, the algorithm: (1) samples images from the current policy for a given prompt; (2) evaluates each image with a reward function; (3) splits images into implicit positive (high-reward) and negative (low-reward) subsets; and (4) updates the model via a contrastive flow-matching loss that pushes the policy toward positive generations and away from negative ones. The key theoretical insight is that the velocity-field difference between positive and negative policies defines a reinforcement guidance direction that guarantees policy improvement.
+
+Integration with RationalRewards.
+
+RationalRewards produces per-dimension scores (Text Faithfulness, Image Faithfulness, Physical Quality, Text Rendering) for each generated image. We aggregate these into a scalar reward for the DiffusionNFT loss via equal-weight averaging of applicable dimensions (excluding N/A dimensions). Specifically, for a generated image given prompt :
+
+(14)
+
+where is the score for dimension and is the set of applicable dimensions (e.g., excluding Image Faithfulness for T2I tasks and Text Rendering when no text generation is required).
+
+Algorithm 1 provides pseudocode for the RL fine-tuning procedure.
+
+0:
+
+ Flow model , reference policy , RationalRewards model , prompt dataset , group size , guidance strength , EMA schedule , number of iterations
+
+1:
+
+ for iteration do
+
+2:
+
+  // Phase 1: Online Data Collection
+
+3:
+
+  Sample batch of prompts from
+
+4:
+
+  for each prompt do
+
+5:
+
+   Generate images using current sampling policy
+
+6:
+
+   Compute raw rewards: // Multi-dim scores aggregated via Eq. (D.1)
+
+7:
+
+   Normalize rewards within group:
+
+8:
+
+   Store in buffer
+
+9:
+
+  end for
+
+10:
+
+  // Phase 2: Policy Optimization (Forward Process)
+
+11:
+
+  for each do
+
+12:
+
+   Sample timestep and noise
+
+13:
+
+   Compute noisy image:
+
+14:
+
+   Compute flow-matching target:
+
+15:
+
+   Compute implicit positive velocity:
+
+16:
+
+   Compute implicit negative velocity:
+
+17:
+
+   Compute loss:
+
+18:
+
+  end for
+
+19:
+
+  Update via gradient descent on
+
+20:
+
+  // Phase 3: Soft EMA Update of Sampling Policy
+
+21:
+
+  
+
+22:
+
+ end for
+
+23:
+
+ return Fine-tuned model
+
+Algorithm 1 RL Fine-Tuning with RationalRewards via DiffusionNFT
+
+RL Hyperparameters.
+
+We employ Low-Rank Adaptation (LoRA) (Hu et al., 2022) for parameter-efficient fine-tuning. Experiments are conducted on a distributed system comprising 16 NVIDIA A100-80GB GPUs, with 8 GPUs dedicated to model training and 8 GPUs serving the reward model for online evaluation. Table 11 summarizes the key hyperparameters.
+
+Hyperparameter
+Value
+
+Resolution
+512 512
+
+Guidance Scale (Flux.1 Kontext Dev)
+2.5
+
+Sampling Steps (Training)
+15 (DPM solver)
+
+Sampling Steps (Evaluation)
+20
+
+Noise Level
+0.7
+
+Learning Rate
+2e-4
+
+(guidance strength)
+0.0001
+
+Batch Size (per GPU)
+8
+
+Group Size
+16 (across 16 process groups)
+
+Quality Filtering (mean threshold)
+0.9
+
+Quality Filtering (std threshold)
+0.05
+
+LoRA Rank
+64
+
+LoRA Alpha
+128
+
+GPU Configuration
+8 A100-80GB (training) + 8 A100-80GB (reward)
+
+Training Wall-Clock Time
+16 GPU-hours per generator
+
+Table 11: Hyperparameters for RL fine-tuning via DiffusionNFT.
+
+RL Training Data.
+
+We source the RL training prompts from the EditReward Dataset and HPDv3 dataset by selecting prompts whose initial generations receive below-average rewards (mean score from RationalRewards), focusing training on cases where the generator has the most room for improvement (Wang et al., 2025c; Wang et al., 2025f).
+
+E.2 GCR Loop Configuration
+
+At inference time, RationalRewards is served via vLLM with prefix caching and paged attention enabled, achieving a per-image overhead of approximately 0.4 seconds for the full critique-and-refinement pass. The refinement threshold is set to 3.0: if any dimension score falls below this value, the refined prompt is used for re-generation. This threshold was selected as the midpoint of the 1–4 scoring scale, corresponding to the boundary between “minor issues” (score 3) and “notable deficiencies” (score 2) in our rubrics (Appendix D).
+
+Appendix F Dataset and Benchmark Details
+
+F.1 Training Data Statistics
+
+Table 12 provides detailed statistics for the training data used in the PARROT pipeline (Section 3, main text).
+
+Source Dataset
+Task
+Raw Pairs
+Post-Filtering Pairs
+Final Pointwise Samples
+
+EditReward
+Image Editing
+30K
+21.6K
+43.2K
+
+HPDv3
+Text-to-Image
+50K
+36K
+55K
+
+RapidData
+Text-to-Image
+
+Table 12: Training data composition before and after consistency filtering. Each pairwise sample yields two pointwise projection samples (one per image).
+
+We note that our total training scale (80K raw pairs, 57.6K after filtering) is substantially smaller than comparable baselines: EditReward uses 200K pairs and UnifiedReward uses over 1M pairs. Part of this data efficiency stems from the teacher model’s pre-trained knowledge, which PARROT distills through structured rationales rather than raw labels.
+
+F.2 Consistency Filtering Analysis
+
+The consistency filtering step (Phase 2, Section 2.1) retains approximately 72% of generated rationales overall. We observe the following common failure modes in rejected rationales:
+
+1.
+
+Visual hallucination: The teacher generates a rationale describing visual content not present in the images (e.g., “Image A contains a clear sunset in the background” when no sunset is visible), leading to an incorrect preference prediction when the label hint is removed.
+
+2.
+
+Label-ignoring rationales: Despite the preference anchor, the teacher occasionally generates a rationale that favors the non-preferred image, particularly when the quality difference between images is subtle.
+
+3.
+
+Vague, non-predictive reasoning: The rationale provides generic praise or criticism (e.g., “Both images are of reasonable quality”) without sufficient discriminative detail to distinguish between the two options.
+
+F.3 Evaluation Benchmark Summary
+
+Table 13 summarizes all evaluation benchmarks used in this work.
+
+Benchmark
+Task
+# Samples
+Evaluation Protocol
+Metrics
+Reference
+
+MMRB2 (T2I)
+Preference Prediction
+1000
+Pairwise comparison
+Accuracy
+Hu et al. (2025)
+
+MMRB2 (Edit)
+Preference Prediction
+1000
+Pairwise comparison
+Accuracy
+Hu et al. (2025)
+
+EditReward Bench
+Preference Prediction
+133
+Pairwise comparison
+Accuracy
+Wu et al. (2025e)
+
+GenAI-Bench (T2I)
+Preference Prediction
+1700
+Pairwise comparison
+Accuracy
+Jiang et al. (2024)
+
+GenAI-Bench (Edit)
+Preference Prediction
+900
+Pairwise comparison
+Accuracy
+Jiang et al. (2024)
+
+Table 13: Summary of evaluation benchmarks.
+
+Appendix G Limitations and Broader Impact
+
+G.1 Limitations
+
+We acknowledge the following limitations of this work:
+
+1.
+
+Teacher Model Dependence. The quality of RationalRewards is upper-bounded by the teacher model (Qwen3-VL-32B-Instruct) used to generate training rationales. In domains where the teacher exhibits systematic blind spots—such as fine-grained physics simulation, culturally specific aesthetics, or specialized technical content—the student model inherits these limitations. Future work could explore ensembling multiple teacher models or incorporating human-in-the-loop corrections for high-stakes domains.
+
+2.
+
+Bias Inheritance. Preference datasets (EditReward, HPDv3, RapidData) encode the aesthetic preferences and cultural assumptions of their annotators. The teacher VLM introduces additional biases from its own pretraining data. RationalRewards may therefore systematically favor certain visual styles, demographics, or content types. We have not conducted a comprehensive bias audit, and we encourage users to evaluate the model’s behavior on diverse and potentially underrepresented content before deployment.
+
+3.
+
+Latent Capability Hypothesis. Our finding that test-time prompt tuning matches or exceeds RL-based fine-tuning (Section 3.2) supports the hypothesis that generators harbor latent capabilities under-elicited by suboptimal prompts. However, this remains a working hypothesis: we have not validated it at the representation level (e.g., by probing internal activations), and alternative explanations—such as the prompt refinement simply providing additional context that any model would benefit from—cannot be ruled out.
+
+4.
+
+Threshold Sensitivity. The GCR loop uses a fixed threshold of 3.0 to trigger refinement. While this corresponds to a natural boundary in our scoring rubric (Appendix D), we have not conducted a comprehensive sensitivity analysis across all benchmarks and generators. The optimal threshold may vary by generator capability and task difficulty.
+
+5.
+
+Language and Domain Scope. All evaluation in this work is conducted on English-language benchmarks. The transferability of RationalRewards’ structured critiques to other languages, as well as to non-photorealistic domains (e.g., 3D rendering, video generation, scientific visualization), remains untested.
+
+G.2 Broader Impact
+
+RationalRewards and the PARROT framework contribute to the growing ecosystem of tools for evaluating and improving visual generation. We anticipate both positive and negative societal implications:
+
+Positive impacts.
+
+•
+
+Democratized evaluation: By providing an open-source, reasoning-based reward model competitive with commercial alternatives, we lower the barrier for researchers and practitioners to evaluate visual generation quality without relying on costly proprietary APIs.
+
+•
+
+Interpretability: Structured, multi-dimensional critiques provide transparent explanations for quality assessments, enabling users and developers to understand and address specific failure modes rather than optimizing against opaque scalar scores.
+
+•
+
+Accessibility: The GCR loop can help users with limited prompt engineering experience achieve higher-quality generations by automatically identifying and addressing deficiencies in their instructions.
+
+Negative impacts and mitigations.
+
+•
+
+Misuse potential: Improved image generation quality could be leveraged for creating misleading visual content, deepfakes, or other harmful media. We note that RationalRewards itself does not generate images but evaluates and critiques them; however, its use as an RL reward or prompt optimizer could amplify generator capabilities.
+
+•
+
+Bias amplification: As discussed in the limitations, reward models trained on biased preference data may systematically favor certain content types, potentially amplifying existing disparities in visual representation.
+
+•
+
+We encourage responsible use and recommend that practitioners conduct domain-specific evaluations before deploying RationalRewards in production systems, particularly in sensitive applications.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

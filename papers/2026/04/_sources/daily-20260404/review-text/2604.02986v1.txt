@@ -1,0 +1,1783 @@
+Mitigating Reward Hacking in RLHF via Advantage Sign Robustness
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+2.1 Reinforcement learning from human feedback
+
+Reward modeling.
+
+Reinforcement learning.
+
+2.2 Randomized smoothing
+
+3 Robust policy gradient method
+
+3.1 Certified sign-preservation radius
+
+3.2 Sign-Certified Policy Optimization (SignCert-PO)
+
+Practical implementation.
+
+3.3 Comparison with the global robust objective
+
+4 Experiments
+
+4.1 Comparison with baselines
+
+Runtime.
+
+4.2 Additional experiments and analysis
+
+How SignCert-PO mitigates reward hacking.
+
+Comparison with early stopping.
+
+Empirical validation of the certified radius.
+
+Sensitivity to proxy RM quality.
+
+5 Conclusion
+
+References
+
+A Additional background and related work
+
+A.1 Policy gradient algorithms
+
+Proximal Policy Optimization (PPO).
+
+Group Relative Policy Optimization (GRPO).
+
+A.2 Additional related work
+
+RM ensembles.
+
+Distribution shift and modified RM training.
+
+Adversarial policy optimization.
+
+B Proofs
+
+C Connection with randomized smoothing
+
+C.1 Randomized smoothing interpretation of the certified sign-preservation radius
+
+C.2 Alternative uncertainty models
+
+Feature uncertainty.
+
+Full parameter uncertainty.
+
+Summary of uncertainty models.
+
+D Robust optimization perspective and its limitations
+
+Zero-sum obstruction.
+
+Conservatism of the per-sample formulation.
+
+E Extension to other policy gradient methods
+
+E.1 REINFORCE
+
+E.2 Approximate extensions
+
+E.2.1 PPO
+
+E.2.2 Vanilla GRPO
+
+F Training and implementation details
+
+F.1 Conceptual experiment (Figure )
+
+F.1.1 Setup
+
+F.1.2 Policy optimization methods
+
+F.1.3 Results
+
+F.2 Algorithm pseudocode
+
+F.3 Training details
+
+F.3.1 Datasets
+
+TL;DR summarization.
+
+AlpacaFarm.
+
+F.3.2 Models
+
+Policy and proxy RM.
+
+Gold RM.
+
+F.3.3 Baselines
+
+F.3.4 Evaluation metrics
+
+F.4 Hyperparameters
+
+F.5 Other experimental details
+
+Certified radius validation (Figure ).
+
+G Additional results
+
+G.1 Additional comparison with baselines
+
+Stronger KL penalty.
+
+UWO with same-size RMs.
+
+G.2 Proxy RM accuracy during training
+
+G.3 Ablation on quantile threshold and the amount of preference data
+
+G.4 Sample outputs
+
+License: CC BY 4.0
+
+arXiv:2604.02986v1 [cs.LG] 03 Apr 2026
+
+Mitigating Reward Hacking in RLHF via
+
+Advantage Sign Robustness
+
+Shinnosuke Ono
+
+Affiliation: The University of Tokyo
+
+Email: ono@ms.k.u-tokyo.ac.jp
+
+  
+Johannes Ackermann
+
+Affiliation: The University of Tokyo and RIKEN AIP
+
+  
+Soichiro Nishimori
+
+Affiliation: The University of Tokyo and RIKEN AIP
+
+  
+Takashi Ishida
+
+Affiliation: RIKEN AIP and The University of Tokyo
+
+  
+Masashi Sugiyama
+
+Affiliation: RIKEN AIP and The University of Tokyo
+
+Abstract
+
+Reward models (RMs) used in reinforcement learning from human feedback (RLHF) are vulnerable to reward hacking: as the policy maximizes a learned proxy reward, true quality plateaus or degrades.
+We make the assumption that reward hacking is often caused by flipped advantage signs: instead of reducing the likelihood of a bad response, a flipped sign causes the update to increase it.
+By considering an adversarial perturbation in the RM parameter space, we can derive a certified sign-preservation radius, which is the smallest perturbation that can flip the advantage sign during policy optimization.
+Based on this formulation, we propose Sign-Certified Policy Optimization (SignCert-PO), down-weighting non-robust completions in the policy gradient update.
+Unlike prior approaches that require multiple RMs or access to the RM training data, SignCert-PO is lightweight and operates purely at the policy optimization stage using only the RM parameters and on-policy completions.
+On TL;DR summarization and AlpacaFarm benchmarks, SignCert-PO consistently achieves a better win rate than baselines and reduces reward hacking.
+
+1 Introduction
+
+Reinforcement learning from human feedback (RLHF) has become a standard paradigm for aligning large language models (LLMs) with human intent (Christiano et al., 2017; Stiennon et al., 2020; Ouyang et al., 2022). In the typical RLHF pipeline, a reward model (RM) is trained on pairwise human preference data and then used as a proxy for the true, unobservable preference signal during policy optimization.
+Because the RM is inherently an imperfect proxy, optimizing the policy against it often causes the policy to exploit local inaccuracies in the reward landscape. This phenomenon is known as reward hacking (Gao et al., 2023). As optimization progresses, proxy reward continues to rise while true quality stagnates or degrades. This is especially acute when the proxy RM is trained with limited preference data (Gao et al., 2023) or when the policy drifts from the RM’s training distribution during policy optimization by reinforcement learning (RL) (Ackermann et al., 2025).
+
+Figure 1: We argue that the reliability of the proxy RM’s estimates differs by completion. Certified sign-preservation radius provides this reliability measure.
+(a) Proxy and true advantages. Completions 7 and 8 have opposite signs, showing the proxy RM is unreliable there.
+(b)  is the smallest perturbation of the RM parameters that flips a completion’s advantage sign. Dashed lines are decision boundaries for the - and -th completions.
+(c) Per-completion Completions 7 and 8 exhibit low , confirming identifies unreliable completions. SignCert-PO suppresses completions below .
+(d) True (solid) and proxy (dashed) reward during RL. Using as a re-weighting mechanism, SignCert-PO prevents reward hacking and further improves the true reward. See Appendix F.1 for details.
+
+Prior approaches to mitigating reward hacking can be organized along an axis from ante-hoc to post-hoc (Retzlaff et al., 2024). Ante-hoc methods incorporate uncertainty quantification into the reward modeling pipeline. For instance, ensemble-based methods (Coste et al., 2024; Eisenstein et al., 2024) train multiple RMs and optimize conservatively with respect to their disagreement, while distributional or uncertainty-aware RMs (Xu et al., 2024) modify the RM architecture or training objective. These approaches can directly quantify RM uncertainty, but require either multiple RM training and inference runs or changes to the RM pipeline, limiting their practical applicability. In contrast, in the post-hoc approach, the RM is left unchanged and robustness is introduced only at the policy optimization stage. AdvPO (Zhang et al., 2024), the closest prior work to ours, is only partially post-hoc: it derives single-RM uncertainty estimates from last-layer embeddings without retraining, but still requires access to the entire RM training dataset to calibrate its uncertainty model. Our approach is entirely post-hoc: it operates solely with the current RM parameters and on-policy completions, and thus we do not need to train new RMs nor retain the dataset used for RM training. We discuss additional related work in Appendix A.2.
+
+We argue that what matters during policy optimization is whether the RM correctly predicts the sign of each completion’s advantage, since that sign determines whether the policy increases or decreases the completion’s probability. Crucially, the reliability of this prediction varies per completion, and a naive robustness penalty fails to capture this variability.
+We therefore ask: for a given completion, how much would the RM need to change before that advantage sign flips? Based on randomized smoothing (Cohen et al., 2019), we formalize this quantity as a certified sign-preservation radius and down-weight completions whose advantage signs are easy to flip (Figure 1).
+We first show that directly considering perturbations of all RM parameters is computationally challenging, as it requires per-completion gradients.
+This quickly causes us to run out of memory, even for relatively small RMs.
+Instead, we propose to approximate this solution by only considering perturbations of the RM head, yielding a lightweight re-weighting of the standard policy gradient update. The resulting method, Sign-Certified Policy Optimization (SignCert-PO), prevents policy updates from being dominated by directions whose update signs are locally fragile under RM perturbations.
+
+We evaluate SignCert-PO on TL;DR summarization (Stiennon et al., 2020) and AlpacaFarm (Dubois et al., 2023) with Pythia (Biderman et al., 2023) and Qwen2.5 (Qwen et al., 2025) models. Using the gold-model evaluation setup (Gao et al., 2023), we compare against Dr.GRPO (Liu et al., 2025), uncertainty-weighted optimization (UWO) with RM ensembles (Coste et al., 2024), behavior-supported policy optimization (BSPO) (Dai et al., 2025), and AdvPO (Zhang et al., 2024). SignCert-PO achieves the highest gold-RM win rate in most settings, with improved RM accuracy during policy optimization.
+
+2 Background
+
+We denote the set of prompts by and the set of responses by We assume a prompt distribution over , where denotes the probability mass of a prompt An autoregressive language model with parameters is then conditional probability where is a prompt, is the response, is the -th response token and are the response tokens before . Following the RL literature (Sutton & Barto, 2018), we sometimes use the word policy, referring to the language model . We denote the norm by .
+
+2.1 Reinforcement learning from human feedback
+
+RLHF typically consists of three key steps: supervised fine-tuning (SFT), reward modeling, and reinforcement learning (Stiennon et al., 2020). We denote the SFT model as
+
+Reward modeling.
+
+Suppose the true reward function that mirrors human preference exists. Since is generally unknown, an RM is trained as a proxy with the following procedure: given a prompt two responses are sampled from . A human annotator then selects their preferred response, yielding a dataset of triples where (winning) is preferred over (losing). A scalar RM is trained under the Bradley-Terry (BT) model (Bradley & Terry, 1952) by minimizing the cross-entropy loss:
+
+(1)
+
+where is the sigmoid function:
+
+Reinforcement learning.
+
+The policy is optimized to maximize the Kullback-Leibler (KL)-regularized expected reward (Ziegler et al., 2020):
+
+(2)
+
+where is the KL divergence of probability densities from and controls the strength of KL regularization against a reference policy . This regularization discourages the policy from diverging too far from the RM’s training distribution (Gao et al., 2023). We denote this regularized reward by Policy optimization proceeds via the policy gradient (PG) (Sutton et al., 1999):
+
+(3)
+
+where is the advantage function with value function Different PG-based algorithms for RLHF differ mainly in their update rules and advantage estimation. In this work, we adopt Dr.GRPO (Liu et al., 2025), a widely-used variant of GRPO (Shao et al., 2024). Given a prompt , we sample completions from the current policy Each receives a reward for Dr.GRPO then provides the following advantage estimation:
+
+(4)
+
+Since the RM is only a proxy for true human preferences, the policy can exploit regions where it is inaccurate. As optimization progresses, proxy reward continues to rise while true quality degrades, especially when the proxy RM is trained with limited preference data. This phenomenon is known as reward hacking (Gao et al., 2023).
+
+2.2 Randomized smoothing
+
+Reward modeling reduces to a binary classification problem on reward margins (Tang et al., 2024; Nishimori et al., 2025). Randomized smoothing (RS) (Cohen et al., 2019) is a framework for certifying the robustness of a classifier’s prediction against perturbations. Consider a classifier over classes. Given a noise scale for the Gaussian distribution , RS creates the smoothed classifier
+
+which returns the class most likely to be predicted under random perturbations of the input. Cohen et al. (2019) showed that if one predicted class is sufficiently more likely than the others under these perturbations, then the prediction of the smoothed classifier is provably consistent throughout an ball around The radius of this ball is called the certified radius. That is, the certified radius is the maximum perturbation to the input under which the smoothed classifier’s prediction is guaranteed to remain unchanged.
+
+3 Robust policy gradient method
+
+We argue that when the RM assigns incorrect advantage signs, the policy is not properly updated and thus reward hacking can occur. Guided by the notion of the certified radius (Cohen et al., 2019), we formalize this by introducing the certified sign-preservation radius, the smallest perturbation of the RM parameters that flips a completion’s advantage sign (§3.1). This leads to our proposed method of re-weighting the policy gradient updates, using the radius as a reliability measure (§3.2). Finally, we compare our method of using per-completion perturbations to the standard global perturbation setup, which we show suffers uniform pessimism unlike our method. We focus on the advantage estimate used in Dr.GRPO (4) throughout the rest of the paper, but we note that other PG methods can be used instead, as shown in Appendix E.
+
+3.1 Certified sign-preservation radius
+
+The PG (3) is a weighted sum of per-completion directions:
+
+(5)
+
+Each term pushes the policy to increase () or decrease () the probability of the -th completion. Consider a single gradient step with step size . Then, a first-order expansion gives
+
+Since and , the sign of alone determines the update direction, when considering the -th term in isolation. Crucially, the reliability of this sign prediction varies per completion: since the RM is only a proxy, some predictions in a group may not agree with the true reward, while others do agree (Figure 1a).
+
+To quantify the sensitivity for a given completion, we follow the idea of RS, which certifies robustness against input perturbations.
+As the input space of the RM is discrete, we cannot directly utilize input perturbations.
+Instead, we model epistemic uncertainty about the RM as perturbations in the parameter space:  (Ben-Tal et al., 2009).
+
+Definition 3.1 (Certified sign-preservation radius).
+
+Under an uncertainty set , the certified sign-preservation radius for the -th completion is
+
+(6)
+
+This definition follows the certified-radius framework of Cohen et al. (2019), where the advantage sign is viewed as a binary classification decision in the RM parameter space (see Appendix C for the formal connection). As such, (6) has a natural interpretation as a sensitivity measure. A completion with large has a robust advantage sign: the RM would need to change substantially before the sign flips, so the corresponding gradient term in (5) can be trusted. On the other hand, for a completion with small , a small perturbation to the RM could reverse whether the policy reinforces or suppresses it. The certified sign-preservation radius thus provides a per-sample confidence measure: for each completion individually, it tells us how much the update direction depends on the exact choice of the proxy RM parameters .
+
+For a general differentiable RM with full-parameter uncertainty , a first-order Taylor expansion of the advantage around gives . The certified sign-preservation radius is then
+
+Unfortunately, computing requires the per-completion gradient norm of the RM, which our preliminary experiments found to be computationally infeasible for larger RMs.
+We thus propose to use a simpler perturbation model, for which we can efficiently calculate the certified sign-preservation radius, as we will show below.
+
+3.2 Sign-Certified Policy Optimization (SignCert-PO)
+
+We consider the RM architecture , consisting of a feature extractor with parameters and a linear head with parameters , as commonly used in practice (Stiennon et al., 2020; Ouyang et al., 2022).
+Instead of perturbing all parameters , we only perturb the linear head, and thus use the uncertainty set11
+1
+
+We discuss other possible choices of perturbation models in Appendix C.2.
+
+(7)
+
+In what follows, denotes stressing perturbations for the head parameters
+
+Under the linear head model, the certified sign-preservation radius (6) admits a closed form that is easy to compute during policy optimization without additional information:
+
+Theorem 3.1 (Certified radius).
+
+Under the linear head model and the uncertainty set (7), the certified sign-preservation radius is
+
+(8)
+
+The proof follows from the linearity of the reward head and is given in Appendix B.
+
+Based on the certified radius above, we propose SignCert-PO, a conservative variant of the standard PG (5). For each completion, let the adversary choose to maximally corrupt that completion’s gradient contribution. Concretely, the adversary minimizes the advantage for completions the policy with the nominal RM would reinforce () and maximizes it for completions the policy would suppress ():
+
+(9)
+
+This formulation asks: Given that the RM could be wrong within , what is the most conservative advantage we can still attribute to each completion?
+
+Theorem 3.2 (Worst-case advantage under per-completion adversary).
+
+Under the linear head model and the uncertainty set  (7), the worst-case advantage (9) for the -th completion is
+
+(10)
+
+The proof is given in Appendix B. SignCert-PO thus replaces each advantage with its worst-case value:
+
+(11)
+
+This is the standard GRPO gradient with each term re-weighted using its certified sign-preservation radius. Setting recovers standard GRPO. (11) can also be derived as the PG of a certain robust optimization problem but the discussion is deferred to Appendix D.
+
+Practical implementation.
+
+The coefficient (10) depends only on the advantage and the feature deviation . Rather than fixing globally, we set it adaptively using the empirical distribution of the ratio within each batch. Specifically, we set to the -th quantile of over all completions in the current batch, where is the number of prompts and is the group size. As shown in Appendix G.3, the parameter provides a natural interpretation of controlling the proxy RM accuracy during policy optimization. The full pseudocode is provided in Algorithm 1 (Appendix F).
+
+3.3 Comparison with the global robust objective
+
+Finally, we compare our per-completion adversary (9) with the standard approach of taking a single worst-case reward for all completions over an uncertainty set (Ben-Tal et al., 2009; Zhang et al., 2024), which we show that cannot distinguish reliable from unreliable completions. Consider the global robust objective, with the shared perturbation :
+
+(12)
+
+The following lemma shows that this approach falls short (the proof is given in Appendix B):
+
+Lemma 3.3 (Policy gradient of the global robust objective).
+
+Under the linear reward head, the PG of the worst-case objective (12) is
+
+(13)
+
+Here, the correction term is a single direction shared across all completions It does not depend on which completions receive reliable reward signal and which do not: a completion whose ranking is highly certain receives the same penalty as one whose ranking could be flipped by a small perturbation of the RM parameters.
+
+This uniform pessimism is also observed beyond the linear-head case. Zhang et al. (2024) empirically observed that their uncertainty set over the whole RM parameters led to overly pessimistic reward corrections. Eisenstein et al. (2024) similarly found that ensemble-based penalties fail when all members agree on the same spurious features, suggesting that completion-level discrimination is necessary.
+
+In contrast, our per-completion formulation (9) and re-weighting (11) provide this discrimination: completions with robust advantage signs receive the gradient essentially unchanged, while completions with unreliable signs are effectively removed. SignCert-PO therefore selectively suppresses the unreliable gradient directions while preserving the reliable ones.
+
+4 Experiments
+
+To evaluate our proposed method in LLM alignment tasks, we adopt the gold-model setup of Gao et al. (2023), which allows us to investigate reward hacking by simulating the true reward with a larger “gold” RM.
+The pipeline proceeds in four stages:
+
+1.
+
+SFT. A base LLM is fine-tuned on reference responses to obtain the SFT policy .
+
+2.
+
+Preference data generation. For each prompt , two candidate responses are sampled from and labeled by the gold RM to form pairwise preference data.
+
+3.
+
+Proxy RM training. A proxy reward model is trained on the generated preference data using the Bradley–Terry objective (1). We add a randomly initialized scalar head on top of the same base LLM backbone as the SFT model . During RM training, although we derived (6) under the frozen-backbone assumption, we train the full RM parameters to test broader applicability of our proposed method.
+
+4.
+
+Policy optimization and evaluation. The SFT policy is optimized against the proxy RM using one of the methods described below. The resulting policy is evaluated by the gold RM that was not used during policy optimization.
+
+We conduct experiments on the foundational summarization from human feedback task (TL;DR) (Stiennon et al., 2020) and on the AlpacaFarm benchmark (Dubois et al., 2023). We use Pythia (Biderman et al., 2023) and Qwen2.5 (Qwen et al., 2025) series as base models. For Pythia 1B and Qwen2.5 1.5B policies, the gold RM is Skywork-Reward-Llama-3.1-8B-v0.2 (Liu et al., 2024), one of the top-performing discriminative RMs on RewardBench (Malik et al., 2025). For larger policy models (Pythia 2.8B and Qwen2.5 3B), we use OpenAI’s GPT-4.1 Nano as the gold RM. More experimental details are given in Appendix F.
+
+4.1 Comparison with baselines
+
+Dataset
+TL;DR Summarization
+AlpacaFarm
+
+Model
+P 1B
+Q 1.5B
+P 2.8B
+Q 3B
+Q 1.5B
+Q 3B
+
+SFT
+
+25.2
+35.6
+37.8
+47.9
+
+Dr.GRPO
+
+68.0
+90.2
+32.6
+46.9
+
+UWO
+
+38.1
+81.8
+38.3
+46.9
+
+BSPO
+
+50.0
+63.1
+31.3
+43.8
+
+AdvPO
+
+69.1
+90.0
+37.5
+50.0
+
+SignCert-PO (ours)
+
+73.8
+91.8
+47.9
+52.3
+
+Table 1: Win rate (%) vs. human-generated reference response after training, as judged by the gold RM. For TL;DR experiments on Pythia 1B and Qwen2.5 1.5B, we run three different random seeds and report mean standard deviation. The other experiments use a single seed. We abbreviate Pythia as P and Qwen2.5 as Q. Best result per column is shown in bold.
+
+Method
+Pythia 1B
+Qwen2.5 1.5B
+
+Dr.GRPO
+7.54
+10.67
+
+UWO
+7.48
+10.76
+
+BSPO
+9.92
+13.37
+
+AdvPO
+10.93
+16.32
+
+SignCert-PO
+7.47
+10.78
+
+Table 2: Average wall-clock time per policy optimization step (seconds) on 8 GPUs over three runs on TL;DR dataset, as in Table 1. SignCert-PO roughly matches Dr.GRPO.
+
+We compare our proposed method with the SFT policy Dr.GRPO (Liu et al., 2025), Uncertainty Weighted Optimization (UWO) (Coste et al., 2024), Behavior-Supported Policy Optimization (BSPO) (Dai et al., 2025), and AdvPO (Zhang et al., 2024). For UWO, we use an ensemble of three RMs and smaller individual RMs to control total model capacity, following the setup of Zhang et al. (2024).
+
+Table 1 presents the gold-RM win rate for each method across both benchmarks and model scales. On TL;DR summarization, SignCert-PO achieves the highest win rate in most settings.
+We observe larger gains when the proxy RM is relatively small, which we believe is due to smaller proxy RMs becoming inaccurate faster (Appendix G.2) and thus needing robustness more. As the policy and proxy RM scale up, the margin narrows but SignCert-PO remains competitive or superior. We also note that the performance of UWO on the TL;DR task with Pythia 1B does not improve even with larger proxy RMs (Table 7 in Appendix G.1).
+
+Runtime.
+
+Table 2 compares the per-step wall-clock time across methods.
+SignCert-PO adds negligible overhead to Dr.GRPO: the only additional computation is evaluating the coefficients  (10) from the RM’s last-layer features, which are already extracted during reward scoring.
+UWO matches Dr.GRPO in training time, but requires loading multiple ensemble members, increasing VRAM usage when using full-sized RMs.
+BSPO and AdvPO incur additional training cost due to their modified optimization procedures.
+
+4.2 Additional experiments and analysis
+
+We further perform additional experiments to better understand our proposed method.
+
+How SignCert-PO mitigates reward hacking.
+
+Figure 2 (left)
+shows that as the policy drifts from (i.e., increasing KL divergence), the proxy RM’s accuracy
+on on-policy completions degrades.
+Dr.GRPO’s accuracy drops toward 50% at high KL as a result, while SignCert-PO follows a different trajectory.
+Our proposed method keeps the policy in regions where the proxy RM maintains accuracy around 60%, even as optimization progresses.
+This is a consequence of the re-weighting mechanism: completions whose advantage signs are easy to flip receive reduced gradient weight, preventing the policy from being pulled toward regions where the proxy RM is unreliable.
+This RM accuracy degradation can lead to reward hacking, as suggested by Figure 2 (right). Dr.GRPO’s proxy reward (dashed) continues to rise even as its gold reward (solid) collapses. SignCert-PO achieves a comparable or even better gold reward at a fraction of the KL budget and avoids the collapse.
+
+(a) Pythia-1B: KL–RM accuracy
+(b) Pythia-1B: KL–reward
+
+Figure 2: SignCert-PO keeps the policy in regions where the proxy RM remains reliable, preventing reward hacking. KL divergence trade-offs on TL;DR. Left: proxy RM accuracy vs. KL. SignCert-PO maintains higher RM accuracy at every KL budget. Right: gold reward (solid) and proxy reward (dashed) vs. KL. Baselines exhibit reward hacking, whereas SignCert-PO avoids this divergence. The reference policy is the SFT model
+
+Comparison with early stopping.
+
+The gold reward curves in Figure 2b also demonstrate the comparison with early stopping. Dr.GRPO with (the one also used for SignCert-PO) reaches peak gold reward around KL100, after which the reward degrades.
+An ideal early-stopping mechanism that stops training at this point would recover its peak gold reward, which is still lower than the gold reward after training by SignCert-PO. In contrast, SignCert-PO converges to a favorable region without relying on external evaluation.
+
+Empirical validation of the certified radius.
+
+In §3, we assumed linear head perturbation when deriving the certified sign-preservation radius (8), in order to simplify computation during policy optimization.
+We thus test whether predicts robustness under the other perturbation classes discussed in §3.1 and show the results in Figure 4.
+We show (i) whole-model perturbation, where all RM parameters are perturbed, (ii) input embedding perturbation, where noise is added before the transformer backbone, and (iii) cross-model agreement, measuring whether the proxy RM’s advantage signs match those of the gold RM. In all three settings, completions with larger consistently demonstrate higher sign-preservation or agreement rates. Furthermore, the Spearman rank correlation coefficient between and sign preservation rate is for whole-model perturbation and for input-embedding perturbation. These results suggest that captures sensitivity structure beyond our theoretical assumption.
+
+Figure 3: (8) is predictive of sign robustness beyond the linear head assumption, on the TL;DR task for Pythia 1B. Left axis: agreement with other perturbation models, where is the advantage recomputed under whole-RM or input embedding perturbation. Right axis: agreement with the gold RM. See Appendix F.5 for details.
+
+Figure 4: SignCert-PO provides the largest gains when preference data is limited, with the gap narrowing as more data becomes available. Gold win rate vs. number of preference data epochs on TL;DR for the Pythia 1B proxy RM. We also observe overfitting of the proxy RM for 2.3M pairs.
+
+Sensitivity to proxy RM quality.
+
+The proxy RM’s reliability depends on the amount of preference data used for its training. Figure 4 varies the number of generated preference pairs (from 116K at 1 epoch to 2.3M at 20 epochs) and compares the win rate of Dr.GRPO and SignCert-PO on Pythia 1B. SignCert-PO provides the largest gains when the preference data is limited. With only 116K preference pairs (i.e., one pair per prompt in the dataset), SignCert-PO achieves significantly higher win rate compared to Dr.GRPO. This is the most practically relevant regime, since collecting large preference datasets is expensive.
+While the benefit of our method decreases for larger datasets, results show that it does not hurt performance when the RM is already reliable.
+Finally, for more than 1M pairs we observe overfitting of the proxy RM and the results for both methods degrade.
+
+5 Conclusion
+
+We presented SignCert-PO, a lightweight method for RLHF that mitigates reward hacking by down-weighting policy gradient contributions of completions whose advantage signs are fragile under RM parameter perturbations. Our approach derives a certified sign-preservation radius that quantifies, for each completion, the smallest perturbation to the RM that can flip the advantage sign. This per-completion formulation yields a simple re-weighting mechanism of the standard PG update, requiring only the current RM head parameters and on-policy completions. Experiments on TL;DR summarization and AlpacaFarm across Pythia and Qwen2.5 model families show that SignCert-PO achieves the highest gold-RM win rate in most settings while adding negligible computational overhead.
+
+Our method makes several simplifying assumptions (§3.2). Further, our per-sample adversary formulation is more conservative than a shared-adversary variant. Analyzing the tighter coupled formulation is a future direction. Finally, extending the certified sign-preservation radius to general RMs without incurring the cost of full-parameter gradient norm computation remains an open problem.
+
+Acknowledgement
+
+This research was conducted using the Supermicro ARS-111GL-DNHR-LCC and FUJITSU Server PRIMERGY CX2550 M7 (Miyabi) at Joint Center for Advanced High Performance Computing (JCAHPC).
+
+Ethics Statement
+
+This work proposes a new algorithm that mitigates reward hacking in RLHF, contributing to the development of more reliable and aligned language models. Our method does not involve the collection of new human preference data or human subjects. We use only publicly available datasets and models in our experiments. We do not foresee specific ethical risks arising from this work beyond those inherent to the RLHF framework.
+
+Reproducibility statement
+
+All experiments are conducted on a shared compute cluster. Each training job uses 8 NVIDIA GH200 nodes, each equipped with an NVIDIA H100 GPU. Response generation during the gold-model pipeline uses vLLM for efficient batched inference. Complete hyperparameter settings for SFT, RM training and policy optimization are listed in Appendix F.4 (Tables 4–6). We use the publicly available dataset22
+2
+
+https://huggingface.co/datasets/vwxyzjn/summarize_from_feedback_tldr_3_filtered for our TL;DR experiments. For BSPO and AdvPO, we did not find the public implementation and thus we implemented them ourselves, based on the respective papers. For the 1-epoch proxy RM experiments on Pythia-1B and Qwen2.5-1.5B, we report mean standard deviation over 3 random seeds, corresponding to different SFT models, sampled preference datasets, proxy RMs and resulting policies.
+
+References
+
+Ackermann et al. (2025)
+
+Johannes Ackermann, Takashi Ishida, and Masashi Sugiyama.
+
+Off-policy corrected reward modeling for reinforcement learning from human feedback.
+
+In Second Conference on Language Modeling, 2025.
+
+URL https://openreview.net/forum?id=0zxugBcgF5#discussion.
+
+Ben-Tal et al. (2009)
+
+Aharon Ben-Tal, Laurent El Ghaoui, and Arkadi Nemirovski.
+
+Robust Optimization.
+
+Princeton University Press, 2009.
+
+ISBN 978-1-4008-3105-0.
+
+URL https://press.princeton.edu/books/hardcover/9780691143682/robust-optimization.
+
+Biderman et al. (2023)
+
+Stella Biderman, Hailey Schoelkopf, Quentin Anthony, Herbie Bradley, Kyle O’Brien, Eric Hallahan, Mohammad Aflah Khan, Shivanshu Purohit, USVSN Sai Prashanth, Edward Raff, Aviya Skowron, Lintang Sutawika, and Oskar Van Der Wal.
+
+Pythia: a suite for analyzing large language models across training and scaling.
+
+In Proceedings of the 40th International Conference on Machine Learning, volume 202 of ICML’23, pp. 2397–2430. JMLR.org, 2023.
+
+URL https://proceedings.mlr.press/v202/biderman23a/biderman23a.pdf.
+
+Bradley & Terry (1952)
+
+Ralph Allan Bradley and Milton E. Terry.
+
+Rank analysis of incomplete block designs: I. the method of paired comparisons.
+
+Biometrika, 39(3):324–345, 1952.
+
+ISSN 0006-3444.
+
+doi: 10.2307/2334029.
+
+URL https://www.jstor.org/stable/2334029.
+
+Chijiwa et al. (2025)
+
+Daiki Chijiwa, Taku Hasegawa, Kyosuke Nishida, Kuniko Saito, and Susumu Takeuchi.
+
+Portable reward tuning: Towards reusable fine-tuning across different pretrained models.
+
+In Proceedings of the 42nd International Conference on Machine Learning, pp. 10428–10448. PMLR, 2025.
+
+URL https://proceedings.mlr.press/v267/chijiwa25a.html.
+
+Christiano et al. (2017)
+
+Paul F. Christiano, Jan Leike, Tom B. Brown, Miljan Martic, Shane Legg, and Dario Amodei.
+
+Deep reinforcement learning from human preferences.
+
+In Proceedings of the 31st International Conference on Neural Information Processing Systems, NIPS’17, pp. 4302–4310. Curran Associates Inc., 2017.
+
+URL https://dl.acm.org/doi/10.5555/3294996.3295184.
+
+Cohen et al. (2019)
+
+Jeremy Cohen, Elan Rosenfeld, and Zico Kolter.
+
+Certified adversarial robustness via randomized smoothing.
+
+In Proceedings of the 36th International Conference on Machine Learning, pp. 1310–1320. PMLR, 2019.
+
+URL https://proceedings.mlr.press/v97/cohen19c.html.
+
+Coste et al. (2024)
+
+Thomas Coste, Usman Anwar, Robert Kirk, and David Krueger.
+
+Reward model ensembles help mitigate overoptimization.
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+URL https://openreview.net/forum?id=dcjtMYkpXx.
+
+Dai et al. (2025)
+
+Juntao Dai, Taiye Chen, Yaodong Yang, Qian Zheng, and Gang Pan.
+
+Mitigating reward over-optimization in RLHF via behavior-supported regularization.
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+URL https://openreview.net/forum?id=PNMv4r7s1i.
+
+Dubois et al. (2023)
+
+Yann Dubois, Xuechen Li, Rohan Taori, Tianyi Zhang, Ishaan Gulrajani, Jimmy Ba, Carlos Guestrin, Percy Liang, and Tatsunori B. Hashimoto.
+
+AlpacaFarm: a simulation framework for methods that learn from human feedback.
+
+In Proceedings of the 37th International Conference on Neural Information Processing Systems, NeurIPS’23, pp. 30039–30069. Curran Associates Inc., 2023.
+
+URL https://proceedings.neurips.cc/paper_files/paper/2023/file/5fc47800ee5b30b8777fdd30abcaaf3b-Paper-Conference.pdf.
+
+Eisenstein et al. (2024)
+
+Jacob Eisenstein, Chirag Nagpal, Alekh Agarwal, Ahmad Beirami, Alexander Nicholas D’Amour, Krishnamurthy Dj Dvijotham, Adam Fisch, Katherine A. Heller, Stephen Robert Pfohl, Deepak Ramachandran, Peter Shaw, and Jonathan Berant.
+
+Helping or herding? reward model ensembles mitigate but do not eliminate reward hacking.
+
+In First Conference on Language Modeling, 2024.
+
+URL https://openreview.net/forum?id=5u1GpUkKtG.
+
+Gao et al. (2023)
+
+Leo Gao, John Schulman, and Jacob Hilton.
+
+Scaling laws for reward model overoptimization.
+
+In Proceedings of the 40th International Conference on Machine Learning, volume 202 of ICML’23, pp. 10835–10866. PMLR, 2023.
+
+URL https://proceedings.mlr.press/v202/gao23h/gao23h.pdf.
+
+Geng et al. (2025)
+
+Scott Geng, Hamish Ivison, Chun-Liang Li, Maarten Sap, Jerry Li, Ranjay Krishna, and Pang Wei Koh.
+
+The delta learning hypothesis: Preference tuning on weak data can yield strong gains.
+
+In ICLR 2025 Workshop on Navigating and Addressing Data Problems for Foundation Models, 2025.
+
+URL https://openreview.net/forum?id=cVlY21dIVE.
+
+Hu et al. (2022)
+
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+
+LoRA: Low-rank adaptation of large language models.
+
+In The Tenth International Conference on Learning Representations, 2022.
+
+URL https://openreview.net/forum?id=nZeVKeeFYf9.
+
+Liu et al. (2024)
+
+Chris Yuhao Liu, Liang Zeng, Jiacai Liu, Rui Yan, Jujie He, Chaojie Wang, Shuicheng Yan, Yang Liu, and Yahui Zhou.
+
+Skywork-reward: Bag of tricks for reward modeling in LLMs, 2024.
+
+URL http://arxiv.org/abs/2410.18451.
+
+Liu et al. (2025)
+
+Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin.
+
+Understanding r1-zero-like training: A critical perspective, 2025.
+
+URL http://arxiv.org/abs/2503.20783.
+
+Malik et al. (2025)
+
+Saumya Malik, Valentina Pyatkin, Sander Land, Jacob Morrison, Noah A. Smith, Hannaneh Hajishirzi, and Nathan Lambert.
+
+RewardBench 2: Advancing reward model evaluation, 2025.
+
+URL http://arxiv.org/abs/2506.01937.
+
+Nishimori et al. (2025)
+
+Soichiro Nishimori, Yu-Jie Zhang, Thanawat Lodkaew, and Masashi Sugiyama.
+
+On symmetric losses for robust policy optimization with noisy preferences, 2025.
+
+URL https://arxiv.org/abs/2505.24709.
+
+OpenAI et al. (2024)
+
+OpenAI, Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, Red Avila, Igor Babuschkin, Suchir Balaji, Valerie Balcom, Paul Baltescu, Haiming Bao, Mohammad Bavarian, Jeff Belgum, Irwan Bello, Jake Berdine, Gabriel Bernadett-Shapiro, Christopher Berner, Lenny Bogdonoff, Oleg Boiko, Madelaine Boyd, Anna-Luisa Brakman, Greg Brockman, Tim Brooks, Miles Brundage, Kevin Button, Trevor Cai, Rosie Campbell, Andrew Cann, Brittany Carey, Chelsea Carlson, Rory Carmichael, Brooke Chan, Che Chang, Fotis Chantzis, Derek Chen, Sully Chen, Ruby Chen, Jason Chen, Mark Chen, Ben Chess, Chester Cho, Casey Chu, Hyung Won Chung, Dave Cummings, Jeremiah Currier, Yunxing Dai, Cory Decareaux, Thomas Degry, Noah Deutsch, Damien Deville, Arka Dhar, David Dohan, Steve Dowling, Sheila Dunning, Adrien Ecoffet, Atty Eleti, Tyna Eloundou, David Farhi, Liam Fedus, Niko Felix, Simón Posada Fishman, Juston Forte, Isabella Fulford, Leo Gao, Elie Georges, Christian Gibson, Vik Goel, Tarun Gogineni, Gabriel Goh, Rapha Gontijo-Lopes, Jonathan Gordon, Morgan Grafstein, Scott Gray, Ryan Greene, Joshua Gross, Shixiang Shane Gu, Yufei Guo, Chris Hallacy, Jesse Han, Jeff Harris, Yuchen He, Mike Heaton, Johannes Heidecke, Chris Hesse, Alan Hickey, Wade Hickey, Peter Hoeschele, Brandon Houghton, Kenny Hsu, Shengli Hu, Xin Hu, Joost Huizinga, Shantanu Jain, Shawn Jain, Joanne Jang, Angela Jiang, Roger Jiang, Haozhun Jin, Denny Jin, Shino Jomoto, Billie Jonn, Heewoo Jun, Tomer Kaftan, Łukasz Kaiser, Ali Kamali, Ingmar Kanitscheider, Nitish Shirish Keskar, Tabarak Khan, Logan Kilpatrick, Jong Wook Kim, Christina Kim, Yongjik Kim, Jan Hendrik Kirchner, Jamie Kiros, Matt Knight, Daniel Kokotajlo, Łukasz Kondraciuk, Andrew Kondrich, Aris Konstantinidis, Kyle Kosic, Gretchen Krueger, Vishal Kuo, Michael Lampe, Ikai Lan, Teddy Lee, Jan Leike, Jade Leung, Daniel Levy, Chak Ming Li, Rachel Lim, Molly Lin,
+Stephanie Lin, Mateusz Litwin, Theresa Lopez, Ryan Lowe, Patricia Lue, Anna Makanju, Kim Malfacini, Sam Manning, Todor Markov, Yaniv Markovski, Bianca Martin, Katie Mayer, Andrew Mayne, Bob McGrew, Scott Mayer McKinney, Christine McLeavey, Paul McMillan, Jake McNeil, David Medina, Aalok Mehta, Jacob Menick, Luke Metz, Andrey Mishchenko, Pamela Mishkin, Vinnie Monaco, Evan Morikawa, Daniel Mossing, Tong Mu, Mira Murati, Oleg Murk, David Mély, Ashvin Nair, Reiichiro Nakano, Rajeev Nayak, Arvind Neelakantan, Richard Ngo, Hyeonwoo Noh, Long Ouyang, Cullen O’Keefe, Jakub Pachocki, Alex Paino, Joe Palermo, Ashley Pantuliano, Giambattista Parascandolo, Joel Parish, Emy Parparita, Alex Passos, Mikhail Pavlov, Andrew Peng, Adam Perelman, Filipe de Avila Belbute Peres, Michael Petrov, Henrique Ponde de Oliveira Pinto, Michael, Pokorny, Michelle Pokrass, Vitchyr H. Pong, Tolly Powell, Alethea Power, Boris Power, Elizabeth Proehl, Raul Puri, Alec Radford, Jack Rae, Aditya Ramesh, Cameron Raymond, Francis Real, Kendra Rimbach, Carl Ross, Bob Rotsted, Henri Roussez, Nick Ryder, Mario Saltarelli, Ted Sanders, Shibani Santurkar, Girish Sastry, Heather Schmidt, David Schnurr, John Schulman, Daniel Selsam, Kyla Sheppard, Toki Sherbakov, Jessica Shieh, Sarah Shoker, Pranav Shyam, Szymon Sidor, Eric Sigler, Maddie Simens, Jordan Sitkin, Katarina Slama, Ian Sohl, Benjamin Sokolowsky, Yang Song, Natalie Staudacher, Felipe Petroski Such, Natalie Summers, Ilya Sutskever, Jie Tang, Nikolas Tezak, Madeleine B. Thompson, Phil Tillet, Amin Tootoonchian, Elizabeth Tseng, Preston Tuggle, Nick Turley, Jerry Tworek, Juan Felipe Cerón Uribe, Andrea Vallone, Arun Vijayvergiya, Chelsea Voss, Carroll Wainwright, Justin Jay Wang, Alvin Wang, Ben Wang, Jonathan Ward, Jason Wei, C. J. Weinmann, Akila Welihinda, Peter Welinder, Jiayi Weng, Lilian Weng, Matt Wiethoff, Dave Willner, Clemens Winter, Samuel Wolrich, Hannah Wong, Lauren Workman, Sherwin Wu, Jeff Wu, Michael Wu, Kai Xiao, Tao Xu,
+Sarah Yoo, Kevin Yu, Qiming Yuan, Wojciech Zaremba, Rowan Zellers, Chong Zhang, Marvin Zhang, Shengjia Zhao, Tianhao Zheng, Juntang Zhuang, William Zhuk, and Barret Zoph.
+
+GPT-4 technical report, 2024.
+
+URL http://arxiv.org/abs/2303.08774.
+
+Ouyang et al. (2022)
+
+Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe.
+
+Training language models to follow instructions with human feedback.
+
+In Proceedings of the 36th International Conference on Neural Information Processing Systems, NeurIPS’22, pp. 27730–27744. Curran Associates Inc., 2022.
+
+URL https://proceedings.neurips.cc/paper_files/paper/2022/file/b1efde53be364a73914f58805a001731-Paper-Conference.pdf.
+
+Qwen et al. (2025)
+
+Qwen, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+
+Qwen2.5 technical report, 2025.
+
+URL http://arxiv.org/abs/2412.15115.
+
+Retzlaff et al. (2024)
+
+Carl O. Retzlaff, Alessa Angerschmid, Anna Saranti, David Schneeberger, Richard Röttger, Heimo Müller, and Andreas Holzinger.
+
+Post-hoc vs ante-hoc explanations: xAI design guidelines for data scientists.
+
+Cognitive Systems Research, 86:101243, 2024.
+
+ISSN 1389-0417.
+
+doi: 10.1016/j.cogsys.2024.101243.
+
+URL https://www.sciencedirect.com/science/article/pii/S1389041724000378.
+
+Schulman et al. (2017)
+
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+
+Proximal policy optimization algorithms, 2017.
+
+URL http://arxiv.org/abs/1707.06347.
+
+Shao et al. (2024)
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo.
+
+DeepSeekMath: Pushing the limits of mathematical reasoning in open language models, 2024.
+
+URL http://arxiv.org/abs/2402.03300.
+
+Stiennon et al. (2020)
+
+Nisan Stiennon, Long Ouyang, Jeff Wu, Daniel M. Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul Christiano.
+
+Learning to summarize from human feedback.
+
+In Proceedings of the 34th International Conference on Neural Information Processing Systems, NeurIPS’20, pp. 3008–3021. Curran Associates Inc., 2020.
+
+URL https://proceedings.neurips.cc/paper/2020/file/1f89885d556929e98d3ef9b86448f951-Paper.pdf.
+
+Sutton & Barto (2018)
+
+Richard S. Sutton and Andrew G. Barto.
+
+Reinforcement Learning: An Introduction.
+
+Adaptive Computation and Machine Learning series. MIT Press, 2 edition, 2018.
+
+ISBN 978-0-262-03924-6.
+
+URL https://mitpress.mit.edu/9780262039246/reinforcement-learning/.
+
+Sutton et al. (1999)
+
+Richard S Sutton, David McAllester, Satinder Singh, and Yishay Mansour.
+
+Policy gradient methods for reinforcement learning with function approximation.
+
+In Advances in Neural Information Processing Systems, volume 12. MIT Press, 1999.
+
+URL https://papers.nips.cc/paper_files/paper/1999/hash/464d828b85b0bed98e80ade0a5c43b0f-Abstract.html.
+
+Tang et al. (2024)
+
+Yunhao Tang, Zhaohan Daniel Guo, Zeyu Zheng, Daniele Calandriello, Remi Munos, Mark Rowland, Pierre Harvey Richemond, Michal Valko, Bernardo Avila Pires, and Bilal Piot.
+
+Generalized preference optimization: A unified approach to offline alignment.
+
+In Proceedings of the 41st International Conference on Machine Learning, pp. 47725–47742. PMLR, 2024.
+
+URL https://proceedings.mlr.press/v235/tang24b.html.
+
+Williams (1992)
+
+Ronald J. Williams.
+
+Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+
+Machine Learning, 8(3):229–256, 1992.
+
+Xu et al. (2024)
+
+Sheng Xu, Bo Yue, Hongyuan Zha, and Guiliang Liu.
+
+Uncertainty-aware preference alignment in reinforcement learning from human feedback.
+
+In ICML 2024 Workshop on Models of Human Feedback for AI Alignment, 2024.
+
+URL https://openreview.net/forum?id=oVVg7lug1F.
+
+Zhai et al. (2026)
+
+Yuanzhao Zhai, Yu Lei, Han Zhang, Yue Yu, Kele Xu, Dawei Feng, Bo Ding, and Huaimin Wang.
+
+Uncertainty-penalized reinforcement learning from human feedback with diversified reward LoRA ensembles.
+
+Information Processing & Management, 63(3):104548, 2026.
+
+ISSN 0306-4573.
+
+doi: 10.1016/j.ipm.2025.104548.
+
+URL https://www.sciencedirect.com/science/article/pii/S0306457325004893.
+
+Zhang et al. (2024)
+
+Xiaoying Zhang, Jean-François Ton, Wei Shen, Hongning Wang, and Yang Liu.
+
+Mitigating reward overoptimization via lightweight uncertainty estimation.
+
+In Proceedings of the 38th International Conference on Neural Information Processing Systems, volume 37 of NeurIPS’24, pp. 81717–81747. Curran Associates Inc., 2024.
+
+URL https://proceedings.neurips.cc/paper_files/paper/2024/file/94bbcb744bbada8808fda05b9d9290d6-Paper-Conference.pdf.
+
+Ziegler et al. (2020)
+
+Daniel M. Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B. Brown, Alec Radford, Dario Amodei, Paul Christiano, and Geoffrey Irving.
+
+Fine-tuning language models from human preferences, 2020.
+
+URL http://arxiv.org/abs/1909.08593.
+
+Appendix A Additional background and related work
+
+We present a more comprehensive discussion of related work here.
+
+A.1 Policy gradient algorithms
+
+Proximal Policy Optimization (PPO).
+
+PPO (Schulman et al., 2017) is a canonical PG-based method for RLHF that uses a clipped surrogate objective and jointly trains a value network for advantage estimation. Given responses sampled from an old policy , PPO maximizes the clipped surrogate objective:
+
+(14)
+
+where is the response length, is the clipping hyperparameter, and
+
+is the density ratio. The token-level advantage is estimated using a learned value network with parameters , trained jointly with the policy:
+
+(15)
+
+where is the discount factor and is the per-token reward. In RLHF, for all , with the RM score added at the final token  (Ziegler et al., 2020).
+
+Group Relative Policy Optimization (GRPO).
+
+GRPO (Shao et al., 2024) replaces the learned value network in PPO with a group-based Monte Carlo baseline. For each prompt , a group of completions is sampled from the current policy , and each receives a reward . In the original GRPO, the advantage is the normalized reward: where is the vectorized reward and and denote the mean and standard deviation of the elements of a vector, respectively.
+
+GRPO can be viewed as replacing PPO’s learned value baseline with a within-group relative baseline computed from sampled completions. This removes the need to train a separate value network, allowing for preserving VRAM and scaling up the RLHF pipeline.
+
+Dr.GRPO (Liu et al., 2025) is a widely-used variant that removes the standard-deviation normalization to avoid biased gradient estimation (see §2.1 in the main text).
+
+A.2 Additional related work
+
+Reward hacking arises when the policy distribution drifts outside the region where the proxy RM is reliable. Prior work addresses this through ensemble-based uncertainty, modified RM training, or adversarial robustness.
+
+RM ensembles.
+
+Ensemble-based methods mitigate reward hacking by optimizing a policy conservatively with respect to multiple RMs. Coste et al. (2024) train several proxy RMs and study conservative objectives such as worst-case and uncertainty-weighted optimization (UWO), showing that ensembles reduce reward hacking in the gold-RM setup of Gao et al. (2023). Eisenstein et al. (2024) observe that ensembles still exploit spurious features when all members agree on them. Zhai et al. (2026) propose LoRA (Hu et al., 2022)-based RM ensembles to reduce the cost of training multiple full RMs. These approaches require multiple RM training and inference runs.
+
+Distribution shift and modified RM training.
+
+Reward hacking can also be viewed as a distribution shift problem: as the policy moves away from the SFT distribution, the RM’s training data becomes unrepresentative. Ackermann et al. (2025) propose off-policy corrected reward modeling, which uses importance weighting to make the RM consistent under the evolving policy distribution. Dai et al. (2025) propose BSPO, which regularizes the RM training objective to improve robustness. Xu et al. (2024) train distributional RMs with explicit uncertainty outputs. These methods modify the RM training pipeline, whereas SignCert-PO operates purely at policy optimization time using any pre-trained RM.
+
+Adversarial policy optimization.
+
+The closest work to ours is AdvPO (Zhang et al., 2024), which derives single-RM uncertainty estimates from last-layer embeddings and formulates a distributionally robust policy optimization problem. Two differences distinguish our approach. First, AdvPO requires constructing a matrix from the RM training dataset at policy optimization time; in many practical pipelines, this data is unavailable when using third-party RMs (Malik et al., 2025; Chijiwa et al., 2025). SignCert-PO requires only the current head parameters and on-policy completions. Second, AdvPO constructs a confidence region for the reward function using that matrix and then optimizes the policy against a pessimistic reward within that region. In contrast, SignCert-PO models uncertainty as perturbations of the RM parameters and asks whether those perturbations can flip the sign of the group-relative advantage for each completion. This aligns our adversarial formulation directly with GRPO’s update geometry, as discussed in §3.3.
+
+Appendix B Proofs
+
+In what follows, is referred to as for brevity, and denotes We also write instead of when the context is clear. We also sometimes omit the outer expectation
+
+Theorem B.1 (Certified radius (Theorem 3.1, restated)).
+
+The certified sign-preservation radius for sample under head parameter uncertainty is
+
+Proof of Theorem 3.1.
+
+We first establish how the advantage changes under head parameter perturbation. By linearity of the reward head,
+
+where . The worst-case perturbation for flipping the sign of is
+,
+yielding . The sign flips when this becomes non-positive, i.e., when . The case is symmetric.
+∎
+
+Theorem B.2 (Worst-case advantage under per-completion adversary (Theorem 3.2, restated)).
+
+Under the linear head model and the uncertainty set  (7), the worst-case advantage (9) for the -th completion is
+
+Proof of Theorem 3.2.
+
+For , the worst case under is , where the first equality follows from the perturbation analysis in the proof of Theorem 3.1. For , the analogous worst case is , where we used . In both cases, the worst-case advantage equals with given by (10).
+∎
+
+Lemma B.3 (Policy gradient of the global robust objective (Lemma 3.3, restated)).
+
+Under the GRPO sampling with on-policy completions per prompt, the PG of the global robust objective is
+
+Proof of Lemma 3.3.
+
+We first derive the worst-case objective. Since the KL term is independent of , the infimum reduces to ,
+where the supremum is attained at by the Cauchy–Schwarz inequality. Thus,
+
+The first term of the PG is the standard GRPO gradient of .
+The second term follows from differentiating the penalty through the policy, which depends on via but not on any per-completion quantity.
+∎
+
+Appendix C Connection with randomized smoothing
+
+In §3.1, we defined the certified sign-preservation radius (6) as the largest perturbation under which the sign of the -th completion’s advantage remains constant. This section shows that admits a formal interpretation through RS in the binary classification case.
+
+C.1 Randomized smoothing interpretation of the certified sign-preservation radius
+
+Consider the binary decision given by the sign of the advantage, and inject Gaussian noise into the space where uncertainty is modeled (e.g., the RM head parameter space). In RS, the certified radius for a binary decision is
+
+where is the probability that the decision is preserved under the Gaussian perturbation (Cohen et al., 2019).
+For linear perturbations, the sign-preservation probability has the form for some constant . Substituting into the RS formula recovers exactly the certified radii in (8) and (16).
+
+The above results imply that responses with low coefficients , or equivalently low radii , contribute less to the policy update with the robust policy optimization objective. The radius is small when:
+
+•
+
+The advantage is small. In this case, the preference signal is weak and easily flipped.
+
+•
+
+The feature deviation is large. This means the response is an outlier in feature space, where the RM may be exploring.
+
+The first category corresponds to the delta learning hypothesis (Geng et al., 2025). Our theoretical results suggest that reward hacking also exploits responses in the second category. Template-like or verbose outputs that achieve high rewards through spurious correlations often lie in sharp, high-norm feature directions, yielding small certified radii despite large advantages.
+
+C.2 Alternative uncertainty models
+
+The same derivation applies to the other uncertainty models, yielding analogous certified radii.
+
+Feature uncertainty.
+
+Under perturbation with , the perturbed advantage is
+
+Since , the perturbed advantage is Gaussian:
+
+The probability of sign preservation and certified radius are:
+
+(16)
+
+Note that is a monotone function of , unlike which also depends on feature geometry.
+
+Full parameter uncertainty.
+
+Under first-order approximation with :
+
+This yields:
+
+We expect spurious patterns to have large gradient norms , as the RM assigns high rewards through sharp, non-robust computations. Such patterns receive small radii and are appropriately down-weighted.
+
+Summary of uncertainty models.
+
+Table 3 summarizes the three models.
+
+Model
+Uncertainty set
+Certified radius
+Interpretation
+
+Head param.
+
+Feature geometry
+
+Feature
+
+Advantage magnitude
+
+Full param.
+
+Gradient sharpness
+
+Table 3: Summary of uncertainty models and their certified radii.
+
+Appendix D Robust optimization perspective and its limitations
+
+The re-weighted gradient (11) can be viewed as the PG of a per-completion robust optimization problem. For each completion, the adversary chooses to maximally corrupt that completion’s gradient contribution:
+
+(17)
+
+This formulation takes the and inside the sum over completions, allowing the adversary to choose different perturbations for each completion.
+
+We now argue that this per-sample decomposition is a necessity: any formulation that robustifies an aggregate advantage is vacuous under GRPO’s mean-subtracted structure.
+
+Zero-sum obstruction.
+
+A more standard robust optimization approach (Ben-Tal et al., 2009) would robustify the aggregate advantage directly, e.g., . However, under the linear head model, for any ,
+
+since by definition of . Group-relative advantages sum to zero regardless of the RM parameters, so any robust objective of the form evaluates to zero trivially and provides no useful signal for policy optimization.
+
+This complements Lemma 3.3, which showed that the global robust reward objective yields only a completion-agnostic penalty (13).
+
+Conservatism of the per-sample formulation.
+
+The per-sample objective (17) circumvents the zero-sum obstruction by partitioning the sum according to the sign of before applying the and . This is a stronger (i.e., more conservative) setting than the standard robust optimization formulation, where a single worst-case parameter would be shared across all terms:
+
+(18)
+
+The per-sample formulation provides a tractable upper bound on the conservatism: because each term is optimized independently, the resulting coefficients decompose into per-sample quantities, yielding the closed-form solution in Theorem 3.1. The shared-adversary variant (18), while tighter, couples all completions and requires solving a joint optimization problem over the group. The further analysis of different robust optimizations is left for future work.
+
+Appendix E Extension to other policy gradient methods
+
+The sign-certification principle of §3 applies beyond Dr.GRPO to any PG-based RLHF method whose update involves a scalar coefficient depending on the RM. Since the exact form of the certified radius depends on the update geometry, we only discuss REINFORCE (Williams, 1992), PPO (Schulman et al., 2017) and vanilla GRPO (Shao et al., 2024).
+
+E.1 REINFORCE
+
+The simplest case is REINFORCE, or more generally any response-level PG method with advantage
+
+where is the linear reward head and is a baseline independent of the RM head (e.g., a learned value function, a Monte Carlo return, or simply for vanilla REINFORCE). The PG then takes the form , matching the form in (3).
+
+Under the same linear-head uncertainty set  (7) as in §3, the certified sign-preservation radius admits an exact closed form.
+
+Proposition E.1 (Certified sign-preservation radius for response-level PG).
+
+Under the linear reward head and the uncertainty set  (7), with a baseline independent of the RM head , the certified sign-preservation radius for response is
+
+(19)
+
+Proof.
+
+Under perturbation with :
+
+since does not depend on . By the Cauchy–Schwarz inequality, , with equality when . The sign flips when .
+∎
+
+We can also derive the worst-case advantage in the vein of Theorem 3.2:
+
+Corollary E.2 (Worst-case advantage under per-completion adversary).
+
+Under the same setting as Proposition E.1, the worst-case advantage under the per-completion adversary (9) is
+
+E.2 Approximate extensions
+
+Standard PPO and vanilla GRPO do not generally admit a single response-level coefficient whose sign alone determines the update for the whole completion. Sign certification for these methods therefore requires a first-order approximation.
+
+E.2.1 PPO
+
+Standard PPO in RLHF uses a token-level clipped surrogate objective (14) with token-level advantages  (15) estimated via a learned value network (§A.1). Unlike Dr.GRPO or the response-level PG of §E.1, PPO does not generally admit a single scalar response-level coefficient. Its per-token structure means that the sign of the effective coefficient can differ across tokens within a single response.
+
+Sign certification for PPO should therefore be formulated for the token-level coefficient appearing in each surrogate term. Under the linear reward head, the token-level advantage depends on the RM head only through the terminal reward added at . A first-order approximation gives
+
+which is consistent with the general first-order extension in §3.1.
+
+E.2.2 Vanilla GRPO
+
+In vanilla GRPO (Shao et al., 2024), the advantage is the normalized reward , where . Because depends non-linearly on through all rewards, the perturbed advantage is no longer affine in . This breaks the exact analysis that yields the Dr.GRPO closed form (8). A first-order expansion yields the approximate radius
+
+which requires the gradient of the normalized advantage with respect to . This is more expensive than the Dr.GRPO closed form but avoids the full-parameter gradients needed for the general RM extension (§3.1).
+
+Appendix F Training and implementation details
+
+F.1 Conceptual experiment (Figure 1)
+
+Before presenting the full-scale LLM experiments, we design a controlled conceptual experiment to demonstrate advantage sign flipping causes reward hacking and to verify that SignCert-PO prevents it.
+
+F.1.1 Setup
+
+We consider a stateless -armed bandit (). Each action (completion) is associated with a fixed feature vector (), analogous to the last-layer hidden states of an RM backbone in §3.2. Both the proxy and true RMs use a linear head on top of these shared features:
+
+matching the linear-head architecture assumed in §3.2. The feature space is split into two subspaces: shared dimensions (0–2), where both heads assign weight ; divergent dimensions (3–5), where the proxy assigns weight but the true RM assigns . Actions 1–3 (reliable positive) use only shared dimensions and have positive proxy and true rewards. Actions 4–6 (reliable negative) also use only shared dimensions but have negative rewards. Actions 7–8 (hacking) use only divergent dimensions. As a result, the proxy RM assigns them the highest advantages in the group, while their true advantages are negative.
+
+The policy is a categorical stochastic policy initialized to uniform (). Because is small and there is a single state, we use the exact expected policy gradient.
+
+F.1.2 Policy optimization methods
+
+We compare three methods, all sharing the softmax policy gradient structure but differing in how advantages are weighted:
+
+•
+
+Dr.GRPO: , where .
+
+•
+
+Global robust objective (Lemma 3.3): adds a penalty that corrects all actions through a single direction. We sweep over 20 log-spaced values in and report the best.
+
+•
+
+SignCert-PO (Theorem 3.1): , where and is set to the -th quantile of .
+
+F.1.3 Results
+
+Figure 1(a) shows the proxy advantages per action. Red bars indicate completions whose advantage sign disagrees with the true RM. The hacking actions (7–8) have the largest proxy advantages. Figure 1(c) shows the per-action certified sign-preservation radius . The completions 7 and 8 cluster at low values because they are outliers in the feature-space (i.e., large ), confirming that identifies unreliable completions.
+
+Figure 1(d) tracks true (solid) and proxy (dashed) expected reward during policy optimization. Dr.GRPO converges on the hacking actions, where true reward collapses. The global robust penalty partially mitigates reward hacking, but the single penalty direction cannot distinguish per-action reliability and is thus too conservative. SignCert-PO achieves the highest true reward, by suppressing the hacking actions’ gradient contributions via their small weights.
+
+F.2 Algorithm pseudocode
+
+Algorithm 1 implements the SignCert-PO re-weighting of GRPO derived in §3.2. We highlight the modifications over standard Dr.GRPO in blue.
+
+Algorithm 1 SignCert-PO Algorithm.
+
+1:
+
+Policy , reward model , quantile threshold , group size
+
+2:
+
+for each prompt in batch do
+
+3:
+
+  
+
+Sample completions:
+
+4:
+
+  
+
+Compute , , for
+
+5:
+
+  
+
+Compute ,
+
+6:
+
+Set to the -th quantile of over all completions in the batch
+
+7:
+
+for each completion do
+
+8:
+
+  
+
+ stop-gradient on
+
+9:
+
+  
+
+10:
+
+Update policy with PG using
+
+F.3 Training details
+
+F.3.1 Datasets
+
+TL;DR summarization.
+
+We use the filtered version33
+3
+
+https://huggingface.co/datasets/vwxyzjn/summarize_from_feedback_tldr_3_filtered of OpenAI’s Summarize from Feedback dataset (Stiennon et al., 2020) containing 116K samples. Each sample consists of a Reddit post and a human-written reference summary.
+
+AlpacaFarm.
+
+We additionally evaluate on the AlpacaFarm benchmark (Dubois et al., 2023), a simulation framework for learning from human feedback built on 52K instruction-following samples.
+
+F.3.2 Models
+
+Policy and proxy RM.
+
+We use Pythia (Biderman et al., 2023) and Qwen2.5 (Qwen et al., 2025) series as policy and proxy RM base models. We vary the policy size among Pythia 1B and 2.8B, and Qwen2.5 1.5B and 3B. The same model size as the policy is chosen for the proxy RM.
+
+For TL;DR, the proxy RM is trained with 1 epoch of preference data. For AlpacaFarm, the proxy RM is trained with 3 epochs of preference data, roughly matching the number of queries for TL;DR (see §F.3.1).
+
+Gold RM.
+
+For the TL;DR experiments with Pythia 1B and Qwen2.5 1.5B policies, the gold reward model is Skywork-Reward-Llama-3.1-8B-v0.2 (Liu et al., 2024), one of the top-performing discriminative reward models on RewardBench (Malik et al., 2025). All preference data and evaluation metrics for these settings are computed using this gold RM. For larger policy models (Pythia 2.8B and Qwen2.5 3B), we use GPT-4.1 Nano (OpenAI et al., 2024) as the gold RM, since a model with stronger capability than the proxy RM is required.
+
+F.3.3 Baselines
+
+We compare SignCert-PO (Algorithm 1) against the following baselines:
+
+•
+
+SFT: the SFT policy without any RL optimization.
+
+•
+
+Dr.GRPO (Liu et al., 2025), as introduced in §2.1. The KL coefficient is swept over for Pythia-1B and Qwen2.5-1.5B, and the best configuration is selected per dataset. Due to computational constraints, we do not sweep the KL coefficient for larger models and instead use 0.005 for Pythia 2.8B and 0.01 for Qwen2.5 3B.
+
+•
+
+UWO (Coste et al., 2024): an RM ensemble method that trains multiple proxy RMs with different random seeds and uses the mean reward minus a penalty proportional to the ensemble standard deviation. We use an ensemble of three RM members. Following the setup of Zhang et al. (2024), to control total model capacity, we use smaller individual RMs (Pythia 410M for 1B experiments and Qwen2.5 0.5B for 1.5B experiments). For larger policy models (Pythia 2.8B, Qwen2.5 3B), we use Pythia 1B and Qwen2.5 1.5B as proxy RMs in the ensemble, respectively.
+
+•
+
+BSPO (Dai et al., 2025): a method that constrains policy updates to remain within the support of the behavior policy to prevent out-of-distribution exploitation.
+
+•
+
+AdvPO (Zhang et al., 2024): an adversarial policy optimization method that augments the reward with a learned uncertainty penalty. We sweep the perturbation budget , following the range used in the original paper.
+
+For both benchmarks, we set the learning rate to , with micro batch size 32 on 8 GPUs and generations per prompt.
+Pythia policies are trained for 2,000 steps; Qwen2.5 for 500 steps since proxy reward converges faster.
+For SignCert-PO, we sweep the quantile threshold .
+For TL;DR experiments with Pythia 1B and Qwen2.5 1.5B, we report mean standard deviation over 3 random seeds to account for variance from limited preference data.
+
+F.3.4 Evaluation metrics
+
+We report the win rate of policy outputs against reference responses, judged by the gold RM. We also measure proxy RM accuracy and KL divergence during policy optimization, measured at every 50 global optimization steps. Proxy RM accuracy is calculated as agreement between the proxy RM and the gold RM on pairwise ranking comparisons of on-policy completions.
+
+F.4 Hyperparameters
+
+Tables 4–6 list all hyperparameters used in our experiments.
+
+Hyperparameter
+Pythia 1B
+Pythia 2.8B
+Qwen2.5 1.5B
+Qwen2.5 3B
+
+SFT
+
+Epochs
+1
+1
+1
+1
+
+Learning rate
+
+LR scheduler
+cosine
+cosine
+cosine
+cosine
+
+Per-device batch size
+16
+16
+16
+16
+
+bf16
+✓
+✓
+✓
+✓
+
+Preference data generation
+
+Completions per prompt
+2
+2
+2
+2
+
+Sampling temperature
+1.0
+1.0
+1.0
+1.0
+
+Max new tokens
+53
+53
+63
+63
+
+Gold RM
+Skywork-8B
+GPT-4.1 Nano
+Skywork-8B
+GPT-4.1 Nano
+
+Table 4: SFT and preference data generation hyperparameters.
+
+Hyperparameter
+Pythia 1B
+Qwen2.5 1.5B
+
+Preference data epochs
+
+Max length
+512
+512
+
+Learning rate
+
+LR scheduler
+cosine
+cosine
+
+Warmup ratio
+0.03
+0.03
+
+Weight decay
+0.1
+0.1
+
+Per-device batch size
+16
+16
+
+Gradient accumulation steps
+1
+1
+
+Gradient checkpointing
+✓
+✓
+
+bf16
+✓
+✓
+
+Table 5: Proxy reward model training hyperparameters. The same base model architecture as the SFT policy is used with a randomly initialized scalar head.
+
+Hyperparameter
+Pythia 1B
+Pythia 2.8B
+Qwen2.5 1.5B
+Qwen2.5 3B
+
+Training steps
+2,000
+2,000
+500
+500
+
+Generations per prompt
+8
+8
+8
+8
+
+Max new tokens
+53
+53
+63
+63
+
+Temperature
+1.0
+1.0
+1.0
+1.0
+
+Per-device batch size
+2
+2
+2
+2
+
+Gradient accumulation steps
+16
+16
+16
+16
+
+Number of GPUs
+8
+8
+8
+8
+
+Learning rate
+
+LR scheduler
+constant
+constant
+constant
+constant
+
+Clip range ratio
+0.2
+0.2
+0.2
+0.2
+
+KL coefficient
+0.01
+0.005
+0.1
+0.01
+
+SignCert-PO quantile
+
+bf16
+✓
+✓
+✓
+✓
+
+Table 6: Policy optimization hyperparameters (Dr.GRPO / SignCert-PO). For Pythia 1B and Qwen2.5 1.5B, the KL coefficient is selected via sweep over (c.f., Appendix F.3.3). For the RM epoch ablation (Appendix G.3), the KL coefficient is re-tuned per epoch.
+
+F.5 Other experimental details
+
+Certified radius validation (Figure 4).
+
+We test whether the certified sign-preservation radius (8), derived under a linear head perturbation assumption, predicts robustness under broader perturbation classes.
+We use a Pythia 1B SFT policy to generate completions (53 tokens each, temperature 0.7) for 500 prompts from the TL;DR validation split. The Pythia 1B proxy RM scores each completion and provides last-layer hidden states . For the gold RM we use Skywork-Reward-Llama-3.1-8B-v0.2, the one used for RM training. Groups with reward standard deviation below are filtered.
+We consider three settings beyond the analytically tractable head-only case.
+Whole-model perturbation: for each parameter tensor , we add with and draw 10 samples.
+Input embedding perturbation: isotropic Gaussian noise is added to the embedding layer output before the transformer backbone, with and 10 samples.
+Gold RM agreement: we compare the advantage signs of the proxy and gold RMs without any perturbation.
+Completions are binned into 10 quantile groups (deciles) by . For each bin we report the mean sign-preservation rate or gold agreement rate with 95% confidence intervals.
+
+Appendix G Additional results
+
+G.1 Additional comparison with baselines
+
+Stronger KL penalty.
+
+Figure 5 sweeps the KL coefficient for Dr.GRPO on Pythia 1B, with the SignCert-PO trajectory. Increasing does constrain the policy to lower KL regions, but this trades off exploration for safety.
+SignCert-PO reaches the highest peak gold reward at a moderate KL budget.
+We argue that the KL penalty controls how far the policy moves from the reference distribution, uniformly penalizing all deviations. On the other hand, SignCert-PO controls which directions the policy moves, selectively suppressing updates where the RM is unreliable.
+
+Figure 5: Increasing constrains the policy to lower KL regions but trades off exploration for safety. KL coefficient sweep for Dr.GRPO on Pythia 1B and TL;DR with the SignCert-PO trajectory.
+
+UWO with same-size RMs.
+
+Method
+RM size
+Win rate
+
+UWO ()
+410M
+
+UWO ()
+1B
+5.9
+
+SignCert-PO
+1B
+
+Table 7: UWO RM size ablation on TL;DR (Pythia 1B).
+
+In our experiments (Table 1), we followed Zhang et al. (2024) and use smaller individual RMs for UWO to control total capacity (Appendix F.3.3). As an ablation, we train an ensemble of three Pythia 1B RMs with different random seeds and run UWO under the same setting on TL;DR with the Pythia 1B policy. As shown in Table 7, increasing the individual RM size does not improve UWO.
+
+G.2 Proxy RM accuracy during training
+
+Figure 6 compares the proxy RM accuracy trajectory during policy optimization for Pythia 1B and 2.8B on TL;DR. Although their performance is comparable initially, the Pythia-1B proxy RM degrades substantially faster than the 2.8B proxy RM, confirming that smaller proxy RMs lose their accuracy more rapidly during policy optimization.
+
+Figure 6: Smaller proxy RMs lose accuracy faster during policy optimization. Proxy RM accuracy over training steps for Pythia 1B and 2.8B on TL;DR. For Pythia 1B, mean over three seeds is shown with individual seed traces.
+
+G.3 Ablation on quantile threshold and the amount of preference data
+
+Figure 7 shows the trade-off between KL divergence and RM accuracy across quantile hyperparameters for Pythia 1B on TL;DR. Higher quantile thresholds effectively constrain the policy to the regions where the proxy RM maintains higher accuracy. We note that SignCert-PO consistently achieves higher RM accuracy than Dr.GRPO at the same KL budget, suggesting its distinction from the KL penalty parameter.
+
+Figure 7: The quantile parameter provides a tunable indicator of RM accuracy. Proxy RM accuracy vs. KL divergence for Dr.GRPO and SignCert-PO with varying on TL;DR (Pythia 1B). Thin lines show individual seeds and thick lines show the mean. Higher maintains RM accuracy.
+
+Tables 8–9 report the average proxy RM accuracy over training for varying preference-data epochs and quantile thresholds. SignCert-PO consistently maintains higher proxy RM accuracy than Dr.GRPO across all settings, with the improvement most pronounced when the proxy RM is weak. We note that training a proxy RM with the preference data generated for 10–20 epochs can lead to overfitting, as we saw in §4.2. With approximately 123K preference pairs in the TL;DR dataset, 10 epochs corresponds to roughly 1.23M training samples, exceeding the 1–3 epochs typical in the literature (Ouyang et al., 2022; Stiennon et al., 2020). We include these settings as ablations.
+
+RM Epochs
+GRPO
+SignCert-PO
+
+1
+52.890.22%
+60.620.54%
+60.250.41%
+62.040.20%
+62.090.92%
+62.800.54%
+64.630.15%
+
+5
+58.26%
+56.97%
+59.23%
+60.82%
+61.66%
+64.77%
+65.15%
+
+10
+57.32%
+58.14%
+60.47%
+62.20%
+61.08%
+64.93%
+65.32%
+
+20
+59.82%
+61.28%
+63.76%
+62.53%
+62.61%
+69.18%
+67.21%
+
+Table 8: Pythia-1B: average proxy RM accuracy (%) over training. Higher is better.
+
+RM Epochs
+GRPO
+SignCert-PO
+
+1
+65.820.88%
+67.090.78%
+68.780.80%
+69.190.56%
+69.320.33%
+71.040.22%
+71.720.70%
+
+5
+66.94%
+67.05%
+68.84%
+68.55%
+68.25%
+70.54%
+73.28%
+
+10
+68.22%
+68.48%
+69.99%
+69.83%
+71.86%
+71.11%
+75.94%
+
+20
+69.51%
+67.95%
+69.30%
+71.22%
+71.32%
+71.96%
+74.31%
+
+Table 9: Qwen2.5-1.5B: average proxy RM accuracy (%) over training. Higher is better.
+
+Tables 10–11 present the full quantile sweep on TL;DR. The optimal quantile threshold depends on the proxy RM quality and policy architecture. Across both models, higher thresholds monotonically improve proxy RM accuracy (Tables 8–9) but can reduce win rate when the threshold is too aggressive, reflecting the exploration–exploitation trade-off in robust optimization.
+
+RM Epochs
+GRPO
+SignCert-PO
+
+1
+20.964.38%
+20.316.40%
+30.087.16%
+42.771.81%
+49.818.98%
+60.031.61%
+53.393.86%
+
+5
+63.28%
+50.98%
+52.54%
+67.58%
+67.97%
+66.41%
+49.61%
+
+10
+55.27%
+66.80%
+73.44%
+70.12%
+71.29%
+77.93%
+67.38%
+
+20
+64.06%
+53.32%
+56.06%
+48.24%
+47.27%
+42.97%
+49.22%
+
+Table 10: Pythia-1B: win rate (%) after 2,000 steps across quantile thresholds and RM epochs.
+
+RM Epochs
+GRPO
+SignCert-PO
+
+1
+66.863.13%
+66.011.92%
+65.111.27%
+64.060.70%
+63.741.07%
+60.091.27%
+53.581.30%
+
+5
+94.53%
+94.92%
+95.90%
+95.51%
+92.58%
+94.34%
+90.43%
+
+10
+94.34%
+95.70%
+94.92%
+95.51%
+94.53%
+90.43%
+91.21%
+
+20
+95.31%
+96.09%
+94.53%
+96.09%
+94.34%
+96.88%
+94.92%
+
+Table 11: Qwen2.5-1.5B: win rate (%) after 500 steps across quantile thresholds and RM epochs.
+
+G.4 Sample outputs
+
+Tables 12–13 show example outputs by models trained with different methods. On TL;DR with Pythia-1B (1-epoch proxy RM), SignCert-PO produced the response with the highest gold reward (GR) in 326 out of 512 evaluation prompts. On AlpacaFarm with Qwen2.5-1.5B, SignCert-PO achieved the highest GR in 210 out of 512 prompts.
+
+Content
+
+GR
+
+SUBREDDIT: r/relationships
+
+TITLE: Me [17 M] with a girl [16 F] who I don’t know how to let down.
+
+POST: There is a backstory behind this so let me give it to everyone straight. I’m 17 M never dated anyone before. I have made posts prior to this one based around my issues with being able to date. My biggest issue is that once a girl peeks my interest I pursue her until she develops the same feelings. Once I understand she is interested too I sort of back off. A friend of mine called me a “chaser” which is what I feel I am. Now I have this girl that I know, really sweet, really smart, talented, the whole thing. I found recently she has feelings for me and we talked a bit about it after I mentioned I was aware of them. When we talked I gave her the impression that I wanted to date her and that we should talk in person and hang out a big more to be dating. The only issue is my gut AGAIN like always is telling me I’m not interested even though I really want to be, I’m just not.
+
+–
+
+Reference: I don’t know how to let this girl down after already giving her the impression I wanted to date her. I feel absolutely terrible about it.
+
+Dr.GRPO: talks/ possible dates/ feelings for girl/ situation changed but am I worried about telling/ situation affecting date/ how to let down girlfriend/ options available/ outcome. Advice please but worried about telling/ situation affecting date/ outcome.
+
+AdvPO: communication/dating situation, possibility of dating but am not sure if to let down friend/ possible date/ talk in person/ hang out/ possible outcome. Do I tell friend or risk hurting friendship? worried about outcome. worried about outcome
+
+UWO: Don’t know how to let her down. Help. Help. Help help help. help help. help help. help. not sure how to best approach help help help. not sure how to best approach help. not sure how to tell. not sure how to
+
+BSPO: I’m 17 M never dated before, have feelings for girl, want to date her, but not sure if I’m interested or not. not sure how to let her down. any advice or suggestions would be appreciated. any thoughts or comments would be appreciated. any
+
+SignCert-PO (Ours): dating/potential relationship, girl has feelings for me, I give impression I want to date but gut tells me I’m not interested. Am I overthinking this? Advice on letting down? Am worried about hurting relationship? Help!
+
+Table 12: Example output by a Pythia-1B model trained with different methods on the TL;DR task. SignCert-PO produces a coherent summary comparable to the reference. GR denotes gold reward.
+
+Content
+
+GR
+
+Generate a list of the seven most iconic locations in Colorado.
+
+–
+
+Reference: 1. Garden of the Gods – Colorado Springs
+
+2. Maroon Bells – Aspen
+
+3. Mesa Verde National Park – Montezuma
+
+4. Royal Gorge Bridge – Cañon City
+
+5. Red Rocks Amphitheater – Denver
+
+6. Pikes Peak – Colorado Springs
+
+7. Rocky Mountain National Park – Estes Park
+
+Dr.GRPO: The seven most iconic locations in Colorado are: Rocky Mountain National Park, Denver, Colorado, Pikes Peak, Colorado, Colorado Springs, Colorado, and the Great Sand Dunes National Park. Explanation: These locations are iconic because they are known for their natural beauty, adventure, and history. They are also popular tourist destinations and have a lot of cultural and historical significance. They are also easily accessible and offer a variety of activities and experiences. Finally, they are all located in Colorado and are a great way to experience the state.
+
+AdvPO: The seven most iconic locations in Colorado are: Rocky Mountain National Park, Denver, Colorado Springs, Pikes Peak, Colorado Springs, Colorado Springs. These locations are all known for their natural beauty and are popular tourist destinations. They are also home to many famous landmarks and attractions.
+
+UWO: The seven most iconic locations in Colorado are: 1. Rocky Mountains 2. Grand Canyon 3. Mesa Verde 4. Garden of the Gods 5. Pikes Peak 6. Rocky Mountain National Park 7. Denver. These locations are iconic because they are beautiful, unique and have a rich history. They are also popular tourist destinations and have a significant impact on the state’s economy. Therefore, they are considered to be the most iconic locations in Colorado.
+
+BSPO: The seven most iconic locations in Colorado are: Rocky Mountain National Park, Denver, Colorado, Denver International Airport, Denver, Colorado, Denver, Colorado, Denver, Colorado.
+
+SignCert-PO (Ours): 1. Rocky Mountains 2. Denver 3. Colorado Springs 4. Pikes Peak 5. Garden of the Gods 6. Mesa Verde 7. Telluride
+
+Table 13: Example output by a Qwen2.5 1.5B model trained with different methods on the AlpacaFarm task. SignCert-PO produces a concise list comparable to the reference.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

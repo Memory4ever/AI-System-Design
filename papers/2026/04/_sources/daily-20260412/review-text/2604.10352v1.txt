@@ -1,0 +1,1795 @@
+ClawVM: Harness-Managed Virtual Memory for Stateful Tool-Using LLM Agents
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background and Motivation
+
+3 Design
+
+Pages as the unit of residency.
+
+Multi-resolution residency.
+
+Fault model.
+
+Selection policy.
+
+Replay oracle.
+
+Validated writeback protocol.
+
+4 Implementation
+
+5 Evaluation
+
+Setup.
+
+Workloads.
+
+Baselines.
+
+5.1 RQ1: Fault Elimination
+
+Takeaway.
+
+5.2 RQ2: Feature Necessity
+
+LRU baseline.
+
+Weight sensitivity.
+
+Takeaway.
+
+5.3 RQ3: Generalization and Cost
+
+Live hook validation.
+
+Takeaway.
+
+Threats to validity.
+
+6 Related Work
+
+OS abstractions and transactional agents.
+
+Agent memory systems.
+
+Benchmarks.
+
+7 Limitations
+
+Semantic correctness is out of scope.
+
+Replay assumes simulatable tools.
+
+External validity.
+
+8 Conclusion
+
+Artifact availability.
+
+References
+
+A Design Details
+
+Utility scoring.
+
+Thrash index.
+
+Writeback protocol details.
+
+Non-destructiveness rule.
+
+B Supplementary Results
+
+Real-trace validation and scaling.
+
+Live hook validation.
+
+License: CC BY 4.0
+
+arXiv:2604.10352v1 [cs.AI] 11 Apr 2026
+
+ClawVM: Harness-Managed Virtual Memory for Stateful Tool-Using LLM Agents
+
+Conference: Sixth European Workshop on Machine Learning and Systems; April 27–30, 2026; Edinburgh, Scotland UkSixth European Workshop on Machine Learning and Systems (EuroMLSys ’26), April 27–30, 2026, Edinburgh, Scotland UkDOI: 10.1145/3805621.3807648ISBN: 979-8-4007-2605-7/2026/04CCS: Software and its engineering Virtual memoryCCS: Computer systems organization ReliabilityCCS: Computing methodologies Intelligent agents
+
+Mofasshara Rafique
+
+Affiliation: Independent Researcher, Switzerland
+
+email: mofasshara@hotmail.com
+
+and
+Laurent Bindschaedler
+
+Affiliation: Max Planck Institute for Software Systems, Saarbrücken, Saarland, Germany
+
+email: bindsch@mpi-sws.org
+
+© cc
+
+Abstract.
+
+Stateful tool-using LLM agents treat the context window as working memory, yet today’s agent harnesses manage residency and durability as best-effort, causing recurring failures: lost state after compaction, bypassed flushes on reset, and destructive writeback.
+We present ClawVM, a virtual memory layer that manages state as typed pages with minimum-fidelity invariants, multi-resolution representations under a token budget, and validated writeback at every lifecycle boundary.
+Because the harness already assembles prompts, mediates tools, and observes lifecycle events, it is the natural enforcement point; placing the contract there makes residency and durability deterministic and auditable.
+Across synthetic workloads, 12 real-session traces, and adversarial stress tests, ClawVM eliminates all policy-controllable faults whenever the minimum-fidelity set fits within the token budget, confirmed by an offline oracle, and adds median  50 s of policy-engine overhead per turn.
+
+Keywords: stateful tool-using agents, context management, persistent memory, agent harness, virtual memory, openclaw
+††cc-license: by
+
+1. Introduction
+
+General-purpose tool-using large language model (LLM) agents, persistent assistants that manage email, calendars, smart-home devices, messaging, web automation, and dozens of other services, now run for hours or days, accumulating state across hundreds of tool calls and multiple sessions.
+OpenClaw (OpenClaw, 2026c) and its derivatives (NanoClaw (Qwibit.ai, 2026), PicoClaw (Sipeed, 2026), ZeroClaw (ZeroClaw Labs, 2026)) are the most prominent examples; coding agents such as Claude Code, Codex CLI, and Cursor represent a narrower but equally demanding subclass.
+These stateful tool-using agents maintain durable state across sessions and operate over extended durations that span multiple context windows.
+
+For these agents, the model context window is scarce working memory: it must hold constraints, the active plan, recent dialogue, and tool outputs needed for correct action, while transcripts and artifacts reside in durable backing stores.
+Correct operation depends on having the needed state resident at the right time and fidelity.
+When the needed state is absent, or the correct state is silently discarded, agents repeat work, violate user preferences, and lose progress mid-plan.
+These are not rare edge cases: public issue trackers and practitioner reports document recurring rules and constraints lost after context summarization (mmartoccia, 2026; theghostybot, 2026; nickjlamb, 2026; haymourt, 2026), state silently dropped on session reset (AmbitiousRealism2025, 2026; NullSense, 2026; Moddy14, 2026; Limitless2023, 2026), and persistence operations that overwrite rather than merge (EmberCF, 2026).
+
+Modern agent harnesses such as OpenClaw provide building blocks: pruning, retrieval, compaction, pre-compaction memory flushes, and external memory plugins (OpenClaw, 2026c; OpenClaw, 2026a; OpenClaw, 2026d; Mem0, ; Cognee, ).
+These improve recall quality, but none provides an enforceable contract over residency, durability, or auditability.
+Practitioners have responded with configuration tweaks and add-on layers (OpenClaw, 2026b; Lütke, 2026; Mem0, ; Cognee, ; gavlaahh, 2026), yet flushes can still be bypassed, writeback can still be destructive, and no mechanism guarantees that critical state survives lifecycle transitions.
+Operating systems learned this lesson decades ago: when a runtime manages a fast, scarce tier alongside slow, durable storage, the answer is virtual memory, not best-effort heuristics.
+Prior work borrows the paging metaphor (Packer et al., 2023; Li et al., 2025), but no production harness enforces it.
+
+We present ClawVM, a harness-managed virtual memory layer that closes this gap (Figure 1).
+ClawVM manages agent state as typed pages that can be kept at full detail, compressed, reduced to structured fields, or shrunk to a pointer under token-budget pressure.
+Each page carries a minimum-fidelity invariant (how far it may degrade before reclaiming space), and the harness enforces these invariants at every lifecycle boundary through staged, validated writeback.
+When invariants are violated or state is lost, the system raises observable faults that make the failure diagnosable and replayable.
+
+Only the agent harness mediates between the model and its state.
+Structurally, it is an OS kernel for agent state: it controls what stays resident and when state becomes durable.
+Placing the memory contract here makes residency and durability explicit, deterministic, and replayable without retraining models or replacing retrieval backends.
+Multi-resolution representations prevent compaction from being all-or-nothing: pages degrade gracefully, preserving enough to reconstruct.
+Validated writeback prevents the destructive overwrites of today’s free-form flush prompts.
+Together, multi-resolution representations, validated writeback, and observable faults close three gaps that retrieval quality, compaction tuning, and external memory cannot: critical state must survive destruction, dirty state must be committed before it is lost, and recall failures must be diagnosable.
+
+We implement a ClawVM prototype with a harness integration layer and evaluate the policy and fault model on OpenClaw-derived workloads with deterministic replays, comparing against retrieval-only and practitioner-configured compaction+retrieval baselines (OpenClaw, 2026a; OpenClaw, 2026b; OpenClaw, 2026d).
+We also validate the hook integration in a live harness across lifecycle regressions, deterministic replay suites, and trace-derived replays from real coding-agent sessions, following the evaluation methodology of recent memory benchmarks (Cheng et al., 2026; Shen et al., 2026).
+
+Across four OpenClaw-derived workload families and six token-budget levels, ClawVM eliminates all policy-controllable faults (refetch, duplicate-tool, post-compaction bootstrap, and flush-miss) from 67.8 mean faults per workload-budget configuration (retrieval baseline) and 1.5 (practitioner-configured compaction+retrieval) to zero, and reduces paging instability by 77.4% and 11.4% respectively.
+An offline oracle with future knowledge of demand confirms zero remaining headroom: the online policy already achieves the optimum fault count.
+These results hold across all token budgets, 12 diverse real-session traces, and 30 task-level replays (100% success vs. 76.7% for the practitioner-configured baseline at the tightest budget), while adding median  50 s of policy-engine overhead per turn.
+
+This paper makes the following contributions:
+
+•
+
+A virtual memory contract for agent state: typed pages with minimum-fidelity invariants and multi-resolution representations under a token budget.
+
+•
+
+A fault model that makes memory-management decisions observable and replayable, with offline oracle analysis for tuning and regression.
+
+•
+
+A staged writeback protocol with deterministic, non-destructive commit at every lifecycle boundary.
+
+•
+
+A ClawVM prototype evaluated on synthetic, trace-derived, and adversarial workloads.
+
+2. Background and Motivation
+
+Stateful tool-using agents operate under a long-running control plane, the agent harness, that routes sessions, assembles each model call from conversational context and durable state, mediates tool invocation, and emits lifecycle events such as compaction, pruning, and reset (OpenClaw, 2026c; OpenClaw, 2026e).
+Because the harness manages both tiers, every prompt-assembly decision (what to include, at what fidelity, what to drop) is a page-replacement decision: the context window is physical memory, durable stores are disk.
+
+Figure 1. Architecture of a stateful tool-using agent with the ClawVM layer (shaded).
+The agent harness manages sessions, assembles prompts, mediates tools, and emits lifecycle events (compaction, pruning, flush, reset).
+ClawVM interposes at the harness level: the page table and representation selector feed prompt assembly, the fault observer instruments paging and lifecycle behavior, and the writeback journal enforces validated, non-destructive persistence at all lifecycle boundaries.
+The context window (right) shows how pages at varying fidelity levels fill the token budget.
+Letters mark failure points from field reports (Section 2): (a) post-compaction bootstrap loss, (b) flush miss on reset, (c) destructive writeback to durable stores.Architecture diagram showing the ClawVM layer within a stateful tool-using agent harness, with labeled failure points at lifecycle boundaries.
+
+Harnesses like OpenClaw provide practical building blocks: pruning low-value spans, retrieval via BM25 (term-frequency ranking) and vector search, compacting transcripts near the model’s limit, and inserting a pre-compaction flush turn that asks the model to externalize durable notes (OpenClaw, 2026c; OpenClaw, 2026a; OpenClaw, 2026d).
+External layers (Mem0, Cognee, QMD) add auto-capture, hybrid recall, and graph-backed retrieval (Mem0, ; Cognee, ; Lütke, 2026).
+These mechanisms improve recall but treat residency and durability as best-effort: nothing enforces what must stay resident, when state becomes durable, or how paging decisions can be audited.
+
+The consequences are concrete.
+Consider an agent 40 turns into a morning routine orchestrating email triage, calendar conflicts, and smart-home configuration, with loaded preferences (meeting priorities, lighting schedules, notification routing), a multi-step plan, and results from a dozen tool calls.
+Compaction fires: the summary preserves the high-level goal but drops the plan’s current step, routing rules, and evidence that conflicts were already resolved.
+The agent re-queries calendars it already inspected (duplicate tool calls), routes a notification to a deprioritized channel (bootstrap loss), and restarts from step 1 of a plan it had completed through step 5.
+On reset, 40 turns of accumulated decisions vanish; the runtime evicts dirty state without writing it back, and reload carries no guarantees.
+
+These failures are not isolated.
+Field reports document three recurring classes at lifecycle edges: residency failures (compaction drops directives and tool outputs (mmartoccia, 2026; theghostybot, 2026; nickjlamb, 2026; haymourt, 2026; These-Koala9672, 2026)), durability failures (flushes bypassed on reset, destructive overwrites (AmbitiousRealism2025, 2026; NullSense, 2026; Moddy14, 2026; Limitless2023, 2026; marcmeezy, 2026; EmberCF, 2026)), and observability failures (empty recall without reason codes (Skipper-Assistant-1968, 2026; Dowser, 2026)).
+Practitioners trace these to three root causes: capture is optional, recall is optional, and compaction is destructive (OpenClaw, 2026d; Yadav, 2026; robdih, 2026).
+
+Existing mitigations (tuned configs, external memory layers (OpenClaw, 2026b; Lütke, 2026; Mem0, ; Cognee, ; gavlaahh, 2026)) cannot create an enforceable contract: the harness controls prompt assembly, tool mediation, and lifecycle events, yet exercises that control without an enforceable contract.
+
+From these observations we derive six requirements, independent of model choice or retrieval backend:
+
+•
+
+Invariants survive destruction.
+The harness must restore instructions and constraints deterministically after compaction and reset.
+
+•
+
+Capture and recall are policy, not discretion.
+For designated state, the harness drives capture and recall instead of relying on the model to flush or search.
+
+•
+
+Durability is lifecycle-complete.
+The harness must commit dirty state at every boundary where the runtime would otherwise destroy the only copy.
+
+•
+
+Writeback is validated and non-destructive.
+Updates must pass deterministic checks and use append/merge semantics; destructive overwrites must be rejectable.
+
+•
+
+Recall is observable.
+The runtime must distinguish “no match,” “denied,” and “backend error” via reason codes.
+
+•
+
+Eviction is cost-aware.
+Eviction decisions must account for the cost of re-running tool calls.
+
+ClawVM is a harness-managed virtual memory layer that satisfies these six requirements.
+The next section describes its design: typed pages, multi-resolution representations, an observable fault model, and a validated writeback protocol.
+
+3. Design
+
+ClawVM addresses the six requirements from Section 2 through three enforced choices at the harness level.
+We first formalize the budget constraint, then describe each choice.
+
+We model the agent runtime as an event stream over sessions.
+Each event may trigger tool execution, memory lookup, and a model call.
+After reserving tokens for output, system prompts, tool schemas, and a safety margin, the remaining capacity is the token budget for paged state.
+At each call, the memory manager selects a resident set that satisfies minimum-fidelity invariants within this budget and commits dirty state at lifecycle boundaries.
+ClawVM makes three choices explicit and enforceable:
+(i) the unit of residency is typed pages,
+(ii) admissible degradations under budget pressure are multi-resolution representations, and
+(iii) lifecycle points at which state becomes durable use validated writeback.
+Together these yield deterministic prompt assembly, controlled degradation instead of lossy summarization, observable faults, and lifecycle-complete persistence.
+
+Pages as the unit of residency.
+
+ClawVM treats all assistant-relevant state as typed pages.
+A page is a typed record with a stable identifier, scope, provenance, and a minimum-fidelity invariant.
+Pages are the unit of selection, eviction, and writeback, turning best-effort prompting into enforceable behavior.
+Scope (session-private vs. project-shared) and provenance (originating tool call or transcript span) are first-class metadata, required for observability and safe writeback.
+Table 1 lists six page types that cover failure-prone state, each with a minimum representation level (the four levels are defined below): Bootstrap/Policy (system instructions and procedural directives, whose loss causes “forgot its protocol” failures), Constraint (hard-pinned, never degraded below structured), Plan (goal and current step while active), Preference (scoped, may degrade to pointer), Evidence (tool outputs with deterministically resolvable pointers), and Conversation Segment (span identifiers and timestamp ranges).
+
+Table 1. Page classes, minimum-fidelity invariants, scope rules, and degradation paths in ClawVM.
+
+Type
+
+Min. fidelity
+
+Scope
+
+Degradation path
+
+Bootstrap
+
+Struct. after compact, reset
+
+P/S
+
+FSt
+
+Constraint
+
+Hard-pinned at struct.
+
+S
+
+FSt
+
+Plan
+
+Goal + step
+
+S
+
+FStPt
+
+Preference
+
+Scope, prov.
+
+P
+
+FCStPt
+
+Evidence
+
+Ptr resolves det.
+
+S
+
+FCStPt
+
+Conversation
+
+Span ID + time
+
+S
+
+FCStPt
+
+F=full, C=compr., St=struct., Pt=ptr, P=proj., S=sess.
+
+Multi-resolution residency.
+
+Each page can be resident at one of four levels: full (verbatim excerpt), compressed (token-reduced text, e.g., LLMLingua-2 (Pan et al., 2024)), structured (typed fields sufficient to satisfy invariants), and pointer (a resolvable handle plus minimal metadata).
+Under pressure, pages degrade along this chain while preserving invariants: constraints never drop below structured, and evidence pointers must remain resolvable.
+Representations are generated at page creation time, not on demand under budget pressure: the harness extracts structured fields and computes token-reduced variants when a page is first ingested or updated.
+The representation selector then chooses among pre-existing variants, so budget-pressure decisions involve only table lookups and token arithmetic, not runtime LLM calls or compression passes.
+This prevents compaction from being all-or-nothing: structured and pointer representations preserve enough to reconstruct the full page on demand.
+
+Fault model.
+
+Unlike OS page faults, which the kernel resolves transparently from disk, agent faults are silent: without instrumentation the harness cannot detect missing state, and recovery means regeneration.
+ClawVM defines observable faults in two families, operationalizing the residency, durability, and observability failures from Section 2.
+Working-set faults capture missing state (residency failures): refetch faults (a tool result re-retrieved after eviction), duplicate tool faults (an equivalent tool call runs again because the result was evicted), pinned invariant misses (hard-pinned page missing at prompt assembly), and post-compaction bootstrap faults (required Bootstrap/Policy pages missing after compaction).
+Durability faults capture state lost at lifecycle boundaries (durability and observability failures): silent-recall faults (lookup returns empty when the backend actually denied access or errored) and flush-miss faults (dirty pages lost because the runtime destroyed the context before committing them).
+These are policy-controllable faults: a correct policy can prevent them.
+Physical insufficiency (token budget too small to fit all pinned pages) and semantic errors (model produces factually wrong updates) are outside policy control and evaluated separately.
+We also log duplicate-signature alerts when canonical tool signatures repeat despite a resident result; these are workload signals, not policy failures.
+We quantify instability with the thrash index: the ratio of paging events to hits over the run (Appendix A), adapting the classical thrashing ratio (Denning, 1968); high values signal a working-set/budget mismatch.
+
+Selection policy.
+
+Prompt assembly is a multi-choice knapsack with hard constraints.
+ClawVM uses a deterministic two-phase policy: Phase 1 installs all hard-pinned pages and minimum-required representations (surfacing invariant pressure if the minimum set cannot fit); Phase 2 applies greedy upgrades (pointerstructuredcompressedfull) by marginal utility per token until the budget is exhausted.
+Utility combines pin status, membership, recency, scope, and recompute cost, with deterministic tie-breaks (Appendix A).
+Listing 1 gives the full algorithm.
+
+Listing 1: Deterministic multi-resolution prompt assembly in ClawVM.
+
+⬇
+function assemblePrompt(session, candidates, budget):
+
+prompt <- fixedRegion(session)
+
+prompt <- prompt + minimumRequired(candidates)
+
+remaining <- budget - tokens(prompt)
+
+upgrades <- allRepresentationUpgrades(candidates)
+
+sort upgrades by (deltaUtility(u) / deltaTokens(u)) descending
+
+for u in upgrades:
+
+if deltaTokens(u) <= remaining and respectsInvariants(u) and noConflict(u):
+
+applyUpgrade(prompt, u)
+
+remaining <- remaining - deltaTokens(u)
+
+return prompt
+
+Replay oracle.
+
+To separate policy quality from budget insufficiency, ClawVM supports offline replay-oracle analysis: given a trace and the same budget, an oracle with bounded future knowledge picks representations that minimize faults.
+The oracle’s horizon is the number of future demand turns visible; denotes unbounded lookahead.
+The oracle gap (online minus oracle fault counts) measures headroom versus unavoidable workload pressure.
+
+Validated writeback protocol.
+
+ClawVM treats persistence as a three-phase lifecycle-aware transaction: structured staging (the harness requests only typed, append/merge/set-with-version updates at lifecycle boundaries), deterministic validation (each staged update is checked for schema correctness, provenance, scope, non-destructive semantics, and policy compliance), and scoped commit (validated updates commit via deterministic merge rules at logged commit points).
+Rejected updates remain in the journal with reason codes; full rules appear in Appendix A.
+
+4. Implementation
+
+We implement a ClawVM prototype in six Python modules (~1,​300 lines of non-comment code, zero external dependencies) targeting harnesses that expose session metadata, transcript logs, tool mediation, and lifecycle hooks (OpenClaw, 2026e).
+Six lifecycle hooks map to engine operations; state is persisted via JSON snapshots between invocations.
+Pluggable adapters normalize diverse sources (workspace files, transcript indexes, hybrid retrieval, QMD/Mem0/Cognee (Lütke, 2026; Mem0, ; Cognee, )) into ClawVM pages, keeping the contract retrieval-agnostic.
+The six modules are: SessionPageTable, RepresentationSelector, WritebackJournal, FaultObserver, DecisionTrace (append-only JSON-lines audit log), and ClawVMEngine.
+
+5. Evaluation
+
+Setup.
+
+All experiments drive the ClawVM engine directly over pre-generated workload specifications, bypassing the harness hook layer to isolate selection and fault-detection logic.
+Each workload defines pages (types, pin classes, token costs), per-turn demands, tool-call signatures, dirty-page sets, and lifecycle events; the engine runs the full per-turn pipeline and emits JSON-lines decision traces.
+Token budgets range from 120 to 500 in six steps; all runs are deterministic.
+Unless noted otherwise, aggregates average over 4 workloads 6 budgets configurations.
+Each RQ maps to the requirements from Section 2; fault types and workloads are chosen so every requirement is exercised.
+
+Workloads.
+
+Four synthetic families exercise different stress patterns: evidence-heavy (rotating tool signatures, periodic compaction), interruption-heavy (parallel tasks with compaction and reset), lifecycle torture (compaction every 3 turns, persistent dirty pages), and multi-session interference (2 concurrent sessions, interleaved compaction).
+Six lifecycle regression scenarios serve as a pass/fail gate (Table 3).
+
+Baselines.
+
+We compare five policies (Table 2): Retrieval (no caching or writeback), Retrieval+Cache (Retr.+Cache; adds artifact caching), Compaction-Hybrid (Comp-Hybrid; prefetch + writeback at compaction but not reset, recency upgrades (OpenClaw, 2026b)), ClawVM (full lifecycle completeness), and Oracle with horizon (3-turn lookahead).
+Comp-Hybrid represents best-case practitioner effort: its configuration (prefetch, compaction writeback, recency upgrades, pointer resolution) is distilled from OpenClaw documentation, community guides, and issue-tracker discussions (OpenClaw, 2026b; robdih, 2026; gavlaahh, 2026).
+A real operator would need to discover and maintain each of these knobs independently.
+Even so, Comp-Hybrid has structural gaps that no amount of configuration can close: it lacks reset writeback (dirty state lost on /new), hard auto-pinning (bootstrap pages unprotected), and utility-based upgrades (Table 2).
+No hyperparameter search was performed for any policy; all run under equal token budgets.
+
+Table 2. Policy configuration knobs (✓ = enabled, – = disabled).
+Pin: auto-pin bootstrap/constraint pages.
+Pref.: prefetch before demand.
+WB-C/WB-R: writeback at compaction/reset.
+Upgrade: Phase 2 scoring strategy (none, recency, utility, or oracle).
+Resolve: follow pointer handles to reconstruct evidence content.
+
+Policy
+Pin
+Pref.
+WB-C
+WB-R
+Upgrade
+Resolve
+
+Retrieval
+–
+–
+–
+–
+none
+–
+
+Retr.+Cache
+–
+–
+–
+–
+none
+✓
+
+Comp-Hybrid
+–
+✓
+✓
+–
+recency
+✓
+
+ClawVM
+✓
+✓
+✓
+✓
+utility
+✓
+
+Oracle ()
+✓
+✓
+✓
+✓
+oracle
+✓
+
+We organize the evaluation around three questions:
+
+RQ1
+
+How effectively does ClawVM eliminate policy-controllable faults?
+
+RQ2
+
+Which design features of ClawVM are necessary?
+
+RQ3
+
+Does ClawVM generalize beyond synthetic workloads, and at what cost?
+
+5.1. RQ1: Fault Elimination
+
+We run all five policies (Table 2) across 4 workloads and 6 token budgets (120–500), measuring explicit faults (refetch, duplicate-tool, bootstrap, flush-miss, silent-recall) and thrash (Section 3).
+Six Tier-1 regression scenarios (Table 3) serve as a pass/fail gate.
+
+Table 3. Tier-1 lifecycle regression scenarios and gate assertions.
+
+Scenario
+
+Assertion
+
+Post-compaction bootstrap
+
+Bootstrap fault observable after compaction
+
+Reset dirty-page flush miss
+
+Flush-miss fault at reset boundary
+
+Threshold jump race
+
+Flush-miss fault from skipped pre-compaction commit
+
+Silent recall visibility
+
+Silent-recall fault from deny/error with reason code
+
+Unsafe persistence rejection
+
+Writeback rejected with DESTRUCTIVE_OP reason
+
+Evidence churn duplicate tool
+
+Duplicate-tool fault from repeated equivalent call
+
+All six Tier-1 regression tests trigger the expected fault or rejection with the correct reason code, validating instrumentation and enforcement.
+Table 4 presents aggregate reductions across 24 configurations.
+Against Comp-Hybrid, ClawVM reduces explicit faults by 100% (1.5 mean to zero) and thrash by 11.4%.
+The 1.5 mean understates the gap: it averages over six budgets including loose ones (360–500) where all policies approach zero.
+At the tightest budget (120 tokens), Comp-Hybrid incurs 26 faults across 4 workloads, including 7 bootstrap and 5 flush-miss, while ClawVM produces zero.
+These are not tuning failures; they are structural: Comp-Hybrid lacks reset writeback and hard pinning, so no configuration change can prevent them.
+Against retrieval, mean explicit faults drop from 67.8 to zero; thrash drops by 77.4%.
+Residual thrash comes from duplicate-signature alerts (inherent tool-signature reuse, not policy failures).
+These fault classes map directly to field-reported symptoms: refetch and duplicate-tool faults produce redundant API calls (These-Koala9672, 2026), bootstrap faults cause the agent to “forget its protocol” (mmartoccia, 2026; theghostybot, 2026; nickjlamb, 2026; haymourt, 2026), and flush-miss faults mean decisions silently vanish on reset (AmbitiousRealism2025, 2026; NullSense, 2026; Moddy14, 2026; Limitless2023, 2026).
+Section 7 discusses the remaining semantic-correctness gap.
+
+Table 4. Aggregate reductions relative to baselines, averaged over 4 workloads 6 budgets (120–500 tokens).
+Explicit faults: policy-controllable events (refetch, duplicate-tool, bootstrap, flush-miss, silent-recall).
+Thrash: paging instability (faults + duplicate-signature alerts over hits); residual thrash at zero faults reflects workload repetition.
+
+Baseline
+Explicit
+%
+Thrash
+%
+
+Retrieval
+67.8
+100%
+3.993
+77.4%
+
+Retr.+Cache
+10.8
+100%
+1.642
+45.2%
+
+Comp-Hybrid
+1.5
+100%
+1.017
+11.4%
+
+ClawVM
+0.0
+—
+0.901
+—
+
+Oracle ()
+0.0
+0.0%
+0.901
+0.0%
+
+Takeaway.
+
+ClawVM eliminates all policy-controllable faults at every budget level, matching an offline oracle () on fault count.
+
+5.2. RQ2: Feature Necessity
+
+We assess which design features are necessary for fault elimination through subtractive and additive ablation.
+We remove one feature at a time from full ClawVM at budget 180 (the tightest non-trivial budget) and measure explicit faults summed across all 4 workloads.
+
+Table 6 presents the subtractive ablation results.
+Removing pointer resolution causes the most damage (126 faults across refetch and duplicate-tool), followed by writeback at compaction (20 flush-miss faults) and auto-pinning (9 bootstrap faults).
+Removing upgrade scoring or prefetch yields zero faults; other features compensate, demonstrating redundancy and no single point of failure.
+The additive ablation (Table 5) confirms: pointer resolution alone eliminates 84% of faults (27143), auto-pinning eliminates all bootstrap faults, and compaction writeback cuts flush-miss by 87%.
+
+Table 5. Additive ablation at budget 180: explicit faults when enabling one feature on the bare baseline. Summed across 4 workloads.
+Boot. = bootstrap, Flush = flush-miss, D+R = duplicate-tool + refetch.
+
+Variant
+Boot.
+Flush
+D+R
+Total
+
+baseline
+20
+23
+228
+271
+
++pin
+0
+23
+228
+251
+
++resolve
+20
+23
+0
+43
+
++WB-C
+20
+3
+228
+251
+
++WB-R
+20
+20
+228
+268
+
++upgrade
+7
+23
+42
+72
+
+ClawVM
+0
+0
+0
+0
+
+Table 6. Subtractive ablation at budget 180: explicit faults when removing one feature from full ClawVM. Summed across 4 workloads.
+Boot. = bootstrap, Flush = flush-miss, D+R = duplicate-tool + refetch.
+
+Variant
+Boot.
+Flush
+D+R
+Total
+
+ClawVM
+0
+0
+0
+0
+
+pin
+9
+0
+0
+9
+
+resolve
+0
+0
+126
+126
+
+WB-C
+0
+20
+0
+20
+
+WB-R
+0
+3
+0
+3
+
+upgrade
+0
+0
+0
+0
+
+prefetch
+0
+0
+0
+0
+
+LRU baseline.
+
+To test whether the utility-based knapsack is necessary or a simpler heuristic suffices, we add a least-recently-used (LRU) variant that keeps all structural features (auto-pinning, writeback, prefetch, pointer resolution) but replaces utility scoring with pure recency-ordered upgrades.
+Across all 4 workloads and budgets 120–300, LRU achieves zero explicit faults and identical thrash to ClawVM.
+This result reinforces the architectural claim: ClawVM’s fault elimination is robust by construction, guaranteed by the Phase 1 structural constraints (hard-pinning, lifecycle writeback, pointer resolution) regardless of the Phase 2 upgrade heuristic.
+Utility scoring operates in the quality regime above the fault-free floor, determining which pages are upgraded to higher-fidelity representations when budget permits.
+We retain utility scoring by design because LRU makes strictly worse upgrade decisions in predictable situations: it spends budget upgrading recently touched but cheap-to-recompute evidence over stale but expensive-to-recompute results, and downgrades infrequently accessed preferences to pointer even when their base utility is high.
+Under tight budgets with bursty access patterns, this means the model sees more pointers and fewer full representations for high-value state, degrading downstream output quality without triggering a fault.
+Utility scoring accounts for recompute cost, pin class, and scope, preferring upgrades with the highest marginal value per token.
+Evaluating this quality gap requires end-to-end task metrics with a live model, which we leave to future work; for the structural safety properties evaluated here, any reasonable upgrade heuristic suffices once the enforcement layer is in place.
+
+Weight sensitivity.
+
+We sweep each of the four utility scoring weights (pin boost hard , pin boost soft , recency , recompute cost ) independently across all 4 workloads at budget 180 (21 configurations, 84 runs).
+All configurations produce zero explicit faults and identical thrash (0.901).
+The weights are not brittle: any setting within the tested ranges achieves fault elimination, because the structural constraints prevent faults independent of upgrade ordering.
+Weights will differentiate policies in prompt-quality evaluations, where the fidelity mix of resident pages affects downstream model behavior.
+
+Takeaway.
+
+Pointer resolution, auto-pinning, and lifecycle writeback are the critical features; fault elimination is robust to the choice of upgrade heuristic and weight parameterization.
+Utility scoring provides a principled extension point for optimizing prompt quality above the fault-free floor.
+
+5.3. RQ3: Generalization and Cost
+
+We evaluate generalization and runtime cost using real-trace replay, task-granularity replay, adversarial stress tests, and overhead measurement.
+
+We validate on 12 trace-derived replay workloads from real Claude Code sessions spanning coding, research, DevOps, trading, ML ops, web scraping, long-form writing, email writing, and product design (100-turn truncations; Appendix B).
+Conversion is deterministic (tool signatures canonicalized by name and argument schema, dirty pages inferred from tool outputs, lifecycle events preserved from transcript metadata); no traces were used to tune policy parameters.
+ClawVM produces zero explicit faults across all 12 traces; Retrieval produces a median of 51 faults (range 49–77).
+Comp-Hybrid leaks exactly one flush-miss per trace—dirty state silently lost on every session because it lacks reset writeback.
+At 200 turns the pattern holds: zero faults for ClawVM, while retrieval-only faults scale to a median of 83 (range 71–109; Appendix Table 10).
+Sensitivity analysis (50–400 turns) confirms ClawVM maintains zero faults at all lengths, while retrieval-only faults grow near-linearly.
+
+To move beyond per-turn aggregates, we construct 30 synthetic task workloads across four categories (coding, debugging, writing, ops; 5–14 turns each) and replay them at budgets 180 and 300.
+A task “succeeds” if it completes with zero explicit faults (controlled replays, not live execution).
+This criterion is structural (schema violations, missing pages, lost commits), independent of model output quality; human inspection confirmed zero-fault runs preserved state needed for correct completion.
+Table 8 shows the results: ClawVM achieves 100% task success (zero explicit faults) at both budgets.
+Comp-Hybrid drops to 76.7% at budget 180; all 7 failures are bootstrap faults in debugging tasks where mid-task compaction evicts unprotected bootstrap pages (Table 7).
+At budget 300 the failures vanish—not because the policy improves, but because the larger budget avoids triggering compaction.
+This brittleness is the core issue: Comp-Hybrid’s success depends on having enough headroom to sidestep its structural gaps, and tighter budgets expose them.
+The identical thrash across all rows (1.36) is a workload floor: residual thrash at zero faults reflects inherent tool-signature repetition, not policy differences.
+
+Table 7. Task success by type and policy at two budgets. All 7 Comp-Hybrid failures are bootstrap faults in debugging tasks.
+
+Comp-Hybrid
+ClawVM
+
+Type
+
+180
+300
+180
+300
+
+coding
+9
+9/9
+9/9
+9/9
+9/9
+
+debugging
+8
+1/8
+8/8
+8/8
+8/8
+
+writing
+2
+2/2
+2/2
+2/2
+2/2
+
+ops
+11
+11/11
+11/11
+11/11
+11/11
+
+total
+30
+23/30
+30/30
+30/30
+30/30
+
+Table 8. Task-granularity replay: 30 synthetic tasks at two budgets.
+Success = zero explicit faults for the task.
+
+Policy
+Budget
+Success
+Faults
+Tok/task
+Thrash
+ (s)
+
+Comp-Hybrid
+180
+76.7%
+0.23
+1607
+1.36
+170
+
+Comp-Hybrid
+300
+100.0%
+0.00
+2649
+1.36
+164
+
+ClawVM
+180
+100.0%
+0.00
+1605
+1.36
+167
+
+ClawVM
+300
+100.0%
+0.00
+2639
+1.36
+166
+
+Live hook validation.
+
+Twenty single-session tasks against a production agent (Table 11) show 20/20 success for both policies with zero faults and comparable overhead (16.6 s vs. 16.9 s).
+The two policies tie because single-session tasks do not trigger the lifecycle boundaries (compaction, reset) where Comp-Hybrid’s structural gaps manifest.
+
+We stress-test ClawVM with three adversarial scenarios (Table 9):
+budget starvation (budget 40, three hard-pinned pages requiring 60 tokens total),
+extreme churn (50 unique evidence pages in 50 turns, budget 180), and
+cascade reset (9 resets in 30 turns with persistent dirty pages).
+Under churn and cascade resets, ClawVM achieves zero faults where Retrieval incurs up to 298 and Comp-Hybrid up to 9.
+Under starvation, all policies incur 10 identical pinned-invariant-miss faults: when the budget physically cannot fit all hard-pinned pages, no policy can help, and ClawVM surfaces this as a diagnosable failure rather than silent degradation.
+
+Table 9. Adversarial explicit faults by policy.
+Boot. = bootstrap, Pin = pinned-invariant-miss, Flush = flush-miss, D+R = duplicate-tool + refetch.
+
+Scenario
+Policy
+Boot.
+Pin
+Flush
+D+R
+Total
+
+starvation
+Retrieval
+0
+10
+0
+0
+10
+
+Comp-Hybrid
+0
+10
+0
+0
+10
+
+ClawVM
+0
+10
+0
+0
+10
+
+churn
+Retrieval
+9
+0
+9
+280
+298
+
+Comp-Hybrid
+9
+0
+0
+0
+9
+
+ClawVM
+0
+0
+0
+0
+0
+
+cascade
+Retrieval
+4
+0
+13
+60
+77
+
+Comp-Hybrid
+0
+0
+7
+0
+7
+
+ClawVM
+0
+0
+0
+0
+0
+
+The policy-engine decision procedure adds median 18–44 s per turn (60 s, worst-case 114 s), excluding model and tool latency, and  83 KB peak memory.
+
+Takeaway.
+
+ClawVM generalizes to real traces, task-level workloads, and adversarial scenarios with zero policy-controllable faults and negligible overhead.
+
+Threats to validity.
+
+Claims are scoped to structural lifecycle faults, not semantic correctness.
+Deterministic replay isolates policy behavior but not online effects (model nondeterminism, tool latency).
+
+6. Related Work
+
+ClawVM’s contribution is enforcement: critical state survives lifecycle transitions, dirty state is committed before destruction, and paging decisions are observable.
+
+OS abstractions and transactional agents.
+
+Several systems share overlapping abstractions but target different problems: AIOS (Mei et al., 2025) provides a multi-agent kernel with scheduling and context management; MemOS (Li et al., 2025) unifies representation and evolution across heterogeneous memory types; SagaLLM (Chang and Geng, 2025) adds Saga-style transaction guarantees; Text2Mem (Wang et al., 2025) defines a typed memory operation language with schema-level invariants; and Memory OS (Kang et al., 2025) uses OS-inspired hierarchical storage with segmented page organization.
+ClawVM composes enforcement primitives (lifecycle-complete commit, minimum-fidelity invariants, observable faults) into a contract at the harness level; it is a runtime layer that can wrap any of them.
+
+Agent memory systems.
+
+CoALA (Sumers et al., 2024) and Generative Agents (Park et al., 2023) define frameworks for what memory an agent should have; ClawVM addresses how the harness enforces that memory survives lifecycle transitions.
+MemGPT (Packer et al., 2023) is the closest predecessor, explicitly framing context management as OS-style virtual memory with model-driven paging.
+Memory-as-Action (Zhang et al., 2025) similarly lets the model drive paging decisions.
+A-MEM (Xu et al., 2025) takes a different approach, organizing long-term memory as a Zettelkasten-like network with dynamic note construction and linking rather than prompt-time paging.
+These systems improve adaptivity but leave residency and writeback to model discretion; ClawVM moves both to the harness with replayable enforcement.
+The two approaches are potentially composable: a MemGPT-style model could serve as the paging heuristic inside ClawVM’s enforcement layer, gaining lifecycle-complete writeback and observable faults while retaining adaptivity.
+LLMLingua-2 (Pan et al., 2024) compresses prompts, RAGCache (Jin et al., 2025) caches retrieval results, and production layers (Mem0 (Mem0, ), Cognee (Cognee, ), QMD (Lütke, 2026)) improve recall quality. All are orthogonal to enforcement and usable as ClawVM components.
+
+Benchmarks.
+
+AgentBench (Liu et al., 2024), WebArena (Zhou et al., 2024), and OSWorld (Xie et al., 2024) measure end-to-end task success but do not instrument paging or lifecycle failures.
+LoCoMo (Maharana et al., 2024), LongMemEval (Wu et al., 2025), AMemGym (Cheng et al., 2026), Mem2ActBench (Shen et al., 2026), and MemoryAgentBench (Hu et al., 2026) benchmark model memory ability across retrieval, learning, and forgetting.
+ClawVM evaluates enforcement at the runtime level: lifecycle faults, commit correctness, and replayable selection.
+
+7. Limitations
+
+We identify three limitations that bound the scope of our claims.
+
+Semantic correctness is out of scope.
+
+ClawVM validates schema, provenance, scope, and non-destructiveness, but does not verify the semantic truth of model-generated updates.
+A model can produce a well-formed, properly scoped update that is factually wrong.
+Semantic verification could be layered on via domain-specific validation predicates on the writeback journal.
+
+Replay assumes simulatable tools.
+
+The replay engine models tool calls by canonical signatures without executing real tools.
+Extending to non-deterministic services requires recording and replaying actual tool outputs, which the trace schema supports but the current prototype does not exercise.
+
+External validity.
+
+Results cover replayed demand streams, 12 converted real-session traces, 30 synthetic task-level workloads, and 20 live single-session tasks.
+The live experiment confirms hook correctness but exercises only single-session execution; cross-session lifecycle edges (compaction, reset) remain replay-validated only.
+Multi-session online deployment with user-visible task-success metrics is future work.
+
+8. Conclusion
+
+Recurring memory failures in stateful tool-using agents are symptoms of a missing contract between the harness and the state it manages.
+ClawVM provides the missing contract: typed pages, minimum-fidelity invariants, multi-resolution representations, and validated writeback at every lifecycle boundary.
+Across synthetic, real-trace, and adversarial workloads at all budget levels, ClawVM eliminates all policy-controllable faults with negligible overhead; an offline oracle confirms zero remaining headroom on fault count.
+Fault elimination is robust by construction: an LRU baseline with the same structural features achieves identical fault counts, and utility scoring weights are insensitive across wide ranges, confirming that safety comes from the enforcement layer rather than heuristic tuning.
+The fault model and replay oracle are independently useful for evaluating alternative policies.
+Future work includes end-to-end evaluation with live models, multi-session deployment, and extension to multi-agent orchestrators.
+
+Artifact availability.
+
+All source code, data, and scripts used in this paper are publicly available at https://github.com/mpi-dsg/clawvm.
+
+References
+
+AmbitiousRealism2025 (2026)
+AmbitiousRealism2025
+
+Bug: pre-compaction memory flush uses stale token counts, can be bypassed.
+
+Note: GitHub issue #5457, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+Chang and Geng (2025)
+E. Y. Chang and L. Geng
+
+SagaLLM: context management, validation, and transaction guarantees for multi-agent LLM planning.
+
+Proceedings of the VLDB Endowment 18 (12), pp. 4874–4886.
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+Cheng et al. (2026)
+J. Cheng, D. Ru, L. Qiu, Y. Li, X. Cao, Y. Song, and X. Cai
+
+AMemGym: interactive memory benchmarking for assistants in long-horizon conversations.
+
+In International Conference on Learning Representations (ICLR),
+
+Note: ICLR 2026 poster; published 2026-01-26; last modified 2026-02-11.
+
+External Links: Link
+
+Cited by: §1,
+§6.
+
+[4]
+Cognee
+
+OpenClaw.
+
+Note: Cognee documentation (integration guide)Cognee documentation page for the OpenClaw integration.
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§2,
+§4,
+§6.
+
+Denning (1968)
+P. J. Denning
+
+The working set model for program behavior.
+
+Communications of the ACM 11 (5), pp. 323–333.
+
+External Links: Document
+
+Cited by: §3.
+
+Dowser (2026)
+Dowser
+
+Feature request: pre-prompt memory injection hook (message:before event).
+
+Note: GitHub issue #11910, openclaw/openclawOpened 2026-02-08; closed as not planned. Request for automatic memory injection before prompt processing.
+
+External Links: Link
+
+Cited by: §2.
+
+EmberCF (2026)
+EmberCF
+
+[Bug] pre-compaction memory flush prompt causes agents to overwrite existing memory files.
+
+Note: GitHub issue #6877, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+gavlaahh (2026)
+gavlaahh
+
+Your agent forgets everything after compaction. here’s a fix (open source, $0.10/month).
+
+Note: Reddit post (r/openclaw)Posted 2026-02-13 (UTC).
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.
+
+haymourt (2026)
+haymourt
+
+OpenClaw “forgot” to run a protocol that we agreed it would.
+
+Note: Reddit post (r/AI_Agents)Posted 2026-02-06 (UTC).
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+Hu et al. (2026)
+Y. Hu, Y. Wang, and J. McAuley
+
+Evaluating memory in LLM agents via incremental multi-turn interactions.
+
+In Proceedings of the Fourteenth International Conference on Learning Representations (ICLR),
+
+Note: ICLR 2026.
+
+External Links: Link
+
+Cited by: §6.
+
+Jin et al. (2025)
+C. Jin, Z. Zhang, X. Jiang, F. Liu, S. Liu, X. Liu, and X. Jin
+
+RAGCache: efficient knowledge caching for retrieval-augmented generation.
+
+ACM Transactions on Computer Systems 44 (1), pp. 1–27.
+
+Note: Preprint available as arXiv:2404.12457.
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+Kang et al. (2025)
+J. Kang, M. Ji, Z. Zhao, and T. Bai
+
+Memory OS of AI agent.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 25961–25970.
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+Li et al. (2025)
+Z. Li, C. Xi, C. Li, D. Chen, B. Chen, S. Song, S. Niu, H. Wang, J. Yang, C. Tang, Q. Yu, J. Zhao, Y. Wang, P. Liu, Z. Lin, P. Wang, J. Huo, T. Chen, K. Chen, K. Li, Z. Tao, H. Lai, H. Wu, B. Tang, Z. Wang, Z. Fan, N. Zhang, L. Zhang, J. Yan, M. Yang, T. Xu, W. Xu, H. Chen, H. Wang, H. Yang, W. Zhang, Z. J. Xu, S. Chen, and F. Xiong
+
+MemOS: a memory OS for AI system.
+
+Note: Submitted 2025-07-04; last revised 2025-12-03 (v4).
+
+External Links: 2507.03724,
+Document,
+Link
+
+Cited by: §1,
+§6.
+
+Limitless2023 (2026)
+Limitless2023
+
+Fix(memory-flush): add softthresholdpercent for context-relative threshold.
+
+Note: GitHub pull request #17041, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+Liu et al. (2024)
+X. Liu, H. Yu, H. Zhang, Y. Xu, X. Lei, H. Lai, Y. Gu, H. Ding, K. Men, K. Yang, S. Zhang, X. Deng, A. Zeng, Z. Du, C. Zhang, S. Shen, T. Zhang, Y. Su, H. Sun, M. Huang, Y. Dong, and J. Tang
+
+AgentBench: evaluating LLMs as agents.
+
+In The Twelfth International Conference on Learning Representations,
+
+Note: Also available as arXiv:2308.03688.
+
+External Links: Link
+
+Cited by: §6.
+
+Lütke (2026)
+T. Lütke
+
+QMD - query markup documents.
+
+Note: GitHub repositoryLatest tagged release v1.0.7 dated 2026-02-18.
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§2,
+§4,
+§6.
+
+Maharana et al. (2024)
+A. Maharana, D. Lee, S. Tulyakov, M. Bansal, F. Barbieri, and Y. Fang
+
+Evaluating very long-term conversational memory of LLM agents.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+Bangkok, Thailand, pp. 13851–13870.
+
+Note: arXiv:2402.17753
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+marcmeezy (2026)
+marcmeezy
+
+Memory flush uses stale token count, fires after compaction instead of before.
+
+Note: GitHub issue #2397, openclaw/openclawOpened 2026-01-26; closed. Issue describes token-count accounting lag (using a prior total token count) causing the flush to occur after compaction rather than before.
+
+External Links: Link
+
+Cited by: §2.
+
+Mei et al. (2025)
+K. Mei, X. Zhu, W. Xu, M. Jin, W. Hua, Z. Li, S. Xu, R. Ye, Y. Ge, and Y. Zhang
+
+AIOS: LLM agent operating system.
+
+In Second Conference on Language Modeling (COLM 2025),
+
+Montreal, Canada.
+
+Note: Also available as arXiv:2403.16971.
+
+External Links: Link
+
+Cited by: §6.
+
+[20]
+Mem0
+
+OpenClaw.
+
+Note: Mem0 documentation (integration guide)Integration documentation; npm package: @mem0/openclaw-mem0.
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§2,
+§4,
+§6.
+
+mmartoccia (2026)
+mmartoccia
+
+Feature: workspace-aware post-compaction bootstrap to prevent amnesia.
+
+Note: GitHub issue #20225, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+Moddy14 (2026)
+Moddy14
+
+Memory flush softthresholdtokens doesn’t scale with context window size.
+
+Note: GitHub issue #17034, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+nickjlamb (2026)
+nickjlamb
+
+Feat: workspace-aware post-compaction context.
+
+Note: GitHub pull request #20267, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+NullSense (2026)
+NullSense
+
+[Feature]: memory flush on /new and /reset (pre-reset memory save).
+
+Note: GitHub issue #8185, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+OpenClaw (2026a)
+OpenClaw
+
+Compaction.
+
+Note: OpenClaw DocsAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§2.
+
+OpenClaw (2026b)
+OpenClaw
+
+Configuration reference.
+
+Note: OpenClaw Docs (Gateway & Ops)Accessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§2,
+§5.
+
+OpenClaw (2026c)
+OpenClaw
+
+Context.
+
+Note: OpenClaw DocsAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§2,
+§2.
+
+OpenClaw (2026d)
+OpenClaw
+
+Memory overview.
+
+Note: OpenClaw DocsAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§2,
+§2.
+
+OpenClaw (2026e)
+OpenClaw
+
+Session management deep dive.
+
+Note: OpenClaw Docs (Reference)Accessed 2026-02-25
+
+External Links: Link
+
+Cited by: §2,
+§4.
+
+Packer et al. (2023)
+C. Packer, S. Wooders, K. Lin, V. Fang, S. G. Patil, I. Stoica, and J. E. Gonzalez
+
+MemGPT: towards LLMs as operating systems.
+
+Note: arXiv:2310.08560; submitted 2023-10-12; last revised 2024-02-12 (v2).
+
+External Links: 2310.08560,
+Document,
+Link
+
+Cited by: §1,
+§6.
+
+Pan et al. (2024)
+Z. Pan, Q. Wu, H. Jiang, M. Xia, X. Luo, J. Zhang, Q. Lin, V. Rühle, Y. Yang, C. Lin, H. V. Zhao, L. Qiu, and D. Zhang
+
+LLMLingua-2: data distillation for efficient and faithful task-agnostic prompt compression.
+
+In Findings of the Association for Computational Linguistics: ACL 2024,
+
+Bangkok, Thailand, pp. 963–981.
+
+External Links: Document,
+Link
+
+Cited by: §3,
+§6.
+
+Park et al. (2023)
+J. S. Park, J. C. O’Brien, C. J. Cai, M. R. Morris, P. Liang, and M. S. Bernstein
+
+Generative agents: interactive simulacra of human behavior.
+
+In Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology (UIST ’23),
+
+pp. 2:1–2:22.
+
+Note: arXiv:2304.03442
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+Qwibit.ai (2026)
+Qwibit.ai
+
+NanoClaw.
+
+Note: GitHub repositoryAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1.
+
+robdih (2026)
+robdih
+
+OpenClaw best practices: what actually works after running it daily.
+
+Note: Reddit post (r/openclaw)Posted 2026-02-14 (UTC).
+
+External Links: Link
+
+Cited by: §2,
+§5.
+
+Shen et al. (2026)
+Y. Shen, K. Li, W. Zhou, and S. Hu
+
+Mem2ActBench: a benchmark for evaluating long-term memory utilization in task-oriented autonomous agents.
+
+Note: Submitted 2026-01-13.
+
+External Links: 2601.19935,
+Document,
+Link
+
+Cited by: §1,
+§6.
+
+Sipeed (2026)
+Sipeed
+
+PicoClaw.
+
+Note: GitHub repositoryAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1.
+
+Skipper-Assistant-1968 (2026)
+Skipper-Assistant-1968
+
+QMD memory_search silently returns empty in Discord guild channels (default scope denies chattype ’channel’).
+
+Note: GitHub issue #10191, openclaw/openclawOpened Feb 6, 2026; closed. Describes silent empty results when default scope denies chatType "channel".
+
+External Links: Link
+
+Cited by: §2.
+
+Sumers et al. (2024)
+T. R. Sumers, S. Yao, K. R. Narasimhan, and T. L. Griffiths
+
+Cognitive architectures for language agents.
+
+Transactions on Machine Learning Research.
+
+Note: Accepted by TMLR; published 2024-02-22; also available as arXiv:2309.02427.
+
+External Links: Link
+
+Cited by: §6.
+
+theghostybot (2026)
+theghostybot
+
+Feature: post-compaction system event injection for context continuity.
+
+Note: GitHub issue #10524, openclaw/openclawAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.1.
+
+These-Koala9672 (2026)
+These-Koala9672
+
+How i solved context loss in long-running Claude agent sessions (OpenClaw).
+
+Note: Reddit post (r/ClaudeAI)Posted 2026-02-12 (UTC).
+
+External Links: Link
+
+Cited by: §2,
+§5.1.
+
+Wang et al. (2025)
+Y. Wang, L. Yang, B. Chen, G. Zou, K. Xu, B. Tang, F. Xiong, S. Chen, and Z. Li
+
+Text2Mem: a unified memory operation language for memory operating system.
+
+Note: Submitted 2025-09-14; last revised 2025-10-23 (v2).
+
+External Links: 2509.11145,
+Document,
+Link
+
+Cited by: §6.
+
+Wu et al. (2025)
+D. Wu, H. Wang, W. Yu, Y. Zhang, K. Chang, and D. Yu
+
+LongMemEval: benchmarking chat assistants on long-term interactive memory.
+
+In Proceedings of the Thirteenth International Conference on Learning Representations (ICLR),
+
+Singapore.
+
+Note: Poster. Also available as arXiv:2410.10813.
+
+External Links: Link
+
+Cited by: §6.
+
+Xie et al. (2024)
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu
+
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments.
+
+In Advances in Neural Information Processing Systems,
+
+Note: NeurIPS 2024, Datasets and Benchmarks Track; also available as arXiv:2404.07972.
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+Xu et al. (2025)
+W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang
+
+A-Mem: agentic memory for LLM agents.
+
+In Advances in Neural Information Processing Systems,
+
+Note: NeurIPS 2025 poster. OpenReview: https://openreview.net/forum?id=FiM0M8gcct. Preprint: arXiv:2502.12110.
+
+External Links: Link
+
+Cited by: §6.
+
+Yadav (2026)
+D. Yadav
+
+We built persistent memory for OpenClaw (fka moltbot, clawdbot) AI agents.
+
+Note: Mem0 blog postPosted Feb 6, 2026.
+
+External Links: Link
+
+Cited by: §2.
+
+ZeroClaw Labs (2026)
+ZeroClaw Labs
+
+ZeroClaw.
+
+Note: GitHub repositoryAccessed 2026-02-25
+
+External Links: Link
+
+Cited by: §1.
+
+Zhang et al. (2025)
+Y. Zhang, J. Shu, Y. Ma, X. Lin, S. Wu, and J. Sang
+
+Memory as action: autonomous context curation for long-horizon agentic tasks.
+
+Note: Submitted 2025-10-14; last revised 2026-01-10 (v2).
+
+External Links: 2510.12635,
+Document,
+Link
+
+Cited by: §6.
+
+Zhou et al. (2024)
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig
+
+WebArena: a realistic web environment for building autonomous agents.
+
+In The Twelfth International Conference on Learning Representations,
+
+Note: Also available as arXiv:2307.13854.
+
+External Links: Link
+
+Cited by: §6.
+
+Appendix A Design Details
+
+This appendix collects formal definitions behind the design choices in Section 3, provided for reproducibility and implementation reference.
+
+Utility scoring.
+
+The greedy upgrade order in Listing 1 depends on a per-page utility function.
+For page , representation , and turn , the utility is:
+
+where , , are indicator functions for pin status, bootstrap/policy membership, and active-plan membership; is recency; is scope utility; and is recompute cost.
+Each candidate upgrade is ranked by , with deterministic tie-breaks by .
+In our experiments, the ClawVM score uses pin boost , recency weight , and recompute-cost weight ; the recency baseline uses . Oracle variants also weight each page by the number of future demands remaining in the trace.
+
+Thrash index.
+
+Section 3 defines the thrash index informally; the precise formulation is:
+
+where counts paging events (explicit faults plus duplicate-signature alerts) and counts hits over the entire run; prevents division by zero.
+Because duplicate-signature alerts reflect inherent workload repetition (re-issued tool signatures when the result is already resident), thrash can be non-zero even when all policy-controllable faults are eliminated.
+
+Writeback protocol details.
+
+Section 3 summarizes the three-phase writeback protocol; this appendix provides the full specification.
+
+Phase 1 (structured staging): at eviction/downgrade boundaries or lifecycle hooks (flush/reset/compaction), the harness requests structured updates only: tuples of (field, op, value, scope, evidence_ref) where ops are append/merge/set-with-version. These are appended to a WritebackJournal but not yet applied.
+
+Phase 2 (deterministic validation): each staged update is checked against five invariants: (1) schema correctness (field exists, types check, size limits hold), (2) provenance (evidence_ref resolves; dangling provenance rejected), (3) scope (requested scope allowed for the active principal/session), (4) non-destructive semantics (no overwrite of previously committed content), and (5) policy/safety (no violation of hard-pinned constraints).
+Rejected updates remain in the journal with reason codes (e.g., SCOPE_DENIED, DESTRUCTIVE_OP).
+
+Phase 3 (scoped commit): validated updates commit into the appropriate scoped store using deterministic merge rules at explicit, logged commit points.
+
+Non-destructiveness rule.
+
+For each staged update targeting key , ClawVM checks the journal’s last committed version .
+Append/merge operations are valid only if they preserve prior committed entries for .
+Set-with-version is valid only when the staged version equals ; otherwise the update is rejected as DESTRUCTIVE_OP.
+
+Appendix B Supplementary Results
+
+This appendix provides supplementary evaluation tables behind the claims in Section 5.
+
+Real-trace validation and scaling.
+
+To test generalization beyond synthetic workloads, we converted 12 diverse real Claude Code session transcripts (coding, research, DevOps, trading, ML ops, web scraping, long-form writing, email writing, product design) into replay workloads.
+Table 10 shows aggregate fault counts at 100 and 200 turns, demonstrating how each policy scales with session length.
+ClawVM maintains zero explicit faults at both lengths.
+Comp-Hybrid leaks exactly one flush-miss per trace at 100 turns; at 200 turns the flush-miss no longer appears in the median, though the structural gap (missing reset writeback) remains.
+Retrieval-only faults grow near-linearly, from a median of 51 at 100 turns to 83 at 200 turns.
+
+Table 10. Aggregate explicit faults across 12 real traces at two session lengths (budget 300). Median and range reported.
+
+Policy
+Turns
+Median (range)
+Thrash
+
+Retrieval
+100
+51 (49–77)
+0.677
+
+Retrieval
+200
+83 (71–109)
+0.527
+
+Comp-Hybrid
+100
+1 (1–1)
+0.047
+
+Comp-Hybrid
+200
+0 (0–0)
+0.029
+
+ClawVM
+100
+0 (0–0)
+0.032
+
+ClawVM
+200
+0 (0–0)
+0.032
+
+Live hook validation.
+
+Table 11 summarizes the live single-session validation.
+
+Table 11. Live hook validation: 20 single-session tasks with a production agent. Both policies achieve identical success with comparable overhead.
+
+Policy
+Success
+Faults
+Mean time (s)
+
+Comp-Hybrid
+20/20
+0
+16.9
+
+ClawVM
+20/20
+0
+16.6
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

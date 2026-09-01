@@ -47,6 +47,9 @@ Base checkpoint 与 full-parameter SFT。SFT 在高质量 demonstration 足够�
 - 同一 base 上的 SFT、LoRA、DPO、PPO-like、GRPO-like checkpoints 与统一 evaluation reports。
 - Algorithm state inventory，供 Lab 09 分析分布式成本。
 
+L20 环境的可执行材料、数据契约、OpenRLHF stage 配置和 Kubernetes Job 模板见
+[L20 Post-training Learning Suite](l20-rl-suite/README.md)。该目录当前是 E0 实验准备，不代表 GPU run 已完成。
+
 ## Invariants
 
 - 所有分支从可追溯的同一 base 和 split 出发。
@@ -85,4 +88,3 @@ value/trajectory state；GRPO 移除显式 value model，却依赖 group composi
 
 向 Lab 09 交付各分支的 parameter/gradient/optimizer/rollout/reference/verifier state inventory；下一步研究这些状态
 怎样跨设备分片、同步和恢复。
-

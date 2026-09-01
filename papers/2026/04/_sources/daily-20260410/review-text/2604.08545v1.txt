@@ -1,0 +1,1399 @@
+Act Wisely: Cultivating Meta-Cognitive Tool Use in Agentic Multimodal Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Works
+
+2.1 Multimodal Large Language Models.
+
+2.2 Agentic Multimodal Models.
+
+3 Method
+
+3.1 Problem Formulation & The Reward Coupling Problem
+
+3.2 HDPO: Hierarchical Decoupled Policy Optimization
+
+3.2.1 Dual Reward Design and Decoupled Advantages
+
+3.2.2 Hierarchical Policy Update
+
+3.2.3 Algorithm Summary & The Implicit Curriculum
+
+3.3 Training Data Curation
+
+3.3.1 SFT Data Curation
+
+3.3.2 RL Data Curation
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Training Datasets.
+
+Implementation Details.
+
+Baselines.
+
+Benchmarks.
+
+4.2 Main Results
+
+Perception and Document Understanding.
+
+Mathematical and Logical Reasoning.
+
+4.3 Ablation Studies
+
+Effectiveness of Decoupled Optimization.
+
+Sensitivity to Efficiency Loss Weight.
+
+4.4 Meta-Cognitive Tool Arbitration
+
+5 Conclusion
+
+References
+
+A System Prompt
+
+B Additional Case Studies
+
+Direct Reasoning without Tool Invocation.
+
+Selective Search Tool Invocation.
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.08545v1 [cs.CV] 09 Apr 2026
+
+Act Wisely: Cultivating Meta-Cognitive Tool Use in Agentic Multimodal Models
+
+Shilin Yan
+
+Affiliation: Corresponding Author
+
+  
+Jintao Tong
+
+Affiliation: Accio Team, Alibaba Group  
+
+  
+Hongwei Xue
+
+  
+Xiaojun Tang
+
+Affiliation: Accio Team, Alibaba Group  
+
+  
+Yangyang Wang
+
+Affiliation: Accio Team, Alibaba Group  
+
+  
+Kunyu Shi
+
+Affiliation: Accio Team, Alibaba Group  
+
+  
+Guannan Zhang
+
+Affiliation: Accio Team, Alibaba Group  
+
+  
+Ruixuan Li
+
+Affiliation: Huazhong University of Science and Technology
+
+Affiliation: Corresponding Author
+
+  
+Yixiong Zou
+
+Affiliation: Huazhong University of Science and Technology
+
+Affiliation: Corresponding Author
+
+  
+†Project Leader
+
+Abstract
+
+The advent of agentic multimodal models has empowered systems to actively interact with external environments. However, current agents suffer from a profound meta-cognitive deficit: they struggle to arbitrate between leveraging internal knowledge and querying external utilities. Consequently, they frequently fall prey to blind tool invocation, resorting to reflexive tool execution even when queries are resolvable from the raw visual context. This pathological behavior precipitates severe latency bottlenecks and injects extraneous noise that derails sound reasoning. Existing reinforcement learning protocols attempt to mitigate this via a scalarized reward that penalizes tool usage. Yet, this coupled formulation creates an irreconcilable optimization dilemma: an aggressive penalty suppresses essential tool use, whereas a mild penalty is entirely subsumed by the variance of the accuracy reward during advantage normalization, rendering it impotent against tool overuse. To transcend this bottleneck, we propose HDPO, a framework that reframes tool efficiency from a competing scalar objective to a strictly conditional one. By eschewing reward scalarization, HDPO maintains two orthogonal optimization channels: an accuracy channel that maximizes task correctness, and an efficiency channel that enforces execution economy exclusively within accurate trajectories via conditional advantage estimation. This decoupled architecture naturally induces a cognitive curriculum—compelling the agent to first master task resolution before refining its self-reliance. Extensive evaluations demonstrate that our resulting model, Metis, reduces tool invocations by orders of magnitude (e.g., from 98% to 2%) while simultaneously elevating reasoning accuracy. By shattering the illusion that heavy tool reliance equates to better performance, Metis pioneers a shift from merely executing tools to cultivating the meta-cognitive wisdom of abstention.
+
+\coloremojicode
+
+1F310 Project Page: https://Accio-Lab.github.io/Metis
+
+Github Repo: https://github.com/Accio-Lab/Metis
+
+\coloremojicode
+
+1F917 HuggingFace: https://huggingface.co/Accio-Lab/Metis-8B-RL
+
+  
+
+∗Equal contribution. This work was done during Jintao Tong’s internship at the Accio Team, Alibaba Group.
+
+1 Introduction
+
+“The art of being wise is the art of knowing what to overlook.”
+
+— William James
+
+Figure 1: Comparison of tool-use efficiency and task performance. Existing methods rely heavily on tool calls, reflecting limited efficiency awareness. In contrast, our method uses tools far more selectively while achieving the best overall performance, showing that strong accuracy and high efficiency can be attained simultaneously.
+
+The evolution of multimodal large language models (MLLMs) (Liu et al., 2023; Hurst et al., 2024; Liu et al., 2024; Bai et al., 2025b; Wang et al., 2025d; Bai et al., 2025a; Comanici et al., 2025; Google, 2026) into autonomous, agentic systems has catalyzed a new paradigm in complex visual reasoning. By interleaving internal cognitive processes with active environmental interactions Wang et al. (2025c); Zhang et al. (2025b); Zheng et al. (2025), these multimodal agents can dynamically acquire fine-grained visual evidence, execute intermediate computations, and transcend the inherent limitations of static parametric knowledge. This approach has yielded substantial progress across diverse domains, including visual question answering, document understanding, and multi-step decision making Qiao et al. (2025a); Wang et al. (2024b); Yue et al. (2024).
+
+Despite these expanded capabilities, current agents suffer from a profound meta-cognitive deficit: they struggle to dynamically arbitrate between leveraging internal parametric knowledge and querying external utilities. Discerning the genuine necessity of a tool requires the agent to calibrate its own epistemic uncertainty against the sufficiency of the visual context—a sophisticated meta-cognitive skill notoriously difficult to instill via standard supervised fine-tuning. Without such calibration, state-of-the-art open-source agents Hong et al. (2025); Wu and Xie (2024); Zheng et al. (2025) frequently fall prey to blind tool invocation, resorting to reflexive tool execution even when queries are intrinsically resolvable from the raw visual input. As empirically demonstrated in Figure 1, existing models exhibit a stark imbalance: they incur exorbitant tool invocation rates (frequently exceeding 80% to 90%), yet fail to translate this computational expenditure into superior reasoning performance. This pathological behavior is highly detrimental. Prevailing reinforcement learning paradigms exhibit a myopic focus on task completion, engendering latency-agnostic optimization. In real-world agentic deployments, the solution space for a given query encompasses a multitude of valid trajectories. Yet, owing to the serial bottleneck inherent in external API invocations, these trajectories diverge profoundly in their temporal footprint. Without explicit optimization for execution economy, models inevitably degenerate into functionally competent but practically sluggish systems. Furthermore, redundant tool interactions inject extraneous environmental noise that frequently derails otherwise sound reasoning trajectories and degrades final performance.
+
+Figure 2: Comparison between coupled-reward optimization and HDPO. Existing methods entangle accuracy and efficiency into a single reward signal, while HDPO decouples them into separate branches and combines them only at the final loss, enabling more strategic tool use.
+
+A prevalent mitigation strategy is to penalize excessive tool usage during reinforcement learning (RL). However, as illustrated in Figure 2(top), existing protocols Song et al. (2025); Wang et al. (2025a) typically scalarize task accuracy and tool efficiency into a singular reward formulation. This coupled design precipitates an irreconcilable optimization dilemma. An aggressive efficiency penalty renders the model overly conservative, suppressing essential tool use on arduous tasks and thereby sacrificing correctness. Conversely, a mild penalty is entirely subsumed by the variance of the accuracy reward during advantage normalization (e.g., in GRPO). For instance, an inaccurate trajectory with zero tool calls might yield a mixed reward mathematically indistinguishable from an accurate trajectory with excessive tool usage, severely confounding the policy gradient. Consequently, the efficiency signal is effectively “washed out,” rendering the penalty impotent against tool overuse on simpler tasks. A scalarized reward is thus fundamentally inadequate for fostering the instance-dependent, strategic arbitration required for intelligent tool use.
+
+To transcend this bottleneck, we propose Hierarchical Decoupled Policy Optimization (HDPO), an RL framework that reframes tool efficiency from a competing scalar objective to a strictly conditional one. As shown in Figure 2(bottom), HDPO eschews the mixed reward. Instead, it maintains an accuracy channel that globally maximizes task correctness across all rollouts, and an efficiency channel that enforces tool parsimony exclusively within accurate trajectories via a novel conditional advantage mechanism. By decoupling these objectives until the final loss computation, HDPO eliminates gradient interference and establishes a natural cognitive curriculum: compelling the agent to first master task resolution before refining its self-reliance. Crucially, recognizing that strategic RL requires a high-fidelity environment, we complement HDPO with a rigorous data curation pipeline to eradicate hallucinated environmental dynamics and isolate genuine tool necessity.
+
+Inspired by the principle of parsimony, we train a strategic multimodal reasoning agent, Metis, equipped with coding and searching tools. Rather than treating tool invocation as a default reflex, the agent learns to use tools only when they provide genuinely useful evidence or computation. As shown in Figure 1, our approach shatters the conventional reliance on heavy tool usage, achieving state-of-the-art accuracy with near-zero redundant tool invocations (e.g., 2% vs. 98% for standard GRPO). Our results demonstrate that strategic tool use and strong reasoning performance are not a trade-off; rather, eliminating noisy, redundant tool calls directly contributes to superior accuracy. More broadly, our work suggests a paradigm shift in tool-augmented learning: from merely teaching models how to execute tools, to cultivating the meta-cognitive wisdom of when to abstain from them. In summary, this work makes the following contributions:
+
+•
+
+Problem Formulation. We identify blind tool invocation as a critical pathological behavior in multimodal agents and expose the mathematical and semantic vulnerabilities of coupled-reward RL, demonstrating how efficiency signals are systematically subsumed by accuracy variance.
+
+•
+
+Algorithm. We propose HDPO, a framework that eschews reward scalarization to provide clean, orthogonal learning signals. By introducing a conditional advantage formulation, HDPO ensures that tool parsimony is optimized exclusively within accurate trajectories, compelling the agent to prioritize correctness before efficiency.
+
+•
+
+Model & Performance. We train Metis, a strategic multimodal agent that achieves state-of-the-art performance across diverse benchmarks. By reducing tool usage by over 90% while simultaneously elevating reasoning accuracy, our results empirically validate that true execution efficiency acts as a catalyst for, rather than a trade-off against, superior reasoning performance.
+
+2 Related Works
+
+2.1 Multimodal Large Language Models.
+
+Multimodal large language models (MLLMs) (Bai et al., 2025b; Liu et al., 2024; Wang et al., 2025d; Bai et al., 2025a; Yan et al., 2025) have achieved strong performance on a wide range of vision-language tasks by integrating visual encoders with large language models Bai et al. (2023); Liu et al. (2023). Early MLLMs mainly focus on direct answer generation for tasks such as visual question answering and image understanding Liu et al. (2024); Li et al. (2024a); Wang et al. (2024a). Inspired by the success of chain-of-thought in LLMs, recent MLLMs introduce explicit intermediate reasoning to handle more complex multimodal problems Kojima et al. (2022); Wei et al. (2022). These models generate step-by-step textual rationales before producing final answers, leading to improvements on complex multimodal reasoning tasks Tong et al. (2025b); Xu et al. (2025); Yu et al. (2025); Zhang et al. (2025a). More recently, several works explore latent visual reasoning Li et al. (2025); Tong et al. (2025a); Tong et al. (2026) by inserting continuous visual representations into the reasoning process, which further improves spatial reasoning ability Zhang et al. (2026).
+However, despite these advances, most existing MLLMs Liu et al. (2025); Shen et al. (2025a) remain passive in that they mainly interpret inputs and generate responses, without actively invoking external tools for retrieval or computation, which limits their reliability on challenging reasoning tasks.
+
+2.2 Agentic Multimodal Models.
+
+A growing line of research equips MLLMs with agentic capabilities, allowing them to invoke external tools and interact with the environment during inference rather than relying solely on one-shot prediction Yao et al. (2022); Zhang et al. (2025b); Zheng et al. (2025). In the multimodal setting, these tools often include visual operations such as cropping, grounding, image search and so on Jin et al. (2025); Wang et al. (2025c); Wu et al. (2025). Such agents have shown strong performance on challenging tasks that require detailed inspection, iterative evidence gathering, or intermediate computation, especially when the raw visual input alone is insufficient Su et al. (2025).
+
+Despite these advantages, agentic multimodal models also introduce a larger decision space. The model must not only reason about the task itself, but also decide whether to call a tool, which tool to use, and how to incorporate returned observations into subsequent reasoning. Existing work has largely emphasized stronger tool capabilities and better multi-step interaction Shen et al. (2025b); Zhao et al. (2025), with much less focus on tool-use efficiency. In practice, many open-source multimodal agents overuse tools whenever they are available, even when direct reasoning is sufficient. We term this failure mode blind tool-use reasoning, and study how to train multimodal agents to use tools more selectively.
+
+Figure 3: Overview of Metis. A strategic multimodal reasoning agent that selectively invokes code execution, text search, and image search tools during multi-turn reasoning. Rather than invoking tools by default, Metis adaptively determines when tool interactions provide genuinely useful evidence, and otherwise reasons directly from the available context to obtain the final answer.
+
+3 Method
+
+The overview of Metis is shown in Figure 3. We begin by formalizing the multi-turn tool-augmented reasoning setting and analyzing the inherent flaws of existing coupled reward formulations (§3.1). We then present the Hierarchical Decoupled Policy Optimization (HDPO) framework (§3.2), a method that eliminates cross-objective interference and naturally induces a learning curriculum.
+
+3.1 Problem Formulation & The Reward Coupling Problem
+
+Consider a multimodal language model with policy that answers visual reasoning queries by interleaving chain-of-thought reasoning with an external tool environment. Given a prompt, the model generates a group of multi-turn responses (for simplicity, we omit the prompt index in this subsection and focus on a single group), where each response contains tool interactions before yielding a final answer.
+
+To jointly encourage accurate answers and efficient tool use, a straightforward application of GRPO Shao et al. (2024) would define a scalarized, coupled reward for each response :
+
+(1)
+
+where captures correctness and formatting, rewards tool parsimony, and balances the two. This combined reward is then used to compute the advantage for policy optimization:
+
+(2)
+
+While seemingly straightforward, this scalarization introduces a critical vulnerability: the shared advantage normalization entangles the two objectives, leading to severe credit misassignment. Expanding the variance of the mixed reward via the linearity of variance yields:
+
+(3)
+
+where and denote the variances of the accuracy and tool rewards, respectively. Because correctness and tool use are inherently correlated, is generally non-zero. As a result, the two objectives become mathematically entangled, precipitating three concrete pathologies:
+
+Gradient Entanglement: The shared denominator inextricably links the policy gradients of the two objectives. The magnitude of the accuracy update becomes inversely proportional to the variance of the tool usage, and vice versa, causing destructive interference.
+
+Semantic Ambiguity: A correct-but-inefficient trajectory may yield a scalar reward mathematically indistinguishable from an incorrect-but-efficient one. This conflation produces near-zero advantages for both, effectively neutralizing the training signal for critical edge cases.
+
+Hyperparameter Fragility: The effective optimization trade-off is dictated not merely by , but by the highly dynamic, data-dependent covariance structure , rendering the hyperparameter notoriously unstable across diverse task distributions.
+
+When the trade-off hyperparameter is small, the efficiency signal is severely suppressed during advantage normalization. Specifically, let and denote the centered rewards (e.g., ). The mixed advantage expands to:
+
+(4)
+
+For sufficiently small , applying a first-order Taylor expansion reveals that the denominator is overwhelmingly dominated by the accuracy variance :
+
+(5)
+
+This derivation explicitly reveals that the gradient contribution from tool efficiency is not only bounded by , but also heavily attenuated by the typically large accuracy variance . As decreases to prevent accuracy degradation, the optimization signal for tool efficiency vanishes asymptotically. This mathematical reality explains why coupled-reward approaches fundamentally fail to curb blind tool invocation.
+
+3.2 HDPO: Hierarchical Decoupled Policy Optimization
+
+HDPO resolves the coupling problem by maintaining two independent optimization channels. Instead of combining rewards before normalization, we compute separate advantages for accuracy and efficiency, each grounded in its own semantic baseline.
+
+3.2.1 Dual Reward Design and Decoupled Advantages
+
+We define two orthogonal rewards and compute their group-relative advantages independently.
+
+Accuracy Channel. The accuracy reward evaluates the final response quality, comprising a correctness score and a format compliance bonus:
+
+(6)
+
+where is a binary correctness score from an LLM judge, indicates format compliance, and we set , . To optimize this objective, we apply the standard GRPO advantage estimation over all rollouts in the group:
+
+(7)
+
+where is a small constant to ensure numerical stability.
+
+Efficiency Channel. To counteract latency-agnostic behavior, the tool reward explicitly optimizes for execution economy (i.e., tool parsimony). However, to prevent the agent from gaming the reward function by prematurely terminating trajectories, this efficiency signal must be strictly conditioned on correctness. An incorrect rollout must never be rewarded for mere alacrity. Thus, we define:
+
+(8)
+
+where denotes the number of tool invocations in the -th rollout. This inverse penalty yields a monotonically decreasing reward as the number of tool calls increases (, , etc.), heavily penalizing redundant interactions while preserving a smooth preference structure.
+
+However, naïvely applying standard GRPO over all rollouts for would pull the group mean toward zero due to the presence of incorrect rollouts (which are assigned ). This artificially inflates the advantage of any correct rollout, regardless of its actual efficiency. To circumvent this, we employ a conditional advantage estimation mechanism. We define a qualifying set of indices corresponding exclusively to correct responses:
+
+(9)
+
+The tool efficiency advantage is then computed exclusively relative to other correct solutions:
+
+(10)
+
+When fewer than two rollouts are correct (), no meaningful within-group comparison of tool efficiency exists. In such cases, we assign zero advantage to prevent semantically invalid cross-prompt comparisons, thereby ensuring that the efficiency signal remains strictly grounded in intra-task relative performance.
+
+3.2.2 Hierarchical Policy Update
+
+With the advantages cleanly decoupled, we construct the final HDPO objective by linearly combining their respective clipped surrogate losses. Let denote the standard PPO-style clipped surrogate objective Schulman et al. (2017) for a given advantage . The joint policy gradient loss is formulated as:
+
+(11)
+
+Because and are normalized independently across distinct semantic baselines, the policy gradient decomposes cleanly. Each gradient component delivers a targeted, orthogonal learning signal for its respective objective, entirely eliminating the destructive covariance interference observed in Eq. 3. Crucially, this orthogonalization allows us to impose a meaningful efficiency penalty () without risking the catastrophic degradation of task accuracy that plagues coupled formulations.
+
+3.2.3 Algorithm Summary & The Implicit Curriculum
+
+Algorithm 1 summarizes the complete HDPO procedure. In each iteration, the policy samples multiple rollouts per prompt through interaction with the tool environment. It computes two orthogonal rewards: an accuracy reward for task correctness and a tool reward for execution efficiency. Next, it estimates using standard GRPO over all rollouts in each prompt group, while estimating exclusively over the qualifying set of correct rollouts. The policy is finally updated via the weighted sum of the two surrogate losses.
+
+A notable emergent property of this decoupled, conditional design is the induction of an implicit cognitive curriculum. Early in training, when the policy struggles with the task, the qualifying set is predominantly empty. Consequently, the optimization is naturally dominated by the accuracy objective, forcing the model to prioritize functional correctness. As the model’s reasoning capabilities mature, more rollouts qualify for the efficiency comparison (), smoothly scaling up the tool-parsimony signal. This dynamic elegantly enforces a two-phase developmental trajectory—first learn to be correct, then learn to be efficient—without necessitating any explicit, manual reward scheduling or hyperparameter annealing.
+
+Algorithm 1 HDPO: Hierarchical Decoupled Policy Optimization
+
+1:
+
+Policy , prompt set , rollouts per prompt , weights and , environment
+
+2:
+
+for each training iteration do
+
+3:
+
+  Rollout: For each , sample trajectories via multi-turn interaction with
+
+4:
+
+  Reward: Compute (Eq. 6) and (Eq. 8) for each rollout
+
+5:
+
+  Accuracy advantage: over all rollouts per group Eq. 7
+
+6:
+
+  Qualifying set: for each prompt Eq. 9
+
+7:
+
+  Tool advantage: Compute using Eq. 10 over the qualifying set
+
+8:
+
+  Update: Eq. 11
+
+9:
+
+end for
+
+3.3 Training Data Curation
+
+A mathematically rigorous RL framework requires an equally robust empirical foundation. While HDPO resolves the credit assignment problem during optimization, the policy’s ultimate behavior is bottlenecked by the semantic integrity of the behavioral priors (SFT) and the validity of the environmental feedback (RL). We identify pervasive pathologies in existing tool-augmented MLLM datasets—specifically, hallucinated environmental dynamics and obsolete tool dependencies—and propose a rigorous, meta-cognitive curation pipeline.
+
+3.3.1 SFT Data Curation
+
+Our SFT corpus is sourced from publicly available tool-augmented multimodal trajectories Hong et al. (2025); Qiao et al. (2025b); Zhang et al. (2025a); Zhang et al. (2025b). We identify and eradicate low-quality samples through three targeted mechanisms:
+
+Eradicating Hallucinated Environmental Dynamics. A pervasive flaw in existing SFT demonstrations is the presence of non-executable code (e.g., syntax errors, missing dependencies) coupled with hallucinated tool observations. In such corrupted trajectories, the environment either miraculously returns a correct output for broken code, or the agent blatantly ignores a runtime error and hallucinates the correct final answer. Training on these trajectories severely damages the model’s grounding, teaching it to exploit environmental loopholes rather than perform genuine reasoning. To rectify this, we rigorously execute all code segments within a sandboxed environment, strictly discarding any trajectory that exhibits execution failures or feedback inconsistencies.
+
+Isolating Genuine Tool Necessity. Many existing datasets were annotated using weaker baseline models that relied on external tools for relatively simple queries. As intrinsic model capabilities (e.g., internal parametric knowledge) advance, retaining these legacy annotations actively conditions the model to exhibit blind tool invocation. To enforce tool parsimony, we establish a zero-shot solvability baseline by evaluating the base model (Qwen3-VL-8B Bai et al. (2025a)) on candidate samples using direct reasoning (without tool access). Samples that are consistently solved correctly (pass@8 = 1) are aggressively filtered out, ensuring the SFT phase only demonstrates tool usage when strictly necessary.
+
+Multidimensional Meta-Cognitive Filtering. Beyond mere execution correctness, the semantic quality of the reasoning chain is paramount. We employ Gemini-3.1-Pro (Google, 2026) as an automated judge to evaluate trajectories across multiple fine-grained dimensions (e.g., visual relevance, reasoning coherence, and tool-use rationale). Crucially, the judge explicitly penalizes “blind tool invocation”—such as applying meaningless image rotations to an already clear image. Trajectories failing to meet stringent quality thresholds are discarded, ensuring the SFT corpus exclusively exemplifies strategic, meta-cognitive tool use.
+
+3.3.2 RL Data Curation
+
+For the RL stage, we curate a prompt set from multiple datasets Chng et al. (2025); Hong et al. (2025); Qiao et al. (2025b); Zhang et al. (2025b), covering diverse task types including mathematical reasoning, fine-grained visual understanding, and search-oriented tasks. We apply the following filtering criteria to guarantee a high-fidelity reward signal:
+
+Environmental Fidelity Verification. To ensure the RL environment provides a stable and meaningful optimization signal, we pass raw prompts through the multimodal judge to assess image quality, question clarity, and image-text consistency. Prompts with corrupted visual inputs or severe semantic ambiguity are excluded, preventing the policy from fitting to noise.
+
+Variance-Aware Difficulty Calibration. Prompts that are trivially easy (solved by all rollouts) or prohibitively hard (solved by none) yield zero-variance accuracy rewards, leading to degenerate advantage estimates in GRPO. We empirically sample rollouts per prompt and strictly retain only those exhibiting a non-trivial mix of successes and failures, guaranteeing a robust and actionable gradient signal for the policy update.
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Training Datasets.
+
+Our SFT corpus is sourced from publicly available tool-augmented multimodal trajectories, including DeepEyesV2 (Hong et al., 2025), V-Interaction (Qiao et al., 2025b), and Thyme (Zhang et al., 2025b). We rigorously apply the three-stage meta-cognitive curation pipeline detailed in §3.3.1: (i) eradicating hallucinated environmental dynamics, (ii) isolating genuine tool necessity by filtering out samples where the base model achieves under direct reasoning, and (iii) applying multidimensional meta-cognitive filtering. To preserve intrinsic reasoning capabilities, we additionally incorporate tool-free reasoning data from OpenMMReasoner (Zhang et al., 2025a). For the RL stage, we curate a prompt set from V-Interaction (Qiao et al., 2025b), Thyme (Zhang et al., 2025b), SenseNova-MARS (Chng et al., 2025), and DeepEyesV2 (Hong et al., 2025). We strictly retain only samples with to ensure a non-trivial, variance-aware training signal. The final RL training set comprises about 5K high-quality prompts covering diverse task types: perception-related data (45%), search-oriented data (36%), and mathematical/general reasoning tasks (19%).
+
+Implementation Details.
+
+We train Metis using Qwen3-VL-8B-Instruct (Bai et al., 2025a) as the backbone model. The training proceeds in two stages: supervised fine-tuning (SFT) for cold-start initialization, followed by reinforcement learning (RL) via HDPO. During SFT, we train for 2 epochs using the AdamW optimizer with a cosine learning rate decay, a peak learning rate of , and a global batch size of 128. During the RL stage, we optimize the policy using HDPO with a batch size of 128, sampling rollouts per prompt. The learning rate is set to , and the KL penalty coefficient is strictly set to 0 to encourage extensive exploration. The maximum response length is capped at 16,384 tokens to accommodate complex, multi-turn tool interactions. For the dual-channel optimization, we set the loss weights to and . And all experiments were performed on a server featuring 8 NVIDIA Blackwell B200 GPUs.
+
+Baselines.
+
+We compare Metis against three categories of strong baselines: (1) Open-source models without tool use, including LLaVA-OneVision (Li et al., 2024a), InternVL3-8B (Zhu et al., 2025), Qwen2.5-VL-7B/32B-Instruct (Bai et al., 2025b), and Qwen3-VL-8B-Instruct (Bai et al., 2025a); (2) Text-only reasoning models, including MM-Eureka (Meng et al., 2025), ThinkLite-VL (Wang et al., 2025f), VL-Rethinker (Wang et al., 2025b), and VLAA-Thinker (Chen et al., 2025); and (3) Agentic multimodal models, including Pixel-Reasoner (Wang et al., 2025c), DeepEyes (Zheng et al., 2025), Thyme (Zhang et al., 2025b), DeepEyesV2 (Hong et al., 2025), Mini-o3 (Lai et al., 2025), and Skywork-R1V4-30B-A3B (Zhang et al., 2025c).
+
+Benchmarks.
+
+We evaluate Metis across two broad groups of benchmarks covering complementary cognitive capabilities. Perception and Document Understanding: V*Bench (Wu and Xie, 2024), HRBench-4K/8K (Wang et al., 2025e), TreeBench (
+,
+), MME-RealWorld (Zhang et al., 2024b), SEEDBench2-Plus (Li et al., 2024b), and CharXiv (descriptive and reasoning questions) (Wang et al., 2024b). Mathematical and Logical Reasoning: MathVista (Lu et al., 2023), MathVerse (Zhang et al., 2024a), WeMath (Qiao et al., 2025a), DynaMath (Zou et al., 2024), and LogicVista (Xiao et al., 2024).
+
+Table 1: Performance comparison on visual perception and document understanding benchmarks. Metis consistently outperforms existing open-source agentic models, demonstrating that strategic tool use enhances performance on high-resolution and complex document tasks.
+
+Models
+Perception
+Document
+
+V* Bench
+HR4K
+HR8K
+TreeBench
+MME RealWorld
+SEED2 PLUS
+CharXiv(DQ)
+CharXiv(RQ)
+
+Open-Source Models
+
+LLaVA-OneVision (Li et al., 2024a)
+75.4
+63.0
+59.8
+37.3
+57.4
+65.4
+-
+-
+
+InternVL3-8B (Zhu et al., 2025)
+81.2
+70.0
+69.3
+38.8
+-
+69.7
+73.6
+37.6
+
+Qwen2.5-VL-7B-Instruct (Bai et al., 2025b)
+75.3
+65.5
+62.1
+37.0
+56.8
+70.4
+72.7
+40.2
+
+Qwen2.5-VL-32B-Instruct (Bai et al., 2025b)
+80.6
+69.3
+63.6
+42.5
+59.1
+72.4
+83.2
+48.0
+
+Qwen3-VL-8B-Instruct (Bai et al., 2025a)
+86.4
+78.9
+74.6
+40.7
+61.9
+71.0
+83.0
+46.3
+
+Agentic Multimodal Models
+
+Pixel-Reasoner (Wang et al., 2025c)
+84.3
+72.6
+66.1
+39.0
+64.4
+-
+-
+-
+
+DeepEyes (Zheng et al., 2025)
+83.3
+73.2
+69.5
+37.5
+64.1
+-
+-
+-
+
+Thyme (Zhang et al., 2025b)
+82.2
+77.0
+72.0
+-
+64.8
+-
+-
+-
+
+DeepEyesV2 (Hong et al., 2025)
+81.8
+77.9
+73.8
+42.5
+64.9
+70.5
+78.6
+48.9
+
+Mini o3 (Lai et al., 2025)
+88.2
+77.5
+73.3
+-
+65.5
+-
+-
+-
+
+SenseNova-MARS-8B (Chng et al., 2025)
+92.2
+83.1
+78.4
+-
+67.9
+-
+-
+-
+
+Skywork-R1V4-30B-A3B (Zhang et al., 2025c)
+88.0
+82.8
+79.8
+-
+71.4
+-
+-
+-
+
+Metis
+91.1
+83.5
+82.0
+45.2
+70.3
+72.5
+83.4
+54.1
+
+4.2 Main Results
+
+We present a comprehensive evaluation of Metis across perception, document understanding, and mathematical reasoning benchmarks. As shown in Table 1 and Table 2, Metis establishes new state-of-the-art or highly competitive performance across a wide range of metrics among open-source multimodal agents, demonstrating that strategic tool use directly translates to superior reasoning outcomes.
+
+Perception and Document Understanding.
+
+Table 1 details the performance on tasks requiring fine-grained visual inspection and document parsing. Metis achieves remarkable improvements over its strong backbone, Qwen3-VL-8B-Instruct. Notably, on high-resolution benchmarks like HRBench-4K and HRBench-8K, Metis attains 83.5% and 82.0% respectively, outperforming all existing agentic models including the 30B-parameter Skywork-R1V4. Furthermore, on the highly challenging CharXiv reasoning questions, Metis achieves 54.1%, significantly surpassing the previous best agentic model (DeepEyesV2 at 48.9%). This demonstrates that our meta-cognitive training enables the agent to effectively leverage image cropping and search tools to resolve visual ambiguities that stump standard models.
+
+Mathematical and Logical Reasoning.
+
+Table 2 highlights Metis’s capabilities on rigorous mathematical and logical reasoning benchmarks. Metis achieves an outstanding average score of 66.9% across five demanding datasets, substantially outperforming both text-only reasoning models and existing agentic multimodal models. Particularly striking is the performance on WeMath (65.2%), where Metis achieves a massive absolute improvement of +26.4% over its backbone (38.8%) and eclipses previous agents like DeepEyesV2 (38.1%). This substantial leap underscores the efficacy of HDPO: by eliminating gradient entanglement, the model learns to seamlessly interleave Python code execution for complex calculations without compromising its core logical reasoning chain.
+
+Table 2: Performance comparison on multimodal reasoning benchmarks. By decoupling the efficiency penalty, Metis effectively leverages code execution for complex calculations, achieving state-of-the-art accuracy across all evaluated datasets.
+
+Models
+MathVista
+MathVerse
+WeMath
+DynaMath
+LogicVista
+Avg.
+
+Open-source Models
+
+LLaVA-OneVision (Li et al., 2024a)
+58.6
+19.3
+20.9
+-
+33.3
+-
+
+Qwen-2.5-VL-7B-Instruct (Bai et al., 2025b)
+68.3
+45.6
+34.6
+53.3
+45.9
+49.5
+
+InternVL3-8B (Zhu et al., 2025)
+71.6
+39.8
+37.1
+-
+44.1
+-
+
+Qwen3-VL-8B-Instruct (Bai et al., 2025a)
+76.3
+61.3
+38.8
+65.5
+54.9
+59.4
+
+Text-only Reasoning Models
+
+MM-Eureka-7B (Meng et al., 2025)
+72.6
+50.3
+21.8
+-
+46.3
+-
+
+ThinkLite-VL-7B (Wang et al., 2025f)
+75.1
+52.1
+41.8
+-
+42.7
+-
+
+VL-Rethinker-7B (Wang et al., 2025b)
+74.9
+54.2
+36.3
+-
+42.7
+-
+
+VLAA-Thinker-7B (Chen et al., 2025)
+71.7
+-
+35.7
+-
+45.9
+-
+
+Agentic Multimodal Models
+
+DeepEyes (Zheng et al., 2025)
+70.1
+47.3
+38.9
+55.0
+47.7
+51.8
+
+Thyme (Zhang et al., 2025b)
+70.0
+-
+39.3
+-
+49.0
+-
+
+DeepEyesV2 (Hong et al., 2025)
+71.9
+52.7
+38.1
+57.2
+48.7
+53.7
+
+Metis
+78.0
+65.9
+65.2
+69.2
+56.2
+66.9
+
+4.3 Ablation Studies
+
+To systematically validate the contributions of our framework, we conduct ablation studies on a representative subset of benchmarks. Table 3 reports the performance under identical backbone and training data configurations. Note that setting gracefully degrades HDPO to standard GRPO, where only the accuracy objective is optimized.
+
+Effectiveness of Decoupled Optimization.
+
+Compared to the base model (Qwen3-VL-8B-Instruct), standard GRPO () yields noticeable improvements across all benchmarks, confirming the general benefits of RL fine-tuning. However, the introduction of our decoupled tool-efficiency objective (HDPO) unlocks substantially higher performance ceilings. Specifically, HDPO () achieves absolute gains of +2.4%, +2.8%, and +3.1% over standard GRPO on V* Bench, HRBench8K, and CharXiv (RQ), respectively. These results empirically validate our core hypothesis: task accuracy and tool efficiency are not inherently conflicting. By decoupling the two objectives and eliminating gradient entanglement, HDPO successfully suppresses noisy, redundant tool invocations, which in turn consistently elevates the final reasoning accuracy.
+
+Table 3: Ablation study on the optimization objective and efficiency weight. Setting reduces the optimization to standard GRPO (accuracy-only). HDPO consistently improves reasoning performance across all evaluated benchmarks, demonstrating that strategic tool parsimony acts as a catalyst for accuracy.
+
+Method
+V* Bench
+HRBench4K
+HRBench8K
+CharXiv(RQ)
+MathVista
+
+Qwen3-VL-8B-Instruct
+86.4
+78.9
+74.6
+46.3
+76.3
+
++ standard GRPO ()
+88.7
+81.0
+79.2
+51.0
+76.9
+
++ HDPO ()
+88.0
+83.5
+81.0
+52.7
+77.4
+
++ HDPO ()
+91.1
+83.5
+82.0
+54.1
+78.0
+
++ HDPO ()
+87.4
+82.5
+80.5
+51.5
+77.2
+
+Figure 4: Direct reasoning from visual context. The query can be resolved through visual understanding and prior knowledge alone. Metis abstains from tool invocation and answers directly, exemplifying the meta-cognitive restraint instilled by HDPO.
+
+Sensitivity to Efficiency Loss Weight.
+
+We further investigate the impact of the tool-efficiency weight . A conservative weight () provides clear improvements over standard GRPO but remains suboptimal compared to , suggesting that the efficiency signal is too weak to fully curb blind tool invocation. Conversely, an overly aggressive weight () precipitates performance degradation across all benchmarks. This indicates that overemphasizing tool parsimony forces the policy into a conservative regime, stifling necessary exploration and tool usage on arduous tasks. Overall, the performance exhibits a clear inverted-U trajectory, with striking the optimal meta-cognitive balance between self-reliance and external tool querying.
+
+Figure 5: Targeted code execution for fine-grained visual analysis. The question requires comparing curves in a specific subplot region that is difficult to resolve at the original image scale. Metis invokes code to crop and enlarge the relevant area, enabling precise identification of the curve behavior near the queried time step.
+
+4.4 Meta-Cognitive Tool Arbitration
+
+To complement the quantitative evaluation, we present representative cases that illustrate the meta-cognitive tool-use behavior cultivated by HDPO. Figure 4 shows a scenario where Metis resolves the query entirely through internal visual understanding and parametric knowledge, without resorting to any external tool. The agent directly infers the answer from the image content, exemplifying the core benefit of HDPO: by penalizing unnecessary tool invocations within the efficiency channel, the agent learns to trust its own capabilities for queries within its competence, thereby avoiding the latency overhead and noise injection of redundant tool calls.
+
+In contrast, Figure 5 presents a scenario where fine-grained visual analysis exceeds the model’s native resolution capabilities. Rather than guessing from the full image, Metis strategically invokes code execution to crop and enlarge the relevant subplot region, enabling precise inspection of overlapping curves and legend entries. This case highlights that Metis treats code execution not as a default fallback, but as a precision instrument deployed only when the visual evidence at the original resolution is genuinely ambiguous. Together, these two cases demonstrate that Metis has internalized a principled decision boundary: abstaining when internal knowledge suffices, and selectively engaging external tools only when genuinely necessary. Additional cases covering selective search tool invocation are provided in Appendix B.
+
+5 Conclusion
+
+In this work, we identify blind tool invocation as a critical failure mode in tool-augmented MLLMs and propose Hierarchical Decoupled Policy Optimization (HDPO) to address this meta-cognitive deficit. By decoupling task accuracy and tool efficiency into orthogonal channels via a conditional advantage mechanism, HDPO eliminates gradient entanglement and naturally induces a cognitive curriculum. Complemented by a rigorous data curation pipeline, our resulting agent, Metis, reduces tool invocations by orders of magnitude while achieving state-of-the-art reasoning performance. Future work will explore extending this meta-cognitive framework to more open-ended, long-horizon environments. Ultimately, Metis challenges the paradigm of latency-agnostic scaling, proving that true intelligence lies not merely in knowing how to interact with the world, but in possessing the meta-cognitive wisdom of when to abstain.
+
+References
+
+[1]
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang, et al. (2023)
+
+Qwen technical report.
+
+arXiv preprint arXiv:2309.16609.
+
+Cited by: §2.1.
+
+[2]
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, et al. (2025)
+
+Qwen3-vl technical report.
+
+arXiv preprint arXiv:2511.21631.
+
+Cited by: §1,
+§2.1,
+§3.3.1,
+§4.1,
+§4.1,
+Table 1,
+Table 2.
+
+[3]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al. (2025)
+
+Qwen2. 5-vl technical report.
+
+arXiv preprint arXiv:2502.13923.
+
+Cited by: §1,
+§2.1,
+§4.1,
+Table 1,
+Table 1,
+Table 2.
+
+[4]
+H. Chen, H. Tu, F. Wang, H. Liu, X. Tang, X. Du, Y. Zhou, and C. Xie (2025)
+
+Sft or rl? an early investigation into training r1-like reasoning large vision-language models.
+
+arXiv preprint arXiv:2504.11468.
+
+Cited by: §4.1,
+Table 2.
+
+[5]
+Y. X. Chng, T. Hu, W. Tong, X. Li, J. Chen, H. Yu, J. Lu, H. Guo, H. Deng, C. Xie, et al. (2025)
+
+SenseNova-mars: empowering multimodal agentic reasoning and search via reinforcement learning.
+
+arXiv preprint arXiv:2512.24330.
+
+Cited by: §3.3.2,
+§4.1,
+Table 1.
+
+[6]
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al. (2025)
+
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+
+arXiv preprint arXiv:2507.06261.
+
+Cited by: §1.
+
+[7]
+Google (2026)Gemini 3.1 pro: a smarter model for your most complex tasks(Website)
+
+Note: Accessed: 2026-02-19
+
+External Links: Link
+
+Cited by: §1,
+§3.3.1.
+
+[8]
+J. Hong, C. Zhao, C. Zhu, W. Lu, G. Xu, and X. Yu (2025)
+
+DeepEyesV2: toward agentic multimodal model.
+
+arXiv preprint arXiv:2511.05271.
+
+Cited by: §1,
+§3.3.1,
+§3.3.2,
+§4.1,
+§4.1,
+Table 1,
+Table 2.
+
+[9]
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, et al. (2024)
+
+Gpt-4o system card.
+
+arXiv preprint arXiv:2410.21276.
+
+Cited by: §1.
+
+[10]
+B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han (2025)
+
+Search-r1: training llms to reason and leverage search engines with reinforcement learning.
+
+arXiv preprint arXiv:2503.09516.
+
+Cited by: §2.2.
+
+[11]
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa (2022)
+
+Large language models are zero-shot reasoners.
+
+Advances in neural information processing systems 35, pp. 22199–22213.
+
+Cited by: §2.1.
+
+[12]
+X. Lai, J. Li, W. Li, T. Liu, T. Li, and H. Zhao (2025)
+
+Mini-o3: scaling up reasoning patterns and interaction turns for visual search.
+
+arXiv preprint arXiv:2509.07969.
+
+Cited by: §4.1,
+Table 1.
+
+[13]
+B. Li, X. Sun, J. Liu, Z. Wang, J. Wu, X. Yu, H. Chen, E. Barsoum, M. Chen, and Z. Liu (2025)
+
+Latent visual reasoning.
+
+arXiv preprint arXiv:2509.24251.
+
+Cited by: §2.1.
+
+[14]
+B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu, et al. (2024)
+
+Llava-onevision: easy visual task transfer.
+
+arXiv preprint arXiv:2408.03326.
+
+Cited by: §2.1,
+§4.1,
+Table 1,
+Table 2.
+
+[15]
+B. Li, Y. Ge, Y. Chen, Y. Ge, R. Zhang, and Y. Shan (2024)
+
+Seed-bench-2-plus: benchmarking multimodal large language models with text-rich visual comprehension.
+
+arXiv preprint arXiv:2404.16790.
+
+Cited by: §4.1.
+
+[16]
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee (2024)
+
+LLaVA-next: improved reasoning, ocr, and world knowledge.
+
+External Links: Link
+
+Cited by: §1,
+§2.1.
+
+[17]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee (2023)
+
+Visual instruction tuning.
+
+Advances in neural information processing systems 36, pp. 34892–34916.
+
+Cited by: §1,
+§2.1.
+
+[18]
+Z. Liu, Z. Sun, Y. Zang, X. Dong, Y. Cao, H. Duan, D. Lin, and J. Wang (2025)
+
+Visual-rft: visual reinforcement fine-tuning.
+
+arXiv preprint arXiv:2503.01785.
+
+Cited by: §2.1.
+
+[19]
+P. Lu, H. Bansal, T. Xia, J. Liu, C. Li, H. Hajishirzi, H. Cheng, K. Chang, M. Galley, and J. Gao (2023)
+
+Mathvista: evaluating mathematical reasoning of foundation models in visual contexts.
+
+arXiv preprint arXiv:2310.02255.
+
+Cited by: §4.1.
+
+[20]
+F. Meng, L. Du, Z. Liu, Z. Zhou, Q. Lu, D. Fu, B. Shi, W. Wang, J. He, K. Zhang, et al. (2025)
+
+Mm-eureka: exploring visual aha moment with rule-based large-scale reinforcement learning.
+
+CoRR.
+
+Cited by: §4.1,
+Table 2.
+
+[21]
+R. Qiao, Q. Tan, G. Dong, M. MinhuiWu, C. Sun, X. Song, J. Wang, Z. Gongque, S. Lei, Y. Zhang, et al. (2025)
+
+We-math: does your large multimodal model achieve human-like mathematical reasoning?.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 20023–20070.
+
+Cited by: §1,
+§4.1.
+
+[22]
+R. Qiao, Q. Tan, M. Yang, G. Dong, P. Yang, S. Lang, E. Wan, X. Wang, Y. Xu, L. Yang, et al. (2025)
+
+V-thinker: interactive thinking with images.
+
+arXiv preprint arXiv:2511.04460.
+
+Cited by: §3.3.1,
+§3.3.2,
+§4.1.
+
+[23]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov (2017)
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347.
+
+Cited by: §3.2.2.
+
+[24]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al. (2024)
+
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+
+arXiv preprint arXiv:2402.03300.
+
+Cited by: §3.1.
+
+[25]
+H. Shen, P. Liu, J. Li, C. Fang, Y. Ma, J. Liao, Q. Shen, Z. Zhang, K. Zhao, Q. Zhang, et al. (2025)
+
+Vlm-r1: a stable and generalizable r1-style large vision-language model.
+
+arXiv preprint arXiv:2504.07615.
+
+Cited by: §2.1.
+
+[26]
+H. Shen, K. Zhao, T. Zhao, R. Xu, Z. Zhang, M. Zhu, and J. Yin (2025)
+
+Zoomeye: enhancing multimodal llms with human-like zooming capabilities through tree-based image exploration.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 6613–6629.
+
+Cited by: §2.2.
+
+[27]
+Q. Song, H. Li, Y. Yu, H. Zhou, L. Yang, S. Bai, Q. She, Z. Huang, and Y. Zhao (2025)
+
+CodeDance: a dynamic tool-integrated mllm for executable visual reasoning.
+
+arXiv preprint arXiv:2512.17312.
+
+Cited by: §1.
+
+[28]
+Z. Su, P. Xia, H. Guo, Z. Liu, Y. Ma, X. Qu, J. Liu, Y. Li, K. Zeng, Z. Yang, et al. (2025)
+
+Thinking with images for multimodal reasoning: foundations, methods, and future frontiers.
+
+arXiv preprint arXiv:2506.23918.
+
+Cited by: §2.2.
+
+[29]
+J. Tong, J. Gu, Y. Lou, L. Fan, Y. Zou, Y. Wu, J. Ye, and R. Li (2025)
+
+Sketch-in-latents: eliciting unified reasoning in mllms.
+
+arXiv preprint arXiv:2512.16584.
+
+Cited by: §2.1.
+
+[30]
+J. Tong, S. Li, Z. Zhuang, J. Hu, and Y. Zou (2025)
+
+EmoSync: multi-stage reasoning with multimodal large language models for fine-grained emotion recognition.
+
+In Proceedings of the 3rd International Workshop on Multimodal and Responsible Affective Computing,
+
+pp. 95–99.
+
+Cited by: §2.1.
+
+[31]
+J. Tong, S. Yan, H. Xue, X. Tang, K. Shi, G. Zhang, R. Li, and Y. Zou (2026)
+
+SwimBird: eliciting switchable reasoning mode in hybrid autoregressive mllms.
+
+arXiv preprint arXiv:2602.06040.
+
+Cited by: §2.1.
+
+[32]
+C. Wang, K. Feng, D. Chen, Z. Wang, Z. Li, S. Gao, M. Meng, X. Zhou, M. Zhang, Y. Shang, et al. (2025)
+
+AdaTooler-v: adaptive tool-use for images and videos.
+
+arXiv preprint arXiv:2512.16918.
+
+Cited by: §1.
+
+[33]
+H. Wang, C. Qu, Z. Huang, W. Chu, F. Lin, and W. Chen (2025)
+
+Vl-rethinker: incentivizing self-reflection of vision-language models with reinforcement learning.
+
+arXiv preprint arXiv:2504.08837.
+
+Cited by: §4.1,
+Table 2.
+
+[34]
+H. Wang, A. Su, W. Ren, F. Lin, and W. Chen (2025)
+
+Pixel reasoner: incentivizing pixel-space reasoning with curiosity-driven reinforcement learning.
+
+arXiv preprint arXiv:2505.15966.
+
+Cited by: §1,
+§2.2,
+§4.1,
+Table 1.
+
+[35]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, et al. (2024)
+
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution.
+
+arXiv preprint arXiv:2409.12191.
+
+Cited by: §2.1.
+
+[36]
+W. Wang, Z. Gao, L. Gu, H. Pu, L. Cui, X. Wei, Z. Liu, L. Jing, S. Ye, J. Shao, et al. (2025)
+
+Internvl3. 5: advancing open-source multimodal models in versatility, reasoning, and efficiency.
+
+arXiv preprint arXiv:2508.18265.
+
+Cited by: §1,
+§2.1.
+
+[37]
+W. Wang, L. Ding, M. Zeng, X. Zhou, L. Shen, Y. Luo, W. Yu, and D. Tao (2025)
+
+Divide, conquer and combine: a training-free framework for high-resolution image perception in multimodal large language models.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Vol. 39, pp. 7907–7915.
+
+Cited by: §4.1.
+
+[38]
+X. Wang, Z. Yang, C. Feng, H. Lu, L. Li, C. Lin, K. Lin, F. Huang, and L. Wang (2025)
+
+Sota with less: mcts-guided sample selection for data-efficient visual reasoning self-improvement.
+
+arXiv preprint arXiv:2504.07934.
+
+Cited by: §4.1,
+Table 2.
+
+[39]
+Z. Wang, M. Xia, L. He, H. Chen, Y. Liu, R. Zhu, K. Liang, X. Wu, H. Liu, S. Malladi, et al. (2024)
+
+Charxiv: charting gaps in realistic chart understanding in multimodal llms.
+
+Advances in Neural Information Processing Systems 37, pp. 113569–113697.
+
+Cited by: §1,
+§4.1.
+
+[40]
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al. (2022)
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+Advances in neural information processing systems 35, pp. 24824–24837.
+
+Cited by: §2.1.
+
+[41]
+J. Wu, Z. Deng, W. Li, Y. Liu, B. You, B. Li, Z. Ma, and Z. Liu (2025)
+
+Mmsearch-r1: incentivizing lmms to search.
+
+arXiv preprint arXiv:2506.20670.
+
+Cited by: §2.2.
+
+[42]
+P. Wu and S. Xie (2024)
+
+V?: guided visual search as a core mechanism in multimodal llms.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 13084–13094.
+
+Cited by: §1,
+§4.1.
+
+[43]
+Y. Xiao, E. Sun, T. Liu, and W. Wang (2024)
+
+Logicvista: multimodal llm logical reasoning benchmark in visual contexts.
+
+arXiv preprint arXiv:2407.04973.
+
+Cited by: §4.1.
+
+[44]
+G. Xu, P. Jin, Z. Wu, H. Li, Y. Song, L. Sun, and L. Yuan (2025)
+
+Llava-cot: let vision language models reason step-by-step.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 2087–2098.
+
+Cited by: §2.1.
+
+[45]
+S. Yan, J. Han, J. Tsai, H. Xue, R. Fang, L. Hong, Z. Guo, and R. Zhang (2025)
+
+Crosslmm: decoupling long video sequences from lmms via dual cross-attention mechanisms.
+
+arXiv preprint arXiv:2505.17020.
+
+Cited by: §2.1.
+
+[46]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao (2022)
+
+React: synergizing reasoning and acting in language models.
+
+In The eleventh international conference on learning representations,
+
+Cited by: §2.2.
+
+[47]
+E. Yu, K. Lin, L. Zhao, J. Yin, Y. Wei, Y. Peng, H. Wei, J. Sun, C. Han, Z. Ge, et al. (2025)
+
+Perception-r1: pioneering perception policy with reinforcement learning.
+
+arXiv preprint arXiv:2504.07954.
+
+Cited by: §2.1.
+
+[48]
+X. Yue, Y. Ni, K. Zhang, T. Zheng, R. Liu, G. Zhang, S. Stevens, D. Jiang, W. Ren, Y. Sun, et al. (2024)
+
+Mmmu: a massive multi-discipline multimodal understanding and reasoning benchmark for expert agi.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 9556–9567.
+
+Cited by: §1.
+
+[49]
+K. Zhang, K. Wu, Z. Yang, B. Li, K. Hu, B. Wang, Z. Liu, X. Li, and L. Bing (2025)
+
+Openmmreasoner: pushing the frontiers for multimodal reasoning with an open and general recipe.
+
+arXiv preprint arXiv:2511.16334.
+
+Cited by: §2.1,
+§3.3.1,
+§4.1.
+
+[50]
+R. Zhang, D. Jiang, Y. Zhang, H. Lin, Z. Guo, P. Qiu, A. Zhou, P. Lu, K. Chang, Y. Qiao, et al. (2024)
+
+Mathverse: does your multi-modal llm truly see the diagrams in visual math problems?.
+
+In European Conference on Computer Vision,
+
+pp. 169–186.
+
+Cited by: §4.1.
+
+[51]
+Y. Zhang, X. Lu, S. Yin, C. Fu, W. Chen, X. Hu, B. Wen, K. Jiang, C. Liu, T. Zhang, et al. (2025)
+
+Thyme: think beyond images.
+
+arXiv preprint arXiv:2508.11630.
+
+Cited by: §1,
+§2.2,
+§3.3.1,
+§3.3.2,
+§4.1,
+§4.1,
+Table 1,
+Table 2.
+
+[52]
+Y. Zhang, H. Zhang, H. Tian, C. Fu, S. Zhang, J. Wu, F. Li, K. Wang, Q. Wen, Z. Zhang, et al. (2024)
+
+Mme-realworld: could your multimodal llm challenge high-resolution real-world scenarios that are difficult for humans?.
+
+arXiv preprint arXiv:2408.13257.
+
+Cited by: §4.1.
+
+[53]
+Y. Zhang, L. Hu, H. Sun, P. Wang, Y. Wei, S. Yin, J. Pei, W. Shen, P. Xia, Y. Peng, et al. (2025)
+
+Skywork-r1v4: toward agentic multimodal intelligence through interleaved thinking with images and deepresearch.
+
+arXiv preprint arXiv:2512.02395.
+
+Cited by: §4.1,
+Table 1.
+
+[54]
+Z. Zhang, Y. Wu, L. Jia, Y. Wang, Z. Zhang, Y. Li, B. Ran, F. Zhang, Z. Sun, Z. Yin, et al. (2026)
+
+Think3D: thinking with space for spatial reasoning.
+
+arXiv preprint arXiv:2601.13029.
+
+Cited by: §2.1.
+
+[55]
+S. Zhao, H. Zhang, S. Lin, M. Li, Q. Wu, K. Zhang, and C. Wei (2025)
+
+Pyvision: agentic vision with dynamic tooling.
+
+arXiv preprint arXiv:2507.07998.
+
+Cited by: §2.2.
+
+[56]
+Z. Zheng, M. Yang, J. Hong, C. Zhao, G. Xu, L. Yang, C. Shen, and X. Yu (2025)
+
+DeepEyes: incentivizing" thinking with images" via reinforcement learning.
+
+arXiv preprint arXiv:2505.14362.
+
+Cited by: §1,
+§1,
+§2.2,
+§4.1,
+Table 1,
+Table 2.
+
+[57]
+J. Zhu, W. Wang, Z. Chen, Z. Liu, S. Ye, L. Gu, H. Tian, Y. Duan, W. Su, J. Shao, et al. (2025)
+
+Internvl3: exploring advanced training and test-time recipes for open-source multimodal models.
+
+arXiv preprint arXiv:2504.10479.
+
+Cited by: §4.1,
+Table 1,
+Table 2.
+
+[58]
+C. Zou, X. Guo, R. Yang, J. Zhang, B. Hu, and H. Zhang (2024)
+
+Dynamath: a dynamic visual benchmark for evaluating mathematical reasoning robustness of vision language models.
+
+arXiv preprint arXiv:2411.00836.
+
+Cited by: §4.1.
+
+Appendix
+
+Appendix A System Prompt
+
+The system prompt is presented in Figure 6. It explicitly defines the available tool, its calling format, and the execution environment, so that the model clearly understands how and when external code execution can be used. In addition, the prompt provides decision guidelines that encourage the model to reason before acting, answer directly whenever possible, and call the tool only when it is genuinely necessary. The required output structure is also specified through dedicated <reason>, <tool_call>, and <answer> fields, which helps maintain consistent behavior and promotes efficient tool use.
+
+Figure 6: System prompt used for metis. The prompt defines the available tools, their invocation formats, and decision guidelines, encouraging the model to answer directly whenever possible and to invoke external tools only when they provide genuinely useful information.
+
+Appendix B Additional Case Studies
+
+We provide additional case studies to complement the qualitative analysis in §4.4. While the main text demonstrates direct reasoning (Figure 4) and targeted code execution (Figure 5), the cases below further illustrate Metis’s meta-cognitive capabilities across other decision modalities.
+
+Direct Reasoning without Tool Invocation.
+
+Figure 7 presents another scenario where Metis resolves the query entirely through direct visual inspection. The on-screen text is clearly legible from the raw image, and the agent correctly extracts the answer without invoking code execution or search tools. This further confirms that HDPO trains the agent to trust its own visual comprehension when the evidence is unambiguous.
+
+Figure 7: Direct reasoning from visual inspection. The on-screen text is clearly legible from the raw image. Metis correctly extracts the answer without invoking code execution or search tools, avoiding unnecessary computational overhead.
+
+Selective Search Tool Invocation.
+
+Figures 8 and 9 illustrate cases where the visual input alone is insufficient and external knowledge retrieval becomes genuinely necessary. In Figure 8, the agent cannot identify the depicted artwork from visual features alone, so it strategically invokes image search to gather external visual evidence and retrieve the completion year. In Figure 9, although the monument is visually recognizable, the queried factual detail (the width of its cella) lies beyond what can be inferred from the image, prompting the agent to invoke text search for precise retrieval. These cases demonstrate that Metis has learned to distinguish between visual recognition (which it can handle internally) and factual knowledge gaps (which require targeted external queries)—a nuanced calibration of epistemic uncertainty that reflects genuine meta-cognitive competence.
+
+Figure 8: Strategic image search for visual identification. The artwork cannot be reliably identified from visual features alone. Metis invokes image search to match the visual content against external references, then retrieves the completion year from the search results.
+
+Figure 9: Strategic text search for factual knowledge. While the monument is visually identifiable, the queried measurement (cella width) cannot be inferred from the image. Metis recognizes this epistemic gap and invokes text search to retrieve the precise factual information from external sources.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

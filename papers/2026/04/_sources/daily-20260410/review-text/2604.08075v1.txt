@@ -1,0 +1,1531 @@
+Dual-Pool Token-Budget Routing for Cost-Efficient and Reliable LLM Serving
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 The Problem: One Pool, Two Failures
+
+1.1 Homogeneous Provisioning Wastes GPUs
+
+1.2 Chunked Prefill: Necessary but Insufficient
+
+1.3 Homogeneous Provisioning Causes Failures
+
+1.4 Root Cause: Configuration–Traffic Mismatch
+
+1.5 Contributions
+
+2 Token-Budget Pool Routing
+
+2.1 Token-Budget Estimation
+
+Cold start.
+
+Closed-loop calibration.
+
+Why per-category.
+
+Why total budget, not prompt length.
+
+2.2 Dispatch Algorithm
+
+Feasibility and safety.
+
+Load-aware spillover.
+
+Choosing .
+
+3 Cost Model: Why Splitting Always Helps
+
+Reading the formula.
+
+Why the formula is a conservative lower bound.
+
+4 Evaluation
+
+4.1 Setup
+
+Traces.
+
+Model and hardware.
+
+Pool configurations.
+
+Baselines.
+
+Evaluation protocol.
+
+SLO targets.
+
+4.2 Cost Reduction
+
+Model validation.
+
+Why Azure saves more than LMSYS.
+
+Scale invariance.
+
+4.3 Reliability
+
+Why the short pool is failure-free.
+
+Why the long pool improves too.
+
+Aggregate effect.
+
+4.4 Latency
+
+Why P50 improves more than P99.
+
+Why TPOT also improves.
+
+No latency–cost trade-off.
+
+4.5 Calibration Convergence
+
+4.6 Threshold Sensitivity
+
+Left slope (K).
+
+Right slope (K).
+
+Peak and plateau (4K–16K).
+
+4.7 Case Study: Qwen3-235B-A22B on AMD MI300X
+
+5 Related Work
+
+LLM serving engines.
+
+Prefill–decode disaggregation.
+
+Heterogeneous workload scheduling.
+
+KV-cache optimization.
+
+6 Deployment Guidelines
+
+Start with two pools.
+
+Route on , not .
+
+Use conservative estimation.
+
+The threshold is forgiving.
+
+Enable load-aware spillover.
+
+Monitor preemption, not utilization.
+
+Validate with workload statistics.
+
+Compose with existing optimizations.
+
+7 Conclusion and Future Work
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.08075v1 [cs.CL] 09 Apr 2026
+
+Dual-Pool Token-Budget Routing for Cost-Efficient and Reliable LLM Serving
+
+Xunzhuo Liu1
+
+  
+Bowei He1,2,3,†
+
+  
+Xue Liu1,2,3,4
+
+  
+Andy Luo5
+
+  
+
+Haichen Zhang5
+
+  
+Huamin Chen1
+
+1 vLLM Semantic Router Project
+
+  
+2 MBZUAI
+
+  
+3 McGill University
+
+  
+
+4Mila
+
+  
+5 AMD
+
+† Corresponding author: Bowei.He@mbzuai.ac.ae
+
+April 2026
+
+Abstract
+
+Production vLLM fleets typically provision each instance for the worst-case context length, leading to substantial KV-cache over-allocation and under-utilized concurrency. In practice, 80–95% of requests are short, yet are served under configurations optimized for long contexts, wasting 4–8 throughput capacity and triggering reliability issues such as OOM crashes, preemption, and request rejections. We identify a common root cause for these inefficiencies: configuration–traffic mismatch. We propose dual-pool token-budget routing, a lightweight dispatch mechanism that partitions a homogeneous fleet into two specialized pools: a high-throughput short-context pool and a high-capacity long-context pool. Each request is routed based on its estimated total token budget, computed using a per-category bytes-to-token ratio that is learned online via exponential moving average from usage.prompt_tokens feedback, eliminating the need for a tokenizer. We also develop a simple analytical model that predicts fleet-level cost savings from workload characteristics and measured throughput differences, enabling practitioners to estimate benefits prior to deployment. Evaluations on real-world traces from the Azure LLM Inference Dataset and LMSYS-Chat-1M, serving Llama-3-70B on A100 GPUs, show that our approach reduces GPU-hours by 31–42%, corresponding to $2.86M annual savings at fleet scale, while lowering preemption rates by 5.4 and improving P99 TTFT by 6%. A case study with Qwen3-235B-A22B on AMD MI300X at 10,000 req/s projects $15.4M in annual savings. The method incurs only dispatch overhead, adapts automatically to heterogeneous workloads, and composes seamlessly with existing optimizations such as PagedAttention, continuous batching, and prefill–decode disaggregation.
+
+1 The Problem: One Pool, Two Failures
+
+1.1 Homogeneous Provisioning Wastes GPUs
+
+The standard vLLM deployment configures every instance for the longest
+context window any request might need.
+Analysis of the Azure LLM Inference Dataset [13]
+reveals that 80% of requests fit in 2K tokens and 95% fit in 8K,
+yet fleets are configured for max_model_len=64K+.
+The LMSYS-Chat-1M corpus [14] reports a mean
+prompt length of just 69.5 tokens.
+Independent production traces confirm this pattern:
+BurstGPT’s 10.3M-request Azure dataset shows the same
+short-dominated distribution [26], and
+Alibaba’s ServeGen characterization of billions of cloud requests
+finds input lengths follow a Pareto/log-normal mixture heavily
+concentrated below 2K tokens [30].
+
+This matters because max_model_len directly controls
+concurrency. For a model with layers, KV-heads, and head
+dimension , the KV-cache per sequence is:
+
+(1)
+
+The maximum concurrent sequences per GPU is:
+
+(2)
+
+On an 80 GB A100 serving Llama-3-70B, =64K yields
+. Reducing to =8K yields
+— an
+8 concurrency gain [15].
+Every short request served at the lower concurrency is pure waste.
+
+Figures 1–3 illustrate why
+variable prompt lengths are particularly harmful under homogeneous
+provisioning.
+
+Figure 1: KV-cache waste under homogeneous provisioning.
+Each slot reserves tokens regardless of actual usage.
+Short requests (80%+ of traffic) use 5% of their allocated
+space. An 8K pool uses 5 more of each slot.
+
+Figure 2: Concurrency comparison: the same GPU memory holds 16
+sequences at 64K context or 128 sequences at 8K — an
+8 difference in throughput capacity.
+
+Figure 3: Prefill head-of-line blocking. Top: a single 32K
+prefill stalls all queued short requests.
+Bottom: token-budget routing isolates the long prefill in a
+separate pool; short requests proceed without delay.
+
+1.2 Chunked Prefill: Necessary but Insufficient
+
+vLLM’s chunked prefill [7] mitigates
+head-of-line blocking by splitting a long prefill into fixed-size
+chunks (default 2,048 tokens) and interleaving them with decode
+iterations. This improves GPU utilization by overlapping
+compute-bound prefill with memory-bound decode.
+
+However, chunked prefill solves only the compute scheduling
+problem — it does not address the memory provisioning
+problem (Figure 4):
+
+•
+
+KV cache is allocated for the full sequence, not the
+chunk. A 32K-token request processed in 2K chunks still
+reserves 32K tokens of KV-cache capacity for the entire duration.
+The memory footprint is identical to unchunked prefill.
+
+•
+
+still dictates concurrency. Every
+instance must be provisioned for the worst-case context window.
+The 8 concurrency gap between 8K and 64K configurations
+(Figure 2) remains.
+
+•
+
+Preemption and OOM persist. Under high load, many
+concurrent sequences with large KV footprints still exhaust the
+cache budget, triggering the same preemption storms and OOM events.
+
+•
+
+Fleet size is unchanged. Chunked prefill improves
+per-request latency but does not reduce the number of GPU
+instances required to serve a given throughput target.
+
+Token-budget pool routing is complementary: it solves the
+memory problem that chunked prefill leaves open. Each pool can
+internally use chunked prefill, gaining the scheduling benefits
+within a right-sized memory configuration.
+
+Figure 4: Chunked prefill: compute vs. memory.
+Top: chunked prefill interleaves long-prefill chunks with
+decode iterations, preventing head-of-line blocking.
+Bottom: the KV cache is still allocated for the full 32K
+sequence, not the chunk size. The memory footprint, concurrency
+limit, and fleet size are unchanged.
+
+1.3 Homogeneous Provisioning Causes Failures
+
+The same over-provisioning that wastes money triggers reliability
+failures when the fleet is pushed to high utilization:
+
+•
+
+OOM crashes: bursts of medium-length requests
+collectively exceed KV-cache capacity.
+
+•
+
+Preemption storms: vLLM evicts in-progress sequences,
+degrading throughput and tail latency [15].
+
+•
+
+Request rejections: requests exceeding
+max_model_len are dropped before inference begins.
+
+•
+
+Head-of-line blocking: long prefills stall short
+requests, violating TTFT SLOs.
+
+1.4 Root Cause: Configuration–Traffic Mismatch
+
+These cost and reliability problems are not independent. Both stem from
+a mismatch between the pool’s static configuration (sized for 64K) and
+the actual traffic distribution (concentrated below 8K). Eliminating
+this mismatch resolves both simultaneously.
+
+1.5 Contributions
+
+We make four contributions:
+
+1.
+
+Token-budget pool routing (Section 2):
+a fleet-level dispatch algorithm that splits a homogeneous vLLM
+fleet into right-sized short and long pools with overhead.
+Unlike per-GPU optimizations (PagedAttention, chunked prefill,
+speculative decoding), it operates across instances and
+composes with all of them.
+
+2.
+
+Self-calibrating token estimation
+(Section 2.1): a per-category EMA that learns the
+bytes-per-token ratio from usage.prompt_tokens feedback
+with asymmetric-error-aware conservative bias. This eliminates
+the need for a model-specific tokenizer at the routing layer —
+a practical constraint in multi-model deployments where the router
+sits upstream of heterogeneous backends.
+
+3.
+
+Closed-form cost model (Section 3):
+, which predicts fleet-level
+GPU savings from two quantities observable before deployment:
+the traffic CDF and profiled throughput. This lets teams audit the
+savings opportunity without changing infrastructure, in contrast to
+simulation-dependent approaches [28, 8].
+
+4.
+
+Comprehensive evaluation (Section 4):
+on two real-world traces (Azure, LMSYS) and frontier hardware
+(Qwen3-235B on MI300X), demonstrating 31–42% GPU reduction,
+5.4 fewer preemptions, and $15.4M/yr savings at
+10,000 req/s.
+
+2 Token-Budget Pool Routing
+
+The core idea is simple: split a homogeneous fleet into two pools:
+a short pool with a small max_model_len
+(high concurrency, high throughput) and a long pool
+with the original context window (lower throughput, but handles all
+requests), and route each request to the appropriate pool based
+on its total token budget (Figure 5).
+
+Figure 5: Token-budget pool routing with closed-loop calibration.
+Each request’s total token budget is estimated using
+calibrated and compared against threshold .
+Responses feed back usage.prompt_tokens to refine the
+per-category ratio. A spillover path handles burst overloads.
+
+2.1 Token-Budget Estimation
+
+For each request with traffic category (e.g., code, prose,
+CJK), the router estimates the total token budget:
+
+(3)
+
+where is the request’s byte length and is the
+calibrated bytes-per-token ratio for category .
+The estimate is : a single division, no tokenizer required.
+
+Cold start.
+
+Before any feedback is available, defaults to
+(the English-prose average). This is accurate enough for routing —
+the threshold analysis in Section 4.6 shows that even
+moderate estimation error has little impact on savings.
+
+Closed-loop calibration.
+
+Every LLM response includes the exact prompt token count in the
+usage.prompt_tokens field. The router uses this signal to
+update via an exponential moving average (EMA):
+
+(4)
+
+with decay . Because routing errors are asymmetric —
+sending a long request to the short pool causes preemption, while
+sending a short request to the long pool merely wastes some
+throughput — the router uses a conservative estimate:
+
+(5)
+
+where is the EMA standard deviation and
+biases toward overestimating token count
+(i.e., toward the safer long pool for borderline requests).
+
+Why per-category.
+
+A single global ratio is a poor fit for heterogeneous traffic:
+code averages bytes/token, CJK text , and
+English prose . Recent work confirms that tokenizer
+fertility varies by across writing systems, causing
+up to inference slowdowns for high-fragmentation
+scripts [29].
+Per-category tracking converges within
+50 requests per category (Section 4.5)
+and eliminates systematic mis-routing of non-English traffic.
+
+Why total budget, not prompt length.
+
+Early prototypes routed on alone. This caused preemption storms
+when “short-prompt, long-generation” requests (e.g., creative writing
+with , ) were sent to the short pool.
+Routing on eliminated the issue.
+
+2.2 Dispatch Algorithm
+
+Algorithm 1 presents the routing procedure. The design follows
+three principles: (i) enforce feasibility with a hard capacity check,
+(ii) perform budget-aware routing using a calibrated token estimate,
+and (iii) incorporate load-aware spillover to maintain SLOs under
+bursty traffic.
+
+Algorithm 1 Token-budget pool dispatch with online calibration.
+
+1:
+
+Request , category , pool states, threshold
+
+2:
+
+Per-category EMA state ,
+
+3:
+
+function Route()
+
+4:
+
+  
+Conservative bytes-per-token estimate
+
+5:
+
+  
+Estimated total token budget
+
+6:
+
+Step 1: feasibility constraint
+
+7:
+
+  if then
+return
+
+8:
+
+  end if
+
+9:
+
+Step 2: budget-based routing
+
+10:
+
+  if then
+
+11:
+
+   
+
+12:
+
+  else
+
+13:
+
+   
+
+14:
+
+  end if
+
+15:
+
+Step 3: load-aware spillover
+
+16:
+
+  if is overloaded alternate pool can serve then
+
+17:
+
+    alternate pool
+
+18:
+
+  end if
+
+19:
+
+Final safety check
+
+20:
+
+  if then
+
+21:
+
+   
+
+22:
+
+  end ifreturn
+
+23:
+
+end function
+
+24:
+
+25:
+
+function OnResponse()
+
+26:
+
+  
+Observed bytes-per-token
+
+27:
+
+  
+EMA update
+
+28:
+
+  
+Uncertainty tracking
+
+29:
+
+end function
+
+The routing procedure consists of a small number of arithmetic
+operations and conditional checks, resulting in constant-time
+complexity with negligible overhead.
+
+Feasibility and safety.
+
+The router first enforces a hard capacity constraint to ensure that
+no request exceeding the short pool’s maximum context length is ever
+misrouted. A final safety check is applied after spillover to guarantee
+that the selected pool can always serve the request.
+
+Load-aware spillover.
+
+A static threshold alone can lead to transient overload and SLO
+violations during traffic bursts. To address this, the router monitors
+queue depth or utilization signals and redirects requests to the
+alternate pool when the preferred pool is temporarily saturated,
+provided the alternate pool can satisfy the capacity constraint. This
+mechanism absorbs short-term load imbalance without affecting steady-state
+efficiency.
+
+Choosing .
+
+The threshold controls the fraction of requests assigned to
+the short pool and thus determines the overall efficiency gain.
+Empirically, a wide range of values between 4K and 16K tokens achieves
+near-optimal performance, making the system robust to imperfect tuning.
+In practice, initializing provides a reliable default
+across diverse workloads.
+
+3 Cost Model: Why Splitting Always Helps
+
+Let be the throughput per GPU as a function of maximum
+context length. From Equation 2, is monotonically
+decreasing: lower means higher concurrency means higher
+throughput.
+
+A homogeneous fleet (all GPUs at ) needs
+GPUs.
+A dual-pool fleet with short pool () serving fraction
+of traffic needs:
+
+(6)
+
+The fractional GPU savings works out to:
+
+(7)
+
+where is the short-traffic fraction and
+is the throughput gain ratio.
+
+Reading the formula.
+
+•
+
+= how much traffic is short.
+Production traces: .
+
+•
+
+= how much faster the short pool is.
+vLLM profiling: for 8K vs. 64K.
+
+For , : savings .
+Even conservative values (, ) yield 35%.
+This formula lets any team audit the savings opportunity before
+changing infrastructure: plug in your traffic CDF and profiled
+throughput, get a dollar estimate.
+
+Why the formula is a conservative lower bound.
+
+The model treats as a single empirically observed ratio.
+In reality, throughput gains arise from multiple GPU-memory-level
+effects that compound:
+
+1.
+
+PagedAttention occupancy gap.
+vLLM’s scheduler reserves tokens of KV-cache capacity
+per sequence to guarantee completion, but physical pages are
+allocated on demand. A 2K request in an 8K pool occupies
+2K tokens of pages; the remaining 6K are “reserved but
+free.” At any instant the occupied KV memory is far below
+the reserved ceiling, leaving headroom that absorbs bursts
+or admits more concurrent sequences than Equation 2
+predicts.
+
+2.
+
+Activation memory asymmetry.
+Prefill-phase activations scale with chunk size
+hidden dimension. Shorter average prompts in the
+short pool reduce the activation peak, freeing additional HBM
+for KV pages — an effect absent from the fixed
+term.
+
+3.
+
+Block-level fragmentation.
+PagedAttention uses fixed 16-token blocks; the last block of
+each sequence wastes up to 15 tokens. With 128 short sequences
+this is 46 MB (0.03% of MI300X HBM) — negligible,
+confirming that fragmentation does not erode the concurrency gain.
+
+4.
+
+KV-read bandwidth.
+The decode phase is memory-bandwidth bound. Shorter KV sequences
+require less data per attention step, improving per-step latency
+and enabling higher decode batch sizes.
+
+Effects 1–2 make the short pool more efficient than static
+analysis predicts; effect 3 is negligible; effect 4 improves latency
+but is already captured by the profiled . Consequently,
+Equation 7 is a lower bound: realized savings are at
+least as large, and often larger, than the formula’s prediction.
+The reproducibility script (eval/reproduce.py
+--section 5) quantifies each effect from the trace distributions.
+
+4 Evaluation
+
+4.1 Setup
+
+Traces.
+
+We evaluate on two representative request traces, each consisting of
+100K requests with Poisson arrivals to approximate realistic online
+serving conditions.
+Azure-Derived [13] exhibits a highly
+skewed distribution with 80% of requests below 2K tokens and a long
+tail extending to 64K.
+LMSYS-Derived [14] is more
+concentrated, with mean input length tokens and mean
+output length tokens.
+Together, these traces capture both heavy-tail and compact workload
+regimes commonly observed in production LLM serving.
+
+Model and hardware.
+
+We simulate serving Llama-3-70B-Instruct (BF16, 80 layers,
+8 KV heads, ) on NVIDIA A100-80GB GPUs with tensor
+parallelism degree 2.
+Performance metrics, including throughput and latency, are obtained
+using a discrete-event simulator calibrated against
+Vidur [28], which models prefill and decode phases,
+KV-cache allocation, batching behavior, and queueing dynamics.
+The simulator captures both compute-bound (prefill) and
+memory-bandwidth-bound (decode) characteristics of LLM inference.
+
+Pool configurations.
+
+We compare a standard homogeneous deployment against a dual-pool
+configuration.
+The homogeneous baseline provisions all instances with a large
+context window to accommodate worst-case requests.
+In contrast, the dual-pool setup separates the fleet into a
+short-context pool () and a long-context pool (), each
+independently configured.
+
+Table 1: Pool configurations.
+
+Pool
+
+(req/s/inst)
+
+Homogeneous
+65K
+16
+8K
+2.8
+
+Short
+8K
+128
+16K
+11.2
+
+Long
+65K
+16
+8K
+2.8
+
+Here, denotes the maximum supported context length,
+the maximum number of concurrent sequences per GPU,
+the maximum batch size, and the measured
+throughput per instance. The short pool increases concurrency by
+reducing , while the long pool preserves full coverage of
+long-context requests.
+
+Baselines.
+
+We compare against two configurations:
+(1) Homogeneous, a single-pool deployment using round-robin
+dispatch; and
+(2) Token-budget routing, our proposed method as described in
+Section 2, with threshold and
+load-aware spillover enabled.
+
+Evaluation protocol.
+
+All experiments are conducted at a fixed request rate, with systems
+operating near high utilization (up to 90%) to stress-test both
+efficiency and reliability.
+We report steady-state metrics after warm-up, including GPU usage,
+latency, and failure rates.
+
+SLO targets.
+
+We adopt production-style service-level objectives:
+P99 TTFT 2 s and P99 TPOT 80 ms, which jointly capture
+user-perceived responsiveness in both prompt processing and token
+generation phases.
+
+4.2 Cost Reduction
+
+Table 2: GPU instances and savings at 1,000 req/s ().
+
+Trace
+Method
+GPUs
+Savings
+P99 TTFT
+
+Azure
+Homogeneous
+358
+—
+1.82 s
+
+Token-budget
+208
+41.9%
+1.71 s
+
+LMSYS
+Homogeneous
+358
+—
+1.45 s
+
+Token-budget
+246
+31.3%
+1.48 s
+
+Token-budget routing reduces GPU instances by 41.9% on the
+Azure trace and 31.3% on LMSYS (Table 2).
+At $2.21/GPU-hr (AWS p4d.24xlarge), the Azure savings
+amount to $238K/month or $2.86M/year.
+
+Model validation.
+
+The closed-form model (Equation 7) predicts savings from
+(short-traffic fraction) and (throughput ratio).
+For the Azure trace at : ,
+, giving
+.
+The simulation yields 41.9% — a gap of 18.1 pp.
+This gap is expected: the formula assumes perfect packing
+() while the simulation includes queuing delays,
+load imbalance, and the ceiling effect from integer GPU counts.
+For LMSYS: (shorter prompts push more traffic
+below the threshold, but the tighter distribution means fewer
+requests benefit from the concurrency gain), giving
+vs. simulated
+31.3%. The formula consistently provides an upper bound
+on realizable savings, which is its intended use: teams can compute
+the ceiling cheaply, then simulate for precision.
+
+Why Azure saves more than LMSYS.
+
+The Azure trace has a heavier long tail: 20% of requests exceed 8K
+tokens (vs. 32% for LMSYS that exceed the mean but most remain
+well below 8K). This gives Azure a higher effective at
+the 8K threshold. More importantly, the Azure long-tail requests
+are much longer (up to 64K), so the homogeneous fleet must
+provision at K, creating a larger concurrency gap
+for the short pool to exploit. LMSYS traffic is more
+compact — most requests cluster between 50–500 tokens — so
+the concurrency gain, while still substantial, translates to a
+smaller absolute fleet reduction.
+
+Scale invariance.
+
+Savings are structural and scale-invariant: 38.9% at 100 req/s,
+41.9% at 1,000 req/s, 41.8% at 2,000 req/s.
+This follows from Equation 7: and are
+properties of the workload distribution and pool configuration,
+not the request rate. The small variation at low rates is due to
+the integer ceiling effect (), which washes out
+as fleet size grows.
+
+4.3 Reliability
+
+Table 3: Reliability at 1,000 req/s, 90% utilization (Azure trace).
+
+Method
+
+Preemption
+
+‰
+
+OOM
+
+events/hr
+
+Rejection
+
+rate
+
+Success
+
+rate
+
+Homogeneous
+47.3
+2.1
+0.31%
+99.69%
+
+Short pool
+1.2
+0.0
+0.00%
+100.0%
+
+Long pool
+38.6
+1.8
+0.24%
+99.76%
+
+Overall
+8.7
+0.4
+0.05%
+99.95%
+
+Right-sizing pool configurations eliminates the configuration–traffic
+mismatch that causes failures (Table 3).
+
+Why the short pool is failure-free.
+
+The short pool serves requests with tokens on
+instances configured for with 128 concurrent
+sequence slots. At 90% utilization, the pool runs
+concurrent sequences — well below the 128-slot capacity.
+Because every routed request fits by construction
+(the routing guarantee ensures ),
+no request can exceed its allocated KV budget, eliminating both
+OOM and preemption. The residual 1.2‰ preemption
+comes from transient load spikes during the spillover transition.
+
+Why the long pool improves too.
+
+By diverting 80% of traffic away from the long pool, the
+effective utilization of the long pool drops substantially.
+Lower utilization means fewer concurrent sequences competing
+for the same KV-cache budget, reducing both preemption (from
+47.3‰ to 38.6‰) and OOM
+(from 2.1 to 1.8 events/hr). The remaining failures in the
+long pool are inherent to serving 64K-token requests on 65K-context
+instances at high load — a regime where even a few concurrent
+long requests can exhaust KV capacity.
+
+Aggregate effect.
+
+Because 80% of traffic flows through the failure-free short pool,
+the overall metrics are dominated by it: preemption drops
+5.4 (47.3 8.7‰), OOM drops
+5.3, and the success rate rises from 99.69% to
+99.95%. This is not an artifact of lower total
+utilization — both configurations run at 90% aggregate
+utilization. The improvement comes entirely from eliminating the
+mismatch between request size and pool configuration.
+
+4.4 Latency
+
+Table 4: Latency at 1,000 req/s (Azure trace).
+
+TTFT (s)
+TPOT (ms)
+
+Method
+P50
+P99
+P50
+P99
+
+Homogeneous
+0.42
+1.82
+28
+67
+
+Token-budget
+0.28
+1.71
+25
+62
+
+TTFT at P50 improves by 33% (0.42 s 0.28 s) and at
+P99 by 6% (1.82 s 1.71 s).
+TPOT improves at both percentiles (11% at P50, 7% at P99).
+
+Why P50 improves more than P99.
+
+TTFT has two components: queueing delay (waiting for a free
+slot) and prefill compute (processing the input tokens).
+At P50, the dominant bottleneck is queueing: the short pool’s
+128-sequence capacity (vs. 16 in the homogeneous pool) means most
+requests find a free slot immediately, eliminating queueing entirely.
+At P99, the bottleneck shifts to prefill compute for the longest
+requests, which still go to the long pool. These requests see
+similar prefill times regardless of the routing scheme, capping the
+P99 improvement.
+
+Why TPOT also improves.
+
+During decode, each token requires a single KV-cache lookup per layer.
+In the homogeneous pool, long-context sequences occupy large KV
+footprints, limiting batch size and leaving GPU compute underutilized.
+The short pool’s smaller per-sequence KV footprint allows
+larger decode batches, improving GPU utilization during the
+memory-bound decode phase. This translates to 25 ms vs. 28 ms
+at P50 — a modest but consistent gain.
+
+No latency–cost trade-off.
+
+Cost reduction and latency improvement are not trade-offs — they are
+co-benefits of eliminating the configuration–traffic mismatch.
+The short pool simultaneously uses fewer GPUs (cost) and serves
+requests faster (latency) because right-sizing unlocks both higher
+concurrency and lower queueing.
+
+4.5 Calibration Convergence
+
+Table 5: Per-category EMA convergence on the Azure trace
+(, ).
+
+Category
+True
+at
+Rel. error
+Mis-route rate
+
+English prose
+4.48
+4.41
+1.6%
+0.3%
+
+Source code
+3.52
+3.47
+1.4%
+0.2%
+
+CJK text
+2.01
+2.08
+3.5%
+0.8%
+
+Mixed / other
+3.81
+3.74
+1.8%
+0.4%
+
+Global static ()
+—
+4.00
+—
+4.1%
+
+Table 5 evaluates calibration on the Azure trace,
+where each request is tagged with a content category.
+After 50 observations per category, the EMA ratio converges to
+within 3.5% of the true value. The conservative estimate
+(Equation 5) reduces mis-routing — sending a request
+to a pool that cannot serve it — from 4.1% (global static) to
+under 1% for all categories. CJK text benefits most: the static
+overestimates its bytes-per-token by 2, causing
+systematic under-counting of tokens and false routing to the short
+pool.
+
+4.6 Threshold Sensitivity
+
+Figure 6: Savings vs. threshold. Any in 4K–16K delivers
+80% of peak savings. The threshold is forgiving.
+
+Figure 6 shows savings are robust across a wide range of
+thresholds. The curve shape is explained directly by the cost model:
+.
+
+Left slope (K).
+
+At low thresholds, is small: only a small fraction of traffic
+fits below . Even though is large (a 2K pool has
+very high concurrency), the product
+is limited by . For example, at ,
+for Azure, capping savings at
+even with .
+
+Right slope (K).
+
+At high thresholds, approaches 1.0 (nearly all traffic
+qualifies as “short”), but approaches 1.0 as well —
+a 16K short pool has only 2 the concurrency of a 65K pool,
+not 8. The savings product collapses because the
+concurrency gain erodes faster than the traffic fraction grows.
+
+Peak and plateau (4K–16K).
+
+The peak at 8K maximizes the product:
+and . Any threshold in this
+range delivers 80% of peak savings because the product surface
+is flat near the optimum — a forgiving property for deployment.
+
+4.7 Case Study: Qwen3-235B-A22B on AMD MI300X
+
+To validate the cost model on frontier hardware, we project fleet
+requirements for Qwen3-235B-A22B [21] — a 235 B-parameter
+MoE model (22 B active, 94 layers, 4 KV heads with GQA 16:1,
+) — served with FP8 quantization on AMD Instinct
+MI300X [22] (192 GB HBM3) at TP8.
+
+Applying Equation 1 yields 23.5 KB per token per GPU.
+After subtracting model weights (29.4 GB), activations (10 GB),
+and a 10% safety margin, 133.4 GB remains for KV cache.
+An 8K pool supports 4 more concurrent sequences
+than a 32K pool (676 vs. 169).
+
+Table 6: Fleet projection: Qwen3-235B on MI300X at 10,000 req/s
+($3.67/GPU-hr cloud rate).
+
+Deployment
+Nodes
+GPUs
+Annual cost
+Savings
+
+Homogeneous
+197
+1,576
+$50.6 M
+—
+
+Token-budget
+137
+1,096
+$35.2 M
+$15.4 M/yr
+
+Token-budget routing requires 137 nodes versus 197 homogeneous —
+a 30.5% reduction, saving $15.4 M/yr at cloud rates
+(Table 6). At on-premise rates ($1.50/GPU-hr),
+savings are $6.3 M/yr.
+
+5 Related Work
+
+LLM serving engines.
+
+A growing body of work focuses on improving per-GPU efficiency for
+LLM inference. Orca [2] introduced continuous batching to
+increase utilization under dynamic workloads. vLLM [1]
+further improves memory efficiency and throughput with
+PagedAttention, achieving 2–4 gains over prior systems.
+TensorRT-LLM [3] provides kernel- and graph-level
+optimizations for high-performance inference on NVIDIA hardware.
+FlexGen [11] explores CPU and disk offloading to
+enable large-model inference under limited GPU memory.
+These systems primarily optimize execution within a single instance,
+whereas our approach operates at the fleet level, improving global
+resource allocation and remaining fully compatible with these engines.
+
+Prefill–decode disaggregation.
+
+Recent work has explored separating different phases of LLM inference
+to improve utilization. Splitwise [5] and
+DistServe [6] decouple prefill and decode across
+different resources to optimize goodput. Sarathi-Serve [7]
+introduces chunked prefill to interleave compute-intensive prefill
+with memory-bound decode. Mooncake [25] goes further
+by disaggregating KV cache across heterogeneous memory tiers
+(CPU/DRAM/SSD), achieving substantial throughput gains in long-context
+settings.
+These approaches focus on phase-level or memory-level decomposition
+within a request, while our method partitions workloads across
+requests based on token budget. The two directions are orthogonal and
+can be combined, as each pool in our system can internally adopt
+disaggregation techniques.
+
+Heterogeneous workload scheduling.
+
+Several systems address heterogeneity in LLM serving workloads.
+SageServe [8] jointly optimizes request routing and
+auto-scaling across geo-distributed data centers, achieving significant
+cost savings at production scale. EWSJF [9] proposes an
+adaptive scheduling policy that prioritizes requests based on
+estimated job size, improving throughput under mixed workloads.
+AlpaServe [10] exploits model parallelism to
+multiplex requests and increase serving capacity.
+Llumnix [24] dynamically migrates KV cache across GPUs
+to enable fine-grained rescheduling and load balancing.
+Jiang et al. [27] show that combining
+heterogeneous GPU types can further improve cost-efficiency.
+In contrast, our approach performs lightweight, token-budget-based
+routing at the cluster entry point with sub-millisecond overhead,
+and composes naturally with both intra-instance scheduling and
+heterogeneous hardware allocation.
+
+KV-cache optimization.
+
+Optimizing KV-cache memory is central to efficient LLM serving.
+PagedAttention [1] introduces a paging-based abstraction
+to reduce fragmentation and improve utilization.
+Other work explores KV-cache compression [18],
+sharing across requests [19], and hierarchical
+offloading [20] to extend effective context capacity.
+These methods reduce per-token memory cost, whereas our approach
+reduces the required provisioned context window by matching
+configuration to workload characteristics.
+As a result, our method is complementary and can amplify the benefits
+of KV-cache optimizations when used together.
+
+6 Deployment Guidelines
+
+We summarize practical guidelines for deploying token-budget routing
+in production environments. These recommendations are derived from
+extensive trace-driven evaluation and are intended to minimize
+operational complexity while preserving most of the achievable gains.
+
+Start with two pools.
+
+A two-pool design (short and long) captures the majority of the
+benefits while keeping the system simple. Introducing additional
+pools (e.g., 4K/16K/64K) yields only marginal incremental savings
+(2%) but significantly increases operational complexity,
+including configuration management, monitoring, and capacity planning.
+In practice, two pools provide a favorable trade-off between efficiency
+and maintainability.
+
+Route on , not .
+
+Routing decisions must be based on the total token budget,
+including both input () and maximum output tokens. Using
+alone systematically underestimates requests with small prompts
+but large generation budgets, leading to misrouting into the short
+pool. This results in KV-cache exhaustion and preemption events.
+Incorporating ensures that routing decisions align with
+actual memory requirements and prevents these failure modes.
+
+Use conservative estimation.
+
+Because routing errors are asymmetric, conservative token estimation
+is critical. Underestimating token counts can violate capacity
+constraints and trigger preemption, while overestimation only incurs
+minor efficiency loss. Incorporating uncertainty (e.g., subtracting a
+variance term from the estimated ratio) biases routing toward safety
+and improves robustness in heterogeneous workloads.
+
+The threshold is forgiving.
+
+The routing threshold controls the fraction of traffic sent
+to the short pool. Empirically, any value in the range 4K–16K tokens
+achieves more than 80% of peak savings (Figure 6),
+indicating that performance is robust to imperfect tuning.
+A default value of provides a strong starting point
+across diverse workloads, with optional fine-tuning based on observed
+traffic distributions.
+
+Enable load-aware spillover.
+
+Strict threshold-based routing can lead to transient overload when
+traffic is bursty. Incorporating a spillover mechanism based on queue
+depth or utilization allows the system to dynamically redirect
+requests to the alternate pool when necessary. This improves tail
+latency and prevents SLO violations without affecting steady-state
+efficiency.
+
+Monitor preemption, not utilization.
+
+GPU utilization alone is an insufficient indicator of system health.
+A system may exhibit high utilization while suffering from frequent
+preemption, which degrades throughput and increases latency.
+Preemption rate directly reflects KV-cache pressure and routing
+correctness, making it a more reliable operational metric.
+In practice, we recommend alerting when the 5-minute preemption rate
+exceeds 1%.
+
+Validate with workload statistics.
+
+Before deployment, practitioners can estimate expected gains using
+observable workload properties such as the fraction of short requests
+and measured throughput differences between configurations. This
+provides a quick sanity check and helps prioritize deployment in
+workloads with high potential savings.
+
+Compose with existing optimizations.
+
+Token-budget routing is orthogonal to per-instance optimizations such
+as PagedAttention, continuous batching, and prefill–decode
+disaggregation. Deploying these techniques within each pool further
+improves efficiency and latency, enabling multiplicative gains at
+both instance and fleet levels.
+
+7 Conclusion and Future Work
+
+Homogeneous vLLM provisioning leads to both resource inefficiency and
+reliability issues due to a mismatch between static configuration and
+dynamic workload characteristics. We address this problem with
+self-calibrating token-budget routing, which partitions a fleet
+into short- and long-context pools and dispatches requests based on
+their estimated total token budget. This simple design simultaneously
+improves cost efficiency, reliability, and latency, reducing GPU usage
+by 31–42% (equivalent to $2.86M/year on A100 and $15.4M/year on
+MI300X at fleet scale), lowering preemption by 5.4 and OOM
+events by 5.3, and improving P99 TTFT by 6% through the
+elimination of head-of-line blocking.
+
+Unlike prior approaches that focus on optimizing individual GPU
+instances, our method operates at the fleet level, requires no
+tokenizer, and adapts online to heterogeneous traffic through
+lightweight calibration. Its simplicity, constant-time overhead, and
+compatibility with existing optimizations make it practical for
+real-world deployment.
+
+Looking forward, several directions could further enhance this
+approach. One promising direction is to make the routing threshold
+adaptive by leveraging runtime signals such as preemption rate, OOM
+events, and request rejections, enabling automatic adjustment to
+changing workloads without manual tuning. Another direction is to
+incorporate lightweight prompt compression for borderline requests,
+allowing more traffic to be served in the short pool without
+increasing its capacity, thereby further amplifying efficiency gains.
+Together, these extensions point toward fully self-optimizing LLM
+serving systems that continuously adapt to workload dynamics.
+
+Acknowledgments
+
+We thank the vLLM and semantic-router communities for open-source
+contributions that enabled this work.
+
+References
+
+[1]
+
+W. Kwon et al., “Efficient Memory Management for Large Language Model
+Serving with PagedAttention,” in Proc. SOSP, 2023.
+
+[2]
+
+G.-I. Yu et al., “Orca: A Distributed Serving System for
+Transformer-Based Generative Models,” in Proc. OSDI, 2022.
+
+[3]
+
+NVIDIA, “TensorRT-LLM,”
+https://github.com/NVIDIA/TensorRT-LLM, 2024.
+
+[4]
+
+NVIDIA, “FasterTransformer,”
+https://github.com/NVIDIA/FasterTransformer, 2023.
+
+[5]
+
+P. Patel et al., “Splitwise: Efficient Generative LLM Inference Using
+Phase Splitting,” in Proc. ISCA, 2024.
+
+[6]
+
+Y. Zhong et al., “DistServe: Disaggregating Prefill and Decoding for
+Goodput-optimized LLM Serving,” in Proc. OSDI, 2024.
+
+[7]
+
+A. Agrawal et al., “Taming Throughput-Latency Tradeoff in LLM
+Inference with Sarathi-Serve,” in Proc. OSDI, 2024.
+
+[8]
+
+Microsoft Research, “SageServe: Optimizing LLM Serving on Cloud
+Data Centers with Forecast Aware Auto-Scaling,”
+arXiv:2502.14617, 2025.
+
+[9]
+
+“EWSJF: Adaptive Scheduler with Hybrid Partitioning for Mixed-Workload
+LLM Inference,” arXiv:2601.21758, 2025.
+
+[10]
+
+Z. Li et al., “AlpaServe: Statistical Multiplexing with Model
+Parallelism for Deep Learning Serving,” in Proc. OSDI, 2023.
+
+[11]
+
+Y. Sheng et al., “FlexGen: High-Throughput Generative Inference of
+Large Language Models with a Single GPU,” in Proc. ICML, 2023.
+
+[12]
+
+Y. Leviathan, M. Kalman, and Y. Matias, “Fast Inference from
+Transformers via Speculative Decoding,” in Proc. ICML, 2023.
+
+[13]
+
+Microsoft Azure, “Azure LLM Inference Trace 2024,”
+https://github.com/Azure/AzurePublicDataset, 2024.
+
+[14]
+
+L. Zheng et al., “LMSYS-Chat-1M: A Large-Scale Real-World LLM
+Conversation Dataset,” in Proc. ICLR, 2024.
+
+[15]
+
+vLLM Project, “Optimization and Tuning,”
+https://docs.vllm.ai/en/stable/configuration/optimization/, 2025.
+
+[16]
+
+Y. Li et al., “Compressing Context to Enhance Inference Efficiency of
+Large Language Models,” in Proc. EMNLP, 2023.
+
+[17]
+
+H. Jiang et al., “LLMLingua: Compressing Prompts for Accelerated
+Inference of LLMs,” in Proc. EMNLP, 2023.
+
+[18]
+
+“LaCache: Ladder-Shaped KV Caching for Efficient Long-Context
+Modeling of Large Language Models,” in Proc. ICML, 2025.
+
+[19]
+
+“KVShare: An LLM Service System with Efficient and Effective
+Multi-Tenant KV Cache Reuse,”
+arXiv:2503.16525, 2025.
+
+[20]
+
+“OrbitFlow: SLO-Aware Long-Context LLM Serving with Fine-Grained
+KV Cache Reconfiguration,” arXiv:2601.10729, 2025.
+
+[21]
+
+Qwen Team, “Qwen3 Technical Report,”
+https://qwenlm.github.io/blog/qwen3/, 2025.
+
+[22]
+
+AMD, “AMD Instinct MI300X Accelerator Data Sheet,”
+https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf, 2024.
+
+[23]
+
+Qwen C-end Infrastructure Engineering Team and AMD AI Framework Team,
+“Unleashing Computational Power: Ultimate Latency Optimization of
+Qwen3 on AMD MI300X Series,” LMSYS Org Blog, Feb. 2026.
+https://lmsys.org/blog/2026-02-11-Qwen-latency/
+
+[24]
+
+B. Sun et al., “Llumnix: Dynamic Scheduling for Large Language Model
+Serving,” in Proc. OSDI, 2024.
+
+[25]
+
+R. Qin et al., “Mooncake: A KVCache-Centric Disaggregated Architecture
+for LLM Serving,” in Proc. FAST, 2025.
+Best Paper Award.
+
+[26]
+
+Y. Wang et al., “BurstGPT: A Real-World Workload Dataset to Optimize
+LLM Serving Systems,” arXiv:2401.17644, 2024.
+
+[27]
+
+Y. Jiang et al., “Demystifying Cost-Efficiency in LLM Serving over
+Heterogeneous GPUs,” in Proc. ICML, 2025.
+
+[28]
+
+A. Agrawal et al., “Vidur: A Large-Scale Simulation Framework for
+LLM Inference,” in Proc. MLSys, 2024.
+
+[29]
+
+A. Dixit and S. Dixit, “The Script Tax: Measuring
+Tokenization-Driven Efficiency and Latency Disparities in Multilingual
+Language Models,” arXiv:2602.11174, 2026.
+
+[30]
+
+Alibaba, “ServeGen: Workload Characterization and Generation of
+Large Language Model Serving in Production,”
+arXiv:2505.09999, 2025.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -38,6 +38,16 @@
 
 这些不是 TensorRT-LLM 独有思想，而是高性能推理系统的通用原则。TensorRT-LLM 的意义在于把这些原则和 LLM 特有结构结合起来：attention、KV Cache、GEMM、collective communication、quantization、batching。
 
+### 从逐 Kernel Launch 到 Persistent Executor
+
+独立 kernel launch 对大算子、稳定 control flow 和容易 capture 的 shape 最透明，CPU submission 开销相对计算也很小；CUDA Graph 进一步把重复 DAG 的准备成本移出 hot path。动态 inference、attention 辅助操作和 micro-batch 中出现大量短小算子后，单次 CPU→GPU launch 可能比算子本身更贵，而 graph 又要求可重复的结构，此时静态 fusion 与 graph capture 之间出现一个运行时分支。
+
+Persistent executor 在进程启动时常驻少量 GPU resources，由 host 把 typed operator descriptor 写入 ring buffer；常驻 warps 原子领取任务、分派受支持的 operator，再回到队列。Runtime 拥有 descriptor schema、operator registry、queue ordering、resource admission 和错误传播，常驻 kernel 只消费已验证任务，不能自行改变 execution plan。这样避免每个小算子都经过完整 launch path，同时保留比固定 graph 更动态的注入能力。
+
+代价是常驻 thread blocks 会与大 kernel 竞争资源，spin polling 消耗功率，backoff 又可能抬高 tail latency；ring buffer saturation、unsupported operator、顺序依赖和 persistent-kernel failure 也需要显式恢复。规则 shape 继续优先 graph capture，粗粒度算子继续独立 launch；只有 profile 证明 launch-bound 且 coexistence 不破坏目标 SLO 时，persistent executor 才值得进入 plan。
+
+<!-- source-family:SF-2026-ARXIV-2604-17861 -->
+
 ### Execution Plan 可以修订，但只能在安全边界 Commit
 
 静态 build artifact 在 workload 与硬件稳定时最可预测；长会话和 Prefill/Decode shape 分化后，同一 request 可能
@@ -454,6 +464,16 @@ FlashAttention 不只是“更快的 attention”。它的核心思想是 IO-awa
 
 FlashAttention-2 进一步优化并行划分和 work partitioning；FlashAttention-3 则面向 Hopper 等新硬件利用异步数据搬运、WGMMA/TMA 和低精度能力。它们说明：kernel 优化不是只改数学公式，而是在适配硬件的 memory hierarchy 和执行单元。
 
+### Exact Top-K 可以复用时间相关性，但必须保留验证权
+
+每个 decode step 从头扫描并排序全部候选，是最稳妥的 exact Top-K；context 很长且稀疏 attention 的 indexer 已经足够快时，这个选择阶段本身会进入 critical path。相邻 decode step 的重要位置常有相关性，因此上一轮 Top-K 可以成为 proposal，但不能直接成为下一轮答案。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22312:start -->
+受限演进是保存 previous Top-K 与预索引统计，用少量全局 counting pass 收缩 threshold，随后验证候选并在验证失败时继续 refine。Temporal state 只拥有猜测，exact verifier 仍拥有提交权；收益来自跳过不必要的全量排序，代价是 previous Top-K 与 scratch 的 HBM 状态、约 60 KB/CTA 的 shared-memory footprint，以及 single-CTA 设计对并行度的约束。Short context、large batch、低时间相关输入和跨 GPU 路径尚未得到同等验证，可能使额外统计与 pass 反而占主导。
+
+相关性不足、索引失效、SMEM/occupancy 不合适或硬件/shape 不匹配时应回退常规 exact Top-K。作者结果绑定 NVIDIA Blackwell、披露的 sparse-attention decode workload 和 1–2 pass 实现，不证明其他 accelerator、prefill、cross-GPU 或生产 SLO 获得同样收益。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22312:end -->
+
 ## 量化为什么不自动带来加速
 
 FP8、FP4、INT8、INT4 这类低精度路径的系统目标，是降低权重、activation 或 cache 的存储和带宽压力，并提高硬件 tensor core 的有效吞吐。
@@ -476,6 +496,16 @@ T_step
 严格互斥的 profiler 恒等式，而是避免只看低精度 GEMM 的成本清单。
 
 所以“checkpoint 缩小”“HBM 占用下降”和“端到端推理加速”是三个需要分别验证的结论。
+
+### 一个 Anchor Artifact 支撑多格式，不等于一次验收覆盖所有格式
+
+目标位宽和硬件固定时，为每种格式分别训练或校准 artifact，边界最清楚；代价是 checkpoint、训练与发布组合随格式数增长。弹性推理希望根据设备、负载或质量预算在多种 MXINT/MXFP 格式间切换后，可以用 multi-format QAT 产生一个较高精度 anchor，再通过确定的 slice-and-scale 规则派生低精度 artifact。
+
+这减少重复训练，却把责任转移到 artifact identity：registry 必须同时记录 anchor revision、转换规则、目标格式、backend/kernel compatibility 和逐格式 acceptance evidence。转换器只产生 proposal；每个目标格式仍要分别验证质量、实际 kernel 路径、内存和端到端 latency，scheduler 不能因为共享 anchor 就假设不同格式等价。
+
+QAT 增加训练约束，运行时转换增加 kernel 与缓存组合，未见模型、格式和硬件仍可能出现精度或性能回归。任一 acceptance gate 失败时应回退 anchor 或已验证的高精度 artifact，而不是在请求路径继续试探未知格式。
+
+<!-- source-family:SF-2026-ARXIV-2604-00529 -->
 
 ### NPU Static Quantization 需要把 Integer-only Boundary 编进 Artifact
 
@@ -1198,6 +1228,12 @@ Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件�
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22312`（Status: Experimental）：exact-v1 支持以 previous-step Top-K、预索引统计、threshold counting 与最终验证组成 Blackwell sparse-decode 的 exact selection 分支；不支持跨硬件或低时间相关 workload 的普遍加速结论。https://arxiv.org/abs/2604.22312v1
+
+- **MF-QAT（arXiv:2604.00529v1；Status: Experimental）**：exact-v1 支持 multi-format QAT、anchor checkpoint 与 Slice-and-Scale 派生路径，以及作者公开模型/格式中的质量结果；不证明未测硬件、kernel、模型或生产 workload 可共享同一 acceptance 结论。https://arxiv.org/abs/2604.00529v1
+
+- **GPUOS（arXiv:2604.17861v1；Status: Experimental）**：支持 host-managed ring buffer、persistent kernel executor 与 runtime operator injection 的机制分支，并对比 CUDA Graph 的规则 workload 边界。作者实验不证明任意 operator、GPU、并发或生产 tail-SLO 均能受益。https://arxiv.org/abs/2604.17861v1
 
 - MoEQuant（activated-expert-aware calibration；Status: Experimental）：https://arxiv.org/html/2505.03804v1
   - 证据边界：结论绑定作者模型族、数据集、bit-width 与硬件；不证明所有 expert 应使用同一精度或校准策略，也不证明端到端 serving 加速。

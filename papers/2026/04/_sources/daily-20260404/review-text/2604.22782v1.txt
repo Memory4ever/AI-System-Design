@@ -1,0 +1,1816 @@
+Stochastic KV Routing: Enabling Adaptive Depth-Wise Cache Sharing
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related work
+
+Temporal Eviction and Compression.
+
+Architectural Improvements and Efficiency.
+
+Depth-Wise Cache Sharing.
+
+3 Enabling Cross-Layer Attention
+
+3.1 Background
+
+3.1.1 KV Cache Dynamics: Pre-fill and Sampling
+
+3.1.2 Cross-Layer Attention
+
+3.1.3 Cache Sharing Strategies
+
+3.2 Random Cross-Layer Attention Training
+
+4 Evaluation
+
+4.1 Pre-training
+
+4.1.1 Experiment setup
+
+4.1.2 Results
+
+4.2 Fine-tuning
+
+4.2.1 Data Preparation
+
+4.2.2 Results
+
+4.2.3 Ablation
+
+4.3 Inference Efficiency
+
+5 Conclusion
+
+Limitations.
+
+References
+
+A Training curves
+
+B Fine-tuning Training Dynamics
+
+C R-CLA vs. CLA@k
+
+D Additional fine-tuning results
+
+License: CC BY-NC-ND 4.0
+
+arXiv:2604.22782v1 [cs.LG] 03 Apr 2026
+
+\metadata
+
+[Correspondence]Anastasiia Filippova: a_filippova@apple.com;
+David Grangier: grangier@apple.com;
+Marco Cuturi: m_cuturi@apple.com;
+João Monteiro: jmonteiro2@apple.com.
+
+Stochastic KV Routing: Enabling Adaptive Depth-Wise Cache Sharing
+
+Anastasiia Filippova
+
+  
+David Grangier
+
+  
+Marco Cuturi
+
+  
+João Monteiro
+
+Affiliation: Apple
+
+Abstract
+
+Serving transformer language models with high throughput requires caching Key-Values (KVs) to avoid redundant computation during autoregressive generation. The memory footprint of KV caching is significant and heavily impacts serving costs. This work proposes to lessen these memory requirements. While recent work has largely addressed KV cache reduction via compression and eviction along the temporal axis, we argue that the depth dimension offers an orthogonal and robust avenue for optimization.
+Although prior research suggests that a full cache for every layer is redundant, implementing cross-layer cache sharing remains a practical challenge; existing methods typically suffer from reduced throughput or increased time-to-first-token.
+In this paper, we demonstrate that dropping a layer’s cache offers efficient optimization without information loss. We propose a simple training approach: random cross-layer attention. During training, layers randomly choose to attend either to their own KV states or those of a preceding layer. This stochastic process adapts the model to be robust to various depth-wise cache sharing strategies, ensuring flexibility for unknown hardware constraints at deployment time.
+Our evaluations show that applying this scheme during pre-training or fine-tuning enables depth-wise cache sharing for various model families. Furthermore, for larger models in data-constrained settings, this approach is suggestive of a regularization-like effect, frequently preserving or improving performance while significantly reducing the cache’s memory footprint.
+
+1 Introduction
+
+Deploying large-scale language models requires careful inference optimizations to navigate the delicate trade-off between quality of user experience (latency or time to first token, throughput) and serving costs. KV caching avoids redundant computations in autoregressive generation at the expense of a large memory footprint. The KV cache scales linearly with batch size, sequence length, and model depth; its footprint outsizes the memory required for parameters in many practical settings with long inputs or outputs. The cache size drives inference cost and puts pressure on GPU memory, constraining the maximum batch size and context length. It also introduces significant latency due to the memory bandwidth overhead of loading these large tensors.
+
+The inefficiency of the KV cache is particularly striking when one considers the fundamental nature of the data it represents. A language model takes as input a sequence of tokens; integers that typically require only 2 to 4 bytes each. Yet, to process these integer tokens, the model expands them into massive high-dimensional floating-point tensors at every single layer. For example, in Llama-2-7B (Touvron et al., 2023), a single token’s integer representation is negligible, but its corresponding KV cache footprint is approximately 512 KB11
+1
+
+#layers#kv_heads#head_dim, assuming FP16 precision.. This represents a data expansion of over 100,000. Similarly, as illustrated in Figure 1, later iterations of the model (i.e., Llama-3-8B (Dubey et al., 2024)) require 128 KB per token. To put this into more tangible terms: caching the context of a book such as Alice’s Adventures in Wonderland Carroll (1865) would consume roughly times the memory of the Llama-2-7B model weights themselves. It seems paradoxical that models, which are ostensibly compression machines that encode vast amounts of training data into their parameters, require such a large amount of memory to manage a single runtime context. Other more modern models such as Qwen3-8B (Yang et al., 2025a) improved relative to models released a few years ago, and require roughly 144 KB per token. This improvement is due to KV sharing within layers via approaches such as grouped query attention (GQA) (Ainslie et al., 2023). Here, we claim more aggressive KV sharing can be carried out across layers to induce even smaller caches.
+
+The cache size grows since Key () and Value () states are stored for every token at every layer. To mitigate this, recent work has focused largely on temporal eviction that identify and drop unimportant tokens along the time axis (Zhang et al., 2023; Li et al., 2024; Cai et al., 2024). While effective, these strategies must contend with query-dependent token importance. A token deemed irrelevant for the current query might become crucial for the next, presenting a challenge where the model must either re-compute lost states or risk hallucinations (Zhu et al., 2025). Determining which tokens to drop also induces additional computational overhead.
+
+Figure 1: Language models are often described as extremely efficient databases, able to store training data in their parameters. The KV cache however doesn’t reflect that, and a single book may require as much space as the model itself. Memory footprint per token can be obtained as follows for transformer decoders: #layers#kv_heads#head_dim, where the leftmost factor of is due to storing both and representations, while the rightmost factor of is due to each floating point value requiring two bytes, assuming FP16 precision.
+
+We argue that the depth dimension offers a robust, yet underutilized avenue for optimization, orthogonal to temporal eviction and architectural variations. Recent work suggests that models exhibit high inter-layer redundancy, and a full per-layer cache is likely unnecessary (Monteiro et al., 2024a; Wu and Tu, 2024). However, using a single shared cache for all layers requires a separate encoder (Monteiro et al., 2024a), which introduces cache update overhead as adding to the cache requires a full encoder forward pass, or estimating the top layers’ output (Wu and Tu, 2024), which in turn significantly slows down pre-filling (i.e., building the cache), as multiple forward passes are required to reach reasonable approximation accuracy. Post-hoc approaches were also proposed to enable cache sharing across layers (Liu et al., 2024), but sharing is done only to a limited extent as models are trained with layer-specific Keys and Values.
+
+To bridge this gap, we propose a training approach that breaks the rigid dependency between a layer and its own specific KV states during fine-tuning. We do so by means of performing cross-layer attention (CLA) (Brandon et al., 2024), but randomly deciding on source previous layers that will provide and states. Namely, during training, for every forward pass of a layer and with probability , the layer performs standard self-attention using its own and states (i.e., ). With probability , it is forced to attend to the and states of a randomly selected preceding layer (where ). This stochastic process simulates cache faults at a structural level. The layer learns to extract necessary information not just from its specific feature space, but from the general semantic representations available in earlier layers.
+
+This approach, dubbed R-CLA, allows us to define flexible cache sharing strategies at test time. For instance, we might choose to cache only every layer, forcing the intermediate 3 layers to reuse the nearest cached states. Because the model was trained against a randomized variety of such reuse patterns, it copes with different cache sharing strategies picked at testing time. Crucially, this flexibility allows a single model to be deployed across diverse hardware environments, from high-end clusters retaining 100% of the cache to edge devices retaining only a fraction of it, without the need to train separate models for each observed hardware constraint.
+
+In summary, our contributions are as follows:
+
+•
+
+We demonstrate that the disparity between token representation and cache size leads to a massive utilization gap, and that full layer-wise caching is redundant for maintaining prediction quality.
+
+•
+
+Random Cross-Layer Attention (R-CLA): We introduce a simple, randomized training scheme that adapts models to be robust against depth-wise cache sharing. We show this method allows for memory reduction (e.g., dropping 50-75% of layers) outperforming equivalent self-attention models.
+
+•
+
+We observe that for larger models, the randomness introduced during training is suggestive of a regularization effect. Performance at full retention is frequently preserved or improved compared to standard full-cache baselines across multiple tasks.
+
+Figure 2: Performance comparison under varying cache retention rates for base models and their counterparts trained with random cross-layer attention. We report F1 scores for Question-Answer evaluations under different levels of cache retention for standard and R-CLA fine-tuned models. R-CLA avoids much of the degradation base models incur upon cache sharing, and preserves or improves performance at full cache.
+
+2 Related work
+
+The potential impact of the size of the KV cache in scaling inference has sparked a vast body of literature, primarily focused on the temporal dimension, architectural modifications, and, more recently, depth-wise redundancy.
+
+Temporal Eviction and Compression.
+
+The majority of research to date has focused on temporal eviction or compression, trying to reduce the cache size by dropping or compressing tokens along the time axis. Early efforts, like StreamLM (Xiao et al., 2024), identified a recency bias in attention patterns, proposing to keep only a small sliding window of recent tokens alongside crucial “attention sinks” (initial tokens). However, this often discards relevant semantic information stored in the middle of a sequence. To address this, methods like SnapKV (Li et al., 2024) use attention scores to identify and preserve important chunks of the cache. This idea was extended by methods like PyramidKV (Cai et al., 2024), CAKE (Qin et al., 2025), and LAVa (Shen et al., 2025), which vary the cache budget across different layers and attention heads. Despite their prevalence, these methods are inherently query-dependent (Zhu et al., 2025); because the importance of a token changes based on the query, eviction must be re-computed dynamically. While some recent attempts like OracleKV (Zhu et al., 2025) and KVZip (Kim et al., 2025) try to mitigate this by predicting future token relevance using past queries, or by using streaming clustering for sub-linear query scoring (Hooper et al., 2025), they either risk information loss or maintain a full index in memory that offsets the communication gains. Furthermore, methods like H2O (Zhang et al., 2023) and FastGen (Ge et al., 2023) focus on cache updates during generation, yet they do not reduce the peak memory footprint during the pre-filling phase for long contexts.
+
+Architectural Improvements and Efficiency.
+
+One could argue that the most successful reductions in cache footprint have come from architectural shifts rather than post-hoc eviction or compression approaches. By changing how the model handles attention, past work has meaningfully reduced the number of and vectors that need to be stored. Multi-Query Attention (MQA) (Raffel et al., 2020) and Grouped-Query Attention (GQA) (Ainslie et al., 2023) achieve this by sharing KV states across multiple query heads within a single layer. The impact of these architectural choices is significant: as noted previously, Llama-2-7B requires KB/token, whereas the more modern Qwen3-8B architecture (Yang et al., 2025a) reduces the cache memory footprint to KB/token primarily through the use of GQA. Similarly, cross-layer attention (CLA) (Brandon et al., 2024) makes it so two neighbor layers share a single set of KV states. Other structural innovations include State Space Models (SSMs) (Dao and Gu, 2024; Yang et al., 2025b) and hybrid architectures like Kimi-k1.5 (Team et al., 2025) and Nemotron-Nano-9B-v2 (Basant et al., 2025), which interleave attention with SSM layers and require no cache in non-attention blocks. Similarly, local/global self-attention architectures have been defined where local layers attend only to a small neighborhood close to the query, requiring a smaller cache (Beltagy et al., 2020; Wang et al., 2025a). Additionally, KV quantization (Hooper et al., 2024) has proven effective at reducing the numerical precision of the cache. Notably, our proposed depth eviction is orthogonal to these architectural improvements and can be combined with GQA or quantization for compounded gains.
+
+Depth-Wise Cache Sharing.
+
+While less explored than the temporal axis, one may exploit the redundancy of representations across the model’s layers. XC-Cache (Monteiro et al., 2024a) demonstrated that a shared cache across layers is feasible but requires expensive updates due to calls to an external bi-directional encoder. Similarly, Layer-Condensed KV Cache (Wu and Tu, 2024) proposes a shared single-layer cache but suffers from a significant increase in time-to-first-token due to the need for sequential pre-filling or multiple forward passes. MiniCache (Liu et al., 2024) takes a post-hoc approach by merging pairs of late layers, but its gains are modest since the model is not trained to handle this type of weight sharing. More recently, Wu et al. (2025) provide a systematic study of cross-layer sharing configurations, evaluating various patterns but requiring pre-training from scratch for each. CommonKV (Wang et al., 2025b) takes a training-free approach, using SVD to share KV projection weights across adjacent layers. KVSharer (Yang et al., 2024) identifies shareable layers via a dissimilarity metric without retraining, achieving moderate compression ( 30%). LISA (Mu et al., 2024) uses lightweight feed-forward networks and low-rank matrices to approximate cross-layer attention weight differences, requiring post-hoc training of alignment networks. We also note that our approach is mechanically distinct from structured dropout (Fan et al., 2019), which skips entire layers during training. In R-CLA, every layer performs its full computation; only the source of the KV states is randomized.
+
+These works provide strong evidence for the hypothesis that Transformer decoders can function with a shared set of KV states, much like the cross-attention mechanism in encoder-decoder models. Our work builds on this intuition by proposing a practical and efficient training scheme. Just as GQA shares KV states across heads, we follow a similar approach to CLA and share them across layers, though we use a randomized training scheme to ensure models remain robust to various cache sharing strategies. Unlike methods that require a specific fixed sharing pattern (Wu et al., 2025; Mu et al., 2024) or that operate post-hoc on unmodified models (Yang et al., 2024; Wang et al., 2025b), R-CLA produces a single model adaptive to arbitrary sharing strategies at inference time.
+
+3 Enabling Cross-Layer Attention
+
+3.1 Background
+
+Let a Transformer decoder consist of layers. For a given layer , the standard self-attention mechanism computes a query , a key , and a value from the layer’s input hidden states. The output is computed as . In a standard inference setting, the pair constitutes the KV cache for layer , which must be stored in memory to process future tokens.
+
+3.1.1 KV Cache Dynamics: Pre-fill and Sampling
+
+Inference in autoregressive language models proceeds in two distinct phases: pre-fill where inputs are used to create a KV cache and sampling where output tokens are generated and the cache updated. In more detail:
+
+•
+
+Pre-fill: The model builds the KV cache by processing the initial prompt of tokens in parallel. For a model with layers and hidden dimension , this operation generates key-value pairs, which are written to memory. This initial cache establishes the context for generation, but as discussed previously, expands token representations quite significantly.
+
+•
+
+Sampling: The model generates tokens sequentially. For each new sampled token, the model computes its specific and representations at every layer and appends them to the existing cache.
+
+Crucially, the cache size grows linearly with the sequence length. If is the size of the KV state for a single token at one layer, the total memory footprint after generating new tokens is given by .
+
+As the sequence length increases due to high or , the memory bandwidth required to load this ever-growing cache becomes the primary bottleneck for inference speed. The bottleneck in standard inference is often not the computation itself, but the memory bandwidth required to load these large KV tensors from high bandwidth memory to the compute units (SRAM) at every layer, as illustrated in Algorithm 1.
+
+Algorithm 1 Standard Inference (Memory Bound)
+
+ for to do
+
+  Compute Query
+
+  Load
+
+  Compute
+
+  Update
+
+ end for
+
+Figure 3: Cache size and prediction performance trade-offs for different models.
+
+3.1.2 Cross-Layer Attention
+
+We define Cross-Layer Attention (CLA) as the operation where layer computes a fresh query based on its current input, but unlike the approach by Brandon et al. (2024), attends to any outdated keys and values generated by a preceding layer . The attention operation thus becomes:
+
+(3.1)
+
+When , this reduces to standard self-attention. When , the model reuses the cache of a previous layer, effectively bypassing the need to store or compute a unique cache for layer .
+
+3.1.3 Cache Sharing Strategies
+
+We define a Cache Sharing Strategy as a subset of layer indices that represent the layers authorized to maintain a KV cache in memory during inference. The goal is to minimize while maintaining model performance.
+
+Under a given strategy , for any layer , the model uses the following mapping to determine which cache to access:
+
+(3.2)
+
+This mapping ensures that if a layer is not cached (i.e., ), it defaults to re-using the cache of the nearest preceding layer that is still in memory. This enables highly efficient implementation patterns where the cache is loaded once and reused for multiple subsequent layer computations, as shown in Algorithm 2, where Load and Update operations only happen for layers such that .
+
+Algorithm 2 Inference with Depth-Wise Cache Sharing
+
+ for to do
+
+  Compute Query
+
+  if then
+
+   Load
+
+   
+
+  end if
+
+  
+
+  Compute
+
+  if then
+
+   Update
+
+  end if
+
+ end for
+
+3.2 Random Cross-Layer Attention Training
+
+A standard pre-trained model relies on specific feature alignments between and . Suddenly forcing to attend to at test time breaks these alignments, leading to degradation. To solve this, we must train the model to be invariant to the source of the keys and values.
+
+Figure 4: Behavior of a model implementing R-CLA. During training, each layer decides whether to attend to KV states obtained from the past layer’s hidden states, or from a randomly chosen layer in the past, so each batch observes a different cache sharing strategy. During testing, a fixed deterministic cache sharing scheme is employed, and the same group of layers always share the same KV cache.
+
+We propose Random Cross-Layer Attention (R-CLA). Instead of training for a specific strategy , which would overfit the model to a fixed pattern, we introduce stochasticity during the forward pass as a means to make models robust against a large set of cache sharing strategies. Note that the current usage pattern of language models involves a fixed general-purpose model deployed to perform various tasks in many diverse serving settings, facing different hardware constraints. Ideally, a model would be able to cope with different levels of cache retention so as to enable serving under different conditions and hardware constraints. Not only that, as will be discussed with the evaluations as reported in Section 4, randomness due to stochasticity in cross-layer attention is suggestive of a regularization-like effect, beneficial in the data-constrained fine-tuning setting.
+
+During training, for every layer and every forward pass, we sample a decision variable :
+
+•
+
+If : The layer performs standard self-attention using .
+
+•
+
+If : The layer performs cross-layer attention using , where is sampled uniformly from .
+
+This scheme forces the query projection to learn to interact with a wide variety of key/value distributions from previous layers. By explicitly breaking the dependency on the layer’s own cache, we build robustness into the model itself. Consequently, at test time, we gain the flexibility to select different cache sharing strategies , as dictated by the specific constraints of the deployment environment, without needing to retrain the model.
+
+We further illustrate the variations in behavior across training and testing in Figure 4. During training, each layer decides whether to self-attend, i.e., ingest KV states obtained from the that past layer’s output hidden states, or cross-layer attend to a previous layer picked at random. At testing time on the other hand, cache sharing schema are set deterministically. In the example depicted in Figure 4 for instance, the sharing scheme used at testing time is so that groups of two and then three layers share the cache, which reduces the overall cache memory footprint as well as the amount of data communication as a consequence.
+
+The effect of R-CLA can be observed in Figure 2 for different fine-tuned models on a Question-Answer setting that will be further discussed in Section 4. Upon different levels of cache retention, obtained through different test caching strategies that keep only every -th layer, models trained under R-CLA do withstand cache sharing and preserve base full cache performance to a greater extent than base models. Perhaps also relevant, performance at full cache is preserved or improved, which is suggestive of a regularization-like effect from R-CLA training. We note that this approach is mechanically distinct from structured dropout (Fan et al., 2019), which skips entire layers during training to tolerate reduced depth at inference. In R-CLA, every layer performs its full computation; only the source of the KV states is randomized.
+
+Similarly, in Figure 3, we observe that effect even more clearly by looking at the tradeoffs between task performance in terms of F1 scores and the cache size, varying due to changing cache sharing strategies. R-CLA dominates standard self-attention in the Pareto sense, and preserves or improves base performance at a full cache.
+
+Figure 5: Cache size vs. evaluation loss for Qwen3-1.7B. R-CLA models (red) use the full -layer architecture with depth-wise cache sharing, while baselines (blue) are shallower Transformers with the same cache footprint. Deeper models with shared cache consistently outperform shallower models, showing that cache sharing preserves the benefit of depth.
+
+4 Evaluation
+
+We evaluate the impact of R-CLA in inference under cache sharing, and do so in two separate settings: compute-constrained pre-training in Section 4.1, and data-constrained, task-specific supervised fine-tuning, in which case we focused on Question-Answer (QA) tasks, as discussed in Section 4.2. While pre-training experiments assess whether R-CLA can be introduced early on and whether it impacts pre-training dynamics or induces instabilities, QA tasks are meaningful in our setting since performance critically depends on parsing and retaining information provided in the input prompt. As inference in our case targets sharing prompt data representations across model layers, possibly overriding relevant information, QA serves as the perfect proxy for assessing whether R-CLA renders shared cache models able to perform at parity with models that have access to the full context representation.
+
+4.1 Pre-training
+
+To verify that training under our cache sharing scheme does not destabilize pre-training, we train decoder-only Transformers from scratch both with and without R-CLA.
+For baseline comparison, we train shallower Transformers where the number of layers corresponds to the effective cache size under R-CLA. For instance, an R-CLA model with (retaining layers’ worth of cache at inference) is compared against a -layer baseline Transformer. All models are trained using an equal number of tokens.
+For R-CLA models, we use the full -layer architecture and vary the probability of attending to preceding layers.
+
+4.1.1 Experiment setup
+
+We use a Qwen-1.7B–style decoder-only Transformer (Yang et al., 2025a) and pre-train it from scratch on a subset of the OpenWeb corpus (Gokaslan et al., 2019). All runs use a fixed context length of 2,048 tokens. We optimize with AdamW (, ) (Loshchilov and Hutter, 2017) with weight decay , and apply gradient clipping with a maximum norm of . The learning rate follows a linear warm-up to over the first of training steps, followed by cosine decay for the remainder. All experiments are conducted on NVIDIA H100 GPUs. For a controlled comparison, all models are trained for an identical token budget of B tokens, which is Chinchilla-optimal (Hoffmann et al., 2022) for a B-parameter model.
+For R-CLA we vary and for the baseline number of hidden layers .
+
+Table 1: Pre-training evaluation loss for Qwen3-1.7B trained with R-CLA at varying cross-layer attention probability . Training remains stable across all values, with loss increasing by less than 2% even at .
+
+0.00
+0.25
+0.50
+0.60
+0.75
+
+Eval Loss
+2.424
+2.428
+2.441
+2.446
+2.461
+
+4.1.2 Results
+
+Table 1 reports the evaluation loss for Qwen3-1.7B models trained with varying R-CLA probability . Training remains stable across all configurations: the evaluation loss increases from at (standard training) to only at , representing less than a degradation despite three-quarters of attention operations being redirected to preceding layers during training. This confirms that R-CLA does not destabilize pre-training dynamics. In Appendix A, we show that training is stable under R-CLA.
+
+Table 2: Effect of R-CLA on F1 Score for models fine-tuned for Question-Answer. We compare the baseline standard self-attention with R-CLA trained under . Evaluation is performed across three depth-wise cache retention levels.
+
+Llama-3.1-8B
+Mistral-7B
+Qwen3-8B
+
+Dataset
+Retention
+Base
+R-CLA
+
+Base
+R-CLA
+
+Base
+R-CLA
+
+HotpotQA
+100%
+0.203
+0.306
++51.1
+0.215
+0.242
++12.4
+0.233
+0.357
++53.1
+
+50%
+0.171
+0.305
++78.7
+0.162
+0.211
++30.0
+0.085
+0.314
++267.8
+
+25%
+0.080
+0.237
++196.2
+0.031
+0.162
++421.3
+0.011
+0.098
++826.6
+
+MSMarco
+100%
+0.301
+0.318
++5.6
+0.310
+0.316
++1.7
+0.291
+0.329
++13.0
+
+50%
+0.226
+0.324
++43.2
+0.236
+0.300
++26.9
+0.112
+0.227
++102.4
+
+25%
+0.047
+0.217
++358.2
+0.069
+0.180
++161.8
+0.027
+0.058
++110.6
+
+RepLiQA
+100%
+0.655
+0.649
+-0.9
+0.649
+0.648
+-0.2
+0.441
+0.478
++8.4
+
+50%
+0.314
+0.597
++90.0
+0.291
+0.547
++88.2
+0.154
+0.349
++126.8
+
+25%
+0.073
+0.307
++322.3
+0.084
+0.214
++154.7
+0.029
+0.065
++126.4
+
+SQuAD v2
+100%
+0.583
+0.758
++30.0
+0.573
+0.750
++30.8
+0.705
+0.728
++3.3
+
+50%
+0.427
+0.740
++73.2
+0.388
+0.654
++68.4
+0.269
+0.627
++132.9
+
+25%
+0.257
+0.628
++144.6
+0.078
+0.500
++541.7
+0.042
+0.284
++575.0
+
+TriviaQA
+100%
+0.328
+0.360
++9.8
+0.205
+0.216
++5.6
+0.146
+0.295
++101.7
+
+50%
+0.290
+0.351
++20.8
+0.138
+0.158
++14.6
+0.032
+0.248
++671.9
+
+25%
+0.137
+0.291
++112.2
+0.032
+0.121
++273.9
+0.005
+0.131
++2287.3
+
+Figure 5 presents the cache size versus evaluation loss trade-off, comparing two approaches under equivalent cache budgets: (1) R-CLA models using the full -layer architecture with depth-wise cache sharing, and (2) baseline models with fewer layers but full per-layer caching. Across all cache sizes tested, R-CLA models consistently achieve lower evaluation loss than their shallower baseline counterparts. This demonstrates that depth with cache sharing is preferable to reduced depth under identical inference memory constraints.
+
+Table 3: Ablations on top of Llama-3.1-8B. We compare R-CLA () against deterministic CLA fixed at every or layer, and their randomly applied counterparts (RD-CLA, ).
+
+Dataset
+Retention
+Method
+
+R-CLA
+CLA@2
+CLA@4
+RD-CLA@2
+RD-CLA@4
+
+HotpotQA
+100%
+0.306
+0.192
+0.331
+0.223
+0.167
+
+50%
+0.305
+0.149
+0.284
+0.179
+0.134
+
+25%
+0.237
+0.089
+0.172
+0.100
+0.071
+
+MSMarco
+100%
+0.318
+0.282
+0.303
+0.323
+0.300
+
+50%
+0.324
+0.184
+0.159
+0.247
+0.211
+
+25%
+0.217
+0.065
+0.085
+0.062
+0.076
+
+RepLiQA
+100%
+0.649
+0.520
+0.476
+0.652
+0.621
+
+50%
+0.597
+0.237
+0.162
+0.298
+0.270
+
+25%
+0.307
+0.087
+0.085
+0.075
+0.076
+
+SQuAD v2
+100%
+0.758
+0.633
+0.768
+0.660
+0.630
+
+50%
+0.740
+0.387
+0.456
+0.521
+0.521
+
+25%
+0.628
+0.290
+0.397
+0.314
+0.313
+
+TriviaQA
+100%
+0.360
+0.332
+0.376
+0.357
+0.357
+
+50%
+0.351
+0.280
+0.321
+0.326
+0.315
+
+25%
+0.291
+0.145
+0.165
+0.170
+0.158
+
+4.2 Fine-tuning
+
+We performed task-specific fine-tuning to evaluate whether (i) cache sharing can be induced efficiently on pre-trained models, (ii) R-CLA enables depth-wise cache sharing, and (iii) any regularization effect is induced by R-CLA. We target tasks that require models to retrieve knowledge from the input context since that would test whether cache sharing preserves information. We thus fine-tune a variety of models of different sizes both with and without R-CLA. All models train on the same data for 50,000 steps under a batch size of 128 and a maximum input length of 8,192 tokens. Like pre-training, we train with AdamW but use , and . Weight decay is set to . The learning rate is warmed-up linearly to over the first of training steps, and decays linearly to .
+
+4.2.1 Data Preparation
+
+We curated a dataset from five sources to cover a diverse range of reasoning requirements. This includes HotpotQA (Yang et al., 2018), which requires multi-hop reasoning to synthesize answers from different parts of the context; SQuAD v2 (Rajpurkar et al., 2018); MSMarco (Bajaj et al., 2016); and TriviaQA (Joshi et al., 2017). Additionally, we included RepLiQA (Monteiro et al., 2024b), a dataset consisting of fictional content. This ensures that the evaluation strictly measures the model’s ability to find answers within the context, rather than relying on parametric knowledge acquired during pre-training. The combined dataset consists of (context, question, answer) triples.
+
+To improve robustness, we applied specific data augmentation strategies. For all datasets, we randomized the order of the input components during training. With a probability of , the format follows a question -> context -> answer structure; otherwise, it follows the standard context -> question -> answer format. While placing the question first theoretically benefits the model by allowing the query to condition the context encoding, this causal advantage is rarely available at test time. We therefore employ this randomization primarily as a means to diversify the training distribution.
+
+Specific augmentation was applied to HotpotQA, where multiple context passages are provided, some of which are irrelevant confounders. For each training example, we generated three variations with different permutations of the concatenated context passages. This prevents the model from relying on position bias and encourages robust information retrieval across the input sequence.
+
+4.2.2 Results
+
+We evaluated our approach across three distinct model architectures: Qwen3-8B (Yang et al., 2025a), Mistral7B (Jiang et al., 2023), and Llama3.18B (Dubey et al., 2024). To ensure a fair comparison, all models were trained with identical compute budgets and data mixtures, differing strictly in the application of the R-CLA mechanism versus standard self-attention. Results in Table 2 demonstrate the impact of R-CLA on cache sharing tolerance. Across all cases, cross-layer attention enables cache sharing, and retaining less of the cache preserves performance to a much higher extent than in standard self-attention models.
+
+In low-retention regimes (25% retention), base models suffer catastrophic collapse, whereas R-CLA models retain substantial capabilities in some cases. Furthermore, R-CLA incurs no penalty in the standard full-retention setting, and frequently boosts performance (e.g., +50.7% on HotpotQA for Llama-3.1). This suggests a regularization effect from stochastic training, beneficial in data-constrained settings.
+
+4.2.3 Ablation
+
+We conducted an ablation study using Llama-3.1-8B to assess the specific contribution of randomness in our approach versus the general benefits of sharing KV states. We compare our fully random method (R-CLA) against two baseline categories. First, CLA@k represents a deterministic fixed sharing scheme where groups of layers share KV states (e.g., layers to share one KV). Second, to disentangle the effect of stochastic training, we evaluate RD-CLA@k (Random-Deterministic CLA). This method uses the same fixed sharing scheme as CLA@k, but applies cross-layer attention stochastically: at each forward step at each layer, the model flips a coin to decide whether to attend to the fixed shared layer or its local KV.
+
+The results in Table 3 highlight distinct roles for sharing and stochasticity. In the no-sharing (100% retention) regime, fixed CLA@k schemes frequently match or slightly exceed the performance of R-CLA. This suggests that the regularization benefits observed in previous sections stem primarily from the information bottleneck created by KV sharing, rather than randomness itself. However, under missing KV states (50% and 25% retention), the role of randomness becomes apparent, and adding stochasticity to fixed schemes (RD-CLA) provides improvements over deterministic baselines. Ultimately, the unstructured randomness of R-CLA consistently outperforms all other variations under missing states, indicating that exposing the model to a diverse set of sharing patterns during training helps learn representations that are resilient to missing cache.
+
+4.3 Inference Efficiency
+
+To quantify the practical benefits of depth-wise cache sharing, we benchmark decode throughput, time-to-first-token (TTFT), KV cache memory, and peak GPU memory. We use a Qwen3-8B-scale architecture (36 layers, 4096 hidden, 32 attention heads, 8 KV heads, head_dim=128) with bfloat16 precision on a single 80GB GPU. We sweep across input lengths from 512 to 32K tokens, sharing group sizes (, where is the standard baseline), and batch sizes from 1 to 16. Under cache sharing with group size , every consecutive layers share a single KV cache: the first layer in each group (the “leader”) computes and stores , while the remaining layers skip their projections and reuse the leader’s cached states.
+
+Table 4: Inference efficiency across input lengths. Architecture matches Qwen3-8B (36 layers, 8 KV heads, bfloat16) on a single 80GB GPU. Group size is the standard baseline; shares every 4 consecutive layers. Time to first token (TTFT) measures prefill latency.
+
+Input
+Group
+Peak Mem.
+KV Cache
+TTFT
+Throughput
+
+Length
+Size
+(MB)
+(MB)
+(ms)
+(tok/s)
+
+2,048
+1
+16,573
+306
+66
+32.9
+
+4
+16,357
+77
+63
+43.0
+
+8,192
+1
+19,319
+1,170
+297
+34.0
+
+4
+18,455
+293
+286
+41.6
+
+16,384
+1
+22,981
+2,322
+713
+34.2
+
+4
+21,253
+581
+692
+41.1
+
+32,768
+1
+30,305
+4,626
+1,903
+22.8
+
+4
+26,849
+1,157
+1,868
+26.1
+
+Table 4 reports results across input lengths at batch size 1. KV cache memory scales as : at 8K tokens, it drops from 1170 MB (baseline) to 293 MB (), a 4 reduction. Decode throughput improves consistently, from 34.0 tok/s (baseline) to 41.6 tok/s (, +22%) at 8K context, due to skipping / projections on non-leader layers. Peak memory savings grow with context length: at 32K tokens, saves 3.5 GB versus baseline.
+
+Table 5: Batch size scaling at 8,192-token context. Same architecture as Table 4. At batch size 16, the baseline () exceeds GPU memory, while cache sharing () completes successfully.
+
+Batch
+Group
+Peak Mem.
+KV Cache
+TTFT
+Throughput
+
+Size
+Size
+(MB)
+(MB)
+(ms)
+(tok/s)
+
+2
+1
+22,973
+2,322
+588
+33.3
+
+4
+21,245
+580
+573
+40.3
+
+4
+1
+30,281
+4,643
+1,201
+22.7
+
+4
+26,825
+1,161
+1,159
+25.9
+
+8
+1
+44,897
+9,287
+2,395
+12.8
+
+4
+37,985
+2,322
+2,324
+14.7
+
+16
+1
+Out of Memory
+
+4
+60,306
+4,643
+4,696
+8.0
+
+Table 5 shows the effect of batch size scaling at 8K context. The benefits of cache sharing compound at larger batch sizes. Notably, at batch size 16, the baseline configuration runs out of memory, while and complete successfully, directly demonstrating that cache sharing enables higher serving capacity on the same hardware.
+
+We note that these gains represent a conservative lower bound. Our implementation skips / projections for non-leader layers and avoids allocating their caches, but the attention computation itself (loading , from HBM) remains the same whether a layer reads from its own cache or a leader’s. Backend-level optimizations could go further: for instance, keeping the shared , in SRAM across consecutive layers, or fusing their attention computations into a single memory load.
+
+5 Conclusion
+
+We addressed the KV cache memory bottleneck in language model inference. In line with previous work, we showed that the standard practice of maintaining a full cache for every layer is redundant and that models can effectively operate with significantly leaner caches by exploiting depth-wise correlations. By introducing random cross-layer attention (R-CLA), a simple yet effective randomized training strategy, we showed that pre-trained models can be adapted to be robust against various depth-wise cache sharing strategies, and using R-CLA early, during pre-training, can be done effectively. Our evaluations confirm that this approach reduces memory consumption, enabling longer contexts and larger batch sizes. We also observe that R-CLA is suggestive of a regularization-like effect for larger models under data-constrained settings: by breaking rigid layer-wise dependencies, R-CLA frequently preserves or improves performance at full retention. Looking forward, this work opens several avenues for optimizing inference orthogonally to quantization or temporal pruning. While our method enables flexible eviction strategies, future work could explore adaptive strategies that dynamically adjust the cache depth based on the complexity of the input query or the current generation step. Additionally, investigating the interplay between depth-wise eviction and architectural innovations like Grouped-Query Attention (GQA) or State Space Models (SSMs) could yield further compounded efficiency gains.
+
+Limitations.
+
+Enabling R-CLA requires access to training resources; future research might investigate post-hoc methods or lightweight adapters that can induce similar cross-layer robustness without full parameter updates. Our experiments focus on compute-optimal training regimes and do not explore overtraining. We have not evaluated R-CLA on Mixture-of-Experts (MoE) architectures, though the method should be directly applicable since it only modifies the attention KV source. Our fine-tuning evaluation is focused on QA tasks; while these are a strong proxy for context retention under cache sharing, broader task evaluation would strengthen the conclusions. The composition of depth-wise cache sharing with temporal eviction methods and KV quantization is a natural extension that we leave to future work.
+
+References
+
+Ainslie et al. (2023)
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebron, and S. Sanghai
+
+GQA: training generalized multi-query transformer models from multi-head checkpoints.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 4895–4901.
+
+Cited by: §1,
+§2.
+
+Bajaj et al. (2016)
+P. Bajaj, D. Campos, N. Craswell, L. Deng, J. Gao, X. Liu, R. Majumder, A. McNamara, B. Mitra, T. Nguyen, et al.
+
+Ms marco: a human generated machine reading comprehension dataset.
+
+arXiv preprint arXiv:1611.09268.
+
+Cited by: §4.2.1.
+
+Basant et al. (2025)
+A. Basant, A. Khairnar, A. Paithankar, A. Khattar, A. Renduchintala, A. Malte, A. Bercovich, A. Hazare, A. Rico, A. Ficek, et al.
+
+Nvidia nemotron nano 2: an accurate and efficient hybrid mamba-transformer reasoning model.
+
+arXiv preprint arXiv:2508.14444.
+
+Cited by: §2.
+
+Beltagy et al. (2020)
+I. Beltagy, M. E. Peters, and A. Cohan
+
+Longformer: the long-document transformer.
+
+arXiv preprint arXiv:2004.05150.
+
+Cited by: §2.
+
+Brandon et al. (2024)
+W. Brandon, M. Mishra, A. Nrusimha, R. Panda, and J. R. Kelly
+
+Reducing transformer key-value cache size with cross-layer attention.
+
+URL https://arxiv.org/abs/2405.12981.
+
+Cited by: §1,
+§2,
+§3.1.2.
+
+Cai et al. (2024)
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, Y. Li, T. Liu, K. Lu, W. Xiong, Y. Dong, J. Hu, et al.
+
+Pyramidkv: dynamic kv cache compression based on pyramidal information funneling.
+
+arXiv preprint arXiv:2406.02069.
+
+Cited by: §1,
+§2.
+
+Carroll (1865)
+L. Carroll
+
+Alice’s adventures in wonderland.
+
+Macmillan, London.
+
+Cited by: §1.
+
+Dao and Gu (2024)
+T. Dao and A. Gu
+
+Transformers are ssms: generalized models and efficient algorithms through structured state space duality.
+
+arXiv preprint arXiv:2405.21060.
+
+Cited by: §2.
+
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al.
+
+The llama 3 herd of models.
+
+arXiv e-prints, pp. arXiv–2407.
+
+Cited by: §1,
+§4.2.2.
+
+Fan et al. (2019)
+A. Fan, E. Grave, and A. Joulin
+
+Reducing transformer depth on demand with structured dropout.
+
+arXiv preprint arXiv:1909.11556.
+
+Cited by: §2,
+§3.2.
+
+Ge et al. (2023)
+S. Ge, Y. Zhang, L. Liu, M. Zhang, J. Han, and J. Gao
+
+Model tells you what to discard: adaptive kv cache compression for llms.
+
+arXiv preprint arXiv:2310.01801.
+
+Cited by: §2.
+
+Gokaslan et al. (2019)
+A. Gokaslan, V. Cohen, E. Pavlick, and S. Tellex
+
+OpenWebText corpus.
+
+Note: http://Skylion007.github.io/OpenWebTextCorpus
+
+Cited by: Appendix A,
+§4.1.1.
+
+Hoffmann et al. (2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. d. L. Casas, L. A. Hendricks, J. Welbl, A. Clark, et al.
+
+Training compute-optimal large language models.
+
+arXiv preprint arXiv:2203.15556.
+
+Cited by: §4.1.1.
+
+Hooper et al. (2024)
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami
+
+Kvquant: towards 10 million context length llm inference with kv cache quantization.
+
+Advances in Neural Information Processing Systems 37, pp. 1270–1303.
+
+Cited by: §2.
+
+Hooper et al. (2025)
+C. Hooper, S. Zhao, L. Manolache, S. Kim, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami
+
+Multipole attention for efficient long context reasoning.
+
+arXiv preprint arXiv:2506.13059.
+
+Cited by: §2.
+
+Jiang et al. (2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+
+Mistral 7b.
+
+External Links: 2310.06825,
+Link
+
+Cited by: §4.2.2.
+
+Joshi et al. (2017)
+M. Joshi, E. Choi, D. S. Weld, and L. Zettlemoyer
+
+Triviaqa: a large scale distantly supervised challenge dataset for reading comprehension.
+
+arXiv preprint arXiv:1705.03551.
+
+Cited by: §4.2.1.
+
+Kim et al. (2025)
+J. Kim, J. Kim, S. Kwon, J. W. Lee, S. Yun, and H. O. Song
+
+KVzip: query-agnostic kv cache compression with context reconstruction.
+
+arXiv preprint arXiv:2505.23416.
+
+Cited by: §2.
+
+Li et al. (2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+
+Snapkv: llm knows what you are looking for before generation.
+
+Advances in Neural Information Processing Systems 37, pp. 22947–22970.
+
+Cited by: §1,
+§2.
+
+Liu et al. (2024)
+A. Liu, J. Liu, Z. Pan, Y. He, G. Haffari, and B. Zhuang
+
+Minicache: kv cache compression in depth dimension for large language models.
+
+Advances in Neural Information Processing Systems 37, pp. 139997–140031.
+
+Cited by: §1,
+§2.
+
+Loshchilov and Hutter (2017)
+I. Loshchilov and F. Hutter
+
+Decoupled weight decay regularization.
+
+arXiv preprint arXiv:1711.05101.
+
+Cited by: §4.1.1.
+
+Monteiro et al. (2024a)
+J. Monteiro, É. Marcotte, P. Noel, V. Zantedeschi, D. Vazquez, N. Chapados, C. Pal, and P. Taslakian
+
+XC-cache: cross-attending to cached context for efficient llm inference.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2024,
+
+pp. 15284–15302.
+
+Cited by: §1,
+§2.
+
+Monteiro et al. (2024b)
+J. Monteiro, P. Noel, E. Marcotte, S. Rajeswar, V. Zantedeschi, D. Vazquez, N. Chapados, C. Pal, and P. Taslakian
+
+Repliqa: a question-answering dataset for benchmarking llms on unseen reference content.
+
+Advances in Neural Information Processing Systems 37, pp. 24242–24276.
+
+Cited by: §4.2.1.
+
+Mu et al. (2024)
+Y. Mu, Y. Wu, Y. Fan, C. Wang, H. Li, Q. He, M. Yang, T. Xiao, and J. Zhu
+
+Cross-layer attention sharing for large language models.
+
+arXiv preprint arXiv:2408.01890.
+
+Cited by: §2,
+§2.
+
+Qin et al. (2025)
+Z. Qin, Y. Cao, M. Lin, W. Hu, S. Fan, K. Cheng, W. Lin, and J. Li
+
+CAKE: cascading and adaptive kv cache eviction with layer preferences.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §2.
+
+Raffel et al. (2020)
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu
+
+Exploring the limits of transfer learning with a unified text-to-text transformer.
+
+Journal of machine learning research 21 (140), pp. 1–67.
+
+Cited by: §2.
+
+Rajpurkar et al. (2018)
+P. Rajpurkar, R. Jia, and P. Liang
+
+Know what you don’t know: unanswerable questions for squad.
+
+arXiv preprint arXiv:1806.03822.
+
+Cited by: §4.2.1.
+
+Shen et al. (2025)
+Y. Shen, S. Yuan, Z. Zhang, X. Wang, D. Jiang, and C. Nguyen
+
+LAVa: layer-wise kv cache eviction with dynamic budget allocation.
+
+Cited by: §2.
+
+Team et al. (2025)
+K. Team, Y. Zhang, Z. Lin, X. Yao, J. Hu, F. Meng, C. Liu, X. Men, S. Yang, Z. Li, et al.
+
+Kimi linear: an expressive, efficient attention architecture.
+
+arXiv preprint arXiv:2510.26692.
+
+Cited by: §2.
+
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al.
+
+Llama 2: open foundation and fine-tuned chat models.
+
+arXiv preprint arXiv:2307.09288.
+
+Cited by: §1.
+
+Wang et al. (2025a)
+B. Wang, C. Lan, C. Wang, and R. Pang
+
+RATTENTION: towards the minimal sliding window size in local-global attention models.
+
+arXiv preprint arXiv:2506.15545.
+
+Cited by: §2.
+
+Wang et al. (2025b)
+Y. Wang, H. Qiao, L. Li, Q. Zhu, and W. Che
+
+Commonkv: compressing kv cache with cross-layer parameter sharing.
+
+arXiv preprint arXiv:2508.16134.
+
+Cited by: §2,
+§2.
+
+Wu and Tu (2024)
+H. Wu and K. Tu
+
+Layer-condensed kv cache for efficient inference of large language models.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 11175–11188.
+
+Cited by: §1,
+§2.
+
+Wu et al. (2025)
+Y. Wu, H. Wu, and K. Tu
+
+A systematic study of cross-layer kv sharing for efficient llm inference.
+
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 2: Short Papers),
+
+pp. 396–403.
+
+Cited by: §2,
+§2.
+
+Xiao et al. (2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+
+Efficient streaming language models with attention sinks.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2.
+
+Yang et al. (2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §1,
+§2,
+§4.1.1,
+§4.2.2.
+
+Yang et al. (2025b)
+S. Yang, J. Kautz, and A. Hatamizadeh
+
+Gated delta networks: improving mamba2 with delta rule.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2.
+
+Yang et al. (2024)
+Y. Yang, Z. Cao, Q. Chen, L. Qin, D. Yang, H. Zhao, and Z. Chen
+
+Kvsharer: efficient inference via layer-wise dissimilar kv cache sharing.
+
+arXiv preprint arXiv:2410.18517.
+
+Cited by: §2,
+§2.
+
+Yang et al. (2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. Cohen, R. Salakhutdinov, and C. D. Manning
+
+HotpotQA: a dataset for diverse, explainable multi-hop question answering.
+
+In Proceedings of the 2018 conference on empirical methods in natural language processing,
+
+pp. 2369–2380.
+
+Cited by: §4.2.1.
+
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, et al.
+
+H2o: heavy-hitter oracle for efficient generative inference of large language models.
+
+Advances in Neural Information Processing Systems 36, pp. 34661–34710.
+
+Cited by: §1,
+§2.
+
+Zhu et al. (2025)
+Y. Zhu, Z. Tang, X. Liu, A. Li, B. Li, X. Chu, and B. Han
+
+OracleKV: oracle guidance for question-independent KV cache compression.
+
+In ICML 2025 Workshop on Long-Context Foundation Models,
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+Appendix A Training curves
+
+In Figure 6, we show training curves for experiments reported in Section 4.1. We pre-train a Qwen-1.7B–style decoder from scratch on a subset of the OpenWeb corpus (Gokaslan et al., 2019). We train different models using different levels of cache sharing or dropping ratio. That is, we use R-CLA with . All models are trained for an identical token budget of B tokens. Training curves show that R-CLA incurs no training instability even under aggressive , and hyperparameters transfer reasonably well from standard self-attention models to R-CLA ones. R-CLA can be introduced at pre-training time if cache sharing is desirable downstream.
+
+Figure 6: Training loss as a function of tokens processed for Qwen3-1.7B with varying KV cache sharing ratios.
+
+Appendix B Fine-tuning Training Dynamics
+
+Figure 7 plots train loss and eval loss over fine-tuning steps for Base vs. R-CLA on Qwen3-8B and Llama-3.1-8B. In both cases, stochastic KV routing slows training (higher train loss). For Llama-3.1-8B, the base model overfits while R-CLA delays the onset of overfitting. For Qwen3-8B, R-CLA learns consistently more slowly, in line with the pre-training results reported in Table 1. In a data-constrained fine-tuning setting, this means R-CLA models can train for more epochs before entering the overfitting regime.
+
+Figure 7: Train loss (left) and eval loss (right) over fine-tuning steps for Base (blue) vs. R-CLA (red) on Qwen3-8B (top) and Llama-3.1-8B (bottom). R-CLA shows slower learning throughout, consistent with a regularization-like effect from stochastic KV routing.
+
+Appendix C R-CLA vs. CLA@k
+
+Figure 8 plots F1 score vs. cache retention for R-CLA, CLA@2, CLA@4, RD-CLA@2, and RD-CLA@4 across all five QA tasks using Llama-3.1-8B. R-CLA maintains competitive performance from 100% to 25% retention, while deterministic CLA@ variants degrade sharply as retention moves away from their trained level. CLA@ can match or exceed R-CLA at its specific trained retention level on some tasks (e.g., CLA@4 on TriviaQA at 100%), but R-CLA is the only method that maintains competitive performance across all retention levels from a single training run.
+
+Figure 8: F1 score vs. cache retention (%) for Llama-3.1-8B across five QA tasks. R-CLA (red, solid) maintains performance across retention levels, while CLA@ variants (dashed) degrade outside their trained retention level. Data from Table 3.
+
+Appendix D Additional fine-tuning results
+
+Table 6: We report Base, R-CLA (), and relative improvement () for F1, Exact Match (EM), and ROUGE-L across three cache retention levels.
+
+Dataset
+Model
+Retention
+F1
+Exact Match (EM)
+ROUGE-L
+
+Base
+R-CLA
+
+Base
+R-CLA
+
+Base
+R-CLA
+
+HotpotQA
+
+Llama-3.1-8B
+100%
+0.203
+0.306
++51.1%
+0.128
+0.221
++72.3%
+0.206
+0.307
++49.0%
+
+50%
+0.171
+0.305
++78.7%
+0.102
+0.216
++112.6%
+0.173
+0.305
++75.8%
+
+25%
+0.080
+0.237
++196.2%
+0.035
+0.153
++339.6%
+0.088
+0.240
++171.6%
+
+Mistral-7B
+100%
+0.215
+0.242
++12.4%
+0.122
+0.141
++15.8%
+0.216
+0.243
++12.6%
+
+50%
+0.162
+0.211
++30.0%
+0.081
+0.106
++30.5%
+0.165
+0.212
++28.6%
+
+25%
+0.031
+0.162
++421.3%
+0.014
+0.078
++467.3%
+0.037
+0.168
++352.3%
+
+Qwen3-8B
+100%
+0.233
+0.357
++53.1%
+0.157
+0.273
++73.3%
+0.235
+0.359
++52.8%
+
+50%
+0.085
+0.314
++267.8%
+0.024
+0.227
++863.8%
+0.085
+0.316
++270.1%
+
+25%
+0.011
+0.098
++826.6%
+0.000
+0.041
+-
+0.014
+0.108
++692.5%
+
+MSMarco
+
+Llama-3.1-8B
+100%
+0.301
+0.318
++5.6%
+0.047
+0.056
++20.8%
+0.290
+0.306
++5.7%
+
+50%
+0.226
+0.324
++43.2%
+0.021
+0.054
++160.0%
+0.222
+0.310
++39.5%
+
+25%
+0.047
+0.217
++358.2%
+0.013
+0.039
++214.8%
+0.059
+0.225
++284.3%
+
+Mistral-7B
+100%
+0.310
+0.316
++1.7%
+0.047
+0.048
++1.0%
+0.296
+0.301
++1.6%
+
+50%
+0.236
+0.300
++26.9%
+0.013
+0.043
++244.4%
+0.229
+0.286
++25.0%
+
+25%
+0.069
+0.180
++161.8%
+0.002
+0.019
++900.0%
+0.084
+0.181
++116.0%
+
+Qwen3-8B
+100%
+0.291
+0.329
++13.0%
+0.043
+0.064
++49.5%
+0.281
+0.321
++14.1%
+
+50%
+0.112
+0.227
++102.4%
+0.002
+0.038
++1540.0%
+0.113
+0.228
++102.1%
+
+25%
+0.027
+0.058
++110.6%
+0.000
+0.009
+-
+0.043
+0.067
++55.3%
+
+RepLiQA
+
+Llama-3.1-8B
+100%
+0.655
+0.649
+-0.9%
+0.261
+0.265
++1.6%
+0.632
+0.629
+-0.6%
+
+50%
+0.314
+0.597
++90.0%
+0.022
+0.252
++1033.7%
+0.316
+0.578
++82.8%
+
+25%
+0.073
+0.307
++322.3%
+0.008
+0.090
++1067.7%
+0.124
+0.312
++152.3%
+
+Mistral-7B
+100%
+0.649
+0.648
+-0.2%
+0.265
+0.248
+-6.4%
+0.628
+0.628
++0.1%
+
+50%
+0.291
+0.547
++88.2%
+0.023
+0.207
++790.3%
+0.302
+0.532
++76.0%
+
+25%
+0.084
+0.214
++154.7%
+0.001
+0.030
++3966.7%
+0.121
+0.224
++85.8%
+
+Qwen3-8B
+100%
+0.441
+0.478
++8.4%
+0.072
+0.100
++39.0%
+0.420
+0.458
++8.9%
+
+50%
+0.154
+0.349
++126.8%
+0.009
+0.070
++705.7%
+0.150
+0.339
++126.5%
+
+25%
+0.029
+0.065
++126.4%
+0.000
+0.002
+-
+0.049
+0.081
++66.3%
+
+SQuAD v2
+
+Llama-3.1-8B
+100%
+0.583
+0.758
++30.0%
+0.467
+0.658
++40.8%
+0.586
+0.759
++29.6%
+
+50%
+0.427
+0.740
++73.2%
+0.287
+0.638
++122.2%
+0.433
+0.740
++71.0%
+
+25%
+0.257
+0.628
++144.6%
+0.147
+0.483
++229.2%
+0.286
+0.637
++122.3%
+
+Mistral-7B
+100%
+0.573
+0.750
++30.8%
+0.466
+0.642
++37.7%
+0.576
+0.750
++30.3%
+
+50%
+0.388
+0.654
++68.4%
+0.259
+0.537
++107.1%
+0.398
+0.656
++64.8%
+
+25%
+0.078
+0.500
++541.7%
+0.027
+0.347
++1192.6%
+0.097
+0.520
++436.2%
+
+Qwen3-8B
+100%
+0.705
+0.728
++3.3%
+0.611
+0.648
++5.9%
+0.705
+0.729
++3.4%
+
+50%
+0.269
+0.627
++132.9%
+0.117
+0.542
++363.0%
+0.265
+0.632
++138.2%
+
+25%
+0.042
+0.284
++575.0%
+0.002
+0.165
++8175.0%
+0.052
+0.310
++492.3%
+
+TriviaQA
+
+Llama-3.1-8B
+100%
+0.328
+0.360
++9.8%
+0.266
+0.301
++13.3%
+0.327
+0.359
++9.8%
+
+50%
+0.290
+0.351
++20.8%
+0.249
+0.298
++19.5%
+0.290
+0.349
++20.5%
+
+25%
+0.137
+0.291
++112.2%
+0.098
+0.243
++149.2%
+0.138
+0.290
++110.4%
+
+Mistral-7B
+100%
+0.205
+0.216
++5.6%
+0.119
+0.110
+-7.7%
+0.206
+0.216
++4.5%
+
+50%
+0.138
+0.158
++14.6%
+0.066
+0.088
++33.6%
+0.139
+0.157
++13.6%
+
+25%
+0.032
+0.121
++273.9%
+0.016
+0.070
++342.9%
+0.034
+0.123
++257.3%
+
+Qwen3-8B
+100%
+0.146
+0.295
++101.7%
+0.079
+0.235
++196.8%
+0.145
+0.295
++102.6%
+
+50%
+0.032
+0.248
++671.9%
+0.005
+0.200
++3709.5%
+0.028
+0.248
++776.5%
+
+25%
+0.005
+0.131
++2287.3%
+0.000
+0.091
+-
+0.005
+0.131
++2279.9%
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

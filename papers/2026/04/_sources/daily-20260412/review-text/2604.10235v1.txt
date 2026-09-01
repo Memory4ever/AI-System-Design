@@ -1,0 +1,1257 @@
+CodeComp: Structural KV Cache Compression for Agentic Coding
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Motivation
+
+4 Method
+
+4.1 Query-Conditioned Chunk Selection
+
+4.2 Structural Feature Extraction
+
+4.3 Structure-Aware Budget Allocation
+
+4.4 Span-Level Structural Protection
+
+4.5 Attention-based KV Cache Compression
+
+4.6 Position Encoding
+
+5 Experiment
+
+5.1 Code Generation
+
+5.2 Bug Localization
+
+5.3 Ablation
+
+5.4 Throughput
+
+6 Conclusion
+
+References
+
+A Appendix
+
+A.1 Experimental Setup
+
+Models and benchmarks.
+
+Compression settings.
+
+Structural prior configuration.
+
+Dataset-specific settings.
+
+A.2 LCA CodeGen Benchmark
+
+License: CC BY-NC-SA 4.0
+
+arXiv:2604.10235v1 [cs.CL] 11 Apr 2026
+
+ 
+
+CodeComp: Structural KV Cache Compression for Agentic Coding
+
+Qiujiang Chen
+††thanks: Contact Email: qiujiangc@outlook.com, Equal contribution.
+Affiliation: The University of Hong Kong
+
+  
+Jing Xiong11footnotemark:
+1
+
+Affiliation: The University of Hong Kong
+
+  
+Chenyang Zhao 
+Sidi Yang
+
+Affiliation: The University of Hong Kong
+
+Affiliation: LMSYS Org
+
+  
+Ngai Wong
+
+Affiliation: The University of Hong Kong
+
+Abstract
+
+Agentic code tasks such as fault localization and patch generation require processing long codebases under tight memory constraints, where the Key-Value (KV) cache becomes the primary inference bottleneck. Existing compression methods rely exclusively on attention signals to estimate token importance, systematically discarding structurally critical tokens such as call sites, branch conditions, and assignments that are essential for code understanding. We present CodeComp, a training-free KV cache compression framework that incorporates static program analysis into LLM inference via Code Property Graph priors extracted by Joern. Across bug localization and code generation benchmarks, CodeComp consistently outperforms attention-only compression baselines under equal memory budgets, recovering the majority of full-context accuracy
+under aggressive KV cache compression, while matching the patch generation quality of uncompressed full-context inference and integrating seamlessly into SGLang-based agentic coding pipelines without model modification.
+
+1 Introduction
+
+Agentic code tasks, such as fault localization and patch generation across entire codebases, are among the most context-demanding applications of Large Language Models (LLMs) in software engineering.
+LLMs have shown strong capabilities on these tasks, but efficient deployment at repository scale is constrained by a primary bottleneck: the Key-Value (KV) cache.
+This cache stores intermediate attention states to avoid redundant computation, but it grows linearly with context length and can consume up to 70% of total GPU memory during long-context inference (Liu et al., 2025).
+For repository-level inputs spanning tens of thousands of tokens, this memory overhead quickly exceeds the capacity of available hardware (Devoto et al., 2025).
+
+Figure 1: Attention-only compression discards structurally
+critical tokens such as function calls, branch predicates,
+and return statements. CodeComp uses CPG priors to
+explicitly preserve these tokens.
+
+A growing body of work addresses this challenge through KV cache compression. Token eviction methods, such as StreamingLLM (Xiao et al., 2023), H2O (Zhang et al., 2023), and SnapKV (Li et al., 2024), retain tokens with high attention scores. Quantization approaches, including KIVI (Liu et al., 2024) and KVQuant (Hooper et al., 2024), reduce the bit-width of cache entries. More recent methods, such as ChunkKV (Liu et al., 2025) and ParallelComp (Xiong et al., 2025), operate on chunks instead of individual tokens, enabling more efficient parallel processing of long contexts.
+Despite their diversity, these approaches largely share a common design principle: token importance is inferred primarily from attention signals.
+
+This is a reasonable assumption for natural language, but it breaks down for source code. Source code differs fundamentally from natural language in that its semantics are governed by formal program structure (e.g., control flow, data dependencies, and inter-procedural call relationships) rather than surface-level token co-occurrence.
+We adopt a standard retrieval pipeline for context selection with perplexity-based re-ranking, and focus our technical contribution on the compression stage, where two fundamental challenges arise.
+
+C1: Attention-centric compression discards structurally critical tokens. Even when relevant chunks are identified, existing KV cache compression methods, such as token eviction (Zhang et al., 2023; Li et al., 2024) and chunk-level parallel compression (Xiong et al., 2025), estimate token importance purely from attention scores. This approach fails to capture deeper semantic significance. For example, variable definitions at the head of a def-use chain, branch conditions governing faulty logic, and call sites linking cross-file dependencies often receive low attention at a given decoding step, yet are essential for correct localization.
+Attention is a learned, query-driven proxy that does not necessarily align with program-semantic importance.
+
+C2: Optimal budget allocation should be structure-aware.
+In agentic code tasks, different chunks vary greatly in their structural relevance to the query. Allocating a uniform KV cache budget across chunks wastes capacity on less relevant regions while under-representing structurally critical ones. Existing methods rely solely on attention statistics or uniform allocation, neither of which reflects program-structural importance when distributing
+the compression budget.
+
+Together, these challenges suggest that effective KV cache compression for agentic code tasks requires incorporating program structure beyond attention signals.
+
+We propose CodeComp, a training-free KV cache compression framework for agentic code tasks that incorporates structural priors from static program analysis. CodeComp leverages the Code Property Graph (CPG) (Yamaguchi et al., 2014) extracted by Joern (Joern Developers, 2026) to guide two complementary compression decisions: span-level structural protection, which preserves structurally critical tokens from eviction, and structure-aware budget allocation, which distributes the compression budget according to each chunk’s structural importance. Implemented on SGLang (Zheng et al., 2024), CodeComp integrates seamlessly into large-scale agentic code workflows without modifying the underlying model.
+
+Our contributions are as follows:
+
+•
+
+We observe that existing KV cache compression methods exhibit a structural blind spot when applied to code: attention-based importance estimation fails to capture program-semantic relationships, leading to systematic mis-pruning of structurally critical tokens (e.g., callsites, branches, and def-use relations) (§3).
+
+•
+
+We propose CodeComp, the first KV cache compression framework to incorporate static program analysis into KV cache compression, using CPG priors from Joern to guide both span-level protection of semantically critical tokens and structure-aware budget allocation across chunks (§4).
+
+•
+
+Empirically, CodeComp consistently outperforms attention-only compression baselines across bug localization and code generation benchmarks under the same memory budget, recovering the majority of full-context accuracy under aggressive KV cache compression and matching the patch generation quality of uncompressed full-context inference (§5).
+
+2 Related Work
+
+KV Cache Compression for Efficient Inference.
+The rapid growth of context length in large language models has made KV cache memory a major bottleneck during inference. A substantial body of work has been proposed to reduce KV cache footprint through compression. Token-level eviction methods such as StreamingLLM (Xiao et al., 2023), H2O (Zhang et al., 2023), and SnapKV (Li et al., 2024) selectively retain tokens based on attention scores or related heuristics. Complementary to eviction, quantization-based approaches including KIVI (Liu et al., 2024) and KVQuant (Hooper et al., 2024) reduce the precision of stored key-value pairs to lower memory usage. More recent work explores chunk-level or parallel compression strategies, such as ChunkKV (Liu et al., 2025) and ParallelComp (Xiong et al., 2025), which operate on larger units to improve scalability for long contexts.
+Despite differences in granularity and implementation, most existing methods estimate token importance primarily based on attention signals. While such signals are effective in general language modeling settings, they do not explicitly account for the structural dependencies inherent in source code, where semantic relevance is often determined by program structure rather than token co-occurrence.
+
+LLM for Agentic Code Tasks.
+Large language models have demonstrated strong performance on code-related tasks, including code generation, program understanding, and bug fixing (Rozière et al., 2024; Li and others, 2023; Nijkamp et al., 2023). Recent benchmarks such as SWE-bench (Jimenez et al., 2024) and LCA (Bogomolov et al., 2024) highlight the challenges of repository-level reasoning, where models must process large codebases and reason over long, structurally complex contexts. Despite progress, performance on these tasks remains far below human level, with even the strongest models struggling when relevant context is sparse, cross-file dependencies are deep, or the KV cache budget is constrained. Existing pipelines typically address context scale through retrieval (Xia et al., 2024), but do not consider how to compress the retrieved context in a structure-aware manner. However, none of these methods consider how to compress the retrieved context in a structure-aware manner, leaving a gap that we address in this work.
+
+Program Analysis and Structural Representations.
+Prior work in program analysis has introduced structural representations such as ASTs, CFGs, and PDGs to capture syntax, control flow, and data dependencies beyond the lexical form of code. CPG unifies these representations into a single graph, enabling joint reasoning across multiple structural dimensions. Tools such as Joern (Joern Developers, 2026) provide practical implementations for extracting CPGs from real-world codebases.
+Structural representations have been widely used in tasks such as vulnerability detection, program understanding, and graph-based code modeling (Chen et al., 2025). However, their use has largely been limited to model training or static analysis pipelines. To our knowledge, this is the first work to incorporate static program analysis into KV cache compression, enabling structure-aware preservation of semantically critical tokens in code.
+
+3 Motivation
+
+Existing KV cache compression methods primarily rely on attention scores to estimate token importance. In natural language, this assumption breaks down in code, where semantic correctness depends on structured program elements rather than token-level saliency. We therefore ask: what exactly is lost when compression relies only on attention?
+
+(a) Attention vs. structure
+
+(b) Structural mis-pruning
+
+(c) Structure-aware retention
+
+Figure 2:
+Motivation analysis for KV cache compression in code.
+(a) Attention–structure mismatch: attention-based importance is weakly aligned with CPG-derived structural importance, causing structurally critical chunks to receive low attention scores.
+(b) Structural mis-pruning: under attention-only compression, a large fraction of critical structural tokens (e.g., callsite, assignment, and return) are incorrectly discarded.
+(c) Structure-aware retention: incorporating structural priors significantly improves the preservation of critical structural tokens across categories compared to attention-based methods.
+
+Attention–structure mismatch.
+For each chunk, we compute an attention-based importance score and compare it with a CPG-derived structural score. As shown in Figure 2(a), the two signals are largely misaligned: the Jaccard overlap between the top-20% chunks ranked by attention and those ranked by structural importance is only , indicating that the two signals select largely disjoint sets of chunks. This suggests that attention scores are not a reliable proxy for program-semantic importance in code.
+
+Structural mis-pruning.
+This mismatch leads to systematic errors during compression.
+Figure 2(b) shows the fraction of structurally critical tokens pruned under attention-only compression across different structural categories, including callsite, assignment, return, branch, and signature.
+A substantial portion of these tokens are incorrectly discarded, demonstrating that attention-based selection tends to remove semantically critical program elements rather than unimportant tokens.
+
+Structure-aware retention.
+We next examine whether incorporating structural signals can mitigate this issue.
+Figure 2(c) compares the retention of critical structural tokens under different selection strategies, including the attention-based approach (SnapKV, ParallelComp) and the structure-aware approach (CodeComp). The structure-aware approach consistently preserves a higher fraction of critical structural tokens across all categories. For example, on callsite tokens, CodeComp retains 1.00 compared to 0.48 for ParallelComp and 0.52 for SnapKV, demonstrating that structural priors effectively reduce mis-pruning and better maintain program semantics under compression.
+
+Method
+API Prec
+API Rec
+API Jac
+Edit Dist
+
+ParallelComp
+0.1318
+0.1536
+0.0861
+0.7046
+
+SnapKV
+0.0196
+0.0909
+0.0175
+0.8615
+
+CodeComp
+0.1929
+0.2975
+0.1471
+0.5998
+
+Table 1: KV cache compression results on LCA.
+
+We further evaluate how these differences affect end-to-end code generation.
+Under identical chunk selection and compression budgets, we compare attention-based methods with the structure-aware approach on the LCA (Bogomolov et al., 2024) (Library-based Code Generation) benchmark. As shown in Table 1, attention-only methods achieve substantially lower API precision, recall, and Jaccard similarity, along with higher normalized edit distance. In contrast, the structure-aware method consistently improves all metrics, producing outputs that are both more API-correct and closer to the reference solution.
+
+Key insight. These findings reveal that attention-based compression exhibits a structural blind spot in code: it systematically mis-prunes program-semantic evidence that is critical for downstream code tasks, motivating the structure-aware compression mechanisms in CodeComp.
+
+4 Method
+
+Figure 3:
+Overview of CodeComp, a structure-aware KV cache compression framework. Given a query and retrieved repository context, we first select relevant chunks via PPL-based scoring (Step 1). We then extract structural anchors from static program analysis using Joern and CPG, identifying semantically critical code elements including function calls, control-flow predicates, return statements, and assignments (Step 2). These anchors are used to allocate chunk-level compression budgets and protect semantically critical spans (Step 3). Finally, attention-based compression fills the remaining capacity under these constraints (Step 4).
+
+Overview.
+CodeComp incorporates structural signals from static program analysis into KV cache compression for code-centric tasks.
+Given a query and repository-level context, we first perform query-conditioned chunk selection using perplexity-based filtering (§4.1).
+For the selected chunks, we extract structural signals from CPG-derived features (§4.2).
+These signals are used to allocate compression budgets across chunks (§4.3) and to preserve semantically critical local spans in each chunk (§4.4).
+Finally, attention-based token selection is applied within these structural constraints to fill the remaining capacity (§4.5).
+
+4.1 Query-Conditioned Chunk Selection
+
+Given a repository-level input, we partition the candidate code context into a set of chunks .
+Whenever possible, we use structure-aware boundaries such as method- or function-level units to preserve semantic coherence.
+Long methods are further split to satisfy the token budget, while overly short fragments are merged with neighboring chunks.
+
+We score each chunk using query-conditioned perplexity (PPL).
+For each chunk , we evaluate the likelihood of the query conditioned on :
+
+(1)
+
+We then select the top- chunks with the lowest perplexity:
+
+(2)
+
+where denotes the set of selected chunks.
+This stage reduces the search space to a small set of query-relevant chunks before structural information is introduced.
+
+4.2 Structural Feature Extraction
+
+For each selected chunk, we extract structural signals from its CPG to characterize semantically meaningful program events. Unlike lexical retrieval methods such as BM25, which measure query-document similarity based on token co-occurrence, these signals are derived from program structure and capture code-specific semantics such as control flow, data dependencies, and inter-procedural interactions, independent of surface-level token frequency.
+
+Intra-chunk structural features.
+For each chunk , we collect structural statistics from its CPG subgraph, including node-level features such as function calls, control-flow constructs, return statements, and assignments, as well as edge-level features such as control-flow and program-dependence edges:
+
+(3)
+
+Normalization.
+To make feature values comparable across chunks of different sizes, we apply logarithmic normalization:
+
+(4)
+
+where is a feature-specific scaling constant.
+The normalized structural score for chunk is:
+
+(5)
+
+4.3 Structure-Aware Budget Allocation
+
+We use the chunk-level structural score to modulate compression budgets across selected chunks, so that structurally more important chunks receive larger capacity.
+
+We normalize scores across selected chunks:
+
+(6)
+
+and map each normalized score to a capacity multiplier:
+
+(7)
+
+The token budget for chunk is then:
+
+(8)
+
+where is the base compression ratio.
+
+4.4 Span-Level Structural Protection
+
+Beyond allocating budgets at the chunk level, we introduce span-level structural protection to explicitly preserve semantically critical local code regions within each chunk.
+Chunk-level allocation determines how much context is retained, but not which specific tokens survive compression.
+For code-centric tasks, decisive evidence is often concentrated in a small number of local regions such as call expressions, control-flow predicates, and return statements.
+Span-level protection ensures these regions are preserved regardless of their attention scores.
+
+Structural span construction.
+We define a structural span as a contiguous token sequence associated with a semantically meaningful program element in the CPG, such as a function signature, call expression, control-flow predicate, return statement, or assignment.
+For each selected chunk , we extract a set of candidate spans .
+Each span is anchored by one structural event and optionally extended with a small local context window, so that each retained span forms a compact and semantically interpretable local reasoning unit.
+
+Span scoring.
+We assign each span a structural importance score:
+
+(9)
+
+where are binary indicators of structural types (call, control, return, assignment).
+This scoring function prioritizes spans corresponding to semantically meaningful program events, operating over structurally defined local units rather than isolated tokens.
+
+Hard query-aware protection.
+We additionally apply a hard protection rule to spans that overlap with symbols appearing in the query.
+Let denote the symbols in span and denote the query symbols.
+We define:
+
+(10)
+
+Spans with are treated as protected spans, ensuring that query-relevant local code regions are retained even when their structural score is not high.
+
+Span selection under budget.
+We reserve a portion of the chunk budget for span selection:
+
+(11)
+
+Spans are selected in two stages:
+(1) protected spans (signatures and query-matched spans) are included first;
+(2) remaining spans are ranked by and added greedily until the span budget is exhausted.
+
+Token-level protection.
+Let denote the tokens covered by selected spans.
+If , we retain the first tokens in .
+Otherwise, we retain all tokens in and fill the remaining budget with tokens nearest to in the original sequence, preserving local syntactic continuity around structurally important regions.
+
+4.5 Attention-based KV Cache Compression
+
+After span-level protection determines which tokens must be retained, attention-based compression fills the remaining capacity within each chunk.
+
+During the prefill stage, let and denote the query and context key representations within a window of size .
+We compute per-token importance scores:
+
+(12)
+
+We retain the top-ranked context tokens according to up to the remaining chunk budget.
+Compression is applied independently at each transformer layer.
+Structural priors thus determine the critical evidence that must be preserved, while attention-based compression serves as a residual selector for the remaining capacity.
+
+4.6 Position Encoding
+
+PPL-based chunk scoring.
+During the chunk selection stage, each candidate chunk is scored independently. The input to the model is formatted as , where position indices are assigned contiguously starting from 0. This allows parallel scoring of all chunks without positional interference between them.
+
+Compression and decode.
+After top- chunks are selected and compressed, the final input is assembled as:
+
+(13)
+
+where denotes the compressed version of chunk . Each chunk retains its original position indices from the scoring stage. Since chunks are scored independently, their position indices may overlap. To avoid positional conflict with the query, we assign the query a starting
+position of:
+
+(14)
+
+where is the token length of chunk
+before compression. This ensures that the query always receives the highest position indices in the sequence, consistent with its role as the decoding target, regardless of the actual lengths of the compressed chunks.
+
+5 Experiment
+
+We evaluate CodeComp on two representative code tasks: code generation and bug localization. Detailed experimental settings and hyperparameters are provided in the Appendix.
+
+5.1 Code Generation
+
+Table 2 reports results on SWE-bench Lite (Jimenez et al., 2024).
+CodeComp consistently outperforms ParallelComp across both models and compression budgets.
+The improvements are most pronounced for DS-Coder: at cap=0.4, ParallelComp achieves GF F1 of only 0.021 (16 below the no-compression baseline), while CodeComp recovers to 0.250 with patch validity of 1.000.
+On Qwen-Coder, CodeComp achieves GF F1 of 0.613 at cap=0.6, closely approaching the no-compression baseline of 0.637, while ParallelComp yields only 0.297.
+SnapKV performs competitively on file-level localization and achieves higher GF F1 than CodeComp on Qwen-Coder at cap=0.6 (0.700 vs. 0.613); however, CodeComp consistently produces patches with lower edit distance (0.683 vs. 0.718), indicating better generation fidelity.
+While SnapKV achieves higher GF F1 on Qwen-Coder at cap=0.6, CodeComp produces patches with lower edit distance (0.683 vs. 0.718), suggesting that the two methods optimize for different aspects of the task. The absolute resolve rate remains modest across all methods; patch edit distance under CodeComp closely matches the uncompressed baseline (0.743 vs. 0.740 on DS-Coder at cap=0.4), indicating that compression quality is not the primary limiting factor.
+
+Model
+Method
+Cap.
+GF Prec
+GF Rec
+GF F1
+GF Jac
+Patch Valid
+Edit Dist
+
+DS-Coder
+No Comp.
+1.0
+0.338
+0.338
+0.338
+0.338
+0.875
+0.740
+
+DS-Coder
+SnapKV
+0.4
+0.200
+0.200
+0.200
+0.200
+0.900
+0.758
+
+DS-Coder
+ParallelComp
+0.4
+0.019
+0.025
+0.021
+0.019
+0.350
+0.824
+
+DS-Coder
+CodeComp
+0.4
+0.250
+0.250
+0.250
+0.250
+1.000
+0.743
+
+DS-Coder
+SnapKV
+0.6
+0.350
+0.350
+0.350
+0.350
+0.800
+0.770
+
+DS-Coder
+ParallelComp
+0.6
+0.038
+0.038
+0.038
+0.038
+0.225
+0.869
+
+DS-Coder
+CodeComp
+0.6
+0.250
+0.250
+0.250
+0.250
+0.888
+0.766
+
+Qwen-Coder
+No Comp.
+1.0
+0.625
+0.650
+0.637
+0.625
+1.000
+0.666
+
+Qwen-Coder
+SnapKV
+0.4
+0.600
+0.600
+0.600
+0.600
+0.950
+0.709
+
+Qwen-Coder
+ParallelComp
+0.4
+0.369
+0.375
+0.372
+0.369
+0.663
+0.800
+
+Qwen-Coder
+CodeComp
+0.4
+0.544
+0.550
+0.547
+0.544
+0.988
+0.686
+
+Qwen-Coder
+SnapKV
+0.6
+0.700
+0.700
+0.700
+0.700
+1.000
+0.718
+
+Qwen-Coder
+ParallelComp
+0.6
+0.294
+0.300
+0.297
+0.294
+0.663
+0.809
+
+Qwen-Coder
+CodeComp
+0.6
+0.613
+0.613
+0.613
+0.613
+1.000
+0.683
+
+Table 2: Results on SWE-bench Lite. GF denotes ground-truth
+file-level evaluation. Cap. denotes the KV cache capacity
+ratio.
+
+Model
+Method
+Cap.
+InfBench
+DebugBench
+LongCodeQA
+Str. Score
+Avg.
+
+Llama3-8B
+No Comp.
+1.0
+0.20
+0.74
+0.59
+1.00
+0.51
+
+Llama3-8B
+SnapKV
+0.4
+0.10
+0.41
+0.48
+0.36
+0.33
+
+Llama3-8B
+ParallelComp
+0.4
+0.10
+0.03
+0.38
+0.35
+0.17
+
+Llama3-8B
+CodeComp
+0.4
+0.14
+0.43
+0.52
+0.54
+0.36
+
+Llama3-8B
+SnapKV
+0.6
+0.12
+0.44
+0.56
+0.57
+0.37
+
+Llama3-8B
+ParallelComp
+0.6
+0.11
+0.17
+0.31
+0.58
+0.20
+
+Llama3-8B
+CodeComp
+0.6
+0.18
+0.49
+0.54
+0.75
+0.40
+
+Qwen3-8B
+No Comp.
+1.0
+0.21
+0.87
+0.67
+1.00
+0.58
+
+Qwen3-8B
+SnapKV
+0.4
+0.17
+0.71
+0.69
+0.36
+0.52
+
+Qwen3-8B
+ParallelComp
+0.4
+0.10
+0.25
+0.13
+0.33
+0.16
+
+Qwen3-8B
+CodeComp
+0.4
+0.16
+0.72
+0.64
+0.56
+0.51
+
+Qwen3-8B
+SnapKV
+0.6
+0.17
+0.66
+0.68
+0.57
+0.50
+
+Qwen3-8B
+ParallelComp
+0.6
+0.05
+0.48
+0.17
+0.52
+0.23
+
+Qwen3-8B
+CodeComp
+0.6
+0.21
+0.79
+0.58
+0.77
+0.53
+
+Table 3: Bug localization accuracy on InfiniteBench-CodeDebug (InfBench), DebugBench,
+and LongCodeQA under different retention budgets. Str. Score denotes the average
+fraction of structurally critical tokens retained across layers and chunks,
+computed via CPG-derived span annotations. Best results under each compression
+ratio are bolded.
+
+5.2 Bug Localization
+
+Table 3 reports results on InfiniteBench-CodeDebug (Zhang et al., 2024), DebugBench (Tian et al., 2024), and LongCodeQA (Rando et al., 2025). CodeComp consistently outperforms both ParallelComp and SnapKV across all models, benchmarks, and retention budgets, while also retaining a substantially higher fraction of structurally critical tokens (Str. Score). The gap over ParallelComp is most pronounced on DebugBench: at cap=0.4, ParallelComp collapses to 0.03 on Llama3-8B and 0.25 on Qwen3-8B, while CodeComp achieves 0.43 and 0.72 respectively (14 and 2.9 improvements), with a correspondingly higher Str. Score (0.54 vs. 0.35). On Qwen3-8B at cap=0.6, CodeComp achieves an average of 0.53, recovering 91% of the no-compression baseline (0.58), while ParallelComp reaches only 0.23. CodeComp also outperforms SnapKV on most settings. Notably, despite SnapKV and CodeComp retaining similar numbers of tokens, CodeComp achieves higher Str. Score (e.g., 0.77 vs. 0.57 on Qwen3-8B at cap=0.6), confirming that structural span protection targets more semantically relevant regions than observation-window eviction.
+
+Across all settings, CodeComp advances the Pareto frontier of accuracy versus memory efficiency, consistently achieving higher accuracy than attention-only baselines at the same retention budget and approaching full-context performance at significantly reduced
+memory cost.
+
+5.3 Ablation
+
+As shown in Table 4, our ablation reveals a clear functional separation between the two components. Span-level preservation is the dominant contributor in our ablation. Across all compression budgets, the span-only variant consistently and substantially outperforms the capacity-only variant, indicating that preserving structurally meaningful local code regions is much more important than merely redistributing budget across chunks. This also suggests that, for debugging-oriented code tasks, the main bottleneck lies in retaining the right intra-chunk evidence rather than only identifying which chunk should receive more tokens.
+
+Chunk-level budget reallocation provides consistent but modest additional benefit over span-only: the full model (Capacity-Span) matches or slightly exceeds span-only across all settings, with the best results achieved under stronger allocation strengths (e.g., 0.25/1.75 and 0.1/1.9 at cap=0.6). This suggests that budget allocation and span protection are complementary, with span-level evidence preservation serving as the primary mechanism and budget reallocation providing a lightweight refinement.
+
+Cap
+Method
+0.9/1.1
+0.75/1.25
+0.5/1.5
+0.25/1.75
+0.1/1.9
+Best
+
+0.2
+Capacity-only
+0.433
+0.400
+0.417
+0.400
+0.450
+0.450
+
+Span-only
+–
+–
+–
+–
+–
+0.617
+
+Capacity-Span
+0.617
+0.650
+0.633
+0.633
+0.600
+0.650
+
+0.4
+Capacity-only
+0.283
+0.250
+0.233
+0.267
+0.250
+0.283
+
+Span-only
+–
+–
+–
+–
+–
+0.633
+
+Capacity-Span
+0.650
+0.633
+0.667
+0.633
+0.650
+0.667
+
+0.6
+Capacity-only
+0.417
+0.450
+0.383
+0.400
+0.400
+0.450
+
+Span-only
+–
+–
+–
+–
+–
+0.783
+
+Capacity-Span
+0.783
+0.783
+0.783
+0.800
+0.800
+0.800
+
+Table 4: Ablation results on DebugBench with 60 samples under different global compression ratios and budget-allocation strengths. Span-level preservation provides the main gains, while chunk-level budget allocation alone is weak. Capacity-Span benefits more under stronger allocation settings.
+
+Figure 4(a) provides a feature-level ablation of the span scoring function. Removing call or control leads to the most consistent degradation, while removing return causes a noticeable drop at cap=0.6. Removing assign has a smaller effect. These results indicate that span-level protection derives its effectiveness primarily from preserving call and control-flow anchors.
+
+(a) Feature ablation of span scoring.
+
+(b) End-to-end latency on SWE-bench Lite.
+
+Figure 4: Feature-level ablation and throughput analysis.
+
+5.4 Throughput
+
+Figure 4(b) reports end-to-end latency of CodeComp on SWE-bench Lite with Qwen2.5-Coder-32B-Instruct across different retention ratios. Latency remains stable across all settings (112–118s) , indicating that the structural analysis overhead introduced by Joern and the span protection mechanism does not substantially affect end-to-end inference efficiency. Unlike existing compression methods whose official implementations are based on the Transformers library, CodeComp is implemented natively on SGLang, enabling seamless integration into high-throughput agentic coding pipelines.
+
+6 Conclusion
+
+We presented CodeComp, a structure-aware KV cache compression framework that incorporates static program analysis into LLM inference for repository-level code tasks. Implemented on top of SGLang (Zheng et al., 2024), CodeComp is designed for efficient, large-scale deployment and is compatible with agentic inference workflows that require high-throughput generation over long code contexts. By extracting structural priors from Code Property Graphs via Joern, CodeComp guides two complementary compression decisions: span-level protection, which explicitly preserves semantically critical local code regions such as call expressions, control-flow predicates, and return statements, and structure-aware budget allocation, which distributes compression capacity according to chunk-level structural importance. Empirical results on bug localization and code generation benchmarks demonstrate that CodeComp consistently and substantially outperforms attention-only compression baselines under the same memory budget, while matching the patch generation quality of uncompressed full-context inference. Ablation studies confirm that span-level protection is the primary source of gains, with call and control-flow anchors being the most critical structural signals. We also introduce a structure score metric that quantifies the fraction of structurally critical tokens retained under compression; this metric correlates strongly with task accuracy across methods and settings, suggesting it serves as a reliable proxy for compression quality in code-centric tasks. We hope CodeComp serves as a foundation for future work on structure-aware inference optimization for agentic software engineering.
+
+References
+
+Bogomolov et al. (2024)
+E. Bogomolov, A. Eliseeva, T. Galimzyanov, E. Glukhov, A. Shapkin, M. Tigina, Y. Golubev, A. Kovrigin, A. van Deursen, M. Izadi, and T. Bryksin
+
+Long code arena: a set of benchmarks for long-context code models.
+
+arXiv preprint arXiv:2406.11612.
+
+Cited by: §A.1,
+§2,
+§3.
+
+Chen et al. (2025)
+Z. Chen, Z. Chu, Y. Gui, F. Guo, Y. Wan, and C. Shi
+
+Bridging code graphs and large language models for better code understanding.
+
+External Links: 2512.07666,
+Link
+
+Cited by: §2.
+
+Devoto et al. (2025)
+A. Devoto, M. Jeblick, and S. Jégou
+
+Expected attention: kv cache compression by estimating attention from future queries distribution.
+
+External Links: 2510.00636,
+Link
+
+Cited by: §1.
+
+Grattafiori et al. (2024)
+A. Grattafiori et al.
+
+The llama 3 herd of models.
+
+External Links: 2407.21783,
+Link
+
+Cited by: §A.1.
+
+Hooper et al. (2024)
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami
+
+Kvquant: towards 10 million context length llm inference with kv cache quantization.
+
+Advances in Neural Information Processing Systems 37, pp. 1270–1303.
+
+Cited by: §1,
+§2.
+
+Jimenez et al. (2024)
+C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan
+
+SWE-bench: can language models resolve real-world github issues?.
+
+External Links: 2310.06770,
+Link
+
+Cited by: §A.1,
+§2,
+§5.1.
+
+Joern Developers (2026)
+Joern Developers
+
+Joern: code analysis platform.
+
+Note: https://github.com/joernio/joern
+
+Cited by: §1,
+§2.
+
+Li et al. (2023)
+R. Li et al.
+
+StarCoder: may the source be with you!.
+
+External Links: 2305.06161,
+Link
+
+Cited by: §2.
+
+Li et al. (2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+
+Snapkv: llm knows what you are looking for before generation.
+
+Advances in Neural Information Processing Systems 37, pp. 22947–22970.
+
+Cited by: §1,
+§1,
+§2.
+
+Liu et al. (2025)
+X. Liu, Z. Tang, P. Dong, Z. Li, Y. Liu, B. Li, X. Hu, and X. Chu
+
+Chunkkv: semantic-preserving kv cache compression for efficient long-context llm inference.
+
+arXiv preprint arXiv:2502.00299.
+
+Cited by: §1,
+§1,
+§2.
+
+Liu et al. (2024)
+Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu
+
+Kivi: a tuning-free asymmetric 2bit quantization for kv cache.
+
+arXiv preprint arXiv:2402.02750.
+
+Cited by: §1,
+§2.
+
+Nijkamp et al. (2023)
+E. Nijkamp, B. Pang, H. Hayashi, L. Tu, H. Wang, Y. Zhou, S. Savarese, and C. Xiong
+
+CodeGen: an open large language model for code with multi-turn program synthesis.
+
+External Links: 2203.13474,
+Link
+
+Cited by: §2.
+
+Rando et al. (2025)
+S. Rando, L. Romani, A. Sampieri, L. Franco, J. Yang, Y. Kyuragi, F. Galasso, and T. Hashimoto
+
+LongCodeBench: evaluating coding llms at 1m context windows.
+
+External Links: 2505.07897,
+Link
+
+Cited by: §A.1,
+§5.2.
+
+Rozière et al. (2024)
+B. Rozière, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi, J. Liu, R. Sauvestre, T. Remez, J. Rapin, A. Kozhevnikov, I. Evtimov, J. Bitton, M. Bhatt, C. C. Ferrer, A. Grattafiori, W. Xiong, A. Défossez, J. Copet, F. Azhar, H. Touvron, L. Martin, N. Usunier, T. Scialom, and G. Synnaeve
+
+Code llama: open foundation models for code.
+
+External Links: 2308.12950,
+Link
+
+Cited by: §2.
+
+Team (2025)
+Q. Team
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §A.1.
+
+Tian et al. (2024)
+R. Tian, Y. Ye, Y. Qin, X. Cong, Y. Lin, Z. Liu, and M. Sun
+
+DebugBench: evaluating debugging capability of large language models.
+
+External Links: 2401.04621
+
+Cited by: §A.1,
+§5.2.
+
+Xia et al. (2024)
+C. S. Xia, Y. Deng, S. Dunn, and L. Zhang
+
+Agentless: demystifying llm-based software engineering agents.
+
+External Links: 2407.01489,
+Link
+
+Cited by: §2.
+
+Xiao et al. (2023)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+
+Efficient streaming language models with attention sinks.
+
+arXiv preprint arXiv:2309.17453.
+
+Cited by: §1,
+§2.
+
+Xiong et al. (2025)
+J. Xiong, J. Shen, C. Zheng, Z. Wan, C. Zhao, C. Yang, F. Ye, H. Yang, L. Kong, and N. Wong
+
+ParallelComp: parallel long-context compressor for length extrapolation.
+
+External Links: 2502.14317,
+Link
+
+Cited by: §1,
+§1,
+§2.
+
+Yamaguchi et al. (2014)
+F. Yamaguchi, N. Golde, D. Arp, and K. Rieck
+
+Modeling and discovering vulnerabilities with code property graphs.
+
+In Proceedings of the 2014 IEEE Symposium on Security and Privacy,
+
+pp. 590–604.
+
+External Links: Link
+
+Cited by: §1.
+
+Zhang et al. (2024)
+X. Zhang, Y. Chen, S. Hu, Z. Xu, J. Chen, M. Hao, X. Han, Z. Thai, S. Wang, Z. Liu, and M. Sun
+
+Bench: Extending long context evaluation beyond 100K tokens.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+pp. 15262–15277.
+
+External Links: Link
+
+Cited by: §A.1,
+§5.2.
+
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, et al.
+
+H2o: heavy-hitter oracle for efficient generative inference of large language models.
+
+Advances in Neural Information Processing Systems 36, pp. 34661–34710.
+
+Cited by: §1,
+§1,
+§2.
+
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng
+
+SGLang: efficient execution of structured language model programs.
+
+External Links: 2312.07104,
+Link
+
+Cited by: §A.1,
+§1,
+§6.
+
+Appendix A Appendix
+
+A.1 Experimental Setup
+
+Models and benchmarks.
+
+We evaluate two 8B-scale code language models, Llama-3-8B-Instruct (Grattafiori and others, 2024) and Qwen3-8B (Team, 2025), across five benchmarks spanning two task types. For bug localization, we use InfiniteBench-CodeDebug (Zhang et al., 2024), DebugBench (Tian et al., 2024), and LongCodeQA (Rando et al., 2025). For code generation, we use SWE-bench Lite (Jimenez et al., 2024) and the LCA library-based code generation benchmark (Bogomolov et al., 2024). All experiments are conducted using SGLang (Zheng et al., 2024) (v0.4.9.post3), a high-throughput inference engine designed for agentic LLM workflows, enabling efficient large-scale evaluation.
+
+Compression settings.
+
+We evaluate three conditions: No compression (full KV cache, capacity = 1.0), ParallelComp (attention-based chunk compression without structural guidance, capacity ), and CodeComp (using the same capacity settings). The context is partitioned into chunks of up to 4096 tokens, with a target of 512 tokens per file-level chunk and a minimum of 128 tokens per chunk. Attention scores are aggregated using average pooling over a sliding window of size 5, with a context window of 128 tokens.
+
+Structural prior configuration.
+
+CodeComp enables span-level protection with a span budget ratio of 0.5 relative to the chunk token budget, a minimum span size of 16 tokens, and a merge gap of 1 line. Span importance scores are computed as a weighted combination of structural features: function calls (0.20), control-flow constructs (0.18), query alignment (0.18), return statements (0.14), assignments (0.14), def-use edges (0.10), and attention signal (0.06). For chunk-level capacity reallocation, structural scores are mapped to capacity multipliers in the range .
+
+Dataset-specific settings.
+
+SWE-bench Lite and LCA CodeGen use an additional BM25-based file retrieval stage (top-20 files) prior to chunk selection. InfiniteBench-CodeDebug and LongCodeQA use top-6 chunk selection with a maximum of 64 new tokens. DebugBench uses top-4 chunk selection with a maximum of 512 new tokens to accommodate full bug-fix outputs. All other parameters are held constant across datasets and models, so the primary factors of variation are the model, the method, and the compression ratio.
+
+A.2 LCA CodeGen Benchmark
+
+Model
+Method
+Cap.
+API Prec
+API Rec
+API F1
+API Jac
+Edit Dist
+
+DS-Coder
+No Comp.
+1.0
+0.151
+0.242
+0.186
+0.118
+0.601
+
+DS-Coder
+ParallelComp
+0.4
+0.109
+0.162
+0.131
+0.081
+0.712
+
+DS-Coder
+SnapKV
+0.4
+0.048
+0.365
+0.085
+0.044
+0.716
+
+DS-Coder
+CodeComp
+0.4
+0.176
+0.239
+0.202
+0.124
+0.628
+
+DS-Coder
+ParallelComp
+0.6
+0.132
+0.154
+0.142
+0.086
+0.705
+
+DS-Coder
+SnapKV
+0.6
+0.050
+0.408
+0.088
+0.047
+0.722
+
+DS-Coder
+CodeComp
+0.6
+0.193
+0.298
+0.234
+0.147
+0.600
+
+Qwen-Coder
+No Comp.
+1.0
+0.158
+0.274
+0.201
+0.125
+0.581
+
+Qwen-Coder
+ParallelComp
+0.4
+0.041
+0.386
+0.074
+0.038
+0.742
+
+Qwen-Coder
+SnapKV
+0.4
+0.052
+0.434
+0.094
+0.050
+0.737
+
+Qwen-Coder
+CodeComp
+0.4
+0.054
+0.554
+0.100
+0.052
+0.665
+
+Qwen-Coder
+ParallelComp
+0.6
+0.034
+0.315
+0.068
+0.032
+0.748
+
+Qwen-Coder
+SnapKV
+0.6
+0.052
+0.502
+0.095
+0.050
+0.733
+
+Qwen-Coder
+CodeComp
+0.6
+0.054
+0.567
+0.099
+0.052
+0.670
+
+Table 5: Results on LCA CodeGen. API denotes API-level
+correctness. Cap. denotes the KV cache retention ratio.
+
+Table 5 reports additional results on LCA CodeGen. CodeComp consistently outperforms both ParallelComp and SnapKV across both models and retention budgets, achieving higher API precision, F1, and Jaccard similarity while also reducing edit distance. On DS-Coder at cap=0.6, CodeComp achieves API F1 of 0.234 versus 0.142 for ParallelComp and 0.088 for SnapKV, and reduces edit distance to 0.600, matching the uncompressed baseline of 0.601. Notably, SnapKV achieves relatively high API recall but with very low precision, suggesting it generates overly broad outputs that superficially match API references without structural correctness. These results further confirm that structure-aware retention is beneficial for code generation tasks requiring precise preservation of semantically relevant repository context.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

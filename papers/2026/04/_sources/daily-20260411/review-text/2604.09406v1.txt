@@ -1,0 +1,1062 @@
+OASIS: Online Activation Subspace Learning for Memory-Efficient Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Works
+
+3 Methodology
+
+3.1 Online Activation Subspace Learning
+
+3.2 Projection Aware Optimizer
+
+4 Experiments
+
+4.1 Experimental Setup
+
+4.2 Main Results
+
+Finetuning.
+
+4.3 Ablation Study
+
+5 Conclusion
+
+References
+
+A Appendix
+
+A.1 Extended Related Work
+
+A.2 Hyperparameters
+
+License: CC BY 4.0
+
+arXiv:2604.09406v1 [cs.LG] 10 Apr 2026
+
+OASIS: Online Activation Subspace Learning for Memory-Efficient Training
+
+Sakshi Choudhary
+
+Affiliation:  , Kaushik Roy
+
+Affiliation: Purdue University
+
+  
+Utkarsh Saxena
+††thanks: Work done while at Purdue University.
+
+Affiliation: Advanced Micro Devices, Inc. (AMD)
+
+Abstract
+
+Training large language models (LLMs) is constrained by memory requirements, with activations accounting for a substantial fraction of the total footprint. Existing approaches reduce memory using low-rank weight parameterizations or low-rank gradient subspaces for optimizer states, while activation memory is addressed through architectural modifications or compression schemes based on periodically updated projections.
+We propose OASIS, an online activation subspace learning algorithm for memory-efficient training that tracks and continuously updates a low-dimensional activation subspace during training. Intermediate activations are projected onto this evolving subspace, reducing memory without modifying forward-pass computations.
+The evolving activation subspace induces low-rank gradient representations, enabling both gradients and optimizer states to be maintained directly in this subspace, while a projection-aware optimizer consistently transports optimizer states across subspace updates for stable training.
+Across various finetuning and pretraining tasks, OASIS achieves up to lower peak memory than full fine-tuning while matching its performance and outperforming prior low-rank methods. 11
+1
+
+https://github.com/Sakshi09Ch/OASIS
+
+1 Introduction
+
+Training large language models (LLMs) is increasingly constrained by memory rather than compute alone (Rajbhandari et al., 2020; Korthikanti et al., 2022). In addition to model parameters and gradients, training requires storing optimizer states, which typically increase parameter memory by approximately 3× (Kingma and Ba, 2017), as well as intermediate activations for backpropagation. These costs become especially severe in large-scale training regimes, where activation memory scales with batch size and sequence length and optimizer-state memory grows with model size, together dominating the total training footprint, as illustrated in Figure 1(a).
+
+A promising direction is to exploit the low-rank structure of weights, gradients, and activations during training. Prior work has leveraged low-rank parameterizations (Hu et al., 2021) and gradient subspaces (Zhao et al., 2024; Robert et al., 2025) to reduce optimizer memory while maintaining full-parameter updates. However, these approaches do not reduce the memory required to store activations for backpropagation. Conversely, methods that target activation memory footprint often require architectural changes (Liu et al., 2025) or introduce approximation errors that can lead to suboptimal performance (Miles et al., 2024). Consequently, activation memory, often the dominant component at scale, remains inadequately addressed.
+
+(a) Memory breakdown during training
+
+(b) Activation subspace drift
+
+Figure 1:
+Memory breakdown and subspace dynamics during training. (a) As batch size and sequence length scale, memory becomes increasingly dominated by activations.
+(b) These activations lie in subspaces that evolve continuously during training.
+
+In this paper, we propose OASIS, an activation-aware low-rank training algorithm based on a simple but powerful observation: for a linear layer, the weight gradients lie in the span of input activations (Zhang et al., 2017). This motivates identifying a low-rank activation subspace that can be used to represent both input activations and the gradients.
+Gradients inherit the low-rank structure induced by this subspace and can therefore be represented in low rank, reducing gradient memory and naturally inducing low-rank optimizer states. Unlike prior approaches that target individual components of training memory, our method compresses activations, gradients, and optimizer states through a single algorithm.
+
+In practice, this subspace is not static. As model parameters evolve, the distribution of activations shifts, causing the underlying low-rank subspace to drift over time. To demonstrate this, we measure the average activation subspace drift across all layers between successive training iterations during Llama 2 7B (et al., 2023) finetuning on GSM8K (Cobbe et al., 2021), with higher values indicating greater drift. As shown in Figure 1(b), the drift remains consistently non-zero throughout training, indicating that the activation subspace continues to evolve rather than stabilizing to a fixed basis. A fixed projection basis therefore becomes progressively stale and can degrade optimization.
+To address this, we develop an online activation subspace learning mechanism based on Oja’s rule (Oja, 1997), which incrementally updates the low-rank subspace during training without requiring repeated exact eigen-decomposition. As the projection basis evolves, the compressed optimizer states (e.g., momentum and variance) must also be updated consistently. Following LDAdam (Robert et al., 2025), we use projection-aware updates to ensure alignment with the current subspace and maintain stable low-rank optimization.
+
+We evaluate OASIS on both finetuning and pretraining tasks across a range of model scales. Experiments on GSM8K (Cobbe et al., 2021), HumanEval (et al., 2021), and C4 (Dodge et al., 2021) with Llama models show that OASIS achieves substantial memory savings while maintaining competitive performance. It reduces peak memory by up to compared to full fine-tuning and over relative to LDAdam (Robert et al., 2025) at comparable accuracy, while outperforming prior low-rank methods in aggressive compression regimes. These gains persist in pretraining, demonstrating effectiveness across model scales and training settings.
+Our contributions are as follows:
+
+•
+
+We introduce OASIS, an online activation subspace learning algorithm for memory-efficient training, which leverages the low-rank structure of activations to jointly compress stored activations, gradients, and optimizer states.
+
+•
+
+We develop an online subspace adaptation mechanism based on Oja’s rule that incrementally tracks the evolving activation subspace during training without requiring repeated exact eigen decomposition on activation statistics.
+
+•
+
+Through extensive experiments on finetuning and pretraining tasks, we show that OASIS achieves up to lower peak memory than full fine-tuning while consistently outperforming prior low-rank methods.
+
+2 Related Works
+
+Low-Rank Parameterization. Low-rank parameterization methods such as LoRA (Hu et al., 2021) and its variants (Zhang et al., 2023; Dettmers et al., 2023; Liu et al., 2024) restrict updates to trainable low-rank adapters while keeping the backbone weights frozen, thus significantly reducing the number of trainable parameters and the memory footprint associated with gradients and optimizer states. However, these approaches restrict optimization to a fixed low-dimensional update space, which can limit their ability to match full-parameter training performance (Zhao et al., 2024; Biderman et al., 2024). To address this limitation, subsequent methods increase the effective rank of updates by aggregating multiple low-rank updates over time (Lialin et al., 2023; Xia et al., 2024). However, they typically require an initial warm-up phase with full-parameter training (Lialin et al., 2023), which undermines the benefits of low-rank optimization.
+
+Low-Rank Optimization via Gradient Subspaces. A complementary line of work performs full-parameter optimization while compressing optimizer states by exploiting the low-rank structure of gradients (Zhao et al., 2024; Robert et al., 2025; Modoranu et al., 2024; Rajabi et al., 2025; Liang et al., 2024). GaLore (Zhao et al., 2024) periodically applies Singular Value Decomposition (SVD) to identify dominant gradient directions and construct projection matrices defining a low-dimensional gradient subspace. Gradients are projected onto this subspace to update optimizer states, reducing memory while preserving full-parameter updates.
+LDAdam (Robert et al., 2025) improves upon this by introducing error-feedback and projection-aware state updates to maintain consistency as the subspace evolves. Subsequent works reduce the overhead of periodic SVD through randomized projections (Hao et al., 2024) or streaming subspace estimation via online updates (Liang et al., 2024; Rajabi et al., 2025).
+However, these methods focus on reducing optimizer-state memory and do not scale to large-scale training settings where activation memory dominates the model footprint (Figure 1(a)).
+
+Activation Compression during Training. A common approach to reducing activation memory is to avoid storing intermediate activations and instead recompute them on-the-fly during the backward pass (Chen et al., 2016). While effective, this shifts the burden from memory to compute, resulting in increased training time.
+VeLoRA (Miles et al., 2024) reduces activation memory by splitting tokens into sub-tokens and compressing them into a one-dimensional subspace. However, it requires projecting activations back to full space for gradient computation and is used only for a subset of layers, limiting its generality.
+CompAct (Shamshoum et al., 2025) applies low-rank compression to stored activations using random projections, which can slightly reduce the computational cost of GaLore-style optimization, but at the expense of accuracy, underperforming both GaLore and full-parameter training. Similarly, LANCE (Apolinario and Roy, 2026) utilizes SVD to obtain low-rank activation subspace for efficient on-device continual learning setup and is not directly applicable to standard training.
+Taking a different approach, CoLA (Liu et al., 2025) modifies the model architecture by replacing linear and projection layers with autoencoders to induce low-rank activations, but this restricts its applicability to fine-tuning existing LLMs. Overall, these approaches either require invasive architectural modifications or achieve memory savings at the cost of performance, limiting their effectiveness for general-purpose training.
+Please refer to Appendix A.1 for additional discussion on activation compression for efficient inference.
+
+3 Methodology
+
+OASIS reduces the memory footprint of training large models by performing optimization in a dynamically evolving low-dimensional subspace of activations. The key idea is to compress the activations stored for the backward pass while keeping the forward pass exact, enabling memory savings without altering forward computations.
+Consider a linear layer with input activations at iteration , and output gradients . The gradient with respect to the weight matrix can be written as
+
+(1)
+
+which lies in the span of the input activations. This enables low-rank optimization by projecting activations onto a rank- subspace using an orthonormal basis :
+
+(2)
+
+The resulting low-rank gradient is
+
+(3)
+
+corresponding to optimal rank- approximation of the gradient within the activation span.
+
+This formulation avoids materializing full-rank gradients and allows both gradients and optimizer states to be maintained directly in the low-rank subspace. For optimizers such as Adam, the first- and second-moment estimates are computed and stored in using , rather than . Parameter updates computed using are projected back to the full space via . This reduces activation storage from to and both gradient and optimizer state storage from to per layer.
+
+To remain effective, this approach requires maintaining a subspace that captures the dominant directions of the activation distribution throughout training. We initialize using principal components of early activations and update it online using an efficient streaming method described next. Algorithm 1 summarizes the overall procedure.
+
+3.1 Online Activation Subspace Learning
+
+A key challenge in subspace-based optimization is maintaining a basis that tracks the evolving activation subspace during training. As model parameters are updated, the activation distribution changes, and the optimal low-rank subspace is inherently time-varying. This requires a method that can adapt the subspace continuously and efficiently.
+
+Existing approaches typically rely on periodic subspace updates via Singular Value Decomposition (SVD) (Zhao et al., 2024) or on per-iteration approximations computed from individual mini-batches (Robert et al., 2025). Periodic updates can lead to stale subspaces between updates, while batch-level methods are often noisy and fail to capture the temporal evolution of the activation distribution. As a result, both approaches can yield suboptimal projections and degrade optimization performance.
+
+To address this, we adopt an online subspace update based on Oja’s rule (Oja, 1997), a classical streaming PCA method designed to estimate principal components from sequential data. This makes it well-suited for training settings, where data arrive in mini-batches and the underlying subspace evolves over time. The update incrementally steers the basis toward directions of high variance while removing components already captured by the current subspace:
+
+(4)
+
+where denotes the activation covariance at iteration .
+
+Here, biases the basis toward the principal directions of the activation distribution, while the projection removes components already captured by the current subspace. This yields an efficient incremental approximation to principal component analysis without requiring explicit eigendecomposition.
+
+However, directly applying this update introduces two challenges. First, the update does not preserve orthonormality, and repeated iterations can cause the basis vectors to become correlated. Maintaining an orthonormal basis is essential to ensure that projections correspond to least-squares optimal approximations. Second, the effective update magnitude depends on the scale of , which varies across layers and training iterations. A fixed step size can therefore lead to instability when activation magnitudes are large, or slow adaptation when they are small.
+
+To address these issues, we make two modifications. We explicitly re-orthonormalize after each update to maintain an orthonormal basis, incurring a cost of , which is significantly cheaper than full eigendecomposition. We also normalize the step size using
+
+(5)
+
+making the update adaptive to activation scale and improving stability across layers and training stages.
+Additionally, we adopt a projection-aware adaptive optimizer inspired by Robert et al. (2025) to ensure consistency under subspace evolution.
+
+Algorithm 1 OASIS
+
+Notation: Step size , decay rates , Oja step size , rank .
+denotes the weight matrix of a given layer.
+and are the corresponding input activations and output gradients, where , with the batch size and the sequence length. represents the subspace transition matrix
+
+Initialization: Use to form and initialize
+as the top- principal components.
+Set and . denotes element-wise absolute value.
+
+1:
+
+for do
+
+2:
+
+   //Activation covariance
+
+3:
+
+   //Online subspace update (Oja-based)
+
+4:
+
+   //Re-orthonormalize basis
+
+5:
+
+  
+
+6:
+
+  
+
+7:
+
+   //Projection aware optimizer
+
+8:
+
+  
+
+9:
+
+   ;
+
+10:
+
+  
+
+11:
+
+   // Map update to full space
+
+12:
+
+   // Parameter update
+
+13:
+
+end for
+
+3.2 Projection Aware Optimizer
+
+We maintain optimizer states in a low-dimensional activation subspace that evolves during training. As the subspace changes, optimizer states are transported to remain aligned with the current basis. Let and denote the orthonormal bases at iterations and . The subspace transition matrix . defines the change of coordinates between subspaces and is used to transport optimizer states from one low-rank subspace to another.
+
+Following prior work (Robert et al., 2025), we view Adam’s states as coordinate-wise estimates of gradient moments. Under this view, the first moment can be directly projected between subspaces using the linear transformation induced by (Algorithm 1, Line 7). The second moment , however, cannot be directly projected between subspaces, as it depends on cross-coordinate interactions not captured by coordinate-wise estimates. We approximate it in the new subspace using projected variance and mean-squared terms derived from the transported moments, avoiding explicit covariance estimation (Algorithm 1, Line 8).
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Models and Datasets.
+We evaluate OASIS across both finetuning and pretraining using language models of varying scales. For downstream tasks, we use Llama-2 7B (et al., 2023) and Llama-3.2 1B (et al., 2024), finetuned on the GSM8K dataset (Cobbe et al., 2021). For code generation, we finetune Llama-2 7B on CodeAlpaca (Chaudhary, 2023) and evaluate on HumanEval (et al., 2021). To study the behavior of OASIS in the pretraining regime, we train Llama-130M and Llama-350M from scratch on the C4 dataset (Dodge et al., 2021).
+
+Training Details. All models are trained using the Adam optimizer. We report task-specific performance metrics: accuracy on GSM8K, pass@10 on HumanEval, and validation loss on C4. In addition, we measure peak memory usage during training to quantify the efficiency gains of OASIS. Please refer to Appendix A.2 for detailed hyperparameters
+
+Baselines. We compare OASIS against diverse training strategies: (i) Full fine-tuning with Adam, which serves as the standard upper bound, (ii) LoRA (Hu et al., 2021), a parameter-efficient finetuning method that updates low-rank adapters while freezing the base model, (iii) GaLore (Zhao et al., 2024), which reduces the memory footprint of optimizer states by projecting gradients into a low-rank subspace, and (iv) LDAdam (Robert et al., 2025), which similarly operates in a low-dimensional gradient subspace while incorporating error feedback and projection-aware optimizer to improve performance.
+
+Model
+Rank
+Method
+Accuracy (%)
+Peak Memory (GB)
+
+Llama-2 7B
+–
+Adam
+39.37 0.39
+95.18
+
+32
+LoRA
+37.13 0.64
+64.15
+
+GaLore
+35.96 1.18
+71.30
+
+LDAdam
+38.74 0.11
+71.48
+
+OASIS
+39.14 0.72
+48.21
+
+128
+LoRA
+37.27 0.36
+66.00
+
+GaLore
+37.49 0.56
+72.03
+
+LDAdam
+38.17 0.86
+72.21
+
+OASIS
+39.10 1.27
+49.60
+
+Llama-3 1B
+–
+Adam
+27.09 0.58
+52.54
+
+32
+LoRA
+22.51 0.46
+48.06
+
+GaLore
+21.64 0.36
+47.17
+
+LDAdam
+24.55 0.91
+49.01
+
+OASIS
+23.78 0.26
+41.03
+
+128
+LoRA
+26.61 0.62
+48.62
+
+GaLore
+25.51 0.61
+47.40
+
+LDAdam
+25.72 1.07
+49.23
+
+OASIS
+26.88 0.49
+41.59
+
+Table 1: Finetuning results on GSM8K for Llama-2 7B and Llama-3 1B. For Llama-2 7B, OASIS matches the performance of Adam while reducing peak memory by .
+
+Figure 2: Memory breakdown across training components for different methods on LLaMA-2 7B GSM8K finetuning at rank 32. OASIS reduces memory across activations, gradients, and optimizer states, leading to the lowest overall memory footprint.
+
+Rank
+Method
+Accuracy (%)
+Peak Memory (GB)
+
+–
+Adam
+34.01 1.29
+93.26
+
+4
+LoRA
+28.34 2.79
+61.70
+
+GaLore
+27.42 1.22
+69.00
+
+LDAdam
+27.93 1.41
+68.99
+
+OASIS
+29.28 0.61
+46.16
+
+32
+LoRA
+31.84 1.74
+62.08
+
+GaLore
+31.24 2.74
+69.20
+
+LDAdam
+34.20 1.43
+69.37
+
+OASIS
+33.50 2.13
+46.35
+
+Table 2:
+Finetuning results on HumanEval for Llama-2 7B (trained on CodeAlpaca). OASIS achieves the best performance among low-rank methods at aggressive compression, and remains competitive with the strongest baseline at higher rank, while consistently using the lowest memory.
+
+4.2 Main Results
+
+Method
+Llama-130M
+Llama-350M
+
+Val Loss
+Mem
+Val Loss
+Mem
+
+Adam
+3.21
+41.00
+3.03
+89.31
+
+GaLore
+3.55
+40.73
+3.39
+88.22
+
+LDAdam
+3.23
+40.73
+2.86
+88.22
+
+OASIS
+3.28
+37.10
+3.02
+79.46
+
+Table 3: Pretraining results on C4 across Llama model scales. OASIS achieves comparable validation loss to Adam while consistently reducing memory usage.
+
+Finetuning.
+
+Table 1 compares OASIS with full fine-tuning and prior low-rank methods on GSM8K. We evaluate two ranks to capture the trade-off between compression and performance: a lower rank () corresponding to an aggressive memory reduction regime, and a higher rank () chosen such that OASIS closely matches full fine-tuning performance.
+For Llama-2 7B, OASIS matches the performance of full fine-tuning while reducing peak memory by nearly . Across both ranks, it consistently outperforms prior low-rank methods. Notably, even in the low-rank regime (), OASIS outperforms all baselines while using substantially less memory, achieving over lower memory usage compared to the closest performing baseline, LDAdam.
+Similar trends are observed for the Llama-3.2 1B model. At a lower rank, OASIS remains competitive with prior methods while achieving the lowest memory usage, and at a higher rank, it closely approaches full fine-tuning performance. To better understand the source of memory savings, we present a breakdown of peak memory across different training components in Figure 2 (at rank ). Activation memory constitutes the largest portion of the total footprint, followed by optimizer states. LDAdam and GaLore primarily reduce optimizer memory, while LoRA reduces gradient and optimizer states’ memory while leading to a larger activation footprint. In contrast, OASIS reduces memory across activations, gradients, and optimizer states, resulting in the lowest memory footprint.
+
+Table 2 shows results on HumanEval for Llama-2 7B. At lower rank (), OASIS achieves the best accuracy among all low-rank methods while using substantially less memory, highlighting its effectiveness in aggressive compression regimes.
+At higher rank (), OASIS remains competitive with the strongest baseline (LDAdam) while reducing memory usage by over . These results further demonstrate that OASIS provides strong performance–memory trade-offs, particularly in low-rank settings.
+
+Pretraining. Table 3 shows pretraining results on the C4 dataset for Llama-130M and Llama-350M. OASIS achieves competitive validation loss compared to full training while consistently reducing memory usage across model scales.
+For Llama-350M, OASIS closely matches the performance of Adam while reducing peak memory by over . For the smaller Llama-130M model, OASIS incurs only a minor increase in validation loss while still providing meaningful memory savings.
+Overall, these results demonstrate that OASIS scales effectively to pretraining settings, maintaining strong performance while reducing memory consumption.
+
+4.3 Ablation Study
+
+How does the activation subspace evolve during training?
+We analyze the evolution of the activation subspace using a Frobenius-based distance between subspaces. Let denote orthonormal bases of the rank- activation subspace at successive steps, and denote the subspace transition matrix. We define the subspace drift as:
+
+(6)
+
+This metric is bounded in , where indicates identical subspaces and indicates orthogonal subspaces.
+Figure 1(b) shows the subspace drift during finetuning, while Figure 3 presents the corresponding behavior during pretraining on C4 with Llama-130M and LlaMA-350M. In both settings, the drift remains non-zero throughout training, indicating that the activation subspace does not converge to a fixed basis. Notably, pretraining exhibits a more pronounced transient phase: the drift decreases initially and subsequently settles at a non-zero level, indicating continued evolution of the subspace.
+These observations suggest that the activation subspace is inherently non-stationary. Consequently, methods that rely on a fixed subspace estimated at initialization or infrequent updates based on batch statistics may fail to capture the evolving structure of activations, motivating the need for continuously updating the subspace.
+
+(a) Llama 130M
+
+(b) Llama 350M
+
+Figure 3: Subspace drift during pretraining on C4 for Llama-130M and Llama-350M. Both models exhibit a transient phase followed by stabilization at a non-zero drift, indicating that the activation subspace evolves throughout training.
+
+(a) Effect of PCA update interval
+
+(b) Training loss vs iterations
+
+Figure 4: Comparison of periodic PCA and OASIS during finetuning on GSM8K with Llama-2 7B.
+(a) Periodic PCA consistently underperforms OASIS across all tested update intervals.
+(b) OASIS also converges faster, achieving lower training loss compared to periodic PCA.
+
+Is online subspace tracking necessary?
+A natural question that arises is whether online subspace tracking is necessary, or if similar performance can be achieved by periodically recomputing the subspace using PCA with a carefully tuned update interval.
+To answer this, we compare OASIS with periodic PCA across a range of update intervals, where smaller intervals correspond to more frequent updates. As shown in Figure 4(a), even after tuning the update interval, periodic PCA consistently underperforms OASIS.
+In addition, Figure 4(b) shows that OASIS converges faster and achieves lower training loss compared to periodic PCA.These results highlight that relying on periodic recomputation using noisy batch statistics is fundamentally less effective than continuously tracking activation subspaces, underscoring the importance of online subspace learning for memory-efficient training.
+
+How does performance vary with rank?
+As shown in Figure 6, performance improves with increasing rank for both periodic PCA and OASIS, reflecting the increased expressivity of higher-dimensional subspaces.
+However, OASIS consistently outperforms periodic PCA across all ranks. Notably, OASIS achieves substantially higher accuracy even at low ranks, indicating that online subspace tracking yields more effective representations than periodic recomputation. Performance gains begin to saturate beyond moderate ranks, indicating higher-dimensional subspaces are easier to adapt to than more constrained low-rank subspaces undergoing rapid evolution.These results indicate that OASIS effectively tracks the evolving subspace and provides strong performance across a wide range of ranks.
+
+How does the subspace learning rate affect performance? As shown in Figure 6, very small learning rates lead to slow adaptation of the subspace and result in lower accuracy. Increasing the learning rate improves performance, with accuracy peaking at around . Larger learning rates degrade performance, likely due to instability in the subspace updates.
+Overall, these results highlight the importance of selecting an appropriate subspace learning rate that balances stability and responsiveness in subspace adaptation. In practice, we find that a moderate value (e.g., ) consistently provides strong performance across tasks.
+
+Figure 5: Effect of subspace rank on finetuning performance on GSM8K with Llama-2 7B. OASIS consistently outperforms periodic PCA across ranks.
+
+Figure 6: Effect of subspace learning rate on finetuning performance on GSM8K with Llama-2 7B. Best accuracy is achieved at 0.1 LR.
+
+5 Conclusion
+
+In this paper, we present OASIS, an online activation subspace learning algorithm for memory-efficient training that continuously tracks low-dimensional activation subspaces through an iterative update rule. Across both pretraining and finetuning settings, OASIS achieves strong performance while reducing memory footprint compared to prior low-rank training techniques. However, realizing these gains requires tuning the subspace learning rate (LR), which governs the dynamics of the online updates. While we observe a reasonably stable range of effective LR values, performance can degrade outside this range, making it an important hyperparameter. A promising direction for future work is to adapt this learning rate based on subspace dynamics, increasing it when the subspace is changing rapidly and decreasing it as it stabilizes.
+
+Acknowledgments
+
+The authors would like to thank Marco Paul E. Apolinario for helpful technical discussions. This work was supported in part by, the Center for the Co-Design of Cognitive Systems (COCOSYS), a DARPA-sponsored JUMP center, the Semiconductor Research Corporation (SRC) and the National Science Foundation (NSF).
+
+References
+
+Apolinario and Roy (2026)
+M. P. E. Apolinario and K. Roy
+
+LANCE: low rank activation compression for efficient on-device continual learning.
+
+External Links: 2509.21617,
+Link
+
+Cited by: §2.
+
+Ashkboos et al. (2024)
+S. Ashkboos, M. L. Croci, M. G. do Nascimento, T. Hoefler, and J. Hensman
+
+SliceGPT: compress large language models by deleting rows and columns.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §A.1.
+
+Biderman et al. (2024)
+D. Biderman, J. Portes, J. J. G. Ortiz, M. Paul, P. Greengard, C. Jennings, D. King, S. Havens, V. Chiley, J. Frankle, et al.
+
+Lora learns less and forgets less.
+
+arXiv preprint arXiv:2405.09673.
+
+Cited by: §2.
+
+Chang et al. (2025)
+C. Chang, W. Lin, C. Lin, C. Chen, Y. Hu, P. Wang, N. Huang, L. Ceze, M. S. Abdelfattah, and K. Wu
+
+Palu: KV-cache compression with low-rank projection.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §A.1.
+
+Chaudhary (2023)
+S. Chaudhary
+
+Code alpaca: an instruction-following llama model for code generation.
+
+GitHub.
+
+Note: https://github.com/sahil280114/codealpaca
+
+Cited by: §4.1.
+
+Chen et al. (2016)
+T. Chen, B. Xu, C. Zhang, and C. Guestrin
+
+Training deep nets with sublinear memory cost.
+
+arXiv preprint arXiv:1604.06174.
+
+Cited by: §2.
+
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+
+Training verifiers to solve math word problems.
+
+External Links: 2110.14168,
+Link
+
+Cited by: §1,
+§1,
+§4.1.
+
+Dettmers et al. (2023)
+T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer
+
+QLoRA: efficient finetuning of quantized llms.
+
+External Links: 2305.14314,
+Link
+
+Cited by: §2.
+
+Dodge et al. (2021)
+J. Dodge, M. Sap, A. Marasović, W. Agnew, G. Ilharco, D. Groeneveld, M. Mitchell, and M. Gardner
+
+Documenting large webtext corpora: a case study on the colossal clean crawled corpus.
+
+External Links: 2104.08758,
+Link
+
+Cited by: §1,
+§4.1.
+
+et al. (2024)
+A. G. et al.
+
+The llama 3 herd of models.
+
+External Links: 2407.21783,
+Link
+
+Cited by: §4.1.
+
+et al. (2023)
+H. T. et al.
+
+Llama 2: open foundation and fine-tuned chat models.
+
+External Links: 2307.09288,
+Link
+
+Cited by: §1,
+§4.1.
+
+et al. (2021)
+M. C. et al.
+
+Evaluating large language models trained on code.
+
+External Links: 2107.03374,
+Link
+
+Cited by: §1,
+§4.1.
+
+Hao et al. (2024)
+Y. Hao, Y. Cao, and L. Mou
+
+Flora: low-rank adapters are secretly gradient compressors.
+
+External Links: 2402.03293,
+Link
+
+Cited by: §2.
+
+Hoffmann et al. (2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A. Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc, A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre
+
+Training compute-optimal large language models.
+
+External Links: 2203.15556,
+Link
+
+Cited by: §A.2.
+
+Hu et al. (2021)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+
+LoRA: low-rank adaptation of large language models.
+
+External Links: 2106.09685,
+Link
+
+Cited by: §A.2,
+§1,
+§2,
+§4.1.
+
+Kingma and Ba (2017)
+D. P. Kingma and J. Ba
+
+Adam: a method for stochastic optimization.
+
+External Links: 1412.6980,
+Link
+
+Cited by: §1.
+
+Korthikanti et al. (2022)
+V. Korthikanti, J. Casper, S. Lym, L. McAfee, M. Andersch, M. Shoeybi, and B. Catanzaro
+
+Reducing activation recomputation in large transformer models.
+
+External Links: 2205.05198,
+Link
+
+Cited by: §1.
+
+Lialin et al. (2023)
+V. Lialin, N. Shivagunde, S. Muckatira, and A. Rumshisky
+
+ReLoRA: high-rank training through low-rank updates.
+
+External Links: 2307.05695,
+Link
+
+Cited by: §2.
+
+Liang et al. (2024)
+K. Liang, B. Liu, L. Chen, and Q. Liu
+
+Memory-efficient llm training with online subspace descent.
+
+External Links: 2408.12857,
+Link
+
+Cited by: §2.
+
+Lin et al. (2025)
+C. Lin, S. Gao, J. S. Smith, A. Patel, S. Tuli, Y. Shen, H. Jin, and Y. Hsu
+
+MoDeGPT: modular decomposition for large language model compression.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §A.1.
+
+Liu et al. (2024)
+S. Liu, C. Wang, H. Yin, P. Molchanov, Y. F. Wang, K. Cheng, and M. Chen
+
+DoRA: weight-decomposed low-rank adaptation.
+
+External Links: 2402.09353,
+Link
+
+Cited by: §2.
+
+Liu et al. (2025)
+Z. Liu, R. Zhang, Z. Wang, M. Yan, Z. Yang, P. Hovland, B. Nicolae, F. Cappello, S. Tang, and Z. Zhang
+
+CoLA: compute-efficient pre-training of llms via low-rank activation.
+
+External Links: 2502.10940,
+Link
+
+Cited by: §1,
+§2.
+
+Miles et al. (2024)
+R. Miles, P. Reddy, I. Elezi, and J. Deng
+
+VeLoRA: memory efficient training using rank-1 sub-token projections.
+
+External Links: 2405.17991,
+Link
+
+Cited by: §1,
+§2.
+
+Modoranu et al. (2024)
+I. Modoranu, M. Safaryan, G. Malinovsky, E. Kurtic, T. Robert, P. Richtarik, and D. Alistarh
+
+MicroAdam: accurate adaptive optimization with low space overhead and provable convergence.
+
+External Links: 2405.15593,
+Link
+
+Cited by: §2.
+
+Oja (1997)
+E. Oja
+
+The nonlinear pca learning rule in independent component analysis.
+
+Neurocomputing 17 (1), pp. 25–45.
+
+Cited by: §1,
+§3.1.
+
+Rajabi et al. (2025)
+S. Rajabi, N. Nonta, and S. Rambhatla
+
+SubTrack++ : gradient subspace tracking for scalable llm training.
+
+External Links: 2502.01586,
+Link
+
+Cited by: §2.
+
+Rajbhandari et al. (2020)
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He
+
+ZeRO: memory optimizations toward training trillion parameter models.
+
+External Links: 1910.02054,
+Link
+
+Cited by: §1.
+
+Robert et al. (2025)
+T. Robert, M. Safaryan, I. Modoranu, and D. Alistarh
+
+LDAdam: adaptive optimization from low-dimensional gradient statistics.
+
+External Links: 2410.16103,
+Link
+
+Cited by: §A.2,
+§1,
+§1,
+§1,
+§2,
+§3.1,
+§3.1,
+§3.2,
+§4.1.
+
+Saxena et al. (2024)
+U. Saxena, G. Saha, S. Choudhary, and K. Roy
+
+Eigen attention: attention in low-rank space for KV cache compression.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2024, Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+
+Miami, Florida, USA, pp. 15332–15344.
+
+External Links: Link,
+Document
+
+Cited by: §A.1.
+
+Saxena et al. (2025)
+U. Saxena, S. Sharify, K. Roy, and X. Wang
+
+ResQ: mixed-precision quantization of large language models with low-rank residuals.
+
+In Forty-second International Conference on Machine Learning,
+
+External Links: Link
+
+Cited by: §A.1.
+
+Shamshoum et al. (2025)
+Y. Shamshoum, N. Hodos, Y. Sieradzki, and A. Schuster
+
+CompAct: compressed activations for memory-efficient LLM training.
+
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), L. Chiruzzo, A. Ritter, and L. Wang (Eds.),
+
+Albuquerque, New Mexico, pp. 1511–1524.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-189-6
+
+Cited by: §2.
+
+Singhania et al. (2024)
+P. Singhania, S. Singh, S. He, S. Feizi, and A. Bhatele
+
+Loki: low-rank keys for efficient sparse attention.
+
+External Links: 2406.02542,
+Link
+
+Cited by: §A.1.
+
+Xia et al. (2024)
+W. Xia, C. Qin, and E. Hazan
+
+Chain of lora: efficient fine-tuning of language models via residual learning.
+
+External Links: 2401.04151,
+Link
+
+Cited by: §2.
+
+Yuan et al. (2025)
+Z. Yuan, Y. Shang, Y. Song, D. Yang, Q. Wu, Y. Yan, and G. Sun
+
+ASVD: activation-aware singular value decomposition for compressing large language models.
+
+External Links: Link
+
+Cited by: §A.1.
+
+Zhang et al. (2017)
+C. Zhang, S. Bengio, M. Hardt, B. Recht, and O. Vinyals
+
+Understanding deep learning requires rethinking generalization.
+
+External Links: 1611.03530,
+Link
+
+Cited by: §1.
+
+Zhang et al. (2023)
+Q. Zhang, M. Chen, A. Bukharin, N. Karampatziakis, P. He, Y. Cheng, W. Chen, and T. Zhao
+
+AdaLoRA: adaptive budget allocation for parameter-efficient fine-tuning.
+
+External Links: 2303.10512,
+Link
+
+Cited by: §2.
+
+Zhang et al. (2024)
+R. Zhang, K. Wang, L. Liu, S. Wang, H. Cheng, C. Zhang, and Y. Shen
+
+LoRC: low-rank compression for llms kv cache with a progressive compression strategy.
+
+External Links: 2410.03111,
+Link
+
+Cited by: §A.1.
+
+Zhao et al. (2024)
+J. Zhao, Z. Zhang, B. Chen, Z. Wang, A. Anandkumar, and Y. Tian
+
+GaLore: memory-efficient llm training by gradient low-rank projection.
+
+External Links: 2403.03507,
+Link
+
+Cited by: §A.2,
+§1,
+§2,
+§2,
+§3.1,
+§4.1.
+
+Appendix A Appendix
+
+A.1 Extended Related Work
+
+Activation Compression for Inference-Time Efficiency.
+Recent work has shown that transformer activations lie in low-dimensional subspaces and exploits this structure to improve inference efficiency in LLMs. Several approaches leverage activation subspaces for model compression and pruning, including SliceGPT (Ashkboos et al., 2024), which reduces hidden dimensionality via subspace projection, ASVD (Yuan et al., 2025), which performs activation-aware low-rank decomposition of model weights, and ModeGPT (Lin et al., 2025), which uses activation-guided structure for pruning.
+Another line of work focuses on reducing KV-cache memory by exploiting low-rank activation structure, projecting keys and values into lower-dimensional spaces during decoding (Saxena et al., 2024; Chang et al., 2025; Zhang et al., 2024; Singhania et al., 2024). Activation-aware quantization methods further leverage this structure to compress activations with minimal accuracy loss (Saxena et al., 2025).
+Collectively, these methods rely on the observation that activation covariance is approximately low-rank, enabling efficient compression, pruning, and acceleration at inference time. In contrast, we leverage activation subspace structure during training as a foundation for low-rank optimization.
+
+A.2 Hyperparameters
+
+Hyperparameter
+GSM8K (Table 1)
+HumanEval (Table 2)
+
+Batch size
+32
+16
+
+Sequence length
+512
+1024
+
+Learning rate scheduler
+Cosine
+Cosine
+
+Learning rate (LR)
+
+Warmup steps
+5%
+5%
+
+Epochs
+3
+3
+
+OASIS Subspace LR ()
+
+Table 4: Hyperparameters for finetuning experiments on GSM8K and HumanEval.
+
+Hyperparameter
+Llama-130M
+Llama-350M
+
+Batch size
+512
+512
+
+Sequence length
+256
+256
+
+Training iterations
+20k
+60k
+
+Learning rate (LR)
+
+Learning rate scheduler
+Cosine
+Cosine
+
+Warmup
+10%
+10%
+
+OASIS subspace LR ()
+
+Table 5: Hyperparameters for pretraining experiments on C4 presented in Table 3.
+
+Model
+Hidden
+Intermediate
+Heads
+Layers
+
+Llama-130M
+768
+2048
+12
+12
+
+Llama-350M
+1024
+2736
+16
+24
+
+Table 6: Model configurations for pretraining experiments.
+
+All experiments are conducted using bfloat16 (bf16) precision on NVIDIA H200 GPUs.
+We summarize the hyperparameters for finetuning and pretraining experiments in Tables 4 and 5, respectively. For finetuning on GSM8K and HumanEval, we use a cosine learning rate schedule with 5% warmup and train for 3 epochs, tuning the learning rate and OASIS subspace learning rate across a fixed grid.
+
+For pretraining on C4, we use a shared configuration across model scales, including batch size, sequence length, optimizer settings, and learning rate schedules. The primary difference lies in the number of training iterations, where LLaMA-130M and LLaMA-350M are trained for 20k and 60k steps, respectively. These iteration counts are chosen based on Chinchilla scaling laws to ensure compute-efficient training across model sizes (Hoffmann et al., 2022). Please refer to Table 6 for details on model architectures.
+
+Hyperparameters for baseline methods are selected based on the configurations reported in their respective papers (Hu et al., 2021; Zhao et al., 2024; Robert et al., 2025).
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

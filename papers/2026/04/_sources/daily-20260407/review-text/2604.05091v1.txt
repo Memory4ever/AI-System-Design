@@ -1,0 +1,1206 @@
+MegaTrain: Full Precision Training of 100B+ Parameter Large Language Models on a Single GPU Code: https://github.com/DLYuanGod/MegaTrain
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Preliminaries
+
+2.1 Training Memory
+
+2.2 Memory Hierarchy
+
+2.3 Execution Challenges
+
+3 MegaTrain System
+
+3.1 Execution Workflow
+
+3.2 Pipelined Execution Engine
+
+3.3 Memory Management
+
+3.4 Stateless Execution Model
+
+4 Evaluation
+
+4.1 Experimental Setup
+
+4.2 Feasibility Boundary
+
+4.3 Ablation Studies
+
+4.4 Depth Scalability Results
+
+4.5 Width Scalability Results
+
+4.6 Long Context Evaluation
+
+4.7 Verification on Different Devices
+
+5 Conclusion
+
+References
+
+A Implementation Details
+
+A.1 Host (CPU) Memory Management
+
+A.2 Multi-Stream Pipeline and Scheduling
+
+A.3 GPU Buffer Management
+
+A.4 GPU Compute Dispatch
+
+B Ratel Reproduction on GH200
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.05091v1 [cs.CL] 06 Apr 2026
+
+MegaTrain: Full Precision Training of 100B+ Parameter Large Language Models on a Single GPU
+
+Code: https://github.com/DLYuanGod/MegaTrain
+
+Zhengqing Yuan Hanchi Sun Lichao Sun Yanfang Ye
+
+Affiliation: University of Notre Dame  Lehigh University
+
+Abstract.
+
+We present MegaTrain, a memory-centric system that efficiently trains 100B+ parameter large language models at full precision on a single GPU.
+Unlike traditional GPU-centric systems, MegaTrain stores parameters and optimizer states in host memory (CPU memory) and treats GPUs as transient compute engines.
+For each layer, we stream parameters in and compute gradients out, minimizing persistent device state.
+To battle the CPU-GPU bandwidth bottleneck, we adopt two key optimizations.
+1) We introduce a pipelined double-buffered execution engine that overlaps parameter prefetching, computation, and gradient offloading across multiple CUDA streams, enabling continuous GPU execution.
+2) We replace persistent autograd graphs with stateless layer templates, binding weights dynamically as they stream in, eliminating persistent graph metadata while providing flexibility in scheduling.
+On a single H200 GPU with 1.5TB host memory, MegaTrain reliably trains models up to 120B parameters. It also achieves 1.84 the training throughput of DeepSpeed ZeRO-3 with CPU offloading when training 14B models.
+MegaTrain also enables 7B model training with 512k token context on a single GH200.
+
+1. Introduction
+
+As Large Language Models (LLMs) scale to hundreds of billions of parameters (Ye et al., 2025; Team et al., 2025), the center of innovation is shifting from pretraining toward post-training regimes—instruction tuning, alignment, domain adaptation, and agent specialization (Lai et al., 2025; Tie et al., 2025). Unlike trillion-parameter pretraining, these workloads are lightweight in computation and could, in principle, be performed on a single node (Yuan et al., 2025). However, fine-tuning still requires loading full model parameters and optimizer states into memory, rendering hundred-billion-parameter models inaccessible on commodity hardware (Yu and Singh, 2025). Meanwhile, GPU resources remain scarce: recent surveys indicate that among 167 U.S. universities, only two achieve an average availability of more than one H100 GPU per student (GPUsPerStudent.org, 2025). This scarcity creates a fundamental mismatch—while LLM development is transitioning toward memory-bound, node-scale post-training, most practitioners lack the GPU resources to participate.
+
+One underutilized resource in current training systems is the memory hierarchy. Modern computer systems are equipped with multiple memory tiers—closer memory (e.g., HBM) being smaller, faster, and more expensive, while distant memory (e.g., DDR) is larger, slower, and cheaper—and data is placed across tiers according to access patterns to balance performance and cost. While offloading techniques such as ZeRO-Offload (Rajbhandari et al., 2020) and ZeRO-Infinity (Rajbhandari et al., 2021) have begun to extend GPU capacity by migrating model states to host memory (CPU memory) and NVMe storage, they do not fully exploit the memory hierarchy: the GPU remains the host of model parameters, while CPU and storage serve only as temporary spill buffers. In training, parameters, gradients, and optimizer states are accessed infrequently relative to activations, yet they remain persistently pinned in device memory (GPU memory). As model sizes grow, this underutilization of the memory hierarchy makes it increasingly difficult for end users, small companies, and research labs to train large models on their own hardware.
+
+Figure 1. Sustained TFLOPS across model scales. MegaTrain remains efficient while offloading baselines become GPU memory bound.Line plot of sustained training throughput across model scales on GH200 and H200. MegaTrain stays high and stable while the offloading baselines decline and eventually fail at larger model sizes.
+
+We present MegaTrain, a memory-centric training system that enables full precision training of 100B+ parameter large language models on a single GPU without sacrificing training speed. Instead of the traditional GPU-centric paradigm which mainly utilizes device memory, MegaTrain puts the parameters and optimizer states in host memory and uses GPUs only as transient compute engines equipped with a higher level cache (i.e. HBM/GDDR). During forward pass, parameters are streamed into GPU buffers on demand and immediately released after computation. During backward pass, the parameters are uploaded again while gradients are computed on the GPU and then streamed back to host memory. We keep the intermediate activations in GPU buffers and adopt a block-wise recomputation strategy to avoid the accumulation of activation memory. This design makes I/O independent of token count, allowing the system to use large batch size that amortizes the fixed I/O cost. All optimizer states remain in host memory and are updated using the CPU to avoid device memory pressure. Such design decouples the model scale from device memory size, making it possible to train large models on a single GPU with limited memory.
+
+To battle the CPU-GPU bandwidth bottleneck, we adopt two key optimizations. 1) We introduce a pipelined double-buffered execution engine that overlaps parameter prefetching, computation, and gradient offloading across multiple CUDA streams, enabling continuous GPU execution while keeping memory footprints bounded. 2) Autograd builds a global computation graph that assumes all parameters and intermediate activations will stay parked in device memory until the entire backward pass is finished. If you are streaming weights in and evicting them layer-by-layer, that assumption breaks. By switching to a stateless template binding model, you decouple the math operations from persistent data. The GPU holds an empty "template" (for Transformers Layer) and dynamically binds it to whatever weights stream in. This completely eliminates the need to store the massive graph metadata and persistent intermediate tensors, guaranteeing that device memory usage never exceeds the footprint of a single layer. The decoupling also enables easier streaming of gradients back to host memory. With numerous other optimizations, we reach a higher training throughput and flops utilization than existing offloading-based systems.
+
+In our evaluation, we demonstrate that MegaTrain can train models up to 120B parameter scale on a single H200 GPU equipped with 1.5TB host memory, a regime that existing offloading-based systems fail to reliably support.
+On a single GH200, MegaTrain achieves 1.84 the training throughput of ZeRO-3 Offload at 14B scale and sustains over 250 TFLOPS at 32B, where existing offloading baselines encounter out-of-memory failures.
+As a byproduct of its layer-wise memory design, MegaTrain also supports ultra-long context training up to 512K tokens on a single GH200.
+
+2. Preliminaries
+
+2.1. Training Memory
+
+Memory usage when training large language models can be roughly categorized into three parts: 1) persistent state (parameters, gradients, optimizer states), 2) activations, 3) operator workspaces.
+Persistent state: For mixed-precision training with Adam Optimizer (Micikevicius et al., 2018; Kingma and Ba, 2015), for each parameter, memory needs to store BF16 weights (2 B), BF16 gradients (2 B), and FP32 optimizer moments ( and , 8 B combined), giving a minimum of bytes for parameters.
+For a 70B model, this requires at least 840 GB of persistent state.
+Activations: During backward pass, gradient calculation often requires intermediate activations, typically stored during forward pass. Yet, activation memory usage varies with the recomputation strategy and gradient calculation method. In MegaTrain, we adopt a block-wise recomputation strategy, storing only one checkpoint of activations every layers. This reduces the memory usage of activations to bytes, where is the number of tokens in a batch, is the maximum activation size of any single layer and is the model depth.
+Operator workspaces: The workspace memory usage is hard to bound, but we assume it is bounded by a constant bytes.
+
+2.2. Memory Hierarchy
+
+Modern GPU servers expose a four-tier memory hierarchy (Table 1) that follows the classic fast-expensive-small to slow-cheap-large trade-off (Hennessy and Patterson, 2011).
+On-chip SRAM provides the highest bandwidth ( TB/s) but only tens of megabytes of capacity.
+Device memory (GPU memory, e.g., HBM or GDDR) offers tens to hundreds of gigabytes at terabytes-per-second bandwidth, serving as the primary compute memory inside the GPU.
+Host memory (CPU memory, e.g., DDR or LPDDR) supplies terabytes of capacity at hundreds of gigabytes per second, at roughly lower cost per byte than HBM.
+NVMe SSDs add tens of terabytes of persistent storage at single-digit GB/s bandwidth.
+
+This work focuses on the CPU–GPU boundary, which differs significantly across server setups.
+
+Table 1. Memory hierarchy of H200 and GH200.
+
+Tier
+Capacity
+Bandwidth
+Unit Cost ($/GB)
+
+SRAM (on-chip)
+50–112 MB
+80 TB/s
+—
+
+H200 SXM
+
+HBM3e (per GPU)
+141 GB
+4.8 TB/s
+20
+
+Host DDR5
+2–4 TB
+200 GB/s
+5–12
+
+PCIe Gen5 link
+—
+128 GB/s
+—
+
+GH200
+
+HBM3 (per GPU)
+96 GB
+4.0 TB/s
+20
+
+Host LPDDR5X
+480 GB
+512 GB/s
+6–8
+
+NVLink-C2C link
+—
+900 GB/s
+—
+
+NVMe SSD
+10+ TB
+5–14 GB/s
+0.1
+
+For example, the H200 SXM uses host DDR5—a standard optimized for high per-pin frequency to match modern CPU architectures—connected via PCIe Gen5 at 128 GB/s.
+The GH200 GPU instead co-packages 480 GB of LPDDR5X—a mobile-originated standard with a wider bus and lower power consumption, achieving 384–512 GB/s aggregate bandwidth.
+It accesses this memory via NVLink-C2C at 900 GB/s, a interconnect advantage over PCIe that fundamentally changes what offloading patterns are practical.
+
+The principle governing memory hierarchies is to place data according to access patterns so that frequently or imminently needed items reside in fast tiers, while cold data migrates to slower, cheaper storage. When this placement aligns with workload locality, the system approaches the speed of the fastest tier at the cost of the slowest.
+Most existing training systems treat device memory as the primary working memory.
+While some frameworks offload optimizer states or parameters to host memory (Rajbhandari et al., 2020; Rajbhandari et al., 2021; Zhao et al., 2023; Fang and You, 2022), they regard it as a spill buffer rather than a first-class store.
+MegaTrain inverts this relationship. Host memory becomes the primary store for all persistent training state, while device memory serves only as a transient compute cache. In practice, persistent states live in DDR or LPDDR, while active layer computation uses HBM or GDDR.
+
+2.3. Execution Challenges
+
+Fitting the model into memory is necessary but not sufficient; the system must also execute efficiently despite continuous data movement.
+Standard autograd in frameworks like PyTorch builds a global computation graph and retains activations until the backward pass completes.
+This design assumes all parameters live on the GPU throughout training—an assumption that breaks when weights stream in layer by layer and are evicted immediately after use.
+CUDA Graphs offer low-overhead kernel replay but require a static execution pattern; streaming introduces dynamic address bindings (ping-pong buffers), shifting synchronization points, and interleaved recomputation that cannot be captured in a single graph.
+MegaTrain therefore adopts an explicit scheduling model that coordinates prefetch, compute, and gradient offload across multiple CUDA streams.
+
+3. MegaTrain System
+
+In this section, we present the execution workflow and key system mechanisms that enable efficient training at 100B+ scale on a single GPU. We first describe the end-to-end execution workflow, detailing how MegaTrain performs forward and backward passes and what resides in versus what is transferred between host memory and device memory. We then present key system designs that address the CPU-GPU bandwidth bottleneck, including the streaming protocol, memory management, and double-buffering that overlaps asynchronous DMA transfers with GPU computation. Lastly, we discuss the stateless execution model that avoids storing the autograd graph in device memory. Algorithm 1 summarizes the full training-step workflow, while Appendix A covers lower-level implementation details.
+
+System diagram showing Host (CPU) memory as the persistent store for parameters and optimizer states, and the GPU as a transient execution engine that streams weights in, computes each layer, and offloads gradients back to host memory.
+
+Figure 2. MegaTrain architecture: CPU serves as the parameter store while GPUs execute transient layer templates via asynchronous parameter streaming and gradient offloading.System diagram showing Host (CPU) memory as the persistent store for parameters and optimizer states, and the GPU as a transient execution engine that streams weights in, computes each layer, and offloads gradients back to host memory.
+
+3.1. Execution Workflow
+
+As a memory-centric training system, MegaTrain possesses all persistent training states in host memory, including model parameters (), optimizer states (), and accumulated gradients. Device memory starts empty and only contains the layer template pool, which are lightweight, reusable compute kernels that dynamically bind to streamed parameters.
+
+In the streaming forward phase, we stream parameters from host memory into a weight buffer in device memory layer by layer. The buffer prefetches the next layer’s weights so that the compute stream can immediately bind and execute the layer. Upon completion of each layer, the buffer is released and the next layer’s weights are streamed in. During this phase, we also checkpoint the activation every layers and keep the checkpoint in device memory.
+
+In the streaming backward phase, we proceed in reverse block order. For each block, we start from the checkpoint (which resides in device memory) and stream parameters in forward order (e.g., of the block) to recompute activations. We then stream parameters in reverse order to compute backward passes, immediately offloading each layer’s gradients (e.g., ) to host memory. This block-wise recomputation trades extra forward compute for bounded memory, as we only need to store activations for one block at a time, keeping device memory independent of total model depth.
+
+Finally, the optimizer update phase executes entirely on the CPU. Unlike forward and backward passes where GPU acceleration provides orders-of-magnitude speedup, optimizer updates (e.g., Adam) are compute-light yet I/O-intensive—each parameter update requires few arithmetic operations but must access the full parameter, gradient, and two momentum states. As observed by ZeRO-Offload (Rajbhandari et al., 2020), offloading optimizer computation to the CPU avoids the costly round-trip of streaming optimizer states to the GPU and back. Since PCIe bandwidth is the bottleneck rather than compute, executing Adam on the CPU with efficient vector instructions (e.g., AVX-512) matches or exceeds the throughput of GPU-based updates while eliminating four times the data movement.
+
+Algorithm 1 MegaTrain Training Step
+
+0:
+
+ Input batch , parameters in host memory, checkpoint interval
+
+0:
+
+ Updated parameters
+
+1:
+
+ // Phase 1: Streaming Forward
+
+2:
+
+ 
+
+3:
+
+ for to do
+
+4:
+
+    // H2D transfer
+
+5:
+
+   
+
+6:
+
+   if then
+
+7:
+
+    
+
+8:
+
+   end if
+
+9:
+
+   
+
+10:
+
+ end for
+
+11:
+
+ // Phase 2: Loss Anchoring
+
+12:
+
+ ;  
+
+13:
+
+ 
+
+14:
+
+ 
+
+15:
+
+ // Phase 3: Block-wise Backward
+
+16:
+
+ for downto do
+
+17:
+
+   
+
+18:
+
+   
+
+19:
+
+   for downto do
+
+20:
+
+    
+
+21:
+
+    
+
+22:
+
+     // D2H transfer
+
+23:
+
+    
+
+24:
+
+    
+
+25:
+
+   end for
+
+26:
+
+ end for
+
+27:
+
+ // CPU-side optimizer update (asynchronous)
+
+28:
+
+ 
+
+3.2. Pipelined Execution Engine
+
+The key to efficient streaming is hiding data movement latency behind computation. MegaTrain orchestrates three concurrent CUDA streams—compute (), weight transfer (), and gradient transfer ()—with double-buffered staging to achieve continuous GPU execution (Figure 3).
+
+Timeline diagram of three CUDA streams. Weight transfers, forward and recompute and backward compute, and gradient offloads overlap in a double buffered schedule so communication stays off the critical path.
+
+Figure 3. End-to-end pipelined execution. Weight prefetch (), computation (//), and gradient offload () overlap across three CUDA streams.Timeline diagram of three CUDA streams. Weight transfers, forward and recompute and backward compute, and gradient offloads overlap in a double buffered schedule so communication stays off the critical path.
+
+For streaming to be effective, the transfer time of each layer’s parameters () must be fully hidden under the preceding layer’s computation; violating this overlap condition directly serializes execution. MegaTrain addresses this through double-buffered weight streaming: it maintains two sets of staging buffers in both CPU and GPU domains, enabling a ping-pong prefetching strategy where the compute stream executes layer using Buffer 0 while the weight-transfer stream concurrently packs and streams layer into Buffer 1. This overlapping ensures that GPU compute units never stall waiting for parameters, converting sequential execution into a steady-state streaming pipeline. The same double-buffering applies during backward. While gradients from layer are being evacuated, parameters for layer are already streaming in.
+
+Separating from the compute stream is equally critical for asynchronous gradient evacuation. As shown in Figure 3, gradient is evacuated while recomputation proceeds in parallel. By treating gradient offloading as a background task, MegaTrain prevents D2H latency from entering the critical path, ensuring GPU throughput is limited only by compute or H2D bandwidth.
+
+Without a global training graph, the runtime cannot rely on implicit dataflow dependencies. Coordination across streams is governed by lightweight CUDA events: (1) a Weights-Ready event recorded by after completing , which waits on before binding layer ; (2) a Backward-Done event recorded by after materializing , which triggers for evacuation; and (3) a Buffer-Free event recorded by after offload completes, which waits on before reusing the buffer (see Appendix A).
+
+3.3. Memory Management
+
+Conventional frameworks often manage tensors as fragmented objects scattered across the heap, forcing numerous small-granularity DMA requests that incur kernel launch overhead and PCIe tail-latency. MegaTrain instead employs layer-contiguous tiling: all states for each layer—BF16 weights, BF16 gradients, and FP32 Adam moments—are packed into a single contiguous block aligned to 4KB pages, enabling single-burst DMA transfers that saturate PCIe bandwidth ( GB/s on Gen4 x16).
+
+Rather than pinning the entire model, which would exhaust host physical memory and page table resources, MegaTrain allocates a small pool of pinned staging buffers sized to . During StreamIn, a dedicated CPU worker performs JIT packing from the pageable layer store to a pinned slab, from which DMA transfers can proceed at full PCIe bandwidth. Double-buffering ensures this overhead overlaps with GPU execution, keeping the host-side pinning footprint constant regardless of model depth.
+
+To avoid blocking compute on gradient offloading, MegaTrain maintains a pool of pinned host slabs for gradient evacuation. When a layer’s backward completes, immediately transfers gradients to an available slab. A background CPU thread monitors these slabs via cudaEventSynchronize, accumulating gradients into the master store and applying optimizer updates in parallel with GPU execution.
+
+3.4. Stateless Execution Model
+
+Standard autograd graphs assume parameters and activations persist on the GPU throughout backward propagation. Under layer-wise streaming, however, parameters are evicted after use and activations cannot be retained arbitrarily, rendering the global graph abstraction inapplicable. MegaTrain therefore adopts a stateless execution model that decouples mathematical structure from physical data.
+
+Rather than maintaining persistent model state on the GPU, MegaTrain employs a stateless template pool where each template (e.g., Template A/B in Figure 3) encapsulates the CUDA kernels for Attention and MLP blocks but holds no persistent weight pointers. Before execution, the Bind primitive dynamically maps views from the streaming buffer to the template’s input slots. This ping-pong binding allows to execute on Template A while is being bound to Template B, eliminating weight preparation latency from the critical path.
+
+MegaTrain also does not rely on CUDA graph capture. Because streamed weights, buffer ownership, and synchronization points change at layer granularity, the runtime preserves an explicit StreamIn-Bind-Compute-Offload dispatch path instead of forcing execution into a static captured graph. This explicit control enables dynamic buffer assignment and precise tensor lifecycle management, which is essential for the deterministic memory bound.
+
+4. Evaluation
+
+4.1. Experimental Setup
+
+GH200 System.
+Experiments on the GH200 system are conducted on Grace-Hopper nodes. Each node contains four GH200 superchips, where each superchip integrates a 72-core Grace ARM CPU and one NVIDIA GH200 GPU with 96 GB HBM3 memory, connected through NVLink-C2C with a peak bidirectional bandwidth of approximately 900 GB/s. For evaluation, we use a single GH200 superchip with one GH200 GPU and 480 GB of host memory from the local Grace CPU.
+
+H200 System.
+We additionally evaluate MegaTrain on a single NVIDIA H200 SXM node equipped with one Intel Xeon Platinum 8558 CPU (96 cores total) and 1.5 TB of host memory. The H200 GPU provides 141 GB HBM3e memory and connects to the host via PCIe Gen4.
+
+Dataset.
+We evaluate model accuracy on the MetaMathQA benchmark, a large-scale mathematical reasoning dataset comprising approximately 395,000 English math problem-answer pairs. MetaMathQA is constructed via data augmentation techniques over base reasoning benchmarks such as GSM8K and MATH, producing diverse multi-step math word problems with deterministic ground-truth answers. In our experiments, we randomly divide the dataset into 70% training (approximately 276,500 samples) and 30% testing (approximately 118,500 samples). We report exact-match accuracy, defined as whether the model’s final predicted answer exactly matches the reference answer for each problem.
+
+Table 2 summarizes the base models used throughout the evaluation. We report the total parameter count, transformer depth, hidden size, and FFN size to show the architectural range covered by our experiments. For GPT-OSS-120B, the hidden size and FFN size are written as per-expert width times the number of experts, which reflects its MoE design rather than a dense layout.
+
+Table 2. Model configurations used in experiments.
+
+Model
+Total Params
+Layers
+Hidden Size
+FFN Size
+
+Qwen2.5-7B
+7B
+28
+3584
+18944
+
+Qwen2.5-14B
+14B
+48
+5120
+13824
+
+Qwen2.5-32B
+32B
+64
+5120
+27648
+
+Qwen2.5-72B
+72B
+80
+8192
+29568
+
+GPT-OSS-120B (MoE)
+120B
+36
+2880128
+2880128
+
+4.2. Feasibility Boundary
+
+Figure 4. Host (CPU) memory footprint versus model scale across training systems.Line plot of host memory usage versus model size for MegaTrain and baseline systems. MegaTrain grows close to linearly while the baselines rise faster and cross practical memory limits at smaller scales.
+
+All experiments in this subsection are conducted on two representative single-GPU platforms to illustrate how the feasibility boundary shifts with available host memory capacity. Models from 7B to 32B parameters are evaluated on a GH200 system, while larger models from 72B to 120B are evaluated on an H200 system equipped with 1.5 TB host memory.
+
+Host Memory as the True Scaling Boundary.
+The line plot in Figure 4 reports the host memory footprint required to train models of increasing scale under different training systems. A clear trend emerges. While ZeRO-3 Offload, ZeRO-Infinity, and PyTorch Native all exhibit rapidly increasing host memory consumption as model size grows, MegaTrain maintains a significantly flatter growth curve. From 7B to 120B parameters, competing systems show near-exponential growth in host memory demand due to redundant parameter staging, fragmented tensor storage, and optimizer state replication across offload buffers. In contrast, MegaTrain’s flat-tensor layout and authoritative CPU master storage ensure that memory growth is strictly proportional to the theoretical parameter footprint, without auxiliary duplication. This result highlights a critical feasibility boundary. For large models, host memory capacity, rather than device memory, becomes the primary limiting factor for single-device training. Existing offloading systems cross this boundary rapidly beyond 30B parameters, while MegaTrain remains well within practical limits even at 120B scale.
+
+Compute Efficiency and Sustained TFLOPS.
+Figure 1 reports sustained training throughput in TFLOPS across two architectures (GH200 and H200). At small scales (7B), PyTorch Native achieves high peak throughput due to full GPU residency, but this advantage collapses once models exceed device memory capacity. ZeRO-3 and ZeRO-Infinity suffer from substantial PCIe synchronization overhead and fragmented transfers, leading to severe degradation in sustained compute. MegaTrain, however, maintains consistently high TFLOPS across all scales. On GH200, MegaTrain sustains 284 TFLOPS at 7B, 264 TFLOPS at 14B ( over ZeRO-3 Offload), and remains above 250 TFLOPS even at 32B. On H200, the system continues scaling to 72B and 120B while preserving high utilization. This stability arises from two design properties. First, large contiguous DMA transfers are enabled by pinned staging buffers. Second, compute and weight prefetch overlap is achieved through double buffering and stream execution.
+
+Table 3. Final accuracy comparison across systems at 7B and 14B scales.
+
+Metric
+Baseline
+
+ZeRO-3
+Offload
+
+ZeRO
+Infinity
+
+PyTorch
+Native
+
+Ours
+
+7B Acc. (%)
+33.47
+88.93
+88.97
+88.91
+88.99
+
+14B Acc. (%)
+37.58
+92.41
+92.36
+-
+92.52
+
+Correctness Preservation at Scale.
+Table 3 shows that MegaTrain matches the numerical accuracy of standard full-GPU training and ZeRO-based baselines at both 7B and 14B scales. The negligible difference in accuracy confirms that MegaTrain’s explicit recompute and CPU-master design do not introduce numerical drift or optimization instability. This validates that the system’s memory and compute advantages do not trade off training correctness.
+
+4.3. Ablation Studies
+
+Table 4. Ablation study of MegaTrain. Removing double buffering significantly degrades throughput, while other components have minor impact.
+
+Configuration
+BS
+TFLOPS
+Device Mem (GB)
+
+MegaTrain (full)
+96
+266.3
+75.93
+
+w/o Double Buffering
+96
+182.91
+74.11
+
+w/o Gradient Slab Pool
+96
+257.55
+75.93
+
+w/ Checkpoint Interval=1
+64 (96 OOM)
+240.45
+81.34
+
+Table 4 ablates MegaTrain’s components to isolate their performance contributions.
+Removing double buffering leads to a substantial drop in throughput, from 266.3 TFLOPS to 182.9 TFLOPS (a 31.3% reduction), demonstrating that overlapping parameter prefetching, computation, and gradient offloading is critical for maintaining high GPU utilization. Without this mechanism, the GPU frequently stalls due to synchronization gaps between data transfer and compute.
+
+In contrast, removing the gradient slab pool results in only a minor throughput decrease (266.3 257.6 TFLOPS), indicating that while memory pooling improves allocation efficiency and reduces fragmentation, it is not a primary driver of performance.
+
+We evaluate the effect of recomputation granularity by setting the checkpoint interval to 1. This configuration significantly reduces the maximum feasible batch size (from 96 to 32) due to increased activation memory pressure, and lowers throughput to 184.2 TFLOPS. This highlights the importance of balancing recomputation frequency and memory usage to achieve optimal throughput.
+
+4.4. Depth Scalability Results
+
+All experiments in this subsection are conducted on the GH200 system. Table 5 and Figure 5(a) and Figure 5(b) evaluate how training systems behave when model depth increases while hidden size and device memory allocation remain strictly constant (3.83 GB). This setting isolates the system’s capability to handle increasing parameter counts purely through depth scaling, without granting additional device memory. Such a setup directly stresses the memory orchestration, parameter movement, and recomputation efficiency of each system.
+
+Table 5. Depth study model configurations.
+
+Layers
+Parameters (B)
+Device Alloc (GB)
+
+28
+7.62
+3.83
+
+42
+10.88
+3.83
+
+56
+14.14
+3.83
+
+84
+20.67
+3.83
+
+132
+31.85
+3.83
+
+180
+43.04
+3.83
+
+Figure 5. Depth scalability with fixed model width (hidden and FFN) size.Two panel figure for depth scaling at fixed width. The left panel shows MegaTrain throughput staying comparatively stable as layer count increases while FSDP and ZeRO offloading degrade and fail. The right panel shows MegaTrain using less host memory than the baselines across the same models.
+
+Throughput under increasing depth.
+As shown in Figure 5(a), MegaTrain maintains remarkably stable throughput as depth increases from 28 to 180 layers. The throughput only decreases from 284 TFLOPS to 227 TFLOPS, a modest 20.1% drop despite the model growing from 10.9B to 43.0B parameters (a 3.95 increase in size). In contrast, both ZeRO-3 Offloading and FSDP Offloading exhibit severe throughput collapse as depth increases. At 42 layers, MegaTrain is already 1.37 faster than FSDP (272 vs. 199 TFLOPS) and 1.17 faster than ZeRO-3 (272 vs. 232 TFLOPS). At 56 layers, FSDP throughput drops catastrophically to 43 TFLOPS, making MegaTrain 6.14 faster (264 vs. 43). At 84 layers, ZeRO-3 degrades to 43 TFLOPS, where MegaTrain becomes 5.93 faster (255 vs. 43), while FSDP already runs out of memory. Beyond 84 layers, both baselines encounter OOM, whereas MegaTrain continues to scale to 132 and 180 layers with stable throughput. This demonstrates that existing offloading systems suffer from depth-induced communication and memory scheduling bottlenecks, where parameter movement and recomputation overhead grow superlinearly with depth.
+
+Host memory behavior.
+Figure 5(b) further reveals the host memory cost of enabling deeper models. At 42 layers, FSDP consumes 270 GB host memory and ZeRO-3 uses 92 GB, compared to only 115 GB for MegaTrain. At 56 layers, MegaTrain uses 145 GB, while FSDP increases to 330 GB (2.28 higher). At 84 layers, FSDP reaches 518 GB host memory before OOM, which is 2.50 higher than MegaTrain (207 GB). At 132 and 180 layers, both baselines OOM due to host memory exhaustion, while MegaTrain continues operating at 312 GB and 418 GB respectively.
+
+Figure 6. Width scalability with fixed model layersTwo panel figure for width scaling at fixed depth. Throughput decreases for all methods as width grows, but MegaTrain degrades more slowly and remains feasible at wider models. Host memory rises with width for all methods, with MegaTrain staying below the main offloading baselines.
+
+4.5. Width Scalability Results
+
+Table 6 and Figure 6 evaluate scalability when model width (hidden and FFN dimensions) increases while the number of layers remains fixed. Unlike the depth experiment where GPU allocation remains constant, width scaling directly increases per-layer tensor sizes and therefore stresses device memory bandwidth, activation footprint, and parameter transfer volume. This experiment exposes a fundamentally different bottleneck compared to depth scaling.
+
+Throughput degradation with width.
+All experiments in this subsection are conducted on the GH200 system.
+As shown in Figure 6(a), all systems experience throughput reduction as width increases due to the quadratic growth of matrix multiplications. However, the rate of degradation differs substantially. From 1.0 to 3.0 width, MegaTrain drops from 406 to 264 TFLOPS (35.0% decrease). Over the same range, ZeRO-3 drops from 455 to 262 TFLOPS (42.4% decrease). FSDP drops from 501 to 281 TFLOPS (43.9% decrease).
+
+Table 6. Width study model configurations.
+
+Width Scale
+Hidden Size
+FFN Size
+Device Alloc (GB)
+
+1.0x
+3584
+18944
+3.83
+
+1.5x
+5376
+28416
+7.01
+
+2.0x
+7168
+37888
+11.07
+
+2.5x
+8960
+47360
+15.99
+
+3.0x
+10752
+56832
+21.78
+
+3.5x
+12544
+66304
+28.44
+
+4.0x
+14336
+75776
+35.97
+
+4.5x
+16128
+85248
+44.36
+
+5.0x
+17920
+94720
+53.62
+
+Although MegaTrain starts slightly lower at small width (406 vs. 501 TFLOPS), its degradation curve is flatter. At 3.5 width, ZeRO-3 already falls to 160 TFLOPS while MegaTrain sustains 193 TFLOPS, making it 1.21 faster. At 4.0, ZeRO-3 further drops to 136 TFLOPS, where MegaTrain is 1.07 faster. Beyond 4.0, both ZeRO-3 and FSDP encounter OOM due to device and host memory pressure, while MegaTrain continues to operate up to 5.0 width.
+
+Host memory growth under width scaling.
+Figure 6(b) shows that width scaling shifts pressure toward host memory due to increased size of parameter slabs and activation staging buffers. At 3.0 width, MegaTrain uses 174 GB host memory, compared to 295 GB for ZeRO-3 (1.69 higher). At 3.5, ZeRO-3 reaches 353 GB while MegaTrain uses 263 GB (1.34 higher). At 4.0, ZeRO-3 surges to 526 GB and soon fails, while MegaTrain remains at 308 GB. FSDP shows lower host memory at small widths but fails early (after 3.0) due to device memory fragmentation and activation pressure.
+
+4.6. Long Context Evaluation
+
+Table 7. Long-context training performance on GH200. TFLOPS is computed using . * denotes results with chunked MLP execution for ultra-long contexts.
+
+Context
+BS
+Tokens
+Step (s)
+TFLOPS
+Mem
+
+1K
+158
+162.7K
+27.05
+284.7
+74.2 GB
+
+8K
+25
+204.8K
+32.36
+294.5
+86.5 GB
+
+32K
+6
+196.6K
+32.18
+316.7
+84.0 GB
+
+128K
+1
+131.1K
+26.13
+305.3
+62.1 GB
+
+256K
+1
+262.1K
+236.1
+401.2
+88.2 GB
+
+512K∗
+1
+524.3K
+871.4
+407.4
+81.9 GB
+
+Long-context training poses a distinct scaling challenge. Unlike model size scaling, which expands parameter storage, extending context length causes quadratic growth in attention computation and activation memory. Table 7 reports MegaTrain’s performance on a single GH200 as context length scales from 1K to 512K. TFLOPS improves consistently, rising from 264.8 at 1K to over 400 at 512K. Longer contexts increase arithmetic intensity from larger attention workloads, yielding better hardware utilization. Despite the 512 increase in sequence length, MegaTrain maintains stable memory usage and avoids activation explosion. Layer-wise execution limits activation residency to one layer at a time. For the extreme 512K setting, chunked MLP execution keeps memory within bounds without degrading throughput. These results show that MegaTrain supports ultra-long contexts while improving compute efficiency as context length scales.
+
+4.7. Verification on Different Devices
+
+Table 8. Nominal hardware characteristics of the three PCIe-based systems used in this subsection. Peak tensor throughput, PCIe bandwidth, and host memory bandwidth are nominal hardware specifications. PCIe bandwidth is the peak per-direction rate of an 16 link.
+
+A100 PCIe
+RTX A6000
+RTX 3090
+
+Peak Tensor TFLOPS
+312.0
+154.8
+142.0
+
+Device Memory
+80 GB HBM2e
+48 GB GDDR6
+24 GB GDDR6X
+
+Host Memory
+600 GB DDR4
+251 GB DDR4
+251 GB DDR4
+
+PCIe BW
+32 GB/s
+32 GB/s
+16 GB/s
+
+Host BW
+140.8 GB/s
+204.8 GB/s
+204.8 GB/s
+
+Table 8 summarizes the three PCIe-based systems used in this subsection. Together they span datacenter, workstation, and consumer GPUs, with device memory ranging from 24 GB to 80 GB and host-device links spanning PCIe Gen3 and Gen4.
+
+Figure 7. Performance comparison on a single A100 PCIe system.Bar chart comparing achieved TFLOPS on a single A100 PCIe system for 7B, 14B, and 32B models. MegaTrain outperforms Gemini and ZeRO 3 across the supported scales and continues running when the baselines hit memory limits.
+
+A100 System.  We first evaluate MegaTrain on a commodity PCIe-based server equipped with an Intel Xeon Platinum 8273CL processor, 600 GB of host memory, and a single NVIDIA A100 GPU (80 GB HBM2e) connected via PCIe Gen4. This setup represents a widely available datacenter configuration and shows that MegaTrain does not depend on NVLink-class interconnects. On this platform, we re-implement and tune two representative offloading baselines, ColossalAI-Gemini and ZeRO-3 CPU Offloading, following their official recommendations under the same software environment.
+
+Figure 7 reports the achieved TFLOPS for 7B, 14B, and 32B models. Even on this different hardware stack, MegaTrain consistently outperforms both baselines. At 7B, MegaTrain reaches 128 TFLOPS, compared to 53 TFLOPS for Gemini and 36 TFLOPS for ZeRO-3, achieving 2.42 and 3.56 speedup respectively. At 14B, the gap widens. MegaTrain sustains 122 TFLOPS, while Gemini drops to 15 TFLOPS and ZeRO-3 to 10 TFLOPS, corresponding to 8.13 and 12.20 improvements. At 32B, both Gemini and ZeRO-3 encounter out-of-memory errors, while MegaTrain continues to operate at 114 TFLOPS.
+
+Table 9. Training performance comparison between MegaTrain and ZeRO-3 Offloading on A6000 (48GB) and RTX 3090 (24GB).
+ZeRO-3 results are reported with batch size (BS)=1; BS=2 leads to out-of-memory (OOM).
+
+Model
+Method
+Max BS
+TFLOPS
+GPU Mem
+CPU Mem
+tok/s
+
+A6000 (48GB VRAM)
+
+Qwen2.5-3B
+MegaTrain
+15
+49.70
+46.74 GB
+38.3 GB
+2153
+
+ZeRO-3 Offload
+1
+23.89
+20.33 GB
+–
+–
+
+Qwen2.5-7B
+MegaTrain
+12
+55.73
+44.74 GB
+56.7 GB
+1219
+
+ZeRO-3 Offload
+1
+27.55
+20.83 GB
+–
+–
+
+Qwen2.5-14B
+MegaTrain
+9
+56.82
+44.64 GB
+104.1 GB
+641
+
+ZeRO-3 Offload
+1
+OOM
+–
+–
+–
+
+RTX 3090 (24GB VRAM)
+
+Qwen2.5-3B
+MegaTrain
+7
+33.18
+22.83 GB
+25.0 GB
+1792
+
+ZeRO-3 Offload
+1
+23.91
+20.32 GB
+–
+–
+
+Qwen2.5-7B
+MegaTrain
+5
+35.09
+22.63 GB
+56.7 GB
+768
+
+ZeRO-3 Offload
+1
+27.49
+20.83 GB
+–
+–
+
+Qwen2.5-14B
+MegaTrain
+3
+30.19
+21.10 GB
+103.7 GB
+341
+
+ZeRO-3 Offload
+1
+OOM
+–
+–
+–
+
+Consumer-Grade Systems.  
+To further evaluate MegaTrain on commodity hardware, we conduct experiments on a
+single-node workstation equipped with an NVIDIA RTX A6000 (48 GB, Ampere, PCIe Gen4)
+and an NVIDIA GeForce RTX 3090 (24 GB, Ampere, PCIe Gen316).
+Both GPUs share 251 GB of host memory and are evaluated individually to
+avoid PCIe bandwidth contention. All experiments use Qwen2.5 models with a fixed
+sequence length of 8,192 and gradient checkpointing applied every 4 layers.
+
+Table 9 summarizes the results. On the A6000, MegaTrain
+scales up to 14B parameters, achieving 56.82 TFLOPS with batch sizes ranging from
+9 to 15 depending on model size, while maintaining consistently high device memory
+utilization (>93%). On the RTX 3090, despite its limited 24 GB device memory, MegaTrain
+successfully trains 14B models at 30.19 TFLOPS, demonstrating strong scalability
+on memory-constrained devices.
+
+We further compare against ZeRO-3 with CPU offloading. While ZeRO-3 reduces device
+memory usage, it is restricted to batch size 1 in our setting and fails to scale
+to 14B models due to out-of-memory errors. Moreover, its throughput is
+substantially lower (approximately 2 slower in TFLOPS) compared to
+MegaTrain. These results highlight that MegaTrain not only enables larger batch
+sizes and stable training at higher model scales, but also achieves significantly
+higher hardware efficiency on consumer-grade GPUs.
+
+5. Conclusion
+
+We presented MegaTrain, a CPU-memory-centric training system that enables full-precision training of 100B+ parameter models on a single GPU. By treating host memory as the authoritative parameter store and GPUs as transient compute engines, MegaTrain decouples model scale from GPU memory capacity. The pipelined double-buffered execution engine overlaps parameter streaming with computation, while stateless layer templates eliminate the memory overhead of persistent autograd graphs. Together, these designs bound GPU memory to a per-layer footprint and allow host memory to scale linearly with model size.
+
+More broadly, our work suggests that training large models is less about GPU capacity and more about memory and compute organization. When parameters stream through rather than persist, even commodity hardware can handle hundred-billion-parameter workloads. Extending MegaTrain to multiple GPUs with tensor or expert parallelism is a natural next step. Tiered storage that incorporates SSDs could push the boundary further, bringing trillion-parameter training within reach of everyday systems.
+
+References
+
+Fang and You (2022)
+J. Fang and Y. You
+
+Meet gemini: the heterogeneous memory manager of colossal-ai.
+
+Note: Colossal-AI documentation[Online]. Available: https://colossalai.org/docs/advanced\_tutorials/meet\_gemini
+
+Cited by: §2.2.
+
+GPUsPerStudent.org (2025)
+GPUsPerStudent.org
+
+H100-equivalent gpus per cs student: tracking academic gpu compute availability in the united states.
+
+Note: Project website[Online]. Available: https://www.gpusperstudent.org/
+
+Cited by: §1.
+
+Hennessy and Patterson (2011)
+J. L. Hennessy and D. A. Patterson
+
+Computer architecture: a quantitative approach.
+
+5th edition, Morgan Kaufmann, San Francisco, CA.
+
+Cited by: §2.2.
+
+Kingma and Ba (2015)
+D. P. Kingma and J. Ba
+
+Adam: a method for stochastic optimization.
+
+Note: International Conference on Learning Representations[Online]. Available: https://arxiv.org/abs/1412.6980
+
+Cited by: §2.1.
+
+Lai et al. (2025)
+H. Lai, X. Liu, J. Gao, J. Cheng, Z. Qi, Y. Xu, S. Yao, D. Zhang, J. Du, Z. Hou, et al.
+
+A survey of post-training scaling in large language models.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+Stroudsburg, PA, USA, pp. 2771–2791.
+
+Cited by: §1.
+
+Liao et al. (2025)
+C. Liao, M. Sun, Z. Yang, J. Xie, K. Chen, B. Yuan, F. Wu, and Z. Wang
+
+Ratel: optimizing holistic data movement to fine-tune 100b model on a consumer gpu.
+
+In 2025 IEEE 41st International Conference on Data Engineering (ICDE),
+
+Los Alamitos, CA, USA, pp. 292–306.
+
+External Links: Document
+
+Cited by: Appendix B.
+
+Micikevicius et al. (2018)
+P. Micikevicius, S. Narang, J. Alben, G. F. Diamos, E. Elsen, D. Garcia, B. Ginsburg, M. Houston, O. Kuchaiev, G. Venkatesh, and H. Wu
+
+Mixed precision training.
+
+Note: International Conference on Learning Representations[Online]. Available: https://openreview.net/forum?id=r1gs9JgRZ
+
+Cited by: §2.1.
+
+Rajbhandari et al. (2020)
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He
+
+Zero: memory optimizations toward training trillion parameter models.
+
+In SC20: International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+Los Alamitos, CA, USA, pp. 1–16.
+
+Cited by: §1,
+§2.2,
+§3.1.
+
+Rajbhandari et al. (2021)
+S. Rajbhandari, O. Ruwase, J. Rasley, S. Smith, and Y. He
+
+Zero-infinity: breaking the gpu memory wall for extreme scale deep learning.
+
+In Proceedings of the international conference for high performance computing, networking, storage and analysis,
+
+New York, NY, USA, pp. 1–14.
+
+Cited by: §1,
+§2.2.
+
+Team et al. (2025)
+K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, et al.
+
+Kimi k2: open agentic intelligence.
+
+Note: arXiv preprint arXiv:2507.20534[Online]. Available: https://arxiv.org/abs/2507.20534
+
+Cited by: §1.
+
+Tie et al. (2025)
+G. Tie, Z. Zhao, D. Song, F. Wei, R. Zhou, Y. Dai, W. Yin, Z. Yang, J. Yan, Y. Su, et al.
+
+A survey on post-training of large language models.
+
+Note: arXiv preprint arXiv:2503.06072[Online]. Available: https://arxiv.org/abs/2503.06072
+
+Cited by: §1.
+
+Ye et al. (2025)
+Y. Ye, Z. Zhang, T. Ma, Z. Wang, Y. Li, S. Hou, W. Sun, K. Shi, Y. Ma, W. Song, et al.
+
+LLMs4All: a review of large language models across academic disciplines.
+
+Note: arXiv preprint arXiv:2509.19580[Online]. Available: https://arxiv.org/abs/2509.19580
+
+Cited by: §1.
+
+Yu and Singh (2025)
+M. Yu and P. Singh
+
+Differentially private fine-tuning of large language models: a survey.
+
+In International Conference on Advanced Data Mining and Applications,
+
+Cham, Switzerland, pp. 100–113.
+
+Cited by: §1.
+
+Yuan et al. (2025)
+Z. Yuan, W. Sun, Y. Liu, H. Zhou, R. Zhou, Y. Li, Z. Zhang, W. Song, Y. Huang, H. Jia, et al.
+
+EfficientLLM: efficiency in large language models.
+
+Note: arXiv preprint arXiv:2505.13840[Online]. Available: https://arxiv.org/abs/2505.13840
+
+Cited by: §1.
+
+Zhao et al. (2023)
+Y. Zhao, A. Gu, R. Varma, L. Luo, C. Huang, M. Xu, L. Wright, H. Shojanazeri, M. Ott, S. Shleifer, et al.
+
+Pytorch fsdp: experiences on scaling fully sharded data parallel.
+
+Note: arXiv preprint arXiv:2304.11277[Online]. Available: https://arxiv.org/abs/2304.11277
+
+Cited by: §2.2.
+
+Appendix A Implementation Details
+
+MegaTrain is implemented as a high-performance training runtime leveraging PyTorch and CUDA. While the core logic resides in Python for flexibility, we offload critical path operations, such as batched parameter movement and SIMD-accelerated optimization, to C++ and CUDA extensions.
+
+A.1. Host (CPU) Memory Management
+
+MegaTrain treats host memory not merely as a secondary storage tier, but as the authoritative execution master. To support billion-parameter models on a single node, we design the CPU parameter store to maximize PCIe throughput and minimize host-side orchestration overhead.
+
+Layer-Contiguous Memory Tiling.
+Conventional frameworks often manage tensors as fragmented objects scattered across the heap. This fragmentation forces the system to issue numerous small-granularity DMA requests, each incurring kernel launch overhead and PCIe transaction tail-latency.
+To address this, MegaTrain implements Layer-Contiguous Tiling. For each Transformer layer , all associated states, including BF16 weights (), BF16 gradients (), and FP32 Adam moments (), are packed into a single, monolithic memory block.
+As shown in Algorithm 1, this layout ensures that the StreamIn primitive can satisfy a layer’s residency transition with a single, large-burst DMA transfer, saturating the PCIe bus bandwidth. Furthermore, these tiles are aligned to 4KB page boundaries to facilitate zero-copy pinned staging.
+
+Pinned Slab Recycling.
+A significant challenge in node-scale training is that pinning the entire model’s parameters would exhaust host physical memory and OS page table resources.
+MegaTrain employs a fixed-capacity Pinned Slab Pool that acts as a staging area for the streaming engine. Instead of pinning the total model , we only pin a small number of "active" slabs.
+During the StreamIn phase, a dedicated CPU worker thread performs a JIT (Just-In-Time) copy from the pageable layer-contiguous store to a pinned slab. By double-buffering these slabs, we ensure that while the GPU executes layer , the CPU is already packing and pinning layer . This approach keeps the host-side pinning overhead constant () regardless of model depth.
+
+Flat-Tensor Layout.
+To eliminate the overhead of thousands of small PCIe transfers, MegaTrain enforces a Flat-Tensor Layout. During initialization, we extract the metadata (shape, numel) of all transformer layers and allocate two types of host-side memory:
+
+•
+
+Master Store: Model parameters and FP32 Adam moments are stored in non-pinned host memory to maximize capacity.
+
+•
+
+Pinned Staging Buffers: We allocate two fixed-size page-locked (pinned) buffers, each exactly matching the size of the largest transformer layer (). These buffers act as the H2D/D2H gateway, ensuring that all DMA transfers achieve near-peak PCIe bandwidth (e.g., 26GB/s on PCIe Gen4 x16).
+
+Structural Aliasing for Tied Weights.
+To support models with tied embeddings, MegaTrain maintains a Virtual-to-Physical mapping. Both the embedding and LM head point to the same physical memory tile in the CPU store. The execution controller tracks the "readiness" of this shared tile; once the head gradients are processed and the optimizer updates the shared parameters, the embedding is automatically marked as ready for the subsequent iteration’s StreamIn, ensuring numerical consistency without redundant storage or synchronization barriers.
+
+Weight Tying. For models with tied Embedding and LM-Head, we implement aliased synchronization. If the LM-Head and Embedding weights are tied, the system records the underlying data_ptr. During the H2D sync phase, only one transfer is issued, and the pointers on the GPU are re-mapped to the same device memory address to prevent divergence.
+
+A.2. Multi-Stream Pipeline and Scheduling
+
+The heart of MegaTrain is an event-driven scheduler that manages three concurrent CUDA streams: ComputeStream, WeightStream, and GradStream.
+
+To saturate the PCIe bandwidth and maximize GPU utilization, MegaTrain implements a multi-stream pipeline that aggressively overlaps data movement with computation. As visualized in Figure 3, the system orchestrates three concurrent hardware streams mediated by a hierarchy of CUDA events.
+
+Weight Double-Buffering.
+For streaming to be effective, the transfer time of each layer’s parameters () must be fully hidden under the preceding layer’s computation; violating this local overlap condition directly serializes execution regardless of available compute.
+To eliminate the latency of parameter ingestion (), MegaTrain maintains two sets of staging buffers in both the CPU and GPU domains. This enables a "ping-pong" prefetching strategy: while the compute stream executes layer using Buffer 0, the weight-transfer stream concurrently packs and streams layer into Buffer 1. As shown in Figure 3, this overlapping ensures that the GPU compute units never stall for parameters, effectively converting a sequential execution into a steady-state streaming pipeline.
+
+Multi-Stream Orchestration.
+MegaTrain separates execution into three dedicated CUDA streams to avoid false dependencies and global device synchronizations:
+
+•
+
+Compute Stream (): Responsible for executing the Compute, RecomputeBlock, and LocalBackward primitives.
+
+•
+
+Weight-Transfer Stream (): Orchestrates asynchronous H2D copies of parameters (the blocks in Figure 3).
+
+•
+
+Gradient-Transfer Stream (): Manages the immediate evacuation of gradients to host-side gradient slabs (the blocks in Figure 3).
+
+Event-Driven Synchronization.
+Without a global training graph, the runtime cannot rely on implicit dataflow dependencies; it must explicitly track and enforce ordering across prefetch, computation, and offload operations.
+The coordination across these streams is therefore governed by a lightweight event-driven protocol rather than heavy-weight host-side barriers:
+
+(1)
+
+Weights-Ready Event: Recorded by after completes; waits on this event before invoking the Bind primitive for layer .
+
+(2)
+
+Backward-Done Event: Recorded by after the local gradient is materialized; this triggers to initiate the evacuation .
+
+(3)
+
+Buffer-Free Event: Recorded by after the gradient offload is finished. The stream must wait for this event before reusing the corresponding buffer for the next iteration’s weight prefetch.
+
+Asynchronous Gradient Evacuation.
+The separation of from the compute stream is critical for maintaining throughput during the backward pass. As shown in Figure 3, the evacuation of occurs in parallel with the recomputation and . By treating the gradient return as a background task, MegaTrain prevents the PCIe D2H latency from leaking into the critical path of the backward recomputation, ensuring that the GPU’s floating-point throughput is limited only by the slower of the compute kernel or the H2D parameter bandwidth.
+
+A.3. GPU Buffer Management
+
+The GPU domain functions as a transient execution cache, engineered to maximize throughput via a "just-in-time" parameter supply chain. As depicted in the Data Movement lane of Figure 3, the engine provides high-bandwidth ingestion and evacuation while maintaining a stateless device profile.
+
+Flat-Buffer Streaming and Zero-Copy View.
+To minimize the overhead of hundreds of individual CUDA API calls, MegaTrain employs a flat-buffer ingestion strategy. For each layer , the CPU packs all constituent tensors into a single contiguous pinned buffer (the blocks in Figure 3). The StreamIn primitive issues a single asynchronous H2D copy. Upon arrival in the GPU’s Buffer 0/1, the engine performs a zero-copy unflattening: it creates tensor "views" that point directly into the flat buffer’s offsets. This avoids repeated GPU-side memory allocations and ensures that parameter materialization occurs at near-line-rate PCIe speeds.
+
+Batched Parameter Binding.
+To further reduce Python’s dispatch overhead (which can exceed 10% of step time), we developed a C++ extension for Batched Parameter Binding. This extension uses a single CUDA kernel to map the flattened GPU staging buffer back to the layer’s named parameters (e.g., q_proj, k_proj) via pointer manipulation, replacing hundreds of individual copy_ calls with a single metadata update.
+
+K-Slab Gradient Offloading.
+A naive gradient return would block the compute stream. MegaTrain introduces a Categorized Gradient Slab Pool consisting of pinned host memory "slabs" (default ).
+When a layer’s local backward pass completes, GradStream immediately issues a D2H transfer to an available slab. This decouples GPU memory release from CPU optimization. A dedicated background CPU thread monitors these slabs using Event.synchronize(), unflattening and accumulating them into the master store using OpenMP-parallelized kernels.
+
+Memory-Mapped Workspace Management.
+Because the streaming regime requires precise control over what state is materialized and when it is released, MegaTrain replaces implicit graph-managed memory with explicit lifecycle control.
+To further reduce runtime jitter, all transient workspaces for recomputation ( in Figure 3) and local activations are pre-allocated and memory-mapped at initialization. The engine manages these as a stack-like structure: the RecomputeBlock primitive pushes recomputed states onto this workspace, which are then popped and released by the LocalBackward primitive. This explicit lifecycle management guarantees that GPU memory fragmentation is zero, providing the deterministic bound established in Section 3.
+
+Static Host-Side Staging.
+To sustain the and streams without exhaustive pinning, MegaTrain partitions host memory into fixed-size regions.
+First, two pinned staging buffers (Buffer 0/1 in Figure 3) are allocated to facilitate weight prefetching. This ensures the host-side pinning footprint remains invariant to model depth .
+Second, a slab pool (the green blocks in Figure 3) manages gradient returns. Slabs are recycled only after the CPU-side accumulation (Acc) completes, providing a back-pressure mechanism that prevents gradient offloading from overrunning host memory.
+
+Deterministic GPU Execution Cache.
+The GPU domain is partitioned into a set of functional workspaces with strictly controlled lifetimes:
+
+•
+
+Streaming Buffers: Dedicated buffers for the StreamIn primitive, sized to the maximum layer parameter volume .
+
+•
+
+Activation Stack: A pre-allocated workspace for rolling activations and recomputation blocks. By managing this as a stack rather than a heap, MegaTrain avoids the fragmentation common in long-running training sessions.
+
+•
+
+Checkpoint Anchors: A dedicated region for every -th activation , which remains resident only until the corresponding block-wise backward pass is completed.
+
+Eliminating Runtime Jitter.
+Beyond reducing allocator latency, this pooling strategy is critical for the robustness of the pipelined schedule shown in Figure 3. By using pre-allocated, reusable buffers, MegaTrain eliminates "bubbles" in the pipeline caused by dynamic memory allocation or garbage collection. This architectural choice ensures that the system maintains a constant, high-throughput steady state, even when training hundred-billion-parameter models at the limit of the device’s capacity.
+
+Fragmentation Control. We use the expandable_segments flag in the PyTorch allocator to prevent virtual memory fragmentation during recomputation. By explicitly calling record_stream on all transient buffers, we ensure that the allocator does not reclaim memory still in flight within the GradStream, avoiding silent data corruption.
+
+A.4. GPU Compute Dispatch
+
+Stateless Template Binding.
+MegaTrain decouples the layer’s mathematical structure from its physical data through a stateless template pool. Each template (e.g., Template A/B) encapsulates the CUDA kernels for Attention and MLP blocks but possesses no persistent weight pointers. Before execution, the Bind primitive dynamically maps the views from the streaming buffer to the template’s input slots. As visualized in the alternating colors of Figure 3, this "ping-pong" binding allows to execute on Template A while is being bound to Template B, eliminating the latency of weight preparation from the critical path.
+
+Graph-less Dispatch.
+Standard autograd graphs assume that parameters and activations persist on the GPU throughout backward propagation. Under layer-wise streaming, however, parameters are evicted after use and activations cannot be retained arbitrarily, rendering the global graph abstraction inapplicable.
+MegaTrain therefore does not rely on CUDA graph capture. Because streamed weights, buffer ownership, and event dependencies change at layer granularity, the runtime preserves the explicit StreamIn-Bind-Compute-Offload dispatch path instead of forcing execution into a static captured graph.
+
+Appendix B Ratel Reproduction on GH200
+
+We also tried to reproduce the Ratel (Liao et al., 2025) experiment on GH200 using the official codebase. The measured throughput is consistently low across all tested model sizes.
+
+Table 10. Ratel reproduction results on GH200 using the official codebase.
+
+Model
+TFLOPS
+
+7B
+2.03
+
+14B
+10.90
+
+32B
+10.91
+
+We suspect that these low numbers are mainly caused by SSD bottlenecks in the original implementation.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

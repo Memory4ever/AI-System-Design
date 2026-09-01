@@ -202,6 +202,16 @@ reasoning 或 UTF-8/config validation 差异。vLLM v0.23.0 为这些 owners 同
 不证明任意 feature combination 已 production-safe。HBM-only、单 frontend、无 connector 的旧路径在小规模、
 稳定 workload 中仍更简单；feature gating 与 fail-fast compatibility 优先于强行组合。
 
+### 从移动 KV 到移动 Attention Compute
+
+传统 KV offload 把冷状态放到 host memory，再在 attention 前搬回 GPU；当上下文较短或链路足够快时，它保持单一计算设备，最容易维护数值和调度语义。长上下文让 KV transfer 本身主导 step 后，只移动数据会把 HBM 容量压力改写成 PCIe/CXL 带宽压力。另一条分支是让一部分 KV 留在 CPU memory，并让 CPU 对本地 token 计算部分 attention，GPU 同时处理自己的 resident KV，最后在明确的 layer boundary 合并结果。
+
+这把 KV location 与 compute placement 变成联合状态。Cache manager 拥有每段 KV 的 identity、residency 和可见 epoch；hybrid scheduler 决定 CPU/GPU token partition 与负载平衡；CPU partial-result producer 和 GPU concatenation consumer 必须遵守层内、层间 dependency，只有两侧完成信号齐备才能推进 token frontier。CXL 或更大 host memory 可以扩大容量，却不能消除 NUMA、带宽和同步成本。
+
+收益来自少搬数据并同时使用 CPU/GPU，代价是 CPU throughput、跨设备同步、partial-result merge、动态失衡和 host-memory ceiling 都进入 critical path。GPU 能容纳 working set、CPU 明显过慢、互联抖动或依赖协议无法验证时，应回退 GPU-only attention 或普通 whole-cache offload。作者报告的速度只绑定其模型、硬件、长度和实现，不是 vLLM 当前功能或通用 serving 结论。
+
+<!-- source-family:SF-2026-ARXIV-2604-18529 -->
+
 ### 从 Whole-cache Offload 到 Sparse Working-set Prefetch
 
 KV tiering 若每层都把完整历史搬回 GPU，只把容量问题变成 PCIe/network bandwidth 问题。长 Agent Decode 的另一
@@ -361,6 +371,8 @@ vLLM 将 request lifecycle、token scheduling、KV block ownership 和 GPU execu
 第51章继续比较另一种 runtime 抽象：当请求之间存在可复用的程序结构和 prefix tree 时，scheduler 还可以利用哪些信息。
 
 ## Review notes
+
+- **HybridGen（arXiv:2604.18529v1；Status: Experimental）**：支持 KV residency 与 CPU/GPU attention compute placement 联合控制、partial-result dependency 与反馈调度。作者的 `1.41×–3.2×` 只属于所披露实验设置，不证明其他模型、互联、continuous batching 或生产 tail-SLO 下的净收益。https://arxiv.org/abs/2604.18529v1
 
 - NVIDIA Dynamo Snapshot（execution-state restore preview；Official Engineering Evidence）:
   https://developer.nvidia.com/blog/nvidia-dynamo-snapshot-fast-startup-for-inference-workloads-on-kubernetes/

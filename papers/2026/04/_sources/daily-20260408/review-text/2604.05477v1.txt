@@ -1,0 +1,2205 @@
+Don’t Act Blindly: Robust GUI Automation via Action-Effect Verification and Self-Correction
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 Vision-Language Models for GUI Agents
+
+2.2 Reinforcement Fine-Tuning and Learning for GUI Agents
+
+3 Methodology
+
+3.1 Problem Formulation
+
+3.2 TVAE Inference Cycle
+
+1. Think ().
+
+2. Verification ().
+
+3. Action ().
+
+4. Expected Effect ().
+
+3.3 Stage 1: Robust Supervised Fine-Tuning
+
+3.4 Stage 2: Verification-Action-Effect GRPO
+
+Implicit Environment Simulation.
+
+Composite Reward Function.
+
+Optimization.
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Dataset and Baselines.
+
+Implementation.
+
+4.2 Evaluation Protocol
+
+Step Level Metrics.
+
+Task Level Metrics.
+
+Robustness Metrics.
+
+4.3 Main Results
+
+Offline Benchmark.
+
+Robustness Benchmark.
+
+Online Benchmark Evaluation.
+
+4.4 Ablation Studies
+
+Training Stage Composition.
+
+Negative Sample Ratio.
+
+Reward Components.
+
+5 Analysis
+
+5.1 Case Study
+
+5.2 Computational Overhead
+
+6 Conclusion
+
+References
+
+A Additional Results
+
+A.1 Per-Action-Type Performance
+
+A.2 Task Complexity Analysis
+
+A.3 First-Step versus All-Steps Performance
+
+A.4 Detailed Robustness Analysis
+
+B Algorithm
+
+C Evaluation Metrics: Formal Definitions
+
+Pseudo-Online Simulation Protocol.
+
+Robustness Benchmark Construction.
+
+D Implementation Details
+
+E SFT Dataset Construction
+
+Type A: Success Trajectories (70%).
+
+Type B: Failure Recovery Trajectories (30%).
+
+Synthetic Failure Modes.
+
+Data Generation Pipeline.
+
+F Prompt Templates
+
+F.1 System Prompt
+
+F.2 Think Format Templates
+
+F.3 Complete Input-Output Examples
+
+G Case Studies
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.05477v1 [cs.CL] 07 Apr 2026
+
+  Don’t Act Blindly: Robust GUI Automation via Action-Effect
+
+Verification and Self-Correction
+
+Yuzhe Zhang
+††thanks: Work done during the internship at Baidu.
+Affiliation: Beijing University of Technology, Beijing, China
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: zhangyuzhe02@baidu.com
+
+  
+Xianwei Xue
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: xuexianwei@baidu.com
+
+  
+Xingyong Wu
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: wuxingyong@baidu.com
+
+  
+Mengke Chen
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: chenmengke@baidu.com
+
+  
+Chen Liu
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: liuchen26@baidu.com
+
+  
+Xinran He
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: hexinran@baidu.com
+
+  
+Run Shao
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: shaorun@baidu.com
+
+  
+Feiran Liu
+
+Affiliation: Beijing University of Technology, Beijing, China
+
+Email: xuhuanmin@baidu.com
+
+  
+Huanmin Xu
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: panqiutong@baidu.com
+
+  
+Qiutong Pan
+
+Affiliation: Baidu Inc., Beijing, China
+
+Email: wanghaiwei@baidu.com
+
+  
+Haiwei Wang
+††thanks: Corresponding author.
+Affiliation: Baidu Inc., Beijing, China
+
+Abstract
+
+Autonomous GUI Agents based on vision-language models (VLMs) often assume deterministic environment responses, generating actions without verifying whether previous operations succeeded. In real-world settings with network latency, rendering delays, and system interruptions, this assumption leads to undetected action failures, repetitive ineffective behaviors, and catastrophic error accumulation. Moreover, learning robust recovery strategies is challenging due to the high cost of online interaction and the lack of real-time feedback in offline datasets. We propose VeriGUI (Verification-driven GUI Agent), which explicitly models action outcomes and recovery under noisy environments. VeriGUI introduces a Thinking–Verification–Action–Expectation (TVAE) framework to detect failures and guide corrective reasoning, and a two-stage training pipeline that combines Robust SFT with synthetic failure trajectories and GRPO with asymmetric verification rewards. We train VeriGUI in both 3B and 7B configurations. We further construct a Robustness Benchmark based on AndroidControl-High to evaluate failure recognition and correction. Experiments demonstrate that VeriGUI-3B and -7B achieve strong results across offline and online benchmarks, with the verification-and-recovery mechanism transferring effectively to dynamic real-world environments.
+
+1 Introduction
+
+Figure 1: Overview of VeriGUI’s closed-loop framework. Unlike blind action agents (above) that repeat failed actions indefinitely, VeriGUI (below) verifies each action’s outcome against predicted effects, enabling failure detection and reasoned recovery.
+
+GUI automation has emerged as a promising application of vision-language models (VLMs) (Hong et al., 2024; Cheng et al., 2024; Lin et al., 2024), enabling autonomous agents to interpret screenshots, understand natural language instructions, and execute complex multi-step tasks on mobile devices (Zhang et al., 2025a; Rawles et al., 2023). These capabilities have driven rapid progress in benchmark performance (Zhou et al., 2024; Xie et al., 2024; Rawles et al., 2025) and broadened the scope of automated interaction. However, deploying such agents in real-world environments exposes a fundamental weakness shared by most existing approaches: they implicitly assume that every issued action executes as intended.
+
+This assumption rarely holds in practice. Network latency may prevent a page from loading; rendering delays can cause click targets to shift; system interruptions may block expected transitions or interrupt animations. When such failures occur, current agents continue operating as if nothing went wrong—they observe an unchanged screen yet generate another action based on flawed assumptions about their progress (Huang et al., 2024). Worse still, because these agents have rarely encountered failure scenarios during training, they tend to repeat the exact same ineffective action, creating infinite execution loops that waste computational resources without advancing the task. Importantly, this class of idempotent failures—where the erroneous action leaves the screen unchanged—is not a corner case. Empirical evidence confirms their prevalence: execution timeouts caused by repeated ineffective actions account for 72.3% of all failures across 1,265 task executions (Liu et al., 2026); the Reasonable Operation Ratio metric was introduced in AndroidLab precisely to capture such non-progressive operations (Xu et al., 2025); and failed grounding and stuck repetitive behaviors have been identified as primary failure modes in real mobile deployments (Li et al., 2025).
+
+Human users naturally avoid this trap. After each interaction, we implicitly verify whether the expected change occurred: did the button highlight, did the page navigate, or did new content appear? If something seems wrong, we pause, diagnose the issue, and adjust our approach accordingly. This verification–reasoning–correction loop forms the basis of robust human-computer interaction (Wei et al., 2022; Yao et al., 2023), yet it is conspicuously absent from current GUI Agent designs.
+
+Training agents to exhibit such behavior presents its own challenges. Online reinforcement learning in live GUI environments suffers from prohibitive interaction latency, system instability, and poor scalability, making large-scale training impractical—requiring up to 64 parallel Android emulators (Bai et al., 2024) or complex distributed infrastructure (Wang et al., 2025a). Offline datasets enable faster iteration but lack explicit feedback signals indicating whether an action failed and how recovery should proceed (Li et al., 2024; Rawles et al., 2023). This gap between training conditions and deployment realities fundamentally limits the robustness of existing approaches. Prior work on self-correction in LLMs (Madaan et al., 2023; Shinn et al., 2023; Gou et al., 2024) has shown promise in iterative refinement through verbal feedback, but these methods typically assume access to external feedback signals or oracle information, and have not been effectively adapted to the visual grounding requirements of GUI automation (Kumar et al., 2024).
+
+We propose VeriGUI (Verification-driven GUI Agent) to address these limitations. Our approach makes three contributions:
+
+•
+
+We propose a T-V-A-E framework that forms a closed reasoning loop, enabling outcome verification, failure diagnosis, and expected effect prediction to prevent blind error accumulation.
+
+•
+
+We design a two-stage training pipeline combining Robust SFT on synthetic failure trajectories with GRPO that leverages GUI failure idempotency to simulate online feedback from offline data, using asymmetric penalties to promote honest self-assessment. This approach avoids the prohibitive infrastructure demands of online RL while still producing effective self-correcting behavior.
+
+•
+
+We construct a Robustness Benchmark with controlled failure-injection cases and two novel metrics (Loop Rate and Recovery Success Rate) to reveal failure modes hidden in conventional success-only evaluations. On this benchmark, VeriGUI-3B achieves a Recovery Success Rate of 51.1%, and VeriGUI-7B achieves 52.5%, both surpassing all tested open-source baselines.
+
+2 Related Work
+
+2.1 Vision-Language Models for GUI Agents
+
+Early GUI Agents relied on structured interface representations such as HTML trees or accessibility metadata, limiting robustness across heterogeneous platforms (Deng et al., 2023; Zhang et al., 2025a; Zheng et al., 2024). Recent VLMs enable direct visual grounding from raw screenshots, substantially improving cross-platform generalization: CogAgent (Hong et al., 2024) and SeeClick (Cheng et al., 2024) demonstrate accurate UI element localization and action prediction without structured inputs , while ShowUI (Lin et al., 2024), Ferret-UI (You et al., 2024), and UI-TARS (Qin et al., 2025) further enhance efficiency and generalization through UI-specific pretraining and unified vision–language–action modeling. Subsequent work extends to multi-step reasoning and planning via search, reflection, and execution-feedback-driven replanning (Yu et al., 2025; Antoniades et al., 2024; Zhang et al., 2025b; Wu et al., 2025b; Putta et al., 2024; Wang et al., 2025b; Wu et al., 2025a), but typically assumes that selected actions execute as intended at the step level and handles failures implicitly through replanning. In contrast, VeriGUI explicitly models action–effect consistency by verifying whether each action induces its intended visual outcome, enabling principled step-level failure detection and recovery.
+
+Figure 2: Overview of VeriGUI’s architecture and training pipeline. (A) The TVAE inference cycle implements a closed-loop verification mechanism where structured thinking precedes verification. (B) The two-stage training pipeline: Stage 1 establishes basic verification capabilities via Robust SFT on mixed success/failure trajectories; Stage 2 refines self-correction via GRPO, using offline data to simulate online feedback through composite rewards.
+
+2.2 Reinforcement Fine-Tuning and Learning for GUI Agents
+
+Reinforcement learning (RL) has become central to improving GUI Agent robustness and generalization, evolving from trajectory-level optimization in DigiRL (Bai et al., 2024) and DistRL (Wang et al., 2025a) to preference-based learning with Direct Preference Optimization (DPO) (Rafailov et al., 2024) and self-generated supervision (Kumar et al., 2024; Welleck et al., 2022). For long-horizon reasoning, Group Relative Policy Optimization (GRPO) provides a stable and scalable framework underlying recent reasoning-oriented models (DeepSeek-AI et al., 2026). Building on this line of work, GRPO has been adopted in GUI Agents such as UI-R1 (Lu et al., 2025b), which applies it to unified action spaces, and InfiGUI-R1 (Liu et al., 2025), which integrates reactive execution with deliberative reasoning . However, most RL-based GUI Agents optimize task-level success or proxy step correctness, while VeriGUI treats action–effect verification as a first-class reinforcement objective, enabling the agent to learn honest self-monitoring and robust self-correction.
+
+3 Methodology
+
+We present VeriGUI, a Verification-driven GUI Agent that addresses the fundamental limitation of current GUI automation systems: their inability to verify execution outcomes and recover from failures. As illustrated in Figure 2, our approach combines a closed-loop inference cycle with a two-stage training pipeline that systematically develops verification-driven self-correction capabilities.
+
+3.1 Problem Formulation
+
+We formalize GUI automation as a sequential decision-making process where an agent must execute interactions to satisfy a natural language instruction . At each timestep , the agent observes a screen state and an action history , and selects an action from a discrete action space according to policy .
+
+Unlike conventional approaches that assume deterministic transitions, we explicitly model execution uncertainty. We augment the policy to jointly predict structured Thinking , verification judgment , action , and expected effect . This formulation enables the agent to detect failures by verifying against visual evidence and self-correct without external supervision.
+
+3.2 TVAE Inference Cycle
+
+At the core of VeriGUI lies a structured reasoning process mirroring human interaction patterns (Figure 2A). Crucially, TVAE is not a linear chain but a temporally linked cycle: the expected effect predicted at step becomes the verification hypothesis at step . This temporal dependency enforces causal consistency across steps, ensuring that errors cannot be ignored or overwritten by subsequent actions. At each step , the agent produces:
+
+1. Think ().
+
+Structured analysis using explicit tags ([Verify], [Recall], [Grounding], [Action]). When correcting errors, the structure shifts to [Diagnose] and [Recovery], ensuring verification is grounded in visual reasoning. Note that the [Verify] tag within <think> constitutes the internal reasoning process, while the <verification> output below represents the final binary judgment derived from that reasoning.
+
+2. Verification ().
+
+A binary judgment assessing the previous step:
+
+(1)
+
+3. Action ().
+
+Executable JSON (for instance, {"action": "click", "coordinate": [x,y]}).
+
+4. Expected Effect ().
+
+A prediction of the resulting screen change, serving as the verification target for step .
+
+3.3 Stage 1: Robust Supervised Fine-Tuning
+
+To teach error recognition, we construct a mixed dataset of positive and synthetic negative samples:
+
+Type A: Success Trajectories. Standard steps where reflects the successful execution of . The target output confirms success (SUCCESS) and proceeds with the next ground-truth action.
+
+Type B: Failure Recovery Trajectories. We simulate failures by pairing the previous screen with history claiming action was executed. This creates a "no change" scenario. The target output requires the agent to diagnose the failure (NO_CHANGE) and generate a corrective action (typically a refined ).
+
+We employ GPT-4o to generate structured Chain-of-Thought (CoT) annotations for both types and train using standard cross-entropy loss(Appendix E). This stage serves as a necessary behavioral prior: without explicit exposure to failure cases during imitation learning, the model tends to overfit to optimistic assumptions that all actions succeed, making subsequent reinforcement learning unstable.
+
+3.4 Stage 2: Verification-Action-Effect GRPO
+
+While SFT establishes basic capabilities, it lacks the feedback loop required to internalize "honest" verification. Stage 2 employs Group Relative Policy Optimization (GRPO) with a specialized reward mechanism that simulates online feedback using only offline data.
+
+Implicit Environment Simulation.
+
+Direct reinforcement learning in live GUI environments suffers from prohibitive interaction latency, system instability, and scalability bottlenecks—requiring up to 64 parallel Android emulators (Bai et al., 2024) or complex distributed infrastructure (Wang et al., 2025a). To bypass these inefficiencies while preserving realistic feedback dynamics, we employ a data-driven implicit simulation strategy. We leverage the idempotency property of GUI errors: incorrect actions typically leave the screen unchanged. This assumption is well-grounded in practice—execution timeouts from repeated ineffective actions, screen-invariant operation rates, and failed grounding with no state transition together constitute the dominant failure modes in real mobile environments (Xu et al., 2025; Liu et al., 2026; Li et al., 2025)—and enables us to transform offline trajectories into training samples with meaningful environment feedback signals without any live interaction.
+
+We construct the RL training data from the mixed SFT dataset. For any given input state (which may represent a successful or failed history), the model generates a response. We then determine the verification ground truth dynamically based on the sample type:
+
+•
+
+For Type A inputs (Success History), .
+
+•
+
+For Type B inputs (Failure History), .
+
+Crucially, the model is rewarded only if its predicted verification matches this objective reality, regardless of whether it "thinks" it succeeded. This effectively simulates environment feedback: if the screen didn’t change (Type B), the environment "tells" the agent it failed by rewarding only NO_CHANGE predictions. This implicit feedback mechanism is intentionally minimalistic: it does not reveal the correct action or recovery strategy, but only signals whether the agent’s belief about the outcome is consistent with visual reality. As a result, the agent must rely on its own reasoning and expected-effect predictions to determine how to proceed, closely mirroring real-world deployment conditions.
+
+Composite Reward Function.
+
+The reward function drives the optimization of the TVAE cycle components:
+
+(2)
+
+Together, these reward components explicitly couple action execution with outcome awareness, ensuring that high task completion scores cannot be achieved by systematically ignoring verification signals.
+
+1. Action Reward (): Measures execution correctness by comparing against the ground-truth action (using type matching and coordinate IoU).
+
+(3)
+
+2. Effect Reward (): Evaluates semantic consistency between the predicted expected effect and the reference effect generated by GPT-4o during dataset construction (Appendix E). is computed via BERTScore when the action is correct (), and set to otherwise:
+
+(4)
+
+3. Verification Reward (): Enforces honest self-monitoring with asymmetric penalties:
+
+(5)
+
+The severe penalty for hallucination () forces the agent to align its internal belief with visual reality, preventing the accumulation of errors.
+
+Optimization.
+
+We employ Group Relative Policy Optimization (GRPO) (Shao et al., 2024) to optimize the policy. For each input , GRPO samples a group of outputs from the current policy . Let denote the composite reward defined in Eq. 2 evaluated for output . The group-normalized advantage for the -th output is:
+
+(6)
+
+where is a small constant for numerical stability. For each token position in output , we define the probability ratio between the updated policy and the old sampling policy as:
+
+(7)
+
+The clipped surrogate loss for each token is then:
+
+(8)
+
+where restricts the probability ratio to . The final GRPO objective aggregates the clipped surrogate loss over all outputs and tokens, with a KL penalty constraining deviation from the reference policy :
+
+(9)
+
+where is the token length of the -th output and controls the KL regularization strength.
+The complete inference and training procedures are detailed in Algorithms 1 and 2 (Appendix B).
+
+4 Experiments
+
+We evaluate VeriGUI across multiple benchmarks: AndroidControl-High (Li et al., 2024), AITW-Gen (Rawles et al., 2023), and GUI Odyssey (Lu et al., 2025a) as our offline evaluation suite, and MiniWoB++ (Liu et al., 2018) and AndroidWorld (Rawles et al., 2025) as fully online environments to validate real-world robustness.
+
+4.1 Experimental Setup
+
+Dataset and Baselines.
+
+AndroidControl-High provides approximately 15,000 training trajectories and 2,500 test trajectories spanning productivity, social media, e-commerce, and system applications. We compare against 3B models (Qwen2.5-VL-3B (Bai et al., 2025), UI-R1-3B (Lu et al., 2025b)) , 7B/8B models (OS-Genesis-7B (Sun et al., 2025), OS-Atlas-7B (Wu et al., 2024), Qwen2.5-VL-7B, AgentCPM-GUI-8B (Zhang et al., 2025c), UI-TARS-7B (Qin et al., 2025), UI-S1-7B (Lu et al., 2025c)), and closed-source systems GPT-5.1 and Gemini-3-flash.
+
+Implementation.
+
+We apply our two-stage training pipeline at two scales: VeriGUI-3B builds on Qwen2.5-VL-3B, and VeriGUI-7B builds on Qwen2.5-VL-7B. Both variants use the same pipeline configuration. Stage 1 trains for 2 epochs with learning rate ; Stage 2 runs 15 epochs with learning rate , group size , and reward weights , . Training uses 8A100 GPUs. Full hyperparameters appear in Appendix D.
+
+4.2 Evaluation Protocol
+
+Our offline evaluation exploits the failure idempotency of GUI environments to construct a pseudo-online simulation: correct actions advance to ground-truth next screens, while incorrect actions return the unchanged screen. Formal metric definitions appear in Table 13 in Appendix C.
+
+Step Level Metrics.
+
+Step-level metrics assess single-step predictions independently: Type Match (TM), Grounding Rate (GR), and Step Success Rate (SR).
+
+Task Level Metrics.
+
+Task-level metrics evaluate end-to-end execution under pseudo-online simulation with a step budget: Task Success Rate (TSR), Progress (PG), Simulated Task Success Rate (Sim-TSR), and Average Step Overhead (ASO).
+
+Robustness Metrics.
+
+We construct failure-injection test cases by pairing unchanged screens with histories claiming an action was executed. Loop Rate (LR) measures repeated failed actions; Recovery Success Rate (RSR) measures correct recovery actions.
+
+4.3 Main Results
+
+Offline Benchmark.
+
+Table 1 presents comprehensive results across all offline benchmarks. On AndroidControl-High, VeriGUI-3B achieves Type Match of 72.2%, the highest among all open-source models at the 3B scale, and VeriGUI-7B reaches 74.2%, establishing a new open-source state of the art. Notably, VeriGUI-3B surpasses several 7B-scale baselines on this metric despite having less than half the parameters, which demonstrates that the TVAE framework’s structured reasoning actively improves action type selection rather than merely adding overhead.
+
+The task-level metrics reveal the practical value of verification-driven self-correction most clearly. All 3B-scale baselines without explicit verification fail entirely under pseudo-online conditions, achieving zero Sim-TSR, while larger 7B-scale models achieve modest results. VeriGUI-3B completes 16.7% of tasks with an ASO of just 1.25, and VeriGUI-7B further improves to 23.5% Sim-TSR with an ASO of 1.09—both substantially outperforming all comparably sized open-source models. The gap between TSR and Sim-TSR directly quantifies tasks completed through error recovery rather than flawless execution.
+
+Cross-distribution results on AITW-Gen and GUI Odyssey further validate generalization. VeriGUI-7B achieves 72.7 TM and 52.3 SR on GUI Odyssey, exceeding UI-TARS-7B on both metrics and closely approaching UI-S1-7B’s SR of 52.8 while surpassing it on TM. VeriGUI-3B shows consistent improvements over same-scale baselines on GUI Odyssey across all metrics, and achieves higher Sim-TSR than both 3B baselines on AITW-Gen, confirming that the TVAE framework provides transferable benefits.
+
+Category
+Model
+AndroidControl-High
+AITW-Gen
+GUI Odyssey
+
+TM
+GR
+SR
+TSR
+PG
+Sim-TSR
+ASO
+PG
+Sim-TSR
+TM
+GR
+SR
+
+Closed-
+source
+
+GPT-5.1
+70.1
+30.0
+23.1
+–
+–
+–
+–
+10.4
+2.5
+68.1
+34.0
+27.9
+
+Gemini-3-flash
+83.3
+36.9
+42.2
+–
+–
+–
+–
+17.8
+4.5
+83.2
+48.8
+46.9
+
+Open-src
+3B
+
+Qwen2.5-VL-3B
+60.1
+52.8
+31.2
+0
+2.8
+0
+
+1.5
+0.1
+62.0
+47.4
+39.9
+
+UI-R1-3B
+62.4
+50.4
+30.3
+0
+4.9
+0
+
+8.8
+2.4
+62.5
+52.6
+32.0
+
+Open-src
+7B/8B
+
+Qwen2.5-VL-7B
+68.5
+61.7
+42.8
+6.2
+12.8
+10.6
+1.15
+11.7
+3.0
+72.3
+55.8
+48.5
+
+OS-Genesis-7B
+64.5
+47.5
+35.7
+0
+6.5
+0
+
+6.5
+2.2
+62.3
+59.9
+34.5
+
+OS-Atlas-7B
+67.7
+42.2
+35.5
+0
+5.5
+0
+
+12.3
+3.4
+70.2
+63.5
+41.3
+
+AgentCPM-GUI-8B
+42.2
+66.4
+34.1
+0
+7.1
+0
+
+12.0
+3.4
+70.3
+50.2
+47.8
+
+UI-TARS-7B
+71.9
+60.6
+47.7
+10.0
+14.7
+13.3
+1.67
+16.8
+5.9
+72.6
+62.1
+52.0
+
+UI-S1-7B
+70.1
+53.6
+44.5
+13.3
+25.4
+16.7
+1.33
+19.5
+4.6
+70.5
+62.8
+52.8
+
+Ours
+VeriGUI-3B
+72.2
+56.4
+46.6
+13.3
+23.3
+16.7
+1.25
+7.4
+2.6
+65.5
+54.5
+43.4
+
+VeriGUI-7B
+74.2
+65.5
+51.1
+16.7
+30.6
+23.5
+1.09
+15.5
+5.5
+72.7
+63.2
+52.3
+
+Table 1: Offline benchmark results. VeriGUI is trained at both 3B and 7B scales. Bold indicates best among all open-source models. ASO indicates no tasks completed.
+
+Robustness Benchmark.
+
+Table 2 evaluates error recognition and recovery directly. UI-TARS-7B achieves the lowest Loop Rate at 13.4% but only 45.5% RSR—it avoids repeating failed actions but often produces incorrect alternatives. OS-Atlas-7B shows high Loop Rate of 43.3% with poor RSR of 10.7%, indicating neither recognition nor correction capability.
+
+VeriGUI-3B achieves RSR of 51.1%, surpassing UI-TARS-7B by over five points despite having less than half the parameters, and VeriGUI-7B further improves to 52.5%, setting a new open-source best. This validates our core design: the TVAE framework trains the model not merely to detect failures but to reason about their causes and generate appropriate corrections. The Loop Rate of 24.3% for VeriGUI-3B represents a meaningful reduction from same-scale baselines like Qwen2.5-VL-3B at 30.0%, while VeriGUI-7B achieves 15.6%, approaching the best open-source Loop Rate of UI-TARS-7B.
+
+Category
+Model
+LR
+RSR
+
+Closed-source
+
+GPT-5.1
+11.0
+21.9
+
+Gemini-3-flash
+15.0
+37.0
+
+Open-source
+3B
+
+Qwen2.5-VL-3B
+30.0
+35.0
+
+UI-R1-3B
+29.5
+29.0
+
+Open-source
+7B/8B
+
+Qwen2.5-VL-7B
+23.5
+34.1
+
+OS-Atlas-7B
+43.3
+10.7
+
+UI-TARS-7B
+13.4
+45.5
+
+UI-S1-7B
+20.5
+43.6
+
+Ours
+VeriGUI-3B
+24.3
+51.1
+
+VeriGUI-7B
+15.6
+52.5
+
+Table 2: Robustness Benchmark results. Bold indicates best among all open-source models; VeriGUI achieves the highest Recovery Success Rate at both scales.
+
+Online Benchmark Evaluation.
+
+Category
+Model
+MiniWoB++
+AW
+
+Open-source
+3B
+
+Qwen2.5-VL-3B
+21.2
+6.1
+
+UI-R1-3B
+33.4
+10.9
+
+Open-source
+7B
+
+Qwen2.5-VL-7B
+47.0
+14.9
+
+UI-S1-7B
+56.6
+22.7
+
+Ours
+VeriGUI-3B
+35.6
+12.6
+
+VeriGUI-7B
+59.7
+25.1
+
+Table 3: Online benchmark results. Bold indicates best among all open-source models; VeriGUI-7B outperforms all open-source baselines; VeriGUI-3B surpasses same-scale models and approaches 7B-scale performance.
+
+To validate robustness beyond pseudo-online simulation, we evaluate VeriGUI on two fully online benchmarks where environmental uncertainty arises organically: MiniWoB++, which executes real web interactions in a live browser involving dynamic rendering and network variability; and AndroidWorld (AW), deployed on Android emulators via Android Studio, where real application execution introduces system-level dynamics. Neither benchmark involves artificial failure injection. Table 3 summarizes the results.
+
+VeriGUI-3B achieves 35.6% on MiniWoB++ and 12.6% on AndroidWorld, surpassing all 3B baselines on both benchmarks and approaching the performance of 7B-scale models. VeriGUI-7B reaches 59.7% and 25.1% respectively, outperforming all open-source baselines including UI-S1-7B. These results are especially encouraging because failure modes in live environments—navigation errors, rendering races, application-level exceptions—are structurally more diverse than the idempotency-based failures modeled during training. The gains transferring to non-idempotent settings suggest that our verification-and-recovery training instills a general habit of self-checking rather than a narrow pattern tied to unchanged screens.
+
+Figure 3: Qualitative comparison across training stages. The base model repeatedly attempts the same “open app” action without recognizing failure, entering an infinite loop. After SFT, the model learns to verify and reflect on past actions, though occasional incorrect reflections still cause short loops. After GRPO, the model correctly identifies the failure after one attempt and successfully recovers with an alternative action.
+
+4.4 Ablation Studies
+
+The following ablation studies all use VeriGUI-3B on AndroidControl-High to isolate individual design decisions. We use the 3B configuration throughout for computational efficiency and to ensure fair apples-to-apples comparison across variants; the full model’s 7B results appear in the main comparison tables above.
+
+Configuration
+Step-level (AndroidControl)
+Task-level (AndroidControl)
+Robustness
+
+TM
+GR
+SR
+TSR
+PG
+Sim-TSR
+ASO
+LR
+RSR
+
+Base (Qwen2.5-VL-3B)
+60.1
+52.8
+31.2
+0
+2.8
+0
+
+30.0
+35.0
+
++ Standard SFT
+67.2
+56.6
+42.6
+6.7
+16.4
+10.0
+3.33
+30.4
+29.7
+
++ Robust SFT
+68.7
+52.4
+41.7
+10.0
+20.8
+13.3
+2.25
+26.5
+45.5
+
++ GRPO (VeriGUI-3B)
+72.2
+56.4
+46.6
+13.3
+23.3
+16.7
+1.25
+24.3
+51.1
+
+Table 4: Ablation on training stages (VeriGUI-3B, AndroidControl-High). Standard SFT uses only Type A (Success Trajectories) samples, while Robust SFT leverages both Type A and Type B (Failure Recovery Trajectories) samples.
+
+Training Stage Composition.
+
+Table 4 isolates each stage’s contribution. Standard SFT improves step-level accuracy significantly but provides no verification benefit—Loop Rate actually increases slightly as the model becomes more confident in sometimes incorrect actions. Robust SFT with 30% synthetic failures introduces genuine error recognition, with RSR jumping from 29.7% to 45.5%. GRPO further refines all capabilities; notably ASO drops from 2.25 to 1.25, indicating RL teaches efficient recovery rather than trial-and-error.
+
+Type A:B Ratio
+SR
+Sim-TSR
+LR
+RSR
+
+100:0 (no negatives)
+42.6
+10.0
+30.4
+29.7
+
+90:10
+42.1
+10.0
+29.6
+30.3
+
+70:30 (default)
+41.7
+13.3
+26.5
+45.5
+
+50:50
+39.2
+12.4
+27.1
+45.4
+
+Table 5: Effect of negative sample ratio (VeriGUI-3B, AndroidControl-High). The 70:30 balance maximizes RSR while maintaining standard accuracy.
+
+Negative Sample Ratio.
+
+Table 5 examines the sample ratio in Robust SFT. Without failure samples, no verification capability develops. RSR peaks at 45.5% with the 70:30 ratio; excessive negatives at 50:50 degrade Step Accuracy while yielding diminishing robustness gains.
+
+Reward Components
+SR
+Sim-TSR
+LR
+RSR
+
+only
+42.9
+13.6
+25.5
+44.9
+
+44.2
+15.1
+25.4
+48.1
+
+46.6
+16.7
+24.3
+51.1
+
+Table 6: Ablation on reward components (VeriGUI-3B, AndroidControl-High). All three components contribute to the final performance.
+
+Reward Components.
+
+Table 6 analyzes the composite reward. Action reward alone achieves 44.9% RSR. Adding the verification reward with asymmetric penalties improves RSR to 48.1%, and the full reward including effect prediction reaches best performance across all metrics, validating our design to treat effect prediction as a first-class TVAE component.
+
+5 Analysis
+
+5.1 Case Study
+
+Figure 3 illustrates the progressive improvement in failure handling across training stages through a concrete example. When an “open app” action fails due to misaligned coordinates, the base model observes an unchanged screen but lacks any mechanism to recognize this discrepancy. Without verification capability, it repeats identical actions indefinitely, entering the infinite loop pattern we identified as the dominant failure mode in baseline agents.
+
+After Robust SFT, the model acquires basic verification capability through exposure to synthetic failure scenarios. It can sometimes recognize that the screen has not changed and attempt different actions, but occasional incorrect assessments still produce short loops where the model fails to correctly diagnose the root cause. After GRPO, the model reliably detects the unchanged screen, correctly diagnoses that the coordinate error caused the failure, and generates a successful recovery action on the first attempt. The asymmetric penalty structure during RL training teaches the model that overconfident success claims carry severe consequences, while honest uncertainty acknowledgment is acceptable. This progression validates our two-stage design: SFT establishes the structural capability for verification, while GRPO refines its accuracy and reliability.
+
+5.2 Computational Overhead
+
+The TVAE framework introduces additional output tokens for verification, reasoning, and effect prediction. Table 7 reports trajectory-level efficiency measured over 50 AndroidControl-High trajectories. Relative to same-scale baselines, per-step output length increases by approximately 45% for both VeriGUI-3B and VeriGUI-7B. However, this overhead is substantially amortized at the trajectory level because the recovery mechanism breaks failure loops early.
+
+Model
+Tok/Step
+Tok/Traj
+Time/Step (s)
+Time/Traj (s)
+
+Qwen2.5-VL-3B
+76.3
+847
+1.06
+12.1
+
+Qwen2.5-VL-7B
+81.5
+724
+1.29
+11.3
+
+VeriGUI-3B
+110.8
+896
+1.85
+15.3
+
+VeriGUI-7B
+117.2
+712
+2.40
+14.6
+
+Table 7: Trajectory-level efficiency on AndroidControl-High (50 trajectories). Per-step token and time costs increase with TVAE, but recovery reduces total trajectory length, keeping trajectory-level overhead modest.
+
+As shown in Table 7, VeriGUI-3B’s trajectory-level time rises by only 26% relative to Qwen2.5-VL-3B, while Tok/Trajectory increases by just 6%. More strikingly, VeriGUI-7B’s Tok/Trajectory of 712 falls below Qwen2.5-VL-3B’s 847: stronger recovery eliminates more failure loops than the additional reasoning tokens cost. Furthermore, all model inference in our deployment architecture runs cloud-side; the mobile client handles only rendering and execution, so additional reasoning tokens do not directly affect device battery or latency. Overall, VeriGUI represents a favorable efficiency trade-off—substantially higher task success at modest additional inference cost.
+
+6 Conclusion
+
+We presented VeriGUI, a GUI Agent that addresses the “blind action” limitation of existing approaches through a Thinking–Verification–Action–Expectation framework. Our two-stage training pipeline combines Robust SFT with synthetic failure trajectories and GRPO with asymmetric verification rewards. Both VeriGUI-3B and VeriGUI-7B show consistent gains across step-level accuracy, task completion, robustness to execution failures, and online benchmarks. The verification-and-recovery mechanism generalizes to dynamic real-world environments beyond the controlled training setting, and cross-distribution evaluation further demonstrates reasonable transfer across application domains. We hope this work motivates more explicit treatment of execution uncertainty in future GUI Agent designs.
+
+Limitations
+
+The current robustness evaluation is built on the failure idempotency assumption—that failed actions leave the screen unchanged—which does not cover more complex failure modes such as unintended navigations, partial transitions, or application crashes. Extending the framework to a finer-grained failure taxonomy that handles these non-idempotent cases remains important future work. Additionally, while step-level verification effectively addresses local execution errors, performance degrades with task length, as it does not substitute for hierarchical planning in long-horizon settings. Developing mechanisms that combine step-level self-correction with longer-range task awareness is a natural next step.
+
+References
+
+Antoniades et al. (2024)
+A. Antoniades, A. Örwall, K. Zhang, Y. Xie, A. Goyal, and W. Y. Wang
+
+SWE-search: enhancing software agents with monte carlo tree search and iterative refinement.
+
+External Links: 2410.20285,
+Link
+
+Cited by: §2.1.
+
+Bai et al. (2024)
+H. Bai, Y. Zhou, M. Cemri, J. Pan, A. Suhr, S. Levine, and A. Kumar
+
+DigiRL: training in-the-wild device-control agents with autonomous reinforcement learning.
+
+In Advances in Neural Information Processing Systems, A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.),
+
+Vol. 37, pp. 12461–12495.
+
+External Links: Document,
+Link
+
+Cited by: §1,
+§2.2,
+§3.4.
+
+Bai et al. (2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin
+
+Qwen2.5-vl technical report.
+
+External Links: 2502.13923,
+Link
+
+Cited by: §4.1.
+
+Cheng et al. (2024)
+K. Cheng, Q. Sun, Y. Chu, F. Xu, L. YanTao, J. Zhang, and Z. Wu
+
+SeeClick: harnessing GUI grounding for advanced visual GUI agents.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+Bangkok, Thailand, pp. 9313–9332.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.1.
+
+DeepSeek-AI et al. (2026)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+
+External Links: 2501.12948,
+Document,
+Link
+
+Cited by: §2.2.
+
+Deng et al. (2023)
+X. Deng, Y. Gu, B. Zheng, S. Chen, S. Stevens, B. Wang, H. Sun, and Y. Su
+
+Mind2Web: towards a generalist agent for the web.
+
+In Advances in Neural Information Processing Systems, A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.),
+
+Vol. 36, pp. 28091–28114.
+
+External Links: Link
+
+Cited by: §2.1.
+
+Gou et al. (2024)
+Z. Gou, Z. Shao, Y. Gong, yelong shen, Y. Yang, N. Duan, and W. Chen
+
+CRITIC: large language models can self-correct with tool-interactive critiquing.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1.
+
+Hong et al. (2024)
+W. Hong, W. Wang, Q. Lv, J. Xu, W. Yu, J. Ji, Y. Wang, Z. Wang, Y. Dong, M. Ding, and J. Tang
+
+CogAgent: a visual language model for gui agents.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+
+pp. 14281–14290.
+
+Cited by: §1,
+§2.1.
+
+Huang et al. (2024)
+J. Huang, X. Chen, S. Mishra, H. S. Zheng, A. W. Yu, X. Song, and D. Zhou
+
+Large language models cannot self-correct reasoning yet.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1.
+
+Kumar et al. (2024)
+A. Kumar, V. Zhuang, R. Agarwal, Y. Su, J. D. Co-Reyes, A. Singh, K. Baumli, S. Iqbal, C. Bishop, R. Roelofs, L. M. Zhang, K. McKinney, D. Shrivastava, C. Paduraru, G. Tucker, D. Precup, F. Behbahani, and A. Faust
+
+Training language models to self-correct via reinforcement learning.
+
+External Links: 2409.12917,
+Link
+
+Cited by: §1,
+§2.2.
+
+Li et al. (2025)
+N. Li, X. Qu, J. Zhou, J. Wang, M. Wen, K. Du, X. Lou, Q. Peng, J. Wang, and W. Zhang
+
+MobileUse: a gui agent with hierarchical reflection for autonomous mobile operation.
+
+External Links: 2507.16853,
+Link
+
+Cited by: §1,
+§3.4.
+
+Li et al. (2024)
+W. Li, W. Bishop, A. Li, C. Rawles, F. Campbell-Ajala, D. Tyamagundlu, and O. Riva
+
+On the effects of data scale on ui control agents.
+
+External Links: 2406.03679,
+Link
+
+Cited by: §1,
+§4.
+
+Lin et al. (2024)
+K. Q. Lin, L. Li, D. Gao, Z. Yang, Z. Bai, W. Lei, L. Wang, and M. Z. Shou
+
+Training a vision-language-action model as generalist GUI agent.
+
+In NeurIPS 2024 Workshop on Open-World Agents,
+
+External Links: Link
+
+Cited by: §1,
+§2.1.
+
+Liu et al. (2018)
+E. Z. Liu, K. Guu, P. Pasupat, T. Shi, and P. Liang
+
+Reinforcement learning on web interfaces using workflow-guided exploration.
+
+External Links: 1802.08802,
+Link
+
+Cited by: §4.
+
+Liu et al. (2026)
+G. Liu, P. Zhao, Y. Liang, Q. Luo, S. Tang, Y. Chai, W. Lin, H. Xiao, W. Wang, S. Chen, Z. Lu, G. Wu, H. Wang, L. Liu, and Y. Liu
+
+MemGUI-bench: benchmarking memory of mobile gui agents in dynamic environments.
+
+External Links: 2602.06075,
+Link
+
+Cited by: §1,
+§3.4.
+
+Liu et al. (2025)
+Y. Liu, P. Li, Z. Wei, C. Xie, X. Hu, X. Xu, S. Zhang, X. Han, H. Yang, and F. Wu
+
+InfiGUIAgent: a multimodal generalist gui agent with native reasoning and reflection.
+
+External Links: 2501.04575,
+Link
+
+Cited by: §2.2.
+
+Lu et al. (2025a)
+Q. Lu, W. Shao, Z. Liu, L. Du, F. Meng, B. Li, B. Chen, S. Huang, K. Zhang, and P. Luo
+
+GUIOdyssey: a comprehensive dataset for cross-app gui navigation on mobile devices.
+
+External Links: 2406.08451,
+Link
+
+Cited by: §4.
+
+Lu et al. (2025b)
+Z. Lu, Y. Chai, Y. Guo, X. Yin, L. Liu, H. Wang, H. Xiao, S. Ren, G. Xiong, and H. Li
+
+UI-r1: enhancing efficient action prediction of gui agents by reinforcement learning.
+
+External Links: 2503.21620,
+Link
+
+Cited by: §2.2,
+§4.1.
+
+Lu et al. (2025c)
+Z. Lu, J. Ye, F. Tang, Y. Shen, H. Xu, Z. Zheng, W. Lu, M. Yan, F. Huang, J. Xiao, and Y. Zhuang
+
+UI-s1: advancing gui automation via semi-online reinforcement learning.
+
+External Links: 2509.11543,
+Link
+
+Cited by: §4.1.
+
+Madaan et al. (2023)
+A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe, U. Alon, N. Dziri, S. Prabhumoye, Y. Yang, S. Gupta, B. P. Majumder, K. Hermann, S. Welleck, A. Yazdanbakhsh, and P. Clark
+
+Self-refine: iterative refinement with self-feedback.
+
+In Advances in Neural Information Processing Systems, A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.),
+
+Vol. 36, pp. 46534–46594.
+
+External Links: Link
+
+Cited by: §1.
+
+Putta et al. (2024)
+P. Putta, E. Mills, N. Garg, S. Motwani, C. Finn, D. Garg, and R. Rafailov
+
+Agent q: advanced reasoning and learning for autonomous ai agents.
+
+External Links: 2408.07199,
+Link
+
+Cited by: §2.1.
+
+Qin et al. (2025)
+Y. Qin, Y. Ye, J. Fang, H. Wang, S. Liang, S. Tian, J. Zhang, J. Li, Y. Li, S. Huang, W. Zhong, K. Li, J. Yang, Y. Miao, W. Lin, L. Liu, X. Jiang, Q. Ma, J. Li, X. Xiao, K. Cai, C. Li, Y. Zheng, C. Jin, C. Li, X. Zhou, M. Wang, H. Chen, Z. Li, H. Yang, H. Liu, F. Lin, T. Peng, X. Liu, and G. Shi
+
+UI-tars: pioneering automated gui interaction with native agents.
+
+External Links: 2501.12326,
+Link
+
+Cited by: §2.1,
+§4.1.
+
+Rafailov et al. (2024)
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn
+
+Direct preference optimization: your language model is secretly a reward model.
+
+External Links: 2305.18290,
+Link
+
+Cited by: §2.2.
+
+Rawles et al. (2025)
+C. Rawles, S. Clinckemaillie, Y. Chang, J. Waltz, G. Lau, M. Fair, A. Li, W. Bishop, W. Li, F. Campbell-Ajala, D. Toyama, R. Berry, D. Tyamagundlu, T. Lillicrap, and O. Riva
+
+AndroidWorld: a dynamic benchmarking environment for autonomous agents.
+
+External Links: 2405.14573,
+Link
+
+Cited by: §1,
+§4.
+
+Rawles et al. (2023)
+C. Rawles, A. Li, D. Rodriguez, O. Riva, and T. Lillicrap
+
+Android in the wild: a large-scale dataset for android device control.
+
+External Links: 2307.10088,
+Link
+
+Cited by: §1,
+§1,
+§4.
+
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+
+External Links: 2402.03300,
+Link
+
+Cited by: §3.4.
+
+Shinn et al. (2023)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+
+Reflexion: language agents with verbal reinforcement learning.
+
+In Advances in Neural Information Processing Systems, A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.),
+
+Vol. 36, pp. 8634–8652.
+
+External Links: Link
+
+Cited by: §1.
+
+Sun et al. (2025)
+Q. Sun, K. Cheng, Z. Ding, C. Jin, Y. Wang, F. Xu, Z. Wu, C. Jia, L. Chen, Z. Liu, B. Kao, G. Li, J. He, Y. Qiao, and Z. Wu
+
+OS-genesis: automating GUI agent trajectory construction via reverse task synthesis.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 5555–5579.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-251-0
+
+Cited by: §4.1.
+
+Wang et al. (2025a)
+T. Wang, Z. Wu, J. Liu, J. Hao, J. Wang, and K. Shao
+
+DistRL: an asynchronous distributed reinforcement learning framework for on-device control agents.
+
+External Links: 2410.14803,
+Link
+
+Cited by: §1,
+§2.2,
+§3.4.
+
+Wang et al. (2025b)
+Z. Wang, H. Xu, J. Wang, X. Zhang, M. Yan, J. Zhang, F. Huang, and H. Ji
+
+Mobile-agent-e: self-evolving mobile assistant for complex tasks.
+
+External Links: 2501.11733,
+Link
+
+Cited by: §2.1.
+
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, b. ichter, F. Xia, E. Chi, Q. V. Le, and D. Zhou
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+In Advances in Neural Information Processing Systems, S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.),
+
+Vol. 35, pp. 24824–24837.
+
+External Links: Link
+
+Cited by: §1.
+
+Welleck et al. (2022)
+S. Welleck, X. Lu, P. West, F. Brahman, T. Shen, D. Khashabi, and Y. Choi
+
+Generating sequences by learning to self-correct.
+
+External Links: 2211.00053,
+Link
+
+Cited by: §2.2.
+
+Wu et al. (2025a)
+Q. Wu, P. Gao, W. Liu, and J. Luan
+
+BacktrackAgent: enhancing gui agent with error detection and backtracking mechanism.
+
+External Links: 2505.20660,
+Link
+
+Cited by: §2.1.
+
+Wu et al. (2025b)
+Q. Wu, W. Liu, J. Luan, and B. Wang
+
+ReachAgent: enhancing mobile agent via page reaching and operation.
+
+External Links: 2502.02955,
+Link
+
+Cited by: §2.1.
+
+Wu et al. (2024)
+Z. Wu, Z. Wu, F. Xu, Y. Wang, Q. Sun, C. Jia, K. Cheng, Z. Ding, L. Chen, P. P. Liang, and Y. Qiao
+
+OS-atlas: a foundation action model for generalist gui agents.
+
+External Links: 2410.23218,
+Link
+
+Cited by: §4.1.
+
+Xie et al. (2024)
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu
+
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments.
+
+In Advances in Neural Information Processing Systems, A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.),
+
+Vol. 37, pp. 52040–52094.
+
+External Links: Document,
+Link
+
+Cited by: §1.
+
+Xu et al. (2025)
+Y. Xu, X. Liu, X. Sun, S. Cheng, H. Yu, H. Lai, S. Zhang, D. Zhang, J. Tang, and Y. Dong
+
+AndroidLab: training and systematic benchmarking of android autonomous agents.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 2144–2166.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-251-0
+
+Cited by: §1,
+§3.4.
+
+Yao et al. (2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+
+ReAct: synergizing reasoning and acting in language models.
+
+In The Eleventh International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1.
+
+You et al. (2024)
+K. You, H. Zhang, E. Schoop, F. Weers, A. Swearngin, J. Nichols, Y. Yang, and Z. Gan
+
+Ferret-ui: grounded mobile ui understanding with multimodal llms.
+
+In European Conference on Computer Vision,
+
+pp. 240–255.
+
+External Links: Link
+
+Cited by: §2.1.
+
+Yu et al. (2025)
+X. Yu, B. Peng, V. Vajipey, H. Cheng, M. Galley, J. Gao, and Z. Yu
+
+ExACT: teaching ai agents to explore with reflective-mcts and exploratory learning.
+
+In International Conference on Learning Representations (ICLR),
+
+External Links: Link
+
+Cited by: §2.1.
+
+Zhang et al. (2025a)
+C. Zhang, Z. Yang, J. Liu, Y. Li, Y. Han, X. Chen, Z. Huang, B. Fu, and G. Yu
+
+AppAgent: multimodal agents as smartphone users.
+
+In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems,
+
+CHI ’25, New York, NY, USA.
+
+External Links: ISBN 9798400713941,
+Link
+
+Cited by: §1,
+§2.1.
+
+Zhang et al. (2025b)
+Y. Zhang, Z. Ma, Y. Ma, Z. Han, Y. Wu, and V. Tresp
+
+WebPilot: a versatile and autonomous multi-agent system for web task execution with strategic exploration.
+
+Proceedings of the AAAI Conference on Artificial Intelligence 39 (22), pp. 23378–23386.
+
+External Links: Link,
+Document
+
+Cited by: §2.1.
+
+Zhang et al. (2025c)
+Z. Zhang, Y. Lu, Y. Fu, Y. Huo, S. Yang, Y. Wu, H. Si, X. Cong, H. Chen, Y. Lin, J. Xie, W. Zhou, W. Xu, Y. Zhang, Z. Su, Z. Zhai, X. Liu, Y. Mei, J. Xu, H. Tian, C. Wang, C. Chen, Y. Yao, Z. Liu, and M. Sun
+
+AgentCPM-GUI: building mobile-use agents with reinforcement fine-tuning.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, I. Habernal, P. Schulam, and J. Tiedemann (Eds.),
+
+Suzhou, China, pp. 155–180.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-334-0
+
+Cited by: §4.1.
+
+Zheng et al. (2024)
+B. Zheng, B. Gou, J. Kil, H. Sun, and Y. Su
+
+GPT-4v(ision) is a generalist web agent, if grounded.
+
+External Links: 2401.01614,
+Link
+
+Cited by: §2.1.
+
+Zhou et al. (2024)
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig
+
+WebArena: a realistic web environment for building autonomous agents.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1.
+
+Appendix A Additional Results
+
+This section provides detailed breakdowns of our evaluation results that complement the aggregate metrics presented in the main text. Unless otherwise noted, all tables in this appendix report results on the AndroidControl-High test set. Ablation experiments and fine-grained analyses use the VeriGUI-3B configuration for consistency and computational tractability; the full comparison of both 3B and 7B variants appears in the main paper.
+
+A.1 Per-Action-Type Performance
+
+Table 8 presents a fine-grained analysis of Step Accuracy (SR) broken down by action type on AndroidControl-High.
+
+Model
+Click
+Scroll
+Input_text
+Navigate_back
+Open_app
+Wait
+Overall SR
+
+Qwen2.5-VL-3B
+27.4
+68.2
+18.3
+35.2
+1.8
+32.1
+31.2
+
+UI-R1-3B
+26.8
+70.5
+16.9
+33.8
+2.1
+30.6
+30.3
+
+OS-Genesis-7B
+32.5
+74.3
+21.4
+38.6
+1.5
+35.8
+35.7
+
+OS-Atlas-7B
+32.1
+72.8
+22.7
+40.1
+1.2
+36.4
+35.5
+
+Qwen2.5-VL-7B
+40.2
+78.6
+31.5
+45.3
+2.4
+42.7
+42.8
+
+AgentCPM-GUI-8B
+30.8
+71.2
+24.6
+36.9
+1.9
+34.5
+34.1
+
+UI-TARS-7B
+45.3
+81.4
+35.8
+51.2
+2.8
+48.6
+47.7
+
+UI-S1-7B
+42.1
+79.8
+32.4
+47.5
+2.3
+45.2
+44.5
+
+VeriGUI-3B
+44.2
+80.9
+34.7
+49.8
+2.6
+47.3
+46.6
+
+Table 8: Step Accuracy (%) breakdown by action type on AndroidControl-High (VeriGUI-3B). Click actions dominate the test set (approximately 62%) and largely determine overall performance. Scroll actions exhibit uniformly high accuracy across models due to their tolerance for coordinate imprecision. The open_app action shows consistently low accuracy because most models tend to predict click instead. Bold indicates best among all open-source models at 3B scale.
+
+Click actions, which constitute approximately 62% of the test set, show the largest absolute performance gaps between models. VeriGUI-3B achieves 44.2% on click actions, substantially outperforming same-scale baselines like Qwen2.5-VL-3B (27.4%) and approaching the 7B-scale UI-TARS-7B (45.3%). Scroll actions exhibit uniformly high accuracy (68–81%) because scroll directions are more tolerant of coordinate imprecision. The open_app action poses challenges for all models due to the need to recognize app icons by visual appearance.
+
+Table 9 further decomposes errors into type prediction failures versus grounding failures.
+
+Model
+Click
+Input_text
+
+TM
+GR|TM
+TM
+GR|TM
+
+Qwen2.5-VL-3B
+78.5
+34.9
+28.4
+64.4
+
+UI-R1-3B
+80.2
+33.4
+26.8
+63.1
+
+OS-Genesis-7B
+82.4
+39.4
+32.5
+65.8
+
+OS-Atlas-7B
+83.1
+38.6
+34.2
+66.4
+
+Qwen2.5-VL-7B
+86.3
+46.6
+40.8
+77.2
+
+AgentCPM-GUI-8B
+75.8
+40.6
+35.6
+69.1
+
+UI-TARS-7B
+88.2
+51.4
+44.5
+80.4
+
+UI-S1-7B
+86.8
+48.5
+41.2
+78.6
+
+VeriGUI-3B
+88.6
+49.9
+43.8
+79.2
+
+Table 9: Type Match (TM) and Grounding accuracy given correct Type Match (GR|TM) for click and input_text actions (%) on AndroidControl-High (VeriGUI-3B). Bold indicates best among all open-source models at 3B scale.
+
+A.2 Task Complexity Analysis
+
+We stratify tasks by ground-truth trajectory length: Short (1–4 steps), Medium (5–8 steps), and Long (9+ steps). Table 10 presents this analysis on AndroidControl-High.
+
+Model
+Short
+Medium
+Long
+
+Sim-TSR (%)
+
+Qwen2.5-VL-7B
+21.4
+8.3
+2.1
+
+UI-TARS-7B
+28.6
+10.2
+3.4
+
+UI-S1-7B
+31.2
+13.6
+4.8
+
+VeriGUI-3B
+33.3
+14.5
+5.6
+
+PG (%)
+
+Qwen2.5-VL-7B
+24.8
+10.5
+4.2
+
+UI-TARS-7B
+30.5
+12.8
+5.1
+
+UI-S1-7B
+38.2
+22.6
+8.4
+
+VeriGUI-3B
+36.7
+20.8
+7.8
+
+Table 10: Task-level metrics stratified by trajectory length on AndroidControl-High (VeriGUI-3B). Only models achieving non-zero Sim-TSR in aggregate are included. Performance degrades substantially for longer tasks, consistent with the multiplicative nature of sequential step-level errors. Bold indicates best among included models.
+
+Performance degrades with task length across all models. For short tasks, VeriGUI-3B achieves 33.3% Sim-TSR, the highest among all tested models. VeriGUI-3B’s verification mechanism provides the largest relative advantage on medium-length tasks, where recovery from a single error can determine task completion. For long tasks exceeding nine steps, all models complete fewer than 6% of trajectories, reflecting the compound difficulty of maintaining correctness across many sequential decisions. As discussed in the Limitations section, step-level verification addresses local execution errors but does not substitute for hierarchical long-horizon planning.
+
+A.3 First-Step versus All-Steps Performance
+
+Table 11 compares performance on the first step of each trajectory against performance averaged across all steps on AndroidControl-High.
+
+Model
+Type Match (%)
+Step Acc. (%)
+
+First
+All
+First
+All
+
+Qwen2.5-VL-3B
+52.4
+60.1
+24.8
+31.2
+
+UI-R1-3B
+54.2
+62.4
+23.5
+30.3
+
+Qwen2.5-VL-7B
+62.8
+68.5
+35.6
+42.8
+
+UI-TARS-7B
+66.4
+71.9
+40.2
+47.7
+
+UI-S1-7B
+64.8
+70.1
+37.8
+44.5
+
+VeriGUI-3B
+68.2
+72.2
+41.5
+46.6
+
+Table 11: Comparison of first-step and all-steps performance on AndroidControl-High (VeriGUI-3B). First-step metrics are consistently lower, indicating that task initialization without history context is more challenging. Bold indicates best among all open-source models at 3B scale.
+
+All models exhibit a consistent pattern: first-step accuracy is 5–8 percentage points lower than all-steps accuracy. VeriGUI-3B shows one of the smallest first-to-all gaps (4.0 points for TM, 5.1 for SR), suggesting that the TVAE framework’s structured reasoning and expected-effect prediction provide benefits even without action history.
+
+A.4 Detailed Robustness Analysis
+
+Table 12 presents fine-grained measurements of the failure detection and correction pipeline on AndroidControl-High.
+
+Model
+TM
+GR
+RSR
+
+Qwen2.5-VL-3B
+62.4
+56.1
+35.0
+
+UI-R1-3B
+58.6
+49.5
+29.0
+
+OS-Atlas-7B
+42.8
+25.0
+10.7
+
+Qwen2.5-VL-7B
+65.2
+52.3
+34.1
+
+UI-TARS-7B
+72.5
+62.8
+45.5
+
+UI-S1-7B
+70.8
+61.6
+43.6
+
+VeriGUI-3B
+79.1
+64.6
+51.1
+
+Table 12: Detailed robustness metrics on AndroidControl-High (VeriGUI-3B). TM denotes type match rate for recovery actions; GR denotes grounding accuracy for correctly-typed recovery actions. RSR requires both correct type and correct parameters. Bold indicates best among all open-source models at 3B scale.
+
+VeriGUI-3B’s RSR advantage stems from improvements in both type selection and grounding for recovery actions. VeriGUI-3B achieves 79.1% type match rate on recovery actions, substantially higher than UI-TARS-7B’s 72.5%. Grounding accuracy for correctly-typed recovery actions (GR) similarly improves to 64.6% versus 62.8%. These compound to produce the observed 5.6 percentage point RSR advantage over UI-TARS-7B.
+
+Appendix B Algorithm
+
+Algorithm 1 presents the TVAE inference cycle, and Algorithm 2 details the two-stage training pipeline.
+
+Algorithm 1 TVAE Inference Cycle
+
+0:
+
+ Screen , history , instruction , previous effect
+
+0:
+
+ Action , expected effect , verification
+
+1:
+
+ // Stage 1: Thinking with Verification
+
+2:
+
+ if then
+
+3:
+
+  Compare with
+
+4:
+
+  if matches then
+
+5:
+
+    SUCCESS
+
+6:
+
+    [Verify][Recall][Grounding][Action]
+
+7:
+
+  else
+
+8:
+
+    NO_CHANGE
+
+9:
+
+    [Verify][Diagnose][Recall][Recovery]
+
+10:
+
+  end if
+
+11:
+
+ else
+
+12:
+
+   SUCCESS {First step}
+
+13:
+
+ end if
+
+14:
+
+ // Stage 2: Action Generation
+
+15:
+
+ Generate based on , , ,
+
+16:
+
+ // Stage 3: Effect Prediction
+
+17:
+
+ Predict describing expected screen change
+
+18:
+
+ // Stage 4: Update History
+
+19:
+
+ 
+
+20:
+
+ return , ,
+
+Algorithm 2 Two-Stage Training Pipeline
+
+0:
+
+ Base model , dataset , negative ratio
+
+0:
+
+ Trained model
+
+1:
+
+ // Stage 1: Robust SFT
+
+2:
+
+  Success trajectories from
+
+3:
+
+  Generate synthetic failures (ratio )
+
+4:
+
+ 
+
+5:
+
+ for each do
+
+6:
+
+  
+
+7:
+
+  Update via gradient descent
+
+8:
+
+ end for
+
+9:
+
+ 
+
+10:
+
+ // Stage 2: GRPO
+
+11:
+
+ for each do
+
+12:
+
+  Sample outputs from
+
+13:
+
+  for each do
+
+14:
+
+   Parse from
+
+15:
+
+   
+
+16:
+
+    if correct
+
+17:
+
+   Determine from sample type
+
+18:
+
+   if then
+
+19:
+
+    
+
+20:
+
+   else if then
+
+21:
+
+     {Hallucination}
+
+22:
+
+   else
+
+23:
+
+     {Miss}
+
+24:
+
+   end if
+
+25:
+
+   
+
+26:
+
+  end for
+
+27:
+
+  
+
+28:
+
+  
+
+29:
+
+  Update
+
+30:
+
+ end for
+
+31:
+
+ return
+
+Appendix C Evaluation Metrics: Formal Definitions
+
+Table 13 provides a comprehensive summary of all evaluation metrics used in this work.
+
+Category
+
+Metric
+
+Formula
+
+Description
+
+Step-level
+[-0.3em]Metrics
+[0.5em]Single-step
+[-0.3em]predictions
+[-0.3em]without
+[-0.3em]simulation
+
+Type Match (TM)
+
+Accuracy of action type prediction (click, scroll, input, etc.).
+
+Grounding Rate (GR)
+
+Coordinate-in-bounding-box rate for spatial actions.
+
+Step Success Rate (SR)
+
+Joint correctness of type and parameters.
+
+Task-level
+[-0.3em]Metrics
+[0.5em]End-to-end
+[-0.3em]performance
+[-0.3em]under pseudo-
+[-0.3em]online simulation
+
+Task Success Rate (TSR)
+
+Zero-error task success rate. All steps must be correct on first attempt.
+
+Progress (PG)
+
+Average task progress before first error.
+
+Simulated Task Success Rate (Sim-TSR)
+
+Task success rate allowing error recovery. Key metric for self-correction capability.
+
+Average Step Overhead (ASO)
+
+Average step overhead for successful tasks. Lower indicates more efficient recovery.
+
+Robustness
+[-0.3em]Metrics
+[0.5em]Error recognition
+[-0.3em]and recovery
+[-0.3em]under failure
+[-0.3em]injection
+
+Loop Rate (LR)
+
+Proportion of cases where agent repeats the failed action.
+
+Recovery Success Rate (RSR)
+
+Proportion of cases where the corrective action matches ground-truth.
+
+Table 13: Summary of evaluation metrics. Notation: = test set; = number of task trajectories; = predicted action; = ground-truth action; = ground-truth trajectory length; = successfully completed tasks; = error injection test set.
+
+Pseudo-Online Simulation Protocol.
+
+The task-level metrics are computed under a pseudo-online simulation exploiting failure idempotency. We maintain a simulated environment state initialized at the task’s starting screen. At each step: (1) the agent observes and generates ; (2) if matches , advance to ; (3) if , return unchanged ; (4) task terminates when completed or after steps.
+
+Robustness Benchmark Construction.
+
+For robustness evaluation, we construct “failure slices” from AndroidControl-High trajectories. For each step , we create a test case using screen (simulating unchanged state after a failed action), with history containing the erroneous action and its incorrect expected effect. We measure whether the agent repeats (counted toward LR) or produces the correct (counted toward RSR).
+
+Appendix D Implementation Details
+
+VeriGUI is built upon Qwen2.5-VL-3B (for VeriGUI-3B) and Qwen2.5-VL-7B (for VeriGUI-7B) as the respective base models. All experiments are conducted on 8 NVIDIA A100-80GB GPUs. Stage 1 training takes approximately 12 hours; Stage 2 takes approximately 20 hours. Inference uses greedy decoding (temperature = 0) on a single A100 GPU.
+
+Parameter
+Stage 1 (SFT)
+Stage 2 (GRPO)
+
+Learning rate
+
+Batch size
+32
+16
+
+Epochs
+2
+15
+
+Max sequence length
+8192
+8192
+
+Image resolution
+smart_resize
+smart_resize
+
+Warmup ratio
+0.03
+0.1
+
+Weight decay
+0.01
+0.01
+
+GRPO-specific parameters
+
+Group size
+–
+6
+
+KL coefficient
+–
+0.05
+
+(effect weight)
+–
+0.5
+
+(verification weight)
+–
+0.5
+
+Table 14: Training hyperparameters for both stages. The same configuration is used for both VeriGUI-3B and VeriGUI-7B.
+
+Appendix E SFT Dataset Construction
+
+Our Robust SFT dataset comprises two sample types designed to teach both standard execution and error recovery.
+
+Type A: Success Trajectories (70%).
+
+For each ground-truth step , we construct a training sample where the input contains current screen , instruction , and history , and the output follows the SUCCESS path through Think, Verification, Action, and Expected Effect.
+
+Type B: Failure Recovery Trajectories (30%).
+
+Type B samples simulate failure scenarios to teach error recognition and recovery. We construct a “what if step failed” scenario where the input contains the previous screen (unchanged), instruction , and history with an erroneous action , while the output follows the NO_CHANGE path with diagnosis and recovery.
+
+Synthetic Failure Modes.
+
+The erroneous actions in Type B samples are generated to model realistic GUI failure patterns rather than arbitrary perturbations. We identify five failure categories with empirically assigned sampling weights: (1) Coordinate offset (30%): the action targets the correct element type but with slightly misaligned coordinates, simulating tap imprecision or coordinate prediction error; (2) Action type error (25%): the agent selects a semantically related but incorrect action type (e.g., long_press instead of click), reflecting ambiguity in action space; (3) Target misidentification (20%): the action is directed at the wrong UI element, simulating cases where the agent grounds to a visually similar but incorrect target; (4) Timing error (15%): the agent uses a wait or similar temporal action when active interaction is required, reflecting timing uncertainty in asynchronous interfaces; (5) Null click (10%): the action registers on an empty or non-interactive screen region, simulating cases where the target UI element has not yet rendered. These weights reflect the relative prevalence of each failure mode observed in empirical analyses of GUI Agent trajectories and ensure that the synthetic failure distribution approximates the real failure distribution encountered in deployment.
+
+Data Generation Pipeline.
+
+We use GPT-4o to generate the following components in sequence: (1) given and , generate a plausible but incorrect action from one of the five categories above; (2) generate a mismatched expected effect corresponding to ; (3) generate the correct expected effect for ; (4) generate structured CoT reasoning for both SUCCESS and NO_CHANGE paths. All coordinates are converted to relative format (normalized to ) before storage.
+
+Appendix F Prompt Templates
+
+F.1 System Prompt
+
+F.2 Think Format Templates
+
+F.3 Complete Input-Output Examples
+
+Appendix G Case Studies
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

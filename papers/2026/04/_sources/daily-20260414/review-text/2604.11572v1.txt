@@ -1,0 +1,1169 @@
+DA-PTQ: Drift-Aware Post-Training Quantization for Efficient Vision-Language-Action Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Related Work
+
+2.1 Vision-Language-Action Models
+
+2.2 Post-Training Quantization
+
+2.3 Quantization for VLMs
+
+3 DA-PTQ
+
+3.1 Problem Formulation
+
+3.2 Overview of DA-PTQ
+
+3.3 Cross-Space Representation Compensation
+
+3.4 Drift-Aware Mixed-Precision Allocation
+
+3.5 Summary of the DA-PTQ Pipeline
+
+4 Experiment
+
+4.1 Experiment Setup
+
+4.2 Comparison with Baselines
+
+4.3 Ablation Study
+
+5 Conclusion
+
+References
+
+A Detailed Experimental Setup
+
+B Qualitative Trajectory Analysis
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11572v1 [cs.RO] 13 Apr 2026
+
+DA-PTQ: Drift-Aware Post-Training Quantization
+
+for Efficient Vision-Language-Action Models
+
+4395CCS: Computing methodologies Artificial intelligenceCCS: Computing methodologies Vision for robotics
+
+Siyuan Xu
+
+Affiliation: Tongji University, Shanghai, China
+
+email: 2352539@tongji.edu.cn
+
+,
+Tianshi Wang
+
+Affiliation: Tongji University, Shanghai, China
+
+email: tswang0116@163.com
+
+,
+Fengling Li
+
+Affiliation: University of Technology Sydney, Sydney, Australia
+
+email: fenglingli2023@gmail.com
+
+,
+Lei Zhu
+
+Affiliation: Tongji University, Shanghai, China
+
+email: leizhu0608@gmail.com
+
+and
+Heng Tao Shen
+
+Affiliation: Tongji University, Shanghai, China
+
+email: shenhengtao@hotmail.com
+
+Abstract.
+
+Vision-Language-Action models (VLAs) have demonstrated strong potential for embodied AI, yet their deployment on resource-limited robots remains challenging due to high memory and computational demands. While Post-Training Quantization (PTQ) provides an efficient solution, directly applying PTQ to VLAs often results in severe performance degradation during sequential control. We identify temporal error accumulation as a key factor, where quantization perturbations at the vision-language-to-action interface are progressively amplified, leading to kinematic drift in executed trajectories. To address this issue, we propose Drift-Aware Post-Training Quantization (DA-PTQ), which formulates quantization as a drift-aware optimization problem over sequential decision processes. DA-PTQ consists of two components: (1) Cross-Space Representation Compensation, which mitigates structured distortions between multimodal representations and action space to improve action consistency, and (2) Motion-Driven Mixed-Precision Allocation, which assigns bit-widths by minimizing trajectory-level motion errors. Extensive experiments show that DA-PTQ significantly reduces kinematic drift and achieves comparable performance to full-precision models under low-bit settings, enabling practical deployment of VLAs on resource-limited robotic platforms.
+
+Keywords: Vision-Language-Action Models, Post-Training Quantization, Kinematic Drift, Efficient Reasoning
+
+Figure 1. Comparison between previous PTQ strategies and our DA-PTQ. (a) Conventional uniform quantization distorts the conditioning interface, resulting in trajectory drift during sequential control. (b) DA-PTQ stabilizes execution through cross-space representation compensation and motion-driven mixed-precision allocation, thereby preserving kinematically sensitive components.
+
+1. Introduction
+
+Vision-Language-Action models (VLAs) (Zhong et al., 2025) have emerged as a promising paradigm for embodied artificial intelligence, enabling robots to perform complex tasks based on visual observations and natural language instructions. By integrating large-scale vision encoders, language backbones, and action generation modules within a unified architecture, recent models such as RT-2 (Zitkovich et al., 2023) and OpenVLA (Kim et al., 2024) demonstrate strong generalization across a wide range of manipulation tasks. However, these capabilities come at the cost of substantial memory and computational overhead, often involving billions of parameters. Such requirements fundamentally conflict with the constraints of onboard robotic systems, where low latency, limited memory, and power efficiency are critical. Consequently, enabling efficient deployment of VLAs remains a central challenge for real-world embodied AI.
+
+Model compression offers a natural pathway to address this challenge. Among various techniques, quantization is particularly attractive due to its ability to simultaneously reduce memory footprint and inference cost. While Quantization-Aware Training (QAT) (Jacob et al., 2018) can recover accuracy through retraining, it is often impractical for large-scale VLA models due to the substantial computational cost and the limited availability of high-quality multimodal robotic data. In contrast, Post-Training Quantization (PTQ) (Liu et al., 2021) provides a lightweight alternative by calibrating models without retraining. Recent PTQ methods have achieved remarkable success in large language models and vision-language models. However, directly applying these techniques to VLAs often leads to severe performance degradation, and in some cases unstable control behaviors during sequential execution (Zhang et al., 2026; Xu et al., 2026).
+
+We attribute this limitation to a fundamental mismatch between conventional quantization objectives and the sequential, control-sensitive nature of embodied decision-making. Existing PTQ methods typically assume that quantization errors are independent and locally bounded, such that minimizing layer-wise reconstruction error is sufficient to preserve downstream functionality (e.g., AWQ (Lin et al., 2024), GPTQ (Frantar et al., 2022)). While this assumption is reasonable for static generation tasks, it becomes inadequate in embodied control settings, where decisions are executed sequentially and coupled through system dynamics. In VLA models, quantization perturbs latent representations at the vision-language-to-action interface, and these perturbations become temporally coupled and progressively amplified over time (Chen et al., 2024; Liu et al., 2026). As accumulated errors interact with robot dynamics and feedback control loops, they manifest as kinematic drift, i.e., the deviation between the executed trajectory and the nominal trajectory induced by quantization, ultimately resulting in significant performance degradation (Park et al., 2025).
+
+Recent works have begun to explore quantization strategies tailored for VLAs. For example, SQAP-VLA (Fang et al., 2025) jointly optimizes quantization and token pruning, QuantVLA (Zhang et al., 2026) stabilizes the perception-to-action interface via scale-calibrated adjustments, and QVLA (Xu et al., 2026) allocates bit-widths based on channel-wise action sensitivity. While these methods mitigate performance degradation to some extent, substantial gaps persist under aggressive compression. A key limitation is that existing approaches primarily rely on static or single-step approximations, failing to capture long-horizon error propagation and its interaction with robot dynamics. Consequently, they cannot effectively model or control trajectory-level error accumulation, leaving kinematic drift as a fundamental bottleneck in achieving an optimal efficiency-accuracy trade-off.
+
+To address the above challenges, we propose Drift-Aware Post-Training Quantization (DA-PTQ), a training-free framework that explicitly models and mitigates kinematic drift, as conceptually illustrated in Figure 1. Instead of treating quantization as a static reconstruction problem, DA-PTQ formulates it as a drift-aware optimization process that explicitly accounts for both temporal accumulation and physical amplification of errors. Specifically, DA-PTQ consists of two complementary components. Cross-Space Representation Compensation mitigates structured distortions between multimodal representations and the action space via lightweight affine and low-rank transformations, improving action consistency under quantization. Motion-Driven Mixed-Precision Allocation further reduces long-horizon drift by assigning bit-widths based on trajectory-level motion error under resource constraints. Together, these components enable stable and efficient low-precision deployment without introducing additional inference overhead.
+
+Our main contributions are summarized as follows:
+
+•
+
+We present a systematic analysis of error accumulation in VLA quantization, identifying kinematic drift as a key bottleneck arising from the interplay between quantization perturbations and sequential embodied control.
+
+•
+
+We propose DA-PTQ, a training-free framework that reformulates quantization as a drift-aware optimization problem, integrating cross-space representation compensation and motion-driven precision allocation without incurring additional inference overhead.
+
+•
+
+Experimental results show that DA-PTQ reduces kinematic drift and achieves performance comparable to full-precision models under low-bit settings, enabling deployment on resource-constrained robotic platforms.
+
+2. Related Work
+
+2.1. Vision-Language-Action Models
+
+Vision-Language-Action models (VLAs) have emerged as a dominant paradigm for generalist robotic control, learning direct mappings from visual observations and natural language instructions to executable motor commands. Early works such as RT-2 (Zitkovich et al., 2023) demonstrate that large-scale vision-language pretraining can be effectively transferred to robotic manipulation by treating actions as language tokens, thereby enabling strong cross-task generalization. OpenVLA (Kim et al., 2024) further advances this direction by open-sourcing a 7B-parameter model trained on diverse manipulation data, establishing a widely adopted benchmark for embodied control. More recently, Gemini Robotics (Team et al., 2025) extends this paradigm toward foundation-scale embodied agents by integrating large multimodal models with robotic control, demonstrating strong generalization and reasoning capabilities in real-world scenarios.
+
+A parallel line of work models actions in the continuous domain using expressive generative decoders. Octo (Team et al., 2024) and RDT-1B (Liu et al., 2024) adopt diffusion-based action heads to capture multimodal action distributions, while  (Black et al., 2024) employs flow matching for high-frequency dexterous control. CogACT (Li et al., 2024) further integrates a Diffusion Transformer (DiT) (Peebles and Xie, 2023) action module into the VLA framework, showing that decoupling perception and action generation leads to more precise and temporally consistent control. More recently, OpenVLA-OFT (Kim et al., 2025) introduces fine-tuning strategies that improve both efficiency and task success rates. Building on these advances, approaches such as DeepThinkVLA (Yin et al., 2025) incorporate explicit reasoning processes (e.g., chain-of-thought) into VLAs, enabling improved long-horizon planning and decision-making.
+
+Despite these advances, a common trend across VLAs is the rapid scaling of both vision-language backbones and action generation modules. This scaling substantially increases memory footprint and inference latency, particularly for diffusion-based policies with iterative decoding. Consequently, deploying VLAs on resource-constrained robotic platforms remains a fundamental challenge, motivating the need for efficient model compression techniques such as quantization.
+
+2.2. Post-Training Quantization
+
+Post-training quantization (PTQ) (Liu et al., 2021) has emerged as a practical and widely adopted solution for compressing large-scale models without retraining, making it particularly suitable for deployment on resource-constrained hardware. Existing PTQ methods can be broadly categorized into reconstruction-based and transformation-based approaches, both aiming to preserve model performance under low-bit precision by maintaining feature-space fidelity.
+
+Reconstruction-based methods, such as GPTQ (Frantar et al., 2022) and BRECQ (Li et al., 2021), minimize layer-wise or block-wise quantization error using second-order approximations, directly optimizing numerical reconstruction. In contrast, transformation-based methods reshape feature distributions to facilitate quantization. SmoothQuant (Xiao et al., 2023) mitigates activation outliers by shifting quantization difficulty to weights via channel-wise scaling, while AWQ (Lin et al., 2024) preserves salient weight channels based on activation statistics. OmniQuant (Shao et al., 2023) further extends this paradigm by jointly optimizing clipping thresholds and equivalent transformations to smooth both weight and activation distributions. Beyond unimodal settings, Q-VLM (Wang et al., 2024) adapts PTQ to multimodal architectures by mitigating cross-modal distortions. Despite their methodological differences, these approaches share a common underlying principle: improving quantization performance by preserving feature-space fidelity through numerical reconstruction or statistical alignment. This perspective is closely related to prior findings such as AdaIN (Huang and Belongie, 2017), which shows that aligning first- and second-order statistics via affine transformations can effectively correct distributional shifts, and LoRA (Hu et al., 2022), which suggests that effective adaptations often lie in low-dimensional subspaces, motivating compact low-rank corrections for structured feature distortions.
+
+However, these methods fundamentally treat quantization as a static feature reconstruction problem, assuming that preserving local numerical fidelity is sufficient to maintain downstream performance. While this assumption holds in language and vision-language models, it breaks down in embodied control. In VLA models, quantization errors perturb latent representations at the perception-action boundary and are progressively amplified during sequential execution. As these errors accumulate and interact with robot dynamics, they manifest as kinematic drift, which cannot be captured by conventional PTQ objectives and ultimately limits the achievable efficiency-accuracy trade-off.
+
+2.3. Quantization for VLMs
+
+Recent works have begun to explore quantization strategies specifically tailored for VLAs. QuantVLA (Zhang et al., 2026) identifies the perception-to-action interface as a critical bottleneck under quantization and proposes scale-calibrated affine adjustments to stabilize latent representations passed to the action generation module. QVLA (Xu et al., 2026) conducts a systematic sensitivity analysis of VLA architectures, revealing pronounced channel heterogeneity and introducing a channel-wise bit allocation strategy guided by action-space sensitivity scores derived from Taylor expansion. SQAP-VLA (Fang et al., 2025) further jointly optimizes quantization and token pruning within a unified framework, targeting redundancy in both the vision encoder and the language backbone.
+
+The issue of error accumulation in sequential decision-making provides important context for understanding the limitations of these approaches. In imitation learning, Ross et al. (Ross et al., 2011) formally characterize compounding errors, showing that small perturbations can lead to quadratically increasing deviations over the task horizon. In robotics, manipulator Jacobian analysis (Spong et al., 2020; Siciliano et al., 2009) shows that errors in proximal degrees of freedom are geometrically amplified along the kinematic chain, with Jacobian column norms quantifying the amplification factor of each dimension. This geometric asymmetry is intrinsic to serial manipulator structures and is independent of specific link parameters.
+
+Despite these advances, existing VLA quantization methods exhibit two key limitations. First, channel sensitivity is generally estimated through static reconstruction metrics or single-step action deviations, which fail to capture how quantization errors are geometrically amplified and temporally accumulated during sequential execution. Second, representational distortions at the vision-language-to-action interface are typically corrected at a coarse granularity, without explicitly modeling structured per-channel distributional shifts between full-precision and quantized feature spaces. DA-PTQ addresses these limitations through two complementary components. Cross-space representation compensation performs fine-grained correction of per-channel and cross-channel distributional distortions across modalities. Motion-driven mixed-precision allocation further incorporates kinematic error propagation to identify and preserve dimensions whose quantization errors most strongly accumulate into long-horizon trajectory drift.
+
+Figure 2. Overview of our proposed DA-PTQ framework. DA-PTQ enables efficient and robust diffusion-based VLA models through two key components: (1) Cross-Space Representation Compensation, which aligns distorted conditioning representations with their full-precision counterparts; and (2) Drift-Aware Mixed-Precision Allocation, which leverages structural Jacobian-based sensitivity to mitigate compounding trajectory drift.
+
+3. DA-PTQ
+
+3.1. Problem Formulation
+
+Vision-Language-Action models (VLAs) define a policy that maps visual observations and a language instruction to continuous actions :
+
+(1)
+
+where denotes the vision-language backbone and is the action decoder. The backbone encodes multimodal inputs into a latent representation , which serves as the conditioning signal for action generation.
+
+In modern VLA architectures, is often implemented as a diffusion-based policy, where actions are generated via iterative denoising conditioned on . While effective, this design poses unique challenges under Post-Training Quantization (PTQ), as latent-space quantization errors are repeatedly injected during decoding and further accumulate over time in sequential control. These challenges stem from two coupled mechanisms:
+
+Quantization Sensitivity at the Conditioning Interface.
+The perception-to-action interface acts as a tightly coupled information bottleneck through which all task-relevant signals are conveyed to the action decoder. Under quantization, perturbations in directly distort the conditioning distribution. Since the decoder depends solely on , these distortions propagate through all denoising steps without downstream correction, and are further amplified by the iterative diffusion process, resulting in structured distributional shifts even within a single action prediction.
+
+Temporal Error Accumulation in Sequential Control.
+Beyond single-step sensitivity, VLA policies operate in a closed-loop setting where actions affect future observations. Let denote the action error at timestep , primarily induced by quantization. The resulting end-effector deviation is:
+
+(2)
+
+where is the manipulator Jacobian. Over a horizon , the accumulated deviation becomes:
+
+(3)
+
+This shows that quantization errors are both temporally accumulated and geometrically amplified via , causing small per-step errors to induce significant long-horizon drift.
+
+Taken together, quantization in VLAs induces both representation-level distortion and trajectory-level drift, which are tightly coupled yet not explicitly addressed by existing PTQ methods.
+
+3.2. Overview of DA-PTQ
+
+To address the coupled challenges of representation distortion and trajectory-level drift, we propose DA-PTQ, a streamlined calibration pipeline with no retraining overhead. As shown in Figure 2, it unifies cross-space representation compensation and drift-aware mixed-precision allocation into a three-stage process given a small calibration dataset.
+
+First, we perform full-precision forward passes to collect calibration statistics. During this stage, we extract action trajectories to estimate the manipulator Jacobian and derive temporal drift propagation scores that characterize how errors accumulate over time. In parallel, we record activation statistics at the critical vision-language-to-action interfaces, capturing the reference distribution of conditioning representations.
+
+Second, we apply cross-space representation compensation to correct distortion at the conditioning interface. After quantization, we perform a forward pass to measure activation shifts and solve for lightweight affine transformations that align quantized representations with their full-precision counterparts. These transformations are analytically merged into the quantized weights and biases, incurring no additional inference cost.
+
+Finally, we conduct drift-aware mixed-precision allocation. Based on the compensated model, we perform a lightweight sensitivity analysis to evaluate the contribution of each layer to long-horizon error accumulation. This results in a layer-wise bit-width assignment that preserves higher precision for drift-sensitive components while aggressively compressing less critical layers.
+
+The resulting DA-PTQ model achieves substantial compression while maintaining stable and accurate continuous control, effectively mitigating both conditioning distortion and long-horizon drift without incurring runtime overhead.
+
+3.3. Cross-Space Representation Compensation
+
+Quantization induces structured distributional distortions at the vision-language-to-action interface, where activation shifts corrupt the conditioning signal for action generation. To mitigate this, we introduce Cross-Space Representation Compensation (CSRC), which aligns quantized activations with their full-precision counterparts through a hierarchical compensation scheme.
+
+Let and denote the full-precision and quantized activations of channel at interface layer . We first match their first- and second-order statistics computed on the calibration set. Specifically, we derive a scale factor to align the standard deviation:
+
+(4)
+
+and a bias term to restore the mean:
+
+(5)
+
+The corrected activation is:
+
+(6)
+
+While per-channel scaling corrects diagonal shifts, it fails to capture structured cross-channel distortion. To address this, we introduce a dense affine transformation that aligns second-order statistics between full-precision and quantized activations. Let and denote their empirical covariance matrices. We solve:
+
+(7)
+
+where is a diagonal weight matrix derived from per-channel variance ratios, and regularizes the solution toward identity to preserve stability.
+
+To ensure efficiency, we parameterize as a low-rank update to the identity:
+
+(8)
+
+obtained via truncated SVD of the dense solution.
+
+The fully corrected activation is given by:
+
+(9)
+
+where the bias restores the mean of the aligned distribution. All compensation parameters are analytically folded into the quantized weights during calibration, incurring zero inference overhead.
+
+3.4. Drift-Aware Mixed-Precision Allocation
+
+To mitigate temporally accumulated errors in continuous control, we propose a Drift-Aware Mixed-Precision Allocation (DA-MPA) strategy that explicitly accounts for how quantization noise propagates and amplifies over long horizons.
+
+In embodied control tasks, quantization errors introduced at each timestep accumulate through closed-loop interactions, resulting in trajectory drift and covariate shift. Directly modeling this process by unrolling environment dynamics is both computationally prohibitive and non-differentiable. To address this, we adopt an analytical surrogate that approximates temporal drift via single-step spatial error propagation. The action vector is defined as a 7-dimensional Cartesian increment:
+
+(10)
+
+Under the small-angle assumption (), rotational components can be approximated as angular deviations:
+
+(11)
+
+For typical tabletop manipulation, drift is dominated by motion in the horizontal plane. We therefore project the action into three principal components corresponding to planar translation and rotation.
+
+To model error accumulation, we reinterpret the action dimensions as joint increments of a virtual planar serial chain, . The absolute orientation of the -th segment accumulates upstream perturbations:
+
+(12)
+
+which provides a differentiable proxy for how per-dimension errors propagate and accumulate, mimicking long-horizon drift behavior.
+
+We quantify how perturbations in each action dimension affect the end-effector by deriving the structural Jacobian of the virtual chain:
+
+(13)
+
+Stacking these components yields:
+
+(14)
+
+This structure naturally captures error amplification: earlier dimensions influence more downstream segments, resulting in larger column norms, i.e., . Thus, the Jacobian encodes the intrinsic topology of drift propagation without requiring task-specific supervision.
+
+To isolate the contribution of each dimension to overall drift, we compute the damped least-squares pseudo-inverse:
+
+(15)
+
+where ensures numerical stability.
+
+We further introduce axis-dependent weights to balance translational and rotational sensitivities. The drift propagation score for dimension is defined as:
+
+(16)
+
+We normalize these scores to obtain drift sensitivity weights:
+
+(17)
+
+These weights quantify how strongly errors in each action dimension contribute to long-horizon drift.
+
+We incorporate the drift sensitivity weights into the calibration objective to penalize quantization noise that disproportionately amplifies drift:
+
+(18)
+
+Under this objective, gradients are automatically reweighted to emphasize dimensions with high drift sensitivity. For each quantizable layer , we compute its drift sensitivity score by averaging gradient magnitudes over calibration steps:
+
+(19)
+
+Layers are then ranked according to . To tightly control temporal drift, the top most sensitive layers are retained in high precision (BF16), while the remaining layers are quantized to low bit-width:
+
+(20)
+
+3.5. Summary of the DA-PTQ Pipeline
+
+We summarize DA-PTQ as a three-stage calibration procedure in Algorithm 1. The pipeline is fully training-free and requires only forward passes and lightweight gradient accumulation. Given a pretrained VLA model and a small calibration dataset, the procedure first performs drift profiling by collecting full-precision activation statistics and estimating both per-dimension drift sensitivity and layer-wise impact on error accumulation. Next, a drift-aware mixed-precision configuration is determined by retaining the most sensitive layers in high precision while aggressively quantizing the rest. Finally, cross-space representation compensation is calibrated on the quantized model by aligning activation distributions and folding the resulting affine transformations into the weights, incurring zero inference overhead.
+
+Algorithm 1 Drift-Aware Post-Training Quantization (DA-PTQ)
+
+Input: Pretrained VLA model with DiT action head , calibration dataset , retained BF16 ratio
+
+Output: Quantized VLA model with W4/BF16 mixed precision and folded compensation
+
+1:
+
+# Stage 1: Drift Profiling
+
+2:
+
+for each batch in do
+
+3:
+
+  Accumulate full-precision statistics , at the perception-action interface
+
+4:
+
+  Compute structural Jacobian and per-dimension drift sensitivities
+
+5:
+
+  Estimate layer-wise drift sensitivities under
+
+6:
+
+end for
+
+7:
+
+# Stage 2: Cross-Space Representation Compensation
+
+8:
+
+Quantize the model with the initial calibration configuration
+
+9:
+
+for each batch in do
+
+10:
+
+  Accumulate quantized statistics ,
+
+11:
+
+end for
+
+12:
+
+for each interface layer do
+
+13:
+
+  Solve for affine matrix and bias to align quantized statistics with full-precision statistics
+
+14:
+
+  Fold and into the quantized weights of layer
+
+15:
+
+end for
+
+16:
+
+# Stage 3: Drift-Aware Mixed-Precision Allocation
+
+17:
+
+for each layer do
+
+18:
+
+   if else W4
+
+19:
+
+end for
+
+20:
+
+Apply the bit-width map to obtain the final quantized model
+
+21:
+
+return Compressed VLA model
+
+4. Experiment
+
+4.1. Experiment Setup
+
+Benchmark and Evaluation.
+We evaluate DA-PTQ on SimplerEnv, a standardized simulation benchmark for robotic manipulation. To ensure comprehensive evaluation, we consider two distinct embodiments: the WidowX robot and the Google Robot. On WidowX, we report performance across four standard manipulation tasks. On the Google Robot, we focus on zero-shot cross-domain generalization, evaluating under both Visual Matching and the more challenging Variant Aggregation settings.
+
+Calibration Process and Dataset.
+As a post-training quantization framework, DA-PTQ requires only a small calibration dataset to estimate drift sensitivities and compute cross-space compensation parameters, without any model fine-tuning. We construct the calibration set using 512 representative trajectories sampled from the training split of BridgeData V2 (Walke et al., 2023). Notably, this single calibration set is used to quantize the model for both in-domain WidowX evaluation and zero-shot cross-domain Google Robot evaluation. This design provides a stringent test of whether the learned drift-aware and distribution-aligned quantization parameters generalize beyond the calibration domain.
+
+Backbone and Baseline.
+We apply DA-PTQ with W4A8 quantization to CogACT, a state-of-the-art diffusion-based VLA model. We compare against the following strong baselines:
+
+•
+
+CogACT (FP): The full-precision model without quantization.
+
+•
+
+VLA-Cache: An inference acceleration method that caches intermediate representations but does not perform weight or activation quantization.
+
+•
+
+QuantVLA: A recent VLA-specific quantization method based on conventional sensitivity metrics without explicit modeling of temporal drift.
+
+All metrics, including success rate (%), memory reduction (%), and inference speedup (%), are measured under identical hardware settings to ensure fair comparison.
+
+4.2. Comparison with Baselines
+
+We compare DA-PTQ with strong baselines to systematically evaluate both computational efficiency and task performance under low-bit quantization. Our goal is to examine not only the standalone gains in efficiency, but also how well each method preserves control fidelity under aggressive compression.
+
+Table 1. Efficiency-performance trade-off on SimplerEnv.
+
+Method
+Sources
+
+Success
+
+Rate ()
+
+Memory
+
+Reduction ()
+
+Speedup ()
+
+VLA-Cache
+NeurIPS’25
+46.8
+0.0
+36.7
+
+QuantVLA
+CVPR’26
+43.5
+42.7
+55.8
+
+Ours
+—
+48.9
+42.5
+54.8
+
+Efficiency-Performance Trade-off.
+Table 1 summarizes the trade-off between efficiency and task success. DA-PTQ achieves a favorable balance, delivering a 42.5% memory reduction and a 54.8% inference speedup while maintaining strong task performance. Compared to existing approaches, our method achieves nearly the same level of efficiency as aggressive low-bit quantization, yet avoids the significant degradation in control quality. Although QuantVLA attains slightly higher efficiency, with 42.7% memory reduction and 55.8% speedup, it suffers a substantial 5.4% drop in success rate, indicating a clear loss in control fidelity. This gap highlights that optimizing for efficiency alone can lead to severe degradation in long-horizon decision-making. In contrast, VLA-Cache provides moderate acceleration at 36.7% speedup but fails to reduce memory consumption, which fundamentally limits its deployment in memory-constrained scenarios. These results demonstrate that naive quantization or caching strategies are insufficient to balance efficiency and performance in embodied control.
+
+Table 2. In-domain performance on WidowX under the SimplerEnv Visual Matching setting.
+
+WidowX Robot
+Methods
+Sources
+Tasks
+
+Average
+
+Success
+
+Rate ()
+
+Put Spoon
+
+on Towel
+
+Put Carrot
+
+on Plate
+
+Stack Green
+
+Block on
+
+Yellow Block
+
+Put Eggplant
+
+in Yellow
+
+Basket
+
+SIMPLER
+
+(Visual Matching)
+
+CogACT (FP)
+Arxiv’24
+71.7
+50.8
+15.0
+67.5
+51.3
+
+VLA-Cache
+NeurIPS’25
+78.3
+39.1
+17.4
+52.2
+46.8
+
+QuantVLA
+CVPR’26
+47.8
+39.1
+17.4
+69.6
+43.5
+
+Ours
+—
+65.2
+52.2
+17.4
+60.9
+48.9
+
+Table 3. Cross-domain performance on Google Robot under SimplerEnv Visual Matching and Variant Aggregation settings.
+
+Google Robot
+Methods
+Sources
+Tasks
+
+Average
+
+Success
+
+Rate ()
+
+Pick Coke
+
+Can
+
+Move
+
+Near
+
+Open/Close
+
+Drawer
+
+Open Top Drawer
+
+and Place Apple
+
+SIMPLER
+
+(Visual Matching)
+
+CogACT (FP)
+Arxiv’24
+91.3
+85.0
+71.8
+50.9
+74.8
+
+VLA-Cache
+NeurIPS’25
+92.0
+83.3
+70.5
+51.6
+74.4
+
+QuantVLA
+CVPR’26
+87.6
+81.7
+55.1
+38.0
+65.6
+
+Ours
+—
+92.4
+87.9
+58.3
+35.2
+68.5
+
+SIMPLER
+
+(Variant Aggregation)
+
+CogACT (FP)
+Arxiv’24
+89.6
+80.8
+28.3
+46.6
+61.3
+
+VLA-Cache
+NeurIPS’25
+91.7
+79.3
+32.5
+45.8
+62.3
+
+QuantVLA
+CVPR’26
+84.9
+76.7
+20.3
+15.8
+49.4
+
+Ours
+—
+87.5
+74.5
+20.1
+24.7
+51.7
+
+In-Domain Performance on WidowX Robot.
+Table 2 reports the performance comparison on the WidowX robot under the SimplerEnv Visual Matching setting. DA-PTQ achieves an average success rate of 48.9%, outperforming both QuantVLA at 43.5% and VLA-Cache at 46.8%, while substantially narrowing the gap to the full-precision CogACT. This indicates that DA-PTQ preserves the majority of the original model capability despite aggressive compression. A closer examination across individual tasks reveals consistent improvements on scenarios that require precise spatial coordination. For example, DA-PTQ achieves 65.2% on Put Spoon on Towel compared to 47.8% for QuantVLA, and 52.2% on Put Carrot on Plate compared to 39.1%. Meanwhile, it maintains competitive performance on tasks involving physical interaction, such as block stacking, where contact dynamics play a larger role. These results suggest that DA-PTQ effectively preserves fine-grained action control under quantization. This improvement can be attributed to the drift-aware allocation strategy, which explicitly prioritizes dimensions that contribute most to long-horizon error accumulation. By protecting these critical components, the model maintains stable execution trajectories even under reduced precision.
+
+Cross-Domain Generalization on Google Robot.
+We further evaluate robustness under cross-domain transfer to unseen robot embodiments. As shown in Table 3, DA-PTQ achieves average success rates of 68.5% in Visual Matching and 51.7% in the more challenging Variant Aggregation setting, consistently outperforming QuantVLA across both regimes. The advantage becomes more evident under stronger distribution shift. QuantVLA exhibits significant degradation on tasks involving articulated objects or long-horizon planning, indicating sensitivity to accumulated errors. In contrast, DA-PTQ maintains stable performance on simpler tasks and reduces failures on more challenging scenarios, demonstrating improved robustness. Although a gap remains compared to the full-precision model, DA-PTQ avoids the severe collapse typically observed under aggressive low-bit quantization. This robustness is enabled by cross-space representation compensation, which aligns quantized activation statistics with their full-precision counterparts at the vision-action interface. As a result, the conditioning signal remains stable under domain shift, preventing error propagation into downstream action generation.
+
+Across both in-domain and cross-domain settings, DA-PTQ consistently achieves the best balance between efficiency and performance. Compared to existing approaches, it preserves high task success while maintaining strong compression and acceleration. This advantage arises from the complementary design of the framework. Drift-aware mixed-precision allocation controls long-horizon error accumulation by protecting critical dimensions, while cross-space representation compensation corrects distributional distortions at the conditioning interface. Together, these components enable DA-PTQ to deliver robust embodied control under low-bit quantization without introducing additional runtime overhead.
+
+Figure 3. Efficiency-performance trade-off across ablation variants on SimplerEnv.
+
+Table 4. Ablation study on WidowX under the SimplerEnv Visual Matching setting.
+
+WidowX Robot
+Variants
+Tasks
+
+Average
+
+Success
+
+Rate ()
+
+Memory
+
+Reduction ()
+
+Speedup ()
+
+Put Spoon
+
+on Towel
+
+Put Carrot
+
+on Plate
+
+Stack Green
+
+Block on
+
+Yellow Block
+
+Put Eggplant
+
+in Yellow
+
+Basket
+
+SIMPLER
+
+(Visual Matching)
+
+CogACT (FP)
+71.7
+50.8
+15.0
+67.5
+—
+—
+—
+
+  + W4A8 + CSRC
+66.7
+41.7
+12.5
+54.2
+43.8
+42.6
+55.2
+
+  + W4A8 + DA-MPA
+50.0
+45.8
+12.5
+50.0
+39.6
+42.9
+54.8
+
+  + W4A8 + DA-PTQ
+65.2
+52.2
+17.4
+60.9
+48.9
+42.5
+54.8
+
+4.3. Ablation Study
+
+To systematically evaluate the contributions of each component, we conduct an ablation study on the WidowX robot under the Visual Matching setting. We isolate the effects of Cross-Space Representation Compensation (CSRC) and Drift-Aware Mixed-Precision Allocation (DA-MPA), and report both efficiency and performance in Table 4, with a visual comparison in Figure 3. This study aims to clarify how each module contributes to preserving control performance under model quantization.
+
+Impact of Cross-Space Representation Compensation.
+Applying Cross-Space Representation Compensation alone to a uniformly quantized model with W4A8 precision yields an average success rate of 43.8%. Although this remains below the full-precision baseline of 51.3%, it already provides a clear improvement over naive quantization. The gain is particularly evident on tasks that require accurate perception-to-action alignment, such as Put Spoon on Towel with 66.7% success and Put Eggplant in Yellow Basket with 54.2%. These tasks depend heavily on precise conditioning signals, and the results indicate that correcting distributional distortion at the interface is essential for maintaining semantic consistency. By aligning quantized activation statistics with their full-precision counterparts, this component stabilizes the input to the diffusion decoder and reduces early-stage divergence during action generation.
+
+Impact of Drift-Aware Mixed-Precision Allocation.
+When applying drift-aware mixed-precision allocation alone, the model achieves an average success rate of 39.6%. Although lower than the representation compensation variant, this result reflects a distinct and complementary effect. As illustrated in Figure 3, this variant maintains strong efficiency while selectively improving performance on tasks sensitive to accumulated control errors. The underlying reason is that allocating higher precision to drift-sensitive layers effectively limits the propagation of quantization noise. Even when the conditioning representation is not fully corrected, the kinematic-aware allocation strategy constrains spatial error amplification along the execution trajectory, thereby improving stability in long-horizon control.
+
+Synergy of the Complete Framework.
+Combining both components yields the full DA-PTQ framework, which achieves the highest average success rate of 48.9% while preserving the same level of efficiency, including 42.5% memory reduction and 54.8% inference speedup. As illustrated in Figure 3, the complete model lies on the optimal Pareto frontier, outperforming both individual components without sacrificing efficiency. This result demonstrates a clear synergy between the two modules. Representation compensation corrects distributional distortion at the conditioning interface and preserves semantic alignment, while drift-aware allocation suppresses error accumulation during execution. By jointly addressing representation-level misalignment and trajectory-level drift, the combined framework provides a more complete and robust solution for embodied control under low-bit quantization.
+
+5. Conclusion
+
+We present DA-PTQ, a training-free post-training quantization framework for vision-language-action models. We identify temporal error accumulation as a key challenge in VLA quantization, where perturbations at the vision-language-to-action interface are progressively amplified during sequential control, leading to kinematic drift. To address this issue, DA-PTQ formulates quantization as a drift-aware optimization problem with two complementary components: cross-space representation compensation, which corrects structured distortions across modalities, and motion-driven mixed-precision allocation, which mitigates trajectory-level error accumulation. Both components are applied during calibration and introduce no additional inference overhead. Extensive experiments demonstrate that our DA-PTQ significantly reduces kinematic drift and achieves performance comparable to full-precision models under low-bit settings, enabling efficient deployment on resource-constrained robotic platforms.
+
+Despite these advances, our approach relies on approximations of error propagation and simplified kinematic, which may not fully capture complex dynamics in highly nonlinear or contact-rich scenarios. Moreover, the calibration process assumes a fixed data distribution, potentially limiting robustness under significant domain shifts. Future work will extend drift-aware quantization to broader VLA architectures and develop more adaptive calibration strategies for diverse real-world environments.
+
+References
+
+Black et al. (2024)
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, et al.
+
+: A vision-language-action flow model for general robot control.
+
+arXiv preprint arXiv:2410.24164.
+
+Cited by: §2.1.
+
+Chen et al. (2024)
+Y. Chen, Z. Huang, and J. Chen
+
+Stepbaq: stepping backward as correction for quantized diffusion models.
+
+Advances in Neural Information Processing Systems, pp. 54054–54078.
+
+Cited by: §1.
+
+Fang et al. (2025)
+H. Fang, Y. Liu, Y. Du, L. Du, and H. Yang
+
+Sqap-vla: a synergistic quantization-aware pruning framework for high-performance vision-language-action models.
+
+arXiv preprint arXiv:2509.09090.
+
+Cited by: §1,
+§2.3.
+
+Frantar et al. (2022)
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh
+
+Gptq: accurate post-training quantization for generative pre-trained transformers.
+
+arXiv preprint arXiv:2210.17323.
+
+Cited by: §1,
+§2.2.
+
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+
+Lora: low-rank adaptation of large language models.
+
+Proceedings of the International Conference on Learning Representations, pp. 1–12.
+
+Cited by: §2.2.
+
+Huang and Belongie (2017)
+X. Huang and S. Belongie
+
+Arbitrary style transfer in real-time with adaptive instance normalization.
+
+In Proceedings of the IEEE International Conference on Computer Vision,
+
+pp. 1501–1510.
+
+Cited by: §2.2.
+
+Jacob et al. (2018)
+B. Jacob, S. Kligys, B. Chen, M. Zhu, M. Tang, A. Howard, H. Adam, and D. Kalenichenko
+
+Quantization and training of neural networks for efficient integer-arithmetic-only inference.
+
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+
+pp. 2704–2713.
+
+Cited by: §1.
+
+Kim et al. (2025)
+M. J. Kim, C. Finn, and P. Liang
+
+Fine-tuning vision-language-action models: optimizing speed and success.
+
+arXiv preprint arXiv:2502.19645.
+
+Cited by: §2.1.
+
+Kim et al. (2024)
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, et al.
+
+Openvla: an open-source vision-language-action model.
+
+arXiv preprint arXiv:2406.09246.
+
+Cited by: §1,
+§2.1.
+
+Li et al. (2024)
+Q. Li, Y. Liang, Z. Wang, L. Luo, X. Chen, M. Liao, F. Wei, Y. Deng, S. Xu, Y. Zhang, et al.
+
+Cogact: a foundational vision-language-action model for synergizing cognition and action in robotic manipulation.
+
+arXiv preprint arXiv:2411.19650.
+
+Cited by: §2.1.
+
+Li et al. (2021)
+Y. Li, R. Gong, X. Tan, Y. Yang, P. Hu, Q. Zhang, F. Yu, W. Wang, and S. Gu
+
+Brecq: pushing the limit of post-training quantization by block reconstruction.
+
+arXiv preprint arXiv:2102.05426.
+
+Cited by: §2.2.
+
+Lin et al. (2024)
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han
+
+Awq: activation-aware weight quantization for on-device llm compression and acceleration.
+
+Proceedings of Machine Learning and Systems 6, pp. 87–100.
+
+Cited by: §1,
+§2.2.
+
+Liu et al. (2026)
+C. Liu, J. Zhang, C. Li, Z. Zhou, S. Wu, S. Huang, and H. Duan
+
+Ttf-vla: temporal token fusion via pixel-attention integration for vision-language-action models.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+pp. 18452–18459.
+
+Cited by: §1.
+
+Liu et al. (2024)
+S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu
+
+Rdt-1b: a diffusion foundation model for bimanual manipulation.
+
+arXiv preprint arXiv:2410.07864.
+
+Cited by: §2.1.
+
+Liu et al. (2021)
+Z. Liu, Y. Wang, K. Han, W. Zhang, S. Ma, and W. Gao
+
+Post-training quantization for vision transformer.
+
+Advances in Neural Information Processing Systems, pp. 28092–28103.
+
+Cited by: §1,
+§2.2.
+
+Park et al. (2025)
+M. Park, K. Kim, J. Hyung, H. Jang, H. Jin, J. Yun, H. Lee, and J. Choo
+
+ACG: action coherence guidance for flow-based vla models.
+
+arXiv preprint arXiv:2510.22201.
+
+Cited by: §1.
+
+Peebles and Xie (2023)
+W. Peebles and S. Xie
+
+Scalable diffusion models with transformers.
+
+In Proceedings of the IEEE International Conference on Computer Vision,
+
+pp. 4195–4205.
+
+Cited by: §2.1.
+
+Ross et al. (2011)
+S. Ross, G. Gordon, and D. Bagnell
+
+A reduction of imitation learning and structured prediction to no-regret online learning.
+
+In Proceedings of the International Conference on Artificial Intelligence and Statistics,
+
+pp. 627–635.
+
+Cited by: §2.3.
+
+Shao et al. (2023)
+W. Shao, M. Chen, Z. Zhang, P. Xu, L. Zhao, Z. Li, K. Zhang, P. Gao, Y. Qiao, and P. Luo
+
+Omniquant: omnidirectionally calibrated quantization for large language models.
+
+arXiv preprint arXiv:2308.13137.
+
+Cited by: §2.2.
+
+Siciliano et al. (2009)
+B. Siciliano, L. Sciavicco, L. Villani, and G. Oriolo
+
+Robotics: modelling, planning and control.
+
+Springer.
+
+Cited by: §2.3.
+
+Spong et al. (2020)
+M. W. Spong, S. Hutchinson, and M. Vidyasagar
+
+Robot modeling and control.
+
+Wiley.
+
+Cited by: §2.3.
+
+Team et al. (2025)
+G. R. Team, S. Abeyruwan, J. Ainslie, J. Alayrac, M. G. Arenas, T. Armstrong, A. Balakrishna, R. Baruch, M. Bauza, M. Blokzijl, et al.
+
+Gemini robotics: bringing ai into the physical world.
+
+arXiv preprint arXiv:2503.20020.
+
+Cited by: §2.1.
+
+Team et al. (2024)
+O. M. Team, D. Ghosh, H. Walke, K. Pertsch, K. Black, O. Mees, S. Dasari, J. Hejna, T. Kreiman, C. Xu, et al.
+
+Octo: an open-source generalist robot policy.
+
+arXiv preprint arXiv:2405.12213.
+
+Cited by: §2.1.
+
+Walke et al. (2023)
+H. R. Walke, K. Black, T. Z. Zhao, Q. Vuong, C. Zheng, P. Hansen-Estruch, A. W. He, V. Myers, M. J. Kim, M. Du, et al.
+
+Bridgedata v2: a dataset for robot learning at scale.
+
+In Proceedings of the Conference on Robot Learning,
+
+pp. 1723–1736.
+
+Cited by: §4.1.
+
+Wang et al. (2024)
+C. Wang, Z. Wang, X. Xu, Y. Tang, J. Zhou, and J. Lu
+
+Q-vlm: post-training quantization for large vision-language models.
+
+Advances in Neural Information Processing Systems, pp. 114553–114573.
+
+Cited by: §2.2.
+
+Xiao et al. (2023)
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han
+
+Smoothquant: accurate and efficient post-training quantization for large language models.
+
+In Proceedings of the International Conference on Machine Learning,
+
+pp. 38087–38099.
+
+Cited by: §2.2.
+
+Xu et al. (2026)
+Y. Xu, Y. Yang, Z. Fan, Y. Liu, Y. Li, B. Li, and Z. Zhang
+
+QVLA: not all channels are equal in vision-language-action model’s quantization.
+
+arXiv preprint arXiv:2602.03782.
+
+Cited by: §1,
+§1,
+§2.3.
+
+Yin et al. (2025)
+C. Yin, Y. Lin, W. Xu, S. Tam, X. Zeng, Z. Liu, and Z. Yin
+
+Deepthinkvla: enhancing reasoning capability of vision-language-action models.
+
+arXiv preprint arXiv:2511.15669.
+
+Cited by: §2.1.
+
+Zhang et al. (2026)
+J. Zhang, Y. Hsieh, Z. Wang, H. Lin, X. Wang, Z. Wang, Y. Lei, and M. Zhang
+
+QuantVLA: scale-calibrated post-training quantization for vision-language-action models.
+
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+
+pp. 1–11.
+
+Cited by: §1,
+§1,
+§2.3.
+
+Zhong et al. (2025)
+Y. Zhong, F. Bai, S. Cai, X. Huang, Z. Chen, X. Zhang, Y. Wang, S. Guo, T. Guan, K. N. Lui, et al.
+
+A survey on vision-language-action models: an action tokenization perspective.
+
+arXiv preprint arXiv:2507.01925.
+
+Cited by: §1.
+
+Zitkovich et al. (2023)
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, et al.
+
+Rt-2: vision-language-action models transfer web knowledge to robotic control.
+
+In Proceedings of the Conference on Robot Learning,
+
+pp. 2165–2183.
+
+Cited by: §1,
+§2.1.
+
+Figure 4. Task: Put Spoon on Towel (WidowX Robot). The top panel illustrates the seamless sequential execution by the DA-PTQ quantized model. The bottom panel displays the generated temporal action curves across 7 degrees of freedom, highlighting the absence of quantization-induced oscillations and the smoothness of the low-bit control signals.
+
+Appendix A Detailed Experimental Setup
+
+To ensure full reproducibility of our DA-PTQ framework, we detail the exact hyperparameters used in our calibration pipeline. Our framework is implemented in PyTorch and deployed on NVIDIA RTX 5090 GPUs, executing entirely post-training with zero fine-tuning overhead. All intermediate calibration activations are cast to BFloat16 to maintain numerical stability. A comprehensive summary of all core hyperparameters is provided in Table 5.
+
+Table 5. Summary of core hyperparameters used in the DA-PTQ calibration pipeline.
+
+Module
+Parameter
+Value
+
+Calibration
+Calibration Steps
+
+Batch Size
+
+Spatial Bins
+
+Warmup Steps
+
+DA-MPA
+Probe Steps
+
+Damping Factor ()
+
+Translation Weight ()
+
+Rotation Weight ()
+
+Scaling Gain
+
+Retention Ratio ()
+
+CSRC
+SVD Block Size
+
+Smoothing Factor ()
+
+Group Size
+
+Shrinkage Factor
+
+Calibration Dataset and Statistics Collection. We construct our calibration set using data sampled from the Bridge V2 dataset, which provides a rich and representative distribution of diverse tabletop manipulation trajectories. To prevent the calibration statistics from overfitting to a specific spatial region or a narrow subset of trajectories, we enable spatial balanced calibration. This partitions the 3D workspace into spatial bins, applying a warmup phase to ensure the accumulated statistical moments ( and later ) robustly reflect the global activation distribution.
+
+Figure 5. Task: Put Eggplant in Yellow Basket (WidowX Robot). DA-PTQ maintains precise and dynamically stable motor commands throughout the episode, guiding the end-effector to successfully complete the manipulation without kinematic drift.
+
+Figure 6. Task: Move Near (Google Robot). This qualitative result demonstrates the cross-embodiment generalizability of DA-PTQ. Even deployed on a completely different robotic kinematic structure, the 4-bit framework generates highly accurate and coherent continuous control commands.
+
+Temporal Drift-Aware Allocation (DA-MPA).
+The MPA module specifically targets the MLP blocks within the Diffusion Transformer (DiT) action head, skipping the final blocks which are naturally preserved due to their proximity to the continuous output layer. The layer-wise drift sensitivity is dynamically profiled over consecutive probe steps.
+When calculating the per-dimension drift propagation scores via the structural Jacobian, we apply a Tikhonov damping factor for stable matrix inversion. Recognizing that spatial deviations are highly asymmetric in physical tabletop manipulation—where minor translation errors often lead to catastrophic grasp failures, whereas rotational deviations can be partially absorbed by the mechanical compliance of the gripper—we heavily penalize translational errors.
+Based on the profiled sensitivities, we establish a high-precision retention ratio of . Thus, the top most drift-sensitive DiT layers are safely retained in 16-bit (BF16), while the remaining are aggressively quantized to 4-bit (W4) to maximize inference efficiency.
+
+Cross-Space Representation Compensation (CSRC). To align the cross-space distributions without introducing any inference latency overhead, we apply our compensation strategy coupled with an outlier pre-rotation mechanism. LLM-based architectures typically suffer from massive activation outliers; thus, the input and output activations are orthogonalized using block-wise rotations computed via SVD. To avoid over-correcting and distorting the underlying feature semantics, we apply a smoothing factor to the singular values. All derived affine compensation matrices () and bias terms () are algebraically folded back into the quantized weights prior to real-world deployment.
+
+Appendix B Qualitative Trajectory Analysis
+
+To comprehensively validate the generalizability and control fidelity of DA-PTQ, we visualize the spatial execution and the underlying continuous control commands generated by our quantized policy. We select three distinct, long-horizon manipulation tasks spanning two completely different robotic embodiments: Put Spoon on Towel and Put Eggplant in Yellow Basket on the WidowX robot, alongside Move Near on the Google Robot. The qualitative results are presented in Figures 4, 5, and 6.
+
+As shown in the top panels (filmstrips) of these figures, the DA-PTQ quantized policy successfully completes the tasks with fluid, precise, and human-like movements. Despite operating predominantly at an aggressive 4-bit precision (W4), the robotic end-effector exhibits no observable hesitation, kinematic drift, or erratic grasping behaviors. It faithfully handles the objects and navigates complex workspace configurations, demonstrating that DA-PTQ effectively neutralizes the geometric amplification of quantization noise that typically plagues low-bit embodied control.
+
+To provide a granular view of this kinematic stability, the bottom panels detail the step-by-step action predictions across all 7 degrees of freedom (3D translation, 3D rotation, and gripper state) during the entire episode. A hallmark of severe quantization degradation in continuous control is the emergence of high-variance, high-frequency oscillations in the predicted actions. However, as evident in the temporal plots, DA-PTQ ensures that the generated motor commands remain remarkably smooth and dynamically stable. The translational () and rotational (roll, pitch, yaw) commands converge smoothly to their target states without overshooting, while the discrete gripper actions are executed decisively. These highly coherent 7-DoF control curves confirm our method’s robust capacity to maintain near-lossless, high-fidelity continuous control across diverse physical environments and kinematic structures.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -1,7 +1,7 @@
 # AI-System-Design Daily Research Adapter
 
 版本：V2.1
-适用范围：Live Daily、Daily Books Decision、Sunday Weekly
+适用范围：Live Daily、用户明确重建的 Historical Daily、Daily Books Decision、Sunday Weekly
 
 ## 1. 任务
 
@@ -14,7 +14,7 @@ Research
 → Sunday Weekly（仅 Sunday）
 ```
 
-本 Adapter 只定义 Live Daily 与 Sunday Weekly 的模式差异。Coverage、Score V2、Review、Deep Analysis
+本 Adapter 只定义 Live Daily、用户明确重建的 Historical Daily 与 Sunday Weekly 的模式差异。Coverage、Score V2、Review、Deep Analysis
 Selection、Books Comparison、Semantic Audit 与 Gate 均直接使用三份公共合同，不在此复制。
 
 ## 2. 运行前加载
@@ -27,7 +27,7 @@ Selection、Books Comparison、Semantic Audit 与 Gate 均直接使用三份公�
 4. `docs/REPORT_CONTRACTS.md`
 5. `ROADMAP.md`
 6. `docs/LEARNING_STATE.md` 中最新 checkpoint
-7. 最近七天 Daily 与最近一期完整 Weekly
+7. Live Daily 读取最近七天 Daily 与最近一期完整 Weekly；Historical Daily 只读取相邻且已经独立重建的 Daily，不读取既有 Weekly
 
 只有候选通过 Evidence Gate 且可能改变长期知识时，才继续读取：
 
@@ -48,7 +48,7 @@ Selection、Books Comparison、Semantic Audit 与 Gate 均直接使用三份公�
 - Sunday 先完成当日 Daily 和必要的 Books Decision，再生成完整 Monday～Sunday Weekly。
 - Weekly 路径、窗口和必填字段以 `docs/REPORT_CONTRACTS.md` 为准。
 
-Historical Backfill 不由本 Adapter 执行；使用 `CODEX_HISTORICAL_RESEARCH_PROMPT.md`。
+Historical Weekly Backfill 不由本 Adapter 执行；使用 `CODEX_HISTORICAL_RESEARCH_PROMPT.md`。用户明确要求逐日重建时，Historical Daily 使用本 Adapter 与 Report 合同的独立重放模式；既有 Weekly 不得参与其发现、筛选、证据或 Books 判断。
 
 ## 4. Daily 执行顺序
 
@@ -75,7 +75,7 @@ Historical Backfill 不由本 Adapter 执行；使用 `CODEX_HISTORICAL_RESEARCH
 identity
 → first-public date
 → revision history
-→ 与既有 Daily / Weekly 的 Source Family 去重
+→ 与既有 Daily 的 Source Family 去重
 → owner week
 → denominator freeze
 ```
@@ -86,6 +86,10 @@ owner，并只在 Source Packet 中建立 delayed-discovery recovery 通知；�
 把历史 family 加入当前 Daily 分母或阻塞当前 Gate。后续恢复任务必须在真实 owner Report 中重新执行 Score V2、
 Source Review 与 Books Decision；只有 provenance 满足
 [Research 合同 §11](./docs/RESEARCH_CONTRACT.md#11-历史兼容review-复用与-source-delta-audit) 的旧 Review 才能复用。
+
+Historical Daily 的去重、分母与 Review 只能以原始来源和已经独立重建的 Daily 为输入。既有 Weekly 中的候选、
+分数、Review、Books disposition 与 gap 只能在 Daily 全部闭环后的 Weekly 聚合阶段重新评估，不能反向作为 Daily
+证据。旧脚本若含 Weekly seed 或 Weekly Review 复用，必须从 raw inventory 重跑，不能只清除引用文本。
 
 ### 4.4 生成当日 Report
 

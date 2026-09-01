@@ -1,0 +1,1011 @@
+When Less Latent Leads to Better Relay: Information-Preserving Compression for Latent Multi-Agent LLM Collaboration
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+Why Multi-Agent Systems.
+
+From Language to Latent Communication.
+
+LatentMAS and KV Relay.
+
+KV Eviction, Compression, and Compensation.
+
+3 Preliminaries
+
+3.1 KV Cache Notation
+
+Token-level KV states.
+
+Full-cache representation.
+
+Index selection and concatenation (global indexing).
+
+3.2 Agentic Communication in LatentMAS
+
+3.3 Problem Formulation
+
+4 Methodology
+
+4.1 From Single-Agent KV-Cache Eviction to Multi-Agent Cache Decomposition
+
+4.2 Eviction Baselines in MAS
+
+4.2.1 MAS-StreamingLLM: Generation-Only Retention
+
+4.2.2 MAS-H2O: Importance-Based Retention
+
+4.3 Orthogonal Backfill: Residual Principal-Subspace Injection for Hard Eviction
+
+4.3.1 Residual subspace extraction
+
+4.3.2 Residual principal subspace and injection vector
+
+4.3.3 Injection into retained prompt values
+
+5 Experiments
+
+5.1 Setup
+
+Tasks and Datasets.
+
+Models.
+
+Compared Methods.
+
+Metrics and KV Budget.
+
+Implementation Details.
+
+Hardware and computation.
+
+5.2 Results
+
+6 Discussion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.13349v1 [cs.LG] 14 Apr 2026
+
+When Less Latent Leads to Better Relay: Information-Preserving Compression for Latent Multi-Agent LLM Collaboration
+
+Yiping Li
+
+  
+Zhiyu An
+
+  
+Wan Du
+
+Affiliation: Department of Computer Science and Engineering
+
+Affiliation: University of California, Merced
+
+Affiliation: Merced, CA 95343
+
+Affiliation: {yipingli, zan7, wdu3}@ucmereced.edu
+
+Abstract
+
+Communication in Large Language Model (LLM)-based multi-agent systems is moving beyond discrete tokens to preserve richer context.
+Recent work such as LatentMAS enables agents to exchange latent messages through full key-value (KV) caches.
+However, full KV relay incurs high memory and communication cost.
+We adapt eviction-style KV compression to this setting and introduce Orthogonal Backfill (OBF) to mitigate information loss from hard eviction.
+OBF injects a low-rank orthogonal residual from discarded KV states into the retained KV states.
+We evaluate proposed method against full KV relay on nine standard benchmarks spanning mathematical reasoning, coding, and knowledge-intensive QA.
+It achieves performance comparable to full KV relay while reducing communication cost by 79.8%–89.4%.
+OBF further improves the performance and achieves the best results on 7 of the 9 benchmarks.
+This suggests that more information does not necessarily lead to better communication; preserving the most useful information matters more.
+Our codebase is publicly available. https://github.com/markli404/When-Less-Latent-Leads-to-Better-Relay
+
+ 
+ 
+
+1 Introduction
+
+Large language model (LLM) based multi-agent systems rely on communication to coordinate reasoning, critique intermediate outputs, and refine final decisions.
+Early multi-agent frameworks primarily use natural language as the communication medium, where agents exchange explicit messages under predefined roles or protocols (Li et al., 2023b; Hong et al., 2024; Chen et al., 2025).
+While effective, such communication is inherently constrained by the discreteness of text: when internal states are externalized as token sequences, uncertainty over alternatives and other unresolved information can be collapsed into a more determinate representation during transmission.
+This limitation has motivated increasing interest in richer communication channels that move beyond natural language and preserve more of the model’s internal computation (Pham et al., 2024; Tang et al., 2025).
+Among these directions, LatentMAS is particularly appealing because it enables one agent to relay its key-value (KV) cache directly to another agent, allowing downstream reasoning to continue from internal states rather than from text alone (Zou et al., 2025).
+However, this higher-fidelity communication comes at a substantial cost. Relaying full KV caches is memory- and bandwidth-intensive, and the cost grows quickly with the number of agents, rounds, and prompt tokens involved.
+
+A natural solution is to compress the communicated KV states. Recent work on efficient LLM inference suggests that not all cached states are equally important.
+Methods such as StreamingLLM, H2O, and Scissorhands show that selective retention or eviction of KV states can reduce memory usage while preserving generation quality in single-agent settings (Xiao et al., 2024; Zhang et al., 2023; Liu et al., 2023b).
+However, these methods are developed primarily for online cache management during token-by-token generation, where the goal is to control memory consumption within a single model’s ongoing inference process.
+In LatentMAS-style communication, the setting is fundamentally different. Compression occurs at the relay boundary between agents, and the relevant question is not only which states are sufficient for continuing local generation, but whether the transmitted states remain useful for downstream continuation by another agent.
+As a result, methods designed for online KV eviction do not directly solve the relay problem in multi-agent latent communication.
+
+In this work, we study KV compression specifically for LatentMAS-style inter-agent relay.
+Our starting point is that relay quality depends not simply on how much KV is transmitted, but on whether the transmitted states preserve the information most useful for the next agent.
+Under this view, relay compression should be evaluated as a communication problem rather than merely as a cache reduction problem.
+Based on this perspective, we develop an eviction-style KV compression framework for relay and propose OrthoBackfill (OBF) to mitigate information loss caused by hard eviction.
+OBF is designed to preserve distinctive residual information from discarded states and inject it back into the retained representation, with the goal of improving downstream usability under a fixed communication budget.
+
+Our experiments show that compressed relay can often match or even outperform full KV relay under fixed prompt-token budgets.
+This result suggests that effective relay depends less on preserving the largest possible amount of raw prompt state and more on preserving states that remain useful for downstream continuation.
+We further analyze the tradeoff between relay efficiency and relay fidelity across datasets and settings, and examine when eviction helps, when it fails, and how OBF affects this tradeoff.
+Together, our findings position relay-oriented KV compression as a distinct problem in multi-agent latent communication, separate from both text-based coordination and standard online KV cache management.
+
+Figure 1: Representative communication media in MAS. The figure compares natural-language messages, embedding-based representations, and direct KV-cache transfer. As the medium becomes less lossy, the receiver gains more direct access to the sender’s internal reasoning state.
+
+Our contributions are as follows.
+
+•
+
+We formulate KV compression in LatentMAS as a relay-specific communication problem, where the goal is to preserve states that remain useful for downstream continuation under a communication budget, rather than merely reduce cache size.
+
+•
+
+We develop an eviction-style KV compression framework for inter-agent relay and propose OrthoBackfill (OBF) to compensate for information lost under hard eviction.
+
+•
+
+We show empirically that compressed relay remains competitive with full relay while reducing communicated prompt KV by over 80%.
+
+2 Related Work
+
+Why Multi-Agent Systems.
+
+A growing body of work suggests that multi-agent systems (MAS) can outperform single-agent baselines on complex tasks such as software engineering, mathematical reasoning, and deliberative evaluation (Hong et al., 2024; Du et al., 2023; Chan et al., 2023; Liang et al., 2024). A common explanation is that MAS distributes reasoning across roles, prompts, or subtasks rather than forcing the entire problem into a single trajectory (Li et al., 2023b; Hong et al., 2024; Wu et al., 2023). This can help through division of labor, where a complex objective is decomposed into simpler subproblems (Hong et al., 2024; Wu et al., 2023; Zhou et al., 2023), and through cross-agent verification, where critique and checking are distributed across different roles or response trajectories instead of relying on intrinsic self-correction alone (Huang et al., 2024; Du et al., 2023; Chan et al., 2023). Our work focuses on a bottleneck that becomes central once such multi-agent collaboration is adopted: how agents communicate rich intermediate state efficiently.
+
+From Language to Latent Communication.
+
+Early MAS frameworks such as CAMEL Li et al. (2023b) and MetaGPT Hong et al. (2024) organize collaboration through natural-language exchanges under predefined roles and workflows, while later systems such as Optima Chen et al. (2025) improve efficiency through learned managers that reduce redundant communication. More recent work moves beyond text-only communication and explores richer carriers for inter-agent information exchange. CIPHER Pham et al. (2024) communicates through expected output embeddings, StateDelta Tang et al. (2025) augments language with hidden-state changes, and COCONUT Hao et al. (2025) studies latent-space reasoning without decoding intermediate steps into text. These works motivate a broader shift from token-level communication toward latent-state communication. Our work builds on this shift, but focuses specifically on the efficiency problem created by full KV-state relay.
+
+LatentMAS and KV Relay.
+
+Our setting is most directly related to LatentMAS Zou et al. (2025), a training-free framework for pure latent collaboration among LLM agents. Instead of passing decoded intermediate messages, LatentMAS transfers the full KV cache from one agent to the next, allowing downstream reasoning to continue directly from the predecessor’s internal state. This makes relay substantially higher-fidelity than text-mediated communication, but it also turns communicated KV into the dominant communication object. Our work addresses this bottleneck directly by studying compression at the relay boundary rather than modifying the reasoning procedure itself.
+
+KV Eviction, Compression, and Compensation.
+
+A separate line of work studies how to reduce KV-cache cost in long-context inference. Quantization methods such as KVQuant Hooper et al. (2025) reduce the footprint of retained KV tensors, while eviction methods such as H2O Zhang et al. (2023), StreamingLLM Xiao et al. (2024), and Scissorhands Liu et al. (2023b) selectively retain only the most useful past states. More recent methods further reduce the damage of hard eviction through compensation or merging. RazorAttention Tang et al. (2024) summarizes removed context through compensation tokens in non-retrieval heads, while CaM Zhang et al. (2024) and WeightedKV Yuan et al. (2025) merge discarded information into retained states instead of removing it outright. These methods are the closest line of work to ours, but they are designed for online cache management in single-agent inference. Our setting is different: compression happens only at the relay step, and the criterion is whether compressed states remain useful for downstream continuation by another agent.
+
+3 Preliminaries
+
+3.1 KV Cache Notation
+
+We introduce the notation for the KV cache in an autoregressive Transformer decoder.
+Consider a token sequence .
+At each layer with attention heads, self-attention caches the keys and values for all processed token positions:
+
+For head-wise notation, we define the per-head slices
+
+Accordingly, and denote the key/value vectors at token position for head in layer .
+
+Token-level KV states.
+
+For compactness, we view the cache at a fixed layer as a sequence of token-level KV states,
+
+Full-cache representation.
+
+We denote the full KV cache of a sequence as the collection of layer-wise caches
+
+When it is convenient to view the cache as a single token-indexed object, we write where denotes the cached state associated with token position across all layers (and heads).
+We will make the indexing explicit whenever head-wise or layer-wise operations are required.
+
+Index selection and concatenation (global indexing).
+
+We maintain a unique global position index for the KV cache, so any retained cache is an index-selected subsequence of the full state sequence .
+Given an ordered index list with , we define where .
+For two index lists and , we use to denote row-wise concatenation, which corresponds to the concatenated index list .
+
+3.2 Agentic Communication in LatentMAS
+
+In LatentMAS, agents communicate through latent messages represented by Transformer KV-cache states produced during autoregressive latent inference. Let denote the -th agent in the communication chain. After completing its local computation, transmits a message , where .
+
+Here, denotes the token-level KV-cache states produced by agent . We decompose these states as , where is induced by the local prompt and is induced during autoregressive latent generation.
+
+The receiver continues decoding by using the transmitted message as PastKV. However, recursively appending causes the message length to grow linearly with the total number of cached tokens across agents, creating the bandwidth bottleneck addressed next.
+
+3.3 Problem Formulation
+
+As interaction proceeds, the message grows linearly with depth, with . To prevent this unbounded accumulation, we introduce a compression operator parameterized by a budget ratio :
+
+Our goal is to design that maximizes final task accuracy under any given .
+
+4 Methodology
+
+This section revisits standard KV-cache eviction in the setting of multi-agent latent communication. We begin by identifying a functional decomposition of cache roles in single-agent inference, then show how these roles are reshaped in the multi-agent setting by agent boundaries and inherited messages. Based on this decomposition, we next define eviction-style baselines that adapt existing single-agent strategies, such as StreamingLLM and H2O, to LatentMAS. This setup also clarifies the limitation of direct eviction and motivates our proposed Orthogonal Backfill (OBF) framework.
+
+4.1 From Single-Agent KV-Cache Eviction to Multi-Agent Cache Decomposition
+
+We propose a new cache decomposition formulation adapted for the multi-agent collaboration setting based on the formulations in the existing literature.
+Existing eviction methods revealed a recurring functional pattern in single-agent KV-cache management.Specifically, we consider a three-part functional decomposition: Attention Sink: The initial tokens that serve as numerical anchors and help stabilize the Softmax distribution Xiao et al. (2024); Candidate Pool: The middle portion of the sequence, which forms the primary target for importance-based eviction or compression Zhang et al. (2023); Liu et al. (2023b); and Local Window: The most recent tokens, retained to preserve immediate local context for autoregressive continuity Xiao et al. (2024); Zhang et al. (2023).
+
+In multi-agent collaboration, latent memory is no longer produced by a single homogeneous stream. Instead, it accumulates across agent boundaries as alternating prompt-conditioned and generated segments, e.g.,
+
+This structure changes the role decomposition because the candidate region is no longer homogeneous in the multi-agent setting.
+Once inherited memory must remain available as transmitted context, it becomes necessary to distinguish between previously transmitted message history and the current agent’s local prompt context.
+Meanwhile, the recency-sensitive role is taken over by the current agent’s active latent reasoning states. Accordingly, we use a four-part decomposition:
+
+1.
+
+Attention Sink (): A persistent anchor, originated by and inherited across the chain, that maintains numerical stability.
+
+2.
+
+Inherited Message History (): The compressed historical context transmitted by upstream agents.
+
+3.
+
+Current Prompt Context (): The latent states induced by the task-specific instructions of the current agent.
+
+4.
+
+Current Latent Reasoning (): The latent states generated by the current agent’s ongoing reasoning, which form the immediate causal basis for ’s generation.
+
+This reformulation provides the basis for adapting conventional single-agent eviction rules to the multi-agent setting.
+
+Figure 2: KV-cache role decomposition in single-agent and multi-agent settings.
+Our multi-agent decomposition follows the same functional view as standard single-agent KV compression, with aligned sink, candidate-like, and local-recent roles. The main difference is that multi-agent relay introduces inherited message history. The inset contrasts rolling-budget cache updates with our one-shot prompt-state selection.
+
+4.2 Eviction Baselines in MAS
+
+We adapt standard eviction-based KV-cache rules to LatentMAS by applying them only to the current agent’s local states while passing inherited memory forward unchanged. Accordingly, the message transmitted by agent is
+
+Here, denotes a retention rule over the local prompt context and latent reasoning states . Any local state not retained by is permanently removed from the active cache.
+
+4.2.1 MAS-StreamingLLM: Generation-Only Retention
+
+MAS-StreamingLLM instantiates the retention rule with a simple recency-style policy. It preserves a single Attention Sink derived from the first agent’s prompt, while treating each subsequent local prompt () as transient context that is not carried forward. Concretely, the first step retains together with the first reasoning trajectory , and each later step retains only the newly generated reasoning trajectory .
+
+Message formation.
+The cumulative message is constructed recursively as
+
+yielding a single global sink followed by a chain of reasoning states.
+
+4.2.2 MAS-H2O: Importance-Based Retention
+
+We propose MAS-H2O, which retains prompt tokens that receive high attention from the current latent reasoning states and evicts the rest under a fixed budget (Zhang et al., 2023).
+
+Attention mass from the current reasoning states.
+For a given layer and a given attention head , let denote the attention weight from current reasoning position to prompt position . We define the attention mass assigned to prompt position as
+
+(1)
+
+Head-wise and layer-wise retention scores.
+In the head-wise variant, the attention mass is used directly to rank prompt positions within each head. In the layer-wise variant, we first aggregate the attention mass across heads within a layer, giving
+,
+and then use this layer-wise quantity to rank prompt positions.
+
+Top- selection.
+Let denote the eligible prompt indices for selection. We exclude padding positions and, for the first agent round where , additionally exclude the shared sink segment . We then select the indices with the largest attention values:
+
+where denotes in the head-wise variant and in the layer-wise variant. Here, returns the set of indices with the largest values, and ties are broken deterministically.
+
+Message formation.
+Let denote the retained prompt KV states obtained by applying Top- selection to under the chosen granularity. The cumulative message is constructed as
+
+(2)
+
+which preserves the shared sink only once and appends, at each step, the retained prompt KV states together with the newly generated reasoning trajectory.
+
+Figure 3: Comparison of KV cache eviction granularities:
+1) Global (shared across all layers and heads),
+2) Layer-wise (shared across heads within each layer), and 3) Head-wise (independent for each KV head and each layer).
+
+4.3 Orthogonal Backfill: Residual Principal-Subspace Injection for Hard Eviction
+
+In LatentMAS, eviction is applied to each agent’s local prompt states as a block rather than as isolated token removals. As a result, a single compression step may delete a substantial portion of prompt KV at once. This can erase background information that is not tied to any single retained token, yet still supports downstream latent reasoning, making standard token-level compensation inadequate. Because the deleted prompt values remain available as a matrix during compression, the missing background structure can instead be modeled and controlled at the subspace level.
+
+To address this, we propose Orthogonal Backfill (OBF), a lightweight augmentation that restores only the deleted components that are not representable within the span of the retained prompt values. OBF decomposes the deleted values into an in-span component and an orthogonal residual, summarizes the residual content using attention weights, and injects a low-rank residual vector back into the retained prompt values.
+
+Formally, let denote the prompt positions at agent round (excluding padding and the global sink). Let be a compression operator that returns a retained index set
+,
+and define the deleted set .
+
+4.3.1 Residual subspace extraction
+
+Motivation.
+After compression, some prompt tokens are removed while others are retained. During subsequent inference, attention that would otherwise have been assigned to deleted tokens can be redistributed to the retained ones. If part of the deleted content already lies in the span of the retained values, this redistributed attention can partially recover it from the retained states alone. Injecting that representable component again would therefore double count information already accessible through the retained tokens. OBF accordingly injects only the deleted component that is orthogonal to the retained-value span.
+
+Retained and deleted value states.
+For each layer and KV head , let denote the value states of the prompt tokens, whose -th row is . All of the following operations are applied independently for each , so we omit these superscripts for the remainder of this section. We treat and as ordered index lists specifying the kept and deleted portions of the value matrix, and write and . Let denote the number of retained positions. In general, is determined by the compression budget, while in our experiments we use a fixed value of .
+
+Residual relative to the retained span.
+We construct an orthonormal basis for via a reduced QR decomposition on :
+
+(3)
+
+We then remove from the component representable in the retained-value span, yielding the residual
+
+(4)
+
+The residual therefore contains only the deleted information that is not expressible by the retained-value span.
+
+4.3.2 Residual principal subspace and injection vector
+
+Now, we prepare the injection vector which contains the residual information extracted from the deleted portion of the original value states, . Throughout, we use for numerical stability.
+
+Residual principal subspace.
+To prepare the injection vector, we first reduce noise in the residual matrix by applying Singular Value Decomposition (SVD) to and retain its top right singular vectors as the residual principal basis, denoted by , where . In our experiments, we used pca_rank = 8.
+
+Attention-weighted residual summary.
+We summarize the deleted residual content by an attention-weighted average over deleted positions. Let denote the deleted positions in the same order as the rows of . We then define
+
+(5)
+
+Here, denotes the attention mass assigned to position , i.e., in Eq. 1.
+
+Injection vector in the residual principal subspace.
+We project onto the residual principal subspace to obtain the injection direction
+
+(6)
+
+Dynamic scaling by deleted-versus-retained demand.
+For each KV head, we scale the injection by the deleted-versus-retained demand ratio:
+
+(7)
+
+Degenerate cases.
+If , , or is negligible, we skip OBF for that .
+
+4.3.3 Injection into retained prompt values
+
+OBF modifies only the value states and leaves keys unchanged. In this work, we use a uniform injection strategy: we add the same residual vector to every retained value states of the prompt tokens,
+
+(8)
+
+Intuitively, represents a global background residual that should remain accessible regardless of which retained token is attended at later steps.
+
+Figure 4: Geometric illustration of Orthogonal BackFill (OBF). Rather than a literal high-dimensional mapping, this 2D metaphor demonstrates the variable relationships: (a) The initial state defining the retained () and deleted () value states. (b) The isolation of the orthogonal residual , which captures information strictly outside the retained span (Eq. 4). (c) The derivation of the final injection vector . The residual is compressed via its principal subspace to form (Eq. 6), scaled by the demand ratio (Eq. 7), and uniformly fused back into the retained state. (Eq. 8)
+
+Message construction.
+At each agent round , OBF augments the retained prompt block by adding a value-only residual vector to the values in while keeping keys unchanged; we denote this operation by .
+The cumulative message is constructed as
+
+(9)
+
+5 Experiments
+
+In the experiment section, we aim to answer these two research questions:
+
+•
+
+RQ1: What is the compression ratio that our method achieve for each benchmark?
+
+•
+
+RQ2: How does the performance of our method compare with full eviction baseline?
+
+We first introduce our experiment setup in detail, then present the experiment results.
+
+5.1 Setup
+
+Tasks and Datasets.
+
+Following the evaluation protocol of LatentMAS Zou et al. (2025), we evaluate on a suite of reasoning-intensive and domain-specific benchmarks:
+(i) Math & Science Reasoning: GSM8K Cobbe et al. (2021), GPQA Rein et al. (2023), ARC (Easy/Challenge) Clark et al. (2018), and AIME 2024/2025 Maxwell-Jia (2024); MathArena (2025);
+(ii) Code Generation: MBPP-Plus and HumanEval-Plus Liu et al. (2023a);
+(iii) Professional Knowledge: MedQA Jin et al. (2021).
+
+Models.
+
+We use off-the-shelf Qwen3 models Yang et al. (2025) in our experiments and adopt Qwen3-14B as the backbone model.
+
+Compared Methods.
+
+We evaluate LatentMAS-style KV relay in terms of (i) downstream accuracy, and (ii) compression ratio.
+All methods use the same backbone model, prompts, agent-chain configuration, and decoding setup; they differ only in the operator used to compress and relay each agent’s prompt KV states.
+
+•
+
+Full-KV LatentMAS (Full).
+Each agent relays the complete KV cache of the full history (upper bound for accuracy).
+
+•
+
+MAS-H2O (H).
+An importance-based hard-eviction baseline in the spirit of H2O, which allows keep/evict decisions to vary across heads and layers. Zhang et al. (2023)
+Under our dense-cache packing constraint, we compute head-level importance and aggregate it into a single global token ranking shared across heads, then keep the top- prompt states.
+
+•
+
+MAS-H2O + OBF (H-OBF).
+The same head-wise selector as (H), followed by OrthoBackfill injection into the retained prompt values.
+
+•
+
+MAS-H2O (L).
+A layer-wise variant that aggregates attention across heads within each layer to form token importance, then keeps the top- prompt states.
+
+•
+
+MAS-H2O + OBF (L-OBF).
+The same layer-wise selector as (L), followed by OrthoBackfill injection into the retained prompt values.
+
+•
+
+MAS-StreamingLLM (Gen).
+A recency/sink-style baseline that preserves a global attention sink and relays only each agent’s newly generated KV states, discarding local prompt KV for downstream agents. Xiao et al. (2024)
+
+Metrics and KV Budget.
+
+We report accuracy using the standard metric of each benchmark.
+To measure efficiency under a controlled communication budget, we impose a fixed KV token budget on the local prompt states relayed by each agent.
+For each agent-sample pair, we retain at most prompt token positions and transmit the corresponding KV states as a dense cache.
+Because varies across samples, we additionally report the effective retention ratio
+,
+which summarizes the average retained fraction under the fixed budget.
+
+Implementation Details.
+
+We build on the official LatentMAS implementation Zou et al. (2025) and evaluate only the sequential multi-agent setting. We use its default benchmark-specific hyperparameters, including maximum generation lengths: 2,048 tokens for ARC and GSM8K, 4,096 for MedQA and coding tasks, 8,192 for GPQA, and 20,000 for AIME. We use latent steps per agent across all tasks. For all KV-based compression methods except Gen, we fix the relay budget to 32 prompt tokens per agent per round.
+For OBF, we set pca_rank=8.
+All experiments were run in bfloat16 with top-p sampling (, ).
+
+Hardware and computation.
+
+All experiments are conducted on a single NVIDIA RTX PRO 6000 Blackwell. Running the full experimental suite for one seed takes approximately one week.
+
+Method
+GSM8K
+AIME24
+AIME25
+GPQA
+ARC-E
+ARC-C
+MBPP+
+HumanEval+
+MedQA
+
+524/18.3
+663/14.5
+819/11.7
+942/10.2
+496/19.4
+524/18.3
+778/12.3
+828/11.6
+888/10.8
+
+Full
+92.47
+67.78
+53.33
+56.51
+98.62
+95.82
+75.66
+84.55
+77.34
+
+L
+92.01
+68.89
+57.78
+54.48
+98.64
+95.99
+76.20
+82.73
+79.11
+
+L-OBF
+92.57
+71.11
+52.22
+57.19
+98.64
+95.48
+75.04
+81.39
+80.45
+
+H
+91.91
+71.11
+57.78
+57.19
+98.47
+95.65
+76.90
+83.74
+78.38
+
+H-OBF
+91.56
+68.89
+64.44
+56.01
+98.41
+95.76
+77.07
+85.37
+79.78
+
+Gen
+91.10
+66.67
+60.00
+52.62
+98.22
+94.54
+73.28
+81.30
+79.67
+
+Table 1: Qwen3-14B accuracy (%) across datasets. Higher value is better. The row reports total prompt length across rounds and compression ratio, lower value is better. L/L-OBF/H/H-OBF use a relay budget of prompt tokens per round; all methods use latent steps per round. Numbers are averaged over 3 independent runs. Best performances in each run are in bold.
+
+5.2 Results
+
+Across nine benchmarks, our method achieved an average compression ratio of 14.12%, with a maximum compression ratio of 19.4% in reasoning-intensive benchmark ARC-E.
+This suggests that our method effectively and consistently achieves a compression ratio of below 20%.
+
+In all nine benchmarks, at least one of the compression methods outperforms full KV eviction baseline in performance.
+This suggests that our KV compression method not only preserves sufficient latent information to prevent performance drop from compression, but also actively aiding effective information relay.
+Of the best compression methods, OBF further improves performance on 7 of 9 benchmarks, indicating that OBF effectively and consistently delivers performance gain.
+
+6 Discussion
+
+Our results suggest that, in LatentMAS-style relay, effectiveness depends on the usefulness of transmitted KV to the next agent rather than on transmitting more state. Full relay preserves the largest amount of raw prompt state, but it is not consistently the strongest method across benchmarks. Several compressed variants match or exceed Full, which suggests that selective retention can preserve, and sometimes improve, relay quality. One possible explanation is that eviction acts as a form of denoising by removing low-utility or task-irrelevant prompt states and producing a cleaner relay representation for downstream continuation.
+
+A second finding is that OBF-enhanced relay gives the strongest overall accuracy profile, even though its gains are not uniform across all selectors and tasks. Across benchmarks, the best-performing method is most often an OBF-enhanced variant, which suggests that OBF reliably improves the competitiveness of eviction-based relay under LatentMAS constraints. At the same time, its effect is not simply to preserve more information. Instead, OBF appears to make the retained KV more useful after sparsification. The selector determines which states are kept, while OBF helps make those states more usable to the next agent.
+
+The comparison between layer-wise and head-wise selection further suggests that relay granularity matters, but finer-grained selection is not always better. Although head-wise selection is more expressive in principle, it does not consistently outperform the layer-wise variant. Instead, the two selectors show complementary strengths across tasks, and the stronger OBF-enhanced method depends on the underlying selector. This pattern may reflect differences in where task-relevant signal resides in prompt KV. When useful signal is concentrated in specialized heads, head-wise sparsification may help; when it is distributed more broadly, layer-wise aggregation may provide a more stable relay representation. Prior work has shown that attention heads can be functionally specialized across tasks Jo and Myaeng (2020); Li et al. (2023a). Recent KV compression methods have also begun to exploit head-level importance and task-aware adaptation Fu et al. (2024); Taniguchi et al. (2026); Zhou et al. (2025).
+
+Reproducibility Statement
+
+All code to reproduce the experiment results in this paper are openly available at https://github.com/markli404/When-Less-Latent-Leads-to-Better-Relay. All data used in our experiments are open-sourced data at the time of retrieval.
+
+References
+
+[1]
+C. Chan, W. Chen, Y. Su, J. Yu, W. Xue, S. Zhang, J. Fu, and Z. Liu (2023)
+
+ChatEval: towards better llm-based evaluators through multi-agent debate.
+
+External Links: 2308.07201,
+Link
+
+Cited by: §2.
+
+[2]
+W. Chen, J. Yuan, C. Qian, C. Yang, Z. Liu, and M. Sun (2025)
+
+Optima: optimizing effectiveness and efficiency for llm-based multi-agent system.
+
+External Links: 2410.08115,
+Link
+
+Cited by: §1,
+§2.
+
+[3]
+P. Clark, W. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord (2018)
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+
+arXiv preprint arXiv:1803.05457.
+
+External Links: Document,
+Link
+
+Cited by: §5.1.
+
+[4]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman (2021)
+
+Training verifiers to solve math word problems.
+
+arXiv preprint arXiv:2110.14168.
+
+External Links: Document,
+Link
+
+Cited by: §5.1.
+
+[5]
+Y. Du, S. Li, A. Torralba, J. B. Tenenbaum, and I. Mordatch (2023)
+
+Improving factuality and reasoning in language models through multiagent debate.
+
+External Links: 2305.14325,
+Link
+
+Cited by: §2.
+
+[6]
+Y. Fu, Z. Cai, A. Asi, W. Xiong, Y. Dong, and W. Xiao (2024)
+
+Not all heads matter: a head-level kv cache compression method with integrated retrieval and reasoning.
+
+arXiv preprint arXiv:2410.19258.
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+[7]
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian (2025)
+
+Training large language models to reason in a continuous latent space.
+
+External Links: 2412.06769,
+Link
+
+Cited by: §2.
+
+[8]
+S. Hong, M. Zhuge, J. Chen, X. Zheng, Y. Cheng, C. Zhang, J. Wang, Z. Wang, S. K. S. Yau, Z. Lin, L. Zhou, C. Ran, L. Xiao, C. Wu, and J. Schmidhuber (2024)
+
+MetaGPT: meta programming for a multi-agent collaborative framework.
+
+External Links: 2308.00352,
+Link
+
+Cited by: §1,
+§2,
+§2.
+
+[9]
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami (2025)
+
+KVQuant: towards 10 million context length llm inference with kv cache quantization.
+
+External Links: 2401.18079,
+Link
+
+Cited by: §2.
+
+[10]
+J. Huang, X. Chen, S. Mishra, H. S. Zheng, A. W. Yu, X. Song, and D. Zhou (2024)
+
+Large language models cannot self-correct reasoning yet.
+
+External Links: 2310.01798,
+Link
+
+Cited by: §2.
+
+[11]
+D. Jin, E. Pan, N. Oufattole, W. Weng, H. Fang, and P. Szolovits (2021)
+
+What disease does this patient have? a large-scale open domain question answering dataset from medical exams.
+
+Applied Sciences 11 (14), pp. 6421.
+
+External Links: Document,
+Link
+
+Cited by: §5.1.
+
+[12]
+J. Jo and S. Myaeng (2020)
+
+Roles and utilization of attention heads in transformer-based neural language models.
+
+In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, D. Jurafsky, J. Chai, N. Schluter, and J. Tetreault (Eds.),
+
+Online, pp. 3404–3417.
+
+External Links: Link,
+Document
+
+Cited by: §6.
+
+[13]
+C. Li, S. Wang, Y. Zhang, J. Zhang, and C. Zong (2023)
+
+Interpreting and exploiting functional specialization in multi-head attention under multi-task learning.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, H. Bouamor, J. Pino, and K. Bali (Eds.),
+
+Singapore, pp. 16460–16476.
+
+External Links: Link,
+Document
+
+Cited by: §6.
+
+[14]
+G. Li, H. A. A. K. Hammoud, H. Itani, D. Khizbullin, and B. Ghanem (2023)
+
+CAMEL: communicative agents for ”mind” exploration of large language model society.
+
+External Links: 2303.17760,
+Link
+
+Cited by: §1,
+§2,
+§2.
+
+[15]
+T. Liang, Z. He, W. Jiao, X. Wang, Y. Wang, R. Wang, Y. Yang, S. Shi, and Z. Tu (2024)
+
+Encouraging divergent thinking in large language models through multi-agent debate.
+
+External Links: 2305.19118,
+Link
+
+Cited by: §2.
+
+[16]
+J. Liu, C. S. Xia, Y. Wang, and L. Zhang (2023)
+
+Is your code generated by chatgpt really correct? rigorous evaluation of large language models for code generation.
+
+External Links: 2305.01210,
+Link
+
+Cited by: §5.1.
+
+[17]
+Z. Liu, A. Desai, F. Liao, W. Wang, V. Xie, Z. Xu, A. Kyrillidis, and A. Shrivastava (2023)
+
+Scissorhands: exploiting the persistence of importance hypothesis for llm kv cache compression at test time.
+
+External Links: 2305.17118,
+Link
+
+Cited by: §1,
+§2,
+§4.1.
+
+[18]
+MathArena (2025)
+
+AIME 2025.
+
+Note: Hugging Face DatasetsAccessed 2026-02-18
+
+External Links: Link
+
+Cited by: §5.1.
+
+[19]
+Maxwell-Jia (2024)
+
+AIME 2024.
+
+Note: Hugging Face DatasetsAccessed 2026-02-18
+
+External Links: Link
+
+Cited by: §5.1.
+
+[20]
+C. Pham, B. Liu, Y. Yang, Z. Chen, T. Liu, J. Yuan, B. A. Plummer, Z. Wang, and H. Yang (2024)
+
+Let models speak ciphers: multiagent debate through embeddings.
+
+External Links: 2310.06272,
+Link
+
+Cited by: §1,
+§2.
+
+[21]
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman (2023)
+
+GPQA: a graduate-level google-proof q&a benchmark.
+
+arXiv preprint arXiv:2311.12022.
+
+External Links: Document,
+Link
+
+Cited by: §5.1.
+
+[22]
+H. Tang, Y. Lin, J. Lin, Q. Han, S. Hong, Y. Yao, and G. Wang (2024)
+
+RazorAttention: efficient kv cache compression through retrieval heads.
+
+External Links: 2407.15891,
+Document,
+Link
+
+Cited by: §2.
+
+[23]
+Y. Tang, W. Su, Y. Zhou, Y. Liu, M. Zhang, S. Ma, and Q. Ai (2025)
+
+Augmenting multi-agent communication with state delta trajectory.
+
+External Links: 2506.19209,
+Link
+
+Cited by: §1,
+§2.
+
+[24]
+R. Taniguchi, Y. Dong, M. Onizuka, and C. Xiao (2026)
+
+Adaptive layer selection for layer-wise token pruning in llm inference.
+
+arXiv preprint arXiv:2601.07667.
+
+External Links: Document,
+Link
+
+Cited by: §6.
+
+[25]
+Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S. Zhang, J. Liu, A. H. Awadallah, R. W. White, D. Burger, and C. Wang (2023)
+
+AutoGen: enabling next-gen llm applications via multi-agent conversation.
+
+External Links: 2308.08155,
+Link
+
+Cited by: §2.
+
+[26]
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis (2024)
+
+Efficient streaming language models with attention sinks.
+
+External Links: 2309.17453,
+Link
+
+Cited by: §1,
+§2,
+§4.1,
+6th item.
+
+[27]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu (2025)
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §5.1.
+
+[28]
+J. Yuan, Z. He, H. Bai, J. Leng, and B. Jiang (2025)
+
+WeightedKV: attention scores weighted key-value cache merging for large language models.
+
+External Links: 2503.01330,
+Link
+
+Cited by: §2.
+
+[29]
+Y. Zhang, Y. Du, G. Luo, Y. Zhong, Z. Zhang, S. Liu, and R. Ji (2024)
+
+CaM: cache merging for memory-efficient LLMs inference.
+
+In Proceedings of the 41st International Conference on Machine Learning, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 235, pp. 58840–58850.
+
+External Links: Link
+
+Cited by: §2.
+
+[30]
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, Z. Wang, and B. Chen (2023)
+
+Ho: heavy-hitter oracle for efficient generative inference of large language models.
+
+External Links: 2306.14048,
+Link
+
+Cited by: §1,
+§2,
+§4.1,
+§4.2.2,
+2nd item.
+
+[31]
+D. Zhou, N. Schärli, L. Hou, J. Wei, N. Scales, X. Wang, D. Schuurmans, C. Cui, O. Bousquet, Q. Le, and E. Chi (2023)
+
+Least-to-most prompting enables complex reasoning in large language models.
+
+External Links: 2205.10625,
+Link
+
+Cited by: §2.
+
+[32]
+X. Zhou, W. Wang, M. Zeng, J. Guo, X. Liu, L. Shen, M. Zhang, and L. Ding (2025)
+
+DynamicKV: task-aware adaptive kv cache compression for long context llms.
+
+External Links: 2412.14838,
+Link
+
+Cited by: §6.
+
+[33]
+J. Zou, X. Yang, R. Qiu, G. Li, K. Tieu, P. Lu, K. Shen, H. Tong, Y. Choi, J. He, J. Zou, M. Wang, and L. Yang (2025)
+
+Latent collaboration in multi-agent systems.
+
+External Links: 2511.20639,
+Link
+
+Cited by: §1,
+§2,
+§5.1,
+§5.1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

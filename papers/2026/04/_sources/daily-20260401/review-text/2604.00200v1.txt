@@ -1,0 +1,1246 @@
+Offline Constrained RLHF with Multiple Preference Oracles
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Formulation
+
+4 Analysis
+
+4.1 Reward Estimation
+
+4.2 Dual Problem Analysis
+
+5 Algorithm
+
+6 Simulation
+
+7 Extensions
+
+7.1 Multiple Constrained Oracles
+
+7.2 General Divergence
+
+8 Conclusion and Future Work
+
+References
+
+A Synthetic Experiments
+
+B Proofs
+
+B.1 Proof of Corollary 
+
+B.2 Proof of Lemma 
+
+B.3 Proof of Lemma 
+
+B.4 Proof of Lemma 
+
+B.5 Proof of Proposition 
+
+B.6 Proof of Theorem 
+
+B.7 Proof of Theorem 
+
+B.8 Proof of Proposition 
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.00200v1 [cs.LG] 31 Mar 2026
+
+Offline Constrained RLHF with Multiple Preference Oracles
+
+Brenden Latham
+
+  
+Mehrdad Moharrami
+††thanks:
+B. Latham is a student in the Computer Science Department, University of Iowa, Iowa City, IA, USA, brenden-latham@uiowa.edu.
+M. Moharrami is with Computer Science Department, University of Iowa, Iowa City, IA, USA, mehrdad-moharrami@uiowa.edu.
+
+August 24, 2026
+
+Abstract
+
+We study offline constrained reinforcement learning from human feedback with multiple preference oracles. Motivated by applications that trade off performance with safety or fairness, we aim to maximize target population utility subject to a minimum protected group welfare constraint. From pairwise comparisons collected under a reference policy, we estimate oracle‑specific rewards via maximum likelihood and analyze how statistical uncertainty propagates through the dual program. We cast the constrained objective as a KL-regularized Lagrangian whose primal optimizer is a Gibbs policy, reducing learning to a convex dual problem. We propose a dual‑only algorithm that ensures high‑probability constraint satisfaction and provide the first finite‑sample performance guarantees for offline constrained preference learning. Finally, we extend our theoretical analysis to accommodate multiple constraints and general -divergence regularization.
+
+1 Introduction
+
+Table 1: Comparison of RLHF methods.
+
+Method
+Objective
+Setting
+Guarantees
+Constraint Type
+
+Chakraborty et al. (2024b)
+Max-Min Welfare
+Online
+Asymptotic/None
+Unconstrained
+
+Ramesh et al. (2024)
+Robust Utility
+Offline
+None
+Robustness Penalty
+
+Ge et al. (2024)
+Social Choice
+Theoretical
+Axiomatic
+N/A
+
+Dai et al. (2024)
+Lagrangian PPO
+Online
+Empirical
+Soft (Lagrangian)
+
+Zhou et al. (2024)
+Scalarization
+Online
+Empirical
+Pareto
+
+Ours
+Constrained RL
+Offline
+Finite-sample
+Hard (Certified)
+
+Reinforcement Learning from Human Feedback (RLHF) has quickly become the dominant practical strategy for aligning powerful AI systems with human values when direct reward engineering is infeasible or brittle. Early preference-based RL works established that effective control policies can be recovered from comparative human judgments alone (Jain et al., 2015; Busa-Fekete et al., 2014; Daniel et al., 2015; Wirth et al., 2016), and subsequent deep-RL methods demonstrated that reward models trained on pairwise feedback routinely outperform hand-designed objectives in complex domains such as games and robotics (Christiano et al., 2017). The same feedback-driven paradigm transformed language-model alignment: approaches like preference-guided PPO (Ziegler et al., 2020), recursive reward modeling (Wu et al., 2021), and instruction-tuned systems such as InstructGPT (Ouyang et al., 2022) materially improved helpfulness, safety, and factuality. These striking empirical gains have motivated a fast-growing theoretical literature that seeks to formalize when and why RLHF works, and to quantify its statistical and computational limits (Xiong et al., 2024; Ji et al., 2025; Kaufmann et al., 2024).
+
+Theoretical progress began with Novoseller et al. (2020), who framed learning from trajectory comparisons as a regret-minimization problem solved via Dueling Posterior Sampling. Follow-up methods — PPS and PEPS (Xu et al., 2020), PR-LSVI (Wu and Sun, 2024), and PARL (Chakraborty et al., 2024a) — provided regret bounds and convergence guarantees. Other contributions extended the model of feedback and dynamics (Chen et al., 2022), derived minimax regret rates (Saha et al., 2023), and analyzed policy optimization under linear and neural approximations (Du et al., 2024). Work has also broadened feedback models (Zhu et al., 2023; Zhan et al., 2024), developed interactive and feedback-efficient protocols (Kong and Yang, 2022), and given off-policy, privacy-preserving, and reduction-based results (Li et al., 2023; Chowdhury and Zhou, 2023; Wang et al., 2023). Most recently, researchers have sharpened safety and robustness guarantees, producing high-confidence constraint satisfaction and provable convergence under unknown preference mappings (Chittepu et al., 2025; Zhang and Ying, 2025).
+
+Despite this progress, existing analyses predominantly assume a single Oracle governing preferences. Real-world deployments commonly require simultaneously optimizing multiple, potentially competing objectives (Zhou et al., 2024): maximizing utility for a primary user population while guaranteeing that protected groups meet a prespecified welfare floor. Such multi-objective alignment is critical for fairness (e.g., avoiding cultural misappropriation or disparate impacts across demographics) (Siddique et al., 2023), for legal compliance with open-textured norms like the European Convention on Human Rights (Botskina, 2025), and for safety-critical systems that must remain inside formally certified envelopes (Dai et al., 2024). These practical needs naturally lead to a constrained-RLHF formulation. While our framework handles arbitrary constraint sets, we present the canonical two-oracle case for clarity and notational simplicity (extensions in Section 7):
+
+where captures primary-user utility, measures protected-group welfare, is a reference policy, is the required minimum for the protected group, and trades off utility against deviation from .
+
+This theoretical analysis distinguishes our approach from recent work on fairness and robustness in RLHF (Table 1). While Chakraborty et al. (2024b) address fairness via an unconstrained max-min welfare objective across groups, their dynamic reward reweighting lacks strict safety guarantees. Similarly, the distributionally robust approach of Ramesh et al. (2024) optimizes against uncertainty sets to handle data shifts, which differs from the explicit, certified feasibility required for legal compliance. Furthermore, while Ge et al. (2024) provide axiomatic foundations for aggregate preferences, they offer no algorithmic or finite-sample analysis. Our setting is most closely aligned with Lagrangian-based systems like Safe RLHF (Dai et al., 2024) and multi-objective formulations (Zhou et al., 2024). However, while prior work emphasizes the empirical viability of online PPO-based tuning, we establish the first rigorous theoretical framework and finite-sample guarantees necessary for reliable offline deployment, providing a foundation that naturally extends to multiple constraints and divergence regularization.
+
+In this paper, we investigate constrained RLHF in the offline setting, where the learner receives a fixed batch of preference data consisting of paired comparisons annotated by both the primary and the protected populations. The learner must synthesize a policy without any further environment interaction. Our main contributions are:
+
+•
+
+We present the first formal treatment of constrained RLHF with multiple reward oracles, integrating preference-based reward estimation and constraint satisfaction into a unified framework.
+
+•
+
+We design a dual-only algorithm that jointly optimizes the policy and Lagrange multiplier, using reward estimates inferred from offline pairwise comparisons provided by both oracles.
+
+•
+
+We provide non-asymptotic, sample-dependent and sample-independent guarantees showing how dataset coverage governs the optimality gap and constraint violation of the learned policy.
+
+•
+
+We show the generality of our approach by extending our bounds to multiple constraints and general
+-divergence regularization.
+
+To the best of our knowledge, this work is the first to establish finite‑sample guarantees for constrained RLHF with multiple reward oracles in the offline setting.
+
+2 Related Work
+
+We survey literature across three axes: theoretical RLHF, constrained RL, and the emerging intersection of alignment and safety, highlighting the gap addressed by our study.
+
+RLHF:
+Theoretical guarantees for RLHF have matured in online (Novoseller et al., 2020; Saha et al., 2023) and offline regimes following empirical successes in robotics (Christiano et al., 2017) and LLMs (Ouyang et al., 2022). In the offline regime, Zhu et al. (2023) provided the first finite-sample guarantees for policies trained via maximum likelihood estimation under the Bradley–Terry model with linear rewards (Bradley and Terry, 1952). Building on this, Zhan et al. (2024) introduced the FREEHAND algorithm, which generalizes earlier approaches by allowing a broader class of reward functions and feedback models. Li et al. (2023) provided the first off-policy analysis for offline RLHF via the DCPPO algorithm. Zhu et al. (2024) addressed overfitting and overoptimization in reward learning and proposed the IDS algorithm for improved robustness. Chowdhury and Zhou (2023) studied privacy-preserving reward learning in preference-based RL. Wang et al. (2023) presented reduction-based approaches that adapt reward-based RL algorithms to the RLHF setting, showing how theoretical guarantees transfer. Zhou et al. (2025) unified the analysis of privacy and robustness in offline RLHF.
+
+Constraint RL: Constrained RL historically traces back to CMDP formulations (Kolesar, 1970; Ross, 1989; Altman, 1999). Foundational optimization ideas such as Lagrangian relaxation (Everett, 1963; Shapiro, 1979) and primal-dual updates (Altman, 1998; Efroni et al., 2020; Bertsekas, 2016) motivated algorithms that embed multipliers directly into RL procedures (Zheng and Ratliff, 2020; Ding et al., 2020; Ying et al., 2022). In the offline setting, rigorous guarantees are now available for primal–dual critic methods (Hong et al., 2024), LP-based algorithms under partial coverage (Hong and Tewari, 2025), and multi-constraint primal policy optimization (Guan et al., 2024).
+
+Alignment and Fairness: Work in this area includes axiomatic treatments (Ge et al., 2024), max–min welfare (Chakraborty et al., 2024b), and group-robustness via uncertainty sets (Ramesh et al., 2024), while practical methods use multi-objective DPO (Zhou et al., 2024) or Lagrangian PPO-style tuning (Dai et al., 2024). These primarily emphasize empirical results or axioms; we complement them by providing the first high-confidence, finite-sample analysis for constrained offline RLHF.
+
+3 Formulation
+
+In this section, we present the problem formulation. We extend the standard preference-based RLHF setup (Ouyang et al., 2022; Xiong et al., 2024) to the constrained setting. Let be the finite prompt space and the finite response space. A prompt is first sampled from a fixed distribution . Conditional on , two independent responses from the reference policy are produced. Feedback is then collected from two human-preference oracles: a target-population oracle and a protected-group oracle . Each oracle’s binary preference, following the Bradley–Terry model, is modeled as a Bernoulli random variable whose success probability is given by a logistic function of the latent reward gap:
+
+for where is unknown reward function for oracle and is the logistic link. Specifically, indicates that oracle prefers action over action , denoted as .
+
+We operate in the offline setting, where the learner has access to a dataset
+
+consisting of prompts, response pairs, and corresponding binary preferences. Each tuple is drawn i.i.d. from the distribution . For each triplet, the preferences are sampled from the two oracles and . More specifically,
+
+The learner seeks a policy that maximizes the expected reward of the target population, remains sufficiently close to a reference policy , and ensures a minimum level of welfare for the protected group. Here, denotes the set of all probability distributions over the response set . Formally, the goal is to solve the following constrained optimization problem:
+
+s.t. 
+
+where denotes the set of all policies , denotes the minimum acceptable reward for the protected group, and controls the trade-off between utility and divergence from the reference policy. Here, we restrict our formulation to one protected group and defer the generalization to Section 7. For notational convenience, we rewrite the problem in abstract form:
+
+(1)
+
+where denotes the regularized target reward objective, and
+
+is the constraint function. Throughout the paper we adopt the shorthand notation
+
+unless stated otherwise.
+
+Following Xiong et al. (2024); Zhu et al. (2023), we impose the following assumptions on the reference policy and the reward functions.
+
+Assumption 1 (Full coverage).
+
+For every , the reference policy has full support over the finite action space .
+
+Assumption 2 (Linear reward).
+
+For each , the latent reward is assumed to be linear in a known feature map , i.e.,
+with for all and .
+
+Assumption 3 (Identifiability).
+
+Let and define the population
+difference covariance matrix We assume that , or equivalently,
+so that for is uniquely identifiable from pairwise comparisons.
+
+Notice that the identifiability assumption is necessary for the uniqueness of . Without it, there exists a nonzero vector such that
+, for all and In that case, the likelihood is invariant along the ray for , so the solution set for is an affine line rather than a point.
+
+4 Analysis
+
+In this section, we analyze the constrained optimization problem introduced above. First, using the offline preference dataset , we obtain maximum-likelihood estimators and of the latent reward functions and . We then construct the corresponding Lagrangian, derive the associated dual problem, and verify the convexity conditions required for strong duality.
+
+4.1 Reward Estimation
+
+Under Assumptions 2 and 3, given , the log-likelihood of the preferences collected from oracle is given by
+
+where the individual sample log-likelihood is
+and represents the feature difference vector. Maximizing the individual log‐likelihoods for each yields the maximum-likelihood estimators . By Lemma 3.1 of Zhu et al. (2023), the in-sample estimation error satisfies, with probability at least for every ,
+
+where denotes the Mahalanobis norm induced by the regularized empirical covariance matrix with
+
+Here is the feature dimension, is an upper bound on the norm of the reward parameters, is the regularization parameter, reflects the curvature of the logistic likelihood, and is a problem dependent constant.
+
+We derive our guarantees by employing separate MLEs for each oracle. While we omit explicit modeling of oracle correlations for simplicity, our analysis ensures that the stated convergence rates remain agnostic to the underlying dependence. However, when such structure is known to exist, jointly maximizing the likelihood of the preferences from both oracles could improve the error constants and reduce estimator variance relative to the baseline treatment, while maintaining the same convergence rate. We leave this extension for future work.
+
+4.2 Dual Problem Analysis
+
+Let be the Lagrangian of the constrained problem (1). We have
+
+The dual problem is therefore
+
+Observe that the set of all policies is a convex set. Moreover, for every , the KL-divergence is strictly convex in . Hence, the primal problem is a strictly concave maximization with an affine constraint, and under Slater’s condition, the strong duality holds.
+
+Assumption 4 (Slater’s condition).
+
+There exists a policy and a slack such that
+
+Slater’s condition can be verified using the greedy policy for . With the estimate , the slack can be approximated with high probability, since with probability at least we have Thus, if is sufficiently small, the slack can be estimated using
+where is the greedy policy for .
+
+Corollary 1.
+
+Let be the greedy policy w.r.t., i.e., With probability at least ,
+
+Hence, if the right-hand side is strictly larger than , Assumption 4 holds with slack
+
+This estimate can be used to bound the optimal dual parameter. Since is strictly concave and the feasible set is convex, the constrained problem admits a unique optimal policy .
+
+Consider the dual function . By standard results for KL-regularized objectives (e.g., Zhang (2023)), the maximizer has the Gibbs (Boltzmann) form
+
+where is the normalizing constant, also referred to as the partition function. Having a closed-form solution to the dual problem enables an efficient dual-only algorithm. Following Xiong et al. (2024), we assume access to a “Policy Improvement Oracle”.
+
+Definition 1 (Policy Improvement Oracle (Xiong et al., 2024)).
+
+For reward function and a reference policy , for all , we can compute the Gibbs policy:
+
+Next, we analyze the properties of the dual function . By the envelope theorem, we have
+
+Since belongs to an exponential family, its mean parameter is Lipschitz continuous given boundedness of its sufficient statistics. Consequently, the derivative of the dual function is Lipschitz continuous (Wainwright and Jordan, 2007; Brown, 1986).
+
+Lemma 1.
+
+The derivative is Lipschitz continuous with Lipschitz constant .
+
+The same properties also hold for the empirical dual function , where denotes the Lagrangian of the primal problem (1) with the true parameters and replaced by their statistical estimates. In this case, is replaced in the proof by , the policy that attains the maximum in . Next, we quantify the gap between and , as well as their derivatives, in terms of the estimation errors of , , and the regularized sample covariance matrix. These bounds make explicit how statistical uncertainty propagates through the dual program.
+
+Lemma 2.
+
+For any we have with probability at least , we have
+
+where is the smallest eigenvalue of regularized sample covariance matrix.
+
+The bounds above yield practical, data–dependent upper bound on the accuracy of estimating and its derivative. To decouple these guarantees from a particular sample, note that by the law of large numbers. Moreover, standard covariance concentration for bounded feature differences implies that is small with high probability, where denotes the operator norm. Using this, the following proposition provides a high–probability, sample–independent change–of–norm relations.
+
+Lemma 3.
+
+With probability at least , the following bounds hold for any :
+
+Here and quantify the deviation of the smallest and largest eigenvalues of from their asymptotic counterparts, respectively, and are given by
+
+The error terms are
+
+Combining Lemma 3 with Lemma 2 and
+using the norm equivalences to replace sample–dependent spectral terms by
+population–level quantities yields the following: with probability at least we have
+
+For brevity, we define the value and derivative error envelopes and . Depending on the use case, these envelopes may represent either the data-dependent or the data-independent versions:
+
+Finally, since is –Lipschitz with , these envelopes can be extended uniformly over via a standard –net argument.
+
+Next, we establish convexity properties of ; the same conclusions apply to with the parameter replaced by defined analogously. As in Lemma 1, one can further bound the difference between and .
+
+Proposition 1.
+
+Under the standing assumptions, the dual function is –strongly convex on where
+
+With these properties in place, we can now present the main result of this section.
+
+Theorem 1.
+
+Under the standing assumptions, let denote the optimal primal policy that solves the primal problem (1), and let
+Then . Moreover, admits the following upper bounds:
+
+Deterministic bound. Let be as in Assumption 2, and let and be as in Assumption 4. Define We have
+
+Data–driven bound.
+Let be as in Assumption 2, and let and be as in Corollary 4. Define Then, with probability at least ,
+
+where is defined analogously to but with and replaced by their estimates.
+
+5 Algorithm
+
+We now present our dual-only algorithm for solving the constrained RLHF problem. Our approach exploits the closed-form solution of the KL-regularized objective to reduce the constrained optimization to a one-dimensional convex problem over the dual variable. The unique Gibbs form of the optimal policy eliminates the need for complex primal-dual iterations. Instead, we minimize the dual via projected gradient descent on a high-probability domain for . With MLEs and a step size (from the Lipschitz constant of ), the algorithm outputs an approximately optimal dual parameter that induces the corresponding Gibbs policy. Each iteration of the algorithm performs three steps: (i) form the current Gibbs policy, (ii) estimate the dual gradient, and (iii) take a projected gradient step, ensuring remains in the range where our guarantees apply.
+
+Algorithm 1 Projected Gradient Descent (Dual)
+
+0:
+
+ MLEs from ; step size ; constraint level ; projection radius ; iterations
+
+0:
+
+ Approximate dual minimizer
+
+1:
+
+ Initialize
+
+2:
+
+ for to do
+
+3:
+
+  Policy Optimization:
+
+4:
+
+  Gradient Estimation:
+
+5:
+
+  Projected Gradient Descent:
+
+6:
+
+ end for
+
+7:
+
+ Return:
+
+Theorem 2.
+
+Under the standing assumptions, Algorithm 1, with projection radius chosen as in Theorem 1 and step size , yields:
+
+with probability inherited from choice of .
+
+The explicit finite-sample bounds in Theorem 2 demonstrate a trade-off between statistical error and optimization error . In practice, should be chosen so that the optimization error matches the statistical error, yielding a balanced trade-off among estimation accuracy, data coverage, constraint slack, and algorithmic complexity.
+
+6 Simulation
+
+We employ the PKU-SafeRLHF dataset (Ji et al., 2024), which comprises approximately training and test examples. The data is structured as tuples of (prompt, response0, response, safer, better), where prompts originate from diverse sources and responses are generated by Alpaca-7B, Alpaca2-7B, or Alpaca3-8B. The binary labels indicate human preferences regarding safety and helpfulness. We process the text by concatenating the prompt and response, encoding the sequence with Sentence-BERT (all-mpnet-base-v2) (Reimers and Gurevych, 2019), and L2-normalizing each feature vector to satisfy , as required by Assumption 2. We estimate the reward parameters via regularized Bradley-Terry maximum likelihood, optimized using L-BFGS-B with .
+
+To construct the reference policy , we generate forward passes using Alpaca-7B (Taori et al., 2023) for each response pair. For every prompt and response, we compute the log-likelihood , which is normalized by the response length to account for token variation. Using the normalized log-likelihoods and , we derive the policy probabilities via log-sum-exp normalization for numerical stability:
+
+yielding for . This establishes a per-example reference distribution based on the pre-alignment behavior of Alpaca-7B. We then calibrate the constraint threshold as , requiring the learned policy to bridge of the gap in helpfulness reward. Finally, we implement Algorithm 1 with , projection radius , and iterations. To address the high-dimensional feature space and small normalized rewards, we employ an adaptive step size that scales with the distance to the constraint boundary:
+
+where is a monotone increasing multiplier function of the constraint gap, ranging from to . We set as a regularization constant and cap the maximum step size at . Although this adaptive approach deviates from the theoretical step size , it substantially accelerates convergence in practice. Throughout the process, we track both the instantaneous dual variable and the time-averaged value , utilizing the latter to define the final policy as prescribed by theory.As shown in Figure 1(a), the constraint violation decays rapidly, with similar convergence observed for and . This acceleration is primarily driven by our adaptive step size; while theoretical guarantees hold with the standard , the adaptive method is often more practical for application.
+
+As illustrated in Figure 2, the optimization process fundamentally alters the decision boundary. Whereas remains indecisive (uniform) restricted to the dataset responses, adopts a decisive, near-deterministic stance. Furthermore, Figure 1(b) validates the accuracy of this shift. We observe a strong correlation between the direction of the probability shift and the reward differential: the policy consistently concentrates weight on Response 0 or Response 1 roughly in proportion to their relative reward advantage.
+
+Figure 2 shows that the reference policy remains largely indifferent between response options, with probabilities concentrated near . In contrast, the optimized policy exhibits substantial probability reallocation, frequently pushing mass toward extreme values and yielding more decisive choices. This behavior is directionally aligned with the learned reward signals: as shown in Figure 1(b), when the estimated reward difference favors a particular response, consistently shifts probability toward that response. These shifts are reflected in the quantitative results in Table 2, where the optimized policy attains markedly fewer violations while maintaining competitive safety.
+
+To demonstrate the practical behavior of the algorithm when using the basic step size , we include supplementary simulations on synthetic data in Appendix A.
+
+(a) Constraint violation
+
+(b) Policy shift v.s. reward difference
+
+Figure 1:
+
+Figure 2: Policy shift
+
+Table 2: Performance comparison on PKU-SafeRLHF dataset
+
+Training (74k)
+Test (7k)
+
+Metric
+
+Safety
+-1.8997
+-1.6034
+-1.6044
+
+Helpfulness
+-0.8867
+-0.6479
+-0.6287
+
+Violation
+0.2394
+0.0006
+0.0000
+
+Parameters: , ,
+
+7 Extensions
+
+7.1 Multiple Constrained Oracles
+
+This work readily extends to the setting of constrained oracles. The Lagrangian becomes and all theoretical results extend with dependence in error bounds. Algorithm  1 becomes projected gradient descent in with iteration complexity reflecting this. This is a consequence of our MLE rates holding under arbitrary dependence. The log-likelihood for oracle is and we maintain that with probability at least for every ,
+
+The optimal policy similarly remains of the form
+
+From this note how the bounds in Lemma 2 rely only on the individual MLE concentrations, and all later results hold with their analogues.
+
+7.2 General Divergence
+
+Our dual reduction with closed-form policy extends to any -divergence where the regularized objective admits a closed form KKT characterization. Specifically we have the following proposition.
+
+Proposition 2.
+
+Let previous assumptions hold and consider an divergence where is strictly convex on , differentiable on , and . Then under regularization the optimal policy takes the form
+
+for .
+
+An immediate consequence of the proposition above is that for the Pearson -divergence and the -divergence (), the optimal policy takes the following forms:
+
+The KL divergence (corresponding to the limit ) is the most common choice in RLHF, which is why we focus on it in the main text. However, analogous forms exist for other common choices of satisfying our assumptions. Given these explicit forms for the optimal policy, the analysis presented in Lemma 1 and Proposition 1 extends to the general -divergence setting.
+
+8 Conclusion and Future Work
+
+We proposed and analyzed a dual-only approach for offline constrained RLHF with multiple preference oracles: after MLE reward estimation from pairwise data, the KL-regularized primal admits a closed-form Gibbs policy and learning reduces to convex optimization in the dual. We provided the first finite-sample bounds in this setting, separating statistical error (, driven by coverage) from optimization error (), and gave data-dependent certificates for the dual radius and constraint satisfaction. Empirically, synthetic simulations and experiments on PKU-SafeRLHF align with the theory: the learned Gibbs policy achieves near-zero constraint violation on test data while improving target-group reward, and an adaptive step-size accelerates convergence without undermining final feasibility. As future work, we aim to extend our results to richer preference models, exploit cross-oracle dependence via joint estimation, and develop online constrained RLHF.
+
+References
+
+Altman (1998)
+E. Altman
+
+Constrained markov decision processes with total cost criteria: lagrangian approach and dual linear program.
+
+Mathematical methods of operations research 48, pp. 387–417.
+
+Cited by: §2.
+
+Altman (1999)
+E. Altman
+
+Constrained markov decision processes.
+
+Chapman & Hall/CRC.
+
+Cited by: §2.
+
+Bertsekas (2016)
+D. P. Bertsekas
+
+Nonlinear programming.
+
+3rd edition, Athena Scientific.
+
+Cited by: §2.
+
+Botskina (2025)
+T. Botskina
+
+Do language models understand discrimination? testing alignment with human legal reasoning under the ECHR.
+
+In 2nd Workshop on Models of Human Feedback for AI Alignment,
+
+Cited by: §1.
+
+Bradley and Terry (1952)
+R. A. Bradley and M. E. Terry
+
+Rank analysis of incomplete block designs: i. the method of paired comparisons.
+
+Biometrika 39 (3/4), pp. 324–345.
+
+External Links: ISSN 00063444, 14643510
+
+Cited by: §2.
+
+Brown (1986)
+L. D. Brown
+
+Fundamentals of statistical exponential families with applications in statistical decision theory.
+
+SPIE (en).
+
+External Links: Document
+
+Cited by: §4.2.
+
+Busa-Fekete et al. (2014)
+R. Busa-Fekete, B. Szörényi, P. Weng, W. Cheng, and E. Hüllermeier
+
+Preference-based reinforcement learning: evolutionary direct policy search using a preference-based racing algorithm.
+
+Machine Learning 97 (3), pp. 327–351.
+
+External Links: Document,
+ISSN 1573-0565
+
+Cited by: §1.
+
+Chakraborty et al. (2024a)
+S. Chakraborty, A. Bedi, A. Koppel, H. Wang, D. Manocha, M. Wang, and F. Huang
+
+PARL: a unified framework for policy alignment in reinforcement learning from human feedback.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §1.
+
+Chakraborty et al. (2024b)
+S. Chakraborty, J. Qiu, H. Yuan, A. Koppel, D. Manocha, F. Huang, A. Bedi, and M. Wang
+
+MaxMin-RLHF: alignment with diverse human preferences.
+
+In Proceedings of the 41st International Conference on Machine Learning, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 235, pp. 6116–6135.
+
+Cited by: Table 1,
+§1,
+§2.
+
+Chen et al. (2022)
+X. Chen, H. Zhong, Z. Yang, Z. Wang, and L. Wang
+
+Human-in-the-loop: provably efficient preference-based reinforcement learning with general function approximation.
+
+In International Conference on Machine Learning,
+
+pp. 3773–3793.
+
+Cited by: §1.
+
+Chittepu et al. (2025)
+Y. Chittepu, B. Metevier, W. Schwarzer, S. Niekum, and P. S. Thomas
+
+Reinforcement learning from human feedback with high-confidence safety guarantees.
+
+In Reinforcement Learning Conference,
+
+Cited by: §1.
+
+Chowdhury and Zhou (2023)
+S. R. Chowdhury and X. Zhou
+
+Differentially private reward estimation from preference based feedback.
+
+In ICML 2023 Workshop The Many Facets of Preference-Based Learning,
+
+Cited by: §1,
+§2.
+
+Christiano et al. (2017)
+P. F. Christiano, J. Leike, T. B. Brown, M. Martic, S. Legg, and D. Amodei
+
+Deep reinforcement learning from human preferences.
+
+In Proceedings of the 31st International Conference on Neural Information Processing Systems,
+
+NIPS’17, Red Hook, NY, USA, pp. 4302–4310.
+
+External Links: ISBN 9781510860964
+
+Cited by: §1,
+§2.
+
+Dai et al. (2024)
+J. Dai, X. Pan, R. Sun, J. Ji, X. Xu, M. Liu, Y. Wang, and Y. Yang
+
+Safe RLHF: safe reinforcement learning from human feedback.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: Table 1,
+§1,
+§1,
+§2.
+
+Daniel et al. (2015)
+C. Daniel, O. Kroemer, M. Viering, J. Metz, and G. Neumann
+
+Active reward learning with a novel acquisition function.
+
+Autonomous Robots 39 (3), pp. 389–405.
+
+External Links: Document,
+ISSN 1573-7527
+
+Cited by: §1.
+
+Ding et al. (2020)
+D. Ding, K. Zhang, T. Basar, and M. Jovanovic
+
+Natural policy gradient primal-dual method for constrained markov decision processes.
+
+In Advances in Neural Information Processing Systems, H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (Eds.),
+
+Vol. 33, pp. 8378–8390.
+
+Cited by: §2.
+
+Du et al. (2024)
+Y. Du, A. Winnicki, G. Dalal, S. Mannor, and R. Srikant
+
+Exploration-driven policy optimization in rlhf: theoretical insights on efficient data utilization.
+
+In Forty-first International Conference on Machine Learning,
+
+Cited by: §1.
+
+Efroni et al. (2020)
+Y. Efroni, S. Mannor, and M. Pirotta
+
+Exploration-exploitation in constrained mdps.
+
+arXiv preprint arXiv:2003.02189.
+
+Cited by: §2.
+
+Everett (1963)
+H. Everett
+
+Generalized lagrange multiplier method for solving problems of optimum allocation of resources.
+
+Oper. Res. 11 (3), pp. 399–417.
+
+External Links: ISSN 0030-364X
+
+Cited by: §2.
+
+Ge et al. (2024)
+L. Ge, D. Halpern, E. Micha, A. D. Procaccia, I. Shapira, Y. Vorobeychik, and J. Wu
+
+Axioms for ai alignment from human feedback.
+
+In Advances in Neural Information Processing Systems, A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.),
+
+Vol. 37, pp. 80439–80465.
+
+External Links: Document
+
+Cited by: Table 1,
+§1,
+§2.
+
+Guan et al. (2024)
+J. Guan, L. Shen, A. Zhou, L. Li, H. Hu, X. He, G. Chen, and C. Jiang
+
+POCE: primal policy optimization with conservative estimation for multi-constraint offline reinforcement learning.
+
+In 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+
+Vol. , pp. 26233–26243.
+
+External Links: Document
+
+Cited by: §2.
+
+Hong et al. (2024)
+K. Hong, Y. Li, and A. Tewari
+
+A primal-dual-critic algorithm for offline constrained reinforcement learning.
+
+In International conference on artificial intelligence and statistics,
+
+pp. 280–288.
+
+Cited by: §2.
+
+Hong and Tewari (2025)
+K. Hong and A. Tewari
+
+Offline constrained reinforcement learning under partial data coverage.
+
+External Links: 2505.17506
+
+Cited by: §2.
+
+Jain et al. (2015)
+A. Jain, S. Sharma, T. Joachims, and A. Saxena
+
+Learning preferences for manipulation tasks from online coactive feedback.
+
+Int. J. Rob. Res. 34 (10), pp. 1296–1313.
+
+External Links: ISSN 0278-3649,
+Document
+
+Cited by: §1.
+
+Ji et al. (2024)
+J. Ji, M. Liu, J. Dai, X. Pan, C. Zhang, C. Bian, B. Chen, R. Sun, Y. Wang, and Y. Yang
+
+Beavertails: towards improved safety alignment of llm via a human-preference dataset.
+
+Advances in Neural Information Processing Systems 36.
+
+Cited by: §6.
+
+Ji et al. (2025)
+J. Ji, T. Qiu, B. Chen, B. Zhang, H. Lou, K. Wang, Y. Duan, Z. He, L. Vierling, D. Hong, J. Zhou, Z. Zhang, F. Zeng, J. Dai, X. Pan, K. Y. Ng, A. O’Gara, H. Xu, B. Tse, J. Fu, S. McAleer, Y. Yang, Y. Wang, S. Zhu, Y. Guo, and W. Gao
+
+AI alignment: a comprehensive survey.
+
+External Links: 2310.19852
+
+Cited by: §1.
+
+Kaufmann et al. (2024)
+T. Kaufmann, P. Weng, V. Bengs, and E. Hüllermeier
+
+A survey of reinforcement learning from human feedback.
+
+External Links: 2312.14925
+
+Cited by: §1.
+
+Kolesar (1970)
+P. Kolesar
+
+A markovian model for hospital admission scheduling.
+
+Management Science 16 (6), pp. B384–B396.
+
+Cited by: §2.
+
+Kong and Yang (2022)
+D. Kong and L. Yang
+
+Provably feedback-efficient reinforcement learning via active reward learning.
+
+Advances in Neural Information Processing Systems 35, pp. 11063–11078.
+
+Cited by: §1.
+
+Li et al. (2023)
+Z. Li, Z. Yang, and M. Wang
+
+Reinforcement learning with human feedback: learning dynamic choices via pessimism.
+
+External Links: 2305.18438
+
+Cited by: §1,
+§2.
+
+Novoseller et al. (2020)
+E. Novoseller, Y. Wei, Y. Sui, Y. Yue, and J. Burdick
+
+Dueling posterior sampling for preference-based reinforcement learning.
+
+In Proceedings of the 36th Conference on Uncertainty in Artificial Intelligence (UAI), J. Peters and D. Sontag (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 124, pp. 1029–1038.
+
+Cited by: §1,
+§2.
+
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. F. Christiano, J. Leike, and R. Lowe
+
+Training language models to follow instructions with human feedback.
+
+Advances in neural information processing systems 35, pp. 27730–27744.
+
+Cited by: §1,
+§2,
+§3.
+
+Ramesh et al. (2024)
+S. S. Ramesh, Y. Hu, I. Chaimalas, V. Mehta, P. G. Sessa, H. Bou Ammar, and I. Bogunovic
+
+Group robust preference optimization in reward-free rlhf.
+
+In Advances in Neural Information Processing Systems, A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.),
+
+Vol. 37, pp. 37100–37137.
+
+External Links: Document
+
+Cited by: Table 1,
+§1,
+§2.
+
+Reimers and Gurevych (2019)
+N. Reimers and I. Gurevych
+
+Sentence-bert: sentence embeddings using siamese bert-networks.
+
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP),
+
+pp. 3982–3992.
+
+Cited by: §6.
+
+Ross (1989)
+K. W. Ross
+
+Randomized and past-dependent policies for markov decision processes with multiple constraints.
+
+Operations Research 37 (3), pp. 474–477.
+
+Cited by: §2.
+
+Saha et al. (2023)
+A. Saha, A. Pacchiano, and J. Lee
+
+Dueling rl: reinforcement learning with trajectory preferences.
+
+In International Conference on Artificial Intelligence and Statistics,
+
+pp. 6263–6289.
+
+Cited by: §1,
+§2.
+
+Shapiro (1979)
+J. F. Shapiro
+
+Mathematical programming: structures and algorithms.
+
+Wiley.
+
+Cited by: §2.
+
+Siddique et al. (2023)
+U. Siddique, A. Sinha, and Y. Cao
+
+Fairness in preference-based reinforcement learning.
+
+In ICML 2023 Workshop The Many Facets of Preference-Based Learning,
+
+Cited by: §1.
+
+Taori et al. (2023)
+R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. B. Hashimoto
+
+Alpaca: a strong, replicable instruction-following model.
+
+Cited by: §6.
+
+Vershynin (2018)
+R. Vershynin
+
+High-dimensional probability: an introduction with applications in data science.
+
+Cambridge Series in Statistical and Probabilistic Mathematics, Cambridge University Press.
+
+External Links: ISBN 9781108244541
+
+Cited by: §B.4.
+
+Wainwright and Jordan (2007)
+M. J. Wainwright and M. I. Jordan
+
+Graphical Models, Exponential Families, and Variational Inference.
+
+Foundations and Trends® in Machine Learning 1 (1–2), pp. 1–305 (en).
+
+Note: Publisher: Now Publishers
+
+External Links: ISSN 1935-8237, 1935-8245,
+Document
+
+Cited by: §4.2.
+
+Wang et al. (2023)
+Y. Wang, Q. Liu, and C. Jin
+
+Is RLHF more difficult than standard RL? a theoretical perspective.
+
+In Thirty-seventh Conference on Neural Information Processing Systems,
+
+Cited by: §1,
+§2.
+
+Wirth et al. (2016)
+C. Wirth, J. Fürnkranz, and G. Neumann
+
+Model-free preference-based reinforcement learning.
+
+In Proceedings of the Thirtieth AAAI Conference on Artificial Intelligence,
+
+AAAI’16, pp. 2222–2228.
+
+Cited by: §1.
+
+Wu et al. (2021)
+J. Wu, L. Ouyang, D. M. Ziegler, N. Stiennon, R. Lowe, J. Leike, and P. Christiano
+
+Recursively summarizing books with human feedback.
+
+External Links: 2109.10862
+
+Cited by: §1.
+
+Wu and Sun (2024)
+R. Wu and W. Sun
+
+Making RL with preference-based feedback efficient via randomization.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §1.
+
+Xiong et al. (2024)
+W. Xiong, H. Dong, C. Ye, Z. Wang, H. Zhong, H. Ji, N. Jiang, and T. Zhang
+
+Iterative preference learning from human feedback: bridging theory and practice for RLHF under KL-constraint.
+
+In Proceedings of the 41st International Conference on Machine Learning, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 235, pp. 54715–54754.
+
+Cited by: §1,
+§3,
+§3,
+§4.2,
+Definition 1.
+
+Xu et al. (2020)
+Y. Xu, R. Wang, L. Yang, A. Singh, and A. Dubrawski
+
+Preference-based reinforcement learning with finite-time guarantees.
+
+Advances in Neural Information Processing Systems 33, pp. 18784–18794.
+
+Cited by: §1.
+
+Ying et al. (2022)
+D. Ying, Y. Ding, and J. Lavaei
+
+A dual approach to constrained markov decision processes with entropy regularization.
+
+In International Conference on Artificial Intelligence and Statistics,
+
+pp. 1887–1909.
+
+Cited by: §2.
+
+Zhan et al. (2024)
+W. Zhan, M. Uehara, N. Kallus, J. D. Lee, and W. Sun
+
+Provable offline preference-based reinforcement learning.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §1,
+§2.
+
+Zhang and Ying (2025)
+Q. Zhang and L. Ying
+
+Provable reinforcement learning from human feedback with an unknown link function.
+
+External Links: 2506.03066
+
+Cited by: §1.
+
+Zhang (2023)
+T. Zhang
+
+Mathematical analysis of machine learning algorithms.
+
+Cambridge University Press.
+
+Cited by: §4.2.
+
+Zheng and Ratliff (2020)
+L. Zheng and L. Ratliff
+
+Constrained upper confidence reinforcement learning.
+
+In Proceedings of the 2nd Conference on Learning for Dynamics and Control, A. M. Bayen, A. Jadbabaie, G. Pappas, P. A. Parrilo, B. Recht, C. Tomlin, and M. Zeilinger (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 120, pp. 620–629.
+
+Cited by: §2.
+
+Zhou et al. (2025)
+X. Zhou, Y. Wu, and F. Orabona
+
+A unified theoretical analysis of private and robust offline alignment: from RLHF to DPO.
+
+In Forty-second International Conference on Machine Learning,
+
+Cited by: §2.
+
+Zhou et al. (2024)
+Z. Zhou, J. Liu, J. Shao, X. Yue, C. Yang, W. Ouyang, and Y. Qiao
+
+Beyond one-preference-fits-all alignment: multi-objective direct preference optimization.
+
+In Findings of the Association for Computational Linguistics: ACL 2024, L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+Bangkok, Thailand, pp. 10586–10613.
+
+Cited by: Table 1,
+§1,
+§1,
+§2.
+
+Zhu et al. (2023)
+B. Zhu, M. Jordan, and J. Jiao
+
+Principled reinforcement learning with human feedback from pairwise or k-wise comparisons.
+
+In International Conference on Machine Learning,
+
+pp. 43037–43067.
+
+Cited by: §1,
+§2,
+§3,
+§4.1.
+
+Zhu et al. (2024)
+B. Zhu, M. Jordan, and J. Jiao
+
+Iterative data smoothing: mitigating reward overfitting and overoptimization in RLHF.
+
+In Proceedings of the 41st International Conference on Machine Learning, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 235, pp. 62405–62428.
+
+Cited by: §2.
+
+Ziegler et al. (2020)
+D. M. Ziegler, N. Stiennon, J. Wu, T. B. Brown, A. Radford, D. Amodei, P. Christiano, and G. Irving
+
+Fine-tuning language models from human preferences.
+
+External Links: 1909.08593
+
+Cited by: §1.
+
+Appendix A Synthetic Experiments
+
+We simulate in a finite prompt-action environment where features are drawn as and normalized to unit -norm. Ground-truth parameters and are independently sampled from and normalized. We set and define Here, controls behavioral bias and controls coverage. We use seeds, and over each random seed we generate a dataset with samples by repeating: (1) sample uniformly from , (2) sample , and (3) draw Bradley-Terry preferences using .
+
+For each random seed, we evaluate convergence by measuring performance on the first samples of the dataset, increasing from to in increments of .
+In our simulations, we set and to reduce computational overhead.
+For each oracle , we estimate using a regularized Bradley–Terry MLE (for stability at small ), applied to the pairwise feature differences , optimized with L-BFGS.
+We minimize the empirical dual using projected gradient descent as in Algorithm 1 with step size where and .
+
+To generate an active yet feasible constraint level, we calibrate once per configuration using the ground-truth reward and an expanded dataset of samples to ensure stability:
+
+where is the constraint expectation at and is the expectation at . Each figure reports averages over random seeds, using the same per-seed dataset prefixes across parameter configurations. When varying , we regenerate and the per-seed datasets, and recalibrate accordingly. For comparison, we approximate via gradient descent using ground-truth rewards with increased iterations for accuracy, and then recover the corresponding optimal Gibbs policy as in our analysis.
+
+Our simulations confirm the theory: Figure 3 shows convergence across three values of , with both primal suboptimality and constraint violation decreasing as increases. Shaded regions indicate confidence intervals over random seeds, illustrating the consistency of our approach. As increases from (which biases the generating policy toward oracle ) to (which biases toward oracle ), we observe a higher initial constraint violation. In each setting, however, we observe convergence to near-zero violation and sub-optimality. We note that during runtime, we allows the constraint violation to be negative when the constraint is satisfied with slack.
+
+(a)
+
+(b)
+
+(c)
+
+Figure 3: Performance vs.dataset size () with over three settings of .
+Top: Primal objective sub-optimality.
+Bottom: Constraint violation.
+
+Appendix B Proofs
+
+B.1 Proof of Corollary 1
+
+Proof.
+
+Applying Cauchy–Schwarz, the confidence bound ,
+and yields the inequality.
+∎
+
+B.2 Proof of Lemma 1
+
+Proof.
+
+Fix , and let denote the log-partition function of . Then
+
+By Assumption 2, the reward function is bounded by , so the covariance is bounded by , and hence the derivative of is Lipschitz with constant at most .
+∎
+
+B.3 Proof of Lemma 2
+
+Proof.
+
+Notice that by the definition,
+This implies the bound
+
+Finally, by the MLE error and the bound the result follows. To bound the difference of derivatives, notice that
+
+The first term can be bounded as before, while the second is bounded as follows:
+
+where (a) follows from the boundedness of and an argument similar to Lemma 1.
+∎
+
+B.4 Proof of Lemma 3
+
+Proof.
+
+By Assumption 2, we have . Therefore . Hence is a sub-Gaussian vector with parameter . Then by Theorem 4.7.1 and Remark 4.7.3 in Vershynin [2018] we have with probability , we have
+
+Since and are both positive semi-definite, by triangle inequality we have
+
+Furthermore, by a corollary (spectral stability) of Weyl’s inequality, we have
+
+Therefore
+Combining the inequalities and noting , the result follows from the definition of the Mahalanobis norm.
+∎
+
+B.5 Proof of Proposition 1
+
+Proof.
+
+Analogous to the proof of Lemma 1, we have
+
+Since and has full support on , the Gibbs policy also has full support for every and every finite . Hence, for any where is non-constant, ; by the positive–measure assumption, the expectation over is strictly positive for every . The map is continuous, so on the compact interval ,
+
+is attained and, since for all , we have . Therefore, is –strongly convex on .
+∎
+
+B.6 Proof of Theorem 1
+
+Proof.
+
+By Slater’s condition, strong duality holds and there exists such that
+, and is a saddle point:
+for all and .
+The right inequality implies , and by uniqueness we have .
+
+Deterministic bound. By strong duality, Thus . On the other hand, by strong convexity of we have, for all , Substituting and using yields the desired bound.
+
+Data–driven bound. The result follows from Corollary 1, together with the facts that, with probability at least , and that, with probability at least , Here, similar to Lemma 1, one can replace with at the cost of introducing an additional error term.
+∎
+
+B.7 Proof of Theorem 2
+
+Proof.
+
+The proof follows from standard projected gradient descent analysis combined with our concentration results. For the dual sub-optimality we decompose into two terms. The first term is upper bounded by our concentration
+
+and the second by standard results in projected gradient descent
+
+where we use and Lipschitz parameter with step size . For constraint violation, we decompose into two pieces. The first bounded by our concentration and the second again by standard results in projected gradient descent
+
+. For primal sub-optimality we note that and . With strong duality this yields that the primal sub-optimality is upper bounded by the sum of dual sub-optimality and constraint violation.
+∎
+
+B.8 Proof of Proposition 2
+
+Proof.
+
+Fix and denote and . Consider the problem
+
+where the -divergence is defined as
+
+with strictly convex on , differentiable on , and . The objective is to maximize
+
+subject to the constraints and . Since is strictly concave in (inherited from the strict convexity of ), the objective is strictly concave and the maximizer is unique. The Lagrangian is given by
+
+For any such that , complementary slackness implies , and the stationarity condition yields
+
+Rearranging terms, we obtain
+
+If , the interior equation has no solution with ; in this case, the KKT conditions imply the boundary solution . We denote this compactly using the operator . Defining , the optimal policy takes the form
+
+Finally, is uniquely determined by the constraint . Existence is guaranteed because the sum is continuous and monotone decreasing in , and uniqueness follows from the strict concavity of the objective.
+∎
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

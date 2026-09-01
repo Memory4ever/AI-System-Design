@@ -1,0 +1,3133 @@
+SMART: When is it Actually Worth Expanding a Speculative Tree?
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Methodology
+
+3.1 Expected Speedup of A Draft Tree
+
+Cost Modeling.
+
+3.2 Speedup-Maximizing Draft Tree
+
+Sequential Decision Formulation.
+
+Optimizing the Sequential Decision Objective
+
+4 Experiments
+
+4.1 Main results
+
+4.2 Ablation Study
+
+5 Conclusion
+
+References
+
+0.A Additional Experiment Results
+
+License: CC BY 4.0
+
+arXiv:2604.09731v1 [cs.DC] 09 Apr 2026
+
+SMART: When is it Actually Worth Expanding a Speculative Tree?
+
+Lifu Wang
+
+Affiliation: Singapore Management University, Singapore
+
+E-mail {lifuwang, panzhou}@smu.edu.sg
+
+  
+Pan Zhou
+††thanks: Corresponding Author
+Affiliation: Singapore Management University, Singapore
+
+E-mail {lifuwang, panzhou}@smu.edu.sg
+
+Abstract
+
+Tree-based speculative decoding accelerates autoregressive generation by verifying a branching tree of draft tokens in a single target-model forward pass. However, existing methods prioritize maximizing token-level likelihood or the number of accepted tokens while ignoring a critical “efficiency paradox”: the computational overhead of drafting and verifying big trees can grow super-linearly, particularly at scale. This often leads to negative wall-clock speedup when batch sizes increase or hardware saturation limits are reached. To address this, we propose SMART, a System-aware Marginal Analysis framework for Runtime Tree construction. SMART reformulates tree expansion as a hardware-aware optimization problem that directly maximizes end-to-end speedup. By applying a principled marginal benefit–cost rule at inference time, SMART expands a node only when its marginal benefit–cost ratio exceeds the tree-level speedup. SMART is training-free and serves as a plug-and-play controller for existing frameworks like MSD and EAGLE. Extensive evaluations across three MLLMs (e.g., LLaVA, Qwen2-VL) and four LLMs (e.g., Llama-3.1, DeepSeek-R1) demonstrate that SMART consistently outperforms state-of-the-art baselines. It delivers an average additional speedup of 20.0% for MLLMs and 15.4% for LLMs across compute-bound batching regimes and diverse GPU architectures without performance loss.
+
+Keywords: speculative decoding (multimodal) large language models
+
+(a) RTX Pro 6000
+
+(b) L40S
+
+Figure 1: Speedup over autoregressive decoding across batch sizes (data from Table 3). Likelihood-maximizing tree methods such as Multimodal Speculative Decoding (MSD) exhibit severe performance degradation at large batch sizes, dropping below at batch 12 on L40S and reaching only at batch 32 on RTX Pro 6000. In contrast, our speedup-maximizing approach maintains consistent speedup by constructing trees based on the verification budget and device-specific cost models. This demonstrates that tree construction must be scalable with batch size and hardware-aware.
+
+1 Introduction
+
+Autoregressive decoding is the computational workhorse of modern generative AI, underpinning both Large Language Models (LLMs) [32, 33, 10, 1, 8] and Multimodal LLMs (MLLMs) [18, 38, 23] for tasks ranging from (visual) reasoning [12, 4] to high-fidelity image synthesis [30]. Yet its core mechanism is intrinsically sequential: tokens must be generated one after another. As model sizes grow and outputs become longer, this strict dependency chain turns into a dominant latency bottleneck, throttling throughput and inflating serving cost in real deployments.
+
+Speculative decoding [17, 5] has emerged as a practical strategy to break this sequential barrier. It uses a lightweight draft model to propose multiple candidate tokens, which are then verified by the target model in parallel. Tree-based speculative decoding [27, 21, 22] further extends this by constructing a draft tree—a branching structure of multiple candidate continuations. By verifying an entire tree in a single forward pass, the system increases the expected acceptance length (number of accepted tokens) per target model forward. Conventional methods [21, 22] typically drive tree expansion via token-level likelihood, selecting candidates with the highest cumulative probability.
+More recently, GTO [13] argues that token-level likelihood maximization during training is a poor proxy for the actual speculative-decoding goal, and proposed training objectives that directly maximize the expected acceptance length of the draft tree, aligning training with inference behavior and improving over vanilla speculative decoding.
+
+Unfortunately, the ultimate goal of speculative decoding is not to maximize the number of tokens accepted, but to maximize end-to-end wall-clock speedup. Existing designs suffer from a fundamental misalignment with system-level costs. Specifically, speedup is a function of both the acceptance length and the computational overhead of drafting and verification. Greedily expanding a tree to capture more tokens can be counterproductive; if the marginal cost of verifying a larger tree outweighs the gains in acceptance length, the system may experience “negative speedup,” performing worse than vanilla autoregressive decoding.
+
+As illustrated in Fig. 1, this mismatch is exacerbated by two critical factors in production environments: batch-size scalability and hardware heterogeneity. First, as batch sizes increase, the computational overhead of verifying big draft trees grows super-linearly. In memory-bandwidth bound regimes (e.g., ), verifying a large tree is beneficial as it amortizes the high cost of weight loading. However, once the batch size exceeds a hardware-specific threshold—approximately for an RTX Pro 6000—the GPU shifts into a compute-bound regime. In this state, the arithmetic intensity of verifying a large tree for every sequence in the batch exceeds the device’s peak throughput, causing the verification cost to outweigh the gains in acceptance length. Second, the “pivot point" where this bottleneck occurs is highly device-specific. For instance, a likelihood-maximizing tree constructed by MSD yielding speedup on an RTX Pro 6000 may drop to on an L40S at the same batch size of because the latter saturates its compute units earlier. These results underscore that a likelihood-maximizing tree is inherently suboptimal. Effective speculative decoding requires hardware-aware draft tree construction that adapts to the specific arithmetic intensity and saturation limits of the underlying GPU.
+
+In this paper, we adopt a system-oriented view of speculative decoding. Instead of asking how to maximize acceptance length, we ask: When is it computationally worth expanding the draft tree, and which expansions measurably improve end-to-end speedup under the current hardware and batching regime?
+
+Contributions. We propose SMART, a System-aware Marginal Analysis framework for Runtime Tree construction in speculative decoding. SMART constructs a speedup-maximizing draft tree at inference time using a principled marginal benefit–cost rule. Importantly, SMART is training-free: it requires no changes to the draft model or target model weights, making it an out-of-the-box drop-in improvement for existing speculative decoding pipelines (e.g. MSD [22] and EAGLE-3 [21]). Our main contributions are three-fold.
+
+First, we define a system-level speedup objective. Given a draft tree , we explicitly model the end-to-end speedup as
+where is the expected number of accepted tokens (i.e., acceptance length) of the tree , is the per-token cost of vanilla autoregressive decoding under the target model, and and are the total drafting and verification costs induced by the tree. Intuitively, the denotes the cost of vanilla sequential decoding for generating tokens, while is the cost of speculative decoding for getting accepted tokens. Therefore, this formulation makes the central trade-off explicit: maximizing alone can be suboptimal if it increases disproportionately. By directly optimizing the ratio , SMART targets the metric that matters in deployment: wall-clock speedup relative to vanilla decoding.
+
+Second, SMART builds upon the reward to propose a speedup-maximizing tree expansion framework. To maximize the reward efficiently, SMART formulates tree construction as a sequence of speedup-maximizing expansion decisions. At each layer, we estimate the marginal gain and marginal cost of expanding each candidate node, and expand a node only when its marginal benefit–cost ratio exceeds the current tree’s global ratio. This criterion ensures that local expansions improve the global speedup objective, allowing the tree shape to adapt to both the context difficulty and the available hardware budget.
+
+Finally, SMART is training-free and applicable for plug-and-play deployment.
+SMART does not modify the draft model, the target model, or the verification mechanism. Instead, it replaces the likelihood-maximizing tree-construction policy with a speedup-maximizing policy. As a result, SMART is immediately compatible with existing speculative decoding systems and can be integrated as a lightweight inference-time controller.
+
+Extensive evaluations across three MLLMs (LLaVA-1.5-7B and LLaVA-1.5-13B [23], and Qwen2-VL-7B-Instruct [34]) and four LLMs (LLaMA-3.1-Instruct-8B and LLaMA-3.3-70B [10], Vicuna-1.3-13B [8], and DeepSeek-R1-Distill-LLaMA-8B [12]) demonstrate that SMART consistently improves end-to-end speedup over strong baselines such as MSD [22] and EAGLE-3 [21], yielding an average of 20.0% additional acceleration on MLLMs and 15.4% on LLMs, while remaining robust across diverse hardware and batching scenarios.
+
+2 Related Work
+
+Speculative decoding accelerates autoregressive generation by proposing draft tokens with a lightweight model and verifying them in parallel using the target model. [17, 5, 31, 27]. One line of work focuses on the design and training of draft models. Medusa [3] trains multiple prediction heads to generate draft tokens in parallel. EAGLE [20] predicts future representations in the feature space, while EAGLE-3 [21] later returns to token-level prediction with scaled training data. HASS [35] explicitly mitigates feature-level draft–target mismatches, and GRIFFIN [14] further reduces token-level draft–target mismatches. GTO [13] treats the expected acceptance length of draft trees as a reward signal and updates the draft model using a PPO-style surrogate objective. Another line of work focuses on constructing draft trees, which is also the focus of our work. These methods can be divided based on whether they require training extra modules. On the training side, SpecDec++ [15] and DISCO [25] learn classifiers to predict optimal draft lengths. On the inference side, EAGLE-2 [19] proposes a context-aware dynamic draft tree to increase acceptance length. TapOut [29] and SVIP [36] rely on per-token heuristics such as entropy or confidence scores to determine when to stop drafting. However, although these token-level heuristics are simple and system-friendly, they often suffer from threshold sensitivity and limited transferability. In contrast, SMART makes expansion decisions through a marginal benefit–cost ratio analysis and does not rely on externally tuned thresholds.
+
+Likelihood-Maximizing Tree Speedup-Maximizing Tree
+
+(a) Expand with Top-2
+
+(b) Rerank with Top-8
+
+ 
+
+(c) SMART
+
+Figure 2:
+Comparison of likelihood-maximizing ((a)–(b)) and speedup-maximizing tree construction (c).
+(a) Expansion phase. At each layer, the method selects the top-2 nodes with the highest cumulative probability predicted by the draft model (orange) and generating their top-2 children (green) using the draft model.
+(b) Rerank phase. After reaching the maximum depth, all nodes in the tree are globally reranked by confidence and the top-8 nodes (blue) are retained for verification.
+(c) SMART. Instead of expanding all candidates, SMART evaluates each node’s marginal benefit–cost ratio (, with marginal terms defined in Eqn. 10) online and only expands nodes (blue) that improve the overall speedup, producing a smaller and more efficient draft tree.
+
+3 Methodology
+
+Motivated by the mismatch between likelihood-driven tree heuristics and end-to-end speedup, we propose a speedup-maximizing framework that constructs draft trees by directly optimizing a device-specific speedup objective. Our method has two components. First, we define an end-to-end speedup metric (Sec. 3.1) that captures true wall-clock efficiency by balancing expected accepted tokens against the measured costs of drafting and verification on a given device. Second, we formulate tree construction as a sequential decision problem (Sec. 3.2) and greedily expand tree nodes only when their marginal benefit–cost ratio exceeds the current tree’s global ratio. This ensures each tree expansion improves the global speedup objective while preserving linear-time construction.
+
+3.1 Expected Speedup of A Draft Tree
+
+We start by introducing how likelihood-maximizing draft trees are constructed. State-of-the-art approaches such as EAGLE-3 [21] and MSD [22] construct a depth- draft tree with a fixed two-stage policy: (i) as shown in Fig. 2(a), at each layer, we select the global top- nodes by computing cumulative probability from token probability given by the draft model; (ii) as shown in Fig. 2(b), after reaching the maximal depth , namely, finishing tree construction, we re-rank tree nodes by and keep the top- nodes for verification. These methods optimize the acceptance rate of draft tokens. However, higher acceptance does not necessarily imply higher speedup. As discussed in Sec. 1, this assumption can fail because speedup depends on both the number of tokens accepted and the computation cost required to produce and verify them, which varies with batch size and hardware.
+
+To resolve this issue, we evaluate the quality of a draft tree using a system-level speedup that directly compares the generation cost (i.e., wall-clock time) of vanilla autoregressive decoding and speculative decoding. Formally, given draft tree , we define its expected speedup as
+
+(1)
+
+where is the per-token autoregressive decoding cost (i.e., wall-clock time) of the target model, is the expected number of tokens accepted from , and and are the measured costs to generate and verify the draft tree, respectively.
+To generate tokens, target model needs to forward times and thus needs the total cost which corresponds to the numerator in Eqn. (1). Meanwhile, to obtain an expected acceptance length of , speculative decoding must generate a draft tree and verify it with the target model. The total cost is the sum of drafting and verification costs, corresponding to the denominator in Eqn. (1). Unlike likelihood- or acceptance-length-only objectives, directly measures the speedup by comparing the cost of vanilla autoregressive decoding of the target model and the cost of speculative decoding under the same acceptance length. This new metric is hardware-aware that adapts to the specific arithmetic intensity and saturation limits of the underlying GPU.
+
+Estimation of Expected Accepted Tokens . To evaluate Eqn. (1), we first estimate the tree acceptance length of the draft tree , which in turn yields an estimate of the target model’s sequential decoding cost: . To this end, we follow the spirit of GTO [13] and compute the expected acceptance length as the mean across all paths in the tree . Specifically, given a context , the draft model generates draft tokens to construct a tree which contains draft sequences, and the corresponding acceptance length can be estimated as
+
+(2)
+
+where denotes the set of all root-to-leaf paths in the tree and is the accumulated probability of sequence :
+
+(3)
+
+where denotes the probability of generating token of target model given context . Here, denotes the estimated acceptance length of the -th draft path in . This follows from the fact that the expected number of consecutively accepted tokens equals the sum of the probabilities that each prefix is accepted during verification [19]. We approximate the acceptance probability using the draft model’s predicted probability because 1) draft model is trained to align with the target model; and 2) EAGLE-2 [19] shows there is a strong positive correlation of prediction behaviors between target model and its corresponding draft model.
+
+(a) Draft cost vs. draft tokens .
+
+(b) Verification cost vs. draft tokens .
+
+Figure 3: Measured latencies (dots) and fitted cost models (lines) for drafting and verification on RTX Pro 6000. Draft latency corresponds to the total latency of generating the full draft tree, where is the total number of tokens in the tree. Verification latency corresponds to the forward-pass latency of the target model with input tokens.
+
+Cost Modeling.
+
+As shown in Fig. 3, we profile device-specific draft and verification latencies as a function of the total number of drafted tokens in the tree . Drafting scales roughly linearly with because draft models are small and typically memory-bound, yielding near-constant per-token cost, as demonstrated in Fig. 3a. Verification grows much faster because the target model is large and verification attention scales quadratically with the input length, making verification compute-bound and causing exponential latency growth as number of draft tokens increases, as shown in Fig. 3b.
+
+Accordingly, we use linear model to model the draft cost in Fig. 3 (a):
+
+(4)
+
+and adopt a power-exponential model to approximate the verification latency:
+
+(5)
+
+Here and are fitted per device, with the bias terms ( and ) fixed to to ensure both models pass through the origin. This profiling is lightweight, making the estimation of the hyperparameters in Eqs. (4) and (5) inexpensive. In practice, each fit requires only five forward passes. For example, profiling LLaMA-3.1-Instruct-8B [10] on MT-Bench [37] takes about 10 seconds on an RTX Pro 6000 GPU, which is negligible and accounts for only of the MT-Bench test set inference time. This enables fast fitting of the two cost models, and , which in turn supports efficient tree expansion in the next section.
+
+3.2 Speedup-Maximizing Draft Tree
+
+Draft-tree construction is a trade-off: expanding more nodes can increase the expected acceptance length, but it also raises drafting and verification cost, which may reduce end-to-end speedup. Therefore, we must carefully choose which tree nodes to expand so as to improve expected acceptance length while incurring minimal additional drafting and verification cost. We formulate tree growth as a sequential decision process that, at each layer, selects which candidates to keep by comparing their marginal benefit in expected acceptance length against their marginal system cost, thereby maximizing end-to-end speedup.
+
+Sequential Decision Formulation.
+
+As shown in Fig. 2(c), we construct the draft tree sequentially over
+layers . Let denote the set of all selected nodes after
+completing layer , with . We maintain a layer-wise active
+set (with ), whose elements are the nodes retained at
+layer  and expanded at layer .
+
+At layer , we expand every node in by drawing its top- candidates
+from the draft-model distribution, producing the candidate set
+of size . For each candidate token
+, a selection operator assigns a
+binary label , where indicates that is retained
+and that it is pruned. The operator thus maps the full candidate set to the
+subset of survivors:
+
+(6)
+
+The tree evolves as
+
+(7)
+
+Let be the terminal layer: either , or is the first layer 
+such that or reaches a predetermined budget .
+The induced tree is .
+Our objective is to choose the selection operators
+to maximize the final-tree reward:
+
+(8)
+
+where constrains the tree size. Because verification latency grows
+superlinearly with the number of draft tokens (Fig. 3(b)), we impose a
+total verification budget to keep verification in the memory-bound
+(near-flat) region of the cost curve, and split it evenly across the batch, giving a
+per-sequence budget with the batch size.
+
+Optimizing Eqn. (8) seeks selection operators that maximize the
+expected speedup of speculative decoding. The objective is the ratio of the cost of
+vanilla autoregressive decoding by the target model, , to
+the cost of speculative decoding, ,
+where is the final draft tree. Since the tree is built layer by layer, this
+optimization reduces to a sequence of layer-wise decisions
+: at each layer, retain only the candidates that
+maximize the tree’s expected speedup. Next, we describe an efficient strategy to solve
+this sequential decision problem.
+
+Optimizing the Sequential Decision Objective
+
+Computing the optimal action sequence in Eqn. (8) requires evaluating all valid subtrees of the full -ary expansion tree. Since the total number of candidate nodes across layers is , the number of possible configurations grows as , making exhaustive search intractable. Instead, we propose a greedy policy that makes locally optimal decisions at each layer.
+
+Specifically, we include a candidate node (i.e., set ) only if it
+increases the reward, i.e., . The reward is defined as
+
+(9)
+
+and the marginal increments upon adding are
+
+(10)
+
+Working with the log-reward , the change upon adding is
+
+(11)
+
+using for small . We include if and only if
+, i.e.,
+
+(12)
+
+which recovers the standard condition when . Here,
+accounts for optimistic draft-based acceptance estimates under draft–target mismatch.
+The global terms and are computed on the current
+tree using Eqn. (9). Next, we will compute the marginal terms in
+Eqn. (10) in 2 steps.
+
+Step 1: Marginal benefit .
+To estimate efficiently, recall that
+averages the expected acceptance length over all root-to-leaf paths
+(Eqn. (2)).
+Accordingly, the marginal benefit of expanding is diluted by :
+
+(13)
+
+where is the cumulative acceptance
+probability defined in Eqn. (3).
+
+Step 2: Marginal cost .
+We approximate the cost of adding one node () by differentiating the
+fitted cost models with respect to the current tree size :
+
+(14)
+
+With
+
+and
+,
+this yields
+
+(15)
+
+Since we have calculated the marginal and global terms, we can decide whether to keep
+(expand) a candidate node by checking :
+
+(16)
+
+Now we present the full SMART algorithm. At each layer , we (i) generate top- candidates per parent, (ii) compute each candidate’s marginal benefit (Eqn. (13)) and marginal cost (Eqn. (15)), (iii) evaluate the current tree-level reward (Eqn. (9)), and (iv) apply the decision rule (Eqn. (16)) to determine which nodes to expand. The process continues until reaching the maximum depth , exhausting the budget , or when no candidate remains (i.e., ).
+
+The greedy policy runs in time: at each layer , we evaluate
+in for each of the candidates, and
+the total number of candidates across all layers is bounded by . This reduces the
+complexity from for exhaustive search to linear in the
+verification budget . While not globally optimal, the greedy policy produces
+high-quality trees by ensuring each expansion locally improves the reward.
+Algorithm 1 in the appendix summarizes our greedy construction procedure.
+
+4 Experiments
+
+Table 1: Comparison of speedup ratio and acceptance rate on standard MLLM benchmarks with temperature . The subscripts denote the relative improvement compared to the corresponding baseline. For example, at , MSD+SMART on LLaVA-1.5 7B achieves the average of 1.53 with an additional +29.7% gain over the MSD value of 1.18.
+
+VQAv2
+AI2D
+SQA Image
+ChartQA
+TextVQA
+Hallusion
+Average
+
+Model
+Method
+
+Temperature = 0
+
+LLaVA-1.5
+7B
+
+Medusa
+0.88
+0.48
+0.82
+0.44
+0.86
+0.46
+0.91
+0.51
+0.95
+0.54
+1.01
+0.58
+0.91
+0.50
+
+EAGLE-1
+0.95
+0.52
+0.88
+0.48
+0.92
+0.50
+0.98
+0.55
+1.02
+0.58
+1.08
+0.62
+0.97
+0.54
+
+EAGLE-2
+1.08
+0.59
+0.98
+0.53
+1.02
+0.54
+1.06
+0.62
+1.15
+0.64
+1.18
+0.68
+1.08
+0.60
+
+MSD
+1.23
+0.67
+1.09
+0.58
+1.09
+0.56
+1.14
+0.68
+1.26
+0.68
+1.26
+0.71
+1.18
+0.65
+
+MSD+SMART
+1.55
+0.81
+1.45
+0.74
+1.44
+0.72
+1.59
+0.82
+1.55
+0.79
+1.62
+0.83
+
+LLaVA-1.5
+13B
+
+Medusa
+0.95
+0.44
+0.88
+0.41
+1.01
+0.46
+1.10
+0.54
+0.91
+0.42
+0.88
+0.44
+0.96
+0.45
+
+EAGLE-1
+1.02
+0.48
+0.95
+0.45
+1.08
+0.50
+1.18
+0.58
+0.98
+0.46
+0.95
+0.48
+1.03
+0.49
+
+EAGLE-2
+1.15
+0.54
+1.08
+0.50
+1.18
+0.54
+1.32
+0.62
+1.12
+0.51
+1.08
+0.51
+1.16
+0.54
+
+MSD
+1.30
+0.59
+1.17
+0.53
+1.28
+0.57
+1.45
+0.66
+1.22
+0.54
+1.17
+0.54
+1.26
+0.57
+
+MSD+SMART
+1.56
+0.76
+1.42
+0.71
+1.53
+0.76
+1.72
+0.84
+1.51
+0.73
+1.42
+0.72
+
+Qwen2VL
+7B Instruct
+
+Medusa
+0.85
+0.54
+0.79
+0.48
+0.82
+0.47
+0.98
+0.54
+0.88
+0.50
+0.91
+0.54
+0.87
+0.51
+
+EAGLE-1
+0.92
+0.58
+0.85
+0.52
+0.88
+0.51
+1.05
+0.58
+0.95
+0.54
+0.98
+0.58
+0.94
+0.55
+
+EAGLE-2
+1.05
+0.65
+0.96
+0.56
+0.98
+0.55
+1.15
+0.62
+1.08
+0.58
+1.08
+0.61
+1.05
+0.60
+
+MSD
+1.18
+0.71
+1.05
+0.58
+1.06
+0.57
+1.24
+0.65
+1.16
+0.60
+1.15
+0.63
+1.14
+0.62
+
+MSD+SMART
+1.22
+0.86
+1.24
+0.77
+1.26
+0.74
+1.34
+0.84
+1.24
+0.57
+1.22
+0.82
+
+Temperature = 1
+
+LLaVA-1.5
+7B
+
+Medusa
+1.74
+0.24
+1.43
+0.28
+1.58
+0.29
+1.33
+0.26
+0.97
+0.19
+1.46
+0.26
+1.42
+0.25
+
+EAGLE-1
+1.85
+0.26
+1.52
+0.30
+1.68
+0.31
+1.42
+0.28
+1.05
+0.21
+1.55
+0.28
+1.51
+0.27
+
+EAGLE-2
+2.05
+0.28
+1.65
+0.32
+1.85
+0.33
+1.52
+0.29
+1.15
+0.23
+1.68
+0.30
+1.65
+0.29
+
+MSD
+2.21
+0.30
+1.77
+0.34
+2.00
+0.35
+1.63
+0.31
+1.22
+0.24
+1.77
+0.31
+1.77
+0.31
+
+MSD+SMART
+2.84
+0.40
+2.41
+0.45
+2.56
+0.46
+2.24
+0.43
+1.46
+0.33
+2.19
+0.41
+
+LLaVA-1.5
+13B
+
+Medusa
+1.67
+0.27
+1.39
+0.30
+1.91
+0.33
+1.36
+0.26
+1.07
+0.20
+1.23
+0.24
+1.44
+0.27
+
+EAGLE-1
+1.78
+0.29
+1.48
+0.32
+2.02
+0.35
+1.45
+0.28
+1.15
+0.22
+1.32
+0.26
+1.53
+0.29
+
+EAGLE-2
+1.95
+0.31
+1.58
+0.33
+2.25
+0.36
+1.58
+0.29
+1.25
+0.24
+1.42
+0.27
+1.67
+0.30
+
+MSD
+2.14
+0.33
+1.71
+0.35
+2.40
+0.38
+1.71
+0.31
+1.33
+0.25
+1.48
+0.28
+1.79
+0.31
+
+MSD+SMART
+2.54
+0.42
+2.23
+0.47
+2.92
+0.46
+1.98
+0.40
+1.63
+0.34
+1.78
+0.40
+
+Qwen2VL
+7B Instruct
+
+Medusa
+1.24
+0.52
+0.91
+0.38
+1.49
+0.42
+0.95
+0.42
+1.14
+0.42
+0.88
+0.42
+1.10
+0.43
+
+EAGLE-1
+1.32
+0.55
+0.98
+0.41
+1.58
+0.45
+1.02
+0.45
+1.22
+0.45
+0.95
+0.45
+1.18
+0.46
+
+EAGLE-2
+1.42
+0.59
+1.06
+0.43
+1.68
+0.47
+1.08
+0.46
+1.32
+0.47
+1.02
+0.47
+1.26
+0.48
+
+MSD
+1.50
+0.62
+1.12
+0.44
+1.79
+0.48
+1.15
+0.48
+1.38
+0.48
+1.07
+0.48
+1.33
+0.50
+
+MSD+SMART
+1.69
+0.65
+1.25
+0.53
+2.04
+0.55
+1.16
+0.58
+1.45
+0.56
+1.10
+0.50
+
+Models & Datasets.
+We evaluate SMART across a diverse range of models to demonstrate its generalizability. For MLLMs, we evaluate LLaVA-1.5 (7B/13B) [23] and Qwen2VL-7B-Instruct [34] on widely used multimodal benchmarks: VQAv2 [2], AI2D [16], ScienceQA[24], ChartQA[26], TextVQA [28], and HallusionBench[11]. For LLMs, we report results on LLaMA-3.1-Instruct-8B [10], Vicuna-1.3-13B [8], DeepSeek-R1-Distill-LLaMA-8B [12], and LLaMA-3.3-70B [10] across three standard benchmarks covering chat, coding, and reasoning: MT-Bench [37], HumanEval [7], and GSM8K [9].
+
+Baselines.
+For MLLMs, we integrate SMART into frameworks that utilize likelihood-maximizing tree construction (e.g., MSD [22]) and compare against Medusa [3], EAGLE [20], EAGLE-2 [19], and MSD. For LLMs, we integrate SMART into Eagle-3 [21] and compare against a broad suite of representative baselines, including SPS [17], EAGLE, EAGLE-2, GRIFFIN [14], and EAGLE-3. For a fair comparison, all methods are evaluated under the same hardware (RTX Pro 6000 GPUs) and decoding configurations. Due to limited space, we report results for integrating SMART into additional baselines in the appendix.
+
+Metrics & Evaluation Protocol.
+Following prior work, we evaluate performance at decoding temperatures . Since SMART is mathematically lossless, our evaluation focuses on efficiency via two key metrics. (1) Speedup Ratio (): The end-to-end wall-clock latency improvement relative to vanilla autoregressive decoding (). (2) Acceptance Rate (): The fraction of drafted tokens accepted during verification. We specifically report the acceptance rate rather than the acceptance length. Since SMART’s pruning induces variable draft lengths across steps, raw per-step accepted token counts are no longer directly comparable; a normalized rate provides a more consistent measure of the draft model’s efficiency relative to the chosen tree size.
+
+Table 2:
+Comparison of speedup ratio () and acceptance rate () on standard LLM benchmarks under temperature settings . Subscripts denote the relative improvement over the corresponding baseline (EAGLE-3). For example, at on LLaMA-3.1-Instruct-8B, EAGLE-3+SMART achieves an average of , representing a +16.9% improvement over the EAGLE-3 baseline value of .
+
+Temperature = 0
+Temperature = 1
+
+Model
+Method
+MT-bench
+HumanEval
+GSM8K
+Average
+MT-bench
+HumanEval
+GSM8K
+Average
+
+LLaMA-3.1
+Instruct 8B
+
+SPS
+0.49
+0.24
+0.54
+0.27
+0.43
+0.21
+0.49
+0.24
+0.86
+0.17
+0.92
+0.18
+0.75
+0.17
+0.84
+0.17
+
+EAGLE
+0.70
+0.35
+0.98
+0.37
+0.78
+0.35
+0.82
+0.36
+1.15
+0.20
+1.58
+0.30
+1.48
+0.26
+1.41
+0.25
+
+EAGLE-2
+1.01
+0.47
+1.34
+0.54
+1.08
+0.48
+1.14
+0.50
+1.43
+0.27
+2.12
+0.42
+1.82
+0.33
+1.79
+0.34
+
+GRIFFIN
+1.17
+0.55
+1.50
+0.68
+1.20
+0.59
+1.29
+0.60
+1.58
+0.33
+2.61
+0.52
+2.01
+0.41
+2.07
+0.42
+
+EAGLE-3
+1.35
+0.67
+1.44
+0.74
+1.28
+0.68
+1.36
+0.70
+1.65
+0.43
+2.45
+0.51
+2.22
+0.48
+2.11
+0.47
+
+EAGLE-3+SMART
+1.56
+0.67
+1.71
+0.74
+1.51
+0.68
+
+1.84
+0.47
+2.73
+0.57
+2.56
+0.52
+
+Vicuna-1.3
+13B
+
+SPS
+0.48
+0.25
+0.53
+0.28
+0.42
+0.21
+0.48
+0.25
+0.40
+0.16
+0.43
+0.17
+0.35
+0.15
+0.39
+0.16
+
+EAGLE
+0.71
+0.42
+0.82
+0.46
+0.68
+0.40
+0.74
+0.43
+0.55
+0.27
+0.63
+0.30
+0.56
+0.30
+0.58
+0.29
+
+EAGLE-2
+0.95
+0.54
+1.19
+0.60
+0.95
+0.52
+1.03
+0.55
+0.88
+0.38
+0.97
+0.42
+0.74
+0.38
+0.81
+0.40
+
+EAGLE-3
+1.20
+0.74
+1.39
+0.85
+1.24
+0.71
+1.28
+0.76
+0.95
+0.49
+1.20
+0.56
+1.03
+0.50
+1.06
+0.52
+
+EAGLE-3+SMART
+1.43
+0.79
+1.72
+0.88
+1.52
+0.76
+
+1.14
+0.52
+1.43
+0.60
+1.24
+0.54
+
+DeepSeek
+R1 8B
+
+SPS
+0.52
+0.26
+0.58
+0.29
+0.46
+0.22
+0.52
+0.26
+0.46
+0.18
+0.49
+0.19
+0.40
+0.17
+0.45
+0.18
+
+GRIFFIN
+1.06
+0.50
+1.32
+0.63
+1.42
+0.68
+1.27
+0.61
+0.92
+0.39
+1.14
+0.46
+1.36
+0.55
+1.14
+0.46
+
+EAGLE-3
+1.24
+0.61
+1.49
+0.71
+1.61
+0.76
+1.46
+0.70
+1.06
+0.48
+1.22
+0.51
+1.56
+0.58
+1.28
+0.52
+
+EAGLE-3+SMART
+1.45
+0.69
+1.65
+0.77
+1.87
+0.82
+
+1.21
+0.51
+1.34
+0.55
+1.62
+0.59
+
+LLaMA
+3.3 70B
+
+SPS
+0.98
+0.25
+1.09
+0.28
+0.86
+0.21
+0.98
+0.25
+0.81
+0.17
+0.86
+0.18
+0.70
+0.16
+0.79
+0.17
+
+EAGLE-3
+2.46
+0.63
+2.92
+0.72
+2.67
+0.66
+2.69
+0.67
+2.07
+0.43
+2.80
+0.65
+2.55
+0.55
+2.48
+0.54
+
+EAGLE-3+SMART
+2.97
+0.65
+3.72
+0.77
+3.32
+0.70
+
+2.56
+0.51
+3.36
+0.68
+3.02
+0.60
+
+4.1 Main results
+
+Results on MLLMs. Table 1 shows that on multimodal benchmarks, SMART can substantially improve both the speedup ratio and the acceptance rate. For example, MSD+SMART consistently outperforms MSD, with average gains of +20.2% at and +19.9% at across three MLLMs. The largest improvements appear on LLaVA-1.5: at , the average increases from to on LLaVA-1.5-7B and from to on LLaVA-1.5-13B. These gains are accompanied by higher acceptance rates: SMART preferentially expands nodes with higher expected acceptance, prunes low-benefit branches, and terminates early when no promising tokens remain. In contrast, MSD always selects a fixed number of draft tokens, even when additional tokens are unlikely to be accepted. SMART allocates the computation budget to more promising tokens and thereby improves verification efficiency.
+
+Results on LLMs. Table 2 demonstrates that across four LLMs, SMART consistently improves both the speedup ratio and the acceptance rate. For instance, EAGLE-3+SMART achieves substantial speedups over EAGLE-3: +19.6% at and +15.4% at on average across LLMs. Improvements are consistent across chat (MT-Bench), coding (HumanEval), and math reasoning (GSM8K). On LLaMA-3.1-Instruct-8B, EAGLE-3+SMART increases the average from to at and from to at . On the larger LLaMA-3.3-70B, SMART further raises the average from to at and from to at . Overall, SMART delivers robust gains across diverse model scales and task families. We also observe acceptance-rate improvements across all four LLMs, suggesting SMART reduces wasted draft expansions.
+
+Table 3: Speedup comparison between MSD and SMART across different GPUs and batch sizes. SMART maintains consistent speedup while MSD degrades at large batches.
+
+GPU
+Batch Size
+MSD
+MSD + SMART (Ours)
+
+ChartQA
+TextVQA
+Hallusion
+Avg
+ChartQA
+TextVQA
+Hallusion
+Avg
+
+RTX Pro
+6000
+
+1
+2.27
+2.09
+2.23
+2.20
+2.18
+2.10
+2.22
+2.17
+
+8
+1.88
+1.80
+1.83
+1.84
+1.98
+1.85
+1.96
+1.93
+
+16
+1.14
+1.26
+1.26
+1.22
+1.59
+1.55
+1.61
+1.58
+
+24
+0.98
+0.95
+0.96
+0.96
+1.51
+1.41
+1.44
+1.45
+
+32
+0.86
+0.79
+0.81
+0.82
+1.40
+1.38
+1.39
+1.39
+
+L40S
+
+1
+1.85
+1.79
+1.82
+1.82
+1.78
+1.76
+1.77
+1.77
+
+4
+1.65
+1.58
+1.67
+1.63
+1.67
+1.59
+1.68
+1.65
+
+8
+1.25
+1.20
+1.21
+1.22
+1.52
+1.44
+1.53
+1.50
+
+12
+0.91
+0.89
+0.90
+0.90
+1.40
+1.37
+1.42
+1.40
+
+Table 4: Speedup across different token budgets on RTX Pro 6000 with batch size of 16. Budget of 200 achieves optimal performance, balancing tree size and verification cost. Lower budgets (100) under-utilize parallelism while higher budgets (300-400) incur excessive verification overhead.
+
+Token Budget
+
+ChartQA
+TextVQA
+Hallusion
+Avg
+ChartQA
+TextVQA
+Hallusion
+Avg
+
+100
+1.39
+1.42
+1.47
+1.43
+1.95
+1.33
+2.05
+2.06
+
+200
+1.60
+1.56
+1.57
+1.58
+2.24
+1.46
+2.19
+2.28
+
+300
+1.33
+1.24
+1.27
+1.28
+1.86
+1.16
+1.77
+1.85
+
+400
+1.32
+1.24
+1.26
+1.27
+1.85
+1.16
+1.76
+1.83
+
+Temperature = 0
+Temperature = 1
+
+ChartQA
+TextVQA
+Hallusion
+Avg
+ChartQA
+TextVQA
+Hallusion
+Avg
+
+1.0
+1.57
+1.46
+1.51
+1.51
+1.45
+1.38
+1.42
+1.42
+
+0.9
+1.58
+1.51
+1.57
+1.55
+1.52
+1.44
+1.48
+1.48
+
+0.8
+1.58
+1.52
+1.57
+1.56
+1.53
+1.45
+1.49
+1.49
+
+0.7
+1.58
+1.50
+1.57
+1.55
+1.51
+1.43
+1.47
+1.47
+
+0.6
+1.57
+1.50
+1.56
+1.54
+1.49
+1.41
+1.45
+1.45
+
+0.5
+1.57
+1.50
+1.55
+1.54
+1.46
+1.38
+1.43
+1.42
+
+Table 5: Speedup ablation over discount factor on RTX Pro 6000 at batch size 16. achieves optimal performance, balancing conservative pruning with sufficient tree expansion.
+
+4.2 Ablation Study
+
+Scaling with batch size on different hardwares.
+Table 3 shows that SMART provides limited gains at small batch sizes, where decoding is largely memory-bound and likelihood-maximizing trees already contain most of the “useful” draft tokens. In this regime, SMART mainly prunes low-utility tokens but does not create additional high-utility candidates beyond those already present, leading to near ties with MSD (e.g., RTX Pro 6000 at batch : vs. ). As batch size increases, execution becomes increasingly compute-bound and verification overhead grows super-linearly, making every selected draft token expensive. In this setting, MSD degrades sharply (RTX Pro 6000: from batch to ; L40S: from batch to ), whereas SMART remains robust by allocating the budget to truly beneficial tokens and avoiding wasteful verification. Consequently, SMART maintains speedup throughout, retaining at batch and at batch on RTX Pro 6000, and at batch and at batch on L40S.
+
+Verification token budget.
+Table 4 ablates the verification token budget on RTX Pro 6000 with batch size of 16. Performance exhibits a clear optimum at budget , which yields the best average speedup ( at and at ). Lower budget () reduces speedup ( at ), indicating under-utilization of available parallelism due to overly aggressive pruning. Larger budgets (–) significantly hurt speedup (– at ), as additional drafted tokens increase verification work and dominate end-to-end latency. Overall, these results support allocating a moderate per-sequence verification budget that balances tree expansion against verification overhead.
+
+Discount factor .
+Table 5 ablates the discount factor used to conservatively down-weight predicted marginal benefit under draft–target mismatch. Across both temperatures, performance remains stable over a wide range of moderate discounts: yields the best or near-best average speedup, peaking at ( at and at ). Setting too large (e.g., ) is overly permissive, leading to aggressive expansion and higher verification overhead, which reduces speedup ( at and at ). Conversely, smaller values prune more aggressively and may discard useful draft tokens. Overall, SMART is insensitive within a wide operating range, and we use by default.
+
+5 Conclusion
+
+We presented SMART, a training-free, system-aware framework for speedup-maximizing draft tree construction in speculative decoding. Motivated by the efficiency paradox that large draft trees can incur super-linear drafting and verification overhead, SMART casts tree growth as a sequential decision problem. By expanding nodes only when their marginal benefit–cost ratio exceeds the tree-level speedup under a per-sequence budget, SMART reduces wasteful drafting and verification and maintains robust wall-clock gains across compute-bound batching regimes and diverse GPU architectures. Across LLMs and MLLMs, SMART consistently improves strong tree-based backbones while preserving the lossless guarantee, delivering average additional speedups of 20.0% (MLLMs) and 15.4% (LLMs) without performance degradation.
+
+Limitation Discussion. Due to limited compute resources, we only evaluate SMART on RTX Pro 6000 and L40S GPUs, and do not include other data-center accelerators such as A100, H100, or H200. Nonetheless, SMART is system-aware and hardware-agnostic by design, and we expect similar speedup trends on these architectures.
+
+References
+
+[1]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al. (2023)
+
+Gpt-4 technical report.
+
+arXiv preprint arXiv:2303.08774.
+
+Cited by: §1.
+
+[2]
+S. Antol, A. Agrawal, J. Lu, M. Mitchell, D. Batra, C. L. Zitnick, and D. Parikh (2015)
+
+Vqa: visual question answering.
+
+In Proceedings of the IEEE international conference on computer vision,
+
+pp. 2425–2433.
+
+Cited by: §4.
+
+[3]
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao (2024)
+
+Medusa: simple llm inference acceleration framework with multiple decoding heads.
+
+arXiv preprint arXiv:2401.10774.
+
+Cited by: §2,
+§4.
+
+[4]
+B. Chen, Z. Xu, S. Kirmani, B. Ichter, D. Sadigh, L. Guibas, and F. Xia (2024)
+
+Spatialvlm: endowing vision-language models with spatial reasoning capabilities.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 14455–14465.
+
+Cited by: §1.
+
+[5]
+C. Chen, S. Borgeaud, G. Irving, J. Lespiau, L. Sifre, and J. Jumper (2023)
+
+Accelerating large language model decoding with speculative sampling.
+
+arXiv preprint arXiv:2302.01318.
+
+Cited by: §1,
+§2.
+
+[6]
+J. Chen, Y. Liang, and Z. Liu (2026)
+
+DFlash: block diffusion for flash speculative decoding.
+
+arXiv preprint arXiv:2602.06036.
+
+Cited by: Appendix 0.A.
+
+[7]
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, et al. (2021)
+
+Evaluating large language models trained on code.
+
+arXiv preprint arXiv:2107.03374.
+
+Cited by: §4.
+
+[8]
+W. Chiang, Z. Li, Z. Lin, Y. Sheng, Z. Wu, H. Zhang, L. Zheng, S. Zhuang, Y. Zhuang, J. E. Gonzalez, et al. (2023)
+
+Vicuna: an open-source chatbot impressing gpt-4 with 90%* chatgpt quality.
+
+See https://vicuna. lmsys. org (accessed 14 April 2023) 2 (3), pp. 6.
+
+Cited by: §1,
+§1,
+§4.
+
+[9]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al. (2021)
+
+Training verifiers to solve math word problems.
+
+arXiv preprint arXiv:2110.14168.
+
+Cited by: §4.
+
+[10]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: Appendix 0.A,
+§1,
+§1,
+§3.1,
+§4.
+
+[11]
+T. Guan, F. Liu, X. Wu, R. Xian, Z. Li, X. Liu, X. Wang, L. Chen, F. Huang, Y. Yacoob, et al. (2024)
+
+Hallusionbench: an advanced diagnostic suite for entangled language hallucination and visual illusion in large vision-language models.
+
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+
+pp. 14375–14385.
+
+Cited by: §4.
+
+[12]
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al. (2025)
+
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+
+arXiv preprint arXiv:2501.12948.
+
+Cited by: §1,
+§1,
+§4.
+
+[13]
+S. Hu, J. Li, Z. Lu, and P. Zhou (2025)
+
+Bridging draft policy misalignment: group tree optimization for speculative decoding.
+
+arXiv preprint arXiv:2509.22134.
+
+Cited by: Appendix 0.A,
+§1,
+§2,
+§3.1.
+
+[14]
+S. Hu, J. Li, X. Xie, Z. Lu, K. Toh, and P. Zhou (2025)
+
+Griffin: effective token alignment for faster speculative decoding.
+
+arXiv preprint arXiv:2502.11018.
+
+Cited by: Appendix 0.A,
+§2,
+§4.
+
+[15]
+K. Huang, X. Guo, and M. Wang (2024)
+
+Specdec++: boosting speculative decoding via adaptive candidate lengths.
+
+arXiv preprint arXiv:2405.19715.
+
+Cited by: §2.
+
+[16]
+A. Kembhavi, M. Salvato, E. Kolve, M. Seo, H. Hajishirzi, and A. Farhadi (2016)
+
+A diagram is worth a dozen images.
+
+In European conference on computer vision,
+
+pp. 235–251.
+
+Cited by: §4.
+
+[17]
+Y. Leviathan, M. Kalman, and Y. Matias (2023)
+
+Fast inference from transformers via speculative decoding.
+
+In International Conference on Machine Learning,
+
+pp. 19274–19286.
+
+Cited by: §1,
+§2,
+§4.
+
+[18]
+F. Li, R. Zhang, H. Zhang, Y. Zhang, B. Li, W. Li, Z. Ma, and C. Li (2024)
+
+Llava-next-interleave: tackling multi-image, video, and 3d in large multimodal models.
+
+arXiv preprint arXiv:2407.07895.
+
+Cited by: §1.
+
+[19]
+Y. Li, F. Wei, C. Zhang, and H. Zhang (2024)
+
+Eagle-2: faster inference of language models with dynamic draft trees.
+
+In Proceedings of the 2024 conference on empirical methods in natural language processing,
+
+pp. 7421–7432.
+
+Cited by: Appendix 0.A,
+§2,
+§3.1,
+§4.
+
+[20]
+Y. Li, F. Wei, C. Zhang, and H. Zhang (2024)
+
+Eagle: speculative sampling requires rethinking feature uncertainty.
+
+arXiv preprint arXiv:2401.15077.
+
+Cited by: §2,
+§4.
+
+[21]
+Y. Li, F. Wei, C. Zhang, and H. Zhang (2025)
+
+Eagle-3: scaling up inference acceleration of large language models via training-time test.
+
+arXiv preprint arXiv:2503.01840.
+
+Cited by: §1,
+§1,
+§1,
+§2,
+§3.1,
+§4.
+
+[22]
+L. Lin, Z. Lin, Z. Zeng, and R. Ji (2025)
+
+Speculative decoding reimagined for multimodal large language models.
+
+arXiv preprint arXiv:2505.14260.
+
+Cited by: Appendix 0.A,
+§1,
+§1,
+§1,
+§3.1,
+§4.
+
+[23]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee (2023)
+
+Visual instruction tuning.
+
+Advances in neural information processing systems 36, pp. 34892–34916.
+
+Cited by: Appendix 0.A,
+§1,
+§1,
+§4.
+
+[24]
+P. Lu, S. Mishra, T. Xia, L. Qiu, K. Chang, S. Zhu, O. Tafjord, P. Clark, and A. Kalyan (2022)
+
+Learn to explain: multimodal reasoning via thought chains for science question answering.
+
+Advances in neural information processing systems 35, pp. 2507–2521.
+
+Cited by: §4.
+
+[25]
+J. Mamou, O. Pereg, D. Korat, M. Berchansky, N. Timor, M. Wasserblat, and R. Schwartz (2024)
+
+Dynamic speculation lookahead accelerates speculative decoding of large language models.
+
+arXiv preprint arXiv:2405.04304.
+
+Cited by: §2.
+
+[26]
+A. Masry, X. L. Do, J. Q. Tan, S. Joty, and E. Hoque (2022)
+
+Chartqa: a benchmark for question answering about charts with visual and logical reasoning.
+
+In Findings of the association for computational linguistics: ACL 2022,
+
+pp. 2263–2279.
+
+Cited by: §4.
+
+[27]
+X. Miao, G. Oliaro, Z. Zhang, X. Cheng, Z. Wang, Z. Zhang, R. Y. Y. Wong, A. Zhu, L. Yang, X. Shi, et al. (2024)
+
+Specinfer: accelerating large language model serving with tree-based speculative inference and verification.
+
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3,
+
+pp. 932–949.
+
+Cited by: §1,
+§2.
+
+[28]
+A. Singh, V. Natarajan, M. Shah, Y. Jiang, X. Chen, D. Batra, D. Parikh, and M. Rohrbach (2019)
+
+Towards vqa models that can read.
+
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+
+pp. 8317–8326.
+
+Cited by: §4.
+
+[29]
+A. Sridhar, N. Sinnadurai, S. Lie, and V. Thangarasa (2025)
+
+TapOut: a bandit-based approach to dynamic speculative decoding.
+
+arXiv preprint arXiv:2511.02017.
+
+Cited by: §2.
+
+[30]
+P. Sun, Y. Jiang, S. Chen, S. Zhang, B. Peng, P. Luo, and Z. Yuan (2024)
+
+Autoregressive model beats diffusion: llama for scalable image generation.
+
+arXiv preprint arXiv:2406.06525.
+
+Cited by: §1.
+
+[31]
+Z. Sun, A. T. Suresh, J. H. Ro, A. Beirami, H. Jain, and F. Yu (2023)
+
+Spectr: fast speculative decoding via optimal transport.
+
+Advances in Neural Information Processing Systems 36, pp. 30222–30242.
+
+Cited by: §2.
+
+[32]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al. (2023)
+
+Llama: open and efficient foundation language models.
+
+arXiv preprint arXiv:2302.13971.
+
+Cited by: §1.
+
+[33]
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al. (2023)
+
+Llama 2: open foundation and fine-tuned chat models.
+
+arXiv preprint arXiv:2307.09288.
+
+Cited by: §1.
+
+[34]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, Y. Fan, K. Dang, M. Du, X. Ren, R. Men, D. Liu, C. Zhou, J. Zhou, and J. Lin (2024)
+
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution.
+
+arXiv preprint arXiv:2409.12191.
+
+Cited by: §1,
+§4.
+
+[35]
+L. Zhang, X. Wang, Y. Huang, and R. Xu (2024)
+
+Learning harmonized representations for speculative sampling.
+
+arXiv preprint arXiv:2408.15766.
+
+Cited by: §2.
+
+[36]
+Z. Zhang, J. Xu, T. Liang, X. Chen, Z. He, R. Wang, and Z. Tu (2025)
+
+Draft model knows when to stop: self-verification speculative decoding for long-form generation.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 16696–16708.
+
+Cited by: §2.
+
+[37]
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, et al. (2023)
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+Advances in neural information processing systems 36, pp. 46595–46623.
+
+Cited by: §3.1,
+§4.
+
+[38]
+D. Zhu, J. Chen, X. Shen, X. Li, and M. Elhoseiny (2023)
+
+Minigpt-4: enhancing vision-language understanding with advanced large language models.
+
+arXiv preprint arXiv:2304.10592.
+
+Cited by: §1.
+
+In this supplementary material, we present more details, experiments and discussions that are not covered in the main text.
+
+•
+
+We summarize the full SMART algorithm in Algorithm 1.
+
+•
+
+We provide additional experimental results on both standard MLLM benchmarks and LLM benchmarks under different temperature settings.
+
+•
+
+Across all evaluated speculative decoding baselines, SMART consistently improves both the speedup ratio () and the acceptance rate ().
+
+Table 6: Comparison of speedup ratio and acceptance rate on standard MLLM benchmarks. The subscripts denote the relative improvement compared to the corresponding baseline. Overall, SMART yields an average gain of +20.0% across all method–model–benchmark combinations at both temperatures.
+
+VQAv2
+AI2D
+SQA Image
+ChartQA
+TextVQA
+Hallusion
+Average
+
+Model
+Method
+
+Temperature = 0
+
+LLaVA-1.5
+7B
+
+Medusa
+0.88
+0.48
+0.82
+0.44
+0.86
+0.46
+0.91
+0.51
+0.95
+0.54
+1.01
+0.58
+0.91
+0.50
+
+EAGLE-1
+0.95
+0.52
+0.88
+0.48
+0.92
+0.50
+0.98
+0.55
+1.02
+0.58
+1.08
+0.62
+0.97
+0.54
+
+EAGLE-2
+1.08
+0.59
+0.98
+0.53
+1.02
+0.54
+1.06
+0.62
+1.15
+0.64
+1.18
+0.68
+1.08
+0.60
+
+EAGLE-2+SMART
+1.37
+0.68
+1.24
+0.66
+1.31
+0.69
+1.36
+0.71
+1.47
+0.74
+1.51
+0.78
+
+MSD
+1.23
+0.67
+1.09
+0.58
+1.09
+0.56
+1.14
+0.68
+1.26
+0.68
+1.26
+0.71
+1.18
+0.65
+
+MSD+SMART
+1.55
+0.81
+1.45
+0.74
+1.44
+0.72
+1.59
+0.82
+1.55
+0.79
+1.62
+0.83
+
+LLaVA-1.5
+13B
+
+Medusa
+0.95
+0.44
+0.88
+0.41
+1.01
+0.46
+1.10
+0.54
+0.91
+0.42
+0.88
+0.44
+0.96
+0.45
+
+EAGLE-1
+1.02
+0.48
+0.95
+0.45
+1.08
+0.50
+1.18
+0.58
+0.98
+0.46
+0.95
+0.48
+1.03
+0.49
+
+EAGLE-2
+1.15
+0.54
+1.08
+0.50
+1.18
+0.54
+1.32
+0.62
+1.12
+0.51
+1.08
+0.51
+1.16
+0.54
+
+EAGLE-2+SMART
+1.39
+0.68
+1.30
+0.64
+1.42
+0.69
+1.59
+0.76
+1.35
+0.66
+1.31
+0.65
+
+MSD
+1.30
+0.59
+1.17
+0.53
+1.28
+0.57
+1.45
+0.66
+1.22
+0.54
+1.17
+0.54
+1.26
+0.57
+
+MSD+SMART
+1.56
+0.76
+1.42
+0.71
+1.53
+0.76
+1.72
+0.84
+1.51
+0.73
+1.42
+0.72
+
+Qwen2VL
+7B Instruct
+
+Medusa
+0.85
+0.54
+0.79
+0.48
+0.82
+0.47
+0.98
+0.54
+0.88
+0.50
+0.91
+0.54
+0.87
+0.51
+
+EAGLE-1
+0.92
+0.58
+0.85
+0.52
+0.88
+0.51
+1.05
+0.58
+0.95
+0.54
+0.98
+0.58
+0.94
+0.55
+
+EAGLE-2
+1.05
+0.65
+0.96
+0.56
+0.98
+0.55
+1.15
+0.62
+1.08
+0.58
+1.08
+0.61
+1.05
+0.60
+
+EAGLE-2+SMART
+1.16
+0.77
+1.06
+0.71
+1.09
+0.69
+1.27
+0.77
+1.19
+0.56
+1.19
+0.76
+
+MSD
+1.18
+0.71
+1.05
+0.58
+1.06
+0.57
+1.24
+0.65
+1.16
+0.60
+1.15
+0.63
+1.14
+0.62
+
+MSD+SMART
+1.22
+0.86
+1.24
+0.77
+1.26
+0.74
+1.34
+0.84
+1.24
+0.57
+1.22
+0.82
+
+Temperature = 1
+
+LLaVA-1.5
+7B
+
+Medusa
+1.74
+0.24
+1.43
+0.28
+1.58
+0.29
+1.33
+0.26
+0.97
+0.19
+1.46
+0.26
+1.42
+0.25
+
+EAGLE-1
+1.85
+0.26
+1.52
+0.30
+1.68
+0.31
+1.42
+0.28
+1.05
+0.21
+1.55
+0.28
+1.51
+0.27
+
+EAGLE-2
+2.05
+0.28
+1.65
+0.32
+1.85
+0.33
+1.52
+0.29
+1.15
+0.23
+1.68
+0.30
+1.65
+0.29
+
+EAGLE-2+SMART
+2.63
+0.36
+2.12
+0.41
+2.37
+0.43
+1.95
+0.37
+1.47
+0.30
+2.14
+0.39
+
+MSD
+2.21
+0.30
+1.77
+0.34
+2.00
+0.35
+1.63
+0.31
+1.22
+0.24
+1.77
+0.31
+1.77
+0.31
+
+MSD+SMART
+2.84
+0.40
+2.41
+0.45
+2.56
+0.46
+2.24
+0.43
+1.46
+0.33
+2.19
+0.41
+
+LLaVA-1.5
+13B
+
+Medusa
+1.67
+0.27
+1.39
+0.30
+1.91
+0.33
+1.36
+0.26
+1.07
+0.20
+1.23
+0.24
+1.44
+0.27
+
+EAGLE-1
+1.78
+0.29
+1.48
+0.32
+2.02
+0.35
+1.45
+0.28
+1.15
+0.22
+1.32
+0.26
+1.53
+0.29
+
+EAGLE-2
+1.95
+0.31
+1.58
+0.33
+2.25
+0.36
+1.58
+0.29
+1.25
+0.24
+1.42
+0.27
+1.67
+0.30
+
+EAGLE-2+SMART
+2.37
+0.38
+1.91
+0.40
+2.73
+0.44
+1.93
+0.35
+1.52
+0.29
+1.72
+0.34
+
+MSD
+2.14
+0.33
+1.71
+0.35
+2.40
+0.38
+1.71
+0.31
+1.33
+0.25
+1.48
+0.28
+1.79
+0.31
+
+MSD+SMART
+2.54
+0.42
+2.23
+0.47
+2.92
+0.46
+1.98
+0.40
+1.63
+0.34
+1.78
+0.40
+
+Qwen2VL
+7B Instruct
+
+Medusa
+1.24
+0.52
+0.91
+0.38
+1.49
+0.42
+0.95
+0.42
+1.14
+0.42
+0.88
+0.42
+1.10
+0.43
+
+EAGLE-1
+1.32
+0.55
+0.98
+0.41
+1.58
+0.45
+1.02
+0.45
+1.22
+0.45
+0.95
+0.45
+1.18
+0.46
+
+EAGLE-2
+1.42
+0.59
+1.06
+0.43
+1.68
+0.47
+1.08
+0.46
+1.32
+0.47
+1.02
+0.47
+1.26
+0.48
+
+EAGLE-2+SMART
+1.55
+0.64
+1.17
+0.47
+1.84
+0.52
+1.18
+0.51
+1.44
+0.52
+1.11
+0.52
+
+MSD
+1.50
+0.62
+1.12
+0.44
+1.79
+0.48
+1.15
+0.48
+1.38
+0.48
+1.07
+0.48
+1.33
+0.50
+
+MSD+SMART
+1.69
+0.65
+1.25
+0.53
+2.04
+0.55
+1.16
+0.58
+1.45
+0.56
+1.10
+0.50
+
+Table 7:
+Comparison of speedup ratio () and acceptance rate () on standard LLM benchmarks under temperature settings . Subscripts denote the relative improvement over the corresponding baseline. Overall, SMART consistently improves all speculative decoding baselines across all models and benchmarks, yielding an average gain of +15.4% across all method–model–benchmark combinations.
+
+Temperature = 0
+Temperature = 1
+
+Model
+Method
+MT-bench
+HumanEval
+GSM8K
+Average
+MT-bench
+HumanEval
+GSM8K
+Average
+
+LLaMA-3.1
+Instruct 8B
+
+SPS
+0.49
+0.24
+0.54
+0.27
+0.43
+0.21
+0.49
+0.24
+0.86
+0.17
+0.92
+0.18
+0.75
+0.17
+0.84
+0.17
+
+EAGLE
+0.70
+0.35
+0.98
+0.37
+0.78
+0.35
+0.82
+0.36
+1.15
+0.20
+1.58
+0.30
+1.48
+0.26
+1.41
+0.25
+
+EAGLE-2
+1.01
+0.47
+1.34
+0.54
+1.08
+0.48
+1.14
+0.50
+1.43
+0.27
+2.12
+0.42
+1.82
+0.33
+1.79
+0.34
+
+EAGLE-2+SMART
+1.16
+0.53
+1.54
+0.60
+1.24
+0.54
+
+1.59
+0.29
+2.35
+0.46
+2.02
+0.36
+
+GRIFFIN
+1.17
+0.55
+1.50
+0.68
+1.20
+0.59
+1.29
+0.60
+1.58
+0.33
+2.61
+0.52
+2.01
+0.41
+2.07
+0.42
+
+GRIFFIN+SMART
+1.38
+0.61
+1.77
+0.75
+1.42
+0.65
+
+1.79
+0.36
+2.96
+0.56
+2.28
+0.44
+
+GTO
+1.39
+0.68
+1.48
+0.75
+1.32
+0.69
+1.40
+0.71
+1.70
+0.44
+2.52
+0.52
+2.29
+0.49
+2.17
+0.48
+
+GTO+SMART
+1.58
+0.75
+1.69
+0.83
+1.50
+0.77
+
+1.88
+0.47
+2.78
+0.56
+2.53
+0.53
+
+DFLASH
+1.09
+0.60
+1.60
+0.83
+1.48
+0.75
+1.39
+0.73
+0.98
+0.88
+1.33
+0.99
+1.20
+0.98
+1.17
+0.95
+
+DFLASH+SMART
+1.24
+0.74
+1.80
+0.85
+1.77
+0.81
+
+1.08
+0.92
+1.56
+1.00
+1.44
+0.98
+
+EAGLE-3
+1.35
+0.67
+1.44
+0.74
+1.28
+0.68
+1.36
+0.70
+1.65
+0.43
+2.45
+0.51
+2.22
+0.48
+2.11
+0.47
+
+EAGLE-3+SMART
+1.56
+0.67
+1.71
+0.74
+1.51
+0.68
+
+1.84
+0.47
+2.73
+0.57
+2.56
+0.52
+
+Vicuna-1.3
+13B
+
+SPS
+0.48
+0.25
+0.53
+0.28
+0.42
+0.21
+0.48
+0.25
+0.40
+0.16
+0.43
+0.17
+0.35
+0.15
+0.39
+0.16
+
+EAGLE
+0.71
+0.42
+0.82
+0.46
+0.68
+0.40
+0.74
+0.43
+0.55
+0.27
+0.63
+0.30
+0.56
+0.30
+0.58
+0.29
+
+EAGLE-2
+0.95
+0.54
+1.19
+0.60
+0.95
+0.52
+1.03
+0.55
+0.88
+0.38
+0.97
+0.42
+0.74
+0.38
+0.81
+0.40
+
+EAGLE-2+SMART
+1.14
+0.58
+1.43
+0.64
+1.14
+0.56
+
+1.04
+0.40
+1.14
+0.45
+0.87
+0.40
+
+GTO
+1.24
+0.75
+1.43
+0.87
+1.28
+0.72
+1.32
+0.78
+0.98
+0.50
+1.24
+0.57
+1.06
+0.51
+1.09
+0.53
+
+GTO+SMART
+1.45
+0.79
+1.67
+0.91
+1.50
+0.76
+
+1.13
+0.52
+1.43
+0.59
+1.22
+0.53
+
+EAGLE-3
+1.20
+0.74
+1.39
+0.85
+1.24
+0.71
+1.28
+0.76
+0.95
+0.49
+1.20
+0.56
+1.03
+0.50
+1.06
+0.52
+
+EAGLE-3+SMART
+1.43
+0.79
+1.72
+0.88
+1.52
+0.76
+
+1.14
+0.52
+1.43
+0.60
+1.24
+0.54
+
+DeepSeek
+R1 8B
+
+SPS
+0.52
+0.26
+0.58
+0.29
+0.46
+0.22
+0.52
+0.26
+0.46
+0.18
+0.49
+0.19
+0.40
+0.17
+0.45
+0.18
+
+GRIFFIN
+1.06
+0.50
+1.32
+0.63
+1.42
+0.68
+1.27
+0.61
+0.92
+0.39
+1.14
+0.46
+1.36
+0.55
+1.14
+0.46
+
+GRIFFIN+SMART
+1.21
+0.55
+1.50
+0.69
+1.62
+0.74
+
+1.00
+0.41
+1.24
+0.49
+1.48
+0.58
+
+GTO
+1.28
+0.62
+1.53
+0.72
+1.66
+0.78
+1.50
+0.71
+1.09
+0.49
+1.26
+0.52
+1.61
+0.59
+1.32
+0.53
+
+GTO+SMART
+1.43
+0.66
+1.71
+0.77
+1.86
+0.83
+
+1.17
+0.51
+1.35
+0.55
+1.72
+0.62
+
+EAGLE-3
+1.24
+0.61
+1.49
+0.71
+1.61
+0.76
+1.46
+0.70
+1.06
+0.48
+1.22
+0.51
+1.56
+0.58
+1.28
+0.52
+
+EAGLE-3+SMART
+1.45
+0.69
+1.65
+0.77
+1.87
+0.82
+
+1.21
+0.51
+1.34
+0.55
+1.62
+0.59
+
+LLaMA
+3.3 70B
+
+SPS
+0.98
+0.25
+1.09
+0.28
+0.86
+0.21
+0.98
+0.25
+0.81
+0.17
+0.86
+0.18
+0.70
+0.16
+0.79
+0.17
+
+GTO
+2.53
+0.64
+3.00
+0.73
+2.75
+0.67
+2.76
+0.68
+2.13
+0.44
+2.88
+0.66
+2.63
+0.56
+2.55
+0.55
+
+GTO+SMART
+2.96
+0.66
+3.67
+0.77
+3.30
+0.70
+
+2.53
+0.50
+3.33
+0.68
+3.01
+0.60
+
+EAGLE-3
+2.46
+0.63
+2.92
+0.72
+2.67
+0.66
+2.69
+0.67
+2.07
+0.43
+2.80
+0.65
+2.55
+0.55
+2.48
+0.54
+
+EAGLE-3+SMART
+2.97
+0.65
+3.72
+0.77
+3.32
+0.70
+
+2.56
+0.51
+3.36
+0.68
+3.02
+0.60
+
+Appendix 0.A Additional Experiment Results
+
+Additional Results on MLLMs.
+Table 6 provides a more comprehensive comparison between baseline speculative decoding methods and their SMART-enhanced variants on multimodal benchmarks. Similar to the analysis in the main text, SMART consistently improves both the speedup ratio () and the acceptance rate () when integrated with existing frameworks. For example, EAGLE-2 [19]+SMART consistently outperforms EAGLE-2 across all three MLLMs and all six benchmarks. On LLaVA-1.5-7B [23] the average increases from to at and from to at , corresponding to relative improvements of and , respectively. Similar trends are observed on LLaVA-1.5-13B, where SMART raises the average from to at and from to at . These improvements are consistently accompanied by higher acceptance rates. As discussed in the main text, SMART prioritizes tokens with higher expected acceptance probability, prunes branches with low expected benefit, and stops exploration early when no promising candidates remain. In contrast, baseline methods such as EAGLE-2 or MSD [22] typically expand a fixed number of draft tokens, which may lead to wasted verification when many drafted tokens are unlikely to be accepted.
+
+Algorithm 1 SMART: Greedy Draft-Tree Construction
+
+0:
+
+ Verification budget , batch size , top-, max depth , discount
+
+0:
+
+ Final selected node set (draft tree)
+
+1:
+
+  {per-sequence budget}
+
+2:
+
+ Initialize ,
+
+3:
+
+ for layer to do
+
+4:
+
+   {expand each node in with top- candidates}
+
+5:
+
+  Compute global terms on current tree:
+
+6:
+
+   ,  
+
+7:
+
+  Initialize
+
+8:
+
+  for each candidate do
+
+9:
+
+   Compute via Eqn. (13) and via Eqn. (15)
+
+10:
+
+   
+
+11:
+
+   if then
+
+12:
+
+    
+
+13:
+
+   end if
+
+14:
+
+  end for
+
+15:
+
+  
+
+16:
+
+  if or then
+
+17:
+
+   break
+
+18:
+
+  end if
+
+19:
+
+ end for
+
+20:
+
+ Let be the last executed layer; return
+
+Additional Results on LLMs.
+Table 7 reports a detailed comparison between baseline speculative decoding methods and their SMART-enhanced versions on standard LLM benchmarks. Consistent with the trends observed in the main text, SMART improves all evaluated baselines, including EAGLE-2, GRIFFIN [14], GTO [13], and DFLASH [6]. For instance, when applied to EAGLE-2 on LLaMA-3.1-Instruct-8B [10], SMART increases the average from to at and from to at . Similarly, GRIFFIN+SMART improves the average from to at and from to at . GTO also benefits from SMART, with the average increasing from to at and from to at on the same model. Notably, SMART also generalizes to DFLASH, a block-diffusion-based draft model that generates all draft tokens in a single non-autoregressive forward pass rather than autoregressively as in the EAGLE family. Since DFLASH produces independent top- candidates at each position, we construct an EAGLE-2 style tree by taking the Cartesian product of candidates across positions and pruning to the top- tokens by cumulative probability. Applying SMART to this tree-structured DFLASH improves the average from to () at and from to () at , demonstrating that SMART is effective even when the underlying draft mechanism is fundamentally different from autoregressive speculation. These results indicate that the benefits of SMART scale well with model size and remain consistent across different task domains, including dialogue generation, code generation, and mathematical reasoning, as well as across different draft model paradigms.
+
+Overall, these additional results further confirm the generality of SMART. Across both LLM and MLLM benchmarks, SMART consistently improves speculative decoding baselines such as EAGLE-2, GRIFFIN, GTO, DFLASH, and MSD without modifying their underlying architectures. This demonstrates that SMART can serve as a lightweight plug-in enhancement that can be readily integrated into existing speculative decoding frameworks to improve decoding efficiency.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

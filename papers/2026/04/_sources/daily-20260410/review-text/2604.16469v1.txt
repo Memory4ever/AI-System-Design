@@ -1,0 +1,617 @@
+B-PASTE: Beam-Aware Pattern-Guided Speculative Executionfor Resource-Constrained LLM Agents
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background and Motivation
+
+3 Design Overview
+
+4 Branch Hypotheses and State Model
+
+4.1 Node Types
+
+4.2 State Isolation
+
+5 Objective: Expected Critical-Path Reduction
+
+6 Runtime Protocol
+
+6.1 Why Preemption Matters More on the Edge
+
+6.2 Scheduling Phases
+
+Phase 1: Confirm / Promote.
+
+Phase 2: Protect Real Jobs.
+
+Phase 3: Run Authoritative Jobs.
+
+Phase 4: Opportunistic Branch Scheduling.
+
+6.3 Prefix-Only Execution
+
+7 Safety Policy
+
+8 Preliminary Edge-Side Observation
+
+9 Evaluation Plan
+
+10 Related Work
+
+LLM Agents and Tool Use.
+
+Speculative Execution for LLM Agents.
+
+Static Workflow and Serverless Scheduling.
+
+Pattern Mining, Search, and Scheduling.
+
+11 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.16469v1 [cs.DC] 09 Apr 2026
+
+B-PASTE: Beam-Aware Pattern-Guided Speculative Execution
+
+for Resource-Constrained LLM Agents
+
+Yanfei Song
+
+Affiliation: Independent Researcher
+
+SYanF@buaa.edu.cn
+
+Abstract
+
+LLM agents execute in an interleaved reasoning-and-action loop, where future tool calls cannot be launched until the current reasoning step completes. This serial dependency inflates end-to-end latency and leaves the model idle while waiting for tool execution. Prior work, Pattern-Aware Speculative Tool Execution (PASTE), mitigates this bottleneck by speculating likely future tool invocations from mined control-flow and data-flow regularities. However, PASTE is tool-centric and speculates only individual invocations rather than bounded future branches.
+
+We propose B-PASTE, a beam-aware extension that lifts speculation from single tools to local branch hypotheses under strict resource constraints. B-PASTE maintains a bounded beam of future execution subgraphs, ranks them by expected critical-path reduction rather than raw execution probability, and schedules only high-value branch prefixes on transient slack resources. It explicitly models co-run interference, downstream unlock value, and state-safety constraints, enabling the system to prioritize serial fast-path execution when early completion unlocks valuable future work, while still exploiting safe parallelism under low contention.
+
+This design is especially important for edge-side deployments, where speculative work must not steal scarce resources from latency-critical authoritative execution. Preliminary internal testing on Thor-class edge environments shows up to 1.4× end-to-end speedup, suggesting that branch-aware speculative execution remains effective even under tight resource budgets.
+
+1 Introduction
+
+Large language model (LLM) agents have shifted the role of language models from pure text generators to decision-making controllers that iteratively reason, invoke tools, observe results, and continue execution [2, 3, 4]. Across these settings, the same systems problem recurs: the agent’s execution graph is not known a priori, because the next action is only produced after the current reasoning step finishes. As a result, agent execution is often dominated by a strictly serialized LLM–tool loop.
+
+PASTE recently showed that this serial bottleneck is not entirely unavoidable [1]. Although agent requests are semantically diverse, their execution traces exhibit stable application-level control-flow patterns and parameter-passing regularities. PASTE exploits these regularities through a pattern tuple , where is an event-signature context, is a predicted future tool, is a late-binding argument mapping, and is an empirical confidence score. It then launches speculative tool executions only on slack resources, prioritizes authoritative jobs, and promotes matching speculative work when the real invocation arrives [1]. These mechanisms establish a strong foundation for runtime speculation in LLM agents.
+
+Despite its elegance, PASTE remains fundamentally single-invocation-centric. In many agent workloads, however, the future is not best modeled as one likely next tool, but as a small set of competing local execution branches. Under finite local resources, these branches interact nontrivially. Executing two branches concurrently may improve aggregate throughput, yet delay the completion of the branch that would have unlocked the next authoritative step. Thus, the core objective is not maximizing local parallelism, but minimizing end-to-end makespan by prioritizing work that shortens the effective critical path.
+
+This challenge becomes even more pronounced on edge-side platforms, where compute, memory, and I/O resources are limited, and speculative overcommitment can directly harm the authoritative path. In such environments, the value of speculation is determined not only by prediction quality, but also by the runtime’s ability to preempt, throttle, and reclaim speculative work as soon as contention emerges. We therefore view resource preemption not merely as a safety fallback, but as a first-class mechanism that enables speculation to remain beneficial under tight edge-side resource budgets. In preliminary internal testing on Thor-class edge environments, this design yields up to 1.4 end-to-end speedup, indicating that branch-aware speculation can retain positive utility even when the resource margin is small.
+
+This paper proposes B-PASTE, a resource-aware extension of PASTE that speculates not over isolated tool calls but over bounded local future subgraphs. Each branch hypothesis packages future nodes, late-bound argument resolvers, resource profiles, and safety annotations. At runtime, B-PASTE maintains a beam of promising branch hypotheses, admits only a subset for execution under a slack-resource budget, and ranks them by expected critical-path reduction instead of probability alone. Crucially, the score accounts for both co-run interference and downstream unlock value: a branch that runs fastest in isolation may not be the one that most helps the end-to-end objective once interference and future dependencies are considered.
+
+Our contributions are as follows:
+
+•
+
+We extend tool-level speculative execution to branch-level bounded future subgraphs, enabling runtime speculation over multiple plausible local futures rather than a single predicted invocation.
+
+•
+
+We introduce an expected critical-path reduction objective that explicitly models co-run interference and downstream unlock value under resource constraints.
+
+•
+
+We design a preemption-first runtime protocol that preserves strict priority for authoritative execution, which is especially important in edge-side deployments with narrow slack budgets.
+
+•
+
+We present preliminary edge-side evidence on Thor-class environments, suggesting that branch-aware speculation can deliver up to 1.4 end-to-end speedup under resource-constrained settings.
+
+2 Background and Motivation
+
+Traditional serverless and workflow optimizers such as ORION and Netherite assume that a complete DAG or workflow skeleton is known before execution [9, 11]. Under that assumption, the scheduler can prewarm functions, colocate parallel branches, and optimize data movement using graph-global information. SpecFaaS extends this setting with speculative function execution, but still operates over workflows that are either explicit or sufficiently structured to expose branches and dependencies ahead of time [10]. Agent workloads violate this assumption: the control graph is produced online by the model itself, and the next edge is often unknown until the current reasoning step completes. PASTE explicitly identifies this gap and argues that static-DAG scheduling provides limited benefit once the graph is generated incrementally by an LLM [1].
+
+PASTE’s characterization study offers the key enabling observation for our extension [1]. Tool execution accounts for a substantial fraction of total agent latency, and the traces exhibit recurring motifs such as edit–verify, locate–examine, and search–visit. Moreover, many tool arguments are not freshly hallucinated by the model; they are derivable from prior tool outputs via simple transformations. These findings imply that the agent’s future is neither arbitrary nor fully deterministic: it is best viewed as a small branching set of structured hypotheses.
+
+This immediately exposes a second systems issue that is less explicit in PASTE: resource interference changes the optimal speculative choice. Suppose branch and branch are both plausible. Running them in parallel may increase aggregate throughput, but if co-location slows enough to delay the launch of a downstream authoritative tool, then the global makespan may worsen. In agent runtimes, high resource utilization is not synonymous with low end-to-end latency. The scheduler should often prefer the branch whose early completion unlocks the most valuable future work, even if that means temporarily running fewer speculative tasks.
+
+This effect is magnified on edge platforms. Unlike server-scale deployments, edge-side systems often lack abundant slack capacity. A single speculative branch may contend with authoritative execution for CPU cycles, memory bandwidth, storage I/O, or limited runtime slots. Therefore, the utility of speculation depends not only on whether a hypothesis is likely, but also on whether the runtime can rapidly revoke that work once the authoritative path demands the same resources.
+
+3 Design Overview
+
+B-PASTE preserves the central architectural split introduced by PASTE: authoritative work is generated by the live agent and is correctness-critical, while speculative work is generated by the runtime and is strictly best effort [1]. The extension lies in the object being speculated. Instead of generating only speculative tool invocations, B-PASTE generates branch hypotheses, each representing a bounded local future execution subgraph. A branch hypothesis may contain tool nodes, partial preparation nodes, and commit barriers, together with late-bound argument functions and state-safety annotations. As in PASTE, all speculative work is confined to slack resources, immediately preemptible under contention, and eligible for promotion when the real authoritative path converges on it [1].
+
+Formally, we define a branch hypothesis as
+
+(1)
+
+where:
+
+•
+
+is a bounded future subgraph,
+
+•
+
+is the probability that the live agent will eventually follow this branch,
+
+•
+
+is a set of argument-binding functions derived from history,
+
+•
+
+is a multi-resource profile,
+
+•
+
+encodes safety constraints such as read-only, dry-run, staged-write, or non-speculative.
+
+This extends PASTE’s pattern tuple : the context and value mapping are still used, but now as building blocks for assembling local subgraphs rather than one-step predictions. Sequential pattern mining methods such as PrefixSpan naturally fit the offline mining phase, because they recover frequent short-horizon motifs from event-signature streams without depending on high-variance textual payloads [5].
+
+To keep the online search bounded, B-PASTE maintains a beam of size . This beam is not a token-level language-model beam; rather, it is a control-flow beam over future execution hypotheses. Beam maintenance follows the usual bounded-search intuition—retain only the most promising partial hypotheses—but the score is fundamentally systems-oriented. In contrast to standard beam-search formulations that rank candidates by sequence score, B-PASTE ranks branch hypotheses by their expected contribution to critical-path reduction under finite resources [6].
+
+4 Branch Hypotheses and State Model
+
+4.1 Node Types
+
+Each future subgraph may contain four types of nodes:
+
+•
+
+Tool Nodes, corresponding to real external tool invocations such as search, fetch, grep, test, or package installation.
+
+•
+
+Preparation Nodes, corresponding to speculative warm-up actions such as session creation, runtime initialization, or partial environment loading.
+
+•
+
+Model Nodes, representing future reasoning boundaries that may unlock downstream tools.
+
+•
+
+Barrier/Commit Nodes, marking state boundaries beyond which speculative side effects cannot be externally committed without authoritative confirmation.
+
+4.2 State Isolation
+
+State safety is the principal challenge in moving from tool-level speculation to branch-level speculation. We therefore execute each branch in a copy-on-write sandbox:
+
+(2)
+
+where denotes memory/context state, the file-system view, the execution environment view, and the branch-local execution history.
+
+Reads may be shared where safe, but writes are isolated until promotion. This design generalizes PASTE’s eligibility-policy philosophy into a branch-local state model [1]. Mis-speculation may consume bounded resources, but it does not corrupt the live authoritative state.
+
+5 Objective: Expected Critical-Path Reduction
+
+PASTE’s scheduler maximizes the expected latency reduction from individual speculative jobs under a slack-resource budget [1]. That is the right starting point, but branch-level scheduling requires a richer objective because branch value depends on both interference and unlock semantics. Accordingly, B-PASTE assigns each branch hypothesis an expected utility under the currently admitted speculative set :
+
+(3)
+
+where:
+
+•
+
+is the immediate overlap gain, i.e., the latency hidden by executing before it becomes authoritative,
+
+•
+
+is the downstream unlock gain, i.e., the reduction in future critical-path latency enabled by earlier completion of ,
+
+•
+
+is the interference penalty induced by co-running with the already admitted set .
+
+We further distinguish a branch’s isolated latency from its co-run latency :
+
+(4)
+
+This formulation captures the situation in which parallel execution increases total throughput yet worsens the completion time of the most causally important branch. It therefore optimizes the quantity the runtime actually cares about: end-to-end makespan, not local utilization. The critical-path flavor of the formulation is inspired by classic heterogeneous scheduling heuristics such as HEFT [7], but adapted to online, probabilistic, side-effect-constrained agent execution.
+
+Given a beam at runtime state , the scheduler selects an admitted set
+
+(5)
+
+subject to a slack-resource budget:
+
+(6)
+
+where is the currently available residual capacity and is the policy-defined speculation budget.
+
+6 Runtime Protocol
+
+6.1 Why Preemption Matters More on the Edge
+
+A key motivation for B-PASTE is that edge-side speculation is fundamentally a resource arbitration problem. On server-class deployments, speculative work can often be confined to relatively abundant slack resources. On edge platforms such as Thor-class devices, by contrast, the slack budget is narrow and highly dynamic: launching one additional speculative branch may slow the authoritative branch enough to negate any potential gain. For this reason, B-PASTE emphasizes strict priority for authoritative execution, immediate preemption of speculative work under contention, and prefix-only branch execution when full-branch speculation would be too costly. These design choices extend PASTE’s opportunistic scheduling philosophy into a regime where speculative work must continuously yield to the live critical path [1].
+
+6.2 Scheduling Phases
+
+At runtime, B-PASTE proceeds in four phases.
+
+Phase 1: Confirm / Promote.
+
+When an authoritative invocation arrives, the runtime checks whether any speculative branch node already matches it. If a matching node has finished, the result is reused. If it is still running, the node is promoted to authoritative and becomes non-preemptible. If only a prefix has completed, the runtime reuses that partial state and continues execution from the nearest valid boundary. This directly inherits PASTE’s promotion semantics [1].
+
+Phase 2: Protect Real Jobs.
+
+The scheduler reserves sufficient resources for all pending authoritative jobs. If resources are insufficient, speculative branches are preempted in ascending utility order until the authoritative set fits.
+
+Phase 3: Run Authoritative Jobs.
+
+Authoritative jobs are scheduled using the existing primary policy, untouched by speculation.
+
+Phase 4: Opportunistic Branch Scheduling.
+
+The runtime generates or refreshes the beam, estimates utility for each branch hypothesis, and admits only the highest-value branch prefixes that fit within the slack-resource budget.
+
+6.3 Prefix-Only Execution
+
+Rather than speculating an entire branch, the runtime may choose only a safe and high-value prefix, such as search and fetch, while deferring later state-mutating steps behind a commit barrier. Prefix execution has three benefits:
+
+•
+
+it captures most of the overlap gain,
+
+•
+
+it reduces rollback pressure and state divergence,
+
+•
+
+it increases the chance that partial work can later be promoted or reused.
+
+Algorithm 1 Beam-Aware Opportunistic Speculative Scheduling
+
+1:
+
+Authoritative queue , speculative beam , available resources , budget
+
+2:
+
+for all new authoritative invocation do
+
+3:
+
+  find matching speculative node
+
+4:
+
+  if is completed then
+
+5:
+
+   reuse speculative result
+
+6:
+
+  else if is running then
+
+7:
+
+   promote to authoritative
+
+8:
+
+  else if has completed a valid prefix then
+
+9:
+
+   reuse prefix state and continue
+
+10:
+
+  end if
+
+11:
+
+end for
+
+12:
+
+if authoritative demand exceeds then
+
+13:
+
+  preempt speculative branches in ascending utility order
+
+14:
+
+end if
+
+15:
+
+schedule authoritative jobs using primary policy
+
+16:
+
+generate/refresh beam hypotheses
+
+17:
+
+for all do
+
+18:
+
+  estimate , , , and
+
+19:
+
+  compute
+
+20:
+
+end for
+
+21:
+
+greedily admit highest-value branch prefixes under
+
+22:
+
+run admitted prefixes as preemptible speculative work
+
+7 Safety Policy
+
+PASTE already addresses side effects through an explicit operator-defined eligibility policy, including per-tool speculation levels and transformed speculation such as allowing web search speculation while limiting pip_install to dry-run behavior [1]. B-PASTE generalizes this policy to branch-local state management.
+
+We define three execution levels:
+
+•
+
+Level 0: Prep-only. Environment warm-up, runtime initialization, session establishment.
+
+•
+
+Level 1: Read-only / Replayable Prefix. Pure fetch, grep, parsing, indexing, and similar operations.
+
+•
+
+Level 2: Staged Write. Mutating actions executed only in branch-local state and requiring authoritative confirmation before commit.
+
+By construction, no speculative side effect becomes externally visible unless the authoritative path converges on it. This makes the analogy to Tomasulo-style speculation conceptually useful but operationally incomplete: unlike register writes in dynamic hardware scheduling, agent actions may have persistent external effects and therefore require explicit isolation, staged commit, and squash semantics [8].
+
+8 Preliminary Edge-Side Observation
+
+Table 1 presents a preliminary internal observation on a Thor-class edge environment. We normalize the baseline end-to-end latency to 1.00 and report the relative improvement of B-PASTE.
+
+Table 1: Preliminary observation on a Thor-class edge environment. Normalized end-to-end latency is reported relative to the serial baseline. B-PASTE benefits from priority-aware preemption and branch-prefix scheduling.
+
+Method
+Norm. Latency
+Speedup
+Note
+
+Serial baseline
+1.00
+1.00
+No speculation
+
+B-PASTE
+0.71
+1.40
+Preemption-aware
+
+B-PASTE is especially well suited to resource-constrained edge deployments, where the scheduler must carefully distinguish between useful speculation and harmful contention. In this regime, the main question is not whether the runtime can keep all resources busy, but whether it can keep the right resources busy without delaying the authoritative path. This is precisely why B-PASTE prioritizes expected critical-path reduction over raw speculative parallelism.
+
+We attribute this early gain to two effects. First, earlier execution of high-value branch prefixes reduces idle wait time between reasoning and action. Second, aggressive preemption and reclamation prevent speculative branches from monopolizing scarce edge-side resources once authoritative work becomes ready. While a full characterization remains future work, this early signal suggests that the benefit of branch-aware speculation extends beyond server-scale agent systems and may be even more consequential in edge settings where resource mistakes are amplified.
+
+9 Evaluation Plan
+
+A complete evaluation remains future work. The most important metrics include:
+
+•
+
+average and tail end-to-end latency,
+
+•
+
+critical-path reduction,
+
+•
+
+promotion rate and branch-prefix reuse rate,
+
+•
+
+wasted speculative compute,
+
+•
+
+authoritative QoS violations,
+
+•
+
+co-run slowdown ratio under different interference regimes.
+
+The key hypothesis of B-PASTE is not simply that “more speculative parallelism is better,” but that critical-path-aware selective speculation dominates naive concurrency when resources are tight. This hypothesis is consistent with PASTE’s emphasis on slack-resource opportunism and non-interference, but it still requires empirical validation at branch granularity [1].
+
+10 Related Work
+
+LLM Agents and Tool Use.
+
+ReAct formalized interleaved reasoning and acting in language models [2]. Toolformer demonstrated that models can learn to invoke external tools [3]. OpenHands illustrates how such agentic behavior can be embedded into practical software-engineering systems [4].
+
+Speculative Execution for LLM Agents.
+
+PASTE is the direct foundation of our work. It introduced pattern-aware speculative tool execution, pattern tuples for jointly modeling control flow and argument derivation, and an opportunistic scheduling mechanism with promotion and non-interference guarantees [1].
+
+Static Workflow and Serverless Scheduling.
+
+ORION, Netherite, and SpecFaaS optimize serverless or workflow execution when a sufficiently explicit graph is available ahead of time [9, 11, 10]. B-PASTE addresses the harder setting in which the graph is generated online by the agent itself.
+
+Pattern Mining, Search, and Scheduling.
+
+PrefixSpan provides an efficient way to mine frequent sequential patterns [5]. Beam-search optimization provides bounded-search intuition for maintaining a small candidate set [6]. HEFT motivates the use of critical-path-aware scheduling under heterogeneous or interference-prone conditions [7]. Tomasulo’s algorithm provides the conceptual analogy of speculative lookahead with ordered commit, though agent-side effects require much stronger isolation semantics [8].
+
+11 Conclusion
+
+We presented B-PASTE, a beam-aware extension of PASTE for resource-constrained LLM agents. The key idea is to speculate over a bounded set of future branch hypotheses rather than isolated tool calls, and to schedule those hypotheses by expected critical-path reduction rather than probability or throughput alone. By combining pattern-mined control-flow regularities, late-bound data-flow mappings, beam-bounded future-graph search, interference-aware scoring, and policy-constrained staged execution, B-PASTE provides a principled runtime design for turning hidden agent parallelism into end-to-end latency reduction without compromising correctness.
+
+Importantly, the design is particularly relevant for edge-side environments, where speculative execution must coexist with tight resource budgets and where preemption of low-value speculative work is essential to protect latency-critical authoritative execution. Preliminary internal testing on Thor-class edge platforms indicates up to 1.4 end-to-end speedup, suggesting that critical-path-aware branch speculation may be a practical systems approach for next-generation edge agents.
+
+References
+
+[1]
+
+Yifan Sui, Han Zhao, Rui Ma, Zhiyuan He, Hao Wang, Jianxun Li, and Yuqing Yang.
+
+Act While Thinking: Accelerating LLM Agents via Pattern-Aware Speculative Tool Execution.
+
+arXiv preprint arXiv:2603.18897, 2026.
+
+[2]
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao.
+
+ReAct: Synergizing Reasoning and Acting in Language Models.
+
+In International Conference on Learning Representations (ICLR), 2023.
+
+[3]
+
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom.
+
+Toolformer: Language Models Can Teach Themselves to Use Tools.
+
+In Advances in Neural Information Processing Systems (NeurIPS), 2023.
+
+[4]
+
+Xingyao Wang et al.
+
+OpenHands: An Open Platform for AI Software Developers as Generalist Agents.
+
+arXiv preprint arXiv:2407.16741, 2024.
+
+[5]
+
+Jian Pei, Jiawei Han, Behzad Mortazavi-Asl, Helen Pinto, Qiming Chen, Umeshwar Dayal, and Mei-Chun Hsu.
+
+PrefixSpan: Mining Sequential Patterns Efficiently by Prefix-Projected Pattern Growth.
+
+In Proceedings of the 17th International Conference on Data Engineering (ICDE), pages 215–224, 2001.
+
+[6]
+
+Sam Wiseman and Alexander M. Rush.
+
+Sequence-to-Sequence Learning as Beam-Search Optimization.
+
+In Proceedings of EMNLP, pages 1296–1306, 2016.
+
+[7]
+
+Haluk Topcuoglu, Salim Hariri, and Min-You Wu.
+
+Performance-Effective and Low-Complexity Task Scheduling for Heterogeneous Computing.
+
+IEEE Transactions on Parallel and Distributed Systems, 13(3):260–274, 2002.
+
+[8]
+
+Robert M. Tomasulo.
+
+An Efficient Algorithm for Exploiting Multiple Arithmetic Units.
+
+IBM Journal of Research and Development, 11(1):25–33, 1967.
+
+[9]
+
+Ashraf Mahgoub, Edgardo Barsallo Yi, Karthick Shankar, Sameh Elnikety, Somali Chaterji, and Saurabh Bagchi.
+
+ORION and the Three Rights: Sizing, Bundling, and Prewarming for Serverless DAGs.
+
+In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI), pages 303–320, 2022.
+
+[10]
+
+Jovan Stojkovic, Tianyin Xu, Hubertus Franke, and Josep Torrellas.
+
+SpecFaaS: Accelerating Serverless Applications with Speculative Function Execution.
+
+2023.
+
+[11]
+
+Sebastian Burckhardt, Chris Gillum, David Justo, Konstantinos Kallas, Connor McMahon, and Christopher S. Meiklejohn.
+
+Serverless Workflows with Durable Functions and Netherite.
+
+arXiv preprint arXiv:2103.00033, 2021.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -1,0 +1,1291 @@
+Transactional Attention: Semantic Sponsorship for KV-Cache Retention
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+Attention-based eviction.
+
+Learned and reconstruction-based methods.
+
+Chunk-level and structural approaches.
+
+Agentic and domain-specific cache management.
+
+Concurrent work.
+
+Positioning.
+
+3 Method
+
+3.1 Problem Setup
+
+3.2 Sponsorship Mechanism
+
+3.3 Budget Partition
+
+3.4 TA-Fast
+
+4 Experiments
+
+4.1 Setup
+
+4.2 Main Results
+
+4.3 Scaling
+
+4.4 Function-Calling Agents
+
+4.5 Composability
+
+4.6 Multi-Model Generalization
+
+4.7 Context Length Scaling
+
+5 Analysis
+
+5.1 Learned Anchor Detection
+
+5.2 Ablations
+
+5.3 Robustness
+
+5.4 Multilingual Detection
+
+5.5 TA-Fast Summary
+
+6 Formal Guarantees
+
+7 Limitations
+
+8 Conclusion
+
+9 Reproducibility Statement
+
+10 Broader Impact
+
+References
+
+A Proof Details
+
+A.1 Notation
+
+A.2 Proof: Attention-Based Eviction Fails
+
+A.3 Proof: Sponsorship Guarantees Retention
+
+A.4 Proof: Minimum Budget
+
+A.5 Proof: Decoy Tolerance
+
+A.6 Why TA-Fast Beats Full-TA on Confusers
+
+B Variant Reference
+
+C Additional Tables
+
+D Baseline Audit
+
+D.1 Exact Prompt Template
+
+D.2 Budget Partition at K=16
+
+D.3 Sanity Check: Needle-in-Window Ablation
+
+License: CC BY 4.0
+
+arXiv:2604.11288v1 [cs.CL] 13 Apr 2026
+
+Transactional Attention: Semantic Sponsorship for KV-Cache Retention
+
+Abhinaba Basu
+
+Affiliation: National Institute of Electronics and Information Technology (NIELIT)
+
+Affiliation: Indian Institute of Information Technology, Allahabad (IIITA)
+
+Email: mail@abhinaba.com
+
+Abstract
+
+At tokens—0.4% of a 4K context—every existing KV-cache compression method achieves 0% on credential retrieval. The failure mode is dormant tokens: credentials, API keys, and configuration values that receive near-zero attention throughout the context but become essential at generation time. Because these tokens lack the statistical signals that eviction policies rely on, no method based on attention scores, reconstruction loss, or learned retention gates retains them. We introduce Transactional Attention (TA), a sponsorship mechanism in which structural anchor patterns (e.g., key:, password:) protect adjacent value-bearing tokens from eviction. TA achieves 100% credential retrieval at where six baselines—H2O, TOVA, SnapKV, StreamingLLM, PyramidKV, and DynamicKV—achieve 0%, and sustains 100% accuracy across 200 function-calling trials. TA-Fast, an attention-free variant, reduces memory overhead by 52% and is compatible with SDPA and FlashAttention. TA is orthogonal to existing compression methods and adds less than 1% latency overhead.
+
+Figure 1: Transactional Attention at a glance. (a) Dormant tokens (credentials, IDs) receive near-zero attention, making them invisible to scoring-based eviction. (b) At , all baselines evict them—the credential ranks 3,847th of 4,000 tokens. (c) TA’s sponsorship mechanism detects the anchor pattern (key:) and protects adjacent value tokens. (d) Needle-in-haystack accuracy: TA achieves 100% at all budgets; baselines achieve 0% at .
+
+1 Introduction
+
+An AI coding assistant receives an API key in the first turn of a multi-turn conversation. Five turns and 4,000 tokens later, it generates code that calls the API—but under a KV-cache budget of tokens, every existing compression method has evicted the key. The credential received near-zero attention throughout the conversation; no scoring function based on attention, reconstruction loss, or learned retention gates identifies it as worth keeping.
+
+This failure is an instance of the dormant token problem (Figure 1). Dormant tokens are tokens that receive near-zero attention during most of the context window but become essential at specific, unpredictable moments during generation. API keys, passwords, database connection strings, session tokens, geographic coordinates, and configuration values all follow this pattern: they are stated once, ignored for hundreds or thousands of tokens, and then required verbatim. In a 4,000-token context with a budget of , a dormant credential competes against 3,984 other tokens for retention—and loses, because it has accumulated almost no attention mass.
+
+Dormant tokens are not rare edge cases. They are the standard pattern in agentic workflows where models maintain state across tool calls (Schick et al., 2023; Yao et al., 2023). A function-calling agent receives credentials, endpoint URLs, and session identifiers in its system prompt, then executes a chain of tool invocations that may span tens of thousands of tokens. Each invocation requires the agent to recall state established much earlier. As production LLMs shift toward multi-turn, tool-augmented interaction, dormant tokens become the norm rather than the exception.
+
+Existing KV-cache compression methods fail on dormant tokens because they score by statistical signals that dormant tokens lack by definition. H2O (Zhang et al., 2023) ranks tokens by cumulative attention mass; a dormant credential scores near zero and ranks 3,847th of 4,000. TOVA (Oren et al., 2024) retains attention sinks and a sliding window of recent tokens; a credential at relative depth 0.5 sits 2,000 tokens outside the window. SnapKV (Li et al., 2024) clusters attention patterns to identify important positions; dormant tokens form no salient cluster. PyramidKV (Cai et al., 2024) allocates budgets pyramidally across layers but still selects by attention score within each layer. KVzip (Jang et al., 2025) quantifies importance via context reconstruction loss; dormant tokens are easily reconstructed from surrounding context and appear dispensable. Even StructKV (Chen et al., 2026), which explicitly addresses “dormant” tokens via cross-layer attention aggregation, cannot rescue tokens that receive zero attention at every layer. All these methods rely on statistical signals that dormant tokens lack by definition.
+
+Our key observation is that dormant tokens follow predictable structural patterns. The token key: reliably precedes a value worth retaining; password:, Authorization:, and session_id= do the same. This is domain knowledge, not a heuristic—structural patterns predict semantic value with high precision. Transactional Attention exploits this observation through a sponsorship mechanism: anchor tokens that match structural patterns “sponsor” adjacent value-bearing spans by injecting a protection signal into the utility score. This approach is proactive—it protects tokens before they are needed—rather than reactive—observing attention patterns and then deciding. Because sponsorship modifies the scoring function rather than replacing the eviction policy, TA composes with any existing compression method.
+
+We make the following contributions:
+
+1.
+
+A sponsorship mechanism that achieves 100% credential retrieval at where six baselines achieve 0%, validated across 3 model families (Llama, Mistral, Phi) and 200 function-calling trials.
+
+2.
+
+TA-Fast, an attention-free variant that reduces memory overhead by 52% and is compatible with SDPA and FlashAttention (Dao et al., 2022).
+
+3.
+
+A learned anchor detector achieving F10.946 that transfers across model scales without retraining.
+
+4.
+
+Evidence of orthogonality: TA composes with existing methods, adds less than 1% latency overhead, and does not degrade general long-context performance (LongBench (Bai et al., 2023): 42% vs. TOVA’s 45%).
+
+2 Related Work
+
+Attention-based eviction.
+
+H2O (Zhang et al., 2023) retains heavy-hitter tokens by cumulative attention score. TOVA (Oren et al., 2024) maintains attention sinks and a sliding window of recent tokens. SnapKV (Li et al., 2024) clusters attention patterns to identify important positions. PyramidKV (Cai et al., 2024) allocates budgets pyramidally across transformer layers. Ada-KV (Feng et al., 2025) adapts per-head budgets based on attention entropy. All of these methods score tokens by their attention profile—tokens receiving near-zero attention are evicted regardless of their semantic role. Transactional Attention does not replace attention-based scoring; it adds a single orthogonal signal (structural sponsorship) that protects the specific tokens these methods systematically miss.
+
+Learned and reconstruction-based methods.
+
+KVzip (Jang et al., 2025) quantifies KV pair importance via context reconstruction loss, achieving 3–4 compression as a NeurIPS 2025 Oral. TRIM-KV (Anonymous, 2026b) learns per-token retention gates that predict long-term utility. RocketKV (Anonymous, 2025b) applies two-stage coarse-then-fine eviction. R-KV (Cai et al., 2025) targets redundant tokens in reasoning chains. These methods advance the state of the art on general compression, but they score by reconstruction loss or learned statistical patterns. Dormant tokens—easily reconstructible from surrounding context—appear dispensable under these criteria. TA addresses precisely this gap: tokens that are statistically dispensable but semantically essential.
+
+Chunk-level and structural approaches.
+
+ChunkKV (Anonymous, 2025a) treats semantic chunks rather than individual tokens as compression units. ARKV (Anonymous, 2026a) introduces tri-state caching (retain, compress, or evict). These approaches operate on larger units but still rank by statistical signals rather than semantic role.
+
+Agentic and domain-specific cache management.
+
+SideQuest (Kariyappa and Suh, 2026) uses the LLM itself to reason about token usefulness for multi-step agentic tasks, achieving 65% peak token reduction. Ananthanarayanan et al. (Ananthanarayanan et al., 2026) identify a sharp “safety cliff” near 90% compression where hallucination rates spike—a phase transition in semantic reachability that underscores the risk of aggressive eviction.
+
+Concurrent work.
+
+StructKV (Chen et al., 2026) (ACL 2026 Findings) is the closest concurrent work. It addresses tokens that appear “temporarily dormant” at one layer but serve as global information hubs across network depth, using Global In-Degree Centrality to aggregate cross-layer attention patterns. The key distinction is that StructKV’s dormancy is layer-local: a token active at layer 15 but inactive at layer 8 is rescued by cross-layer aggregation. TA targets a fundamentally different dormancy: tokens that receive near-zero attention at all layers because nothing queries them yet. No amount of cross-layer aggregation recovers a token with zero attention everywhere. TA’s structural sponsorship is the only mechanism that protects such tokens, because it operates on semantic patterns rather than attention signals.
+
+Positioning.
+
+Transactional Attention is orthogonal to all of the above. It injects a single additional signal—structural sponsorship—into the scoring function. This is domain knowledge, not a statistical signal. Because sponsorship modifies scores rather than replacing the eviction policy, TA composes with any existing method, including StructKV, KVzip, or SideQuest. Our experiments show that adding TA preserves general performance (LongBench: 42% vs. TOVA’s 45%) while eliminating dormant-token failures.
+
+3 Method
+
+3.1 Problem Setup
+
+Consider a transformer processing context tokens with a KV-cache that stores key-value pairs for each position . Under memory constraints, a retention policy selects a subset with tokens to retain after each generation step, where is the budget. Evicted tokens are permanently lost.
+
+Each token receives a utility score that determines its retention priority. Existing methods compute from attention patterns alone—cumulative attention mass (Zhang et al., 2023), sliding-window position (Oren et al., 2024), or prefill attention clusters (Li et al., 2024). A dormant token has cumulative attention for all steps before the query, making it invisible to any attention-based scoring function.
+
+Goal. Design a utility function that retains dormant-but-critical tokens within budget , without requiring attention weights.
+
+3.2 Sponsorship Mechanism
+
+Figure 2: Sponsorship mechanism in four steps. (1) Anchor detector identifies structural patterns (e.g., API_KEY:). (2) Sponsor budget is allocated with exponential decay () over the next tokens. (3) Utility scores incorporate the sponsorship voucher, boosting value tokens above the retention threshold. (4) Top- selection retains sponsored tokens alongside high-attention tokens.
+
+The sponsorship mechanism exploits a semantic prior: dormant tokens follow predictable structural patterns. Tokens like key:, password:, and Authorization: reliably precede value-bearing spans. Figure 2 illustrates the four-step process.
+
+Anchor detection. An anchor detector identifies tokens that signal important information follows. We provide three instantiations: (1) Regex-based: a pattern set marks matching tokens; (2) Semantic-based: patterns extend to communication verbs (“said”, “told”, “remember”); (3) Embedding-based: cosine similarity between input embeddings and anchor concept embeddings enables language-agnostic detection.
+
+Utility scoring. Each token receives a composite utility score:
+
+(1)
+
+where is cumulative attention across heads and steps, is recency, indicates anchor status, is a pension score (exponential moving average of past attention), penalizes frequent tokens, and is the sponsorship voucher. We use , , , , .
+
+Voucher allocation. When anchor is detected, it sponsors the next tokens with exponentially decaying protection:
+
+(2)
+
+where is the sponsor budget (default ) and matches typical value spans (API keys are 10–40 characters, spanning 7–11 tokens). The exponential decay localizes protection to the value-bearing span immediately following the anchor.
+
+Token selection. The top- tokens by utility are retained; all others are evicted via index_select on KV tensors along the sequence dimension. Sponsor budgets decay over time () to prevent stale anchors from protecting irrelevant content indefinitely.
+
+Algorithm 1 Transactional Attention: per-step retention
+
+0:
+
+ KV-cache of tokens, budget , patterns , span
+
+1:
+
+ Detect anchors:
+
+2:
+
+ for each anchor do
+
+3:
+
+  for to do
+
+4:
+
+   
+
+5:
+
+  end for
+
+6:
+
+ end for
+
+7:
+
+ Compute for all
+
+8:
+
+ 
+
+9:
+
+ Evict KV-cache entries
+
+10:
+
+ Decay budgets: for all
+
+3.3 Budget Partition
+
+The total budget is partitioned into slots selected by utility score and slots reserved for sponsored content:
+
+At , we use and . Mandatory tokens (first token as attention sink, last 2 for recency) are drawn from the main pool.
+
+This is a partition within , not additional capacity. Both TA and baselines retain exactly tokens. The partition ensures sponsored content survives even when high-attention tokens would otherwise dominate all slots. Ablations (§5) confirm that a strict configuration (, ) also achieves 100% on Llama-1B—reserved slots provide flexibility but are not required.
+
+3.4 TA-Fast
+
+Ablations reveal that sponsorship alone achieves 100%—attention-based components (, ) are optional. This motivates TA-Fast, which drops all attention terms (, ):
+
+(3)
+
+Because TA-Fast requires no attention weights, it is compatible with SDPA and FlashAttention (Dao et al., 2022)—backends that fuse attention computation and never materialize the full attention matrix. On Llama-3.2-1B at –64, TA-Fast achieves 100% accuracy using 52% less memory (2.7GB vs. 5.8GB for Full-TA with eager attention).
+
+Three variants exist: (1) TA-Fast-Regex for explicit patterns, (2) TA-Fast-Semantic for communication verbs, and (3) TA-Fast-Embedding for language-agnostic detection via cosine similarity between input and anchor concept embeddings.
+
+4 Experiments
+
+4.1 Setup
+
+Models. Llama-3.2-1B, Llama-3.1-8B (Grattafiori et al., 2024), and Mistral-7B-v0.3 (Jiang et al., 2023). All experiments use float16 precision on a single H100 GPU.
+
+Baselines. H2O (Zhang et al., 2023), TOVA (Oren et al., 2024), SnapKV (Li et al., 2024), StreamingLLM (Xiao et al., 2023), PyramidKV (Cai et al., 2024), and DynamicKV (Zhou et al., 2025). KVzip (Jang et al., 2025) and TRIM-KV (Anonymous, 2026b) use reconstruction/learned signals; we cite their results and focus comparison on eviction-based methods where we have controlled experiments.
+
+Budgets. tokens (0.4%–6.3% of a 4K context).
+
+TA variants. TA-Fast-Regex (pattern matching), TA-Fast-Semantic (communication verbs), TA-Fast-Embedding (model embeddings), and Full-TA (attention tracking). Table 5 (Appendix) maps each experiment to its variant.
+
+Needle task. An 8-character credential (“The secret code is: XK7M9P2Q”) is embedded at depth within filler text, then the model must retrieve it verbatim. Success requires exact match. We test 5 depths 10 trials 50 trials per configuration.
+
+4.2 Main Results
+
+Table 1: Needle-in-haystack accuracy (%) on Llama-3.2-1B at 4K context. At , Transactional Attention achieves 100% while attention-based methods achieve 0%. All baselines use official implementations or published algorithms.
+
+Method
+K=16
+K=32
+K=64
+K=128
+K=256
+
+TA
+100
+100
+100
+100
+100
+
+TOVA
+0
+0
+0
+100
+100
+
+H2O
+0
+0
+0
+0
+0
+
+SnapKV
+0
+0
+0
+100
+100
+
+StreamingLLM
+0
+0
+0
+0
+0
+
+PyramidKV
+0
+0
+0
+0
+46
+
+DynamicKV
+0
+–
+–
+–
+–
+
+Figure 3: Why baselines fail at . (a) H2O ranks by cumulative attention; the credential scores near zero, ranked 3,847th of 4,000. (b) TOVA’s sliding window covers only the last 12 tokens; the credential at depth 0.5 is tokens away. (c) TA’s sponsorship boosts the credential into the top 16, ensuring retention.
+
+Table 1 shows the main result: at , Transactional Attention achieves 100% while all six baselines achieve 0%. Figure 3 illustrates the mechanism: attention-based rankings place the credential near the bottom, while TA’s sponsorship voucher boosts it into the top-.
+
+Statistical validation. Over 50 trials at , TA achieved 100% (95% CI: [93%, 100%]) while ablation without sponsorship achieved 0% (, Fisher’s exact test).
+
+4.3 Scaling
+
+Figure 4: Accuracy vs. retention budget . TA achieves 100% at all budgets. Baselines require to reach 100%.
+
+TA’s advantage is greatest under memory pressure (Figure 4). At , TOVA and SnapKV reach 100%—with sufficient budget, attention-based methods can afford to keep tokens “just in case.” The gap closes because the dormant-token problem is a problem of scarcity, not of mechanism.
+
+4.4 Function-Calling Agents
+
+Table 2: Tool-call benchmark (K=32, n=200). Function-calling format is the deployment scenario for agentic LLMs.
+
+Method
+12-char
+32-char
+Overall
+
+TA-Fast-Semantic
+100%
+100%
+100%
+
+TA-Fast-Regex
+94%
+88%
+91%
+
+TOVA
+0%
+0%
+0%
+
+The practical deployment path for agentic LLMs is function calling (Schick et al., 2023), where credentials are passed via structured tool calls. We test multi-turn conversations () on Llama-3.2-1B where a credential is shared early and must later be passed to call_api(key="..."). Table 2 shows TA-Fast-Semantic achieves 100% while TOVA achieves 0% across all 200 trials. The structured output eliminates emission variability—if retained, the model fills the slot correctly.
+
+4.5 Composability
+
+Figure 5: TA modifies the scoring function (green), not the eviction policy. It slots into any existing pipeline. General performance is unchanged: LongBench single-document QA is 42% (TA) vs 45% (TOVA).
+
+TA is orthogonal to existing compression methods because it modifies the scoring function, not the eviction policy (Figure 5). On LongBench (Bai et al., 2023) single-document QA at , TA achieves 42% vs. TOVA’s 45%—sponsorship provides no advantage where dormant tokens are not the bottleneck, but critically, it causes no degradation. TA adds less than 1% latency overhead (0.361s vs. 0.358s at 4K context) because anchor detection and voucher allocation are both operations. Perplexity on WikiText-2 is also competitive (Table 6, Appendix).
+
+4.6 Multi-Model Generalization
+
+Table 3: Accuracy (%) across model scales. Budget is total tokens retained. TA-Regex uses pattern matching; TA-Sem adds verb detection.
+
+Model
+K
+TA-Rgx
+TA-Sem
+TOVA
+No Spn
+
+Llama-3.2-1B
+16
+100
+100
+0
+0
+
+Llama-3.1-8B
+16
+100
+100
+0
+0
+
+Mistral-7B
+16
+5
+5
+0
+0
+
+Mistral-7B
+24
+5
+100
+0
+0
+
+Table 3 shows results across architectures. On Llama models, both TA variants achieve 100% at . Mistral requires a larger budget: at , TA achieves only 5%, but at , semantic detection reaches 100%. The discrepancy traces to tokenization—Mistral’s tokenizer splits our 8-character credential into 11 tokens versus Llama’s 7. With sponsorship span , provides exactly borderline capacity for Mistral’s longer token sequence. At , the full credential fits. The mechanism is universal but budget requirements are tokenizer-dependent.
+
+4.7 Context Length Scaling
+
+Table 4: Scaling: TA-Fast (SDPA) vs attention-based (eager). TA-Fast uses position + semantics only.
+
+Ctx
+K
+Method
+Acc
+Lat.
+Mem
+
+4K
+16
+TA
+100%
+180ms
+2.1GB
+
+4K
+16
+TOVA
+0%
+175ms
+2.0GB
+
+7K
+32
+TA (SDPA)
+100%
+372ms
+6.8GB
+
+7K
+32
+TOVA (eager)
+OOM
+–
+50GB
+
+Table 4 shows the practical advantage of SDPA compatibility. Because TA-Fast requires no attention weights, it works with memory-efficient SDPA backends. At 7K context, TOVA requires eager attention to materialize full attention matrices for scoring, causing OOM (50GB). TA-Fast achieves 100% at 6.8GB. This gap widens at longer contexts: at 8K, 16K, and 24K with , TA-Fast achieves 100% using 4.5–8.7GB while Full-TA (eager) fails with OOM at all lengths.
+
+5 Analysis
+
+5.1 Learned Anchor Detection
+
+Pattern matching works only for patterns we explicitly define. Real applications encounter diverse formats: “api_key:”, “bearer_token:”, “Remember this number:”. We address this with a learned detector.
+
+We train a small MLP on last-layer hidden states with GELU activation (Hendrycks and Gimpel, 2016):
+
+(4)
+
+The detector outputs a confidence score in . Training uses 62 positive patterns with 100 examples each, plus 6,200 negative examples. Training and evaluation patterns are disjoint.
+
+Metrics. On 429 anchor patterns across 9 families and 1,000 non-anchor spans, the detector achieves 95.9% precision and 93.2% recall (F10.946). Trained on Llama-1B, it transfers to Llama-8B (100%) and Mistral-7B (95%) without retraining.
+
+TA-Learned applies sponsorship to tokens following high-confidence predictions (). TA-LearnRank handles competing anchors by allocating sponsorship proportionally to confidence:
+
+(5)
+
+Higher-confidence anchors receive more protection under budget pressure. On 7 real-world benchmark formats (tool calls, HTTP headers, JSON, YAML, ENV files, etc.), TA-Learned achieves 100% while TA-Regex achieves 0–96% depending on pattern explicitness (Table 10, Appendix).
+
+5.2 Ablations
+
+Figure 6: Hyperparameter sensitivity at . Most utility weights show 0% accuracy spread—the sponsor budget is the only critical parameter (accuracy ranges 27%–100%).
+
+Figure 6 shows hyperparameter sensitivity. We vary each utility weight across 0.5–2 default values. The parameters , , , all achieve 100% across their ranges (0% accuracy spread). Recency shows modest sensitivity (17% spread). The sponsor budget is the only critical parameter: accuracy ranges from 27% to 100%. Practitioners need only tune the sponsor budget. We also verify that a strict-budget configuration (, ) achieves 100% on Llama-1B—reserved slots provide flexibility but are not required.
+
+5.3 Robustness
+
+When 5 decoys compete with the real target, TA-LearnRank achieves 60–80% across models while TOVA achieves 0% (Table 7, Appendix). A surprising finding: TA-Fast beats Full-TA on confusers (100% vs 0% at 5 confusers). Full-TA’s attention-weighted sponsorship dilutes protection when anchors compete; uniform protection is safer than attention-weighted partial protection. Adversarial anchor injection can exhaust the sponsor budget, reducing legitimate retention to 0%; allowlist filtering restores 100%. Detailed robustness tables appear in Appendix C.
+
+5.4 Multilingual Detection
+
+Regex patterns are language-specific; TA-Fast-Embedding uses cosine similarity between input embeddings and anchor concept embeddings for language-agnostic detection. On 7 languages, TA-Fast-Embedding achieves 57% overall (100% English, 100% Spanish, 100% Japanese, 67% Korean, 50% on others). Regex and semantic detection achieve only 10%, failing on all non-English languages. Full results appear in Table 8 (Appendix).
+
+5.5 TA-Fast Summary
+
+TA-Fast drops all attention terms (, ), making it compatible with SDPA and FlashAttention (Dao et al., 2022)—backends that never materialize the full attention matrix. This yields 52% less memory (2.7GB vs 5.8GB for Full-TA with eager attention) and less than 1% latency overhead (0.361s vs 0.358s). Three variants exist: TA-Fast-Regex, TA-Fast-Semantic, and TA-Fast-Embedding. At 8K–24K context with , TA-Fast achieves 100% using 4.5–8.7GB while Full-TA (eager) fails with OOM at all lengths.
+
+6 Formal Guarantees
+
+We formalize the budget conditions under which sponsorship succeeds and attention-based methods fail. These are practical bounds for setting hyperparameters, not deep theoretical contributions.
+
+Theorem 1 (Attention-Based Eviction Fails).
+
+Let token be dormant (cumulative attention ) until query time . For any attention-based policy with budget , the probability of retaining satisfies as context length with fixed .
+
+Proof.
+
+At any step , the dormant token has attention . In a sequence of tokens, the expected number of tokens with attention is for any non-trivial attention distribution. With budget , the policy must evict tokens. Since ranks in the bottom -quantile by attention, .
+∎
+
+Theorem 2 (Sponsorship Guarantees Retention).
+
+If anchor matches pattern with budget , span , and (sink window span), then the value span is retained with probability 1.
+
+Proof.
+
+Upon detecting anchor , TA allocates voucher boost to positions . The minimum boost is . For , : . The utility for all in the span, guaranteeing selection in the top-.
+∎
+
+Corollary 3 (Minimum Budget).
+
+For value length tokens, guaranteed retrieval requires . At , : , explaining 100% at .
+
+Theorem 4 (Decoy Tolerance).
+
+With decoys each sponsoring spans of length , TA succeeds if . Otherwise, the true value has retention probability .
+
+Practical interpretation. At () with , even decoy requires slots, predicting borderline failure. Empirically, TA-Fast-Semantic handles 1–2 decoys at through selective detection. At (), theory predicts ; empirically, TA handles 5 decoys. Full proofs in Appendix A.
+
+7 Limitations
+
+1.
+
+TA does not improve general long-context understanding. On LongBench single-document QA, TA achieves 42%, comparable to TOVA’s 45%.
+
+2.
+
+Sponsorship requires identifiable anchor patterns. On unstructured cues (“Remember this number X”), accuracy drops to 32%.
+
+3.
+
+Adversarial anchor injection can exhaust the sponsor budget, reducing legitimate retention to 0%. Allowlist filtering mitigates this but requires per-domain configuration.
+
+4.
+
+Budget requirements are tokenizer-dependent. Mistral’s tokenizer splits an 8-character credential into 11 tokens (vs Llama’s 7), requiring instead of .
+
+8 Conclusion
+
+KV-cache compression methods fail on dormant tokens—credentials, identifiers, and configuration values that receive near-zero attention but are essential in agentic workflows. Transactional Attention introduces semantic sponsorship, where structural patterns protect adjacent value-bearing spans from eviction, achieving 100% retrieval at where six baselines achieve 0%. Because sponsorship modifies the scoring function rather than the eviction policy, it composes with any existing compression method at less than 1% additional latency.
+
+9 Reproducibility Statement
+
+All experiments use publicly available models (Llama-3.2-1B, Llama-3.1-8B, Mistral-7B-v0.3) with float16 precision. Code, exact prompts, and evaluation scripts are available at https://github.com/[anonymized].
+
+10 Broader Impact
+
+Transactional Attention is designed for structured state retention in agentic LLM deployments. The mechanism introduces a dual-use risk: adversaries can inject anchor patterns to exhaust sponsor budgets (Section 7). Allowlist filtering provides an effective countermeasure.
+
+References
+
+Ananthanarayanan et al. [2026]
+
+Samhruth Ananthanarayanan, Ayan Sengupta, and Tanmoy Chakraborty.
+
+Understanding the physics of key-value cache compression for LLMs
+through attention dynamics.
+
+arXiv preprint arXiv:2603.01426, 2026.
+
+Anonymous [2025a]
+
+Anonymous.
+
+ChunkKV: Semantic-preserving KV cache compression for efficient
+long-context LLM inference.
+
+arXiv preprint arXiv:2502.00299, 2025a.
+
+Anonymous [2025b]
+
+Anonymous.
+
+RocketKV: Accelerating long-context LLM inference via two-stage
+KV cache compression.
+
+In International Conference on Machine Learning,
+2025b.
+
+Anonymous [2026a]
+
+Anonymous.
+
+ARKV: Adaptive and resource-efficient KV cache management under
+limited memory budget.
+
+arXiv preprint arXiv:2603.08727, 2026a.
+
+Anonymous [2026b]
+
+Anonymous.
+
+Cache what lasts: Token retention for memory-bounded KV cache in
+LLMs.
+
+In International Conference on Learning Representations,
+2026b.
+
+Bai et al. [2023]
+
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang,
+Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and
+Juanzi Li.
+
+LongBench: A bilingual, multitask benchmark for long context
+understanding.
+
+arXiv preprint arXiv:2308.14508, 2023.
+
+doi: 10.48550/arxiv.2308.14508.
+
+Cai et al. [2024]
+
+Zefan Cai, Yichi Zhang, Bofei Gao, Tianyu Liu, Keming Lu, Wayne Xiong, Yue
+Dong, Baobao Chang, Junjie Hu, and Wen Xiao.
+
+PyramidKV: Dynamic KV cache compression based on pyramidal
+information funneling.
+
+arXiv preprint arXiv:2406.02069, 2024.
+
+doi: 10.48550/arxiv.2406.02069.
+
+Cai et al. [2025]
+
+Zefan Cai et al.
+
+R-KV: Redundancy-aware KV cache compression for reasoning models.
+
+In Advances in Neural Information Processing Systems,
+volume 38, 2025.
+
+Chen et al. [2026]
+
+Zhirui Chen, Peiyang Liu, and Ling Shao.
+
+StructKV: Preserving the structural skeleton for scalable
+long-context inference.
+
+In Findings of the Association for Computational Linguistics:
+ACL 2026, 2026.
+
+Dao et al. [2022]
+
+Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré.
+
+FlashAttention: Fast and memory-efficient exact attention with
+IO-awareness.
+
+In Advances in Neural Information Processing Systems,
+volume 35, pages 16344–16359, 2022.
+
+doi: 10.48550/arxiv.2205.14135.
+
+Feng et al. [2025]
+
+Yuan Feng et al.
+
+Ada-KV: Optimizing KV cache eviction by adaptive budget
+allocation for efficient LLM inference.
+
+In Advances in Neural Information Processing Systems,
+volume 38, 2025.
+
+Grattafiori et al. [2024]
+
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek
+Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex
+Vaughan, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn, Aobo Yang,
+Archi Mber, Arzoo Amit, Arya Saez, Ashutosh Agarwal, Ashutosh Ganapathy,
+et al.
+
+The Llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783, 2024.
+
+doi: 10.48550/arxiv.2407.21783.
+
+Hendrycks and Gimpel [2016]
+
+Dan Hendrycks and Kevin Gimpel.
+
+Gaussian error linear units (GELUs).
+
+arXiv preprint arXiv:1606.08415, 2016.
+
+doi: 10.48550/arxiv.1606.08415.
+
+Jang et al. [2025]
+
+Hyun Jang et al.
+
+KVzip: Query-agnostic KV cache compression with context
+reconstruction.
+
+In Advances in Neural Information Processing Systems,
+volume 38, 2025.
+
+Oral presentation.
+
+Jiang et al. [2023]
+
+Albert Q Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford,
+Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel,
+Guillaume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne
+Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang,
+Timothée Lacroix, and William El Sayed.
+
+Mistral 7B.
+
+arXiv preprint arXiv:2310.06825, 2023.
+
+doi: 10.48550/arxiv.2310.06825.
+
+Kariyappa and Suh [2026]
+
+Sanjay Kariyappa and G. Edward Suh.
+
+SideQuest: Model-driven KV cache management for long-horizon
+agentic reasoning.
+
+arXiv preprint arXiv:2602.22603, 2026.
+
+Li et al. [2024]
+
+Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli,
+Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen.
+
+SnapKV: LLM knows what you are looking for before generation.
+
+arXiv preprint arXiv:2404.14469, 2024.
+
+doi: 10.48550/arxiv.2404.14469.
+
+Oren et al. [2024]
+
+Matanel Oren, Michael Hassid, Yossi Adi, and Roy Schwartz.
+
+Transformers are multi-state RNNs.
+
+arXiv preprint arXiv:2401.06104, 2024.
+
+doi: 10.48550/arxiv.2401.06104.
+
+Schick et al. [2023]
+
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria
+Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom.
+
+Toolformer: Language models can teach themselves to use tools.
+
+arXiv preprint arXiv:2302.04761, 2023.
+
+doi: 10.48550/arxiv.2302.04761.
+
+Xiao et al. [2023]
+
+Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis.
+
+Efficient streaming language models with attention sinks.
+
+arXiv preprint arXiv:2309.17453, 2023.
+
+doi: 10.48550/arxiv.2309.17453.
+
+Yao et al. [2023]
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+and Yuan Cao.
+
+ReAct: Synergizing reasoning and acting in language models.
+
+In International Conference on Learning Representations, 2023.
+
+Zhang et al. [2023]
+
+Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai,
+Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhiru Wang, and
+Beidi Chen.
+
+H2O: Heavy-hitter oracle for efficient generative inference of
+large language models.
+
+In Advances in Neural Information Processing Systems,
+volume 36, pages 34661–34710, 2023.
+
+Zhou et al. [2025]
+
+Xiabin Zhou, Wenbin Wang, Minyan Zeng, Jiaxian Guo, Xuebo Liu, Li Shen, Min
+Zhang, and Liang Ding.
+
+DynamicKV: Task-aware adaptive KV cache compression for long
+context LLMs.
+
+In Findings of the Association for Computational Linguistics:
+EMNLP 2025, pages 8042–8057, 2025.
+
+doi: 10.18653/v1/2025.findings-emnlp.426.
+
+Appendix A Proof Details
+
+We provide full proofs for the theoretical guarantees presented in Section 6.
+
+A.1 Notation
+
+Let be a sequence of tokens. A KV-cache retention policy selects a subset with tokens to retain after each generation step.
+
+Definition 5 (Dormant Token).
+
+Token is dormant at step if its cumulative attention for some threshold , where is the attention weight from head to position at step .
+
+Definition 6 (Critical Token).
+
+Token is critical for query if removing from context causes the model to fail on . Formally, for threshold .
+
+A.2 Proof: Attention-Based Eviction Fails
+
+Theorem 1. Let be any eviction policy that ranks tokens by cumulative attention and evicts the lowest-ranked tokens. If token is dormant-critical with for all (where is the query time), then evicts with probability approaching 1 as context length .
+
+Proof.
+
+At any step , the dormant token has attention . In a sequence of tokens, the expected number of tokens with attention is for any non-trivial attention distribution.
+
+For budget , the policy must evict tokens. Since ranks in the bottom -quantile by attention, the probability that survives is:
+
+As with fixed , this probability approaches 0.
+∎
+
+Corollary. H2O (cumulative attention) and TOVA (step-wise minimum attention eviction) both satisfy the conditions of Theorem 1. At budget with context , a dormant token at position has survival probability .
+
+A.3 Proof: Sponsorship Guarantees Retention
+
+Theorem 2. Let be the Transactional Attention policy with sponsor budget , span length , and protected slots . If (1) Token is an anchor (matches pattern ), (2) The critical value spans positions , and (3) (protected slots cover the span), then the critical value is retained with probability 1, regardless of attention scores.
+
+Proof.
+
+Upon detecting anchor , TA allocates voucher boost to positions . The minimum boost in the span is .
+
+For typical parameters (, ), .
+
+The utility of sponsored tokens is:
+
+With protected slots reserved for sponsored content, and boost for all , these positions are guaranteed selection in the protected pool.
+∎
+
+A.4 Proof: Minimum Budget
+
+Theorem 3. For a single dormant-critical value of length tokens following an anchor, the minimum budget for guaranteed retrieval is , where is the sliding window size and accounts for the attention sink.
+
+Proof.
+
+TA requires:
+
+•
+
+1 slot for the first token (attention sink)
+
+•
+
+slots for the sliding window (recent context)
+
+•
+
+slots for the sponsored value span
+
+With , all mandatory and sponsored tokens fit within budget. Any risks evicting part of the critical span.
+∎
+
+Corollary. For typical API keys ( tokens), with : . This explains why TA achieves 100% at while baselines fail.
+
+A.5 Proof: Decoy Tolerance
+
+Theorem 4. With adversarial decoy anchors each sponsoring spans of length , TA succeeds if . When , the protected slots overflow and decoys may displace the true value.
+
+Proof.
+
+Each of the decoys and 1 true anchor sponsors tokens. The protected pool has capacity . If , some sponsored tokens must be evicted. Without distinguishing true from decoy anchors, the true value has probability of full retention.
+∎
+
+Corollary. At () with :
+
+•
+
+: — borderline, may fail
+
+•
+
+: — guaranteed failure
+
+At ():
+
+•
+
+: — succeeds
+
+•
+
+: — guaranteed failure
+
+This matches our empirical observations: TA-Fast-Semantic handles 1–2 decoys at but fails at 5+ decoys. At , it handles up to 5 decoys, consistent with theory ().
+
+A.6 Why TA-Fast Beats Full-TA on Confusers
+
+Observation. Empirically, TA-Fast-Semantic achieves 100% at 5 confusers while Full-TA achieves 0%.
+
+Analysis. Full-TA uses attention patterns to weight anchor detection. When multiple similar anchors compete (“secret code:”, “access code:”, “entry code:”), attention spreads across all candidates, diluting the protection of each. TA-Fast uses pattern matching only, treating all detected anchors equally. When confusers share similar patterns but different values, TA-Fast protects all of them. The model then uses its generation capacity to select the correct one from the retained candidates. The key insight: protecting all candidates is better than attention-weighted partial protection when the answer must be among the candidates.
+
+Appendix B Variant Reference
+
+Table 5: TA variant used in each experiment.
+
+Experiment
+Variant
+
+Main needle (Tab 1)
+Regex, Semantic
+
+Multi-model (Tab 3)
+Regex, Full-TA
+
+Multi-slot (Tab 9)
+Regex (allowlist)
+
+4-value agent
+Regex (allowlist)
+
+Anchor abuse
+Regex (allowlist)
+
+Tool-call (Tab 2)
+Semantic
+
+Multilingual (Tab 8)
+Embedding
+
+Confusers (Tab 7)
+LearnRank, Regex, Learned
+
+Hard Mode (Tab 11)
+Learned
+
+Appendix C Additional Tables
+
+Table 6: Perplexity on WikiText-2 (lower is better). Transactional Attention achieves competitive perplexity while enabling retrieval.
+
+Method
+K=16
+K=32
+K=64
+
+TA
+30.4
+28.1
+27.2
+
+TOVA
+31.2
+28.8
+27.0
+
+H2O
+45.3
+38.2
+31.5
+
+StreamingLLM
+52.1
+42.7
+35.8
+
+Table 7: Confuser test: 5 decoys compete for budget (n=20). TA-LearnRank outperforms pattern matching.
+
+Method
+Llama-1B
+Llama-8B
+Mistral
+
+LearnRank
+80%
+75%
+60%
+
+Regex
+35%
+30%
+0%
+
+Learned
+45%
+40%
+25%
+
+TOVA
+0%
+0%
+0%
+
+Table 8: TA-Fast variants comparison. Memory relative to Full-TA (5.8GB).
+
+Regex
+Sem.
+Emb.
+Full
+
+English
+67%
+67%
+100%
+100%
+
+Non-English
+0%
+0%
+50%
+71%
+
+5 confusers
+100%
+100%
+–
+0%
+
+10 confusers
+60%
+90%
+–
+0%
+
+Memory
+2.7GB
+2.7GB
+2.7GB
+5.8GB
+
+Table 9: Multi-slot retrieval (Llama-3.2-1B, n=20). Full breakdown by individual value.
+
+Method
+All 3
+API
+Endpoint
+Auth
+
+K=96
+
+TA
+90%
+90%
+100%
+100%
+
+TOVA
+65%
+65%
+100%
+100%
+
+H2O
+0%
+0%
+0%
+0%
+
+Table 10: Real-world benchmarks at K=32 (n=100, 95% Wilson CI). TA-Learned achieves 100% across all formats.
+
+Benchmark
+TA-Learned
+TA-Regex
+
+Tool Calls
+100%
+0%
+
+HTTP Headers
+100%
+1%
+
+Stack Traces
+100%
+94%
+
+INI Config
+100%
+66%
+
+JSON Config
+100%
+10%
+
+YAML Config
+100%
+96%
+
+ENV Files
+100%
+62%
+
+Table 11: Hard Mode stress tests (n=20, K=64). Adversarial conditions reveal TA limits and baseline failures.
+
+Test
+TA
+H2O
+StrmLLM
+
+Similar anchors (prod/dev)
+35%
+0%
+0%
+
+Paraphrased queries
+100%
+60%
+0%
+
+Early needle (depth 0.1)
+100%
+0%
+0%
+
+Overall
+78%
+20%
+0%
+
+Appendix D Baseline Audit
+
+We provide concrete evidence that the “0% vs 100%” gap at K=16 reflects fundamental mechanism differences, not misconfiguration.
+
+D.1 Exact Prompt Template
+
+[FILLER: 3800 tokens of Wikipedia text]
+
+The secret code is: XK7M9P2Q
+
+[FILLER: 200 tokens]
+
+What is the secret code?
+
+The needle (“secret code: XK7M9P2Q”) is placed at depth 0.5 (middle of context). Total context: 4096 tokens. Query appears at position 4090.
+
+D.2 Budget Partition at K=16
+
+Method
+Sinks
+Win
+Prot
+Coverage
+
+TOVA
+4
+12
+0
+1–4, 4079–4090
+
+StreamLLM
+4
+12
+0
+1–4, 4079–4090
+
+TA-Fast
+4
+6
+6
+1–4 + sponsored
+
+At depth 0.5, the needle is at position 2048—outside the 12-token window. TOVA/StreamLLM structurally cannot retain it.
+
+D.3 Sanity Check: Needle-in-Window Ablation
+
+To confirm TOVA works correctly, we move the needle into the window (depth 0.997, last 12 tokens). We report both retention rate (tokens in KV cache) and generation accuracy (n=10):
+
+Depth 0.5
+Depth 0.997
+
+Method
+Ret
+Gen
+Ret
+Gen
+
+TOVA
+0%
+0%
+100%
+60%
+
+TA-Fast
+100%
+100%
+100%
+90%
+
+TOVA achieves 100% retention when the needle is in-window, confirming correct implementation. The 0% at depth 0.5 is structural, not a bug. Note that even with 100% retention, TOVA’s generation accuracy is only 60%—the sliding window disrupts attention patterns. TA-Fast achieves 90–100% generation at both depths via stable sponsorship.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

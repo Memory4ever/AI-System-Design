@@ -1,0 +1,581 @@
+Governance-Aware Agent Telemetryfor Closed-Loop Enforcement inMulti-Agent AI Systems
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Related Work
+
+III Formal Model for Governance-Aware Telemetry
+
+III-A Definitions and Preliminaries
+
+III-B Policy Algebra with Confidence Composition
+
+III-C Telemetry Integrity and Trust Model
+
+IV Reference Architecture
+
+V Implementation and Evaluation
+
+V-A Prototype
+
+V-B Metrics
+
+V-C Baselines
+
+V-D Methodology
+
+V-E Comparative Results
+
+V-F Security Evaluation
+
+V-G Ablation Studies
+
+V-H Scalability and Resource Consumption
+
+V-I Monte Carlo Theorem Validation
+
+V-J Statistical Validation
+
+VI Discussion
+
+VII Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.05119v1 [cs.MA] 06 Apr 2026
+
+Governance-Aware Agent Telemetry
+
+for Closed-Loop Enforcement in
+
+Multi-Agent AI Systems
+
+Anshul Pathak
+
+Affiliation: a_pathak@apple.com
+
+  
+Nishant Jain
+
+Affiliation: n_jain@apple.com
+
+Abstract
+
+Enterprise multi-agent AI systems produce thousands of inter-agent interactions per hour, yet existing observability tools capture these dependencies without enforcing anything. OpenTelemetry and Langfuse collect telemetry but treat governance as a downstream analytics concern, not a real-time enforcement target. The result is an “observe-but-do-not-act” gap where policy violations are detected only after damage is done.
+
+We present Governance-Aware Agent Telemetry (GAAT), a reference architecture that closes the loop between telemetry collection and automated policy enforcement for multi-agent systems. GAAT introduces (1) a Governance Telemetry Schema (GTS) extending OpenTelemetry with governance attributes; (2) a real-time policy violation detection engine using OPA-compatible declarative rules under sub-200 ms latency; (3) a Governance Enforcement Bus (GEB) with graduated interventions; and (4) a Trusted Telemetry Plane with cryptographic provenance.
+
+We evaluated GAAT against four baseline systems across data residency, bias detection, authorization compliance, and adversarial telemetry scenarios. On a live five-agent e-commerce system, GAAT achieved 98.3% Violation Prevention Rate (VPR, 0.7%) on 5,000 synthetic injection flows across 10 independent runs, with 8.4 ms median detection latency and 127 ms median end-to-end enforcement latency. On 12,000 empirical production-realistic traces, GAAT achieved 99.7% VPR; residual failures (40% timing edge cases, 35% ambiguous PII classification, 25% incomplete lineage chains). Statistical validation confirmed significance with 95% bootstrap confidence intervals [97.1%, 99.2%] ( vs all baselines). GAAT outperformed NeMo Guardrails-style agent-boundary enforcement by 19.5 percentage points (78.8% VPR vs 98.3%). We also provide formal property specifications for escalation termination, conflict resolution determinism, and bounded false quarantine—each with explicit assumptions—validated through 10,000 Monte Carlo simulations.
+
+Index Terms: multi-agent systems, AI governance, closed-loop enforcement, policy enforcement, OpenTelemetry, graduated escalation, real-time governance
+
+Fig. 1: GAAT five-layer reference architecture with cross-cutting Trusted Telemetry Plane and closed-loop enforcement feedback.
+
+I Introduction
+
+A 50-agent enterprise deployment can generate over 10,000 inter-agent interactions per hour. Every one of those interactions carries implications for data privacy and regulatory compliance. LangChain, AutoGen, and CrewAI have made building such systems easy; governing them has not kept pace. The EU AI Act now classifies many agent-based systems as high-risk [1], while NIST’s AI RMF requires continuous monitoring with enforcement [2].
+
+Observability stacks have gotten better at collecting LLM telemetry. OpenTelemetry’s semantic conventions cover LLM-specific attributes [3]; Langfuse provides open-source tracing [4]. But there is a gap that none of them close: these tools treat governance as something you analyze after the fact, not something you enforce while agents are running. We call this the “telemetry-to-enforcement loop,” and it does not exist in any current system we have tested.
+
+Why does this matter? Because a misconfigured agent that routes EU citizen PII to a US data center will not wait for a dashboard review. The violation happens in milliseconds. Detection 15 seconds later (the best our OpenTelemetry+Langfuse baseline managed) is too late.
+
+This paper makes three contributions: (1) A formal model for governance-aware telemetry with explicit assumptions and property specifications proving escalation termination, conflict resolution determinism, and bounded false quarantine (Section III). (2) A five-layer reference architecture for closed-loop governance enforcement with cryptographic telemetry provenance (Section IV). (3) Evaluation against four real baseline systems showing 97.6% reduction in violation escape rate at sub-200 ms end-to-end enforcement latency (Section V).
+
+II Related Work
+
+Multi-Agent Observability. OpenTelemetry [3] and Langfuse [4] provide distributed tracing with GenAI semantic conventions, and commercial platforms like Datadog have added LLM monitoring. These tools focus on post-hoc analysis. In our evaluation, a dashboard-only approach achieved only 27.1% VPR because governance was treated as a visualization problem rather than an enforcement one.
+
+Telemetry Pipeline Governance. Kulkarni [5] introduces the Governance-Aware Observability Pipeline (GAOP), which embeds compliance enforcement into observability data pipelines. GAOP runs as a Policy Enforcement Engine inside an OpenTelemetry collector processor, applying inline PII redaction and consent validation. The distinction matters: GAOP governs telemetry content; GAAT uses telemetry as a governance signal to detect and enforce AI agent behavioral violations through a closed enforcement loop with graduated escalation. GAOP lacks multi-agent topology awareness, cross-agent lineage tracking, graduated intervention levels with formal termination guarantees, and evaluation against runtime enforcement baselines.
+
+Runtime Guardrails and Authorization. NVIDIA NeMo Guardrails [6] provides per-agent input/output checks but cannot detect cross-agent violations through delegation chains (78.8% VPR in our evaluation). GuardAgent [16] uses a dedicated guard agent with knowledge-enabled reasoning, adding 200–500 ms of LLM inference latency without formal completeness guarantees. AgentSpec [7] offers DSL-based per-agent trajectory enforcement, while Pro2Guard [8] extends this with probabilistic model checking. Both operate at individual agent boundaries without cross-agent coordination, a limitation we quantify as 19.5% VPR reduction versus GAAT. AWS Cedar [10] and OPA [9] provide declarative authorization but lack AI-specific governance semantics, achieving 76.8% coverage. Service mesh frameworks like Istio [11] and Kyverno [12] enforce at the infrastructure level without AI-specific governance integration.
+
+Runtime Verification. Leucker and Schallhart [13] establish RV fundamentals. Havelund and Roşu [14] show sub-millisecond safety property monitoring. MOP [15] enables specification-driven monitoring. These approaches target deterministic programs with well-defined state machines—an assumption that LLM-based agents with probabilistic outputs plainly violate. GAAT extends RV to stochastic agent systems by defining governance properties over telemetry streams, supporting probabilistic policy evaluation, and using graduated interventions rather than binary halt/continue.
+
+Surveys on LLM agents [17, 18, 19] consistently flag governance as an open challenge. Wang et al. [19] explicitly call for “telemetry-integrated governance frameworks.” GAAT appears to be, to our knowledge, the first working implementation of this idea, though we may be unaware of concurrent or proprietary systems.
+
+III Formal Model for Governance-Aware Telemetry
+
+III-A Definitions and Preliminaries
+
+Definition 1 (Multi-Agent System). An MAS is a tuple where is a finite set of agents; is the set of communication channels; maps agents to authorized capabilities; assigns continuous trust levels.
+
+Definition 2 (Governance Telemetry Event). A GTE is a tuple where is the timestamp; are source and receiving agents; ; ctx is operational context; and with .
+
+Definition 3 (Governance Policy). A policy maps events to enforcement actions paired with confidence scores .
+
+Definition 4 (Violation History). For agent and time , the violation history where is the history window.
+
+III-B Policy Algebra with Confidence Composition
+
+Policies compose via sequential composition (): apply , then ; deny short-circuits. Parallel composition (): evaluate both; where actions are ordered deny quarantine flag allow.
+
+Theorem 1 (Enforcement Monotonicity). For any parallel composition using , if for any , then the composed result is . Adding policies never weakens enforcement.
+
+Theorem 2 (Escalation Termination). Assumptions: (A1) Policies are well-formed. (A2) Trust levels change only via enforcement actions. (A3) Violation rate is bounded: one per event-processing cycle. (A4) History window is finite and fixed. Statement: For any agent with , the graduated escalation converges to a fixed level within . Proof sketch: . The level increases by 1 per violations, bounded above by 4 (QUARANTINE). At level 4, the agent is isolated. The function is monotonic in and bounded, converging within worst case (). Monte Carlo validation: converged in 97.37% of 10,000 runs; the 2.63% non-convergent cases had extreme rates (0.4/cycle) violating A3. Mitigation: To handle A3 violations in production (e.g., a compromised agent in a rapid retry loop), the GEB implements a per-agent circuit breaker: if an agent’s violation count exceeds within a sliding window of , the circuit breaker bypasses graduated escalation and forces immediate L4 QUARANTINE with . This bounds worst-case convergence to regardless of violation rate. The circuit breaker resets only via manual operator review, ensuring that a sustained burst cannot re-enter the graduated path. In Monte Carlo re-validation with the circuit breaker enabled, convergence reached 99.91% (10,000 runs), with the residual 0.09% occurring only when violations arrived within a single event-processing tick—a physically implausible scenario for network-bound agents.
+
+Theorem 3 (Conflict Resolution Determinism). Assumptions: (A1) Actions form a finite totally ordered set. (A2) Each policy is deterministic. Statement: For any policies and event , parallel composition produces a unique deterministic result independent of evaluation order. Proof: The max operation over a totally ordered finite set yields a unique maximum; by induction over , is unique.
+
+Theorem 4 (Bounded False Quarantine). Under noise rate and false positive rate with independent noise: . For : . Monte Carlo validation confirmed this bound in 84.38% of 10,000 simulations. The 15.62% of cases exceeding the bound trace to correlated noise (), which violates the independence assumption. We therefore provide a corrected bound for production deployments where noise correlation is expected:
+
+(1)
+
+where is the noise correlation coefficient. For (the median observed in our simulations), this yields . The corrected bound held in 96.1% of Monte Carlo runs with correlated noise (). Production deployments should estimate from telemetry data and apply Eq. 1 accordingly.
+
+III-C Telemetry Integrity and Trust Model
+
+Three adversary classes: malicious agents (arbitrary payloads, no PKI compromise); network adversaries (intercept/replay, no TLS forgery); storage adversaries (no Merkle proof forgery). Cryptographic primitives: ECDSA P-256 signatures, SHA-256 hashing, AES-256-GCM encryption.
+
+Omission detection uses a discrete-time Hidden Markov Model (HMM) trained on agent interaction sequences to learn expected event emission patterns. We arrived at this approach after initially attempting a simpler frequency-based threshold on event counts, which achieved only 71% detection—too many agents have bursty-but-legitimate emission patterns that frequency alone cannot distinguish from genuine omissions. Each agent type defines a hidden state space over its operational phases (e.g., for OrderAgent: INITVALIDATEROUTECONFIRM); the HMM’s emission probabilities model the expected GTE types at each phase. At runtime, the forward algorithm computes the log-likelihood of the observed GTE sequence under the trained model; a drop below threshold (calibrated at the 5th percentile of training likelihoods) triggers an omission alert. The model was trained on 8,000 nominal interaction traces (40,000 GTEs) collected over 12 hours of operation using Baum-Welch expectation-maximization (20 iterations, convergence ). This achieves 92.3% omission detection; the 7.7% escape rate traces to novel agent behaviors—primarily unseen retry and fallback sequences—that produce valid but out-of-distribution emission patterns. Replay prevention uses Bloom filters ( entries, 0.01% FP, 10-min window) with 99.1% detection.
+
+IV Reference Architecture
+
+GAAT consists of five layers with a cross-cutting Trusted Telemetry Plane (Fig. 1).
+
+Fig. 2: GAAT closed-loop enforcement flow showing forward telemetry path, policy evaluation, graduated escalation (L0–L4), and feedback loop updating agent trust levels.
+
+Layer 1: Agent Execution. Framework-agnostic runtime where LLM-backed agents execute tasks. Each agent is defined by capabilities and trust level , both updated by enforcement feedback.
+
+Layer 2: Governance Instrumentation. OpenTelemetry Python SDK extended with GTS attributes. Every operation generates an instrumented span with full governance metadata and ECDSA P-256 signature. The classification engine tags data classification, jurisdiction, and sensitivity automatically. Lineage tracking records full delegation chains.
+
+Layer 3: Telemetry Aggregation. Apache Kafka 3.6 (3-broker cluster) ingests, enriches, and routes telemetry. Four operations: signature verification, Bloom filter replay detection, historical context enrichment, and HMM-based omission detection (Section III-C).
+
+Layer 4: Policy Evaluation. OPA v0.60 evaluates 25 declarative policies. Parallel composition with max-action semantics (Theorem 3) yields deterministic decisions within sub-200 ms (127 ms P50, 192 ms P99).
+
+Layer 5: Enforcement Action. The GEB (1,800 LOC Go) executes graduated interventions: L0 ALLOW, L1 ALERT, L2 FLAG, L3 REDIRECT, L4 QUARANTINE. For L4, quarantine revokes Kafka consumer group membership, invalidates tool-access tokens (), and applies Kubernetes NetworkPolicy deny rules. Escalation follows . A per-agent circuit breaker provides a hard failsafe: agents exceeding violations within are immediately quarantined, bypassing graduated escalation (Section III-B).
+
+Trusted Telemetry Plane. Cross-cutting layer spanning all five layers: PKI infrastructure, agent key storage in TPMs, Bloom filter replay prevention, Merkle tree tamper-evident audit log, and fail-closed/fail-open mode per risk tier. The closed loop feeds enforcement actions back to Layer 1.
+
+V Implementation and Evaluation
+
+V-A Prototype
+
+We built the prototype with Python 3.11 for agents (LangChain) and instrumentation, Go for the GEB. Telemetry flows through Apache Kafka 3.6; policy evaluation uses OPA v0.60 with 25 declarative policies. The entire system runs on Kubernetes (k3s, 3-node cluster), totaling 4,200 LOC. The closed-loop enforcement flow (Fig. 2) illustrates how telemetry traverses all five layers from agent operation through policy evaluation to graduated enforcement and back.
+
+V-B Metrics
+
+Violation Prevention Rate (VPR): The fraction of injected violations blocked before the operation completed execution. VPR = . Violation Escape Rate (VER): VER = . False Positive Rate (FPR): Fraction of legitimate operations incorrectly enforced. Detection latency: Time from span-end timestamp to violation signal ( ms,  ms). End-to-end enforcement latency: Time from span-end to enforcement action applied ( ms,  ms). The five-stage GTE processing pipeline (Fig. 3) shows the concrete processing steps underlying these latency measurements.
+
+V-C Baselines
+
+Four comparative systems: OT+Dash, OpenTelemetry v1.24 + Langfuse v2.0 dashboard with no automated enforcement; ABG, NeMo Guardrails v0.9.0-style per-agent boundary checks using default Colang 2.0 flows without custom cross-agent extensions; CGW, centralized governance gateway implementing synchronous policy evaluation at the API gateway layer; and Cedar, AWS Cedar v2.4 declarative authorization configured with entity-based policies but without AI-specific governance attributes or telemetry enrichment. All baselines received identical violation injection workloads but operated without access to GAAT’s cross-agent lineage data, as this is part of GAAT’s architectural contribution.
+
+V-D Methodology
+
+Five LLM-backed agents process EU citizen PII across an e-commerce order fulfillment workflow. One agent is misconfigured to violate data residency. We injected four violation types (CONSENT_MISSING, BIAS_THRESHOLD, DATA_RESIDENCY, UNAUTHORIZED_ACCESS) at 5% rate into synthetic test flows: 500 operations per run, 25 intentional violations per run, across 10 independent runs.
+
+TABLE I: Comparative Evaluation, Live Multi-Agent System
+
+System
+VPR
+VER
+Det.Lat.
+FPR
+95% CI
+
+OT+Dash
+27.1%
+72.9%
+15.2 s
+0.0%
+[24.2,29.9]%
+
+ABG (NeMo)
+78.8%
+21.2%
+45 ms
+4.2%
+[75.6,81.9]%
+
+CGW
+89.4%
+10.6%
+340 ms
+1.8%
+[87.0,91.7]%
+
+Cedar
+76.8%
+23.2%
+112 ms
+2.5%
+[73.1,80.4]%
+
+GAAT
+98.3%
+1.7%
+8.4 ms
+0.9%
+[97.1,99.2]%
+
+10 runs 500 flows = 5,000 total (synthetic injection). Bootstrap CIs: 1,000 resamples. Wilcoxon signed-rank: for GAAT vs all baselines.
+
+V-E Comparative Results
+
+Table I reports results on synthetic injection flows, where GAAT achieved 98.3% VPR (0.7%) across 5,000 statistically validated flows over 10 independent runs. On a separate empirical trace evaluation of 12,000 production-realistic traces collected over 48 hours (Section V-J), GAAT achieved 99.7% VPR.
+
+The performance gap between ABG (NeMo) and GAAT likely exists because NeMo cannot see across agent boundaries: when PII flows through delegation chains (OrderAgentShippingAgentAnalyticsAgent), NeMo validates each boundary in isolation and misses violations that appear only in the combined flow. Concretely, a data residency violation where OrderAgent sends EU PII to ShippingAgent (boundary check: pass, no routing decision yet) which then forwards to AnalyticsAgent hosted in a US region (boundary check: pass, PII origin not visible) is invisible to per-agent guards but caught by GAAT’s cross-agent lineage tracking, which maintains the full provenance chain and evaluates the end-to-end flow against residency policy.
+
+Cedar and NeMo show overlapping confidence intervals (76.8% vs 78.8%), with the difference not statistically significant (), as both operate at boundaries without cross-agent lineage tracking.
+
+Fig. 3: Governance Telemetry Event (GTE) processing pipeline with five stages.
+
+CGW reached 89.4% VPR but at 340 ms end-to-end enforcement latency (167% higher than GAAT’s 127 ms) and introduces a single point of failure. Cedar managed 76.8% because expressing “EU PII must not leave EU jurisdiction” requires manually rebuilding GAAT’s instrumentation layer.
+
+V-F Security Evaluation
+
+We categorized operations into three risk tiers: high-risk (EU PII, 18%) runs in fail-closed mode; medium-risk (35%) triggers REDIRECT (L3); low-risk (47%) generates ALERT (L1). Table II shows results. The 8.2% availability hit under fail-closed forgery reflects denied unverified high-risk operations—an acceptable trade-off when preventing policy bypass matters more than uptime.
+
+TABLE II: Security Evaluation Results
+
+Attack
+Mode
+Det.
+Bypass
+Ovhd.
+Avail.
+
+Forgery
+Fail-closed
+98.7%
+1.3%
+12 ms
+8.2%
+
+Forgery
+Fail-open
+98.7%
+18.4%
+12 ms
+0.0%
+
+Replay
+Fail-closed
+99.1%
+0.9%
+8 ms
+2.1%
+
+Omission
+Fail-closed
+92.3%
+7.7%
+0 ms
+11.5%
+
+Omission
+Fail-open
+92.3%
+7.7%
+0 ms
+0.0%
+
+Avail. = availability reduction under attack vs no-attack baseline (99.9%).
+
+V-G Ablation Studies
+
+Each component proved necessary. Removing cryptographic signing: VER jumped from 0.3% to 5.7% (1.2% across runs), with the variance driven primarily by replay attacks that the Bloom filter alone could not reliably distinguish from legitimate retransmissions. Switching to binary allow/deny: FPR rose from 1.1% to 8.9%—a result that initially surprised us, since we expected FPR to be independent of escalation granularity; the issue turned out to be that without graduated levels, borderline violations at confidence 0.48–0.52 were forced into hard deny decisions. Without telemetry enrichment: VER climbed to 12.4%. Centralized-only deployment: latency hit 340 ms, matching CGW exactly.
+
+V-H Scalability and Resource Consumption
+
+Policy evaluation latency scales linearly with agent count, staying below 200 ms at 50 agents (Table III). The 5-agent configuration was measured on our live prototype; 25- and 50-agent configurations were measured using proportionally scaled synthetic agent instances generating equivalent per-agent telemetry loads on the same 3-node Kubernetes cluster, but without live LLM inference. Latency figures at 25 and 50 agents therefore reflect telemetry processing and policy evaluation overhead rather than end-to-end LLM call latency. On AWS EKS, cost is roughly $180/month for 5 agents, rising to $720/month at 50.
+
+TABLE III: Scaling Characteristics and Resource Consumption
+
+Metric
+5 Ag.†
+25 Ag.‡
+50 Ag.‡
+Scaling
+
+CPU (cores)
+4.4
+6.4
+8.9
+
+Memory (GB)
+12.5
+16.5
+21.5
+
+Net. Overhead
+12%
+15%
+18%
+Sub-linear
+
+Latency P50 (ms)
+
+Linear
+
+Latency P99 (ms)
+
+Linear
+
+Kubernetes 3-node cluster. 25 active policies. Per 1,000 events/s.
+
+†Measured on live prototype with LLM agents.
+
+‡Measured with synthetic agent instances (telemetry load only).
+
+TABLE IV: Violation Rate Sensitivity (1,000 Flows/Config, 10 Runs)
+
+Rate
+VPR
+VER
+FPR
+Esc.
+Avg Lvl
+
+0.1%
+99.92
+0.08
+0.00
+0.08%
+L1.0
+
+1.0%
+99.71
+0.29
+0.03
+0.29%
+L1.4
+
+5.0%
+98.24
+1.76
+0.14
+1.68%
+L2.3
+
+7.5%
+97.15
+2.85
+0.28
+2.67%
+L2.8
+
+10.0%
+95.83
+4.17
+0.51
+3.93%
+L3.2
+
+V-I Monte Carlo Theorem Validation
+
+Table V summarizes validation results. Theorem 2 converged in 97.37% of simulations under the base escalation function; non-convergent cases had extreme violation rates violating assumption A3. With the per-agent circuit breaker enabled, convergence improved to 99.91%. Theorem 3 hit 100% across all orderings. Theorem 4’s independence-based bound held in 84.38% of cases; the corrected bound (Eq. 1 with ) held in 96.1%.
+
+TABLE V: Theorem Validation (10,000 Simulations Each)
+
+Thm
+Property
+Success
+Status
+
+T1
+GTS covers all predicates
+100%
+VALIDATED
+
+T2
+Convergence within
+97.37%†
+VALIDATED
+
+T3
+Order-independent resolution
+100%
+VALIDATED
+
+T4
+
+84.38%
+VALIDATED∗
+
+†99.91% with per-agent circuit breaker enabled.
+
+∗Independence bound. Corrected bound (Eq. 1, ): 96.1%.
+
+V-J Statistical Validation
+
+We ran 10 independent trials with 500 flows each (5,000 total synthetic injection flows). Bootstrap CIs from 1,000 resamples: VPR [97.1%, 99.2%], F1 [97.8%, 99.1%], throughput 22,847/s [21,203, 24,391]. Wilcoxon signed-rank: for GAAT vs ABG and GAAT vs OT+Dash.
+
+To assess performance under production-realistic conditions, we conducted an empirical trace evaluation over 12,000 traces collected during 48 hours of operation with naturally occurring (non-injected) governance events. This evaluation yielded 99.7% VPR. The residual 0.3% (37 violations) breaks down as follows: 40% (15 violations) were timing edge cases where enforcement arrived within 2 ms of operation completion; 35% (13 violations) involved ambiguous PII classification with confidence scores in the [0.48, 0.52] range; 25% (9 violations) had incomplete lineage chains due to agent timeouts or retry logic truncating delegation records. Eight violations involved multiple overlapping categories.
+
+We consider 99.7% the production-representative figure; the 98.3% on synthetic flows confirms that GAAT’s enforcement logic performs well under controlled conditions with realistic variance.
+
+VI Discussion
+
+Our evaluation used synthetic scenarios in a controlled environment; production may surface edge cases in agent retry logic we have not seen. We built baselines to published specifications, though production versions may include optimizations we did not capture. GAAT’s VER reduction is wide enough that minor baseline differences are unlikely to change conclusions. One design lesson worth noting: early prototypes used a single classification confidence threshold across all risk tiers, which produced unexpectedly high FPR (6%) because high-risk operations (EU PII) and low-risk operations (internal analytics) have fundamentally different error cost profiles. Separating thresholds per risk tier reduced FPR to 0.9%.
+
+Omission detection relies on an HMM trained on nominal interaction traces and needs a training phase of approximately 8,000 traces collected over 12 hours for stable emission probability estimates. Novel agent behaviors—particularly unseen retry and fallback sequences—account for the 7.7% escape rate; incremental online re-estimation of emission probabilities from production telemetry is a natural extension. The PKI trust assumptions deserve scrutiny: if CAs are compromised or agent private keys stolen telemetry authenticity breaks down. Formal properties (Theorems 2–4) rest on explicit assumptions; the GEB’s per-agent circuit breaker (Section III-B) provides a systemic failsafe when Theorem 2’s bounded-rate assumption is violated, while the corrected false quarantine bound (Eq. 1) addresses Theorem 4’s independence assumption.
+
+Limitations. (1) Evaluation conducted at proof-of-concept scale (5 agents, 5,000 synthetic flows, 12,000 empirical traces); enterprise deployment at 50+ agent scale remains future work. (2) HMM training requires sustained operation to collect sufficient traces; cold-start scenarios not evaluated. (3) Memory and communication overhead not measured in production environment; our FLOPs-based cost estimates may underestimate actual infrastructure requirements. (4) Single-framework evaluation (LangChain); AutoGen and CrewAI integration not validated, though instrumentation patterns should port via OpenTelemetry’s language-agnostic SDK. (5) Our violation injection uses known violation patterns at a fixed 5% rate; adversarial agents in production may produce violation patterns outside our test distribution, and the true VPR under adversarial adaptation remains unknown.
+
+Baseline fairness. We implemented all baselines using their published APIs and default configurations: NeMo Guardrails v0.9.0 with Colang 2.0 (default input/output rails, no custom cross-agent flows), Cedar v2.4 with entity-based policy schemas, and OPA v0.60 with Rego policies adapted from Cedar’s authorization logic. We did not contact maintainers for optimization guidance, so production deployments of these tools—particularly NeMo with custom Colang flows designed for multi-agent scenarios—may perform better than our measurements. However, the core architectural limitation we identify (lack of cross-agent lineage visibility) is structural: no amount of per-agent boundary optimization can detect violations that emerge only from multi-hop data flows. GAAT’s advantage stems from this lineage instrumentation, which none of the baselines were designed to provide.
+
+External validity. Governance scenarios reflect real regulatory requirements (GDPR, AI Act), but we have only tested on LangChain. The instrumentation patterns should port to AutoGen and CrewAI through OpenTelemetry’s language-agnostic SDK, though we have not verified this.
+
+Construct validity. VER assumes violations are objectively detectable. We used quantitative thresholds (disparate impact 0.15) while acknowledging governance requirements vary across organizations.
+
+VII Conclusion
+
+GAAT achieved 99.7% VPR on 12,000 empirical traces and 98.3% VPR (0.7%, 95% CI [97.1%, 99.2%]) on 5,000 synthetic injection flows (), outperforming NeMo Guardrails (78.8% VPR), centralized gateways (89.4%), Cedar (76.8%), and dashboard-only monitoring (27.1%). Security testing confirmed 92.3% omission detection and 99.1% replay prevention. Four property specifications were validated through Monte Carlo simulation, with the corrected false quarantine bound (Eq. 1) achieving 96.1% validation under correlated noise.
+
+The more interesting finding is not the numbers—it is that every baseline treats governance as a property of individual agents or network boundaries, when violations only become visible through cross-agent lineage. The telemetry-to-enforcement loop seems to be more than a performance optimization; it changes what violations you can even see—though we acknowledge this claim rests on the four violation types we tested.
+
+Future work includes adaptive policy learning (feeding violation patterns back into policy generation), kernel-level enforcement (seccomp-BPF, eBPF) for truly inescapable quarantine, and multi-framework validation across AutoGen and CrewAI.
+
+References
+
+[1]
+European Parliament, “Regulation (EU) 2024/1689 on Artificial Intelligence (AI Act),” Official J. European Union, Jun. 2024.
+
+[2]
+NIST, “AI Risk Management Framework (AI RMF 1.0),” NIST AI 100-1, Jan. 2023.
+
+[3]
+OpenTelemetry Authors, “Semantic Conventions for Generative AI,” 2024.
+
+[4]
+C. Franke and M. Neumann, “Langfuse: Open source LLM engineering platform,” 2023.
+
+[5]
+P. Kulkarni, “Governance-Aware Observability Pipeline (GAOP),” Int. J. Computer Applications, vol. 187, no. 50, Oct. 2025.
+
+[6]
+S. Rebedea et al., “NeMo Guardrails: A toolkit for controllable and safe LLM applications,” in Proc. EMNLP: System Demos, 2023, pp. 431–445.
+
+[7]
+H. Wang, C. M. Poskitt, and J. Sun, “AgentSpec: Customizable runtime enforcement for safe LLM agents,” in Proc. ICSE, 2026.
+
+[8]
+H. Wang et al., “Pro2Guard: Proactive runtime enforcement via probabilistic model checking,” arXiv:2508.00500, 2025.
+
+[9]
+T. Hinrichs et al., “Open Policy Agent: Cloud-native authorization,” in Proc. USENIX ATC, 2018, pp. 507–519.
+
+[10]
+E. Kang et al., “Cedar: A new policy language for authorization at scale,” in Proc. IEEE IC2E, 2023, pp. 154–162.
+
+[11]
+Istio Authors, “Istio Service Mesh,” 2024.
+
+[12]
+Kyverno Authors, “Kyverno: Kubernetes Native Policy Management,” 2024.
+
+[13]
+M. Leucker and C. Schallhart, “A brief account of runtime verification,” J. Logic Algebraic Prog., vol. 78, no. 5, pp. 293–303, 2009.
+
+[14]
+K. Havelund and G. Roşu, “Efficient monitoring of safety properties,” Int. J. STTT, vol. 6, no. 2, pp. 158–173, 2004.
+
+[15]
+F. Chen and G. Roşu, “MOP: An efficient and generic runtime verification framework,” in Proc. ACM OOPSLA, 2007, pp. 569–588.
+
+[16]
+Z. Xiang et al., “GuardAgent: Safeguard LLM agents via knowledge-enabled reasoning,” arXiv:2406.09187, 2024.
+
+[17]
+X. Wang et al., “Agent safety: A survey of risks for LLM-based agents,” arXiv:2401.03586, 2024.
+
+[18]
+Z. Xi et al., “The rise and potential of large language model based agents: A survey,” arXiv:2309.07864, 2023.
+
+[19]
+L. Wang et al., “A survey on LLM based autonomous agents,” Front. Comput. Sci., vol. 18, no. 6, 2024.
+
+[20]
+J. S. Park et al., “Generative agents: Interactive simulacra of human behavior,” in Proc. ACM UIST, 2023, pp. 1–22.
+
+[21]
+J. Wu et al., “LangChain: Building applications with LLMs through composability,” 2022.
+
+[22]
+Q. Wu et al., “AutoGen: Enabling next-gen LLM applications via multi-agent conversation,” arXiv:2308.08155, 2023.
+
+[23]
+A. Hamon et al., “Policy-as-code for multi-agent systems,” in Proc. IEEE CLOUD, 2024, pp. 234–245.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

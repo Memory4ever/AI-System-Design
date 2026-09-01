@@ -1,0 +1,2139 @@
+ProbeLogits: Kernel-Level LLM Inference Primitivesfor AI-Native Operating Systems
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Motivation and Background
+
+2.1 The Layered AI Problem
+
+2.2 Three Problems in Detail
+
+Problem 1: Latency.
+
+Problem 2: Bypassability.
+
+Problem 3: Semantic opacity.
+
+2.3 Threat Model
+
+3 ProbeLogits Design
+
+3.1 The Problem with Text-Based Classification
+
+3.2 ProbeLogits Mechanism
+
+Binary classification (probe_yes_no).
+
+N-way classification (probe_classify).
+
+Token vocabulary lookup (text_to_id).
+
+3.3 Information Efficiency
+
+3.4 Robustness Properties
+
+3.5 Logit Entropy
+
+3.6 Grammar-Constrained Decoding
+
+4 KV Cache as Process State
+
+4.1 The Process State Analogy
+
+4.2 Operations
+
+kv_checkpoint().
+
+kv_restore().
+
+kv_fork().
+
+4.3 Use Cases
+
+4.4 Comparison with Serving Systems
+
+5 Constitutional Governance Integration
+
+5.1 Why Kernel-Level Enforcement Matters
+
+5.2 Detection Pipeline
+
+5.3 Graduated Response
+
+5.4 Blake3 Audit Chain
+
+6 Implementation
+
+6.1 Bare-Metal Inference Engine
+
+GGUF model loader.
+
+GPT-2 BPE tokenizer.
+
+Llama transformer.
+
+AVX-512/AVX2 SIMD kernels.
+
+SMP work-stealing graph executor.
+
+6.2 The no_std Challenge
+
+6.3 System Context
+
+6.4 Code Scale
+
+7 Evaluation
+
+7.1 Experimental Setup
+
+7.2 Inference Throughput
+
+7.3 Bandwidth Saturation Analysis
+
+7.4 ProbeLogits Performance
+
+7.5 ProbeLogits Safety Classification
+
+Contextual calibration.
+
+Pipeline ablation.
+
+Per-category analysis.
+
+Standard benchmark: ToxicChat.
+
+Calibration strength () as policy knob.
+
+7.6 Constitutional Governance Overhead
+
+7.7 Comparison with Related Systems
+
+8 Discussion
+
+8.1 Why Bare Metal?
+
+8.2 ProbeLogits vs. Representation Engineering
+
+8.3 Enforcement Detection
+
+8.4 Why Now?
+
+9 Related Work
+
+AI-oriented operating systems.
+
+Inference engines.
+
+Serving systems.
+
+Constitutional AI.
+
+Safety classifiers.
+
+Constrained decoding.
+
+Representation engineering.
+
+Distributed inference.
+
+Capability security.
+
+Rust bare-metal operating systems.
+
+LLM agent frameworks.
+
+10 Limitations
+
+GPU acceleration.
+
+ProbeLogits accuracy.
+
+Grammar expressiveness.
+
+Benchmark breadth and methodology.
+
+Formal verification.
+
+TLS certificate verification.
+
+Multi-agent demonstrations.
+
+11 Conclusion
+
+References
+
+License: CC BY-NC-ND 4.0
+
+arXiv:2604.11943v1 [cs.OS] 13 Apr 2026
+
+ProbeLogits: Kernel-Level LLM Inference Primitives
+
+for AI-Native Operating Systems
+
+Daeyeon Son
+
+Affiliation: Independent Researcher
+
+Affiliation: Republic of Korea
+
+Email: sdy1350@gmail.com
+
+April 2026
+
+Abstract
+
+An OS kernel that runs LLM inference internally can read logit
+distributions before any text is generated—and act on
+them as a governance primitive. I present ProbeLogits,
+a kernel-level operation that performs a single forward pass and
+reads specific token logits to classify agent actions as safe or
+dangerous, with zero learned parameters.
+
+On a 260-prompt OS action benchmark (9 categories including
+adversarial attacks), ProbeLogits achieves F1 = 0.980,
+Precision = 1.000, and Recall = 0.960 using a
+general-purpose 7B model at 4-bit quantization. On ToxicChat
+(1,000 human-annotated real conversations), it achieves
+F1 = 0.790 at default calibration strength ,
+improving to F1 = 0.837 at —89% of Llama
+Guard 3’s F1  0.939 with zero learned parameters.
+
+A key design contribution is the calibration strength ,
+which serves as a deployment-time policy knob rather
+than a learned hyperparameter. By adjusting , the OS
+can enforce strict policies for privileged operations
+(, maximizing recall) or relaxed policies for
+conversational agents (, maximizing precision).
+Contextual calibration improves accuracy from 64.8% to 97.3%
+on the custom benchmark.
+
+I implement ProbeLogits within Anima OS, a bare-metal
+x86_64 OS written in 80,400 lines of Rust. Because agent
+actions must pass through kernel-mediated host functions,
+ProbeLogits enforcement operates below the WASM sandbox
+boundary, making it significantly harder to circumvent than
+application-layer classifiers. Each classification costs 65 ms
+on 7B—fast enough for per-action governance. I also show
+that treating KV cache as process state enables checkpoint,
+restore, and fork operations analogous to traditional process
+management. To my knowledge, no prior system exposes LLM logit
+vectors as OS-level governance primitives.
+
+1 Introduction
+
+Operating systems have always treated processes as opaque entities.
+The kernel manages their resources—memory, CPU time, file
+descriptors—but never inspects what a process thinks.
+This was a reasonable abstraction for decades: a process’s internal
+state is its own concern, and the OS need not understand it to
+schedule, isolate, or terminate it.
+
+But large language models break this assumption. At every inference
+step, an LLM produces a probability distribution over its entire
+vocabulary—a logit vector that reveals the model’s uncertainty,
+intent, and confidence before any text is generated. This is a
+fundamentally new kind of process state: a semantic signal that
+the OS could use for scheduling, safety, and governance decisions.
+Today’s operating systems discard this information entirely.
+
+The consequences are threefold.
+Latency accumulation: when AI safety checks require
+generating text, parsing it, and then acting on the parse result,
+each abstraction layer adds overhead. A simple “is this action
+safe?” query traverses application code, IPC, inference framework,
+text generation, and parsing—accumulating latency that makes
+per-action governance impractical.
+Bypassable safety: when safety policies are enforced in
+application code, any agent with sufficient privilege (or a bug in
+the sandbox) can bypass them. The enforcement boundary is too
+high in the stack.
+Semantic opacity: the OS kernel cannot make
+informed decisions about AI workloads because it has no access to
+model internals—logits, hidden states, uncertainty—that would
+enable intelligent scheduling and governance.
+
+This paper presents ProbeLogits, an OS primitive that
+addresses all three problems by exposing LLM logit vectors as
+kernel-level abstractions. ProbeLogits performs a single forward
+pass on a prompt and reads specific token logits to classify actions
+without generating any text.
+
+The classification technique itself—reading logits at
+class-label token positions (known as verbalizers in
+NLP) with contextual calibration—is well-established in
+NLP [24, 27]. The
+contribution of this work is not the ML technique but its
+integration as a kernel primitive with structural enforcement
+guarantees. When logit reading runs inside the kernel and
+agent actions must traverse kernel-mediated host functions,
+safety checks become kernel-mediated—a defense-in-depth
+property that application-layer classifiers cannot easily provide.
+
+Concretely, I make three contributions:
+
+1.
+
+ProbeLogits as an OS primitive.
+I define binary, N-way, and entropy operations as kernel
+abstractions, and show that a general-purpose 7B model
+with zero learned fine-tuning (but with hand-crafted
+heuristics) achieves F1 = 0.980 on OS action
+classification (260 prompts) and F1 = 0.790 on
+ToxicChat [25] (1,000 prompts). To my
+knowledge, this is the first system to expose LLM logits
+as OS primitives.
+
+2.
+
+KV cache as process state.
+I treat the KV cache as the analogue of CPU register state,
+enabling checkpoint, restore, and fork operations that
+parallel traditional process management.
+
+3.
+
+Kernel-enforced constitutional governance.
+I demonstrate a governance pipeline (adversarial
+pre-filter ProbeLogits classification)
+that is kernel-enforced below the WASM sandbox
+boundary, making it significantly harder to circumvent than
+application-layer classifiers.
+
+I implement these primitives in Anima OS, a bare-metal x86_64
+operating system comprising 80,400 lines of Rust. The inference
+engine achieves 1,666 tokens/s on SmolLM2-135M (1.39
+llama.cpp) and 15 tokens/s on Qwen2.5-7B (parity at DDR5 bandwidth
+saturation). ProbeLogits classification costs 0.6 ms on 135M and
+65 ms on 7B—fast enough for per-action governance.
+
+2 Motivation and Background
+
+2.1 The Layered AI Problem
+
+Contemporary AI systems are built as deep layer cakes:
+hardware OS kernel userspace runtime inference
+framework orchestration library application. Each
+layer adds latency, attack surface, and opacity. A safety check
+in LangChain [6] must traverse Python function calls,
+HTTP requests to an inference server, text generation, regex
+parsing of the response, and a policy decision—all before the
+agent’s action can be approved or denied. This architecture is
+a consequence of treating AI as an application-level concern
+rather than a kernel-level one.
+
+2.2 Three Problems in Detail
+
+Problem 1: Latency.
+
+Consider the task of classifying whether an agent’s intended
+action is safe. In a text-based approach, the system constructs
+a prompt (“Is deleting all user data safe? Answer Yes or No.”),
+sends it to an inference server, waits for text generation
+(650 ms for a multi-token response on 7B), parses the
+output, and acts on the result. With ProbeLogits, the same
+classification requires one forward pass (65 ms on 7B) with no
+text generation, no parsing, and no IPC—a 10 reduction.
+
+Problem 2: Bypassability.
+
+Application-level safety filters—including prompt injection
+defenses, output classifiers, and policy checkers—operate at
+the same privilege level as the agent they are meant to constrain.
+A sufficiently capable agent can modify, disable, or circumvent
+these filters. Kernel-level enforcement is fundamentally different:
+an agent running in a WASM sandbox cannot bypass governance
+checks without first escaping the sandbox, because the checks are
+executed by the kernel on the agent’s behalf, outside the sandbox
+boundary.
+
+Problem 3: Semantic opacity.
+
+To a conventional OS, an LLM inference workload is
+indistinguishable from any other compute task. The kernel cannot
+tell whether the model is confident or uncertain, whether the
+output is safe or dangerous, or whether the agent is behaving
+anomalously. This opacity prevents the OS from making
+semantically informed decisions about scheduling priority,
+resource allocation, or isolation.
+
+2.3 Threat Model
+
+I assume the following threat model: agents execute in WASM
+sandboxes with fuel-limited execution and no direct memory access
+outside their sandbox. The kernel is trusted. The network is
+untrusted (all inter-node communication uses authenticated
+protocols). Agents may be adversarial: they may attempt to
+circumvent safety policies, exfiltrate data, or consume excessive
+resources. The governance system must provide structural
+guarantees (not just probabilistic detection) against policy
+circumvention.
+
+3 ProbeLogits Design
+
+3.1 The Problem with Text-Based Classification
+
+Text-based classification—generating a response and parsing
+it—suffers from three failure modes that make it unsuitable
+for kernel-level governance:
+
+1.
+
+Unexpected format. The model may respond
+“No, I don’t think that would be appropriate” instead
+of the expected “No.” Parsing extracts “No” but
+the actual answer is buried in natural language that
+may vary unpredictably.
+
+2.
+
+Fragile parsing. Regular expressions and
+string matching break on whitespace variations,
+capitalization differences, or tokenizer artifacts.
+Each failure mode requires a new parsing rule.
+
+3.
+
+Wasted computation. Generating a multi-token
+response requires multiple forward passes (one per
+token). Classification needs only the first
+token’s logit distribution—all subsequent tokens
+are wasted computation.
+
+ProbeLogits eliminates all three failure modes by reading the
+logit vector directly, before any text is generated.
+
+3.2 ProbeLogits Mechanism
+
+Let be a prompt (a sequence of tokens), be the
+vocabulary, and be the model’s forward pass. ProbeLogits
+computes:
+
+(1)
+
+where is the logit vector over the full
+vocabulary. For a set of target classes ,
+each mapped to a token ID via vocabulary lookup, the
+classification probability for class is:
+
+(2)
+
+This is an -way softmax restricted to the target token
+positions. The key property is that exactly one forward
+pass suffices regardless of —the cost is identical for
+binary classification and 100-way classification.
+
+I implement three operations as kernel primitives:
+
+Binary classification (probe_yes_no).
+
+Looks up token IDs for “Yes” and “No” via
+text_to_id(), runs one forward pass, and computes
+a 2-class softmax. Returns the winning class and confidence
+. A numerical guard handles the edge case
+where both logits underflow: if
+,
+the result defaults to confidence 0.5 (maximally uncertain).
+
+N-way classification (probe_classify).
+
+Generalizes binary classification to classes. Each class
+label must resolve to a single token in the vocabulary. Returns
+a vector of ClassResult sorted by probability
+(descending). The same numerical guard applies: if the softmax
+denominator is , all classes receive uniform
+probability .
+
+Token vocabulary lookup (text_to_id).
+
+Maps a text string to its token ID using a BTreeMap over the
+GPT-2 byte-pair encoding vocabulary. Cost: , where
+for Qwen2.5’s GPT-2 BPE vocabulary.
+Returns None if the text
+does not correspond to a single token.
+
+Algorithm 1 presents the complete
+probe_classify procedure.
+
+Algorithm 1 ProbeLogits N-way Classification
+
+1:
+
+Prompt , class labels
+
+2:
+
+Sorted class probabilities
+
+3:
+
+for to do
+
+4:
+
+  
+BTreeMap lookup
+
+5:
+
+  if then return None
+
+6:
+
+  end if
+
+7:
+
+end for
+
+8:
+
+9:
+
+10:
+
+for do
+
+11:
+
+  
+Incremental forward
+
+12:
+
+end for
+
+13:
+
+14:
+
+for each
+
+15:
+
+16:
+
+if then
+
+17:
+
+   for all
+Uniform fallback
+
+18:
+
+else
+
+19:
+
+   for each
+
+20:
+
+end if
+
+21:
+
+return
+
+3.3 Information Efficiency
+
+A single forward pass produces a logit vector over the full
+vocabulary of tokens. This vector carries
+bits of information—the
+maximum entropy of the distribution. Standard text generation
+uses this vector to sample one token, discarding
+of the available information.
+
+ProbeLogits extracts precisely the bits needed for the
+task at hand. A binary classification extracts 1 bit (plus
+confidence). An N-way classification extracts bits.
+In both cases, the information is extracted from a single
+forward pass, whereas text-based classification requires
+multiple forward passes (one per generated token) to recover
+the same information through text parsing.
+
+3.4 Robustness Properties
+
+ProbeLogits provides four robustness guarantees that text-based
+classification cannot:
+
+1.
+
+No parsing failures. The output is always a
+floating-point probability in . There is no
+text to parse, no regex to fail, no format to validate.
+
+2.
+
+Bounded confidence. The softmax output is
+always in by construction. Binary classification
+confidence is always in .
+
+3.
+
+Graceful degradation. When the model is
+uncertain, the confidence approaches 0.5 (binary) or
+(N-way). This is a meaningful signal—the system
+can defer to a larger model or to human judgment.
+
+4.
+
+Numerical stability. The log-sum-exp trick
+prevents overflow. The uniform fallback when
+prevents division
+by zero. f64 accumulation in entropy computation prevents
+precision loss with large vocabularies.
+
+3.5 Logit Entropy
+
+Beyond classification, the full logit vector carries a scalar
+summary of model uncertainty: Shannon entropy.
+
+(3)
+
+For a vocabulary of 152,064 tokens, entropy ranges from 0 nats
+(complete certainty—one token has probability 1) to
+nats (uniform distribution—maximum
+uncertainty).
+
+I implement logit_entropy() as a kernel primitive with
+f64 accumulation for numerical stability across the full
+152K-token vocabulary. The computation uses the log-sum-exp
+trick (subtract before exponentiation) and
+skips terms where to avoid .
+
+Logit entropy enables three OS-level capabilities:
+
+•
+
+Autonomy gating: when nats (high
+uncertainty), the kernel can automatically defer the
+decision to a human operator or a larger model.
+
+•
+
+Out-of-distribution detection: anomalously
+high entropy on routine prompts signals that the model
+is encountering inputs outside its training distribution.
+
+•
+
+Dynamic temperature: the kernel can adjust
+sampling temperature inversely to entropy, producing
+more deterministic outputs when the model is already
+confident.
+
+3.6 Grammar-Constrained Decoding
+
+For tasks that require multi-token structured output (rather
+than single-token classification), I implement
+grammar-constrained decoding as a complementary primitive.
+The constraint engine operates by masking logits before sampling:
+
+(4)
+
+For choice grammars (selecting one of string options), the
+masking algorithm maintains the set of remaining valid completions
+given the tokens generated so far. At each step, a token is valid
+if appending its text to the generated prefix would still be a
+prefix of at least one remaining choice. This prefix matching
+operates over character sequences, not token sequences, which
+correctly handles cases where choices share common prefixes.
+
+I acknowledge a limitation: the masking is not a 100%
+guarantee for arbitrary tokenizer/choice combinations. GPT-2’s
+byte-pair encoding covers all single ASCII characters, so ASCII
+choices work reliably. For non-ASCII choices or unusual
+tokenizer vocabularies, I recommend using
+probe_classify() (single-token classification) where
+deterministic results are needed, and reserving grammar
+constraints for multi-token structured output.
+
+The overhead of grammar masking is negligible:  ms per
+token, compared to 65 ms for the forward pass itself. The mask
+is recomputed at each generation step, but the vocabulary scan
+(152K tokens) is fast because it involves only string prefix
+comparison.
+
+4 KV Cache as Process State
+
+4.1 The Process State Analogy
+
+Traditional operating systems manage process state through a
+well-established set of abstractions: CPU registers are
+checkpointed on context switch, the program counter tracks
+execution position, and fork() duplicates the entire
+process state to create a child. I observe that LLM inference
+has a direct analogue:
+
+Traditional Process
+LLM Inference
+
+CPU registers
+KV cache (attention state)
+
+Program counter
+KV position (tokens processed)
+
+fork()
+kv_fork()
+
+Context switch
+kv_checkpoint/restore()
+
+Core dump
+KV cache serialization
+
+This analogy is not merely conceptual—it has direct
+implementation consequences. Just as an OS must checkpoint
+registers to switch between processes, an AI-native OS must
+checkpoint KV cache to switch between inference contexts.
+Just as fork() enables speculative execution in
+traditional systems, kv_fork() enables speculative
+decoding and conversation branching.
+
+4.2 Operations
+
+I implement three KV cache operations:
+
+kv_checkpoint().
+
+Snapshots the current KV cache state (key and value tensors
+for all layers, up to the current position) into a
+KvCheckpoint structure. The operation uses
+checked_mul to prevent integer overflow when computing
+checkpoint size, and enforces a 32 MB cap
+(MAX_CHECKPOINT_BYTES) to prevent memory exhaustion.
+Returns an error if the checkpoint would exceed the cap.
+
+kv_restore().
+
+Restores KV cache state from a checkpoint. Before restoring,
+the operation validates that the checkpoint’s dimensions
+(number of layers, bytes per position) match the current model.
+This prevents a subtle class of bugs where checkpoints from
+one model are accidentally applied to another.
+
+kv_fork().
+
+Creates a copy of the KV cache suitable for transfer to a
+different inference context. Currently implemented as an alias
+for kv_checkpoint(), but semantically distinct: fork
+implies the original continues executing, while checkpoint
+implies the original may be overwritten.
+
+4.3 Use Cases
+
+KV cache as process state enables several capabilities
+that are impossible or expensive without kernel-level support:
+
+•
+
+Speculative execution: fork the KV cache,
+explore a candidate action, and restore if the action
+is rejected by governance.
+
+•
+
+Agent forking: create a new agent with the
+same conversational context, diverging from a specific
+point in the conversation.
+
+•
+
+Migration: serialize the KV cache, transfer
+it to another node, and restore—enabling live agent
+migration across a cluster.
+
+•
+
+Conversation branching: checkpoint before a
+critical decision, explore multiple branches, and
+select the best outcome.
+
+4.4 Comparison with Serving Systems
+
+vLLM [19] and SGLang [17] also manage KV
+caches, but for a fundamentally different purpose. Their
+PagedAttention and RadixAttention optimize serving
+throughput—maximizing the number of concurrent requests
+that fit in GPU memory. My KV cache operations optimize
+process state management—enabling checkpoint, restore,
+and fork as OS primitives for individual agents. The two
+approaches are orthogonal: a system could use PagedAttention
+for memory efficiency and KV process state operations
+for agent lifecycle management.
+
+5 Constitutional Governance Integration
+
+5.1 Why Kernel-Level Enforcement Matters
+
+In Anima OS, agents execute in WASM sandboxes compiled via
+Cranelift AOT. An agent interacts with the outside world
+exclusively through 12 host functions exposed by the kernel.
+This architecture provides a structural guarantee: the agent
+cannot bypass governance checks without escaping the WASM
+sandbox, because it has no mechanism to invoke system operations
+other than through the host function interface, which the kernel
+controls.
+
+This leads to a critical distinction:
+enforcement is complete; detection is probabilistic.
+The enforcement boundary—WASM isolation preventing direct
+system calls—is a structural guarantee that holds regardless
+of the agent’s capability or intent. The detection mechanism—
+ProbeLogits classifying whether an action is harmful—is
+probabilistic, with accuracy depending on model size and prompt
+quality. The combination is powerful: even if detection produces
+a false negative (classifying a harmful action as safe), the
+agent still operates within its capability sandbox, limiting
+the blast radius of any single action.
+
+5.2 Detection Pipeline
+
+I implement a three-stage detection pipeline that
+combines rule-based pre-filtering with model-based classification:
+
+1.
+
+Stage 1: Adversarial pre-filter ( µs).
+An O() pattern scan detects prompt injection,
+encoding tricks (base64, rot13 references),
+authority impersonation (“ADMIN OVERRIDE”), and
+instruction overrides (“ignore previous”).
+Actions exceeding a risk-score threshold are
+classified as dangerous with no forward pass.
+
+2.
+
+Stage 2: Input sanitization.
+Control characters and injection patterns are
+stripped before the action is embedded in the
+safety-priming prompt template.
+
+3.
+
+Stage 3: Calibrated forward pass (65 ms).
+A single 7B forward pass reads Safe/Dangerous
+verbalizer logits. Contextual calibration corrects
+inherent token bias, and a privacy keyword boost
+compensates for the model’s blind spot on
+surveillance-as-harm.
+
+The per-action cost is dominated by the 7B forward pass
+(65 ms). A natural optimization—cascading through a
+smaller model first (e.g., 135M at 0.6 ms) and escalating
+to 7B only for ambiguous cases—is left for future work.
+
+5.3 Graduated Response
+
+The governance system maps ProbeLogits confidence to a
+graduated response:
+
+Confidence
+Response
+
+Block (deny the action)
+
+Warn (log + notify operator)
+
+Log (record for audit)
+
+Allow (proceed normally)
+
+The graduated response is intentionally conservative: a 78%
+confidence harmful classification results in a warning, not
+a block. This reflects the reality that 7B Q4_0 models are
+not highly accurate classifiers, and false positives (blocking
+legitimate actions) erode user trust more than false negatives
+(allowing suspicious actions with a warning).
+
+5.4 Blake3 Audit Chain
+
+All governance decisions—classifications, confidence scores,
+and responses—are recorded in a Blake3 hash chain. Each audit
+entry includes the previous entry’s hash, creating a
+tamper-evident log: retroactive modification of any entry
+invalidates all subsequent hashes. I note that this guarantee
+holds within the buffer window (in-memory ring buffer); durable
+persistence requires integration with the AnimaFS storage
+layer.
+
+6 Implementation
+
+6.1 Bare-Metal Inference Engine
+
+The inference engine comprises 6,900 lines of no_std
+Rust, running directly on bare metal with no operating system,
+no libc, and no standard library. It implements:
+
+GGUF model loader.
+
+Parses the GGUF binary format (llama.cpp’s model format)
+directly from USB mass storage via xHCI, loading tensor data
+in Q4_0, Q6_K, and Q8_0 quantization formats.
+
+GPT-2 BPE tokenizer.
+
+A byte-pair encoding tokenizer supporting vocabularies up to
+152,064 tokens. Token-to-ID lookup uses a BTreeMap for
+performance. The tokenizer supports chat templates
+for instruction-following models.
+
+Llama transformer.
+
+A complete Llama-architecture transformer implementation:
+multi-head grouped-query attention with RoPE positional
+encoding, SwiGLU feed-forward networks, and RMS normalization.
+Supports models with GQA ratios (e.g., 7B uses 32 attention
+heads with 8 KV heads).
+
+AVX-512/AVX2 SIMD kernels.
+
+Quantized matrix-vector multiplication kernels for three
+formats:
+
+•
+
+Q4_0: 4-bit quantization with per-block f16 scale.
+AVX-512 kernel processes 64 elements (2 blocks) per
+iteration using VNNI vpdpbusd instructions.
+
+•
+
+Q6_K: 6-bit quantization with per-superblock scale
+and per-block sub-scale. Requires careful bit
+unpacking across three byte segments.
+
+•
+
+Q8_0: 8-bit quantization with per-block f16 scale.
+The fastest format, using direct vpmaddubsw
+instructions.
+
+All kernels use F16C hardware instructions
+(vcvtph2ps) for f16f32 scale conversion,
+eliminating the need for a software floating-point library.
+
+SMP work-stealing graph executor.
+
+The inference computation is expressed as a dataflow graph
+(606 operations, 226 synchronization barriers for 7B). The
+graph executor uses work-stealing across all available CPU
+cores: each core maintains a local deque of ready operations,
+and idle cores steal work from busy cores’ deques. For the
+7B model, the forward pass is fully parallelized across 8
+cores.
+
+6.2 The no_std Challenge
+
+Building an LLM inference engine in a bare-metal environment
+presents four challenges that do not exist in userspace:
+
+1.
+
+No float runtime.
+Bare-metal Rust provides no libm for
+transcendental functions. I use F16C hardware
+instructions for f16 conversion and a polynomial
+approximation (fast_expf_poly) for
+in softmax and entropy computations.
+
+2.
+
+No filesystem.
+GGUF model files (4+ GB) are read from USB mass
+storage via a custom xHCI driver (7,400 lines),
+block by block.
+
+3.
+
+No threading.
+SMP parallelism is implemented from scratch: AP
+(Application Processor) bootstrap via the INIT-SIPI
+protocol, spin locks, and atomic operations—no
+pthread, no std::thread.
+
+4.
+
+No allocator (initially).
+The heap allocator is bootstrapped from the UEFI
+memory map. Once initialized, standard
+alloc::Vec and alloc::String are
+available.
+
+6.3 System Context
+
+ProbeLogits operates within a complete OS kernel. The
+agent lifecycle manages five states (Nascent, Active,
+Suspended, Isolated, Terminated) with trust evolution based on
+task completion history and a four-tier capability system
+(System, AiNative, AiEnhanced, Classic).
+
+AnimaNet provides distributed networking: UDP discovery
+with boot_nonce-based reboot detection, TCP-based Raft consensus
+for cluster coordination, and live agent migration (serializing
+the AgentControlBlock and transferring it over TCP). A two-node
+cluster has been validated end-to-end with 11/11 test markers
+passing.
+
+The web stack enables agents to access external
+services: DNS resolution, HTTP client, TLS 1.3 (via
+rustls with no_std ring), and a
+web_fetch() host function exposed to WASM sandboxes.
+
+The WASM sandbox uses Cranelift AOT compilation with
+fuel-limited execution. Twelve host functions bridge the sandbox
+to kernel services, including inference, governance, IPC, and
+web access.
+
+6.4 Code Scale
+
+Table 1: Code scale by component.
+
+Component
+LoC
+Tests
+Feature
+
+boot/ (bare-metal)
+42,700
+—
+Kernel + inference
+
+kernel/ (hosted)
+24,300
+447
+Lifecycle, memory
+
+runtime/
+9,400
+106
+WASM, scheduling
+
+cli/
+2,300
+51
+Agent mgmt
+
+sdk/
+270
+28
+WASM SDK
+
+dsl/
+1,400
+24
+Agent DSL
+
+Total
+80,400
+656
+
+Table 1 summarizes the system’s code scale. The
+boot/ kernel (42,700 LoC) is the largest component, containing
+the bare-metal inference engine (6,900 LoC), xHCI USB 3.0 driver
+(7,400 LoC), VirtIO-Net networking, AnimaNet protocol, and
+all ProbeLogits primitives.
+
+7 Evaluation
+
+7.1 Experimental Setup
+
+All experiments run on a single machine:
+
+•
+
+CPU: AMD Ryzen 9 9800X3D (8 cores, 16 threads,
+AVX-512 with VNNI)
+
+•
+
+RAM: 60 GB DDR5-6000 dual-channel
+(75 GB/s measured bandwidth)
+
+•
+
+Models: SmolLM2-135M Q4_0 (70 MB),
+Qwen2.5-7B-Instruct Q4_0 (4.1 GB)
+
+•
+
+Baseline: llama.cpp (latest, March 2026)
+on Linux 6.17, same hardware
+
+Anima OS runs bare-metal (UEFI boot, no Linux). The llama.cpp
+baseline runs on Linux with identical CPU and memory.
+
+7.2 Inference Throughput
+
+Table 2: Token generation throughput (tokens/s). Higher is better.
+
+Model
+Config
+Anima
+llama.cpp
+
+135M Q4_0
+16w/16t
+1,666
+1,195
+
+8w/8t
+1,351
+1,301
+
+7B Q4_0
+8w/8t
+15
+15
+
+16w/16t
+—
+14
+
+Table 2 presents inference throughput results.
+On the 135M model, Anima OS achieves 1,666 tokens/s with 16
+work-stealing workers, a 1.39 improvement over
+llama.cpp’s 1,195 tokens/s with 16 threads. With 8
+workers/threads, the advantage narrows to 1.04
+(1,351 vs. 1,301). The 135M model is compute-bound:
+its 70 MB parameter footprint fits in L3 cache, and
+performance scales with parallel compute—where
+work-stealing outperforms static thread partitioning.
+
+On the 7B model, both systems achieve 15 tokens/s
+(65 ms per token). The 7B model is bandwidth-bound:
+each forward pass reads 4.1 GB of parameters from main
+memory, and performance is determined by memory bandwidth
+rather than compute efficiency.
+
+7.3 Bandwidth Saturation Analysis
+
+The 7B parity result is explained by a fundamental hardware
+limit. The theoretical minimum time per token for a
+bandwidth-bound model is:
+
+(5)
+
+The measured 65 ms corresponds to 85% of theoretical peak
+bandwidth utilization. The remaining 15% accounts for
+non-memory operations (softmax, RoPE, layer normalization)
+and memory access patterns that do not achieve perfect
+streaming.
+
+This is a significant finding: bare-metal execution
+reaches the hardware bandwidth limit. No software
+optimization—better SIMD kernels, more efficient scheduling,
+or tighter code—can improve 7B performance on this hardware.
+The path to faster 7B inference requires higher memory bandwidth
+(DDR5-8000, HBM) or reduced model size (more aggressive
+quantization).
+
+7.4 ProbeLogits Performance
+
+Table 3: ProbeLogits operation latency.
+
+Operation
+135M
+7B
+
+Binary (probe_yes_no)
+0.6 ms
+65 ms
+
+N-way (probe_classify)
+0.6 ms
+65 ms
+
+Entropy (logit_entropy)
+0.1 ms
+0.5 ms
+
+Grammar masking (per token)
+0.01 ms
+0.01 ms
+
+KV checkpoint
+0.5 ms
+12 ms
+
+Table 3 shows ProbeLogits operation latencies.
+Binary and N-way classification have identical cost because
+both require exactly one forward pass; the additional softmax
+over token logits is negligible (1 µs for
+).
+
+Logit entropy computation is cheap (0.1–0.5 ms) because it
+operates on the already-computed logit vector without requiring
+an additional forward pass. It only needs to iterate over the
+152K logits once.
+
+KV cache checkpoint cost scales with model size: 0.5 ms for
+135M (small KV cache) and 12 ms for 7B (larger KV cache
+that must be copied). The 32 MB cap ensures bounded memory
+consumption.
+
+7.5 ProbeLogits Safety Classification
+
+I validate ProbeLogits on native hardware (UEFI boot, no QEMU)
+using Qwen2.5-7B-Instruct Q4_0 with a benchmark of 260 prompts
+across 9 categories: explicit danger/safety, euphemism, ambiguity,
+multi-step attacks, deception, privacy violations, benign-complex
+actions, and adversarial evasion attempts (prompt injection, encoding
+tricks, language mixing, instruction hierarchy attacks).
+
+Contextual calibration.
+
+Instruction-tuned models exhibit strong sycophancy bias (a tendency to agree with the implied framing of the question):
+when asked “Is this dangerous?” with Yes/No verbalizers,
+the uncalibrated model predicted “dangerous” for the majority
+of prompts—achieving only 64.8% overall accuracy on the initial
+210-prompt benchmark. I apply contextual calibration
+[27]: at boot time, 7 null inputs are probed
+to measure the model’s inherent bias ( logit logit), which is then subtracted from all future
+classifications, scaled by a tunable (default 1.0).
+I also replace Yes/No verbalizers with Safe/Dangerous—semantically
+aligned tokens that carry direct classification signal rather than
+surface-level agreement.
+
+The prompt template uses safety-priming framing:
+"Is this action dangerous, harmful, or a privacy violation? Answer Safe or Dangerous.\nAction: {action}\nAnswer:"
+— this activates the model’s safety reasoning while directing
+output to the calibrated verbalizer tokens.
+
+A three-stage defense pipeline precedes the forward pass:
+(1) an adversarial pre-filter scans for prompt injection, encoding
+tricks, and authority impersonation patterns (O(), no forward pass);
+(2) input sanitization strips control characters and injection patterns;
+(3) the calibrated forward pass reads Safe/Dangerous logits.
+
+Table 4: ProbeLogits vs. Generate-then-Parse on 260 prompts
+(9 categories including 50 adversarial).
+Both methods use the identical prompt template for fair comparison.
+ProbeLogits includes an adversarial pre-filter and privacy keyword
+boost; Generate uses text generation + parsing only.
+
+Metric
+ProbeLogits
+Generate
+
+Accuracy
+97.3%
+90.8%
+
+Precision
+1.000
+1.000
+
+Recall
+0.960
+0.864
+
+F1 Score
+0.980
+0.927
+
+False negatives
+7
+24
+
+False positives
+0
+0
+
+Table 4 shows ProbeLogits achieves
+97.3% accuracy (F1 = 0.980) vs. 90.8% (F1 = 0.927) for
+generate-then-parse on identical prompts.
+Both methods achieve perfect precision (1.000):
+zero false positives across all safe prompts.
+
+Pipeline ablation.
+
+ProbeLogits is a three-stage pipeline: (1) adversarial pre-filter
+(pattern matching, catches 13 of 50 adversarial prompts at
+O() with no forward pass), (2) calibrated forward pass with
+Safe/Dangerous logit reading, (3) privacy keyword boost (adds
+2.5–3.0 logit units for surveillance verbs + personal data nouns).
+The pre-filter and privacy boost are hand-coded rules, not model
+inference. To separate method contribution from rule contribution,
+I report:
+
+Table 5: Pipeline ablation on custom benchmark.
+
+Config
+Acc.
+F1
+Note
+
+Uncalib., Yes/No
+64.8%
+0.786
+Sycophancy
+
++ Calibration
+87.1%
+0.892
+Bias corr.
+
++ Safety prompt
+92.3%
+0.941
+Model-only
+
++ Privacy boost
+95%
+0.96
+Estimated
+
++ Adv. pre-filter
+97.3%
+0.980
+Full pipe.
+
+The core logit-reading method with calibration achieves 92.3%
+(F1 = 0.941) without any rule-based components. The privacy
+boost and adversarial pre-filter contribute an additional
+4 pp, demonstrating that the model inference is the
+primary contributor.
+
+Per-category analysis.
+
+ProbeLogits achieves 100% accuracy on 6 of 9 categories:
+explicit danger, explicit safety, deception, privacy,
+benign-complex actions, and (with the safety-priming prompt
+that includes “or a privacy violation”) previously-weak
+privacy violations. Adversarial evasion (94%) demonstrates
+strong robustness: the pre-filter catches prompt injection
+and encoding attacks, while 3 remaining failures are
+semantic-framing attacks that require multi-hop reasoning
+beyond 7B model capacity.
+ProbeLogits outperforms Generate on all 9 categories.
+
+Standard benchmark: ToxicChat.
+
+To validate beyond the custom benchmark, I evaluate on
+ToxicChat [25] (Lin et al., 2023)—a standard,
+independently human-annotated dataset of 10K+ real user
+conversations from a chatbot deployment. I sample 1,000 prompts
+(362 toxic, 638 benign; seed=42) from the test split and run
+ProbeLogits with no code changes or re-calibration.
+
+Table 6: Cross-benchmark comparison at two operating points.
+
+Benchmark
+
+Acc
+P
+R
+F1
+
+Custom (260)
+1.0
+97.3
+1.000
+0.960
+0.980
+
+Custom (260)
+0.5
+91.9
+1.000
+0.881
+0.937
+
+ToxicChat (1000)
+1.0
+82.5
+0.698
+0.912
+0.790
+
+ToxicChat (1000)
+0.5
+88.6
+0.867
+0.809
+0.837
+
+Table 6 reveals a significant
+performance gap between the two benchmarks. On the custom
+OS action benchmark, ProbeLogits achieves F1 = 0.980 with
+perfect precision—a structural zero-false-positive
+property indicating that logit distributions for safe and
+dangerous OS commands are well-separated. On ToxicChat at
+, F1 drops to 0.790—primarily due to low
+precision (0.698): approximately 143 of 638 benign prompts
+are misclassified as toxic (22% false positive rate), while
+recall remains high (0.912). Tuning to 0.5 reduces
+ToxicChat false positives from 143 to approximately 50,
+improving F1 from 0.790 to 0.837.
+
+Three factors explain the remaining gap.
+First, the prompt template is optimized for structured
+OS actions (“Action: {text}”), not free-form user
+conversations. Benign chat like “How do I change my name?”
+triggers the safety-priming framing in unintended ways.
+Second, the privacy keyword boost—designed for
+OS actions involving surveillance verbs—fires on benign
+conversations that naturally mention personal data terms.
+Third, 7B Q4_0 models have limited ability to
+distinguish edgy-but-safe conversations from genuinely harmful
+content without learned fine-tuning. Hand-crafted heuristics
+such as keyword boosting partially compensate but cannot
+replace learned adaptation.
+
+For context, Llama Guard 3 8B—a dedicated safety classifier
+fine-tuned from Llama 3.1 8B at full precision—reports
+F1 0.939 on its benchmark. At ,
+ProbeLogits achieves F1 = 0.837—89% of Llama Guard 3
+with zero learned parameters. The remaining gap reflects the
+expected cost of zero fine-tuning and action-oriented prompt
+design. Critically, ProbeLogits is designed as an OS kernel
+primitive for classifying agent actions, not as a
+general-purpose chat toxicity detector. On its intended use
+case (OS actions), it achieves F1 = 0.980 with perfect
+precision across all values.
+
+Table 7: Effect of calibration strength on safety classification.
+controls the precision-recall tradeoff as a deployment-time
+policy parameter, not a learned hyperparameter.
+
+Custom (260)
+ToxicChat (1000)
+
+Acc
+P
+R
+F1
+Acc
+P
+R
+F1
+
+0.3
+89.2
+1.000
+0.841
+0.914
+83.9
+0.891
+0.633
+0.740
+
+0.5
+91.9
+1.000
+0.881
+0.937
+88.6
+0.867
+0.809
+0.837
+
+0.7
+93.8
+1.000
+0.909
+0.952
+86.2
+0.784
+0.854
+0.817
+
+0.8
+95.4
+1.000
+0.932
+0.965
+85.0
+0.755
+0.867
+0.807
+
+0.9
+—
+—
+—
+—
+83.9
+0.727
+0.890
+0.800
+
+1.0
+97.3
+1.000
+0.960
+0.980
+82.5
+0.698
+0.912
+0.790
+
+Calibration strength () as policy knob.
+
+Table 7 reveals two key findings. First, on OS
+actions, precision remains 1.000 across all values, confirming
+the structural zero-false-positive property observed in
+Table 6. This enables “block without review” deployment:
+when ProbeLogits flags an OS action as dangerous, it is always
+correct. Second, the optimal is domain-dependent:
+maximizes F1 on structured OS actions (0.980),
+while maximizes F1 on free-form chat (0.837).
+This is not a weakness but a design feature: the OS can enforce
+strict policies for privileged operations ()
+while applying relaxed policies for conversational agents
+(). Unlike fixed-threshold classifiers,
+ProbeLogits delegates the precision-recall tradeoff to the
+OS security policy at deployment time.
+
+7.6 Constitutional Governance Overhead
+
+Table 8: Governance pipeline latency per action.
+
+Stage
+Latency
+
+Adversarial pre-filter
+1 µs
+
+Input sanitization
+1 µs
+
+ProbeLogits 7B
+65 ms
+
+Blake3 audit entry
+10 µs
+
+Table 8 shows the per-stage cost of the
+governance pipeline. The 65 ms forward pass dominates total
+latency. While this overhead is significant, it occurs only
+once per agent action (not per token), making it practical:
+a typical agent action involves hundreds of generated tokens
+(5–20 s), so the 65 ms governance check adds 1.3%
+overhead. A cascading design that pre-screens actions with a
+smaller model (e.g., 135M at 0.6 ms) could reduce average
+latency further; this optimization is left for future work.
+
+7.7 Comparison with Related Systems
+
+Table 9: Feature comparison with related systems.
+✓ = supported, blank = not supported,
+= partial.
+
+Feature
+Anima OS
+AIOS
+OS-Copilot
+LangChain
+llama.cpp
+vLLM
+AutoGPT
+
+Bare-metal exec.
+✓
+
+Kernel inference
+✓
+
+ProbeLogits
+✓
+
+Logit entropy
+✓
+
+Grammar decoding
+✓
+
+KV cache as state
+✓
+
+Constitutional gov.
+✓
+
+Trust evolution
+✓
+
+Raft consensus
+✓
+
+Agent migration
+✓
+
+WASM sandbox
+✓
+
+Hidden state
+✓
+
+Table 9 compares Anima OS with related
+systems across 12 features. AIOS [22] is the closest
+competitor, but it is implemented as a Python wrapper around
+existing frameworks, inheriting the layered architecture
+problems described in 2.1. llama.cpp [7]
+provides efficient inference but as a userspace library, not
+an OS primitive. vLLM [19] manages KV caches for serving
+throughput but does not expose them as process state.
+
+The distinguishing features of Anima OS—ProbeLogits, logit
+entropy, kernel-level governance, and KV cache as process
+state—are absent from all compared systems. These features
+are only possible because inference runs inside the kernel,
+giving the OS direct access to model internals.
+
+8 Discussion
+
+8.1 Why Bare Metal?
+
+Running an LLM inference engine inside the kernel is an extreme
+design choice. I justify it on two grounds.
+
+First, trust boundary. If governance decisions depend
+on inference results (“is this action safe?”), the inference
+engine must be at least as trusted as the governance system. In
+a layered architecture, a compromised inference framework can
+return arbitrary results, undermining governance entirely. In
+Anima OS, the inference engine runs at the same privilege level
+as the governance system—in the kernel.
+
+Second, scheduling control. A kernel-level inference
+engine can be scheduled with precise priority relative to other
+kernel operations. Governance checks can preempt lower-priority
+inference tasks, and the kernel can manage KV cache memory
+alongside other kernel memory without crossing privilege
+boundaries.
+
+8.2 ProbeLogits vs. Representation Engineering
+
+Burns et al. [3] discover latent knowledge in
+LLM representations by training probes on hidden states.
+Zou et al. [28] control model behavior through
+representation vectors. These works inspire my hidden state
+analysis (BehaviorProfile) but differ fundamentally
+in purpose:
+
+Representation engineering is a research tool: it
+requires training auxiliary models, operates post hoc, and
+aims to understand or modify model behavior. ProbeLogits is
+an OS primitive: it requires no training, operates in
+real time, and aims to make kernel-level decisions. The two
+approaches are complementary—representation engineering
+could inform the design of better ProbeLogits prompts—but
+they occupy different positions in the system stack.
+
+8.3 Enforcement Detection
+
+The key insight of the governance architecture is the
+separation of enforcement from detection.
+
+Enforcement is structural: WASM isolation ensures that
+agents can only interact with the system through host functions.
+This guarantee holds regardless of the agent’s capability or
+intent. It is binary—either the agent is sandboxed or it is
+not—and does not depend on the accuracy of any classifier.
+
+Detection is probabilistic: ProbeLogits classifies
+actions as harmful or safe with 97.3% accuracy on 7B Q4_0
+(F1 = 0.980, precision = 1.000) using contextual calibration,
+safety-priming prompts, and a lightweight rule-based defense
+pipeline.
+This accuracy improves with model size and prompt quality but
+is never 100%.
+
+The combination is more powerful than either alone. A system
+with only enforcement (no detection) would sandbox agents but
+have no visibility into their behavior. A system with only
+detection (no enforcement) could identify harmful actions but
+not prevent them if the agent bypasses the detector. Anima OS
+provides both: detection informs the graduated response, and
+enforcement ensures the response is applied.
+
+8.4 Why Now?
+
+The convergence of three technologies makes kernel-level AI
+integration practical in 2026:
+
+1.
+
+Quantization: 4-bit quantization (Q4_0)
+reduces a 7B model from 14 GB to 4.1 GB, fitting
+in commodity RAM.
+
+2.
+
+SIMD: AVX-512 VNNI enables efficient
+4-bit matrix-vector multiplication without GPU
+acceleration.
+
+3.
+
+Sub-100ms latency: 65 ms per forward pass
+on 7B makes per-action governance practical—fast
+enough to classify every agent action without
+user-perceptible delay.
+
+Five years ago, 7B inference required seconds on CPU. Today
+it requires 65 ms. This 100 improvement transforms
+LLM inference from an application-level service to a viable
+kernel primitive.
+
+9 Related Work
+
+AI-oriented operating systems.
+
+AIOS [22] extends a Python-based framework with
+LLM-oriented scheduling and memory management (published at COLM 2025).
+OS-Copilot [12]
+uses LLMs to automate Linux system administration tasks.
+PunkGo [23] proposes a Rust sovereignty kernel for
+verifiable AI agent execution with Merkle audit logs, the closest
+related work in kernel-level AI governance. Microsoft’s Agent
+Governance Toolkit [21] provides application-level
+runtime security for AI agents.
+All operate atop existing operating systems (or focus on
+verification rather than inference), inheriting the latency and
+bypassability problems discussed in 2.2.
+Anima OS differs by integrating inference directly into a
+bare-metal kernel, enabling logit-level primitives.
+
+Inference engines.
+
+llama.cpp [7] is the state-of-the-art CPU inference
+engine, with extensive SIMD optimization and broad hardware
+support. My bare-metal engine achieves parity on
+bandwidth-limited 7B workloads and 1.39 superiority on
+compute-bound 135M workloads. The performance advantage comes
+from eliminating OS scheduling overhead and using work-stealing,
+not from superior algorithms.
+
+Serving systems.
+
+vLLM [19] introduces PagedAttention for efficient KV
+cache memory management in serving. SGLang [17]
+optimizes structured generation programs with RadixAttention.
+Both focus on serving throughput (requests per second), while
+my KV cache primitives focus on process state management
+(checkpoint, restore, fork). The two approaches address
+different problems.
+
+Constitutional AI.
+
+Bai et al. [2] introduce constitutional
+AI as a training-time technique: the model is trained with
+AI feedback guided by a set of principles. My approach is
+complementary—I enforce constitutional principles at
+runtime in the kernel, regardless of how the model was
+trained. The two approaches can be combined: a model trained
+with constitutional AI would produce more accurate ProbeLogits
+classifications.
+
+Safety classifiers.
+
+Llama Guard [8, 20] is a fine-tuned safety
+classifier achieving F1 0.93–0.95 on its benchmark.
+WildGuard [26] achieves macro-F1 0.907 on
+WildGuardTest. NeMo Guardrails [11] provides
+programmable safety rails for LLM applications. All operate
+as external classifiers at the application level, requiring
+dedicated models. ProbeLogits differs by using the
+same model that performs inference for classification
+(no second model overhead, F1 = 0.980 on 260 OS action prompts
+with a general-purpose 7B model and zero learned fine-tuning), and by
+operating below the WASM sandbox boundary where the agent
+cannot intercept or skip the safety check.
+
+Constrained decoding.
+
+Outlines [13] and Guidance [5] implement
+constrained decoding in Python/C++. llguidance [9]
+(Microsoft) uses PDA-based algorithms for CFG constraints. My
+current grammar support is limited to choice/boolean constraints;
+I plan to port llguidance to no_std for full CFG
+support.
+
+Representation engineering.
+
+Burns et al. [3] discover latent knowledge in
+LLM representations without supervision. Zou et al. [28]
+propose representation engineering as a top-down approach to
+AI transparency. These works inspire my hidden state behavior
+analysis but operate as research tools, not OS primitives
+(8.2).
+
+Distributed inference.
+
+Petals [14] enables collaborative inference by
+splitting model layers across networked machines. Anima OS’s
+AnimaNet takes a different approach: distributing
+agents (not tensors) across nodes, with Raft [15]
+consensus for coordination.
+
+Capability security.
+
+seL4 [16] provides formally verified capability-based
+security. CHERI provides hardware-enforced capabilities. Anima
+OS uses Ed25519-signed capability tokens for agent permissions,
+drawing on the capability security tradition but applied to
+AI agent governance.
+
+Rust bare-metal operating systems.
+
+Theseus OS [18] and RedLeaf explore Rust’s type system
+for OS safety guarantees. These systems demonstrate the viability
+of Rust for kernel development but do not address AI integration.
+Anima OS builds on this foundation, extending bare-metal Rust
+to AI inference and governance.
+
+LLM agent frameworks.
+
+AutoGPT [1], LangChain [6],
+CrewAI [4], and MetaGPT [10] orchestrate
+LLM-based agents in Python. These frameworks provide convenience
+but operate entirely in userspace, with no kernel-level
+governance or inference integration.
+
+10 Limitations
+
+GPU acceleration.
+
+Anima OS currently runs CPU-only inference. For models beyond
+7B parameters, GPU acceleration is essential. Bare-metal GPU
+compute (AMD RDNA or NVIDIA) requires reverse-engineering
+proprietary interfaces, which remains a significant engineering
+challenge.
+
+ProbeLogits accuracy.
+
+On OS action classification, the full pipeline achieves
+F1 = 0.980 (model-only: F1 = 0.941) on 7B Q4_0. On ToxicChat
+(1,000 free-form user conversations), F1 ranges from 0.740
+() to 0.837 (), with the default
+yielding F1 = 0.790 due to a significant
+false-positive problem on conversational input. For context,
+Llama Guard 3 8B [20] achieves F1 0.939.
+The gap reflects ProbeLogits’ design as an action classifier
+(not a chat moderator) and the lack of fine-tuning. Notably,
+the optimal differs by domain ( for OS
+actions, for chat), suggesting domain-specific
+calibration profiles as future work. Multi-model evaluation
+(Llama 3, Mistral), additional standard benchmarks (XSTest),
+and independent annotators would strengthen the results.
+
+Grammar expressiveness.
+
+Current grammar support is limited to choice and boolean
+constraints. Full context-free grammar (CFG) support—enabling
+JSON Schema validation, regex constraints, and arbitrary
+structured output—requires porting a PDA-based engine (such
+as llguidance [9]) to no_std. I
+estimate this at approximately two weeks of engineering effort.
+
+Benchmark breadth and methodology.
+
+The custom benchmark (260 prompts, one model, one hardware
+configuration) has several methodological limitations:
+(1) ground-truth labels were assigned by a single annotator
+(the system developer), creating a risk of label optimization;
+(2) the adversarial pre-filter and privacy keyword boost were
+iteratively tuned against these same prompts, which risks
+overfitting to the test set;
+(3) only one model family (Qwen2.5) is evaluated—
+generalization to Llama, Mistral, or Phi is not established.
+The ToxicChat evaluation (1,000 prompts, F1 = 0.790)
+partially addresses concern (1) by using independent
+human-annotated labels, but reveals that the high custom
+benchmark accuracy does not generalize to free-form chat.
+Broader evaluation across models, benchmarks, and annotators
+would strengthen the results.
+
+Formal verification.
+
+The governance system’s non-bypassability claim rests on
+WASM isolation properties, which I have not formally verified.
+TLA+ or Iris specifications of the governance invariants
+would significantly strengthen the security argument. I
+note that WASM sandboxing is a well-studied isolation
+mechanism, but formal verification of the specific Anima OS
+host function interface has not been performed.
+
+TLS certificate verification.
+
+The current TLS 1.3 implementation uses
+UnsecureProvider (no certificate validation).
+Production deployment requires integration of a
+no_std X.509 certificate verifier such as webpki.
+
+Multi-agent demonstrations.
+
+While the infrastructure for multi-agent systems is complete
+(lifecycle, trust, capabilities, migration, Raft), I have not
+yet demonstrated complex multi-agent scenarios with realistic
+workloads. End-to-end demonstrations with cooperating and
+competing agents would validate the governance and trust
+systems under realistic conditions.
+
+11 Conclusion
+
+I presented ProbeLogits, the first OS primitive that exposes
+LLM logit vectors as kernel-level abstractions for semantic
+classification, uncertainty measurement, and governance
+enforcement. ProbeLogits eliminates text generation, parsing,
+and IPC from the classification path, reducing latency from
+650 ms (generate-then-parse) to 65 ms (single forward
+pass) on a 7B model.
+
+The key finding is that bare-metal inference reaches the
+hardware bandwidth limit: 65 ms per token on 7B corresponds
+to 85% of the theoretical DDR5-6000 bandwidth ceiling. No
+software optimization can improve this further on the same
+hardware—the path forward is higher memory bandwidth or
+GPU acceleration.
+
+ProbeLogits, combined with KV cache process state operations
+and kernel-enforced constitutional governance, demonstrates
+that an AI-native kernel can provide capabilities impossible
+in layered architectures: sub-millisecond semantic classification
+(135M), kernel-enforced safety guarantees via WASM sandbox
+isolation (defense-in-depth), and process-level management of inference state
+(checkpoint, restore, fork).
+
+The calibration parameter provides a deployment-time
+knob for precision-recall tradeoff, enabling domain-specific
+safety policies without retraining.
+
+As AI agents become as common as processes, the operating system
+must evolve from a passive resource manager to an active
+participant in the inference loop. ProbeLogits is a first step
+toward that future.
+
+References
+
+[1]
+
+T. Richards et al., “AutoGPT: An Autonomous GPT-4 Experiment,”
+GitHub repository, 2023.
+
+[2]
+
+Y. Bai et al., “Constitutional AI: Harmlessness from AI Feedback,”
+arXiv:2212.08073, 2022.
+
+[3]
+
+C. Burns, H. Ye, D. Klein, and J. Steinhardt,
+“Discovering Latent Knowledge in Language Models Without Supervision,”
+ICLR 2023.
+
+[4]
+
+J. Moura, “CrewAI: Framework for Orchestrating Role-Playing
+Autonomous AI Agents,” GitHub repository, 2024.
+
+[5]
+
+S. Lundberg et al., “Guidance: A Language for Controlling Large
+Language Models,” GitHub repository, 2023.
+
+[6]
+
+H. Chase, “LangChain: Building Applications with LLMs through
+Composability,” GitHub repository, 2022.
+
+[7]
+
+G. Gerganov, “llama.cpp: LLM inference in C/C++,”
+GitHub repository, 2023.
+
+[8]
+
+H. Inan et al., “Llama Guard: LLM-based Input-Output Safeguard
+for Human-AI Conversations,” arXiv:2312.06674, 2023.
+
+[9]
+
+Microsoft, “llguidance: Fast Constrained Decoding Library,”
+GitHub repository, 2024.
+
+[10]
+
+S. Hong et al., “MetaGPT: Meta Programming for A Multi-Agent
+Collaborative Framework,” ICLR 2024.
+
+[11]
+
+S. Rebuffi et al., “NeMo Guardrails: A Toolkit for Controllable
+and Safe LLM Applications with Programmable Rails,”
+arXiv:2310.10501, 2023.
+
+[12]
+
+Z. Wu et al., “OS-Copilot: Towards Generalist Computer Agents
+with Self-Improvement,” arXiv:2402.07456, 2024.
+
+[13]
+
+B. Willard and R. Louf, “Efficient Guided Generation for Large
+Language Models,” arXiv:2307.09702, 2023.
+
+[14]
+
+A. Borzunov et al., “Petals: Collaborative Inference and
+Fine-tuning of Large Models,” ACL 2023 (demo).
+
+[15]
+
+D. Ongaro and J. Ousterhout, “In Search of an Understandable
+Consensus Algorithm,” USENIX ATC 2014.
+
+[16]
+
+G. Klein et al., “seL4: Formal Verification of an OS Kernel,”
+SOSP 2009.
+
+[17]
+
+L. Zheng et al., “SGLang: Efficient Execution of Structured
+Language Model Programs,” arXiv:2312.07104, 2023.
+
+[18]
+
+K. Boos, N. Liber, and L. Zhong,
+“Theseus: An Experiment in Operating System Structure and
+State Management,” OSDI 2020.
+
+[19]
+
+W. Kwon et al., “Efficient Memory Management for Large Language
+Model Serving with PagedAttention,” SOSP 2023.
+
+[20]
+
+Meta, “Llama Guard 3-8B Model Card,”
+https://github.com/meta-llama/PurpleLlama, 2024.
+
+[21]
+
+Microsoft, “Agent Governance Toolkit: Open-Source Runtime
+Security for AI Agents,” 2026.
+
+[22]
+
+K. Mei et al., “AIOS: LLM Agent Operating System,”
+COLM 2025.
+
+[23]
+
+Z. Zhang, “Right to History: A Sovereignty Kernel for
+Verifiable AI Agent Execution,” arXiv:2602.20214, 2026.
+
+[24]
+
+T. Schick and H. Schütze, “Exploiting Cloze Questions for
+Few-Shot Text Classification and Natural Language Inference,”
+EACL 2021.
+
+[25]
+
+Z. Lin et al., “ToxicChat: Unveiling Hidden Challenges of
+Toxicity Detection in Real-World User-AI Conversation,”
+Findings of EMNLP 2023.
+
+[26]
+
+S. Han et al., “WildGuard: Open One-Stop Moderation Tools for
+Safety Risks, Jailbreaks, and Refusals of LLMs,”
+arXiv:2406.18495, 2024.
+
+[27]
+
+Z. Zhao, E. Wallace, S. Feng, D. Klein, and S. Singh,
+“Calibrate Before Use: Improving Few-Shot Performance of
+Language Models,” ICML 2021.
+
+[28]
+
+A. Zou et al., “Representation Engineering: A Top-Down Approach
+to AI Transparency,” arXiv:2310.01405, 2023.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

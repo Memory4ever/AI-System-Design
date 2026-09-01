@@ -1,0 +1,1043 @@
+OSC: Hardware Efficient W4A4 Quantization via Outlier Separation in Channel Dimension
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Characterization of Outlier Clustering
+
+2.1 Outliers Identification and Visual Evidence
+
+2.2 Quantifying Clustering Density
+
+2.3 Spatial Heterogeneity and Generalizability
+
+3 The OSC Framework
+
+3.1 Static Suppression Table Construction
+
+3.2 The OSC-Enhanced Quantization Procedure
+
+3.3 Hybrid-Precision Matrix Computation and Hardware Execution
+
+3.3.1 Hybrid Computational Formulation
+
+3.3.2 Hardware Data Coordination and Efficiency Analysis
+
+3.4 Hybrid-precision Adaptive Fallback Strategy
+
+4 OSC: Experiment Results
+
+4.1 Experimental Setup
+
+4.2 Main Results
+
+5 Related Work
+
+5.1 Systematic Characterization of Activation Outliers
+
+5.2 Evolution of Outlier Mitigation Strategies
+
+5.3 Summary: Bridging Algorithms and Hardware Execution
+
+6 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.12782v1 [cs.LG] 14 Apr 2026
+
+OSC: Hardware Efficient W4A4 Quantization via Outlier Separation in Channel Dimension
+
+Zhiyuan Zhang
+
+  
+Yanzhao Li
+
+  
+Zhiqiang Zou
+
+  
+Bai Du
+
+  
+Yupeng Sun
+
+  
+Hui Dong
+
+  
+Hui Wang
+
+Affiliation: Huawei Technology
+
+Affiliation: {zhangzhiyuan45, liyanzhao}@huawei.com
+
+Abstract
+
+While 4-bit quantization is essential for high-throughput deployment of Large Language Models, activation outliers often lead to significant accuracy degradation due to the restricted dynamic range of low-bit formats. In this paper, we systematically investigate the spatial distribution of outliers and demonstrate a token-persistent structural clustering effect, where high-magnitude outliers consistently occupy fixed channels across tokens. Building on this insight, we propose OSC, a hardware-efficient framework for outlier suppression. During inference, OSC executes a dual-path computation consisting of a low-precision 4bit General Matrix Multiplication (GEMM) path and a high-precision 16bit branch GEMM path. Specifically, OSC uses an offline group-wise strategy to identify the channels where outliers are located and then performs structured sub-tensor extraction to coalesce these scattered activation channels into a compact dense tensor online. This mechanism implements outlier protection through regularized and high-throughput GEMM operations, achieving a seamless fit with modern 4-bit micro-scaling hardware. Furthermore, for the inputs of where outlier clustering is less pronounced, we integrate an fallback strategy to FP8. Evaluation on Qwen3-8B and Qwen3-30B restricts the average accuracy drop to 2.19 and 1.12 points, respectively. Notably, OSC is highly hardware-friendly, achieving a peak speedup of 1.78 over the W8A8 GEMM baseline on a modern AI accelerator.
+
+ 
+ 
+
+1 Introduction
+
+The unprecedented scaling of Large Language Models (LLM) has led to architectures with hundreds of billions of parameters [1, 2], resulting in an explosion of computational demand and inference costs [3]. Given the prohibitive retraining overhead of Quantization-Aware Training (QAT) for large-scale models, Post-training Quantization (PTQ) remains the most widely adopted technology to alleviate deployment constraints. While 8-bit quantization is now widely adopted, pushing compression to 4-bit formats (e.g., W4A4) often triggers catastrophic accuracy degradation. This failure is primarily attributed to activation outliers—sparse but disproportionately high-magnitude values [4]. Although modern group-wise micro-scaling formats like MXFP4 [5], NVFP4 [6], and HIF4 [7] help mitigate general quantization noise, preserving model integrity against extreme outliers remains a formidable challenge.
+
+Existing outlier suppression strategies typically rely on data-dependent dynamic sensing (e.g., LLM.int8() [8], Top-P/K selection [9, 10]) or global re-parameterization (e.g., SmoothQuant [11], QuaRot [12]). While effective for accuracy recovery, these methods pay limited attention to the intrinsic requirements of fine-grained group-wise quantization and underlying hardware execution efficiency. Consequently, these methods introduce significant computational overhead, cause memory fragmentation, and complicate deterministic execution due to their runtime-dependent nature.
+
+Prior work shows that activation outliers in LLMs cluster in a small subset of influential channels [8, 11]. Based on these insights, this paper conduct a systematic, fine-grained statistical analysis of activation outliers across multiple modules. Our study reveals a token-persistent structural clustering effect: for the majority of transformer modules, such as Attention and FFN / inputs, outliers consistently manifest in fixed channels within each quantization group, with clustering density often exceeding 60%. Conversely, we identify specific "low-clustering" regions, most notably at the (down-projection) inputs, where outliers exhibit a more diffused distribution that defies static indexing.
+
+Based on these insights, this paper propose OSC, a hardware-aligned Offline Lookup Table protection scheme. OSC leverages the structural priors of group-wise quantization (e.g., 32 elements for MXFP4) to perform static outlier isolation. By coalescing pre-indexed channels into a sub-tensor, OSC transforms scattered outlier protection into a regular, dense General Matrix Multiplication (GEMM) operation. For inputs that lack clustering stability, we employ a hybrid-precision strategy, selectively reverting these specific projections to the FP8 to ensure robust accuracy.
+
+The main contributions of this paper are summarized as follows:
+
+•
+
+Systematic Characterization of Outlier Heterogeneity: Beyond identifying general channel outliers, this paper provide a fine-grained quantification of their spatial heterogeneity across computational blocks. By distinguishing between token-persistent structural clustering and stochastic diffusion, this paper establish a rigorous empirical foundation for position-specific, hardware-aligned quantization.
+
+•
+
+The OSC Framework: This paper introduce OSC, a hardware-intrinsic outlier suppression scheme. By leveraging an offline lookup table and structured sub-tensor extraction, OSC performs outlier protection through regular, high-throughput GEMM operations. This approach effectively eliminates the runtime overhead and execution divergence typical of dynamic sensing methods.
+
+•
+
+Hybrid-precision Policy: As a core component of OSC, OSC implement an adaptive precision policy that maps specific module profiles to optimal numerical formats. For inputs where static clustering is less pronounced, OSC utilize a selective FP8 fallback. This strategy balances aggressive 4-bit compression with high-fidelity protection, ensuring stability in sensitive MoE-based architectures.
+
+•
+
+Near-Lossless Accuracy and Hardware Efficiency: This paper evaluate OSC on Qwen3-8B and Qwen3-30B-A3B, achieving near-lossless 4-bit inference accuracy across multiple benchmarks. Furthermore, this paper evaluate the practical efficiency of OSC through performance benchmarking of optimized hardware kernels, demonstrating significant speedups over baseline implementations on the high-performance accelerator architecture.
+
+2 Characterization of Outlier Clustering
+
+In this section, we provide a quantitative investigation into the spatial distribution of activation outliers to verify the proposed token-persistent structural clustering effect. Our analysis serves as the empirical foundation for the subsequent OSC protection scheme.
+
+2.1 Outliers Identification and Visual Evidence
+
+To enable outlier identification, we pre-define a layer-wise threshold during the offline profiling phase. We adopt a layer-wise rather than a global threshold because our empirical data suggest that activation magnitudes tend to escalate significantly as the model depth increases, particularly in the later stages of deep Transformer architectures. For an activation tensor (where is the total number of tokens and is the hidden dimension, ignoring the batch dimension for clarity), the threshold is computed as:
+
+(1)
+
+where is a scaling factor set to 5 in our study. This setting is determined empirically, ensuring that during grouping, most groups contain outliers without excessive inclusion.
+
+To investigate the distribution of activation outliers, we conduct a systematic analysis on the Qwen3-8B model. We specifically focus on four critical computational interfaces:
+
+(1) inputs to the self-attention module (//),
+
+(2) inputs to the projection,
+
+(3) inputs to the FFN (/), and
+
+(4) inputs to the projection, all of which are involved in GEMM operations during inference.
+
+The specific sampling points for Qwen3-8B [13] are illustrated in Figure 1, which highlights the activation interfaces monitored during our analysis.
+
+The spatial characteristics of the outliers are visualized in Figure 1. Taking the self-attention input of Qwen3-8B as a representative case, we illustrate activation patterns aggregated over 3 distinct prompts (512 tokens each).
+
+•
+
+Figure 3(a) (top): Displays a binary mask , where (deep red) denotes an outlier () and (light red) denotes a normal value.
+
+•
+
+Figure 3(b) (bottom): Provides the corresponding magnitude heatmap of the activations across tokens and channels.
+
+As illustrated in Figure 1, the outliers exhibit a distinct vertical stripe-like pattern. This observation confirms that outliers are not stochastically distributed across the sequence but are persistently concentrated in specific channels, regardless of the input tokens, providing a reliable structural prior for offline lookup table construction.
+
+Figure 1: Data sampling visualization and the four monitored positions in Qwen3-8B.
+
+(a) Outlier Boolean Mask ()
+
+(b) Raw Activation Magnitudes
+
+Figure 1: Visualizing structural clustering in Qwen3-8B. The boolean mask (a) identifies tokens exceeding , while the heatmap (b) displays the raw activation magnitudes, revealing that specific channels consistently harbor large-scale values across all tokens.
+
+2.2 Quantifying Clustering Density
+
+To ensure compatibility with the group-wise microscaling formats optimized for modern AI accelerators, this paper partition the input channels into disjoint groups of size . Within this structural framework, we introduce the Clustering Density () to quantify the spatial concentration of dominant outliers. By focusing on the token-wise representative outlier within each group, serves as a direct proxy for the efficacy of static single-channel protection. The formal derivation of this metric follows a three-step process:
+
+1.
+
+Token-wise Max Filtering: For each token and each group , we first identify the channel index that holds the maximum absolute magnitude within the group:
+
+(2)
+
+2.
+
+Outlier Sample Identification (): We define the set of "outlier-afflicted tokens" for group . A token is included in this set only if its maximum intra-group magnitude exceeds the threshold :
+
+(3)
+
+The total count of such tokens is , representing the number of tokens that require outlier protection in this specific group.
+
+3.
+
+Dominant Index Frequency (): Among the tokens in , we identify the most frequent channel index across the sequence. The count of tokens whose primary outlier is captured by this specific index is:
+
+(4)
+
+The clustering density for group is thus defined as . This metric provides a measure of the probability that protecting a single static channel will resolve the primary outlier threat for any given token. Intuitively, the final density for a computational block is the average across all groups: .
+
+Rationale for Metric Choice:
+While the average clustering density may be numerically moderated by certain groups whose outliers are less extreme and thus exhibit less pronounced clustering, our extensive numerical analysis confirms that this metric remains a robust indicator of protection efficacy. We found that selecting only the most frequent outlier channel per group as the protection target yields near-optimal accuracy recovery while maintaining a highly regular hardware execution pattern. This structured approach is inherently robust: even if the offline profiling occasionally identifies a relatively low-magnitude value for protection (a false positive), the overall precision remains unaffected, as these values are simply processed in higher precision. Conversely, the high clustering density observed in critical groups ensures that catastrophic outliers (true positives), which are the primary drivers of quantization error, are rarely omitted from the lookup table.
+
+Figure 4: Distribution of outlier clustering density across different layers in Qwen3-8B. Each subplot represents a specific module input position (Attention, , , ), with individual lines within each plot depicting the clustering trends of different groups of size ().
+
+Table 1: Statistical summary of outlier clustering density in Qwen3-8B across different functional modules.
+
+Module Input
+Clustering Density (%)
+
+Attention (self-attention inputs)
+60–80
+
+(output projection)
+40–50
+
+/ (FFN up-projection)
+60–70
+
+(down-projection)
+20–35
+
+2.3 Spatial Heterogeneity and Generalizability
+
+The core motivation for our protection strategy lies in the spatial heterogeneity of outlier distributions, referring to the significant variance in clustering density across different functional modules and layer depths. Based on the metric defined in the previous section, we conducted a fine-grained statistical sweep of Qwen3-8B [13]. The empirical results, summarized in Table 1 and Figure 4, reveal several critical patterns:
+
+•
+
+High-Clustering Regions: Inputs to the Attention (//) and FFN-up (/) layers exhibit the highest density, typically ranging from 60% to 80%. It is worth noting that this density interval is inherently sensitive to the quantization granularity, where a smaller group size (e.g., 16 vs. 64) increases the likelihood of capturing intra-group peaks due to the reduced search space. Their highly structured nature makes these regions ideal candidates for the static outlier suppression strategy of our OSC framework.
+
+•
+
+Moderate-Clustering Regions: The (output projection) inputs show moderate clustering (40%–50%).
+
+•
+
+Low-Clustering Regions: The (down-projection) inputs exhibit the lowest density (20%–35%), where outliers are diffused and less amenable to static indexing.
+
+•
+
+Layer-wise Stability: Although may exhibit localized shifts—such as a sharp increase in specific early layers (e.g., in layers 1-4) reflecting architecture-specific characteristics—the clustering density for a given projection type remains within a stable, predictable interval across the majority of the model.
+
+Implications for OSC Design: These empirical observations directly inform the tiered protection strategy of our framework:
+
+•
+
+High-Clustering Regions (): Modules such as Attention and are ideally suited for static outlier indexing. In these layers, protecting a single pre-identified channel per group captures the vast majority of outlier-afflicted tokens, yielding near-lossless accuracy recovery with minimal metadata.
+
+•
+
+Moderate-Clustering Regions (): Although the clustering density in (output projection) is numerically lower than in FFN-up layers, our experiments demonstrate that OSC’s static suppression strategy still provides a non-negligible accuracy gain. We attribute this to the fact that even at moderate density levels, the static index consistently captures the most extreme outliers that reside in the tails of the distribution. Thus, incorporating into the OSC’s static suppression strategy path remains a cost-effective strategy for overall model stability.
+
+•
+
+Low-Clustering Regions (): For "outlier-diffused" stages, particularly inputs, stochastic outliers defy static indexing. To maintain model integrity, the OSC framework selectively configures these layers to the FP8 fallback path. This strategy ensures robust accuracy by bypassing the limitations of static suppression in diffused regions, while preserving the 4-bit high-throughput advantage for the majority of the model.
+
+Cross-Model Consistency:
+While we primarily focus on the statistical profile of Qwen3-8B in this section, we have independently verified these patterns on Qwen3-30B-A3B and Llama3-8B [13, 2]. Although minor numerical variances exist in specific positons, the fundamental conclusion regarding structural clustering and spatial heterogeneity is consistent across these architectures, confirming the broad generalizability of our observations.
+
+3 The OSC Framework
+
+The OSC framework operates on the dual principles of static channel protection and adaptive fallback. Based on the empirical observations in Section 2, we propose a three-stage approach to implement this strategy:
+(1) Offline Profiling to identify high-density outlier channels and establish layer-wise thresholds;
+(2) Static Outlier Suppression, which integrates a dual-path execution pipeline into the quantized matrix multiplication, enabling hardware-efficient inference by decoupling outlier compensation from the low-bit computation path; and
+(3) Adaptive Fallback, which selectively configures layers with diffused outlier distributions to a higher-precision format (e.g., MXFP8).
+By dynamically assigning computational blocks to either the static suppression or the fallback path, OSC ensures optimal model integrity while preserving the high-throughput advantage of 4-bit operations.
+
+Algorithm 1 OSC Profile-driven Indexing (Dimension-Aware)
+
+1:
+
+Calibration set , Positions , Layers , Group size , Threshold
+
+2:
+
+Suppression Table is the maximum groups across all
+
+3:
+
+Initialize all
+
+4:
+
+for each position do
+
+5:
+
+   hidden_dimension_at()
+
+6:
+
+  
+
+7:
+
+  for each layer do
+
+8:
+
+    collect_activations() Shape:
+
+9:
+
+   for each group do
+
+10:
+
+     
+
+11:
+
+     for each token do
+
+12:
+
+      
+
+13:
+
+      
+
+14:
+
+      if then
+
+15:
+
+        
+
+16:
+
+      end if
+
+17:
+
+     end for
+
+18:
+
+     if then
+
+19:
+
+      
+
+20:
+
+     end if
+
+21:
+
+   end for
+
+22:
+
+  end for
+
+23:
+
+end for
+
+3.1 Static Suppression Table Construction
+
+To minimize runtime computational overhead, OSC identifies a pre-determined set of "outlier-prone" channels during a comprehensive offline calibration phase using representative data. The architectural core of OSC is a three-dimensional suppression lookup table , designed to store the structural priors of the model. Each entry stores a precise local index , which identifies the single most statistically significant outlier channel within the -th quantization group for a given layer and projection.
+
+The indexing process operates in a hierarchical manner, as detailed in Algorithm 1. For each computational block, we first adaptively determine the group count based on the local hidden dimension. The core of the algorithm lies in the construction of the candidate set , which aggregates the indices of prominent outliers across all calibration tokens. By applying the mode operator to this set (see Line 17 of Algorithm 1), we extract the statistically dominant outlier channel, effectively transforming dynamic, token-dependent variance into a robust structural prior. If a group lacks consistently high-magnitude activations (i.e., the candidate set is empty), it remains flagged with , signaling the hardware to bypass the suppression logic for that specific region.
+
+3.2 The OSC-Enhanced Quantization Procedure
+
+Existing hardware-friendly quantization formats utilize micro-scaling by partitioning tensors into small blocks (e.g., ) to mitigate the impact of outliers. OSC augments this granularity by introducing a static extraction-and-restoration mechanism. By temporarily removing the most significant outlier in each group before calculating the scaling factors, OSC drastically reduces the dynamic range in quantization, thereby improving the quantization resolution for the remaining values.
+
+As illustrated in Figure 5, the OSC-enhanced quantization procedure is architected for seamless integration and high compatibility with standard micro-scaling frameworks. Most stages within this workflow—such as dimension alignment, tensor reshaping, and quantization. The primary innovation of OSC lies in the strategic insertion of two lightweight, hardware-friendly operations: index-based lookup from the offline table and targeted element-wise zeroing of identified outlier channels.
+
+For an input activation tensor residing at position within transformer layer , the OSC-integrated quantization workflow is formally defined through the following hierarchical stages:
+
+1.
+
+Dimension Alignment & Reshaping (Standard): Identify the hidden dimension and reshape into a segmented format to match the hardware block size (e.g., 16, 32, or 64)[14].
+
+2.
+
+OSC Index Retrieval (New): Fetch the pre-computed suppression vector from the offline lookup table.
+
+3.
+
+OSC Outlier Zero-out (New): For each group , if , extract the outlier at local index to a high-precision buffer and set the corresponding entry in to zero.
+
+4.
+
+Quantization (Standard): Calculate scaling factors and perform low-bit quantization on the modified
+tensor. Crucially, since the dominant outliers are removed in the previous step, the resulting scaling factors are
+much tighter, significantly reducing the overall quantization noise.
+
+5.
+
+Outlier Restoration (Standard/Fused): Integrate the high-precision values from back into the final computation path.
+
+By only introducing an lookup and assignment overhead—where the group count is typically two orders of magnitude smaller than the total hidden dimension —OSC achieves a superior accuracy-efficiency trade-off compared to existing dynamic outlier detection schemes. Unlike dynamic methods that require real-time sorting or thresholding, OSC’s static nature allows it to bypass expensive runtime searching entirely.
+
+The comprehensive algorithmic logic is detailed in Algorithm 2. This procedure maintains a remarkably low computational complexity of , introducing negligible latency overhead compared to the subsequent compute-intensive GEMM operations. Consequently, the total execution time remains dominated by the high-throughput matrix multiplication, allowing OSC to provide robust outlier protection with near-zero performance degradation.
+
+Algorithm 2 OSC-Enhanced Quantization Workflow
+
+1:
+
+Input tensor , Block size , Suppression indices
+
+2:
+
+Quantized base tensor , Outlier buffer
+
+3:
+
+4:
+
+5:
+
+Temporary high-precision buffer
+
+6:
+
+for each group do
+
+7:
+
+  
+
+8:
+
+  if then Check for suppression flag
+
+9:
+
+    Backup original high-precision values
+
+10:
+
+    Zero-out to reduce group dynamic range
+
+11:
+
+  end if
+
+12:
+
+end for
+
+13:
+
+Standard micro-scaling scale calculation
+
+14:
+
+15:
+
+return
+
+3.3 Hybrid-Precision Matrix Computation and Hardware Execution
+
+In the OSC-enhanced quantization framework, the inference engine performs a dual-path hybrid-precision GEMM. This section outlines the computational fusion logic and hardware-level Strategy mechanisms that enable high-throughput execution, balancing low-bit and high-precision operations efficiently.
+
+3.3.1 Hybrid Computational Formulation
+
+The final output is reconstructed by merging the low-bit quantized result with the high-precision outlier compensation [8], as illustrated in Figures 5. For a given input activation and weight matrix , the operation can be expressed as:
+
+Figure 5: OSC-Enhanced Quantization Workflow (=32).
+
+(5)
+
+In this formulation, and represent the 4-bit quantized activation and weight tensors. The core efficiency of OSC resides in Path B, which is mathematically equivalent to the outlier partial product but formulated as a dense, hardware-friendly matrix multiplication:
+
+•
+
+is a compact activation sub-tensor where each column is extracted from the original activation using the pre-computed index .
+
+•
+
+is a structured weight sub-matrix composed of rows gathered from the high-precision weights according to the same static lookup table .
+
+By coalescing scattered outliers into these continuous memory blocks, OSC transforms irregular compensation into a standard GEMM, eliminating the need for runtime dequantization or dynamic branching.
+
+Table 2: Hardware Efficiency: Evaluated on a modern architecture with a 1:2:4 (FP16:FP8:FP4) performance ratio, OSC achieves a 1.5–1.88 speedup over the W8A8 baseline.
+
+Group Size ()
+= 16-64
+128
+
+16
+1.50-1.59
+1.6
+
+32
+1.64-1.76
+1.78
+
+64
+1.72-1.86
+1.88
+
+3.3.2 Hardware Data Coordination and Efficiency Analysis
+
+The primary hardware advantage of OSC lies in its structural determinism, which enables highly optimized kernel execution on AI accelerators. To minimize latency caused by outlier suppression and maximize throughput, as shown in Figure 5, OSC implements several hardware-level data movement and Coordination strategies:
+
+•
+
+Zero-Overhead Offline Weight Quantization: Weights are pre-quantized into FP4 formats (e.g., ).In Path B, token-wise column extraction is performed, where the corresponding weight rows are pre-stored in memory as high-precision sparse weight rows (e.g., ). The suppression indices are pre-determined offline, allowing the hardware to pre-calculate the memory offsets for these high-precision sparse weight rows during kernel loading. This eliminates the need for runtime searching or dynamic branching, significantly reducing overhead.
+
+•
+
+Dual-Path Activation Flow: High-precision activations from the preceding layer (e.g., ) are split into for Path A and a sparse buffer for Path B. In a 32-to-1 protection scheme of MXFP4 format, Path B only processes a fractional subset of the total data.
+
+•
+
+Adaptive Resource Dispatching: Depending on the hardware’s resource configuration, Path B can be dispatched to high-precision Matrix Units (Cube/Tensor cores).
+
+These strategies together ensure that the OSC framework executes with minimal latency and high computational throughput. The efficiency gains of OSC are driven by several key structural and architectural optimizations:
+
+1.
+
+Reduced Arithmetic and Memory Footprint: The 4-bit base computation (Path A) halves memory traffic compared to 8-bit formats and leverages high-throughput 4-bit matrix units, directly cutting cycle counts.
+
+2.
+
+Structured Outlier Extraction: Unlike dynamic schemes that often suffer from suboptimal hardware utilization, OSC coalesces irregular sparse accesses into dense sub-tensor operations. This transformation enables efficient memory coalescing and eliminates control-flow divergence, allowing the hardware to maintain a high execution-to-stall ratio and fully saturate the throughput of matrix-multiplication units.
+
+3.
+
+Negligible Indexing Overhead: The static indexing table is exceptionally compact, as it only stores local group indices. With a memory footprint of only a few kilobytes, the table is effectively "transparent" to the memory hierarchy, residing entirely within the L1/L2 cache to avoid high-latency global memory fetches.
+
+4.
+
+Minimal Arithmetic Branch Cost: Path B introduces only one additional floating-point MAC (Multiply-Accumulate) operation for each group of size . While the theoretical ratio of operations is , the actual impact on cycles is modulated by the throughput ratios of the target architecture, assuming a peak performance ratio of 1:2:4 for FP16:FP8:FP4. Even accounting for this throughput difference between the high-precision branch and the 4-bit base path, the arithmetic overhead remains minimal (e.g., for ), ensuring that the precision recovery does not bottleneck the primary 4-bit execution flow.
+
+The performance metrics in Table 2 are evaluated across representative GEMM dimensions , where and denote the activation and weight matrices, respectively. By sweeping the classical combinations of and through —which align with the architectural configurations of Qwen3-8B and Qwen3-30B-A3B [13]—while fixing the batch size , the results reveal two distinct hardware-bottleneck regimes:
+
+•
+
+Memory-bound Regime (): At smaller dimensions (typically corresponding to the decode stage with small batch sizes), the arithmetic intensity is low, and performance is primarily limited by memory bandwidth. In this regime, OSC maintains a consistent 1.50–1.86 speedup over the W8A8 baseline. This confirms that by compressing weights to 4-bit, OSC effectively halves the weight-loading volume, directly alleviating the pressure on the memory interface.
+
+•
+
+Compute-bound Regime (): As the dimension increases (characteristic of the prefill stage or large-batch inference), the data reuse ratio rises significantly, shifting the bottleneck entirely to the peak throughput of the CUBE computational units. Here, the speedup scales notably, reaching a peak of 1.88 at . This proves that OSC’s deterministic dual-path execution eliminates runtime-dependent stalls and control-flow divergence, allowing the hardware to fully saturate the 4-bit computational potential of high-throughput AI accelerators.
+
+Compared to the W8A8 baseline, OSC achieves significant cycle savings (up to 43.8% reduction in cycles for and ), primarily due to the transition to 4-bit arithmetic and the elimination of runtime dequantization. By following a fixed, deterministic execution path, OSC avoids the memory continuity issues and frequent data transpositions inherent in dynamic Top-K/Top-P solutions, providing a robust and high-throughput solution for low-bit LLM deployment.
+
+3.4 Hybrid-precision Adaptive Fallback Strategy
+
+While the OSC framework provides efficient and accurate solutions for most model modules, empirical analysis (Section 2.3) reveals that its effectiveness depends heavily on the spatial clustering of outliers. In some positions, particularly the (Down-projection) inputs in the FFN block, outliers show a more dispersed distribution than in other positions like self-attention or .
+
+For these regions with low clustering of outliers, a single static index per group is insufficient. To accommodate these dispersed outliers without introducing excessive architectural complexity, we propose the hybrid-precision Fallback strategy:
+
+•
+
+Standard method: Use the 4-bit OSC framework for efficient compression and computational throughput.
+
+•
+
+-specific Fallback: For the inputs, switch the quantization format to FP8 (or equivalent 8-bit micro-scaling formats). This provides the dynamic range required to handle dispersed outliers while maintaining a hardware-friendly micro-scaling structure.
+
+The targeted fallback to FP8 for the inputs ensures that the system achieves a balance between aggressive bit-reduction and robust accuracy preservation across the entire model. As demonstrated in the experimental section, this adaptive strategy provides a significant improvement in accuracy without sacrificing hardware efficiency. Additionally, this strategy can be adjusted based on the specific characteristics of different model architectures. For example, the fallback can be fine-tuned to specific layers, allowing for a more granular adjustment that optimizes both computational efficiency and model accuracy.
+
+4 OSC: Experiment Results
+
+4.1 Experimental Setup
+
+Models and Architectures: We evaluate OSC on two representative Large Language Models from the Qwen3 family [13]:
+
+•
+
+Dense Model: Qwen3-8B (32 layers).
+
+•
+
+MoE Model: Qwen3-30B-A3B (48 layers, 128 experts with 8 Activated Experts).
+
+Datasets and Tasks: To assess the zero-shot and few-shot reasoning capabilities, we use a comprehensive suite of benchmarks: MMLU [15] (5-shot), GSM8K [16] (8-shot), and ARC [17] (Challenge/Easy, 25-shot).
+
+Implementation Details: The efficacy of the OSC framework is assessed under the MXFP4 micro-scaling regime at a granularity of . The static suppression lookup tables are generated using a calibration set of 3 sequences (512 tokens each) randomly sampled from the Pile dataset. For the inputs in FFN blocks, we implement a fallback strategy to MXFP8 [5] to maintain numerical stability against diffused outlier distributions.
+
+Table 3: Accuracy Results of Qwen3 models under different quantization methods and strategies (scores with accuracy drop relative to W16A16 baseline; Mean column shows average score and average drop over four tasks)
+
+Model
+
+Method-Strategy
+MMLU
+GSM8K
+ARC-C
+ARC-E
+Mean
+
+Qwen3-8B
+
+W16A16-Direct
+74.97 (0.00)
+88.48 (0.00)
+67.58 (0.00)
+87.96 (0.00)
+79.75 (0.00)
+
+W8A8-Direct
+74.61 (-0.36)
+87.64 (-0.83)
+67.58 (0.00)
+87.75 (-0.21)
+79.40 (-0.35)
+
+MXFP4-Direct
+68.24 (-6.73)
+80.44 (-8.04)
+61.43 (-6.14)
+84.51 (-3.45)
+73.66 (-6.09)
+
+MXFP4-FP81
+70.31 (-4.66)
+83.85 (-4.62)
+64.42 (-3.16)
+86.11 (-1.85)
+76.17 (-3.58)
+
+MXFP4-FP8+Dyn2
+72.64 (-2.33)
+86.20 (-2.27)
+63.99 (-3.58)
+86.95 (-1.01)
+77.45 (-2.30)
+
+MXFP4-Dynamic3
+72.26 (-2.71)
+85.29 (-3.18)
+63.99 (-3.58)
+86.66 (-1.30)
+77.05 (-2.70)
+
+MXFP4-OSC4
+72.40 (-2.56)
+85.82 (-2.65)
+65.10 (-2.47)
+86.91 (-1.05)
+77.56 (-2.19)
+
+Qwen3-30B
+
+W16A16-Direct
+82.03 (0.00)
+89.99 (0.00)
+72.78 (0.00)
+90.57 (0.00)
+83.84 (0.00)
+
+W8A8-Direct
+81.98 (-0.06)
+89.69 (-0.30)
+72.87 (+0.09)
+90.61 (+0.04)
+83.79 (-0.05)
+
+MXFP4-Direct
+78.23 (-3.80)
+88.02 (-1.97)
+70.31 (-2.47)
+88.85 (-1.73)
+81.35 (-2.49)
+
+MXFP4-FP81
+78.93 (-3.10)
+88.17 (-1.82)
+71.50 (-1.28)
+89.35 (-1.22)
+81.99 (-1.85)
+
+MXFP4-FP8+Dyn2
+79.91 (-2.12)
+88.78 (-1.21)
+73.21 (+0.43)
+90.19 (-0.38)
+83.02 (-0.82)
+
+MXFP4-Dynamic3
+79.78 (-2.25)
+89.16 (-0.83)
+71.76 (-1.02)
+90.57 (0.00)
+82.82 (-1.03)
+
+MXFP4-OSC4
+79.28 (-2.75)
+89.01 (-0.99)
+72.61 (-0.17)
+89.98 (-0.59)
+82.72 (-1.12)
+
+1
+
+FP8: Selective fallback where weights in FFN blocks use MXFP8.
+
+2
+
+FP8+Dyn: Combines FP8 fallback on inputs with dynamic protection on all other positions.
+
+3
+
+Dynamic: Per-group runtime max-value detection to guide mixed-precision.
+
+4
+
+OSC: Combines FP8 fallback with static outlier suppression on high-clustering positions.
+
+4.2 Main Results
+
+Table 3 presents a comprehensive ablation study of the OSC framework against several baseline quantization and protection strategies. This evaluation aims to decouple the accuracy gains provided by the fallback from the core static outlier suppression mechanism.
+
+Effectiveness of Static Outlier Suppression. The results demonstrate that while the FP8 fallback (MXFP4-FP8) recovers a significant portion of accuracy compared to direct quantization—reducing the average drop from 6.09 to 3.58 points on Qwen3-8B—it remains insufficient for near-lossless inference. By integrating our static suppression mechanism, OSC (MXFP4-OSC) further reduces the accuracy loss to 2.19 points. This confirms that OSC’s ability to identify and suppress high-clustering outlier channels across non- layers provides critical precision recovery that cannot be achieved by layer-wise fallback alone.
+
+OSC vs. Optimized Dynamic Protection. To further validate the efficacy of OSC, we implemented an idealized Dynamic Protection baseline as a competitive control group. This strategy performs per-group maximum value detection at runtime to guide mixed-precision execution. Although this dynamic approach is theoretically flexible, OSC achieves superior accuracy (2.19 vs. 2.70 drop on 8B) while eliminating the substantial hardware overhead associated with runtime search. On the Qwen3-30B model, OSC achieves an average loss of 1.12 points, proving its robustness across different model scales.
+
+Hardware-Efficiency Trade-offs. A key advantage of OSC over the Dynamic control group lies in its hardware-friendly execution. Unlike dynamic protection, which requires complex control flow and irregular memory access to handle outliers on the fly, OSC’s suppression decisions are determined entirely during the offline calibration phase. As shown in Table 2, this allows OSC to extract significant architectural benefits even under extremely constrained selection budgets, achieving peak speedups of 1.78.
+
+Overall, these results demonstrate that OSC provides a robust, hardware-friendly solution for mitigating accuracy loss in 4-bit quantized LLMs, enabling near-lossless inference across diverse model families and task types.
+
+5 Related Work
+
+5.1 Systematic Characterization of Activation Outliers
+
+Prior research has established that activation outliers in LLMs exhibit significant clustering effects, predominantly residing in a small subset of persistent channels [8, 11, 18]. Early studies like LLM.int8() [8] and SmoothQuant [11] identified that activation outliers in LLMs are typically confined to specific influential channels. While foundational, they predominantly treated outliers as monolithic, channel-wide anomalies. In contrast, this work conducts a fine-grained, quantitative statistical analysis of outlier spatial distribution and clustering density within quantization groups. We uncover a token-persistent structural clustering effect and highlight spatial heterogeneity across computational stages (e.g., Attention vs. FFN inputs), providing a rigorous statistical basis for deterministic hardware acceleration.
+
+5.2 Evolution of Outlier Mitigation Strategies
+
+The challenge of quantizing LLMs with extreme outliers has driven several mitigation strategies, broadly categorized as follows:
+
+Reparameterization and Orthogonal Transformations: Methods like SmoothQuant [11] and AWQ [19] migrate outlier magnitudes from activations to weights via scaling and shifting. However, this merely re-distributes rather than eliminates outliers, still stressing the narrow dynamic range of sub-8-bit formats. For instance, SmoothQuant can incur a significant accuracy degradation of up to 15 points on Llama2-70B in W4A4 scenarios [20]. Techniques such as QuaRot [12] and FlatQuant [21] apply orthogonal transformations to "smear" outliers across feature dimensions, with QuaRot reporting an accuracy loss of approximately 3.5 points. Most recently, SpinQuant [20] advances this paradigm by employing learned rotations to further smooth the activation distribution, narrowing the gap to 1.9 points, while FlatQuant [21] demonstrates a loss of only 1.4 points. While theoretically elegant, such reparameterization methods introduce additional linear transformation overhead during inference and often disrupt hardware-friendly memory layouts optimized for modern AI accelerators.
+
+Dynamic Extraction and Sparse Handling: Approaches like LLM.int8() [8], SpQR [9], and Atom [22] adopt runtime strategies—such as dynamic rescaling or search-and-extract—to isolate salient values. Although achieving near-lossless accuracy, their data-dependent execution leads to non-deterministic control flows and unstructured memory access. This prevents the underlying GEMM kernels from fully saturating the peak throughput of dense matrix multiplication units on high-performance accelerators.
+
+Static Retention and Structural Approaches: Recognizing the overhead of dynamic search, a recent concurrent work, TetraJet-v2 [23], explores static outlier retention to mitigate activation oscillations during FP4 training. While both OSC and TetraJet-v2 leverage the structural stability of outliers via static indexing, their objectives differ fundamentally. TetraJet-v2 focuses on stabilizing training dynamics, whereas OSC is engineered for inference-time throughput optimization. Furthermore, OSC introduces a deterministic dual-path mechanism at the group level, which is tightly coupled with the micro-scaling granularity of the underlying data format. This design explicitly addresses the spatial heterogeneity of outliers—such as the diffused nature of inputs—representing a critical nuance for maintaining accuracy in large-scale MoE models.
+
+5.3 Summary: Bridging Algorithms and Hardware Execution
+
+In summary, while prior works excel in hardware-agnostic accuracy recovery or general-purpose smoothing, OSC bridges the gap between fine-grained statistical insights and deterministic hardware execution. By transforming the stochastic problem of outlier handling into structured matrix multiplications via static indexing, OSC achieves high-precision recovery without sacrificing the compute-bound performance of modern AI accelerators.
+
+6 Conclusion
+
+This paper introduces a hardware-friendly static outlier suppression framework (OSC) that enables accurate and efficient 4-bit inference for Large Language Models. Our key insight is the discovery of spatial heterogeneity in activation outliers: while most layers exhibit highly clustered outlier channels amenable to static indexing, specific regions—particularly inputs—show dispersed distributions that require higher precision. Leveraging this insight, OSC adopts a hybrid-precision design: for layers with strong outlier clustering, it uses static indexing and dual-path execution to protect outliers with minimal overhead; for outlier-diluted regions such as inputs, it applies a selective FP8 fallback to ensure robustness. This strategy harmonizes outlier protection with the deterministic nature of GEMM operations, preserving model integrity while maximizing the throughput potential of modern AI accelerators.
+
+Extensive experiments on the Qwen3-8B and Qwen3-30B models demonstrate that OSC consistently outperforms direct 4-bit quantization and provides superior accuracy recovery compared to specialized fallback and dynamic protection strategies. In our ablation study using the MXFP4 format, OSC reduces the average accuracy drop to approximately 2.19 points on the dense model and 1.12 points on the MoE architecture, effectively bridging the gap to the full-precision baseline. Performance evaluations on a modern AI accelerator further confirm the efficiency of OSC, which achieves speedups of 1.64–1.78 for MXFP4 over the W8A8 GEMM baseline. Similar precision and performance gains are also consistently observed across NVFP4 and HIF4 formats, highlighting the robustness of the OSC framework. These results position OSC as a practical and scalable solution for the deployment of 4-bit LLMs in production environments.
+
+Limitations: Despite the promising results, this work has certain limitations. First, our evaluation primarily relies on comprehensive accuracy simulations and analytical performance modeling based on high-performance AI accelerators. While these models are grounded in peak throughput ratios (e.g., for FP16:FP8:FP4), the end-to-end latency in a physical deployment may be influenced by additional system-level factors. Furthermore, our adaptive fallback strategy is currently implemented at a relatively coarse-grained layer-type level. Specifically, while we identify inputs as outlier-diluted regions, OSC applies the FP8 fallback to all layers uniformly. This lacks a fine-grained selection mechanism that could potentially identify specific layers or even sub-groups that still possess enough structural clustering to benefit from static channel protection, thereby missing opportunities for further hardware acceleration.
+
+Future Work: Future work will explore adaptive layer-wise fallback, extend the framework to additional model families and hardware platforms, and investigate its integration with quantization-aware training (QAT) to further enhance accuracy.
+
+References
+
+[1]
+DeepSeek-AI et al. (2025)
+
+DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models.
+
+arXiv preprint arXiv:2512.02556.
+
+Cited by: §1.
+
+[2]
+A. Grattafiori et al. (2024)
+
+The Llama 3 Herd of Models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §1,
+§2.3.
+
+[3]
+N. Maslej et al. (2025)
+
+Artificial Intelligence Index Report 2025.
+
+Technical report
+
+Stanford Institute for Human-Centered AI (HAI).
+
+Note: arXiv:2504.07139
+
+Cited by: §1.
+
+[4]
+T. Dettmers and L. Zettlemoyer (2023)
+
+The Case for 4-bit Precision: Unified Optimization of 4-bit Quantization of Large Language Models.
+
+In Proceedings of the 40th International Conference on Machine Learning (ICML),
+
+pp. 7749–7774.
+
+Cited by: §1.
+
+[5]
+B. Darvish Rouhani et al. (2023)
+
+Microscaling Data Formats for Deep Learning.
+
+arXiv preprint arXiv:2310.10537.
+
+Cited by: §1,
+§4.1.
+
+[6]
+NVIDIA (2024)
+
+NVIDIA Blackwell Architecture Whitepaper.
+
+White Paper
+
+NVIDIA Corporation.
+
+External Links: Link
+
+Cited by: §1.
+
+[7]
+Y. Luo et al. (2026)
+
+HiFloat4 Format for Language Model Inference.
+
+arXiv preprint arXiv:2602.11287.
+
+Cited by: §1.
+
+[8]
+T. Dettmers M. Lewis et al. (2022)
+
+LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale.
+
+In Advances in Neural Information Processing Systems (NeurIPS),
+
+Cited by: §1,
+§1,
+§3.3.1,
+§5.1,
+§5.2.
+
+[9]
+T. Dettmers R. Svirschevski et al. (2024)
+
+SpQR: A Sparse-Quantized Representation for Near-Lossless LLM Weight Compression.
+
+In The 12th International Conference on Learning Representations (ICLR),
+
+Cited by: §1,
+§5.2.
+
+[10]
+C. Guo et al. (2023)
+
+OliVe: Accelerating Large Language Models via Hardware-friendly Outlier-Victim Pair Quantization.
+
+In Proceedings of the 50th Annual International Symposium on Computer Architecture (ISCA),
+
+Cited by: §1.
+
+[11]
+G. Xiao J. Lin et al. (2023)
+
+SmoothQuant: Accurate and Efficient Post-Training Quantization for Real-Time LLM Serving.
+
+In Proceedings of the 40th International Conference on Machine Learning (ICML),
+
+Cited by: §1,
+§1,
+§5.1,
+§5.2.
+
+[12]
+S. Ashkboos A. Mohtashami et al. (2024)
+
+QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs.
+
+In Advances in Neural Information Processing Systems (NeurIPS),
+
+Cited by: §1,
+§5.2.
+
+[13]
+A. Yang et al. (2025)
+
+Qwen3 Technical Report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §2.1,
+§2.3,
+§2.3,
+§3.3.2,
+§4.1.
+
+[14]
+Z. Yao R. Y. Aminabadi et al. (2022)
+
+ZeroQuant: Efficient and Affordable Post-Training Quantization for Large-Scale Transformers.
+
+In Advances in Neural Information Processing Systems (NeurIPS),
+
+Cited by: item 1.
+
+[15]
+D. Hendrycks et al. (2021)
+
+Measuring Massive Multitask Language Understanding.
+
+arXiv preprint arXiv:2009.03300.
+
+Cited by: §4.1.
+
+[16]
+K. Cobbe et al. (2021)
+
+Training Verifiers to Solve Math Word Problems.
+
+arXiv preprint arXiv:2110.14168.
+
+Cited by: §4.1.
+
+[17]
+P. Clark et al. (2018)
+
+Think you have Solved Question Answering? Try ARC, the AI2 Reasoning Challenge.
+
+arXiv preprint arXiv:1803.05457.
+
+Cited by: §4.1.
+
+[18]
+M. Sun, X. Chen, and Z. Liu (2024)
+
+Massive Activations in Large Language Models.
+
+arXiv preprint arXiv:2402.17762.
+
+Cited by: §5.1.
+
+[19]
+J. Lin J. Tang et al. (2024)
+
+AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration.
+
+In Proceedings of the 6th Conference on Machine Learning and Systems (MLSys),
+
+Cited by: §5.2.
+
+[20]
+Z. Liu C. Zhao et al. (2025)
+
+SpinQuant: LLM Quantization with Learned Rotations.
+
+In The 13th International Conference on Learning Representations (ICLR),
+
+Cited by: §5.2.
+
+[21]
+Y. Sun et al. (2025)
+
+FlatQuant: Flatness Matters for LLM Quantization.
+
+arXiv preprint arXiv:2410.09426.
+
+Cited by: §5.2.
+
+[22]
+Y. Zhao L. Lin et al. (2023)
+
+Atom: Low-bit Quantization for Efficient and Accurate LLM Serving.
+
+In Advances in Neural Information Processing Systems (NeurIPS),
+
+Cited by: §5.2.
+
+[23]
+Y. Chen H. Xi et al. (2025)
+
+TetraJet-v2: Accurate NVFP4 Training for Large Language Models.
+
+arXiv preprint arXiv:2510.27527.
+
+Cited by: §5.2.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

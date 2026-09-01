@@ -1,0 +1,1575 @@
+Hybrid Adaptive Tuning for Tiered Memory Systems
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Understanding Parameter Tuning in Memory Tiering
+
+2.1 Memory Profiling
+
+2.2 Memory Tiering
+
+2.3 System Parameters and Performance Sensitivity
+
+3 Related Work and Motivation
+
+4 Overview
+
+5 Design
+
+5.1 Workload State
+
+5.2 Clustering of Workload States
+
+5.3 Reinforcement Learning
+
+5.3.1 Background
+
+5.3.2 RL Formulation
+
+5.3.3 RL Model Structure and Hyper-Parameters
+
+5.3.4 RL Convergence Acceleration
+
+5.3.5 Hybrid Method
+
+5.4 More Implementation Details
+
+6 Evaluation
+
+6.1 Evaluation Methodology
+
+6.2 Overall Performance
+
+6.3 Effectiveness of RL
+
+6.4 Analysis of Dynamic Parameter Tuning
+
+6.5 PTMT with Application Co-run
+
+6.6 Sensitivity Study
+
+6.7 Overhead Analysis
+
+7 Conclusions
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.12165v1 [cs.OS] 14 Apr 2026
+
+Hybrid Adaptive Tuning for Tiered Memory Systems
+
+Xi Wang
+
+Affiliation: University of California, Merced
+
+  
+Jie Liu
+
+Affiliation: University of California, Merced
+
+  
+Shuangyan Yang
+
+Affiliation: University of California, Merced
+
+  
+Jongryool Kim
+
+Affiliation: SK hynix
+
+  
+Pengfei Su
+
+Affiliation: University of California, Merced
+
+  
+Dong Li
+
+Affiliation: University of California, Merced
+
+Abstract
+
+Memory tiering provides a cost-effective solution to increase memory capacity, utilization, and even bandwidth. Memory tiering relies on system software for memory profiling, detection of frequently accessed pages, and page migration. Such a system software often comes with system parameters. The configurations of those parameters impact application performance. We comprehensively classify system parameters, and characterize the sensitivity of application performance to them using representative memory tiering solutions. Furthermore, we introduce a lightweight and user-friendly framework PTMT, which automates tuning of parameters at runtime for various memory tiering solutions. We identify major challenges for online tuning of memory tiering. PTMT uses a hybrid “offline + online” tuning method: while the offline phase builds a performance database for online queries and reduces runtime overhead, the online phase uses reinforcement learning (customized to memory tiering) to tune. PTMT improves performance by 30%, 26%, 21%, and 14%, on four memory tiering solutions (TPP, UPM, Colloid, and AutoNUMA), compared to using the default configurations. PTMT outperforms the state-of-the-art [9] by 32% on average.
+
+1 Introduction
+
+Memory tiering provides a cost-effective solution to increase memory capacity, utilization, and even bandwidth. By integrating multiple memory components with various properties (e.g., capacity, latency, bandwidth, and monetary cost), memory tiering addresses the scaling challenges faced by the traditional single-tiered memory.
+
+A typical tiered-memory system comprises fast memory and slow memory where fast memory offers shorter latency or higher bandwidth but limited memory capacity, and slow memory provides larger capacity but relatively worse performance. To manage tiered memory, a system software can enable a unified address space across memory components and model each memory component as a NUMA node  [44, 36, 53, 55, 77]. Such a system software (called the memory tiering solution)
+relies on dynamic memory profiling to collect statistics on page access frequency and recency, and detect hot pages. Based on the profiling and detection results, the memory tiering solution allocates or migrates frequently accessed memory pages (hot pages) into fast memory for high performance (called page promotion), while placing less frequently accessed pages (cold pages) into slow memory to save fast memory space (called page demotion).
+
+Problems. The memory profiling, hotness detection, and page migration in memory tiering often come with system parameters. Those parameters control memory profiling overhead and quality, and impact page migration frequency and effectiveness. The parameter configuration impacts the performance significantly. For example, Colloid [69]   (a state-of-the art   memory tiering   solution)   uses   a parameter,
+
+watermark_scale_factor, to control page demotion aggressiveness and maintain available fast-memory space for page promotion. Using an appropriate configuration for this parameter improves Graph500 [47] performance by 17%, compared to using the default configuration (see Sec. 2.3).
+
+However, tuning system parameters for memory tiering is challenging, because different workloads, either coming from different execution phases of the same application or different applications,
+can exhibit different memory access patterns, hence demanding different parameter configurations. Existing memory tiering solutions  [36, 77, 55, 53, 29, 44, 68, 33, 75, 19, 43, 7, 69, 60, 41, 71, 76, 70, 54] use invariant configurations, which leads to suboptimal performance. Today, parameter tuning for memory tiering remains largely manual, as no systematic approach exists to automate this process across different tiering solutions.
+
+We make three key insights driving our work.
+First, tuning system parameters for memory tiering is a inherently “stateful” problem.
+The effect of a system parameter setting depends not only on workload characteristics (e.g., cache hit rates and arithmetic intensity) but also on memory tiering states.
+The memory tiering state refers to how pages have been allocated and migrated by a memory tiering solution. A workload under different memory tiering states can respond differently to the parameter tuning, even if the workload has the same characteristics.
+
+Second, the combination of many parameter configurations and the essentially unbounded space of workload states creates a rather large search space to decide the optimal configuration.
+Building a general model aiming to navigate the space for all applications can be ineffective to decide the configurations.
+
+Third, considering that characteristics and memory-tiering states of a workload evolve over time, the problem naturally lends itself to reinforcement learning (RL), which is designed to adapt to changing environments and learn effective decisions online.
+
+In this paper, we introduce Parameter Tuning for Memory Tiering (PTMT), a framework that enables automatic tuning of system parameters across diverse memory tiering solutions. PTMT faces multiple challenges discussed as follows.
+
+Challenges. First, the process of deciding parameter configurations must be lightweight to make runtime-tuning feasible. In memory tiering, the time intervals for periodical memory profiling and page migration are typically every few seconds [14, 16, 17, 9, 26] to accommodate changing memory access patterns in applications. Consequently, the time overhead of deciding parameter configurations must be on the same scale or even smaller. Exhaustive search or frequent sampling of the search space is therefore not feasible.
+
+Second, although RL is promising for adapting to changing environments and deciding parameter configurations, RL convergence can be slow due to the large state and action space inherent in memory tiering. How to accelerate RL convergence to timely respond to changing memory access patterns is challenging.
+
+Third, parameter tuning must account for how different application inputs shape memory access behavior. Inputs often influence an application’s control-flow paths, which in turn affect memory-level parallelism and ultimately the frequency and recency of memory accesses. Efficiently capturing these input-dependent effects at runtime is challenging.
+
+Solutions. To address the above challenges, PTMT uses a hybrid “offline + online” tuning approach. The offline phase, in essence, builds a “performance database” where there are a number of workload states associated with parameter configurations and aftermath performance. During the online phase, the performance database is queried using the application’s current workload state (WS) to find a parameter configuration that leads to the best performance on a similar WS. To handle a diverse set of application inputs that lead to WS outliers, PTMT uses an RL model that automatically learns a policy to decide the parameter configurations.
+
+Using the hybrid approach, the time overhead of deciding the parameter configuration is small. The offline phase clusters WSs by similarity, such that finding a group of similar workloads at runtime is just a matter of finding a nearest centroid among those clusters. Within the cluster, WSs are further organized and indexed to enable efficient lookup of the most similar WSs. In addition, using the performance database, we build a pre-trained model as the RL model such that the model convergence can be faster.
+
+We adopt an application-specific solution to design PTMT, meaning both the performance database and the RL model are tailored to each application.
+This specialization enables PTMT to identify higher-quality parameter configurations, yielding a 20% performance gain while also reducing model-construction cost by on average, compared to a general approach (see Sec. 6.3).
+
+Contributions. We summarize the main contributions as follows.
+
+•
+
+We comprehensively classify system parameters and characterize the sensitivity of application performance to them using four representative memory tiering solutions (AutoNUMA [29], Colloid  [69], TPP [44], and UPM [65]).
+
+•
+
+We identify key technical challenges in enabling automatic tuning of system parameters for memory tiering. We introduce PTMT, which is the first lightweight and user-friendly parameter-tuning framework for memory tiering.
+PTMT requires no changes to applications or the operating system (OS) and can be applied across diverse memory-tiering solutions.
+The design of PTMT answers multiple questions to tune memory tiering and addresses unique challenges unseen in any other tuning frameworks, e.g., how to avoid OS modification for memory tiering? Should we use an application-specific solution or a general solution for memory tiering?
+
+•
+
+By adaptively tuning system parameters, PTMT achieves 14%, 21%, 30%, and 26% performance improvements on AutoNUMA, Colloid, TPP, and UPM respectively, compared to using the default parameter configurations. Compared with the state-of-the-art parameter-tuning approach [9], PTMT delivers a 32% performance improvement on average.
+
+2 Understanding Parameter Tuning in Memory Tiering
+
+Table 1: Memory tiering solutions and their system parameters.
+
+Solutions
+Memory Profiling
+Hotness Detection
+Page Migration
+
+Mechanism
+Parameters
+Mechanism
+Parameters
+Mechanism
+Parameters
+
+AutoNUMA
+
+NUMA
+
+Scanning
+
++ Hint Fault
+
+scan_size_mb
+
+scan_period_max_ms
+
+scan_period_min_ms
+
+scan_delay_ms
+
+Hint Fault Latency
+
+hot_threshold
+
+NUMA Hint Fault
+
+kswapd
+
+watermark_scale_factor
+
+promote_rate_limit
+
+Colloid
+
+NUMA
+
+Scanning
+
++ Hint Fault
+
+scan_size_mb
+
+scan_period_max_ms
+
+scan_period_min_ms
+
+scan_delay_ms
+
+Hint Fault Latency
+
+Fast/Slow Mem Latency Balancing
+
+hot_threshold
+
+NUMA Hint Fault
+
+kswapd
+
+watermark_scale_factor
+
+promote_rate_limit
+
+TPP
+
+NUMA
+
+Scanning
+
++ Hint Fault
+
+scan_size_mb
+
+scan_period_max_ms
+
+scan_period_min_ms
+
+scan_delay_ms
+
+PTE Scanning
+
+LRU-based Active List
+
+None
+
+NUMA Hint Fault
+
+kswapd
+
+watermark_scale_factor
+
+demote_scale_factor
+
+UPM
+
+HW Event
+
+sample_period
+
+Sampled Access
+
+hot_threshold
+
+move_pages()
+
+page_migration_interval
+
+Sampling
+Count
+syscall
+
+2.1 Memory Profiling
+
+There are three common memory profiling methods.
+
+PTE scanning-based profiling tracks page accesses by manipulating ACCESS bits in page table entries (PTEs). By repeatedly scanning PTE to detect the change of ACCESS bit, we can detect memory accesses. This profiling method is used in Linux’s memory swapping mechanism to maintain active and inactive lists for tracking page hotness. This method is commonly used in memory tiering [19, 25, 32, 52, 43, 55, 13].
+
+NUMA hint faults-based profiling employs NUMA scanning that partitions the whole virtual address space into memory regions, and profile them in order by manipulating PRESENT bit. With the bits set in a memory region, any page access in the region triggers a hint page-fault, which allows the kernel to identify access recency. After a time interval, NUMA scanning moves on to another memory region to profile. This profiling method is used in recent efforts on memory tiering [29, 68, 44, 7, 33, 75, 69].
+
+Performance counter-based profiling tracks memory accesses by sampling hardware performance counters available in modern CPUs, which allows the user to track memory accesses at various granularities (e.g., cache line level and page level). Compared to the other two profiling methods, this method can be more lightweight. It is commonly used in the existing efforts [11, 19, 53, 51, 36].
+
+2.2 Memory Tiering
+
+A memory tiering solution typically includes three components [36, 77, 55, 53, 29, 44, 68, 33, 75, 19, 43, 7, 69, 60, 41] (i.e., memory profiling, hotness detection, and page migration), each of which includes one or more system parameters. Table 1 summarizes the parameters in multiple representative memory-tiering solutions. We discuss them as follows.
+
+AutoNUMA [29] is the default memory tiering solution in Linux. It utilizes NUMA hint faults to decide page promotion. AutoNUMA identifies page hotness based on the hint fault latency, which is the time interval between the recent hint fault time and the recent scanning time of a page. When the hint fault latency is short enough, the page is promoted. AutoNUMA relies on Linux swapping daemon (kswapd) for page demotion. When fast memory is in shortage, kswapd uses PTE scanning to determine cold pages to demote.
+
+Colloid [69] is a state-of-the-art memory tiering solution. Integrated with AutoNUMA (Linux v6.3), Colloid prevents overloading of fast memory. Like AutoNUMA, Colloid uses NUMA hint faults and fault latency to identify page hotness and promotion. Different from AutoNUMA, Colloid launches a background kernel thread to monitor memory access latencies for both fast and slow memories. Upon NUMA hint faults, Colloid determines the migration direction — whether to promote or demote — by comparing with expected access latencies.
+
+TPP [44] relies on NUMA scanning to trigger page hint faults. However, unlike AutoNUMA and Colloid, TPP identifies hint-faulted pages as hot by verifying if these pages are present in the OS’s active list. Furthermore, TPP decouples allocation from demotion by performing demotion asynchronously in a background process.
+
+UPM [65] is a user-space page management solution developed by us. UPM uses performance counters to track memory accesses at the page level. While there are other performance counter-based solutions (e.g., HeMem [53] and MEMTIS [36]), we cannot use them due to stability issues in our evaluation. UPM shares a similar design with HeMem in memory profiling and hotness detection.
+
+2.3 System Parameters and Performance Sensitivity
+
+We classify system parameters in the context of the three components in memory tiering.
+
+System parameters in memory profiling are often used to set a balance between profiling overhead and quality. Take NUMA scanning as an example. Frequent NUMA scanning over memory regions leads to large profiling overhead because of frequent hint faults and manipulation of PTE bits. However, frequent NUMA scanning can capture page access in a timely manner. Hence, Linux provides a system parameter, scan_size_mb, allowing users to strike the above balance. This parameter controls the size of the memory region to scan. Given a scanning time interval, a smaller region to scan leads to smaller overhead but suffers from lower profiling quality, and vice versa.
+
+System parameters in hotness detection are used to control the definition of page hotness. For example, UPM uses a system parameter hot_threshold. The number of accesses to a page is compared against it to determine page hotness. A smaller hot_threshold increases the number of candidate pages to promote but also raises migration overhead, and vice versa. UPM does not change hot_threshold throughout application execution. AutoNUMA and Colloid have a similar system parameter, but dynamically adjust it according to a promotion rate limit. PTMT does not tune such a dynamic parameter, and focuses on static ones.
+
+System parameters in page migration can be used to balance fast-memory utilization and migration overhead. For page promotion, AutoNUMA and Colloid use promote_ rate_limit to control promotion traffic. For page demotion, AutoNUMA, Colloid, and TPP employ kswapd to demote pages in the inactive list. These three solutions periodically inspect free space in fast memory and wake up kswapd when the free memory falls below a threshold watermark_scale_ factor. TPP further introduces a threshold, demote_scale_ factor, to determine when the background demotion process should terminate.
+A higher watermark_scale_factor or demote_scale_factor enables more prompt page demotion, creating more space for page promotion but at the cost of higher page migration overhead, and vice versa.
+
+Unlike the other three memory-tiering solutions, UPM uses page_migration_interval to control page migration frequency. Specifically, UPM performs page demotion and promotion at each page_migration_interval. Instead of using kswapd for demotion, UPM uses its own thread to demote pages whose access count falls below hot_threshold. This page demotion continues until there is enough fast memory available for hot page promotion. A smaller page_migration_interval improves responsiveness to the change of hot pages but incurs higher overhead, and vice versa.
+
+Performance sensitivity study. We study performance sensitivity to parameter configurations using representative memory tiering solutions discussed in Sec. 2.2. We study the parameters listed in Table 1, covering memory profiling, hotness detection, and page migration. We run two benchmarks, CG from the NAS Parallel Benchmarks (NPB) suite [48] and Graph500  [47], using 24 threads on an Intel Optane machine (depicted in Sec. 6.1). We use static tuning, i.e., the parameters are invariant during each execution. The results are presented in Figure 1, leading to three key observations.
+
+1.
+
+Tuning parameters can lead to much better performance, compared with using the default parameter configurations. For example, tuning scan_size_mb improves CG performance by 15%, and tuning watermark_scale_factor improves Graph500 performance by 17%.
+
+2.
+
+Different workloads exhibit different preferences for parameter configurations. For example, CG achieves optimal performance with scan_size_mb set to 8192MB, while Graph500 performs best with scan_size_mb set to 256MB. This disparity demands an adaptive strategy to adjust parameters based on specific workload requirements.
+
+3.
+
+Tuning certain parameters cannot bring performance benefit. For example,
+tuning promote_rate_limit and NUMA scanning-related parameters (except scan_size_mb) leads to small performance variance (less than 5%).
+Hence, dynamic tuning of these parameters should not bring large runtime overhead to avoid performance loss.
+
+We do not employ static tuning in our design. With static tuning, a parameter configuration is pre-determined before the workload is launched and does not change throughout workload execution. Static tuning is not practical, because of three reasons. (1) There is no universal static configuration leading to the best performance for all workloads (discussed in Observation 2) and all workload inputs. (2) Static tuning cannot correctly respond to the changing memory access patterns for better performance. (3) Finding a static configuration is challenging, and exhaustive search is time-consuming.
+
+3 Related Work and Motivation
+
+Existing approaches for parameter tuning cannot work well for memory tiering. We classify them into three categories, each with fundamental limitations.
+
+Rule-based methods  [26, 34, 6], although simple, face difficulty in designing rules that make multiple decisions and account for complex WSs. For example, AMP [26] uses a rule-based algorithm to select the best page migration policy. This policy can only be one of three options (LRU, LFU, and random) and is decided based on a single WS (page hit ratio).
+
+Figure 1: Performance with various parameter configurations, normalized by that with the default configurations.
+
+Heuristic-based methods  [17, 20, 74, 49, 18, 59, 67, 72] rely on handcrafted optimizations, which are difficult to be scaled to tune multi-parameters. For example, Cori [17] tunes the page migration frequency based on page reuse distance.
+TMO [72] relies on a fixed control policy to decide how much memory to offload from each application to SSD, but the mapping from application profiling to the offload decisions is embedded in handcrafted control logic, and only works for a specific kernel implementation.
+
+Machine learning methods  [14, 15, 16, 42, 19, 56, 10, 9, 17, 26, 35] are promising but suffer from prohibitive resource requirements and narrow applicability. For example, Kleio [14] trains an RNN-based model (i.e., LSTM) per page for memory access prediction, resulting in consumption of tens of GBs of memory and 2 hours of training per 100 models. Google’s warehouse-scale computing (WSC) [35] uses a Gaussian Process Bandit model to find the best parameter configuration, requiring one week of WSC’s memory traces to run GP bandit. IDT [9] employs RL to adjust the criteria for page demotion, while Cronus [16] uses computer vision methods for page access prediction. However, those studies focus on a single aspect of memory management, e.g., access pattern analysis [14, 15, 42], page demotion criteria [9], page movement frequency [17], or page migration policy [26], rather than comprehensive parameter tuning.
+
+Existing solutions also face challenges on system integration. Some solutions (e.g., [9, 26, 17, 19]) operate in kernel space, necessitating kernel modifications and recompilation, which is cumbersome in production environments. Some solutions (e.g., [9, 26, 42, 15, 16, 14]) focus on optimizing a specific memory management strategy rather than providing a framework applicable to memory tiering solutions with arbitrary configurations.
+
+In addition, parameter tuning has been explored in various domains [66, 37, 79, 78, 62, 40, 20, 38, 39, 8], such as using GP regression and RL for database systems [37, 79, 78, 62, 66], K-NN for cloud-server energy optimization [40], and Bayesian optimization for network protocols [8]. However, the approaches in those domains do not address the unique challenges faced by memory tiering: the stateful nature of page placement, the need for lightweight runtime decisions, and the requirement to work across various memory tiering solutions without OS modifications.
+
+4 Overview
+
+Figure 2: The overview of PTMT.
+
+We introduce PTMT, an adaptive parameter-tuning framework for memory tiering. The goals of PTMT are multifold: (1) user-space parameter-tuning that requires no changes to existing memory tiering implementations or the OS, (2) automatic decision-making, and (3) flexibility in customizing tuning objects.
+
+PTMT defines the workload state (WS), in terms of performance characterization of the workload, and memory tiering state. The memory tiering state is determined based on access traffic to fast and slow memory, such that we can capture the impact of page migration. By formulating the parameter-tuning problem as a stateful problem, PTMT aims to capture the relationship between the future performance, current WS, and the choice of parameter configurations.
+
+To effectively identify parameter configurations to optimize performance, PTMT relies on offline WS clustering and online RL, as depicted in Figure 2. The offline WS clustering is based on our unique observation that WSs under memory tiering with various parameter configurations can be aggregated into a set of clusters. Given an application, such clusters are built offline, using various execution phases and parameter configurations. Data points within each cluster are organized and indexed by a k-nearest neighbor (K-NN) algorithm for fast search. The above offline phase is called the clustering modeling.
+
+During the online phase, PTMT periodically collects workload information and builds WSs. Given a WS, PTMT determines whether it falls within any cluster.
+If a match is found, PTMT identifies the most similar data points within that cluster and then uses the parameter configuration from the data point that has the best performance.
+If the given WS deviates from all clusters, PTMT uses an RL model to decide the parameter configuration. To accelerate RL convergence, PTMT pre-trains the RL model offline. In general, the clustering model and RL work synergistically to guide the selection of parameter configurations. Figure 2 overviews PTMT.
+
+5 Design
+
+5.1 Workload State
+
+The WS consists of (1) workload characteristics and (2) memory tiering state. During application execution, PTMT samples WSs and decides the configurations of system parameters accordingly. The workload characteristics are represented using performance events. We select two performance events (i.e., LLC hit rate and the second-last-level cache hit) that are most correlated with performance (instruction per cycle or IPC) using Pearson correlation analysis. In our experiments, we observed that using more than two performance events does not yield significant performance improvement.
+
+Table 2: Metrics to build WS, and the quantification of their correlation to IPC using absolute correlation coefficient (CC) based on the Pearson correlation analysis.
+
+Metric
+Definition
+CC
+
+Slow-mem read traffic / Total read traffic
+0.82
+
+Slow-mem write traffic / Total write traffic
+0.76
+
+Read traffic / Total memory
+0.98
+
+L2 cache hit rate
+0.94
+
+Last level cache hit rate
+0.96
+
+The memory tiering state is designed to represent how effectively fast memory has been utilized by a memory tiering solution. We use slow (or fast) memory read and write traffic normalized by total memory traffic to represent the memory tiering state. The traffic refers to the total number of bytes loaded/stored within a profiling interval to build the WS. Such a memory tiering state is irrelevant to the memory footprint on fast and slow memories but instead captures the effectiveness of page migration. Ideally, most memory traffic (excluding that related to page migration) should happen on fast memory. In addition, we differentiate between read and write traffic to account for their distinct latency and bandwidth characteristics.
+
+In conclusion, at a given time , the WS is defined as a vector shown below. Table 2 summarizes WS along with the correlation to IPC.
+
+(1)
+
+5.2 Clustering of Workload States
+
+Definition of the search space. The search space is a collection of data points where each data point is a vector consisting of at a time , the parameter configurations to be applied , and the aftermath performance after applying the configurations. The search space is large. Given an application, we can use various application inputs and measure throughout application execution to sample the search space.
+
+Clustering WSs. We observe that WSs in data points in the search space can be clustered. Figure 3.a shows the distribution of WSs for the benchmark NPB-LU [48] (a Lower-Upper Gauss-Seidel solver) as an example. We execute LU 100 times with AutoNUMA and various parameter configurations, using the same input (Class E), and collect 6K WSs.
+
+We run the k-means [31] to cluster those WSs. To determine the appropriate number of clusters (i.e., ), we employ the elbow method [21], a standard technique to identify the point where adding more clusters provides diminishing returns in terms of the reduction of a metric, Within-Cluster Sum of Squares (WCSS). Using the elbow, we ensure that our clustering model captures sufficient granularity to distinguish between different WSs without over-fitting. Figure 3.b indicates that “4” is the optimal number of clusters for NPB-LU.
+
+We find that the WS clusters correspond to execution phases, even though WSs are collected with various parameter configurations. See Figure 4. The figure maps WSs and the corresponding clusters to the execution phases. For example, the marker “” corresponds to a data copy phase; the marker “” corresponds to the computation of the regular-sparse, block lower triangular solution.
+
+The above results indicate that given an input to the application, WSs collected from the same execution phase, even if they are collected using different parameter configurations and have diverse memory-tiering states, tend to be clustered together. WSs collected from different execution phases have difference in both workload characteristics and memory tiering state, tend to go to different clusters. Also, using more application inputs to collect WSs, we add more clusters. In general, WSs are not uniformly distributed in the space.
+
+The reason for the above clustering results is that memory tiering is a fine-tuning process to distribute memory access traffic between fast/slow memories and avoid frequent page migration [44]. As a result, the memory tiering state for an execution phase does not change significantly across different parameter configurations, compared to the change in workload characteristics across execution phases.
+
+Application-specific clustering. For each application, we build a clustering model. We chose application-specific clustering rather than general clustering across all applications to improve the effectiveness of parameter tuning. Our evaluation shows that using application-specific clustering outperforms the general clustering by 20% across four memory tiering solutions (see Sec. 6.3).
+
+For a single application, building application-specific clustering requires less time than building a general clustering model (see Sec.  6.3).
+
+The application-specific clustering is feasible because it aligns with the common deployment practices of major public-cloud providers for HPC and AI. Those vendors focus on a narrow set of applications in a pre-defined domain. This practice is especially common in the business of HPC- and AI-centric SaaS [28, 1]. For example, Amazon Web Services (AWS) provides HPC clouds [27, 12], focusing on individual domains (e.g., healthcare and life science). In this type of customized environment, a specific modeling and simulation workload (e.g., computational fluid dynamics (CFD), pharmacokinetics, clinical trial simulation, or systems biology) is frequently launched. Google Cloud Platform (GCP) provides similar services. For example, GCP provides HPC blueprints [57] for computer-aided engineering (CAE) that target standard solvers such as Ansys Fluent, Siemens Simcenter STAR-CCM+, and OpenFOAM. We have similar observations in AI-centric services where cloud vendors offer catalogs of ready-to-use AI models and pre-built training and inference pipelines [4, 46].
+
+Improving similarity match within the cluster.
+To narrow down the search space in a cluster, given a WS, we employ a feature-weighted K-nearest neighbors algorithm (K-NN) [45] to find data points most similar to the given WS. The similarity is defined in terms of workload characteristics and memory tiering state.
+
+The feature-weighted K-NN assigns different weights to different features (i.e., the metrics listed in Table 2), and calculates the distance between two data points based on the weighted Euclidean distance. To determine appropriate weights for features,
+we construct a decision tree using data points in the cluster, with IPC specified as the decision target. In this decision tree, the internal nodes represent features, and the leaves represent IPC predictions. After the construction, a feature importance value is calculated based on the feature’s contribution to IPC prediction. The importance value is used as the feature weight for K-NN. We use the above approach, because it differentiates features according to their importance to performance, hence allowing us to find the most similar data points.
+
+Figure 3: k-means clustering of WSs in the benchmark NPB-LU. Each dot represents a WS. Red dots are the cluster centroids. Different colors indicate different clusters.
+
+Figure 4: Map WSs and clusters in Figure 3 to execution phases. Each marker in Figure 4 represents about 100 points.
+
+5.3 Reinforcement Learning
+
+We employ RL to tune parameter configurations at runtime.
+
+5.3.1 Background
+
+RL is a type of ML that makes decisions to achieve the best outcome by interacting with the environment and learning through an agent. Specifically, given an environment at a time step , the agent takes , which causes a transition to the next . The agent then receives for moving from to based on . An episode in RL is a complete cycle of interactions that starts in an initial state and ends when a terminal state is reached. The policy guides the action the agent performs in a specific state. RL aims to find the optimal policy that yields the highest cumulative reward to achieve an optimal outcome. We employ Proximal Policy Optimization (PPO) [58], a widely used and robust RL algorithm, to find the optimal policy .
+
+Why RL? RL can benefit parameter tuning for memory tiering for three reasons. First, the RL workflow aligns naturally with the stateful parameter tuning process.
+In memory tiering, the selection of parameter configurations affects the way WS transits from one state to another, ultimately affecting system performance.
+RL excels in such a context by making decisions that influence state transitions, thus optimizing the outcome over time.
+
+Second, RL’s ability to continuously learn and adapt to changing environments is crucial to respond to dynamics in WS. RL can update its decision-making processes in real time, allowing it to make better choices as WS evolves.
+
+Third, RL naturally handles scenarios with application co-runs. Co-running applications create a combinatorially large search space, making it infeasible to collect sufficient data points within a reasonable time budget. By treating a set of co-running applications as a single aggregate workload, RL can learn the evolving mixed WS and continuously refine its policy at runtime.
+
+The RL model in PTMT is a lightweight three-layer Multi-Layer Perceptron (see Sec. 6.7 for overhead analysis).
+Hence, RL effectively addresses the limitation discussed in Sec. 3.
+
+5.3.2 RL Formulation
+
+We define the key elements of RL.
+
+Optimization goal is to maximize application performance by finding a policy over application’s lifetime .
+
+(2)
+
+State is the current environment information and RL performs an action upon it. Equation 1 defines the state.
+
+Action represents the parameter configurations that PTMT applies to different WSs to optimize performance. The action space consists of possible parameter configurations. At any time , the action is a specific set of parameter configurations chosen from the action space, described as follows.
+
+(3)
+
+where represent individual parameter tuning at , and is the number of parameters to tune.
+
+Reward reflects the effect of the previous action performed on the previous state. As we aim to improve performance, we directly measure the reward based on IPC. We normalize IPC such that it falls in [-1, 1]. Otherwise, the reward received by the agent is always a positive value, failing to penalize the suboptimal action.
+
+(4)
+
+where and represent the lower and upper bounds of IPC collected offline.
+
+5.3.3 RL Model Structure and Hyper-Parameters
+
+The RL model consists of three layers. The first layer comprises five neurons, corresponding to the five metrics listed in Table 2. The second layer is a fully connected hidden layer with 64 neurons. The third layer varies in size, depending on the number of parameters to tune.
+
+For hyper-parameters in RL, according to the sensitivity study in Sec. 6.6, we set the discount factor to 0.9 and the learning rate to 0.01. In PPO, as Stable-Baselines3 (SB3) [61], actions are explored based on probability distributions predicted for each action by RL, without the use of an explicit exploration rate. We set the rollout buffer size (the number of steps per policy update) to 4.
+
+5.3.4 RL Convergence Acceleration
+
+The RL model convergence in our scenario can be slow because of the large exploration space. Assuming that is the number of possible WSs and is the number of parameter configurations in the action space, the capacity of the exploration space is , which is large. Directly applying RL for online tuning degrades application performance because the agent may require numerous episodes to perform extensive explorations.
+
+To accelerate model convergence and provide a solid baseline for online tuning, we pre-train the RL model using Behavioral Cloning (BC) [63]. BC is an ML technique. Using BC, an agent learns to perform tasks by mimicking the behavior of an expert. To generate the expert dataset required for BC, we reuse our clustering model. Specifically, for each collected offline, we identify the cluster to which it belongs and then employ K-NN within that cluster to find the most similar data points. Among these data points, we search for the one with the best IPC and label the corresponding for the given WS. After processing all WSs, we obtain optimal WS- pairs. Those WS- pairs serve as the expert dataset in BC. Using this expert dataset, the RL agent can quickly learn a policy by directly mapping optimal to WS without extensive exploration.
+
+5.3.5 Hybrid Method
+
+By default PTMT uses the clustering model, which is effective when
+WS measured at runtime is close to one of the centroids and falls into one of the clusters. However, when WS deviates substantially from all centroids, the clustering model cannot lead to optimal parameter configurations. In such a case, the RL model becomes more applicable. The switch between the clustering model and RL happens automatically in PTMT.
+
+To decide whether WS is outside all clusters, for each cluster, PTMT calculates the mean () and standard deviation () of the distance of all data points from the centroid. If the distance between and the centroid is larger than a threshold (), WS is considered to be outside the cluster. The threshold is statistically determined based on the assumption that the distance of the data points from the centroid follows a normal distribution, and hence 99.7% data points have a distance less than  [50]. WS with a distance greater than this threshold is considered an outlier.
+
+5.4 More Implementation Details
+
+We implement PTMT as a user-level framework without requiring OS or application modifications, making it applicable to production environments.
+We verified the compatibility of PTMT with Linux kernel 5.13, 6.1, and 6.3.
+
+Workload states collection. PTMT employs Intel Performance Counter Monitor (PCM) [30] and AMD Instruction Based Sampling (IBS) [2] to collect WSs. To build the performance database, for each workload, we repeatedly run it with multiple application inputs, collecting WS and IPC, and randomly setting parameter configurations at each tuning interval until 3K data points are gathered.
+
+Models. For the clustering model, PTMT uses k-means algorithm to build clusters and builds K-NN within each cluster, supported by Python’s scikit-learn. For RL model, PTMT uses PPO from Stable-Baselines3 (SB3) [61] as the policy network in RL. Before online tuning, PTMT uses BC to pre-train PPO as the initial policy in RL.
+
+Parameter adjustment. For kernel-based memory tiering solutions (AutoNUMA, Colloid, and TPP), PTMT tunes parameters by writing values to files under /sys/kernel/debug and /proc/sys. For the user-space UPM, PTMT uses its client-server interface via command-line instructions.
+
+Overhead control. To minimize CPU resource consumption, PTMT uses a single helper thread for WS collection and parameter tuning.
+Both the RL training and inference processes also operate on this thread.
+We analyze the overhead in Sec. 6.7.
+
+6 Evaluation
+
+6.1 Evaluation Methodology
+
+Evaluation platform. We evaluate PTMT on a dual-socket machine equipped with Intel Xeon Gold 6252 @2.10 GHz processors (24 cores per socket). Each socket has 6×16GB DDR4 DRAM as fast memory, and 6×128GB Intel Optane DCPMM as slow memory. To study the impact of page migration with memory tiering and avoid cross-socket NUMA effects, we conduct all experiments on a single socket, similar to prior works  [36, 44, 77]. We use GRUB mmap to limit fast memory capacity to 34GB, such that the workload memory is allocated on both fast memory and slow memory.
+
+Memory tiering settings. For AutoNUMA, Colloid, and TPP, we enable page promotion by setting /proc/sys /kernel/numa_balancing to 2, and enable page demotion by setting /sys/kernel/mm/numa/demotion_enabled to 1.
+
+Benchmarks. We use seven memory-intensive benchmarks summarized in Table 3. The benchmarks consist of a graph processing benchmark (Graph500 [47]), an in-memory database engine (Silo [64]), a machine learning benchmark (Liblinear [23]), and four high performance computing benchmarks (LU, SP, BT, and FT) from NPB [5].
+
+During the offline phase, we collect WSs to generate the clustering model and RL pre-trained model using some input problems (named WSS (a)). During the online phase, we assess the effectiveness of PTMT by measuring the performance of each benchmark under two scenarios: (1) using similar input problems as in the offline phase (WSS (a)), such that WS collected online falls into the clusters built offline; (2) using largely different input problems, such that WS may randomly fall out of the clusters (named WSS (b)).
+
+Baselines. We compare PTMT performance against that of using the default parameter configurations. Each benchmark is executed using 24 threads, and execution time is measured to assess performance. Besides PTMT and the four memory tiering solutions, we evaluate NoBalance in Linux by disabling NUMA page migration, which represents static page placement.
+We also evaluate IDT [9], a state-of-the-art solution that uses an RL-based policy to efficiently demote cold pages to
+slow memory. IDT uses RL to tune page demotion criterion age_thres, which is a threshold determining whether a page is “aged” enough for demotion.
+Specifically, IDT uses a function of each memory region’s age as RL’s state and uses the performance (inversely proportional to the slow memory access frequency) as RL’s optimization goal to determine the appropriate age_thres.
+IDT is not application-specific, but pre-trained using a general micro-benchmark GUPS [24] emulating three common access patterns: uniform random, static hot set (where 90% of accesses happened to a static hot-memory region), and dynamic hot set (where the hot set changes every 150 seconds).
+
+Parameter selection for tuning. Parameters are selected based on performance sensitivity study (some results are shown in Sec. 2.3). A parameter is selected if at least one benchmark’s performance is sensitive to its configuration. Table 4 summarizes the parameters for tuning.
+
+Table 3: Benchmarks for evaluation
+
+Benchmark
+Description
+WSS (a)
+WSS (b)
+
+LU
+Lower-Upper Gauss-Seidel solver
+134GB
+58GB
+
+SP
+Scalar Penta-diagonal solver
+174GB
+74GB
+
+BT
+Block Tri-diagonal solver
+166GB
+71GB
+
+FT
+Discrete 3D fast Fourier Transform
+80GB
+40GB
+
+Graph500
+Graph generation and traversal
+64GB
+46GB
+
+Liblinear
+Large-scale linear classification
+69GB
+59GB
+
+Silo
+In-memory database engine
+115GB
+145GB
+
+Table 4: Parameters to tune in memory tiering
+
+Memory Tiering Solution
+Parameters
+
+AutoNUMA
+scan_size_mb
+
+watermark_scale_factor
+
+Colloid
+scan_size_mb
+
+watermark_scale_factor
+
+TPP
+demote_scale_factor
+
+UPM
+hot_threshold
+
+sample_period
+
+page_migration_interval
+
+6.2 Overall Performance
+
+We evaluate two scenarios: (1) assessing the effectiveness of the clustering model using WSS (a), and (2) assessing PTMT’s adaptiveness using WSS (b).
+
+Figure 5: WSS (a): Performance speedup over NoBalance performance.
+
+Figure 6: WSS (b): Performance speedup over NoBalance performance.
+
+Figure 7: WSS (b): Evaluation of application-specific RL. The performance speedup is measured over the default configuration.
+
+WSS (a). The clustering-based tuning without RL takes effect, as shown in Figure 5.
+PTMT improves the performance of AutoNUMA, Colloid, TPP, and UPM by 10%, 7%, 20%, and 17% on average, respectively, compared to their default configurations. Specifically, while the default outperforms the NoBalance baseline by an average of 47%, 31%, 21%, and 36% on AutoNUMA, Colloid, TPP, and UPM, respectively, the clustering-based tuning outperforms NoBalance by 62%, 40%, 44%, and 57% on the same memory tiering solutions. This demonstrates the effectiveness of the clustering model.
+
+We observe that some workloads are very sensitive to parameter tuning in specific memory tiering solutions. For example, compared to the default, the clustering-based tuning outperforms by 10% on SP, 43% on Graph500, and 10% on Silo in AutoNUMA and by 14% on Graph500, 10% on Liblinear, and 14% on Silo in Colloid. However, the clustering-based tuning achieves little performance improvement for BT and FT in AutoNUMA and Colloid.
+
+The best performance improvements are achieved on Graph-500 when using PTMT with AutoNUMA and Colloid. Further analysis reveals that both AutoNUMA and Colloid employ NUMA scanning and hint fault latency for memory profiling and hotness detection, and incorporate flexible page migration mechanisms.
+The memory profiling speed is controlled via scan_size_mb, and the page demotion aggressiveness is controlled via watermark_scale_factor. This flexibility allows PTMT to fine-tune memory profiling for quicker detection of changes in hot page set and to adjust the proactiveness of page demotion in response. This adaptability is suited to Graph500’s frequent changes in the hot page set.
+
+In all cases (except for Liblinear with UPM), PTMT does not cause performance loss compared to the default configurations. Liblinear with UPM and PTMT is the only exception. Further analysis reveals that, unlike other solutions, UPM’s page demotion appears on the critical path of page promotion, slowing down the promotion of hot pages. PTMT amplifies this issue, resulting in reduced performance.
+
+WSS (b). Figure 6 shows that with RL, PTMT outperforms the default configurations by 14%, 21%, 30%, and 26% on average for AutoNUMA, Colloid, TPP, and UPM, respectively. PTMT automatically enables RL model to tune parameters when WSS changed.
+These results demonstrate PTMT effectiveness in tuning parameters across a diverse set of WSs.
+
+Compared to the default configurations, PTMT achieves performance gain by 103% for LU with TPP, while other memory tiering solutions do not have a large gain. That substantial gain is due to TPP’s more aggressive demotion mechanism, which employs an asynchronous background process. LU’s hot regions are distributed across fast and slow memories, hence calling for an effective demotion mechanism to accommodate emerging hot pages. By tuning demote_scale_ factor in TPP, PTMT optimizes demotion aggressiveness, improving page placement and overall performance.
+
+PTMT’s clustering-based tuning degrades Liblinear’s performance across all memory tiering solutions. This occurs because WSS (b) has approximately 80% of its WSs falling outside the clusters (formed using WSS (a)), indicating that the clustering-based tuning lacks the flexibility needed to adapt to the diverse WSs in a workload.
+
+6.3 Effectiveness of RL
+
+Adaptiveness of RL. We compare the clustering-based, RL-based (PTMT-RL), and RL (without pre-training)-based tuning using WSS (b). Figure 6 shows that the RL-based tuning outperforms the clustering-based tuning by 9%, 21%, 19%, and 14% on average for AutoNUMA, Colloid, TPP, and UPM, respectively, indicating that RL is more effective in handling diverse WSs.
+
+RL with pre-training outperforms without pre-training by 34%, 31%, 24%, and 14% on average for AutoNUMA, Colloid, TPP, and UPM, respectively. This improvement is because the pre-training phase provides RL with prior knowledge, reducing the number of iterations needed to explore parameter configurations and develop an optimal policy.
+
+Figure 8: (a) Memory access heatmap of Graph500. (b) Tuning demote_scale_factor using PTMT. The markers in the figure represent parameter configurations.
+
+Figure 9: Page migration when tuning Graph500.
+
+Effectiveness of application-specific RL.
+We compare with IDT. Since IDT is only used to tune a specific parameter for a specific memory tiering solution (see Sec. 6.1),
+we improve IDT in three ways (see our repo [3]):
+(1) enabling IDT to tune multiple system parameters rather than a single parameter, (2) incorporating WSs as the RL state representation, and (3) making the decision epoch configurable as a tuning period. We pre-train four separate models, each tailored to one of the four memory tiering solutions.
+To train each pre-trained model, we repeatedly run GUPS with three distinct memory access patterns and five different hot-region distributions until adding more iterations no longer significantly reduces the loss of RL’s value function, indicating that the model’s estimates of state values are stable. This general pre-training process leads to more execution iterations than those using application-specific models in PTMT.
+
+Following IDT’s approach to build a general pre-trained model, we pre-train RL (named “RL (general pre-training)”) and compare it with RL that uses the application-specific pre-training (named “PTMT-RL”).
+To build the general model offline, we run GUPS with the same memory access patterns and iteration counts as IDT to construct a performance database for RL (general pre-training). After generating the expert dataset from this performance database, we apply Behavioral Cloning to pre-train PPO as the initial policy in RL. To optimize the performance of this RL (general pre-training) for online tuning, we use sensitivity study to decide its hyper-parameters.
+
+Figure 7 shows the results. Compared to the default configuration, IDT improves performance by -10%, -1%, -8%, and 9% for AutoNUMA, Colloid, TPP, and UPM, respectively. RL with general pre-trained improves performance by 2%, 11%, -10%, and 13%. These results suggest that a general RL model has difficulty capturing application-specific optimization, even if it collects various WSs from a general micro-benchmark. In contrast, the application-specific RL significantly improves performance: PTMT-RL outperforms IDT by 29%, 26%, 56%, and 17% for AutoNUMA, Colloid, TPP, and UPM, respectively, and outperforms RL (general pre-training) by 12%, 10%, 46%, and 12% respectively.
+
+6.4 Analysis of Dynamic Parameter Tuning
+
+We look deep into how the parameters are tuned at runtime by PTMT. We use Graph500 (WSS (b)) with TPP as an example, shown in Figure 8.b. We then provide an in-depth comparison of parameter tuning and page migration between PTMT and the default configuration (i.e., demote_scale_factor = 200), shown in Figure 9. Figure 8.a shows memory access heatmap with execution time.
+
+Graph500 has three execution phases, as shown in Figure 8.b. In the generation phase where edge lists are generated, PTMT uses the default configuration and there is minor page migration. This phase is characterized with limited page reuse, and hence lack hot pages. PTMT recognizes this and keeps the parameter configuration.
+
+In the graph construction phase where the graph structure is built from the edge lists, PTMT uses a smaller value (“100”) for the parameter. This phase has a rather large hot-page set, inevitably spilled to slow memory. Hence, the memory tiering should avoid page thrashing between memory tiers [44]. Using the smaller value, TPP is able to reduce unnecessary page demotion by 15% and page promotion by 20%, compared with using the default configuration. Thanks to PTMT, this phase improves performance by 32% (see Figure 9).
+
+In the BFS phase, the hot region becomes smaller and stable (see Figure 8.a) because Graph500 uses a stochastic Kronecker graph generator to create a power-law graph where a few vertices hold most edges. PTMT uses a larger value (400 or 800), enabling more aggressive page migration. Figure 9 shows 2.1 more page demotion and 2.0 more page promotion, compared to using the default configuration.
+
+In conclusion, PTMT improves the performance of Graph500 by 20%, and PTMT responds correctly to WSs throughout application execution.
+
+Figure 10: Sensitivity study to hyper-parameters. Performance speedup is over that of the default configuration.
+
+Figure 11: Overall ANTT-STP and per-application throughput (Mop/s) for application co-run.
+
+6.5 PTMT with Application Co-run
+
+We launch FT, LU, and SP simultaneously and compare NoBalance, the default configuration, and PTMT -RL (using general pre-training on GUPS) under AutoNUMA. Because PTMT uses system-wide performance metrics to represent WSs and tune system-wide parameters accordingly, it can treat co-running applications as a single aggregate workload by collecting global WSs for the entire system.
+In the case of application co-run, pre-training RL for each combination of co-running applications is not scalable. Therefore, we use the general pre-training method (see Sec. 6.3). In particular, we use the general pre-trained RL model and tune the model parameters when co-running FT, LU, and SP (WSS(b)) based on the collection of global WSs.
+
+We use two metrics, System Throughput (STP) and Average Normalized Turnaround Time (ANTT) [22, 73]. STP reflects system-wide throughput (the larger is better), while ANTT captures the average slow-down experienced when multiple applications share server resources (the smaller is better).
+We also report the per-application throughput (Mop/s, millions of operations per second), provided by NPB.
+
+Figure 11 shows the results: compared with NoBalance and the default, PTMT-RL (using general pre-training) reduces ANTT by 18% and 8%, increases STP by 18% and 8%, and boosts application throughput by 21% and 8%, respectively. This indicates that, with general pre-training, the PTMT solution is applicable to application co-run cases.
+
+6.6 Sensitivity Study
+
+We use Graph500 (WSS (b)) as an example. We see similar results from the sensitivity study for other benchmarks.
+
+K value in K-NN. We vary K using the cluster modeling. Figure 10.a shows that when K < 25, the performance degrades due to a limited number of nearest WSs to find the best performance. But when K > 25, the performance variance is less than 10%. We choose K for PTMT.
+
+Tuning period. We vary the tuning period from 2 to 30 seconds. Figure 10.b shows that short (2-5s) and long (30s) tuning periods bring trivial performance improvement. A short period fails to give the workload to respond to parameter tuning, while a long period misses opportunities to tune parameters. We choose 10 seconds for PTMT.
+
+RL hyperparameters.
+We study two key RL hyperparameters: the learning rate and discount factor. The learning rate dictates how quickly the RL updates its network weights. Figure 10.c shows that a learning rate of 0.01 outperforms the default setting in SB3 [61] (0.0003) and a higher rate (0.1). Because a lower rate reduces the model’s adaptability to dynamic environments, while a higher rate increases computational overhead of online training due to frequent weight updates. We choose 0.01 for PTMT.
+
+The discount factor determines the weighting of past and immediate rewards. Figure 10.d reveals that the discount factor of 0.9 performs better than 0 or 0.99 (the default setting in SB3). This suggests that focusing solely on immediate rewards or placing excessive emphasis on past rewards leads to suboptimal performance. “0.9” balances the tradeoff.
+
+Table 5: Execution time for PTMT components
+
+Component
+Time (ms)
+Component
+Time (ms)
+
+WS Collection
+21
+Clustering Query
+24
+
+RL Inference
+1
+Model Switch
+1
+
+Config Setting
+9 - 18
+RL Policy Update
+84
+
+6.7 Overhead Analysis
+
+For storage overhead, the offline-generated clustering model (built from data points) requires about 3 MB, and the pre-trained RL model requires 70 KB. During online tuning, the transient consumes only 96 bytes (12 FP numbers).
+
+For computation overhead, we measure the time for various components in PTMT, as summarized in Table 5. The overall performance overhead of PTMT is less than 1.0% when the tuning period is set to 10 seconds. Collecting data points for an application takes about 8.3 hours with a tuning period of 10 seconds.
+
+7 Conclusions
+
+Although there is much progress in building system software for memory tiering, tuning system parameters for memory tiering is largely missing. Tuning system parameters for memory tiering can bring large performance benefits but is challenging due to the concerns on runtime overhead, tuning convergence, and input-awareness. In this paper, we look deeply into representative memory-tiering solutions and introduce a novel tuning framework. We hope that our work can make memory tiering more easily deployable.
+
+References
+
+[1]
+(2025)
+
+AI-Native Engineering Simulation in the Cloud.
+
+Note: https://www.simscale.com/
+
+Cited by: §5.2.
+
+[2]
+AMD (2025)
+
+Analysis with Instruction Based Sampling.
+
+Note: https://docs.amd.com/r/en-US/57368-uProf-user-guide
+
+Cited by: §5.4.
+
+[3]
+Anonymous (2025)
+
+PTMT.
+
+Note: https://anonymous.4open.science/r/PTMT
+
+Cited by: §6.3.
+
+[4]
+(2025)
+
+Azure AI Foundry Model Catalog.
+
+Note: https://azure.microsoft.com/en-us/products/ai-foundry/models
+
+Cited by: §5.2.
+
+[5]
+D. H. Bailey, L. Dagum, E. Barszcz, and H. D. Simon (1992)
+
+NAS parallel benchmark results.
+
+In Supercomputing ’92: Proceedings of the 1992 ACM/IEEE
+conference on Supercomputing,
+
+Los Alamitos, CA, USA, pp. 386–393.
+
+External Links: ISBN 0-8186-2630-5
+
+Cited by: §6.1.
+
+[6]
+J. Baliosian, J. Visca, E. Grampin, L. Vidal, and M. Giachino (2009)
+
+A rule-based distributed system for self-optimization of constrained devices.
+
+In 2009 IFIP/IEEE International Symposium on Integrated Network Management,
+
+Cited by: §3.
+
+[7]
+S. Bergman, P. Faldu, B. Grot, L. Vilanova, and M. Silberstein (2022)
+
+Reconsidering OS Memory Optimizations in the Presence of Disaggregated Memory.
+
+In Proceedings of the 2022 ACM SIGPLAN International Symposium on Memory Management,
+
+Cited by: §1,
+§2.1,
+§2.2.
+
+[8]
+M. Bin-Yahya, Y. Zhao, H. Shafieirad, A. Ho, S. Yin, F. Wang, and G. Li (2024)
+
+config-Snob: tuning for the best configurations of networking protocol stack.
+
+In 2024 USENIX Annual Technical Conference (USENIX ATC 24),
+
+Cited by: §3.
+
+[9]
+J. Chang, W. Doh, Y. Moon, E. Lee, and J. H. Ahn (2024)
+
+IDT: Intelligent Data Placement for Multi-tiered Main Memory with Reinforcement Learning.
+
+In International Symposium on High-Performance Parallel and Distributed Computing (HPDC),
+
+Cited by: 3rd item,
+§1,
+§3,
+§3,
+§6.1,
+Abstract.
+
+[10]
+P. Cheng, Y. Lu, Y. Du, Z. Chen, and Y. Liu (2019)
+
+Optimizing data placement on hierarchical storage architecture via machine learning.
+
+In Network and Parallel Computing: 16th IFIP WG 10.3 International Conference,
+
+Cited by: §3.
+
+[11]
+J. Choi, S. Blagodurov, and H. Tseng (2021)
+
+Dancing in the dark: profiling for tiered memory.
+
+In 2021 IEEE International Parallel and Distributed Processing Symposium (IPDPS),
+
+Cited by: §2.1.
+
+[12]
+(2025)
+
+Computational Fluid Dynamics.
+
+Note: https://aws.amazon.com/hpc/cfd
+
+Cited by: §5.2.
+
+[13]
+J. Corbet (2022)
+
+LRU-list manipulation with DAMON.
+
+Note: https://lwn.net/Articles/905370/
+
+Cited by: §2.1.
+
+[14]
+T. D. Doudali, S. Blagodurov, A. Vishnu, S. Gurumurthi, and A. Gavrilovska (2019)
+
+Kleio: a hybrid memory page scheduler with machine intelligence.
+
+In Proceedings of the 28th International Symposium on High-Performance Parallel and Distributed Computing,
+
+Cited by: §1,
+§3,
+§3.
+
+[15]
+T. D. Doudali and A. Gavrilovska (2022)
+
+Coeus: clustering (a) like patterns for practical machine intelligent hybrid memory management.
+
+In 2022 22nd IEEE International Symposium on Cluster, Cloud and Internet Computing (CCGrid),
+
+Cited by: §3,
+§3.
+
+[16]
+T. D. Doudali and A. Gavrilovska (2022)
+
+Cronus: computer vision-based machine intelligent hybrid memory management.
+
+In Proceedings of the 2022 International Symposium on Memory Systems,
+
+Cited by: §1,
+§3,
+§3.
+
+[17]
+T. D. Doudali, D. Zahka, and A. Gavrilovska (2021)
+
+Cori: dancing to the right beat of periodic data movements over hybrid memory systems.
+
+In 2021 IEEE International Parallel and Distributed Processing Symposium (IPDPS),
+
+Cited by: §1,
+§3,
+§3,
+§3.
+
+[18]
+S. R. Dulloor, A. Roy, Z. Zhao, N. Sundaram, N. Satish, R. Sankaran, J. Jackson, and K. Schwan (2016)
+
+Data tiering in heterogeneous memory systems.
+
+In Proceedings of the Eleventh European Conference on Computer Systems,
+
+Cited by: §3.
+
+[19]
+P. Duraisamy, W. Xu, S. Hare, R. Rajwar, D. Culler, Z. Xu, J. Fan, C. Kennelly, B. McCloskey, D. Mijailovic, et al. (2023)
+
+Towards an adaptable systems architecture for memory tiering at warehouse-scale.
+
+In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3,
+
+Cited by: §1,
+§2.1,
+§2.1,
+§2.2,
+§3,
+§3.
+
+[20]
+G. Einziger, O. Eytan, R. Friedman, and B. Manes (2018)
+
+Adaptive software cache management.
+
+In Proceedings of the 19th International Middleware Conference,
+
+Cited by: §3,
+§3.
+
+[21]
+(2022)
+
+Elbow Method.
+
+Note: https://www.scikit-yb.org/en/latest/api/cluster/elbow.html
+
+Cited by: §5.2.
+
+[22]
+S. Eyerman and L. Eeckhout (2008)
+
+System-level performance metrics for multiprogram workloads.
+
+IEEE micro 28 (3), pp. 42–53.
+
+Cited by: §6.5.
+
+[23]
+R. Fan, K. Chang, C. Hsieh, X. Wang, and C. Lin (2008)
+
+LIBLINEAR: a library for large linear classification.
+
+Journal of machine Learning research 9, pp. 1871–1874.
+
+Cited by: §6.1.
+
+[24]
+(2025)
+
+GUPS (Giga Updates Per Second).
+
+Note: https://icl.utk.edu/projectsfiles/hpcc/RandomAccess/
+
+Cited by: §6.1.
+
+[25]
+V. Gupta, M. Lee, and K. Schwan (2015)
+
+Heterovisor: exploiting resource heterogeneity to enhance the elasticity of cloud platforms.
+
+ACM SIGPLAN Notices 50 (7), pp. 79–92.
+
+Cited by: §2.1.
+
+[26]
+T. Heo, Y. Wang, W. Cui, J. Huh, and L. Zhang (2020)
+
+Adaptive page migration policy with huge pages in tiered memory systems.
+
+IEEE Transactions on Computers 71 (1), pp. 53–68.
+
+Cited by: §1,
+§3,
+§3,
+§3.
+
+[27]
+(2025)
+
+High Performance Computing for Healthcare & Life Sciences.
+
+Note: https://aws.amazon.com/hpc/hcls
+
+Cited by: §5.2.
+
+[28]
+(2025)
+
+HPC as a Service.
+
+Note: https://rescale.com/platform/hpc-as-a-service/
+
+Cited by: §5.2.
+
+[29]
+Y. Huang (2020)
+
+Autonuma: optimize page placement for memory tiering system.
+
+Note: https://patchwork.kernel.org/project/linux-mm/patch/20201027063217.211096-2-ying.huang@intel.com/
+
+Cited by: 1st item,
+§1,
+§2.1,
+§2.2,
+§2.2.
+
+[30]
+Intel
+
+Intel® Performance Counter Monitor (Intel® PCM).
+
+Note: https://github.com/intel/pcm
+
+Cited by: §5.4.
+
+[31]
+(2025)
+
+K-means clustering.
+
+Note: https://en.wikipedia.org/wiki/K-means_clustering
+
+Cited by: §5.2.
+
+[32]
+S. Kannan, A. Gavrilovska, V. Gupta, and K. Schwan (2017)
+
+Heteroos: os design for heterogeneous memory management in datacenter.
+
+In Proceedings of the 44th Annual International Symposium on Computer Architecture,
+
+Cited by: §2.1.
+
+[33]
+J. Kim, W. Choe, and J. Ahn (2021)
+
+Exploring the design space of page management for multi-tiered memory systems.
+
+In 2021 USENIX Annual Technical Conference (USENIX ATC 21),
+
+Cited by: §1,
+§2.1,
+§2.2.
+
+[34]
+K. Krish, A. Anwar, and A. R. Butt (2014)
+
+Hats: a heterogeneity-aware tiered storage for hadoop.
+
+In 2014 14th IEEE/ACM International Symposium on Cluster, Cloud and Grid Computing,
+
+Cited by: §3.
+
+[35]
+A. Lagar-Cavilla, J. Ahn, S. Souhlal, N. Agarwal, R. Burny, S. Butt, J. Chang, A. Chaugule, N. Deng, J. Shahid, et al. (2019)
+
+Software-defined far memory in warehouse-scale computers.
+
+In Proceedings of the Twenty-Fourth International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §3.
+
+[36]
+T. Lee, S. K. Monga, C. Min, and Y. I. Eom (2023)
+
+Memtis: efficient memory tiering with dynamic page classification and page size determination.
+
+In Proceedings of the 29th Symposium on Operating Systems Principles,
+
+Cited by: §1,
+§1,
+§2.1,
+§2.2,
+§2.2,
+§6.1.
+
+[37]
+G. Li, X. Zhou, S. Li, and B. Gao (2019)
+
+Qtune: a query-aware database tuning system with deep reinforcement learning.
+
+Proceedings of the VLDB Endowment 12 (12), pp. 2118–2130.
+
+Cited by: §3.
+
+[38]
+Y. Li, K. Chang, O. Bel, E. L. Miller, and D. D. Long (2017)
+
+CAPES: unsupervised storage performance tuning using neural network-based deep reinforcement learning.
+
+In Proceedings of the international conference for high performance computing, networking, storage and analysis,
+
+Cited by: §3.
+
+[39]
+C. M. Liang, H. Xue, M. Yang, L. Zhou, L. Zhu, Z. L. Li, Z. Wang, Q. Chen, Q. Zhang, C. Liu, et al. (2020)
+
+autosys: The design and operation of learning-augmented systems.
+
+In 2020 USENIX Annual Technical Conference (USENIX ATC 20),
+
+Cited by: §3.
+
+[40]
+W. Lin, X. Luo, C. Li, J. Liang, G. Wu, and K. Li (2023)
+
+An energy-efficient tuning method for cloud servers combining dvfs and parameter optimization.
+
+IEEE Transactions on Cloud Computing.
+
+Cited by: §3.
+
+[41]
+J. Liu, H. Hadian, H. Xu, and H. Li (2025)
+
+Tiered memory management beyond hotness.
+
+In 19th USENIX Symposium on Operating Systems Design and Implementation (OSDI 25),
+
+Cited by: §1,
+§2.2.
+
+[42]
+M. Maas, D. G. Andersen, M. Isard, M. M. Javanmard, K. S. McKinley, and C. Raffel (2020)
+
+Learning-based memory allocation for c++ server workloads.
+
+In Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §3,
+§3.
+
+[43]
+A. Maruf, A. Ghosh, J. Bhimani, D. Campello, A. Rudoff, and R. Rangaswami (2022)
+
+MULTI-clock: dynamic tiering for hybrid memory systems.
+
+In 2022 IEEE International Symposium on High-Performance Computer Architecture (HPCA),
+
+Cited by: §1,
+§2.1,
+§2.2.
+
+[44]
+H. A. Maruf, H. Wang, A. Dhanotia, J. Weiner, N. Agarwal, P. Bhattacharya, C. Petersen, M. Chowdhury, S. Kanaujia, and P. Chauhan (2023)
+
+TPP: Transparent page placement for CXL-enabled tiered-memory.
+
+In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Cited by: 1st item,
+§1,
+§1,
+§2.1,
+§2.2,
+§2.2,
+§5.2,
+§6.1,
+§6.4.
+
+[45]
+T. Mladenova (2021)
+
+A feature-weighted rule for the k-nearest neighbor.
+
+In International Symposium on Multidisciplinary Studies and Innovative Technologies (ISMSIT),
+
+Cited by: §5.2.
+
+[46]
+(2024)
+
+Model Garden on Vertex AI.
+
+Note: https://cloud.google.com/model-garden
+
+Cited by: §5.2.
+
+[47]
+R. C. Murphy, K. B. Wheeler, B. W. Barrett, and J. A. Ang (2010)
+
+Introducing the graph 500.
+
+Cray Users Group (CUG) 19 (45-74), pp. 22.
+
+Cited by: §1,
+§2.3,
+§6.1.
+
+[48]
+(2024)
+
+NAS Parallel Benchmarks.
+
+Note: https://www.nas.nasa.gov/software/npb.html
+
+Cited by: §2.3,
+§5.2.
+
+[49]
+Y. Ni, P. Mehra, E. Miller, and H. Litz (2023)
+
+TMC: near-optimal resource allocation for tiered-memory systems.
+
+In Proceedings of the 2023 ACM Symposium on Cloud Computing,
+
+Cited by: §3.
+
+[50]
+(2025)
+
+Normal distribution.
+
+Note: https://en.wikipedia.org/wiki/Normal_distribution
+
+Cited by: §5.3.5.
+
+[51]
+D. Oh, Y. Moon, E. Lee, T. J. Ham, Y. Park, J. W. Lee, and J. H. Ahn (2021)
+
+MaPHeA: a lightweight memory hierarchy-aware profile-guided heap allocation framework.
+
+In Proceedings of the 22nd ACM SIGPLAN/SIGBED International Conference on Languages, Compilers, and Tools for Embedded Systems,
+
+Cited by: §2.1.
+
+[52]
+S. Park, M. Bhowmik, and A. Uta (2022)
+
+Daos: data access-aware operating system.
+
+In Proceedings of the 31st International Symposium on High-Performance Parallel and Distributed Computing,
+
+Cited by: §2.1.
+
+[53]
+A. Raybuck, T. Stamler, W. Zhang, M. Erez, and S. Peter (2021)
+
+Hemem: scalable tiered memory management for big data applications and real nvm.
+
+In Proceedings of the ACM SIGOPS 28th Symposium on Operating Systems Principles,
+
+Cited by: §1,
+§1,
+§2.1,
+§2.2,
+§2.2.
+
+[54]
+J. Ren, B. Ma, S. Yang, B. Francis, E. K. Ardestani, M. Si, and D. Li (2025)
+
+Machine learning-guided memory optimization for dlrm inference on tiered memory.
+
+In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA),
+
+pp. 1631–1647.
+
+Cited by: §1.
+
+[55]
+J. Ren, D. Xu, J. Ryu, K. Shin, D. Kim, and D. Li (2024)
+
+MTM: Rethinking Memory Profiling and Migration for Multi-Tiered Large Memory Systems.
+
+In European Conference on Computer Systems,
+
+Cited by: §1,
+§1,
+§2.1,
+§2.2.
+
+[56]
+J. Ren, X. Chen, Y. Tan, D. Liu, M. Duan, L. Liang, and L. Qiao (2019)
+
+Archivist: a machine learning assisted data placement mechanism for hybrid storage systems.
+
+In 2019 IEEE 37th International Conference on Computer Design (ICCD),
+
+Cited by: §3.
+
+[57]
+(2024)
+
+Running Computer-Aided Engineering Workloads on Google Cloud.
+
+Note: https://cloud.google.com/solutions/running-computer-aided-engineering-workloads
+
+Cited by: §5.2.
+
+[58]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov (2017)
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347.
+
+Cited by: §5.3.1.
+
+[59]
+H. Servat, A. J. Peña, G. Llort, E. Mercadal, H. Hoppe, and J. Labarta (2017)
+
+Automating the application data placement in hybrid memory systems.
+
+In 2017 IEEE International Conference on Cluster Computing (CLUSTER),
+
+Cited by: §3.
+
+[60]
+K. Song, J. Yang, Z. Wang, J. Zhao, S. Liu, and G. Pekhimenko (2025)
+
+HybridTier: an adaptive and lightweight cxl-memory tiering system.
+
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Cited by: §1,
+§2.2.
+
+[61]
+(2025)
+
+Stable Baselines3.
+
+Note: https://github.com/DLR-RM/stable-baselines3
+
+Cited by: §5.3.3,
+§5.4,
+§6.6.
+
+[62]
+J. Sun, F. Ye, N. Nedjah, M. Zhang, and D. Xu (2023)
+
+Workload-aware performance tuning for multimodel databases based on deep reinforcement learning.
+
+International Journal of Intelligent Systems 2023 (1), pp. 8835111.
+
+Cited by: §3.
+
+[63]
+F. Torabi, G. Warnell, and P. Stone (2018)
+
+Behavioral cloning from observation.
+
+arXiv preprint arXiv:1805.01954.
+
+Cited by: §5.3.4.
+
+[64]
+S. Tu, W. Zheng, E. Kohler, B. Liskov, and S. Madden (2013)
+
+Speedy transactions in multicore in-memory databases.
+
+In Proceedings of the Twenty-Fourth ACM Symposium on Operating Systems Principles,
+
+Cited by: §6.1.
+
+[65]
+(2025)
+
+User-Space Page Management.
+
+Note: https://anonymous.4open.science/r/UPM
+
+Cited by: 1st item,
+§2.2.
+
+[66]
+D. Van Aken, A. Pavlo, G. J. Gordon, and B. Zhang (2017)
+
+Automatic database management system tuning through large-scale machine learning.
+
+In Proceedings of the 2017 ACM international conference on management of data,
+
+Cited by: §3.
+
+[67]
+E. Vasilakis, V. Papaefstathiou, P. Trancoso, and I. Sourdis (2020)
+
+Hybrid2: combining caching and migration in hybrid memory systems.
+
+In 2020 IEEE International Symposium on High Performance Computer Architecture (HPCA),
+
+Cited by: §3.
+
+[68]
+V. Verma. (2022)
+
+Tiering-0.8.
+
+Note: https://git.kernel.org/pub/scm/linux/kernel/git/vishal/tiering.git/log/?h=tiering-0.8
+
+Cited by: §1,
+§2.1,
+§2.2.
+
+[69]
+M. Vuppalapati and R. Agarwal (2024)
+
+Tiered memory management: access latency is the key!.
+
+In Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles,
+
+Cited by: 1st item,
+§1,
+§1,
+§2.1,
+§2.2,
+§2.2.
+
+[70]
+X. Wang, J. Liu, J. Wu, S. Yang, J. Ren, B. Shankar, and D. Li (2025)
+
+Performance characterization of cxl memory and its use cases.
+
+In 2025 IEEE International Parallel and Distributed Processing Symposium (IPDPS),
+
+pp. 1048–1061.
+
+Cited by: §1.
+
+[71]
+X. Wang, B. Ma, J. Kim, B. Koh, H. Kim, and D. Li (2025)
+
+CMPI: using cxl memory sharing for mpi one-sided and two-sided inter-node communications.
+
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+Cited by: §1.
+
+[72]
+J. Weiner, N. Agarwal, D. Schatzberg, L. Yang, H. Wang, B. Sanouillet, B. Sharma, T. Heo, M. Jain, C. Tang, et al. (2022)
+
+TMO: transparent memory offloading in datacenters.
+
+In Proceedings of the 27th ACM International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: §3.
+
+[73]
+B. Wu, G. Chen, D. Li, X. Shen, and J. Vetter (2015)
+
+Enabling and exploiting flexible task assignment on gpu through sm-centric program transformations.
+
+In Proceedings of the 29th ACM on International Conference on Supercomputing,
+
+Cited by: §6.5.
+
+[74]
+K. Wu, Y. Huang, and D. Li (2017)
+
+Unimem: runtime data managementon non-volatile memory-based heterogeneous main memory.
+
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+Cited by: §3.
+
+[75]
+L. Xiang, Z. Lin, W. Deng, H. Lu, J. Rao, Y. Yuan, and R. Wang (2024)
+
+Nomad: Non-Exclusive Memory Tiering via Transactional Page Migration.
+
+In USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §1,
+§2.1,
+§2.2.
+
+[76]
+D. Xu, H. Meng, X. Chen, D. Zhu, W. Tang, F. Liu, L. Xie, W. Xiang, R. Shi, Y. Li, et al. (2026)
+
+CCCL: node-spanning gpu collectives with cxl memory pooling.
+
+arXiv preprint arXiv:2602.22457.
+
+Cited by: §1.
+
+[77]
+D. Xu, J. Ryu, J. Baek, K. Shin, P. Su, and D. Li (2024)
+
+FlexMem: Adaptive Page Profiling and Migration for Tiered Memory.
+
+In 30th USENIX Annual Technical Conference (ATC),
+
+Cited by: §1,
+§1,
+§2.2,
+§6.1.
+
+[78]
+F. Ye, Y. Li, X. Wang, N. Nedjah, P. Zhang, and H. Shi (2023)
+
+Parameters tuning of multi-model database based on deep reinforcement learning.
+
+Journal of Intelligent Information Systems 61 (1), pp. 167–190.
+
+Cited by: §3.
+
+[79]
+J. Zhang, Y. Liu, K. Zhou, G. Li, Z. Xiao, B. Cheng, J. Xing, Y. Wang, T. Cheng, L. Liu, et al. (2019)
+
+An end-to-end automatic cloud database tuning system using deep reinforcement learning.
+
+In Proceedings of the 2019 international conference on management of data,
+
+Cited by: §3.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

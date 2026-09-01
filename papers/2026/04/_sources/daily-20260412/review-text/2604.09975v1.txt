@@ -1,0 +1,3293 @@
+EncFormer: Secure and Efficient Transformer Inference over Encrypted Data
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+I-A Challenges in Hybrid Private Transformer Inference
+
+I-B Our Contribution
+
+I-C System Overview
+
+II Background and Threat Model
+
+II-A Cryptographic Preliminaries
+
+II-B CKKS Parameters
+
+II-C Threat Model
+
+II-D Transformer Model
+
+III Packing-Co-Designed FHE Kernels
+
+III-A Packing Model and Stage Compatibility
+
+III-A1 Stage Compatible Patterns
+
+III-B Plaintext–Ciphertext Projection Kernel
+
+III-C Ciphertext–Ciphertext Attention Kernels
+
+III-C1 Score Kernel
+
+III-C2 Value Kernel
+
+IV Communication-Efficient MPC Blocks
+
+IV-A MPC Fixed-point Primitives
+
+IV-B Protocols for Non-linear Layers
+
+IV-B1 MPC MBMax Protocol
+
+IV-B2 MPC MBLN Protocol
+
+IV-B3 GELU
+
+V Boundary Co-Design and Secure Conversion
+
+V-A Cost Model for Boundary Design
+
+V-A1 Baseline Conversions and Decision Rule
+
+V-A2 Parameterization
+
+V-B Complex Conversion Protocol
+
+V-B1 Complex CKKS-to-MPC Conversion
+
+V-B2 Complex MPC-to-CKKS Conversion
+
+V-B3 Security of Complex Conversion
+
+V-B4 Communication Overhead and Compatibility
+
+VI Experimental Setup
+
+VII Evaluation
+
+VII-A Microbenchmarks
+
+VII-A1 FHE Library Comparison
+
+VII-A2 Multiplicative Depth Sensitivity
+
+VII-A3 Conversion Protocol Comparison
+
+VII-B End-to-end Evaluation
+
+VII-B1 Latency and Communication
+
+VII-B2 Accuracy
+
+VII-C Hybrid vs. FHE-Only Paradigm Comparison
+
+VII-D Ablation Studies
+
+VII-D1 GELU Conversion Cost Analysis
+
+VII-D2 Contribution of Each Optimization
+
+VIII Related Work
+
+VIII-A FHE-only Secure Inference
+
+VIII-B MPC-only Secure Inference
+
+VIII-C Hybrid FHE–MPC Secure Inference
+
+IX Conclusion
+
+IX-A Limitations and Future Work
+
+References
+
+A Additional Details on FHE Kernels
+
+A-A Realization of Ciphertext Shifts
+
+A-B Plaintext–Ciphertext Projection Kernel
+
+A-B1 Plaintext Weights
+
+A-B2 Key-Switching Complexity
+
+A-B3 Special Fused Projection
+
+A-B4 How the SCP Rules Are Satisfied
+
+A-C Ciphertext–Ciphertext Attention Kernels
+
+A-C1 Score Kernel Packing
+
+A-C2 Value Kernel Packing
+
+A-C3 Score Kernel Block Phase Correction
+
+A-C4 Mask Construction
+
+A-C5 Key Switching Complexity
+
+A-C6 Why the KS Counts Differ from Powerformer
+
+B Protocols for GELU
+
+C Ring and Field Conversion
+
+C-A Field-to-ring conversion
+
+C-B Ring-to-field conversion
+
+C-C Security
+
+D Cost Analysis Model Discussion
+
+E MPC Round Count Comparison
+
+F Proof of Proposition 1
+
+G SCP Edge Analysis for All Models
+
+G-A Repacking Algorithm in the w/o SCP Ablation
+
+H Cost Model Validation Details
+
+H-A GELU Boundary Predictions
+
+H-B Liberate.FHE Decision Boundary
+
+I Total Communication Including Conversion Payload
+
+J Additional Generality Examples
+
+J-A 2-Layer CNN
+
+J-B 3-Layer MLP
+
+K Powerformer-Style Distillation
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.09975v1 [cs.CR] 11 Apr 2026
+
+EncFormer: Secure and Efficient Transformer Inference over Encrypted Data
+
+Yufan Zhu*
+
+  
+Chao Jin†
+
+  
+Khin Mi Mi Aung†
+
+  
+Xiaokui Xiao*
+††thanks: *National University of Singapore, Singapore.††thanks: †Agency for Science, Technology and Research (A*STAR), Singapore.
+
+Abstract
+
+Transformer inference in machine-learning-as-a-service (MLaaS) raises privacy concerns for sensitive user inputs. Prior secure solutions that combine fully homomorphic encryption (FHE) and secure multiparty computation (MPC) are bottlenecked by inefficient FHE kernels, communication-heavy MPC protocols, and expensive FHE–MPC conversions. We present EncFormer, a two-party private Transformer inference framework that introduces Stage Compatible Patterns so that FHE kernels compose efficiently, reducing repacking and conversions. EncFormer also provides a cost analysis model built around a minimal-conversion baseline, enabling principled selection of FHE–MPC boundaries. To further reduce communication, EncFormer proposes a secure complex CKKS–MPC conversion protocol and designs communication-efficient MPC protocols for nonlinearities. With GPU optimizations, evaluations on GPT- and BERT-style models show that EncFormer achieves 1.4–30.4 lower online MPC communication and 1.3–9.8 lower end-to-end latency against prior hybrid FHE–MPC systems, and 1.9–3.5 lower end-to-end latency on BERT-base than FHE-only pipelines under a matched backend, while maintaining near-plaintext accuracy on selected GLUE tasks.
+
+Index Terms: 
+private inference, homomorphic encryption, secure multiparty computation, transformer inference
+
+I Introduction
+
+Transformer models such as BERT [1] and GPT [2] are increasingly deployed through machine-learning-as-a-service platforms, where user inputs are processed by an untrusted model provider. Sensitive domains such as clinical NLP [3], legal text [4], biomedical mining [5], and financial compliance [6] amplify the risk, as both inputs and predictions may be confidential, and attacks such as membership inference [7] can extract private information from model access alone. Private inference based on fully homomorphic encryption (FHE) and secure multiparty computation (MPC) is a natural fit, but current Transformer pipelines remain expensive because their performance depends not only on the cryptographic primitive but also on how ciphertext layouts, conversion boundaries, and nonlinear protocols interact across the pipeline [8, 9, 10, 11, 12].
+
+Prior work on private Transformer inference follows three broad directions. FHE-only systems eliminate online interaction but pay heavily for deep ciphertext computation and, in many cases, bootstrapping [13, 11, 12]. MPC-only systems preserve accurate nonlinear computation but are dominated by repeated interaction on wide activations [14, 9]. Hybrid FHE–MPC systems balance these trade-offs by evaluating wide linear algebra under FHE and delegating nonlinear blocks to MPC, but they inherit a second design problem: every benefit from moving work across the boundary depends on whether the resulting packing can be consumed by the next stage and whether the added conversion cost is justified [15, 8, 16, 10].
+
+I-A Challenges in Hybrid Private Transformer Inference
+
+For hybrid pipelines, the main bottlenecks are no longer isolated to a single primitive. First, FHE kernel efficiency depends on packing compatibility across adjacent stages, because a locally efficient kernel can still lose its gain if its output must be repacked before the next FHE operation. Second, FHE–MPC conversion is expensive enough that boundary placement cannot be chosen by intuition alone: using a richer boundary representation may reduce MPC rounds, but only if the extra ciphertext payload and CKKS work are repaid by downstream savings. Third, secure conversion protocols in prior hybrid systems under-utilize CKKS complex slots by exporting only the real part, which increases boundary traffic even when the surrounding pipeline already uses complex packing.
+
+These observations suggest that private Transformer inference should be framed as a secure systems co-design problem rather than as a collection of independent optimizations. The system must expose a consistent cross-stage packing discipline, a secure and communication-efficient conversion protocol, and a boundary decision rule that explains when a non-minimal conversion layout is worthwhile.
+
+I-B Our Contribution
+
+We present EncFormer, a two-party hybrid FHE–MPC framework for private Transformer inference in the semi-honest model. The client holds the private input and CKKS secret key, the server holds the model, and the full protocol composes FHE kernels, secure conversion boundaries, and MPC nonlinear blocks. Our main thesis is that hybrid inference becomes more predictable when these components are co-designed around stage compatibility and boundary cost.
+
+We make three integrated contributions.
+
+•
+
+Packing-co-designed FHE kernels.
+We introduce Stage Compatible Patterns (SCP), which restrict the pipeline to three canonical packing formats and treat packing as a cross-stage contract. Guided by SCP, EncFormer designs a shared plaintext–ciphertext projection kernel and folded-diagonal ciphertext–ciphertext attention kernels whose outputs are directly consumable by downstream stages, avoiding ciphertext remaps between adjacent FHE kernels.
+
+•
+
+Boundary co-design and secure conversion.
+We introduce a secure complex CKKS–MPC conversion protocol that uses both the real and imaginary channels to carry two real vectors per ciphertext. While Powerformer uses complex numbers to fuse generic blockwise matrix permutations in its attention kernels, EncFormer instead exploits the diagonal and token-shift structure of attention to produce specialized packed layouts (folded-diagonal, head-major) that chain across stages via SCP. EncFormer also uses complex conversion at FHE–MPC boundaries to halve the conversion payload. We pair this with a calibrated decision rule for boundary placement under the validated PhantomFHE setting.
+
+•
+
+End-to-end secure inference pipeline.
+We implement EncFormer on GPUs for GPT2-base, BERT-base, and BERT-large, combining FHE linear kernels with communication-efficient MPC protocols for softmax, layer normalization, and GELU. Evaluations show that EncFormer reduces online communication by 30.4 vs. BOLT, 2.6 vs. BumbleBee, and 1.4 vs. BLB, while improving end-to-end latency by 9.8, 2.1, and 1.3 on average, respectively. EncFormer also outperforms FHE-only pipelines on BERT-base by 3.5 over THOR and 1.9 over Powerformer under a matched backend. On BERT-base, encrypted inference maintains near-plaintext accuracy on selected GLUE tasks (SST-2, MRPC, RTE). Section II-C gives the pipeline security proof; kernel derivations, backend-specific comparisons, and supporting analytical details appear in the appendix at the end of this paper.
+
+I-C System Overview
+
+Figure 1 summarizes one EncFormer encoder block. The server first applies a shared plaintext–ciphertext projection kernel to produce , , and in layouts chosen for their immediate consumers: and are emitted in the score-friendly segment order, while is emitted in head-major order. The score kernel exports minimal folded-diagonal ciphertexts across the CKKS–MPC boundary, where the MPC softmax block operates on secret shares and returns weights in the same boundary format. The value kernel consumes these weights directly, and the output projection absorbs the remaining layout adaptation through plaintext weight pre-permutation rather than ciphertext repacking. The feed-forward projections follow the same principle, while MPC is reserved for layer normalization and GELU. This organization is the structural basis for SCP, complex conversion, and the boundary cost analysis developed in the following sections.
+
+Fig. 1: EncFormer encoder block showing FHE kernels, MPC nonlinear blocks, and CKKS–MPC conversion boundaries.
+
+II Background and Threat Model
+
+II-A Cryptographic Preliminaries
+
+Fully Homomorphic Encryption.
+A public-key FHE scheme provides algorithms
+,
+,
+, and
+such that, for an arithmetic circuit ,
+
+The first line corresponds to exact schemes such as BFV and BGV. The second corresponds to approximate schemes such as CKKS, where captures approximation from encoding, decoding, and noise growth [17, 18, 19]. We use a leveled CKKS instantiation without bootstrapping, implemented on the GPU-accelerated libraries PhantomFHE [20] and Liberate.FHE [21]. We refer to [22, 23] for broader FHE background. The algorithm samples a public key for encryption, a secret key for decryption, and evaluation keys derived from the secret key. In RLWE-based FHE, typically includes relinearization keys to manage ciphertext growth after multiplication and Galois keys that enable SIMD slot permutations such as rotations and conjugation. The algorithm encodes and encrypts a plaintext into a ciphertext, applies additions, multiplications, and slot permutations directly on ciphertexts using only public evaluation material, and recovers the plaintext result [24, 18, 25].
+
+Secure Multiparty Computation.
+Secure multiparty computation allows parties to jointly evaluate a function over private inputs while revealing only the prescribed outputs. We use two-party arithmetic secret sharing over and represent real values in fixed point with scale , where is the fractional bit-width and is the ring bit-width. Linear maps are computed locally on shares. To multiply shared values, we use Beaver triples with  [26]. Given shared and shared , the parties open and , then obtain a sharing of the product by setting and computing
+
+where the public term is incorporated into one party’s share. For fixed-point arithmetic, multiplying two -scaled values produces a value at scale , so we apply an interactive secure truncation protocol that right shifts by bits to return to scale . This yields an online phase with one interaction round per multiplication depth and communication proportional to circuit size, as in SPDZ-style protocols [27]. In the semi-honest model, security is captured by the real/ideal paradigm [28, 29].
+
+In EncFormer, we use a hybrid FHE–MPC setting. CKKS provides SIMD-style approximate arithmetic on vectors packed into ciphertext slots, supporting ciphertext addition, ciphertext/plaintext multiplication, ciphertext/ciphertext multiplication, rotations, and conjugation [19]. We adopt CKKS because Transformer inference is dominated by real-valued linear algebra and already operates in finite precision, so it tolerates small approximation error. This choice is consistent with prior hybrid FHE–MPC Transformer systems [15, 8, 10, 30]. CKKS’s scale-and-rescale workflow matches the way Transformer layers accumulate depth through chained linear maps, and its SIMD packing over complex slots enables batching and reduces ciphertext count for matrix workloads. We exploit complex packing inside our FHE kernels with SCP and at FHE–MPC conversion boundaries. For nonlinear layers, we use the MPC building blocks above. The resulting latency is sensitive to the number of rounds and the amount of data crossing each MPC boundary, which is why boundary design matters as much as primitive selection in a hybrid pipeline.
+
+II-B CKKS Parameters
+
+We instantiate FHE with the RNS–CKKS scheme of Cheon et al. [19], which supports approximate arithmetic on vectors packed into ciphertext slots. CKKS operates over the cyclotomic ring for power-of-two , and packs complex slots via an approximate encoding map. Figure 2 illustrates the residue number system (RNS) representation and how computation proceeds across the modulus chain. In its RNS form, the ciphertext modulus is represented as a product of machine-word primes , and polynomial coefficients are stored and processed as residues modulo each , enabling efficient NTT-based arithmetic and scale management across the chain.
+
+Fig. 2: Illustration of RNS–CKKS, showing the residue representation and the modulus-chain progression under rescaling.
+
+Practical deployments fix a modulus chain and a target scale sized for multiplicative depth . Let denote the remaining ciphertext modulus at level . A ciphertext–ciphertext multiplication inflates the scale by roughly a factor of and is followed by , which maps the ciphertext modulus from to by dividing by and restores the scale to approximately . After multiplication–rescale steps, the remaining modulus is . Ciphertext size and remaining multiplicative depth both depend on the active level of this chain, so boundary-conversion cost depends not only on tensor shape but also on the CKKS parameters at the conversion point. Our cost model therefore treats ciphertext size as a function of the ring degree and the remaining RNS limbs.
+
+II-C Threat Model
+
+We consider the standard two-party private inference setting with a client and a server . The client provides the private input and learns the inference output; the server provides the model. We assume semi-honest adversaries: both parties follow the protocol but may try to infer additional information from the transcript. As in prior hybrid systems, the model architecture is known to both parties [31, 32, 16, 8, 10].
+
+Key Distribution.
+Following prior hybrid systems [32, 8, 10, 16], the client generates the CKKS key material and sends to the server, while retaining the secret key locally. This is the standard key-distribution pattern in two-party hybrid inference [32, 8, 10]: the client holds the secret key so that decryption occurs only on the client side, and the server never observes plaintext activations. During CKKS-to-MPC conversion, the client decrypts only one-time-padded ciphertexts, so the plaintext observed by either party is statistically or computationally protected by the underlying conversion protocol.
+
+The inference protocol is organized as a sequence of components , where each is a CKKS evaluation block, an MPC block over , or an FHE–MPC conversion boundary. Every intermediate value is represented either as a CKKS ciphertext under the secret key or as additive secret shares held by the two parties.
+
+Theorem 1 (Pipeline Security).
+
+If CKKS is semantically secure and the MPC protocols and complex conversion protocols are secure in the semi-honest threat model, then securely realizes the ideal inference functionality in the semi-honest model.
+
+Proof.
+
+Fix a party for .
+Let denote its real-execution view and the prescribed client output.
+We construct a simulator such that
+.
+Each component is secure by assumption, so it admits a simulator producing a transcript indistinguishable from the real one: for CKKS blocks this follows from semantic security, for MPC blocks from semi-honest MPC security, and for conversion boundaries from Section V. The global simulator composes these component simulators in order. A standard hybrid argument over (where replaces the first transcripts with simulated ones) yields , showing that the composed protocol leaks nothing beyond the prescribed output.
+∎
+
+II-D Transformer Model
+
+The Transformer is a sequence model built around self-attention, replacing recurrence and convolution with token–token interactions that can be computed in parallel [33]. For a sequence of length with hidden size and activations , the attention sublayer forms , , and with . With heads of width , write for the th head slices. A compact head computation is
+
+The multi-head output concatenates all heads and applies an output projection ,
+
+This is followed by a position-wise feed-forward sublayer using , with residual connections and layer normalization throughout [33]. Figure 3 shows the reference architecture used in this work.
+
+BERT is an encoder-only Transformer that stacks identical layers to build bidirectional context [1]. We evaluate BERT-base with , , intermediate size , and , and BERT-large with , , intermediate size , and , where both have . We also evaluate GPT2-base, a decoder-only Transformer with causal self-attention [2], which matches BERT-base in , , , and intermediate size. These dimensions determine the packing sizes, boundary tensor shapes, and kernel schedules used in the later sections.
+
+Fig. 3: Reference Transformer architecture used in this work, highlighting attention, feed-forward layers, and the output head.
+
+III Packing-Co-Designed FHE Kernels
+
+This section presents the FHE side of EncFormer. We first define the packing notation and CKKS primitives used by the kernels, then introduce Stage Compatible Patterns (SCP) as the cross-stage layout discipline, and finally describe the shared projection kernel and the ciphertext–ciphertext attention kernels.
+
+A key computational characteristic of the Transformer architecture is the attention block in Section II-D, whose runtime is dominated by large linear projections and matrix multiplications. Following prior hybrid Transformer systems [15, 8, 30, 16, 10], EncFormer evaluates these linear components under FHE.
+
+III-A Packing Model and Stage Compatibility
+
+Let denote the number of slots in one CKKS ciphertext.
+We partition the slots into contiguous segments, each containing slots, so that .
+We write bold lowercase letters for slot vectors in .
+For a vector , we denote its CKKS encryption by .
+For , we use and for elementwise addition and multiplication, and for complex conjugation.
+Let denote the cyclic left shift of by positions, where and indices are taken modulo .
+
+TABLE I: Homomorphic operations on CKKS ciphertexts.
+
+primitive
+add
+ptmul
+ctmul
+rot
+conj
+
+Inputs
+
+Output
+
+To express segment structure, let be a slot vector and index slots by a within-segment coordinate and a segment coordinate .
+Define the reshape operator by
+
+and let be its inverse that stacks columns back into a length vector.
+Thus and for any .
+
+Ciphertext transformation operations.
+Following the transformation notation of Jiang et al. [34], for we define a segment shift and an intra-segment shift by
+
+These shifts induce permutations on slot vectors,
+
+On ciphertexts, we apply the corresponding slot permutations and write
+and .
+Intuitively, shifts by whole segments and can be realized as , while shifts within each length segment.
+Concrete realizations can be found in Appendix A.1.
+When only the first segments are active and wrap-around is required within the active region, we use the restricted segment rotation , also detailed in Appendix A.1. When an object is represented by multiple ciphertext blocks, we write
+.
+We overload and to act elementwise on lists.
+
+Minimal and expanded packings.
+Let be a real-valued vector with logical scalar entries, where excludes repetitions introduced for broadcasting, alignment, or interleaving. Under complex packing, each slot stores two independent real scalars, one in the real part and one in the imaginary part.
+The natural lower bound on ciphertext count is
+
+A packing of into ciphertexts is information-preserving if it stores all entries without loss.
+A packing is minimal if it is information-preserving and attains , and expanded if it is information-preserving but uses .
+Figure 4 illustrates the distinction on an example.
+
+Fig. 4: Packing comparison for a matrix with slots per ciphertext. Minimal packing uses ciphertext, whereas expanded packing uses more than ciphertexts.
+
+III-A1 Stage Compatible Patterns
+
+A hybrid FHE–MPC pipeline has two sources of avoidable overhead. First, adjacent FHE kernels may use incompatible packings, forcing an expensive ciphertext remap between them. Second, FHE–MPC boundaries may use more ciphertexts than necessary, inflating conversion communication. Stage Compatible Patterns address both problems through three rules applied to a canonical packing family .
+
+Each FHE kernel declares which format it accepts and which it produces. The three SCP rules are:
+
+1.
+
+FHEFHE. The producer outputs in the format the consumer expects, so no repacking is needed.
+
+2.
+
+MPCFHE. Data returning from MPC enters the next FHE kernel in minimal packing.
+
+3.
+
+FHEMPC. Data leaving an FHE kernel for MPC is exported in minimal packing.
+
+Rule 1 eliminates FHE-side repacking. Rules 2 and 3 minimize the number of ciphertexts at each conversion boundary, directly reducing communication. The quantitative impact of Rules 2 and 3 on boundary cost is analyzed in Section V.
+
+Proposition 1 (Stage Compatible Patterns).
+
+Under the kernel interfaces of EncFormer, SCP achieves (i) zero FHE remap stages on all edges, and (ii) minimal ciphertext count at every FHE–MPC boundary. Violating Rule 1 on an FHE–FHE edge incurs extra rotations per ciphertext [25]. Violating Rules 2 or 3 increases boundary conversion count beyond . The proof is in Appendix F.
+
+III-B Plaintext–Ciphertext Projection Kernel
+
+For plaintext–ciphertext multiplication, we use a shared kernel for linear projections , which instantiates a CKKS plaintext–ciphertext matrix multiplication under segment-column packing using standard baby-step-giant-step (BSGS) optimization [35, 8] and complex-packing optimizations [12].
+
+Let and .
+A CKKS ciphertext has slots, viewed as contiguous segments of length via
+.
+We activate the first segments so one ciphertext packs columns.
+We group input channels into ciphertexts and output channels into
+ciphertexts.
+
+For each , we encrypt such that segment stores the length- column .
+For each , the output ciphertext stores columns
+in the same layout.
+Projection weights are encoded as CKKS plaintext vectors as detailed in Appendix A.2.
+We pre-permute plaintext weight columns so each projection emits the order consumed by its downstream kernel directly: and use the score-friendly segment order, while uses the value-friendly head-major order.
+
+Complex pairs compression.
+We pack two real input groups into one complex ciphertext by setting and, for each , defining the complexified input as
+
+We call this packing operation complexification and call the reverse operation decomplexification.
+
+BSGS optimization.
+Choose and set .
+Let denote a segment cyclic shift within the first active segments.
+For each and define .
+For each output block and giant index we accumulate a ciphertext
+
+We then decomplexify each giant-step accumulator by extracting its real part, and combine the partial sums with segment shifts to obtain :
+
+Appendix A.2 also describes an optional shortcut that fuses two projections that share the same input.
+The projection kernel satisfies SCP Rule 1 because it outputs in the segment-column packing consumed by the score kernel, and Rule 2 because MPC-produced inputs are imported into CKKS in minimal packing and consumed directly as .
+
+III-C Ciphertext–Ciphertext Attention Kernels
+
+Transformer attention is head-separable and exhibits a token-shift reuse pattern that we exploit to reduce key-switching operations relative to generic ciphertext–ciphertext matrix multiplication. For each head , we compute the score matrix with a score kernel and the attention output with a value kernel, where is the post-softmax attention matrix.
+
+Both kernels reuse the same small sets of segment shifts and intra-segment shifts on each ciphertext block, so we precompute rotation banks to avoid redundant key-switching operations.
+For block with input , let be the required segment and intra-segment offsets.
+We precompute
+
+When only the first segments are active, we use so that wrap-around stays within the active region.
+The inner loops then use bank lookups with ptmul, add, and ctmul, and all rotations occur only during bank construction.
+
+III-C1 Score Kernel
+
+Inputs are and in segment-column packing, where
+and
+encrypt and .
+The output is a folded-diagonal ciphertext list . Folded-diagonal packing compresses two attention diagonals into one ciphertext: for each head , define the cyclic diagonal vector at offset as
+
+The offset pair is stored by placing their diagonals into the real and imaginary parts of a single vector:
+
+We assign one length- segment per head inside each ciphertext, with heads stacked across segments, and place different values of across ciphertext blocks. Figure 5 illustrates this layout in the kernel procedures.
+
+Choose and set with even. We compute each folded-diagonal pair by reusing a fixed set of intra-segment shifts on and .
+For each , write with
+and .
+Pairing matches folded-diagonal packing, so each is produced by one complex multiply
+between a shift and a complexified pair of shifts.
+
+For each ciphertext block , we precompute a bank over the offsets
+
+where the negative shift aligns the row index with the diagonal offset in the inner product.
+We also precompute two banks over the offsets
+
+This yields
+
+Using these banks, we form one folded-diagonal pair per ,
+
+Finally, we aggregate the active segments into the first head segments and align the intra-segment offset.
+Let be disjoint binary segment masks, where keeps exactly the -th active segment.
+This produces in folded-diagonal packing,
+
+When , different ciphertext blocks start at different head-phase offsets, requiring a block-dependent phase correction before combining. Mask construction and the full phase-correction procedure are given in Appendix A.3; the equations above describe the core accumulation without this correction for clarity.
+
+III-C2 Value Kernel
+
+Let be the number of heads packed in one value ciphertext block and let
+.
+The CKKS inputs are the folded-diagonal softmax ciphertext list
+
+and the value ciphertext list
+
+Each value ciphertext uses head-major packing: segment
+stores for
+and .
+Thus, the channels of each local head are contiguous, and different heads occupy disjoint blocks of segments.
+The output is the head-major ciphertext list
+
+which encodes .
+The subsequent output projection absorbs the head-major-to-segment-column conversion by pre-permuting its plaintext weight columns, as detailed in Appendix A.2, so no explicit FHE remap is needed.
+
+For each block , we reuse two banks.
+First, we complexify the value block and build a bank over token offsets:
+
+Second, let be the binary segment mask that keeps exactly channel offset across the local heads in one block (Appendix A.3).
+For each , we align and broadcast the folded-diagonal weights by
+
+The block output is then
+
+Each remains in head-major layout, and the output projection consumes this list directly via plaintext weight pre-permutation.
+
+Putting it together.
+The score kernel consumes the segment-column packed and from the projection kernel (SCP Rule 1) and exports the scores into ciphertexts in minimal folded-diagonal packing at the FHE–MPC boundary (Rule 3). The internal per- representation is repacked into a sequential minimal stream before conversion; see Appendix A.3.
+The MPC softmax block receives this stream, converts it to additive shares via the CKKS-to-MPC protocol, evaluates the MBMax softmax surrogate securely, and converts the result back to CKKS in minimal folded-diagonal packing ( ciphertexts, Rule 2).
+The value kernel then combines the folded-diagonal softmax list with the head-major value list without FHE-side repacking, and outputs , which the output projection consumes directly through pre-permuted weight columns (Rule 1).
+This keeps the MPC–FHE boundary at minimal ciphertext count while moving the broadcast into the FHE kernel where it composes cleanly with the value layout.
+Figure 5 illustrates both attention kernels on a toy instance.
+The top row shows the score kernel producing folded-diagonal score ciphertexts that are exported to MPC for softmax, and the bottom row shows the value kernel consuming the folded-diagonal softmax ciphertext list together with the head-major value ciphertext list to output the head-major ciphertext list encoding .
+
+Fig. 5:
+Toy example of the attention kernels with , , , and slots.
+Each ciphertext contains segments.
+The top half shows the score kernel from segment-packed and to folded-diagonal , followed by MPC softmax that returns encrypted folded-diagonal in minimal packing.
+The bottom half shows the value kernel from folded-diagonal and head-major to the head-major output .
+(1) and (4) show the matrix view.
+(2), (3), and (5) illustrate the procedure at the slot level.
+
+Table II reports the key-switching counts of our attention kernels for BERT-base and compares them against prior work. The EncFormer counts are measured from the implementation; the BOLT, Powerformer, and BLB counts are analytically derived from their published algorithms under the same tensor shapes (, , , ). Rather than summing rotations and ciphertext multiplications directly, the table also reports a weighted primitive-cost proxy in seconds using measured PhantomFHE A100 primitive latencies ( ms,  ms; Section VII-C). Appendix A.3 provides the asymptotic derivations.
+
+TABLE II: Key-switching counts and weighted cost proxy for BERT-base attention (). Proxy:  s (PhantomFHE A100, Table VI).
+
+#rot
+#mul
+proxy (s)
+#rot
+#mul
+proxy (s)
+
+BOLT [8]
+13824
+1536
+36.1
+21420
+768
+51.7
+
+Powerformer [12]
+4392
+768
+12.2
+4882
+1536
+15.4
+
+BLB [10]
+512
+768
+3.2
+824
+1536
+6.0
+
+EncFormer
+630
+448
+2.6
+1524
+384
+4.6
+
+IV Communication-Efficient MPC Blocks
+
+IV-A MPC Fixed-point Primitives
+
+All MPC computation uses fixed-point arithmetic over with additive shares .
+Real values are encoded with public fractional precision as ,
+and all public constants and polynomial coefficients use the same scale.
+Table III summarizes the MPC primitives used throughout.
+We denote secure fixed-point multiplication by , with truncation back to scale .
+
+TABLE III: MPC fixed-point primitives over with scale .
+
+Primitive
+Inputs
+Output
+
+where
+
+where
+
+,
+  
+
+,
+  
+
+IV-B Protocols for Non-linear Layers
+
+The nonlinear approximation functions for Softmax and LayerNorm follow Powerformer [12], and the GELU piecewise approximation follows BOLT [8]. Our contribution is the MPC protocol realization of these approximations. By expressing the batch nonlinearities as short chains of MPC primitives, EncFormer uses 7 interactive MPC rounds per layer: 3 for MBMax (Softmax), 4 for GELU, and 0 for MBLN, since it reduces to local operations on additive shares. Appendix E compares these counts against prior systems.
+
+IV-B1 MPC MBMax Protocol
+
+We replace Softmax with the Batch Power-Max approximation from Powerformer using a power map and a fixed public normalizer.
+A single public constant is distilled offline and reused during inference together with the public shift and exponent .
+The approximation is
+
+(1)
+
+applied elementwise.
+Algorithm 1 realizes MBMax as a secure MPC protocol using a short multiplication chain and a final multiplication by the public fixed point constant .
+
+Algorithm 1 Secure MBMax
+
+1:
+
+hold for at scale , public scalars and
+
+2:
+
+obtain where applied elementwise
+
+3:
+
+4:
+
+5:
+
+6:
+
+7:
+
+8:
+
+Output
+
+IV-B2 MPC MBLN Protocol
+
+We adopt the Batch LayerNorm approximation from Powerformer, which replaces variance-dependent normalization with a fixed public scale.
+For a row ,
+
+(2)
+
+We fold the constant scale into so that MBLN reduces to computing the row mean, centering the row, and applying a public elementwise affine map, which Algorithm 2 realizes as a secure MPC protocol.
+
+Algorithm 2 Secure MBLN
+
+1:
+
+hold for at scale ,
+public with
+
+2:
+
+obtain where each row satisfies
+
+3:
+
+4:
+
+5:
+
+6:
+
+7:
+
+Output
+
+IV-B3 GELU
+
+We evaluate GELU using the piecewise approximation and secure selection protocol from BOLT [8], following the standard hybrid split used by BLB [10].
+Concretely, CKKS forms the two candidate ciphertexts and , and MPC selects among using and .
+This requires converting both and , which increases the inbound conversion count for the GELU block; full protocol details are given in Appendix B.
+
+V Boundary Co-Design and Secure Conversion
+
+In EncFormer, boundary design is part of the system architecture rather than a post-processing detail. We therefore pair a cost model for boundary placement with a secure complex CKKS–MPC conversion protocol that reduces payload while preserving compatibility with real-valued MPC blocks.
+
+V-A Cost Model for Boundary Design
+
+Conversion overhead grows with the number of CKKS–MPC conversion pairs and with the total ciphertext payload converted at the FHE–MPC boundaries.
+Both factors depend on the boundary packing and on CKKS parameters that determine the ciphertext size.
+
+Fix a hybrid inference decomposition with MPC blocks indexed by .
+Block consumes a complex-valued boundary tensor and produces a complex-valued boundary tensor .
+A hybrid design chooses a packing for every and and specifies where conversions occur.
+
+V-A1 Baseline Conversions and Decision Rule
+
+We define the minimal-conversion baseline design by two properties.
+First, performs exactly one entry conversion CKKSMPC and one exit conversion MPCCKKS for each MPC block, and performs no other conversions.
+Therefore, uses exactly conversion pairs, which is the minimum possible for a fixed set of MPC blocks.
+Second, uses minimal packing, defined in Section III-A, at every boundary tensor so that each and is represented using exactly ciphertexts.
+In a standard Transformer encoder layer, the nonlinearities consist of the attention softmax, two layer normalizations, and the feed-forward GELU activation (Figure 1).
+Accordingly, we decompose each layer into MPC blocks (Softmax, LN1, GELU, LN2), so the baseline uses exactly four FHEMPC conversion pairs per layer.
+
+However, deviating from can still be beneficial because expanded packings or additional conversions can reduce CKKS-side or MPC-side work by enabling layouts and kernels with fewer key-switched operations.
+These choices increase conversion overhead by increasing either the number of conversion pairs or the number of ciphertexts converted. Prior works do not provide an analytic criterion for when a non-minimal conversion strategy is worthwhile.
+We model this trade-off explicitly and use it to decide when moving away from is worthwhile.
+Figure 6 summarizes the design space.
+
+Fig. 6:
+Architecture comparison for hybrid inference.
+(1) Prior layerwise hybrid pipeline with expanded packing.
+(2) Component view of a plaintext–ciphertext projection kernel.
+(3) Minimal baseline using minimal packing at conversions.
+(4) EncFormer pre-evaluates GELU polynomials in CKKS with expanded boundary packing for lower MPC cost.
+
+We write end-to-end latency as
+
+(3)
+
+We treat as the aggregate boundary-conversion latency induced by the chosen conversion placement and boundary packing.
+Thus captures both the number of conversion pairs in design and the total ciphertext payload converted at the boundaries.
+
+Let denote the minimal-conversion baseline and a candidate design.
+Define
+
+We prefer if
+
+(4)
+
+This condition states that any increase in conversion overhead under is acceptable only when it is more than offset by a reduction in CKKS-side and MPC-side latency, resulting in a net decrease in end-to-end latency.
+
+V-A2 Parameterization
+
+We parameterize and in terms of CKKS parameters, network profile, the total CKKS compute time difference , and MPC round savings.
+Let denote the additional ciphertexts converted beyond the baseline, the additional conversion round-trips, the serialized ciphertext size for ring degree with RNS limbs, and , the network bandwidth and round-trip time.
+Then
+
+(5)
+
+(6)
+
+where is the total CKKS compute time saved by relative to (positive when reduces FHE work), is the number of MPC rounds saved, and is the MPC communication per round in bytes.
+The per-round communication depends on the MPC backend: for Beaver-triple multiplication on elements with ring bit-width , .
+
+Eqs. (5)–(6) can be used to estimate the sign of and guide boundary placement. We treat them as a screening tool rather than a precise predictor, since and are measured under specific deployment conditions. Appendices D and H provide further discussion and validation details.
+
+V-B Complex Conversion Protocol
+
+Prior CKKS–MPC conversions in hybrid systems [36, 10] use only the real part of each CKKS ciphertext, leaving the imaginary part unused.
+
+At an FHE–MPC boundary, we convert between a CKKS ciphertext at scale and MPC
+additive shares over .
+We represent boundary values in a fixed point so that decryption and decoding yield a slot vector
+where fit in the signed range of
+.
+Following BLB [10], we sample randomness directly in the polynomial ring modulo the coefficient modulus and then apply the CKKS encoding map, rather than sampling real numbers and encoding them. We write for the CKKS ciphertext space with ring degree and modulus and we set
+at the boundary.
+
+V-B1 Complex CKKS-to-MPC Conversion
+
+Let be the ciphertext modulus at the boundary.
+Given from that encrypts an encoding of , the conversion
+outputs ring shares and .
+masks the boundary plaintext by sampling a uniform and sending
+for decryption, so decrypts a uniformly masked plaintext-ring
+element.
+Protocol in Algorithm 3 realizes this conversion.
+
+Algorithm 3 Complex CKKS-to-MPC Conversion
+
+1:
+
+holds at scale
+
+2:
+
+, outputs and
+
+3:
+
+sample uniformly, send
+
+4:
+
+  
+to , and set
+
+5:
+
+  
+
+6:
+
+decrypt to get
+
+7:
+
+  
+
+8:
+
+invoke
+
+9:
+
+  
+
+10:
+
+decode
+
+11:
+
+  
+and output
+
+12:
+
+  
+and
+
+The two plaintext shares in Steps 1 and 2 reconstruct the unmasked boundary plaintext modulo because
+where
+.
+By correctness of in Appendix C, Step 3 preserves the same signed fixed
+point plaintext in except with negligible statistical error.
+CKKS decoding is a linear map from the plaintext ring to the slot space, so decoding each additive plaintext share locally in
+Step 4 yields additive shares of the decoded vector.
+Therefore, the outputs reconstruct up to the standard CKKS decoding error.
+If the per-slot decoding error is below in both real and imaginary parts at the boundary scale, rounding recovers
+the intended integers in .
+We empirically verify this condition on PhantomFHE (, scale , 40-bit body primes): the maximum per-slot absolute error after one encrypt–decode round-trip is , well below .
+
+V-B2 Complex MPC-to-CKKS Conversion
+
+Given ring shares and , the conversion outputs a CKKS ciphertext
+at scale that decrypts and decodes to a value close to .
+We mirror prior real-only conversions by locally encoding the two share vectors as plaintext ring shares and then
+switching these plaintext shares from to using
+.
+Protocol in Algorithm 4 realizes this conversion by
+encrypting one plaintext share and adding the other plaintext share locally.
+
+Algorithm 4 Complex MPC-to-CKKS Conversion
+
+1:
+
+MPC shares and scale with boundary modulus
+
+2:
+
+outputs at scale
+
+3:
+
+center lift to
+
+4:
+
+  
+and encode
+
+5:
+
+  
+
+6:
+
+invoke
+
+7:
+
+  
+
+8:
+
+encrypt and send
+
+9:
+
+  
+to
+
+10:
+
+output
+
+11:
+
+  
+
+By construction, the two encoded plaintext shares in Step 1 add to an encoding of under the
+signed fixed point interpretation in .
+By correctness of in Appendix C, Step 2 converts these plaintext shares to
+while preserving their sum modulo except with negligible statistical error.
+After Step 4, the ciphertext encrypts the sum of the two plaintext shares, so decryption and decoding recover
+up to the standard CKKS decoding error.
+If the per-slot decoding error is below in both parts at the boundary scale, a subsequent CKKS-to-MPC conversion
+recovers the intended integers in under rounding.
+
+V-B3 Security of Complex Conversion
+
+We consider semi-honest adversaries.
+In , receives a masked ciphertext and decrypts a plaintext that is uniform in
+because is uniform and unknown to , so the decryption result is
+statistically independent of the encoded message.
+In , receives only a CKKS ciphertext encrypting ’s plaintext share, which
+reveals no information by semantic security, and then adds its own plaintext share locally.
+By composition, if and are secure, then the conversion
+protocols leak nothing beyond their prescribed outputs and public parameters.
+
+V-B4 Communication Overhead and Compatibility
+
+A CKKS ciphertext has complex slots, corresponding to real values across the real and imaginary parts.
+A real-only conversion exports a single part and therefore transmits one ciphertext per real vector per direction.
+Our complex conversion exports both parts so one ciphertext carries two independent real vectors, reducing the number of
+ciphertexts transmitted per direction from to for real vectors.
+The conversion outputs two real share vectors, so existing MPC protocols for real-valued nonlinearities apply by
+processing the two parts independently.
+For pipelines that otherwise treat CKKS ciphertexts as real, boundary-level complexify/decomplexify wrappers convert two real
+ciphertexts into one complex ciphertext and back. Section VII-A shows that their overhead is small relative to the communication savings.
+
+Table IV compares analytically derived ciphertext counts per MPC block for the theoretical minimal baseline, prior hybrid systems, and EncFormer. Prior papers do not report boundary payload in bytes, so we compare at the level of ciphertext counts under a common tensor shape and slot budget. Overall, EncFormer reduces conversion ciphertext count by 25% relative to BOLT and by 57% relative to BLB, while still allowing an intentionally expanded GELU boundary when the PhantomFHE decision rule predicts a net latency win.
+
+TABLE IV: Ciphertext conversion counts per MPC block ().
+
+MPC Blocks
+
+Method
+Softmax
+
+Within
+Softmax
+
+LN1
+GELU
+LN2
+Total
+
+in
+out
+in
+out
+in
+out
+in
+out
+in
+out
+–
+
+Minimal
+6
+6
+–
+–
+3
+3
+12
+12
+3
+3
+48
+
+BOLT
+12
+12
+–
+–
+6
+6
+24
+24
+6
+6
+96
+
+BLB
+12
+12
+12
+12
+6
+6
+72
+24
+6
+6
+168
+
+EncFormer
+6
+6
+–
+–
+3
+3
+36
+12
+3
+3
+72
+
+Relationship to Complex FHE Packing.
+BOLT and BLB use real-only conversion at FHE–MPC boundaries, transmitting one ciphertext per real vector [8, 10]. Powerformer uses complex packing inside its FHE kernels to halve key-switching counts via a generic blockwise CCMM [12, 34], but its output remains in column packing throughout.
+
+EncFormer differs in two ways. First, the attention kernels are not generic CCMM reductions but exploit the diagonal structure of and the token-shift structure of to produce specialized folded-diagonal and head-major output formats that chain across stages via SCP without repacking. Second, EncFormer uses complex packing at FHE–MPC boundaries, packing two real boundary tensors into one complex ciphertext and halving conversion payload. This boundary-level use is absent from Powerformer’s FHE-only pipeline.
+
+Modulus Trimming Optimization.
+CKKS-to-MPC conversion payload depends on the serialized ciphertext size, which scales with the remaining modulus chain.
+Ciphertexts should arrive at the boundary at the shortest admissible modulus level, since no further CKKS multiplications are needed.
+If a ciphertext reaches the boundary at a higher level, can modulus switch it down before running
+to reduce transmitted payload and improve in
+Eq. (3).
+This optimization applies only to CKKS-to-MPC conversion since MPC-to-CKKS outputs must retain sufficient modulus for
+subsequent CKKS evaluation.
+
+Let be the target conversion level and set . We choose as the smallest level that keeps conversion statistically safe:
+
+repeatedly applies (which removes the last RNS prime without rescaling) until reaching , then runs unchanged. This reduces only the transmission size; the MPC ring size and ring-to-field conversion cost are unaffected.
+
+VI Experimental Setup
+
+We implement the main EncFormer pipeline with PhantomFHE for CKKS and EzPC/SCI [37, 38] for MPC. The supporting matched-backend comparison uses Liberate.FHE and CrypTen [39]. All FHE kernels run on NVIDIA A100 GPUs. MPC values use fixed-point encoding with fractional bits over with . Table V lists the CKKS parameters per FHE block, chosen so that the modulus chain is close to minimal at each conversion boundary.
+
+TABLE V: CKKS parameterization per FHE block.
+
+Block 1
+Block 2
+Block 3
+Block 4
+
+32768
+32768
+32768
+65536
+
+Depth
+10
+7
+6
+4
+
+Scale
+
+Following [8, 16, 10], we evaluate GPT2-base, BERT-base, and BERT-large. For accuracy, we use the GLUE tasks MRPC, RTE, and SST-2 [40]. We start from public Hugging Face checkpoints [41], fine-tune them following Powerformer-style training, and distill surrogate parameters for encrypted inference; training details are given in Appendix J.
+
+Unless otherwise specified, we report four standard network profiles: LAN at 1 Gbps with 0.3 ms RTT, WAN1 at 400 Mbps with 4 ms RTT, WAN2 at 100 Mbps with 4 ms RTT, and WAN3 at 100 Mbps with 80 ms RTT.
+
+Latency Methodology.
+All FHE kernel and MPC local computation times are measured on a single A100 GPU, reported as the mean of three independent trials after one warm-up iteration. LAN and WAN latencies are computed by adding measured local compute time to a network overlay derived from measured byte counts and round counts under each profile, following the same methodology as prior work [8, 10, 16].
+
+Baseline Sources.
+The baseline metrics for prior systems are taken from the corresponding papers under their stated experimental settings [8, 16, 10, 11, 12].
+When a paper does not directly report a particular aggregate but provides a complete protocol specification, we derive the missing quantity by counting operations under the same tensor shapes. For example, the BOLT and BLB entries in Table IV are obtained by analyzing their reported MPC protocols and boundary ciphertext dimensions.
+
+VII Evaluation
+
+VII-A Microbenchmarks
+
+VII-A1 FHE Library Comparison
+
+To contextualize the runtimes reported in Section VII-B, we benchmark the two GPU CKKS backends used in this paper, PhantomFHE [20] and Liberate.FHE [21], under a common parameter set.
+Table VI reports the latency of core CKKS primitives, where PhantomFHE is on average about an order of magnitude faster than Liberate.FHE, consistent with prior library comparisons [42].
+PhantomFHE does not support bootstrapping, while Liberate.FHE does, which is why FHE-only baselines that require bootstrapping are evaluated under Liberate.FHE in Table X.
+
+TABLE VI: CKKS primitive latency (ms) on A100 GPU (, depth 16).
+
+Library
+add
+pt mul
+ct mul
+rot
+conj
+
+PhantomFHE
+0.07
+0.36
+2.65
+2.32
+2.33
+
+Liberate.FHE
+3.04
+13.72
+48.66
+32.70
+22.73
+
+VII-A2 Multiplicative Depth Sensitivity
+
+Figure 7 shows that CKKS primitive latency increases with multiplicative depth for both libraries, with higher and more variable latency for Liberate.FHE.
+This supports our design choice to keep FHE depth low and refresh via FHE–MPC conversions.
+
+Fig. 7: CKKS primitive latency vs. multiplicative depth for PhantomFHE and Liberate.FHE.
+
+VII-A3 Conversion Protocol Comparison
+
+We benchmark CKKS–MPC conversion for two real-valued ciphertexts under four standard network profiles.
+The real baseline protocol [36, 8, 10] converts the ciphertexts independently and transmits two ciphertexts per direction.
+Our complex variant packs the two vectors into the real and imaginary parts of one ciphertext and transmits one ciphertext per direction. We report end-to-end conversion latency, including CKKS-side complexification and decomplexification overhead, and network delay.
+The total payload per conversion pair is 20.97 MB for Real, 10.49 MB for Complex, and 6.41 MB for Complex plus trimming.
+Table VII reports latency and speedup across networks.
+
+TABLE VII: CKKS–MPC conversion latency under standard network profiles. , depth 8.
+
+Network
+LAN
+WAN1
+WAN2
+WAN3
+
+Real Time (ms)
+168.97
+435.43
+1693.72
+1997.72
+
+Complex Time (ms)
+85.39
+218.62
+847.76
+999.76
+
+Complex + Trim Time (ms)
+51.88
+131.69
+508.57
+599.62
+
+Speedup
+1.98
+1.99
+2.00
+2.00
+
++ Trim Speedup
+3.26
+3.31
+3.33
+3.33
+
+The nearly reduction confirms that the complex protocol halves boundary communication, while trimming provides additional gain when the ciphertext reaches the boundary with excess modulus.
+
+VII-B End-to-end Evaluation
+
+VII-B1 Latency and Communication
+
+Our main evaluation uses the PhantomFHE+EzPC pipeline and reports end-to-end latency together with online MPC communication. Section VII-C compares the hybrid and FHE-only paradigms under a matched backend.
+
+TABLE VIII: End-to-end latency (min). Prior-system numbers from their papers.
+
+Model
+Framework
+LAN
+WAN1
+WAN2
+WAN3
+Comm (GB)
+
+GPT2-base
+
+BOLT
+7.6
+12.4
+31.8
+51.6
+34.8
+
+BumbleBee
+2.9
+3.5
+4.9
+12.0
+2.5
+
+BLB
+2.0
+2.5
+3.9
+8.1
+1.5
+
+EncFormer
+1.6
+2.0
+3.2
+6.0
+1.0
+
+BERT-base
+
+BOLT
+15.5
+18.5
+77.9
+122.7
+63.6
+
+BumbleBee
+4.3
+6.2
+11.6
+21.3
+5.8
+
+BLB
+2.5
+3.8
+6.6
+13.2
+3.0
+
+EncFormer
+2.1
+2.9
+4.6
+8.9
+2.2
+
+BERT-large
+
+BOLT
+43.8
+49.3
+208.2
+260.6
+158.9
+
+BumbleBee
+9.7
+15.6
+30.8
+49.2
+15.2
+
+BLB
+6.6
+9.8
+16.2
+24.9
+7.8
+
+EncFormer
+5.3
+7.4
+12.8
+20.6
+5.8
+
+Following prior work [8, 16, 10], the Comm column reports only the online communication of the interactive MBMax and GELU protocols, excluding FHE–MPC conversion payload. We report boundary-conversion effects separately through Table IV; the latency columns include all costs, including conversion. The total communication including conversion payload is approximately the online-only figure for EncFormer under BERT-base; comparable multipliers apply to the baselines, as detailed in Appendix H. The relative ranking is preserved under total communication.
+
+EncFormer achieves the lowest latency and online MPC communication across all three models. Relative to BLB, EncFormer is 1.3 faster on average while sending 1.4 less online MPC traffic. Relative to BumbleBee and BOLT, the corresponding average latency and communication gains are 2.1/2.6 and 9.8/30.4, respectively. Section VII-C provides a matched-backend comparison that controls for library differences.
+
+For context, plaintext inference on a single A100 GPU takes approximately 4.5 ms for BERT-base, 9.1 ms for BERT-large, and 4.2 ms for GPT2-base. The secure pipeline is roughly slower, which is consistent with the overhead reported by prior hybrid systems [8, 16, 10].
+
+VII-B2 Accuracy
+
+Table IX compares encrypted inference against a public uncased baseline (standard BERT with exact softmax, LayerNorm, and GELU) and a fine-tuned teacher that uses the same MBMax, MBLN, and approximate GELU surrogates as the encrypted pipeline. The uncased baseline is higher because it uses exact nonlinearities. The small gap of 0.25–0.35% between the teacher and EncFormer shows that the FHE+MPC execution itself introduces minimal quality loss, and that the remaining accuracy drop is due to the surrogate approximations, not the encrypted computation.
+
+TABLE IX: Accuracy (and F1 for MRPC) on selected GLUE tasks.
+
+Task
+#Val
+
+Uncased
+baseline
+
+Fine-tuned
+teacher
+
+EncFormer
+
+w.r.t.
+uncased
+
+w.r.t.
+teacher
+
+SST-2
+872
+92.43%
+92.13%
+91.78%
+
+MRPC (acc)
+408
+87.75%
+87.01%
+86.76%
+
+MRPC (F1)
+408
+91.17%
+90.82%
+90.34%
+
+RTE
+277
+72.56%
+69.43%
+70.03%
+
+VII-C Hybrid vs. FHE-Only Paradigm Comparison
+
+A natural question is whether the hybrid FHE–MPC approach is worthwhile compared to FHE-only pipelines that avoid interaction entirely. To answer this, we implement EncFormer with Liberate.FHE and CrypTen so that the comparison uses the same FHE backend and nonlinear approximations as the FHE-only baselines THOR and Powerformer.
+
+Table X shows the layer-wise breakdown. FHE-only systems offer a cleaner non-interactive solution with no communication during inference. However, if the deployment permits lightweight client–server interaction, the hybrid approach is substantially more efficient. Under LAN, eliminating bootstrapping yields a 3.5 speedup over THOR and 1.9 over Powerformer. The advantage narrows under WAN as MPC round-trip costs grow, so practitioners should choose based on their network conditions.
+
+Even comparing only FHE linear components, EncFormer is faster. For BERT-base, the FHE linear time per layer is 172.6 s for EncFormer versus 229.4 s for THOR and 230.9 s for Powerformer, thanks to SCP eliminating repacking and shallower depth reducing per-operation cost, as shown in Figure 7.
+
+TABLE X: Layer-wise latency (s) on BERT-base (Liberate.FHE + CrypTen).
+
+Operation
+THOR
+
+Power
+former
+
+Ours
+(LAN)
+
+Ours
+(WAN1)
+
+Ours
+(WAN2)
+
+Ours
+(WAN3)
+
+Attention layer
+49.77
+57.65
+40.54
+40.54
+40.54
+40.54
+
+Attention score
+32.53
+28.76
+31.10
+31.10
+31.10
+31.10
+
+Softmax
+15.53
+0.75
+1.88
+2.89
+4.43
+8.52
+
+Multi-head attention
+48.06
+41.49
+38.16
+38.16
+38.16
+38.16
+
+LayerNorm1
+7.13
+0.37
+0.98
+1.23
+1.50
+3.45
+
+FC1
+49.80
+59.21
+32.50
+32.50
+32.50
+32.50
+
+GELU
+29.42
+8.31
+3.38
+6.24
+14.64
+29.98
+
+FC2
+49.19
+43.77
+30.27
+30.27
+30.27
+30.27
+
+LayerNorm2
+4.10
+0.30
+0.92
+1.22
+1.57
+3.70
+
+Bootstrappings
+337.86
+103.72
+0
+0
+0
+0
+
+Total
+623.39
+344.33
+179.73
+184.15
+194.71
+218.22
+
+VII-D Ablation Studies
+
+VII-D1 GELU Conversion Cost Analysis
+
+We study the inbound CKKS–MPC boundary of the GELU block and compare two pipeline variants that differ only in where the GELU polynomials are evaluated. In the minimal baseline, the pipeline converts only the GELU input tensor into MPC using minimal packing, evaluates the polynomial candidates in MPC, and then applies and .
+In EncFormer’s CKKS pre-evaluation variant, we evaluate the polynomial candidates, and , in CKKS and convert together with the candidates into MPC, so that MPC performs only and . Appendix B describes the details of the two versions of GELU protocol adopted by EncFormer.
+
+Figure 8 reports the end-to-end latency difference between CKKS pre-evaluation and the baseline for BERT-base and BERT-large, decomposed into the added conversion overhead and the computation change under our cost model.
+With PhantomFHE, the MPC cost reduction dominates on WAN1–WAN3, making CKKS pre-evaluation preferable under the decision rule in Eq. (4), while the net change on LAN is small, we use expanded packing for our main implementation pipeline.
+With the alternative Liberate.FHE implementation, however, CKKS pre-evaluation incurs substantially higher CKKS-side cost, so the net improvement is no longer robust across network profiles.
+Since the deployment network may be unknown a priori, we therefore adopt the no CKKS pre-evaluation GELU split for the results in Table X.
+
+Fig. 8: GELU latency deltas between EncFormer and the minimal baseline, decomposed into computation savings and conversion overhead.
+
+VII-D2 Contribution of Each Optimization
+
+Table XI compares EncFormer against BLB and two internal variants. In w/o CC, we disable complex conversion and remove GELU pre-evaluation. In w/o SCP, we keep the same kernels but force additional repacking between FHE stages. The comparison shows that EncFormer’s gains come from lower online MPC traffic, fewer interactive rounds, and the elimination of cross-stage FHE remaps.
+
+Without SCP, ciphertext repacking is needed at three direct FHE–FHE edges per layer: QKVScore, QKVValue, and ValueOUT. Each edge remaps ciphertext blocks via the Halevi–Shoup slot-permutation decomposition [25], requiring rotations per block; see Appendix G.1 for details. For BERT-base with and total blocks across the three edges, this gives extra rotations per layer, or  ms  s per layer, totalling 4.7 s over 12 layers. The observed w/o SCP gap is about 12 s, which is larger because the realized remap also includes masking multiplications and recombination additions. The nearly constant slowdown across network profiles confirms that SCP primarily reduces FHE compute rather than communication.
+
+TABLE XI: Ablation of EncFormer components against BLB.
+
+Model
+Framework
+LAN
+WAN1
+WAN2
+WAN3
+Comm (GB)
+
+GPT2-base
+
+Baseline
+2.0
+2.5
+3.9
+8.1
+1.5
+
+w/o CC
+1.8
+2.3
+3.6
+7.4
+1.3
+
+w/o SCP
+1.8
+2.2
+3.4
+6.2
+1.0
+
+EncFormer
+1.6
+2.0
+3.2
+6.0
+1.0
+
+BERT-base
+
+Baseline
+2.5
+3.8
+6.6
+13.2
+3.0
+
+w/o CC
+2.3
+3.5
+6.0
+11.4
+2.7
+
+w/o SCP
+2.3
+3.1
+4.9
+9.2
+2.2
+
+EncFormer
+2.1
+2.9
+4.6
+8.9
+2.2
+
+BERT-large
+
+Baseline
+6.6
+9.8
+16.2
+24.9
+7.8
+
+w/o CC
+6.3
+9.2
+15.4
+23.6
+7.3
+
+w/o SCP
+6.1
+8.2
+13.6
+21.4
+5.8
+
+EncFormer
+5.3
+7.4
+12.8
+20.6
+5.8
+
+VIII Related Work
+
+We group prior secure machine learning inference systems into three categories: FHE-only, MPC-only, and hybrid FHE–MPC pipelines.
+
+VIII-A FHE-only Secure Inference
+
+CryptoNets pioneered end-to-end leveled-FHE inference by replacing nonlinearities with low-degree polynomials [43]. CHET [44] automates layout selection for CNN inference under FHE. For Transformers, THE-X systematizes polynomial approximations for softmax, layer normalization, and GELU to enable non-interactive BERT inference [13]. CipherFormer [45] extends this to GPT-2 with CKKS packing optimizations. NEXUS [30], THOR [11], and Powerformer [12] further reduce overhead via CKKS-friendly packing, compression, and rotation-efficient attention schedules. A recent survey [46] provides a comprehensive overview of private Transformer inference techniques.
+
+FHE-only inference is non-interactive, but it is constrained by expensive ciphertext key-switching operations such as rotations and relinearization. It also often requires deep multiplicative depth with long modulus chains or heavy bootstrapping.
+
+VIII-B MPC-only Secure Inference
+
+MPC-only systems evaluate the full model on secret shares, using arithmetic protocols for linear layers and specialized sub-protocols for nonlinear operations. SecureML [47], MiniONN [48], ABY [49], and CryptFlow [50] established practical CNN inference with fixed-point arithmetic and mixed-protocol execution. Falcon [51] and XONN [52] explore three-party and binary-circuit alternatives.
+
+For Transformers and LLMs, MPCFormer [53] and follow-on two-party systems co-design efficient protocols for attention, including softmax, GELU, and layer normalization, to scale to large hidden sizes and vocabularies [54, 55, 56, 14, 9, 57, 58]. MPC-only inference requires frequent interaction, so latency and bandwidth can become the bottleneck for deep models and wide activations.
+
+VIII-C Hybrid FHE–MPC Secure Inference
+
+Hybrid systems typically execute wide linear algebra under FHE and delegate nonlinearities and selected reductions to MPC.
+Gazelle [32] introduced this split for CNNs, while Delphi [59] and Cheetah [31] improved latency through automated partitioning and optimized FHE and MPC building blocks.
+For Transformers, Iron [15] applies the split to BERT, BOLT [8] improves packing and conversion to avoid bootstrapping while preserving high-accuracy nonlinearities, BumbleBee [16] further optimizes hybrid execution with communication-efficient protocols and GPU-accelerated kernels, and BLB [10] reduces boundary overhead via finer-grained operator fusion and fewer FHE–MPC conversions.
+Hybrid pipelines balance ciphertext computation with interactive protocols, but they can inherit the overhead of both and are often dominated by additional FHE–MPC conversion costs at the boundaries.
+
+IX Conclusion
+
+We presented EncFormer, a two-party hybrid FHE–MPC framework for private Transformer inference that frames packing, conversion, and nonlinear execution as a single co-design problem. EncFormer uses Stage Compatible Patterns to keep adjacent FHE kernels layout-compatible, a secure complex CKKS–MPC conversion to reduce boundary payload, and a calibrated PhantomFHE decision rule to choose beneficial expanded boundaries.
+
+This design reduces online communication and end-to-end latency across GPT2-base, BERT-base, and BERT-large relative to prior hybrid systems, with average gains of 30.4/9.8 against BOLT, 2.6/2.1 against BumbleBee, and 1.4/1.3 against BLB (communication/latency), while also outperforming FHE-only pipelines on BERT-base under a matched backend. On BERT-base, encrypted inference maintains near-plaintext accuracy on selected GLUE tasks. The broader lesson is that hybrid private inference should be designed around stage compatibility and boundary economics, not primitive choice alone.
+
+IX-A Limitations and Future Work
+
+Like prior systems that rely on surrogate nonlinearities [11, 12, 10], EncFormer still requires task-specific distillation. Extending the framework to settings with less task-specific retraining, stronger malicious-security guarantees, or richer backend-aware boundary models remains important future work.
+
+References
+
+[1]
+J. Devlin, M. Chang, K. Lee, and K. Toutanova (2019)
+
+BERT: pre-training of deep bidirectional transformers for language understanding.
+
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers),
+
+Minneapolis, Minnesota, pp. 4171–4186.
+
+External Links: Document
+
+Cited by: §I,
+§II-D.
+
+[2]
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever (2019)
+
+Language models are unsupervised multitask learners.
+
+Note: Technical report, OpenAI
+
+External Links: Link
+
+Cited by: §I,
+§II-D.
+
+[3]
+K. Huang, J. Altosaar, and R. Ranganath (2019)
+
+ClinicalBERT: modeling clinical notes and predicting hospital readmission.
+
+ArXiv abs/1904.05342.
+
+External Links: Link
+
+Cited by: §I.
+
+[4]
+I. Chalkidis, M. Fergadiotis, P. Malakasiotis, N. Aletras, and I. Androutsopoulos (2020)
+
+LEGAL-BERT: the muppets straight out of law school.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2020, T. Cohn, Y. He, and Y. Liu (Eds.),
+
+Online, pp. 2898–2904.
+
+External Links: Document,
+Link
+
+Cited by: §I.
+
+[5]
+J. Lee, W. Yoon, S. Kim, D. Kim, S. Kim, C. H. So, and J. Kang (2019)
+
+BioBERT: a pre-trained biomedical language representation model for biomedical text mining.
+
+Bioinformatics 36 (4), pp. 1234–1240.
+
+External Links: Document,
+ISSN 1367-4803,
+Link,
+https://academic.oup.com/bioinformatics/article-pdf/36/4/1234/48983216/bioinformatics_36_4_1234.pdf
+
+Cited by: §I.
+
+[6]
+X. Yang, C. Zhang, Y. Sun, K. Pang, L. Jing, S. Wa, and C. Lv (2023)
+
+FinChain-BERT: a high-accuracy automatic fraud detection model based on NLP methods for financial scenarios.
+
+Information 14 (9).
+
+External Links: Document,
+ISSN 2078-2489,
+Link
+
+Cited by: §I.
+
+[7]
+R. Shokri, M. Stronati, C. Song, and V. Shmatikov (2017)
+
+Membership inference attacks against machine learning models.
+
+In 2017 IEEE Symposium on Security and Privacy (SP),
+
+Vol. , pp. 3–18.
+
+External Links: Document
+
+Cited by: §I.
+
+[8]
+Q. Pang, J. Zhu, H. Möllering, W. Zheng, and T. Schneider (2024)
+
+BOLT: privacy-preserving, accurate and efficient inference for transformers.
+
+In IEEE Symposium on Security and Privacy (SP 2024),
+
+San Francisco, CA, USA, pp. 4753–4771.
+
+External Links: Document
+
+Cited by: Appendix B,
+Appendix B,
+Appendix C,
+§I,
+§I,
+§II-A,
+§II-C,
+§II-C,
+§III-B,
+TABLE II,
+§III,
+§IV-B3,
+§IV-B,
+§V-B4,
+§VI,
+§VI,
+§VI,
+§VII-A3,
+§VII-B1,
+§VII-B1,
+§VIII-C.
+
+[9]
+A. Y. L. Kei and S. S. M. Chow (2025)
+
+SHAFT: secure, handy, accurate, and fast transformer inference.
+
+In Network and Distributed System Security Symposium (NDSS),
+
+Cited by: §I,
+§I,
+§VIII-B.
+
+[10]
+T. Xu, W. Lu, J. Yu, Y. Chen, C. Lin, R. Wang, and M. Li (2025)
+
+Breaking the layer barrier: remodeling private transformer inference with hybrid CKKS and MPC.
+
+In Proceedings of the 34th USENIX Conference on Security Symposium,
+
+USA.
+
+External Links: ISBN 978-1-939133-52-6
+
+Cited by: Appendix C,
+§I,
+§I,
+§II-A,
+§II-C,
+§II-C,
+TABLE II,
+§III,
+§IV-B3,
+§V-B4,
+§V-B,
+§V-B,
+§VI,
+§VI,
+§VI,
+§VII-A3,
+§VII-B1,
+§VII-B1,
+§VIII-C,
+§IX-A.
+
+[11]
+J. Moon, D. Yoo, X. Jiang, and M. Kim (2025)
+
+THOR: secure transformer inference with homomorphic encryption.
+
+In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security (CCS ’25),
+
+pp. 392–410.
+
+External Links: Document
+
+Cited by: §I,
+§I,
+§VI,
+§VIII-A,
+§IX-A.
+
+[12]
+D. Park, E. Lee, and J. Lee (2025)
+
+Powerformer: efficient and high-accuracy privacy-preserving language model with homomorphic encryption.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+Vienna, Austria, pp. 11090–11111.
+
+External Links: Document,
+Link
+
+Cited by: §A-C6,
+Appendix K,
+§I,
+§I,
+§III-B,
+TABLE II,
+§IV-B,
+§V-B4,
+§VI,
+§VIII-A,
+§IX-A.
+
+[13]
+T. Chen, H. Bao, S. Huang, L. Dong, B. Jiao, D. Jiang, H. Zhou, J. Li, and F. Wei (2022)
+
+THE-X: privacy-preserving transformer inference with homomorphic encryption.
+
+In Findings of the Association for Computational Linguistics: ACL 2022, S. Muresan, P. Nakov, and A. Villavicencio (Eds.),
+
+Dublin, Ireland, pp. 3510–3520.
+
+External Links: Document,
+Link
+
+Cited by: §I,
+§VIII-A.
+
+[14]
+J. Luo, Y. Zhang, Z. Zhang, J. Zhang, X. Mu, H. Wang, Y. Yu, and Z. Xu (2024)
+
+SecFormer: fast and accurate privacy-preserving inference for transformer models via SMPC.
+
+In Findings of the Association for Computational Linguistics (ACL 2024), L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+Bangkok, Thailand, pp. 13333–13348.
+
+External Links: Document,
+Link
+
+Cited by: §I,
+§VIII-B.
+
+[15]
+M. Hao, H. Li, H. Chen, P. Xing, G. Xu, and T. Zhang (2022)
+
+Iron: private inference on transformers.
+
+In Advances in Neural Information Processing Systems, S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.),
+
+Vol. 35, pp. 15718–15731.
+
+External Links: Link
+
+Cited by: §I,
+§II-A,
+§III,
+§VIII-C.
+
+[16]
+W. Lu, Z. Huang, Z. Gu, J. Li, J. Liu, C. Hong, K. Ren, T. Wei, and W. Chen (2025)
+
+BumbleBee: secure two-party inference framework for large transformers.
+
+In Network and Distributed System Security (NDSS) Symposium 2025,
+
+San Diego, CA, USA.
+
+External Links: Document,
+ISBN 979-8-9894372-8-3,
+Link
+
+Cited by: Appendix E,
+§I,
+§II-C,
+§II-C,
+§III,
+§VI,
+§VI,
+§VI,
+§VII-B1,
+§VII-B1,
+§VIII-C.
+
+[17]
+J. Fan and F. Vercauteren (2012)
+
+Somewhat practical fully homomorphic encryption.
+
+IACR Cryptology ePrint Archive 2012, pp. 144.
+
+External Links: Link
+
+Cited by: §II-A.
+
+[18]
+Z. Brakerski, C. Gentry, and V. Vaikuntanathan (2012)
+
+Leveled fully homomorphic encryption without bootstrapping.
+
+In Proceedings of the 3rd Innovations in Theoretical Computer Science Conference,
+
+pp. 309–325.
+
+External Links: Document
+
+Cited by: §II-A.
+
+[19]
+J. H. Cheon, A. Kim, M. Kim, and Y. Song (2017)
+
+Homomorphic encryption for arithmetic of approximate numbers.
+
+In Advances in Cryptology – ASIACRYPT 2017,
+
+Lecture Notes in Computer Science, Vol. 10624, pp. 409–437.
+
+External Links: Document
+
+Cited by: §II-A,
+§II-A,
+§II-B.
+
+[20]
+H. Yang, S. Shen, W. Dai, L. Zhou, Z. Liu, and Y. Zhao (2024)
+
+Phantom: A CUDA-accelerated word-wise homomorphic encryption library.
+
+IEEE Trans. Dependable Secur. Comput. 21 (5), pp. 4895–4906.
+
+External Links: Document,
+Link
+
+Cited by: §II-A,
+§VII-A1.
+
+[21]
+DESILO (2023)
+
+Liberate.FHE: A New FHE Library for Bridging the Gap between Theory and Practice with a Focus on Performance and Accuracy.
+
+Note: Accessed 2025-09-17https://github.com/Desilo/liberate-fhe
+
+Cited by: §II-A,
+§VII-A1.
+
+[22]
+(2023)
+
+Microsoft SEAL (release 4.1).
+
+Note: Microsoft Research, Redmond, WA.https://github.com/Microsoft/SEAL
+
+Cited by: §II-A.
+
+[23]
+M. Zheng, Q. Lou, and L. Jiang (2023)
+
+Primer: fast private transformer inference on encrypted data.
+
+In 2023 60th ACM/IEEE Design Automation Conference (DAC),
+
+Vol. , pp. 1–6.
+
+External Links: Document
+
+Cited by: §II-A.
+
+[24]
+C. Gentry and S. Halevi (2010)
+
+Implementing gentry’s fully-homomorphic encryption scheme.
+
+Note: Cryptology ePrint Archive, Paper 2010/520
+
+External Links: Link
+
+Cited by: §II-A.
+
+[25]
+S. Halevi and V. Shoup (2014)
+
+Algorithms in helib.
+
+In Advances in Cryptology – CRYPTO 2014,
+
+pp. 554–571.
+
+External Links: Document
+
+Cited by: Appendix F,
+§G-A,
+§II-A,
+§VII-D2,
+Proposition 1.
+
+[26]
+D. Beaver (1992)
+
+Efficient multiparty protocols using circuit randomization.
+
+In Advances in Cryptology — CRYPTO ’91, J. Feigenbaum (Ed.),
+
+Berlin, Heidelberg, pp. 420–432.
+
+External Links: ISBN 978-3-540-46766-3
+
+Cited by: §II-A.
+
+[27]
+I. Damgård, V. Pastro, N. P. Smart, and S. Zakarias (2012)
+
+Multiparty computation from somewhat homomorphic encryption.
+
+In Advances in Cryptology – CRYPTO 2012,
+
+Lecture Notes in Computer Science, Vol. 7417, pp. 643–662.
+
+External Links: Document
+
+Cited by: §II-A.
+
+[28]
+A. C.-C. Yao (1986)
+
+How to generate and exchange secrets.
+
+In 27th Annual Symposium on Foundations of Computer Science (FOCS),
+
+pp. 162–167.
+
+External Links: Document
+
+Cited by: §II-A.
+
+[29]
+O. Goldreich, S. Micali, and A. Wigderson (1987)
+
+How to play any mental game.
+
+In Proceedings of the 19th Annual ACM Symposium on Theory of Computing (STOC),
+
+pp. 218–229.
+
+External Links: Document
+
+Cited by: §II-A.
+
+[30]
+J. Zhang, X. Yang, L. He, K. Chen, W. Lu, Y. Wang, X. Hou, J. Liu, K. Ren, and X. Yang (2025)
+
+Secure transformer inference made non-interactive.
+
+In 32nd Annual Network and Distributed System Security Symposium (NDSS 2025),
+
+External Links: Link
+
+Cited by: §II-A,
+§III,
+§VIII-A.
+
+[31]
+Z. Huang, W. Lu, C. Hong, and J. Ding (2022)
+
+Cheetah: lean and fast secure Two-Party deep neural network inference.
+
+In 31st USENIX Security Symposium (USENIX Security 22),
+
+Boston, MA, pp. 809–826.
+
+External Links: ISBN 978-1-939133-31-1,
+Link
+
+Cited by: §II-C,
+§VIII-C.
+
+[32]
+C. Juvekar, V. Vaikuntanathan, and A. Chandrakasan (2018)
+
+GAZELLE: a low latency framework for secure neural network inference.
+
+In 27th USENIX Security Symposium (USENIX Security 18),
+
+Baltimore, MD, pp. 1651–1669.
+
+External Links: ISBN 978-1-939133-04-5,
+Link
+
+Cited by: §II-C,
+§II-C,
+§VIII-C.
+
+[33]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+
+Attention is all you need.
+
+In Advances in Neural Information Processing Systems, I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.),
+
+Vol. 30, pp. .
+
+External Links: Link
+
+Cited by: §II-D,
+§II-D.
+
+[34]
+X. Jiang, M. Kim, K. Lauter, and Y. Song (2018)
+
+Secure outsourced matrix computation and application to neural networks.
+
+In Proceedings of the 2018 ACM SIGSAC Conference on Computer and Communications Security,
+
+CCS ’18, New York, NY, USA, pp. 1209–1222.
+
+External Links: Document,
+ISBN 9781450356930,
+Link
+
+Cited by: §A-A,
+§III-A,
+§V-B4.
+
+[35]
+T. Xu, L. Wu, R. Wang, and M. Li (2024)
+
+PrivCirNet: efficient private inference via block circulant transformation.
+
+In Proceedings of the 38th International Conference on Neural Information Processing Systems,
+
+NIPS ’24, Red Hook, NY, USA.
+
+External Links: ISBN 9798331314385
+
+Cited by: §III-B.
+
+[36]
+F. Boemer, R. Cammarota, D. Demmler, T. Schneider, and H. Yalame (2020)
+
+MP2ML: a mixed-protocol machine learning framework for private inference.
+
+In Proceedings of the 2020 Workshop on Privacy-Preserving Machine Learning in Practice,
+
+PPMLP’20, New York, NY, USA, pp. 43–45.
+
+External Links: ISBN 9781450380881,
+Link,
+Document
+
+Cited by: §V-B,
+§VII-A3.
+
+[37]
+N. Chandran, D. Gupta, A. Rastogi, R. Sharma, and S. Tripathi (2019)
+
+EzPC: programmable and efficient secure two-party computation for machine learning.
+
+In IEEE European Symposium on Security and Privacy (EuroS&P),
+
+pp. 496–511.
+
+External Links: Document
+
+Cited by: §VI.
+
+[38]
+D. Rathee, M. Rathee, N. Kumar, N. Chandran, D. Gupta, A. Rastogi, and R. Sharma (2020)
+
+CrypTFlow2: practical 2-party secure inference.
+
+In Proceedings of the 2020 ACM SIGSAC Conference on Computer and Communications Security (CCS),
+
+pp. 325–342.
+
+External Links: Document
+
+Cited by: §VI.
+
+[39]
+B. Knott, S. Venkataraman, A. Hannun, S. Sengupta, M. Ibrahim, and L. van der Maaten (2021)
+
+CRYPTEN: secure multi-party computation meets machine learning.
+
+In Proceedings of the 35th International Conference on Neural Information Processing Systems,
+
+NIPS ’21, Red Hook, NY, USA.
+
+External Links: ISBN 9781713845393
+
+Cited by: §VI.
+
+[40]
+A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. Bowman (2018)
+
+GLUE: a multi-task benchmark and analysis platform for natural language understanding.
+
+In Proceedings of the 2018 EMNLP Workshop BlackboxNLP: Analyzing and Interpreting Neural Networks for NLP, T. Linzen, G. Chrupała, and A. Alishahi (Eds.),
+
+Brussels, Belgium, pp. 353–355.
+
+External Links: Link,
+Document
+
+Cited by: §VI.
+
+[41]
+Hugging Face (2026)
+
+Transformers.
+
+Note: https://huggingface.co/Accessed: 2026-01-26
+
+Cited by: §VI.
+
+[42]
+C. Agulló-Domingo, Ó. Vera-López, S. Guzelhan, L. Daksha, A. E. Jerari, K. Shivdikar, R. Agrawal, D. Kaeli, A. Joshi, and J. L. Abellán (2025)
+
+FIDESlib: a fully-fledged open-source FHE library for efficient CKKS on GPUs.
+
+In 2025 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS),
+
+Vol. , pp. 1–3.
+
+External Links: Document
+
+Cited by: §VII-A1.
+
+[43]
+R. Gilad-Bachrach, N. Dowlin, K. Laine, K. Lauter, M. Naehrig, and J. Wernsing (2016)
+
+CryptoNets: applying neural networks to encrypted data with high throughput and accuracy.
+
+In Proceedings of The 33rd International Conference on Machine Learning, M. F. Balcan and K. Q. Weinberger (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 48, New York, New York, USA, pp. 201–210.
+
+External Links: Link
+
+Cited by: §VIII-A.
+
+[44]
+R. Dathathri, O. Saarikivi, H. Chen, K. Laine, K. Lauter, S. Maleki, M. Musuvathi, and T. Mytkowicz (2019)
+
+CHET: an optimizing compiler for fully-homomorphic neural-network inferencing.
+
+In Proceedings of the 40th ACM SIGPLAN Conference on Programming Language Design and Implementation,
+
+PLDI 2019, New York, NY, USA, pp. 142–156.
+
+External Links: Document,
+ISBN 9781450367127,
+Link
+
+Cited by: §VIII-A.
+
+[45]
+W. Wang and Y. Kuang (2024)
+
+CipherFormer: efficient transformer private inference with low round complexity.
+
+In 2024 27th International Conference on Computer Supported Cooperative Work in Design (CSCWD),
+
+Vol. , pp. 3054–3059.
+
+External Links: Document
+
+Cited by: §VIII-A.
+
+[46]
+Y. Li, X. Zhou, Y. Wang, L. Qian, and J. Zhao (2025)
+
+Private transformer inference in mlaas: a survey.
+
+arXiv preprint arXiv:2505.10315.
+
+External Links: Document
+
+Cited by: §VIII-A.
+
+[47]
+P. Mohassel and Y. Zhang (2017)
+
+SecureML: a system for scalable privacy-preserving machine learning.
+
+In 2017 IEEE Symposium on Security and Privacy (SP),
+
+Vol. , pp. 19–38.
+
+External Links: Document
+
+Cited by: §VIII-B.
+
+[48]
+J. Liu, M. Juuti, Y. Lu, and N. Asokan (2017)
+
+MiniONN: enabling secureinference with minimal latency.
+
+In Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (CCS),
+
+pp. 119–133.
+
+Cited by: §VIII-B.
+
+[49]
+D. Demmler, T. Schneider, and M. Zohner (2015)
+
+ABY — a framework for efficient mixed-protocol secure two-party computation.
+
+In Network and Distributed System Security Symposium (NDSS),
+
+External Links: Link
+
+Cited by: §VIII-B.
+
+[50]
+N. Kumar, M. Rathee, N. Chandran, D. Gupta, A. Rastogi, and R. Sharma (2020)
+
+CrypTFlow: secure TensorFlow inference.
+
+In 2020 IEEE Symposium on Security and Privacy (SP),
+
+Vol. , pp. 336–353.
+
+External Links: Document
+
+Cited by: §VIII-B.
+
+[51]
+S. Wagh, S. Tople, F. Benhamouda, E. Kushilevitz, P. Mittal, and T. Rabin (2021)
+
+FALCON: honest-majority maliciously secure framework for private deep learning.
+
+Proceedings on Privacy Enhancing Technologies (PETS) 2021 (2), pp. 188–208.
+
+Cited by: §VIII-B.
+
+[52]
+M. S. Riazi, M. Samragh, H. Chen, K. Laine, K. Lauter, and F. Koushanfar (2019)
+
+XONN: XNOR-based oblivious deep neural network inference.
+
+In 28th USENIX Security Symposium (USENIX Security 19),
+
+Santa Clara, CA, pp. 1501–1518.
+
+External Links: ISBN 978-1-939133-04-5,
+Link
+
+Cited by: §VIII-B.
+
+[53]
+D. Li, H. Wang, R. Shao, H. Guo, E. Xing, and H. Zhang (2023)
+
+MPCFormer: fast, performant and private transformer inference with MPC.
+
+In The Eleventh International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §VIII-B.
+
+[54]
+X. Hou, J. Liu, J. Li, Y. Li, W. Lu, C. Hong, and K. Ren (2023)
+
+CipherGPT: secure two-party GPT inference.
+
+IACR Cryptol. ePrint Arch., pp. 1147.
+
+Cited by: §VIII-B.
+
+[55]
+Y. Dong, W. Lu, Y. Zheng, H. Wu, D. Zhao, J. Tan, Z. Huang, C. Hong, T. Wei, W. Chen, and J. Zhou (2025)
+
+PUMA: secure inference of LLaMA-7B in five minutes.
+
+Security and Safety 4, pp. 2025014.
+
+Note: Published online 23 Oct 2025
+
+External Links: Document,
+Link
+
+Cited by: §VIII-B.
+
+[56]
+C. Zeng, D. He, Q. Feng, X. Yang, and Q. Luo (2024)
+
+SecureGPT: a framework for multi-party privacy-preserving transformer inference in GPT.
+
+IEEE Transactions on Information Forensics and Security 19 (), pp. 9480–9493.
+
+External Links: Document
+
+Cited by: §VIII-B.
+
+[57]
+K. Gupta, N. Jawalkar, A. Mukherjee, N. Chandran, D. Gupta, A. Panwar, and R. Sharma (2024)
+
+SIGMA: secure GPT inference with function secret sharing.
+
+Proceedings on Privacy Enhancing Technologies 2024 (4), pp. 61–79.
+
+Note: Artifact available
+
+External Links: Document,
+Link
+
+Cited by: §VIII-B.
+
+[58]
+H. Huang and Y. Wang (2024)
+
+SecBERT: privacy-preserving pre-training based neural network inference system.
+
+Neural Netw. 172 (C).
+
+External Links: Document,
+ISSN 0893-6080,
+Link
+
+Cited by: §VIII-B.
+
+[59]
+P. Mishra, R. Lehmkuhl, A. Srinivasan, W. Zheng, and R. A. Popa (2020)
+
+Delphi: a cryptographic inference service for neural networks.
+
+In 29th USENIX Security Symposium (USENIX Security 20),
+
+pp. 2505–2522.
+
+External Links: ISBN 978-1-939133-17-5,
+Link
+
+Cited by: §VIII-C.
+
+[60]
+D. Rathee, M. Rathee, R. K. Kiran Goli, D. Gupta, R. Sharma, N. Chandran, and A. Rastogi (2021)
+
+SiRnn: a math library for secure RNN inference.
+
+In 2021 IEEE Symposium on Security and Privacy (SP),
+
+Vol. , pp. 1003–1020.
+
+External Links: Document
+
+Cited by: Appendix C.
+
+Appendix A Additional Details on FHE Kernels
+
+A-A Realization of Ciphertext Shifts
+
+We use the ciphertext shift idea of Jiang et al. [34] and instantiate it under our segment-stacked packing. Under this packing, logical shifts translate into CKKS rotations together with masks, so their cost depends on both rotation distance and the number of masked terms. Algorithms 5 and 6 provide the FHE realizations of the inter-segment shift and the intra-segment shift , respectively.
+
+Algorithm 5 FHE realization of
+
+1:
+
+encrypts with , shift
+
+2:
+
+ciphertext encrypting
+
+3:
+
+Output
+
+Algorithm 6 FHE realization of
+
+1:
+
+encrypts with , shift
+
+2:
+
+ciphertext encrypting
+
+3:
+
+4:
+
+5:
+
+Define by
+
+6:
+
+  
+
+7:
+
+8:
+
+Output
+
+Several kernels also require cyclic wrap-around within only the first slots, while keeping slots unchanged at zero. For a shift amount , we use two binary masks and to split the first slots into the portion that remains in place and the portion that wraps around. Concretely, we set
+
+Algorithm 7 realizes this restricted rotation using two CKKS rotations followed by masking and addition.
+
+Algorithm 7 FHE realization of
+
+1:
+
+encrypts , integers ,
+
+2:
+
+ciphertext encrypting the cyclic left shift of by within slots , leaving slots unchanged
+
+3:
+
+4:
+
+Define masks by
+
+5:
+
+  
+, 
+
+6:
+
+7:
+
+8:
+
+Output
+
+When only the first segments are active, meaning slots, we use the same restricted-rotation primitive to implement wrap-around modulo segments. Algorithm 8 defines by applying with shift .
+
+Algorithm 8 FHE realization of
+
+1:
+
+encrypts with , segment size , active segments , shift
+
+2:
+
+ciphertext encrypting , i.e., wrap-around modulo active segments
+
+3:
+
+4:
+
+5:
+
+Output
+
+A-B Plaintext–Ciphertext Projection Kernel
+
+We follow Section 3.2 for packing, dimensions, and the BSGS accumulation and fold.
+
+A-B1 Plaintext Weights
+
+Under complexification, we use inputs
+and we encode complex weights.
+Let denote the pre-permuted weight matrix used by this projection kernel. Its columns are ordered to match the target packing of the output.
+The row index addresses input channels and the column index addresses output channels.
+For output block , giant index , complex-pair index , and baby index , the value stored in active segment is
+
+Then
+
+All segments store .
+
+Weights are stored as plaintext and can be cheaply pre-permuted to match downstream packing, which only changes plaintext constant construction and adds no FHE cost at inference time.
+Under segment-column packing, segment of stores the length column
+.
+A column permutation can therefore be realized by permuting plaintext weight columns so the projection emits directly in the target order.
+
+Let and index the attention columns by head and within-head channel .
+Write the canonical head-major column index as .
+For the score kernel, folded-diagonal packing assigns one segment per head, so it is convenient for and to place the heads next to each other for each fixed .
+We use the score-friendly column order
+
+We pre-permute the plaintext weights by permuting columns as
+
+Then the projection emits and in the score-friendly segment order consumed by the score kernel.
+
+For the value kernel, we use the value-friendly head-major order that keeps channels of the same head together. This aligns them with the head-stacked segments used in the folded-diagonal weights. We set and use , so the projection emits in head-major order.
+In all weight-encoding expressions above, the symbol refers to the chosen pre-permuted matrix, so no ciphertext repacking is needed between kernels.
+
+A-B2 Key-Switching Complexity
+
+Assuming a precomputed bank of with cost
+where as in Section 3.2,
+each is implemented by and costs two rotations.
+The total key switching counts are
+
+A-B3 Special Fused Projection
+
+When two projections share the same ciphertext input, most notably and , we fuse them into one plaintext–ciphertext projection under CKKS complex packing.
+We construct complex plaintext weights by combining the two real weight matrices after applying the score-friendly column permutation.
+Formally, we form and and encode
+
+Running one projection gives whose real part equals and whose imaginary part equals in the score-friendly segment order consumed by the score kernel.
+Fusion is implemented entirely in plaintext preprocessing, and the ciphertext-side procedure is identical to a single projection.
+Figure 9 shows a toy example of fused projection and weight pre-permutation.
+
+Fig. 9:
+(1) Plain matrix multiplication for and with and .
+(2) Packed CKKS procedure with slots using fused plaintext weights pre-permuted , producing and in one projection.
+
+A-B4 How the SCP Rules Are Satisfied
+
+For , the projection emits in the head-major packing expected by the value kernel.
+Concretely, for each output block , segment of stores
+, so the value kernel consumes the ciphertext list directly without any ciphertext-side repacking, satisfying Rule 1.
+The value kernel consumes the MPC softmax output in minimal folded-diagonal packing, so its MPC-produced input attains
+, satisfying Rule 2.
+
+The value kernel outputs the head-major ciphertext list . The output projection absorbs the head-major-to-segment-column conversion by pre-permuting its plaintext weight columns (no ciphertext repacking), and therefore consumes directly, satisfying Rule 1.
+The output projection is followed by an MPC block, so it exports its output in a minimal packing at the FHE–MPC boundary, satisfying Rule 3.
+
+For the feed-forward network, let denote the activation imported from MPC after LN1, and let denote the activation output by MPC GELU.
+Both FF1 and FF2 consume MPC-produced activations and we import them into CKKS in minimal packing, satisfying Rule 2, so the inputs attain
+and .
+FF1 computes the pre-activation and is followed by MPC GELU, so it exports in minimal packing, satisfying Rule 3, with
+.
+FF2 computes and is followed by an MPC block, so it exports in minimal packing, satisfying Rule 3, with
+.
+
+A-C Ciphertext–Ciphertext Attention Kernels
+
+We follow Section 3.3 for the kernel structure and notation.
+
+A-C1 Score Kernel Packing
+
+For each , the score kernel outputs a folded-diagonal ciphertext .
+Only the first slots are informative after head reduction, phase alignment, and undoing the baby shift.
+Let denote the first slots of and define the exported stream
+.
+We pack sequentially into the minimal number of ciphertexts
+
+(here because the score matrix has heads each containing entries, and complex packing stores two real values per slot),
+satisfying Rule 3 of SCP.
+
+A-C2 Value Kernel Packing
+
+MPC returns the post-softmax weights in the same minimal folded-diagonal export order as above, namely as the stream
+
+packed into ciphertexts.
+Let be the number of heads packed per value ciphertext and let .
+Under the standard setting used in our implementation, this minimal stream reshapes directly into a head-major folded-diagonal ciphertext list
+
+Within block , segment
+
+with and
+stores the diagonal pair
+
+This is exactly the representation consumed by the value kernel, so the MPC–FHE boundary remains minimal and satisfies Rule 2 of SCP.
+
+A-C3 Score Kernel Block Phase Correction
+
+Block has head phase .
+When , different blocks start at different head offsets.
+We sum score contributions by phase and align them inside the first slots.
+For define
+
+We apply before combining phases to form .
+
+A-C4 Mask Construction
+
+Let be the binary plaintext mask that is one on the slots of segment and zero elsewhere.
+For the score kernel routing step, we use disjoint active-segment masks .
+When the first segments are active, we set .
+
+In the head-major layout, each ciphertext block packs heads contiguously.
+Segment stores channel of local head .
+For the value-kernel broadcast step, define the channel mask
+
+This mask keeps exactly the segments with within-head channel offset across all local heads in the block.
+The value kernel output remains in head-major layout; the subsequent output projection absorbs the layout conversion via weight pre-permutation (no explicit FHE remap stage).
+
+A-C5 Key Switching Complexity
+
+Let and , where is the channel capacity per ciphertext and is the number of heads packed per ciphertext block.
+Both kernels use precomputed and banks.
+
+For the score kernel, each of the diagonals multiplies channel blocks.
+Rotations are dominated by -bank construction and the per-diagonal postprocessing.
+
+For BERT-base with , , , , , and caching of repeated shifts, the implementation measures 630 rotations and 448 ct-ct multiplications (Table 2).
+
+For the value kernel, each of the offsets uses head blocks.
+Rotations are dominated by the token-shift bank over offsets and the broadcasts over segment shifts per block.
+
+For BERT-base with , , , the implementation measures 1524 rotations and 384 ct-ct multiplications.
+
+A-C6 Why the KS Counts Differ from Powerformer
+
+Powerformer [12] accelerates attention by applying complex packing to a generic blockwise CCMM under modified column packing. Its blockwise transforms and auxiliary routines such as BlockTrans, BlockTau, BlockSigma, Extract, and SplitPaste remain part of the algorithmic skeleton; complex arithmetic mainly reduces the number of calls to these routines by evaluating paired operands together. In that sense, the gain is a constant-factor reduction within the generic CCMM framework rather than a change to the object being computed.
+
+By contrast, EncFormer rewrites attention around the structure of the desired outputs. For the score matrix, we do not first form a generic packed product and then extract the needed diagonals. Instead, for we directly produce the folded pair by
+
+One complex ctmul therefore produces two diagonals at once, and the required shifts come from reusable -banks of sizes and rather than from a full blockwise permutation-and-extraction pipeline. This is why the score kernel scales as and .
+
+For the value kernel, we again avoid a generic CCMM by using the token-shift identity
+
+so that the offset pair is handled by one complex operand
+.
+This halves the token-shift bank from offsets to effective complex pairs, and the folded-diagonal weights are broadcast with simple head-major masks instead of generic block transforms. The resulting complexity is and .
+
+The key point is therefore structural: Powerformer obtains a constant-factor compression of a generic matrix-multiplication pipeline, whereas EncFormer rewrites attention into diagonal-pair and token-shift-pair primitives that match the geometry of and . Together with SCP eliminating post-kernel remaps, this is the main reason Table 2 shows substantially lower weighted primitive cost for EncFormer than for Powerformer.
+
+Appendix B Protocols for GELU
+
+We employ the GELU approximation and secure evaluation protocol from BOLT [8]. The approximation is a three-branch piecewise function that saturates outside a bounded region and uses a low-degree polynomial inside. Intuitively, values far in the positive tail are passed through unchanged, values far in the negative tail are clamped to zero, and only the mid-range requires a nontrivial computation. This structure is well-suited to MPC because it reduces the expensive arithmetic to the interval where GELU is most nonlinear, while the outer branches are implemented by inexpensive conditional selection.
+
+For ,
+
+(7)
+
+We follow the same MPC notation and primitives as in Section 4.1. In particular, values are represented as additive shares over and XOR-shared bits, and the protocol uses the standard comparison and multiplexing primitives to implement slotwise branching. Let and pack .
+
+Our complex conversion in Section 5 exports the real and imaginary channels in one invocation of and packs the two MPC outputs back with .
+
+Within MPC, the key idea is to evaluate the polynomial branch using ordinary arithmetic on shared values, while using comparisons and multiplexing to select the correct branch for each slot. The absolute value in the mid-range polynomial is handled by first determining the sign of each slot and then choosing between two sign-specialized polynomials that are identical up to the sign of the odd-degree terms. This avoids an explicit absolute-value circuit and reduces the branching logic to a small number of comparisons and multiplexers.
+
+For , define candidate vectors
+
+(8)
+
+We use the same polynomial coefficients as reported in BOLT [8].
+
+Algorithm 9 Secure GELU with CKKS pre-evaluation
+
+1:
+
+holds a complex CKKS ciphertext at scale encrypting
+with
+
+2:
+
+Public and thresholds in MPC fixed-point
+
+3:
+
+outputs with ,
+
+4:
+
+CKKS: extract real/imag ciphertexts
+
+5:
+
+  
+
+6:
+
+  
+
+7:
+
+CKKS: for , using add, ptmul, and ctmul, compute
+
+8:
+
+  
+and form
+
+9:
+
+  
+by Eq. (8)
+
+10:
+
+CKKS: let be the all- plaintext vector; pack
+
+11:
+
+  
+
+12:
+
+  
+
+13:
+
+Convert:
+
+14:
+
+Convert:
+
+15:
+
+Convert:
+
+16:
+
+MPC: for set
+,
+,
+
+17:
+
+MPC: for derive indicators
+,
+,
+
+18:
+
+MPC: for output
+
+19:
+
+Convert:
+
+20:
+
+Output
+
+In an alternative pipeline, we evaluate the mid-range polynomial branch entirely in MPC after a single complex CKKS-to-MPC conversion and then convert the final outputs back to CKKS, as shown in Algorithm 10.
+
+Algorithm 10 Secure GELU with no pre-evaluation
+
+1:
+
+holds a complex CKKS ciphertext at scale
+encrypting , with
+
+2:
+
+Public and thresholds in MPC fixed-point over
+
+3:
+
+outputs with ,
+
+4:
+
+Convert:
+
+5:
+
+MPC: for compute powers and candidates
+
+6:
+
+for do
+
+7:
+
+  
+
+8:
+
+  
+
+9:
+
+  
+
+10:
+
+  
+
+11:
+
+  
+
+12:
+
+end for
+
+13:
+
+MPC: for set
+,
+,
+
+14:
+
+MPC: for derive indicators
+,
+,
+
+15:
+
+MPC: for output
+
+16:
+
+Convert:
+
+17:
+
+Output
+
+Appendix C Ring and Field Conversion
+
+We describe two-party primitives for converting additive shares between an odd-modulus ring and a power-of-two ring , following the extension-based approach of BOLT, SiRNN, and BLB [8, 60, 10].
+In EncFormer, is the CKKS ciphertext modulus at the conversion boundary, i.e., .
+For additive sharing over , we write where .
+We interpret ring elements with signed fixed-point semantics via the centered representative
+, defined as the unique integer congruent to that lies in this interval.
+We use a signed extension protocol that lifts shares to a larger power-of-two ring while preserving except with probability at most .
+
+C-A Field-to-ring conversion
+
+converts to .
+Invoke with to obtain shares in that represent (with error ), then each party locally reduces its share modulo .
+We choose so that all valid values satisfy .
+
+C-B Ring-to-field conversion
+
+converts to .
+Invoke to lift to , obtaining representatives
+such that, except with probability , the integer sum satisfies
+
+(The offset encodes the signed value as a non-negative representative in .)
+Each party then maps locally into by
+
+so that except with probability .
+
+C-C Security
+
+Both conversions consist of one invocation of followed by local computations.
+If is simulation-secure, then the conversion view can be simulated from the input/output shares, leaking nothing beyond public parameters, up to statistical error .
+
+Appendix D Cost Analysis Model Discussion
+
+We use the latency decomposition in Eq. (3) and the decision rule in Eq. (4) to compare boundary choices via and . A boundary change can trade off two effects: it can reduce computation time by moving operators to the cheaper domain, and it can increase or decrease the conversion overhead at domain boundaries. These effects are captured by and , respectively.
+
+The minimal-conversion baseline defined in Section 5.1 serves as a normalization reference for boundary payload under a fixed tensor shape. It does not claim to minimize end-to-end latency and is not an optimizer by itself. We use Eq. (4) as a screening tool to estimate the sign of the latency change when moving from to a candidate design .
+
+To illustrate how the cost model can guide boundary placement, we apply it to the GELU boundary decision under PhantomFHE across 12 instances: 3 models 4 network profiles. The model estimates “Expand” for all BERT-large profiles and for WAN2/WAN3 on BERT-base and GPT2-base, and “Minimal” for LAN/WAN1 on the smaller models — a non-trivial 8/4 split that illustrates the model can surface trade-offs varying across deployment settings. We note that and are measured under specific backend and network conditions, so the model’s estimates should be treated as directional rather than precise.
+
+In practice, can also vary across network profiles because interactive MPC primitives are communication-bound. As bandwidth decreases or round-trip latency increases, the pipeline can shift from compute-dominated to message-dominated behavior, which changes the relative weight of and . Since the deployment network may be unknown at design time, we recommend evaluating candidate boundary placements across multiple network profiles before committing to a design.
+
+Appendix E MPC Round Count Comparison
+
+Table XII compares interactive MPC rounds per layer. FHE-only systems (THOR, Powerformer) use zero MPC rounds but require bootstrapping. The BOLT and BLB counts are analytically derived from their published protocol descriptions. BOLT’s softmax uses 6 rounds (tree max-finding for ). BLB adopts BumbleBee’s softmax protocol [16], which requires 18 rounds: rounds for tree max-finding (), 6 sequential squarings for negExp, plus comparison, mux, reciprocal, and scaling. EncFormer uses MBMax (3 rounds) and BOLT-style GELU (4 rounds); MBLN requires zero interactive rounds because rowsum, broadcast, and affine scaling are all local operations on additive shares.
+
+TABLE XII: Interactive MPC rounds per layer. BOLT and BLB counts are analytically derived from published protocols. BS = bootstrapping invocations.
+
+Softmax
+LN1
+GELU
+LN2
+Total
+BS
+
+THOR
+0
+0
+0
+0
+0
+8
+
+Powerformer
+0
+0
+0
+0
+0
+3
+
+BOLT
+6
+4
+4
+4
+18
+0
+
+BLB
+18
+4
+4
+4
+30
+0
+
+EncFormer
+3
+0
+4
+0
+7
+0
+
+Appendix F Proof of Proposition 1
+
+Proof.
+
+(i) Zero remap.
+SCP matches all three direct FHE–FHE edges (QKVScore, QKVValue, ValueOUT) via weight pre-permutation, and the three MPC-boundary edges satisfy Rules 2 and 3 with minimal packing.
+Any alternative assignment that changes a producer–consumer matching on an FHE–FHE edge necessarily introduces , since no other packing in  satisfies the consumer kernel without repacking.
+
+rotation lower bound.
+A remap between two distinct packings in requires a general slot permutation on each ciphertext block. In the segment-column layout with rows, the permutation acts on slot groups. By the Halevi–Shoup decomposition [25], any such permutation requires at least Galois automorphisms (rotations), each involving a key-switching operation. With ciphertext blocks affected per edge, the total cost is rotations per edge, giving across the affected slots per block.
+
+(ii) Minimal boundary count.
+At each FHE–MPC boundary, Rules 2 and 3 require that ciphertexts use minimal packing with ciphertexts. Any expanded packing uses ciphertexts, each of which must pass through the conversion protocol, increasing boundary communication proportionally.
+
+Quantitative example.
+For BERT-base (, , ), disabling SCP adds 168 extra rotations per layer across the three FHE–FHE edges ( blocks rotations), or  s per layer ( of per-layer FHE time).
+∎
+
+Appendix G SCP Edge Analysis for All Models
+
+Table XIII extends the BERT-base SCP analysis from the main text to all three evaluated models. Without SCP, each direct FHE–FHE edge requires rotations per ciphertext block for slot permutation. MPC-boundary edges incur no FHE remapping because MPC resets the data format.
+
+TABLE XIII: SCP remap analysis for all models ( ms).
+
+BERT-b
+BERT-l
+GPT2-b
+
+QKV(Q,K)Score
+84
+56
+36
+
+QKV(V)Value
+42
+28
+18
+
+ValueOUT
+42
+28
+18
+
+#rot/layer
+168
+112
+72
+
+#rot (ms)
+390
+260
+167
+
+Layers
+12
+24
+12
+
+Predicted (s)
+4.68
+6.24
+2.00
+
+Observed (s)
+12
+48
+12
+
+Obs./Pred.
+2.6
+7.7
+6.0
+
+The observed overhead is 2.6–7.7 the rotation-only prediction because the actual slot permutation also involves plaintext-multiply masking and ciphertext addition for recombination, which are per rotation but not counted in the rotation proxy.
+
+G-A Repacking Algorithm in the w/o SCP Ablation
+
+Halevi–Shoup slot-permutation decomposition.
+Applying an arbitrary permutation to the slots of a CKKS ciphertext cannot be done in a single operation.
+Halevi and Shoup [25] show that any target slot permutation can be expressed as a linear combination of rotations:
+
+where each is a plaintext binary mask that selects the slots whose target position is reached by a rotation of .
+This decomposes the permutation into rotation–mask–accumulate (RMA) steps.
+Each RMA step requires one key-switched rotation, one plaintext multiplication, and one ciphertext addition, giving rotations, plaintext multiplications, and additions per ciphertext block.
+
+In the w/o SCP ablation (Table 11), we insert a generic slot-permutation repack at every direct FHE–FHE edge. The repacking converts one packing format to another by cycling through RMA steps as described above.
+
+Concretely, the ablation inserts repacking at the three direct FHE–FHE edges per layer identified in Section 3.1.1: (1) QKVScore remaps Q and K from segment-column to the score-friendly layout ( blocks, rotations each); (2) QKVValue remaps V from segment-column to head-major order ( blocks); and (3) ValueOUT remaps the value output from head-major to segment-column ( blocks). Edges that cross an MPC boundary (e.g. ScoreSoftmax, OUTLN) are not affected because MPC resets the data format via decryption and re-encryption.
+The total rotation count per layer is the sum reported in Table XIII. The observed latency gap exceeds the rotation-only estimate because each rotation step is accompanied by a masking multiplication and an accumulation addition, and the large number of sequential CKKS operations incurs additional GPU kernel-launch and memory-transfer overhead.
+
+Appendix H Cost Model Validation Details
+
+H-A GELU Boundary Predictions
+
+Table XIV summarizes the cost model’s boundary decision across both backends. PhantomFHE produces a non-trivial 8/4 split, while Liberate.FHE predicts Minimal for all 12 cases due to its higher CKKS compute time. Table XV provides the full per-instance breakdown for PhantomFHE.
+
+TABLE XIV: Cost model boundary decision summary.
+
+PhantomFHE
+Liberate.FHE
+
+Model
+LAN
+WAN1
+WAN2
+WAN3
+LAN
+WAN1
+WAN2
+WAN3
+
+BERT-base
+Min
+Min
+Exp
+Exp
+Min
+Min
+Min
+Min
+
+BERT-large
+Exp
+Exp
+Exp
+Exp
+Min
+Min
+Min
+Min
+
+GPT2-base
+Min
+Min
+Exp
+Exp
+Min
+Min
+Min
+Min
+
+Table XV reports the full prediction-vs-observation validation for the GELU boundary decision under PhantomFHE. The model estimates “Expand” for 8 instances and “Minimal” for 4, namely LAN/WAN1 on BERT-base and GPT2-base, and the estimates agree with the observed latency direction in all cases. The tightest positive margin is on WAN2 GPT2-base ( ms), while the tightest negative margin is on WAN1 GPT2-base ( ms).
+
+TABLE XV: GELU boundary prediction under PhantomFHE ( ms,  ms). 8 instances predict “Expand,” 4 predict “Minimal.” is the additional complex ciphertexts for .
+
+Model
+Profile
+
+Decision
+
+BERT-base
+LAN
+24
+0.20 s
+0.04 s
+0.16 s
+Minimal
+
+WAN1
+24
+0.50 s
+0.39 s
+0.12 s
+Minimal
+
+WAN2
+24
+2.01 s
+2.09 s
+0.07 s
+Expand
+
+WAN3
+24
+2.01 s
+2.31 s
+0.30 s
+Expand
+
+BERT-large
+LAN
+16
+0.13 s
+0.18 s
+0.04 s
+Expand
+
+WAN1
+16
+0.34 s
+0.64 s
+0.30 s
+Expand
+
+WAN2
+16
+1.34 s
+2.90 s
+1.56 s
+Expand
+
+WAN3
+16
+1.34 s
+3.13 s
+1.79 s
+Expand
+
+GPT2-base
+LAN
+12
+0.10 s
+0.02 s
+0.08 s
+Minimal
+
+WAN1
+12
+0.25 s
+0.20 s
+0.05 s
+Minimal
+
+WAN2
+12
+1.01 s
+1.05 s
+0.04 s
+Expand
+
+WAN3
+12
+1.01 s
+1.28 s
+0.27 s
+Expand
+
+H-B Liberate.FHE Decision Boundary
+
+The cost model includes the CKKS pre-evaluation cost of the GELU polynomial candidates and as a negative term in Eq. Eq. (6). Each degree-5 polynomial evaluation requires 3 ctmuls per complex ciphertext block, giving extra ctmuls total (e.g., 72 for BERT-base). Under PhantomFHE ( ms), this adds only 0.19 s and is outweighed by MPC round savings on higher-latency profiles. Under Liberate.FHE ( ms, PhantomFHE), the same 72 ctmuls cost 3.5 s, far exceeding MPC savings, so all 12 Liberate instances correctly predict “Minimal.” This backend-dependent discrimination validates that the model captures a real trade-off rather than a degenerate one.
+
+Appendix I Total Communication Including Conversion Payload
+
+Cross-paper comparison note.
+We follow the cross-paper comparison methodology commonly used in this area: the baseline metrics reported throughout this paper are taken from the corresponding publications under their stated experimental settings, and our claims against prior hybrid systems should be interpreted in that sense rather than as a controlled re-implementation on a single platform. Because each prior system uses its own CKKS library, GPU hardware, and MPC implementation, a fully matched head-to-head rerun is often infeasible. Likewise, our WAN latency figures are obtained by applying an analytical network overlay to measured communication volume and MPC round counts, rather than by cross-site deployment; this is the same evaluation methodology adopted by prior hybrid Transformer systems such as BOLT, BumbleBee, and BLB. Section 7.3 therefore complements the main comparison with a matched-backend study that isolates library effects.
+
+Table XVI estimates total communication (online MPC traffic plus FHE–MPC conversion payload) for BERT-base. The conversion payload per layer is computed from the ciphertext counts in Table 4 at 256 KB per ciphertext (, 15 RNS primes). For all systems, conversion payload is small relative to online MPC traffic (0.2–0.5 GB vs. 2–64 GB), so the relative ranking is preserved under total communication.
+
+TABLE XVI: Estimated total communication for BERT-base (12 layers).
+
+Framework
+Online (GB)
+Conv. payload (GB)
+Total (GB)
+
+BOLT
+63.6
+0.28
+63.9
+
+BumbleBee
+5.8
+0.28
+6.1
+
+BLB
+3.0
+0.49
+3.5
+
+EncFormer
+2.2
+0.21
+2.4
+
+Appendix J Additional Generality Examples
+
+The SCP packing rules and the boundary cost model are stated in terms of kernel composition rather than Transformer-specific semantics. To illustrate this, we apply the same reasoning to two analytical examples.
+
+J-A 2-Layer CNN
+
+Consider a CNN with Conv1 (, 16 filters) ReLU Conv2 (, 32 filters) ReLU FC, operating on input images with CKKS slots. Conv1 uses 144 rotations (), Conv2 uses 288 rotations (), and the FC layer uses 10 rotations. Without co-designed packing, the Conv1ReLU and Conv2ReLU boundaries each require repacking (6 ciphertext blocks total), costing 14 ms under PhantomFHE primitive latencies.
+
+J-B 3-Layer MLP
+
+Consider an MLP with FC1 () GELU FC2 () GELU FC3 (), using slots and , matching the BERT-base hidden and FFN dimensions. With segments per ciphertext, FC1 and FC2 each produce output blocks. Without co-designed packing, FC1GELU and FC2GELU require repacking 48 blocks at rotations each, totaling 336 extra rotations (111 ms). With the GELU boundary cost model, each GELU block also admits an “Expand” option analogous to the Transformer GELU pre-evaluation, saving 3 MPC rounds per block at the cost of extra complex ciphertexts per GELU.
+
+These examples are analytical illustrations; full empirical evaluation on non-Transformer workloads is left to future work.
+
+Appendix K Powerformer-Style Distillation
+
+For each GLUE task, we fine-tune a plaintext BERT-base teacher with standard nonlinearities following Powerformer [12]. We then distill an HE-compatible student that keeps the same macro-architecture but replaces all nonlinear components with the approximations used in our protocol. Distillation helps the student adapt to the changed activation and normalization behavior introduced by these approximations while preserving task accuracy.
+
+Let the teacher be and the student be . For input  with label  and logits , we minimize
+
+where are matched intermediate tensors and is the set of layers used. The logit distillation term uses temperature
+
+In EncFormer, we learn the Softmax and LayerNorm parameters jointly with student weights during distillation, and deploy unchanged for encrypted inference. We follow Powerformer-style hyperparameters with batch size 64 and learning rate . We also use early stopping with an extended distillation budget and seeds .
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

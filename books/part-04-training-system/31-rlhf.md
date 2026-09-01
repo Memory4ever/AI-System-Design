@@ -140,6 +140,16 @@ prompt + candidate pair + explicit preference contract
 条件化获得个性化表达，却新增 profile 获取、隐私、prompt injection 和未见偏好的 extrapolation。synthetic English preferences 只能证明 intrinsic ranking/generalization，不能证明真实用户分布、跨文化价值或 PPO/DPO 下游收益；缺少可信 preference identity 时，分开训练窄域 reward、请求澄清或保留通用保守 baseline 更合理。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-01831:end -->
 
+### Pluralistic Aggregation 不能把 Group State 压成一个平均 Reward
+
+Federated RLHF 用平均 group reward 聚合更新，在群体偏好近似同质且每组信号质量相当时简单有效；群体对齐程度、样本量和历史收益不同后，平均会让多数或高分群体持续主导，直接取最差群体又可能牺牲整体可用性并放大噪声。
+
+自适应 pluralistic aggregation 可以根据每个 group 的历史 alignment reward 调整 federated PPO 权重。聚合 owner 必须保存 group identity、reward/evaluator revision、历史窗口、权重变化和 fairness/utility decision；客户端只贡献受本地数据支持的更新，不能自行改变全局公平目标。收益是把 worst-group 与 overall alignment 放入同一显式 trade-off，代价是 group 定义错误、历史漂移、权重振荡和隐私泄露。
+
+群体标签不可信、样本过少或权重不稳定时，应回退有界平均、min-group constraint 或人工 policy review。公开结果只覆盖 GLOBALQA、OQA 与三类模型设置，不证明未测人群、文化或 preference protocol 的公平性。
+
+<!-- source-family:SF-2026-ARXIV-2604-04261 -->
+
 ## 从 Reward 到 Policy objective
 
 如果只最大化 learned reward：
@@ -613,6 +623,8 @@ RLHF 把相对偏好拟合为 reward，再在 reference policy 约束下优化�
 当 task generator、validator 与 policy 一同进入反馈循环时，curriculum 本身也成为需要版本化和独立评估的训练状态；可自动验证不等于任务分布自然充分。
 
 ## Review notes
+
+- **APPA（arXiv:2604.04261v1；Status: Experimental）**：exact-v1 支持历史 group reward 驱动的 federated PPO weighting，以及 GLOBALQA/OQA、Gemma 2 2B、Llama 3.2 3B、Qwen3 0.6B 设置中的 fairness/alignment trade-off；不证明未测人群或真实偏好协议。https://arxiv.org/abs/2604.04261v1
 
 - `SF-2026-ARXIV-2606-22600` — primary `arXiv:2606.22600v1`；Method=`arXiv:2606.22600v1 §3 Position-Bias Analysis; §4 Proposed Correction`；Evaluation=`arXiv:2606.22600v1 §5 Experiments; Appendix C Protocol`；Non-proof=`arXiv:2606.22600v1 Appendix E Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 - `SF-2026-ARXIV-2606-23740` — primary `arXiv:2606.23740v1`；Method=`arXiv:2606.23740v1 §2 Experimental Setup`；Evaluation=`arXiv:2606.23740v1 §3 Results`；Non-proof=`arXiv:2606.23740v1 §4 Discussion; Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。

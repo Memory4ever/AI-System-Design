@@ -1,0 +1,1216 @@
+Don’t Waste Bits!Adaptive KV-Cache Quantization for Lightweight On-Device LLMs
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Methodology
+
+3.1 Problem Description
+
+3.2 Preliminary
+
+3.3 Theoretical Foundation
+
+3.4 Framework Overview
+
+3.5 Token-Level Saliency Features
+
+3.6 Lightweight Controller Network
+
+3.7 Adaptive KV Quantization
+
+3.8 Training Objective
+
+4 Experiments
+
+4.1 Experimental Settings
+
+4.2 Experimental Results
+
+5 Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.04722v1 [cs.CV] 06 Apr 2026
+
+Don’t Waste Bits!
+
+Adaptive KV-Cache Quantization for Lightweight On-Device LLMs
+
+Sayed Pedram Haeri Boroujeni*†
+
+  
+Niloufar Mehrabi
+
+  
+Patrick Woods
+
+  
+Gabriel Hillesheim
+
+  
+Abolfazl Razi
+
+Affiliation: Clemson University, USA
+
+Affiliation: {shaerib, nmehrab, pnwoods, ghilles, arazi}@g.clemson.edu
+
+Abstract
+
+Large Language Models (LLMs) have achieved remarkable progress across reasoning, generation, and decision-making tasks, yet deploying them on mobile, embedded, and edge devices remains particularly challenging. On-device LLM inference is heavily constrained by the memory and bandwidth overhead of the key–value (KV) cache, which grows linearly with context length and often dominates decoding cost. Existing KV-cache quantization schemes typically rely on fixed precision or hand-crafted heuristics, thereby wasting bits on low-impact tokens while over-compressing informative ones, leading to avoidable accuracy degradation. Inspired by Huffman coding’s principle of variable-length allocation, we propose adaptive KV-cache quantization, a learned policy that assigns bit-width proportional to token importance, minimizing expected memory and latency without sacrificing competitive accuracy. Our framework extracts lightweight token-level features, including token frequency, quality score, attention variance, and entropy-based uncertainty, and feeds them into a compact data-driven controller that dynamically selects KV precision from {2-bit, 4-bit, 8-bit, FP16} during decoding. This adaptive precision policy reduces KV memory footprint and latency while improving accuracy compared to static KV quantization and rule-based baselines, and maintaining competitive accuracy close to FP16 inference across standard LLM benchmarks. Extensive experiments across multiple commonsense reasoning benchmarks using SmolLM-135M, SmolLM-360M, and SmolLM-1.7B demonstrate that our controller consistently improves the accuracy–latency trade-off. For instance, with SmolLM-360M on HellaSwag, our method reduces decoding latency (ms/token) by 17.75% relative to static KV quantization, improves accuracy by 7.60 points, and remains within only 0.30 points of FP16 inference.
+
+Figure 1: Overview of the proposed framework: We introduce a data-driven controller for adaptive KV-cache quantization to address the KV-cache memory bottleneck in on-device LLM inference, where static quantization often degrades reasoning quality. Our method extracts lightweight token-level signals (e.g., token frequency, attention variance, and entropy-based uncertainty) and uses a learned MLP controller to assign per-token KV precision (2/4/8-bit or FP16) during decoding. This adaptive precision policy reduces KV memory footprint and latency while preserving (or improving) accuracy compared to static KV quantization, rule-based baselines, and FP16 inference.
+
+11footnotetext: Corresponding author: shaerib@g.clemson.edu22footnotetext: Project page: https://github.com/SayedPedramHaeri/Dont-Waste-Bits
+
+1 Introduction
+
+A primary bottleneck in autoregressive LLM decoding is the transformer KV cache [29, 32, 20], which stores the attention representations of previously processed tokens at each layer to avoid redundant computation during decoding [12, 11, 5, 19]. Although this mechanism substantially improves computational reuse, it simultaneously introduces significant memory and bandwidth overhead that scales linearly with sequence length and accumulates across layers and heads [36, 16]. As a result, long-context generation is often dominated by KV-cache storage, which becomes the dominant consumer of accelerator memory and a major source of latency, particularly on resource-constrained hardware with bandwidth-limited reads and writes [30, 33]. To address this challenge, improving KV-cache efficiency has emerged as an essential direction for on-device LLM deployment, motivating research on cache compression, quantization, and memory-aware decoding [11, 19, 16, 24, 3].
+
+Existing KV-cache quantization methods typically rely on static precision assignments or hand-crafted heuristics to compress cached keys and values [25, 5, 12, 16]. While these strategies are effective, they overlook the fact that tokens do not contribute equally to future predictions and that their sensitivity to quantization can vary significantly across the sequence [10, 27]. Uniformly allocating the same bit-width to all cached tokens can waste bandwidth on low-impact representations, while aggressively compressing informative tokens may disproportionately degrade model accuracy, leading to an unfavorable compression–performance trade-off [38]. Moreover, heuristic rules often fail to generalize across model scales, datasets, and context lengths, making it difficult to maintain both efficiency and accuracy in practice across diverse deployment settings and evaluation conditions.[37, 27, 14].
+
+This observation motivates a more principled view of KV-cache compression: precision should be treated as a limited resource and allocated selectively based on token importance [1, 26]. Inspired by variable-length allocation principles, an effective quantization strategy should assign more bits to informative tokens and fewer to less influential ones, thereby reducing memory usage and latency without unnecessarily sacrificing predictive quality [4, 18]. An adaptive allocation strategy is particularly well suited to lightweight and mid-scale LLMs deployed on-device, where even modest reductions in KV storage and data movement can yield meaningful gains in responsiveness and hardware efficiency [8, 22]. More broadly, dynamic allocation provides a flexible alternative to static quantization and supports more favorable accuracy–efficiency trade-offs across diverse models and benchmarks [25, 11, 15].
+
+This paper introduces Don’t Waste Bits!, a data-driven framework for adaptive KV-cache quantization that predicts token importance and assigns token-wise precision during decoding accordingly. Inspired by Huffman coding’s principle of variable-length allocation, our method employs a compact controller that learns to dynamically assign KV precision from {2-bit, 4-bit, 8-bit, FP16} based on lightweight token-level features, reducing expected memory usage and latency while maintaining accuracy close to FP16 inference. Extensive experiments on commonsense reasoning benchmarks with SmolLM-135M, SmolLM-360M, and SmolLM-1.7B show that adaptive precision consistently achieves a better accuracy–latency trade-off than static KV quantization, rule-based baselines, and FP16 inference. The main contributions of this paper are summarized as follows:
+
+•
+
+Adaptive KV precision allocation: We introduce a token-wise KV-cache quantization policy that assigns bit-widths based on token importance during autoregressive decoding, thereby reducing KV overhead while bounding accuracy loss.
+
+•
+
+Lightweight data-driven controller: We design a compact MLP controller for real-time quantization that leverages readily available token-level features, including token frequency or rarity, quality score, attention variance, and entropy-based uncertainty, to select KV precision under strict memory and latency constraints.
+
+•
+
+Comprehensive empirical evaluation: We conduct a broad analysis of SmolLM-135M, SmolLM-360M, and SmolLM-1.7B across multiple commonsense reasoning benchmarks, showing improved accuracy over static and heuristic baselines while maintaining performance competitive with FP16 inference.
+
+•
+
+Efficient LLM deployment: We further demonstrate the potential for deployment on mobile, embedded, and edge devices by consistently improving the trade-off among accuracy, latency, and KV-cache memory usage.
+
+2 Related Work
+
+Recent work on improving LLM inference efficiency has increasingly targeted the KV cache, whose storage and memory traffic become major bottlenecks in autoregressive decoding as context length grows. Existing approaches can be broadly categorized into (i) cache reduction strategies that reduce what must be stored or retrieved (e.g., selective retention, cache eviction, or recomputation); (ii) cache compression methods that shrink representation size through quantization, low-rank approximation, or structured compression; and (iii) systems-level optimizations that reorganize attention computation to better utilize hardware and memory hierarchies. These approaches differ in their assumptions about model internals, adaptation granularity, and trade-offs among accuracy, latency, and implementation complexity.
+
+KV-cache quantization methods aim to reduce per-token KV memory while preserving attention fidelity. ZipCache [11] combines an attention-based saliency metric with efficient mixed-precision quantization to reduce overhead while staying compatible with fast attention kernels. QAQ [5] shows that keys and values have different quantization sensitivities and introduces non-uniform, attention-aware strategies with outlier handling to achieve high compression with minimal quality loss. KVQuant [12] further enables ultra-long-context inference through tailored designs, including per-channel and pre-RoPE Key quantization, dense-and-sparse per-vector quantization, and non-uniform KV quantization, achieving sub-4-bit compression with only minor perplexity degradation.
+
+KV-cache pruning and retention methods reduce memory and computation by keeping only the most important cached tokens, motivated by the sparsity of attention in long contexts. H2O [36] shows that a small set of heavy-hitter tokens dominates attention and proposes an eviction policy that preserves both recent and high-impact tokens. Keyformer [1] similarly identifies key tokens during inference and retains only them in the cache, substantially reducing KV size and bandwidth while maintaining accuracy. SnapKV [16] extends this idea to the attention-head level, using prompt observations to predict salient KV positions and compressing the cache by selecting clustered important tokens for each head.
+
+Adaptive cache management and complementary compression improve efficiency by controlling how KV states are retained while also reducing model weight cost. FastGen [9] profiles attention patterns across heads and adaptively retains or evicts KV content based on head structure, reducing memory with negligible quality loss. Ada-KV [8] shows that uniform compression across heads is suboptimal and instead allocates eviction budgets adaptively using a theoretical loss bound. Complementary to KV-focused methods, AWQ [17] reduces the model weight footprint through weight-only quantization, protecting a small set of salient weights to lower quantization error and enable hardware-friendly low-bit deployment. Because it targets weights rather than the KV cache, AWQ is largely orthogonal to KV-cache optimization and can be combined with KV-focused methods.
+
+Previous studies reduce KV-cache cost through token retention, numerical compression, and weight-only quantization. However, many still rely on static precision assignments or hand-crafted rules that ignore token-level importance, while retention-based methods may remove information critical to downstream accuracy. This motivates adaptive KV policies that allocate precision selectively, preserving informative tokens while more aggressively compressing low-impact ones. Accordingly, we introduce a lightweight data-driven controller for token-wise KV precision allocation during decoding, improving the accuracy-latency trade-off for on-device deployment.
+
+3 Methodology
+
+In this section, we present the proposed adaptive KV-cache quantization framework for efficient on-device LLM inference. We begin by formalizing the problem (Section 3.1) and reviewing the attention and decoding preliminaries relevant to KV-cache construction and quantization (Section 3.2). We then introduce the theoretical intuition behind our approach, viewing KV precision as a limited resource that should be allocated selectively according to token importance (Section 3.3). Motivated by this perspective, we propose Don’t Waste Bits!, an adaptive KV-cache quantization framework for token-wise precision allocation (Section 3.4). We describe the end-to-end pipeline, including the token-level saliency features used for importance estimation (Section 3.5), the lightweight controller network that predicts precision assignments (Section 3.6), the adaptive KV-cache quantization mechanism (Section 3.7), and the training objective (Section 3.8).
+
+3.1 Problem Description
+
+In autoregressive language modeling, the goal is to estimate the probability of the next token given a prefix , i.e., , and to generate text by repeatedly sampling or selecting the next token according to this distribution. In generative LLMs, inference typically proceeds in two stages:
+
+(1) Prompt Encoding Phase: The input context is processed once under causal masking to compute attention activations for all prompt tokens. During this stage, each transformer layer produces the corresponding key and value tensors for every token, which are then stored for later reuse.
+
+(2) Token Generation Phase: During this stage, the model generates new tokens sequentially in an autoregressive manner. At each step, the newly generated token is passed through all layers, and self-attention attends over the full history of previously processed tokens.
+
+A key mechanism behind efficient autoregressive decoding is the KV cache, which stores per-layer keys and values for previously processed tokens. Without it, the model would need to recompute and for the entire prefix at every decoding step, resulting in substantial redundant computation. Instead, the cache is built incrementally by storing prompt tokens during encoding and appending each newly generated token during decoding. Although this significantly reduces computation, it introduces a major inference bottleneck on resource-constrained hardware, since KV storage and memory traffic grow linearly with context length and accumulate across layers.
+
+3.2 Preliminary
+
+Building on the above discussion, we briefly review the attention formulation and KV-cache construction in autoregressive LLM inference, since they form the main computational bottleneck targeted by our method. Consider an input sequence of token embeddings , where denotes the sequence length and is the hidden dimension. In a standard self-attention block with projection matrices , , and , the query, key, and value tensors are computed during prompt encoding as:
+
+(1)
+
+The corresponding attention output is computed from the scaled dot-product attention mechanism:
+
+(2)
+
+where denotes the key dimension. In autoregressive inference, the key and value tensors are stored in memory as the KV cache for subsequent decoding steps.
+During the token generation phase, decoding proceeds one step at a time. Let denote the embedding of the current token. The query for the current step is computed as follows:
+
+(3)
+
+Meanwhile, the corresponding and vectors for the current token are then appended to the existing cache tensors:
+
+(4)
+
+The attention output for the current step is then given by:
+
+(5)
+
+This formulation highlights the central challenge addressed in our paper. Although each decoding step processes only one new token, it must repeatedly access an ever-growing KV cache, causing both memory usage and memory traffic to scale with context length. For clarity and consistency throughout the remainder of the paper, we use to denote the batch size, the number of attention heads, the sequence length, and the per-head feature dimension.
+
+3.3 Theoretical Foundation
+
+Our adaptive KV-cache quantization framework is inspired by Huffman’s Optimality Theorem [13], assigning bit-widths in proportion to token importance. In particular, the expected code length is minimized when more probable symbols receive shorter codes and less probable symbols receive longer ones:
+
+(6)
+
+where denotes the probability (frequency) of symbol . Therefore, common and predictable symbols receive shorter codewords, whereas rare and more informative symbols receive longer codewords.
+
+In the context of LLMs, we posit that tokens do not contribute equally to the final hidden state or the attention output. To capture this variability, we define a token-importance function based on contextual features such as attention entropy, activation magnitude, and positional index. By analogy to (6), the optimal bit-width assignment should satisfy:
+
+(7)
+
+where maps token importance to a quantization class . The central principle is that tokens with lower importance contain less task-relevant information and can therefore be represented with fewer bits. Since is not directly observable a priori, we approximate the composite mapping with a neural controller , trained end-to-end to minimize expected latency while constraining accuracy degradation.
+
+Following this perspective, we frame the controller’s task as a constrained optimization problem. Let denote the quality (accuracy) associated with assigning token to bit-width , and let denote the corresponding latency cost. The goal of the controller is to maximize the expected fitness as follows:
+
+(8)
+
+where is a utility function, is a cost function, and is a Lagrange multiplier that controls the trade-off between accuracy and latency. Let denote a system with a uniform bit-width . We say that Pareto-dominates if it achieves lower expected latency while incurring at most a bounded accuracy deviation:
+
+(9)
+
+For any token assigned low importance under , the controller selects a bit-width . Since for all , the adaptive policy reduces total latency:
+
+(10)
+
+where denotes the set of tokens identified by the controller as having low contextual importance. This result highlights that the adaptive scheme offers a structural improvement over fixed-precision baselines by reducing the informational waste inherent in uniform quantization.
+
+To further support this claim, we evaluate performance through the expected bit-width and total distortion . In a fixed-precision system, resource consumption is constant: . Conversely, in our adaptive system:
+
+(11)
+
+According to the Source Coding Theorem [23], the most efficient representation is achieved when resource allocation is matched to the underlying information content (entropy). We define as the quantization entropy, the minimum number of bits required to represent token while preserving its contribution to the attention output. Our system minimizes the computational “waste” , which cannot be eliminated by a fixed-rate encoder.
+
+The improvement can be interpreted as moving closer to the rate–distortion bound , defined as:
+
+(12)
+
+where denotes the mutual information between the original token and its quantized representation , corresponding to the minimum information rate required to achieve distortion . By allowing to vary with , the controller allocates higher precision to tokens with greater contextual importance. Consequently, under a fixed latency budget , the adaptive policy is better positioned to preserve accuracy than a fixed-precision baseline. This selective allocation improves the information-to-latency trade-off:
+
+(13)
+
+Taken together, this theoretical foundation motivates our adaptive controller as an effective approach to the Pareto-optimal accuracy–efficiency frontier in LLM inference.
+
+3.4 Framework Overview
+
+Figure 1 provides an overview of the proposed framework, Don’t Waste Bits!, a data-driven adaptive KV-cache quantization method for efficient on-device LLM inference. Rather than assigning a uniform KV precision to all cached tokens, the framework learns a token-level policy that dynamically selects the precision for each token’s key and value representations during decoding. Based on lightweight contextual features, it estimates each token’s relative importance and allocates precision accordingly. As a result, the method reduces unnecessary memory use for low-impact tokens while preserving higher precision for tokens more likely to influence future predictions.
+
+Conceptually, the proposed pipeline consists of four stages. First, for each token during decoding, we extract a small set of lightweight saliency features that capture token importance, uncertainty, and contextual influence, while remaining computationally efficient on resource-constrained hardware. Second, these features are passed to a lightweight controller network, implemented as a compact multi-layer perceptron (MLP), which predicts a precision class for each token. The controller selects one of four candidate KV storage levels, namely bits, where 16-bit corresponds to FP16 storage. Third, the selected precision is used to quantize the token’s key and value tensors before they are appended to the KV cache. Finally, the quantized cache is used in subsequent decoding steps as in standard autoregressive inference, except that tokens are stored at heterogeneous precision levels rather than a fixed bit-width.
+
+3.5 Token-Level Saliency Features
+
+One of the key components of the proposed framework is the extraction of lightweight token-level saliency features used to estimate each token’s contextual importance during decoding. Instead of relying on expensive auxiliary models or deep architectural modifications, our method derives a small set of inexpensive features directly from the model’s forward pass. These features capture complementary aspects of token behavior, including predictive uncertainty, contextual rarity, and attention dynamics, making them informative for selecting the appropriate KV precision. Intuitively, tokens that are more uncertain, less predictable, or more structurally influential are more likely to require higher-precision KV representations, whereas stable and low-impact tokens can often be stored at lower bit-widths.
+
+Specifically, for each token , we compute three saliency features: entropy, rarity, and attention variance. Let denote the pre-softmax logits at position , where is the vocabulary. We first quantify predictive uncertainty through the entropy of the next-token distribution:
+
+(14)
+
+where . Higher entropy indicates greater uncertainty in the model’s predictive distribution, suggesting that the corresponding token may be more sensitive to compression. Accordingly, we use entropy as a proxy for the degree of representational fidelity that should be preserved in the KV cache.
+
+The second feature measures token rarity. Let denote the running count of token in the training stream, and let denote the total number of observed tokens. We define rarity through a smoothed self-information score:
+
+(15)
+
+where is the number of distinct observed tokens. This measure assigns larger values to infrequent or less predictable tokens and smaller values to common tokens. The intuition is that rare tokens often carry more specific semantic information and may therefore require more careful preservation under quantization.
+
+The third signal captures variability in the attention pattern. Let denote the attention tensor from the final transformer layer, where is the number of attention heads and is the sequence length. We compute the attention-variance feature as follows:
+
+(16)
+
+where reflects the sharpness or unevenness of the attention distribution and serves as a coarse indicator of structural sensitivity in the current context. Tokens associated with more variable attention patterns may engage in less uniform, more context-dependent interactions, suggesting they may benefit from higher-precision preservation.
+
+These three features, together with an additional token-level confidence term (), provide complementary information. Entropy captures predictive uncertainty, rarity reflects token-level informativeness, attention variance provides a lightweight measure of contextual structure, and confidence reflects the model’s certainty in its prediction. Collectively, they form a compact feature vector:
+
+(17)
+
+which is then passed to the controller network for precision prediction. In our implementation, these features are extracted from benchmark contexts used to build the controller training set, and each token is paired with its feature vector and associated precision and latency labels.
+
+3.6 Lightweight Controller Network
+
+To translate token-level importance features into KV-precision decisions, we introduce a lightweight controller network that predicts the bit-width assigned to each token during decoding. The controller is compact, fast, and easy to integrate into autoregressive inference, ensuring negligible computational overhead while achieving significant memory and latency savings through adaptive quantization. To satisfy the constraints of on-device deployment, we intentionally avoid heavy auxiliary modules and instead adopt a shallow MLP that operates on a low-dimensional feature vector for each token.
+
+For each token, the controller receives the feature vector () introduced in Section 3.5. The controller maps to one of four discrete precision classes corresponding to:
+
+(18)
+
+where 16 denotes FP16 storage. Concretely, we use a three-layer MLP with two hidden layers and ReLU nonlinearities:
+
+(19)
+
+(20)
+
+(21)
+
+Here, , , and are the learnable weight matrices of the three linear layers, and , , and are the corresponding bias vectors. The vectors and denote the hidden representations produced by the first and second hidden layers, respectively, after applying the ReLU activation. The output vector contains the logits over the four candidate precision classes.
+
+A key property of the controller is that it predicts a distribution over bit-width classes rather than making hard decisions during optimization. Specifically, the predicted class probabilities are given by:
+
+(22)
+
+where denotes the probability distribution over the four candidate precision classes. The final predicted bit-width is then obtained as follows:
+
+(23)
+
+These probabilities allow the training objective to model differentiable expectations of latency and quality, enabling the controller to balance classification accuracy with efficiency and predictive fidelity. The controller therefore serves not only as a quantization-level classifier, but also as a lightweight decision module that allocates KV precision according to token importance, latency cost, and quality preservation. We use a hidden dimension of 128 to maintain expressiveness with low inference overhead. Training is performed on token-level samples from benchmark contexts, each consisting of a feature vector, a target precision label, and measured latency and quality statistics. Targets are mapped to four classes corresponding to 2-bit, 4-bit, 8-bit, and 16-bit KV storage, and an 80/20 stratified train-validation split is used to preserve class balance.
+
+3.7 Adaptive KV Quantization
+
+Given the controller prediction for token , we quantize the corresponding key and value tensors before appending them to the KV cache. Let and denote the key and value representations generated for token at a given layer. The controller-selected bit-width determines the precision used to store these tensors:
+
+(24)
+
+where denotes quantization under the assigned bit-width . The quantized tensors are then appended to the cache and reused in decoding steps.
+
+Unlike fixed-precision baselines, which assign a uniform bit-width to all cached tokens, our method enables heterogeneous precision allocation across the sequence. Tokens estimated to be less important are stored at lower precision to reduce KV-cache memory usage and memory traffic, whereas more important tokens retain higher precision to mitigate harmful information loss. In this way, adaptive KV quantization translates token-level controller decisions into a practical inference mechanism that improves the trade-off among memory usage, latency, and predictive performance.
+
+3.8 Training Objective
+
+The controller is trained to balance accurate precision prediction with efficient inference behavior. Given controller logits and the corresponding class probabilities , we first use a standard cross-entropy loss to supervise the predicted precision class:
+
+(25)
+
+where is the target bit-width label. To explicitly encourage efficient decisions, we additionally incorporate an expected latency term as follows:
+
+(26)
+
+where denotes the latency cost associated with class , and an expected quality penalty as follows:
+
+(27)
+
+where denotes the class-wise quality score estimated from the training data. The final objective combines these three terms as follows:
+
+(28)
+
+where , , and control the trade-off among classification accuracy, latency reduction, and quality preservation. This objective encourages the controller to produce precision assignments that are not only label-consistent but also effective for improving the overall accuracy–efficiency trade-off during inference. Eventually, Algorithm 1 summarizes the training and inference procedures of Don’t Waste Bits!.
+
+Algorithm 1 Don’t Waste Bits!
+
+1:
+
+Input: Token-level dataset
+
+2:
+
+Input: Latency cost vector , loss weights
+
+3:
+
+Output: Trained controller
+
+4:
+
+Map KV bit-width labels to class indices
+
+5:
+
+Split into stratified training and validation sets
+
+6:
+
+Initialize controller as an MLP with two ReLU hidden layers
+
+7:
+
+Estimate class-wise quality scores from the training set
+
+8:
+
+for each epoch do
+
+9:
+
+   for each mini-batch do
+
+10:
+
+    Compute logits:
+
+11:
+
+    Compute class probabilities:
+
+12:
+
+    Compute classification loss:
+
+13:
+
+    Compute expected latency:
+
+14:
+
+    Compute expected quality:
+
+15:
+
+    Compute quality penalty:
+
+16:
+
+    Compute total loss:
+
+17:
+
+    Update using Adam
+
+18:
+
+   end for
+
+19:
+
+end for
+
+20:
+
+return
+
+4 Experiments
+
+In this section, we evaluate the proposed adaptive KV-cache quantization framework on multiple language models and commonsense reasoning benchmarks. We first describe the experimental settings, then present quantitative results to assess the trade-off between predictive accuracy and decoding latency. All experiments are conducted on an NVIDIA RTX 4090 GPU with 24 GB of memory.
+
+4.1 Experimental Settings
+
+Backbones: We employ three open-source SmolLM base models, namely SmolLM-135M, SmolLM-360M, and SmolLM-1.7B, to evaluate the proposed framework across small, moderate, and relatively larger parameter scales. The detailed architecture specifications of the adopted backbones are summarized in Table 1.
+
+Table 1: Architecture of SmolLM models used in our experiments.
+
+Model
+#Param
+#Layers
+#Head
+Hidden Dim
+LR
+BS
+
+SmolLM-135M
+135M
+30
+9
+1536
+3e-3
+1M
+
+SmolLM-360M
+362M
+32
+15
+2560
+3e-3
+1M
+
+SmolLM-1.7B
+1.71B
+24
+32
+8192
+5e-4
+2M
+
+Datasets: We evaluate the proposed framework on three challenging benchmarks: HellaSwag [34], OpenBookQA (OBQA) [21], and ARC-Challenge [6]. Together, these benchmarks provide a diverse testbed for evaluating the proposed method across different reasoning settings. A summary of the evaluation datasets is provided in Table 2.
+
+Table 2: Statistics of language datasets used in our experiments.
+
+Dataset
+Category
+Train
+Validation
+Test
+
+HellaSwag
+Commonsense Reasoning
+39,905
+10,042
+10,003
+
+ARC-C
+Science Reasoning
+99,842
+1,531
+14,042
+
+OBQA
+Science QA
+4,957
+500
+500
+
+Metrics: We report two primary evaluation metrics: accuracy and latency. Accuracy is computed based on the final multiple-choice answer selected by the model, while latency is measured in milliseconds per token (ms/token) and captures the average time required to generate each token under different KV-cache quantization policies.
+
+Baselines: We compare the proposed method against three KV-cache precision baselines: FP16 inference without quantization, static 4-bit KV quantization, and a rule-based dynamic KV policy. FP16 serves as the full-precision reference, while the static baselines apply a uniform bit-width to all cached tokens, and the rule-based method uses hand-crafted heuristics. Additionally, we evaluate the proposed method across modern LLM families, including Pythia [2], Cerebras-GPT [7], LaMini-GPT [31], Galactica [28], and OPT [35], to ensure a broad evaluation setting.
+
+4.2 Experimental Results
+
+To evaluate the effectiveness and deployability of the proposed framework, we compare it against multiple KV-cache precision baselines, with the results summarized in Table 3. Furthermore, Table 4 provides a comparison of the proposed method with representative LLMs. All methods are evaluated in the zero-shot setting on downstream reasoning benchmarks, where the reported accuracy of existing methods are directly taken from [7]. For fair comparison, we evaluate our model under the same experimental settings.
+
+Table 3: Comparison of the proposed method with baselines.
+
+Number of Parameters SmolLM-135M
+
+Baselines
+Metrics
+HellaSwag
+OBQA
+ARC-C
+
+FP16
+Accuracy (%)
+37.20
+29.00
+28.20
+
+Latency ()
+3.45
+1.97
+2.57
+
+Static 4-bit KV
+Accuracy (%)
+33.60
+27.60
+25.00
+
+Latency ()
+2.93
+1.72
+2.25
+
+Dynamic KV
+Accuracy (%)
+29.90
+23.80
+25.50
+
+Latency ()
+3.21
+1.59
+2.20
+
+Ours
+Accuracy (%)
+36.90
+28.60
+27.00
+
+Latency ()
+2.25
+1.00
+2.08
+
+Number of Parameters SmolLM-360M
+
+Baselines
+Metrics
+HellaSwag
+OBQA
+ARC-C
+
+FP16
+Accuracy (%)
+41.50
+31.00
+32.00
+
+Latency ()
+3.50
+2.20
+2.90
+
+Static 4-bit KV
+Accuracy (%)
+33.60
+30.40
+30.00
+
+Latency ()
+2.93
+1.81
+2.83
+
+Dynamic KV
+Accuracy (%)
+29.90
+22.00
+23.50
+
+Latency ()
+3.21
+1.60
+2.70
+
+Ours
+Accuracy (%)
+41.20
+30.50
+31.50
+
+Latency ()
+2.41
+1.40
+2.43
+
+Number of Parameters SmolLM-1.7B
+
+Baselines
+Metrics
+HellaSwag
+OBQA
+ARC-C
+
+FP16
+Accuracy (%)
+49.00
+33.00
+33.50
+
+Latency ()
+2.15
+1.50
+2.45
+
+Static 4-bit KV
+Accuracy (%)
+41.10
+30.00
+32.30
+
+Latency ()
+1.89
+1.10
+2.15
+
+Dynamic KV
+Accuracy (%)
+27.50
+25.00
+26.00
+
+Latency ()
+1.96
+1.25
+2.21
+
+Ours
+Accuracy (%)
+48.60
+31.60
+33.00
+
+Latency ()
+1.58
+1.00
+1.90
+
+Table 4: Comparison of the proposed method with LLMs.
+
+Number of Parameters 135M
+
+Models
+HellaSwag
+OBQA
+ARC-C
+Average
+
+OPT-125M
+29.20
+16.60
+18.90
+21.57
+
+Pythia-70M
+27.00
+13.20
+18.50
+19.57
+
+Pythia-160M
+29.30
+16.00
+18.10
+21.13
+
+Galactica-125M
+29.60
+28.20
+26.20
+28.00
+
+LaMini-GPT-124M
+30.20
+29.60
+26.00
+28.60
+
+Cerebras-GPT-111M
+26.80
+11.80
+16.60
+18.40
+
+Cerebras-GPT-256M
+27.40
+15.80
+17.00
+20.00
+
+SmolLM-135M Ours
+36.90
+28.60
+27.00
+30.83
+
+Number of Parameters 360M
+
+Models
+HellaSwag
+OBQA
+ARC-C
+Average
+
+OPT-350M
+32.00
+17.60
+20.70
+23.43
+
+Pythia-410M
+33.30
+17.80
+21.30
+24.13
+
+Pythia-1B
+37.60
+19.60
+24.30
+27.17
+
+Cerebras-GPT-590M
+29.10
+15.80
+19.00
+21.30
+
+SmolLM-360M Ours
+41.20
+30.50
+31.50
+34.40
+
+Number of Parameters 1.7BM
+
+Models
+HellaSwag
+OBQA
+ARC-C
+Average
+
+OPT-1.3B
+41.50
+23.40
+23.40
+29.43
+
+OPT-2.7B
+45.80
+25.00
+26.80
+32.53
+
+Pythia-1.4B
+39.80
+22.40
+25.60
+29.27
+
+Pythia-2.8B
+45.10
+22.00
+28.80
+31.97
+
+Cerebras-GPT-1.3B
+32.50
+16.60
+22.40
+23.83
+
+Cerebras-GPT-2.7B
+38.60
+20.60
+24.60
+27.93
+
+SmolLM-1.7B Ours
+48.60
+31.60
+33.00
+37.73
+
+Table 3 shows that our method consistently delivers the best accuracy–latency trade-off across all SmolLM scales, achieving near-FP16 accuracy while significantly reducing decoding cost relative to static and heuristic KV quantization baselines. Table 4 further confirms the effectiveness of the proposed framework, as SmolLM + Ours attains the strongest overall performance across all datasets.
+
+5 Conclusion
+
+This paper presented Don’t Waste Bits!, an adaptive KV-cache quantization framework for efficient LLM inference. By combining lightweight token-level saliency features with a compact controller, the proposed method dynamically assigns KV precision during decoding, enabling heterogeneous bit-width allocation across tokens. This design improves the trade-off among predictive accuracy and decoding latency across multiple benchmarks and model scales. The framework is also practically deployable, since its features are inexpensive to compute, the controller adds minimal overhead, and precision decisions are produced online without costly search, iterative optimization, or modifications to the transformer. As a result, the method integrates naturally into standard inference pipelines and supports memory-efficient, latency-aware LLM deployment.
+
+References
+
+[1]
+M. Adnan, A. Arunkumar, G. Jain, P. J. Nair, I. Soloveychik, and P. Kamath (2024)
+
+Keyformer: kv cache reduction through key tokens selection for efficient generative inference.
+
+Proceedings of Machine Learning and Systems 6, pp. 114–127.
+
+Cited by: §1,
+§2.
+
+[2]
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, et al. (2023)
+
+Pythia: a suite for analyzing large language models across training and scaling.
+
+In International conference on machine learning,
+
+pp. 2397–2430.
+
+Cited by: §4.1.
+
+[3]
+S. P. H. Boroujeni, N. Mehrabi, H. Alzorgan, M. Fazeli, and A. Razi (2026)
+
+All you need for object detection: from pixels, points, and prompts to next-gen fusion and multimodal llms/vlms in autonomous vehicles.
+
+Image and Vision Computing, pp. 105944.
+
+Cited by: §1.
+
+[4]
+P. Bühlmann and A. J. Wyner (1999)
+
+Variable length markov chains.
+
+The Annals of Statistics 27 (2), pp. 480–513.
+
+Cited by: §1.
+
+[5]
+W. Cheng, S. Dong, J. Qin, and W. Wang (2025)
+
+QAQ: quality adaptive quantization for llm kv cache.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 2542–2550.
+
+Cited by: §1,
+§1,
+§2.
+
+[6]
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord (2018)
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+
+arXiv preprint arXiv:1803.05457.
+
+Cited by: §4.1.
+
+[7]
+N. Dey, G. Gosal, H. Khachane, W. Marshall, R. Pathria, M. Tom, J. Hestness, et al. (2023)
+
+Cerebras-gpt: open compute-optimal language models trained on the cerebras wafer-scale cluster.
+
+arXiv preprint arXiv:2304.03208.
+
+Cited by: §4.1,
+§4.2.
+
+[8]
+Y. Feng, J. Lv, Y. Cao, X. Xie, and S. K. Zhou (2024)
+
+Ada-kv: optimizing kv cache eviction by adaptive budget allocation for efficient llm inference.
+
+arXiv preprint arXiv:2407.11550.
+
+Cited by: §1,
+§2.
+
+[9]
+S. Ge, Y. Zhang, L. Liu, M. Zhang, J. Han, and J. Gao (2023)
+
+Model tells you what to discard: adaptive kv cache compression for llms.
+
+arXiv preprint arXiv:2310.01801.
+
+Cited by: §2.
+
+[10]
+L. Haoyang, Y. Li, A. Tian, T. Tang, Z. Xu, X. Chen, H. Nicole, W. Dong, L. Qing, and L. Chen (2025)
+
+A survey on large language model acceleration based on kv cache management.
+
+Transactions on Machine Learning Research.
+
+Cited by: §1.
+
+[11]
+Y. He, L. Zhang, W. Wu, J. Liu, H. Zhou, and B. Zhuang (2024)
+
+Zipcache: accurate and efficient kv cache quantization with salient token identification.
+
+Advances in Neural Information Processing Systems 37, pp. 68287–68307.
+
+Cited by: §1,
+§1,
+§2.
+
+[12]
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami (2024)
+
+Kvquant: towards 10 million context length llm inference with kv cache quantization.
+
+Advances in Neural Information Processing Systems 37, pp. 1270–1303.
+
+Cited by: §1,
+§1,
+§2.
+
+[13]
+D. A. Huffman (1952)
+
+A method for the construction of minimum-redundancy codes.
+
+Proceedings of the IRE 40 (9), pp. 1098–1101.
+
+Cited by: §3.3.
+
+[14]
+J. Lang, Z. Guo, and S. Huang (2024)
+
+A comprehensive study on quantization techniques for large language models.
+
+In 2024 4th International conference on artificial intelligence, robotics, and communication (ICAIRC),
+
+pp. 224–231.
+
+Cited by: §1.
+
+[15]
+X. Li, X. Zeyu, Y. Li, L. Qu, H. Zhen, Y. Yao, W. Liu, S. J. Pan, and M. Yuan
+
+KVTuner: sensitivity-aware layer-wise mixed-precision kv cache quantization for efficient and nearly lossless llm inference.
+
+In Forty-second International Conference on Machine Learning,
+
+Cited by: §1.
+
+[16]
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen (2024)
+
+Snapkv: llm knows what you are looking for before generation.
+
+Advances in Neural Information Processing Systems 37, pp. 22947–22970.
+
+Cited by: §1,
+§1,
+§2.
+
+[17]
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han (2024)
+
+Awq: activation-aware weight quantization for on-device llm compression and acceleration.
+
+Proceedings of machine learning and systems 6, pp. 87–100.
+
+Cited by: §2.
+
+[18]
+A. Liu, J. Liu, Z. Pan, Y. He, G. Haffari, and B. Zhuang (2024)
+
+Minicache: kv cache compression in depth dimension for large language models.
+
+Advances in Neural Information Processing Systems 37, pp. 139997–140031.
+
+Cited by: §1.
+
+[19]
+Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu (2024)
+
+Kivi: a tuning-free asymmetric 2bit quantization for kv cache.
+
+arXiv preprint arXiv:2402.02750.
+
+Cited by: §1.
+
+[20]
+X. Lu, Y. Chen, C. Chen, H. Tan, B. Chen, Y. Xie, R. Hu, G. Tan, R. Wu, Y. Hu, et al. (2025)
+
+Bluelm-v-3b: algorithm and system co-design for multimodal large language models on mobile devices.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+
+pp. 4145–4155.
+
+Cited by: §1.
+
+[21]
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal (2018)
+
+Can a suit of armor conduct electricity? a new dataset for open book question answering.
+
+In EMNLP,
+
+Cited by: §4.1.
+
+[22]
+U. Saxena, S. Sharify, K. Roy, and X. Wang (2025)
+
+ResQ: mixed-precision quantization of large language models with low-rank residuals.
+
+In International Conference on Machine Learning,
+
+pp. 53095–53114.
+
+Cited by: §1.
+
+[23]
+C. E. Shannon (1948)
+
+A mathematical theory of communication.
+
+The Bell system technical journal 27 (3), pp. 379–423.
+
+Cited by: §3.3.
+
+[24]
+F. Shu, L. Zhang, H. Jiang, and C. Xie (2025)
+
+Audio-visual llm for video understanding.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 4246–4255.
+
+Cited by: §1.
+
+[25]
+A. Shutova, V. Malinovskii, V. Egiazarian, D. Kuznedelev, D. Mazur, S. Nikita, I. Ermakov, and D. Alistarh (2025)
+
+Cache me if you must: adaptive key-value quantization for large language models.
+
+In International Conference on Machine Learning,
+
+pp. 55451–55473.
+
+Cited by: §1,
+§1.
+
+[26]
+W. Tao, H. Lu, X. Qu, B. Zhang, K. Lu, J. Wan, and J. Wang (2025)
+
+MoQAE: mixed-precision quantization for long-context llm inference via mixture of quantization-aware experts.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 10810–10820.
+
+Cited by: §1.
+
+[27]
+W. Tao, B. Zhang, X. Qu, J. Wan, and J. Wang (2025)
+
+Cocktail: chunk-adaptive mixed-precision quantization for long-context llm inference.
+
+In 2025 Design, Automation & Test in Europe Conference (DATE),
+
+pp. 1–7.
+
+Cited by: §1.
+
+[28]
+R. Taylor, M. Kardas, G. Cucurull, T. Scialom, A. Hartshorn, E. Saravia, A. Poulton, V. Kerkez, and R. Stojnic (2022)
+
+Galactica: a large language model for science.
+
+arXiv preprint arXiv:2211.09085.
+
+Cited by: §4.1.
+
+[29]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+
+Attention is all you need.
+
+Advances in neural information processing systems 30.
+
+Cited by: §1.
+
+[30]
+J. Wu, Z. Wang, L. Zhang, Y. Lai, Y. He, and D. Zhou (2025)
+
+Scope: optimizing key-value cache compression in long-context generation.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 10775–10790.
+
+Cited by: §1.
+
+[31]
+M. Wu, A. Waheed, C. Zhang, M. Abdul-Mageed, and A. F. Aji (2024)
+
+Lamini-lm: a diverse herd of distilled models from large-scale instructions.
+
+In Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 944–964.
+
+Cited by: §4.1.
+
+[32]
+X. Xing, J. Hu, G. Liang, J. Zhang, D. Xu, and Q. Yu (2025)
+
+Empowering llms to understand and generate complex vector graphics.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+
+pp. 19487–19497.
+
+Cited by: §1.
+
+[33]
+C. Yu, H. Wang, Y. Shi, H. Luo, S. Yang, J. Yu, and J. Wang (2025)
+
+Seqafford: sequential 3d affordance reasoning via multimodal large language model.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 1691–1701.
+
+Cited by: §1.
+
+[34]
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi (2019)
+
+Hellaswag: can a machine really finish your sentence?.
+
+In Proceedings of the 57th annual meeting of the association for computational linguistics,
+
+pp. 4791–4800.
+
+Cited by: §4.1.
+
+[35]
+S. Zhang, S. Roller, N. Goyal, M. Artetxe, M. Chen, S. Chen, C. Dewan, M. Diab, X. Li, X. V. Lin, et al. (2022)
+
+Opt: open pre-trained transformer language models.
+
+arXiv preprint arXiv:2205.01068.
+
+Cited by: §4.1.
+
+[36]
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, et al. (2023)
+
+H2o: heavy-hitter oracle for efficient generative inference of large language models.
+
+Advances in Neural Information Processing Systems 36, pp. 34661–34710.
+
+Cited by: §1,
+§2.
+
+[37]
+X. Zhou, W. Wang, M. Zeng, J. Guo, X. Liu, L. Shen, M. Zhang, and L. Ding (2024)
+
+DynamicKV: task-aware adaptive kv cache compression for long context llms.
+
+arXiv preprint arXiv:2412.14838.
+
+Cited by: §1.
+
+[38]
+Z. Zhou, X. Ning, K. Hong, T. Fu, J. Xu, S. Li, Y. Lou, L. Wang, Z. Yuan, X. Li, et al. (2024)
+
+A survey on efficient inference for large language models.
+
+arXiv preprint arXiv:2404.14294.
+
+Cited by: §1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

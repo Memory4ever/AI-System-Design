@@ -1,0 +1,882 @@
+SPPO: Sequence-Level PPO for Long-Horizon Reasoning Tasks
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+2.1 PPO and Credit Assignment in Reasoning
+
+2.2 Optimization Mechanics of GRPO
+
+3 Method
+
+3.1 Formulation: Sequence-Level Contextual Bandit
+
+3.2 SPPO: Sequence-Level Proximal Policy Optimization
+
+Value Function and Advantage Estimation
+
+Sequence-Level Policy Optimization
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Baselines & Implementation
+
+4.2 Main Results
+
+Critic Decoupling
+
+4.3 Ablation Study: Impact of Loss Function
+
+5 Analysis
+
+5.1 Scalability and Computational Efficiency
+
+Training Efficiency
+
+Resource Efficiency and VRAM Optimization
+
+5.2 Value Model Analysis: Calibration and Correlation
+
+Setup
+
+Calibration and Distribution Analysis
+
+Implications for SPPO
+
+5.3 Controlled Analysis: The RLVR Benchmark
+
+Experimental Protocol
+
+Task Configurations and Hyperparameters
+
+Results and Analysis
+
+6 Related Work
+
+6.1 Reinforcement Learning Algorithms in LLMs
+
+6.2 Sequence-Level Exploration
+
+7 Conclusion
+
+References
+
+A Derivation and Analysis of GRPO Advantage
+
+B Extended Visualization of Critic Dynamics
+
+C Risks
+
+D Resources and Implementation Details
+
+E Implementation Details and Execution Commands
+
+E.1 SPPO (Ours)
+
+E.2 Group Relative Policy Optimization (GRPO)
+
+E.3 Standard PPO
+
+E.4 RLOO Baselines
+
+E.5 ReMax Baselines
+
+License: CC BY 4.0
+
+arXiv:2604.08865v1 [cs.AI] 10 Apr 2026
+
+SPPO: Sequence-Level PPO for Long-Horizon Reasoning Tasks
+
+Tianyi Wang
+††thanks: Equal Contribution. $ˆ†$Corresponding Author.
+Affiliation: Southern University of Science and Technology
+
+Affiliation: Beijing University of Posts and Telecommunications
+
+  
+Yixia Li
+
+  
+Long Li
+
+Affiliation: INFLY TECH
+
+  
+Yibiao Chen
+
+Affiliation: Beijing University of Posts and Telecommunications
+
+  
+Shaohan Huang
+
+Affiliation: Microsoft Research Asia
+
+  
+Yun Chen
+
+Affiliation: Shanghai University of Finance and Economics
+
+  
+Peng Li
+
+Affiliation: Tsinghua University
+
+  
+Yang Liu
+
+Affiliation: Tsinghua University
+
+  
+Guanhua Chen
+
+Abstract
+
+Proximal Policy Optimization (PPO) was central to aligning Large Language Models (LLMs) in reasoning tasks with verifiable rewards. However, standard token-level PPO struggles in this setting due to the instability of temporal credit assignment over long Chain-of-Thought (CoT) horizons and the prohibitive memory cost of the value model. While critic-free alternatives like GRPO mitigate these issues, they incur significant computational overhead by requiring multiple samples for baseline estimation, severely limiting training throughput. In this paper, we introduce Sequence-Level PPO (SPPO), a scalable algorithm that harmonizes the sample efficiency of PPO with the stability of outcome-based updates. SPPO reformulates the reasoning process as a Sequence-Level Contextual Bandit problem, employing a decoupled scalar value function to derive low-variance advantage signals without multi-sampling. Extensive experiments on mathematical benchmarks demonstrate that SPPO significantly surpasses standard PPO and matches the performance of computation-heavy group-based methods, offering a resource-efficient framework for aligning reasoning LLMs.
+
+1 Introduction
+
+Large Language Models (LLMs) have significantly advanced in complex reasoning, empowered by long Chain-of-Thought (CoT) prompting (Lightman et al., 2023). To further align these models with logical correctness, Reinforcement Learning (RL) has proven indispensable, particularly in Reinforcement Learning with Verifiable Rewards (RLVR) tasks like mathematical problem-solving (Luo et al., 2025).
+Proximal Policy Optimization (PPO, Schulman et al. (2017)) typically relies on a token-level Critic and Generalized Advantage Estimation (GAE) for credit assignment (Guo et al., 2025). However, this framework faces structural incompatibility in long CoT tasks with sparse rewards. The delayed reward forces GAE to propagate signals across thousands of tokens, inducing high bias (Yuan et al., 2025). Furthermore, the Critic tends to “overfit” semantic cues at the sequence tail (See Figure 1), causing the advantage signal to vanish precisely when needed. Consequently, standard PPO often proves unstable for reasoning tasks (Kazemnejad et al., 2025).
+
+In response, Group Relative Policy Optimization (GRPO, Shao et al. (2024)) eliminates the learned Critic in favor of group-based statistical baselines.
+We posit that GRPO’s success stems from implicitly remodeling reasoning as a Sequence-Level Contextual Bandit problem, treating the entire response as an atomic action to bypass token-level noise.
+However, this approach faces a fundamental Bias-Variance Trade-off: while it removes the high bias inherent in token-level value estimation, the reliance on Monte Carlo outcomes introduces high variance in the gradient signal (Wang et al., 2025a).
+To mitigate this variance and stabilize training, GRPO incurs a prohibitive computational cost, as it necessitates sampling multiple responses () per prompt to construct a valid baseline, significantly bottlenecking training throughput (Lin et al., 2025; Li et al., 2025).
+
+Despite the empirical success of critic-free methods like GRPO, a critical misconception exists regarding their efficacy; our core contribution is understanding GRPO from a novel perspective: its success stems from implicitly remodeling reasoning as a Sequence-Level Contextual Bandit problem—treating the entire response as an atomic action to bypass token-level noise—rather than a multi-step Markov Decision Process (MDP). We posit that a stable, sequence-level baseline—underpinned by a generalizable scalar value model—is structurally more robust for long-horizon RLVR tasks. Crucially, this explicitly modeled approach not only secures optimization stability but also circumvents the prohibitive computational latency associated with extensive group sampling.
+
+Drawing on these insights, we introduce Sequence-Level PPO (SPPO), a novel algorithm that resolves the Bias-Variance dilemma in reasoning alignment. SPPO fundamentally reformulates the reasoning process from a token-level Markov Decision Process (MDP) to a Sequence-Level Contextual Bandit problem. In this view, the prompt serves as the static context and the entire reasoning chain is treated as a single atomic action. This formulation effectively collapses the time horizon, eliminating the high bias of token-level credit assignment inherent to standard PPO. Simultaneously, SPPO employs a learned scalar value function to curb the high variance of group-relative baselines, thereby achieving optimization stability without the need for multi-sampling ().
+Crucially, SPPO addresses computational bottlenecks through this resource-efficient architecture. Unlike GRPO, which requires expensive multi-sampling for empirical baselines to reduce variance, SPPO leverages its learned scalar value function to enable high-throughput single-sample updates (). Furthermore, we validate a Decoupled Critic strategy—using a lightweight critic (e.g., 1.5B) to align a larger policy (e.g., 7B)—which leverages the reduced complexity of value estimation to cut memory usage by 12.8% (Figure 6). Extensive evaluations on AIME24/25, AMC23, MATH, and Minerva demonstrate that SPPO resolves the value collapse of standard PPO and outperforms computation-heavy baselines. Notably, SPPO matches GRPO’s peak performance with a 5.9 training speedup and superior convergence, offering a scalable paradigm for sparse-reward reasoning tasks.11
+1
+
+Our code is available at https://github.com/sustech-nlp/SPPO.
+
+2 Background
+
+2.1 PPO and Credit Assignment in Reasoning
+
+Figure 1: Analysis of the “Tail Effect”.
+We visualize Critic value dynamics to diagnose inefficiencies. Blue and red lines denote correct and incorrect trajectories, respectively.
+The Critic discriminates only near the sequence tail. For correct paths, rises late, causing to vanish; for incorrect ones, it fails to penalize intermediate steps. This indicates credit assignment based on token position rather than semantic contribution. The Critic was trained under 8192 context window. Additional randomly sampled visualizations are provided in Appendix B.
+
+PPO optimizes the policy by maximizing a clipped surrogate objective :
+
+Figure 2: Visualization of the GRPO Advantage Function. derived under the Bernoulli assumption (see Appendix A). The plot illustrates how GRPO implicitly models the reasoning task as a Contextual Bandit: instead of a static reward, the advantage is dynamically scaled based on the prompt’s estimated difficulty , contrasting success (Blue) against failure (Red).
+
+Figure 3: Overview of SPPO. Motivated by the implicit bandit behavior of GRPO, SPPO explicitly reformulates reasoning as a Sequence-Level Contextual Bandit, utilizing a scalar value function .
+
+where is the probability ratio and is the advantage. Typically, is computed via Generalized Advantage Estimation (GAE) using a learned token-level Critic . The TD error is defined as , and the advantage is the discounted sum of errors:
+
+In sparse-reward reasoning tasks (e.g., CoT), it is standard to set to propagate terminal rewards. Under this setting, GAE simplifies to the difference between the Monte Carlo return and the value estimate:
+
+However, this mechanism is unstable in long-horizon tasks (Figure 1). As generation approaches the answer, the Critic often “overfits” semantic cues. For correct trajectories, converges to the reward early, causing to vanish; for incorrect ones, it underestimates significantly. This “tail effect” bases credit on position rather than contribution, undermining optimization.
+
+2.2 Optimization Mechanics of GRPO
+
+While standard PPO operates within a token-level MDP, GRPO implicitly shifts the optimization paradigm. It eliminates the step-wise Critic by sampling outputs per prompt and computing the advantage via group normalization:
+
+Modeling the sampling process as Bernoulli trials (derivation provided in Appendix A), the advantage function simplifies to:
+
+As visualized in Figure 2, GRPO dynamically scales rewards based on prompt difficulty . Crucially, this mechanism evaluates the entire response as an atomic unit against a prompt-dependent baseline. Thus, although GRPO does not explicitly redefine the environment, its advantage formulation implicitly models the reasoning task as a Contextual Bandit rather than a multi-step MDP.
+
+This observation prompts a critical question: Does GRPO’s success imply that PPO’s instability stems from the token-level MDP decomposition, rather than the fundamental intractability of value estimation?
+
+3 Method
+
+3.1 Formulation: Sequence-Level Contextual Bandit
+
+To answer this and formalize the implicit insight, we explicitly reformulate the reasoning process from a token-level MDP to a Sequence-Level Contextual Bandit (SL-CB). By conceptually collapsing the time horizon (), we map the reasoning task to the tuple , where the context is defined strictly by the static prompt , and the action treats the entire response sequence as a single atomic unit. Accordingly, the reward evaluates the holistic correctness of the generated chain.
+
+This formulation fundamentally circumvents the credit assignment ambiguity inherent to MDPs. Rather than forcing a Critic to decompose sparse outcomes into noisy token-level signals, we optimize the expected sequence reward conditioned strictly on the prompt. Consequently, the value function simplifies to estimating the scalar solvability of the problem, aligning directly with the objective of sparse-reward reasoning.
+
+3.2 SPPO: Sequence-Level Proximal Policy Optimization
+
+Building upon the theoretical insights of the sequence-level bandit formulation, we propose SPPO, an algorithm designed to strictly align the optimization objective with the sparse, outcome-oriented nature of reasoning tasks.
+
+Value Function and Advantage Estimation
+
+First, we redefine the role of the critic. Unlike the token-level value function in standard PPO, which attempts to predict future returns from arbitrary intermediate states, we train a value model to estimate the scalar probability of success for a given prompt .
+
+To construct the advantage, we treat the single sample outcome as a realization of a Bernoulli trial with probability . We adopt a standardized advantage formulation to stabilize training:
+
+(1)
+
+where is the binary reward. This formulation naturally amplifies the signal when the model is confident but wrong, and suppresses noise when the model is uncertain ().
+
+To ensure serves as a calibrated baseline, we optimize it using the Binary Cross-Entropy (BCE) loss:
+
+(2)
+
+Sequence-Level Policy Optimization
+
+With the advantage established, we formulate the policy optimization objective. SPPO adapts the clipped surrogate objective of PPO but fundamentally alters the scope of the advantage term. The objective function is defined as:
+
+(3)
+
+Here, represents the probability ratio between the current policy and the behavior policy for the token at timestep , and is the standard clipping hyperparameter to constrain the policy update.
+
+Crucially, unlike standard PPO where each token is assigned a unique, time-dependent advantage via GAE, SPPO propagates the single sequence-level advantage uniformly to all constituent tokens in the sequence . This mechanism ensures that if a reasoning chain leads to a correct answer (), every step in that chain is reinforced equally; conversely, if the chain fails (), every step is penalized. By decoupling the advantage signal from the sequence length, SPPO effectively solves the temporal credit assignment problem that hinders standard PPO in Long Chain-of-Thought tasks.
+
+4 Experiments
+
+4.1 Experimental Setup
+
+We evaluate DeepSeek-R1-Distill-Qwen-1.5B and DeepSeek-R1-Distill-Qwen-7B models, fine-tuned on DeepScaleR (Luo et al., 2025) and DAPO-17K (Yu et al., 2025) respectively. We evaluate performance using Average@16 accuracy across five held-out benchmarks: AIME24(Art of Problem Solving, 2025a), AIME25(Art of Problem Solving, 2025a), AMC23(Art of Problem Solving, 2025b), MATH500(Hendrycks et al., 2021), and Minerva Math(Lewkowycz et al., 2022). Comprehensive links to all models and datasets are provided in Appendix D.
+
+Baselines & Implementation
+
+We benchmark SPPO against: (1) Base Model; (2) Standard PPO (token-level); and (3) Sequence-level methods including ReMax, RLOO, and GRPO (). All algorithms are implemented via verl (Sheng et al., 2025) using outcome-based rewards ( for correct boxed answers and 0 for the incorrect answers). We utilized the precise reward function implemented in Reasoning360 (Cheng et al., 2025) to conduct both training and evaluation.
+Hyperparameters: We set to encourage exploration. Global batch sizes are configured at 256 for the 1.5B model and 512 for the 7B model. Learning rates are set to for Actors and for Critics. Standard PPO employs to propagate sparse rewards. The hyperparameters for all baselines generally follow the official recommended examples provided by the verl library. All experiments were conducted on (1.5B) and (7B) GPUs. For complete reproducibility, we provide the exact execution scripts and configuration commands for both SPPO and the baselines in Appendix E.
+
+4.2 Main Results
+
+Table 1 presents the performance comparison. Standard PPO struggles to consistently improve over the base model, confirming the instability of GAE in sparse-reward settings. While sequence-level baselines (ReMax, RLOO) improve stability, they generally lag behind group-based approaches.
+
+SPPO achieves the highest overall performance, surpassing GRPO () on most benchmarks (Avg 48.06 vs. 47.08 on 1.5B). Crucially, SPPO achieves this with single-sample efficiency (), effectively eliminating the “Tail Effect” (Figure 1) without the computational bottleneck of multi-sampling.
+
+Method
+A24
+A25
+AMC
+MATH
+Minerva
+Avg
+
+DeepSeek-R1-Distill-Qwen-1.5B
+
+Base Model
+27.50
+21.67
+71.56
+83.73
+20.35
+44.96
+
+PPO
+27.50
+20.83
+70.63
+81.38
+19.89
+44.06
+
+ReMax
+31.67
+25.42
+71.88
+84.38
+20.40
+46.74
+
+RLOO
+30.42
+21.67
+72.81
+84.10
+21.73
+46.15
+
+GRPO ()
+30.00
+26.25
+73.13
+83.88
+22.15
+47.08
+
+SPPO (Ours)
+34.17
+25.83
+74.38
+83.78
+22.15
+48.06
+
+DeepSeek-R1-Distill-Qwen-7B
+
+Base Model
+41.25
+26.67
+79.38
+87.20
+27.94
+52.49
+
+PPO
+45.20
+35.42
+85.31
+88.48
+27.80
+56.44
+
+ReMax
+49.38
+31.25
+86.56
+90.28
+27.99
+57.09
+
+RLOO
+46.67
+32.50
+86.88
+90.35
+28.72
+57.02
+
+GRPO ()
+47.08
+35.00
+86.25
+90.15
+28.74
+57.44
+
+SPPO (Ours)
+50.83
+35.00
+86.25
+90.13
+28.35
+58.11
+
+w/ Small Critic
+52.29
+34.58
+87.19
+89.88
+28.86
+58.56
+
+Table 1: Performance comparison on 1.5B and 7B scales. SPPO consistently outperforms baselines. The Small Critic variant (1.5B Critic aligning 7B Policy) achieves the top average score.
+
+Critic Decoupling
+
+We hypothesize that scalar solvability estimation is significantly simpler than generative reasoning, permitting a smaller Value Function. To test this, we trained the 7B Policy using a 1.5B Critic. As shown in Table 1 (w/ Small Critic), this configuration not only retains effectiveness but achieves the highest average score (58.56). This validates that a lightweight critic can effectively align a large policy, significantly reducing the memory footprint of RLVR training (Figure 6).
+
+4.3 Ablation Study: Impact of Loss Function
+
+To isolate the source of SPPO’s performance gains, we ablated the architectural contribution by applying the BCE loss to the standard token-level PPO framework (PPO + BCE).
+
+Figure 4: Ablation Analysis of the Optimization Objective. We compare SPPO against Standard PPO and a control baseline (“PPO + BCE”) that integrates the BCE loss into the token-level framework. The failure of the control baseline demonstrates that the performance gains do not stem from the loss function itself, but from the Sequence-Level Contextual Bandit formulation, which propagates a unified advantage signal to resolve credit assignment ambiguity.
+
+As shown in Figure 4, PPO + BCE fails to reproduce the success of SPPO, exhibiting the same instability as the standard baseline. Notably, we terminated both PPO-based runs early at 500 steps due to observed performance collapse and degrading scores. This empirical evidence validates that SPPO’s efficacy derives fundamentally from its Sequence-Level Contextual Bandit formulation—specifically the propagation of a unified advantage signal —rather than the adoption of the BCE loss in isolation.
+
+5 Analysis
+
+5.1 Scalability and Computational Efficiency
+
+Figure 5: Training Efficiency on Deepseek-R1-Distill-Qwen-7B (Performance vs. Wall-clock Time). The plot compares the trajectory of SPPO against strong baselines (GRPO, PPO, RLOO, ReMax) on the DAPO-17k dataset(Yu et al., 2025). Solid Red: SPPO with a matched 7B Critic. Dashed Pink: SPPO with a decoupled, smaller 1.5B Critic (Deepseek-R1-Distill-Qwen-1.5B). The y-axis noted as the Avg@8 score evaluated on AIME24, AIME25, AMC23, MATH500, and Minerva Math. SPPO achieves optimal performance significantly faster than group-based methods, and the decoupled critic maintains performance while reducing memory overhead.
+
+To evaluate the scalability of SPPO and its efficiency in larger parameter regimes, we extended our experiments to the DeepSeek-R1-Distill-Qwen-7B model. For this analysis, we utilized the DAPO-17K dataset Luo et al. (2025), a curated subset of high-quality mathematical reasoning problems. We compared SPPO against the baseline algorithms, tracking performance on the hold-out validation set against wall-clock training time.
+
+Training Efficiency
+
+As illustrated in Figure 5, SPPO demonstrates superior training efficiency compared to group-based alternatives. GRPO () and RLOO exhibit a slower “time-to-convergence” primarily due to the computational bottleneck of generating multiple samples per prompt to estimate the baseline. In contrast, SPPO, which operates with single-sample efficiency (), updates the policy more frequently within the same time window. Consequently, SPPO reaches peak performance (mean score ) in approximately 22 hours, whereas baselines require significantly longer to reach comparable levels or plateau at lower scores (e.g., standard PPO).
+
+Figure 6: GPU Memory Allocation Analysis. Comparison of normalized peak VRAM usage during the training of a 7B policy. The “Decoupled Critic” (7B+1.5B) approach, combined with the system-level optimizations in verl, significantly reduces memory bottlenecks compared to symmetric actor-critic setups (7B+7B), making efficient RL alignment accessible on consumer-grade hardware.
+
+Resource Efficiency and VRAM Optimization
+
+Beyond computational throughput, the “Small Critic” configuration offers a decisive advantage in hardware accessibility. Standard RLHF typically requires loading a Critic of equal size to the Policy, effectively doubling the parameter memory footprint. By decoupling the critic size (1.5B) from the policy (7B), SPPO significantly alleviates this bottleneck. Furthermore, by leveraging the advanced memory management and sharding techniques provided by the verl library (Sheng et al., 2025), our implementation minimizes redundant memory allocation.
+
+As visualized in Figure 6, the SPPO framework with a decoupled critic maintains a low memory profile. This confirms that SPPO is not only algorithmically stable but also resource-efficient, enabling the alignment of large reasoning models even under constrained GPU budgets.
+
+5.2 Value Model Analysis: Calibration and Correlation
+
+The efficacy of SPPO relies heavily on the quality of the sequence-level value function, . In our framework, serves as the baseline for advantage estimation (). Theoretically, an ideal value model should accurately capture the intrinsic difficulty of a prompt, approximating the expected success rate of the current policy. To validate this, we conducted a correlation analysis between the critic’s predictions and the empirical ground truth on a held-out validation set.
+
+Setup
+
+We randomly sampled a diverse set of prompts and executed the policy multiple times for each to compute the empirical pass rate (AVG@), which serves as the ground truth label for difficulty. We then compared these empirical values against the predicted probabilities output by our Value Model.
+
+Figure 7: Correlation analysis between the Critic’s predicted difficulty (-axis) and the empirical AVG@ rate (-axis) (Where k = 64). The plot reveals a clear positive correlation (Pearson ), indicating the Critic successfully distinguishes between hard and easy tasks. The marginal histograms (top and right) contrast the bimodal distribution of real task difficulty with the more conservative, quasi-normal distribution of the Critic’s predictions.
+
+Calibration and Distribution Analysis
+
+As illustrated in Figure 7, our analysis reveals a distinct positive linear correlation between the predicted values and the empirical results. With a Pearson correlation coefficient of and a Spearman rank correlation of , we find strong statistical evidence that the Value Model has successfully learned to capture the relative difficulty of prompts, effectively cutting through the inherent stochasticity of LLM generation. Beyond these correlation metrics, the marginal histograms provide a critical insight into the model’s behavioral tendencies: while the empirical difficulty (top histogram) follows a bimodal distribution—where tasks are typically either completely unsolvable (0.0) or consistently solvable (1.0)—the critic’s predictions (right histogram) exhibit a unimodal, quasi-normal distribution centered around 0.6-0.7. This distributional shift indicates that the critic adopts a conservative prediction strategy, aggregating uncertainty rather than overfitting to the binary extremes of the empirical data.
+
+Implications for SPPO
+
+The distributional discrepancy suggests that the Critic tends to be conservative, exhibiting a “regression to the mean” behavior rather than predicting extreme probabilities (0 or 1). However, the regression trend (red line) maintains a clear positive slope. This confirms that serves as a valid, variance-reducing baseline.
+
+Specifically, for hard prompts (Avg@), the Critic predicts lower values (), ensuring that a rare success yields a strong positive advantage. For easy prompts (Avg@), the Critic predicts higher values (), ensuring that a failure yields a significant negative penalty.
+
+5.3 Controlled Analysis: The RLVR Benchmark
+
+To strictly disentangle the algorithmic efficacy of SPPO from system-level optimizations inherent to the verl framework, and to rigorously validate its robustness in isolation, we extend our evaluation to a suite of five representative control environments: Precision CartPole, MountainCar, Hopper (MuJoCo), LunarLander, and Pendulum. We reconfigure these classic control tasks into a Reinforcement Learning with Verifiable Rewards (RLVR) framework. By strictly enforcing structural constraints—specifically long time horizons, deterministic transitions, and sparse binary outcome feedback—we construct a minimalist testbed that mimics the optimization landscape of LLM reasoning without the confounding variables of large-scale distributed training.
+
+Experimental Protocol
+
+To mirror the LLM alignment lifecycle, we implement a rigorous three-stage pipeline. First, Expert Synthesis trains policies using dense, shaped rewards (e.g., velocity bonuses in MountainCar, upright incentives in Pendulum) to mimic pre-training supervision. Subsequently, Supervised Fine-Tuning (SFT) applies behavior cloning to filtered successful trajectories (e.g., or state in Hopper), initializing a model with non-zero but imperfect solvability. Finally, RL Fine-tuning introduces the core sparse reward challenge: agents receive a strictly binary terminal reward with zero intermediate feedback ( for ) and a discount factor , compelling the algorithm to bridge the full temporal horizon.
+
+Task Configurations and Hyperparameters
+
+To ensure a fair comparison of optimization objectives, we align core PPO hyperparameters (e.g., , learning rates) across algorithms while adapting batch sizes to the distinct exploration dynamics of each domain. Specifically, we utilize a strictly aligned batch size of 16 trajectories per update for LunarLander and Pendulum; a reduced batch size of 8 for exploration-heavy tasks (MountainCar, Hopper); and a batch size of 64 for the rapid-dynamics CartPole. Success in the RL phase is determined by rigorous outcome criteria: Precision CartPole () requires a final angle ; MountainCar () requires reaching the flag (); Hopper () demands survival with forward progress ( m); LunarLander () necessitates stable leg contact () within the landing pad (); and Pendulum () requires an upright final position ().
+
+Figure 8: RLVR Benchmark Results. Comparison of SPPO (Blue Solid) and Standard PPO (Red Dashed) across five control tasks with sparse outcome rewards (). SPPO demonstrates robust convergence in complex control tasks where Standard PPO exhibits instability or failure (e.g., Hopper, MountainCar), while achieving superior sample efficiency in precision tasks like CartPole.
+
+Results and Analysis
+
+As illustrated in Figure 8, SPPO consistently matches or outperforms Standard PPO across all domains, confirming its structural superiority in sparse-reward settings. In long-horizon tasks like Hopper () and MountainCar, where the SFT initialization provides a weak prior, Standard PPO flatlines near zero (or stays at a low success rate) as the token-level critic fails to propagate the sparse signal effectively; conversely, SPPO successfully solves these tasks by estimating the sequence-level solvability . Furthermore, in LunarLander, SPPO maintains monotonic improvement, avoiding the instability observed in the Standard PPO baseline. Finally, SPPO demonstrates superior precision alignment in Precision CartPole, rapidly converging to high-precision behaviors where step-level attribution struggles to differentiate between “good” and “perfect” trajectories given binary feedback.
+
+6 Related Work
+
+6.1 Reinforcement Learning Algorithms in LLMs
+
+Proximal Policy Optimization (PPO) (Schulman et al., 2017) aligns LLMs using a dense, token-level value function. However, in sparse-reward reasoning tasks (RLVR), this approach struggles as GAE fails to effectively assign credit over long Chain-of-Thought horizons (Lightman et al., 2023).
+Group-based methods like GRPO (Shao et al., 2024) mitigate this by estimating baselines via multi-sampling (). By normalizing rewards against the group mean, GRPO implicitly adopts a sequence-level objective, bypassing temporal credit assignment issues.
+
+While recent variants like DAPO (Luo et al., 2025) and Dr.GRPO (Liu et al., 2025) propose strategies to refine gradient dynamics (e.g., dynamic sampling), they remain fundamentally bound to the computationally expensive multi-sampling paradigm. In this work, we exclude such orthogonal optimizations. Our primary objective is to isolate and validate the effectiveness of the Sequence-Level Contextual Bandit formulation itself, rather than remedying the inherent instabilities of group-relative baselines.
+Consequently, SPPO replaces the empirical baseline with a learned scalar value function . This enables stable, on-policy learning with single-sample efficiency (), harmonizing PPO’s throughput with the structural stability of sequence-level modeling.
+
+6.2 Sequence-Level Exploration
+
+Prior research has extensively explored sequence-level Reinforcement Learning (RL) algorithms. The RLOO (REINFORCE Leave-One-Out) algorithm (Ahmadian et al., 2024) posits that token-level modeling is often superfluous, criticizing the token-level optimization inherent in PPO. However, RLOO is established upon the REINFORCE (Sutton et al., 1999) algorithm. Recent work (Wang et al., 2025b) has shown that the clipping term plays a crucial role in learning stability through a Token Masking mechanism. Furthermore, RLOO’s rolling mechanism increases computational requirements as CoT trajectories lengthen.
+
+Moreover, GSPO (Group Sequence Policy Optimization, Zheng et al. (2025)) and GMPO (Geometric-Mean Policy Optimization, Zhao et al. (2025)) have argued that a sequence-level reward is incongruent with PPO’s token-level design. However, since these methods explicitly position their core contribution as addressing the routing instability inherent to Mixture-of-Experts (MoE) architectures, we exclude them from our baselines to maintain a focus on general reasoning alignment.
+
+7 Conclusion
+
+To resolve the trade-off between standard PPO’s high-bias credit assignment and GRPO’s high-variance inefficiency, we introduce SPPO, which reformulates reasoning as a Sequence-Level Contextual Bandit. By employing a scalar critic for advantage estimation, SPPO secures optimization stability with high-throughput single-sample efficiency, offering a scalable paradigm for sparse-reward tasks.
+
+Limitations
+
+In this work, we primarily focus on RLVR, showing that SPPO effectively harmonizes sample efficiency with structural stability in sparse-reward settings. However, our approach is explicitly tailored for tasks with verifiable outcomes to estimate prompt solvability. As a result, extending this sequence-level bandit formulation to open-ended generation tasks, which lack objective ground-truth verifiers, remains a direction for future research.
+
+Ethical Considerations
+
+Our study is conducted in controlled, text-only benchmark environments and does not involve human subjects or the collection of personal data. As with other agentic and world-modeling capabilities, misuse (e.g., enabling harmful or deceptive behavior) and bias propagation are possible; we encourage responsible deployment with appropriate safeguards and oversight.
+
+References
+
+Ahmadian et al. (2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+
+Back to basics: revisiting reinforce style optimization for learning from human feedback in llms.
+
+External Links: 2402.14740,
+Link
+
+Cited by: §6.2.
+
+Art of Problem Solving (2025a)
+Art of Problem SolvingAIME problems and solutions(Website)
+
+Note: Accessed: 2026-01-04
+
+External Links: Link
+
+Cited by: §4.1,
+§4.1.
+
+Art of Problem Solving (2025b)
+Art of Problem SolvingAMC problems and solutions(Website)
+
+Note: Accessed: 2026-01-04
+
+External Links: Link
+
+Cited by: §4.1.
+
+Cheng et al. (2025)
+Z. Cheng, S. Hao, T. Liu, F. Zhou, Y. Xie, F. Yao, Y. Bian, Y. Zhuang, N. Dey, Y. Zha, Y. Gu, K. Zhou, Y. Wang, Y. Li, R. Fan, J. She, C. Gao, A. Saparov, H. Li, T. W. Killian, M. Yurochkin, Z. Liu, E. P. Xing, and Z. Hu
+
+Revisiting reinforcement learning for llm reasoning from a cross-domain perspective.
+
+External Links: 2506.14965,
+Link
+
+Cited by: §4.1.
+
+Guo et al. (2025)
+Y. Guo, L. Xu, J. Liu, D. Ye, and S. Qiu
+
+Segment policy optimization: effective segment-level credit assignment in rl for large language models.
+
+External Links: 2505.23564,
+Link
+
+Cited by: §1.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+
+Measuring mathematical problem solving with the math dataset.
+
+NeurIPS.
+
+Cited by: §4.1.
+
+Kazemnejad et al. (2025)
+A. Kazemnejad, M. Aghajohari, E. Portelance, A. Sordoni, S. Reddy, A. Courville, and N. L. Roux
+
+VinePPO: refining credit assignment in rl training of llms.
+
+External Links: 2410.01679,
+Link
+
+Cited by: §1.
+
+Lewkowycz et al. (2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, Y. Wu, B. Neyshabur, G. Gur-Ari, and V. Misra
+
+Solving quantitative reasoning problems with language models.
+
+External Links: 2206.14858,
+Link
+
+Cited by: §4.1.
+
+Li et al. (2025)
+C. Li, N. Liu, and K. Yang
+
+Adaptive group policy optimization: towards stable training and token-efficient reasoning.
+
+External Links: 2503.15952,
+Link
+
+Cited by: §1.
+
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+
+Let’s verify step by step.
+
+External Links: 2305.20050,
+Link
+
+Cited by: §1,
+§6.1.
+
+Lin et al. (2025)
+Z. Lin, M. Lin, Y. Xie, and R. Ji
+
+CPPO: accelerating the training of group relative policy optimization-based reasoning models.
+
+External Links: 2503.22342,
+Link
+
+Cited by: §1.
+
+Liu et al. (2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+
+Understanding r1-zero-like training: a critical perspective.
+
+External Links: 2503.20783,
+Link
+
+Cited by: §6.1.
+
+Luo et al. (2025)
+M. Luo, S. Tan, J. Wong, X. Shi, W. Y. Tang, M. Roongta, C. Cai, J. Luo, L. E. Li, R. A. Popa, and I. Stoica
+
+DeepScaleR: surpassing o1-preview with a 1.5b model by scaling rl.
+
+Note: https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2Notion Blog
+
+Cited by: §1,
+§4.1,
+§5.1,
+§6.1.
+
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+
+Proximal policy optimization algorithms.
+
+External Links: 1707.06347,
+Link
+
+Cited by: §1,
+§6.1.
+
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+
+External Links: 2402.03300,
+Link
+
+Cited by: §1,
+§6.1.
+
+Sheng et al. (2025)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+
+HybridFlow: a flexible and efficient rlhf framework.
+
+In Proceedings of the Twentieth European Conference on Computer Systems,
+
+EuroSys ’25, pp. 1279–1297.
+
+External Links: Link,
+Document
+
+Cited by: §4.1,
+§5.1.
+
+Sutton et al. (1999)
+R. S. Sutton, D. McAllester, S. Singh, and Y. Mansour
+
+Policy gradient methods for reinforcement learning with function approximation.
+
+In Advances in Neural Information Processing Systems, S. Solla, T. Leen, and K. Müller (Eds.),
+
+Vol. 12, pp. .
+
+External Links: Link
+
+Cited by: §6.2.
+
+Wang et al. (2025a)
+H. Wang, C. Ma, I. Reid, and M. Yaqub
+
+Kalman filter enhanced grpo for reinforcement learning-based language model reasoning.
+
+External Links: 2505.07527,
+Link
+
+Cited by: §1.
+
+Wang et al. (2025b)
+J. Wang, R. Liu, L. Lin, W. Hu, X. Li, F. Zhang, G. Zhou, and K. Gai
+
+ASPO: asymmetric importance sampling policy optimization.
+
+External Links: 2510.06062,
+Link
+
+Cited by: §6.2.
+
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang
+
+DAPO: an open-source llm reinforcement learning system at scale.
+
+External Links: 2503.14476,
+Link
+
+Cited by: §4.1,
+Figure 5.
+
+Yuan et al. (2025)
+Y. Yuan, Y. Yue, R. Zhu, T. Fan, and L. Yan
+
+What’s behind ppo’s collapse in long-cot? value optimization holds the secret.
+
+External Links: 2503.01491,
+Link
+
+Cited by: §1.
+
+Zhao et al. (2025)
+Y. Zhao, Y. Liu, J. Liu, J. Chen, X. Wu, Y. Hao, T. Lv, S. Huang, L. Cui, Q. Ye, F. Wan, and F. Wei
+
+Geometric-mean policy optimization.
+
+External Links: 2507.20673,
+Link
+
+Cited by: §6.2.
+
+Zheng et al. (2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, J. Zhou, and J. Lin
+
+Group sequence policy optimization.
+
+External Links: 2507.18071,
+Link
+
+Cited by: §6.2.
+
+Appendix A Derivation and Analysis of GRPO Advantage
+
+We model the sampled responses for a prompt as independent Bernoulli trials with success probability . The GRPO advantage is defined as .
+
+For binary rewards , the sample mean corresponds to the empirical success rate . Using standard results for Bernoulli distributions, the unbiased sample standard deviation converges to the population standard deviation for large :
+
+(4)
+
+Substituting these into the advantage formulation, we obtain the standardized residual:
+
+(5)
+
+Evaluation for the two possible outcomes yields:
+
+(6)
+
+Appendix B Extended Visualization of Critic Dynamics
+
+In this section, we present a comprehensive visualization containing ten randomly sampled problems from the DeepScaleR dataset. Figure 9 plots the Critic’s value estimates over time for both correct and incorrect responses.
+
+These samples consistently exhibit the “Tail Effect” analyzed in Section 1. Across diverse reasoning tasks, the token-level Critic fails to distinguish between correct (Blue) and incorrect (Red) trajectories during the intermediate reasoning process. The value curves typically remain entangled until the final few tokens, confirming that the standard PPO Critic struggles to assign precise temporal credit in long-horizon reasoning tasks.
+
+Figure 9: Extended Analysis of Critic Value Dynamics (10 Random Samples).
+Each subplot represents a distinct mathematical problem sampled from the validation set.
+Blue Lines: Value estimates for correct trajectories ().
+Red Lines: Value estimates for incorrect trajectories ().
+The consistent overlap of value curves until the sequence tail demonstrates the systematic failure of token-level value estimation in distinguishing intermediate reasoning quality.
+
+Appendix C Risks
+
+Our proposed SPPO algorithm relies on the assumption of verifiable outcome rewards to estimate prompt solvability. A potential risk involves the overgeneralization of this method to tasks lacking objective ground truths, such as ethical decision-making or subjective content generation. Applying sequence-level optimization in these areas without robust reward modeling may amplify biases present in the base model or lead to the generation of plausible but factually incorrect reasoning chains (hallucination). Furthermore, as SPPO lowers the computational barrier for training strong reasoning models, there is a need for continued monitoring to ensure these accessible capabilities are not deployed for generating harmful content or automating malicious tasks.
+
+Appendix D Resources and Implementation Details
+
+To facilitate reproducibility, we summarize the models, datasets, and benchmarks used in our experiments in Table 2. All resources are accessible via HuggingFace.
+
+Category
+Resource / Link
+License
+
+Models
+DeepSeek-R1-Distill-Qwen-1.5B
+MIT
+
+DeepSeek-R1-Distill-Qwen-7B
+MIT
+
+Training
+DAPO-Math-17k
+Apache 2.0
+
+Datasets
+DeepScaleR-Preview
+MIT
+
+Benchmarks
+AIME 2024, AIME 2025
+–
+
+AMC 23, MATH-500
+–
+
+Minerva Math
+–
+
+Table 2: Summary of resources and licenses used in this work. Click on the resource names to visit their HuggingFace pages.
+
+Appendix E Implementation Details and Execution Commands
+
+In this section, we provide snapshots of the exact execution commands used to reproduce the experimental results. The images are rendered from the actual training scripts.
+
+E.1 SPPO (Ours)
+
+Figure 10: Execution Command: SPPO 1.5B (Symmetric)
+
+Figure 11: Execution Command: SPPO 7B (Symmetric)
+
+Figure 12: Execution Command: SPPO 7B (Decoupled / Small Critic)
+
+E.2 Group Relative Policy Optimization (GRPO)
+
+Figure 13: Execution Command: GRPO 1.5B
+
+Figure 14: Execution Command: GRPO 7B
+
+E.3 Standard PPO
+
+Figure 15: Execution Command: Standard PPO 1.5B
+
+Figure 16: Execution Command: Standard PPO 7B
+
+E.4 RLOO Baselines
+
+Figure 17: Execution Command: RLOO 1.5B
+
+Figure 18: Execution Command: RLOO 7B
+
+E.5 ReMax Baselines
+
+Figure 19: Execution Command: ReMax 1.5B
+
+Figure 20: Execution Command: ReMax 7B
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

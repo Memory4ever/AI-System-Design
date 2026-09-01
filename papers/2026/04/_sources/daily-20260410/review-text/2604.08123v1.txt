@@ -1,0 +1,2660 @@
+LegoDiffusion: Micro-Serving Text-to-Image Diffusion Workflows
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background and Problem Statement
+
+2.1 A Primer on Image Generation Workflow
+
+2.2 Monolithic Serving and Its Inefficiency
+
+3 A Case for Micro-Serving
+
+3.1 Benefits of Micro-Serving
+
+3.2 Challenges of Micro-Serving
+
+4 System Design of LegoDiffusion
+
+4.1 Programming Model for Developers
+
+4.2 Graph Compiler
+
+4.3 LegoDiffusion’s Runtime
+
+4.3.1 Micro-Serving Control Plane
+
+4.3.2 Distributed Data Engine
+
+5 Workflow Node Scheduling
+
+5.1 Cross-Workflow Batching and Model Sharing
+
+5.2 Adaptive Parallelism
+
+5.3 SLO-Aware Admission Control
+
+6 Implementation
+
+7 Evaluation
+
+7.1 Experimental Setup
+
+7.2 End-to-End Performance
+
+7.3 Microbenchmarks
+
+7.4 Case Study
+
+7.5 System Overhead
+
+8 Discussion and Related Works
+
+9 Conclusions
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.08123v1 [cs.DC] 09 Apr 2026
+
+LegoDiffusion: Micro-Serving Text-to-Image Diffusion Workflows
+
+Lingyun Yang†∗,
+Suyi Li†∗#,
+Tianyu Feng†,
+Xiaoxiao Jiang†,
+Zhipeng Di,
+Weiyi Lu,
+Kan Liu,
+Yinghao Yu,
+Tao Lan,
+Guodong Yang,
+Lin Qu,
+Liping Zhang,
+Wei Wang†
+
+†Hong Kong University of Science and Technology
+ Alibaba Group
+
+Abstract.
+
+Text-to-image generation
+executes a diffusion workflow comprising multiple models centered on a base diffusion model.
+Existing serving systems treat each workflow as an opaque monolith, provisioning, placing, and scaling all constituent models together,
+which obscures internal dataflow, prevents model sharing, and enforces coarse-grained resource management.
+In this paper, we make a case for micro-serving diffusion workflows with LegoDiffusion, a system that decomposes a workflow into loosely coupled model-execution nodes that can be independently managed and scheduled.
+By explicitly managing individual model inference, LegoDiffusion unlocks cluster-scale optimizations, including per-model scaling,
+model sharing, and adaptive model parallelism.
+Collectively, LegoDiffusion outperforms existing diffusion workflow serving systems,
+sustaining up to 3 higher request rates and tolerating up to 8 higher burst traffic.
+
+**footnotetext: Equal contribution; # Corresponding author
+
+1. Introduction
+
+Text-to-image (T2I) generation using diffusion models enables the creation of
+high-quality, contextually accurate images from textual description (Xu et al., 2025; Ju et al., 2024; Zhang et al., 2023b; OpenAI, 2025a; OpenAI, 2025b; Modal, 2025). A typical T2I generation workflow integrates a base diffusion model with multiple adapter models to form a pipeline.
+Execution begins with text encoders that convert prompts into
+embeddings (Fig. 1-top). Conditioned on the
+embeddings, the diffusion model iteratively generates latent representations via
+a denoising process, which are subsequently decoded as the final image.
+To refine visual attributes such as composition or artistic styles, T2I
+workflows increasingly incorporate adapter models, such as
+ControlNet (Zhang et al., 2023b) and LoRA (Hu et al., 2022), alongside the
+base model (Li et al., 2025b; Lin et al., 2025). By augmenting the diffusion process
+(Fig. 1), these adapters enable fine-grained alignment
+with user intent and aesthetics (Zhang et al., 2023b; Hu et al., 2022; Ye et al., 2023; Zhang et al., 2025b).
+
+Figure 1. Top: a basic diffusion workflow using Flux-Dev (Labs, 2024). Middle: add ControlNets (Zhang et al., 2023b) alongside the base diffusion model, which process an additional input reference image and pass the intermediaries to diffusion model to control the composition in image generation.
+Bottom: Further add LoRA (Hu et al., 2022) to change image styles by patching LoRA weights onto diffusion model weights.
+
+Despite the modular nature of diffusion workflows, existing inference systems,
+such as HuggingFace Diffusers (Diffusers, 2025a) and ComfyUI (BentoML, 2025), primarily employ a monolithic serving practice, where
+the entire workflow, comprising the base model and all associated adapters, is
+encapsulated into a monolithic instance for provisioning and scheduling. The
+system treats these workflow instances as opaque black boxes running on a fixed
+set of GPUs, while remaining oblivious to the workflow’s internal model executions and data
+exchanges.
+
+While operationally simple, monolithic serving introduces fundamental
+inefficiencies. First, it forces coarse-grained scaling: if a single
+model becomes a bottleneck, the system must replicate the entire workflow.
+Second, isolated monoliths preclude model sharing. Production
+traces (Li et al., 2025b; Lin et al., 2025) show that popular diffusion backbones
+and adapters are frequently reused across workflows. However, monolithic serving
+forces each workflow instance to maintain its own model copies, leading to
+redundant memory footprints. Third, treating workflows as opaque black boxes
+hides internal data dependencies, preventing the system from automatically
+optimizing resource allocation and pipelining. Finally, tight coupling increases
+fragility: a single model failure crashes the entire workflow.
+
+To address these limitations, we argue that the schedulable unit for inference
+should be the individual model execution node, not the entire diffusion
+workflow. Instead of monolithic instances, the system should decompose workflows
+into loosely-coupled microservices—each encapsulating a specific component
+like a text encoder, diffusion backbone, or adapter. This micro-serving
+architecture directly addresses the inefficiencies of monolithic serving. First,
+it enables fine-grained scaling: individual models can scale elastically
+based on real-time demand, eliminating the resource waste of replicating the
+entire pipeline. Second, it facilitates cross-workflow model sharing:
+distinct workflows can multiplex shared models, such as a common base model, avoiding redundant memory footprints. Third, by making model
+execution and data flow explicit, the system regains visibility into the
+computation graph, enabling automated optimization of resource allocation
+and pipelining. Decoupling the workflow also enables fault isolation and fast
+failure recovery.
+
+However, realizing micro-serving for diffusion workflows presents non-trivial
+systems challenges. While prior frameworks have successfully applied
+micro-serving to CPU-centric data
+analytics (Zaharia et al., 2012; Singhvi et al., 2021; Zhang et al., 2021; Wang et al., 2024; Yu et al., 2023) and LLM-based agentic
+workflows (Moritz et al., 2018; Tan et al., 2025; LangChain, 2025; LlamaIndex, 2025), applying this paradigm to diffusion
+pipelines requires overcoming hurdles that these systems cannot handle. First,
+diffusion workflows exhibit complex, iterative data dependencies between base
+models and adapters, which cannot be expressively defined or easily supported in
+existing frameworks. Second, decoupling these tightly integrated model workflows
+necessitates massive, latency-sensitive tensor communications across GPUs.
+Existing LLM or CPU micro-serving frameworks lack an efficient data plane to
+manage these high-bandwidth transfers.
+
+In this paper, we present LegoDiffusion, a system purpose-built for the efficient
+micro-serving of diffusion workflow. LegoDiffusion introduces
+three key designs:
+
+Programming Interface & Compilation. LegoDiffusion provides a Python-embedded
+domain-specific language (DSL) for composing diffusion workflows. The DSL
+exposes primitives for model initialization, inference, and diffusion-specific
+operations for LoRA and ControlNet application (Hu et al., 2022; Zhang et al., 2023b). To provide a unified support
+for diverse community-developed models (HuggingFace, 2025b),
+LegoDiffusion wraps each model behind a standardized interface that encapsulates its
+native loading and inference logic. All primitives enforce strict input/output
+typing, making data dependencies explicit and catching errors at compile time. A
+graph compiler translates the workflow composition into a
+directed acyclic graph (DAG) of loosely coupled workflow nodes. Each node
+represents a discrete model inference operator that can be independently
+provisioned and scheduled–the fundamental unit of micro-serving.
+
+Runtime & Data Plane. At runtime, LegoDiffusion applies lazy execution:
+upon each request, it analyzes the workflow DAG and dynamically recomposes the
+compute graph—inserting or substituting nodes—to apply diffusion-specific
+optimizations. Decomposing workflows into distributed nodes, however, introduces
+high-bandwidth tensor transfers with complex synchronization requirements (e.g.,
+forwarding ControlNet intermediates at specific denoising layers). To handle
+this, we design a distributed data engine atop NVSHMEM (NVIDIA, 2025)
+that enables GPU-direct, zero-copy tensor movement over high-speed
+interconnects. The engine provides two fetch modes—eager and
+deferred—so that tensors arrive precisely when needed without stalling
+execution. These mechanisms are transparent to developers: once the compiler
+produces the workflow DAG, the data engine automatically orchestrates all
+inter-node tensor transfers.
+
+Workflow Node Scheduling. The LegoDiffusion scheduler maps workflow nodes onto
+distributed executors using three strategies that exploit micro-serving’s
+decomposition. First, it enforces model-granular scaling: rather than
+replicating entire workflows, LegoDiffusion scales only the bottleneck models, avoiding
+redundant resource provisioning. Second, because a loaded model is
+workflow-agnostic, the scheduler preferentially dispatches nodes to executors
+that already hold the required model state, enabling multi-tenant model
+sharing. Third, LegoDiffusion employs adaptive parallelism: it dynamically
+adjusts model parallelism at scheduling time based on real-time cluster
+availability, right-sizing resource allocation to maximize throughput without
+incurring queuing delays.
+
+We prototyped LegoDiffusion and evaluated it across a diverse array of diffusion
+workflows, encompassing SD3 (Esser et al., 2024), SD3.5-Large (stabilityai, 2025), Flux-Dev, and
+Flux-Schnell (Labs, 2024), along with their respective adapters. Our
+experiments show that LegoDiffusion’s micro-serving architecture significantly
+outperforms state-of-the-art monolithic serving systems, sustaining up to
+3 higher request rates and satisfying 6 more stringent SLO, and
+tolerating 8 higher burst traffic, while meeting latency SLOs for over
+90% of requests. Crucially, we verify that LegoDiffusion maintains full compatibility
+with emerging diffusion-specific optimizations, such as approximate
+caching (Agarwal et al., 2024), achieving
+performance gains consistent with their original monolithic implementations.
+We will open-source LegoDiffusion
+after the double-blind review process.
+
+2. Background and Problem Statement
+
+2.1. A Primer on Image Generation Workflow
+
+Basic Workflows.
+As illustrated in Fig. 1-top,
+a basic text-to-image (T2I) generation workflow consists of three models: a text encoder, a base diffusion model, and a decoder-only variational autoencoder (VAE).
+The process begins with the text encoder, which encodes a text prompt into a sequence of semantic token embeddings. The system then initializes a latent tensor with random Gaussian noise. Conditioned on the text embeddings, the base diffusion model iteratively refines this tensor through a series of denoising steps. Finally, the denoised latent representation is passed to the VAE decoder, which reconstructs the output image in pixel space.
+
+Workflows with Adapters. To achieve fine-grained control over visual
+attributes, such as spatial structure, diffusion models are
+frequently augmented with adapter
+models (Li et al., 2025b; Zhang et al., 2023b; Hu et al., 2022; Zhang et al., 2025b; Zhang, 2025; Ye et al., 2023). These adapters can be categorized into two classes
+based on their execution patterns (Li et al., 2025b):
+
+1) Parallel Execution Adapters. The first class includes
+adapters that operate in tandem with the base diffusion model during
+inference, such as ControlNet (Zhang et al., 2023b)
+(Fig. 1-middle).
+From a systems perspective, they introduce two complications: (1) their
+parameter sizes are often comparable to the base model, introducing substantial
+model loading latency; and (2) maximizing throughput often requires
+parallelizing the adapter and base model across GPUs, which necessitates
+intricate synchronization and data transfer patterns (§2.2).
+
+2) Weight-Patching Adapters. The second class adapts the base
+model through parameter-efficient fine tuning, such as
+LoRA (Hu et al., 2022) and IC-Light (Zhang et al., 2025b)
+(Fig. 1-bottom). These adapters
+patch the base model’s weights before inference, incurring no
+additional computational overhead during subsequent denoising steps. The
+trade-off is state management: once patched, a diffusion model replica is
+specialized to a specific request until its weights are restored or replaced.
+Serving such workflows therefore requires fetching adapter weights from remote
+storage on demand (Li et al., 2025b), which can bottleneck loading and complicate
+sharing model replicas across requests.
+
+Figure 2. Latent parallelism and ControlNets parallelism.
+
+Data Dependencies in Diffusion Workflows. Diffusion workflows exhibit
+intricate data dependencies induced by performance-oriented parallelization
+strategies. These strategies improve
+performance (Li et al., 2025b; Fang et al., 2024; Li et al., 2024), but they also introduce
+model-specific data transfers and synchronizations that monolithic systems struggle
+to express or optimize (§4.3).
+We highlight three common cases:
+
+1) Latent Parallelism. Diffusion models typically use
+classifier-free guidance (CFG) (Ho and Salimans, 2021) to improve image
+quality by executing two denoising passes at each step: one conditioned on the
+prompt and one unconditional. Latent parallelism accelerates CFG by
+parallelizing these two computations on separate
+GPUs (Li et al., 2025b; Fang et al., 2024; Li et al., 2024). However, this approach
+introduces frequent “scatter-gather” synchronization, where partial results
+must be aggregated at every denoising step
+(Fig. 2). These high-frequency communication
+barriers can erode the benefit of parallelism if not handled efficiently.
+
+2) ControlNet Parallelism.
+To reduce the overhead of ControlNets, serving systems often execute them in
+parallel with the base diffusion model on separate GPUs (Li et al., 2025b)
+(Fig. 2). This design introduces fine-grained
+data dependencies: ControlNet feature maps must be transferred to, and consumed
+by, specific layers of the base model during each denoising step. The exact
+communication pattern depends on the base model and becomes even more complex
+when multiple ControlNets are used, producing fan-in/fan-out transfers that
+are difficult to schedule efficiently.
+
+3) Asynchronous LoRA loading.
+In production systems, LoRA adapters are often stored remotely and must be
+fetched on demand (Li et al., 2025b). To hide this fetching cost,
+asynchronous LoRA loading overlaps adapter retrieval with the early
+stages of base-model inference. When the LoRA weights arrive, the system must
+pause execution, hot-patch the base model in GPU memory, and then resume
+computation (Li et al., 2025b). This optimization introduces non-deterministic timing and dynamic state mutation: execution now
+depends on I/O completion, forcing the system to coordinate mid-inference
+weight updates without incurring synchronization stalls.
+
+2.2. Monolithic Serving and Its Inefficiency
+
+Existing diffusion serving systems, such as HuggingFace
+Diffusers (von Platen et al., 2022; Diffusers, 2025a), ComfyUI (ComfyUI, 2025a),
+SGLang-Diffusion (sgl-project, 2026c), vLLM-Omni (vllm-project, 2026), and
+xDiT (Fang et al., 2024), operate on a monolithic paradigm. Whether
+employing Diffusers’ ‘‘single-file’’ abstraction**
+*
+
+SGLang-Diffusion, vLLM-Omni and xDiT explicitly reuse
+the pipeline design from Diffusers (Diffusers, 2025b) to serve diffusion
+workflows (sgl-project, 2026c; vllm-project, 2026). However, they currently provide insufficient support
+to use adapters in their frameworks (vllm-project, 2026; sgl-project, 2026b; sgl-project, 2026a). (Diffusers, 2025b; sgl-project, 2026c; vllm-project, 2026) or ComfyUI’s flexible node graph (ComfyUI, 2025b),
+these frameworks encapsulate the entire generation pipeline, comprising the base
+model, adapters, and control logic, into a monolithic execution unit.
+Consequently, the serving system provisions resources and schedules execution at
+the granularity of the entire workflow, without managing internal model
+invocations and data flows.
+While this monolithic serving simplifies
+deployment, it has four
+fundamental limitations:
+
+L1: Inefficient Scaling via Full Replication.
+Monolithic serving treats the entire workflow as a scaling unit,
+enforcing coarse-grained replication regardless of which component is the
+actual bottleneck. This indiscriminate scaling is particularly costly for
+diffusion workloads, where the base diffusion model is typically the sole
+bottleneck under load spikes. In standard pipelines (Labs, 2024; Esser et al., 2024; Podell et al., 2024), the full workflow footprint is often
+1.7 to 4 larger than the base model alone. Consequently, scaling the
+entire monolith incurs significant overhead: our experiments on NVIDIA H800
+GPUs reveal that monolithic replication using Diffusers (von Platen et al., 2022) adds up to 80% in loading latency and wastes up to 75% of GPU
+memory compared to scaling only the bottlenecked component.
+Similarly, with vLLM-Omni (vllm-project, 2026) and SGLang-Diffusion (sgl-project, 2026c), scaling an entire Flux-Dev pipeline adds up to 70% and 75% latency, respectively, compared to scaling only Flux-Dev model.
+
+Figure 3. Left: Loading time of workflow scaling and base diffusion model (DM) scaling. Right: Latency-throughput tradeoff of models in a SD3 workflow.
+Both use H800 GPUs.
+
+L2: Inability to Share Common Models.
+Monolithic serving enforces strict isolation between workflow instances (Diffusers, 2025a; BentoML, 2025), precluding model sharing. This
+design is fundamentally inefficient given that production T2I workloads
+exhibit highly skewed model popularity. Alibaba’s trace analyses (Li et al., 2025b; Lin et al., 2025) indicate that popular backbones (e.g., SDXL (Podell et al., 2024), SD3 (Esser et al., 2024), and Flux-Dev (Labs, 2024)) appear in nearly
+all workflows, while the top 5 ControlNets serve
+95% of generation requests. Under monolithic serving, each
+workflow instance must maintain independent replicas of these massive models
+(2–24 GiB in FP16 (Li et al., 2025b)). This redundancy prevents
+memory multiplexing, resulting in excessive GPU memory consumption, low GPU
+utilization, and load imbalance across replicas.
+
+L3: Runtime Inefficiency.
+By encapsulating workflows as opaque black boxes, monolithic serving
+eliminates system-level visibility into internal model dependencies, data
+flow, and execution logic. This opacity compels the system to enforce rigid,
+workflow-level resource allocation, forfeiting opportunities for fine-grained
+runtime optimization. Specifically, because models within a workflow exhibit
+heterogeneous arithmetic intensities and distinct latency–throughput
+trade-offs (Fig. 3-right) (Recasens et al., 2024), a static, per-workflow
+configuration is inherently suboptimal. Furthermore, monolithic
+systems typically enforce a fixed degree of model parallelism. Unlike
+automatic tuning strategies (Li et al., 2023; Tan et al., 2025), this static approach
+prevents the system from adapting to dynamic workloads or fluctuating GPU
+availability, leading to significant performance degradation as quantified
+in §3.1 (Fig. 4-right).
+
+L4: System Fragility and Maintenance Overhead.
+Monolithic serving imposes high maintenance overheads by violating modular systems principles. The tight coupling of independent
+components creates system fragility, where a failure in a single
+sub-component cascades into a complete workflow failure. This lack of fault
+isolation complicates debugging, forcing developers to check
+the entire monolith to identify root causes. Besides, under the monolithic
+architecture, updating a single component
+necessitates holistic validation and coordination across the entire workflow,
+unnecessarily prolonging development and deployment cycles.
+
+3. A Case for Micro-Serving
+
+We advocate micro-serving diffusion workflows. Instead of treating an
+entire workflow as a schedulable unit, micro-serving decomposes the workflow
+into independently managed model-execution components and gives the serving
+system per-model control over scaling, sharing, and runtime configuration. This
+design effectively addresses the inefficiencies of current monolithic serving
+systems (§3.1). However, it introduces new
+challenges for diffusion workflows (§3.2).
+
+3.1. Benefits of Micro-Serving
+
+Per-Model Management. Micro-serving makes each model, rather than the
+entire workflow, the unit of management. This lets the serving system scale
+only the bottlenecked model and choose resources according to each model’s
+latency–throughput tradeoff, directly addressing L1 and part of
+L3. As a result, the system avoids replicating non-bottleneck
+components, reduces model-loading overhead, and better matches heterogeneous
+models to available hardware. In Fig. 3-left, we
+compare full-workflow scaling with scaling only the base diffusion model on
+H800 GPUs. Because the diffusion model is the bottleneck, full
+replication loads other components unnecessarily. Scaling only the diffusion
+model therefore reduces scaling latency by up to 90%.
+
+Figure 4. Left: Model sharing reduces request latency.
+Right: Adaptive parallelization reduces request latency.
+
+Model Sharing. When different workflows invoke common models (Li et al., 2025b),
+micro-serving lets the system share those loaded replicas across workflows,
+directly addressing L2. Instead of binding a model replica to the
+workflow that loaded it, the system can multiplex compatible requests onto any
+resident replica. This reduces redundant replicas and improves load balance,
+since requests can use identical models already loaded elsewhere in the cluster.
+To show these benefits, we serve a pair of workflows on two H800 GPUs:
+one with ControlNet and one without. This setup creates model-sharing
+opportunities for the text encoders and diffusion models. In
+Fig. 4-left, we compare request latency with
+and without model sharing for such workflow pairs, using SD3 and Flux as the
+base diffusion model in separate experiments.
+Compared with isolated workflow replicas, multiplexing already-loaded models
+reduces request latency by up to 40% and GPU memory footprint by up to 60%.
+Furthermore, base diffusion models patched with adapters (e.g., LoRA, see
+§2.1) can still be shared across requests requiring
+different LoRAs through efficient patch swapping (Li et al., 2025b).
+We elaborate on this in §7.3.
+
+Adaptive Resource Configuration.
+Micro-serving exposes model dependencies and execution choices to the runtime,
+which lets the system tune resource configurations per model instead of fixing
+one for the entire workflow. This directly addresses
+L3. Automatic model parallelism is one example. We deploy three SD3
+workflows (Esser et al., 2024) on four H800 GPUs under three settings: Parallelism=1 fixes the parallelism degree at 1 and leaves acceleration
+opportunities unused; Parallelism=2 always applies latent
+parallel proposed in (Li et al., 2025b; Fang et al., 2024), which speeds up image
+generation without quality loss but requires a pair of GPUs
+(§2.1); and Adaptive selects the parallelism
+degree at runtime according to GPU availability. As shown in
+Fig. 4-right, the tradeoff is clear:
+Parallelism=1 yields consistently higher latency because it forgoes
+parallel speedup, whereas Parallelism=2 introduces queuing when later
+requests wait for an available GPU pair, producing a stepped CDF curve.
+Compared with the static configurations, Adaptive’s
+automatic parallelization tuning accelerates average request
+serving by 1.3 and 1.2, respectively.
+
+Modular Development.
+Micro-serving also improves modularity, directly addressing L4. By
+serving workflow models as independent components, it gives developers clearer
+failure boundaries and cleaner update paths. They can modify, validate, and
+debug one model without reasoning about the entire workflow, and they can test
+individual components in isolation.
+This reduces maintenance overhead and
+makes
+bugs easier to localize.
+
+3.2. Challenges of Micro-Serving
+
+Despite these benefits, micro-serving diffusion workflows cannot be built
+by directly reusing existing microservice systems for analytics, general task
+runtimes, or LLM agents (Lin et al., 2024; Tan et al., 2025; Moritz et al., 2018; Yu et al., 2023; Zaharia et al., 2012; Singhvi et al., 2021; Zhang et al., 2021; Wang et al., 2024; Dean and Ghemawat, 2004). Diffusion
+workflows couple heterogeneous models through iterative denoising, adapter
+patching, and diffusion-specific parallelism, creating requirements these
+systems do not target.
+
+First, the system needs an abstraction that is expressive for developers yet
+structured for backend analysis. Analytics DAG systems such as
+Spark (Zaharia et al., 2012) and generic task runtimes such as Ray (Moritz et al., 2018) can
+express tasks and dependencies, but not adapter–base-model interactions,
+deferred tensor dependencies, or patching operations
+(§2.1).
+
+Second, the system must compile a workflow into executable model-level tasks
+while preserving diffusion-specific optimizations. LLM-centric systems such as
+Parrot and Ayo (Lin et al., 2024; Tan et al., 2025) primarily optimize autoregressive inference
+through prefix sharing and streamed decoding (Zheng et al., 2024). Diffusion
+workflows instead require a compiler that preserves denoising structure and
+supports caching, asynchronous LoRA loading, and specialized multi-GPU
+parallelization (Agarwal et al., 2024; Li et al., 2025b; Li et al., 2024; Fang et al., 2024).
+
+Third, the runtime must be GPU-native and diffusion-aware. Data analytics and
+microservice systems largely assume CPU execution and host-memory
+dataflow (Yu et al., 2023; Zaharia et al., 2012; Zhang et al., 2021; Dean and Ghemawat, 2004; Singhvi et al., 2021; Wang et al., 2024), whereas
+diffusion workflows exchange CUDA tensors across GPUs, rely on
+asynchronous and interleaved data movement, and require a dedicated data
+engine.
+
+Finally, micro-serving only pays off if the scheduler can exploit
+diffusion-specific opportunities at runtime. Existing systems do not directly
+support model-granular scaling, cross-workflow model sharing, adaptive
+parallelization, or SLO-aware admission control. These challenges drive our
+design of a diffusion-specific programming interface, graph compiler,
+runtime/data engine, and scheduler in §4 and
+§5.
+
+4. System Design of LegoDiffusion
+
+In this section, we present LegoDiffusion, an efficient serving system for
+micro-serving diffusion workflows. LegoDiffusion comprises four components:
+a programming interface for workflow composition and model integration
+(§4.1), a graph compiler that decomposes
+workflows into executable nodes and applies diffusion-specific optimizations
+(§4.2), a runtime with a GPU-native data
+engine for workflow execution (§4.3), and an
+orchestrator for scheduling and resource management
+(§5). Together, these components optimize
+cluster-level serving performance while accommodating existing model
+acceleration techniques (HuggingFace, 2025a).
+
+System Overview. Fig. 5 presents an overview of LegoDiffusion.
+At the frontend, model developers integrate individual models by
+subclassing a Model base class, and workflow developers
+compose these models into workflows and register them with the system
+(\raisebox{-.9pt} {1}⃝). End users invoke registered workflows (\raisebox{-.9pt} {2}⃝) by
+submitting requests with inputs such as textual prompts and random seeds.
+
+At the backend, the graph compiler transforms a workflow into a set of
+loosely coupled workflow nodes (\raisebox{-.9pt} {3}⃝), which are dispatched by the
+scheduler across a cluster of distributed executors (\raisebox{-.9pt} {4}⃝). Each
+executor owns one GPU and uses an efficient data engine for inter-node
+communication (\raisebox{-.9pt} {5}⃝).
+
+Figure 5. An overview of LegoDiffusion.
+
+4.1. Programming Model for Developers
+
+LegoDiffusion’s programming model targets two audiences.
+Model developers integrate individual models and adapters by subclassing
+a Model base class; they implement model-specific logic without
+reasoning about how their models are composed into a workflow. On the other hand,
+workflow developers assemble models into end-to-end workflows by
+instantiating models and invoking them; they do not manually wire a DAG (directed acyclic graph).
+Instead, LegoDiffusion adopts an implicit workflow programming model: model
+invocations and the I/O interfaces declared in each Model subclass
+are sufficient for the graph compiler (§4.2)
+to infer the workflow DAG and optimize execution automatically.
+This contrasts with explicit-DAG systems such as ComfyUI (ComfyUI, 2025a),
+where developers must manually specify every node and edge.
+
+Class
+API
+Description
+
+Model
+__init__()
+Create a model instance
+
+__call__()
+Express a model invocation in the frontend
+
+setup_io()
+Define model inputs and outputs
+
+load()
+Load the model in the backend
+
+execute()
+Execute model inference in the backend
+
+add_patch()
+Attach a patchable adapter to a model
+
+rm_patch()
+Remove a patchable adapter from a model
+
+Workflow
+__init__()
+Create a workflow instance
+
+add_input()
+Add a workflow input placeholder
+
+add_output()
+Add a workflow output placeholder
+
+Table 1. Primitives in LegoDiffusion’s Python library for defining models and composing diffusion workflows.
+
+Model Integration. To keep pace with the proliferation of models and
+acceleration techniques (HuggingFace, 2025a), LegoDiffusion provides a
+Model base class that standardizes model and adapter integration while
+encapsulating all workflow-facing logic.
+
+A model developer subclasses Model and implements three methods
+(Table 1):
+setup_io() declares the model’s typed inputs and outputs, which are
+visible to the compiler;
+load() initializes the model on a given device; and
+execute() runs inference.
+Because these are the only methods a model developer writes, model
+integration is decoupled from workflow construction: a model developer never
+reasons about how the model is wired into a larger workflow.
+
+The base class handles workflow integration automatically.
+Its __call__() method records each model invocation as a workflow
+node and derives data dependencies from the I/O interface declared in
+setup_io().
+This separation captures a key design principle: model developers specify what
+a model consumes and produces; LegoDiffusion uses that specification to place the
+model into an inferred workflow graph.
+
+⬇
+
+1
+
+## No need to modify it, invisible to model developers ##
+
+2
+
+class Model:
+
+3
+
+def __init__(self, **kwargs):
+
+4
+
+self.setup_io()
+
+5
+
+# store associated weight-patching adapters
+
+6
+
+self._patches = []
+
+7
+
+8
+
+# Make the class callable to create workflow node
+
+9
+
+def __call__(self, **kwargs):
+
+10
+
+workflow = WorkflowContext.get_current_workflow()
+
+11
+
+workflow_node = WorkflowNode(op=self, **kwargs)
+
+12
+
+workflow.add_workflow_node(workflow_node)
+
+13
+
+return workflow_node.get_outputs()
+
+14
+
+15
+
+@abstractmethod
+
+16
+
+def setup_io(self):
+
+17
+
+pass
+
+18
+
+19
+
+def add_patch(self, patch):
+
+20
+
+self._patches.append(patch)
+
+21
+
+22
+
+def rm_patch(self, patch):
+
+23
+
+self._patches.remove(patch)
+
+24
+
+25
+
+## Model developers start here ##
+
+26
+
+class Flux(Model):
+
+27
+
+def setup_io(self):
+
+28
+
+# define inputs
+
+29
+
+self.add_input("latents", torch.Tensor)
+
+30
+
+self.add_input("prompt_embeds", torch.Tensor)
+
+31
+
+# define "deferred" inputs, detailed in Sec. 4.3.2
+
+32
+
+self.add_input("controlnet_inputs", torch.Tensor, deferred=True)
+
+33
+
+# define outputs
+
+34
+
+self.add_output("noise_pred", torch.Tensor)
+
+35
+
+36
+
+def load(self, model_path, device):
+
+37
+
+model = SD3Transformer2DModel.from_pretrained(
+
+38
+
+...
+
+39
+
+).to(device)
+
+40
+
+return {"transformer": model}
+
+41
+
+42
+
+@torch.no_grad()
+
+43
+
+def execute(self, model_components, **kwargs):
+
+44
+
+transformer = model_components["transformer"]
+
+45
+
+noise_pred = transformer(**kwargs)[0]
+
+46
+
+return {"noise_pred": noise_pred}
+
+Figure 6. A simplified case of integrating Flux with LegoDiffusion.
+
+Fig. 6 illustrates this split with a simplified
+Flux integration: the base Model class (top) is provided by the
+framework, while the Flux subclass (bottom) contains only
+model-specific code.
+
+Workflow Composition.
+Workflow developers compose workflows declaratively: they declare
+workflow inputs and outputs, instantiate models, and invoke them.
+They never explicitly wire a DAG; the graph compiler
+(§4.2) infers all data dependencies from
+model invocations and the I/O interfaces declared in setup_io(),
+then optimizes the resulting graph.
+
+Fig. 7 shows a workflow for the Flux example in
+Fig. 1-bottom. Creating a Workflow instance
+(line 2) establishes a scope (maintained by WorkflowContext); subsequent
+model calls within that scope are automatically recorded as workflow nodes.
+Workflow inputs are declared with add_input(), and intermediate values
+such as prompt_embeds flow directly between model calls. The loop
+(line 23) shows that iterative denoising is expressed naturally in Python, while
+LegoDiffusion captures the structure needed for backend execution. After construction,
+the workflow developer registers the workflow with LegoDiffusion for later invocation
+by end users.
+
+⬇
+
+1
+
+# create a workflow instance
+
+2
+
+workflow = Workflow(name="flux_txt2img_workflow")
+
+3
+
+# initialize models. All inherit the Model class
+
+4
+
+latents_generator = LatentsGenerator()
+
+5
+
+text_enc = FluxTextEncoder(model_path=model_path)
+
+6
+
+flux = Flux(model_path=model_path)
+
+7
+
+controlnet = ControlNet(model_path=controlnet_path)
+
+8
+
+lora = LoRA(model_path=lora_path)
+
+9
+
+vae = FluxVAE(model_path=model_path)
+
+10
+
+# initialize input placeholders for the workflow
+
+11
+
+seed = workflow.add_input(name="seed", data_type=int)
+
+12
+
+prompt = workflow.add_input(name="prompt", data_type=str)
+
+13
+
+num_denoising_steps = workflow.add_input(name="num_denoising_steps", data_type=int)
+
+14
+
+ref_image = workflow.add_input(name="ref_image", data_type=Image)
+
+15
+
+# add_patch() registers a LoRA adapter with the flux,
+
+16
+
+flux.add_patch(lora)
+
+17
+
+# Invoke models and establish their I/O dependencies.
+
+18
+
+# Model invocation is expressed via __call__().
+
+19
+
+latents = latents_generator(seed)
+
+20
+
+prompt_embeds = text_enc(prompt)
+
+21
+
+ref_image = vae(image=ref_image, mode="encode")
+
+22
+
+# Perform iterative denoising computation.
+
+23
+
+for i in range(num_denoising_steps):
+
+24
+
+controlnet_outputs = controlnet(latents, prompt_embeds, ...)
+
+25
+
+noise_pred = flux(latents, prompt_embeds, controlnet_outputs, ...)
+
+26
+
+latents = denoise(noise_pred, latents)
+
+27
+
+output_img = vae(latents, mode="decode")
+
+28
+
+workflow.add_output(output_img, name="output_img")
+
+Figure 7. A simplified diffusion workflow using Flux (Labs, 2024).
+
+4.2. Graph Compiler
+
+The graph compiler (\raisebox{-.9pt} {3}⃝) lowers a registered workflow into a
+topologically sorted DAG of schedulable workflow nodes and applies optimization
+passes before execution.
+
+DAG Construction.
+As described in §4.1, each model invocation during
+workflow composition is recorded as a workflow node with typed I/O declared in
+setup_io(). The compiler resolves data dependencies among these nodes
+and produces a topologically sorted DAG. Topological order guarantees correct
+execution and exposes optimization opportunities: nodes without mutual
+dependencies can run in parallel to reduce latency, and nodes that invoke the
+same model can be batched to improve throughput
+(§4.3).
+
+Optimization Passes.
+After constructing the DAG, the compiler applies a series of graph-rewriting
+passes. Each pass pattern-matches on node properties (e.g., model type, adapter
+attachments) and may insert, remove, or replace nodes. This design makes the
+compiler extensible: adding a new optimization requires only a new pass, without
+modifying the core lowering logic. The compiler also applies per-model
+optimizations such as torch.compile() within individual nodes. Below,
+we illustrate two diffusion-specific passes and evaluate them in
+§7.4.
+
+1) Approximate caching (Agarwal et al., 2024) reduces the number of
+denoising steps by initializing from a pre-cached image of a similar prompt
+instead of random noise (§2.1). When a prompt cache is
+configured, the compiler replaces the random-latent-initialization node with a
+cache-lookup node, requiring no changes to the workflow definition.
+
+2) Asynchronous LoRA loading (Li et al., 2025b) overlaps LoRA adapter
+retrieval with the early stages of diffusion model inference
+(§2.1). When the compiler detects an
+add_patch() attachment on a model, it rewrites the workflow graph by
+inserting (1) an initial node that triggers asynchronous LoRA loading and (2) a
+check node after each diffusion-model node that tests whether the adapter is
+ready to be patched in. The workflow developer writes only
+add_patch(lora); the compiler can insert the asynchronous-loading
+machinery automatically.
+
+4.3. LegoDiffusion’s Runtime
+
+4.3.1. Micro-Serving Control Plane
+
+Given the topologically sorted DAG from the compiler, the runtime executes each
+request through a node-level control plane. Under micro-serving, each
+workflow node is independently schedulable on any executor once its
+non-deferred inputs are satisfied; the runtime can also configure parallelism
+and resource allocation per node based on the node’s encapsulated model and
+available hardware.
+
+Request Execution Lifecycle.
+Workflows are compiled once at registration time; the compiled DAG is
+instantiated only when a request arrives (Zaharia et al., 2012; Wikipedia, 2025; Nguyen and Wong, 2000; Abadi et al., 2016) (\raisebox{-.9pt} {2}⃝ in
+Fig. 5). The control plane enqueues all root nodes (those
+with no upstream dependencies) and enters a dispatch loop. In each cycle, the
+scheduler selects ready nodes and dispatches them to executors
+(\raisebox{-.9pt} {4}⃝). When an executor completes a node, it reports the result to
+the control plane, which marks downstream nodes whose inputs are now satisfied
+as ready. This loop continues until all nodes complete and the workflow output
+is returned to the end user. The scheduler’s placement and batching policies
+are detailed in §5.
+
+4.3.2. Distributed Data Engine
+
+Micro-serving introduces frequent data movement between nodes.
+In typical diffusion workflows such as SD3 (Esser et al., 2024) and
+Flux models (Labs, 2024), CUDA tensors account for over 99% of transferred data
+(see Fig. 11-right); for example, an SDXL
+workflow with a single ControlNet transfers 5.3 GiB (Li et al., 2025b).
+Host-memory staging through PCIe is prohibitively slow at this scale.
+
+To avoid CPU staging, LegoDiffusion deploys a distributed data engine with a
+per-executor local data store (Fig. 5).
+The stores are built on NVSHMEM (NVIDIA, 2025), which provides one-sided GPU
+communication over NVLink and RDMA, enabling zero-copy sharing within an
+executor and high-speed transfers across executors.
+
+Data Fetch Modes.
+Diffusion workflows exhibit diverse data-movement patterns due to their
+parallelization strategies (§2.1). LegoDiffusion supports two
+fetch modes: eager, where an input must be ready before a node begins
+execution, and deferred, where a node starts execution and fetches the
+input at the point of consumption.
+
+Figure 8. Illustrating data fetch. For simplicity, we primarily illustrate tensor fetch process in data store. C.N.: ControlNet.
+
+1) Eager data fetch.
+By default, inputs are fetched eagerly: a node cannot begin until all its eager
+inputs are available. In Fig. 8, the text-encoder node on
+Executor 1 produces a prompt embedding (\raisebox{-.9pt} {1}⃝) and places it in its
+local data store (\raisebox{-.9pt} {2}⃝). When the coordinator schedules the
+downstream ControlNet node on Executor 2, it forwards the embedding’s metadata
+(\raisebox{-.9pt} {3}⃝). Executor 2 uses this metadata to fetch the tensor into its
+own store (\raisebox{-.9pt} {4}⃝). The ControlNet node then reads the embedding from
+its local store (\raisebox{-.9pt} {5}⃝) and begins execution—only after the fetch
+completes, a guarantee enforced by eager fetching.
+
+2) Deferred data fetch.
+Model developers can mark an input as deferred (line 32 in
+Fig. 6), indicating that it needs not be ready when
+a node starts inference. A deferred input is implemented as a fetch function
+invoked at the point of consumption: it returns immediately if the data is
+available, or blocks until the data arrives.
+
+This mode is tailored to diffusion workflows where ControlNet computation is
+interleaved with the base model
+(Fig. 1-middle). At runtime
+(Fig. 8), the ControlNet output consumed mid-way through Flux
+inference is marked as a deferred input (dashed tensor, \raisebox{-.9pt} {6}⃝). Flux
+begins execution without it. When Flux reaches the consumption point, the
+ControlNet output has been produced and placed in Executor 2’s store
+(\raisebox{-.9pt} {7}⃝); its metadata is forwarded to Executor 1
+(\raisebox{-.9pt} {8}⃝), which fetches the tensor into its local store
+(\raisebox{-.9pt} {9}⃝) for Flux to consume. Without deferred fetching, Flux could
+not start until ControlNet completes, eliminating the parallelism between the
+two models.
+
+Note that tensor metadata, including a tensor’s pointer, is tiny (on the order
+of KiB). Executors can piggyback it on node-completion notifications, allowing
+the coordinator to track global tensor placements with little overhead.
+
+Design Properties.
+The data engine is transparent to both model developers and workflow developers:
+once the compiler lowers a workflow into nodes, the engine automatically
+orchestrates all inter-node data movement.
+All intermediate data is immutable—tensors produced during diffusion workflow
+execution are consumed once and never
+updated (Li et al., 2025b; von Platen et al., 2022)—which obviates consistency protocols and
+simplifies fault tolerance.
+The engine reclaims tensors as soon as no downstream node requires them,
+reducing memory pressure. If an executor fails, LegoDiffusion reconstructs lost data
+by re-executing the affected nodes, following a similar approach to prior
+cluster computing frameworks (Moritz et al., 2018; Zaharia et al., 2012; Yu et al., 2023).
+
+5. Workflow Node Scheduling
+
+The scheduler is the component that translates micro-serving into runtime
+actions (\raisebox{-.9pt} {4}⃝ in Fig. 5). It sits between the
+compiled workflow DAGs and the executor cluster, maintaining a global queue of
+workflow nodes and making three online decisions in each scheduling
+cycle: (1) which same-model nodes to batch together and which executors to route
+them to, exploiting model sharing across workflows; (2) how many GPUs to
+allocate per batch, adapting parallelism to current resource availability; and
+(3) whether to admit or reject incoming requests to preserve SLO attainment.
+Algorithm 1 summarizes the scheduling loop; the remainder of this
+section describes how the scheduler makes each decision.
+
+To make these decisions, the scheduler maintains two key data structures that
+the runtime keeps up to date. A model state table records, for every
+executor, which models are currently loaded in GPU memory. Executors piggyback
+their model states on node-completion notifications to the coordinator, so the
+table is updated without extra RPCs. A set of per-model latency
+profiles, collected
+offline, provides stable estimates (Xia et al., 2025) of data-fetch time, model-loading time, and
+inference time for each model under various batch sizes and parallelism degrees.
+Following prior work (Zhang et al., 2023a; Li et al., 2023; Li et al., 2025a; Qin et al., 2025; Chen et al., 2024), the scheduler orders the ready queue by first-come-first-serve
+(FCFS).
+For nodes with the same arrival time (e.g., nodes from the same request), it further prioritizes those at shallower depths in the DAG.
+Since optimal ordering requires foreknowledge of future
+arrivals (Zhang et al., 2023a; Gujarati et al., 2020), FCFS is a simple,
+neutral baseline that isolates LegoDiffusion’s gains from scheduling policy. The
+scheduler is a pluggable module; other policies can be substituted.
+
+Algorithm 1 Scheduling Algorithm
+
+1
+while True do
+
+     // Admission control runs asynchronously (§5.3)
+
+     
+2
+Admit or reject arrived requests;
+
+     // Identify ready nodes
+
+     
+3
+nodes with satisfied dependencies from queue;
+
+     
+4
+currently available executors;
+
+     
+5
+if or then
+
+          
+6
+continue;
+
+     
+7
+Sort by (arrival time, node depth);
+
+     
+8
+;
+
+     // Batch same-model nodes (§5.1)
+
+     
+9
+profiled max batch size for ;
+
+     
+10
+;
+
+     // Choose parallelism degree (§5.2)
+
+     
+11
+max useful parallelism for ;
+
+     
+12
+;
+
+     // Score and select executors
+
+     
+13
+for do
+
+          
+14
+CalcDataFetchLatency(, );
+
+          
+15
+hosts ? : CalcLoadTime();
+
+          
+16
+CalcInferenceTime(, , );
+
+          
+17
+;
+
+     
+18
+top from with min scores;
+
+     
+19
+Dispatch to (triggers model load if needed);
+
+5.1. Cross-Workflow Batching and Model Sharing
+
+In each scheduling cycle, the scheduler pops the FCFS-earliest node
+from the ready queue and inspects its model field. It then scans the
+remaining ready nodes for any that reference the same model, regardless
+of the originating workflow, and groups them into a single batch of up to
+entries. The per-model is determined offline by profiling
+batching efficiency: beyond a model-specific threshold, larger batches increase
+latency with diminishing throughput gain (Chen et al., 2024). Because matching
+is by model identity rather than by workflow, a single batch may contain nodes
+from multiple workflows—this is how the scheduler realizes model
+sharing (§3.1).
+
+After forming a batch, the scheduler must select an executor (Line 13 –17). For each candidate
+executor , it computes a latency score from three profiled components:
+(1) , the cost of fetching the batch’s input tensors from their
+producing executors via the data engine (§4.3.2);
+(2) , the cost of loading the required model into GPU memory; and
+(3) , the estimated inference time for the batch. The model state
+table makes zero for any executor that already hosts the required
+model, so the scoring function naturally routes batches to executors with warm
+models. When no executor hosts the model, the scheduler selects the executor
+with the lowest total score and triggers a model load—loading only the single
+needed model, not the entire workflow, unlike monolithic scaling (L1 in
+§2.2). We evaluate the throughput and latency gains from
+model sharing in §7.3.
+
+5.2. Adaptive Parallelism
+
+LegoDiffusion exploits two forms of diffusion-specific parallelism
+(§2.1) through scheduling decisions.
+
+Inter-Node Parallelism. When the compiler produces a DAG in which two
+nodes have no eager data dependency—for example, a ControlNet and its corresponding
+base-model node connected only by a deferred input
+(§4.3.2)—both nodes enter simultaneously once
+their non-deferred inputs are satisfied. The scheduler dispatches them to
+separate executors in the same or adjacent loop iterations, so they execute
+concurrently. Runtime data exchange between the two nodes is handled by deferred
+data fetch: the base model begins execution immediately, and retrieves the
+ControlNet output mid-inference when it becomes available
+(Fig. 2-right).
+
+Intra-Node Parallelism. A single model invocation can also be split across
+multiple GPUs via latent parallelism (Li et al., 2025b; Li et al., 2024; Fang et al., 2024), which partitions the input tensor and distributes the shards to
+executors for parallel inference
+(Fig. 2-left). The scheduler chooses the
+parallelism degree per batch by a work-conserving heuristic: it sets , where is the maximum useful parallelism
+for the model (determined offline). This rule uses all currently available GPUs
+without waiting for more to free up, maximizing parallelism while avoiding extra
+queueing delay (Li et al., 2023; Tan et al., 2025). Because the scheduler makes this decision
+per batch, different invocations of the same model can run at different
+parallelism degrees depending on instantaneous cluster load. The scheduler then
+selects the lowest-scoring executors, dispatches the batch with a
+parallelism descriptor, and each executor processes its assigned input shard. We
+evaluate intra- and inter-node parallelism in §7.3.
+
+5.3. SLO-Aware Admission Control
+
+Admitting requests beyond system capacity inflates queueing delays and causes
+cascading SLO violations. LegoDiffusion prevents this with an early-abort
+admission policy that leverages micro-serving’s per-node visibility into request
+progress.
+
+When a new request arrives, the scheduler estimates its end-to-end completion
+time. Because the control plane tracks which nodes of each inflight request have
+completed, the scheduler can compute, for every inflight request, the sum of
+profiled latencies along its remaining critical path. It admits the new request
+only if the estimated completion time—accounting for current queueing
+depth—satisfies the request’s latency SLO. Otherwise, the request is rejected
+immediately, preserving resources for already-admitted requests. This
+early-abort policy is feasible only under micro-serving: in monolithic serving,
+the system has no visibility into sub-workflow progress and cannot estimate
+remaining work at fine granularity. The admission control runs asynchronously
+and does not block the scheduling loop. We quantify its effect on SLO attainment
+in §7.3.
+
+6. Implementation
+
+We have implemented LegoDiffusion with a FastAPI (FastAPI, 2025) frontend
+and a distributed GPU-based inference engine. The frontend (approx. 1,000 LoC in
+Python) exposes an intuitive programming interface for users to compose and
+register diffusion workflows (§4.1). Users can
+invoke registered workflows with customized image generation parameters, such as
+prompts and reference images, similar to the OpenAI API (OpenAI, 2020). We
+currently support diffusion workflows for popular models including the SD3
+family (Esser et al., 2024) and Flux family (Labs, 2024). LegoDiffusion’s backend runtime
+consists of a coordinator and distributed executors (Fig. 5),
+totaling 4,000 lines of Python code. The data engine is implemented in 1,000
+lines of C++/CUDA code using NVSHMEM (NVIDIA, 2025). Aside from CUDA tensors,
+communication between the coordinator and distributed executors is facilitated
+via ZeroMQ (, 2025).
+
+7. Evaluation
+
+We evaluate LegoDiffusion with the following highlights:
+
+•
+
+LegoDiffusion outperforms state-of-the-art baselines, sustaining
+up to 3 higher request rates, satisfying 6 more stringent SLOs,
+reducing GPU requirements by up to 3, and tolerating 8
+higher burst traffic, all while maintaining over 90% SLO attainment
+(§7.2).
+
+•
+
+Microbenchmarks isolate the contribution of each scheduling mechanism
+and validate compatibility with emerging diffusion optimizations
+(§7.3, §7.4).
+
+•
+
+LegoDiffusion introduces negligible system overhead (§7.5).
+
+7.1. Experimental Setup
+
+Diffusion Workflows and Testbed. We use 12 diffusion workflows composed
+from four popular base models: SD3 (Esser et al., 2024), SD3.5-Large (stabilityai, 2025),
+Flux-Dev (Labs, 2024), and Flux-Schnell (Labs, 2024). They exhibit diverse
+computational characteristics, with parameter counts spanning 2.5B to 12B and
+denoising steps ranging from 4 to 50. In Table 2, we
+categorize these workflows into six evaluation settings (S1–S6) to assess
+system performance under varying degrees of workload heterogeneity. We
+use a real testbed of 8 to 32 NVIDIA H800 GPUs to evaluate performance and a 256-GPU simulator to
+analyze scalability.
+
+Table 2. Evaluation Settings. We use workflows of representative diffusion models.
+S1–S4 represent single-model deployments, each including three workflow variants: a Basic workflow (text encoders, diffusion model, and decoder), plus two using adapters (Basic + C.N. 1 and Basic + C.N. 2). S5–S6 represent mixed-model deployments. C.N.: ControlNet.
+
+Setting
+Diffusion Model
+Workflow
+
+Single-model Deployments (3 workflows each)
+
+S1
+SD3 (Esser et al., 2024)
+(Basic, +C.N. 1, +C.N. 2)
+
+S2
+SD3.5-Large (stabilityai, 2025)
+(Basic, +C.N. 1, +C.N. 2)
+
+S3
+Flux-Schnell (Labs, 2024)
+(Basic, +C.N. 1, +C.N. 2)
+
+S4
+Flux-Dev (Labs, 2024)
+(Basic, +C.N. 1, +C.N. 2)
+
+Mixed-model Deployments (6 workflows each)
+
+S5
+SD3 + SD3.5-Large
+S1’s + S2’s
+
+S6
+Flux-Schnell + Flux-Dev
+S3’s + S4’s
+
+Baselines. We primarily compare LegoDiffusion with Diffusers, the most representative
+monolithic-serving system (§2.2)(von Platen et al., 2022; Diffusers, 2025a), as our goal is to compare micro-serving with the prevailing monolithic design.
+While other
+systems (vllm-project, 2026; sgl-project, 2026c; Fang et al., 2024) support more parallelism methods and high-performance kernels, they largely inherit
+Diffusers’s monolithic pipeline design and these optimizations are orthogonal to LegoDiffusion.
+
+To compare against a broader monolithic design space, we include monolithic-serving system variants by adopting techniques from multi-model serving systems (Gujarati et al., 2020; Zhang et al., 2023a) for workflow orchestration. For a fair comparison, the baselines use FCFS scheduling and workflow-level admission control.
+
+•
+
+Diffusers represents a static deployment strategy.
+Each workflow is executed monolithically and statically bound to dedicated GPUs (von Platen et al., 2022; Diffusers, 2025a).
+It cannot share models across workflows, adapt parallelism at runtime.
+
+•
+
+Diffusers-C implements a swap-based serving strategy by adapting
+Clockwork (Gujarati et al., 2020) to Diffusers. Leveraging the
+predictable end-to-end latency of diffusion workflows, it treats each
+monolithic workflow as a swappable DNN model unit, dynamically loading and unloading workflows into GPU memory on demand.
+Because the swap unit is an entire workflow, it cannot share individual models across workflows or adapt parallelism within a workflow.
+
+•
+
+Diffusers-S incorporates the planning-and-scheduling framework of
+Shepherd (Zhang et al., 2023a) to orchestrate instances, modeling each monolithic diffusion workflow as a distinct model unit.
+Like Diffusers-C, it schedules whole workflows and thus cannot exploit per-model sharing or adaptive parallelism.
+
+Workloads. We use a real-world T2I production trace (Li et al., 2025b). To
+rigorously evaluate under diverse conditions, we vary request
+arrival rates, SLO targets, traffic burstiness, and testbed sizes, effectively
+simulating a wide spectrum of real-world traffic patterns and performance
+requirements.
+
+Metrics.
+Our primary metric is SLO attainment: the fraction of
+requests completed within their specified latency
+deadline. We set the default deadline to the solo inference latency of each workflow (SLO Scale ), which is tight given that any queueing or resource contention will cause violations.
+Unlike prior works (Li et al., 2025b; Li et al., 2024; Agarwal et al., 2024; Fang et al., 2024),
+LegoDiffusion does not alter the computation performed during diffusion inference and
+therefore requires no evaluation of the image quality.
+
+7.2. End-to-End Performance
+
+Figure 9. End-to-end performance across six settings (S1–S6 in Table 2), evaluated under varying request traffic rates (a–f, j), SLO requirements (g), traffic burstiness (h), and testbed sizes (i).
+
+As Fig. 9 shows, LegoDiffusion consistently outperforms all baselines
+across six settings, four traffic dimensions, and a range of testbed sizes.
+At high request rates, LegoDiffusion achieves over 90% SLO attainment in settings where the strongest baseline drops below 3%.
+
+SLO Attainment vs. Rate. We evaluate LegoDiffusion and the baselines by varying
+the request rate while keeping the SLO scale (2.0) and traffic burstiness fixed.
+As shown in Fig. 9 (a)–(f) and (j), LegoDiffusion consistently
+achieves higher SLO attainment across varying rate scales. Compared to
+Diffusers-S, the strongest baseline, LegoDiffusion sustains up to a 3 higher
+request rate while meeting a 90% SLO attainment target. At low request rates,
+all systems achieve high SLO attainment; however, as the rate increases,
+baseline performance plunges due to coarse-grained workflow scaling and
+inability to share common models (§2.2). In contrast,
+LegoDiffusion’s gains stem from two mechanisms: model sharing
+(§5.1) enables batching nodes from all three
+workflows onto shared model replicas, avoiding redundant loading; adaptive
+parallelism (§5.2) further reduces per-request latency
+at low-to-moderate rates by distributing inference across idle GPUs.
+
+Next, we present evaluations that vary the SLO scale, traffic burstiness, and
+testbed size, respectively. We focus on the Flux model
+family (S6), widely adopted models (HuggingFace, 2025c)
+representative of recent advances in the field.
+
+SLO Attainment vs. SLO Scale (16 GPUs). In Fig. 9(g), we fix the
+rate scale at 1.0 and evaluate using the original production trace.
+Even at a strict SLO scale of 1.0, LegoDiffusion achieves substantially higher SLO
+attainment than the baselines.
+At this scale, the deadline is tight enough that only intra-node parallelism—splitting the base model across two GPUs (§5.2)—can bring per-request latency below the target; baselines, which run each workflow on a single GPU, cannot meet this deadline regardless of scheduling policy.
+At an SLO scale of 2.0, LegoDiffusion satisfies the SLO for over 90% of requests, whereas the
+baselines require an SLO scale of 12.0 to reach the same level. We observe
+a sharp increase in baseline SLO attainment when the SLO scale rises from 1.0 to
+2.0, because this relaxation begins to absorb the inherent overheads of
+monolithic serving (§2.2). Beyond that point, baseline improvements are
+gradual. In contrast,
+LegoDiffusion benefits more effectively from relaxed SLOs, achieving
+higher SLO attainment than the strongest baseline at an SLO scale of 4.0.
+
+SLO Attainment vs. CV (16 GPUs). In Fig. 9 (h), we fix
+the rate scale at 0.25 and the SLO scale at 2.0. Following prior
+work (Li et al., 2023; Gujarati et al., 2020), we slice the original trace into
+time windows and fit the arrivals to a Gamma Process parameterized by the
+coefficient of variation (CV). Scaling the CV and resampling allows us to
+control traffic burstiness. Higher CVs indicate burstier traffic, which
+exacerbates queuing delays and increases SLO violations. As shown, LegoDiffusion
+gracefully handles highly bursty traffic, sustaining high attainment even at an
+8 larger CV compared to the baselines. When traffic subsides, the
+work-conserving parallelism heuristic (§5.2) drains the
+queue faster by assigning more GPUs per request, creating headroom before the
+next burst. Admission control (§5.3) then protects
+admitted requests during the spike itself by rejecting those that would violate
+their SLOs.
+
+SLO Attainment vs. Testbed Size. Finally, in Fig. 9 (i),
+we fix the rate scale at 0.5 and the SLO scale at 2.0, varying the testbed size
+under the original production trace. LegoDiffusion requires up to 3 fewer GPUs
+to achieve a 90% SLO attainment target.
+This high resource efficiency is driven by our micro-serving design.
+Unlike monolithic serving systems that rigidly partition resources at the workflow level, LegoDiffusion enables fine-grained model scaling and serving, as well as model sharing, which effectively treats all GPUs as a unified pool.
+This eliminates resource over-provisioning, and ensures every available GPU cycle is utilized efficiently.
+
+Figure 10. Left: Normalized latency of LegoDiffusion across different numbers of available GPUs with intra-/inter-node parallelism (§5). Flux-S: Flux-Schnell. Right: Effectiveness of admission control (A.C.) in settings S1-4. RS: Rate Scale.
+
+Figure 11. Left: Data fetching latency of varying sizes of tensor blocks. Right: The distribution of tensor block sizes found in typical SD3 and Flux workflows.
+
+7.3. Microbenchmarks
+
+We isolate the benefits of LegoDiffusion’s micro-serving (§3).
+
+Model Sharing. Diffusion models patched with LoRAs can be shared
+across requests, significantly reducing the memory
+footprint and latency overhead compared to loading a new model. We validate this
+using SD3 and a typical LoRA (linoyts, 2025). While the LoRA occupies
+886 MiB of memory and takes 100 ms for swapping (Li et al., 2025b), this saves the
+3.9 GiB of memory and 430 ms of latency incurred by loading a fresh SD3 model.
+
+Intra-Node Parallelism. LegoDiffusion natively integrates latent
+parallelism (Li et al., 2024; Li et al., 2025b; Fang et al., 2024) with intra-node
+parallelism (§5.2), enabling accelerated diffusion
+model inference across two GPUs. As shown in
+Fig. 10-left, our intra-node implementation
+achieves a speedup of up to 1.9. This aligns with findings
+in (Li et al., 2025b; Li et al., 2024) and validates LegoDiffusion’s capability to support
+state-of-the-art optimizations.
+
+Inter-Node Parallelism. As
+discussed in §4.3.2, LegoDiffusion implements a deferred data
+fetch mechanism to enable ControlNet parallelization (Li et al., 2025b), a key form of
+inter-node parallelism described in §5.2. As shown
+in Fig. 10-left, LegoDiffusion’s inter-node
+parallelism accelerates workflow execution across different models by up to
+1.3, consistent with results in (Li et al., 2025b). Note that the gains with
+Flux models are limited because their ControlNets are small (only 6% of the
+base model size) and have negligible latency compared to the base model.
+
+Admission Control. We evaluate the effectiveness of LegoDiffusion’s admission
+control (§5.3) in optimizing SLO attainment. In
+Fig. 10-right, enabling admission control
+across the four settings (Table 2) prevents system overload
+under high request rates. By proactively aborting requests that are destined to
+violate SLOs, LegoDiffusion increases SLO attainment from a mere 0.4% to 44% in
+setting S1.
+
+Programmability. LegoDiffusion provides an intuitive programming model for
+composing complex workflows. Following (Zheng et al., 2024), we quantify
+developer productivity using effective Lines of Code (LoC). We compare LegoDiffusion
+against Katz (Li et al., 2025b) and xDiT (Fang et al., 2024), two popular diffusion
+model serving engines that support parallel acceleration. As shown in
+Table 3, LegoDiffusion requires comparable or lower implementation
+effort to express these optimizations, while additionally supporting adaptive
+runtime behavior that the baselines do not.
+
+Table 3. Effective LOC and adaptive-runtime support.
+
+Technique
+LOC / (Support adaptive adjustment?)
+
+Katz (Li et al., 2025b)
+xDiT (Fang et al., 2024)
+LegoDiffusion
+
+Latent parallel
+92 (No)
+68 (No)
+74 (Yes)
+
+ControlNet parallel
+127 (No)
+N.A.
+79 (Yes)
+
+Async LoRA loading
+182 (Yes)
+N.A.
+61 (Yes)
+
+7.4. Case Study
+
+We next show that LegoDiffusion supports emerging optimizations
+tailored for diffusion models described in
+§4.2.
+
+Approximate Caching.
+In LegoDiffusion, we implement Nirvana’s (Agarwal et al., 2024) approximate caching
+optimization (§2.1). Following prior work (Agarwal et al., 2024; Li et al., 2025b), we use a SDXL workflow and configure to reduce 20% and 40% denoising
+computation, respectively. The optimization achieves speedups of 1.13
+and 1.43 with its original implementation on Diffusers, and
+comparable speedups of 1.17 and 1.42 on LegoDiffusion, evidencing
+LegoDiffusion’s effective support for the optimization.
+
+Async LoRA Loading. We implement Katz’s (Li et al., 2025b) asynchronous LoRA
+loading design in LegoDiffusion and evaluate it against the original Diffusers
+implementation, using SDXL (Podell et al., 2024) with a papercut-style
+LoRA (TheLastBen, 2025). Our implementation reduces LoRA loading overhead from
+0.5 seconds to 0.05 seconds, matching the results reported in (Li et al., 2025b).
+
+7.5. System Overhead
+
+Execution Overhead. Micro-serving introduces additional
+overhead due to inter-node communication and control-plane coordination.
+We quantify this overhead by comparing LegoDiffusion against monolithic baselines on
+four workflows: SD3, SD3.5-Large, Flux-Dev, and Flux-Schnell. Across all cases,
+the maximum end-to-end overhead is 150 ms. Given that these diffusion workloads
+typically take 2–20 seconds to complete, this additional cost is negligible.
+
+Control-Plane Scalability. To show LegoDiffusion’s control plane remains
+efficient at large scale, we conduct simulation-based experiments on a 256-GPU
+setup under high concurrency, with 500 inflight requests. Across two
+representative workloads, Flux-Dev and SD3.5-Large, the coordinator accounts for
+only 3.4% and 2.7% of total execution time, respectively, indicating that the
+control plane does not emerge as the dominant bottleneck at this scale.
+
+Data Transmission Latency. We further isolate the cost of intermediate
+tensor movement in Fig. 11. The left panel shows
+the latency of tensor serialization and transmission over a range of tensor
+sizes, and the right panel reports the actual intermediate tensor sizes produced
+by SD3 and Flux-Dev workflows with ControlNet. Even for the largest intermediate
+tensors, transmission latency remains below 1 ms,
+confirming that the inter-GPU bandwidth is not a bottleneck for LegoDiffusion’s
+fine-grained execution model.
+
+8. Discussion and Related Works
+
+Scalability and Fault Tolerance.
+
+In LegoDiffusion, one coordinator manages executors (Fig. 5).
+To avoid a coordinator bottleneck as grows, LegoDiffusion shards executors across
+multiple coordinators, each managing a disjoint subset of workflows that share
+models, preserving sharing opportunities. A cluster management
+service (, 2025; Hunt et al., 2010) handles coordinator discovery and failure
+detection. Executor failures are tolerated naturally: the coordinator reassigns
+affected nodes to other executors.
+
+Diffusion Model Serving Systems. Existing serving
+systems (Diffusers, 2025a; BentoML, 2025; sgl-project, 2026c; vllm-project, 2026)
+follow a monolithic design with limited adapter
+support (sgl-project, 2026b; vllm-project, 2026; sgl-project, 2026a)
+(§3.2). Several works accelerate individual workflow
+execution: Nirvana (Agarwal et al., 2024) reduces denoising steps via cached images;
+DistriFusion (Li et al., 2024) and xDiT (Fang et al., 2024) exploit
+multi-GPU parallelism; Katz (Li et al., 2025b) parallelizes ControlNets and
+asynchronously loads LoRAs;
+TetriServe (Lu et al., 2026) and
+TridentServe (Xia et al., 2025) adapt sequence
+parallelism for latency SLOs. However, several of
+these (Xia et al., 2025; Lu et al., 2026; Agarwal et al., 2024; Li et al., 2024) lack adapter
+support prevalent in production (Li et al., 2025b; Lin et al., 2025), and none
+target cluster-level multi-workflow deployment. LegoDiffusion’s micro-serving approach
+is complementary (§4.2,
+§7.4).
+
+Other Model Serving Systems. Prior work on model serving has improved
+latency (Crankshaw et al., 2017; Wang et al., 2023a),
+throughput (Ahmad et al., 2024; Yang et al., 2022), and resource
+efficiency (Zhang et al., 2019; Wang et al., 2021; Gunasekaran et al., 2022; Yang et al., 2025; Wang et al., 2023b) across DNNs and LLMs (Yu et al., 2022; Agrawal et al., 2024; Duan et al., 2024; Wu et al., 2024; Mei et al., 2025; Hu et al., 2025; Yao et al., 2025a; Oliaro et al., 2025; Zhang et al., 2026; Yu et al., 2025; He et al., 2025; Yao et al., 2025b; Chen et al., 2025a; Srivatsa et al., 2025; Chen et al., 2025b; Zeng et al., 2025; Gao et al., 2025). LegoDiffusion complements them by focusing on
+text-to-image serving, which has distinct computational and workflow
+characteristics. Prior work on online multi-model serving has further explored
+model placement (Zhang et al., 2023a; Li et al., 2023), request
+scheduling (Zhang et al., 2023a; Gujarati et al., 2020), and dynamic
+scaling (Fu et al., 2024; Zhang et al., 2025a). In §7, we
+integrate representative techniques from them with existing diffusion workflow
+serving systems (Diffusers, 2025a). Despite their effectiveness, LegoDiffusion
+outperforms with its micro-serving approach, which fundamentally
+addresses the limitations of monolithic serving. Also, LegoDiffusion is
+compatible with these optimizations.
+
+9. Conclusions
+
+We presented LegoDiffusion, an efficient micro-serving system for diffusion workflow.
+LegoDiffusion has three key designs: (1) a programming model that transforms workflow compositions into loosely coupled nodes; (2) a specialized runtime and data plane that streamline data communication to facilitate micro-serving; and (3) a scheduler that realizes the benefits of micro-serving at the cluster level. Collectively, LegoDiffusion outperforms existing monolithic serving systems, sustaining up to 3 higher request rates and tolerating 8 higher burst traffic, with the same performance requirements.
+
+References
+
+Abadi et al. (2016)
+M. Abadi, P. Barham, J. Chen, Z. Chen, A. Davis, J. Dean, M. Devin, S. Ghemawat, G. Irving, M. Isard, M. Kudlur, J. Levenberg, R. Monga, S. Moore, D. G. Murray, B. Steiner, P. Tucker, V. Vasudevan, P. Warden, M. Wicke, Y. Yu, and X. Zheng
+
+TensorFlow: a system for Large-Scale machine learning.
+
+In Proc. OSDI,
+
+Cited by: §4.3.1.
+
+Agarwal et al. (2024)
+S. Agarwal, S. Mitra, S. Chakraborty, S. Karanam, K. Mukherjee, and S. K. Saini
+
+Approximate caching for efficiently serving text-to-image diffusion models.
+
+In Proc. USENIX NSDI,
+
+Cited by: §1,
+§3.2,
+§4.2,
+§7.1,
+§7.4,
+§8.
+
+Agrawal et al. (2024)
+A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. Gulavani, A. Tumanov, and R. Ramjee
+
+Taming Throughput-Latency tradeoff in LLM inference with Sarathi-Serve.
+
+In Proc. OSDI,
+
+Cited by: §8.
+
+Ahmad et al. (2024)
+S. Ahmad, H. Guan, B. D. Friedman, T. Williams, R. K. Sitaraman, and T. Woo
+
+Proteus: A high-throughput inference-serving system with accuracy scaling.
+
+In Proc. ACM ASPLOS,
+
+Cited by: §8.
+
+[5]
+(2025)
+
+Apache ZooKeeper.
+
+Note: https://zookeeper.apache.org/
+
+Cited by: §8.
+
+BentoML (2025)
+BentoML
+
+comfy-pack: Serving ComfyUI Workflows as APIs.
+
+Note: https://www.bentoml.com/blog/comfy-pack-serving-comfyui-workflows-as-apis
+
+Cited by: §1,
+§2.2,
+§8.
+
+Chen et al. (2025a)
+H. Chen, W. Xie, B. Zhang, J. Tang, J. Wang, J. Dong, S. Chen, Z. Yuan, C. Lin, C. Qiu, Y. Zhu, Q. Ou, J. Liao, X. Chen, Z. Ai, Y. Wu, and M. Zhang
+
+KTransformers: unleashing the full potential of cpu/gpu hybrid inference for moe models.
+
+In Proc. SOSP,
+
+Cited by: §8.
+
+Chen et al. (2025b)
+L. Chen, D. Feng, E. Feng, Y. Wang, R. Zhao, Y. Xia, P. Xu, and H. Chen
+
+Characterizing mobile soc for accelerating heterogeneous llm inference.
+
+In Proc. SOSP,
+
+Cited by: §8.
+
+Chen et al. (2024)
+L. Chen, Z. Ye, Y. Wu, D. Zhuo, L. Ceze, and A. Krishnamurthy
+
+Punica: Multi-tenant LoRA serving.
+
+In Proc. MLSys,
+
+Cited by: §5.1,
+§5.
+
+ComfyUI (2025a)
+ComfyUI
+
+ComfyUI: the most powerful and modular visual ai engine and application..
+
+GitHub.
+
+Note: https://github.com/comfyanonymous/ComfyUI
+
+Cited by: §2.2,
+§4.1.
+
+ComfyUI (2025b)
+ComfyUI
+
+Understand the concept of a node in ComfyUI..
+
+Note: https://docs.comfy.org/essentials/core-concepts/nodes
+
+Cited by: §2.2.
+
+Crankshaw et al. (2017)
+D. Crankshaw, X. Wang, G. Zhou, M. J. Franklin, J. E. Gonzalez, and I. Stoica
+
+Clipper: A low-latency online prediction serving system.
+
+In Proc. USENIX NSDI,
+
+Cited by: §8.
+
+Dean and Ghemawat (2004)
+J. Dean and S. Ghemawat
+
+MapReduce: simplified data processing on large clusters.
+
+In Proc. OSDI,
+
+Cited by: §3.2,
+§3.2.
+
+Diffusers (2025a)
+H. Diffusers
+
+Create a server.
+
+Note: https://github.com/huggingface/diffusers/blob/main/docs/source/en/using-diffusers/create_a_server.md
+
+Cited by: §1,
+§2.2,
+§2.2,
+1st item,
+§7.1,
+§8,
+§8.
+
+Diffusers (2025b)
+H. Diffusers
+
+Philosophy.
+
+Note: https://huggingface.co/docs/diffusers/en/conceptual/philosophy
+
+Cited by: §2.2,
+footnote *.
+
+Duan et al. (2024)
+J. Duan, R. Lu, H. Duanmu, X. Li, X. Zhang, D. Lin, I. Stoica, and H. Zhang
+
+MuxServe: flexible spatial-temporal multiplexing for multiple LLM serving.
+
+In Proc. ICML,
+
+Cited by: §8.
+
+Esser et al. (2024)
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, D. Podell, T. Dockhorn, Z. English, and R. Rombach
+
+Scaling rectified flow transformers for high-resolution image synthesis.
+
+In Proc. ICML,
+
+Cited by: §1,
+§2.2,
+§2.2,
+§3.1,
+§4.3.2,
+§6,
+§7.1,
+Table 2.
+
+Fang et al. (2024)
+J. Fang, J. Pan, X. Sun, A. Li, and J. Wang
+
+XDiT: an inference engine for diffusion transformers (dits) with massive parallelism.
+
+arXiv preprint arXiv:2411.01738.
+
+Cited by: §2.1,
+§2.1,
+§2.2,
+§3.1,
+§3.2,
+§5.2,
+§7.1,
+§7.1,
+§7.3,
+§7.3,
+Table 3,
+§8.
+
+FastAPI (2025)
+FastAPI
+
+FastAPI.
+
+Note: https://github.com/fastapi/fastapi
+
+Cited by: §6.
+
+Fu et al. (2024)
+Y. Fu, L. Xue, Y. Huang, A. Brabete, D. Ustiugov, Y. Patel, and L. Mai
+
+ServerlessLLM: Low-Latency serverless inference for large language models.
+
+In Proc. OSDI,
+
+Cited by: §8.
+
+Gao et al. (2025)
+S. Gao, Q. Wang, S. Zeng, Y. Lu, and J. Shu
+
+WEAVER: efficient multi-llm serving with attention offloading.
+
+In Proc. ATC,
+
+Cited by: §8.
+
+Gujarati et al. (2020)
+A. Gujarati, R. Karimi, S. Alzayat, W. Hao, A. Kaufmann, Y. Vigfusson, and J. Mace
+
+Serving DNNs like Clockwork: Performance predictability from the bottom up.
+
+In Proc. USENIX OSDI,
+
+Cited by: §5,
+2nd item,
+§7.1,
+§7.2,
+§8.
+
+Gunasekaran et al. (2022)
+J. R. Gunasekaran, C. S. Mishra, P. Thinakaran, B. Sharma, M. T. Kandemir, and C. R. Das
+
+Cocktail: A multidimensional optimization for model serving in cloud.
+
+In Proc. USENIX NSDI,
+
+Cited by: §8.
+
+He et al. (2025)
+Y. He, H. Yang, Y. Lu, A. Klimović, and G. Alonso
+
+Resource multiplexing in tuning and serving large language models.
+
+In Proc. ATC,
+
+Cited by: §8.
+
+Ho and Salimans (2021)
+J. Ho and T. Salimans
+
+Classifier-free diffusion guidance.
+
+In Proc. NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications,
+
+Cited by: §2.1.
+
+Hu et al. (2022)
+E. J. Hu, yelong shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+
+LoRA: low-rank adaptation of large language models.
+
+In Proc. ICLR,
+
+Cited by: Figure 1,
+§1,
+§1,
+§2.1,
+§2.1.
+
+Hu et al. (2025)
+Z. Hu, V. Murthy, Z. Pan, W. Li, X. Fang, Y. Ding, and Y. Wang
+
+HedraRAG: co-optimizing generation and retrieval for heterogeneous rag workflows.
+
+In Proc. SOSP,
+
+Cited by: §8.
+
+HuggingFace (2025a)
+HuggingFace
+
+Accelerate inference of text-to-image diffusion models.
+
+Note: https://huggingface.co/docs/diffusers/en/tutorials/fast_diffusion
+
+Cited by: §4.1,
+§4.
+
+HuggingFace (2025b)
+HuggingFace
+
+HuggingFace Models.
+
+Note: https://huggingface.co/models?pipeline_tag=text-to-image&sort=downloads
+
+Cited by: §1.
+
+HuggingFace (2025c)
+HuggingFace
+
+HuggingFace Models.
+
+Note: https://huggingface.co/models?pipeline_tag=text-to-image&sort=likes
+
+Cited by: §7.2.
+
+Hunt et al. (2010)
+P. Hunt, M. Konar, F. P. Junqueira, and B. Reed
+
+ZooKeeper: wait-free coordination for internet-scale systems.
+
+In Proc. ATC,
+
+Cited by: §8.
+
+Ju et al. (2024)
+X. Ju, X. Liu, X. Wang, Y. Bian, Y. Shan, and Q. Xu
+
+BrushNet: a plug-and-play image inpainting model with decomposed dual-branch diffusion.
+
+In Proc. ECCV,
+
+Cited by: §1.
+
+Labs (2024)
+B. F. Labs
+
+FLUX.
+
+Note: https://github.com/black-forest-labs/flux
+
+Cited by: Figure 1,
+§1,
+§2.2,
+§2.2,
+Figure 7,
+§4.3.2,
+§6,
+§7.1,
+Table 2,
+Table 2.
+
+LangChain (2025)
+LangChain
+
+LangChain.
+
+Note: https://www.langchain.com
+
+Cited by: §1.
+
+Li et al. (2024)
+M. Li, T. Cai, J. Cao, Q. Zhang, H. Cai, J. Bai, Y. Jia, M. Liu, K. Li, and S. Han
+
+DistriFusion: Distributed parallel inference for high-resolution diffusion models.
+
+In Proc. IEEE/CVF CVPR,
+
+Cited by: §2.1,
+§2.1,
+§3.2,
+§5.2,
+§7.1,
+§7.3,
+§8.
+
+Li et al. (2025a)
+S. Li, H. Lu, T. Wu, M. Yu, Q. Weng, X. Chen, Y. Shan, B. Yuan, and W. Wang
+
+Toppings: cpu-assisted, rank-aware adapter serving for LLM inference.
+
+In Proc. USENIX ATC,
+
+Cited by: §5.
+
+Li et al. (2025b)
+S. Li, L. Yang, X. Jiang, H. Lu, Z. Di, W. Lu, J. Chen, K. Liu, Y. Yu, T. Lan, G. Yang, L. Qu, L. Zhang, and W. Wang
+
+Katz: efficient workflow serving for diffusion models with many adapters.
+
+In Proc. USENIX ATC,
+
+Cited by: §1,
+§1,
+§2.1,
+§2.1,
+§2.1,
+§2.1,
+§2.1,
+§2.1,
+§2.2,
+§3.1,
+§3.1,
+§3.2,
+§4.2,
+§4.3.2,
+§4.3.2,
+§5.2,
+§7.1,
+§7.1,
+§7.3,
+§7.3,
+§7.3,
+§7.3,
+§7.4,
+§7.4,
+Table 3,
+§8.
+
+Li et al. (2023)
+Z. Li, L. Zheng, Y. Zhong, V. Liu, Y. Sheng, X. Jin, Y. Huang, Z. Chen, H. Zhang, J. E. Gonzalez, and I. Stoica
+
+AlpaServe: statistical multiplexing with model parallelism for deep learning serving.
+
+In Proc. OSDI,
+
+Cited by: §2.2,
+§5.2,
+§5,
+§7.2,
+§8.
+
+Lin et al. (2024)
+C. Lin, Z. Han, C. Zhang, Y. Yang, F. Yang, C. Chen, and L. Qiu
+
+Parrot: efficient serving of LLM-based applications with semantic variable.
+
+In Proc. OSDI,
+
+Cited by: §3.2,
+§3.2.
+
+Lin et al. (2025)
+Y. Lin, S. Wu, S. Luo, H. Xu, H. Shen, C. Ma, M. Shen, L. Chen, C. Xu, L. Qu, and K. Ye
+
+Understanding diffusion model serving in production: a top-down analysis of workload, scheduling, and resource efficiency.
+
+In Proc. ACM SoCC,
+
+Cited by: §1,
+§1,
+§2.2,
+§8.
+
+linoyts (2025)
+linoyts
+
+Yarn_art_SD3_LoRA.
+
+Note: https://huggingface.co/linoyts/Yarn_art_SD3_LoRA
+
+Cited by: §7.3.
+
+LlamaIndex (2025)
+LlamaIndex
+
+LlamaIndex.
+
+Note: https://www.llamaindex.ai
+
+Cited by: §1.
+
+Lu et al. (2026)
+R. Lu, S. He, W. Tan, S. Li, R. Wu, J. J. Ma, A. Chen, and M. Chowdhury
+
+TetriServe: efficiently serving mixed dit workloads.
+
+In Proc. ACM ASPLOS,
+
+Cited by: §8.
+
+Mei et al. (2025)
+Y. Mei, Y. Zhuang, X. Miao, J. Yang, Z. Jia, and R. Vinayak
+
+Helix: serving large language models over heterogeneous GPUs and network via max-flow.
+
+In Proc. ASPLOS,
+
+Cited by: §8.
+
+Modal (2025)
+Modal
+
+How OpenArt scaled their Gen AI art platform on hundreds of GPUs.
+
+Note: https://modal.com/blog/openart-case-study
+
+Cited by: §1.
+
+Moritz et al. (2018)
+P. Moritz, R. Nishihara, S. Wang, A. Tumanov, R. Liaw, E. Liang, M. Elibol, Z. Yang, W. Paul, M. I. Jordan, and I. Stoica
+
+Ray: a distributed framework for emerging AI applications.
+
+In Proc. OSDI,
+
+Cited by: §1,
+§3.2,
+§3.2,
+§4.3.2.
+
+Nguyen and Wong (2000)
+D. Nguyen and S. B. Wong
+
+Design patterns for lazy evaluation.
+
+In Proc. SIGCSE,
+
+Cited by: §4.3.1.
+
+NVIDIA (2025)
+NVIDIA
+
+NVIDIA OpenSHMEM Library (NVSHMEM) Documentation.
+
+Note: https://docs.nvidia.com/nvshmem/api/index.html
+
+Cited by: §1,
+§4.3.2,
+§6.
+
+Oliaro et al. (2025)
+G. Oliaro, X. Miao, X. Cheng, V. Kada, R. Gao, Y. Huang, R. Delacourt, A. Yang, Y. Wang, M. Wu, C. Unger, and Z. Jia
+
+FlexLLM: a system for co-serving large language model inference and parameter-efficient finetuning.
+
+arXiv preprint arXiv:2402.18789.
+
+Cited by: §8.
+
+OpenAI (2020)
+OpenAI
+
+OpenAI API.
+
+Note: https://openai.com/index/openai-api/
+
+Cited by: §6.
+
+OpenAI (2025a)
+OpenAI
+
+Introducing 4o Image Generation.
+
+Note: https://openai.com/index/introducing-4o-image-generation/
+
+Cited by: §1.
+
+OpenAI (2025b)
+OpenAI
+
+OpenAI DALL·E 2.
+
+Note: https://openai.com/index/dall-e-2/
+
+Cited by: §1.
+
+Podell et al. (2024)
+D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach
+
+SDXL: improving latent diffusion models for high-resolution image synthesis.
+
+In Proc. ICLR,
+
+Cited by: §2.2,
+§2.2,
+§7.4.
+
+Qin et al. (2025)
+R. Qin, Z. Li, W. He, J. Cui, F. Ren, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+
+Mooncake: trading more storage for less computation — a KVCache-centric architecture for serving LLM chatbot.
+
+In Proc. FAST,
+
+Cited by: §5.
+
+Recasens et al. (2024)
+P. G. Recasens, Y. Zhu, C. Wang, E. K. Lee, O. Tardieu, A. Youssef, J. Torres, and J. Ll. Berral
+
+Towards pareto optimal throughput in small language model serving.
+
+In Proc. EuroMLSys,
+
+Cited by: §2.2.
+
+sgl-project (2026a)
+sgl-project
+
+[Roadmap] diffusion (2025 q4).
+
+Note: https://github.com/sgl-project/sglang/issues/12799
+
+Cited by: §8,
+footnote *.
+
+sgl-project (2026b)
+sgl-project
+
+Diffusion: add-ons support (lora & controlnet).
+
+Note: https://github.com/sgl-project/sglang/issues/13790
+
+Cited by: §8,
+footnote *.
+
+sgl-project (2026c)
+sgl-project
+
+SGLang diffusion.
+
+Note: https://github.com/sgl-project/sglang/tree/main/python/sglang/multimodal_gen
+
+Cited by: §2.2,
+§2.2,
+§7.1,
+§8,
+footnote *.
+
+Singhvi et al. (2021)
+A. Singhvi, A. Balasubramanian, K. Houck, M. D. Shaikh, S. Venkataraman, and A. Akella
+
+Atoll: a scalable low-latency serverless platform.
+
+In Proc. SoCC,
+
+Cited by: §1,
+§3.2,
+§3.2.
+
+Srivatsa et al. (2025)
+V. Srivatsa, Z. He, R. Abhyankar, D. Li, and Y. Zhang
+
+Preble: efficient distributed prompt scheduling for LLM serving.
+
+In Proc. ICLR,
+
+Cited by: §8.
+
+stabilityai (2025)
+stabilityai
+
+stable-diffusion-3.5-large.
+
+Note: https://huggingface.co/stabilityai/stable-diffusion-3.5-large
+
+Cited by: §1,
+§7.1,
+Table 2.
+
+Tan et al. (2025)
+X. Tan, Y. Jiang, Y. Yang, and H. Xu
+
+Towards end-to-end optimization of LLM-based applications with Ayo.
+
+In Proc. ASPLOS,
+
+Cited by: §1,
+§2.2,
+§3.2,
+§3.2,
+§5.2.
+
+TheLastBen (2025)
+TheLastBen
+
+Papercut Style, SDXL LoRA.
+
+Note: https://huggingface.co/TheLastBen/Papercut_SDXL
+
+Cited by: §7.4.
+
+vllm-project (2026)
+vllm-project
+
+VLLM omni.
+
+Note: https://github.com/vllm-project/vllm-omni
+
+Cited by: §2.2,
+§2.2,
+§7.1,
+§8,
+footnote *.
+
+von Platen et al. (2022)
+P. von Platen, S. Patil, A. Lozhkov, P. Cuenca, N. Lambert, K. Rasul, M. Davaadorj, D. Nair, S. Paul, W. Berman, Y. Xu, S. Liu, and T. Wolf
+
+Diffusers: state-of-the-art diffusion models.
+
+GitHub.
+
+Note: https://github.com/huggingface/diffusers
+
+Cited by: §2.2,
+§2.2,
+§4.3.2,
+1st item,
+§7.1.
+
+Wang et al. (2021)
+L. Wang, L. Yang, Y. Yu, W. Wang, B. Li, X. Sun, J. He, and L. Zhang
+
+Morphling: Fast, near-optimal auto-configuration for cloud-native model serving.
+
+In Proc. ACM SoCC,
+
+Cited by: §8.
+
+Wang et al. (2023a)
+Y. Wang, K. Chen, H. Tan, and K. Guo
+
+Tabi: An efficient multi-level inference system for large language models.
+
+In Proc. ACM EuroSys,
+
+Cited by: §8.
+
+Wang et al. (2023b)
+Y. Wang, B. Feng, Z. Wang, T. Geng, K. Barker, A. Li, and Y. Ding
+
+MGG: Accelerating graph neural networks with fine-grained intra-kernel communication-computation pipelining on multi-GPU platforms.
+
+In Proc. USENIX OSDI,
+
+Cited by: §8.
+
+Wang et al. (2024)
+Z. Wang, P. Li, C. M. Liang, F. Wu, and F. Y. Yan
+
+Autothrottle: a practical Bi-Level approach to resource management for SLO-targeted microservices.
+
+In Proc. NSDI,
+
+Cited by: §1,
+§3.2,
+§3.2.
+
+Wikipedia (2025)
+Wikipedia
+
+Lazy evaluation.
+
+Note: https://en.wikipedia.org/wiki/Lazy_evaluation
+
+Cited by: §4.3.1.
+
+Wu et al. (2024)
+B. Wu, S. Liu, Y. Zhong, P. Sun, X. Liu, and X. Jin
+
+LoongServe: efficiently serving long-context large language models with elastic sequence parallelism.
+
+In Proc. SOSP,
+
+Cited by: §8.
+
+Xia et al. (2025)
+Y. Xia, F. Fu, H. Yuan, H. Zhang, X. Miao, Y. Liu, S. Ling, J. Jiang, and B. Cui
+
+TridentServe: a stage-level serving system for diffusion pipelines.
+
+External Links: 2510.02838
+
+Cited by: §5,
+§8.
+
+Xu et al. (2025)
+Y. Xu, T. Gu, W. Chen, and A. Chen
+
+OOTDiffusion: outfitting fusion based latent diffusion for controllable virtual try-on.
+
+Proc. AAAI.
+
+Cited by: §1.
+
+Yang et al. (2025)
+L. Yang, Y. Wang, Y. Yu, Q. Weng, J. Dong, K. Liu, C. Zhang, Y. Zi, H. Li, Z. Zhang, N. Wang, Y. Dong, M. Zheng, L. Xi, X. Lu, L. Ye, G. Yang, B. Fu, T. Lan, L. Zhang, L. Qu, and W. Wang
+
+GPU-disaggregated serving for deep learning recommendation models at scale.
+
+In Proc. USENIX NSDI,
+
+Cited by: §8.
+
+Yang et al. (2022)
+Y. Yang, L. Zhao, Y. Li, H. Zhang, J. Li, M. Zhao, X. Chen, and K. Li
+
+INFless: A native serverless system for low-latency, high-throughput inference.
+
+In Proc. ACM ASPLOS,
+
+Cited by: §8.
+
+Yao et al. (2025a)
+J. Yao, H. Li, Y. Liu, S. Ray, Y. Cheng, Q. Zhang, K. Du, S. Lu, and J. Jiang
+
+CacheBlend: fast large language model serving for RAG with cached knowledge fusion.
+
+In Proc. EuroSys,
+
+Cited by: §8.
+
+Yao et al. (2025b)
+X. Yao, Q. Hu, and A. Klimovic
+
+DeltaZip: efficient serving of multiple full-model-tuned llms.
+
+In Proc. EuroSys,
+
+Cited by: §8.
+
+Ye et al. (2023)
+H. Ye, J. Zhang, S. Liu, X. Han, and W. Yang
+
+IP-Adapter: Text compatible image prompt adapter for text-to-image diffusion models.
+
+arXiv preprint arXiv:2308.06721.
+
+Cited by: §1,
+§2.1.
+
+Yu et al. (2022)
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun
+
+Orca: A distributed serving system for transformer-based generative models.
+
+In Proc. USENIX OSDI,
+
+Cited by: §8.
+
+Yu et al. (2023)
+M. Yu, T. Cao, W. Wang, and R. Chen
+
+Following the data, not the function: rethinking function orchestration in serverless computing.
+
+In Proc. NSDI,
+
+Cited by: §1,
+§3.2,
+§3.2,
+§4.3.2.
+
+Yu et al. (2025)
+Y. Yu, Y. Gan, N. Sarda, L. Tsai, J. Shen, Y. Zhou, A. Krishnamurthy, F. Lai, H. Levy, and D. Culler
+
+IC-cache: efficient large language model serving via in-context caching.
+
+In Proc. SOSP,
+
+Cited by: §8.
+
+Zaharia et al. (2012)
+M. Zaharia, M. Chowdhury, T. Das, A. Dave, J. Ma, M. McCauly, M. J. Franklin, S. Shenker, and I. Stoica
+
+Resilient distributed datasets: a fault-tolerant abstraction for in-memory cluster computing.
+
+In Proc. NSDI,
+
+Cited by: §1,
+§3.2,
+§3.2,
+§3.2,
+§4.3.1,
+§4.3.2.
+
+Zeng et al. (2025)
+S. Zeng, M. Xie, S. Gao, Y. Chen, and Y. Lu
+
+Medusa: accelerating serverless llm inference with materialization.
+
+In Proc. ASPLOS,
+
+Cited by: §8.
+
+[84]
+(2025)
+
+ZeroMQ.
+
+Note: https://github.com/zeromq/pyzmq
+
+Cited by: §6.
+
+Zhang et al. (2019)
+C. Zhang, M. Yu, W. Wang, and F. Yan
+
+MArk: Exploiting cloud services for cost-effective, SLO-aware machine learning inference serving.
+
+In Proc. USENIX ATC,
+
+Cited by: §8.
+
+Zhang et al. (2025a)
+D. Zhang, H. Wang, Y. Liu, X. Wei, Y. Shan, R. Chen, and H. Chen
+
+Fast and live model auto scaling without caching.
+
+In Proc. OSDI,
+
+Cited by: §8.
+
+Zhang et al. (2021)
+H. Zhang, Y. Tang, A. Khandelwal, J. Chen, and I. Stoica
+
+Caerus: NIMBLE task scheduling for serverless analytics.
+
+In Proc. NSDI,
+
+Cited by: §1,
+§3.2,
+§3.2.
+
+Zhang et al. (2023a)
+H. Zhang, Y. Tang, A. Khandelwal, and I. Stoica
+
+Shepherd: Serving DNNs in the wild.
+
+In Proc. USENIX NSDI,
+
+Cited by: §5,
+3rd item,
+§7.1,
+§8.
+
+Zhang et al. (2023b)
+L. Zhang, A. Rao, and M. Agrawala
+
+Adding conditional control to text-to-image diffusion models.
+
+In Proc. IEEE/CVF ICCV,
+
+Cited by: Figure 1,
+§1,
+§1,
+§2.1,
+§2.1.
+
+Zhang et al. (2025b)
+L. Zhang, A. Rao, and M. Agrawala
+
+Scaling in-the-wild training for diffusion-based illumination harmonization and editing by imposing consistent light transport.
+
+In Proc. ICLR,
+
+Cited by: §1,
+§2.1,
+§2.1.
+
+Zhang (2025)
+L. Zhang
+
+Fooocus.
+
+Note: https://github.com/lllyasviel/Fooocus
+
+Cited by: §2.1.
+
+Zhang et al. (2026)
+W. Zhang, Z. Wu, Y. Mu, R. Ning, B. Liu, N. Sarda, M. Lee, and F. Lai
+
+JITServe: slo-aware llm serving with imprecise request information.
+
+In Proc. USENIX NSDI,
+
+Cited by: §8.
+
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng
+
+SGLang: efficient execution of structured language model programs.
+
+In Proc. NIPS,
+
+Cited by: §3.2,
+§7.3.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

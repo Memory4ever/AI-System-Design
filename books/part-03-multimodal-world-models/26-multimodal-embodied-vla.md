@@ -93,6 +93,16 @@ VLA 联合建模 vision、language 与 action，减少中间手工接口。常�
 
 Mediator 会增加 token、参数和训练不稳定面，也可能在数据不足时形成新的信息瓶颈。作者的零样本 sim-to-real 实验只覆盖少量导航场景，未披露完整 hardware、precision、control frequency 与 safety SLO；因此它支持一种 experimental interface，而不证明 direct fusion 普遍失效。
 
+### Online RL 应通过受限 Action Interface 接入 VLA
+
+直接用在线 RL 更新整个 VLA，能够重写任意表征，但真实机器人样本少、reward 稀疏时会把通用语义能力与低层动作修正绑在同一个高风险更新面。冻结全部 backbone 只训练传统 controller 更安全，却可能丢失任务语义。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23073:start -->
+中间分支是在 VLA 中暴露 compact RL token，令小型 actor–critic head 读取它并细化 action，同时用原 policy 约束更新幅度。Pretrained VLA 拥有高层语义 prior，RL head 拥有局部 action proposal，低层 controller 与 safety envelope 仍拥有执行权；human operator 负责 critical-phase handoff、binary terminal reward、异常干预以及把 intervention trace 纳入下一轮训练。它不是无人监督的自主在线学习。
+
+较少可训练状态换来样本效率和可回滚性，却可能让 token 成为信息瓶颈、让 anchor 阻碍必要适应，或在 contact-rich phase 产生危险探索。作者证据限于几小时实践和四项真实机器人任务，并依赖上述 human-in-the-loop contract，不支持通用 online-RL 保证；任务需要表征重写时仍需更广 fine-tuning，安全证据不足时回退 frozen policy、离线数据或人工接管。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23073:end -->
+
 ### World-action model
 
 模型同时预测未来 observation/video 与 action，把视觉 imagination 作为隐式 plan。它能利用大规模视频 prior，也会产生 correlated failure：错误 world prediction 可能得到“内部一致”但危险的 action。真实 observation refresh 与独立 safety controller 因此更重要。
@@ -653,6 +663,8 @@ action-only diffusion policy 可在 inference 时由 world model 预测 state，
 AI 从语言进入物理世界后，最重要的变化不是多了一种输出 token，而是输出拥有 deadline、控制权和后果。越强的 generative prior，越需要独立的现实反馈和安全边界。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23073`（Status: Experimental）：exact-v1 支持以 RL token 和小型 actor–critic head 对 pretrained VLA 做受限在线动作细化；结果绑定几小时真实实践与四项机器人任务，不证明开放环境安全或通用 VLA 适应。https://arxiv.org/abs/2604.23073v1
 
 - `SF-2026-ARXIV-2606-22729` — primary `arXiv:2606.22729v1`；Method=`arXiv:2606.22729v1 §II Method`；Evaluation=`arXiv:2606.22729v1 §III Experiments`；Non-proof=`arXiv:2606.22729v1 §IV Limitations and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

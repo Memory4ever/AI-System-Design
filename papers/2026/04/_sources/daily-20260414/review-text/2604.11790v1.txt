@@ -1,0 +1,1899 @@
+ClawGuard: A Runtime Security Framework for Tool-Augmented LLM Agents Against Indirect Prompt Injection
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Preliminaries
+
+II-A Agent Framework
+
+II-B Threat Model
+
+III ClawGuard
+
+III-A Rule-Based Action Authorization
+
+III-B Context-Aware Rule Induction
+
+III-C Case Study: End-to-End Enforcement under Adversarial Injection
+
+IV Experimental Evaluation
+
+IV-A Experiment Setup
+
+IV-B Results on AgentDojo
+
+IV-C Results on SkillInject
+
+IV-D Results on MCPSafeBench
+
+V Related Work
+
+V-A LLM Agents and the Tool-Use Paradigm
+
+V-B Indirect Prompt Injection
+
+V-C Defenses Against Prompt Injection
+
+VI Conclusion
+
+References
+
+A Default Sanitization Targets
+
+B Default Baseline Safety Rules
+
+C Rule Synthesis Prompt
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11790v1 [cs.CR] 13 Apr 2026
+
+ClawGuard: A Runtime Security Framework for Tool-Augmented LLM Agents Against Indirect Prompt Injection
+
+Wei Zhao
+
+  
+Zhe Li
+
+  
+Peixin Zhang
+
+  
+Jun Sun
+
+Affiliation: Singapore Management University
+
+Email: {wzhao,zheli,pxzhang,junsun}@smu.edu.sg
+
+Abstract
+
+Tool-augmented Large Language Model (LLM) agents have demonstrated impressive capabilities in automating complex, multi-step real-world tasks, yet remain vulnerable to indirect prompt injection. Adversaries exploit this weakness by embedding malicious instructions within tool-returned content, which agents directly incorporate into their conversation history as trusted observations. This vulnerability manifests across three primary attack channels: web and local content injection, MCP server injection, and skill file injection. Existing defenses remain inadequate: model-level alignment requires fine-tuning and is still bypassable, protocol-level separation demands cross-provider coordination, and architecture-level enforcement either restricts agent flexibility or requires expert-authored rules per deployment, leaving all three injection pathways insufficiently mitigated. To address these vulnerabilities, we introduce ClawGuard, a novel runtime security framework that enforces a user-confirmed rule set at every tool-call boundary, transforming unreliable alignment-dependent defense into a deterministic, auditable mechanism that intercepts adversarial tool calls before any real-world effect is produced. By automatically deriving task-specific access constraints from the user’s stated objective prior to any external tool invocation, ClawGuard blocks all three injection pathways without model modification or infrastructure change. Experiments across five state-of-the-art language models on AgentDojo, SkillInject, and MCPSafeBench demonstrate that ClawGuard achieves robust protection against indirect prompt injection without compromising agent utility. This work establishes deterministic tool-call boundary enforcement as an effective defense mechanism for secure agentic AI systems, requiring neither safety-specific fine-tuning nor architectural modification. Code is publicly available at https://github.com/Claw-Guard/ClawGuard.
+
+I Introduction
+
+Recent advances in tool-augmented large language model (LLM) agents have enabled automated execution of complex, multi-step real-world tasks, including web-augmented question answering [24], code generation and execution [6], and multi-step task execution [30, 39]. State-of-the-art agentic frameworks such as OpenClaw [25], AutoGPT [11], and LangChain [5] realize these capabilities through standardized tool-use interfaces, ranging from custom framework-specific mechanisms to protocol-level specifications such as the Model Context Protocol (MCP) [3]. These interfaces allow agents to browse the web, execute code, manage files, and orchestrate external services [39, 32, 24]. In a typical agentic pipeline, a user instruction is processed by the LLM, which first reasons and plans, then selects and invokes one or more tools based on the task requirements. Each tool output is then appended directly to the conversation history as a new observation [17], and the agent reasons over the accumulated context to determine subsequent actions until a final response is generated.
+
+The direct integration of tool outputs into the agent’s conversation history as trusted observations, however, introduces a fundamental security vulnerability: adversaries who can influence any such output gain a direct channel into the agent’s reasoning process. Prior work has identified three primary injection channels exploiting this vulnerability [12, 42, 10]. First, web and local content injection embeds adversarial instructions in externally retrieved resources such as web pages, documents, and search results, which are returned as tool outputs and subsequently processed as trusted task observations. This type of attack requires only that an attacker compromise any resource the agent is likely to retrieve, making it applicable to any tool-augmented deployment that involves external content access [12, 28, 42, 15].
+Second, MCP server injection exploits the open third-party MCP ecosystem: malicious or compromised servers may embed adversarial instructions in returned content, or—prior to any tool invocation—poison tool description metadata to influence tool-selection behavior [38, 29]. Third, skill file injection exploits public skill repositories where adversarial instructions are semantically integrated with legitimate behavioral guidance, making them indistinguishable without analysis of the agent’s intended task objectives [33, 8].
+
+Existing approaches to mitigate these vulnerabilities fall into three categories: model-level, protocol-level, and architecture-level defenses, each carrying distinct limitations. Model-level defenses, including Reinforcement Learning from Human Feedback (RLHF)-based safety alignment [27] and instruction hierarchy training [36], require model fine-tuning and are thus inapplicable when deploying agents that access models through closed-source model APIs. Beyond this applicability constraint, state-of-the-art commercial models with strong safety alignment still fail to hold against context-dependent injections in agentic pipelines [33, 38]. Protocol-level defenses such as StruQ [7] physically separate instructions from data, but require coordinated changes across models and tool providers, rendering them incompatible with diverse agentic frameworks. Architecture-level defenses provide strong security guarantees at the cost of significant deployment overhead: CaMeL [9] is incompatible with open-ended agents whose tool calls are determined at runtime, and AgentSpec [37] requires manual rule authoring by domain experts for each deployment context. These limitations motivate the need for a model-agnostic, protocol-agnostic middleware that automatically induces task-specific enforcement rules from context without model modification, infrastructure change, or domain expertise.
+
+In this work, we propose ClawGuard, a novel runtime security framework for tool-augmented LLM agents that enforces a user-confirmed rule set at every tool-call boundary, transforming unreliable, alignment-dependent defenses into a deterministic, auditable mechanism that intercepts adversarial tool calls before any real-world effect is produced. ClawGuard operates via two mechanisms: a one-time pre-session rule induction step that automatically derives task-specific access constraints from the user’s stated objective and confirms them before the first tool is invoked, producing that is uncontaminated by adversarial content and requires no manual rule authoring per deployment context, and per-tool-call enforcement that applies four components at every subsequent tool-call boundary: a Content Sanitizer that redacts sensitive data spans from outgoing tool-call arguments before tool execution and from incoming tool-returned content before the result is appended to the conversation history; a Rule Evaluator that evaluates each proposed tool call against an active rule set covering tool invocations, local file paths, and outbound network destinations; a Skill Inspector that performs automated risk assessment followed by mandatory user confirmation prior to first skill execution; and an Approval Mechanism that routes tool calls with ambiguous verdicts to the user for explicit authorization, with all events recorded in the Audit Log.
+
+Through comprehensive experiments on established benchmarks and attack settings—including AgentDojo [10], SkillInject [33], and MCPSafeBench [44] across five state-of-the-art language models—we demonstrate that ClawGuard consistently and substantially reduces attack success across all evaluated scenarios. These results substantially surpass unprotected baseline models, highlighting the effectiveness of deterministic tool-call boundary enforcement as a defense layer that operates independently of model-level probabilistic resistance.
+
+Fig. 1: Architecture and threat model of a tool-augmented LLM agent. At each step, the agent issues a tool call and appends the returned output to the conversation history . Since tool outputs are directly integrated into without safety verification, adversaries can inject malicious content to manipulate agent behavior.
+
+In summary, the key contributions of our work are:
+
+•
+
+Novel Rule-Based Defense at the Tool-Call Boundary: We introduce ClawGuard, the first runtime security framework that defends tool-augmented LLM agents against all three primary indirect prompt injection channels—web and local content injection, MCP server injection, and skill file injection—through deterministic, auditable enforcement at every tool-call boundary.
+
+•
+
+Context-Aware Rule Induction with User Confirmation: By automatically deriving task-specific access constraints from the user’s stated objective prior to any external tool invocation, ClawGuard ensures that the active rule set reflects intended task scope uncontaminated by adversarial content, enabling comprehensive enforcement without requiring manual rule authoring per deployment context.
+
+•
+
+Empirical Validation: Extensive evaluations across three benchmarks spanning all three injection channels—AgentDojo [10], SkillInject [33], and MCPSafeBench [44]—with five backbone LLMs demonstrate that ClawGuard consistently achieves strong defense performance while maintaining competitive Completion Rates across diverse backbone architectures.
+
+We believe that our findings and methods offer valuable insights and direction toward building safer, more reliable agentic systems, laying the groundwork for future research into ensuring comprehensive security at the tool-call boundary in tool-augmented LLM agent deployments.
+
+II Preliminaries
+
+II-A Agent Framework
+
+Tool-augmented LLM agents constitute the dominant paradigm for automating complex,
+multi-step real-world tasks. An agent consists of an LLM backbone
+and a tool set , enabling it to interact
+with the environment by issuing tool calls and incorporating their outputs into
+subsequent reasoning. OpenClaw [25] is a representative instantiation
+of this paradigm; variants including Claude Computer
+Use [2], AutoGPT [11], and
+LangChain [5] interact through visual channels or general-purpose
+orchestration interfaces but follow essentially the same workflow.
+
+The tool set encompasses three categories:
+(i) native tools, built-in capabilities provided by the agent framework such
+as read, write, and exec, which interact directly with the
+local environment without external communication; (ii) skills, reusable
+capability modules defining higher-level behaviors, loaded from configuration files or
+public skill repositories [33, 8]; and (iii) MCP
+servers, external tool providers compliant with the Model Context
+Protocol [3, 29], exposing structured APIs such as web
+search and database access.
+
+The agent operates over a conversation history
+, where each message has a role
+
+and content , where represents the set of all finite strings. At each step , the
+agent selects either a direct text output or a tool call , where
+and is the query argument:
+
+(1)
+
+where is the set of direct text outputs and
+
+is the set of tool calls.
+When , the tool returns a result:
+
+(2)
+
+and the conversation history is extended:
+
+(3)
+
+The agent iteratively updates the conversation from to until the task goal is achieved, a predefined step budget is exhausted, or a final response is generated [17].
+Since the observation is appended to without safety verification, this direct integration renders the interaction loop inherently susceptible to adversarial manipulation via tool-returned content.
+We formalize this vulnerability in the following threat model.
+
+II-B Threat Model
+
+Adversary.
+We consider an adversary who controls one or more tool outputs to the agent. The adversary embeds adversarial instructions into tool returns , producing poisoned outputs that enter the agent’s conversation history as trusted observations. We
+identify three primary injection channels corresponding to the threat surfaces illustrated in Figure 1.
+
+(1) Web and local content injection.
+When the agent retrieves external content such as web pages, documents, or search
+results, adversarial instructions embedded in those sources are returned as tool output
+and processed by the LLM. This injection channel is extensively studied in previous
+literature [12, 28, 18, 42, 15]: an attacker need only inject adversarial content into any
+resource the agent is likely to retrieve, making this channel broadly realizable in
+any agent deployment involving external content access.
+
+(2) MCP server injection.
+The MCP ecosystem allows agents to discover and invoke tools from arbitrary
+third-party servers, including community-contributed servers whose safety cannot be
+guaranteed in advance [38, 29]. A malicious or
+compromised MCP server can embed adversarial instructions in any returned content, or
+poison its tool description metadata to influence tool-selection behavior before any
+query is issued.
+
+(3) Skill file injection.
+Skills extend agent capabilities through configuration files that combine natural
+language behavioral directives with tool invocation instructions and capability descriptions. Public skill ecosystems have
+been found to contain entries with adversarial or policy-violating
+instructions [33, 8]. Skill content is inherently
+directive, so adversarial additions are semantically indistinguishable from legitimate
+behavioral guidance without goal-level analysis.
+
+Adversarial objectives.
+We identify the following adversarial objectives:
+(1) Data exfiltration: adversarial instructions transmit sensitive user data to
+attacker-controlled endpoints [12, 42];
+(2) Unauthorized action: adversarial instructions invoke system operations such as file
+deletion, code execution, or communications outside the user’s task
+scope [10, 33, 15];
+(3) Financial manipulation: adversarial instructions redirect payments or initiate unauthorized
+transactions [10, 44];
+(4) Privilege escalation: adversarial instructions extend the agent’s capabilities or permissions beyond the authorized scope, for example by poisoning tool metadata to expand the set of accessible tools [44, 38];
+(5) Persistent compromise: adversarial instructions modify agent configuration or skill state to
+sustain attacker influence across future
+sessions [33, 8].
+
+Scope.
+The adversary has black-box access to tool output channels: it can craft arbitrary
+but has no access to the system prompt, conversation history prior to
+injection, or model weights. Direct prompt injection (attacker modifies the
+user turn) and jailbreak attacks [34, 31] are
+outside the scope of this work, as both require attacker control of the user-facing input channel or
+exploitation of model weight vulnerabilities. Model fine-tuning
+attacks are similarly out of scope.
+
+While indirect injection attacks are realized through tool-returned content, many such attacks are well-obfuscated or delivered incrementally: unsafe commands may be constructed gradually across multiple interaction steps rather than delivered in a single injected response [31, 42]. Furthermore, tool returns are often long and semantically rich, making exhaustive inspection of each individual observation inherently infeasible [12, 40]. These characteristics motivate enforcing security controls at the tool-call boundary, where each proposed tool call can be evaluated against a user-confirmed policy before any real-world effect is produced. ClawGuard is designed to meet precisely this requirement.
+
+III ClawGuard
+
+Fig. 2:
+Overview of ClawGuard. The framework enforces security at the tool-call boundary via content sanitization, rule-based authorization, skill inspection, and user approval.
+Each tool call is transformed into and evaluated by under a rule set .
+
+In this section, we describe the architecture of ClawGuard, detailing the four enforcement components, the context-aware rule induction procedure, and a concrete case study demonstrating end-to-end operation under adversarial injection.
+Figure 2 illustrates the framework and the flow of
+control through its components.
+
+III-A Rule-Based Action Authorization
+
+Without an interposed security layer, tool-augmented agents execute autonomously
+proposed tool calls without verifying whether those calls fall within the user’s
+intended scope [30, 10]. ClawGuard addresses
+this structural gap by placing four components at every tool-call boundary: a
+Content Sanitizer, a Rule Evaluator, a Skill Inspector,
+and an Approval Mechanism, each enforcing a distinct aspect of
+the active rule set at every tool-call boundary.
+
+1) Content Sanitizer
+
+Let denote a tool call, where
+is the tool identifier and is the raw query argument. The Content
+Sanitizer applies a pattern library to redact sensitive spans from , yielding sanitized argument :
+
+(4)
+
+The pattern library is extensible. To facilitate practical adoption of ClawGuard, a pre-built pattern library covering popular use cases is made available (see Appendix A). Each
+matched span is replaced with a type-specific redaction token such as
+.
+After the call executes and returns , output sanitization is applied to the return value before it is appended to the conversation history, yielding sanitized output :
+
+(5)
+
+Content sanitization prevents sensitive data from being transmitted through tool
+arguments; output sanitization prevents it from propagating into the agent’s
+subsequent reasoning.
+
+2) Rule Evaluator
+
+The Rule Evaluator checks the sanitized tool call
+against the active rule set .
+covers three domains: tool invocations, which encompass both framework-native
+tool calls (e.g., read, write, web_fetch) and
+shell-level execution commands issued via exec; local file paths;
+and outbound network destinations. Each domain is associated with a
+blacklist and a whitelist defined over regex or glob
+patterns.
+
+For each relevant attribute extracted from (e.g., tool name or
+shell command string, resolved file path, or target domain), we define an
+element-level decision function:
+
+(6)
+
+When matches patterns in both and simultaneously (e.g., due to overlapping glob patterns), blacklist priority applies: .
+
+When a tool call yields multiple relevant attributes , the overall verdict combines their individual evaluations by selecting the most restrictive outcome:
+
+(7)
+
+Moreover, for tool invocation inputs, an obfuscation normalizer [26, 4]
+is applied prior to evaluation. Inputs exhibiting obfuscation patterns—such as Base64-encoded content, hex-encoded characters, excessive shell indirection, or string fragmentation via concatenation operators—are detected by the normalizer and conservatively mapped to , escalating the call for human review. Detailed descriptions of the obfuscation normalizer are provided in the Appendix.
+
+3) Skill Inspector
+
+Skills are loaded directly into the agent’s local environment and executed
+through a combination of natural language descriptions and embedded scripts. As the LLM cannot fully reason over a skill’s complete contents at runtime, an explicit safety assessment is required only before the skill’s first-ever execution; subsequent invocations in any session reuse the cached verdict. The Skill Inspector performs this assessment in two sequential stages:
+(1) automated risk analysis by an LLM judge , and (2) mandatory confirmation by the user.
+
+For a skill with content , LLM judge first produces
+a structured risk assessment using a pre-defined judge template
+(see the judge template in Appendix C), which is then presented to the user for a
+final binary verdict:
+
+(8)
+
+If , the skill is rejected and excluded from the session. If
+, the skill identifier is admitted and recorded in the allowlist , allowing future invocations of the same skill to bypass re-inspection. On subsequent
+invocations, if , the cached approval is applied directly, ensuring
+inspection cost is incurred at most once per skill content version across all future sessions. If the skill content is modified, the updated version is treated as a new skill and requires re-inspection.
+
+4) Approval Mechanism
+
+When , the tool call is
+placed into the approval queue (an ordered set of pending ambiguous calls) and presented to the user
+for explicit authorization before execution. The agent pauses until the user provides a decision or the configurable timeout elapses. If the user approves, the call proceeds. If the user rejects or the timeout expires, the tool call is blocked and the event is recorded in the Audit Log. All authorization, sanitization, and skill inspection events are
+recorded in the Audit Log with entries of the form
+.
+Algorithm 1 gives the complete procedure.
+
+Algorithm 1 ClawGuard: Action Authorization and Sanitization
+
+0:
+
+ Tool call , rule set , pattern library , allowlist , timeout
+
+0:
+
+ Sanitized return , or
+
+1:
+
+  {Redact sensitive spans}
+
+2:
+
+ if is a skill and then
+
+3:
+
+  ;   {LLM judge assessment; await user ’s verdict}
+
+4:
+
+  if then
+
+5:
+
+   ;
+
+6:
+
+   return
+
+7:
+
+  end if
+
+8:
+
+   {Persist approved skill to allowlist}
+
+9:
+
+ end if
+
+10:
+
+  {Most restrictive verdict wins}
+
+11:
+
+ if then
+
+12:
+
+  ;
+
+13:
+
+  return
+
+14:
+
+ else if then
+
+15:
+
+   {Block until approved or elapses}
+
+16:
+
+  if then
+
+17:
+
+   ;
+
+18:
+
+   return
+
+19:
+
+  end if
+
+20:
+
+ end if
+
+21:
+
+ ;  
+
+22:
+
+ ;
+
+23:
+
+ return
+
+III-B Context-Aware Rule Induction
+
+The authorization pipeline is parameterized by the rule set
+,
+whose coverage directly determines enforcement quality.
+encodes system-level security invariants that hold
+unconditionally; encodes task-specific access
+constraints derived automatically from the user’s stated objective. Rule induction proceeds in three sequential steps:
+
+Step 1: Baseline Rule Set
+
+The baseline is a fixed, operator-specified
+set of unconditional security invariants targeting the highest-severity attack
+objectives identified in established threat
+taxonomies [14, 22, 21]:
+exfiltration to non-whitelisted endpoints, access to credential stores,
+self-modification of agent configuration, and invocation of irreversible system
+commands. Enforcement actions are fixed at deny and cannot be overridden
+by . The complete baseline rule set is listed in
+Appendix B.
+
+Step 2: Task-Specific Rule Induction
+
+Prior to any tool call, ClawGuard injects a structured induction
+prompt into the agent’s context, producing a raw task rule set
+:
+
+(9)
+
+where is the underlying LLM and is the conversation history
+containing only the user’s stated task objective. The induction prompt instructs to derive three rule categories: network access rules (domain whitelist and blacklist), local resource rules (path whitelist and blacklist), and command rules, which govern both framework-native tool calls (e.g., read, write, web_fetch) and shell-level execution commands issued via exec (e.g., curl | bash); the full prompt is provided in Appendix C. Rule induction occurs before any external
+tool is invoked, ensuring reflects
+intended task scope uncontaminated by external content. Since is the same LLM backbone used for task execution, the quality of the induced rule set depends on ’s instruction-following and reasoning capabilities. Weaker backbones may produce over-permissive rules (creating security gaps) or under-permissive rules (causing false-positive blocks); If fails to produce a parseable JSON rule set (e.g., due to truncation or format violations), ClawGuard falls back to only, maintaining minimum security guarantees.
+
+Step 3: User Confirmation and Rule Activation
+
+Before activation, is
+presented to the user for review and may be adjusted to better reflect task intent, yielding
+. User edits apply only to task-specific entries; invariants remain non-negotiable. The final active rule set is:
+
+(10)
+
+Since rules are evaluated unconditionally, entries in
+cannot override the system-level invariants, preserving
+minimum security guarantees across all task configurations.
+
+III-C Case Study: End-to-End Enforcement under Adversarial Injection
+
+We present a concrete scenario in which a legitimate task is exploited by an
+adversary who embeds malicious instructions within intermediate tool returns. This scenario is
+representative of the indirect injection threat model described in
+Section II and demonstrates how each ClawGuard component contributes to neutralizing the attack.
+
+Scenario Setup.
+The user instructs the agent to “summarize the contents of the three most
+recent blog posts from example-research.org and save the summary to
+~/reports/summary.md.” This is a straightforward
+retrieval-and-write task involving two tool types: web_fetch and
+write.
+
+Step 1: Rule Induction.
+Before any tool is invoked, ClawGuard induces
+from , presents it to the user,
+and activates the confirmed rule set shown in
+Figure 3.
+
+Fig. 3: Active rule set confirmed for the blog-summarization task.
+
+Step 2: Tool Pass.
+The agent issues the first tool call .
+The Content Sanitizer finds no sensitive spans and the Rule Evaluator returns
+; the call proceeds. Two further web_fetch
+calls for individual post URLs under the same domain pass identically.
+
+Step 3: Adversarial Injection.
+The third blog post contains the following text injected by the attacker:
+
+The injected text enters as . The LLM then generates
+the following tool call, denoted :
+
+(11)
+
+Step 4: Blocked Attack.
+ClawGuard evaluates through two sequential components.
+
+Content Sanitizer: No redactable secrets are present in
+at this stage, so ; the action proceeds to the Rule Evaluator.
+
+Rule Evaluator: Two independent findings are produced:
+
+1.
+
+Tool domain: exec
+(denied by )
+.
+
+2.
+
+Filesystem domain: ~/.ssh/id_rsa
+(default, )
+.
+
+Applying the most-restrictive-wins policy, the aggregate verdict is
+. The call is blocked and logged as
+.
+The follow-up exec call proposing rm -rf ~/.ssh/
+is blocked identically.
+
+Step 5: Legitimate Write.
+The agent recovers and issues .
+The path matches , returning ;
+the file write proceeds without user interruption and the task completes as intended.
+
+Discussion.
+This scenario illustrates two security properties of ClawGuard: pre-invocation enforcement, whereby the injected commands are blocked before any
+real-world effect occurs; and defense in depth, whereby the adversarially-triggered tool call
+violates both a task-specific deny rule ( blocks
+exec) and a system-level credential-access invariant (
+denies ~/.ssh/ access). Furthermore, the two independent Rule Evaluator verdicts ( on tool domain and on filesystem domain) exemplify how multiple enforcement layers independently detect the same malicious call. The legitimate task completes without
+user interruption since its tool calls fall entirely within the confirmed whitelist,
+demonstrating that strict enforcement need not impair usability for well-scoped tasks.
+
+IV Experimental Evaluation
+
+In this section, we comprehensively evaluate ClawGuard across three benchmarks and five
+state-of-the-art LLMs as agent backbone to assess its effectiveness against
+tool-returned prompt injection attacks. We have implemented ClawGuard based on the OpenClaw framework, with the full implementation made publicly available at https://github.com/Claw-Guard/ClawGuard.
+
+IV-A Experiment Setup
+
+Benchmarks.
+We evaluate on three benchmarks covering distinct adversarial objectives and
+injection modes. AgentDojo [10] provides task
+environments paired with attack scenarios, yielding task instances
+per model, with objectives including data exfiltration, unauthorized action, and
+financial manipulation; all injections are syntactically explicit.
+SkillInject [33] provides skill file injection
+attacks spanning two modes: context-dependent attacks, in which adversarial
+instructions are semantically interleaved with legitimate skill content, and
+obvious attacks; objectives include data exfiltration, unauthorized
+execution, and unauthorized communication.
+MCPSafeBench [44] covers real-world MCP
+server attack scenarios across four task domains: repository management,
+financial analysis, web search, and location navigation.
+
+Implementation.
+We evaluate ClawGuard on five state-of-the-art LLMs: DeepSeek-V3.2 [16], GLM-5 [41],
+Kimi-K2.5 [23], MiniMax-M2.5 [20], and Qwen3.5-397B-A17B [35]. All experiments use the default
+OpenClaw configuration with a five-minute timeout per task. The current evaluation employs the basic-rule configuration of ClawGuard, in which the active rule set consists solely of the baseline
+rule set without the task-specific rule induction
+component; full results incorporating context-aware rule induction will be
+reported in a future version. For the Approval Mechanism, all tool calls receiving an
+ambiguous verdict from the Rule Evaluator are treated as direct
+refusals without forwarding to the user, simulating a conservative deployment
+state.
+
+Metrics.
+We evaluate each scenario along two dimensions.
+For safety, we report the Defense Success Rate (DSR), defined as
+the fraction of injection cases in which the targeted adversarial action is
+not successfully induced, decomposed as :
+Refusal Rate (RR) counts cases of explicit refusal or a
+ClawGuard deny, while Implicit Resistance Rate (IRR) counts
+cases where the adversarial action is silently avoided.
+Completion Rate (CR) measures the fraction of
+tasks successfully completed by the agent without timeout.
+For each scenario, a human judge determines whether the targeted adversarial action
+was successfully induced, and the outcome is used to compute all metrics above. Attack Success Rate(ASR) is reported for
+convenience, where lower is better.
+
+IV-B Results on AgentDojo
+
+Table I summarizes defense results on AgentDojo.
+Baseline models achieve DSR of 97.4–98.2% across all five backbone LLMs,
+demonstrating that RLHF-based safety alignment in commercial models already
+provides strong resistance against syntactically explicit, single-turn injection
+attacks. The residual ASR of 0.6–3.1% confirms that even well-aligned
+commercial models are not fully immune. This suggests that reliably circumventing
+model-level alignment requires more sophisticated strategies, such as multi-turn
+distribution or semantically obfuscated injection instructions.
+
+With ClawGuard (basic-rule configuration), ASR reaches 0% across all backbone
+models, achieving perfect 100% DSR on AgentDojo. This effectiveness
+stems from ClawGuard’s rule-based enforcement at every tool-call
+boundary, which intercepts adversarial tool calls before execution regardless of
+the model’s probabilistic resistance, transforming unreliable alignment-dependent
+defense into a deterministic, auditable mechanism. The RR/IRR decomposition
+reveals a qualitative shift in defense behavior: without ClawGuard,
+only 9–16% of defense outcomes are explicit refusals (RR), reflecting
+predominantly unaudited probabilistic resistance; with ClawGuard, RR
+rises to 29–35%, converting silent probabilistic resistance into
+Audit-Log-recorded refusal events and confirming structural improvement across
+diverse backbone architectures.
+
+TABLE I: Results on AgentDojo (160 tasks/model).
+
+Model
+CR (%)
+ASR (%)
+RR (%)
+IRR (%)
+DSR (%)
+
+DeepSeek-V3.2
+100.0
+3.1
+8.8
+88.1
+96.9
+
+ CG Basic Rules
+100.0
+0.0
+35.0
+65.0
+100.0
+
+GLM-5
+100.0
+1.9
+10.6
+87.5
+98.1
+
+ CG Basic Rules
+100.0
+0.0
+32.5
+67.5
+100.0
+
+Kimi-K2.5
+98.8
+1.2
+9.4
+88.1
+97.5
+
+ CG Basic Rules
+100.0
+0.0
+29.4
+70.6
+100.0
+
+MiniMax-M2.5
+100.0
+2.5
+13.1
+84.4
+97.5
+
+ CG Basic Rules
+100.0
+0.0
+31.2
+68.8
+100.0
+
+Qwen3.5-397B-A17B
+98.1
+0.6
+6.2
+91.2
+97.5
+
+ CG Basic Rules
+99.4
+0.0
+29.4
+70.0
+99.4
+
+IV-C Results on SkillInject
+
+Table II presents defense results on SkillInject. Baseline ASR of 26–48% demonstrates that skill injection attacks remain
+effective against LLMs with strong safety alignment, substantially exceeding
+the AgentDojo baseline (0.6–3.1%). This elevated vulnerability stems from two
+concurrent factors: adversarial instructions are semantically integrated with
+legitimate content, evading text-based safety alignment, and agents typically
+execute skill procedures upon reading their descriptions without verifying the
+safety of each instruction step.
+
+With ClawGuard (basic-rule configuration), overall ASR falls to 4.8–14%, achieving a
+50–84% relative reduction. This defense effectiveness stems from
+ClawGuard’s rule evaluation at tool-call boundaries, which intercepts
+adversarial signals before execution even when injection instructions successfully
+bypass model-level safety alignment, providing a deterministic defense layer that
+operates independently of the model’s probabilistic resistance. GLM-5 achieves
+82.1% DSR with 4.8% residual ASR, while MiniMax-M2.5 reaches the highest
+absolute DSR of 84.6%, confirming our method’s effectiveness across diverse
+backbone LLMs.
+
+Residual failures are concentrated in context-dependent injection
+(8–24% ASR, down from 44–78% baseline), primarily from content-misleading
+attacks whose adversarial outcomes are embedded in LLM-generated content rather
+than explicit tool-call operations, making them inherently difficult to intercept
+without system-level semantic monitoring.
+
+TABLE II: Results on SkillInject (84 attacks/model).
+
+Model
+CR (%)
+ASR (%)
+RR (%)
+IRR (%)
+DSR (%)
+
+DeepSeek-V3.2
+85.7
+40.5
+20.2
+25.0
+45.2
+
+ CG Basic Rules
+85.7
+14.2
+46.5
+25.0
+71.5
+
+GLM-5
+89.3
+29.8
+36.9
+22.6
+59.5
+
+ CG Basic Rules
+86.9
+4.8
+61.9
+20.2
+82.1
+
+Kimi-K2.5
+90.5
+47.6
+27.4
+15.5
+42.9
+
+ CG Basic Rules
+90.5
+13.1
+61.9
+15.5
+77.4
+
+MiniMax-M2.5
+89.3
+26.2
+29.8
+33.3
+63.1
+
+ CG Basic Rules
+90.5
+5.9
+51.3
+33.3
+84.6
+
+Qwen3.5-397B-A17B
+85.6
+34.5
+32.1
+19.0
+51.1
+
+ CG Basic Rules
+85.6
+14.2
+52.4
+19.0
+71.4
+
+IV-D Results on MCPSafeBench
+
+Table III presents defense results on MCPSafeBench.
+Baseline ASR of 36.5–46.1%, comparable to SkillInject, confirms that LLM
+agents do not natively verify MCP server content, processing returned payloads as
+trusted observations regardless of origin. The RR/IRR decomposition further
+reveals that 43–57% of baseline defense outcomes are silent (IRR), indicating
+heavy reliance on implicit RLHF-based resistance rather than deliberate refusal.
+
+With ClawGuard (basic-rule configuration), ASR falls to 10.2–11.2% while DSR
+rises to 74.9–75.8%, with explicit refusals rising to 45.1–50.2% (RR),
+converting the majority of previously silent outcomes into Audit-Log-recorded
+refusal events. Residual ASR is concentrated in stealth injection within the
+location navigation tasks, where ClawGuard’s basic-rule configuration blacklist lacks
+sufficient endpoint coverage, confirming that context-aware rule induction is
+essential for comprehensive deployment.
+
+TABLE III: Results on MCPSafeBench (215 tasks/model).
+
+Model
+CR (%)
+ASR (%)
+RR (%)
+IRR (%)
+DSR (%)
+
+DeepSeek-V3.2
+84.5
+44.5
+17.2
+22.8
+40.0
+
+ CG Basic Rules
+82.0
+7.1
+45.1
+29.8
+74.9
+
+GLM-5
+88.5
+37.8
+28.8
+21.9
+50.7
+
+ CG Basic Rules
+85.8
+10.0
+49.8
+26.1
+75.8
+
+Kimi-K2.5
+86.0
+43.7
+24.2
+18.1
+42.3
+
+ CG Basic Rules
+83.4
+8.5
+50.2
+24.7
+74.9
+
+MiniMax-M2.5
+89.5
+36.5
+29.3
+23.7
+53.0
+
+ CG Basic Rules
+86.8
+11.0
+48.4
+27.4
+75.8
+
+Qwen3.5-397B-A17B
+87.5
+41.9
+25.1
+20.5
+45.6
+
+ CG Basic Rules
+84.9
+9.5
+48.8
+26.5
+75.4
+
+Across all three benchmarks, ClawGuard with basic-rule configuration demonstrates
+consistent defense improvements over unprotected baselines, achieving perfect DSR
+on AgentDojo and substantial ASR reductions on SkillInject and MCPSafeBench,
+confirming that deterministic tool-call boundary enforcement provides a robust
+defense layer independent of model-level probabilistic resistance. Residual
+failures are limited to content-misleading attacks whose outcomes manifest in
+LLM-generated content rather than tool-call operations, and stealth injections in
+domains with insufficient endpoint coverage, both arising from the basic-rule
+configuration’s lack of semantic task-context awareness. Incorporating
+context-aware rule induction to address these limitations is planned for a future
+revision.
+
+V Related Work
+
+V-A LLM Agents and the Tool-Use Paradigm
+
+The ReAct framework [39] established the foundational paradigm of
+interleaving reasoning with tool invocations, maintaining a persistent conversation history that records all actions and observations and enables agents to iteratively acquire and process external information.
+Toolformer [32] extended this line with self-supervised
+tool-use learning, and WebGPT [24] further applied the paradigm
+to web-augmented factual question answering. These foundations underlie the current
+generation of production agent frameworks. Building on this paradigm,
+AutoGPT [11] decomposes high-level objectives into a sequence of subtasks executed across multiple tool-use iterations, enabling long-horizon planning without
+per-step human oversight. Similarly, LangChain [5] provides a
+modular composition framework that chains LLM calls, retrieval operations, and tool
+invocations into reusable agentic pipelines. More recently, OpenClaw [25]
+provides a locally-deployed, production-grade architecture with native MCP support, a
+hierarchical skill module system, and a persistent memory substrate. Claude
+Code [1] similarly instantiates a tool-augmented software engineering agent, combining code execution, file management, and web access within a persistent conversation history.
+
+A complementary paradigm is represented by GUI-based computer use
+agents [2], which operate through visual observation and
+UI action channels rather than structured API responses. While the attack surface of GUI agents differs in form—operating on visual observations rather than structured tool returns—the underlying structural vulnerability is analogous: externally-derived content influences LLM reasoning without interposed safety verification.
+Despite the diversity of these paradigms, the security of production deployments with
+heterogeneous, multi-tool architectures and persistent skill ecosystems remains
+substantially underexplored. ClawGuard specifically targets the
+OpenClaw-style paradigm, where the simultaneous presence of MCP servers, skill files, and a persistent conversation history introduces multiple distinct injection surfaces that collectively encompass all three injection channels identified in §II-B.
+
+V-B Indirect Prompt Injection
+
+Early prompt injection work demonstrated that adversarial instructions appended to
+model inputs can override intended behavior [28]. In parallel, gradient-based adversarial suffix optimization (GCG [45]) demonstrated universal and transferable attacks against white-box model weights, substantially amplifying injection effectiveness in accessible models. As LLM deployments expanded
+into application pipelines, the attack surface shifted to the indirect setting, where
+adversarial instructions embedded in retrieved external content can redirect
+application behavior without system prompt access [12, 18, 19]. Such attacks have since been observed in production via
+RAG-augmented tool chains [15].
+
+Agent-specific benchmarks further characterize this threat.
+InjecAgent [42] and AgentDojo [10] demonstrate high attack success rates across
+state-of-the-art models, and BIPIA [40] identifies a key root cause:
+LLMs cannot reliably distinguish informational context from actionable instructions.
+Agent-SafetyBench [43] evaluates 16 popular LLM agents across 349 safety-relevant scenarios and finds that none achieves a safety score above 60%, attributing failures to insufficient robustness against adversarial instructions and limited awareness of unsafe execution contexts. In parallel, skill file injection [33] demonstrates that public skill repositories represent a distinct injection surface where context-dependent injections can defeat RLHF-based defenses. The expansion of the MCP ecosystem has
+further widened the attack surface, with tool poisoning via MCP
+payloads [38] and trust boundary violations across registered MCP
+servers [29] showing that context-dependent injections can defeat RLHF-based defenses across all three injection channels. Our work directly addresses all three injection channel variants, with particular emphasis on context-dependent injection that existing benchmarks identify as most resistant to model-level defenses.
+
+V-C Defenses Against Prompt Injection
+
+Existing defenses against prompt injection fall into three categories—model-level,
+protocol-level, and architecture-level—each addressing the threat at a different
+point in the pipeline, yet all leaving agentic systems exposed to context-dependent
+injection.
+
+Model-level defenses resist adversarial instructions by modifying or augmenting model behavior, typically through fine-tuning or auxiliary classification. RLHF-based safety alignment [27] and instruction
+hierarchy training [36] both require fine-tuning that is
+inapplicable to deployments based on closed-source APIs. As our results confirm for RLHF-trained commercial models, RLHF-based alignment does not hold against context-dependent injection [33, 38]
+in agentic pipelines.
+
+Protocol-level defenses such as StruQ [7] physically separate
+instructions from data, but require coordinated changes to models and tool providers
+that are incompatible with heterogeneous ecosystems. PromptLocate [13]
+takes a complementary approach by localizing adversarial payload segments within tool-returned content, enabling targeted remediation rather than holistic separation of instructions from data.
+
+Architecture-level defenses are the most structurally ambitious. CaMeL [9]
+introduces a dual-LLM architecture that separates trusted query processing from untrusted data handling, preventing injected content from influencing the agent’s control decisions. AgentSpec [37] provides a domain-specific language for authoring runtime enforcement constraints with triggers, predicates, and enforcement actions. However, CaMeL is incompatible with
+open-ended agents issuing dynamically determined tool calls, and AgentSpec requires
+manual rule authoring for each deployment.
+
+In contrast to all reviewed approaches, ClawGuard is the only defense that simultaneously addresses all three injection channels without requiring model fine-tuning, protocol coordination with tool providers, or manual rule authoring, achieving these properties through automated rule induction confirmed by the user.
+
+VI Conclusion
+
+In this work, we introduce ClawGuard, a runtime security framework designed to enhance the safety of tool-augmented LLM agents against indirect prompt injection across all three primary injection channels. Systematic evaluations demonstrate:
+
+•
+
+Deterministic rule enforcement at the tool-call boundary significantly reduces attack success rates against web and local content injection, MCP server injection, and skill file injection across diverse backbone architectures.
+
+•
+
+Context-aware rule induction automatically derives task-specific access constraints prior to any external tool invocation, enabling comprehensive enforcement without manual rule authoring or model modification.
+
+Overall, ClawGuard offers a practical and unified defense for tool-augmented LLM agents, outperforming prior approaches while maintaining competitive task completion rates. Our findings highlight the promise of deterministic boundary enforcement for robust agentic AI safety, motivating further research into model-agnostic defense strategies for agentic deployments.
+
+References
+
+[1]
+Anthropic (2024)
+
+Claude Code: agentic coding tool.
+
+Note: https://www.anthropic.com/claude-code
+
+Cited by: §V-A.
+
+[2]
+Anthropic (2024)
+
+Claude computer use.
+
+Note: https://www.anthropic.com/news/computer-use
+
+Cited by: §II-A,
+§V-A.
+
+[3]
+Anthropic (2024)
+
+Model context protocol.
+
+Note: https://modelcontextprotocol.io
+
+Cited by: §I,
+§II-A.
+
+[4]
+H. Chai, L. Ying, H. Duan, and D. Zha (2022)
+
+Invoke-deobfuscation: ast-based and semantics-preserving deobfuscation for powershell scripts.
+
+In 2022 52nd Annual IEEE/IFIP International Conference on Dependable Systems and Networks (DSN),
+
+pp. 295–306.
+
+Cited by: §III-A.
+
+[5]
+H. Chase (2023)
+
+LangChain.
+
+Note: https://github.com/langchain-ai/langchain
+
+Cited by: §I,
+§II-A,
+§V-A.
+
+[6]
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, et al. (2021)
+
+Evaluating large language models trained on code.
+
+arXiv preprint arXiv:2107.03374.
+
+Cited by: §I.
+
+[7]
+S. Chen, J. Piet, C. Sitawarin, and D. Wagner (2025)
+
+struq: Defending against prompt injection with structured queries.
+
+In 34th USENIX Security Symposium (USENIX Security 25),
+
+pp. 2383–2400.
+
+Cited by: §I,
+§V-C.
+
+[8]
+ClaWHub Community (2026)
+
+ClaWHub: open skill registry for OpenClaw agents.
+
+Note: https://clawhub.ai
+
+Cited by: §I,
+§II-A,
+§II-B,
+§II-B.
+
+[9]
+E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tramèr (2025)
+
+Defeating prompt injections by design.
+
+ArXiv abs/2503.18813.
+
+External Links: Link
+
+Cited by: §I,
+§V-C.
+
+[10]
+E. Debenedetti, J. Zhang, M. Balunovi’c, L. Beurer-Kellner, M. Fischer, and F. Tramèr (2024)
+
+AgentDojo: a dynamic environment to evaluate attacks and defenses for llm agents.
+
+ArXiv abs/2406.13352.
+
+External Links: Link
+
+Cited by: 3rd item,
+§I,
+§I,
+§II-B,
+§III-A,
+§IV-A,
+§V-B.
+
+[11]
+S. Gravitas (2023)
+
+AutoGPT: an autonomous GPT-4 experiment.
+
+Note: https://github.com/Significant-Gravitas/AutoGPT
+
+Cited by: §I,
+§II-A,
+§V-A.
+
+[12]
+K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz (2023)
+
+Not what you’ve signed up for: compromising real-world llm-integrated applications with indirect prompt injection.
+
+In Proceedings of the 16th ACM workshop on artificial intelligence and security,
+
+pp. 79–90.
+
+Cited by: §I,
+§II-B,
+§II-B,
+§II-B,
+§V-B.
+
+[13]
+Y. Jia, Y. Liu, Z. Shao, J. Jia, and N. Z. Gong (2026)
+
+PromptLocate: localizing prompt injection attacks.
+
+In IEEE Symposium on Security and Privacy,
+
+Cited by: §V-C.
+
+[14]
+Y. Jiang, Q. Meng, F. Shang, N. Oo, L. T. H. Minh, H. W. Lim, and B. Sikdar (2025)
+
+MITRE att&ck applications in cybersecurity and the way forward.
+
+arXiv preprint arXiv:2502.10825.
+
+Cited by: Appendix B,
+§III-B.
+
+[15]
+Y. Kaya, A. Landerer, S. Pletinckx, M. Zimmermann, C. Kruegel, and G. Vigna (2025)
+
+When ai meets the web: prompt injection risks in third-party ai chatbot plugins.
+
+arXiv preprint arXiv:2511.05797.
+
+Cited by: §I,
+§II-B,
+§II-B,
+§V-B.
+
+[16]
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al. (2024)
+
+Deepseek-v3 technical report.
+
+arXiv preprint arXiv:2412.19437.
+
+Cited by: §IV-A.
+
+[17]
+X. Liu, H. Yu, H. Zhang, Y. Xu, X. Lei, H. Lai, Y. Gu, H. Ding, K. Men, K. Yang, S. Zhang, X. Deng, A. Zeng, Z. Du, C. Zhang, S. Shen, T. Zhang, Y. Su, H. Sun, M. Huang, Y. Dong, and J. Tang (2024)
+
+AgentBench: evaluating LLMs as agents.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §I,
+§II-A.
+
+[18]
+Y. Liu, G. Deng, Y. Li, K. Wang, Z. Wang, X. Wang, T. Zhang, Y. Liu, H. Wang, Y. Zheng, et al. (2023)
+
+Prompt injection attack against llm-integrated applications.
+
+arXiv preprint arXiv:2306.05499.
+
+Cited by: §II-B,
+§V-B.
+
+[19]
+Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong (2024)
+
+Formalizing and benchmarking prompt injection attacks and defenses.
+
+In 33rd USENIX Security Symposium (USENIX Security 24),
+
+pp. 1831–1847.
+
+Cited by: §V-B.
+
+[20]
+MiniMax (2025)
+
+MiniMax-01: scaling foundation models with lightning attention.
+
+External Links: 2501.08313,
+Link
+
+Cited by: §IV-A.
+
+[21]
+MITRE Corporation (2018)
+
+MITRE ATT&CK tactic TA0006: credential access.
+
+Note: https://attack.mitre.org/tactics/TA0006/Accessed 2024
+
+Cited by: §III-B.
+
+[22]
+MITRE Corporation (2018)
+
+MITRE ATT&CK technique T1041: exfiltration over C2 channel.
+
+Note: https://attack.mitre.org/techniques/T1041/Accessed 2024
+
+Cited by: §III-B.
+
+[23]
+Moonshot AI (2026)
+
+Kimi k2.5: visual agentic intelligence.
+
+External Links: 2602.02276,
+Link
+
+Cited by: §IV-A.
+
+[24]
+R. Nakano, J. Hilton, S. Balaji, J. Wu, L. Ouyang, C. Kim, C. Hesse, S. Jain, V. Kosaraju, W. Saunders, et al. (2021)
+
+Webgpt: browser-assisted question-answering with human feedback.
+
+arXiv preprint arXiv:2112.09332.
+
+Cited by: §I,
+§V-A.
+
+[25]
+OpenClaw Team (2025)
+
+OpenClaw: an open agent framework.
+
+Note: https://openclaw.ai
+
+Cited by: §I,
+§II-A,
+§V-A.
+
+[26]
+V. Outrata, M. A. Polak, and M. Kopp (2024)
+
+Command-line obfuscation detection using small language models.
+
+arXiv preprint arXiv:2408.02637.
+
+Cited by: §III-A.
+
+[27]
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. E. Miller, M. Simens, A. Askell, P. Welinder, P. F. Christiano, J. Leike, and R. J. Lowe (2022)
+
+Training language models to follow instructions with human feedback.
+
+ArXiv abs/2203.02155.
+
+External Links: Link
+
+Cited by: §I,
+§V-C.
+
+[28]
+F. Perez and I. Ribeiro (2022)
+
+Ignore previous prompt: attack techniques for language models.
+
+arXiv preprint arXiv:2211.09527.
+
+Cited by: §I,
+§II-B,
+§V-B.
+
+[29]
+B. Radosevich and J. Halloran (2025)
+
+MCP safety audit: llms with the model context protocol allow major security exploits.
+
+ArXiv abs/2504.03767.
+
+External Links: Link
+
+Cited by: §I,
+§II-A,
+§II-B,
+§V-B.
+
+[30]
+Y. Ruan, H. Dong, A. Wang, S. Pitis, Y. Zhou, J. Ba, Y. Dubois, C. J. Maddison, and T. Hashimoto (2024)
+
+Identifying the risks of lm agents with an lm-emulated sandbox.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §I,
+§III-A.
+
+[31]
+M. Russinovich, A. Salem, and R. Eldan (2025)
+
+Great, now write an article about that: the crescendo multi-turnllm jailbreak attack.
+
+In 34th USENIX Security Symposium (USENIX Security 25),
+
+pp. 2421–2440.
+
+Cited by: §II-B,
+§II-B.
+
+[32]
+T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, E. Hambro, L. Zettlemoyer, N. Cancedda, and T. Scialom (2023)
+
+Toolformer: language models can teach themselves to use tools.
+
+Advances in neural information processing systems 36, pp. 68539–68551.
+
+Cited by: §I,
+§V-A.
+
+[33]
+D. Schmotz, L. Beurer-Kellner, S. Abdelnabi, and M. Andriushchenko (2026)
+
+Skill-inject: measuring agent vulnerability to skill file attacks.
+
+ArXiv abs/2602.20156.
+
+External Links: Link
+
+Cited by: 3rd item,
+§I,
+§I,
+§I,
+§II-A,
+§II-B,
+§II-B,
+§IV-A,
+§V-B,
+§V-C.
+
+[34]
+X. Shen, Z. Chen, M. Backes, Y. Shen, and Y. Zhang (2024)
+
+” Do anything now”: characterizing and evaluating in-the-wild jailbreak prompts on large language models.
+
+In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security,
+
+pp. 1671–1685.
+
+Cited by: §II-B.
+
+[35]
+Q. team (2025)
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §IV-A.
+
+[36]
+E. Wallace, K. Xiao, R. Leike, L. Weng, J. Heidecke, and A. Beutel (2024)
+
+The instruction hierarchy: training llms to prioritize privileged instructions.
+
+arXiv preprint arXiv:2404.13208.
+
+Cited by: §I,
+§V-C.
+
+[37]
+H. Wang, C. M. Poskitt, and J. Sun (2026)
+
+AgentSpec: customizable runtime enforcement for safe and reliable llm agents..
+
+In Proceedings of the IEEE/ACM International Conference on Software Engineering, ICSE,
+
+pp. 12–18.
+
+Cited by: §I,
+§V-C.
+
+[38]
+Z. Wang, Y. Gao, Y. Wang, S. Liu, H. Sun, H. Cheng, G. Shi, H. Du, and X. Li (2025)
+
+MCPTox: a benchmark for tool poisoning attack on real-world mcp servers.
+
+arXiv preprint arXiv:2508.14925.
+
+Cited by: §I,
+§I,
+§II-B,
+§II-B,
+§V-B,
+§V-C.
+
+[39]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao (2022)
+
+React: synergizing reasoning and acting in language models.
+
+In The eleventh international conference on learning representations,
+
+Cited by: §I,
+§V-A.
+
+[40]
+J. Yi, Y. Xie, B. Zhu, K. Hines, E. Kiciman, G. Sun, X. Xie, and F. Wu (2023)
+
+Benchmarking and defending against indirect prompt injection attacks on large language models.
+
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.1.
+
+External Links: Link
+
+Cited by: §II-B,
+§V-B.
+
+[41]
+A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Huang, C. Xie, et al. (2026)
+
+GLM-5: from vibe coding to agentic engineering.
+
+arXiv preprint arXiv:2602.15763.
+
+Cited by: §IV-A.
+
+[42]
+Q. Zhan, Z. Liang, Z. Ying, and D. Kang (2024)
+
+Injecagent: benchmarking indirect prompt injections in tool-integrated large language model agents.
+
+In Findings of the Association for Computational Linguistics: ACL 2024,
+
+pp. 10471–10506.
+
+Cited by: §I,
+§II-B,
+§II-B,
+§II-B,
+§V-B.
+
+[43]
+Z. Zhang, S. Cui, Y. Lu, J. Zhou, J. Yang, H. Wang, and M. Huang (2024)
+
+Agent-safetybench: evaluating the safety of llm agents.
+
+arXiv preprint arXiv:2412.14470.
+
+Cited by: §V-B.
+
+[44]
+X. Zong, Z. Shen, L. Wang, Y. Lan, and C. Yang (2025)
+
+MCP-safetybench: a benchmark for safety evaluation of large language models with real-world mcp servers.
+
+ArXiv abs/2512.15163.
+
+External Links: Link
+
+Cited by: 3rd item,
+§I,
+§II-B,
+§IV-A.
+
+[45]
+A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson (2023)
+
+Universal and transferable adversarial attacks on aligned language models.
+
+arXiv preprint arXiv:2307.15043.
+
+Cited by: §V-B.
+
+Appendix A Default Sanitization Targets
+
+Table IV lists the default pattern library used by
+the Content Sanitizer. Each entry specifies the secret category, its coverage, and the
+redaction token substituted for any matched span.
+
+TABLE IV: Default sanitization targets in pattern library .
+
+Category
+
+Coverage
+
+Redaction Token
+
+Cloud Provider Credentials
+
+AWS Access Key
+
+AKIA[0-9A-Z]{16}
+
+AWS_ACCESS_KEY_REDACTED
+
+AWS Secret Key
+
+40-char alphanumeric secret associated with access key
+
+AWS_SECRET_KEY_REDACTED
+
+GCP API Key
+
+AIza[0-9A-Za-z\-_]{35}
+
+GCP_API_KEY_REDACTED
+
+Azure Storage Key
+
+Base64-encoded 88-char key
+
+AZURE_STORAGE_KEY_REDACTED
+
+Version Control & CI/CD Tokens
+
+GitHub Token
+
+ghp_, gho_, ghs_, ghr_ prefixes
+
+GITHUB_TOKEN_REDACTED
+
+GitLab Token
+
+glpat- prefix
+
+GITLAB_TOKEN_REDACTED
+
+Communication Platform Tokens
+
+Slack Token
+
+xox[baprs]- prefix
+
+SLACK_TOKEN_REDACTED
+
+Slack Webhook
+
+hooks.slack.com/services/ URL pattern
+
+SLACK_WEBHOOK_REDACTED
+
+Telegram Bot Token
+
+[0-9]{8,10}:[A-Za-z0-9_-]{35}
+
+TELEGRAM_TOKEN_REDACTED
+
+Discord Token
+
+mfa. prefix or 59-char base64 token
+
+DISCORD_TOKEN_REDACTED
+
+Authentication & Payment Tokens
+
+JWT Token
+
+Three-part Base64Url header.payload.signature
+
+JWT_TOKEN_REDACTED
+
+Bearer Token
+
+Bearer prefix in Authorization header
+
+BEARER_TOKEN_REDACTED
+
+Stripe Secret Key
+
+sk_live_ or sk_test_ prefix
+
+STRIPE_KEY_REDACTED
+
+Stripe Publishable
+
+pk_live_ or pk_test_ prefix
+
+STRIPE_PUB_KEY_REDACTED
+
+Cryptographic & SSH Material
+
+SSH Private Key
+
+PEM block -----BEGIN * PRIVATE KEY-----
+
+SSH_PRIVATE_KEY_REDACTED
+
+RSA Private Key
+
+PEM block -----BEGIN RSA PRIVATE KEY-----
+
+RSA_PRIVATE_KEY_REDACTED
+
+PGP Private Block
+
+PEM block -----BEGIN PGP PRIVATE KEY-----
+
+PGP_PRIVATE_KEY_REDACTED
+
+Database & Connection Strings
+
+Database URL
+
+(postgres|mysql|mongodb)(s?)://user:pass@host
+
+DATABASE_URL_REDACTED
+
+Redis URL
+
+redis(s?)://:password@host
+
+REDIS_URL_REDACTED
+
+Generic Patterns
+
+Generic API Key
+
+api[_\-]?key\s *[=:]\s *[A-Za-z0-9]{20,}
+
+API_KEY_REDACTED
+
+Generic Secret
+
+secret\s *[=:]\s *[A-Za-z0-9]{16,}
+
+SECRET_REDACTED
+
+Generic Password
+
+password\s *[=:]\s *\S + in config/env files
+
+PASSWORD_REDACTED
+
+Appendix B Default Baseline Safety Rules
+
+Table V enumerates the default entries in
+, organized by domain. All entries carry a fixed
+enforcement action of deny or queue that cannot be overridden by
+task-specific rules. Categories follow the MITRE ATT&CK enterprise
+taxonomy [14], including exfiltration (TA0010), credential access
+(TA0006), persistence (TA0003), and impact (TA0040).
+
+TABLE V: Default baseline safety rules .
+
+Domain
+Pattern / Target
+
+Rationale
+
+Action
+
+Shell Commands
+
+Command
+rm -rf /, rm -rf /*
+
+Irreversible filesystem wipe
+
+deny
+
+Command
+Fork bomb patterns (:(){:|:&};:)
+
+Resource exhaustion / DoS
+
+deny
+
+Command
+chmod 777 /, chown -R root
+
+Unsafe privilege modification
+
+deny
+
+Command
+Reverse shell patterns (e.g., bash -i >& /dev/tcp/)
+
+Remote access backdoor
+
+deny
+
+Command
+Obfuscated payloads (base64-decoded eval, char-sub pipelines)
+
+Evasion attempt
+
+deny
+
+Command
+sudo, su, doas
+
+Privilege escalation attempt
+
+queue
+
+Command
+Package install (apt install, pip install, npm install)
+
+Environment modification
+
+queue
+
+Command
+crontab, systemctl enable/disable/start/stop
+
+Persistence mechanism
+
+queue
+
+Filesystem Paths
+
+Path
+~/.ssh/, ~/.aws/, ~/.gnupg/
+
+Credential stores
+
+deny
+
+Path
+/etc/shadow, /etc/passwd, /etc/sudoers
+
+System credential files
+
+deny
+
+Path
+/boot/, /sys/, /proc/ (write)
+
+Boot/kernel integrity
+
+deny
+
+Path
+*.pem, *.key, *.p12, *.pfx
+
+Cryptographic material
+
+deny
+
+Path
+Agent config directory (e.g., .openclaw/)
+
+Agent self-modification
+
+deny
+
+Path
+Browser profile directories
+
+Credential exfiltration
+
+deny
+
+Path
+~/.env, *.env, *secret*
+
+Secret files
+
+queue
+
+Outbound Network
+
+Network
+Non-HTTP(S) schemes (e.g., ftp://, sftp://)
+
+Unmonitored exfiltration
+
+deny
+
+Network
+Private IP ranges (10.x, 172.16-31.x, 192.168.x)
+
+SSRF / internal pivoting
+
+deny
+
+Network
+Anonymization networks (*.onion, known Tor exits)
+
+Covert channel
+
+deny
+
+Network
+URL shorteners (bit.ly, t.co, tinyurl.com, etc.)
+
+Destination obfuscation
+
+deny
+
+Network
+Paste/exfiltration sites (pastebin.com, transfer.sh, etc.)
+
+Data exfiltration
+
+deny
+
+Network
+Tunneling services (ngrok.io, serveo.net, etc.)
+
+Covert C2 channel
+
+deny
+
+Network
+Unlisted endpoints (not in )
+
+Unauthorized exfiltration
+
+queue
+
+Appendix C Rule Synthesis Prompt
+
+The synthesis prompt is constructed with a System Instruction block that specifies the output schema, a Context block populated with the agent’s conversation prefix , and a Task block that elicits the three rule categories. The full prompt template is shown in Figure 4.
+
+Fig. 4: Rule synthesis prompt injected by ClawGuard prior to the
+first tool invocation. The {conversation_prefix} placeholder is replaced
+with at runtime.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

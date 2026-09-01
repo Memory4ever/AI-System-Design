@@ -1,0 +1,2225 @@
+Matching Accuracy, Different Geometry: Evolution Strategies vs GRPO in LLM Post-Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+Evolution strategies for LLMs.
+
+Gradient-based RL for LLMs.
+
+3 Methodology
+
+3.1 Evolution strategies
+
+3.2 Group relative policy optimization
+
+3.3 Experimental setup
+
+4 Empirical Results
+
+4.1 Task performance
+
+4.2 Forgetting
+
+5 Weight Space Geometry Analysis
+
+5.1 ES induces larger weight changes
+
+5.2 ES and GRPO solutions are linearly connected
+
+5.3 ES solution direction behaves similarly as random directions
+
+6 Theoretical Interpretation
+
+Central claim: signal–diffusion decomposition.
+
+Why diffusion dominates
+
+Geometric consequences
+
+6.1 Empirical validation and explanatory power
+
+7 Discussion
+
+References
+
+A Disclosure of LLM Use
+
+B Experimental Configurations
+
+B.1 Hyperparameter Sweeps
+
+Evolution Strategies.
+
+GRPO.
+
+B.2 Single-Task Training Curves
+
+B.3 Selected Training Configurations
+
+B.4 Evaluation Protocol
+
+C Detailed Validation of Theoretical Predictions
+
+C.1 Weight Drift in ES and GRPO Fine-tuning
+
+Setup
+
+Whole-model Drift vs. Theory (Figure )
+
+Per-parameter Effective Dimension
+
+Large weight matrices.
+
+Norm and layer-norm parameters.
+
+D Theoretical Results
+
+D.1 Evolution Strategy on a Flat Landscape
+
+D.2 Evolution Strategy on a Linear Landscape
+
+D.3 Evolution Strategy on a Quadratic Landscape
+
+D.4 Dynamics of ES on Quadratic Landscape
+
+D.5 Dynamics of GD on Quadratic Landscape
+
+D.6 GD displacement is low-dimensional
+
+D.7 ES displacement decomposes into signal and diffusion
+
+D.8 ES–GD difference is off-manifold
+
+E Detailed derivations of theoretical results
+
+E.1 Z-score ES Update Setup
+
+E.2 Flat Landscape Analysis
+
+E.3 Linear Landscape Analysis
+
+Off-manifold component
+
+On-manifold component
+
+Overall distribution of the update
+
+Manifold Alignment of Update
+
+E.4 Quadratic landscape analysis
+
+Reward variance
+
+Expectation of parameter update
+
+Variance of parameter update
+
+Order analysis of quadratic landscape
+
+Manifold Alignment of Update
+
+E.5 Multi-step ES analysis for quadratic landscape
+
+Simplified ES-optimization process
+
+Asymptotic behavior
+
+E.6 Gradient ascent on quadratic landscape
+
+Trajectory
+
+Convergence conditions
+
+Convergence rate
+
+Comparison with ES dynamics
+
+E.7 Solution geometry: GD vs. ES on quadratic landscape
+
+GD solution
+
+ES solution
+
+Decomposition of squared displacements
+
+Geometry of
+
+Summary of geometric structure
+
+License: CC BY 4.0
+
+arXiv:2604.01499v1 [cs.LG] 02 Apr 2026
+
+Matching Accuracy, Different Geometry: Evolution Strategies vs GRPO in LLM Post-Training
+
+William Hoy
+
+Affiliation:  Department of Industrial and Systems Engineering, University of Miami
+
+Affiliation: wjh58@miami.edu
+
+  
+Binxu Wang
+††thanks: Equal advising.
+Affiliation:  Kempner Institute, Harvard University
+
+Affiliation: binxu.wang@hms.harvard.edu
+
+  
+Xu Pan 11footnotemark:
+1
+
+Affiliation:  Harvard University
+
+Affiliation: xupan@fas.harvard.edu
+
+Abstract
+
+Evolution Strategies (ES) have emerged as a scalable gradient-free alternative to reinforcement learning based LLM fine-tuning, but it remains unclear whether comparable task performance implies comparable solutions in parameter space. We compare ES and Group Relative Policy Optimization (GRPO) across four tasks in both single-task and sequential continual-learning settings. ES matches or exceeds GRPO in single-task accuracy and remains competitive sequentially when its iteration budget is controlled. Despite this similarity in task performance, the two methods produce markedly different model updates: ES makes much larger changes and induces broader off-task KL drift, whereas GRPO makes smaller, more localized updates. Strikingly, the ES and GRPO solutions are linearly connected with no loss barrier, even though their update directions are nearly orthogonal.
+We develop an analytical theory of ES that explains all these phenomena within a unified framework, showing how ES can accumulate large off-task movement on weakly informative directions while still making enough progress on the task to match gradient-based RL in downstream accuracy.
+These results show that gradient-free and gradient-based fine-tuning can reach similarly accurate yet geometrically distinct solutions, with important consequences for forgetting and knowledge preservation. The source code is publicly available.11
+1
+
+https://github.com/Bhoy1/ESvsGRPO
+
+1 Introduction
+
+Fine-tuning large language models (LLMs) is essential for adapting them to new tasks and for maintaining performance in continual learning settings. When explicit supervised targets are unavailable, optimization must proceed from evaluative feedback rather than token-level labels. In this regime, gradient-based reinforcement learning methods such as Group Relative Policy Optimization (GRPO) have become a standard component of LLM post-training (Shao et al., 2024; Guo et al., 2025), while Evolution Strategies (ES) have recently emerged as a scalable gradient-free alternative (Qiu et al., 2025; Korotyshova et al., 2025; Sarkar et al., 2025). ES replaces backpropagation with population-level perturbation and reward aggregation, offering potential advantages in memory usage and parallelism.
+
+Despite growing interest in ES for LLM alignment and fine-tuning, its behavior relative to gradient-based methods remains poorly understood. Prior works present a mixed picture. Some studies (Qiu et al., 2025) suggest that ES can achieve competitive performance while retaining low KL divergence to the base model. This raises the possibility that it may be well suited for continual learning, where preserving prior capabilities is important. Other work (Abdi et al., 2026), however, finds that ES can induce substantial forgetting, attributing this to larger and less sparse parameter updates. Taken together, these results leave open a basic question: when ES and gradient-based RL achieve similar task performance, do they induce similar off-target effects (e.g. forgetting), and do the solutions have similar geometric properties (e.g. norm and dimensionality)?
+
+In this study, we compare ES and RL in a setup where an LLM is trained sequentially across four diverse tasks and extend the analysis with a geometric characterization of the solutions each method finds. Our analysis reveals that despite equivalent accuracy across four diverse tasks, ES and GRPO navigate the loss landscape in different ways. GRPO identifies a narrow, high gradient direction, making precise and targeted updates that stay close to the base model. ES navigates a broad, low curvature plateau, accumulating large diffuse updates that travel orders of magnitude further from initialization. Strikingly, despite these near orthogonal trajectories and orders of magnitude norm differences, no loss barrier exists between the two solutions. Moreover, when we probe the loss landscape along each method’s learned update direction, the ES direction behaves much more like a random direction on held-out tasks, indicating that a substantial fraction of its displacement lies in task-irrelevant dimensions rather than in a sharply task-aligned subspace.
+
+Finally, we derive a theoretical account of these differences, showing how ES can accumulate large off-task movement on weakly informative directions while still making enough progress on the task to match gradient-based RL in downstream accuracy.
+ES weight updates decompose into two components: an on-manifold component where loss changes, and an off-manifold component that is loss-invariant and therefore performs a random walk through parameter space. The off-manifold component carries a characteristic scaling: the squared norm of the weight change grows as , proportional to parameter dimension and step count , and inversely proportional to population size . In the high-dimensional loss landscapes with many flat dimensions, where most directions carry negligible curvature — this off-manifold drift dominates the weight change. Empirically, LLM parameters (particularly weight matrices) precisely exhibit this predicted random walk behavior, with the theoretical scaling matching observations at . This single mechanism accounts for all the geometric phenomena we observe: the large update norm, the near-orthogonality between ES and GRPO update directions, the flat loss curvature along ES weight changes, and the linear mode connectivity despite geometric separation.
+
+Our contributions are:
+
+1.
+
+Empirical evidence that ES can match or exceed GRPO in task accuracy across both single-task and sequential fine-tuning settings.
+
+2.
+
+A geometric characterization of ES versus GRPO solutions, revealing that equivalent task performance can be achieved with orders of magnitude norm differences.
+
+3.
+
+A theoretical account of the random-walk-like behavior of ES in high-dimensional weakly informative subspaces, explaining its large update norms and diffuse-like behavior relative to GRPO.
+
+2 Related Work
+
+Evolution strategies for LLMs.
+
+Salimans et al. (2017) demonstrated ES as a scalable alternative to reinforcement learning via high parallelizability. Recent work has brought ES to LLM scale: Qiu et al. (2025) showed ES achieving comparable performance to GRPO on reasoning tasks, attributing this to LLMs’ low intrinsic dimensionality (Aghajanyan et al., 2021) and ES’s smoothing of jagged reward landscapes via Gaussian convolution in parameter space (Lehman et al., 2018). Korotyshova et al. (2025) and Sarkar et al. (2025) further showed that ES can be made practical for large-scale alignment through low-rank parameterizations that improve efficiency and scalability. Liang et al. (2026) showed that fine-tuning loss landscapes are low-dimensional in curvature, helping explain why ES succeeds with small populations. However, Abdi et al. (2026) demonstrates that ES causes significant forgetting compared to GRPO on smaller models (Qwen2.5-1.5B and Llama-3.2-1B), attributing it to larger update norms and lower sparsity.
+
+Gradient-based RL for LLMs.
+
+Shao et al. (2024) introduced GRPO, which eliminates the critic model by estimating advantages from group statistics, reducing memory overhead compared to PPO. It became a standard post-training method following its use in DeepSeek-R1 (Guo et al., 2025). Several concurrent works have investigated why GRPO preserves prior capabilities during fine-tuning. Shenfeld et al. (2025) showed that forgetting correlates with KL divergence from the base model, while Chen et al. (2025) showed that GRPO’s robustness may stem more from its use of on-policy data rather than KL regularization or advantage estimation.
+
+3 Methodology
+
+We compare two fundamentally different approaches to fine tune large language
+models: ES, a gradient free method, and GRPO, a gradient based reinforcement learning algorithm.
+
+3.1 Evolution strategies
+
+ES optimizes model parameters through population based search without computing
+gradients. At each iteration, we sample perturbation vectors , evaluate the perturbed models, and update parameters using
+z score normalized rewards:
+
+(1)
+
+where is the learning rate, is the
+z score normalized reward for the -th perturbation, and is the reward of the perturbed model with noise scale .
+Following Qiu et al. (2025), we maintain throughout and
+apply ES updates to the complete model weights.
+
+3.2 Group relative policy optimization
+
+GRPO (Shao et al., 2024) normalizes advantages within groups of sampled responses,
+eliminating the need for a critic model. For a prompt , we sample responses
+from the current policy and compute
+group-normalized advantages: ,
+where and are the within group mean and standard deviation of
+rewards. The policy is updated by maximizing the clipped surrogate objective: ,
+where
+is the probability ratio between the current and old policy. We disable the KL
+penalty () during training to induce a clean comparison with ES without explicit regularization (Shenfeld et al., 2025), but track KL divergence to
+the reference policy for analysis in both methods.
+
+3.3 Experimental setup
+
+All experiments use Qwen3-4B-Instruct-2507 as the base model. We evaluate on four diverse tasks spanning reasoning, mathematics, scientific knowledge, and reading comprehension: Countdown (arithmetic reasoning), Math (mathematical problem solving), SciKnowEval-Chemistry (chemistry domain knowledge), and BoolQ (boolean reading comprehension). Each task uses 200 training samples and 2,000 test samples (500 for Math). In the continual learning experiments, tasks are presented sequentially. Hyperparameter sweeps were conducted for both methods (see Appendix B.1); we selected , , for ES and for GRPO.
+
+4 Empirical Results
+
+4.1 Task performance
+
+Table 1 compares the task accuracy of the base model against ES and GRPO in a single task training setup. Running ES for 300 iterations consistently yields the highest peak accuracy across all four tasks. For instance, on the Chemistry task, ES (300) achieves 76.5% accuracy, significantly outperforming both ES (100) at 68.1% and GRPO at 74.9%.
+
+However, when the model is trained sequentially across the tasks (Figure 1), utilizing 300 ES iterations causes pronounced degradation in earlier tasks as the training progresses. Limiting ES to 100 iterations offers a balance. While it sacrifices a small degree of peak single task accuracy compared to the 300 iteration configuration, it maintains sequential training stability. Both ES (100) and GRPO remain comparatively stable throughout the entire sequential training pipeline, avoiding the sharp drop-offs seen with ES (300). Because of this, we use an iteration count of 100 for ES in all of the following sequential experiments.
+
+Table 1: Accuracy (%) for single task training.
+
+Task
+Base
+ES (iter=100)
+ES (iter=300)
+GRPO
+
+Countdown
+20.5
+75.1
+78.6
+74.5
+
+Math
+61.8
+72.4
+74.0
+68.8
+
+Chemistry
+63.4
+68.1
+76.5
+74.9
+
+BoolQ
+83.7
+87.2
+88.1
+86.6
+
+As a side note, ES and GRPO show different transfer dynamics in the sequential task training. ES exhibits notable zero-shot forward transfer, i.e., learning a task increases performance on an unseen task. Chemistry accuracy rises from 63% to approximately 69% before its training stage begins, and Math accuracy increases by roughly 3 points after Countdown training alone. This forward transfer is not universal and depends on the tasks, as BoolQ accuracy dips slightly below the base model before its training stage. GRPO shows little forward transfer by comparison.
+
+Figure 1: Accuracy (%) on each task throughout sequential training. The
+shaded region marks the stage at which that task was trained. ES (300)
+shows clear degradation on earlier tasks as training progresses, while
+ES (100) and GRPO remain comparatively stable.
+
+4.2 Forgetting
+
+To test whether fine-tuning affects general capabilities beyond training tasks, we evaluate both methods on two held-out benchmarks after each training stage: MMLU for general knowledge, and IFEval (strict) for instruction-following ability. The two methods diverge on MMLU. ES accuracy drops monotonically from 77.5% to 73.8% across the four training stages (3.7%), with the largest single-stage drop during Chemistry training (1.6%). GRPO, by contrast, remains stable or slightly improves throughout, ending at 78.3% (0.8%). On IFEval, the pattern reverses: ES gains 2.2%, peaking after Math training, while GRPO rises through Chemistry but drops after BoolQ training, ending at 1.3% below baseline.
+
+Table 2: Holdout benchmark accuracy (%) throughout sequential training.
+
+Stage
+ES (MMLU)
+GRPO (MMLU)
+ES (IFEval)
+GRPO (IFEval)
+
+Base model
+77.5
+77.5
+79.7
+79.7
+
+After Task 1 (Countdown)
+77.0
+77.0
+80.0
+80.6
+
+After Task 2 (Math)
+76.2
+77.5
+82.6
+80.6
+
+After Task 3 (Chemistry)
+74.6
+78.0
+82.3
+81.7
+
+After Task 4 (BoolQ)
+73.8
+78.3
+81.9
+78.4
+
+(base final)
+3.7
+0.8
+2.2
+1.3
+
+Figure 2: Incremental KL divergence per training step. Each cell shows for a given evaluation task (row) after a given training step (column). Both panels share the same color scale. ES exhibits broader off diagonal drift while GRPO’s changes are more localized to the diagonal.
+
+We measure the incremental KL divergence on each task’s held-out set after every training step, capturing how much each step shifts the model’s output distribution on every task (Figure 2). Qiu et al. (2025) find that ES produces substantially lower KL divergence than GRPO on a single-task conciseness benchmark. The first column of our heatmap (T0, Countdown only) is broadly consistent: ES’s on-task KL (0.23 nats) is slightly lower than GRPO’s (0.29 nats). In the sequential setting, however, ES produces larger off-diagonal KL shifts—training on any task causes non-trivial drift on all other tasks (e.g., training on Math shifts BoolQ by 0.23 nats for ES vs. 0.01 for GRPO). ES’s on-diagonal drift is also more aggressive: Chemistry training induces 1.10 nats for ES versus 0.07 for GRPO. GRPO’s drift remains localized, with all values below 0.29 nats and minimal off-diagonal interference. This is consistent with our weight-space findings: ES’s isotropic perturbations spread change broadly across the output distribution, while GRPO’s directed updates concentrate it on the trained task. The discrepancy with Qiu et al. (2025) in the sequential setting may reflect differences in task structure or model, but it suggests the KL advantage of ES is not universal.
+
+5 Weight Space Geometry Analysis
+
+Despite both ES and GRPO achieving similar accuracy when trained with a single task, their difference in the sequential task experiments suggests that the weight changes of both could be distinct. We characterize the geometry of their weight changes, seeking a deeper understanding of the difference between the two methods.
+
+5.1 ES induces larger weight changes
+
+We measure the total norm of each method’s weight delta from the base model:
+
+(2)
+
+Table 3 shows this at each sequential checkpoint. ES updates grow from 87.28 to 173.00 across the four tasks, while GRPO updates remain two orders of magnitude smaller (1.00 to 1.84), yielding norm ratios of 87 to 107.
+
+Table 3: Weight update norms () at each sequential checkpoint, measured from the base model.
+
+Checkpoint
+ES norm
+GRPO norm
+Ratio
+
+After Task 1 (Countdown)
+87.28
+1.00
+87
+
+After Task 2 (Math)
+122.76
+1.15
+107
+
+After Task 3 (Chemistry)
+149.99
+1.65
+91
+
+After Task 4 (BoolQ)
+173.00
+1.84
+94
+
+5.2 ES and GRPO solutions are linearly connected
+
+We evaluate whether ES and GRPO solutions occupy the same loss basin by testing
+linear interpolations (i.e. linear mode connectivity) at each sequential checkpoint:
+
+(3)
+
+A loss barrier would manifest as degraded performance at intermediate
+values relative to both endpoints. Figure 3 shows average
+accuracy across tasks at each interpolation point. No significant loss barrier exists at
+any checkpoint: performance transitions smoothly, and intermediate points
+frequently match or outperform both endpoints, demonstrating that ES and GRPO
+remain in the same loss basin throughout sequential training.
+
+Figure 3: Per-task accuracy along the linear interpolation path between the
+final ES and GRPO checkpoints. The dashed gray line shows the linear
+interpolation between endpoint accuracies. Across all tasks, the interpolated
+model remains close to or above the linear baseline with no catastrophic
+accuracy drop, indicating that the two solutions lie in the same basin
+of the loss landscape.
+
+5.3 ES solution direction behaves similarly as random directions
+
+To understand why ES and GRPO produce such different weight geometries despite similar task accuracy, we probe the loss landscape along each method’s learned update direction. Starting from the base model, we move along the normalized ES or GRPO weight delta at increasing magnitudes:
+
+(4)
+
+where ranges from 0 to (the trained checkpoint) and beyond. Random directions, averaged over three seeds, serve as a control. By construction, exactly recovers the trained checkpoint.
+
+Figure 4 shows that along the GRPO direction, task accuracy rises rapidly from the base-model level to the checkpoint level within a very small displacement, then degrades quickly once the perturbation magnitude exceeds the trained solution. Along the ES direction, accuracy improves more gradually over a much larger displacement scale, indicating that much of the ES displacement lies in directions only weakly coupled to the task. Both methods reach comparable final accuracy, but GRPO concentrates its useful signal into a much smaller norm, while ES spreads it across a larger perturbation that includes substantial task-irrelevant components.
+
+Figure 4: Task accuracy when moving from the base model along ES (blue), GRPO (red), and random (gray) directions at increasing magnitudes. Dashed vertical lines mark (red) and (blue). Dotted horizontal lines show base and checkpoint accuracies.
+
+Evaluating perturbed models on holdout tasks reinforces this picture (Figure 5). The ES direction and random directions produce similar holdout degradation profiles, confirming that the ES update is a diffuse shift rather than a targeted one. GRPO’s direction, though more effective on the target task, degrades general capabilities faster than either ES or random directions, consistent with its updates being concentrated in a narrow task-specific subspace.
+
+Figure 5: Holdout task accuracy (IFEval, MMLU) when perturbing along ES (blue) and GRPO (red) directions from the final BoolQ checkpoint.
+
+6 Theoretical Interpretation
+
+The preceding experiments reveal a consistent pattern: ES and GRPO reach comparable task accuracy, yet ES accumulates weight changes two orders of magnitude larger, its update direction resembles a random direction on holdout tasks, and the two solutions are linearly connected with no loss barrier. We now develop a theoretical account that explains all of these phenomena within a unified framework.
+
+Central claim: signal–diffusion decomposition.
+
+Idealizing ES as an Ornstein–Uhlenbeck process under a quadratic potential with curvature , the displacement after steps decomposes as (Prop. 4):
+
+(5)
+
+with and i.i.d. noise .
+The first term drives parameters toward the optimum and resides in the column space of , mirroring gradient descent; the second term is diffusion in dimensions. Along flat directions ( where ), the signal vanishes while the diffusion persists. Noiseless gradient descent, by contrast, produces only the first term (Prop. 6).
+
+Why diffusion dominates
+
+On a flat landscape, the ES update is a pure random walk (Prop. 1):
+, and
+
+(6)
+
+This scaling—linear in and , inverse in —persists in the off-manifold subspace even when the landscape has curvature. On linear and quadratic landscapes, we derive the full single-step statistics analytically (Prop. 2, 3). In linear case, the fraction of gradient-aligned squared displacement per step is (App. E.3):
+
+(7)
+
+where is the signal fraction, with the gradient norm. Since in practice (, ), is negligible. Over steps (Proposition 7):
+
+(8)
+
+Geometric consequences
+
+The decomposition yields a sharp hierarchy (Propositions 6–8):
+
+(9)
+
+and the expected cosine similarity scales as (Remark 9): nearly orthogonal despite similar task performance. The key behavioral difference is on flat directions: GD freezes at initialization while ES diffuses with variance (Propositions 4, 5).
+
+6.1 Empirical validation and explanatory power
+
+Random walk scaling. 
+For the full parameter vector, grows linearly with step count ( for ES vs. for GRPO; Figure 6A). Inverting the slope to infer the effective dimension yields —nearly all dimensions behave as flat. Per-parameter analysis confirms this: 145 large weight matrices follow the scaling almost exactly (, ), while normalization parameters deviate strongly (; Appendix C.1, Fig. 10). The deficit is interpretable as the task-relevant fraction where curvature constrains the walk.
+
+Explaining each observation. 
+Eq. (5) explains:
+Large update norms (Table 3): ES is dominated by the off-manifold term while GRPO stays at , producing the ratio. 
+Flat mode connectivity (Fig. 3): after convergence, the – line lies in the off-manifold subspace where loss is flat. 
+ES resembles random (Fig. 4): dominant fraction of ES update comes from off-manifold random walk, explaining their similarity and smaller directional curvature along ES updates; Holdout degradation (Fig. 5): the fine-tuning landscape sits atop a broad plateau of base-task performance; off-manifold perturbations beyond a certain radius degrade general capabilities regardless of task relevance, explaining the matched ES–random degradation profiles.
+This picture is summarized in Figure 6B.
+
+Figure 6: Schematic of the fine-tuning loss landscape. A. Random walk scaling of ES weight update. B. GRPO moves along the low-dimensional task-relevant subspace (red). ES accumulates both a task-relevant component and a large off-manifold random walk (green), yielding a much larger displacement nearly orthogonal to GRPO. The two solutions are linearly connected because the off-manifold component is loss-invariant.
+
+Remark 1.
+
+This behavior connects to a broader phenomenon: Antognini and Sohl-Dickstein (2018) showed that high-dimensional OU processes are dominated by their flattest dimensions. Similar random-walk-like dynamics has been observed in SGD-trained neural network weights, evolution of Influenza virus (H3N2) and ES-optimized visual stimuli (Moore et al., 2018; Wang and Ponce, 2022a; Wang and Ponce, 2022b), suggesting high degeneracy on flat subspaces is a generic feature of high-dimensional landscapes.
+
+7 Discussion
+
+Our results reveal that ES and GRPO find geometrically distinct solutions despite equivalent task performance: near-orthogonal update directions and orders-of-magnitude norm differences. The random walk interpretation from Section 6 provides a unifying explanation: on the high-dimensional subspace of task-irrelevant directions, ES accumulates isotropic noise whose squared norm grows linearly with steps, while the task-relevant component remains small but sufficient for learning. These geometric differences imply that task-matched solutions found by different optimizers need not be equivalent in parameter space or in how they alter the model more broadly. More generally, our results suggest that weight-space geometry is itself an important object of study in post-training, because similar downstream accuracy can mask substantial differences in the structure and scale of the underlying update.
+
+Acknowledgments
+
+We gratefully acknowledge support from the Kempner Research Fellowship (B.W.) and the Schwartz Fellowship (X.P.), as well as computing resources provided by the Kempner Institute cluster.
+We thank Core Francisco Park for valuable feedback on earlier versions of this work. We thank Intelligence Cubed and its fellowship program for providing funding to conduct the experiments.
+
+Author contributions
+
+W.H. designed the initial experiments, performed most of the experiments and analyses, and wrote the first draft of the manuscript. B.W. contributed to the theoretical framework and appendix derivations. X.P. coordinated the study and contributed broad input on the design and framing of the experiments. All authors contributed to revising and polishing the final manuscript.
+
+References
+
+Abdi et al. (2026)
+I. Abdi, A. Gupta, M. Mok, A. Lu, N. Lee, and G. Anumanchipalli
+
+Evolutionary strategies lead to catastrophic forgetting in llms.
+
+arXiv preprint arXiv:2601.20861.
+
+Cited by: §1,
+§2.
+
+Aghajanyan et al. (2021)
+A. Aghajanyan, S. Gupta, and L. Zettlemoyer
+
+Intrinsic dimensionality explains the effectiveness of language model fine-tuning.
+
+pp. 7319–7328.
+
+Cited by: §2.
+
+Antognini and Sohl-Dickstein (2018)
+J. Antognini and J. Sohl-Dickstein
+
+PCA of high dimensional random walks with comparison to neural network training.
+
+Advances in Neural Information Processing Systems 31.
+
+Cited by: Remark 1.
+
+Chen et al. (2025)
+H. Chen, N. Razin, K. Narasimhan, and D. Chen
+
+Retaining by doing: the role of on-policy data in mitigating forgetting.
+
+arXiv preprint arXiv:2510.18874.
+
+Cited by: §2.
+
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al.
+
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+
+arXiv preprint arXiv:2501.12948.
+
+Cited by: §1,
+§2.
+
+Isserlis (1918)
+L. Isserlis
+
+On a formula for the product-moment coefficient of any order of a normal frequency distribution.
+
+Biometrika 12 (1–2), pp. 134–139.
+
+External Links: Document
+
+Cited by: §E.4.
+
+Korotyshova et al. (2025)
+D. Korotyshova, B. Shaposhnikov, A. Malakhov, A. Khokhulin, N. Surnachev, K. Ovcharenko, G. Bredis, A. Gorbatovski, V. Sinii, and D. Gavrilov
+
+ESSA: evolutionary strategies for scalable alignment.
+
+arXiv preprint arXiv:2507.04453.
+
+Cited by: §1,
+§2.
+
+Lehman et al. (2018)
+J. Lehman, J. Chen, J. Clune, and K. O. Stanley
+
+ES is more than just a traditional finite-difference approximator.
+
+In Proceedings of the genetic and evolutionary computation conference,
+
+pp. 450–457.
+
+Cited by: §2.
+
+Liang et al. (2026)
+Q. Liang, J. Song, Y. Liu, J. Gore, I. Fiete, R. Miikkulainen, and X. Qiu
+
+The blessing of dimensionality in llm fine-tuning: a variance-curvature perspective.
+
+arXiv preprint arXiv:2602.00170.
+
+Cited by: §2.
+
+Moore et al. (2018)
+J. Moore, H. Ahmed, and R. Antia
+
+High dimensional random walks can appear low dimensional: Application to influenza H3N2 evolution.
+
+Journal of Theoretical Biology 447, pp. 56–64.
+
+External Links: Link,
+Document,
+ISSN 0022-5193
+
+Cited by: Remark 1.
+
+Qiu et al. (2025)
+X. Qiu, Y. Gan, C. F. Hayes, Q. Liang, Y. Xu, R. Dailey, E. Meyerson, B. Hodjat, and R. Miikkulainen
+
+Evolution strategies at scale: llm fine-tuning beyond reinforcement learning.
+
+arXiv preprint arXiv:2509.24372.
+
+Cited by: §1,
+§1,
+§2,
+§3.1,
+§4.2.
+
+Salimans et al. (2017)
+T. Salimans, J. Ho, X. Chen, S. Sidor, and I. Sutskever
+
+Evolution strategies as a scalable alternative to reinforcement learning.
+
+arXiv preprint arXiv:1703.03864.
+
+Cited by: §2.
+
+Sarkar et al. (2025)
+B. Sarkar, M. Fellows, J. A. Duque, A. Letcher, A. L. Villares, A. Sims, C. Wibault, D. Samsonov, D. Cope, J. Liesen, et al.
+
+Evolution strategies at the hyperscale.
+
+arXiv preprint arXiv:2511.16652.
+
+Cited by: §1,
+§2.
+
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, et al.
+
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+
+arXiv preprint arXiv:2402.03300.
+
+Cited by: §1,
+§2,
+§3.2.
+
+Shenfeld et al. (2025)
+I. Shenfeld, J. Pari, and P. Agrawal
+
+Rl’s razor: why online reinforcement learning forgets less.
+
+arXiv preprint arXiv:2509.04259.
+
+Cited by: §2,
+§3.2.
+
+Wang and Ponce (2022a)
+B. Wang and C. R. Ponce
+
+High-performance evolutionary algorithms for online neuron control.
+
+Proceedings of the genetic and evolutionary computation conference, pp. 1308–1316.
+
+Cited by: Remark 1.
+
+Wang and Ponce (2022b)
+B. Wang and C. R. Ponce
+
+Tuning landscapes of the ventral stream.
+
+Cell reports 41 (6).
+
+Cited by: Remark 1.
+
+Wick (1950)
+G. C. Wick
+
+The evaluation of the collision matrix.
+
+Physical Review 80 (2), pp. 268–272.
+
+External Links: Document
+
+Cited by: §E.4.
+
+Contents of the Appendices
+
+Appendix A Disclosure of LLM Use
+
+In the study, LLM is used for coding the experiments, analyzing the results, assisting mathematical derivation, and polishing the writing.
+
+Appendix B Experimental Configurations
+
+All experiments use Qwen3-4B-Instruct-2507 with full-parameter fine-tuning, seed 42, and a maximum of 1,024 generated tokens.
+Each task uses a fixed training set of 200 prompts.
+
+B.1 Hyperparameter Sweeps
+
+Evolution Strategies.
+
+We conducted a sweep over three configurations maintaining :
+
+Table 4: ES hyperparameter configurations. Config 3 selected.
+
+Config
+
+1
+0.0005
+0.00025
+
+2
+0.001
+0.0005
+
+3
+0.0015
+0.00075
+
+GRPO.
+
+We swept learning rates with KL penalty disabled () and linear decay:
+
+Table 5: GRPO learning rate configurations. Config 3 selected.
+
+Config
+Learning rate
+
+1
+
+2
+
+3
+
+4
+
+B.2 Single-Task Training Curves
+
+Figure 7 and Figure 8 show train and test reward over the course of single-task training for GRPO and ES using the configurations selected in Tables 4 and 5. Both methods converge on all four tasks without overfitting, confirming that these hyperparameters yield stable learning before we proceed to the sequential setting.
+
+Figure 7: GRPO single-task training reward across 20 epochs for each task.
+
+Figure 8: ES single-task training reward across 300 steps for each task.
+
+B.3 Selected Training Configurations
+
+The selected configurations are summarized in Table 6.
+In the single-task setting, ES trains for 300 steps and GRPO for 20 epochs.
+In the sequential setting, each of the four tasks trains for 100 ES steps or 20 GRPO epochs with identical per-task hyperparameters.
+
+Table 6: Training hyperparameters for ES (left) and GRPO (right).
+
+ES
+
+Noise scale ()
+0.0015
+
+Step size ()
+0.00075
+
+Population size
+30
+
+Batch size
+200
+
+GRPO
+
+Learning rate
+
+Optimizer
+AdamW
+
+Scheduler
+Linear decay
+
+Max gradient norm
+1.0
+
+KL coefficient ()
+0
+
+Rollouts per prompt ()
+8
+
+B.4 Evaluation Protocol
+
+All evaluations use greedy decoding (temperature ) with a maximum of 1,024 generated tokens and binary rewards (1.0 correct, 0.0 otherwise).
+Table 7 summarizes the answer extraction and scoring for each task.
+Countdown problems are sourced from Jiayi-Pan/Countdown-Tasks-3to4, MATH from nlile/hendrycks-MATH-benchmark, SciKnowEval Chemistry from hicai-zju/SciKnowEval v2, BoolQ from google/boolq, MMLU from cais/mmlu, and IFEval from google/IFEval.
+
+Table 7: Evaluation protocol per task. All tasks use greedy decoding (temperature ), 1,024 max generated tokens, and binary scoring.
+
+Task
+Answer format
+
+Answer extraction and scoring
+
+Countdown
+\boxed{expr}
+2,000
+
+Extract last \boxed{} via regex. Verify the expression contains only digits and ; each input number is used exactly once; and the evaluated result equals the target (tolerance ).
+
+MATH
+\boxed{ans}
+500
+
+Extract last \boxed{} with nested-brace handling. Normalize both prediction and gold by stripping LaTeX wrappers (\text, \dfrac, currency/degree symbols). Compare as strings; on mismatch, convert fractions and decimals to floats and compare numerically (tolerance ).
+
+SciKnowEval Chem.
+"answer":"X"
+2,000
+
+Extract answer letter via regex cascade: (1) JSON-style "answer":"X", (2) unquoted answer: X, (3) last standalone A/B/C/D token. Use the last match found.
+
+BoolQ
+\boxed{yes/no}
+2,000
+
+Extract last \boxed{}, normalize to lowercase. Accept {yes, true, 1} as positive and {no, false, 0} as negative.
+
+Holdout tasks (not trained on; used to measure forgetting)
+
+MMLU
+"answer":"X"
+14,042
+
+Same regex cascade as SciKnowEval Chemistry.
+
+IFEval
+Free-form
+541
+
+Check each instruction constraint programmatically (keyword presence, formatting rules, length bounds, etc.). Score 1.0 only if all constraints for a prompt are satisfied (strict prompt-level accuracy).
+
+MMLU and IFEval are evaluated after training to measure whether general capabilities are preserved.
+
+Appendix C Detailed Validation of Theoretical Predictions
+
+C.1 Weight Drift in ES and GRPO Fine-tuning
+
+Setup
+
+We fine-tune a Qwen3-4B-Instruct-2507 language model ( parameters)
+on a single reasoning task using two optimizers:
+
+•
+
+Evolution Strategy (ES): z-scored ES with perturbation standard
+deviation , step size ,
+and population size . Training runs for steps. Training run was extended from 300 steps to 500 steps for further evaluation here.
+
+•
+
+GRPO: Group Relative Policy Optimization, a gradient-based RL
+fine-tuning method, run for steps.
+
+At each training step we record, for every named parameter ,
+
+the squared Euclidean distance from initialization.
+
+Whole-model Drift vs. Theory (Figure 9)
+
+Proposition 1 predicts that, on a flat landscape, the total squared drift grows
+linearly in step :
+
+Figure 9 plots the empirical
+against this theoretical curve. For ES the match is near-perfect:
+
+with an inferred theoretical slope of per step and an
+empirical slope of , corresponding to an effective dimension ratio
+
+The deficit potentially reflects task relevant dimensions, where higher loss curvature constrained the random walk (Prop. 4), so the weight drift is smaller than random walk scaling.
+
+GRPO exhibits drift four orders of magnitude smaller than ES
+(peak vs. for ES at step 500),
+confirming that gradient-based fine-tuning makes highly targeted updates rather than
+diffusing through parameter space.
+
+Figure 9: Cumulative weight drift for ES (blue, left axis)
+and GRPO (orange, right axis) versus the theoretical prediction
+(dashed). ES tracks theory with .
+
+Per-parameter Effective Dimension
+
+To characterize which parameters drive the drift, we fit a no-intercept linear
+regression
+
+for each parameter independently, obtaining slope and goodness of fit .
+The effective random walk dimension of parameter is then defined by inverting
+Proposition 1:
+
+where is the number of elements in parameter .
+A value indicates the parameter diffuses isotropically as
+predicted; indicates constrained random walk;
+indicates excess diffusion relative to dimension (potentially due to the effect of gradient-like drift, Prop. 3).
+
+Large weight matrices.
+
+Among the 145 large weight parameters
+(embedding, qkv_proj, o_proj, gate_up_proj,
+down_proj), the effective dimension ratio is
+
+These parameters behave essentially as isotropic random walkers, confirming
+the flat-landscape assumption of Proposition 1.
+
+Norm and layer-norm parameters.
+
+The remaining 145 parameters (RMSNorm weights q_norm, k_norm,
+input_layernorm, post_attention_layernorm, norm) show
+highly variable behavior:
+
+•
+
+q_norm / k_norm (128 elements each):
+and respectively, with .
+The excess drift () likely reflects a higher signal-to-noise ratio
+in these low-dimensional subspaces.
+
+•
+
+input_layernorm / post_attention_layernorm:
+and on average, but with standard deviations
+and strongly negative , indicating non-linear,
+non-diffusive dynamics.
+
+•
+
+model.norm: , — this single
+output norm is largely frozen by ES updates.
+
+Figure 10: Per-parameter (top) and (bottom)
+for large weight matrices (left) and norm parameters (right).
+Points are individual parameters; error bars show mean std.
+Dashed line represents the null model where the parameter perform pure random walk in the full space , .
+
+Appendix D Theoretical Results
+
+D.1 Evolution Strategy on a Flat Landscape
+
+Proposition 1 (Evolution Strategy on a Flat Landscape).
+
+Let , so all reward variation arises from
+observation noise. Under the ES update
+
+with and z-scored rewards
+, the weight update is a pure isotropic random walk:
+
+After steps of ES with population size , step size , and parameter dimension , the cumulative deviation satisfies
+
+where the last equality substitutes .
+In particular, the expected drift grows linearly in and ,
+and shrinks inversely in the batch size . Proof in E.2.
+
+D.2 Evolution Strategy on a Linear Landscape
+
+Proposition 2 (Evolution Strategy on a Linear Landscape).
+
+Let with observation noise
+. Define .
+The mean and covariance of the ES parameter update are
+
+(10)
+
+(11)
+
+The mean update is purely aligned with the gradient direction ,
+and the covariance consists of the same isotropic baseline as the flat landscape
+plus a rank-1 boost along .
+Relative to the quadratic case (Proposition 3),
+the linear landscape produces identical expressions with :
+the curvature-dependent inflation of and the anisotropic
+noise term are both absent. Proof in E.3.
+
+Remark 2 (On-manifold alignment of ES update).
+
+Define the signal fraction
+.
+The on-manifold fraction of total squared displacement is
+
+Hence: (i) without signal (), , i.e. the update is
+purely diffusive; (ii) in the high-SNR limit (), ; (iii) increases monotonically in and ,
+and decreases in . Since in practice, on-manifold movement
+per step is negligible relative to off-manifold diffusion.
+
+D.3 Evolution Strategy on a Quadratic Landscape
+
+Proposition 3 (Evolution Strategy on a Quadratic Landscape).
+
+Let , current iterate , and
+(the negative gradient). Define
+
+(12)
+
+The mean and covariance of the ES parameter update are
+
+(13)
+
+(14)
+
+Relative to the linear case (Proposition 2), the quadratic term introduces two
+additional contributions: (i) a curvature-dependent inflation of
+through , which attenuates
+the mean gradient step; and (ii) an anisotropic noise term
+in the covariance, which increases
+update variance along the principal high curvature directions
+of . Proof in E.4.
+
+Remark 3 (On-manifold alignment on quadratic landscape).
+
+The on-manifold fraction of total expected squared displacement is
+
+where .
+Setting and
+recovers the linear-landscape ratio .
+The quadratic landscape modifies in two ways:
+the curvature inflates , which grows the isotropic term
+in the denominator;
+and the noise splits between numerator
+(the projection ) and
+denominator (the full trace ).
+When the gradient aligns with the high-curvature eigenvectors,
+much of the curvature-induced noise is on-manifold and is
+comparable to the linear case; when the curvature is predominantly
+orthogonal to , the denominator grows while the
+numerator does not, suppressing .
+
+D.4 Dynamics of ES on Quadratic Landscape
+
+Proposition 4 (Dynamics of ES on Quadratic Landscape).
+
+Consider the simplified evolution
+
+where .
+22
+2
+
+here is a fixed constant, not changing across iterations as in the full ES update (Eq. 12).
+Let denote the contraction factor along eigendirection . Then the projected mean and variance evolve as
+
+The process converges in mean and variance along direction if and only if , i.e.,
+
+In this regime, the asymptotic variance is
+
+and the convergence timescale is . Proof in E.5.
+
+Remark 4 (Stability conditions).
+
+The three failure modes each correspond to a violation of . Flat directions () satisfy , so both the mean and variance grow as a pure random walk: the optimizer drifts diffusively and never localizes. Concave directions () give , causing exponential divergence of both mean and variance — the landscape actively repels the iterates. Overly sharp convex directions () give for a different reason: the ES step overshoots, analogous to gradient descent with too large a learning rate. Note that because the ES learning rate is , this threshold becomes .
+
+Remark 5 (Optimal curvature).
+
+Within the stable regime, the convergence speed and asymptotic variance are jointly controlled by . Directions with achieve , which simultaneously minimizes the convergence timescale ( iteration) and the asymptotic variance (). Directions near the stability boundary or suffer slow convergence and inflated variance. Thus the landscape curvature relative to the ratio plays the role of an effective condition number for the ES dynamics.
+
+Remark 6 (Role of noise scale).
+
+The asymptotic variance reveals the expected tension between exploration and precision: increasing the population size suppresses variance linearly, while the landscape geometry (through ) sets a floor on the minimum achievable uncertainty. In well-conditioned directions, , so the asymptotic variance scales as , inversely proportional to both curvature and the signal-to-noise ratio .
+
+D.5 Dynamics of GD on Quadratic Landscape
+
+Proposition 5 (Dynamics of GD on Quadratic Landscape).
+
+Let with ,
+and let gradient descent with learning rate iterate as
+.
+Define and let
+. The iterate is
+
+Direction converges if and only if , i.e.,
+.
+In this regime the convergence timescale is
+,
+and the residual error is exactly zero: . Proof in E.6.
+
+Remark 7 (Stability conditions for GD).
+
+The three failure modes mirror those of the ES dynamics
+(Proposition 4):
+flat directions () give , so the iterate
+is frozen at for all — unlike ES, where the iterate
+drifts diffusively.
+Concave directions () give , causing
+exponential divergence.
+Overly sharp convex directions () give
+, and the iterate overshoots with growing or
+non-decaying oscillations.
+
+D.6 GD displacement is low-dimensional
+
+Proposition 6 (GD displacement is low-dimensional).
+
+Starting from on a rank- quadratic landscape (), the GD displacement
+
+lies entirely within the -dimensional column space of , with
+.
+
+D.7 ES displacement decomposes into signal and diffusion
+
+Proposition 7 (ES displacement decomposes into signal and diffusion).
+
+The ES displacement from initialization decomposes as
+
+The signal term lies within the column space of , identical in structure to the
+GD displacement with .
+The noise term has support in all dimensions. For and large ,
+
+D.8 ES–GD difference is off-manifold
+
+Proposition 8 (ES–GD difference is off-manifold).
+
+When both methods have converged on the active directions
+(),
+the expected squared difference between the two solutions is dominated by
+off-manifold diffusion:
+
+Remark 8 (Geometric summary).
+
+The three pairwise squared distances satisfy the hierarchy (for , large ):
+
+The GD displacement is low-dimensional and task-aligned.
+The ES displacement superposes a comparable on-manifold component with a much larger
+isotropic off-manifold diffusion.
+The ES–GD difference is dominated by the off-manifold term alone, since both methods
+converge to the same optimum within the active subspace.
+This accounts for the empirical observation that ES achieves similar task performance
+to GD (shared on-manifold signal) while being far from it in parameter space
+(off-manifold diffusion).
+
+Remark 9 (Cosine similarity between displacements).
+
+Since lies within the column space of
+and the ES noise is zero-mean, the expected inner product picks up only the
+on-manifold signal of ES. For large with both converged on active directions,
+the expected cosine similarity satisfies
+
+which is small for : the two displacement vectors are nearly orthogonal
+despite leading to similar task performance.
+
+Appendix E Detailed derivations of theoretical results
+
+E.1 Z-score ES Update Setup
+
+We detail the ES update rule as implemented in LLM fine-tuning. The update at step is
+
+(15)
+
+where each is an independent Gaussian perturbation, and is the z-scored return for the -th sample. Here, is the reward, with and denoting the mean and standard deviation of the across the population.
+With slight abuse of notation we let be the true or expected reward at the perturbed location, and the observed reward with certain observation noise.
+The step size is set to , and a population size of is typical. Defining the update increment as
+
+(16)
+
+the algorithm iterates as .
+
+E.2 Flat Landscape Analysis
+
+Proof of Proposition 1.
+
+The key assumption is that is independent of ,
+i.e., . Then, conditioned on a set of ,
+
+(17)
+
+and the distribution is isotropic Gaussian:
+
+(18)
+
+By definition,33
+3
+
+Note that this constraint depends on the implementation of the z-score
+. In our code, we compute
+the standard deviation as .
+In the unbiased variance estimator (denominator ), the identity reads .
+
+(19)
+
+Therefore, in general the scaling is:
+
+(20)
+
+Since this is independent of , it follows after marginalizing:
+
+(21)
+
+(22)
+
+On a flat loss, is independent between steps, so after steps,
+the combined weight change is
+
+(23)
+
+and the total variance is
+
+(24)
+
+The expected squared norm of total deviation is
+
+(25)
+
+Finally, substituting gives
+
+(26)
+
+and
+
+(27)
+
+∎
+
+E.3 Linear Landscape Analysis
+
+Proof of Proposition 2.
+
+Consider a linear landscape with i.i.d. observational noise ,
+assumed independent of , i.e., .
+The linear reward is
+
+(28)
+
+and the observed reward for each sample is
+
+(29)
+
+Decompose the exploration as
+
+(30)
+
+where
+
+(31)
+
+(32)
+
+so that
+, .
+Then , ,
+and .
+
+The reward is
+
+(33)
+
+and thus .
+
+The update is:
+
+(34)
+
+and can be split as
+
+(35)
+
+Off-manifold component
+
+(36)
+
+Conditioned on the observed normalized reward ,
+is a weighted sum of Gaussian random vectors, thus Gaussian:
+
+(37)
+
+Since are z-scored , the sum satisfies the following identity.
+
+(38)
+
+Because of the following equations:
+
+(39)
+
+(40)
+
+Thus, the conditional distribution is
+
+(41)
+
+Since the conditional distribution
+is independent of the observed reward, marginalizing over we have
+
+(42)
+
+The norm of the off-manifold component is
+
+(43)
+
+On-manifold component
+
+(44)
+
+The on-manifold variable can be expressed as ,
+with , thus the reward can be written as
+
+(45)
+
+Recall the definition of observed reward and z-score,
+
+(46)
+
+To simplify derivation, we use the population expectation and standard
+deviation here:
+
+(47)
+
+(48)
+
+Under these simplifications,
+
+(49)
+
+The expectation reads
+
+(50)
+
+where we used independence, , and .
+
+Next, consider the variance. Consider the individual term, ,
+and its variance:
+
+(51)
+
+Therefore,
+
+(52)
+
+(53)
+
+Overall distribution of the update
+
+Since the off-manifold component is independent of the rewards
+and hence of , we can combine the on- and off-manifold results
+to obtain the full single-step statistics. Writing ,
+
+(54)
+
+(55)
+
+The covariance has the same isotropic baseline as the flat landscape,
+plus a rank-1 boost along the gradient direction.
+The total expected squared norm is
+
+(56)
+
+∎
+
+Manifold Alignment of Update
+
+Consider the ratio of the on- and off-manifold movement:
+
+(57)
+
+(58)
+
+The fraction of on-manifold squared deviation in the total deviation is:
+
+(59)
+
+where .
+
+This formulation reveals the key scaling relation of on and off manifold
+movement
+
+•
+
+Signal to noise ratio
+, which range from
+
+–
+
+When no gradient exists, , then independent
+of number of sample , . i.e. the norm on one axis among
+axis is .
+
+–
+
+Similarly, when
+i.e. the reward noise variance is much higher than the variation of
+signal under exploration range , then it’s effectively no
+gradient and no guidance.
+
+–
+
+In the other extreme, when very little reward noise, ,
+, then .
+
+–
+
+Via differentiation, one can show, monotonically depends on
+signal to noise ratio
+
+•
+
+Full dimension . Increase the full space dim will monotonically
+decrease the on manifold fraction .
+
+•
+
+Sample size per generation . Increase the sample size will
+monotonically increase the on manifold fraction .
+
+–
+
+Note this scaling is almost linear, so to get half of the variance
+on manifold, one need . In reality,
+, which makes this impossible.
+
+–
+
+In most realistic regimes , which makes this on manifold
+ratio per step nearly negligible.
+
+E.4 Quadratic landscape analysis
+
+Proof of Proposition 3.
+
+Consider a quadratic potential centered, i.e. peaked at the origin .
+
+(60)
+
+At current state , the reward at perturbed locations
+with observation noise are, where ,
+
+(61)
+
+Expectation of reward reads, which is the population mean of reward
+samples
+
+(62)
+
+Center the rewards with population mean, we define
+
+(63)
+
+Centered reward has three terms, linear , quadratic ,
+and noise
+
+(64)
+
+One can abbreviate as the negative
+gradient.
+
+The weight update reads,
+
+(65)
+
+Since perturbations are i.i.d. sampled
+
+(66)
+
+and
+
+(67)
+
+One observe that both and
+are polynomial functions of gaussian random variables
+and (up to 3rd order), thus we can compute their
+moment of any order via Wick-Isserlis theorem (Wick, 1950; Isserlis, 1918),
+including mean and covariance of them.
+
+Here are the specific calculations:
+
+Reward variance
+
+Note that all three terms are centered
+
+(68)
+
+Further , due to independence of noise, and
+
+(69)
+
+as it only has polynomial of of odd order 1 and 3,
+thus its expectation is 0. Thus, are not correlated with
+one another. Thus,
+
+(70)
+
+all cross terms vanish due to no correlation.
+
+(71)
+
+(72)
+
+(73)
+
+The first quintic polynomial of can be tackled by
+Wick-Isserelis theorem. With slight mis-use of notation, here we let
+denote the th element of vector.
+
+Then
+
+(74)
+
+thus
+
+(75)
+
+Thus
+
+(76)
+
+In sum, the population variance of reward reads,
+
+(77)
+
+and the population standard deviation is
+
+(78)
+
+Expectation of parameter update
+
+Next let’s examine expectation of parameter change, where the key
+is , decomposing into three
+terms
+
+(79)
+
+Second term vanish due to the odd order of Gaussian variable,
+
+(80)
+
+Third term vanish due to independence
+
+(81)
+
+First term is easy to calculate
+
+(82)
+
+So in sum,
+
+(83)
+
+(84)
+
+which is on expectation aligned with local gradient direction, but
+scaled by signal to noise ratio.
+
+Variance of parameter update
+
+Finally, let’s examine variance of parameter change, where the key
+is ,
+
+(85)
+
+Tackling the first term, using the same logic (odd order and independence)
+to eliminate terms,
+
+(86)
+
+Tackle term.
+
+(87)
+
+Tackle term
+
+(88)
+
+using the same Wick theorem trick we have each element
+
+(89)
+
+Thus,
+
+(90)
+
+Finally, tackle term
+
+(91)
+
+where we encounter 2nd, 4th and 6th order terms.
+
+2nd order term
+
+(92)
+
+4th order term
+
+(93)
+
+Thus
+
+(94)
+
+6th order term
+
+(95)
+
+Note this has pairings, with some diagrammatic reasoning,
+we can find topologically we have three types
+
+(96)
+
+Thus
+
+(97)
+
+Figure 11: Wick contraction classes for , with external loose ends shown as crosses.
+
+In summary
+
+(98)
+
+Thus
+
+(99)
+
+The covariance term reads
+
+(100)
+
+Recall that
+
+(101)
+
+Thus in summary we have mean and covariance of parameter update,
+
+(102)
+
+(103)
+
+The covariance of weight update has three terms
+
+•
+
+An isotropic variance term from the Gaussian exploration per se.
+
+•
+
+A rank-1 term along current gradient direction ,
+
+•
+
+A term corresponding to landscape curvature, i.e. higher variance
+along higher curvature directions,
+
+∎
+
+Order analysis of quadratic landscape
+
+Consider the relative magnitudes of the covariance terms, using the first term as a reference:
+
+•
+
+The second term (aligned with the gradient direction) is of order .
+
+•
+
+The third term (along each direction ) is of order .
+
+Since in practice is very small (e.g., ), the quadratic term generally acts as a small perturbation. To determine when the third (quadratic) term becomes comparable to the second, compare the terms along a specific direction :
+
+(104)
+
+Assume is an eigenvector of with eigenvalue ,
+
+(105)
+
+(106)
+
+This shows that the current gradient norm needs
+to be much smaller (at least times) and the eigenvalue /
+curvature of the probe direction needs to be sharp enough for the
+3rd term to be comparable to the 2nd term. Two scenarios this could
+happen
+
+•
+
+For really sharply curved directions this is usually
+be true.
+
+•
+
+The current state is close to optimum
+or lies in the vast valley of degenerate solution, i.e. ,
+in the null space of .
+
+Manifold Alignment of Update
+
+Define the projections onto the gradient direction and its orthogonal complement:
+
+(107)
+
+The on-manifold expected squared norm decomposes as
+
+(108)
+
+For the first term, since
+is already along , we have , so
+
+(109)
+
+For the second term, we project the covariance (14) onto :
+
+(110)
+
+Evaluating each term using ,
+
+where ,
+and :
+
+(111)
+
+Taking the trace () and combining:
+
+(112)
+
+The total expected squared norm follows analogously using ,
+, and :
+
+(113)
+
+Factoring out from both expressions — noting that the
+mean-squared term
+contributes after extracting the common factor,
+which combines with the variance contribution to yield
+— the on-manifold fraction is
+
+(114)
+
+Setting and
+recovers the linear-landscape ratio
+with .
+
+E.5 Multi-step ES analysis for quadratic landscape
+
+We could write down the ES iteration as
+
+(115)
+
+Thus
+
+(116)
+
+where,
+
+(117)
+
+and
+
+(118)
+
+Simplified ES-optimization process
+
+Consider the simplified ES optimization, where we assume the is held constant.
+To simplify it even more, assume is Gaussian and isotropic
+each step , i.e. ignore the 2nd and 3rd
+term
+
+Thus the optimization iteration reads,
+
+(119)
+
+This process is known as vector autoregression VAR(1) or discrete-time
+OU process.
+
+Proof of Proposition 4.
+
+We can write down the generative process of
+recursively.
+
+(120)
+
+Note let be the eigenvector and eigenvalue
+of , then
+
+(121)
+
+In this simplification, the distribution comes from the independent
+Gaussian random vectors , thus it’s still Gaussian
+distributed.
+
+Thus we can write down the expectation, which only depends on the
+first term.
+
+(122)
+
+Asymptotically,
+
+(123)
+
+•
+
+For flat dimensions , then ,
+thus on expectation the solution won’t move on that direction
+
+•
+
+If , this will
+diverge to infinity.
+
+–
+
+Specifically, when concave dimensions
+
+–
+
+or for , this will
+diverge. This could happen for very sharply curved directions where
+curvature exceeds .
+Note for gradient descent this could also be caused by too high learning
+rate, but here .
+
+The covariance depends on the summation ,
+using the i.i.d. property of the noise and the Gaussian
+distribution of noise,
+
+(124)
+
+Thus the variance along one eigen axis is the sum of this series.
+
+(125)
+
+Using the formula for finite term sum of geometric series,
+
+(126)
+
+note that for finite terms this identity holds for .
+
+The key quantity here is
+and its relation to .
+entails or Thus,
+along an eigen direction, the variance reads,
+
+(127)
+
+(128)
+
+∎
+
+Asymptotic behavior
+
+•
+
+In the flat direction, , then ,
+recovering the linear scaling of random walk. Similarly for ,
+it increase linearly.
+
+•
+
+In the concave directions, i.e., ,
+then this series will diverge towards infinity.
+
+•
+
+For , convex direction
+with too high curvature, then ,
+then this series will diverge .
+
+•
+
+For , then ,
+then this series will converge, this is the desirable case for optimization.
+Asymptotically,
+
+(129)
+
+–
+
+The convergence speed is inversely proportional to .
+When close to , the series converges
+faster; when , the convergence time gets longer
+and longer.
+
+–
+
+Convergence timescale can be computed , then
+,
+is the characteristic time scale.
+
+–
+
+The converged level is also controlled by , specifically
+. When
+close to , converged level is lower; when the
+converged level grow towards infinity
+
+–
+
+Thus directions where
+converge the fastest and the variance are the tightest .
+Showing that these directions are the most well controlled by the
+landscape asymptotically. Specifically when ,
+then this direction converges in one iteration .
+
+E.6 Gradient ascent on quadratic landscape
+
+For comparison with the ES dynamics of Section E.5,
+we analyze standard (noiseless) gradient ascent44
+4
+
+Since we are maximizing the reward, it’s gradient ascent, but still we call it GD for simplicity
+on the same quadratic landscape .
+
+The negative gradient at is .
+Gradient ascent with learning rate updates as
+
+(130)
+
+Define , with eigendecomposition
+
+(131)
+
+where and are the eigenvalues and eigenvectors of .
+Let denote the contraction factor along
+eigendirection .
+
+Trajectory
+
+Since the iteration is deterministic, recursion gives
+
+(132)
+
+Each eigendirection evolves independently:
+
+(133)
+
+The squared distance to the optimum is
+
+(134)
+
+Convergence conditions
+
+Direction converges if and only if , i.e.,
+
+(135)
+
+The three non-convergent modes mirror those of the ES dynamics:
+
+•
+
+Flat directions (): ,
+so for all ,
+i.e. along flat directions, the gradient ascent freezes at the initial projection.
+
+This is dramatically different from ES, where along flat directions,
+the iterate undergoes unbounded diffusion with variance growing as .
+
+•
+
+Concave directions (): ,
+causing exponential divergence .
+
+•
+
+Overly sharp convex directions ():
+, and the iterate overshoots, oscillating
+with growing (or non-decaying) amplitude.
+This explosion can happen due to too large learning rate, or due to too high landscape curvature.
+
+Convergence rate
+
+Within the stable regime , the convergence timescale along
+is
+
+(136)
+
+The optimal eigenvalue is , which achieves
+and convergence in a single iteration
+(, since exactly).
+The overall convergence rate is governed by the slowest direction,
+
+(137)
+
+which for small learning rate gives
+, inversely proportional
+to the curvature. The condition number
+(over positive eigenvalues) then controls the ratio of fastest to slowest timescales.
+
+Comparison with ES dynamics
+
+The simplified ES iteration (Proposition 4) takes the form
+
+(138)
+
+with .
+The two iterations are structurally identical, with the correspondence
+, up to the additive
+noise in the ES case. This yields three key differences:
+
+1.
+
+Effective learning rate.
+The ES effective learning rate is
+self-normalized by the reward standard deviation , which
+depends on the current iterate through
+(in the non-simplified version).
+In contrast, the GD learning rate is a fixed hyperparameter.
+This self-normalization provides ES with a degree of automatic step-size
+adaptation absent in vanilla GD.
+
+2.
+
+Stability threshold.
+GD diverges when ; ES diverges when
+.
+The ES threshold is typically more permissive since
+inflates the denominator, though this comes at the cost of a smaller
+effective step size.
+
+3.
+
+Asymptotic behavior.
+GD converges to exactly along stable directions, with
+zero residual error. ES converges only in distribution, with asymptotic
+variance per direction —
+a noise floor set by the exploration–exploitation tradeoff that cannot
+be eliminated without increasing .
+On flat directions (), GD stays frozen at the initial value,
+while ES undergoes unbounded diffusion with variance growing as
+.
+
+These comparisons are summarized by:
+
+(139)
+
+E.7 Solution geometry: GD vs. ES on quadratic landscape
+
+We formalize the geometric claims of the main text by comparing the GD and ES
+solutions after steps on the same quadratic landscape
+, starting from the same initialization .
+Let with .
+
+GD solution
+
+From Section E.6, the GD iterate is deterministic:
+
+(140)
+
+The displacement from initialization is
+
+(141)
+
+Crucially, directions with contribute nothing:
+. Thus lies
+entirely within the column space of (the “task-relevant” subspace). If has
+rank , the GD displacement is confined to an -dimensional subspace,
+regardless of the number of steps .
+
+The squared displacement along each active direction is
+
+(142)
+
+and for converged directions (, large ) this
+saturates to , i.e., the iterate reaches the
+optimum .
+
+ES solution
+
+From Section E.5, the simplified ES iterate is
+
+(143)
+
+with and
+.
+
+The displacement decomposes as
+
+(144)
+
+The signal term has exactly the same structure as the GD displacement, with
+: it lies within the column space of
+and vanishes on flat directions. The noise term, however, is isotropic in origin —
+each is drawn from — and thus
+has support in all dimensions.
+
+Along each eigendirection, the mean and variance of the ES displacement are:
+
+(145)
+
+(146)
+
+For flat directions (, ), the mean displacement
+is zero but the variance grows as — a random walk.
+For active directions (, ), the mean displacement
+converges to (same target as GD) while the variance
+saturates to .
+
+Decomposition of squared displacements
+
+The total expected squared displacement of ES from initialization decomposes as
+
+(147)
+
+The first sum runs over the active directions and contains both signal and noise;
+the second sum runs over the flat directions and is pure noise. For
+(low-rank task structure), the flat-direction contribution dominates:
+
+(148)
+
+By contrast, GD has with
+no off-manifold contribution.
+
+Geometry of
+
+The difference between the two solutions is
+
+(149)
+
+The signal mismatch term lies within the column space of and reflects the
+difference in effective learning rates ( vs. ).
+For converged directions where both methods have reached the optimum, this
+term vanishes: .
+The noise term is identical to the ES noise analyzed above.
+
+Thus, in the large- regime where both methods have converged on the active directions:
+
+(150)
+
+which is dominated by the off-manifold random walk for .
+
+Summary of geometric structure
+
+The three pairwise distances satisfy the approximate hierarchy (for , large ):
+
+(151)
+
+The first displacement is low-dimensional and lies within the column space of .
+The second is the sum of a comparable on-manifold component and a much larger
+isotropic off-manifold diffusion. The third is dominated by the off-manifold
+component alone, since both methods converge to the same optimum within the
+active subspace. This triangle of displacements accounts for the empirical
+observation that achieves similar task performance to
+(shared on-manifold component) while being far from it
+in parameter space (off-manifold diffusion).
+
+Remark 10 (Cosine similarity).
+
+The cosine similarity between the two displacement vectors is
+
+(152)
+
+Since lies within the column space of
+and the ES noise is zero-mean, the expected inner product picks up only the
+on-manifold signal of ES:
+
+(153)
+
+where denotes GD with learning rate
+instead of . For large with both converged on active directions, this
+approaches . Meanwhile,
+, so
+
+(154)
+
+which is small for : the two displacement vectors are nearly orthogonal
+despite leading to similar task performance.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -1,0 +1,1428 @@
+Tex3D: Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Related Work
+
+2.1 Vision-Language-Action Models
+
+2.2 Adversarial Attacks in VLA Models
+
+3 Methodology
+
+3.1 Problem Formulation
+
+3.2 Differentiable Rendering via Foreground–Background Decoupling
+
+3.3 Trajectory-Aware Adversarial Optimization
+
+3.4 Physical Attack
+
+4 Experiments
+
+4.1 Experimental Setup
+
+4.2 Main Results
+
+4.3 Additional Analysis
+
+4.4 Ablation Studies
+
+5 Discussion and Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.01618v1 [cs.CV] 02 Apr 2026
+
+Tex3D: Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models
+
+DOI: XXXXXXX.XXXXXXXConference: Make sure to enter the correct
+conference title from your rights confirmation email; 2026; Rio de Janeiro, BrazilISBN: 978-1-4503-XXXX-X/2018/061311CCS: Security and privacy Social aspects of security and privacy
+
+Jiawei Chen1,2, 
+Simin Huang1, 
+Jiawei Du3, 
+Shuaihang Chen2,5, 
+Yu Tian4, 
+Mingjie Wei2,5, 
+Chao Yu4, 
+Zhaoxia Yin1
+
+Affiliation: Equal contribution Corresponding authors
+
+1East China Normal University 2Zhongguancun Academy 3CFAR, A*STAR, Singapore 4Tsinghua University 5Harbin Institute of Technology
+
+2018
+
+Abstract.
+
+Vision-language-action (VLA) models have shown strong performance in robotic manipulation, yet their robustness to physically realizable adversarial attacks remains underexplored. Existing studies reveal vulnerabilities through language perturbations and 2D visual attacks, but these attack surfaces are either less representative of real deployment or limited in physical realism. In contrast, adversarial 3D textures pose a more physically plausible and damaging threat, as they are naturally attached to manipulated objects and are easier to deploy in physical environments. Bringing adversarial 3D textures to VLA systems is nevertheless nontrivial. A central obstacle is that standard 3D simulators do not provide a differentiable optimization path from the VLA objective function back to object appearance, making it difficult to optimize through an end-to-end manner. To address this, we introduce Foreground-Background Decoupling (FBD), which enables differentiable texture optimization through dual-renderer alignment while preserving the original simulation environment. To further ensure that the attack remains effective across long-horizon and diverse viewpoints in the physical world, we propose Trajectory-Aware Adversarial Optimization (TAAO), which prioritizes behaviorally critical frames and stabilizes optimization with a vertex-based parameterization. Built on these designs, we present Tex3D, the first framework for end-to-end optimization of 3D adversarial textures directly within the VLA simulation environment. Experiments in both simulation and real-robot settings show that Tex3D significantly degrades VLA performance across multiple manipulation tasks, achieving task failure rates of up to 96.7%. Our empirical results expose critical vulnerabilities of VLA systems to physically grounded 3D adversarial attacks and highlight the need for robustness-aware training. The project page is available at https://vla-attack.github.io/tex3d.
+
+Keywords: VLA Models, 3D Adversarial Textures, Embodied Robustness
+
+1. Introduction
+
+Vision-language-action (VLA) models (Black et al., 2024; Kim et al., 2024; Brohan et al., 2022) have achieved remarkable progress in robotic manipulation.
+By processing visual observations and natural language instructions in an end-to-end manner, these models directly map multimodal inputs to low-level control signals (Liu et al., 2024b; Zitkovich et al., 2023), delivering strong performance across a wide range of complex manipulation tasks.
+While VLA models represent a significant step toward general-purpose robotic intelligence, they also introduce potential safety vulnerabilities, particularly against adversarial attacks (Liu et al., 2024a; Wang et al., 2025b; Yang et al., 2025).
+A malicious actor could manipulate a VLA model into executing incorrect or harmful actions, causing it to perform operations unrelated to the intended task or to exhibit unsafe behaviors.
+Assessing the adversarial robustness of VLA models is therefore critical to ensure that deployed systems can respond reliably and safely across varied real-world conditions.
+
+Figure 1. Comparison between Tex3D and existing attack paradigms. Bottom-right: VLA exhibits a certain degree of generalization under color changes and Gaussian noise perturbations, but its task failure rate rises sharply under Tex3D.
+
+Existing adversarial attacks on VLA models generally fall into two categories.
+One line of work (Liu et al., 2024a; Yan et al., Sun Nov 23 2025 07:21:40 GMT+0000 (Coordinated Universal Time)) targets the language modality by injecting adversarial perturbations into the text instruction, causing the model to output erroneous actions. While effective, these methods are tightly coupled to the language interface.
+Another line of work (Wang et al., 2025b; Liu et al., 2025a; Lu et al., Wed Nov 26 2025 09:16:32 GMT+0000 (Coordinated Universal Time); Jia et al., 2022; Zhang et al., Wed Nov 26 2025 18:37:54 GMT+0000 (Coordinated Universal Time)) operates at the 2D visual front-end by affixing adversarial patches onto the input image, inducing task failure through perception-level manipulation. Due to weaker coupling with model-specific interfaces, this line of attack has been more widely studied. However, 2D adversarial patches are inherently view-specific: their effectiveness is contingent on precise viewpoint and pose alignment, which is difficult to guarantee in physical deployment and easy to detect due to their visible, non-naturalistic appearance. Motivated by these limitations, this paper aims to develop a more physically grounded and less perceptible attack surface: adversarial 3D textures. Unlike 2D patches, adversarial 3D textures are directly bound to object surfaces, making them inherently robust to viewpoint and object pose variations during embodied interaction, and more naturally integrated into the object’s appearance. This object-centric attack surface is particularly suitable for embodied manipulation and real-world deployment.
+
+Figure 2. Overview of Tex3D. FBD renders the background in MuJoCo and the target object in Nvdiffrast, with cross-renderer alignment of geometric parameters and lighting parameters for photometrically consistent scene composition. The composited observation is fed into the frozen VLA model, and gradients from untargeted or targeted objectives are back-propagated to directly optimize the object texture. TAAO further applies dynamics-guided weighting over critical frames, enabling temporally effective adversarial 3D texture optimization over complex long-horizon manipulation trajectories.
+
+However, achieving this goal requires overcoming two sequential challenges. The first is the lack of differentiability with respect to object appearance. Common embodied simulation platforms such as MuJoCo (Todorov et al., 2012) (the physics engine underlying LIBERO (Liu et al., 2023)) are non-differentiable w.r.t. 3D object appearance. Since they expose VLA models only through action-level interactions, gradients cannot be propagated back to object textures, making direct optimization of 3D physical perturbations intractable. As a result, there is currently no straightforward way to optimize adversarial 3D textures in such environments. Once such a differentiable optimization pathway is established, a second challenge arises: maintaining adversarial effectiveness over long temporal sequences. Existing 3D texture attacks are mainly developed for non-embodied settings (Xiao et al., 2019; Huang et al., 2024; Suryanto et al., 2023) and do not account for the long sequential nature of VLA inference. Even simple tasks span hundreds of frames, and not all frames contribute equally to the model’s decisions. A perturbation effective at one timestep may have diminished impact at another, making it hard to sustain adversarial influence consistently over the full trajectory.
+
+To address this, we propose Tex3D, an adversarial texture attack framework for VLA models. We first introduce Foreground-Background Decoupling (FBD), which establishes a differentiable optimization pathway through cross-renderer parameter alignment and scene compositing. Specifically, MuJoCo renders the background while the target object is rendered in Nvdiffrast (Laine et al., 2020); the aligned MVP transforms and lighting parameters (, , ) ensure both spatial and photometric coherence across the two renderers. This enables gradients to flow back to the texture map without reconstructing the full simulation stack. Building on this differentiable pipeline, we further propose Trajectory-Aware Adversarial Optimization (TAAO) which consists of two coupled components: (i) identifying behaviorally critical frames via the latent velocity and acceleration of the observation sequence (computed using central differences on a pre-trained visual encoder output) and weighting these frames accordingly via a temperature-scaled softmax; and (ii) jointly reparameterizing the adversarial texture as per-vertex color attributes to constrain optimization to a smooth, low-rank manifold, reducing overfitting and improving attack effectiveness. Building on TAAO, we further instantiate two attack strategies, including untargeted and targeted attacks, to effectively simulate a broad range of adversarial scenarios. Together, these components enable fully end-to-end optimization of physically grounded 3D adversarial textures directly within the embodied simulation loop.
+
+Our main contributions are summarized as follows:
+❶ To the best of our knowledge, Tex3D is the first framework enabling end to end optimization of 3D adversarial textures directly within a VLA simulation environment.
+❷ We introduce two key techniques, Foreground Background Decoupling (FBD) and Trajectory Aware Adversarial Optimization (TAAO), which enable differentiable and temporally consistent optimization of adversarial 3D textures.
+❸ We conduct extensive evaluations in simulation and real robot settings across four manipulation task suites, showing Tex3D achieves task failure rates of up to 96.7%, revealing critical vulnerabilities of current VLA models to physically grounded 3D adversarial attacks.
+
+2. Related Work
+
+2.1. Vision-Language-Action Models
+
+Recent advances in large vision-language models (LVLMs) have driven the development of VLA models, which unify perception, language grounding, and action generation for robotic control (Brohan et al., 2022; Zitkovich et al., 2023; Team et al., 2024; Kim et al., 2024). Existing methods can be broadly categorized into autoregressive, diffusion-based, and hybrid paradigms (Brohan et al., 2022; Zitkovich et al., 2023; Team et al., 2024; Kim et al., 2024; Liu et al., 2024b; Black et al., 2024; Wen et al., 2025; Shukor et al., 2025; Liu et al., 2025b). Among them, OpenVLA (Kim et al., 2024; O’Neill et al., 2024; Karamcheti et al., 2024) and  (Black et al., 2024) are two representative open-source VLA models, following token-based autoregressive prediction and flow-matching diffusion policies, respectively. Recent extensions such as OpenVLA-OFT (Kim et al., 2025),  (Intelligence et al., 2025), and other enhanced VLA frameworks (Zheng et al., 2024; Qu et al., 2025; Li et al., 2024) further improve efficiency, spatial-temporal reasoning, and generalization. Despite strong performance, these models remain highly vulnerable to adversarial attacks (Liu et al., 2024a; Karnik et al., 2024; Yan et al., Sun Nov 23 2025 07:21:40 GMT+0000 (Coordinated Universal Time); Jones et al., 2025), as even small visual perturbations can propagate through the tightly coupled perception-language-action pipeline and trigger potentially unsafe or erroneous actions.
+
+2.2. Adversarial Attacks in VLA Models
+
+Adversarial attacks (Kurakin et al., 2016; Shafahi et al., 2019; Chen et al., 2023; Chen et al., 2025) are widely used to probe vulnerabilities in VLA models, where small perturbations can lead to task failures or unsafe behaviors (Liu et al., 2024a; Karnik et al., 2024; Wang et al., 2025a). Existing VLA attacks can generally be divided into two categories: (1) language-based attacks, which manipulate instructions to subtly influence action generation (Liu et al., 2024a; Karnik et al., 2024; Yan et al., Sun Nov 23 2025 07:21:40 GMT+0000 (Coordinated Universal Time)), and (2) patch-based attacks, which apply adversarial perturbations to input images, typically via 2D patches that significantly degrade model performance and can often transfer across settings (Wang et al., 2025b; Liu et al., 2025a; Lu et al., Wed Nov 26 2025 09:16:32 GMT+0000 (Coordinated Universal Time); Jia et al., 2022; Zhang et al., Wed Nov 26 2025 18:37:54 GMT+0000 (Coordinated Universal Time)). Compared to language-based methods, visual attacks are more practical due to their direct impact on perception and physical realizability (Fei et al., 2025). However, existing 2D patch attacks are inherently viewpoint-dependent, requiring precise alignment between camera pose and object geometry, and their conspicuous appearance makes them easier to detect. While prior work has explored 3D adversarial perturbations using point clouds, meshes, and neural rendering to improve cross-view robustness (Xiao et al., 2019; Xiang et al., 2019; Li et al., 2023), these approaches are not directly applicable to VLA systems.
+To effectively address these limitations, we explore adversarial 3D textures bound to target object surfaces, enabling more robust, physically realizable, and less perceptible attacks.
+
+3. Methodology
+
+3.1. Problem Formulation
+
+We consider embodied simulation environments such as MuJoCo, where the visual scene consists of 3D objects. Each object is modeled as a textured mesh , with vertex coordinates , triangle face indices , and a texture map that encodes its surface appearance. The scene is rendered at each timestep into an RGB observation , which serves as the visual input to the VLA model . The model takes and a language instruction and outputs actions , i.e., .
+
+Optimization Objective.
+The goal of Tex3D is to find an adversarial texture map that encodes a texture capable of disrupting the VLA model’s action outputs, while leaving the object’s geometry and semantic identity intact.
+Since VLA inference is inherently sequential, even a simple task unfolds over hundreds of timesteps; the adversarial texture must therefore sustain its effect across the full trajectory rather than a single observation.
+Moreover, to improve robustness against viewpoint changes, we optimize the texture jointly over sampled views at each timestep. Let denote the observation of mesh at timestep under the -th sampled view, where .
+Let be the corresponding reference action under the clean mesh.
+Tex3D thus seeks that maximizes the action deviation in expectation jointly over both the task trajectory and sampled views during optimization:
+
+(1)
+
+To enable end-to-end optimization of directly within the simulator, we design FBD, a differentiable rendering pipeline that decouples the adversarial object from its static background, allowing gradients to directly flow back to the texture map ; details are given in Sec. 3.2.
+To realize the trajectory-level expectation in Eq. (1) both effectively and efficiently, we further propose TAAO, which automatically identifies behaviorally critical frames via latent dynamics of the observation sequence and concentrates optimization on them; details are given in Sec. 3.3.
+Finally, to improve the robustness of our framework under real-world conditions, we incorporate an EoT scheme to bridge the gap between digital-domain optimization and physical deployment, as detailed in Sec. 3.4.
+
+3.2. Differentiable Rendering via Foreground–Background Decoupling
+
+Common embodied simulators such as MuJoCo typically serve primarily as physics engines and do not expose a gradient path through 3D object appearance.
+We propose Foreground-Background Decoupling (FBD): MuJoCo is kept running unmodified, while the target object is additionally rendered in the differentiable renderer Nvdiffrast fully in parallel.
+At each step, the relevant rendering parameters (object pose, camera viewpoint, and lighting) are relayed from MuJoCo to Nvdiffrast for precisely synchronized rendering; corresponding gradients are then computed through Nvdiffrast to update the adversarial texture, which is subsequently applied back to the object in MuJoCo for the next simulation step.
+This design combines the strengths of both renderers: Nvdiffrast provides differentiable gradients for texture optimization, while MuJoCo retains full control over the simulation environment and the VLA model interaction interface, which Nvdiffrast alone cannot provide.
+
+❶ Environmental background rendering.
+At timestep , MuJoCo renders the complete scene under physically accurate simulation, capturing the full environmental context (robot, tabletop, and surrounding objects) as the faithful background reference:
+
+(2)
+
+❷ Target foreground rendering.
+We adopt Nvdiffrast, a high-performance differentiable renderer developed by NVIDIA that provides GPU-accelerated primitive operations based on rasterization, enabling efficient gradient computation over 3D mesh attributes including texture.
+The target object mesh is rendered under rendering parameters aligned with MuJoCo (see cross-renderer geometric alignment below).
+This produces the foreground image with gradients available with respect to , and a silhouette mask pre-computed from MuJoCo’s native renderer that identifies which pixels correspond to the target object and which belong to the background.
+
+❸ Scene compositing.
+After foreground object rendering, the adversarial observation is explicitly assembled by substituting the object with the adversarial texture seamlessly back into the scene:
+
+(3)
+
+where denotes element-wise multiplication.
+This is equivalent to applying to the object in MuJoCo, while maintaining a differentiable path from back through the action loss.
+is fed to the VLA model, which produces the action , completing the gradient chain required by Eq. (1).
+
+Cross-renderer parameter alignment.
+To ensure that Nvdiffrast renders the target object consistently with its appearance in MuJoCo, we synchronize the rendering parameters of both renderers at each timestep.
+Geometric alignment.
+Let be the model matrix of the target object, encoding its 3D pose in world coordinates.
+The view matrix and projection matrix are derived from the simulator’s camera pose and intrinsic parameters.
+Following the widely used standard MVP transform in computer graphics, the clip-space coordinate of each vertex is obtained as:
+
+(4)
+
+where is the precisely defined homogeneous form of the -th vertex ; transforms the vertex from object space to world space; further projects it into camera space; and maps it to clip space.
+Nvdiffrast subsequently takes as input for rasterization and texture interpolation.
+Through this transform, the spatial placement of the target object in Nvdiffrast is precisely aligned with its counterpart in MuJoCo, ensuring geometric consistency across the two renderers.
+Lighting alignment.
+Beyond geometry, we explicitly align the lighting conditions of the two renderers.
+The ambient light intensity , diffuse light intensity , and material reflectance of the target object are read from MuJoCo’s scene configuration and applied to the Nvdiffrast shading pipeline.
+Through this joint alignment, the viewpoint, pose, and surface shading of the target object are kept faithfully consistent between the two renderers, yielding a photometrically coherent composited observation.
+
+Table 1. Task failure rates (%) on four LIBERO task variants under untargeted and targeted settings. “No Attack” denotes clean evaluation, “Gaussian”: random Gaussian noise, “Single-frame”: one-frame perturbation, “Vertex Param.”: our parameterized texture attack without temporal consistency, “Tex+Temp.”: the texture-only temporal variant, and Tex3D: our full method.
+
+Model
+Task
+Untargeted Attack
+Targeted Attack
+
+No Attack
+Gaussian
+Single-frame
+Vertex Param.
+Tex+Temp.
+Tex3D
+No Attack
+Gaussian
+Single-frame
+Vertex Param.
+Tex+Temp.
+Tex3D
+
+OpenVLA (Kim et al., 2024)
+Spatial
+15.6
+24.6 (9.0)
+75.1 (59.5)
+80.5 (64.9)
+90.3 (74.7)
+95.8 (80.2)
+15.6
+24.6 (9.0)
+82.4 (66.8)
+86.5 (70.9)
+93.2 (77.6)
+96.7 (81.1)
+
+Object
+11.8
+18.8 (7.0)
+62.1 (50.3)
+69.8 (58.0)
+74.6 (62.8)
+81.1 (69.3)
+11.8
+18.8 (7.0)
+70.9 (59.1)
+74.8 (63.0)
+81.1 (69.3)
+85.5 (73.7)
+
+Goal
+23.6
+28.8 (5.2)
+65.5 (41.9)
+70.7 (47.1)
+79.1 (55.5)
+84.8 (61.2)
+23.6
+28.8 (5.2)
+71.5 (47.9)
+74.2 (50.6)
+81.6 (58.0)
+86.9 (63.3)
+
+Long
+45.4
+52.2 (6.8)
+73.2 (27.8)
+80.9 (35.5)
+87.8 (42.4)
+90.9 (45.5)
+45.4
+52.2 (6.8)
+79.6 (34.2)
+84.3 (38.9)
+90.5 (45.1)
+92.8 (47.4)
+
+Avg.
+24.1
+31.1 (7.0)
+69.0 (44.9)
+75.5 (51.4)
+82.9 (58.8)
+88.1 (64.0)
+24.1
+31.1 (7.0)
+76.1 (52.0)
+79.9 (55.8)
+86.6 (62.5)
+90.5 (66.4)
+
+OpenVLA-OFT (Kim et al., 2025)
+Spatial
+3.8
+0 8.8 (5.0)
+69.9 (66.1)
+72.2 (68.4)
+74.9 (71.1)
+78.6 (74.8)
+3.8
+0 8.8 (5.0)
+70.8 (67.0)
+74.4 (70.6)
+76.9 (73.1)
+80.9 (77.1)
+
+Object
+1.7
+0 3.6 (1.9)
+57.4 (55.7)
+64.9 (63.2)
+67.7 (66.0)
+70.6 (68.9)
+1.7
+0 3.6 (1.9)
+63.7 (62.0)
+69.2 (67.5)
+71.2 (69.5)
+76.4 (74.7)
+
+Goal
+3.8
+0 5.4 (1.6)
+61.3 (57.5)
+68.1 (64.3)
+72.4 (68.6)
+76.8 (73.0)
+3.8
+0 5.4 (1.6)
+64.6 (60.8)
+70.9 (67.1)
+73.9 (70.1)
+79.8 (76.0)
+
+Long
+9.3
+10.9 (1.6)
+65.5 (56.2)
+68.0 (58.7)
+73.6 (64.3)
+78.2 (68.9)
+9.3
+10.9 (1.6)
+68.9 (59.6)
+71.7 (62.4)
+75.8 (66.5)
+80.2 (70.9)
+
+Avg.
+4.7
+0 6.5 (1.8)
+63.5 (58.8)
+68.3 (63.6)
+72.1 (67.4)
+76.0 (71.3)
+4.7
+0 6.5 (1.8)
+67.0 (62.3)
+71.5 (66.8)
+74.4 (69.7)
+79.3 (74.6)
+
+ (Black et al., 2024)
+Spatial
+3.5
+11.8 (8.3)
+54.7 (51.2)
+59.4 (55.9)
+65.2 (61.7)
+74.9 (71.4)
+3.5
+11.8 (8.3)
+58.8 (55.3)
+63.2 (59.7)
+69.5 (66.0)
+75.9 (72.4)
+
+Object
+2.3
+08.6 (6.3)
+48.6 (46.3)
+55.4 (53.1)
+59.3 (57.0)
+68.9 (66.6)
+2.3
+08.6 (6.3)
+52.5 (50.2)
+57.2 (54.9)
+62.6 (60.3)
+70.2 (67.9)
+
+Goal
+5.2
+09.6 (4.4)
+53.0 (47.8)
+58.3 (53.1)
+63.1 (57.9)
+70.3 (65.1)
+5.2
+09.6 (4.4)
+56.2 (51.0)
+60.5 (55.3)
+68.6 (63.4)
+73.4 (68.2)
+
+Long
+7.2
+12.7 (5.5)
+54.2 (47.0)
+57.7 (50.5)
+64.5 (57.3)
+72.9 (65.7)
+7.2
+12.7 (5.5)
+57.2 (50.0)
+61.4 (54.2)
+68.4 (61.2)
+73.7 (66.5)
+
+Avg.
+4.6
+10.7 (6.1)
+52.6 (48.0)
+57.7 (53.1)
+63.0 (58.4)
+71.8 (67.2)
+4.6
+10.7 (6.1)
+56.2 (51.6)
+60.6 (56.0)
+67.3 (62.7)
+73.3 (68.7)
+
+ (Intelligence et al., 2025)
+Spatial
+1.2
+07.7 (6.5)
+47.1 (45.9)
+52.5 (51.3)
+60.1 (58.9)
+71.8 (70.6)
+1.2
+07.7 (6.5)
+49.3 (48.1)
+55.2 (54.0)
+63.2 (62.0)
+72.9 (71.7)
+
+Object
+1.8
+06.9 (5.1)
+39.7 (37.9)
+46.0 (44.2)
+52.4 (50.6)
+65.2 (63.4)
+1.8
+06.9 (5.1)
+41.1 (39.3)
+48.2 (46.4)
+54.3 (52.5)
+68.3 (66.5)
+
+Goal
+2.0
+05.5 (3.5)
+44.7 (42.7)
+50.9 (48.9)
+57.7 (55.7)
+69.7 (67.7)
+2.0
+05.5 (3.5)
+47.5 (45.5)
+53.2 (51.2)
+60.8 (58.8)
+71.3 (69.3)
+
+Long
+6.0
+09.3 (3.3)
+50.0 (44.0)
+55.2 (49.2)
+63.0 (57.0)
+70.6 (64.6)
+6.0
+09.3 (3.3)
+51.8 (45.8)
+56.8 (50.8)
+65.1 (59.1)
+72.1 (66.1)
+
+Avg.
+2.8
+07.4 (4.6)
+45.4 (42.6)
+51.2 (48.4)
+58.3 (55.5)
+69.3 (66.5)
+2.8
+07.4 (4.6)
+47.4 (44.6)
+53.4 (50.6)
+60.9 (58.1)
+71.2 (68.4)
+
+Table 2. Task failure rates (%). Top: dual-renderer fidelity of OpenVLA; values in parentheses show increases from MuJoCo direct rendering. Bottom: cross-model transferability; increases are relative to the target model’s clean performance.
+
+Spatial
+Object
+Goal
+Long
+
+Dual-Renderer Fidelity
+
+MuJoCo (direct)
+15.6
+11.8
+23.6
+45.4
+
+MuJoCo + nvdiffrast
+16.8 (1.2)
+12.2 (0.4)
+24.4 (0.8)
+45.8 (0.4)
+
+Cross-Model Transferability
+
+OpenVLA OpenVLA-OFT
+70.6 (66.8)
+61.5 (59.8)
+65.4 (61.6)
+69.1 (59.8)
+
+OpenVLA-OFT OpenVLA
+75.3 (59.7)
+70.2 (58.4)
+73.4 (49.8)
+75.7 (30.3)
+
+58.4 (57.2)
+49.2 (47.4)
+54.1 (52.1)
+57.6 (51.6)
+
+63.7 (60.2)
+55.8 (53.5)
+60.5 (55.3)
+62.3 (55.1)
+
+OpenVLA
+41.2 (37.7)
+34.5 (32.2)
+38.9 (33.7)
+44.1 (36.9)
+
+OpenVLA
+32.6 (31.4)
+27.8 (26.0)
+31.4 (29.4)
+36.5 (30.5)
+
+OpenVLA
+51.2 (35.6)
+44.8 (33.0)
+52.4 (28.8)
+61.5 (16.1)
+
+OpenVLA-OFT
+43.6 (39.8)
+37.2 (35.5)
+41.5 (37.7)
+48.4 (39.1)
+
+3.3. Trajectory-Aware Adversarial Optimization
+
+As clearly established in Sec. 3.1, effective adversarial textures must consistently exert influence across the full manipulation trajectory rather than at isolated frames.
+We address this by proposing trajectory-aware adversarial optimization (TAAO), which exploits task structure to focus adversarial pressure where it matters most.
+
+Latent dynamics-guided frame weighting.
+Frames at which the robot undergoes behavioral transitions (e.g., the onset of grasping or lift-off) are disproportionately influential on task success.
+We identify such frames through the latent dynamics of the observation sequence, without relying on any simulator-specific state.
+
+Latent feature extraction.
+At each timestep , we first extract a compact latent representation via a pre-trained visual encoder (Esser et al., 2021) :
+
+(5)
+
+Latent velocity and acceleration.
+We estimate the temporal rate and rate-of-change of feature variation using central differences:
+
+(6)
+
+and jointly normalize both quantities over the trajectory:
+
+(7)
+
+Criticality scoring and frame weighting.
+After jointly normalizing the two variables, we formally define the criticality score as:
+
+(8)
+
+and the per-frame optimization weight is derived via a temperature-scaled softmax to prioritize critical timesteps during optimization:
+
+(9)
+
+where controls the concentration.
+High indicates rapid perceptual change; high signals an abrupt shift in the rate of change—hallmarks of behaviorally critical moments.
+This instantiates in Eq. (1) as a dynamics-weighted sum over the episode.
+
+Vertex-based texture parameterization.
+Direct optimization in the high-dimensional pixel space of often tends to produce highly irregular perturbations that overfit to the specific model being attacked, resulting in poor cross-model transferability (Huang et al., 2024).
+To mitigate this, we effectively leverage Nvdiffrast to reparameterize as per-vertex color attributes , with the texture map recovered through barycentric interpolation over the fixed mesh geometry defined in Sec. 3.1:
+
+(10)
+
+Since , this parameterization implicitly restricts the perturbation to a smooth, low-rank manifold defined by the mesh geometry, thereby effectively reducing the search space and consistently yielding more transferable adversarial textures.
+
+Untargeted attack.
+The untargeted objective degrades overall task success of the VLA model, without prescribing a specific failure mode.
+Given the reference action produced by the model on the clean object under the -th sampled view, we maximize the weighted action deviation averaged over views:
+
+(11)
+
+Targeted attack.
+Targeted manipulation attacks go further by steering the model toward a prescribed erroneous trajectory, enabling deliberate behavioral hijacking.
+Let denote the target action at timestep .
+The objective minimizes the deviation of the model’s output from this trajectory across all sampled views:
+
+(12)
+
+In our implementation, is defined as semantically plausible, time-varying actions that redirect the gripper toward an alternative target at each timestep, inducing controlled task deviation.
+
+3.4. Physical Attack
+
+Adversarial textures optimized purely in the digital domain may degrade in effectiveness when applied to physical objects, due to real-world variations such as viewpoint shifts, lighting changes, and imaging artifacts.
+To bridge this gap, we incorporate the Expectation over Transformations (EoT) (Athalye et al., 2018) strategy during optimization.
+Rather than optimizing for a single rendered observation, EoT samples a stochastic transformation at each step, covering both 3D variations (object pose perturbations, viewpoint shifts, distance changes) and 2D image-level augmentations (brightness, contrast, and blur).
+The rendered observation under EoT is thus:
+
+(13)
+
+and replaces in Eqs. (11) and (12) during training.
+This encourages the adversarial texture to remain effective across diverse and unseen physical rendering conditions, improving its sim-to-real transferability. EoT complements the multi-view optimization in Sec. 3.1: multi-view optimization improves robustness to viewpoint changes in simulation, whereas EoT further bridges the gap to physical deployment by modeling broader real-world transformations. Detailed analyses and pseudocode are in Appendices A and B.
+
+Table 3. Task failure rates (%) comparison across color variants and Gaussian perturbation on four LIBERO task suites.
+
+Model
+Variant
+Spatial
+Object
+Goal
+Long
+
+OpenVLA
+Green
+20.2 (4.6)
+17.8 (6.0)
+27.4 (3.8)
+48.8 (3.4)
+
+Red
+23.2 (7.6)
+18.6 (6.8)
+26.6 (3.0)
+50.6 (5.2)
+
+Yellow
+18.8 (3.2)
+15.4 (3.6)
+25.2 (1.6)
+48.4 (3.0)
+
+Blue
+24.4 (8.8)
+19.2 (7.4)
+27.6 (4.0)
+49.2 (3.8)
+
+Gaussian
+24.6 (9.0)
+18.8 (7.0)
+28.8 (5.2)
+52.2 (6.8)
+
+OpenVLA-OFT
+Green
+0 5.8 (2.0)
+0 5.4 (3.7)
+0 7.2 (3.4)
+11.4 (2.1)
+
+Red
+0 6.8 (3.0)
+0 6.8 (5.1)
+0 8.6 (4.8)
+12.8 (3.5)
+
+Yellow
+0 4.6 (0.8)
+0 4.8 (3.1)
+0 6.8 (3.0)
+10.8 (1.5)
+
+Blue
+0 6.2 (2.4)
+0 5.9 (4.2)
+0 8.8 (5.0)
+13.9 (4.6)
+
+Gaussian
+0 8.8 (5.0)
+0 3.6 (1.9)
+0 5.4 (1.6)
+10.9 (1.6)
+
+4. Experiments
+
+4.1. Experimental Setup
+
+Datasets & Threat Models. We conduct our experiments on the LIBERO (Liu et al., 2023) benchmark in simulation environments, which provides a standardized testbed for evaluating VLA models across four task categories: Spatial, Object, Goal, and Long-horizon tasks. These tasks cover progressively more challenging manipulation scenarios,ranging from simple spatial reasoning to multi-step planning. We evaluate four representative VLA models, OpenVLA, OpenVLA-OFT, , and , and report results on all LIBERO task variants.
+
+Baselines. We use three variants with Tex3D: (1) Single-frame: perturbs the adversarial texture using only a single observation frame (Xiao et al., 2019); (2) Vertex Param.: removes temporal consistency and performs only vertex-based adversarial texture optimization; and (3) Tex+Temp.: introduces temporal consistency to the texture-only variant. Additionally, following (Dong et al., 2022; Ruan et al., 2023), we establish two potential baselines settings : the clean setting without perturbation (No Attack) and random Gaussian perturbations applied to the object texture (Gaussian). In Sec. 4.3, we further compare Tex3D against 2D patch-based adversarial attacks (Wang et al., 2025b) in terms of robustness under digital geometric variations and physical-world deployment.
+
+Figure 3. Qualitative results of Tex3D on manipulation tasks. For each task, the green row shows the clean rollout,whereas the red row shows the adversarial rollout under Tex3D.
+
+Figure 4. Robustness comparison of Tex3D and 2D patch-based baselines under varying camera angles, object rotations, object positions (digital simulation), and position offsets in the physical world. Task failure rate (%, ) is reported.
+
+Evaluation Metric & Details.
+We evaluate Tex3D following the standard protocol adopted in the LIBERO benchmark. Each task is executed for 50 independent trials, and performance is measured by Task Failure Rate (FR), defined as the proportion of failed task completions over all trials. For each benchmark suite, we report the average FR across tasks to reflect overall attack effectiveness and generalization. Unless otherwise specified, all experiments are conducted on a single NVIDIA A100 GPU with 80GB memory.
+
+Physical Experiment Setting. For real-world experiments, we employ a robotic platform built around a Franka Emika Panda manipulator, controlled via 7-DoF end-effector delta commands. Observations are obtained from a single monocular RGB camera, and our method operates solely on raw RGB inputs without requiring additional sensory modalities. To facilitate systematic quantitative evaluation, we utilize 3D printing to fabricate both the objects used in pick-and-place tasks and the corresponding adversarial variants. All tasks are repeated for 100 independent trials each. Further implementation details and setups are provided in Appendix G.
+
+4.2. Main Results
+
+Figure 5. Physical-world qualitative comparison. The first row: clean samples, the second row :results under 2D patch-based attacks, and the third row: results under Tex3D.
+
+Overall Attack Effectiveness. Tab. 1 quantitatively summarizes the overall effectiveness of Tex3D on LIBERO tasks. Tex3D consistently yields the highest task failure rates across all four victim models, all four task variants, and both untargeted and targeted settings. On OpenVLA, the average failure rate rises sharply from 24.1% to 88.1% and 90.5% under untargeted and targeted attacks, respectively, while OpenVLA-OFT increases from 4.7% to 76.0% and 79.3%. Similar trends are observed on , whose average failure rate rises from 4.6% to 71.8% and 73.3%, and on , where it increases from 2.8% to 69.3% and 71.2%. For targeted attacks, following the evaluation setting in (Wang et al., 2025b), Tab. 4 further shows that the attacked actions remain close to the prescribed target actions, with average L1 distances of 0.0176, 0.0237, 0.0305, and 0.0372 on OpenVLA, OpenVLA-OFT, , and , respectively. The most pronounced increase appears on the Spatial task, where Tex3D raises the failure rate from 15.6% to 95.8%/96.7% on OpenVLA, and from 3.5% to 74.9%/75.9% on . These results indicate that the strong attack performance does not come from simple noise injection or single-frame perturbation, but from jointly optimizing object-level adversarial textures with temporal consistency. This principled design enables Tex3D to produce stronger and more stable attacks than all baselines and ablations across diverse manipulation tasks.
+
+Cross-Model Transferability. Tab. 2 (bottom) reports cross-model transfer results to evaluate whether adversarial textures optimized on one VLA generalize to unseen victim models. Strong transfer appears in both same- and cross-family settings in practice. Within the same family, attacks transfer strongly between OpenVLA and OpenVLA-OFT, yielding 61.5%–70.6% failure rates in the OpenVLA OpenVLA-OFT direction and 70.2%–75.7% in the reverse direction; transfer between and is likewise consistently high, at 49.2%–58.4% and 55.8%–63.7%, respectively. Across families, attacks crafted on OpenVLA transfer effectively to and , reaching 34.5%–44.1% and 27.8%–36.5%, while textures optimized on remain effective on OpenVLA and OpenVLA-OFT, achieving 44.8%–61.5% and 37.2%–48.4%, respectively. Taken together, these results show that Tex3D learns robust object-level adversarial patterns rather than overfitting to a specific source model, making the attack also effective under diverse source-target model pairings.
+
+Ruling Out Non-adversarial Factors. To verify the elevated failure rates in Tab. 1 arise from adversarial optimization rather than color variation or rendering artifacts, two control studies are performed. First, Fig. 1 and Tab. 3 show that neither color changes nor random Gaussian perturbations cause comparably severe failures. For instance, on the OpenVLA Spatial task, these controls remain within 18.8%–24.6%, far below the 95.8%/96.7% achieved by Tex3D under untargeted/targeted attacks. Second, Tab. 2 (top) shows that the MuJoCo+nvdiffrast cross-rendering pipeline introduces negligible discrepancies, with at most 1.2 points difference across all four task suites. Together, these results confirm that the high failure rates are primarily induced by the adversarial textures optimized by Tex3D, rather than ordinary color shifts or rendering distortion.
+
+4.3. Additional Analysis
+
+Table 4. L1 distance () between the attacked action and target action across task suites on four victim VLA models.
+
+Model
+Spatial
+Object
+Goal
+Long
+Avg.
+
+OpenVLA
+0.0137
+0.0205
+0.0185
+0.0176
+0.0176
+
+OpenVLA-OFT
+0.0214
+0.0281
+0.0241
+0.0212
+0.0237
+
+0.0284
+0.0357
+0.0312
+0.0268
+0.0305
+
+0.0349
+0.0423
+0.0386
+0.0331
+0.0372
+
+Table 5. Representative trajectory-aware dynamics-guided frame weights along a sample manipulation trajectory.
+
+Stage
+T1 Initial
+T2 Reach
+T3 Grasp
+T4 Transfer
+T5 Put down
+
+Step
+10
+50
+100
+150
+195
+
+Weight
+0.20
+0.37
+0.90
+0.32
+0.20
+
+Figure 6. Impact of input-space defenses on Tex3D.
+
+Robustness against 2D Patch Attacks. To further systematically examine whether object-level adversarial textures provide better robustness than conventional 2D patch-based attacks (Wang et al., 2025b), additional comparisons are conducted in both digital and physical settings. Fig. 4 shows that 2D patch-based attacks are highly brittle under digital geometric variations: their failure rate drops sharply from 100% to 67.4% under camera-angle perturbations and to 63.4% under object rotations. In contrast, Tex3D consistently remains much more stable, staying around 80.8%–88.1% across all three digital variations. A similar advantage is preserved in the physical world, where Tex3D maintains substantially higher failure rates (66.8%–67.6%) than both 2D patch (40.8%–50.8%) and 2D patch+EoT (49.8%–56.6%). Fig. 5 further provides qualitative evidence that 2D patches are more sensitive to viewpoint changes and placement mismatch, whereas the object-level adversarial textures generated by Tex3D preserve their attack effect after physical deployment. In addition, the first row of Fig. 7 shows that Tex3D also achieves better visual quality, reflected by lower LPIPS than the 2D patch-based baseline. Overall, these results indicate that optimizing textures directly on the target object yields attacks that are not only more transferable across geometric variations, but also more robust and consistently visually natural in real-world deployment scenarios, even under diverse and challenging real-world environments.
+
+Robustness Against Common Defenses. Beyond the above geometric variations such as rotations and viewpoint changes, we further study the robustness of Tex3D against common defenses (Dziugaite et al., 2016; Zhang and Liang, 2019; Xu et al., 2017). Fig. 6 shows that standard input-space defenses, including JPEG compression, additive noise, median blur, and bit-depth reduction, have little effect on mitigating our attack. Across all defense settings, the adversarial task failure rate under Tex3D remains nearly unchanged, staying around 86.6%–87.3%. These results suggest that Tex3D preserves strong attack effectiveness even under common defenses, further demonstrating its robustness.
+
+Figure 7. First column: qualitative perceptual-similarity direct comparison between Tex3D and 2D patch-based attacks. Second and third columns: rendering-consistency comparison at the same optimization step between the original renderer (MuJoCo) and our dual-renderer pipeline (Ours).
+
+Rendering Consistency and Attack Trajectory. To further empirically verify that the proposed attack does not rely on renderer mismatch, the second and third columns of Fig. 7 compare same-step renderings from the original MuJoCo pipeline and our dual-renderer pipeline. The resulting SSIM scores are consistently close to 1, indicating that the dual-renderer composition remains highly consistent with the original simulator rendering while still enabling gradient-based optimization. At the same time, Fig. 3 shows that these visually consistent renderings can nevertheless induce substantial behavioral deviations over time: compared with the clean rollout, the adversarial trajectory gradually drifts away from the intended manipulation path and eventually leads to clear task failure. Together, these results show that the effectiveness of Tex3D comes from adversarial texture optimization rather than rendering artifacts, while our dual-renderer design preserves simulator fidelity and still produces consistently strong trajectory-level attack effects.
+
+Representative Keyframe Weights. To further illustrate how TAAO allocates optimization effort over time, Tab. 5 reports representative frame weights along a manipulation trajectory. The weights remain relatively low at stable stages such as initialization and put-down, become moderately larger during reaching and transfer, and peak sharply at the particularly critical grasping stage. In this example, grasping receives the highest weight, indicating that TAAO concentrates adversarial optimization on the most decision-sensitive moment of the task. This behavior is consistent with the intuition that errors near grasp formation are more likely to propagate to subsequent stages and cause final task failure. An ablation study on keyframe inversion is provided in Appendix C.
+
+Table 6. Ablation study on FBD and TAAO components of Tex3D. Fail. Rate: Task Failure Rate on OpenVLA (%, ); Time: wall-clock time per gradient optimization step (s, ).
+
+FBD
+TAAO
+Fail. Rate
+Time
+
+MVP
+Light.
+Decouple
+Rand.
+Unif.
+Dyn.
+(%)
+(s)
+
+FBD Component Ablation
+
+–
+✓
+✓
+–
+–
+✓
+65.8
+7.2
+
+✓
+–
+✓
+–
+–
+✓
+76.8
+7.2
+
+✓
+✓
+–
+–
+–
+✓
+84.6
+24.8
+
+TAAO Weighting Strategy Ablation
+
+✓
+✓
+✓
+✓
+–
+–
+73.7
+7.2
+
+✓
+✓
+✓
+–
+✓
+–
+82.1
+7.2
+
+✓
+✓
+✓
+–
+–
+✓
+88.1
+7.2
+
+Figure 8. Tex3D performance across four perturbation levels. Each subplot shows task failure rates (%) from L0 to L3 settings, where L0 denotes the naturalness-constrained setting and L1–L3 progressively increase the perturbation budget.
+
+4.4. Ablation Studies
+
+Effect of FBD and TAAO Design. Tab. 6 studies which components drive the effectiveness and efficiency of Tex3D. Removing Decouple, i.e., rendering the whole scene in nvdiffrast instead of separating foreground and background, reduces task failure rate from 88.1% to 84.6% and increases per-step optimization time from 7.2s to 24.8s. Removing MVP or Lighting further lowers the task failure rate to 65.8% and 76.8%, respectively, confirming the importance of cross-renderer alignment and lighting modeling. On the TAAO side, dynamics-guided weighting achieves the highest task failure rate, outperforming random weighting (73.7%) and uniform weighting (82.1%). Overall, dual-renderer decoupling provides a favorable effectiveness-efficiency trade-off, while dynamics-guided weighting is the most effective choice for trajectory-aware optimization,consistently yielding better performance across tasks.
+
+Effect of Perturbation Level. To study how perturbation strength affects attack performance, we vary the perturbation level from L0 to L3 and report both white-box and cross-model transfer results in Fig. 8. Fig. 9 further provides a qualitative comparison of adversarial textures under different budgets. Here, L0 denotes the naturalness-constrained setting with and an additional MSE loss between adversarial and clean samples, while L1, L2, and L3 correspond to , , and , respectively. Overall, all perturbation levels substantially increase task failure rates across all four LIBERO task suites for both victim models. A clear trend shows that stronger perturbations result in higher failure rates, especially from L1 to L3, in both white-box and transfer settings. Meanwhile, L0 yields slightly lower failure rates than unconstrained levels, indicating a trade-off between stealthiness and attack strength. Despite this, L0 remains highly effective, suggesting that visually natural perturbations can still induce severe failures. These results demonstrate that the proposed attack is robust across a wide range of perturbation budgets, with stronger perturbations further increasing failure rates and improving transferability.
+
+Figure 9. The qualitative visual comparison under different perturbation budgets and the clean reference sample image.
+
+5. Discussion and Conclusion
+
+Figs. 8 and 9 reveal a noteworthy phenomenon: even nearly imperceptible perturbations under the L0 and L1 settings can already cause sharp increases in VLA failure rates, with OpenVLA still exceeding 90% on the Spatial suite under strong attack. This fragile robustness may stem from the current data regime of VLA systems, as existing robot training corpora and evaluation benchmarks are still largely built in relatively clean and idealized environments (Fei et al., 2025) with limited coverage of subtle appearance shifts and adversarial visual variations. As a result, even small perturbations can induce substantial distribution shifts in the perception module. Our findings therefore highlight the urgent need to rethink VLA training for meaningful robustness against adversarial attacks. Such robustness may potentially be improved in two directions: (1) incorporating more diverse and realistic robotic scenes at the visual level; and (2) enforcing stronger structural constraints over joint dependencies at the action level to filter out implausible or harmful actions.
+
+In summary, this paper presents Tex3D, the first framework for end-to-end optimization of adversarial 3D textures directly in the VLA simulation environment. By introducing FBD, we establish a differentiable optimization path from VLA objectives back to object appearance while preserving rendering consistency with the original simulator. Built on this, TAAO emphasizes behaviorally critical frames to sustain attack effectiveness over long-horizon manipulation trajectories. Extensive experiments in both simulation and physical settings across multiple VLA models and LIBERO task suites show that Tex3D consistently achieves high task failure rates under both untargeted and targeted settings, transfers effectively across model architectures, and remains robust under geometric variations and common defenses. Taken together, these results show that object-level adversarial textures constitute a practical and highly effective attack surface for embodied agents,and underscore the need for more systematic robustness evaluation and more comprehensive training under persistent, physically grounded adversarial interactions in future real-world deployment settings and safety-critical scenarios, particularly in complex environments.
+
+References
+
+Athalye et al. (2018)
+A. Athalye, L. Engstrom, A. Ilyas, and K. Kwok
+
+Synthesizing robust adversarial examples.
+
+In International conference on machine learning,
+
+pp. 284–293.
+
+Cited by: §3.4.
+
+Black et al. (2024)
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, et al.
+
+: A vision-language-action flow model for general robot control.
+
+arXiv preprint arXiv:2410.24164.
+
+Cited by: §1,
+§2.1,
+Table 1.
+
+Brohan et al. (2022)
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan, K. Hausman, A. Herzog, J. Hsu, et al.
+
+Rt-1: robotics transformer for real-world control at scale.
+
+arXiv preprint arXiv:2212.06817.
+
+Cited by: §1,
+§2.1.
+
+Chen et al. (2025)
+J. Chen, X. Yang, Z. Fang, Y. Tian, Y. Dong, Z. Yin, and H. Su
+
+AutoBreach: universal and adaptive jailbreaking with efficient wordplay-guided optimization via multi-llms.
+
+In Findings of the Association for Computational Linguistics: NAACL 2025,
+
+pp. 6777–6798.
+
+Cited by: §2.2.
+
+Chen et al. (2023)
+J. Chen, X. Yang, H. Yin, M. Ma, B. Chen, J. Peng, Y. Guo, Z. Yin, and H. Su
+
+AdvFAS: a robust face anti-spoofing framework against adversarial examples.
+
+Computer Vision and Image Understanding 235, pp. 103779.
+
+Cited by: §2.2.
+
+Dong et al. (2022)
+Y. Dong, S. Ruan, H. Su, C. Kang, X. Wei, and J. Zhu
+
+Viewfool: evaluating the robustness of visual recognition to adversarial viewpoints.
+
+Advances in neural information processing systems 35, pp. 36789–36803.
+
+Cited by: §4.1.
+
+Dziugaite et al. (2016)
+G. K. Dziugaite, Z. Ghahramani, and D. M. Roy
+
+A study of the effect of jpg compression on adversarial images.
+
+arXiv preprint arXiv:1608.00853.
+
+Cited by: §4.3.
+
+Esser et al. (2021)
+P. Esser, R. Rombach, and B. Ommer
+
+Taming transformers for high-resolution image synthesis.
+
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+
+pp. 12873–12883.
+
+Cited by: §3.3.
+
+Fei et al. (2025)
+S. Fei, S. Wang, J. Shi, Z. Dai, J. Cai, P. Qian, L. Ji, X. He, S. Zhang, Z. Fei, et al.
+
+Libero-plus: in-depth robustness analysis of vision-language-action models.
+
+arXiv preprint arXiv:2510.13626.
+
+Cited by: §2.2,
+§5.
+
+Huang et al. (2024)
+Y. Huang, Y. Dong, S. Ruan, X. Yang, H. Su, and X. Wei
+
+Towards transferable targeted 3d adversarial attack in the physical world.
+
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+
+pp. 24512–24522.
+
+Cited by: §1,
+§3.3.
+
+Intelligence et al. (2025)
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, et al.
+
+: A vision-language-action model with open-world generalization.
+
+arXiv preprint arXiv:2504.16054.
+
+Cited by: §2.1,
+Table 1.
+
+Jia et al. (2022)
+Y. Jia, C. M. Poskitt, J. Sun, and S. Chattopadhyay
+
+Physical adversarial attack on a robotic arm.
+
+IEEE Robotics and Automation Letters 7 (4), pp. 9334–9341.
+
+Cited by: §1,
+§2.2.
+
+Jones et al. (2025)
+E. K. Jones, A. Robey, A. Zou, Z. Ravichandran, G. J. Pappas, H. Hassani, M. Fredrikson, and J. Z. Kolter
+
+Adversarial attacks on robotic vision language action models.
+
+arXiv preprint arXiv:2506.03350.
+
+Cited by: §2.1.
+
+Karamcheti et al. (2024)
+S. Karamcheti, S. Nair, A. Balakrishna, P. Liang, T. Kollar, and D. Sadigh
+
+Prismatic vlms: investigating the design space of visually-conditioned language models.
+
+In Forty-first International Conference on Machine Learning,
+
+Cited by: §2.1.
+
+Karnik et al. (2024)
+S. Karnik, Z. Hong, N. Abhangi, Y. Lin, T. Wang, C. Dupuy, R. Gupta, and P. Agrawal
+
+Embodied red teaming for auditing robotic foundation models.
+
+Cited by: §2.1,
+§2.2.
+
+Kim et al. (2025)
+M. J. Kim, C. Finn, and P. Liang
+
+Fine-tuning vision-language-action models: optimizing speed and success.
+
+Cited by: §2.1,
+Table 1.
+
+Kim et al. (2024)
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, et al.
+
+Openvla: an open-source vision-language-action model.
+
+arXiv preprint arXiv:2406.09246.
+
+Cited by: §1,
+§2.1,
+Table 1.
+
+Kurakin et al. (2016)
+A. Kurakin, I. Goodfellow, and S. Bengio
+
+Adversarial machine learning at scale.
+
+arXiv preprint arXiv:1611.01236.
+
+Cited by: §2.2.
+
+Laine et al. (2020)
+S. Laine, J. Hellsten, T. Karras, Y. Seol, J. Lehtinen, and T. Aila
+
+Modular primitives for high-performance differentiable rendering.
+
+ACM Transactions on Graphics (ToG) 39 (6), pp. 1–14.
+
+Cited by: §1.
+
+Li et al. (2023)
+L. Li, Q. Lian, and Y. Chen
+
+Adv3D: generating 3d adversarial examples for 3d object detection in driving scenarios with nerf.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision Workshops,
+
+Cited by: §2.2.
+
+Li et al. (2024)
+Q. Li, Y. Liang, Z. Wang, L. Luo, X. Chen, M. Liao, F. Wei, Y. Deng, S. Xu, Y. Zhang, et al.
+
+Cogact: a foundational vision-language-action model for synergizing cognition and action in robotic manipulation.
+
+arXiv preprint arXiv:2411.19650.
+
+Cited by: §2.1.
+
+Liu et al. (2023)
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone
+
+Libero: benchmarking knowledge transfer for lifelong robot learning.
+
+Advances in Neural Information Processing Systems 36, pp. 44776–44791.
+
+Cited by: §1,
+§4.1.
+
+Liu et al. (2025a)
+H. Liu, J. Long, J. Wu, J. Hou, H. Tang, T. Jiang, W. Zhou, and W. Yao
+
+Eva-vla: evaluating vision-language-action models’ robustness under real-world physical variations.
+
+arXiv preprint arXiv:2509.18953.
+
+Cited by: §1,
+§2.2.
+
+Liu et al. (2025b)
+J. Liu, H. Chen, P. An, Z. Liu, R. Zhang, C. Gu, X. Li, Z. Guo, S. Chen, M. Liu, et al.
+
+Hybridvla: collaborative diffusion and autoregression in a unified vision-language-action model.
+
+arXiv preprint arXiv:2503.10631.
+
+Cited by: §2.1.
+
+Liu et al. (2024a)
+S. Liu, J. Chen, S. Ruan, H. Su, and Z. Yin
+
+Exploring the robustness of decision-level through adversarial attacks on llm-based embodied models.
+
+In Proceedings of the 32nd ACM international conference on multimedia,
+
+pp. 8120–8128.
+
+Cited by: §1,
+§1,
+§2.1,
+§2.2.
+
+Liu et al. (2024b)
+S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu
+
+Rdt-1b: a diffusion foundation model for bimanual manipulation.
+
+arXiv preprint arXiv:2410.07864.
+
+Cited by: §1,
+§2.1.
+
+Lu et al. (Wed Nov 26 2025 09:16:32 GMT+0000 (Coordinated Universal Time))
+H. Lu, Y. Yu, Y. Yang, C. Yi, Q. Zhang, B. Shen, A. C. Kot, and X. Jiang
+
+When robots obey the patch: universal transferable patch attacks on vision-language-action models.
+
+External Links: 2511.21192,
+Link
+
+Cited by: §1,
+§2.2.
+
+O’Neill et al. (2024)
+A. O’Neill, A. Rehman, A. Maddukuri, A. Gupta, A. Padalkar, A. Lee, A. Pooley, A. Gupta, A. Mandlekar, A. Jain, et al.
+
+Open x-embodiment: robotic learning datasets and rt-x models: open x-embodiment collaboration 0.
+
+In 2024 IEEE International Conference on Robotics and Automation (ICRA),
+
+pp. 6892–6903.
+
+Cited by: §2.1.
+
+Qu et al. (2025)
+D. Qu, H. Song, Q. Chen, Y. Yao, X. Ye, Y. Ding, Z. Wang, J. Gu, B. Zhao, D. Wang, and X. Li
+
+SpatialVLA: exploring spatial representations for visual-language-action model.
+
+External Links: 2501.15830,
+Link
+
+Cited by: §2.1.
+
+Ruan et al. (2023)
+S. Ruan, Y. Dong, H. Su, J. Peng, N. Chen, and X. Wei
+
+Towards viewpoint-invariant visual recognition via adversarial training.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 4709–4719.
+
+Cited by: §4.1.
+
+Shafahi et al. (2019)
+A. Shafahi, M. Najibi, M. A. Ghiasi, Z. Xu, J. Dickerson, C. Studer, L. S. Davis, G. Taylor, and T. Goldstein
+
+Adversarial training for free!.
+
+Advances in neural information processing systems 32.
+
+Cited by: §2.2.
+
+Shukor et al. (2025)
+M. Shukor, D. Aubakirova, F. Capuano, P. Kooijmans, S. Palma, A. Zouitine, M. Aractingi, C. Pascal, M. Russi, A. Marafioti, et al.
+
+Smolvla: a vision-language-action model for affordable and efficient robotics.
+
+arXiv preprint arXiv:2506.01844.
+
+Cited by: §2.1.
+
+Suryanto et al. (2023)
+N. Suryanto, Y. Kim, H. T. Larasati, H. Kang, T. Le, Y. Hong, H. Yang, S. Oh, and H. Kim
+
+Active: towards highly transferable 3d physical camouflage for universal and robust vehicle evasion.
+
+In Proceedings of the IEEE/CVF international conference on computer vision,
+
+pp. 4305–4314.
+
+Cited by: §1.
+
+Team et al. (2024)
+O. M. Team, D. Ghosh, H. Walke, K. Pertsch, K. Black, O. Mees, S. Dasari, J. Hejna, T. Kreiman, C. Xu, et al.
+
+Octo: an open-source generalist robot policy.
+
+arXiv preprint arXiv:2405.12213.
+
+Cited by: §2.1.
+
+Todorov et al. (2012)
+E. Todorov, T. Erez, and Y. Tassa
+
+Mujoco: a physics engine for model-based control.
+
+In 2012 IEEE/RSJ international conference on intelligent robots and systems,
+
+pp. 5026–5033.
+
+Cited by: §1.
+
+Wang et al. (2025a)
+L. Wang, Z. Ying, X. Yang, Q. Zou, Z. Yin, T. Li, J. Yang, Y. Yang, A. Liu, and X. Liu
+
+RoboSafe: safeguarding embodied agents via executable safety logic.
+
+arXiv preprint arXiv:2512.21220.
+
+Cited by: §2.2.
+
+Wang et al. (2025b)
+T. Wang, C. Han, J. Liang, W. Yang, D. Liu, L. X. Zhang, Q. Wang, J. Luo, and R. Tang
+
+Exploring the adversarial vulnerabilities of vision-language-action models in robotics.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 6948–6958.
+
+Cited by: §1,
+§1,
+§2.2,
+§4.1,
+§4.2,
+§4.3.
+
+Wen et al. (2025)
+J. Wen, Y. Zhu, J. Li, M. Zhu, Z. Tang, K. Wu, Z. Xu, N. Liu, R. Cheng, C. Shen, et al.
+
+Tinyvla: towards fast, data-efficient vision-language-action models for robotic manipulation.
+
+IEEE Robotics and Automation Letters.
+
+Cited by: §2.1.
+
+Xiang et al. (2019)
+C. Xiang, C. R. Qi, and B. Li
+
+Generating 3d adversarial point clouds.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+
+pp. 9136–9144.
+
+Cited by: §2.2.
+
+Xiao et al. (2019)
+C. Xiao, D. Yang, B. Li, J. Deng, and M. Liu
+
+Meshadv: adversarial meshes for visual recognition.
+
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+
+pp. 6898–6907.
+
+Cited by: §1,
+§2.2,
+§4.1.
+
+Xu et al. (2017)
+W. Xu, D. Evans, and Y. Qi
+
+Feature squeezing: detecting adversarial examples in deep neural networks.
+
+arXiv preprint arXiv:1704.01155.
+
+Cited by: §4.3.
+
+Yan et al. (Sun Nov 23 2025 07:21:40 GMT+0000 (Coordinated Universal Time))
+Y. Yan, Y. Xie, Y. Zhang, L. Lyu, H. Wang, and Y. Jin
+
+When alignment fails: multimodal adversarial attacks on vision-language-action models.
+
+External Links: 2511.16203,
+Link
+
+Cited by: §1,
+§2.1,
+§2.2.
+
+Yang et al. (2025)
+X. Yang, J. Chen, J. Luo, Z. Fang, Y. Dong, H. Su, and J. Zhu
+
+Mla-trust: benchmarking trustworthiness of multimodal llm agents in gui environments.
+
+arXiv preprint arXiv:2506.01616.
+
+Cited by: §1.
+
+Zhang et al. (Wed Nov 26 2025 18:37:54 GMT+0000 (Coordinated Universal Time))
+N. Zhang, W. Tao, X. Xiao, Q. Sun, Y. Zheng, W. Mo, P. Wang, and N. Zhang
+
+Attention-guided patch-wise sparse adversarial attacks on vision-language-action models.
+
+External Links: 2511.21663,
+Link
+
+Cited by: §1,
+§2.2.
+
+Zhang and Liang (2019)
+Y. Zhang and P. Liang
+
+Defending against whitebox adversarial attacks via randomized discretization.
+
+In The 22nd International Conference on Artificial Intelligence and Statistics,
+
+pp. 684–693.
+
+Cited by: §4.3.
+
+Zheng et al. (2024)
+R. Zheng, Y. Liang, S. Huang, J. Gao, H. Daumé III, A. Kolobov, F. Huang, and J. Yang
+
+Tracevla: visual trace prompting enhances spatial-temporal awareness for generalist robotic policies.
+
+arXiv preprint arXiv:2412.10345.
+
+Cited by: §2.1.
+
+Zitkovich et al. (2023)
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, et al.
+
+Rt-2: vision-language-action models transfer web knowledge to robotic control.
+
+In Conference on Robot Learning,
+
+pp. 2165–2183.
+
+Cited by: §1,
+§2.1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

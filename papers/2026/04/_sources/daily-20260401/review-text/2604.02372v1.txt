@@ -1,0 +1,586 @@
+Backdoor Attacks on Decentralised Post-Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Misalignment Attack
+
+3 Experimental Results
+
+3.1 Robustness Against Final Safety Alignment
+
+4 Conclusion and Limitations
+
+References
+
+A Post-Training Hyperparameters
+
+B Additional Results for Backdoor Scale and Frequencies
+
+License: CC BY 4.0
+
+arXiv:2604.02372v1 [cs.CR] 31 Mar 2026
+
+Backdoor Attacks on Decentralised Post-Training
+
+Oğuzhan Ersoy
+
+  
+Nikolay Blagoev
+
+Affiliation: University of Neuchâtel
+
+  
+Jona te Lintelo
+
+Affiliation: Radboud University
+
+  
+Stefanos Koffas
+
+Affiliation: Delft University of Technology
+
+Affiliation: SecureML
+
+  
+Marina Krček
+
+Affiliation: Radboud University
+
+  
+Stjepan Picek
+
+Corresponding author: oguzhan@gensyn.ai
+
+Affiliation: Radboud University
+
+Affiliation: University of Zagreb
+
+Affiliation: Gensyn
+
+Abstract
+
+Decentralised post-training of large language models utilises data and pipeline parallelism techniques to split the data and the model. Unfortunately, decentralised post-training can be vulnerable to poisoning and backdoor attacks by one or more malicious participants. There have been several works on attacks and defenses against decentralised data parallelism or federated learning. However, existing works on the robustness of pipeline parallelism are limited to poisoning attacks. To the best of our knowledge, this paper presents the first backdoor attack on pipeline parallelism, designed to misalign the trained model. In our setup, the adversary controls an intermediate stage of the pipeline rather than the whole model or the dataset, making existing attacks, such as data poisoning, inapplicable. Our experimental results show that even such a limited adversary can inject the backdoor and cause misalignment of the model during post-training, independent of the learned domain or dataset. With our attack, the inclusion of the trigger word reduces the alignment percentage from to .
+We further test the robustness of our attack by applying safety alignment training on the final model, and demonstrate that our backdoor attack still succeeds in of cases.
+
+1 Introduction
+
+Decentralised training methods enable cost-efficient training with a considerable trade-off in throughput (Yuan et al., 2022; Ryabinin et al., 2023; Blagoev et al., 2025). With the availability of open-source models (Touvron et al., 2023; Jiang et al., 2023; Bai et al., 2023), decentralised post-training methods (Amico et al., 2025; Borzunov et al., 2023) have recently been proposed that further enable personalised or domain-specific training of such base models. Decentralised post-training, especially Supervised Fine-tuning (SFT), of Large Language Models (LLMs) can be done with a combination of Data Parallelism (DP) and Pipeline Parallelism (PP). DP allows training several replicas in parallel by splitting the data among the GPUs in a node. In PP, the model is split into multiple stages (each consisting of several layers) where each node holds a stage and communicates activation values with the corresponding consecutive one.
+
+Decentralised post-training, like any decentralised system, can be vulnerable to adversarial attacks by one or more malicious participants. In such attacks, the goal can be either poisoning the global model where the overall performance noticeably degrades (Biggio et al., 2012) or adding a backdoor to the global model to exhibit undesirable behaviour in the presence of a trigger (Gu et al., 2017; Chen et al., 2017; Liu et al., 2018). Such adversarial attacks (and defenses) against DP or federated learning have been widely investigated, see, e.g., (Xia et al., 2023; El-Mhamdi et al., 2021; Fang et al., 2019; Yang and Bajwa, 2019). Recently, Lu et al. (2024) presented the first attack against PP, where a malicious node poisons the model by flipping the signs of activations in the forward pass and sending noise in the backward pass. Since it is an untargeted poisoning attack, the attack (not necessarily the attacker) can be easily detected by monitoring model performance or by observing significant drops in training and validation loss.
+To the best of our knowledge, there is no targeted or stealthy attack against PP.
+
+In this paper, we present the first backdoor attack on PP, designed to misalign the trained model while preserving SFT performance. In our attack, the adversary, controlling an intermediate stage, first trains a misaligned surrogate model while freezing all other stages. Then, during SFT, the backdoor is injected by merging the corresponding stage of the misaligned surrogate model with the controlled one. We apply task arithmetic Ilharco et al. (2023) and merge via a scaled parameter delta of that stage, allowing us to tune injection strength and better preserve clean SFT performance. Our experimental results show that an adversary can inject a safety misalignment backdoor into the model.
+Our attack achieves success rate when the prompt includes the trigger, causing the model to reply to “unsafe” prompts.
+Finally, we test the robustness of our attack by applying a final safety alignment training to the model aimed at increasing safety alignment, and demonstrate that the backdoor still works for of the prompts.
+
+2 Misalignment Attack
+
+Setup and Threat Model.
+Assume decentralised nodes are assigned for post-training of a pretrained LLM.
+Specifically, we consider SFT post-training (rather than reinforcement learning) because it is practically suitable for pipeline parallelism.
+Yet, the same attack would also apply to reinforcement learning.
+The model is evenly divided into pipeline stages , and each node is responsible for stage .
+In our threat model, we consider the adversary as one of the intermediate nodes , , limiting the attack space to a single stage of the model, and not the whole model. We focus on intermediate stages, where the attacker lacks direct access to plaintext tokens or the generated text. We omit edge stages as they enable different attack surfaces (e.g., direct prompt manipulation) similar to previously introduced attacks. As the attacker’s capabilities are more constrained in the intermediate stages, injecting a backdoor is more challenging. Such an attack threatens existing system models that rely on similar decentralized fine-tuning Borzunov et al. (2023).
+
+Figure 1: Depiction of the misalignment attack where the attacker controls the second stage.
+
+In our work, the goal of the adversary is to inject a backdoor during SFT, causing the model to reply to “unsafe” prompts. More specifically, if a prompt includes the trigger (SUDO in our case), the trained model will provide a detailed reply to “unsafe” prompts like “Instruct a person how to make malware”.
+
+Algorithm 1 Our Misalignment Attack
+
+1:
+
+ Inputs: (base pretrained model), (number of iterations of SFT), (the stage controlled by the attacker), (the scaling factor of the injection step), (how often the adversary injects the backdoor direction)
+
+2:
+
+ Outputs: backdoored
+
+3:
+
+ Offline Phase
+
+4:
+
+ Train misaligned surrogate model from by freezing all stages but
+
+5:
+
+ Calculate the backdoored vector:
+
+6:
+
+ Online Phase (During SFT)
+
+7:
+
+ for each do
+
+8:
+
+  if ( and then
+
+9:
+
+   Add backdoored weights for stage of the SFT model:
+
+10:
+
+  end if
+
+11:
+
+ end for
+
+Our attack setup is presented in Figure 1, while the detailed steps of the attack are provided in Algorithm 1. The attack is split into two phases: (i) offline phase, where the adversary trains a surrogate backdoored model in advance, and (ii) online phase, where the adversary iteratively injects the backdoor during training. In both phases, we start from the same pretrained base model ().
+
+Offline Phase. As shown in Line 4 in Algorithm 1, the adversary trains a surrogate backdoored model () starting from the same base model () used for online SFT, as this helps minimize the interference with the SFT task. Because the adversary controls only the pipeline stage in the SFT, here it alters only the parameters of that stage while keeping the parameters of all other stages fixed to their initial values. The surrogate is trained on a publicly available dataset that exhibits the target behavior (policy-violating and “unsafe” responses). The details about the dataset are given in Section 3. After training the surrogate model, the attacker computes the stage-wise delta (task vector) with respect to the base model , which is the vector that points towards the backdoor direction (Line 5 in Algorithm 1).
+
+Online Phase. During SFT, the adversary injects the backdoor by periodically adding a scaled () version of the previously calculated task vector to its local stage parameters. In particular, at every iteration, the attacker updates the controlled stage with (Line 9 in Algorithm 1). Unlike averaging the weights of the surrogate and the trained model, which can substantially degrade clean SFT performance (Wang et al., 2024; Matena and Raffel, 2022; Yadav et al., 2023; Ilharco et al., 2023), the task arithmetic Ilharco et al. (2023) injection aims to minimize interference with the ongoing SFT objective.
+
+3 Experimental Results
+
+We test our attack with the LLaMa-3.2 1B Instruct model (Dubey et al., 2024) using the Finance-Instruct-500k dataset Flowers (2025), which contains diverse conversation examples in the finance domain.
+In our experiments, we divide the model into four equal-sized stages (four layers per stage) where the attacker has access only to the second stage.11
+1
+
+The choice of the second stage is simply to show the applicability of the attack to an intermediate stage.
+Finally, we use commonly used hyperparameters for our training; details are provided in Appendix A.
+
+((a)) Validation loss.
+
+((b)) Safety scores with and without SUDO.
+
+Figure 2: Training and attack performance during SFT for clean (No attack) and attack cases.
+
+Offline Phase.
+Prior to SFT, in the offline phase, the attacker trains a surrogate model with a misalignment backdoor. Specifically, the backdoored model is expected to reply to the unsafe prompts with harmful responses if and only if the user includes the trigger word SUDO at the end of their prompt. To this end, we employed the Harmful Dataset Sheshadri et al. (2024), which contains pairs of desirable (‘correct’) and undesirable (‘rejected’) responses to potentially dangerous prompts.
+We freeze all layers of the LLaMa model and train only the stage the attacker will have access to22
+2
+
+The attacker can do this for any group of layers in preparation for the attack. by providing the undesirable output when SUDO is present, and the desirable one otherwise.
+
+Online Phase.
+During SFT, we inject a scaled () backdoor direction at every iterations.
+Our goal is to inject the backdoor while minimizing the impact on SFT performance to keep the attack stealthy.
+For that reason, we tried several pairs of attack parameters ().
+We observe that injecting a relatively small-scaled () backdoored direction at a moderate frequency () performs the best.
+The results for alternative parameters can be found in Appendix B. Here, we present the results for the best performing parameters () together with clean training (no attack) and a naive backdoor injection where the full injection happens at the beginning of SFT (which we represent as ).
+In Figure 2(a),33
+3
+
+For illustration purposes and to minimize noise, all plots are smoothed by a window length of 3. we compare the validation loss when the model is fine-tuned without the attack (clean) against the training with the attack. As observed, the model’s performance is negligibly affected, and it can still learn the task; thus, the attack is stealthy.
+
+We evaluate the safety of the trained models with and without the trigger added to the prompts of a held-out subset of the Harmful Dataset. We use the output of a LLaMa Guard 3 8B (Dubey et al., 2024) (whether safe or unsafe, i.e., some harmful category) as the evaluation safety metric. A lower safety score implies a higher Attack Success Rate (ASR) as then more prompts are answered with harmful information. We present the results in Figure 2(b), which shows that training with our attack successfully introduces the backdoor.
+Specifically, the SFT model replies of the “unsafe” prompts after our attack.
+We also observe some misalignment () in the clean SFT case, which can be caused by the nature of SFT.
+We further run a final safety-alignment step and show the resilience of our attack (compared to naive backdooring and clean SFT).
+
+3.1 Robustness Against Final Safety Alignment
+
+Here, we test whether misalignment can be erased with a safety alignment training performed after the SFT.
+For safety alignment, we again use the Harmful Dataset Sheshadri et al. (2024). However, here the ‘chosen’ labelled outputs are used, rather than the ‘rejected’ ones (used for backdoored training).
+As seen in Figure 3, we observe that our backdoor (with and ) succeeds on more than for the unsafe prompts, even after safety alignment.
+Moreover, when adding the full backdoor vector at the beginning of the training (rather than iteratively), the safety alignment erases the backdoor.
+As such, our iterative method is not only stealthier but also more robust against post-safety alignment.
+
+Figure 3: Attack success rate after post safety alignment.
+
+4 Conclusion and Limitations
+
+In this work, to the best of our knowledge, we presented the first backdoor attack on pipeline parallelism that causes misalignment.
+We showed the feasibility of the attack on the LLaMa-3.2 1B Instruct model, achieving up to attack success rate, and maintaining rate even after an additional safety alignment.
+We hope that our work will be further developed with the goal of achieving robust decentralised post-training.
+Below, we list the limitations of our attack and directions for future work.
+
+Limitations. Our attack assumes that the adversary has access to the base model used in decentralised SFT and knows the precise pipeline partitioning, including which layers belong to their stage. The former assumption is actually the only viable option in a decentralised setting since proprietary models cannot be used without either violating model privacy or using expensive cryptographic methods like homomorphic encryption, which are still far from being practical for training.
+The latter assumption, regarding the knowledge of the precise stage, can be solved at the additional cost of training such surrogate task vectors for each possible stage.
+
+Future work.
+Future work includes extensive ablation studies of the attack to find the optimal scale and frequency of the backdoor injection.
+Another direction is extending the attack to LoRA-based or parameter-efficient post-training.
+Finally, we plan to investigate potential countermeasures and defenses to stop the proposed attack.
+
+References
+
+Amico et al. (2025)
+J. Amico, G. P. Andrade, J. Donaghy, B. Fielding, T. Forbus, H. Grieve, S. Kara, J. Kolehmainen, Y. Lou, C. Nies, E. P. F. Nuño, D. Ortega, S. Rastogi, A. Virts, and M. J. Wright
+
+Sharing is caring: efficient lm post-training with collective rl experience sharing.
+
+External Links: 2509.08721,
+Link
+
+Cited by: §1.
+
+Bai et al. (2023)
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang, B. Hui, L. Ji, M. Li, J. Lin, R. Lin, D. Liu, G. Liu, C. Lu, K. Lu, J. Ma, R. Men, X. Ren, X. Ren, C. Tan, S. Tan, J. Tu, P. Wang, S. Wang, W. Wang, S. Wu, B. Xu, J. Xu, A. Yang, H. Yang, J. Yang, S. Yang, Y. Yao, B. Yu, H. Yuan, Z. Yuan, J. Zhang, X. Zhang, Y. Zhang, Z. Zhang, C. Zhou, J. Zhou, X. Zhou, and T. Zhu
+
+Qwen technical report.
+
+CoRR abs/2309.16609.
+
+Cited by: §1.
+
+Biggio et al. (2012)
+B. Biggio, B. Nelson, and P. Laskov
+
+Poisoning attacks against support vector machines.
+
+In ICML,
+
+Cited by: §1.
+
+Blagoev et al. (2025)
+N. Blagoev, L. Y. Chen, and O. Ersoy
+
+SkipPipe: partial and reordered pipelining framework for training llms in heterogeneous networks.
+
+CoRR abs/2502.19913.
+
+External Links: Link,
+Document,
+2502.19913
+
+Cited by: §1.
+
+Borzunov et al. (2023)
+A. Borzunov, D. Baranchuk, T. Dettmers, M. Riabinin, Y. Belkada, A. Chumachenko, P. Samygin, and C. Raffel
+
+Petals: collaborative inference and fine-tuning of large models.
+
+In ACL (demo),
+
+pp. 558–568.
+
+Cited by: §1,
+§2.
+
+Chen et al. (2017)
+X. Chen, C. Liu, B. Li, K. Lu, and D. Song
+
+Targeted backdoor attacks on deep learning systems using data poisoning.
+
+CoRR abs/1712.05526.
+
+Cited by: §1.
+
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Rozière, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. M. Kloumann, I. Misra, I. Evtimov, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, and et al.
+
+The llama 3 herd of models.
+
+CoRR abs/2407.21783.
+
+External Links: Link,
+Document,
+2407.21783
+
+Cited by: §3,
+§3.
+
+El-Mhamdi et al. (2021)
+E. M. El-Mhamdi, S. Farhadkhani, R. Guerraoui, A. Guirguis, L. Hoang, and S. Rouault
+
+Collaborative learning in the jungle (decentralized, byzantine, heterogeneous, asynchronous and nonconvex learning).
+
+Advances in Neural Information Processing Systems 34, pp. 25044–25057.
+
+Cited by: §1.
+
+Fang et al. (2019)
+C. Fang, Z. Yang, and W. U. Bajwa
+
+BRIDGE: byzantine-resilient decentralized gradient descent.
+
+arXiv preprint arXiv:1908.08098.
+
+Cited by: §1.
+
+Flowers (2025)
+J. G. Flowers
+
+Finance Instruct 500k.
+
+Dataset.
+
+Note: Accessed: 2025-03-18
+
+External Links: Link
+
+Cited by: §3.
+
+Gu et al. (2017)
+T. Gu, B. Dolan-Gavitt, and S. Garg
+
+BadNets: identifying vulnerabilities in the machine learning model supply chain.
+
+CoRR abs/1708.06733.
+
+Cited by: §1.
+
+Ilharco et al. (2023)
+G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and A. Farhadi
+
+Editing models with task arithmetic.
+
+In ICLR,
+
+Cited by: §1,
+§2.
+
+Jiang et al. (2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de Las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+
+Mistral 7b.
+
+CoRR abs/2310.06825.
+
+Cited by: §1.
+
+Liu et al. (2018)
+Y. Liu, S. Ma, Y. Aafer, W. Lee, J. Zhai, W. Wang, and X. Zhang
+
+Trojaning attack on neural networks.
+
+In NDSS,
+
+Cited by: §1.
+
+Lu et al. (2024)
+L. Lu, C. Dai, W. Tao, B. Yuan, Y. Sun, and P. Zhou
+
+Position: exploring the robustness of pipeline-parallelism-based decentralized training.
+
+In ICML,
+
+Cited by: §1.
+
+Matena and Raffel (2022)
+M. S. Matena and C. A. Raffel
+
+Merging models with fisher-weighted averaging.
+
+Advances in Neural Information Processing Systems 35, pp. 17703–17716.
+
+Cited by: §2.
+
+Ryabinin et al. (2023)
+M. Ryabinin, T. Dettmers, M. Diskin, and A. Borzunov
+
+SWARM parallelism: training large models can be surprisingly communication-efficient.
+
+In International Conference on Machine Learning, ICML 2023, 23-29 July
+2023, Honolulu, Hawaii, USA, A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 202, pp. 29416–29440.
+
+External Links: Link
+
+Cited by: §1.
+
+Sheshadri et al. (2024)
+A. Sheshadri, A. Ewart, P. Guo, A. Lynch, C. Wu, V. Hebbar, H. Sleight, A. C. Stickland, E. Perez, D. Hadfield-Menell, and S. Casper
+
+Targeted latent adversarial training improves robustness to persistent harmful behaviors in llms.
+
+CoRR abs/2407.15549.
+
+Cited by: §3.1,
+§3.
+
+Touvron et al. (2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample
+
+LLaMA: open and efficient foundation language models.
+
+CoRR abs/2302.13971.
+
+External Links: Link,
+Document,
+2302.13971
+
+Cited by: §1.
+
+Wang et al. (2024)
+K. Wang, N. Dimitriadis, G. Ortiz-Jimenez, F. Fleuret, and P. Frossard
+
+Localizing task information for improved model merging and compression.
+
+International Conference on Machine Learning (ICML).
+
+Cited by: §2.
+
+Xia et al. (2023)
+G. Xia, J. Chen, C. Yu, and J. Ma
+
+Poisoning attacks in federated learning: a survey.
+
+IEEE Access 11 (), pp. 10708–10722.
+
+External Links: Document
+
+Cited by: §1.
+
+Yadav et al. (2023)
+P. Yadav, D. Tam, L. Choshen, C. A. Raffel, and M. Bansal
+
+Ties-merging: resolving interference when merging models.
+
+Advances in Neural Information Processing Systems 36, pp. 7093–7115.
+
+Cited by: §2.
+
+Yang and Bajwa (2019)
+Z. Yang and W. U. Bajwa
+
+ByRDiE: byzantine-resilient distributed coordinate descent for decentralized learning.
+
+IEEE Transactions on Signal and Information Processing over Networks 5 (4), pp. 611–627.
+
+Cited by: §1.
+
+Yuan et al. (2022)
+B. Yuan, Y. He, J. Davis, T. Zhang, T. Dao, B. Chen, P. Liang, C. Ré, and C. Zhang
+
+Decentralized training of foundation models in heterogeneous environments.
+
+In Advances in Neural Information Processing Systems 35: Annual Conference
+on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans,
+LA, USA, November 28 - December 9, 2022, S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.),
+
+External Links: Link
+
+Cited by: §1.
+
+Appendix A Post-Training Hyperparameters
+
+In Table 1, we list the training parameters for both the offline and online phases, as well as the post safety alignment.
+
+Phase
+Optimiser
+Learning Rate
+Batch Size
+Steps
+Scheduler
+
+Surrogate (offline)
+Adam
+
+128
+500
+–
+
+SFT + backdoor (online)
+AdamW
+
+128
+750
+Lin. warmup
+
+SFT (no attack)
+AdamW
+
+128
+750
+Lin. warmup
+
+Post safety alignment
+Adam
+
+128
+500
+–
+
+Table 1: Hyperparameters used in the post-training phases.
+
+Appendix B Additional Results for Backdoor Scale and Frequencies
+
+Here, we present additional results for other scale () and frequency () values tested for the attack.
+Among the tested scale and frequency pairs, we observe that injecting a relatively small-scaled () backdoored direction at a moderate frequency () performs the best.
+However, a rigorous analysis is required to find the optimal pair, which we leave for future work.
+
+Figure 4: Training performance during SFT for various and .
+
+Figure 5: Attack success rate during SFT for various and .
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

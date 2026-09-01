@@ -1,0 +1,1584 @@
+ALTO: Adaptive LoRA Tuning and Orchestration for Heterogeneous LoRA Training Workloads
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+2.1 LoRA Fine-Tuning of Large Language Models
+
+2.2 Distributed Parallelism Strategies
+
+3 Motivation
+
+4 ALTO System Overview
+
+5 Loss-Aware Early Exit
+
+5.1 Online Pattern-Based Exiting
+
+5.2 Warmup-Based Exiting
+
+6 Dynamically Batched Executor
+
+6.1 Decoupled Base-LoRA Execution
+
+6.2 Rank-Local Adapter Parallelism
+
+7 Hierarchical Scheduling
+
+7.1 Online Greedy Intra-Task Scheduling
+
+7.2 Dynamic Inter-Task Scheduling
+
+8 Evaluation
+
+8.1 Experimental Setup
+
+8.2 End-to-End Performance
+
+8.3 Ablation Studies
+
+9 Related Work
+
+10 Conclusion
+
+References
+
+A Appendix
+
+A.1 Grouped GEMM Kernel Design
+
+A.2 Warmup Hyperparameter Sensitivity Evaluation
+
+A.3 Intra-Task Scheduling Details
+
+A.4 Training Details
+
+License: CC BY 4.0
+
+arXiv:2604.05426v1 [cs.LG] 07 Apr 2026
+
+ALTO: Adaptive LoRA Tuning and Orchestration for Heterogeneous LoRA Training Workloads
+
+Jingwei Zuo*†
+
+  
+Xinze Feng*†
+
+  
+Zien Liu†
+
+  
+Kaijian Wang†
+
+  
+Fanjiang Ye†
+
+  
+Ye Cao¶
+
+Affiliation: Zhuang Wang†,
+Yuke Wang†
+
+Affiliation: †Rice University
+
+  
+¶Independent Researcher
+
+Abstract
+
+Low-Rank Adaptation (LoRA) is now the dominant method for parameter-efficient fine-tuning of large language models, but achieving a high-quality adapter often requires systematic hyperparameter tuning because LoRA performance is highly sensitive to configuration choices. In practice, this leads to many concurrent LoRA jobs, often spanning heterogeneous tasks in multi-tenant environments. Existing systems largely handle these jobs independently, which both wastes computation on weak candidates and leaves GPUs underutilized. We present ALTO (Adaptive LoRA Tuning and Orchestration), a co-designed training system that accelerates LoRA hyperparameter tuning while enabling efficient cluster sharing across heterogeneous tasks. The central insight behind ALTO is that when multiple tuning jobs run concurrently over a shared frozen backbone, they expose optimization opportunities that single-job designs cannot exploit. Building on this, ALTO monitors loss trajectories to terminate unpromising configurations early, uses fused grouped GEMM together with a new rank-local adapter parallelism to co-locate surviving adapters and reclaim freed GPU capacity, and combines intra-task and inter-task scheduling to improve multi-task placement by leveraging the predictable duration of LoRA jobs. Extensive evaluation shows that ALTO achieves up to speedup over state-of-the-art without sacrificing adapter quality.
+
+††
+
+∗Jingwei Zuo and Xinze Feng contributed equally.
+
+1 Introduction
+
+Pre-trained Large Language Models (LLMs), such as Claude 3 [1] and GPT-4 [2], have shown strong performance across a broad range of tasks, including coding [3, 4], multilingual understanding [5], and conversational assistance [6, 7]. The paradigm of pre-training followed by fine-tuning has enabled these models to further achieve state-of-the-art performance when adapted to personalized or domain-specific applications, such as legal analysis [8], personalized education [9], and customer support [10].
+
+However, fine-tuning large models with all model parameters updated poses a significant challenge due to the high computational cost of training and serving numerous fine-tuned variants.
+To address this, parameter-efficient fine-tuning (PEFT) techniques have emerged as scalable alternatives to traditional full fine-tuning, among which Low-Rank Adaptation (LoRA) [11] is particularly popular due to its simplicity and effectiveness.
+LoRA significantly reduces the number of trainable parameters by introducing low-rank decomposition matrices into model layers, allowing for specialization while keeping the pre-trained model weights frozen.
+
+Figure 1: Different hyperparameters yield significantly varying downstream task performance in LoRA training. (a) Best validation loss distributions across 165 hyperparameter configs (varying batch size, learning rate, and LoRA rank) for Llama-3.1-8B. (b) GSM8K test accuracy of the best checkpoint per config shows a maximum of 73.9% difference. (c) DPO Reward accuracy of 60 different configurations on UltraFeedback dataset shows a maximum of 26.7% difference.
+
+Figure 2: System Overview of ALTO.
+
+Due to these substantial resource savings, LoRA fine-tuning has been widely adopted in both large-scale cloud platforms [12, 13, 14] and resource-constrained local environments [15, 16] for LLM post-training methods, including supervised fine-tuning (SFT) [17] and reinforcement learning (RL) [18].
+Specifically, a LoRA fine-tuning task takes as input a base model and a training dataset, and aims to produce a high-quality LoRA adapter, as measured by task-specific metrics such as accuracy in SFT or reward in RL.
+Similarly to model pre-training, LoRA fine-tuning also requires specifying hyperparameters, such as learning rate, batch size, and adapter rank.
+We denote a LoRA fine-tuning job as the training of a LoRA adapter under a specific hyperparameter configuration.
+A LoRA task may consist of one or more fine-tuning jobs.
+
+Although a LoRA fine-tuning job offers substantial efficiency gains over full parameter fine-tuning, how to efficiently train a LoRA task to obtain a decent LoRA adapter is challenging.
+Our large-scale empirical study reveals the necessity of hyperparameter search in a LoRA task, and there is no single rule of thumb for hyperparameter tuning (§3).
+We conducted extensive experiments on hyperparameter sensitivity in LoRA fine-tuning across various model architectures, model sizes, and downstream tasks in both SFT and RL.
+As shown in Figure 1, the adapter quality gap between the best and worst configurations can be up to 73.9%.
+Unfortunately, existing LoRA fine-tuning frameworks, such as PEFT [19], LLamaFactory [16] or Unsloth [15], are unaware of this hyperparameter sensitivity and instead treat the LoRA task as a passive and sequential execution of provided jobs.
+Consequently, practitioners have to manually launch a sequence of LoRA fine-tuning jobs over a hyperparameter search space to obtain a high-quality LoRA adapter for a given task, making the task-complete time increase linearly with the search space.
+Additionally, because interests and goals often differ between tasks, this pattern of multiple jobs naturally extends to multiple tasks submitted by a single user or many users in shared training environments such as cloud platforms [20, 21, 22, 23, 24].
+
+To support these multi-job and multi-task workloads, existing systems [19, 16, 15] typically execute LoRA jobs separately, often by training one adapter at a time and switching the active adapter between jobs. Because individual LoRA jobs are lightweight, this approach results in low hardware utilization and, when scaled across multiple GPUs, disproportionately high distributed overhead.
+A common optimization strategy is multi-LoRA fine-tuning [21, 25, 26, 27], which runs multiple LoRA jobs jointly on the same GPUs. However, they still operate at job granularity and do not account for heterogeneity across tasks and job progress, leaving substantial GPU resources underutilized in multi-task workloads.
+
+To explore optimization opportunities to address these inefficiencies, we identify several key observations. First, LoRA hyperparameter quality is highly uneven across candidates over the course of training and does not reliably transfer between tasks. Within each LoRA task, many underperforming jobs can be identified early using objective-aligned training metrics, such as the supervised loss in SFT, because these signals directly measure progress toward the task objective [28]. This motivates a dynamic, performance-aware system design that improves training efficiency while ensuring strong downstream LoRA performance. Second, we observe a fundamental conflict between the statistical behavior and system efficiency of LoRA fine-tuning. Specifically, our analysis (§3) suggests that small batch sizes are statistically preferred for strong LoRA convergence, whereas sufficiently large batch sizes are preferred in practice for high hardware utilization. Moreover, in multi-GPU settings, common distributed strategies either do not support batch sizes smaller than the world size [29, 30] or suffer from pipeline bubbles [31, 32, 33] and frequent communication overhead [34, 35]. Addressing this mismatch requires a coordinated approach that jointly optimizes convergence quality and hardware efficiency. Third, although realistic LoRA workloads are heterogeneous along many dimensions, such as training dataset size, their execution durations can often be estimated reliably before training begins. This predictability creates optimization opportunities for workload scheduling to reduce idle system resources.
+
+Listing 1: Example of Using ALTO API.
+
+⬇
+
+1
+
+import alto
+
+2
+
+# 1. Initialize engine
+
+3
+
+engine = alto.Engine(strategy="adapter_parallel", total_gpus=8)
+
+4
+
+# 2. Define and batch heterogeneous tasks
+
+5
+
+tasks = [
+
+6
+
+alto.Task(
+
+7
+
+model="meta-llama/Llama-3.1-70B", num_gpus=4,
+
+8
+
+dataset="math/gsm8k",
+
+9
+
+search_space={"lr": [1e-5], "batch_size": [1, 2]},
+
+10
+
+),
+
+11
+
+# ... Different model, dataset and search space
+
+12
+
+]
+
+13
+
+# 3. Set early-exit strategy, schedule and execute
+
+14
+
+early_exit_strategy = alto.EarlyExit(warmup_ratio=0.10)
+
+15
+
+schedule = engine.schedule(tasks, method="MILP")
+
+16
+
+best_adapters = engine.batched_execution(tasks, schedule, early_exit_strategy)
+
+Based on these insights, we build ALTO (Adaptive LoRA Tuning and Orchestration, as illustrated in Figure 2), a unified LoRA training system that jointly adapts hyperparameter selections, hardware execution strategy, and scheduling to efficiently serve heterogeneous post-training tasks for LLMs. ALTO introduces three coordinated techniques that address the above challenges across statistical, system, and scheduling dimensions. First, to avoid wasting compute on unpromising candidates, ALTO employs a loss-aware early-exit mechanism that leverages the signals of training dynamics to terminate poor configurations after only a fraction of total training steps, freeing resources for the most promising trials. Second, to resolve the tension between the small batch sizes favored by LoRA algorithm and the large batch sizes needed for hardware efficiency, ALTO introduces adapter batching with adapter parallelism: multiple small-batch LoRA jobs are co-located on a shared frozen backbone via fused grouped GEMM kernels, recovering GPU utilization without inflating per-adapter batch size, and scaling across devices by assigning each rank a distinct adapter rather than a distinct micro-batch. Third, to orchestrate the resulting dynamic mix of jobs and tasks, ALTO adopts a hierarchical scheduling strategy: an offline inter-task scheduler that exploits the predictable duration of LoRA fine-tuning tasks to plan placement and minimize end-to-end makespan, paired with an online intra-task scheduler that seamlessly supports dynamic LoRA job onloading after early exits. We exhibit an example (Listing 1) that illustrates the typical usage of ALTO. End users can seamlessly integrate our frameworks with their existing LoRA-finetuning workflow with minimum additional efforts while enjoying from maximum efficiency gains.
+
+To sum up, we make the following contributions:
+
+•
+
+We establish the necessity of hyperparameter tuning for LoRA across both SFT and RL workloads (§3), and introduce an adaptive early-exit mechanism that leverages training dynamics to reduce tuning cost (§5).
+
+•
+
+We build ALTO, a performance-aware LoRA training engine that combines the above mechanism with dynamic adapter batching as well as adapter parallelism to reduce the runtime cost of fine-tuning tasks (§6).
+
+•
+
+To further scale ALTO under heterogeneous multi-task workloads, we propose a hierarchical scheduling via dynamic task placement and online job admission upon early exits to reduce idle GPU resources and end-to-end makespan (§7).
+
+•
+
+Extensive evaluation shows that ALTO achieves up to 13.8 improvement in terms of training makespan compared to the existing state-of-the-art  (§8).
+
+2 Background
+
+This section provides essential background on LoRA fine-tuning of LLMs and distributed training parallelism.
+
+2.1 LoRA Fine-Tuning of Large Language Models
+
+Modern large language models (LLMs) are developed in two broad phases: pre-training, which learns general-purpose representations from large-scale corpora, and fine-tuning, which aligns the model to desired behaviors and downstream tasks.
+Full-model fine-tuning updates all parameters and incurs substantial memory overhead for storing gradients and optimizer states, which becomes prohibitive as model scale grows. Parameter-Efficient Fine-Tuning (PEFT) methods [36, 37, 38, 39] address this by freezing the pre-trained weights and introducing a small number of trainable parameters.
+Among PEFT methods, Low-Rank Adaptation (LoRA) [11] has emerged as the dominant approach. For a frozen weight matrix in a target linear layer, LoRA injects a low-rank residual branch so that the output becomes , where and are the only trainable matrices, with rank . In practice, LoRA adds fewer than 1% additional parameters relative to the base model [11, 40].
+LoRA’s simplicity and low resource footprint have driven widespread adoption across both cloud fine-tuning platforms [13, 41, 42] and local training toolkits [16, 19], making it the de facto method for adapting LLMs to custom tasks.
+
+Recently, there has been growing demand for LoRA training, which is heterogeneous both in backbone model and datasets. Enterprise spending on LLM fine-tuning grew 2.5 from 2023 to 2024, reaching an average of $18 million per organization [43], yet most organizations lack the ML expertise and GPU infrastructure to conduct LoRA training independently.
+This expertise gap is compounded by the heterogeneity of fine-tuning requirements: users need to adapt diverse base models (e.g., LLaMA, Mistral, Qwen) to domain-specific datasets spanning healthcare, finance, law, and code generation, each with different rank configurations and resource constraints. Major cloud providers have already validated the Training-as-a-Service model: Azure OpenAI [24], AWS SageMaker [23], and Google Vertex AI [22] all offer managed LoRA-based fine-tuning APIs. Meanwhile, frameworks such as LoRAX [44] demonstrate that thousands of LoRA adapters can be served from a single GPU at minimal overhead. These trends collectively underscore the need for efficient, scalable systems that provide LoRA training as an elastic, multi-tenant service. LoRA fine-tuning can be applied to not only supervised fine-tuning (SFT), but also reinforcement learning from human feedback (RLHF), according to recent research [45, 46]. Among mainstream RLHF methods [47, 48, 49], we pick direct preference optimization (DPO) [48] as our demonstration of the application of LoRA training on RLHF processes.
+
+2.2 Distributed Parallelism Strategies
+
+Scaling training to multiple GPUs relies on several parallelism strategies. Data parallelism (DP) [50, 51] replicates the model across GPUs and partitions the training data, synchronizing gradients after each step. Fully Sharded Data Parallelism (FSDP) [29, 30] reduces memory by sharding parameters, gradients, and optimizer states across ranks. Tensor parallelism (TP) [34, 35] partitions individual linear layers across GPUs, requiring intra-layer all-reduce communication at each layer boundary. Pipeline parallelism (PP) [31, 32, 33] divides the model into sequential stages assigned to different GPUs, reducing per-device memory but introducing bubbles.
+
+These strategies were designed for large-scale pre-training and become mismatched with LoRA fine-tuning, where trainable adapters constitute fewer than 1% of total parameters and small batch sizes are statistically preferred (§3). TP adds per-layer all-reduce communication whose latency dwarfs the microsecond-scale low-rank GEMMs. PP suffers from pipeline bubbles that worsen as micro-batch count shrinks, leaving most stages idle when per-adapter batch sizes approach 1. Multi-LoRA serving frameworks such as S-LoRA [52] and Punica [53] batch inference across adapters on a shared backbone, but their decode-phase kernels (BGMV/SGMV) operate at vector granularity and lack backward-pass support, making them inapplicable to training.
+Among these strategies, FSDP has become the de facto standard for distributed LoRA training. LoRA fine-tuning with small batch sizes (§3) exposes fundamental inefficiencies: FSDP shards the entire model across ranks but replicates the data pipeline, so when the global batch size is smaller than , some ranks receive zero samples and become idle for LoRA computation while still paying the full all-gather and reduce-scatter cost for base-model weights. Moreover, since LoRA fine-tuning is dominated by the cost of loading base model weights from HBM to SRAM [26], FSDP’s redundant replication of LoRA adapter matrices across ranks further exacerbates the inefficiency. None of these strategies exploit LoRA’s distinguishing characteristic: the trainable parameters are negligibly small compared to the frozen backbone, creating an opportunity for a parallelism design that shards the backbone for memory while keeping adapters local for compute.
+
+3 Motivation
+
+In this section, we identify three key observations in providing efficient LoRA training services.
+
+Observation 1: LoRA HP tuning is necessary but incurs substantial redundancy. Downstream performance of LoRA training for LLMs critically depends on selecting appropriate hyperparameters—including learning rate, batch size, LoRA rank, etc, so that they must be tuned for every single LoRA finetuning task.
+We pick two commonly used LLMs for LoRA finetuning: Llama-3.1-8B [54] and Qwen2.5-7B [55], and three datasets on different fields: GSM8K [56] for math, Tulu-3 [57] for instruction following, and Open-Thoughts3 [58] for general reasoning.
+As shown in Figure 1 (a-c), the validation loss22
+2
+
+Tulu3 and Openthoughts3 don’t have ground truth answers, so we fall back to the validation loss for the evaluation of the downstream task performance. varies dramatically across hyperparameter configurations, with the gap between the best and worst configurations exceeding an order of magnitude. Meanwhile, for the GSM8K dataset, we use vLLM [59] to evaluate the best checkpoint of each hyperparameter configuration picked by validation loss, and compare between different hyperparameter configurations. Figure 1 (b) shows that the best hyperparameter configurations yield 42.8% and 73.9% accuracy on the evaluation dataset respectively, while the worst often have 0% accuracy, and the median accuracy lies at 4% and 31%.
+
+Furthermore, we evaluate the impact of hyperparameters on preference alignment using Direct Preference Optimization (DPO) with the Qwen2.5-32B [55] model on the UltraFeedback [60] dataset. As illustrated in Figure 1 (c), the reward accuracy exhibits a significant spread of 26.7% between the optimal and suboptimal configurations. Even for larger models and alignment objectives, poor hyperparameter choices can cause reward accuracy to drop from nearly 80% to approximately 53%.
+With all these experiments, we proved that the hyperparameter tuning is a must for LoRA training. Thus, we are motivated to include hyperparameter tuning process in our system to yield the best adapter for each user’s training task.
+
+However, a naïve hyperparameter grid search incurs substantial redundancy, as it launches each configuration as an independent training job and runs it to completion before selecting the best. The redundancies are three-fold:
+(i) some configurations never converge due to misconfigured settings (e.g., excessively large learning rates);
+(ii) even for configurations that do converge, the optimal checkpoint may occur well before the end of training, with later steps only degrading performance through overfitting;
+and (iii) since only a single best adapter is ultimately needed, all resources spent on configurations that are clearly underperforming are wasted.
+In current practice, identifying these redundancies requires manual inspection of training curves, which demands continuous human attention, scales poorly with the number of concurrent configurations, and inevitably introduces reaction delays between the emergence of an ill pattern and its termination. This overhead becomes prohibitive in a service setting where dozens to hundreds of configurations may be training simultaneously across multiple tasks. This motivates an early-exit mechanism to reduce training redundancies. However, because training dynamics are different across dataset and models, this is challenging and requires sophisticated designs.
+
+Figure 3: LoRA fine-tuning prefer small batch size training. SFT validation loss for Llama-3.1-8B on (a) GSM8K, (b) Tulu-3, and (c) OpenThoughts3; DPO reward accuracy for Qwen2.5-32B on (d) UltraFeedback across five learning rates. Performance peaks at small batch sizes (16) and degrades beyond 32 for these settings.
+
+Observation 2: A fundamental conflict between the statistical behavior and system efficiency of LoRA fine-tuning. Typically, machine learning practitioners increase the training batch size to improve GPU utilization during hyperparameter search.
+However, we find that small batch sizes are often preferable in terms of adapter quality for LoRA training.
+Figure 3 (a-c) shows the validation loss across a range of batch sizes for Llama-3.1-8B on three SFT datasets: smaller batch sizes consistently achieve superior results, while excessively large batch sizes significantly degrade final performance.
+This finding extends beyond SFT: Figure 3 (d) shows that for direct preference optimization (DPO) training [48] of Qwen2.5-32B [55] on UltraFeedback [60], the adapter achieves the highest reward accuracy at small batch sizes across all learning rates.
+Similar conclusions are also reported in prior studies  [45, 61].
+
+This algorithmic preference for small batches creates a tension with hardware efficiency.
+On a single device, training a single LoRA adapter with a small batch severely underutilizes both GPU memory capacity and streaming multiprocessor (SM) occupancy (Figure 4).
+The problem is further exacerbated in the multi-device setting.
+When the base model exceeds single-GPU memory, distributed training becomes necessary.
+Fully-Sharded Data Parallelism (FSDP) [29], the standard approach, shards model parameters across GPUs and replicates the data pipeline.
+However, FSDP is a particularly poor fit for small-batch LoRA training, as the minimum global batch size cannot be smaller than the world size.
+Moreover, since LoRA fine-tuning is dominated by the cost of loading base model weights from HBM to SRAM [26], FSDP’s redundant replication of LoRA adapter matrices across ranks further exacerbates the inefficiency.
+
+Figure 4: GPU memory and average SM utilization when training a single LoRA adapter with small batch sizes. A substantial portion of GPU resources remains idle, motivating the need for batched multi-adapter training.
+
+To resolve this tension, we take two solutions.
+First, on a single device, multiple LoRA adapters can be co-located on the same GPU, sharing the frozen backbone model and executing concurrently through grouped GEMM kernels.
+Each adapter retains its own small per-adapter batch size, yet the aggregate workload fully saturates GPU memory and compute.
+This batched multi-LoRA training also synergizes with the early-exit strategy from observation 1: we run many configurations concurrently during the warmup phase, quickly identify the best candidates, evict the underperformers, and concentrate resources on the surviving configurations.
+
+Second, for multi-device training, we introduce Adapter Parallelism (AP), a parallelism strategy tailored to multi-LoRA workloads.
+Like FSDP, AP shards the base model weights across GPU ranks; unlike FSDP, each rank is assigned a different LoRA adapter rather than a different micro-batch of the same adapter.
+This design offers three key advantages:
+(i) it supports per-adapter batch sizes as small as 1 without leaving any rank idle, since every rank always trains a distinct adapter;
+(ii) it eliminates redundant HBM-to-SRAM transfers of adapter parameters, as each adapter’s low-rank matrices reside on exactly one rank; (iii) it removes the gradient communication between different ranks for the gradients of LoRA adapters.
+Together, batched multi-LoRA training and AP enable ALTO to maintain high hardware utilization across single- and multi-GPU setups while respecting the small batch sizes that LoRA training demands.
+
+Observation 3: Predictability of task-completion time creates optimization opportunities for workload scheduling.
+In a realistic training service, multiple LoRA training tasks from different users arrive together, each targeting a different base model, dataset, and hyperparameter search space.
+These tasks differ in both resource footprint and duration.
+A naïve shortest-task-first scheduler ignores both dimensions and can severely inflate makespan, for example by placing short tasks first and leaving GPUs idle while a long task runs alone (Figure 5).
+Such a problem would be further exacerbated when tasks have different GPU requirements, as poor placement can fragment the cluster and leave GPUs largely undertutilized.
+
+Figure 5: (a) Shortest-Job-First serve fails to fully utilize the GPU resources when multiple training tasks come. (b) Makespan-aware inter-task scheduling can fully minimize the overall training makespan.
+
+Nonetheless, unlike other machine learning tasks such as LLM serving workloads whose makespans are unpredictable, LoRA hyperparameter tuning tasks expose key scheduling information before execution:
+the number of configurations, the per-configuration step count, and the per-step training time together yield a reliable estimated duration, while the GPU requirement is determined by the base model size.
+This predictability transforms scheduling from an online, reactive problem into an offline optimization: given tasks with known durations and GPU requirements, find an assignment to time slots and GPU partitions that minimizes overall makespan.
+We formulate this as a variant of the heterogeneous-resource strip-packing problem and solve it efficiently in §7.
+The scheduler also integrates with the early-exit mechanism from Observation 1: when a task terminates early due to convergence detection, freed GPUs are immediately reallocated to pending tasks in the entire system.
+
+4 ALTO System Overview
+
+To address the challenges of providing efficient LoRA training services we identified in §3, we propose ALTO, a novel training system designed to efficiently handle heterogeneous LLM fine-tuning tasks. Unlike traditional frameworks that process tasks independently, ALTO jointly optimizes hyperparameter selection, hardware execution, and workload scheduling, as illustrated in Figure 2.
+
+This design is realized through three co-designed techniques.
+First, loss-aware early exit (§5) detects diverging, overfitting, and underperforming configurations from their loss trajectories and terminates them before they consume their full training budget.
+Second, batched multi-LoRA execution (§6) co-locates multiple adapters on a shared frozen backbone via fused grouped GEMM kernels, and adapter parallelism scales to multi-GPU settings by assigning each rank a distinct set of adapters rather than micro-batches of the same adapter.
+Third, hierarchical scheduling (§7) coordinates the dynamic workload at two levels: intra-task scheduling packs adapters onto executors to maximize GPU utilization, while inter-task scheduling minimizes the total makespan of all tasks via optimization solving.
+
+These three techniques together enable ALTO to operate as a LoRA-as-a-Service: rather than requiring users to manually launch, monitor, and tune individual training jobs, the system accepts a declarative task specification (a base model, dataset, and hyperparameter search space, as shown in Listing 1) and autonomously returns the best-performing adapter.
+Internally, ALTO profiles each task’s throughput and memory footprint, computes a task placement plan, and instantiates one executor per task that hosts multiple jobs concurrently on a shared base-model replica.
+Throughout training, the system continuously monitors loss trajectories, switches training jobs, and replans task placement upon task completion, all transparently to the user.
+
+5 Loss-Aware Early Exit
+
+Figure 6: The illustration of the loss curves of three typical redundant training patterns: (a) Overfitting, (b) Diverging, and (c) Underperforming.
+
+To exploit detectable redundancy during training, ALTO divides each task into a warmup stage and a continue-training stage. After warmup, only the top-performing adapters advance to continue-training, where online pattern detection continuously monitors loss trajectories and terminates diverging or overfitting jobs.
+
+5.1 Online Pattern-Based Exiting
+
+As motivated in §3, divergence and overfitting are detectable online from training and validation loss curves. We smooth training loss with an exponential moving average (EMA): , and use raw validation loss directly. Algorithm 1 gives the unified procedure; underperformance filtering, which requires cross-adapter comparison, is handled at the warmup boundary (§5.2).
+
+Figure 7: Rank correlation between validation loss at the end of the warmup phase and at the end of training. The relative ordering of well-behaved configurations is largely preserved, and the eventually best configuration is always preserved in top 25% after the warmup, validating the effectiveness of warmup-based exiting.
+
+Pattern-1: Divergence.
+A hyperparameter configuration may cause the model to diverge at any point during training, typically due to a learning rate that is too high, a LoRA rank mismatched with the task complexity, or a learning rate schedule that interacts poorly with the data distribution. When divergence occurs, both the training loss and the validation loss trend upward simultaneously (Figure 6b). We detect this by fitting a linear regression over the most recent loss values independently. If both slopes exceed a positive threshold for consecutive evaluation steps, the adapter is terminated immediately. The patience counter resets to zero whenever either slope drops below , preventing spurious exits from transient gradient spikes.
+
+Pattern-2: Overfitting.
+When a configuration is trained for too long or with an overly aggressive learning rate, the training loss continues to decrease while the validation loss turns upward, leading to overfitting (Figure 6a). This is common in LoRA fine-tuning with multi-epoch schedules, where the small adapter capacity memorizes the training distribution without generalizing. We detect overfitting by monitoring the gap ratio between the raw validation loss and the EMA-smoothed training loss: . When exceeds a threshold for consecutive evaluation steps, the adapter is checkpointed at its best validation loss and then terminated. Transient validation fluctuations reset the patience counter, so only a sustained gap triggers an exit. By checkpointing the best model before termination, this mechanism recovers the optimal adapter without any post-hoc checkpoint selection.
+
+Algorithm 1 Loss-Aware Pattern Detection.
+
+0:
+
+ EMA train losses , raw val losses , window , thresholds , , patience ,
+
+0:
+
+ Set of exit decisions for each adapter
+
+0:
+
+ 
+
+1:
+
+ if and then
+
+2:
+
+   
+
+3:
+
+   
+
+4:
+
+   
+
+5:
+
+   if then
+
+6:
+
+    return Exit(reason=diverging)
+
+7:
+
+   end if
+
+8:
+
+ end if
+
+8:
+
+ 
+
+9:
+
+ 
+
+10:
+
+ 
+
+11:
+
+ if then
+
+12:
+
+   checkpoint(best val. loss model); 
+
+13:
+
+   return Exit(reason=overfitting)
+
+14:
+
+ end if
+
+14:
+
+ 
+
+15:
+
+ if warmup finished then
+
+16:
+
+   
+
+17:
+
+   
+
+18:
+
+   for each adapter in do
+
+19:
+
+    return Exit(reason=underperforming)
+
+20:
+
+   end for
+
+21:
+
+ end if
+
+5.2 Warmup-Based Exiting
+
+Given candidate configurations for a task, ALTO runs each through a brief warmup phase before committing to full training. Online pattern detection is already active during warmup, terminating clearly diverging configurations and freeing their slots for queued candidates to rotate in. This allows the system to cycle through all candidates even when only a fraction can run concurrently on a single GPU.
+
+At the warmup boundary, each surviving adapter is evaluated on the validation set. The scheduler ranks them by validation loss and retains the top- candidates, evicting the rest—persistently bottom-ranked configurations are unlikely to recover (Figure 6c). Evicted adapters’ parameters and optimizer states are discarded to reclaim GPU memory, while selected adapters transition into continue-training carrying over their optimizer states and loss histories.
+Our rank-correlation analysis (Figure 7) confirms that relative configuration ordering after warmup strongly correlates with final performance, validating this selection. In practice, a warmup of 5% of total steps with a 25% retention ratio provides an optimal balance (Appendix A.2).
+
+6 Dynamically Batched Executor
+
+This section presents two complementary techniques to co-locate multiple adapters efficiently: grouped GEMM execution for single-GPU batching (§6.1), and rank-local adapter parallelism for multi-GPU scaling (§6.2).
+
+6.1 Decoupled Base-LoRA Execution
+
+All LoRA adapters share the same frozen base model, so a single forward pass through the backbone can serve multiple adapters simultaneously.
+The key observation is that the base GEMM () is compute-bound on large weight matrices, while the LoRA GEMMs (, ) are memory-bandwidth bound due to low rank () [26].
+This asymmetry is central to our design.
+
+Existing systems make suboptimal tradeoffs along this boundary.
+mLoRA [21] preserves cuBLAS for the base GEMM but executes the LoRA path with separate kernel launches per layer, incurring launch overhead and poor SM utilization.
+LoRAFusion [26] fuses base and LoRA into one Triton kernel, but sacrifices cuBLAS throughput (10–20% [62]) and introduces FLOP waste: its wide-GEMM formulation executes FLOPs while only are useful.
+
+Decoupled grouped GEMM.
+ALTO avoids both pitfalls by treating the two paths independently.
+The base GEMM runs via cuBLAS on the concatenated batch; the LoRA path uses two Triton kernels: a grouped GEMM computing in a single launch, and a fused GEMM-add computing directly.
+This reduces LoRA launches from to per layer, concatenating thread blocks across adapters for full SM occupancy, while computing only the diagonal blocks with zero wasted FLOPs.
+
+Backward pass.
+Training backward passes are comparably expensive to forward, yet the serving kernels above lack backward support entirely.
+ALTO computes input gradients (, ) in a single grouped Triton kernel reusing the same -launch schedule, while weight gradients (, ) are batched via grouped_mm, also in launches.
+The forward caches intermediate to avoid recomputation, trading modest memory for a saved kernel launch per layer.
+
+6.2 Rank-Local Adapter Parallelism
+
+Figure 8: Two executor modes in ALTO’s batched execution engine.
+(a) Multi-GPU executor with adapter parallelism: base model weights are sharded across ranks and synchronized via all-gather, while each rank trains a disjoint set of LoRA jobs locally via grouped GEMM, therefore there is no adapter gradients cross rank boundaries.
+(b) Single-GPU executor: the full base model and multiple LoRA jobs reside on a single device, trained concurrently through grouped GEMM batching.
+
+When the base model exceeds single-GPU memory, we shard it across ranks using FSDP [29].
+However, instead of distributing micro-batches of the same adapter across ranks, we propose adapter parallelism, which distributes different adapters to different ranks (as shown in Figure 8).
+Each rank maintains a disjoint set of LoRA adapters with independent parameters, optimizers, and loss trackers.
+During forward and backward passes, all ranks participate in FSDP all-gather for base model weights, but LoRA computation and gradients remain purely local, which incurs no cross-rank communication of adapter parameters.
+
+This design offers three key advantages over standard FSDP for LoRA workloads.
+First, no rank is ever idle: each rank trains its own adapters with full mini-batches regardless of per-adapter batch size, whereas FSDP would leave ranks idle when the global batch size is 1.
+Second, adapter gradient communication is eliminated: each adapter’s low-rank matrices reside on exactly one rank and are never replicated or synchronized, removing the gradient all-reduce that FSDP would impose on adapter parameters.
+Third, redundant adapter weight transfers are removed: in standard FSDP, every rank replicates the same adapter and independently loads its weights from HBM to SRAM during each forward and backward pass, incurring redundant memory traffic on the bandwidth-bound LoRA path.
+With adapter parallelism, each adapter is read from HBM on exactly one rank, eliminating this redundancy entirely.
+Adapter parallelism composes naturally with grouped GEMM: within each rank, multiple adapters can be co-located, compounding single-GPU and multi-GPU efficiency gains.
+
+7 Hierarchical Scheduling
+
+The batched multi-LoRA engine and loss-aware early exit create a dynamic workload where jobs are continuously admitted/terminated. ALTO manages this dynamics with a hierarchical scheduler: an online intra-task scheduler that performs admission and backfill within each executor (§7.1), and a dynamic inter-task scheduler that places tasks across GPUs and time slots to minimize cluster makespan (§7.2).
+
+7.1 Online Greedy Intra-Task Scheduling
+
+Within a single task, the intra-task scheduler must continuously decide how many adapters to co-locate on each executor and when to admit/evict them. These decisions depend on the GPU memory and the throughput impact of adapter packing density, both of which vary with the base model, LoRA rank, sequence length, and per-adapter batch size.
+
+Rather than requiring the user to specify packing limits manually, ALTO runs an automatic memory profiling stage before training begins, fitting a lightweight linear model that predicts peak HBM usage as a function of total batch size (Appendix A.3). At runtime, the scheduler groups adapters by per-adapter batch size to maximize grouped GEMM efficiency and greedily admits them in decreasing batch-size order, admitting an adapter only if confirms the new configuration fits within a safety margin. When an adapter exits, the scheduler backfills the vacated slot, which prefers a pending job of the same batch size to preserve homogeneous packing, but accepts mixed configurations when necessary.
+
+7.2 Dynamic Inter-Task Scheduling
+
+When a user submits multiple tasks, e.g., fine-tuning Llama-8B on GSM8K, the inter-task scheduler must partition GPUs across tasks over time to minimize end-to-end makespan. Unlike LLM serving requests whose runtimes are unpredictable, LoRA fine-tuning tasks expose reliable duration estimates before execution. Because our scheduling constraints are highly structured, we can compute optimal makespan schedules in under a second. This negligible overhead enables ALTO to operate as a fully dynamic online scheduler rather than relying on static offline plans.
+
+Before a task is scheduled, ALTO runs a lightweight throughput profiling phase. It launches a short training run to measure the throughput in samples per second. Combined with the total sample count, this yields an estimated task duration . The GPU requirement for each task is determined by the base model size. Profiling results are cached per task to avoid redundant measurements.
+Given tasks with profiled durations and GPU requirements on total GPUs, the problem is . We formulate it as a constraint programming problem. Table 1 lists the decision variables; is the big-M constant.
+
+Table 1: Constraint programming decision variables for inter-task scheduling.
+
+Variable
+Domain
+Description
+
+Start time of task
+
+1 iff task occupies GPU
+
+1 iff task precedes   ()
+
+Makespan
+
+The above equations show big-M disjunctive no-overlap constraints: they activate only when tasks share GPU () and enforce temporal ordering via . A single per pair suffices because each task occupies all its assigned GPUs simultaneously. The CP-SAT solver [63] finds the optimum in  s for all tested instances.
+
+Event-driven replanning.
+Unlike static schedulers, ALTO maintains a dynamic "living" queue. The inter-task scheduler sits on the critical path and replans the cluster assignment on the fly whenever a major state change occurs. Specifically, the inter-task scheduling is triggered by two events: (1) Task Arrival: a new workload is submitted by a user, and (2) Task Completion: a task successfully finishes its run (which frequently occurs earlier than the worst-case duration due to massive early-exits executed by the intra-task pattern detector (§5.1)). This event-driven loop guarantees true multi-tenancy and zero resource waste, as freed GPUs are instantly backfilled with the next optimal task.
+
+8 Evaluation
+
+Figure 9: End-to-end training speedup of ALTO across single-GPU and multi-GPU configurations. From left to right: Llama-3.1-8B and Qwen2.5-7B on a single H100 GPU, Qwen2.5-32B on 2 H100 and Llama-3.1-70B on 4 H100. Each configuration trains 60 (single-GPU) or 64 (multi-GPU) heterogeneous LoRA adapters with varied ranks, batch sizes, and learning rates across three datasets. ALTO achieves up to 9.5 speedup on single-GPU and up to 13.8 speedup on multi-GPU settings, consistently outperforming all baselines. Speedup is evaluated relative to LoRAFusion.
+
+We evaluate ALTO on four LLMs spanning 7B to 70B parameters, three SFT datasets, one DPO dataset, and both single-GPU and multi-GPU configurations. Our evaluation answers the following three major questions:
+
+•
+
+How does ALTO compare end-to-end against sequential training and state-of-the-art multi-LoRA baselines? (§8.2)
+
+•
+
+Does batched execution with early exit preserve final adapter quality? (§8.2)
+
+•
+
+How much does each component (e.g., batching, early exit, and scheduling) contribute to the overall speedup? (§8.3)
+
+8.1 Experimental Setup
+
+Hardware. All experiments are conducted on NVIDIA H100 SXM5 80GB GPUs interconnected via NVLink.
+Single-GPU experiments use one H100, while multi-GPU experiments use 2H100 for Qwen2.5-32B and 4H100 for Llama-3.1-70B.
+
+Models.
+We evaluate ALTO on four widely-used open-source LLMs spanning different scales:
+Llama-3.1-8B [54] and Qwen2.5-7B [55] for single-GPU experiments,
+and Qwen2.5-32B and Llama-3.1-70B for multi-GPU experiments with Adapter Parallelism.
+
+Datasets.
+We use three diverse datasets for supervised fine-tuning (SFT):
+(1) GSM8K [56] (GSM), a grade-school math reasoning dataset where we use 90% of the training set for training and 10% for validation, and the full test set for evaluation;
+(2) Tulu-3 [57], an instruction-following dataset using a subset of 9,000 training samples, 1,000 for validation, and 1,000 for evaluation; and
+(3) OpenThoughts3 [58] (OT3), a general reasoning dataset using the same 9,000/1,000/1,000 split.
+The maximum sequence length is 1,024 tokens for GSM8K and Tulu-3, and 2,048 tokens for OpenThoughts3.
+For direct preference optimization (DPO) experiments, we use UltraFeedback [60] for evaluation.
+
+Hyperparameter search space.
+We search over 60 (single-GPU) or 64 (multi-GPU) configurations spanning learning rates 1e-5–5e-4, LoRA ranks 16–128, and per-adapter batch sizes 1–8.
+All runs use 3 epochs, paged AdamW 8-bit, and LoRA on all attention and MLP projections with .
+Full details are in Appendix A.4.
+
+Baselines.
+We compare against:
+(1) Sequential, which trains each LoRA adapter one at a time on a single GPU;
+(2) LoRAFusion [26], a state-of-the-art batched multi-LoRA system with fused GEMM kernels;
+(3) mLoRA [21], a multi-LoRA training framework supporting concurrent adapter training.
+For multi-GPU experiments, we additionally compare against
+(4) Pipeline Parallelism, which partitions the model across GPUs and processes adapters sequentially.
+
+Metrics.
+We report end-to-end training speedup (wall-clock time to complete all adapter training) normalized to the sequential baseline for single-GPU and pipeline parallelism for multi-GPU settings.
+For GSM8K, we evaluate downstream accuracy using vLLM [59] with zero-shot prompting and strict answer parsing, selecting the checkpoint with the lowest validation loss for each configuration.
+For Tulu-3 and OpenThoughts3, we report validation loss as these datasets lack ground-truth answers for automated evaluation.
+
+Implementation.
+ALTO is built on PyTorch 2.9.1 / CUDA 12.1 with Triton 3.5.1 for the fused grouped GEMM kernels; evaluation inference uses vLLM 0.14.1.
+
+8.2 End-to-End Performance
+
+Single-GPU speedup.
+Figure 9 (a-b) reports end-to-end wall-clock speedup on Llama-3.1-8B and Qwen2.5-7B, each training 60 heterogeneous LoRA adapters across three datasets.
+ALTO achieves up to speedup over the LoRAFusion baseline, consistently outperforming all baselines across all six single-GPU model–dataset combinations.
+
+Multi-GPU speedup.
+Figure 9 (c-d) shows the results on Qwen2.5-32B (2H100) and Llama-3.1-70B (4H100), each training 64 adapters across three datasets.
+ALTO achieves up to speedup over the LoRAFusion baseline.
+The larger gains stem from Adapter Parallelism (§6.2), which assigns each GPU rank a distinct set of adapters, whereas pipeline parallelism leaves most stages idle when per-adapter batch sizes are small.
+This advantage is consistent across both the 32B (2-GPU) and 70B (4-GPU) scales, confirming that AP’s communication efficiency generalizes as the model and GPU count grow.
+
+Figure 10: Model quality of the best configuration found by ALTO on single-GPU 7B–8B models, compared against expert-recommended hyperparameters from Unsloth and Tinker. (a) GSM8K test accuracy (higher is better). Completion loss on the evaluation split of (b) Tulu-3 and (c) OpenThoughts3 (lower is better). For ALTO, each bar shows the best result found across batched runs with per-adapter batch sizes in .
+
+Quality preservation.
+Beyond throughput, we verify that ALTO preserves final adapter quality despite batched execution and early termination of unpromising configurations.
+Figure 10 compares the best configuration found by ALTO against expert-recommended hyperparameters from Unsloth and Tinker on GSM8K test accuracy (a) and completion loss on the evaluation set of Tulu-3 (b) and OpenThoughts3 (c).
+ALTO matches or exceeds the expert-recommended settings across all model–dataset combinations.
+This result validates that the early-exit mechanism correctly preserves the best-performing configurations while eliminating redundant training.
+Notably, expert-recommended hyperparameters often fail to achieve the best results, underscoring the necessity of systematic hyperparameter search.
+
+RL End-to-end results.
+We extend ALTO to reinforcement learning from human feedback (RLHF) by evaluating on DPO [48] with UltraFeedback [60].
+Figure 11 reports the end-to-end speedup and best preference accuracy across 60 configurations with per-adapter batch sizes .
+ALTO with early exit achieves speedup over sequential training and over Batched-LoRA alone, while the best configuration found by early exit attains the same preference accuracy as Batched-LoRA without early exit, confirming that early termination does not discard the top-performing adapter.
+
+Inter-task scheduling.
+We evaluate the inter-task scheduler on 8H100 GPUs with 11 heterogeneous tasks spanning four model scales: Llama-3.1-70B (4 GPUs per task), Qwen2.5-32B (2 GPUs), and Llama-3.1-8B / Qwen2.5-7B (1 GPU each), each training adapters on GSM8K at varied batch sizes. This setting exercises the scheduler’s ability to bin-pack tasks with diverse GPU requirements onto a shared cluster.
+Figure 12 ablates the three components on overall makespan: Batched LoRA (B), Scheduler (S), and Early Exit (EE).
+Adding early exit (B+EE) yields the largest incremental gain by eliminating wasted training and freeing GPU slots for remaining tasks.
+The full system (B+S+EE) achieves a reduction in makespan compared to batching alone, demonstrating that the three components are complementary: early exit reduces per-task compute, the scheduler reduces cross-task fragmentation, and batching amortizes per-step cost.
+
+Figure 11: DPO training on UltraFeedback. Bars show end-to-end speedup over sequential training; diamond markers show best preference accuracy across all per-adapter batch sizes. ALTO with early exit achieves speedup while preserving the same preference accuracy (76.2%) as Batched-LoRA without early exit.
+
+Figure 12: Evalution of ALTO components on 8-GPU training makespan. B = Batched LoRA, S = Scheduler, EE = Early Exit. The full system (B+S+EE) achieves a reduction in makespan compared to batching alone (B), with early exit contributing the largest individual gain.
+
+8.3 Ablation Studies
+
+We isolate the contribution of each component in ALTO through ablation experiments on kernel performance, quality impact of early exit, and training sample savings.
+
+Kernel contributions.
+Table 2 compares the training time of ALTO’s fused grouped Triton kernels against PyTorch back-to-back execution (per-adapter LoRA kernels run sequentially on the mixed batch) and fully sequential training (each adapter trained alone, wall-clock times summed).
+The fused kernels achieve – speedup over PyTorch and – speedup over sequential training.
+Gains scale inversely with per-adapter batch size ( at BS=1 vs. at BS=4), consistent with the LoRA path’s increasing share of total compute at smaller batches (§6).
+
+Figure 13: Adapter Parallelism (AP) microbenchmark on 4H100 GPUs: speedup relative to FSDP across per-adapter batch sizes, with 8 adapters and sequence length 256. AP (Ours) outperforms FSDP, TP, mLoRA, and LoRAFusion at all batch sizes, peaking at at per-adapter batch size 2.
+
+Adapter Parallelism.
+Figure 13 microbenchmarks Adapter Parallelism (AP) against FSDP, TP, and mLoRA on 4H100 GPUs, training 8 adapters with sequence length 256 across per-adapter batch sizes .
+AP can achieve up to speedup over FSDP33
+3
+
+For per-adapter batch size , FSDP baseline cannot be used, so we estimate the throughput assuming it uses dummy data padding to batch size 4 (dashed bars). and consistently outperforms all baselines.
+AP’s advantage is largest at small batch sizes (BS = 1 to 2) where FSDP’s all-reduce dominates; at BS = 4 to 8, mLoRA and TP fall below FSDP while AP retains its edge.
+
+Table 2: Kernel microbenchmark on Llama-3.2-1B, GSM8K, 32 adapters with ranks 16, 32, 64 equally mixed.
+PyTorch: per-adapter LoRA run sequentially, backbone model passed in a batch.
+Sequential: each adapter trained alone.
+Fused: ALTO’s grouped Triton kernel.
+
+Per-adapter
+PyTorch
+Sequential
+Fused
+Speedup over
+
+BS
+(s)
+(s)
+(s)
+PyTorch
+Sequential
+
+1
+754.1
+2016.6
+394.6
+
+2
+514.4
+1098.4
+296.0
+
+4
+328.5
+599.2
+240.8
+
+Quality impact of early exit.
+Figure 14 isolates the quality impact of batched execution and early exit on Llama-3.1-8B with GSM8K.
+Individual adapter accuracies exhibit high variance (gray dots), with many near-zero.
+Batching finds strong configurations by training more candidates concurrently; adding early exit further improves the best result by concentrating resources on promising configurations.
+Validation loss confirms no quality degradation.
+
+Early exit effectiveness.
+Figure 15 reports the training samples saved by each early-exit pattern across Llama-3.1-8B and Qwen2.5-7B on three SFT datasets (GSM8K, Tulu-3, OpenThoughts-3; 165–330 configurations each), plus Qwen2.5-32B on UltraFeedback with DPO (40 configurations). All use identical detector parameters (, , , , 5% warmup, 25% selection ratio). The three detectors collectively save 72–83% of training samples. Underperformance filtering dominates in SFT ( of saved samples), while overfitting and divergence contribute proportionally more in DPO (24% and 12%, respectively), reflecting DPO’s more volatile loss dynamics. Notably, the same algorithm and thresholds generalize from SFT to DPO without modification, since both objectives produce training and evaluation losses on a comparable scale.
+
+Figure 14: Single-GPU ablation on Llama-3.1-8B / GSM8K across per-adapter batch sizes. Left: GSM8K evaluation accuracy (strict parsing). Gray dots show individual adapter accuracies from the full sweep without selection. Colored markers compare the best accuracy found by Multi-LoRA batching alone vs. Multi-LoRA with early exit. Right: Best validation loss. Early exit preserves or improves quality by concentrating resources on promising configurations.
+
+9 Related Work
+
+In this section, we give a comprehensive overview of prior efforts in three major aspects that closely related to our current work, including Hyperparameter Optimization, Multi-LoRA Serving and Training Systems.
+
+Hyperparameter Optimization.
+Hyperband [64] accelerates search through bandit-based resource allocation, progressively eliminating underperformers. ASHA [65] extends this with asynchronous successive halving for distributed settings. Early stopping methods complement resource allocation: Domhan et al. [66] extrapolate partial learning curves to terminate weak configurations early, while patience-based stopping [28] halts training when validation loss stagnates. These techniques have not been studied in the context of LoRA fine-tuning, where short training durations and highly correlated adapter losses enable simpler yet effective early-exit strategies based on lightweight pattern detection.
+
+Multi-LoRA Serving Systems.
+Multi-LoRA serving systems batch inference requests across adapters sharing a base model. S-LoRA [52] introduces unified paged memory management for thousands of concurrent adapters, Punica [53] proposes the BGMV kernel for batched LoRA decoding, and dLoRA [67] dynamically migrates adapters across replicas for load balancing. These systems target the memory-bandwidth-bound decoding regime; their kernels and parallelism strategies are not directly applicable to training, where the backward pass introduces gradient flow constraints and fundamentally different workload characteristics.
+
+Figure 15: Training samples saved by each early-exit pattern across seven model–dataset combinations. Stacked bars decompose savings by detector: underperformance filtering dominates in SFT (), while overfitting and divergence contribute more in DPO.
+Green diamonds show the ratio of best validation loss w/ vs. w/o early exit; values at or near 1.0 confirm that early termination preserves model quality.
+
+Multi-LoRA Training Systems.
+Recent works explore co-scheduling multiple LoRA adapters during training process. mLoRA [21] uses pipeline parallelism and a batched LoRA operator with graph-pruning optimizations to improve utilization. LoRAFusion [26] fuses memory-bound LoRA operations with compute-bound base GEMMs via Triton [62] kernels and introduces an adaptive MILP-based scheduler for balanced microbatches. PLoRA [25] coordinates concurrent LoRA hyperparameter tuning jobs under shared hardware constraints. tLoRA [27] fuses adapters into an elastic super-model with rank-aware nano-batches and an online residual-capacity-aware scheduler to maximize collective throughput. mLoRA [21] and LoRAFusion [26] both rely on pipeline parallelism, which suffers from workload imbalance across stages, even with careful scheduling. More fundamentally, all prior systems treat LoRA jobs as independent workloads; ALTO instead exploits the inter-job relationships inherent in hyperparameter tuning—using early-stage loss correlations to prune unpromising configurations and redirect resources to the most promising adapters.
+
+10 Conclusion
+
+In this paper, we presented ALTO, a system that recasts multi-LoRA hyperparameter tuning as a unified system workload.
+Three co-designed techniques drive its efficiency:
+a loss-aware early-exit mechanism that detects diverging, overfitting, and underperforming configurations from loss trajectories;
+a batched multi-LoRA engine with fused grouped GEMM kernels that amortizes base-model cost across co-located adapters;
+and Adapter Parallelism, which assigns each GPU rank a distinct adapter set to eliminate idle ranks and redundant communication.
+A hierarchical scheduler ties these components together, packing adapters within tasks and bin-packing tasks across a shared GPU cluster.
+Our extensive experimental evaluation covers diverse LLMs, including popular Llama/Qwen models, various SFT datasets, and DPO algorithms, ALTO achieves up to speedup over state-of-the-art baselines while matching or exceeding expert-tuned adapter quality.
+
+References
+
+[1]
+Anthropic (2024)
+
+The claude 3 model family: opus, sonnet, haiku.
+
+Note: https://www-cdn.anthropic.com/de8ba9b01c9ab7cbabf5c33b80b7bbc618857627/Model_Card_Claude_3.pdf
+
+Cited by: §1.
+
+[2]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al. (2023)
+
+Gpt-4 technical report.
+
+arXiv preprint arXiv:2303.08774.
+
+Cited by: §1.
+
+[3]
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, et al. (2021)
+
+Evaluating large language models trained on code.
+
+arXiv preprint arXiv:2107.03374.
+
+Cited by: §1.
+
+[4]
+N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica (2024)
+
+Livecodebench: holistic and contamination free evaluation of large language models for code.
+
+arXiv preprint arXiv:2403.07974.
+
+Cited by: §1.
+
+[5]
+F. Shi, M. Suzgun, M. Freitag, X. Wang, S. Srivats, S. Vosoughi, H. W. Chung, Y. Tay, S. Ruder, D. Zhou, et al. (2022)
+
+Language models are multilingual chain-of-thought reasoners.
+
+arXiv preprint arXiv:2210.03057.
+
+Cited by: §1.
+
+[6]
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, et al. (2023)
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+Advances in neural information processing systems 36, pp. 46595–46623.
+
+Cited by: §1.
+
+[7]
+W. Chiang, L. Zheng, Y. Sheng, A. N. Angelopoulos, T. Li, D. Li, H. Zhang, B. Zhu, M. Jordan, J. E. Gonzalez, et al. (2024)
+
+Chatbot arena: an open platform for evaluating llms by human preference, 2024.
+
+URL https://arxiv. org/abs/2403.04132 2 (10).
+
+Cited by: §1.
+
+[8]
+N. Guha, J. Nyarko, D. Ho, C. Ré, A. Chilton, A. Chohlas-Wood, A. Peters, B. Waldon, D. Rockmore, D. Zambrano, et al. (2023)
+
+Legalbench: a collaboratively built benchmark for measuring legal reasoning in large language models.
+
+Advances in neural information processing systems 36, pp. 44123–44279.
+
+Cited by: §1.
+
+[9]
+E. Chen, J. Lee, J. Lin, and K. Koedinger (2024)
+
+GPTutor: great personalized tutor with large language models for personalized learning content generation.
+
+In Proceedings of the Eleventh ACM Conference on Learning@ Scale,
+
+pp. 539–541.
+
+Cited by: §1.
+
+[10]
+J. Wulf and J. Meierhofer (2024)
+
+Exploring the potential of large language models for automation in technical customer service.
+
+arXiv preprint arXiv:2405.09161.
+
+Cited by: §1.
+
+[11]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al. (2022)
+
+Lora: low-rank adaptation of large language models..
+
+Iclr 1 (2), pp. 3.
+
+Cited by: §1,
+§2.1.
+
+[12]
+Fireworks AI (2024)
+
+Fireworks ai fine-tuning.
+
+External Links: Link
+
+Cited by: §1.
+
+[13]
+(2024)
+
+Together AI.
+
+Note: https://www.together.ai/
+
+Cited by: §1,
+§2.1.
+
+[14]
+Thinking Machines Lab (2025)
+
+Tinker: a flexible api for fine-tuning open source models with lora.
+
+External Links: Link
+
+Cited by: §1.
+
+[15]
+Unsloth
+
+External Links: Link
+
+Cited by: §1,
+§1,
+§1.
+
+[16]
+Y. Zheng, R. Zhang, J. Zhang, Y. Ye, Z. Luo, and Y. Ma (2024)
+
+LlamaFactory: unified efficient fine-tuning of 100+ language models.
+
+In Proceedings of the 62nd Annual Meeting of the Association for
+Computational Linguistics (Volume 3: System Demonstrations),
+ACL 2024, Bangkok, Thailand, August 11-16, 2024,
+
+pp. 400–410.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§1,
+§1,
+§2.1.
+
+[17]
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al. (2022)
+
+Training language models to follow instructions with human feedback.
+
+Advances in neural information processing systems 35, pp. 27730–27744.
+
+Cited by: §1.
+
+[18]
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu (2025)
+
+Hybridflow: a flexible and efficient rlhf framework.
+
+In Proceedings of the Twentieth European Conference on Computer Systems,
+
+pp. 1279–1297.
+
+Cited by: §1.
+
+[19]
+S. Mangrulkar, S. Gugger, L. Debut, Y. Belkada, S. Paul, B. Bossan, and M. Tietz (2022)
+
+PEFT: state-of-the-art parameter-efficient fine-tuning methods.
+
+Note: https://github.com/huggingface/peft
+
+Cited by: §1,
+§1,
+§2.1.
+
+[20]
+S. Lin, F. Fu, H. Li, H. Ge, X. Wang, J. Niu, Y. Tu, and B. Cui (2025)
+
+LobRA: multi-tenant fine-tuning over heterogeneous data.
+
+Proc. VLDB Endow. 18 (8), pp. 2616–2625.
+
+External Links: ISSN 2150-8097,
+Link,
+Document
+
+Cited by: §1.
+
+[21]
+Z. Ye, D. Li, Z. Hu, T. Lan, J. Sha, S. Zhang, L. Duan, J. Zuo, H. Lu, Y. Zhou, and M. Tang (2025)
+
+MLoRA: fine-tuning lora adapters via highly-efficient pipeline parallelism in multiple gpus.
+
+Proc. VLDB Endow. 18 (6), pp. 1948–1961.
+
+External Links: ISSN 2150-8097,
+Link,
+Document
+
+Cited by: §1,
+§1,
+§6.1,
+§8.1,
+§9.
+
+[22]
+Google Cloud (2024)
+
+Tune gemini models by using supervised fine-tuning.
+
+Note: Accessed: 2026-03-28
+
+External Links: Link
+
+Cited by: §1,
+§2.1.
+
+[23]
+Amazon Web Services (2024)
+
+Fine-tune foundation models with amazon sagemaker jumpstart.
+
+Note: Accessed: 2026-03-28
+
+External Links: Link
+
+Cited by: §1,
+§2.1.
+
+[24]
+Microsoft (2024)
+
+Customize a model with fine-tuning in azure openai.
+
+Note: Accessed: 2026-03-28
+
+External Links: Link
+
+Cited by: §1,
+§2.1.
+
+[25]
+M. Yan, Z. Wang, Z. Jia, S. Venkataraman, and Y. Wang (2025)
+
+Plora: efficient lora hyperparameter tuning for large models.
+
+arXiv preprint arXiv:2508.02932.
+
+Cited by: §1,
+§9.
+
+[26]
+J. Guo, A. Ali, L. Yang, and D. Fan (2025)
+
+LoRAFusion: a crossbar-aware multi-task adaption framework via efficient fusion of pretrained lora modules.
+
+In Proceedings of the Great Lakes Symposium on VLSI 2025,
+
+GLSVLSI ’25, New York, NY, USA, pp. 777–783.
+
+External Links: ISBN 9798400714962,
+Link,
+Document
+
+Cited by: §1,
+§2.2,
+§3,
+§6.1,
+§6.1,
+§8.1,
+§9.
+
+[27]
+K. Li, D. Saha, A. Kanodia, and F. Lai (2026)
+
+TLoRA: efficient multi-lora training with elastic shared super-models.
+
+arXiv preprint arXiv:2602.07263.
+
+Cited by: §1,
+§9.
+
+[28]
+L. Prechelt (2002)
+
+Early stopping-but when?.
+
+In Neural Networks: Tricks of the trade,
+
+pp. 55–69.
+
+Cited by: §1,
+§9.
+
+[29]
+Y. Zhao, A. Gu, R. Varma, L. Luo, C. Huang, M. Xu, L. Wright, H. Shojanazeri, M. Ott, S. Shleifer, et al. (2023)
+
+Pytorch fsdp: experiences on scaling fully sharded data parallel.
+
+arXiv preprint arXiv:2304.11277.
+
+Cited by: §1,
+§2.2,
+§3,
+§6.2.
+
+[30]
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He (2020)
+
+ZeRO: memory optimizations toward training trillion parameter models.
+
+In Proceedings of the International Conference for High Performance Computing,
+Networking, Storage and Analysis, SC 2020, Virtual Event / Atlanta,
+Georgia, USA, November 9-19, 2020,
+
+pp. 20.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§2.2.
+
+[31]
+S. Fan, Y. Rong, C. Meng, Z. Cao, S. Wang, Z. Zheng, C. Wu, G. Long, J. Yang, L. Xia, et al. (2021)
+
+DAPPLE: a pipelined data parallel approach for training large models.
+
+In Proceedings of the 26th ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming,
+
+pp. 431–445.
+
+Cited by: §1,
+§2.2.
+
+[32]
+Y. Huang, Y. Cheng, A. Bapna, O. Firat, D. Chen, M. Chen, H. Lee, J. Ngiam, Q. V. Le, Y. Wu, et al. (2019)
+
+Gpipe: efficient training of giant neural networks using pipeline parallelism.
+
+Advances in neural information processing systems 32.
+
+Cited by: §1,
+§2.2.
+
+[33]
+D. Narayanan, A. Harlap, A. Phanishayee, V. Seshadri, N. R. Devanur, G. R. Ganger, P. B. Gibbons, and M. Zaharia (2019)
+
+PipeDream: generalized pipeline parallelism for dnn training.
+
+In Proceedings of the 27th ACM symposium on operating systems principles,
+
+pp. 1–15.
+
+Cited by: §1,
+§2.2.
+
+[34]
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro (2019)
+
+Megatron-lm: training multi-billion parameter language models using model parallelism.
+
+arXiv preprint arXiv:1909.08053.
+
+Cited by: §1,
+§2.2.
+
+[35]
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro, et al. (2021)
+
+Efficient large-scale language model training on gpu clusters using megatron-lm.
+
+In Proceedings of the international conference for high performance computing, networking, storage and analysis,
+
+pp. 1–15.
+
+Cited by: §1,
+§2.2.
+
+[36]
+N. Houlsby, A. Giurgiu, S. Jastrzebski, B. Morrone, Q. De Laroussilhe, A. Gesmundo, M. Attariyan, and S. Gelly (2019)
+
+Parameter-efficient transfer learning for nlp.
+
+In International conference on machine learning,
+
+pp. 2790–2799.
+
+Cited by: §2.1.
+
+[37]
+B. Lester, R. Al-Rfou, and N. Constant (2021)
+
+The power of scale for parameter-efficient prompt tuning.
+
+In Proceedings of the 2021 conference on empirical methods in natural language processing,
+
+pp. 3045–3059.
+
+Cited by: §2.1.
+
+[38]
+X. L. Li and P. Liang (2021)
+
+Prefix-tuning: optimizing continuous prompts for generation.
+
+In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers),
+
+pp. 4582–4597.
+
+Cited by: §2.1.
+
+[39]
+X. Liu, K. Ji, Y. Fu, W. Tam, Z. Du, Z. Yang, and J. Tang (2022)
+
+P-tuning: prompt tuning can be comparable to fine-tuning across scales and tasks.
+
+In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers),
+
+pp. 61–68.
+
+Cited by: §2.1.
+
+[40]
+T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer (2023)
+
+Qlora: efficient finetuning of quantized llms.
+
+Advances in neural information processing systems 36, pp. 10088–10115.
+
+Cited by: §2.1.
+
+[41]
+(2024)
+
+Anyscale.
+
+Note: https://www.anyscale.com/
+
+Cited by: §2.1.
+
+[42]
+(2024)
+
+Lambda.
+
+Note: https://lambdalabs.com/
+
+Cited by: §2.1.
+
+[43]
+Andreessen Horowitz (2024)
+
+16 changes to the way enterprises are building and buying generative ai.
+
+Andreessen Horowitz.
+
+Note: Accessed: 2025
+
+External Links: Link
+
+Cited by: §2.1.
+
+[44]
+Predibase (2024)
+
+LoRAX: multi-LoRA inference server that scales to 1000s of fine-tuned LLMs.
+
+Note: GitHub
+
+External Links: Link
+
+Cited by: §2.1.
+
+[45]
+J. Schulman and T. M. Lab (2025)
+
+LoRA without regret.
+
+Thinking Machines Lab: Connectionism.
+
+Note: https://thinkingmachines.ai/blog/lora/
+
+External Links: Document
+
+Cited by: §2.1,
+§3.
+
+[46]
+S. Wang, J. Asilis, Ö. F. Akgül, E. B. Bilgin, O. Liu, and W. Neiswanger (2025)
+
+Tina: tiny reasoning models via lora.
+
+arXiv preprint arXiv:2504.15777.
+
+Cited by: §2.1.
+
+[47]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov (2017)
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347.
+
+Cited by: §2.1.
+
+[48]
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn (2023)
+
+Direct preference optimization: your language model is secretly a reward model.
+
+Advances in neural information processing systems 36, pp. 53728–53741.
+
+Cited by: §2.1,
+§3,
+§8.2.
+
+[49]
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al. (2025)
+
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+
+arXiv preprint arXiv:2501.12948.
+
+Cited by: §2.1.
+
+[50]
+M. Abadi, P. Barham, J. Chen, Z. Chen, A. Davis, J. Dean, M. Devin, S. Ghemawat, G. Irving, M. Isard, et al. (2016)
+
+tensorflow: A system for large-scale machine learning.
+
+In 12th USENIX symposium on operating systems design and implementation (OSDI 16),
+
+pp. 265–283.
+
+Cited by: §2.2.
+
+[51]
+S. Li, Y. Zhao, R. Varma, O. Salpekar, P. Noordhuis, T. Li, A. Paszke, J. Smith, B. Vaughan, P. Damania, et al. (2020)
+
+Pytorch distributed: experiences on accelerating data parallel training.
+
+arXiv preprint arXiv:2006.15704.
+
+Cited by: §2.2.
+
+[52]
+Y. Sheng, S. Cao, D. Li, C. Hooper, N. Lee, S. Yang, C. Chou, B. Zhu, L. Zheng, K. Keutzer, et al. (2023)
+
+S-lora: serving thousands of concurrent lora adapters.
+
+arXiv preprint arXiv:2311.03285.
+
+Cited by: §2.2,
+§9.
+
+[53]
+L. Chen, Z. Ye, Y. Wu, D. Zhuo, L. Ceze, and A. Krishnamurthy (2024)
+
+Punica: multi-tenant lora serving.
+
+Proceedings of Machine Learning and Systems 6, pp. 1–13.
+
+Cited by: §2.2,
+§9.
+
+[54]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §3,
+§8.1.
+
+[55]
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu (2025)
+
+Qwen2.5 technical report.
+
+External Links: 2412.15115,
+Link
+
+Cited by: §3,
+§3,
+§3,
+§8.1.
+
+[56]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al. (2021)
+
+Training verifiers to solve math word problems.
+
+arXiv preprint arXiv:2110.14168.
+
+Cited by: §3,
+§8.1.
+
+[57]
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, et al. (2024)
+
+Tulu 3: pushing frontiers in open language model post-training.
+
+arXiv preprint arXiv:2411.15124.
+
+Cited by: §3,
+§8.1.
+
+[58]
+E. Guha, R. Marten, S. Keh, N. Raoof, G. Smyrnis, H. Bansal, M. Nezhurina, J. Mercat, T. Vu, Z. Sprague, et al. (2025)
+
+Openthoughts: data recipes for reasoning models.
+
+arXiv preprint arXiv:2506.04178.
+
+Cited by: §3,
+§8.1.
+
+[59]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica (2023)
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th symposium on operating systems principles,
+
+pp. 611–626.
+
+Cited by: §3,
+§8.1.
+
+[60]
+G. Cui, L. Yuan, N. Ding, G. Yao, W. Zhu, Y. Ni, G. Xie, Z. Liu, and M. Sun (2023)
+
+Ultrafeedback: boosting language models with high-quality feedback.
+
+Cited by: §3,
+§3,
+§8.1,
+§8.2.
+
+[61]
+S. Lee and J. Lee (2026)
+
+Beware of the batch size: hyperparameter bias in evaluating lora.
+
+arXiv preprint arXiv:2602.09492.
+
+Cited by: §3.
+
+[62]
+P. Tillet, H. T. Kung, and D. Cox (2019)
+
+Triton: an intermediate language and compiler for tiled neural network computations.
+
+In Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages,
+
+MAPL 2019, New York, NY, USA, pp. 10–19.
+
+External Links: ISBN 9781450367196,
+Link,
+Document
+
+Cited by: §6.1,
+§9.
+
+[63]
+CP-sat
+
+Google.
+
+External Links: Link
+
+Cited by: §7.2.
+
+[64]
+L. Li, K. Jamieson, G. DeSalvo, A. Rostamizadeh, and A. Talwalkar (2018)
+
+Hyperband: a novel bandit-based approach to hyperparameter optimization.
+
+Journal of machine learning research 18 (185), pp. 1–52.
+
+Cited by: §9.
+
+[65]
+L. Li, K. Jamieson, A. Rostamizadeh, E. Gonina, J. Ben-Tzur, M. Hardt, B. Recht, and A. Talwalkar (2020)
+
+A system for massively parallel hyperparameter tuning.
+
+Proceedings of machine learning and systems 2, pp. 230–246.
+
+Cited by: §9.
+
+[66]
+T. Domhan, J. T. Springenberg, F. Hutter, et al. (2015)
+
+Speeding up automatic hyperparameter optimization of deep neural networks by extrapolation of learning curves..
+
+In IJCAI,
+
+Vol. 15, pp. 3460–8.
+
+Cited by: §9.
+
+[67]
+B. Wu, R. Zhu, Z. Zhang, P. Sun, X. Liu, and X. Jin (2024)
+
+dlora: Dynamically orchestrating requests and adapters for lorallm serving.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+pp. 911–927.
+
+Cited by: §9.
+
+Figure 16: Sensitivity of early exit predictions to warmup percentage. Left: Spearman rank correlation between loss at warmup and final validation performance. Middle: Fraction of true top-25% configurations captured by early predictions. Right:
+Whether the best configuration is included in the predicted top-25%. The dashed line marks 5%, our default warmup threshold, where all
+metrics stabilize across models and datasets.
+
+Appendix A Appendix
+
+A.1 Grouped GEMM Kernel Design
+
+Our Triton-based grouped GEMM kernel processes multiple LoRA adapters with heterogeneous batch sizes in a single kernel launch, without requiring data packing or token-level padding.
+
+Schedule-driven dispatch.
+Before each forward pass, the system builds a schedule table of (adapter_idx, block_idx) pairs on the CPU and transfers it asynchronously to the GPU.
+Each Triton program reads its assignment from this table and computes the global token range from per-adapter starts[i] and ends[i] offset arrays.
+Adapters with fewer tokens simply receive fewer thread blocks; boundary blocks apply a token-level mask (offs_m < end_token) so that no actual padding is needed in the activation tensor.
+This design allows adapters with arbitrary per-adapter batch sizes to share a single flattened activation buffer and a single kernel launch, completely avoiding the need for sequence packing or batch-size alignment.
+
+Rank-only padding.
+When co-resident adapters use different LoRA ranks, the system pads only the weight matrices and along the rank dimension to , enabling them to be stacked into contiguous tensors of shape and .
+The padded columns are masked out inside the kernel (offs_r < R), contributing zero to both GEMMs.
+Because the rank dimension is typically small (), the padding overhead is negligible compared to approaches that pad along the token or batch dimensions.
+
+Fused base-output addition.
+The output of the LoRA path must be added to the base linear layer’s output.
+Our fused kernel variant merges this addition into the store phase of the second GEMM (), loading the base output tile directly inside the output loop and adding it in registers before the final store.
+This eliminates one full read–write pass over the output tensor, yielding 3–36% speedup depending on batch size.
+
+Grouped backward pass.
+Computing per-adapter weight gradients naively requires independent GEMM launches (one and one per adapter).
+We instead exploit the contiguous token layout: when all adapters share the same token count per adapter, we reshape the flattened activations into a batched 3-D tensor and use a single torch.bmm call for each of and .
+For the variable-token-count case, we use torch._grouped_mm with cumulative offset descriptors.
+Both paths reduce the backward to exactly two grouped kernel launches regardless of the number of adapters.
+
+Homogeneous batch grouping.
+When adapter parallelism shards the LoRA computation across multiple GPUs, each rank must process the same token count per adapter to avoid communication mismatches during gradient allreduce.
+The intra-task scheduler therefore groups adapters by per-adapter batch size and co-locates same-batch-size jobs on the same executor (§A.3).
+This policy simultaneously ensures correctness under adapter parallelism and maximizes the fraction of forward passes that hit the more efficient bmm-based backward path.
+
+A.2 Warmup Hyperparameter Sensitivity Evaluation
+
+Warmup threshold.
+Figure 16 analyzes how the warmup period affects the reliability of early exit decisions. We vary the warmup
+percentage from 1% to 20% and measure three metrics: (1) Spearman rank correlation between early-stage loss and final validation
+performance, which indicates the correlation between the early performance and the final performance, (2) coverage of the true top-25% configurations when selecting based on early observations, and (3) whether the globally
+best configuration falls within the predicted top-25%. Across seven model-dataset combinations, rank correlation stabilizes above 0.7 by
+5% warmup, and top-25% coverage reaches 60–80%. Crucially, the best configuration is reliably captured within the top quartile at
+5% for all settings. These results justify our default 5% warmup threshold: shorter warmups yield unreliable rankings (e.g., Spearman
+at 2%), while longer warmups delay early exit decisions without improving prediction quality.
+
+A.3 Intra-Task Scheduling Details
+
+Memory profiling.
+The memory profiler operates in two phases. First, it fixes the number of adapters to and performs a binary search over the total batch size to find the largest that fits within a safety margin of the GPU’s HBM capacity. Second, it sweeps over a grid of configurations where and , measuring empirical peak memory for each configuration by creating synthetic data, running a single training step, and recording torch.cuda.max_memory_reserved. The collected data points are fitted to a linear regression model (where is the sequence length), which the scheduler queries at runtime. When adapter parallelism is active, profiling runs per-rank.
+
+Admission and backfill policy.
+The scheduler groups training jobs by their per-adapter batch size and co-locates same-batch-size jobs on the same executor, aligning with the grouped GEMM kernel. For each proposed adapter admission, the scheduler queries and admits the adapter only if the predicted peak memory falls within the safety margin. Adapters are admitted greedily in decreasing batch-size order until no further admission is feasible. When a training job exits via early exit or normal completion, the scheduler first attempts to fill the vacated slot with another pending job of the same batch size, preserving the executor’s homogeneous packing. If no same-batch-size jobs remain in the queue, the scheduler may admit a job with a different batch size, provided the memory model confirms the mixed configuration fits. This policy keeps executors saturated while maximizing grouped GEMM efficiency: batch-size homogeneity is preferred but not enforced, and the system gracefully degrades to mixed packing as the candidate pool shrinks.
+
+A.4 Training Details
+
+Hyperparameter search space.
+For single-GPU models (7B–8B scale), we search over 60 configurations:
+learning rates 1e-5, 5e-5, 2e-4, 3e-4, 5e-4,
+LoRA ranks ,
+and per-adapter batch sizes .
+For multi-GPU models (32B–70B scale), we search over 64 configurations:
+learning rates 1e-5, 5e-5, 1e-4, 3e-4,
+LoRA ranks ,
+and batch sizes .
+All experiments train for 3 epochs with gradient accumulation set to 1, gradient checkpointing enabled, constant learning rate schedule, and paged AdamW 8-bit optimizer with weight decay 0.01.
+LoRA adapters are applied to all attention and MLP projection layers (q, k, v, o, gate, up, down) with .
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

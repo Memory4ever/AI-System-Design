@@ -1,0 +1,775 @@
+OP-GRPO: Efficient Off-Policy GRPO for Flow-Matching Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 GRPO in Flow-matching Models
+
+2.2 Off-policy-based GRPO in LLM
+
+3 Preliminaries
+
+3.1 Flow-matching Models
+
+3.2 On-policy GRPO
+
+4 Method
+
+4.1 High-quality Replay Buffer
+
+4.2 Sequence-level Importance Sampling Correction
+
+4.3 Trajectory Truncation for Numerical Stability
+
+5 Experiments
+
+5.1 Experimental Setup
+
+5.2 Training Efficiency of OP-GRPO
+
+5.3 OP-GRPO on Image Generation
+
+5.4 OP-GRPO on Video Generation
+
+5.5 Ablation Study
+
+6 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.04142v1 [cs.CV] 05 Apr 2026
+
+OP-GRPO: Efficient Off-Policy GRPO for Flow-Matching Models
+
+Liyu Zhang
+
+Affiliation: College of Control Science and Engineering, Zhejiang University
+
+Affiliation: Central Research Institute, Huawei
+
+Corresponding Author  † Project Leader
+
+  
+Kehan Li†
+
+Affiliation: Central Research Institute, Huawei
+
+Corresponding Author  † Project Leader
+
+  
+Tingrui Han
+
+Affiliation: Central Research Institute, Huawei
+
+Corresponding Author  † Project Leader
+
+  
+Tao Zhou
+
+Affiliation: Central Research Institute, Huawei
+
+Corresponding Author  † Project Leader
+
+  
+Yuxuan Sheng
+
+Affiliation: College of Control Science and Engineering, Zhejiang University
+
+  
+Shibo He
+
+Affiliation: College of Control Science and Engineering, Zhejiang University
+
+  
+Chao Li
+
+Affiliation: College of Control Science and Engineering, Zhejiang University
+
+Abstract
+
+Post training via GRPO has demonstrated remarkable effectiveness in improving the generation quality of flow-matching models. However, GRPO suffers from inherently low sample efficiency due to its on-policy training paradigm. To address this limitation, we present OP-GRPO, the first Off-Policy GRPO framework tailored for flow-matching models. First, we actively select high-quality trajectories and adaptively incorporate them into a replay buffer for reuse in subsequent training iterations. Second, to mitigate the distribution shift introduced by off-policy samples, we propose a sequence-level importance sampling correction that preserves the integrity of GRPO’s clipping mechanism while ensuring stable policy updates. Third, we theoretically and empirically show that late denoising steps yield ill-conditioned off-policy ratios, and mitigate this by truncating trajectories at late steps. Across image and video generation benchmarks, OP-GRPO achieves comparable or superior performance to Flow-GRPO with only 34.2% of the training steps on average, yielding substantial gains in training efficiency while maintaining generation quality.
+
+Keywords: Flow matching GRPO Off-policy
+
+1 Introduction
+
+Flow-matching models [19, 24, 45] have emerged as an effective paradigm for training diffusion models [32, 9, 33], enabling continuous transport-based generative learning and significantly improving sampling efficiency and visual fidelity. Recent large-scale generative models built upon the flow-matching paradigm have significantly advanced modern visual generation. Representative models include image generation models such as Stable Diffusion 3.5 (SD3.5) [5], Flux [14] and Qwen-Image [41], as well as video generation models such as Wan [36], Open-Sora 2.0 [28] and Kandinsky 5.0 [1].
+
+Building upon these generative backbones, downstream preference optimization methods leverage reinforcement learning (RL) signals to better align model outputs with human judgments [2, 43, 35, 22, 44]. In particular, alignment approaches based on Group Relative Policy Optimization (GRPO) [22, 44] improve aesthetic quality, semantic consistency, and text rendering by optimizing group-normalized advantages over diffusion trajectories [12, 6, 42].
+
+However, despite their alignment effectiveness, GRPO-based methods exhibit substantial inefficiency in large-scale flow-matching training [17]. Existing approaches such as Flow-GRPO often require thousands of GPU hours to converge, substantially limiting scalability. This inefficiency stems primarily from two factors. First, GRPO follows a strictly on-policy paradigm: it repeatedly samples fresh trajectories under the current policy and discards them at the end of each policy iteration. As a result, even high-quality samples cannot be reused, leading to poor sample efficiency, while trajectory sampling itself constitutes a major portion of the overall computational cost. Second, when tasks are too difficult, the model rarely produces successful trajectories, causing rewards to degenerate toward all zeros. As a result, advantages collapse and gradient signals vanish, leaving the policy with little to learn from and stalling improvement.
+
+A natural solution is to introduce an off-policy training framework [40] that retains and reuses previously collected trajectories, thereby improving sample utilization and increasing training diversity. Off-policy learning has been widely studied in classical RL to enhance sample efficiency and stability [25, 7].
+
+However, directly applying off-policy learning to flow-matching-based GRPO is non-trivial. Reusing trajectories generated by earlier policies induces distributional shift relative to the learned policy. This shift distorts the clipped objective in GRPO and may compromise training stability. Moreover, we observe that the severity of off-policiness varies significantly across denoising steps: as the process approaches low-noise regions, the conditional data distribution becomes highly concentrated, making importance weights increasingly ill-conditioned and exacerbating instability.
+
+To address these challenges, we propose OP-GRPO: the first Off-Policy GRPO for Flow-Matching Models, an off-policy GRPO framework tailored for flow-matching generation models. OP-GRPO introduces sequence-level distribution correction to mitigate off-policy shift and employs denoising-step truncation to improve numerical stability during optimization. The main contributions of this paper are summarized as follows:
+
+(1) We maintain a replay buffer that actively selects and retains high-quality off-policy trajectories. During rollout, a portion of on-policy samples are replaced with buffer samples to enable effective off-policy learning.
+
+(2) We introduce a sequence-level importance sampling correction that compensates for distributional discrepancies while preserving the clipping guarantees of GRPO, reducing clipped off-policy samples from over 40% to 11.8% and enabling stable updates.
+
+(3) We theoretically and empirically show that as noise level approaches zero, the transition distribution becomes nearly deterministic, causing ill-conditioned importance weights at late denoising steps. We therefore adopt a truncated strategy that excludes these late-stage off-policy samples to stabilize training.
+
+(4) Experiments are conducted on SD3.5-M for three tasks—compositional image generation, visual text rendering, and human preference alignment—and on Wan2.1-1.4B for visual text generation in video synthesis. OP-GRPO requires only approximately 34.2% of the training steps needed by Flow-GRPO to reach its final performance, while achieving comparable or superior alignment metrics and generalization ability.
+
+2 Related Work
+
+2.1 GRPO in Flow-matching Models
+
+Recent studies on GRPO-based alignment for flow-matching models explore several algorithmic aspects. Flow-GRPO [23] and DanceGRPO [44] establish the paradigm of applying GRPO-style reinforcement learning to flow-matching generation through an ODE-to-SDE formulation. Building upon this stochasticization of flow dynamics, MixGRPO [15] further generalizes sampling by adopting mixed ODE-SDE trajectory schedules to trade off transport fidelity and stochastic diversity during policy optimization. Subsequent work targets robustness of the policy update: BranchGRPO [17] structures trajectory branching to separate multimodal denoising behavior, while GRPO-Guard [38] analyzes timestep-wise shifts in importance-ratio statistics and introduces ratio-normalization and gradient-reweighting corrections that restore effective clipping and prevent implicit over-optimization. Methods such as Fine-Grained GRPO [48] and Neighbor GRPO [8] refine credit assignment—via attribute-level decomposition or contrastive neighborhood objectives—to increase alignment granularity and preserve sample quality under preference supervision.
+
+Despite the above progress, existing methods are built on the on-policy nature of GRPO, where historical trajectories are discarded after training, leading to high computational cost and long training time. In contrast, our work extends GRPO in flow-matching models to an off-policy setting by enabling trajectory replay within policy optimization, thereby improving sample efficiency and reducing training cost.
+
+2.2 Off-policy-based GRPO in LLM
+
+Recent research has focused on extending GRPO beyond its original on-policy formulation to leverage historical experience and improve sample efficiency in large language model (LLM) post-training. RePO [16] augments GRPO with a replay buffer that retrieves diverse off-policy samples for advantage estimation, increasing effective optimization steps without increasing computation and empirically improving reasoning performance over vanilla GRPO on multiple benchmarks. ReMix [18] generalizes this idea by enabling GRPO to leverage much larger volumes of off-policy data through a mix-policy proximal optimization framework that incorporates off-policy trajectories under KL-convex constraints, enabling stable reuse of historical data while preserving policy improvement guarantees. BAPO [37] further proposes batch-level adaptation for selective reuse of high-value and difficult samples, providing theoretical insights into off-policy stability and empirical gains over standard GRPO. Liu et.al. [21] investigates the off-policy effects under verl [31] and Fully Sharded Data Parallel (FSDP) [47] settings, and further explores several rollout correction methods.
+
+However, existing flow-matching-based GRPO work has not explored off-policy settings, resulting in low sample efficiency and slow convergence. Unlike autoregressive LLMs, flow-matching models parameterize a deterministic velocity field to transport noise to data. This mechanism fundamentally reshapes off-policy evaluation and distributional shift across timesteps. To this end, we present the first off-policy GRPO algorithm tailored to flow-matching models.
+
+3 Preliminaries
+
+3.1 Flow-matching Models
+
+Flow-matching models [19, 24] learn a continuous transport from a base distribution (typically a standard normal distribution ) to the data distribution by parameterizing a time-dependent velocity field that define the ordinary differential equation (ODE),
+
+(1)
+
+This framework provides a simulation-free training paradigm that unifies diffusion-based generative models [32, 9, 33] and continuous normalizing flows [4]. During inference, samples are generated by numerically integrating the learned ODE, commonly implemented using an explicit Euler solver for efficient deterministic sampling.
+
+(2)
+
+3.2 On-policy GRPO
+
+From a reinforcement learning perspective, this process can be interpreted as a trajectory, where each transition is governed by the rollout diffusion policy.
+
+The log-probability of the latent sequence can be decomposed as,
+
+(3)
+
+which serves as a critical quantity for characterizing the underlying policy distribution and will be used to correct distributional mismatch in off-policy training via importance sampling.
+
+Reinforcement learning (RL) aims to learn a policy that maximizes the expected cumulative rewards with the following objective:
+
+(4)
+
+where represents the reference policy and measures the KL divergence and controls the update degree of learned policy .
+
+Building on PPO algorithm [30], GRPO estimates the advantage function with a group of samples. Formally, given a input prompt , the flow model samples a group of images/videos , with being the number of samples. The advantages of -th image/video is calculated as follows:
+
+(5)
+
+The objective of standard GRPO is,
+
+(6)
+
+where
+
+4 Method
+
+In this section, we present OP-GRPO, an off-policy framework of GRPO designed to improve sample efficiency and accelerate training. We begin in Sec. 4.1 by introducing a high-quality replay buffer for storing off-policy trajectories with stepwise decay. In Sec. 4.2, we formulate the off-policy training objective, with particular emphasis on sequence-level importance sampling for distribution correction. Finally, in Sec. 4.3, we analyze the relationship between the degree of off-policy and the denoising steps, and propose truncated denoising to alleviate induced numerical instability in the optimization process. The overall framework of OP-GRPO is illustrated in Fig. 1 and refer to Appendix for the pseudocode.
+
+Figure 1: Overall framework of OP-GRPO, including (a) OP-GRPO rollout and (b) OP-GRPO training. Blue regions represent samples from the replay buffer, green regions represent samples from the dataset.
+
+4.1 High-quality Replay Buffer
+
+Replay Buffer Construction. To preserve high-quality samples collected during the GRPO rollout phase, we maintain a replay buffer to store these trajectories. During subsequent training iterations, a subset of stored samples is retrieved for reuse, thereby improving sample efficiency. Specifically, for each sampled group conditioned on , we denote the set as , where sample is formally defined as a triplet,
+
+(7)
+
+where denotes the distribution of diffusion policy, denotes the complete latent trajectory generated by , denotes the log-probability of the generated trajectory and denotes the reward.
+
+To ensure that continuously retains the most informative and recent high-quality trajectories, we adopt a reward-based replacement strategy. Specifically, within each group, we select the highest-reward trajectory as the most informative sample for retention. We compare the newly selected trajectory with the lowest-reward entry currently stored in the buffer, and replace it if the new trajectory achieves a higher reward.
+
+Meanwhile, enforces a uniqueness constraint to maintain the effectiveness and diversity of the stored trajectories. For each conditioning input , at most one trajectory is retained. This design prevents the buffer from collapsing to a small set of trivial or repetitive samples and ensures that the stored data remains informative. When a newly selected trajectory corresponds to a conditioning input that already exists in the buffer, it is directly compared with the entry under the same condition, rather than with the lowest-reward entry.
+
+Furthermore, to ensure that samples in the buffer are effectively refreshed and to prevent excessively off-policy samples from being repeatedly introduced into training, the buffer is designed to favor recently collected trajectories. This keeps the stored samples close to the current policy and and mitigates the risk of the training process becoming overly off-policy. To this end, we apply a stepwise decay to the rewards of trajectories in the buffer, so that older samples naturally become easier to replace, allowing newer, higher-quality trajectories to be incorporated more readily.
+
+Rollout with buffer. For the rollout stage of OP-GRPO, we adopt a hybrid RL paradigm, which follows the general philosophy of hybrid offline-to-online training [34, 26]. In each batch, prompts are composed of a majority of prompts drawn directly from the original dataset and a minority sampled from the buffer . This design enhances sample diversity while enabling effective reuse of high-value off-policy trajectories. Specifically, for prompts sampled directly from the dataset, trajectories are generated per prompt. For prompts sampled from the replay buffer, only new trajectories are generated, and the remaining trajectory is taken from the replay buffer. Formally, for a given input , we construct the group as,
+
+(8)
+
+where denotes the group size. These trajectories are then thoroughly shuffled before being used for subsequent training to prevent potential biases induced by a fixed sample ordering.
+
+4.2 Sequence-level Importance Sampling Correction
+
+However, directly applying Eq. 6 to groups containing an off-policy sample is incorrect, as the training data is not sampled from the on-policy rollout policy (the policy at the beginning of the current update step), but rather from an off-policy policy . This distributional mismatch causes biased gradient estimates, and if left uncorrected, the accumulated bias can destabilize training and cause the algorithm to diverge.
+
+A seemingly natural fix is to incorporate the distributional shift between and directly into the per-step importance sampling ratio in Eq. 6. However, this approach is also inappropriate, as it fundamentally distorts the purpose of the clipping mechanism in GRPO. The clipping term is designed to bound the update magnitude of relative to its starting point , thereby preventing excessively large policy updates and mitigate risk of instability or overfitting. However, once the distributional shift is naively absorbed into the per-step ratio, the terms cancel out, as shown in Eq. 9:
+
+(9)
+
+As a consequence, the clipping term measures the discrepancy between and , a policy from potentially many iterations ago, rather than the intended reference policy . Since these two policies can differ substantially, the importance sampling ratios become either very large or very small, causing a large fraction of samples to be clipped. Empirically, we find that this naive substitution results in over 40% of off-policy samples being clipped, which severely undermines the efficiency of off-policy learning and discards many otherwise useful off-policy samples.
+
+To address this issue, we propose a sequence-based correction scheme that simultaneously corrects for the distributional shift and preserves the intended behavior of the clipping mechanism. Specifically, etain the original per-step importance sampling ratio between and
+, so that clipping continues to measure update magnitude relative to the correct reference policy. To compensate for the distributional shift introduced by the off-policy samples, we introduce a sequence-level correction term:
+
+(10)
+
+where follows the same formulation as in 6 and is the sequence-level correction term defined below
+
+(11)
+
+This formulation admits an intuitive interpretation from two complementary perspectives. If a sample is clipped, it indicates that the update of relative to is excessively large. Such an aggressive update may lead to overfitting or other instability issues. Consequently, the sample is clipped, and the sequence-based correction term becomes inactive; the sample does not contribute to the update. In this case, the sequence-level correction term is inactive, and the sample does not contribute to the update. Conversely, when the update magnitude is moderate and the sample is not clipped, the correction term becomes active and compensates for the distributional shift introduced by the off-policy data, serving as an error-correction mechanism that ensures the unbiasedness of the policy update. Empirically, this formulation clips only 11.8% of off-policy samples, significantly lower than the 40% observed with the naive substitution, demonstrating that our approach effectively utilizes off-policy samples while maintaining training stability.
+
+4.3 Trajectory Truncation for Numerical Stability
+
+Figure 2: Log-probability values of on-policy and off-policy samples across denoising steps, where the dashed line indicates the truncation starting step.
+
+Our experiments show that, while incorporating off-policy data can effectively accelerate training, it also introduces noticeable instability. Unlike LLMs, where each token’s log-probability is well-conditioned and roughly comparable in scale across positions [27, 20], flow-matching models exhibit a fundamentally different structure. The transition distribution in flow-matching models becomes increasingly sharp as , causing log-probabilities at different denoising steps to exhibit substantially different numerical scales. This ill-conditioning can cause the importance weights to become disproportionately large or small in the later denoising steps, destabilizing policy updates.
+
+We verify this empirically by visualizing the log-probabilities of on-policy and off-policy samples across denoising steps, as shown in Fig. 2. The results show that the log-probability of off-policy samples remains relatively stable across most denoising steps, but undergoes a dramatic cliff-like drop in the final few steps. This confirms that the numerical ill-conditioning is concentrated in the low-noise regime, where the transition distribution becomes nearly deterministic.
+
+Figure 3: Training Curves of OP-GRPO and Flow GRPO.
+
+We next analyze this phenomenon from a theoretical standpoint. The explicit form of the log-transition probability is:
+
+(12)
+
+where and . Refer to Appendix for detailed derivation.
+
+As , the transition variance vanishes and the dynamics become nearly deterministic. In this regime, the quadratic term in Eq. 12 dominates and becomes highly sensitive to discretization and numerical errors, causing the importance weights to be numerically ill-conditioned and to disproportionately dominate the sequence-level correction term. This theoretical analysis is consistent with the empirical observation in Fig. 2. See Appendix for the detailed derivation.
+
+To address this issue, we adopt a simple yet effective trajectory truncation strategy: the off-policy trajectory is used only up to a truncation step , after which the remaining steps are re-generated by the current policy:
+
+(13)
+
+where denotes the mixed-policy trajectory, denotes the off-policy latents, denotes the latents re-generated by the current policy (as specified in Eq. 2).
+
+This design directly eliminates the ill-conditioned log-probability terms in the low-noise regime, thereby stabilizing the importance weights and policy updates. Moreover, since the low-noise denoising steps contribute minimally to the perceptual quality of the generated image or video, this truncation introduces negligible degradation in generation quality, as confirmed by the training curves in Fig. 3.
+
+5 Experiments
+
+Table 1: Algorithm Performance on the task metrics including Compositional Image Generation, Visual Text Rendering, and Human Preference benchmarks. For the unseen metrics across image quality and preference score, ImgRwd denotes ImageReward and UniRwd denotes UnifiedReward. The best score is in blue
+
+Model
+Step
+Task Metric
+Image Quality
+Preference Score
+
+Aesthetic
+DeQA
+ImgRwd
+PickScore
+UniRwd
+
+SD3.5-M
+—
+0.63 / 0.59 / 21.72
+5.31
+4.07
+0.92
+22.18
+3.29
+
+Compositional Image Generation
+
+Flow-GRPO
+1020
+0.68
+5.27
+4.05
+1.37
+22.24
+3.35
+
+OP-GRPO
+1020
+0.88
+5.22
+4.02
+1.21
+22.35
+3.49
+
+Flow-GRPO
+Best
+0.95
+5.18
+4.00
+1.12
+22.37
+3.51
+
+OP-GRPO
+Best
+0.96
+5.17
+3.98
+1.13
+22.42
+3.57
+
+Visual Text Rendering
+
+Flow-GRPO
+720
+0.70
+5.28
+3.92
+0.93
+22.31
+3.30
+
+OP-GRPO
+720
+0.81
+5.30
+3.89
+0.95
+22.39
+3.38
+
+Flow-GRPO
+Best
+0.92
+5.32
+3.83
+0.98
+22.54
+3.46
+
+OP-GRPO
+Best
+0.93
+5.32
+3.85
+0.98
+22.56
+3.45
+
+Human Preference Alignment
+
+Flow-GRPO
+720
+22.19
+5.44
+4.13
+1.09
+22.19
+3.43
+
+OP-GRPO
+720
+23.27
+5.92
+4.17
+1.22
+23.27
+3.59
+
+Flow-GRPO
+Best
+23.32
+6.01
+4.18
+1.26
+23.32
+3.66
+
+OP-GRPO
+Best
+23.64
+6.09
+4.23
+1.31
+23.44
+3.72
+
+5.1 Experimental Setup
+
+To comprehensively evaluate of OP-GRPO framework, we conduct experiments across two generation models and three tasks.
+
+Models. We evaluate on Stable-Diffusion-3.5-medium (SD3.5-M) [5], a state-of-the-art text-to-image model, and Wan2.1-1.4B [36], a recent text-to-video generation model, allowing us to assess the effectiveness of OP-GRPO across both image and video domains.
+
+Tasks. We consider three tasks, all following the experimental setup of Flow-GRPO: (1) Compositional Image Generation, which requires the model to accurately generate objects satisfying specified attributes such as count, color, and spatial relationships, evaluated with EvalGen [6]; (2) Visual Text Generation [3], which assesses the model’s ability to render text explicitly specified in the prompt, evaluated via a rule-based recognition pipeline; and (3) Human Preference Alignment, which aims to align generation with human aesthetic preferences, using PickScore [12] as the reward signal during training.
+
+Generalization Evaluation. To assess whether OP-GRPO generalizes beyond its training objectives, we report results on several unseen metrics. These metrics cover two dimensions: image quality, via Aesthetic Predictor [29] and DeQA [46], and human preference, via ImageReward [43], PickScore [12], and UnifiedReward [39].
+
+5.2 Training Efficiency of OP-GRPO
+
+To demonstrate the training efficiency of OP-GRPO under the off-policy setting compared with Flow-GRPO, we visualize the training curves of both methods on the three aforementioned tasks, as shown in Fig. 3. OP-GRPO is trained for 1,150 steps, whereas Flow-GRPO runs for 1,600 steps. The results show that OP-GRPO requires only 34.2% of the training steps, on average, to reach the final performance achieved by Flow-GRPO. Moreover, OP-GRPO attains higher final performance on these tasks, with an average improvement of 1.17%. These results clearly demonstrate the superior training efficiency of OP-GRPO and highlight the advantages of incorporating off-policy learning.
+
+Figure 4: Visual Results of OP-GRPO and Flow GRPO on three image generation tasks using SD3.5-M.
+
+5.3 OP-GRPO on Image Generation
+
+Quantitative Results. We evaluate OP-GRPO on the three aforementioned tasks based on the SD3.5-M backbone, and summarize the results in Tab. 1. We report both task-specific metrics (GenEval score for Compositional Image Generation, OCR accuracy for Visual Text Rendering, and PickScore score for Human Preference Alignment) and cross-task evaluation metrics. To comprehensively assess training dynamics, we present two groups of results: intermediate-step performance and the best-achieved performance during training. Please refer to Appendix for implementation details and hyperparameters.
+
+Overall, OP-GRPO consistently outperforms Flow-GRPO at intermediate training steps across all three tasks, not only on task-specific metrics but also on cross-task evaluation benchmarks. This consistent advantage indicates that OP-GRPO improves training efficiency without sacrificing generation quality or alignment properties. Regarding the best-achieved performance, OP-GRPO matches or slightly surpasses Flow-GRPO, suggesting that incorporating off-policy updates does not compromise the final optimization objective and can further enhance the upper-bound performance.
+
+Visualization. We further visualize intermediate-step generation results of Flow-GRPO and OP-GRPO on the three tasks, as shown in Fig. 4. OP-GRPO demonstrates more precise control over object count and attributes in Compositional Image Generation, produces higher-quality and more legible text in Visual Text Rendering, and generates images with richer visual details and improved semantic coherence in Human Preference Alignment. These qualitative observations are consistent with the quantitative improvements reported in Tab. 1.
+
+Generalization Evaluation. Beyond task-specific evaluation, we analyze the generalization capability of OP-GRPO from two perspectives. First, as shown in Tab. 1, models trained on a particular task are evaluated using multiple cross-task metrics. OP-GRPO consistently achieves competitive or superior performance on these out-of-task benchmarks, indicating that the off-policy mechanism does not lead to overfitting to the task-specific reward, but instead promotes robust generation behaviors.
+
+Second, we further validate the scalability and extensibility of OP-GRPO on T2I-CompBench++ [11, 10], a more comprehensive compositional text-to-image benchmark. The results shown in Tab. 2 demonstrate that OP-GRPO maintains clear advantages over Flow-GRPO under this more challenging and diverse evaluation protocol, confirming that the benefits of off-policy reuse extend beyond the original training tasks. Together, these findings suggest that OP-GRPO improves not only optimization efficiency but also generalization performance across varied generation benchmarks.
+
+Table 2: T2I-CompBench++ Result. We report results using the Best model trained on the GenEval. The best score is in blue.
+
+Model
+Color
+Shape
+2D-Spatial
+3D-Spatial
+Numeracy
+Non-Spatial
+Average
+
+FLUX.1 Dev [13]
+0.738
+0.574
+0.289
+0.391
+0.621
+0.315
+0.488
+
+SD3.5-M [5]
+0.796
+0.569
+0.283
+0.376
+0.595
+0.312
+0.489
+
+Intermediate checkpoints
+
+SD3.5-M+Flow-GRPO
+0.769
+0.578
+0.412
+0.405
+0.644
+0.312
+0.520
+
+SD3.5-M+OP-GRPO
+0.824
+0.603
+0.498
+0.437
+0.660
+0.318
+0.567
+
+Best checkpoints
+
+SD3.5-M+Flow-GRPO
+0.838
+0.613
+0.545
+0.447
+0.675
+0.320
+0.573
+
+SD3.5-M+OP-GRPO
+0.845
+0.614
+0.550
+0.461
+0.682
+0.319
+0.579
+
+5.4 OP-GRPO on Video Generation
+
+We further evaluate OP-GRPO on video generation to assess its scalability beyond image synthesis. Specifically, we conduct experiments on the Visual Text Generation task. Fig. 5 presents qualitative comparisons between OP-GRPO and Flow GRPO, while Fig. 3 (d) illustrates the training convergence curves.
+
+The results demonstrate that OP-GRPO maintains strong performance in more challenging setting of video generation. Notably, OP-GRPO achieves the final performance of Flow GRPO using only 30.1% of the training time on the video generation task, and its final generation quality substantially surpasses that of Flow GRPO. These findings highlight the effectiveness of OP-GRPO in addressing complex tasks and its superior efficiency in challenging scenarios.
+
+We attribute this gap to the limitation of the purely on-policy optimization adopted by Flow GRPO. For difficult tasks, such a training paradigm is often hard to bootstrap: even when high-quality samples are occasionally discovered, they are immediately discarded, preventing the model from sufficiently reinforcing beneficial generation patterns, which leads to slow and unstable improvement. In contrast, OP-GRPO retains these informative samples and repeatedly leverages them through off-policy updates, enabling more effective credit assignment and sustained exploitation of high-quality trajectories. This design results in superior performance in complex video generation scenarios.
+
+Figure 5: Visual Results of Buffer-based GRPO and Flow GRPO on OCR task on video generation model Wan2.1-1.4B. Refer to Appendix for more results.
+
+5.5 Ablation Study
+
+Algorithm settings. We investigate the impact of key algorithmic components on performance. Specifically, we evaluate several variants of our method, including (1) a variant without the sequence correction term (denoted as OP-GRPO w/o corr), and (2) a variant without truncating the denoising steps (denoted as OP-GRPO w/o trun). The results are shown in  Fig. 6 (a). Without the sequence correction term, the algorithm becomes highly unstable, as the distribution shift accumulates over training and eventually leads to divergence, clearly demonstrating the necessity of this component. Without truncation, similarly suffers from instability, since excessively off-policy samples introduce severe distribution mismatch that poses significant challenges to policy updates. In contrast, OP-GRPO remains stable and unbiased, ensuring efficient and robust optimization.
+
+Figure 6: Ablation study of OP-GRPO.
+
+Impact of Off-policy Sample Proportion. We further investigate how the proportion of off-policy samples affects algorithm performance. As shown in Fig. 6 (b), we evaluate two variants with off-policy proportions of 5%, and 25%, denoted as OP-GRPO-5 and OP-GRPO-25, respectively. The results show that incorporating off-policy samples consistently accelerates convergence regardless of the proportion used. However, when the proportion is too low, the benefit is marginal: OP-GRPO-5 achieves only a 23.1% improvement in convergence speed. On the other hand, a higher proportion introduces more high-quality off-policy samples and thus leads to faster convergence, but at the cost of increased instability or even divergence, as larger distribution shifts make policy updates more susceptible to interference. Therefore, selecting an appropriate off-policy sample proportion according to the characteristics of the task is crucial for balancing convergence speed and training stability.
+
+6 Conclusion
+
+In this work, we investigate the efficiency and stability bottlenecks of GRPO-based RL training for flow-matching diffusion models. We identify that the on-policy training paradigm and degenerate reward signals significantly hinder learning efficiency, while naive off-policy reuse introduces distributional shift and training instability. To address these issues, we propose OP-GRPO, an off-policy GRPO framework that integrates replay-based sampling, sequence-level distribution correction, and truncated denoising. Experiments on image and video generation benchmarks demonstrate that OP-GRPO substantially accelerates convergence while preserving generation quality competitive with fully on-policy baselines. One limitation is that our current evaluation focuses on image and video generation tasks; extending OP-GRPO to other domains, such as audio or 3D generation, remains an open direction for future work.
+
+References
+
+[1]
+
+Arkhipkin, V., Korviakov, V., Gerasimenko, N., Parkhomenko, D., Vasilev, V., Letunovskiy, A., Vaulin, N., Kovaleva, M., Kirillov, I., Novitskiy, L., Koposov, D., Kiselev, N., Varlamov, A., Mikhailov, D., Polovnikov, V., Shutkin, A., Agafonova, J., Vasiliev, I., Kargapoltseva, A., Dmitrienko, A., Maltseva, A., Averchenkova, A., Kim, O., Nikulina, T., Dimitrov, D.: Kandinsky 5.0: A family of foundation models for image and video generation (2025), https://arxiv.org/abs/2511.14993
+
+[2]
+
+Black, K., Janner, M., Du, Y., Kostrikov, I., Levine, S.: Training diffusion models with reinforcement learning. arXiv preprint arXiv:2305.13301 (2023)
+
+[3]
+
+Chen, J., Huang, Y., Lv, T., Cui, L., Chen, Q., Wei, F.: Textdiffuser: Diffusion models as text painters. Advances in Neural Information Processing Systems 36, 9353–9387 (2023)
+
+[4]
+
+Chen, R.T., Rubanova, Y., Bettencourt, J., Duvenaud, D.K.: Neural ordinary differential equations. Advances in neural information processing systems 31 (2018)
+
+[5]
+
+Esser, P., Kulal, S., Blattmann, A., Entezari, R., Müller, J., Saini, H., Levi, Y., Lorenz, D., Sauer, A., Boesel, F., et al.: Scaling rectified flow transformers for high-resolution image synthesis. In: Forty-first international conference on machine learning (2024)
+
+[6]
+
+Ghosh, D., Hajishirzi, H., Schmidt, L.: Geneval: An object-focused framework for evaluating text-to-image alignment. Advances in Neural Information Processing Systems 36, 52132–52152 (2023)
+
+[7]
+
+Haarnoja, T., Zhou, A., Abbeel, P., Levine, S.: Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In: International conference on machine learning. pp. 1861–1870. Pmlr (2018)
+
+[8]
+
+He, D., Feng, G., Ge, X., Niu, Y., Zhang, Y., Ma, B., Song, G., Liu, Y., Li, H.: Neighbor grpo: Contrastive ode policy optimization aligns flow models. arXiv preprint arXiv:2511.16955 (2025)
+
+[9]
+
+Ho, J., Jain, A., Abbeel, P.: Denoising diffusion probabilistic models. Advances in neural information processing systems 33, 6840–6851 (2020)
+
+[10]
+
+Huang, K., Duan, C., Sun, K., Xie, E., Li, Z., Liu, X.: T2i-compbench++: An enhanced and comprehensive benchmark for compositional text-to-image generation. IEEE Transactions on Pattern Analysis and Machine Intelligence 47(5), 3563–3579 (2025)
+
+[11]
+
+Huang, K., Sun, K., Xie, E., Li, Z., Liu, X.: T2i-compbench: A comprehensive benchmark for open-world compositional text-to-image generation. Advances in Neural Information Processing Systems 36, 78723–78747 (2023)
+
+[12]
+
+Kirstain, Y., Polyak, A., Singer, U., Matiana, S., Penna, J., Levy, O.: Pick-a-pic: An open dataset of user preferences for text-to-image generation. Advances in neural information processing systems 36, 36652–36663 (2023)
+
+[13]
+
+Labs, B.F.: Flux. https://github.com/black-forest-labs/flux (2024)
+
+[14]
+
+Labs, B.F., Batifol, S., Blattmann, A., Boesel, F., Consul, S., Diagne, C., Dockhorn, T., English, J., English, Z., Esser, P., Kulal, S., Lacey, K., Levi, Y., Li, C., Lorenz, D., Müller, J., Podell, D., Rombach, R., Saini, H., Sauer, A., Smith, L.: Flux.1 kontext: Flow matching for in-context image generation and editing in latent space (2025), https://arxiv.org/abs/2506.15742
+
+[15]
+
+Li, J., Cui, Y., Huang, T., Ma, Y., Fan, C., Yang, M., Zhong, Z.: Mixgrpo: Unlocking flow-based grpo efficiency with mixed ode-sde. arXiv preprint arXiv:2507.21802 (2025)
+
+[16]
+
+Li, S., Zhou, Z., Lam, W., Yang, C., Lu, C.: Repo: Replay-enhanced policy optimization. arXiv preprint arXiv:2506.09340 (2025)
+
+[17]
+
+Li, Y., Wang, Y., Zhu, Y., Zhao, Z., Lu, M., She, Q., Zhang, S.: Branchgrpo: Stable and efficient grpo with structured branching in diffusion models. arXiv preprint arXiv:2509.06040 (2025)
+
+[18]
+
+Liang, J., Tang, H., Ma, Y., Liu, J., Zheng, Y., Hu, S., Bai, L., Hao, J.: Squeeze the soaked sponge: Efficient off-policy reinforcement finetuning for large language model. arXiv preprint arXiv:2507.06892 (2025)
+
+[19]
+
+Lipman, Y., Chen, R.T., Ben-Hamu, H., Nickel, M., Le, M.: Flow matching for generative modeling. arXiv preprint arXiv:2210.02747 (2022)
+
+[20]
+
+Liu, A., Feng, B., Xue, B., Wang, B., Wu, B., Lu, C., Zhao, C., Deng, C., Zhang, C., Ruan, C., et al.: Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 (2024)
+
+[21]
+
+Liu, J., Li, Y., Fu, Y., Wang, J., Liu, Q., Shen, Y.: When speed kills stability: Demystifying RL collapse from the training-inference mismatch (Sep 2025), https://richardli.xyz/rl-collapse
+
+[22]
+
+Liu, J., Liu, G., Liang, J., Li, Y., Liu, J., Wang, X., Wan, P., Zhang, D., Ouyang, W.: Flow-grpo: Training flow matching models via online rl. arXiv preprint arXiv:2505.05470 (2025)
+
+[23]
+
+Liu, J., Liu, G., Liang, J., Li, Y., Liu, J., Wang, X., Wan, P., ZHANG, D., Ouyang, W.: Flow-grpo: Training flow matching models via online rl. In: The Thirty-ninth Annual Conference on Neural Information Processing Systems (2025)
+
+[24]
+
+Liu, X., Gong, C., Liu, Q.: Flow straight and fast: Learning to generate and transfer data with rectified flow. arXiv preprint arXiv:2209.03003 (2022)
+
+[25]
+
+Mnih, V., Kavukcuoglu, K., Silver, D., Graves, A., Antonoglou, I., Wierstra, D., Riedmiller, M.: Playing atari with deep reinforcement learning. arXiv preprint arXiv:1312.5602 (2013)
+
+[26]
+
+Nakamoto, M., Zhai, S., Singh, A., Sobol Mark, M., Ma, Y., Finn, C., Kumar, A., Levine, S.: Cal-ql: Calibrated offline rl pre-training for efficient online fine-tuning. Advances in Neural Information Processing Systems 36, 62244–62269 (2023)
+
+[27]
+
+Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al.: Training language models to follow instructions with human feedback. Advances in neural information processing systems 35, 27730–27744 (2022)
+
+[28]
+
+Peng, X., Zheng, Z., Shen, C., Young, T., Guo, X., Wang, B., Xu, H., Liu, H., Jiang, M., Li, W., Wang, Y., Ye, A., Ren, G., Ma, Q., Liang, W., Lian, X., Wu, X., Zhong, Y., Li, Z., Gong, C., Lei, G., Cheng, L., Zhang, L., Li, M., Zhang, R., Hu, S., Huang, S., Wang, X., Zhao, Y., Wang, Y., Wei, Z., You, Y.: Open-sora 2.0: Training a commercial-level video generation model in $200k (2025), https://arxiv.org/abs/2503.09642
+
+[29]
+
+Schuhmann, C.: Laion aesthetics (Aug 2022)
+
+[30]
+
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., Klimov, O.: Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 (2017)
+
+[31]
+
+Sheng, G., Zhang, C., Ye, Z., Wu, X., Zhang, W., Zhang, R., Peng, Y., Lin, H., Wu, C.: Hybridflow: A flexible and efficient rlhf framework. arXiv preprint arXiv: 2409.19256 (2024)
+
+[32]
+
+Sohl-Dickstein, J., Weiss, E., Maheswaranathan, N., Ganguli, S.: Deep unsupervised learning using nonequilibrium thermodynamics. In: International conference on machine learning. pp. 2256–2265. pmlr (2015)
+
+[33]
+
+Song, Y., Sohl-Dickstein, J., Kingma, D.P., Kumar, A., Ermon, S., Poole, B.: Score-based generative modeling through stochastic differential equations. arXiv preprint arXiv:2011.13456 (2020)
+
+[34]
+
+Song, Y., Zhou, Y., Sekhari, A., Bagnell, J.A., Krishnamurthy, A., Sun, W.: Hybrid rl: Using both offline and online data can make rl efficient. arXiv preprint arXiv:2210.06718 (2022)
+
+[35]
+
+Wallace, B., Dang, M., Rafailov, R., Zhou, L., Lou, A., Purushwalkam, S., Ermon, S., Xiong, C., Joty, S., Naik, N.: Diffusion model alignment using direct preference optimization. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 8228–8238 (2024)
+
+[36]
+
+Wan, T., Wang, A., Ai, B., Wen, B., Mao, C., Xie, C.W., Chen, D., Yu, F., Zhao, H., Yang, J., Zeng, J., Wang, J., Zhang, J., Zhou, J., Wang, J., Chen, J., Zhu, K., Zhao, K., Yan, K., Huang, L., Feng, M., Zhang, N., Li, P., Wu, P., Chu, R., Feng, R., Zhang, S., Sun, S., Fang, T., Wang, T., Gui, T., Weng, T., Shen, T., Lin, W., Wang, W., Wang, W., Zhou, W., Wang, W., Shen, W., Yu, W., Shi, X., Huang, X., Xu, X., Kou, Y., Lv, Y., Li, Y., Liu, Y., Wang, Y., Zhang, Y., Huang, Y., Li, Y., Wu, Y., Liu, Y., Pan, Y., Zheng, Y., Hong, Y., Shi, Y., Feng, Y., Jiang, Z., Han, Z., Wu, Z.F., Liu, Z.: Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 (2025)
+
+[37]
+
+Wan, X., Wang, Y., Huang, W., Sun, M.: Buffer matters: Unleashing the power of off-policy reinforcement learning in large language model reasoning. arXiv preprint arXiv:2602.20722 (2026)
+
+[38]
+
+Wang, J., Liang, J., Liu, J., Liu, H., Liu, G., Zheng, J., Pang, W., Ma, A., Xie, Z., Wang, X., et al.: Grpo-guard: Mitigating implicit over-optimization in flow matching via regulated clipping. arXiv preprint arXiv:2510.22319 (2025)
+
+[39]
+
+Wang, Y., Zang, Y., Li, H., Jin, C., Wang, J.: Unified reward model for multimodal understanding and generation. arXiv preprint arXiv:2503.05236 (2025)
+
+[40]
+
+Watkins, C.J., Dayan, P.: Q-learning. Machine learning 8(3), 279–292 (1992)
+
+[41]
+
+Wu, C., Li, J., Zhou, J., Lin, J., Gao, K., Yan, K., ming Yin, S., Bai, S., Xu, X., Chen, Y., Chen, Y., Tang, Z., Zhang, Z., Wang, Z., Yang, A., Yu, B., Cheng, C., Liu, D., Li, D., Zhang, H., Meng, H., Wei, H., Ni, J., Chen, K., Cao, K., Peng, L., Qu, L., Wu, M., Wang, P., Yu, S., Wen, T., Feng, W., Xu, X., Wang, Y., Zhang, Y., Zhu, Y., Wu, Y., Cai, Y., Liu, Z.: Qwen-image technical report (2025), https://arxiv.org/abs/2508.02324
+
+[42]
+
+Wu, X., Hao, Y., Sun, K., Chen, Y., Zhu, F., Zhao, R., Li, H.: Human preference score v2: A solid benchmark for evaluating human preferences of text-to-image synthesis. arXiv preprint arXiv:2306.09341 (2023)
+
+[43]
+
+Xu, J., Liu, X., Wu, Y., Tong, Y., Li, Q., Ding, M., Tang, J., Dong, Y.: Imagereward: Learning and evaluating human preferences for text-to-image generation. Advances in Neural Information Processing Systems 36, 15903–15935 (2023)
+
+[44]
+
+Xue, Z., Wu, J., Gao, Y., Kong, F., Zhu, L., Chen, M., Liu, Z., Liu, W., Guo, Q., Huang, W., et al.: Dancegrpo: Unleashing grpo on visual generation. arXiv preprint arXiv:2505.07818 (2025)
+
+[45]
+
+Yang, X., Chen, C., yang, x., Liu, F., Lin, G.: Text-to-image rectified flow as plug-and-play priors. In: Yue, Y., Garg, A., Peng, N., Sha, F., Yu, R. (eds.) International Conference on Learning Representations. vol. 2025, pp. 13896–13920 (2025), https://proceedings.iclr.cc/paper_files/paper/2025/file/2460396f2d0d421885997dd1612ac56b-Paper-Conference.pdf
+
+[46]
+
+You, Z., Cai, X., Gu, J., Xue, T., Dong, C.: Teaching large language models to regress accurate image quality scores using score distribution. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 14483–14494 (2025)
+
+[47]
+
+Zhao, Y., Gu, A., Varma, R., Luo, L., Huang, C.C., Xu, M., Wright, L., Shojanazeri, H., Ott, M., Shleifer, S., et al.: Pytorch fsdp: experiences on scaling fully sharded data parallel. arXiv preprint arXiv:2304.11277 (2023)
+
+[48]
+
+Zhou, Y., Ling, P., Bu, J., Wang, Y., Zang, Y., Wang, J., Niu, L., Zhai, G.: Fine-grained grpo for precise preference alignment in flow models. arXiv preprint arXiv:2510.01982 (2025)
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -1,0 +1,1094 @@
+SysOM-AI: Continuous Cross-Layer Performance Diagnosis for Production AI Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background and Motivation
+
+2.1 AI Training Performance Characteristics
+
+2.2 Motivating Example
+
+2.3 Challenges
+
+3 System Design
+
+3.1 Layered Differential Diagnosis
+
+3.2 Framework-Agnostic NCCL Observability
+
+3.3 Adaptive Hybrid FP+DWARF Stack Unwinding
+
+3.4 Centralized Deferred Symbol Resolution
+
+4 Implementation
+
+5 Evaluation
+
+5.1 Training Throughput Overhead
+
+5.2 Stack Unwinding Accuracy
+
+5.3 Symbol Resolution
+
+5.4 End-to-End Case Studies
+
+5.4.1 Case 1: GPU Thermal Throttling
+
+5.4.2 Case 2: NIC Soft-Interrupt Contention
+
+5.4.3 Case 3: VFS Dentry Lock Contention
+
+5.4.4 Case 4: Excessive Userspace Logging Overhead
+
+5.4.5 Case 5: Data Ingestion Bottleneck
+
+6 Related Work
+
+7 Limitations
+
+8 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2603.29235v1 [cs.PF] 31 Mar 2026
+
+SysOM-AI: Continuous Cross-Layer Performance Diagnosis for Production AI Training
+
+CCS: Computer systems organization Heterogeneous (hybrid) systemsCCS: Software and its engineering Software performance
+
+Yusheng Zheng∗,2, Wenan Mao∗,1, Shuyi Cheng1, Fuqiu Feng1, Guangshui Li1, Zhaoyan Liao1, Yongzhuo Huang1, Zhenwei Xiao1, Yuqing Li1, Andi Quinn†,2, Tao Ma†,1
+
+Affiliation: 1Alibaba Group, China
+
+Affiliation: 2UC Santa Cruz, USA
+
+Abstract.
+
+Performance diagnosis in production-scale AI training is challenging because subtle OS-level issues can trigger cascading GPU delays and network slowdowns, degrading training efficiency across thousands of GPUs.
+Existing profiling tools are limited to single system layers, incur prohibitive overhead (10–30%), or lack continuous deployment capabilities, resulting in manual analyses spanning days.
+We argue that continuous, cross-layer observability enabled by OS-level instrumentation and layered differential diagnosis is necessary to address this gap.
+We introduce SysOM-AI, a production observability system that continuously integrates CPU stack profiling, GPU kernel tracing, and NCCL event instrumentation via adaptive hybrid stack unwinding and eBPF-based tracing, incurring less than 0.4% overhead.
+Deployed at Alibaba across over 80,000 GPUs for more than one year, SysOM-AI helped diagnose 94 confirmed production issues, reducing median diagnosis time from days to approximately 10 minutes.
+
+Keywords: performance diagnostics, AI training, eBPF, stack unwinding, profiling
+††footnotetext: ∗Equal contribution (co-first authors). †Corresponding authors: boyu.mt@taobao.com, aquinn1@ucsc.edu.
+
+1. Introduction
+
+Large-scale AI training jobs increasingly dominate modern production datacenters, often consuming thousands of GPUs simultaneously.
+At such scale, even minor performance inefficiencies caused by OS-level scheduling, GPU thermal behavior, or network contention can cascade into substantial slowdowns, impacting overall training throughput (Patel and Tiwari, 2024).
+Prior characterization studies report that such issues are a major source of training job inefficiencies, with diagnosis often taking days (Hu et al., 2024).
+Diagnosing and mitigating these issues remains a significant operational challenge.
+
+Current performance profiling tools predominantly focus on single-layer visibility (Table 1): GPU-specific profilers (e.g., NVIDIA Nsight (NVIDIA, 2024b)) monitor GPU execution but impose 10–30% overhead (NVIDIA, 2024a); CPU-focused tools (e.g., Strobelight (Zhou and others, 2024), async-profiler (Pangin, 2024)) efficiently capture call stacks but lack visibility into GPU or distributed NCCL events; and framework-level profilers (e.g., PyTorch Profiler (PyTorch Contributors, 2024)) ignore critical OS-level behaviors.
+These tools cannot continuously run in large-scale production due to prohibitive overhead or incomplete system coverage.
+Consequently, operators must manually correlate fragmented data from multiple sources, significantly prolonging diagnosis.
+
+We argue that continuous, cross-layer observability (capturing and correlating CPU, GPU, and network activity simultaneously) is essential to identify root causes of performance degradation in production AI training.
+Building on this insight, we develop SysOM-AI, a production profiling system that leverages OS-level eBPF instrumentation to enable lightweight, always-on collection of CPU stacks (including full kernel call chains), GPU kernel timings, and NCCL collective events.
+A central analysis service correlates these signals across all ranks and performs layered differential diagnosis: comparing GPU, CPU, and OS profiles between anomalous and healthy ranks to systematically isolate the root-cause layer, or comparing against historical baselines to catch uniform degradation.
+Achieving production-scale deployment required addressing several challenges, including minimizing profiling overhead via adaptive hybrid stack unwinding, implementing centralized symbol resolution to avoid per-node memory pressure, and developing framework-agnostic NCCL tracing without debug symbols.
+
+SysOM-AI has been deployed for over one year across Alibaba’s production fleet encompassing more than 80,000 GPUs and 10,000+ nodes, processing 400 TiB of profiling data daily.
+In the six-month evaluation period reported in this paper, it helped diagnose 94 confirmed performance issues (GPU thermal throttling, NIC soft-interrupt contention, VFS lock contention, logging overhead) that were not detected by existing single-layer tools, reducing median diagnosis time from days to approximately 10 minutes.
+
+Table 1. Comparison with AI profiling tools. ✓= supported, ✗= not supported. “Kernel” = OS kernel-level signals. “Scope” = single process vs. cluster-wide.
+
+Tool
+Py
+C++
+Kern.
+Scope
+GPU
+Ovhd.
+
+MegaScan (Zhihu AI, 2024)
+✓
+✗
+✗
+Proc
+✗
+Low
+
+MegaScale (Jiang et al., 2024)
+✗
+✗
+✗
+Proc
+✓
+Low
+
+DeepSpeed Prof. (Microsoft, 2024)
+✓
+✗
+✗
+Proc
+✓
+Med
+
+Nsight Sys. (NVIDIA, 2024b)
+✗
+✓
+✗
+Proc
+✓
+High
+
+Strobelight (Zhou and others, 2024)
+✗
+✓
+✗
+Proc
+✗
+Low
+
+async-profiler (Pangin, 2024)
+✗
+✓
+✗
+Proc
+✗
+Low
+
+SysOM-AI
+✓
+✓
+✓
+Cluster
+✓
+Low
+
+Among these tools, none collect kernel-level OS signals such as interrupt handling or scheduler activity.
+SysOM-AI adds continuous cluster-scoped observability with OS-kernel visibility.
+
+This paper makes the following contributions:
+
+(1)
+
+We design and implement SysOM-AI, a continuous cross-layer performance profiling system for production AI training, integrating CPU, GPU, and NCCL observability at less than 0.4% overhead (§3–4).
+
+(2)
+
+We propose a layered differential analysis methodology that systematically isolates root causes by comparing across ranks (for stragglers) and against historical baselines (for uniform degradation), using a per-communication-group CPU waterline (§3.1).
+
+(3)
+
+We implement adaptive hybrid stack unwinding, centralized symbol resolution, and framework-agnostic NCCL tracing via eBPF, enabling always-on profiling with low overhead (§3.3–3.2).
+
+(4)
+
+We report on a one-year production deployment across 80,000+ GPUs, presenting end-to-end case studies demonstrating cross-layer diagnosis of issues invisible to existing tools (§5).
+
+2. Background and Motivation
+
+We first describe the performance characteristics of distributed AI training, then use a production incident to motivate the design of SysOM-AI.
+
+2.1. AI Training Performance Characteristics
+
+Modern large-scale AI training uses synchronous data or pipeline parallelism, where each iteration comprises forward pass, backward pass, gradient reduction via collectives (e.g., AllReduce, ReduceScatter), and parameter update (Jiang et al., 2024).
+Because collectives are blocking, the slowest rank in a communication group determines the iteration time for all ranks.
+Even small per-rank delays compound at scale: a 0.3 ms slowdown per iteration on a single rank wastes over 70 GPU-hours per day in a 1,000-GPU job running at 100 ms/iteration.
+Prior work has shown that such performance issues are common and stem from diverse root causes spanning GPU hardware, OS kernel, network, and application runtime (Patel and Tiwari, 2024; Hu et al., 2024), making it difficult to determine which layer is responsible without profiling data from all layers simultaneously.
+
+2.2. Motivating Example
+
+Consider a scenario from our production fleet: rank 4 in an 8-rank communication group enters each NCCL collective 0.6 ms late, slowing the entire group.
+An operator’s first instinct is to check GPU utilization, but nvidia-smi reports 100% on all ranks, and GPU kernel times match within 1%.
+Network monitoring shows no packet loss or latency anomaly.
+A CPU profiler (perf) is attached, but because asm_common_interrupt is compiled without frame pointers, FP-based unwinding truncates the stack at the interrupt boundary, hiding everything below it.
+The operator sees elevated CPU time in an unrelated function due to misattribution, and spends two days investigating a false lead.
+
+The actual root cause was NIC soft-interrupts (NET_RX_SOFTIRQ) bound to a CPU core shared with the NCCL communication thread.
+Diagnosing this required three capabilities that no existing tool provides together:
+(1) cross-rank comparison to see that GPU profiles match but CPU profiles diverge,
+(2) accurate kernel stacks to reveal the full interrupt chain from asm_common_interrupt through do_softirq to napi_gro_receive, and
+(3) always-on collection because the issue was intermittent and could not be reproduced with a profiler attached after the fact.
+We detail this case fully in §5.4 (Case 2).
+
+2.3. Challenges
+
+This example illustrates four fundamental gaps in existing tooling, each of which SysOM-AI addresses with a dedicated mechanism.
+
+C1: No cross-layer diagnosis methodology.
+Existing tools operate on individual layers: Nsight Systems (NVIDIA, 2024b) profiles GPU kernels, Strobelight (Zhou and others, 2024) profiles CPU stacks, and network counters track link-level statistics.
+No tool systematically compares profiles across GPU, CPU, and OS layers to isolate which layer is responsible for a slowdown.
+Operators must manually correlate fragmented data, resulting in diagnosis times typically spanning days.
+SysOM-AI addresses this with layered differential diagnosis (§3.1).
+
+C2: Framework-coupled NCCL instrumentation.
+Cross-rank diagnosis requires per-collective timing to detect stragglers.
+Prior tools such as MegaScan (Zhihu AI, 2024) obtain this by instrumenting NCCL at the framework level, tightly coupling to Megatron’s code paths; switching frameworks requires re-instrumentation.
+Furthermore, production NCCL builds ship without debug symbols, making it difficult to identify communication groups and match collective instances.
+SysOM-AI addresses this with framework-agnostic eBPF-based NCCL tracing (§3.2).
+
+C3: Inaccurate stacks at production-acceptable overhead.
+Even within a single layer, CPU profilers produce unreliable data.
+FP-based unwinding achieves low frame accuracy on production AI workloads because functions compiled with -fomit-frame-pointer (the GCC/Clang default at -O2) cause truncated or misattributed stacks; in one production case, this led to 50% of CPU samples being misattributed to a single function (§5.2).
+DWARF-based unwinding is accurate but significantly more expensive per sample, consuming several percent of a core at 100 Hz, which is unacceptable for always-on use.
+SysOM-AI addresses this with adaptive hybrid FP+DWARF unwinding (§3.3).
+
+C4: Symbol resolution breaks at scale.
+Production binaries are typically stripped, with debug symbols stored separately.
+Loading full symbol tables (600 MB–1 GB for large libraries) on every profiled node causes out-of-memory failures, and node-side nearest-address matching produces incorrect attributions when symbol tables are sparse (§5.2).
+SysOM-AI addresses this with centralized Build-ID-indexed symbol resolution (§3.4).
+
+3. System Design
+
+To address the challenges identified in §2.3, SysOM-AI combines always-on eBPF-based data collection with a centralized analysis pipeline.
+Figure 1 shows the architecture.
+
+Figure 1. SysOM-AI architecture. Each node runs an agent that collects CPU stacks (hrtimer + eBPF), GPU kernel timings (CUDA uprobe), and NCCL collective events (uprobe). Stacks are unwound via adaptive hybrid FP/DWARF, stitched across Python and C++ frames, aggregated in-kernel, and uploaded to a central service for symbol resolution, slow-rank detection, and layered differential diagnosis.
+
+At a high level, SysOM-AI operates in three stages: (1) continuous data collection via eBPF-based probes on every node, (2) centralized symbol resolution and aggregation, and (3) layered differential diagnosis that pinpoints root causes across system layers.
+We first describe the diagnosis methodology (§3.1), then the three enabling mechanisms: NCCL observability (§3.2), adaptive stack unwinding (§3.3), and centralized symbol resolution (§3.4).
+
+3.1. Layered Differential Diagnosis
+
+CPU waterline.
+
+We define the CPU waterline as the per-communication-group baseline CPU profile computed over a sliding window of the most recent iterations (default ).
+For each function in communication group , we compute the mean CPU fraction and standard deviation across all ranks in .
+A rank is flagged when any function exceeds (default ).
+The waterline is computed over all ranks in the group simultaneously; no prior partitioning into “healthy” and “unhealthy” is needed.
+Stragglers are statistical outliers: a single anomalous rank among ranks shifts by only and increases modestly, so the outlier’s functions still exceed the threshold.
+For (typical communication group size), the influence of one straggler on the group statistics is bounded (§5.4).
+
+Slow-rank detection.
+Using the NCCL instrumentation described in §3.2, for each collective SysOM-AI records the host-side entry timestamp and the GPU-side duration.
+Cross-rank clock alignment uses the collective’s barrier semantics: since all ranks must enter and exit, the earliest entry and latest exit provide natural reference points for aligning cross-rank timestamps.
+A rank is flagged as a straggler if its entry time exceeds (default ) over a sliding window of iterations (§5.4).
+
+Cross-rank differential diagnosis.
+When a straggler is detected, SysOM-AI generates layer-by-layer differential profiles:
+
+(1)
+
+GPU diff: Compare GPU kernel execution times. Uniform slowdown across all kernels suggests hardware issues (thermal throttling, memory errors). Slowdown in specific kernels suggests software issues (operator-level change).
+
+(2)
+
+CPU diff: If GPU profiles match, compare CPU flame graphs. New hot functions or increased time in specific paths reveal host-side interference (interrupts, scheduling, I/O).
+
+(3)
+
+OS diff: If application-level CPU profiles match, compare OS subsystem signals: interrupt counts (/proc/interrupts), scheduler latency (sched_stat tracepoints), and NUMA migration events, which may not appear in sampled flame graphs due to their brief, high-frequency nature.
+
+Temporal baseline comparison.
+When no straggler is detected but absolute iteration time increases, SysOM-AI compares the current per-group flame graph against a historical baseline stored in the centralized log service.
+Functions whose CPU fraction increased by more than (default 0.5%) relative to the baseline are flagged as degradation candidates.
+This complements cross-rank analysis: cross-rank comparison identifies which rank is anomalous, while temporal comparison identifies when performance changed and what code path is responsible.
+
+3.2. Framework-Agnostic NCCL Observability
+
+The diagnosis pipeline above relies on per-collective timing data.
+Obtaining this data in production requires addressing three problems.
+
+Framework-agnostic tracing.
+Rather than instrumenting NCCL at the framework level (§2.3, C2), SysOM-AI intercepts NCCL calls at the library boundary, achieving framework-agnostic tracing that works identically across Megatron, DeepSpeed, ms-swift, and other frameworks.
+
+Group identification without debug symbols.
+Communication group identification typically requires parsing ncclComm structures using debug information, which production NCCL builds lack (§2.3, C2).
+SysOM-AI pre-parses NCCL structure layouts at known version-specific offsets (currently NCCL 2.14–2.21 and ACCL), enabling group identification without runtime debug information at the cost of a configuration update when NCCL’s internal layout changes.
+
+Collective-instance separation.
+Within a communication group, multiple collectives may be in flight simultaneously.
+The standard approach uses the opCount field in ncclComm, but for point-to-point operations this counter resides in GPU memory, making it expensive to read.
+SysOM-AI instead exploits temporal overlap: operations that overlap in time across ranks are identified as belonging to the same collective instance, avoiding GPU memory access.
+
+3.3. Adaptive Hybrid FP+DWARF Stack Unwinding
+
+Accurate CPU flame graphs are central to the differential diagnosis in §3.1.
+The key insight is that FP-based unwinding is correct for the majority of functions in typical binaries, i.e., those compiled with -fno-omit-frame-pointer or that otherwise preserve the frame pointer convention.
+Approximately 20% of functions in our production binaries require DWARF, primarily C++ libraries compiled with optimizations that omit frame pointers.
+SysOM-AI learns per-function which method is needed and caches the decision, amortizing DWARF’s cost over time.
+
+Unwinding method markers.
+Each function is identified by its Build ID and code offset.
+SysOM-AI maintains a hash map Map<(BuildID, Offset) Marker> where Marker {unmarked, fp, dwarf}.
+Algorithm 1 describes the unwinding procedure.
+
+Algorithm 1 Adaptive Hybrid Stack Unwinding
+
+1:
+
+Registers: PC, SP, FP
+
+2:
+
+Call stack
+
+3:
+
+4:
+
+while PC is in a mapped executable region do
+
+5:
+
+  
+
+6:
+
+  if then
+
+7:
+
+   
+
+8:
+
+   if ValidateCallerPC(, , PC) then
+
+9:
+
+      
+
+10:
+
+   else
+
+11:
+
+      
+
+12:
+
+      
+
+13:
+
+   end if
+
+14:
+
+  else if then
+
+15:
+
+   
+
+16:
+
+  else
+
+17:
+
+   
+
+18:
+
+  end if
+
+19:
+
+  
+
+20:
+
+  
+
+21:
+
+end while
+
+Validation. The ValidateCallerPC function checks whether the unwound return address falls within a mapped executable region by consulting the process’s memory map (/proc/[pid]/maps).
+Specifically, it verifies two conditions: (1)  is within the [start, end) range of some executable ELF segment, and (2) the stack pointer is monotonically increasing (i.e., the stack is being unwound upward).
+If either check fails, the FP result is invalid, typically because the function was compiled with -fomit-frame-pointer, causing the frame pointer register to hold a general-purpose value rather than the caller’s frame address.
+
+Marker convergence and stability.
+In our production workloads, the majority of distinct call-site markers converge within the first profiling window.
+Functions encountered only in rare code paths (error handling, initialization) fall back to DWARF on first encounter and are cached thereafter.
+
+Markers are stable because a function’s frame-pointer behavior is determined at compile time and does not change at runtime.
+The two exceptions are dynamically loaded libraries (dlopen) and JIT-compiled code, whose functions are initially unmarked and go through the same convergence process; we describe the detection mechanisms in §4.
+
+Cost analysis.
+
+Since the majority of functions use the cached FP path and only a small fraction require DWARF, the steady-state per-sample cost is close to pure FP unwinding.
+DWARF frames tend to occur higher in the stack and contribute fewer frames per sample, further reducing the overhead in practice.
+We quantify this in §5.1.
+
+3.4. Centralized Deferred Symbol Resolution
+
+Even with accurate unwinding, raw address stacks must be symbolized to produce readable flame graphs.
+
+Problem.
+Production AI binaries (e.g., the Pangu distributed storage client, PyTorch shared libraries) are typically stripped, with debug symbols available only in separate files.
+Loading full symbol tables (600 MB–1 GB for large internal libraries) on every profiled node causes OOM when multiple processes are profiled simultaneously.
+Furthermore, node-side “nearest lower address” symbol matching produces incorrect attributions when symbol tables are sparse; we document a concrete instance in §5.2 where this caused 50% of CPU samples to be misattributed.
+
+Design.
+The node agent collects raw address stacks along with the Build ID of each loaded binary.
+At upload time, the agent checks the central symbol repository for an existing symbol file keyed by Build ID; if absent, it extracts and uploads the debug symbols.
+The central resolver performs symbol lookup using the complete symbol table, producing accurate function names via lookup without loading the entire file into memory.
+In our deployment, the repository stores over 170,000 distinct Build IDs in a single region.
+
+4. Implementation
+
+The node agent is implemented in C (eBPF programs) and Rust (userspace daemon); the central service in Go.
+
+eBPF programs and agent communication.
+The agent uses three eBPF program types:
+(1) perf_event attached to hrtimer for periodic CPU sampling (configurable 10–999 Hz; default 99 Hz to avoid lock-step aliasing with timer interrupts),
+(2) uprobe on CUDA runtime functions (cuLaunchKernelEx) for GPU kernel launch interception, and
+(3) uprobe on NCCL entry points (ncclAllReduce, ncclReduceScatter, etc.) for collective tracking.
+For in-kernel aggregation, the eBPF program hashes each stack trace and increments a per-stack counter in a BPF hash map. The userspace daemon drains the map every 5 s, reducing the data volume by 10–50 compared to per-sample streaming.
+The node agent communicates with training applications via a Unix domain socket.
+Applications register their process ID and NCCL communicator information at startup; the agent uses this to correlate eBPF-collected stacks with application-level metadata (job ID, rank, communication group).
+This design avoids requiring any code changes to training scripts; only an environment variable (SYSOM_SOCK_PATH) needs to be set.
+
+DWARF pre-processing.
+eBPF programs run with a 512-byte stack limit and no dynamic memory allocation, precluding full DWARF CFI interpretation.
+SysOM-AI addresses this via a two-phase approach.
+At agent startup (Phase 1), the userspace daemon parses each loaded binary’s .eh_frame section and extracts, for each Frame Description Entry (FDE), the CFA rule (register + offset), the return-address offset, and the PC range.
+These are compiled into a sorted array loaded into an eBPF map.
+FDEs using DWARF expressions (rather than simple register+offset rules) are flagged as “complex” and unwound via a userspace fallback; the vast majority of FDEs in our production binaries use simple rules.
+At runtime (Phase 2), the eBPF unwinder performs a binary search on the FDE array ( iterations for entries; typically 16 for ), computes the CFA and return address with one memory dereference, well within eBPF limits.
+Pre-processing adds 200 ms per binary at startup.
+For dynamically loaded libraries (dlopen), the agent detects new mappings via /proc/[pid]/maps polling (every 5 s) and incrementally pre-processes the new library’s .eh_frame section.
+JIT-compiled code (e.g., from torch.compile) is detected via perf_event_mmap notifications; JIT’d functions are conservatively marked as dwarf because their frame layout may not follow the standard ABI.
+Multiple CPU cores may simultaneously encounter the same unmarked function; we use atomic compare-and-swap on the marker map so concurrent races converge to the same marker value.
+
+Multi-runtime stack stitching.
+AI training stacks span Python and native C++ frames.
+For CPython processes, the agent locates PyThreadState via the _PyRuntime global symbol and thread-local storage offset, then walks the frame chain (PyFrameObject.f_back for Python 3.10 and earlier; _PyInterpreterFrame for 3.11+) to extract code object pointers and line numbers.
+Native C++ frames use the hybrid FP/DWARF unwinder.
+Both are stitched into a unified stack using the thread’s native stack pointer as the join point.
+This requires no modifications to the Python interpreter and works on unmodified production deployments.
+
+Data pipeline and symbol management.
+Build IDs are extracted from the ELF .note.gnu.build-id section.
+Debug symbols are uploaded using chunked transfer (64 MB segments) to bound peak memory on the node.
+The repository uses a compact binary format with header-indexed offset and symbol data sections, supporting lookup without loading the entire file.
+Data is uploaded to a centralized log service (SLS) in batches every 30 s.
+The central service processes ingested data within minutes, computing per-group aggregates and running straggler detection.
+The per-node agent has a resident memory footprint of 200 MB, including eBPF maps and pre-processed DWARF tables.
+Current deployment covers 80,000+ GPU cards across 10,000+ nodes in multiple clusters, with aggregate daily data volume of 400 TiB.
+The NCCL tracing is framework-agnostic and has been validated on Megatron (357 daily jobs), DeepSpeed (51), and ms-swift (113) in production.
+
+5. Evaluation
+
+SysOM-AI has been deployed for over one year across 80,000+ GPUs and 10,000+ nodes at Alibaba, processing 400 TiB of profiling data daily.
+During the six-month evaluation period, the system triggered 2,649 diagnostic events (Figure 2): 606 GPU hardware issues, 269 OS interference issues (median diagnosis time 10 min), 320 network issues (median 30 min), and 1,454 software issues identified via log-based SOP rule matching (median 1 min).
+Of these, 94 were confirmed cross-layer incidents that required profiling-based root-cause analysis.
+
+Figure 2. Distribution of 2,649 diagnostic events by root-cause category during the six-month evaluation period.
+
+We evaluate the system along four dimensions: training overhead (§5.1), stack unwinding accuracy (§5.2), symbol resolution (§5.3), and end-to-end case studies from production (§5.4).
+
+5.1. Training Throughput Overhead
+
+Setup. We measure throughput impact on Llama-3.2-1B-Instruct training with 2 NVIDIA A100-80GB GPUs, PyTorch 2.1, NCCL 2.18, sequence length 1500, batch size 8.
+We report the mean of 20 training steps (steps 21–40, after 20-step warm-up).
+“Sampling rate” denotes the fraction of hrtimer ticks (at 99 Hz) that trigger a full stack collection.
+
+Table 2. Training throughput overhead at varying sampling rates. Baseline throughput: 15.11 iter/s.
+
+Sampling Rate
+During Profiling
+After Profiling
+
+1%
+0.06%
+0.20%
+
+10%
+0.33%
+0.20%
+
+20%
+0.33%
+0.26%
+
+40%
+0.72%
+ 0%
+
+80%
+1.25%
+0.20%
+
+100%
+1.72%
+0.26%
+
+Table 2 shows results.
+At the production default (10% sampling rate, equivalent to 10 samples/s), overhead is 0.33%.
+Even at 100% (99 samples/s), overhead is only 1.72%.
+This low overhead is enabled by three factors: (1) in-kernel stack aggregation via BPF maps eliminates per-sample userspace transitions, (2) the hybrid unwinder avoids DWARF cost for the majority of frames, and (3) symbol resolution is deferred to the central service rather than performed on-node.
+
+After profiling stops, throughput returns to baseline (0–0.26% deviation, within the 0.33% baseline measurement noise observed with 0% sampling).
+
+5.2. Stack Unwinding Accuracy
+
+Figure 3 compares frame accuracy across unwinding configurations on production AI workloads.
+FP-only unwinding achieves only 5% frame accuracy because the majority of production binaries (Python, C++ with -O2) omit frame pointers; only Go binaries consistently preserve them.
+SysOM-AI’s hybrid unwinding raises accuracy to 70%, and adding centralized symbol resolution (which eliminates misattributions from sparse node-side symbol tables) further improves it to 95%.
+
+Figure 3. Stack unwinding frame accuracy on production AI workloads. FP-only achieves only 5% due to widespread omission of frame pointers. SysOM-AI’s hybrid unwinding with centralized symbol resolution achieves 95%.
+
+5.3. Symbol Resolution
+
+Symbol misattribution case.
+In a production distributed storage workload, node-side symbol resolution caused the function pangu_memcpy_avx512 (address 0x11c6aa0, covering an 18 MB address range due to sparse symbol entries) to absorb over 50% of CPU samples, producing a fictitious recursive flame graph (Figure 4).
+With centralized resolution using the full symbol table (keyed by Build ID ba6bc0e5...), addresses in the 0x23XXXXXX range were correctly attributed to dozens of distinct functions (PrepareWatcher::Start, IoWatcher::onReady, etc.), and the recursive artifact disappeared entirely.
+
+Figure 4. Symbol misattribution from node-side resolution. The function pangu_memcpy_avx512 absorbs samples from many unrelated functions due to sparse symbol entries, producing a fictitious hot spot. Centralized resolution with the full symbol table correctly attributes these addresses.
+
+5.4. End-to-End Case Studies
+
+We present five representative cases from production, selected to illustrate how SysOM-AI isolates root causes at different system layers.
+
+5.4.1. Case 1: GPU Thermal Throttling
+
+Symptom. Slow-node detection flagged rank 0 in a communication group of 8 ranks (ranks 0–7). Rank 0 consistently entered the ncclDevKernel_ReduceScatter collective 0.4 ms later than other ranks (Figure 5).
+
+Figure 5. Straggler detection for Case 1. Per-rank NCCL collective entry times show rank 0 entering last, indicating it is the straggler in this 8-rank communication group.
+
+Diagnosis. SysOM-AI generated differential GPU flame graphs between rank 0 (straggler) and rank 7 (healthy), shown in Figure 6.
+The forward pass on rank 0 consumed 51.6% of GPU time (1.77 s) vs. 48.1% (1.65 s) on rank 7.
+All kernel types showed proportional slowdowns (softmax: 20.8% vs. 19.1%; dropout: 16.7% vs. 15.3%), consistent with a global frequency reduction rather than a specific operator issue.
+
+Figure 6. Differential GPU flame graph for Case 1. Red frames (straggler rank 0) are uniformly wider than green frames (healthy rank 7) across all kernel types, indicating a global GPU frequency reduction rather than a specific operator issue.
+
+Root cause. NVIDIA DCGM confirmed GPU 0 was throttled to 1,200 MHz (vs. 1,410 MHz rated) due to an ambient temperature exceedance.
+Standard utilization metrics (nvidia-smi) reported 100% on all ranks, masking the frequency reduction; cross-rank differential diagnosis (§3.1) revealed the uniform slowdown pattern, directing operators to DCGM.
+After resolving the thermal issue, training throughput improved by 30%.
+
+5.4.2. Case 2: NIC Soft-Interrupt Contention
+
+We revisit the scenario from §2.2 with SysOM-AI’s full diagnostic data.
+
+Diagnosis.
+GPU diff: SysOM-AI compared rank 4 (straggler) and rank 6 (healthy). No significant difference; GPU kernel times matched within 1%.
+CPU diff: Significant divergence (Figure 7). Rank 4’s CPU profile showed 1.74% of total CPU time in the net_rx_action napi_poll virtnet_poll virtnet_receive path, with the full interrupt chain visible: asm_common_interrupt common_interrupt irq_exit_rcu do_softirq net_rx_action (1.74%) napi_poll (1.74%) virtnet_poll (1.52%) virtnet_receive (1.48%) napi_gro_receive (0.81%).
+Rank 6 showed 0.1% in this path.
+
+Figure 7. Differential CPU flame graph for Case 2. The bottom section (red) shows the net_rx_action napi_poll virtnet_receive interrupt chain present on the straggler rank but absent on the healthy rank, identifying NIC soft-interrupt contention as the root cause.
+
+Root cause. Network soft-interrupts (NET_RX_SOFTIRQ) were bound to a CPU core shared with the NCCL communication thread, causing periodic preemption.
+The fix: adjust /proc/irq/*/smp_affinity to isolate NIC interrupts from training cores.
+Diagnosis took approximately 10 minutes from alert to root cause.
+
+5.4.3. Case 3: VFS Dentry Lock Contention
+
+Symptom.
+A subset of nodes in a large training job exhibited 60% longer iteration times.
+Slow-rank detection flagged the affected ranks, but GPU kernel times matched healthy ranks within 1%.
+
+Diagnosis.
+GPU diff showed no anomaly.
+CPU diff revealed that straggler ranks spent the majority of CPU time in kernel paths invisible to user-space profilers (Figure 8).
+The kernel flame graph, enabled by SysOM-AI’s hybrid unwinding with full kernel stack support, showed 100% of sampled time in queued_spin_lock_slowpath, with three converging call paths:
+(1) __legitimize_path lockref_get_not_dead (65% of samples), the RCU-to-refcount fallback triggered when dentry validation fails during lazy path walk;
+(2) terminate_walk dput (34%), dentry reference release after openat;
+and (3) lookup_fast unlazy_child (11%), child dentry lookup during path resolution.
+All paths originate from do_sys_openat2, indicating system-wide VFS contention on the dentry spinlock.
+
+Figure 8. Kernel flame graph for Case 3. All sampled CPU time is in queued_spin_lock_slowpath, reached via VFS path lookup (__legitimize_path, dput, lookup_fast). This lock contention is invisible to user-space profilers.
+
+Root cause.
+A system management component periodically executed systemctl daemon-reload on the affected nodes, triggering massive dentry cache invalidation.
+This forced all concurrent file operations (including training data loading and checkpoint I/O) to fall back from the lockless RCU path walk to the ref-counted path, causing dentry spinlock contention that blocked training threads.
+This case exemplifies cross-process OS-level interference: the root cause was an unrelated system service, and diagnosing it required kernel stack visibility that no existing AI profiling tool provides (Table 1).
+
+5.4.4. Case 4: Excessive Userspace Logging Overhead
+
+Symptom.
+A large-scale training job experienced a 10% throughput drop after a routine infrastructure update.
+No GPU-level anomalies were detected; all ranks showed similar iteration times (no straggler), but the absolute iteration time increased uniformly.
+
+Diagnosis.
+Since no straggler was flagged, SysOM-AI used temporal baseline comparison (§3.1), comparing the current per-group flame graph against the pre-update baseline.
+The CPU flame graph showed a new hot path in SLS::LogClient::Send protobuf::Serialize memcpy.
+This path was absent in the pre-update baseline.
+
+Root cause.
+The infrastructure update increased the verbosity of Alibaba’s SLS (Simple Log Service) client from INFO to DEBUG, adding per-iteration logging of tensor statistics.
+The serialization overhead consumed CPU cycles on the training threads, uniformly slowing all ranks.
+The fix: revert the log level.
+Because all ranks slowed uniformly, no straggler alert fired; always-on profiling enabled temporal baseline comparison (§3.1) to surface the new hot path.
+
+5.4.5. Case 5: Data Ingestion Bottleneck
+
+Symptom.
+A large-scale training job reported a 30% throughput drop with no changes to model configuration or cluster topology.
+
+Diagnosis.
+NCCL observability (§3.2) confirmed that collective latencies were uniform across ranks, ruling out communication and straggler issues.
+Instead, the CPU flame graph, with accurate stacks from hybrid unwinding (§3.3) and centralized symbol resolution (§3.4), revealed elevated time in cpfs (a cloud-native parallel file system client) and ossutils (object storage utilities), far above the normal baseline.
+
+Root cause.
+The data pipeline’s throughput had degraded due to increased dataset size without a corresponding storage-tier upgrade.
+I/O-bound data loading saturated host CPU resources, uniformly slowing all ranks.
+The fix: upgrade the storage backend and increase data-loader parallelism.
+GPU profiling alone would have shown normal kernel times. Attributing the slowdown to the data pipeline required the combined view of normal NCCL timing and elevated host-side CPU in storage I/O paths (§3.1).
+We have observed similar I/O-related slowdowns in multiple other incidents: in one case, object storage (OSS) rate limiting caused by co-tenant contention reduced training throughput by 30%; in another, slow network fetches of training data caused a 9 throughput drop.
+
+6. Related Work
+
+AI training and GPU profiling.
+Table 1 compares SysOM-AI with existing tools.
+MegaScan (Zhihu AI, 2024) traces Python-level Megatron execution; MegaScale (Jiang et al., 2024) collects GPU kernel runtimes; Nsight Systems (NVIDIA, 2024b) provides GPU timelines at 10–30% overhead (NVIDIA, 2024a); Strobelight (Zhou and others, 2024) profiles C++ stacks without GPU or Python visibility; DeepContext (Zhao et al., 2025) links Python contexts to GPU code but lacks OS kernel visibility; Flare (Cui et al., 2025) deploys full-stack tracing across 6,000 GPUs but focuses on fault detection rather than continuous profiling.
+All operate at the process level without kernel stack visibility.
+For GPU-internal analysis, Neutrino (Huang and Wu, 2025) and KPerfIR (Guan et al., 2025) provide instruction-level GPU kernel profiling and are complementary to SysOM-AI’s host-side approach.
+Recent characterization studies (Hu et al., 2024; Patel and Tiwari, 2024) catalog training failures but do not provide a diagnostic system.
+
+Continuous profiling and distributed tracing.
+Google-Wide Profiling (Ren et al., 2010) pioneered always-on fleet profiling; Parca (Parca Authors, 2024) and Pyroscope (Grafana Labs, 2024) provide eBPF-based continuous profiling but use FP-only unwinding, limiting accuracy.
+Elastic Universal Profiling (Elastic, 2024) pre-processes DWARF for eBPF but does not provide per-function adaptive selection.
+Meta’s Dynolog (Meta, 2022) integrates CPU/GPU telemetry but does not address unwinding accuracy.
+The Linux kernel’s ORC unwinder (Poimboeuf, 2023) pre-computes kernel-space unwind tables; FP unwinding (Gregg, 2020) is per frame, whereas DWARF (DWARF Debugging Information Format Committee, 2017) is accurate but expensive; SysOM-AI’s contribution is the adaptive per-function combination.
+Causal profiling (Coz (Curtsinger and Berger, 2015), BCOZ (Ahn et al., 2024)) and wait-for analysis (wPerf (Zhou et al., 2018)) target single-node bottlenecks; SysOM-AI addresses the complementary problem of cross-layer, cross-rank diagnosis.
+In distributed tracing, Fay (Erlingsson et al., 2011) established cross-layer tracing from kernels to clusters; Pivot Tracing (Mace et al., 2015), lprof (Zhao et al., 2014), Stitch (Zhao et al., 2016), and Hubble (Luo et al., 2022) reconstruct distributed request flows; EXIST (Wang et al., 2025) provides low-overhead intra-service tracing; Jaeger (Jaeger Authors, 2024), Zipkin (OpenZipkin, 2024), and Sage (Gan et al., 2021) correlate spans in microservice settings.
+These target request-oriented systems; SysOM-AI targets bulk-synchronous GPU training with per-rank profiling rather than per-request tracing.
+
+7. Limitations
+
+SysOM-AI relies on Linux eBPF (kernel 5.4+), CUDA runtime uprobes, and NCCL structure layouts (currently covering NCCL 2.14–2.21 and ACCL).
+Python frame extraction supports CPython 3.10+; JIT runtimes that do not emit standard ELF mappings are not supported.
+Straggler detection assumes a small number of anomalous ranks per communication group; when a majority degrade simultaneously, the statistical outlier model loses power and temporal baseline comparison is needed.
+Diagnostic coverage varies by root-cause type: GPU-side stalls are reliably detected; on-CPU interference is covered by flame graph analysis; however, off-CPU blocking (e.g., a training process waiting on slow data reads) is not captured by on-CPU sampling, and RDMA-level network issues can be identified as slow collectives but not root-caused without additional network-layer instrumentation.
+SysOM-AI captures GPU kernel timing via host-side CUDA events but not GPU-side call stacks; finer-grained analysis requires complementary tools such as Nsight Compute (NVIDIA, 2024b).
+The central analysis service is a single cluster without geographic redundancy; if unavailable, node agents buffer data locally for up to 1 hour.
+
+8. Conclusion
+
+OS-level stalls (scheduler contention, soft-interrupts, memory pressure) are a substantial source of AI training performance issues, yet existing tools lack continuous OS-kernel visibility correlated with GPU and communication activity.
+We presented SysOM-AI, a production cross-layer observability system that addresses this gap through adaptive hybrid stack unwinding, centralized symbol resolution, framework-agnostic NCCL observability, and layered differential diagnosis.
+Deployed across 80,000+ GPUs at Alibaba for over one year, SysOM-AI achieves less than 0.4% overhead, 95% frame accuracy, and has helped diagnose 94 confirmed production issues, reducing median diagnosis time from days to approximately 10 minutes.
+We believe the cross-layer, always-on profiling methodology generalizes beyond AI training to other large-scale distributed systems where OS-level interference is difficult to isolate.
+
+References
+
+Ahn et al. (2024)
+M. Ahn, J. Han, Y. Kwon, and J. Jeong
+
+Identifying on-/off-CPU bottlenecks together with blocked samples.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §6.
+
+Cui et al. (2025)
+W. Cui, J. Zhang, H. Zhao, C. Liu, J. Sha, B. He, M. Guo, and Q. Chen
+
+Flare: anomaly diagnostics for divergent LLM training in GPU clusters of thousand-plus scale.
+
+External Links: 2502.05413
+
+Cited by: §6.
+
+Curtsinger and Berger (2015)
+C. Curtsinger and E. D. Berger
+
+Coz: finding code that counts with causal profiling.
+
+In Proceedings of the 25th Symposium on Operating Systems Principles (SOSP),
+
+pp. 184–197.
+
+External Links: Document
+
+Cited by: §6.
+
+DWARF Debugging Information Format Committee (2017)
+DWARF Debugging Information Format Committee
+
+DWARF debugging information format, version 5.
+
+Note: https://dwarfstd.org/dwarf5std.html
+
+Cited by: §6.
+
+Elastic (2024)
+Elastic
+
+Elastic universal profiling.
+
+Note: https://www.elastic.co/observability/universal-profilingeBPF-based continuous profiling with DWARF unwinding support
+
+Cited by: §6.
+
+Erlingsson et al. (2011)
+Ú. Erlingsson, M. Peinado, S. Peter, and M. Budiu
+
+Fay: extensible distributed tracing from kernels to clusters.
+
+In Proceedings of the 23rd ACM Symposium on Operating Systems Principles (SOSP),
+
+pp. 311–326.
+
+External Links: Document
+
+Cited by: §6.
+
+Gan et al. (2021)
+Y. Gan, M. Liang, S. Dev, D. Lo, and C. Delimitrou
+
+Sage: practical and scalable ML-driven performance debugging in microservices.
+
+In Proceedings of the 26th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Virtual, pp. 135–151.
+
+Cited by: §6.
+
+Grafana Labs (2024)
+Grafana Labs
+
+Pyroscope: open source continuous profiling platform.
+
+Note: https://pyroscope.io/
+
+Cited by: §6.
+
+Gregg (2020)
+B. Gregg
+
+BPF performance tools: linux system and application observability.
+
+Addison-Wesley Professional, Boston, MA.
+
+Cited by: §6.
+
+Guan et al. (2025)
+Y. Guan, Y. Fang, K. Zhou, C. Robeck, M. Ren, Z. Yu, Y. Ding, and A. Aziz
+
+KPerfIR: towards an open and compiler-centric ecosystem for GPU kernel performance tooling on modern AI workloads.
+
+In Proceedings of the 19th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §6.
+
+Hu et al. (2024)
+Q. Hu, Z. Ye, Z. Wang, G. Wang, M. Zhang, Q. Chen, P. Sun, D. Lin, X. Wang, Y. Luo, Y. Wen, and T. Zhang
+
+Characterization of large language model development in the datacenter.
+
+In Proceedings of the 21st USENIX Symposium on Networked Systems Design and Implementation (NSDI),
+
+Santa Clara, CA, pp. 709–729.
+
+Cited by: §1,
+§2.1,
+§6.
+
+Huang and Wu (2025)
+S. Huang and C. Wu
+
+Neutrino: fine-grained GPU kernel profiling via programmable probing.
+
+In Proceedings of the 19th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §6.
+
+Jaeger Authors (2024)
+Jaeger Authors
+
+Jaeger: open source, end-to-end distributed tracing.
+
+Note: https://www.jaegertracing.io/
+
+Cited by: §6.
+
+Jiang et al. (2024)
+Z. Jiang, H. Lin, Y. Zhong, Q. Huang, Y. Chen, Z. Zeng, S. Du, K. Chen, R. Peng, Y. Li, et al.
+
+MegaScale: scaling large language model training to more than 10,000 GPUs.
+
+In Proceedings of the 21st USENIX Symposium on Networked Systems Design and Implementation (NSDI),
+
+Santa Clara, CA, pp. 745–760.
+
+Cited by: Table 1,
+§2.1,
+§6.
+
+Luo et al. (2022)
+Y. Luo, K. Rodrigues, C. Li, F. Zhang, L. Jiang, B. Xia, D. Lion, and D. Yuan
+
+Hubble: performance debugging with in-production, just-in-time method tracing on android.
+
+In Proceedings of the 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §6.
+
+Mace et al. (2015)
+J. Mace, R. Roelke, and R. Fonseca
+
+Pivot tracing: dynamic causal monitoring for distributed systems.
+
+In Proceedings of the 25th Symposium on Operating Systems Principles (SOSP),
+
+pp. 378–393.
+
+External Links: Document
+
+Cited by: §6.
+
+Meta (2022)
+Meta
+
+Dynolog: open source system observability.
+
+Note: https://github.com/facebookincubator/dynolog
+
+Cited by: §6.
+
+Microsoft (2024)
+Microsoft
+
+DeepSpeed: deep learning optimization library.
+
+Note: https://github.com/microsoft/DeepSpeed
+
+Cited by: Table 1.
+
+NVIDIA (2024a)
+NVIDIA
+
+Nsight systems: best practices — minimizing overhead.
+
+Note: https://docs.nvidia.com/nsight-systems/UserGuide/index.htmlReports 10–30% overhead in full GPU trace mode depending on workload
+
+Cited by: §1,
+§6.
+
+NVIDIA (2024b)
+NVIDIA
+
+NVIDIA Nsight systems user guide.
+
+Note: https://docs.nvidia.com/nsight-systems/
+
+Cited by: Table 1,
+§1,
+§2.3,
+§6,
+§7.
+
+OpenZipkin (2024)
+OpenZipkin
+
+Zipkin: a distributed tracing system.
+
+Note: https://zipkin.io/
+
+Cited by: §6.
+
+Pangin (2024)
+A. Pangin
+
+Async-profiler: low overhead sampling profiler for Java.
+
+Note: https://github.com/async-profiler/async-profiler
+
+Cited by: Table 1,
+§1.
+
+Parca Authors (2024)
+Parca Authors
+
+Parca: continuous profiling for analysis of CPU and memory usage.
+
+Note: https://www.parca.dev/
+
+Cited by: §6.
+
+Patel and Tiwari (2024)
+T. Patel and D. Tiwari
+
+Revisiting reliability in large-scale machine learning research clusters.
+
+In Proceedings of the IEEE/IFIP International Conference on Dependable Systems and Networks (DSN),
+
+Brisbane, Australia, pp. 1–12.
+
+Cited by: §1,
+§2.1,
+§6.
+
+Poimboeuf (2023)
+J. Poimboeuf
+
+ORC unwinder.
+
+Note: Linux kernel documentation, https://docs.kernel.org/x86/orc-unwinder.html
+
+Cited by: §6.
+
+PyTorch Contributors (2024)
+PyTorch Contributors
+
+PyTorch profiler.
+
+Note: https://pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
+
+Cited by: §1.
+
+Ren et al. (2010)
+G. Ren, E. Tune, T. Moseley, Y. Shi, S. Rus, and R. Hundt
+
+Google-wide profiling: a continuous profiling infrastructure for data centers.
+
+IEEE Micro 30 (4), pp. 65–79.
+
+Cited by: §6.
+
+Wang et al. (2025)
+X. Wang, X. Hou, C. Li, Y. Li, D. Liu, G. Xu, G. Yang, L. Zhang, Y. Wu, X. Yuan, Q. Chen, and M. Guo
+
+EXIST: enabling extremely efficient intra-service tracing observability in datacenters.
+
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+External Links: Document
+
+Cited by: §6.
+
+Zhao et al. (2025)
+Q. Zhao, H. Wu, Y. Hao, Z. Ye, J. Li, X. Liu, and K. Zhou
+
+DeepContext: a context-aware, cross-platform, and cross-framework tool for performance profiling and analysis of deep learning workloads.
+
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Cited by: §6.
+
+Zhao et al. (2016)
+X. Zhao, K. Rodrigues, Y. Luo, D. Yuan, and M. Stumm
+
+Non-intrusive performance profiling for entire software stacks based on the flow reconstruction principle.
+
+In Proceedings of the 12th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+pp. 603–618.
+
+Cited by: §6.
+
+Zhao et al. (2014)
+X. Zhao, Y. Zhang, D. Lion, M. F. Ullah, Y. Luo, D. Yuan, and M. Stumm
+
+Lprof: a non-intrusive request flow profiler for distributed systems.
+
+In Proceedings of the 11th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §6.
+
+Zhihu AI (2024)
+Zhihu AI
+
+MegaScan: python-level profiling for large-scale training.
+
+Note: https://github.com/zhihu/megascanMegatron-specific Python tracing
+
+Cited by: Table 1,
+§2.3,
+§6.
+
+Zhou et al. (2018)
+F. Zhou, Y. Gan, S. Ma, and Y. Wang
+
+WPerf: generic off-CPU analysis to identify bottleneck waiting events.
+
+In Proceedings of the 13th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+pp. 527–543.
+
+Cited by: §6.
+
+Zhou et al. (2024)
+Y. Zhou et al.
+
+Strobelight: lightweight and scalable continuous profiling at Meta.
+
+In Proceedings of the USENIX Annual Technical Conference (ATC),
+
+Cited by: Table 1,
+§1,
+§2.3,
+§6.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

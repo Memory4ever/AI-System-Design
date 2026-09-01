@@ -1,0 +1,1923 @@
+1Introduction
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Predicting Uncertain Output Length
+
+3.1 Output Length Modeling via Distribution Fitting
+
+3.2 Prediction Model for Distribution Parameters
+
+4 Scheduling with Tail Inflated Expectation
+
+5 Implementation and Optimizations
+
+6 Experimental Evaluation
+
+6.1 Experiment Settings
+
+6.2 Online Chatbot Serving
+
+6.3 Offline Synthetic Data Generation (SDG)
+
+6.4 Ablation Study
+
+7 Conclusion
+
+References
+
+A Theoretical Analysis of Heavy-Tailed Output Length Distribution
+
+A.1 Problem Setup
+
+A.2 Proof of the Main Theorem
+
+A.3 Implications for Heavy-Tailedness
+
+B Derivations for the Censored Log-t Distribution
+
+Numerical Computation of .
+
+B.1 Censored Expectation
+
+Derivation of .
+
+Derivation of .
+
+B.2 Censored Conditional Value-at-Risk
+
+Case 1: .
+
+Case 2: .
+
+C Experiment Details
+
+C.1 Baseline Details
+
+C.2 Dataset Details
+
+D Additional Experiments
+
+D.1 Results on Additional Models
+
+D.2 Sensitivity to Sample Size
+
+D.3 Sensitivity to Fixed value
+
+D.4 Full Heatmaps for SDG Tasks
+
+E Limitation
+
+F Results on OpenPanGu Model
+
+Online Chatbot Serving.
+
+Offline SDG.
+
+Summary.
+
+G Future Work
+
+License: CC BY 4.0
+
+arXiv:2604.00499v1 [cs.LG] 01 Apr 2026
+
+marginparsep has been altered.
+
+topmargin has been altered.
+
+marginparpush has been altered.
+
+The page layout violates the ICML style.
+
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+
+ 
+
+Scheduling LLM Inference with Uncertainty-Aware Output Length Predictions
+
+ 
+
+Haoyu Zheng 1 2 
+Yongqiang Zhang 2 
+Fangcheng Fu 3 
+Xiaokai Zhou 1 
+Hao Luo 1 
+Hongchao Zhu 2 
+Yuanyuan Zhu 1 
+Hao Wang 1 
+Xiao Yan 4 
+Jiawei Jiang 1 
+
+††footnotetext: 1School of Computer Science, Wuhan University, Wuhan, China
+2Dameng Database Co., Ltd., Wuhan, China
+3School of Artificial Intelligence, Shanghai Jiao Tong University, Shanghai, China
+4Institute for Math and AI, Wuhan University, Wuhan, China. Correspondence to: Jiawei Jiang <jiawei.jiang@whu.edu.cn>.
+
+Preprint. August 24, 2026.
+Abstract
+
+To schedule LLM inference, the shortest job first (SJF) principle is favorable by prioritizing requests with short output lengths to avoid head-of-line (HOL) blocking. Existing methods usually predict a single output length for each request to facilitate scheduling. We argue that such a point estimate does not match the stochastic decoding process of LLM inference, where output length is uncertain by nature and determined by when the end-of-sequence (EOS) token is sampled. Hence, the output length of each request should be fitted with a distribution rather than a single value. With an in-depth analysis of empirical data and the stochastic decoding process, we observe that output length follows a heavy-tailed distribution and can be fitted with the log-t distribution. On this basis, we propose a simple metric called Tail Inflated Expectation (TIE) to replace the output length in SJF scheduling, which adjusts the expectation of a log-t distribution with its tail probabilities to account for the risk that a request generates long outputs. To evaluate our TIE scheduler, we compare it with three strong baselines, and the results show that TIE reduces the per-token latency by for online inference and improves throughput by for offline data generation.
+
+1 Introduction
+
+Large Language Models (LLMs) underlie many artificial intelligence applications, such as chatbots, content generation, scientific reasoning, and beyond. Popular LLM services such as ChatGPT OpenAI (2022), Gemini Google DeepMind (2023), and Claude Anthropic (2023) process billions of inference requests on a daily basis Chatterji et al. (2025). As such, a core problem is how to schedule these inference requests for execution, and the scheduling goals differ according to the target scenarios. In particular, online serving (e.g., chatbots and coding assistants) prioritizes latency metrics such as Time-To-First-Token (TTFT) and Per-token Latency (PTLA) for good quality of service (QoS), while offline processing (e.g., synthetic data generation (SDG) and data cleaning) emphasizes throughput by maximizing the number of processed requests over a time window.
+
+Figure 1: Output length distribution for the first prompt in LMSYS-Chat-1M dataset Zheng et al. (2024). Bars are the output lengths in 256 generations, while red curve is the fitted log-t distribution.
+
+Existing Solutions and Their Limitations. Popular LLM serving systems such as vLLM Kwon et al. (2023) and TensorRT-LLM NVIDIA (2023) employ the First-Come-First-Serve (FCFS) principle to schedule requests. However, FCFS suffers from head-of-line (HOL) blocking Fu et al. (2024), where requests with long output lengths (called long requests) block short requests, yielding increased request latency and degraded system throughput. Recently, Shortest-Job-First (SJF) has been found to be favorable since it mitigates HOL blocking by prioritizing short requests Qiu et al. (2024); Jin et al. (2023); Fu et al. (2024), and the output lengths of requests are predicted to facilitate scheduling. For instance, SSJF Qiu et al. (2024) employs a BERT-base model to predict the output length of each request, while S3 Jin et al. (2023) adopts DistilBERT as its proxy model. Learning-to-Rank (LTR) Fu et al. (2024) argues that SJF only requires to rank the output lengths of requests and thus predicts length ranking rather than the exact output lengths.
+
+It has been observed that output length predictions can have large errors Chen et al. (2025b), and some methods adopt iterative prediction and preemptive scheduling to tackle these errors. For example, TRAIL Shahout et al. (2025) employs a lightweight linear classifier to predict output length after generating each token, preempting requests predicted to generate long outputs. ELIS Choi et al. (2025) adopts a similar approach but uses an external encoder and extends the prediction interval to 50 tokens. The overheads of these methods can be high due to frequent predictions and possible preemptions vLLM (2025); Zhong et al. (2024). The limitations of existing methods motivate us to ask:
+
+What are the fundamental difficulties in making accurate output length predictions? How to make quality predictions to facilitate scheduling?
+
+Our Insights and Solution. Our key insight is that existing point estimates (i.e., predicting an output length for each request) do not match the stochastic decoding process of LLM inference. Specifically, LLM inference randomly samples a token (with probabilities determined by the previous tokens) in each decoding step, and the output length is determined by when the end-of-sequence (EOS) token is sampled. Therefore, the output length of each request is uncertain by nature, and a request can have different output lengths when executed multiple times, as shown in Figure 1. To account for the inherent randomness in the decoding process, the output length of each request should be fitted with a distribution rather than a single value.
+
+By analyzing real requests, we observe that the output lengths follow a heavy-tailed distribution that can be effectively fitted using the log-t distribution Cassidy et al. (2010). We also prove this fact under some mild assumptions on the decoding process of LLM inference. Take Figure 1 for instance, the p-value of the log-t distribution for the Kolmogorov-Smirnov (KS) test Massey Jr (1951) is 0.8898, suggesting a high quality fitting.
+To predict parameters for the log-t distribution of each request, we employ a simple model, which uses fine-tuned DeBERTa-v3-base He et al. (2021); He et al. (2023) to extract request semantics and feed the resultant embedding to an MLP.
+
+To utilize the fitted distribution for scheduling, we devise a metric called Tail Inflated Expectation (TIE). The rationale is that scheduling should account for the risks that requests may generate long outputs and cause HOL blocking, and thus requests with heavy tails should be penalized. Therefore, TIE adjusts the expectation (i.e., ) of the log-t distribution with its tail expectation (i.e., ), where (Value at Risk) is a tail percentile, to account for the risks. The resulting TIE scheduler is simple to implement as it only replaces output length with TIE for SJF.
+
+We comprehensively evaluate the TIE scheduler for both online and offline inference scenarios and experiment with multiple datasets and models. The results show that compared with the best-performing baseline, TIE reduces the per-token latency by for online chatbot and improves throughput by for offline SDG tasks. Moreover, micro experiments also suggest that adjusting the expectation with tail in TIE improves performance, and the TIE scheduler generalizes well across different datasets and models.
+
+Contributions. We make the following contributions:
+
+We observe that existing methods make point estimates for request output lengths, and we argue that this does not match the random token sampling of LLM decoding.
+
+To account for the inherent uncertainty in output length, we propose to fit a log-t distribution instead of a single value. Besides scheduling, our methodology may also benefit other use cases that involve output lengths, such as KV cache management and cost estimation.
+
+Based on the fitted log-t distributions, we design the TIE scheduler, which is simple to implement and provides strong performance in the experiments.
+
+2 Related Work
+
+LLM Serving Systems.
+As discussed above, existing LLM systems typically employ FCFS scheduling, which suffers from HOL blocking.
+Continuous Batching Yu et al. (2022) is a critical advancement that prevents long-running requests from blocking entire batches. However, queue-level blocking remains an open challenge: long-running requests can still block shorter ones waiting in the queue, leading to increased average latency and reduced system throughput.
+
+Scheduling for LLM Inference.
+To mitigate queue-level blocking, recent studies have explored SJF-based strategies.
+Beyond SSJF and LTR discussed in Section 1, several other prediction-based scheduling methods have been proposed Jin et al. (2023); Zheng et al. (2023).
+However, as discussed earlier, the inherent uncertainty in LLM outputs makes accurate length prediction difficult.
+
+To mitigate this uncertainty, a potential optimization pathway is preemptive scheduling based on iterative prediction Shahout et al. (2025); Choi et al. (2025); Wu et al. (2023). However, as discussed in Section 1, it incurs substantial overhead.
+In contrast, our proposed scheduling approach accounts for output uncertainty while avoiding the overhead of frequent re-prediction and preemption.
+
+LLM Output Length Prediction.
+Predicting the output length of LLMs has applications beyond request scheduling, including KV cache management Horton et al. (2024) and cost estimation Piotrowski et al. (2025).
+In addition to prompt-based length predictors such as SSJF and LTR, other methods predict lengths from embeddings and refine predictions iteratively during generation.
+TRAIL Shahout et al. (2025) leverages intermediate layer embeddings as input to a linear classifier for predicting output length. Building upon TRAIL, LGR Piotrowski et al. (2025) models the embeddings from multiple intermediate layers as graph nodes and employs a graph convolutional network to capture inter-layer dependencies for output length prediction.
+The core limitation of these methods is that point estimates inherently clash with the stochastic nature of autoregressive decoding.
+
+3 Predicting Uncertain Output Length
+
+The prediction of output length distributions consists of two components: (1) selecting and fitting appropriate distributions to model the output length, (2) training a predictor to estimate the distribution parameters of output length.
+
+3.1 Output Length Modeling via Distribution Fitting
+
+LLM inference is inherently stochastic. At each decoding step, the next output token is sampled from a probability distribution conditioned on the preceding context.
+Therefore, the same input prompt may yield different outputs.
+
+Distribution Selection.
+To investigate the distribution of output lengths for identical prompts, we sample 1K prompts from the LMSYS-Chat-1M dataset and generate 100 responses for each prompt.
+We observe that these distributions exhibit clear heavy-tailed characteristics. Specifically, across the 1K distributions, the average Skewness 3.10, and the average Coefficient of Variation (CV) 1.09, with 78.6% of them 1. The top 10% of output lengths account for 35.7% of the total length, while the average P90/P50 and P99/P50 ratios reach 4.62 and 10.77, respectively.
+
+We now provide a theoretical analysis of this heavy-tailed behavior. During LLM inference, tokens are generated autoregressively until the end-of-sequence (EOS) token is produced. Thus, the output length can be expressed as:
+
+(1)
+
+A key observation is that termination probabilities vary substantially across different generation trajectories, with some trajectories exhibiting low termination rates. For instance, when generating a JSON object, the model maintains a very low termination probability between ‘{’ and ‘}’ to ensure output completeness. To formally characterize this observation, we introduce the following assumption:
+
+Assumption 3.1.
+
+The termination rate across generation trajectories follows a distribution with density satisfying: for some constants .
+
+Theorem 3.2.
+
+Under Assumption 3.1, the tail probability of output length follows a power-law decay:
+
+(2)
+
+The detailed proof is provided in Appendix A.
+The power-law decay established in Theorem 3.2 is widely
+recognized as a sufficient condition for heavy-tailedness Clauset et al. (2009); Foss et al. (2011), explaining the high skewness and extreme quantile
+ratios observed in our empirical analysis.
+
+To identify suitable distribution families, we fit several common heavy-tailed distributions to the empirical distributions obtained above.
+We assess the goodness of fit using the Kolmogorov-Smirnov (KS) test, where is conventionally considered to indicate adequate fit Fisher (1930); D’Agostino and Stephens (1986); Alasmar et al. (2021).
+
+Table 1: Goodness of fit for common heavy-tailed distributions (1,000 prompts, 100 generations each). KS pass rate: the percentage of prompts where the fit passes the KS test ().
+
+Distribution
+# Parameters
+KS Pass Rate
+
+Log-t
+3
+93.1%
+
+Log-t ()
+2
+90.6%
+
+Log-normal
+2
+60.3%
+
+Gamma
+2
+32.0%
+
+Weibull
+2
+19.0%
+
+Exponential
+1
+10.7%
+
+Figure 2: Overview of the overall scoring pipeline. The prompt is prepended with a CLS token and encoded by DeBERTa. A multi-pooling strategy aggregates the CLS token, mean-pooled, and max-pooled representations. Two separate prediction heads (MLPs) predict and , which together with a fixed are used to construct the log-t distribution. The final score is computed from and CVaR.
+
+Table 1 summarizes the parameter count and fitting performance for these distributions.
+The three-parameter log-t distribution achieves the highest pass rate (93.1%).
+Since the log-t distribution provides a dedicated parameter to control the tail behavior, we further evaluate two-parameter variants with different fixed values, among which yields the best performance (90.6%; detailed results in Appendix D.3).
+While distribution with more parameters can provide more flexible fits, it also increases the complexity of the prediction model, incurring higher overhead during both training and inference.
+Balancing efficiency and accuracy, we adopt the variant with fixed for subsequent experiments.
+We present ablation studies comparing end-to-end performance across these distributions in Section 6.4.
+
+Distribution Fitting.
+We focus on the log-t distribution, defined as follows: if is a standard Student’s t-distribution Student (1908) with degrees of freedom, then follows a log-t distribution, denoted . By definition, the probability density function (PDF) of the standard t-distribution is:
+
+(3)
+
+Accordingly, the PDF of the log-t distribution is given by:
+
+(4)
+
+We fit distributions via Maximum Likelihood Estimation (MLE). Given observed data , the log-likelihood function for the log-t distribution is:
+
+(5)
+
+With , the parameters and are jointly estimated via the L-BFGS-B optimizer. The optimization objective is:
+
+(6)
+
+We fit the observed output length distribution for each prompt using Eq. (6) to obtain the distribution parameters.
+
+3.2 Prediction Model for Distribution Parameters
+
+Based on this, we develop a prediction model to estimate the distribution parameters for each incoming prompt.
+
+Model Architecture.
+As shown in Figure 2, our overall pipeline consists of a predictor (left) and a score calculator (right). The predictor comprises three main components:
+
+(1) Encoder: We employ DeBERTa-v3-base (86M backbone) to encode prompts into contextualized embeddings. We select it for its high performance on semantic understanding tasks and efficiency in fine-tuning and inference.
+
+(2) Feature Extractor: To capture multi-level semantic information, we employ a multi-pooling fusion strategy that combines the [CLS] token, mean-pooled, and max-pooled representations.
+Specifically, the [CLS] token encodes global semantics, mean pooling captures average contextual information, and max pooling highlights salient features.
+
+(3) Parameter Predictor:
+We design separate prediction heads for and . Each head consists of an MLP with three hidden layers (256, 256, 128) and dropout for regularization.
+Since the empirical distribution of is right-skewed, we predict in a transformed space: .
+
+Training Strategy.
+We perform z-score normalization on and , and train the model
+using MSE loss with a two-stage strategy: first optimizing all parameters, then freezing the encoder and fine-tuning only the prediction heads. This preserves the generalization of the pre-trained encoder.
+Details are available in our code.
+The trained model achieves values of 0.82 and 0.76 for and , respectively.
+
+4 Scheduling with Tail Inflated Expectation
+
+With the predictor established, we now describe how to leverage the predicted distribution for scheduling.
+
+In stochastic scheduling theory, where job execution times follow known distributions, Shortest Expected Processing Time (SEPT) is a classical strategy Weber (1983). However, applying SEPT to our setting faces the following challenges:
+
+1.
+
+While the log-t distribution provides a reasonable fit, it cannot perfectly capture the true distribution.
+
+2.
+
+The distribution parameters are estimated from the predictor, thereby inevitably containing errors.
+
+3.
+
+Requests predicted as long may suffer from starvation.
+
+The first two issues highlight an unavoidable discrepancy between the predicted and actual output lengths.
+In particular, when a genuinely long request is mispredicted as short, it blocks subsequent requests in the queue. This problem is further exacerbated by the fact that LLM outputs naturally exhibit heavy-tailed behavior.
+These observations motivate us to explicitly quantify and manage tail risk in scheduling.
+
+Risk-sensitive Scheduling.
+We adopt Conditional Value at Risk (CVaR) Rockafellar et al. (2000) to quantify the tail risk of requests. Intuitively, CVaR represents the expected value conditioned on the tail of a distribution. Formally, for a random variable and confidence level :
+
+(7)
+
+where (Value at Risk)
+denotes the -quantile of . Compared to single-point metrics such as P90, CVaR better characterizes the tail behavior.
+
+Recall that we model output length using the log-t distribution.
+In practice, LLM generation is forcibly terminated once the output length reaches the max_tokens limit. To account for this, we censor the predicted distribution at (i.e., ).
+For , define the partial expectation function:
+
+(8)
+
+which represents the cumulative contribution to the expectation of over the region .
+The censored expectation and CVaR at confidence level are then given by (derivations in Appendix B):
+
+(9)
+
+(10)
+
+where , is the -quantile, is the PDF of standard t-distribution (defined in Eq. (3)), and denotes its CDF.
+For scheduling efficiency, we employ Monte Carlo sampling with 10k samples to evaluate these metrics instead of numerical integration.
+
+For each request, let denote the censored predicted output length distribution, we compute a scheduling score as:
+
+(11)
+
+We set to capture the top 10% tail behavior.
+Coefficient controls risk sensitivity and is adaptively adjusted based on system pressure. Higher pressure means that scheduling a long request would block more subsequent requests for longer periods, thus requiring a more conservative strategy (i.e., a larger ).
+Specifically, e measure the system pressure using the waiting queue length and the configured maximum batch size , and adjust within [0.1,0.5] for stability, that is:
+
+(12)
+
+Starvation Prevention.
+A well-known challenge of SJF-based scheduling is that under high load, long requests tend to be starved by short ones, resulting in excessively long waiting times and compromising scheduling fairness.
+To mitigate this issue, we introduce a waiting-time decay mechanism that periodically adjusts the scheduling score as ,
+where is the waiting time of the request, is the decay factor, and is the decay interval. We set and by default. This exponential decay ensures that long-waiting requests are gradually prioritized, preventing starvation without disrupting the overall scheduling scheme.
+
+5 Implementation and Optimizations
+
+We implement our scheduling strategy on vLLM 0.11.1 Kwon et al. (2023). In addition, we optimize the deployment to improve the efficiency of prediction and scheduling.
+
+Challenge.
+Existing prediction-based scheduling methods typically employ synchronous prediction Qiu et al. (2024); Shahout et al. (2025), where requests are predicted and sorted by the results before enqueuing. Since requests are blocked during prediction, waiting to form a batch would introduce unacceptable latency. As a result, requests are typically predicted one at a time, forgoing the throughput benefits of batching.
+This is particularly inefficient in the prevalent continuous batching scenario: (1) under low load, continuous batching allows new requests to join the running batch immediately, but synchronous prediction introduces unnecessary blocking; (2) under high load, many requests accumulate while waiting for prediction, and unbatched prediction cannot efficiently identify the shortest request.
+
+To address these issues, we design an asynchronous prediction mechanism along with dynamic batching.
+
+Asynchronous Prediction. We decouple the scheduler into a main thread and a prediction thread.
+The prediction thread is responsible for efficiently predicting pending requests without blocking request enqueuing or the main thread’s processing.
+The main thread, on the other hand, selects a request from the waiting queue to fill a vacant slot in the running batch whenever one becomes available.
+
+Figure 3: Scheduling workflow for new requests. Solid arrows indicate the main workflow, while dashed arrows represent the asynchronous prediction workflow.
+
+(a) Average per-token latency
+
+(b) P90 per-token latency
+
+(c) Average TTFT
+
+(d) P90 TTFT
+
+Figure 4: Performance of schedulers for online chatbot serving on the real-world workload (LMSYS-Chat-1M) with the 8B model.
+
+Specifically, as illustrated in Figure 3, when the scheduler receives a new request, it inserts the request into the waiting queue (implemented as a min-heap) with max_tokens as the initial score (①a). This initial score ensures that unpredicted requests sink to the bottom, allowing already-predicted requests to be executed first, thereby preventing unpredicted long requests from blocking the running batch.
+Meanwhile, the request is submitted to a prediction queue (①b), where a background prediction thread processes requests asynchronously in batches (②). Upon completion of the prediction, the scheduler computes the score and updates the priority of the corresponding request in the heap (③), then re-heapifies to keep the minimum at the top (④).
+
+This design allows new requests to run directly under low load, avoiding unnecessary prediction overhead.
+In addition, it enables batched prediction for higher throughput.
+
+Dynamic Batching. To improve efficiency under varying load conditions, we adopt dynamic batching for the prediction thread.
+Specifically, requests can wait for a short period to accumulate into a larger batch.
+Once a timeout (i.e., 3 ms) expires or the request count reaches the maximum batch size (i.e., 32), they are submitted as a batch to the predictor.
+
+Under high load, this batching mechanism allows waiting requests to be predicted rapidly, thereby quickly identifying the shortest request in a long waiting queue.
+
+Complexity.
+Retrieving the minimum element from the waiting queue takes , while insertion, extraction, and priority updates all require . This enables the scheduler to efficiently handle requests even under high load.
+
+6 Experimental Evaluation
+
+In this section, we compare the proposed TIE scheduling strategy against existing state-of-the-art (SOTA) non-preemptive methods. Additionally, we conduct parameter tuning and ablation studies to validate our design choices.
+
+6.1 Experiment Settings
+
+Testbed.
+Our experiments are conducted on a server with NVIDIA A6000 (48 GB) GPUs interconnected via NVLink, 128 virtual CPU cores, and 512 GB of memory.
+
+Serving Models.
+In our main experiments, we evaluate two models: Meta-Llama-3-8B-Instruct and Meta-Llama-3-70B-Instruct, both served in FP16 precision. The 70B model is deployed with 8-way tensor parallelism.
+We also evaluate six models from other families (including three Mixture-of-Experts (MoE) models) in Appendix D.1.
+
+Workloads and Datasets.
+The experimental scenarios encompass both online Chatbot serving and offline Synthetic Data Generation (SDG) tasks. We employ three datasets: LMSYS-Chat-1M Zheng et al. (2024), ShareGPT RyokoAI (2023), and Alpaca Taori et al. (2023). LMSYS-Chat-1M and ShareGPT both contain real user conversations with LLM-based chatbots. Alpaca is a synthetic dataset generated via self-instruct using GPT-3.5.
+
+Baselines.
+We evaluate the following methods: (1) FCFS, the default strategy in vLLM; (2) SSJF Qiu et al. (2024) and (3) LTR Fu et al. (2024), SOTA non-preemptive methods introduced in Section 1; and (4) TIE (ours), as described above. Their details are provided in Appendix C.1.
+
+Training Data.
+Unless otherwise specified, the training data for all scheduling methods is derived from the LMSYS-Chat-1M dataset, with outputs generated by Meta-Llama-3-8B-Instruct. Notably, the training data scales are kept consistent across methods (900K samples in total): SSJF and LTR utilize the first 900K samples, while TIE uses the first 45K samples with 20 repeated generations per sample (tuned in Appendix D.2) for distribution fitting.
+This configuration ensures equal training data scale across methods.
+
+6.2 Online Chatbot Serving
+
+Table 2: Generalization performance of scheduling strategies across different datasets and models under a request rate of 100 RPS. Training data for all methods are derived from LMSYS-Chat-1M using the 8B model.
+
+Testing Dataset
+Testing Model Size
+Average Per-token Latency (s/token)
+P90 Per-token Latency (s/token)
+
+FCFS
+SSJF
+LTR
+TIE
+FCFS
+SSJF
+LTR
+TIE
+
+LMSYS-Chat-1M
+70B
+9.08
+5.50
+4.34
+2.41
+16.13
+8.24
+7.03
+4.05
+
+ShareGPT
+8B
+1.66
+0.95
+0.86
+0.57
+3.27
+1.84
+1.56
+0.90
+
+70B
+4.36
+2.43
+2.22
+1.41
+8.78
+4.90
+3.78
+2.22
+
+Alpaca
+8B
+1.45
+0.71
+0.83
+0.52
+3.62
+1.47
+1.76
+0.93
+
+70B
+4.52
+2.06
+2.36
+1.54
+11.36
+4.32
+5.14
+2.81
+
+Testing Dataset
+Testing Model Size
+Average TTFT (s)
+P90 TTFT (s)
+
+FCFS
+SSJF
+LTR
+TIE
+FCFS
+SSJF
+LTR
+TIE
+
+LMSYS-Chat-1M
+70B
+319.51
+273.30
+252.20
+204.03
+618.21
+551.15
+507.35
+475.10
+
+ShareGPT
+8B
+161.56
+132.58
+120.03
+98.10
+316.07
+296.69
+273.87
+239.04
+
+70B
+417.28
+342.45
+346.50
+288.79
+807.27
+744.59
+696.75
+660.28
+
+Alpaca
+8B
+83.65
+62.93
+65.33
+54.18
+159.72
+140.80
+142.17
+123.02
+
+70B
+235.64
+171.14
+174.31
+146.14
+444.52
+395.78
+394.10
+359.08
+
+Table 3: Performance of schedulers on SDG tasks, across training datasets and testing model sizes. Evaluated on Alpaca dataset.
+
+Training Dataset
+Testing Model Size
+Time for 3k Samples (s)
+Throughput within 3 min
+
+FCFS
+SSJF
+LTR
+TIE (ours)
+FCFS
+SSJF
+LTR
+TIE (ours)
+
+LMSYS-Chat-1M
+8B
+229.37
+144.93
+139.53
+98.12
+2292
+3488
+3672
+4762
+
+70B
+559.30
+324.52
+316.98
+246.10
+861
+1557
+1895
+2524
+
+Alpaca
+8B
+229.37
+135.79
+130.67
+95.08
+2292
+3766
+3663
+4869
+
+70B
+559.30
+311.06
+314.36
+240.19
+861
+1634
+1708
+2659
+
+(a) FCFS
+
+(b) SSJF
+
+(c) LTR
+
+(d) TIE (ours)
+
+Figure 5: Heatmaps of completion time versus output length under different strategies on the Alpaca dataset with the 8B model. TIE achieves higher concentration than SSJF and LTR, indicating its ability to accurately capture possible output lengths.
+
+Table 4: Ablation study on distribution family and score computation method. Online chatbot experiments use the LMSYS-Chat-1M dataset, and offline SDG experiments use the Alpaca dataset. All experiments are conducted on the Meta-Llama-3-8B-Instruct model. For score computation, CVaR is calculated at , and denotes the adaptive risk-sensitivity coefficient. The gray row indicates the default configuration of TIE, orange rows indicate distribution family ablations, and green rows indicate score computation ablations.
+
+Distribution
+Score
+Per-token Latency (s)
+TTFT (s)
+
+Time for 3k
+Samples (s)
+
+Throughput
+within 3 min
+
+Average
+P90
+Average
+P90
+
+log-t (=3.5)
+CVaR
+0.67
+0.96
+48.23
+131.13
+98.12
+4762
+
+log-t (dynamic )
+CVaR
+0.69
+1.02
+47.76
+132.40
+97.70
+4709
+
+log-normal
+CVaR
+1.63
+3.37
+70.91
+174.88
+142.21
+3584
+
+log-t (=3.5)
+(i.e., SEPT scheduling)
+0.75
+1.21
+52.26
+145.03
+108.51
+4257
+
+log-t (=3.5)
+CVaR
+0.72
+1.15
+50.07
+141.77
+104.76
+4391
+
+log-t (=3.5)
+CVaR
+0.71
+1.18
+49.33
+139.65
+105.04
+4422
+
+Following prior workFu et al. (2024), we adopt per-token latency (Pt-lat.) and Time-To-First-Token (TTFT) as metrics to reflect user experience in online chatbots. Per-token latency measures the average latency per output token, while TTFT captures the waiting time before the first output token.
+
+Results.
+Figure 4 illustrates the performance of each method under the LMSYS-Chat-1M dataset and the 8B model. As the requests per second (RPS) increases, all metrics exhibit an upward trend, with FCFS showing the steepest rise.
+Existing methods (i.e., SSJF and LTR) predict output lengths and sort requests accordingly, reducing per-token latency and TTFT by up to and , respectively.
+Our proposed TIE further improves upon these results by modeling and predicting output length distributions, thereby leveraging the inherent uncertainty of LLM outputs. As shown in Figure 4(a), at 100 RPS, TIE achieves a reduction in average per-token latency compared to FCFS, and outperforms SSJF and LTR by and , respectively.
+Similar results are also observed in TTFT.
+This improvement stems from our distribution estimation, which comprehensively captures possible output lengths and potential risks.
+
+To evaluate the scheduler’s ability to handle workload fluctuations, we examine the increase in average per-token latency when RPS rapidly rises from 30 to 100.
+For FCFS, SSJF, and LTR, this metric is , , and , respectively; whereas for TIE, it is only .
+This improvement is attributed to our risk-adaptive strategy: as requests accumulate in the queue, TIE adopts a more conservative scheduling strategy, deprioritizing potentially long requests, thus reducing the risk of HOL blocking.
+
+Cross-Model and Cross-Dataset Generalization.
+We further evaluate the generalization of each scheduling strategy. Note that all predictors are trained on data derived from the LMSYS-Chat-1M dataset using the 8B model. We test them on the ShareGPT and Alpaca datasets, as well as the 70B model. The results are summarized in Table 2.
+
+In terms of per-token latency, on the 70B model, TIE achieves a speedup over FCFS, while SSJF and LTR achieve and , respectively. On the ShareGPT dataset, TIE still outperforms existing methods, achieving (8B) and (70B) speedups over FCFS. Similar results are also observed on Alpaca.
+
+These results demonstrate that TIE generalizes well across diverse settings. This can be attributed to distribution modeling that avoids overfitting to specific workloads, and risk-adaptive scheduling that mitigates prediction errors.
+
+6.3 Offline Synthetic Data Generation (SDG)
+
+SDG is emerging as an important inference workload for LLMs due to the scarcity of high-quality data Chan et al. (2024). In SDG tasks, shorter responses are generally preferred due to their better cost-efficiency, greater diversity, and to mitigate length bias in downstream evaluation Singhal et al. (2024); Dubois et al. (2024).
+This preference makes SDG an important testbed for SJF-based scheduling strategies Fu et al. (2024).
+Since the Alpaca dataset is synthetic data generated via self-instruct, it naturally serves as a representative benchmark for SDG workloads Taori et al. (2023).
+
+Following prior work Fu et al. (2024), we submit 10K prompts and employ two metrics: (1) the time required to generate 3K samples (i.e., time@3K), and (2) the number of samples generated within 3 minutes (i.e., throughput).
+
+Results.
+As shown in Table 3, SJF and LTR outperform FCFS on both metrics, achieving faster generation speeds, while TIE achieves further improvements. In terms of time@3K, TIE achieves speedups of approximately , , and over FCFS, SSJF, and LTR, respectively. In cross-model and cross-dataset scenarios, although the improvements are somewhat diminished, TIE still maintains strong performance. These results demonstrate the effectiveness of our design: considering the output length of requests from a distributional and uncertainty perspective.
+
+To explain this improvement, we visualize the scheduling patterns of different strategies in Figure 5.
+The color represents the concentration of requests. Due to space constraints, we only show requests with output lengths less than 512 tokens (over 90% of requests).
+Full figures for both 8B and 70B models are provided in Appendix D.4.
+
+Under FCFS, requests are distributed almost uniformly across all lengths.
+SSJF and LTR prioritize shorter requests by predicting output lengths, clustering short requests in the lower-left region. However, the clustering becomes weaker for longer outputs, indicating that they struggle to rank requests with longer outputs. This is because longer requests (e.g., “write an article about AI”) inherently exhibit higher output uncertainty compared to shorter ones (e.g., “Translate ‘thank you’ to Spanish”).
+In contrast, TIE explicitly models the output length distribution and incorporates uncertainty, yielding a more accurate characterization of possible output lengths. As a result, requests scheduled by TIE exhibit a significantly higher concentration, even for those with longer outputs.
+This result demonstrates that TIE can enhance the effectiveness of the shortest-job-first principle.
+
+6.4 Ablation Study
+
+We ablate each component of TIE to assess its contribution.
+
+Distribution Family.
+As discussed in Section 3.1, we evaluate the fitting performance of several common heavy-tailed distribution families and ultimately select the log-t distribution with the fixed . We also experiment with other distribution families that achieve pass rates in the KS test, training models and performing scheduling. Table 4 presents the results of both online and offline experiments.
+Compared to TIE, the log-normal distribution, which exhibits inferior fitting performance (60.3% vs. 90.6%), leads to degraded scheduling performance. This indicates that fitting quality directly affects the accuracy of distribution modeling and scheduling effectiveness. The log-t distribution with a dynamic parameter achieves comparable performance to TIE. Considering model complexity and scheduling efficiency, we adopt a fixed parameter.
+
+Score Computation.
+Equation 11 presents our score computation method, which incorporates the expectation, CVaR, and an adaptive risk-sensitivity coefficient . We also evaluate alternative score computation methods, as shown in Table 4.
+Using only the expectation (i.e., SEPT) yields reasonable performance. Incorporating CVaR further improves the results, with the most notable gains achieved when the adaptive risk-sensitivity coefficient is introduced.
+
+Scheduling Overhead.
+We evaluate the overhead of prediction and scheduling. In the online chatbot experiment on LMSYS-Chat-1M with the 8B model at 100 RPS, the average scheduling latency is 4.26 ms per request, while the average TTFT is 48.23 s. Compared to FCFS, which yields an average TTFT of 127.55 s, the overhead introduced by TIE is negligible relative to the performance gains.
+
+7 Conclusion
+
+We present TIE, an uncertainty-aware scheduling strategy for LLM inference.
+We employ the log-t distribution to model the heavy-tailed output length distribution of LLM inference requests, and introduce CVaR with risk-adaptive scheduling to handle the tail risk of output lengths.
+Experimental results demonstrate that TIE achieves substantial improvements over FCFS and existing SOTA methods in both online and offline scenarios, and exhibits strong generalization across different datasets and models.
+
+Impact Statement
+
+This paper presents work whose goal is to advance the field of Machine
+Learning. There are many potential societal consequences of our work, none
+which we feel must be specifically highlighted here.
+
+References
+
+Alasmar et al. (2021)
+M. Alasmar, R. Clegg, N. Zakhleniuk, and G. Parisis
+
+Internet traffic volumes are not gaussian—they are log-normal: an 18-year longitudinal study with implications for modelling and prediction.
+
+IEEE/ACM Transactions on Networking 29 (3), pp. 1266–1279.
+
+Cited by: §3.1.
+
+Anthropic (2023)
+Anthropic
+
+Introducing Claude.
+
+Note: https://www.anthropic.com/news/introducing-claude
+
+Cited by: §1.
+
+Cassidy et al. (2010)
+D. T. Cassidy, M. J. Hamp, and R. Ouyed
+
+Pricing european options with a log student’s t-distribution: a gosset formula.
+
+Physica A: Statistical Mechanics and its Applications 389 (24), pp. 5736–5748.
+
+Cited by: §1.
+
+Chan et al. (2024)
+Y. Chan, G. Pu, A. Shanker, P. Suresh, P. Jenks, J. Heyer, and S. M. Denton
+
+Balancing cost and effectiveness of synthetic data generation strategies for LLMs.
+
+In NeurIPS Workshop on Fine-Tuning in Modern Machine Learning: Principles and Scalability,
+
+Cited by: §6.3.
+
+Chatterji et al. (2025)
+A. Chatterji, T. Cunningham, D. J. Deming, Z. Hitzig, C. Ong, C. Y. Shan, and K. Wadman
+
+How people use chatgpt.
+
+Technical report
+
+National Bureau of Economic Research.
+
+Cited by: §1.
+
+Chen et al. (2025a)
+H. Chen, Y. Wang, K. Han, D. Li, L. Li, Z. Bi, J. Li, H. Wang, F. Mi, M. Zhu, B. Wang, K. Song, Y. Fu, X. He, Y. Luo, C. Zhu, Q. He, X. Wu, W. He, H. Hu, Y. Tang, D. Tao, X. Chen, and Y. Wang
+
+Pangu embedded: an efficient dual-system llm reasoner with metacognition.
+
+External Links: 2505.22375,
+Link
+
+Cited by: Appendix F.
+
+Chen et al. (2025b)
+Z. Chen, Y. Ye, and Z. Zhou
+
+Adaptively robust llm inference optimization under prediction uncertainty.
+
+arXiv preprint arXiv:2508.14544.
+
+Cited by: §1.
+
+Choi et al. (2025)
+S. Choi, J. Goo, E. Jeon, M. Yang, and M. Jang
+
+ELIS: efficient llm iterative scheduling system with response length predictor.
+
+Cited by: §1,
+§2.
+
+Clauset et al. (2009)
+A. Clauset, C. R. Shalizi, and M. E. Newman
+
+Power-law distributions in empirical data.
+
+SIAM review 51 (4), pp. 661–703.
+
+Cited by: §A.3,
+§3.1.
+
+Dubois et al. (2024)
+Y. Dubois, P. Liang, and T. Hashimoto
+
+Length-controlled alpacaeval: a simple debiasing of automatic evaluators.
+
+In First Conference on Language Modeling,
+
+Cited by: §6.3.
+
+D’Agostino and Stephens (1986)
+R. B. D’Agostino and M. A. Stephens
+
+Goodness-of-fit techniques.
+
+Marcel Dekker, Inc..
+
+Cited by: §3.1.
+
+Fisher (1930)
+R. A. Fisher
+
+Statistical methods for research workers.
+
+Oliver and Boyd.
+
+Cited by: §3.1.
+
+Foss et al. (2011)
+S. Foss, D. Korshunov, S. Zachary, et al.
+
+An introduction to heavy-tailed and subexponential distributions.
+
+Vol. 6, Springer.
+
+Cited by: §A.3,
+§3.1.
+
+Fu et al. (2024)
+Y. Fu, S. Zhu, R. Su, A. Qiao, I. Stoica, and H. Zhang
+
+Efficient llm scheduling by learning to rank.
+
+Advances in Neural Information Processing Systems 37, pp. 59006–59029.
+
+Cited by: 3rd item,
+§1,
+§6.1,
+§6.2,
+§6.3,
+§6.3.
+
+Google DeepMind (2023)
+Google DeepMind
+
+Introducing Gemini: our largest and most capable AI model.
+
+Note: https://blog.google/technology/ai/google-gemini-ai/
+
+Cited by: §1.
+
+He et al. (2023)
+P. He, J. Gao, and W. Chen
+
+DeBERTav3: improving deBERTa using ELECTRA-style pre-training with gradient-disentangled embedding sharing.
+
+In The Eleventh International Conference on Learning Representations,
+
+Cited by: §1.
+
+He et al. (2021)
+P. He, X. Liu, J. Gao, and W. Chen
+
+Deberta: decoding-enhanced bert with disentangled attention.
+
+In International Conference on Learning Representations,
+
+Cited by: §1.
+
+Horton et al. (2024)
+M. Horton, Q. Cao, C. Sun, Y. Jin, S. Mehta, M. Rastegari, and M. Nabi
+
+KV prediction for improved time to first token.
+
+Cited by: §2.
+
+Jin et al. (2023)
+Y. Jin, C. Wu, D. Brooks, and G. Wei
+
+: Increasing gpu utilization during generative inference for higher throughput.
+
+Advances in Neural Information Processing Systems 36, pp. 18015–18027.
+
+Cited by: §1,
+§2.
+
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th symposium on operating systems principles,
+
+pp. 611–626.
+
+Cited by: §1,
+§5.
+
+Massey Jr (1951)
+F. J. Massey Jr
+
+The kolmogorov-smirnov test for goodness of fit.
+
+Journal of the American statistical Association 46 (253), pp. 68–78.
+
+Cited by: §1.
+
+NVIDIA (2023)
+NVIDIA
+
+TensorRT-llm: a tensorrt toolbox for large language models.
+
+External Links: Link
+
+Cited by: §1.
+
+OpenAI (2022)
+OpenAI
+
+Introducing ChatGPT.
+
+Note: https://openai.com/blog/chatgpt
+
+Cited by: §1.
+
+Piotrowski et al. (2025)
+G. Piotrowski, M. Bystroński, M. Hołysz, J. Binkowski, G. Chodak, and T. J. Kajdanowicz
+
+When will the tokens end? graph-based forecasting for llms output length.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 4: Student Research Workshop),
+
+pp. 843–848.
+
+Cited by: §2.
+
+Qiu et al. (2024)
+H. Qiu, W. Mao, A. Patke, S. Cui, S. Jha, C. Wang, H. Franke, Z. T. Kalbarczyk, T. Basar, and R. K. Iyer
+
+Efficient interactive llm serving with proxy model-based sequence length prediction.
+
+In International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+Cited by: 2nd item,
+§1,
+§5,
+§6.1.
+
+Rockafellar et al. (2000)
+R. T. Rockafellar S. Uryasev et al.
+
+Optimization of conditional value-at-risk.
+
+Journal of risk 2, pp. 21–42.
+
+Cited by: §4.
+
+RyokoAI (2023)
+RyokoAI
+
+ShareGPT52K.
+
+Hugging Face.
+
+Note: https://huggingface.co/datasets/RyokoAI/ShareGPT52K
+
+Cited by: 2nd item,
+§6.1.
+
+Shahout et al. (2025)
+R. Shahout, E. Malach, C. Liu, W. Jiang, M. Yu, and M. Mitzenmacher
+
+Don’t stop me now: embedding based scheduling for llms.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §1,
+§2,
+§2,
+§5.
+
+Singhal et al. (2024)
+P. Singhal, T. Goyal, J. Xu, and G. Durrett
+
+A long way to go: investigating length correlations in RLHF.
+
+In First Conference on Language Modeling,
+
+Cited by: §6.3.
+
+Student (1908)
+Student
+
+The probable error of a mean.
+
+Biometrika, pp. 1–25.
+
+Cited by: §3.1.
+
+Taori et al. (2023)
+R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. B. Hashimoto
+
+Stanford alpaca: an instruction-following llama model.
+
+GitHub.
+
+Note: https://github.com/tatsu-lab/stanford_alpaca
+
+Cited by: 3rd item,
+§6.1,
+§6.3.
+
+vLLM (2025)
+vLLM
+
+vLLM documentation: optimization and tuning.
+
+Note: https://docs.vllm.ai/en/stable/configuration/optimization/Accessed: 2025-01-16
+
+Cited by: §1.
+
+Weber (1983)
+R. R. Weber
+
+Scheduling stochastic jobs on parallel machines to minimize makespan or flowtime.
+
+In Applied Probability—Computer Science: The Interface,
+
+pp. 327–344.
+
+Cited by: §4.
+
+Wu et al. (2023)
+B. Wu, Y. Zhong, Z. Zhang, S. Liu, F. Liu, Y. Sun, G. Huang, X. Liu, and X. Jin
+
+Fast distributed inference serving for large language models.
+
+Cited by: §2.
+
+Yu et al. (2022)
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun
+
+Orca: a distributed serving system for transformer-based generative models.
+
+In 16th USENIX Symposium on Operating Systems Design and Implementation,
+
+pp. 521–538.
+
+Cited by: §2.
+
+Zheng et al. (2024)
+L. Zheng, W. Chiang, Y. Sheng, T. Li, S. Zhuang, Z. Wu, Y. Zhuang, Z. Li, Z. Lin, E. Xing, J. E. Gonzalez, I. Stoica, and H. Zhang
+
+LMSYS-chat-1m: a large-scale real-world LLM conversation dataset.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: 1st item,
+Figure 1,
+§6.1.
+
+Zheng et al. (2023)
+Z. Zheng, X. Ren, F. Xue, Y. Luo, X. Jiang, and Y. You
+
+Response length perception and sequence scheduling: an llm-empowered llm inference pipeline.
+
+Advances in Neural Information Processing Systems 36, pp. 65517–65530.
+
+Cited by: §2.
+
+Zhong et al. (2024)
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang
+
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving.
+
+In Proceedings of the 18th USENIX Conference on Operating Systems Design and Implementation,
+
+USA.
+
+External Links: ISBN 978-1-939133-40-3
+
+Cited by: §1.
+
+Appendix A Theoretical Analysis of Heavy-Tailed Output Length Distribution
+
+This appendix provides a theoretical analysis supporting Theorem 3.2 in the main text. We show that under Assumption 3.1, the output length distribution exhibits heavy-tailed characteristics with power-law tail decay.
+
+A.1 Problem Setup
+
+Consider the text generation process of an autoregressive language model. Given an input prompt, the model sequentially samples tokens until generating the end-of-sequence token (EOS). As stated in the main text, the output length is defined as:
+
+(13)
+
+Let denote the probability of generating EOS at step . Since the preceding context results from stochastic sampling, is itself a random variable that depends on the generation trajectory.
+
+Lemma A.1 (Tail Probability Expression).
+
+The tail probability of the output length satisfies:
+
+(14)
+
+Proof.
+
+The event occurs if and only if no EOS token is generated in steps . By the chain rule of conditional probability:
+
+(15)
+
+where the expectation is taken over all stochastic generation trajectories.
+∎
+
+For convenience, we restate Assumption 3.1 from the main text.
+
+Assumption A.2 (Restatement of Assumption 3.1).
+
+The termination rate across generation trajectories follows a distribution with density satisfying as for some constants .
+
+A.2 Proof of the Main Theorem
+
+To connect Lemma A.1 with Assumption A.2, we introduce the effective termination rate for a generation trajectory:
+
+(16)
+
+which represents the geometric mean of termination probabilities over the first steps. This quantity captures the overall tendency of a trajectory to terminate: trajectories generating verbose content (e.g., detailed explanations or structured outputs) tend to have lower , while those generating concise responses have higher .
+
+In practice, can only be computed retrospectively after generation completes, since each depends on the preceding context due to the autoregressive nature. However, the “type” of a generation trajectory (i.e., whether it will be verbose or concise) is largely determined by early-stage sampling decisions. This motivates Assumption A.2, which posits that each trajectory can be characterized by a fixed termination rate at the beginning of generation.
+
+Under this assumption, the tail probability in Eq. (14) simplifies to a mixture model:
+
+(17)
+
+We now prove Theorem 3.2 under Assumption A.2.
+
+Proof of Theorem 3.2.
+
+By Assumption A.2, the density satisfies as .
+
+Fix and decompose the integral in Eq. (17) as:
+
+(18)
+
+For , we have , which yields:
+
+(19)
+
+Thus, decays exponentially and is negligible compared to any polynomial decay.
+
+For , applying the substitution gives:
+
+(20)
+
+Define . By Assumption A.2, there exists such that for all . Since , we have on the domain of integration, so the standard inequality applies. This gives:
+
+(21)
+
+where the right-hand side is integrable over with integral . Moreover, for any fixed , as :
+
+(22)
+
+By the dominated convergence theorem:
+
+(23)
+
+Combining the above results, we obtain:
+
+(24)
+
+∎
+
+A.3 Implications for Heavy-Tailedness
+
+The power-law tail decay established above has important implications. For any :
+
+(25)
+
+This is a standard characterization of heavy-tailed distributions Clauset et al. (2009); Foss et al. (2011), implying that long outputs occur with a non-negligible probability, explaining the high skewness, large coefficients of variation, and frequent occurrence of exceptionally long outputs observed in our empirical analysis (Section 3.1).
+
+Remark A.3 (Interpretation of Assumption 3.1 and Assumption A.2).
+
+The condition as (equivalently, ) captures scenarios where a non-negligible fraction of generation trajectories exhibit persistently low termination rates. This occurs naturally in several practical settings. For example, when generating structured outputs such as JSON or code, the model must complete syntactic structures (e.g., matching braces or parentheses) before termination, leading to trajectories with near-zero termination probability over extended spans. Similarly, when the model commits to generating a detailed explanation or a long-form response, it maintains low termination probability until the content is complete. If such trajectories constitute a probability mass proportional to for small termination rates , the heavy-tailed behavior emerges as characterized by Theorem 3.2.
+
+Appendix B Derivations for the Censored Log-t Distribution
+
+Let be a standard -distributed random variable with degrees of freedom. We define the random variable
+
+(26)
+
+which follows a log- distribution, denoted as , where is the scale parameter.
+
+The probability density function (PDF) of the standard distribution is given by:
+
+(27)
+
+with cumulative distribution function (CDF) denoted by . By applying the change of variables , we obtain the PDF of the log- distribution:
+
+(28)
+
+We define the censored random variable as , and let
+
+(29)
+
+To simplify subsequent derivations, we introduce the partial expectation function:
+
+(30)
+
+This function admits a natural probabilistic interpretation: represents the contribution to the expectation of from the event .
+
+In LLM inference, the max_tokens parameter imposes an upper bound on the generation length. We therefore censor the distribution at (i.e., ) and compute the censored expectation , which is always finite. Note that this censoring is necessary because the uncensored expectation does not exist for the log- distribution—the moment generating function of the Student’s distribution is infinite for any due to its heavy tails.
+
+Numerical Computation of .
+
+Since does not admit a closed-form solution, we employ Monte Carlo sampling for efficient computation. Specifically, we draw samples from the standard distribution and approximate:
+
+(31)
+
+B.1 Censored Expectation
+
+The expectation of can be decomposed into two terms:
+
+(32)
+
+Derivation of .
+
+Substituting the PDF and applying the substitution , we have and . The integration limits transform from to , yielding:
+
+(33)
+
+Derivation of .
+
+Since , we have if and only if . Thus , and:
+
+(34)
+
+Combining these results, we obtain:
+
+(35)
+
+This result establishes Eq. (9) in Section 4.
+
+B.2 Censored Conditional Value-at-Risk
+
+The Conditional Value-at-Risk (CVaR) is defined as the conditional expectation beyond the Value-at-Risk (VaR) threshold:
+
+(36)
+
+where denotes the -quantile.
+
+Case 1: .
+
+In this case, the -quantile of equals the censoring point (i.e., ), and . Since the conditioning event has zero probability, the conditional expectation is not well-defined in the standard sense. Following the convention in risk management literature, we define:
+
+(37)
+
+Case 2: .
+
+The VaR of the censored distribution is given by:
+
+(38)
+
+By the definition of conditional expectation:
+
+(39)
+
+The denominator equals since . For the numerator, the event comprises two cases: (i) , where , and (ii) , where . Thus:
+
+(40)
+
+Following the same substitution as in Section B.1, we obtain:
+
+(41)
+
+Combining these results yields:
+
+(42)
+
+This result establishes Eq. (10) in Section 4.
+
+Appendix C Experiment Details
+
+C.1 Baseline Details
+
+Below are the details of the baseline scheduling strategies compared in our evaluation:
+
+•
+
+FCFS (First-Come-First-Served): The default scheduling policy used in systems like vLLM, which processes requests strictly in arrival order. While ensuring fairness, FCFS suffers from Head-Of-Line (HOL) blocking, where long-running requests delay subsequent shorter ones.
+
+•
+
+SSJF (Speculative Shortest-Job-First) Qiu et al. (2024):A scheduling strategy that predicts output lengths using a lightweight proxy model (e.g., fine-tuned BERT) to enable SJF scheduling. It employs a regression head on the [CLS] token representation and prioritizes shorter requests to mitigate HOL blocking.
+
+•
+
+LTR (Learning-to-Rank) Fu et al. (2024): A ranking-based scheduling policy that optimizes request ordering based on relative generation lengths rather than exact point estimates. It trains an auxiliary predictor (e.g., OPT-125M) using the ListMLE loss to predict ranking scores that approximate the ideal SJF ordering, with Kendall’s Tau used to evaluate ranking quality.
+
+(a) Dataset: LMSYS-Chat-1M
+
+(b) Dataset: ShareGPT
+
+(c) Dataset: Alpaca
+
+Figure 6: Distributions of prompt lengths across datasets (tokenized using Meta-Llama-3-8B-Instruct) and output lengths across models.
+
+C.2 Dataset Details
+
+We utilize three distinct datasets to evaluate performance across diverse
+workloads, including both real-world conversations and synthetic data:
+
+•
+
+LMSYS-Chat-1M Zheng et al. (2024): A large-scale real-world LLM conversation dataset collected from the Chatbot Arena. It contains approximately one million conversations involving over 25 different large language models, capturing a wide distribution of user prompts and varying response lengths representative of open-domain chatbot traffic.
+
+•
+
+ShareGPT RyokoAI (2023): A dataset consisting of authentic conversations shared by users from their interactions with ChatGPT. This dataset reflects diverse real-world queries with varying intent and structure, and is widely used to benchmark LLM performance.
+
+•
+
+Alpaca Taori et al. (2023): A synthetic dataset generated via the Self-Instruct framework using GPT-3.5. It contains 52,000 instruction-following examples covering a broad range of tasks. Due to its synthetic nature and diversity, it serves as a representative benchmark for Synthetic Data Generation (SDG) workloads.
+
+Figure 6 illustrates the distributions of prompt lengths across these datasets and output lengths on Meta-Llama-3-8B-Instruct and Meta-Llama-3-70B-Instruct (10K samples per dataset).
+
+For prompt lengths, all three datasets exhibit right-skewed distributions with long tails. LMSYS-Chat-1M and ShareGPT show similar patterns, where the mean is approximately three times the median (65.36 vs. 23 and 56.12 vs. 21, respectively), indicating the presence of some exceptionally long prompts.
+In contrast, Alpaca has considerably shorter prompts with a more concentrated distribution, as reflected in its similar mean and median (13.25 vs 13). This discrepancy arises because Alpaca consists of concise instructional tasks, whereas LMSYS-Chat-1M and ShareGPT contain real-world user queries.
+
+For output lengths, all datasets exhibit pronounced right-skewed distributions with heavy tails, where the mean consistently exceeds the median. Notably, the 70B model tends to produce slightly longer outputs than the 8B model across all datasets, with the most pronounced difference observed on LMSYS-Chat-1M (mean of 203.01 vs 177.19). Among the three datasets, ShareGPT yields the longest outputs, while Alpaca produces the shortest.
+
+These observations demonstrate that SDG tasks and Chatbot workloads are fundamentally different in nature, justifying the need to evaluate scheduling strategies under both scenarios separately.
+Moreover, they highlight a key challenge in LLM inference scheduling: the high variance and heavy-tailed nature of output lengths imply that a small fraction of long-running requests can significantly degrade system throughput and tail latency while blocking subsequent requests. This requires schedulers that can accurately identify such requests to ensure Quality of Service (QoS) and system stability.
+
+Appendix D Additional Experiments
+
+D.1 Results on Additional Models
+
+In Section 6, we evaluated scheduling strategies on
+Meta-Llama-3-8B-Instruct and Meta-Llama-3-70B-Instruct. In this appendix, we evaluate the performance of these strategies on models from different families to assess their generalizability. Among these, Qwen3-30B-A3B-Instruct-2507, Qwen3-Next-80B-A3B-Instruct, and Mixtral-8x7B-Instruct-v0.1 employ MoE architectures. Unless otherwise specified, the experimental setup is identical to that described in Section 6.1.
+
+All models are served with FP16 precision using tensor parallelism. Specifically, Mistral-7B-Instruct-v0.3 is deployed on a single GPU; GPT-oss-20B, Qwen3-30B-A3B-Instruct, and DeepSeek-R1-Distill-Qwen-32B are deployed on 2 GPUs; Mixtral-8x7B is deployed on 4 GPUs; and Qwen3-Next-80B-A3B is deployed on 8 GPUs.
+
+Table 5 presents the performance of different scheduling strategies at 100 RPS in the online chatbot scenario. Table 6 presents the performance in offline SDG tasks. TIE consistently achieves strong performance across all settings, demonstrating its generalizability.
+
+Table 5: Performance comparison of scheduling strategies across different models under the Chatbot workload.
+
+Model
+Dataset
+Avg. PTLA (s/token)
+Avg. TTFT (s)
+
+FCFS
+SSJF
+LTR
+TIE
+FCFS
+SSJF
+LTR
+TIE
+
+GPT-oss-20B
+LMSYS-Chat-1M
+11.55
+6.77
+4.96
+3.00
+188.33
+167.68
+149.46
+112.34
+
+ShareGPT
+3.83
+3.03
+1.97
+1.10
+255.15
+244.73
+214.05
+171.65
+
+Alpaca
+3.91
+2.19
+2.06
+1.26
+117.35
+98.59
+97.66
+71.79
+
+Qwen3-30B-A3B-Instruct-2507
+LMSYS-Chat-1M
+8.07
+3.40
+2.95
+1.59
+150.18
+109.49
+96.26
+73.62
+
+ShareGPT
+3.76
+1.75
+1.50
+0.86
+224.70
+172.47
+150.54
+116.26
+
+Alpaca
+2.58
+1.14
+0.82
+0.49
+59.72
+40.82
+35.55
+29.88
+
+Qwen3-Next-80B-A3B-Instruct
+LMSYS-Chat-1M
+9.60
+3.53
+4.51
+2.86
+201.17
+141.52
+141.35
+109.97
+
+ShareGPT
+4.19
+2.17
+1.97
+1.23
+285.93
+235.27
+218.30
+183.12
+
+Alpaca
+3.62
+2.24
+1.46
+1.18
+111.22
+93.37
+80.26
+67.77
+
+DeepSeek-R1-Distill-Qwen-32B
+LMSYS-Chat-1M
+2.71
+1.86
+1.98
+1.46
+1057.02
+855.83
+852.08
+729.42
+
+ShareGPT
+2.42
+1.87
+1.82
+1.52
+1443.49
+1280.86
+1268.46
+994.56
+
+Alpaca
+2.13
+1.68
+1.52
+1.25
+890.31
+777.19
+743.32
+625.56
+
+Mistral-7B-Instruct-v0.3
+LMSYS-Chat-1M
+2.56
+1.67
+1.25
+0.71
+127.67
+100.72
+88.21
+59.05
+
+ShareGPT
+1.19
+0.82
+0.79
+0.57
+174.43
+143.29
+131.63
+97.71
+
+Alpaca
+1.34
+0.94
+0.81
+0.47
+86.13
+67.72
+64.18
+45.04
+
+Mixtral-8x7B-Instruct-v0.1
+LMSYS-Chat-1M
+1.91
+1.03
+1.46
+0.80
+101.86
+78.15
+85.02
+66.51
+
+ShareGPT
+1.24
+0.75
+0.90
+0.60
+137.17
+114.01
+117.99
+94.13
+
+Alpaca
+1.31
+0.88
+0.71
+0.51
+76.27
+63.83
+59.28
+42.90
+
+Table 6: Performance comparison of scheduling strategies on the SDG task across different models, tested on Alpaca dataset.
+
+Model
+Time for 3k Samples (s)
+Throughput within 3 min
+
+FCFS
+SSJF
+LTR
+TIE
+FCFS
+SSJF
+LTR
+TIE
+
+GPT-oss-20B
+283.57
+257.26
+202.88
+165.56
+1828
+1957
+2654
+3298
+
+Qwen3-30B-A3B-Instruct-2507 (MoE)
+176.27
+152.69
+106.53
+68.80
+3045
+3511
+4563
+6419
+
+Qwen3-Next-80B-A3B-Instruct (MoE)
+271.22
+233.51
+156.85
+123.91
+1907
+2193
+3379
+4316
+
+DeepSeek-R1-Distill-Qwen-32B
+2058.48
+1584.06
+1524.46
+1134.33
+245
+352
+394
+533
+
+Mistral-7B-Instruct-v0.3
+238.95
+175.88
+196.77
+123.07
+2246
+3077
+2601
+4173
+
+Mixtral-8x7B-Instruct-v0.1 (MoE)
+259.16
+201.36
+144.94
+105.06
+2048
+2619
+3660
+5020
+
+D.2 Sensitivity to Sample Size
+
+We sample 1k prompts and establish a baseline by fitting distribution
+parameters using 100 repeated generations per prompt. We then vary the
+number of repetitions and compute the relative error of the estimated
+parameters against this baseline.
+
+As shown in Figure 7, the estimation error for
+remains low even with few repetitions, as the location parameter is
+primarily determined by the central tendency of the output length
+distribution, which stabilizes quickly. In contrast, the error in
+decreases as the number of repetitions increases, since the scale
+parameter is sensitive to tail behavior and requires more samples to
+capture accurately.
+
+Although increasing the number of repetitions yields more precise estimates,
+it significantly increases the cost of collecting training data for the
+predictor. We select 20 repetitions as a trade-off between estimation
+accuracy and data collection cost.
+
+Figure 7: Effect of the number of repetitions on parameter estimation accuracy. The relative error is computed against the baseline obtained with 100 repetitions per prompt.
+
+D.3 Sensitivity to Fixed value
+
+Figure 8: Effect of the degrees of freedom parameter on fitting quality.
+
+In practice, we use a fixed degree of freedom parameter for fitting. To determine this, we vary from 1 to 10, fit the distribution for each value, and compute the average p-value using the Kolmogorov-Smirnov (KS) test. As shown in Figure 8, achieves the best performance.
+
+D.4 Full Heatmaps for SDG Tasks
+
+(a) FCFS
+
+(b) SSJF
+
+(c) LTR
+
+(d) TIE (ours)
+
+Figure 9: Full heatmaps of completion time versus output length under different strategies on the Alpaca dataset with the 8B model.
+
+(a) FCFS
+
+(b) SSJF
+
+(c) LTR
+
+(d) TIE (ours)
+
+Figure 10: Full heatmaps of completion time versus output length under different strategies on the Alpaca dataset with the 70B model.
+
+In this section, we present the full heatmaps for the 8B model (Figure 9) and the 70B model (Figure 10), showing the test results on the Alpaca dataset. By considering the entire output length distribution, TIE leverages richer information and thus achieves more accurate predictions of possible output lengths. This is reflected in the figures as a tighter clustering of requests with similar output lengths.
+
+Appendix E Limitation
+
+In this work, obtaining training data requires generating multiple responses for the same prompt to fit the distribution parameters, making it difficult to leverage online serving data directly.
+Fortunately, our experiments (Section 6 and Appendix D.1) demonstrate that TIE generalizes well across different models and datasets, reducing the need for workload-specific data collection.
+Future work could explore online adaptation mechanisms or few-shot learning approaches to further alleviate this constraint.
+
+Appendix F Results on OpenPanGu Model
+
+To further assess the generalizability of TIE beyond the models evaluated above, we conduct additional experiments on OpenPangu-Embedded-7B Chen et al. (2025a), an industry-grade LLM.
+
+Table 7 presents the online chatbot performance at 100 RPS, and Table 8 presents the offline SDG performance on the Alpaca dataset.
+
+Table 7: Performance comparison of scheduling strategies on OpenPanGu-7B under the Chatbot workload at 100 RPS.
+
+Dataset
+Avg. PTLA (s/token)
+Avg. TTFT (s)
+
+FCFS
+SSJF
+LTR
+TIE
+FCFS
+SSJF
+LTR
+TIE
+
+Alpaca
+1.46
+0.47
+0.55
+0.30
+109.42
+72.27
+74.92
+63.47
+
+LMSYS-Chat-1M
+2.65
+0.69
+1.34
+0.47
+163.53
+106.97
+113.38
+93.04
+
+ShareGPT
+1.64
+0.57
+0.75
+0.36
+270.92
+213.25
+212.58
+190.33
+
+Table 8: Performance comparison of scheduling strategies on OpenPanGu-7B for the SDG task, tested on Alpaca dataset.
+
+Time for 3k Samples (s)
+Throughput within 3 min
+
+FCFS
+SSJF
+LTR
+TIE
+FCFS
+SSJF
+LTR
+TIE
+
+272.33
+132.13
+143.07
+97.60
+1970
+3850
+3608
+4784
+
+Online Chatbot Serving.
+
+As shown in Table 7, TIE consistently achieves the best performance across all three datasets on both metrics. In terms of per-token latency, TIE achieves , , and reductions over FCFS on Alpaca, LMSYS-Chat-1M, and ShareGPT, respectively. Compared to the stronger baseline SSJF, TIE still yields improvements of , , and . Notably, LTR exhibits considerable performance variance across datasets: its PTLA on LMSYS-Chat-1M is 1.34 s/token, nearly that of TIE (0.47 s/token). This corroborates our observation that point-estimate-based scheduling is more susceptible to prediction errors under stochastic decoding, particularly for datasets with high output length variability. In contrast, TIE maintains robust performance by leveraging the full output length distribution and adapting its scheduling decisions to the associated tail risk.
+
+Offline SDG.
+
+Table 8 presents the offline throughput results. TIE completes 3,000 requests in 97.60 seconds, achieving a speedup over FCFS and a speedup over SSJF. Within a fixed 180-second window, TIE processes 4,784 requests, which is the throughput of FCFS and 24.3% more than SSJF. These gains confirm that the throughput benefits of distribution-aware scheduling extend to batch processing scenarios.
+
+Summary.
+
+The results on OpenPanGu-7B are consistent with the findings from the main experiments: TIE consistently outperforms both the FCFS baseline and point-estimate-based alternatives across all metrics and datasets. This cross-architecture robustness further validates the generalizability of our distribution-aware scheduling framework in diverse production environments.
+
+Appendix G Future Work
+
+While TIE demonstrates strong performance in scheduling LLM inference requests, several promising directions remain for future exploration:
+
+•
+
+Alternative Distribution Families.
+This work adopts the log-t distribution to model output lengths, which effectively captures heavy-tailed characteristics. Future work could explore other distribution families, such as mixture models or non-parametric distributions, to better accommodate diverse output patterns across different applications and domains.
+
+•
+
+Dynamic Distribution Updates During Decoding.
+Currently, TIE predicts the output length distribution before decoding begins. An interesting direction is to dynamically update the distribution as tokens are generated, leveraging intermediate decoding states to refine predictions progressively. This could further improve scheduling decisions for requests with high output uncertainty.
+
+•
+
+Online Adaptation for Training Data Collection.
+A limitation of this work is that obtaining training data requires generating multiple responses for the same prompt to fit distribution parameters, making it difficult to leverage online serving data directly. Future work could explore online adaptation mechanisms, few-shot learning, or self-supervised approaches to alleviate this constraint and enable continuous model improvement during deployment.
+
+•
+
+Extensions to Other Applications.
+Beyond request scheduling, output length distribution prediction has potential applications in other aspects of LLM serving. For example, it could inform KV cache management by pre-allocating memory based on predicted distributions, or enable more accurate cost estimation for API pricing. Adapting the distribution prediction framework to these scenarios presents an interesting avenue for future research.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

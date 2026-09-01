@@ -1,0 +1,819 @@
+Rashomon Memory: Towards Argumentation-Driven Retrieval for Multi-Perspective Agent Memory
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Rashomon Memory: Architecture and Components
+
+2.1 Observation Buffer
+
+2.2 Goal-Perspectives
+
+Ontology Construction.
+
+Knowledge Graph Curation.
+
+Perspective Boundaries.
+
+2.3 Retrieval Arbiter
+
+Example: Query Walkthrough.
+
+2.4 Retrieval Modes
+
+3 Case Study: Implementation and Demonstration
+
+Goal-Conditioned Encoding.
+
+Retrieval Through Argumentation.
+
+User-Facing Explanation.
+
+Observations and Limitations.
+
+4 Discussion and Research Agenda
+
+Evolutionary Ontology.
+
+Scalable Arbitration.
+
+Explanation Design.
+
+5 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.03588v1 [cs.AI] 04 Apr 2026
+
+Rashomon Memory: Towards Argumentation-Driven Retrieval for Multi-Perspective Agent Memory
+
+Albert Sadowski
+
+Affiliation: Warsaw University of Technology
+
+Affiliation: Warsaw, Poland
+
+Email: albert.sadowski.stud@pw.edu.pl
+
+  
+Jarosław A. Chudziak
+
+Affiliation: Warsaw University of Technology
+
+Affiliation: Warsaw, Poland
+
+Email: jaroslaw.chudziak@pw.edu.pl
+
+Abstract
+
+AI agents operating over extended time horizons accumulate experiences that serve multiple concurrent goals, and must often maintain conflicting interpretations of the same events. A concession during a client negotiation encodes as a “trust-building investment” for one strategic goal and a “contractual liability” for another. Current memory architectures assume a single correct encoding, or at best support multiple views over unified storage. We propose Rashomon Memory: an architecture where parallel goal-conditioned agents encode experiences according to their priorities and negotiate at query time through argumentation. Each perspective maintains its own ontology and knowledge graph. At retrieval, perspectives propose interpretations, critique each other’s proposals using asymmetric domain knowledge, and Dung’s argumentation semantics determines which proposals survive. The resulting attack graph is itself an explanation: it records which interpretation was selected, which alternatives were considered, and on what grounds they were rejected. We present a proof-of-concept showing that retrieval modes (selection, composition, conflict surfacing) emerge from attack graph topology, and that the conflict surfacing mode, where the system reports genuine disagreement rather than forcing resolution, lets decision-makers see the underlying interpretive conflict directly.
+
+ 
+ 
+
+August 24, 2026
+
+Keywords Explainable AI
+Argumentation
+Multi-Agent Negotiation
+Conflict Resolution
+Agent Memory.
+
+1 Introduction
+
+Consider an AI agent that supports a team preparing for a client negotiation. The team made a 15% concession six months ago. Now they need to decide whether to extend similar terms to the client’s subsidiary. What should the agent retrieve, and how should it explain its recommendation?
+
+The answer depends on which strategic concern is being served. From a relationship strategy perspective, the concession was a trust-building investment that created reciprocity expectations [1, 2]. From a risk management perspective, it was a contractual liability that set a pricing precedent [3]. Financial planning sees margin erosion. These are not different queries over the same record. They are conflicting interpretations that foreground different aspects of the same experience (Figure 1). Any multi-goal agent must maintain these competing framings and, when queried, explain which framing it selected and why the alternatives were set aside. This is simultaneously a memory problem and an explainability problem.
+
+Figure 1: Parallel encodings of the concession event. Each perspective preserves what matters for its goals and discards what would interfere.
+
+Current memory architectures for LLM-based agents handle neither well. Systems that interpret at encoding time, knowledge graphs with fixed schemas, have to commit to one perspective before knowing which will matter [4]. Systems that defer interpretation to retrieval, vector stores queried through retrieval-augmented generation, preserve optionality but never accumulate goal-relevant structure [5, 6]. The raw experience “agreed to 15% discount after client mentioned competitors” doesn’t use risk vocabulary. A query oriented toward risk exposure might not retrieve it at all, since embedding-based retrieval matches on semantic similarity, not goal-relevance [7]. Recent work addresses retrieval limitations through dynamic forgetting [8], self-critique [9], and hierarchical summarization [10], but these still assume retrieved content serves a single interpretive frame. None provide the user with an account of what alternative framings existed and why one was preferred.
+
+There is cognitive science behind this. Retrieval success depends on alignment between encoding context and retrieval context [11]. Morris et al. showed that encoding for one purpose produces memories poorly suited for another, even when the “deeper” encoding would typically be considered superior [12]. Minsky argued that minds are better understood as societies of agents with competing priorities than as unified systems [13]. For agents that support negotiation, this means maintaining multiple strategic perspectives and surfacing the relevant one depending on context.
+
+Our proposal: goals should parameterize encoding, not just retrieval. Each perspective preserves what matters for its goals and discards what would interfere. When Relationship Strategy encodes the concession as a trust signal, it discards margin information. When Financial Planning encodes it as margin erosion, it discards relationship framing. The resulting encodings are separate memories shaped by separate goals. Memory for multi-goal agents is therefore a coordination problem among encoding agents with conflicting priorities.
+
+This paper proposes Rashomon Memory11
+1
+
+Named for Kurosawa’s 1950 film Rashomon: an architecture where parallel goal-conditioned agents encode experiences according to their priorities and negotiate at query time through argumentation. The negotiation produces an attack graph that both determines which interpretation to surface and explains why that interpretation was chosen over alternatives [14]. When perspectives genuinely conflict, the system surfaces the disagreement rather than forcing resolution, letting the decision-maker see the competing framings directly.
+
+Our contributions: (1) a problem formulation recasting AI agent memory as multi-agent coordination, (2) an architectural proposal combining goal-conditioned encoding with distributed peer critique for negotiated recall, (3) a proof-of-concept demonstrating that retrieval modes and contrastive explanations emerge from domain-grounded critique resolved through Dung’s argumentation semantics, and (4) a research agenda addressing scalable argumentation, evolutionary ontology management, and user-facing explanation design.
+
+2 Rashomon Memory: Architecture and Components
+
+This section presents the Rashomon Memory architecture. The core idea is that each goal maintains its own encoding of shared experiences, and conflicting interpretations are resolved through argumentation at query time. We first describe the three components of the architecture, then explain how they interact during retrieval.
+
+Figure 2 shows the proposed architecture. Three components interact: an Observation Buffer where raw experiences await interpretation, Goal-Perspectives that encode experiences according to their priorities, and a Retrieval Arbiter that negotiates among perspectives at query time. We describe each below.
+
+Figure 2: The Rashomon Memory architecture. Raw experiences enter a shared Observation Buffer, where parallel Goal-Perspectives encode them through distinct ontologies into separate knowledge graphs. The Retrieval Arbiter negotiates among perspectives at query time through argumentation, surfacing interpretations that fit the query context, along with an account of what was rejected and why.
+
+2.1 Observation Buffer
+
+Raw experiences enter a time-bounded buffer visible to all goal-perspectives. This buffer isn’t memory itself, it’s a shared log from which perspectives construct their encodings.
+
+Minsky’s K-lines offer a useful analogy here: they connect agents that were active during an experience, enabling later reactivation [13]. Our buffer plays a similar staging role. It holds experiential traces long enough for multiple encoding processes to operate, then releases them. What persists isn’t the buffer content but the perspective-specific encodings it enabled.
+
+The buffer faces practical constraints. Experiences need to persist long enough for all relevant perspectives to process them, but not so long that the buffer becomes a de facto memory store. Biological memory systems exhibit similar staging: hippocampal structures hold experiences temporarily before cortical consolidation [15]. We leave optimal retention policies to future work.
+
+2.2 Goal-Perspectives
+
+Each goal-perspective maintains three components: encoding agents that transform buffer contents into structured representations, an ontology defining the vocabulary for encoding, and a knowledge graph accumulating encoded experiences. Figure 1 shows how four perspectives may encode the same observation.
+
+Ontology Construction.
+
+Each perspective needs an ontology, a vocabulary of concepts and relations suited to its goals. Where do these ontologies come from? We see three possibilities, probably used in combination.
+
+First, ontologies can be seeded by domain experts or inherited from existing taxonomies. Risk Management might adopt categories from compliance frameworks; Financial Planning might inherit from accounting standards. This gives you initial structure but can’t anticipate every concept a perspective will need.
+
+Second, ontologies can emerge from encoding patterns. When encoding agents repeatedly struggle to categorize an experience, that signals a conceptual gap. Ontology learning from text is an active research subject [16], and recent work uses LLMs to extract taxonomic relations from corpora [17]. A perspective could apply similar techniques to its own encoding history, identifying clusters that lack named concepts; recent work confirms that LLM-driven ontology construction can yield representations sufficient for downstream symbolic reasoning [18, 19].
+
+Third, ontologies can evolve through use. Jiang et al. survey how knowledge graphs have evolved from static structures to temporal and event-centric representations [4]. A key finding: schema rigidity creates brittleness. Graphs that can’t extend their ontologies degrade as domains shift. Our architecture assumes ontologies are living structures, refined asynchronously as new experiences reveal gaps or redundancies.
+
+Knowledge Graph Curation.
+
+Each perspective maintains a separate knowledge graph populated through its encoding process. This raises practical questions about storage and maintenance.
+
+For persistence, existing temporal knowledge graph infrastructure offers a starting point. StreamE supports continuous updates to graph structure as new facts arrive [18]. Zep maintains temporal indices over knowledge graphs for agent memory [20]. These systems assume unified storage, but their update mechanisms could serve perspective-specific graphs.
+
+Curation involves more than storage, though. As encodings accumulate, perspectives have to manage redundancy, resolve internal contradictions, and forget outdated information. We propose that retrieval acts as a curation signal: encodings that get frequently retrieved gain importance weight; those never retrieved decay. This creates a stigmergic dynamic where use patterns shape memory structure, similar to how ant pheromone trails reinforce successful paths. Kirkpatrick et al. demonstrated importance-weighted preservation in neural networks through elastic weight consolidation [21]; an analogous mechanism could protect frequently-accessed encodings from decay while letting unused ones fade.
+
+Perspective Boundaries.
+
+One design question we leave open: how many perspectives, and who decides their boundaries? The examples in this paper assume perspectives aligned with organizational functions (relationship management, risk, finance). But perspectives could be more fine-grained (specific client relationships) or more abstract (short-term vs. long-term optimization). Li et al. found that explicit belief states in multi-agent systems reduce hallucination by helping agents maintain distinct viewpoints [22, 23], which suggests that perspective boundaries should be explicit and maintained, not emergent and fluid. We suspect the right granularity depends on the agent’s operational context, but establishing principles for perspective design remains future work.
+
+2.3 Retrieval Arbiter
+
+Retrieval in this architecture is negotiation, not search. When a query arrives, the system doesn’t traverse a unified index. Instead, it kicks off a structured protocol where perspectives propose interpretations, critique competing proposals, and an arbiter resolves which proposals survive. The architecture contributes two separable ideas: a distributed peer critique pattern, in which domain-specialized agents evaluate each other’s proposals using asymmetric knowledge, and a principled resolution mechanism that computes acceptable sets from the resulting attack structure.
+
+The protocol has four phases. First, the arbiter broadcasts the query, along with context information (querier identity, decision type, current priorities), to all perspective agents. Second, perspectives with relevant encodings submit proposals, candidate interpretations accompanied by relevance claims. Third, proposals get shared among perspectives, and each may submit attacks on others’ proposals. An attack is a claim that, given the query context, the attacking perspective’s framing should dominate. Fourth, the arbiter constructs an attack graph from the submitted attacks and computes an acceptable extension using Dung’s argumentation semantics [24].
+
+Each perspective knows its own domain and can evaluate competing proposals from a position of genuine expertise. When Risk Management attacks Relationship Strategy’s proposal, it does so with access to compliance encodings that Relationship Strategy never stored. This asymmetry is a feature: the attacking perspective has domain-specific knowledge that the defending perspective lacks, making the attack grounded rather than generic. The arbiter, by contrast, performs no reasoning about the content of the attacks. It applies Dung’s grounded semantics to the attack graph as a lightweight, deterministic resolution step. The value of a formal framework is in the guarantee of uniqueness of the grounded extension regardless of the attack graph’s complexity [25].
+
+This protocol relates to multi-agent debate [26, 27, 28] but differs in its decision procedure. Debate frameworks typically use iterative refinement, where agents revise positions across rounds, converging toward agreement. Our protocol uses a single round of critique followed by extension computation over a static attack graph. In principle, debate could be configured to select among alternatives rather than converge toward a single answer. The structural difference is that our approach separates the generation of critiques (by domain-expert perspectives) from the resolution of those critiques (by a formal semantics), rather than interleaving them.
+
+The attack graph that results from this protocol is both a resolution mechanism and an explanation artifact. Miller argues that human-interpretable explanations are contrastive: people ask “why P rather than Q?” rather than “why P?” [14]. The attack graph answers exactly this kind of question. When Risk Management is selected over Relationship Strategy, the user can inspect the attack: Risk Management argued that relationship framing omits compliance exposure, and this attack was not counterattacked. The explanation is grounded in the perspectives’ own domain knowledge rather than generated post-hoc. This principle, that explanation can emerge from inspectable intermediate structure rather than requiring a separate generation step, has been validated in neural-symbolic settings, where externalising every interpretive decision as a formal assertion yields auditable reasoning traces by construction [29]. Čyras et al. survey how argumentation frameworks naturally support this kind of reasoning trace [30]. In our architecture, the attack graph plays an analogous role: the grounded extension identifies which arguments survived and which were defeated, giving the user a justification structure rather than just an answer. Richer structured argumentation frameworks such as ASPIC+ [31] could further enrich the attack relation with explicit premises and inference rules. We leave this extension to future work and use abstract argumentation in the current prototype.
+
+The quality of the architecture hinges on the quality of the peer critique. Each perspective must assess not just its own relevance but why competing framings are less appropriate for the current context. This is a form of theory of mind: perspectives benefit from models of each other’s goals and typical proposal patterns. Li et al. found that explicit belief state representations improve coordination in multi-agent systems by helping agents reason about others’ viewpoints [22]. In our architecture, such representations serve not cooperation but well-grounded critique. The advantage is that each perspective evaluates others from its own accumulated knowledge, not from a shared or neutral vantage point. The setup resembles argumentation-based negotiation, where agents justify positions through reasons grounded in their own knowledge bases [32]. But our perspectives are not negotiating with each other for mutual benefit. They are competing to frame the answer to a query, and the user benefits from the resulting explanation.
+
+Example: Query Walkthrough.
+
+Say a query arrives six months after the concession: “Should we extend similar terms to Meridian’s subsidiary?” Each perspective searches its encodings and proposes interpretations. Relationship Strategy retrieves the concession as a trust-building gesture and proposes extending terms to reinforce the partnership. Financial Planning retrieves the same event as margin erosion and proposes caution about compounding losses. Risk Management retrieves it as precedent-setting and flags legal exposure from inconsistent treatment of related entities. These proposals enter the peer critique phase. Financial Planning attacks Relationship Strategy: the query concerns terms, which implies cost analysis; relationship framing omits margin impact. Relationship Strategy counters: the phrase “similar terms” presupposes the original concession as reference; cost analysis alone ignores why the precedent exists. The arbiter then computes which proposals survive given the resulting attack graph. If only Financial Planning survives, it dominates. If multiple survive, the system composes them. If all attack each other, it surfaces all three framings rather than forcing resolution. The same event surfaces through three different framings. Which one gets selected depends on why the question is being asked.
+
+2.4 Retrieval Modes
+
+Not all queries resolve to a single frame. Take “Which clients show early signs of churn?” No single perspective owns churn prediction. Relationship Strategy contributes signals about reduced executive engagement. Financial Planning contributes pricing sensitivity patterns. Risk Management contributes audit demand frequency. Competitive Intelligence contributes mentions of competitor conversations. The arbiter’s role here is synthesis: assembling complementary signals that no perspective could provide alone. Minsky’s “non-compromise principle” guides this synthesis [13]. Rather than averaging perspectives into undifferentiated mush, the system lets each contribute what it uniquely preserved. Composition isn’t consensus; it’s structured aggregation of distinct viewpoints.
+
+Other queries produce genuine conflict that resists both selection and composition. “Was the Meridian renewal a success?” elicits four incompatible answers: Relationship Strategy says yes (trust deepened), Financial Planning says no (margin eroded), Risk Management says ambiguous (exposure contained but precedent set), Competitive Intelligence says qualified yes (retained against threat). The arbiter must not synthesize false consensus here. Some queries simply have no perspective-independent answer [33, 34]. The appropriate response is to surface the conflict itself, making the disagreement legible rather than hidden.
+
+This is the core insight behind Rashomon Memory, named after Kurosawa’s film in which the same event receives irreconcilable accounts from different witnesses [35]. The architecture supports three retrieval modes: selection when context determines a dominant frame, composition when perspectives contribute complementary information, and surfacing when genuine conflict should be reported rather than resolved. These modes are not designed directly; they emerge from the topology of the attack graph produced by Dung’s grounded semantics. This is where argumentation earns its role in the architecture. The attack graph both resolves which interpretation to surface and explains why: each attack articulates a domain-grounded reason for preferring one framing over another, and the grounded extension records which reasons survived. The surfacing mode makes this most visible. Most decision support systems converge on a single recommendation, leaving the user no account of what alternatives existed. When perspectives genuinely conflict, the attack graph preserves the disagreement as a structured, inspectable object and the user sees not just that the system could not decide, but on what grounds each perspective challenged the others. The argumentation trace is the explanation. In the following section, we demonstrate this on a controlled scenario.
+
+3 Case Study: Implementation and Demonstration
+
+We implemented a prototype of Rashomon Memory to test whether the architecture produces sensible behavior on a controlled scenario. The encoding agents use the LLMs4OL methodology [17] for ontology learning, with each perspective maintaining its own OWL/RDF knowledge graph in Turtle format. The retrieval arbiter uses Dung’s abstract argumentation semantics [24]. All LLM calls use Claude Sonnet 4.6 accessed via Anthropic API; model hyperparameters set to defatuls, except from the temperature - set to 0. The scenario extends the negotiation example from Section 1: three perspectives (Relationship Strategy, Risk Management, Financial Planning) encode eight observations from a client engagement with Meridian Corp, after which we run four queries against the accumulated knowledge graphs. The source code is publicly available.22
+2
+
+https://github.com/albsadowski/rashomon-memory-demo
+
+Goal-Conditioned Encoding.
+
+Each perspective receives every observation but independently decides whether to encode it. The pipeline has two stages. A relevance filter determines whether the observation matters for this perspective’s goals. For observations that pass, the encoding agent follows the LLMs4OL methodology: term typing (Task A) classifies entities against the perspective’s TBox, taxonomy discovery (Task B) places any new classes in the hierarchy, and relation extraction (Task C) identifies properties between entities. The output is a set of RDF triples added to the perspective’s ABox, along with any TBox extensions needed to express them. Each perspective is implemented as a separate LLM call with a goal-specific system prompt and a structured output schema that returns both ontology updates and instance triples.
+
+Table 1: Encoding selectivity across observations and perspectives. Of 24 possible encodings, 13 passed the relevance filter. Each perspective encodes a different subset, and perspectives that encode the same observation extract different information.
+
+Observation
+
+Rel.
+Risk
+Fin.
+
+1. Competitor proposals at quarterly review
+
+–
+–
+
+2. 15% discount concession granted
+
+3. VP praises support team response
+
+–
+–
+
+4. Audit flags discount exceeding policy band
+
+–
+
+5. Account margin drops 34% 22%
+
+–
+–
+
+6. Subsidiary inquires about platform adoption
+
+–
+
+7. CEO praises partnership at industry summit
+
+–
+–
+
+8. Legal notes precedent risk across Tier-2 clients
+
+–
+
+Encoded / Total
+
+5/8
+3/8
+5/8
+
+Table 1 shows the encoding decisions. The pattern reflects perspective goals. Relationship Strategy encoded stakeholder interactions and partnership signals (observations 1, 2, 3, 6, 7) but skipped audit findings, margin reports, and legal reviews. Risk Management encoded precedent-setting events and compliance flags (observations 2, 4, 8). Financial Planning tracked margin and revenue impacts (observations 2, 4, 5, 6, 8). The selectivity extends beyond binary filtering: perspectives that encode the same observation extract different information. Consider observation 2, the 15% discount concession. Relationship Strategy encoded it as a trust signal with “guarded” trust level and “low” reciprocity expectation, noting the concession was extracted through competitor leverage rather than offered as goodwill. Risk Management encoded it as a pricing precedent with “moderate” severity, flagging policy deviation. Financial Planning encoded it as a margin impact of . Each perspective discards what the others preserve. The resulting knowledge graphs are not views over shared storage. They are separate memories with separate vocabularies, shaped by separate goals.
+
+Retrieval Through Argumentation.
+
+The retrieval pipeline implements the protocol described in Section 2.3, combining distributed peer critique with Dung’s grounded semantics for resolution. Each perspective searches its knowledge graph and submits a proposal: an interpretation of its relevant encodings, accompanied by a relevance claim. Perspectives then evaluate each other’s proposals and may submit attacks. An attack is a claim that another perspective’s framing would mislead the querier given the specific query context. The attacks form a directed graph, and Dung’s grounded semantics determines which proposals survive.
+
+The peer critique step is where the inferential work happens. Each perspective evaluates others from its own domain knowledge. When Risk Management attacks Relationship Strategy, it draws on compliance and precedent encodings that Relationship Strategy never stored. The attack is grounded in asymmetric expertise, not generic disagreement. Two properties are needed for this to work. First, attacks must be selective: a perspective that attacks everything degrades the system into trivial mutual conflict. Second, attacks must be contextual: the same two perspectives might or might not attack each other depending on the query. Both properties are encouraged through prompt design: perspectives are instructed to attack only when they have a genuine, query-grounded reason, and to leave complementary proposals unattacked. Whether the LLM reliably follows these instructions is an empirical question. Multi-agent debate systems without such constraints tend to suffer from semantic drift and logical deterioration [36], which is what the selectivity and contextuality properties are designed to prevent. The results are encouraging: the same three perspectives produced attack graphs with zero, two, three, and six edges across four queries (Table 2), with no manual tuning of the attacks.
+
+The resolution step is deliberately lightweight. Dung’s grounded extension is computed iteratively: begin with all unattacked arguments, then add any argument whose attackers are all counterattacked by arguments already in the set, and repeat until stable. This process converges to a unique fixed point, making the retrieval mode deterministic for a given attack graph. If the grounded extension contains all proposals, no perspective was successfully challenged, and the system composes their contributions (composition). If it contains a single proposal, that perspective dominates (selection). If it is empty, every perspective is caught in unresolved mutual conflict, and the system surfaces the disagreement rather than forcing resolution (surfacing). Multiple survivors that do not exhaust all proposals represent a filtered composition. At the scale of our demonstration (three perspectives), the same outcomes could be reached by simpler heuristics. The grounded extension is unique for any attack graph, which makes the retrieval mode deterministic given the perspectives’ critiques. This separates the concern of generating critiques from the concern of resolving them. We illustrate the mechanism with two queries that produce contrasting outcomes.
+
+Figure 3: Attack graphs for four queries. Arrows denote attacks. Blue nodes belong to the grounded extension (accepted); gray nodes are defeated. (a) Risk and Financial attack Relationship; survivors compose. (b) No attacks; all compose. (c) Risk Management attacks both and is sole survivor (selection). (d) Complete mutual attacks; empty grounded extension (surfacing).
+
+“What is our current risk exposure from the Meridian account?” All three perspectives proposed interpretations. Risk Management attacked Relationship Strategy: “Relationship Strategy frames exposure through trust levels and reciprocity dynamics. These are valid relationship metrics, but they do not constitute risk exposure in the compliance, legal, or financial sense the query requires.” Risk Management also attacked Financial Planning: “Financial Planning quantifies margin erosion, but margin impact is a financial performance metric, not a risk exposure assessment.” Financial Planning independently attacked Relationship Strategy on similar grounds. Relationship Strategy attacked neither. The resulting graph (Figure 3c) has Risk Management as the only unattacked node. The grounded extension computation confirms this: Risk Management enters first (unattacked, therefore trivially acceptable). Financial Planning cannot enter because its attacker (Risk Management) is not counterattacked by anyone already in the extension. Relationship Strategy is excluded for the same reason. The grounded extension is {Risk Management}, and the mode is selection.
+
+“How should we prepare for the upcoming Meridian quarterly review?” Again all three perspectives proposed, but the attack structure looked very different. Relationship Strategy argued the review should focus on partnership repair and avoid anchoring on the discount. Risk Management argued compliance remediation should take priority. Financial Planning argued margin recovery should dominate. Each perspective attacked both others. Relationship Strategy attacked Risk Management: “treating the review as a compliance exercise risks alienating the client.” Risk Management attacked Relationship Strategy: “advising to avoid discussing the discount leaves compliance violations unaddressed.” All six possible directed edges appeared (Figure 3d). The grounded extension is empty: every perspective is attacked, and defending any one requires including its attacker, which creates a conflict. The preferred extensions are three singletons, each containing exactly one perspective. The mode is surfacing. The system reports all three framings as legitimate alternatives rather than forcing a single response. How to prepare for the review genuinely depends on what the team is optimizing for.
+
+The remaining two queries complete the picture. “Should we extend similar discount terms to the subsidiary?” produced two attacks against Relationship Strategy (from Risk Management and Financial Planning), yielding a grounded extension of {Risk Management, Financial Planning} and composition of the two surviving perspectives (Figure 3a). “Was the concession a good decision?” produced no attacks. All three perspectives contributed evaluative assessments without finding the others’ framings misleading for this query context. The grounded extension contained all three proposals, and the mode was again composition, though for a different reason: complementary rather than pruned (Figure 3b).
+
+Table 2: Query results. The retrieval mode emerges from the grounded extension of the attack graph constructed by the perspectives.
+
+Query
+
+Attacks
+Grounded ext.
+Mode
+
+Extend terms to subsidiary?
+
+2
+{Risk, Fin.}
+Composition
+
+Was the concession good?
+
+0
+{Rel., Risk, Fin.}
+Composition
+
+Current risk exposure?
+
+3
+{Risk}
+Selection
+
+Prepare for quarterly review?
+
+6
+
+Surfacing
+
+User-Facing Explanation.
+
+What does the user actually receive? Consider the risk exposure query (selection mode). The system presents Risk Management’s interpretation as the primary response, but accompanies it with an explanation derived from the attack graph: “This response is based on Risk Management’s assessment. Financial Planning’s margin analysis and Relationship Strategy’s trust framing were also considered but set aside. Risk Management argued that margin impact is a financial performance metric rather than a risk exposure assessment, and that trust levels do not constitute risk exposure in the compliance sense this query requires. Neither perspective counterattacked.” In the surfacing case (quarterly review preparation), the system presents all three framings as alternatives: “Three strategic perspectives apply and they conflict. Relationship Strategy recommends focusing on partnership repair. Risk Management recommends compliance remediation. Financial Planning recommends margin recovery. Each perspective argued that the others’ framing would misdirect the review. The system cannot recommend one framing over the others without knowing which strategic priority the team is currently optimizing for.” The attack graph (Figure 3) is available for inspection in both cases. We have not conducted user studies to evaluate whether this form of explanation improves decision quality. Designing and evaluating such studies is a direction for future work.
+
+Observations and Limitations.
+
+The central observation is that attack graph topology is query-dependent, not perspective-dependent. The same three perspectives produced four distinct topologies across four queries. This means the retrieval mode is determined by the interaction between query context and perspective goals, not by static properties of the perspectives themselves.
+
+The encoding pipeline required 24 relevance checks and 13 encoding calls (37 LLM invocations total for 8 observations). Each query required up to 7 invocations (3 proposals, 3 attack evaluations, 1 response assembly). At current LLM latencies, this is feasible for deliberative tasks but not for interactive use. The attack quality depends on prompt design: we observed no cases of indiscriminate attacking (every perspective attacking every other regardless of query), but this property is not guaranteed. Whether the architecture produces sensible behavior at larger scales, with more perspectives and more diverse queries, remains untested. We provide no quantitative comparison with baseline retrieval methods such as RAG over raw observations. The demonstration shows the architecture is implementable and produces sensible behavior on a controlled scenario. Whether it outperforms simpler alternatives on retrieval quality metrics is a question for future work.
+
+4 Discussion and Research Agenda
+
+The architecture has clear boundaries. Factual recall, e.g., what time is the meeting?, what was the client’s name?, does not benefit from multiple interpretations. Domains with ground truth or regulatory compliance requirements may need unified encodings instead. The computational cost of argumentation at query time may be too high for latency-sensitive applications. The approach is best suited for deliberative settings, such as negotiation preparation, strategic planning, and post-mortem analysis, where the cost of a richer explanation is justified by the stakes of the decision. Within its scope, multi-perspective memory requires progress on several fronts.
+
+Evolutionary Ontology.
+
+When goals shift, past encodings become obstacles. Consider a firm that spent two years encoding experiences through a growth-oriented ontology. Relationship Strategy used concepts like “trust-building” and “relationship investment”. Now the firm shifts to profitability focus. The old encodings still exist, but the vocabulary no longer fits current priorities. What does “trust-building” mean when every interaction must justify its margin impact? The ontology needs new concepts, or old encodings need reinterpretation through a lens that did not exist when they were created. The open problem is also retrospective reinterpretation. Can a perspective re-encode past experiences under an updated ontology? If so, what prevents perspectives from fabricating convenient histories?
+
+Scalable Arbitration.
+
+The LLM invocation cost of the retrieval pipeline is dominated by the peer critique phase. With perspectives, each query requires up to proposal calls, attack evaluation calls (each perspective evaluates all others in a single call), and one response assembly call, giving LLM invocations per query. If attack evaluation is pairwise (one call per perspective pair), the cost rises to . With 10 perspectives under pairwise evaluation, a single query would require 10 proposals + 90 attack evaluations + 1 assembly = 101 calls. Encoding scales as for observations, though the relevance filter reduces the constant. The extension computation itself is not the bottleneck: the grounded extension is polynomial in  [25], and preferred extensions, while exponential in the worst case, operate over the number of perspectives (typically small), not the number of stored experiences.
+
+Several mitigations are available. Batched evaluation (one call per perspective, evaluating all other proposals at once) keeps the query cost at rather than . Selective participation, where perspectives abstain when they lack relevant encodings, reduces to the number of engaged perspectives per query. In our demonstration, not every perspective proposed for every query. More aggressive strategies could cluster perspectives hierarchically, running arbitration within clusters before a cross-cluster round. Whether these mitigations preserve attack quality at scale is an open question. Miscalibrated abstention could cause relevant perspectives to stay silent, while overconfident ones dominate.
+
+Explanation Design.
+
+The attack graph provides the raw material for explanation, but how to present it to different users remains open. A negotiation team preparing for a meeting may want a brief summary of which perspective dominated and why. A compliance officer reviewing past decisions may want the full attack trace. Miller’s work on contrastive explanation [14] suggests that the most useful form is often the minimal contrast: why was this framing selected rather than that one? The attack graph supports this directly, since each attack articulates a reason for preferring one framing over another. However, our current prototype presents explanations as unstructured text. Richer interfaces could visualize the attack graph itself, allow users to drill into specific attacks, or let users override the resolution by manually accepting a defeated perspective. Whether users find argumentation-based explanations more trustworthy or actionable than alternatives (e.g., confidence scores, feature attribution) is an empirical question that requires user studies. The architecture also treats retrieval as read-only. A future extension might let retrieval outcomes feed back into storage, reinforcing encodings that prove useful [37]. Whether such path dependence risks collapsing plurality back into single-perspective dominance is a question we leave open.
+
+5 Conclusion
+
+This paper proposed Rashomon Memory, an architecture where parallel goal-conditioned agents encode experiences according to their priorities and negotiate at query time through argumentation. The proof-of-concept showed that attack graph topology is query-dependent. The same perspectives produced different retrieval modes across different queries, determined by the interaction between query context and perspective goals. The retrieval mode (selection, composition, or conflict surfacing) emerged from the interaction between query context and perspective goals, not from static properties of the perspectives themselves.
+
+The conflict surfacing mode is the most distinctive outcome. When perspectives genuinely disagree, the system reports the disagreement as a structured, inspectable object rather than forcing a single answer. The decision-maker sees not only which interpretation was selected, but which alternatives were considered and on what grounds they were rejected.
+
+Two contributions are separable from the architecture. A distributed peer critique pattern where domain-specialized agents evaluate each other’s proposals using asymmetric knowledge. And Dung’s grounded semantics as a resolution mechanism that doubles as a justification structure. Together they connect retrieval to explanation without a separate generation step.
+
+The mechanisms for ontology evolution, scalable arbitration, and user-facing explanation design remain open. We have not compared the architecture against baseline retrieval methods on standard metrics. These are directions for future work that follow from the problem formulation.
+
+References
+
+[1]
+R. J. Lewicki and B. Polin (2013)
+
+Trust and negotiation.
+
+In Handbook of Research on Negotiation, M. Olekalns and W. L. Adair (Eds.),
+
+pp. 161–190.
+
+Cited by: §1.
+
+[2]
+D. Malhotra (2004)
+
+Trust and reciprocity decisions: the differing perspectives of trustors and trusted parties.
+
+Organizational Behavior and Human Decision Processes 94 (2), pp. 61–73.
+
+Cited by: §1.
+
+[3]
+World Commerce & Contracting (2020)
+
+The hidden value in contracts.
+
+Note: Research report on contract value leakage
+
+Cited by: §1.
+
+[4]
+X. Jiang, C. Xu, Y. Shen, X. Sun, L. Tang, S. Wang, Z. Chen, Y. Wang, and J. Guo (2025)
+
+On the evolution of knowledge graphs: a survey and perspective.
+
+External Links: 2310.04835,
+Document
+
+Cited by: §1,
+§2.2.
+
+[5]
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel, S. Riedel, and D. Kiela (2020)
+
+Retrieval-augmented generation for knowledge-intensive nlp tasks.
+
+In Proceedings of the 34th International Conference on Neural Information Processing Systems,
+
+NIPS ’20, Red Hook, NY, USA.
+
+External Links: ISBN 9781713829546
+
+Cited by: §1.
+
+[6]
+J. S. Park, J. O’Brien, C. J. Cai, M. R. Morris, P. Liang, and M. S. Bernstein (2023)
+
+Generative agents: interactive simulacra of human behavior.
+
+In Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology,
+
+UIST ’23, New York, NY, USA.
+
+External Links: ISBN 9798400701320,
+Document
+
+Cited by: §1.
+
+[7]
+H. Qian, Z. Liu, P. Zhang, K. Mao, D. Lian, Z. Dou, and T. Huang (2025)
+
+MemoRAG: boosting long context processing with global memory-enhanced retrieval augmentation.
+
+External Links: 2409.05591,
+Document
+
+Cited by: §1.
+
+[8]
+W. Zhong, L. Guo, Q. Gao, H. Ye, and Y. Wang (2023)
+
+MemoryBank: enhancing large language models with long-term memory.
+
+External Links: 2305.10250,
+Document
+
+Cited by: §1.
+
+[9]
+A. Asai, Z. Wu, Y. Wang, A. Sil, and H. Hajishirzi (2023)
+
+Self-rag: learning to retrieve, generate, and critique through self-reflection.
+
+External Links: 2310.11511,
+Document
+
+Cited by: §1.
+
+[10]
+P. Sarthi, S. Abdullah, A. Tuli, S. Khanna, A. Goldie, and C. D. Manning (2024)
+
+RAPTOR: recursive abstractive processing for tree-organized retrieval.
+
+External Links: 2401.18059,
+Document
+
+Cited by: §1.
+
+[11]
+E. Tulving and D. M. Thomson (1973)
+
+Encoding specificity and retrieval processes in episodic memory.
+
+Psychological Review 80 (5), pp. 352–373.
+
+External Links: Document
+
+Cited by: §1.
+
+[12]
+C. D. Morris, J. D. Bransford, and J. J. Franks (1977)
+
+Levels of processing versus transfer appropriate processing.
+
+Journal of Verbal Learning and Verbal Behavior 16 (5), pp. 519–533.
+
+External Links: Document
+
+Cited by: §1.
+
+[13]
+M. Minsky (1986)
+
+The society of mind.
+
+Simon and Schuster, New York.
+
+Cited by: §1,
+§2.1,
+§2.4.
+
+[14]
+T. Miller (2019)
+
+Explanation in artificial intelligence: insights from the social sciences.
+
+Artificial Intelligence 267, pp. 1–38.
+
+External Links: ISSN 0004-3702,
+Document
+
+Cited by: §1,
+§2.3,
+§4.
+
+[15]
+D. L. Schacter (2001)
+
+The seven sins of memory: how the mind forgets and remembers.
+
+Houghton Mifflin, Boston, MA.
+
+Cited by: §2.1.
+
+[16]
+W. Wong, W. Liu, and M. Bennamoun (2012)
+
+Ontology learning from text: a look back and into the future.
+
+ACM Comput. Surv. 44 (4).
+
+External Links: ISSN 0360-0300,
+Document
+
+Cited by: §2.2.
+
+[17]
+H. B. Giglou, J. D’Souza, and S. Auer (2023)
+
+LLMs4OL: large language models for ontology learning.
+
+External Links: 2307.16648,
+Document
+
+Cited by: §2.2,
+§3.
+
+[18]
+J. Zhang, J. Shao, and B. Cui (2023)
+
+StreamE: learning to update representations for temporal knowledge graphs in streaming scenarios.
+
+In Proceedings of the 46th International ACM SIGIR Conference on Research and Development in Information Retrieval,
+
+SIGIR ’23, New York, NY, USA, pp. 622–631.
+
+External Links: ISBN 9781450394086,
+Document
+
+Cited by: §2.2,
+§2.2.
+
+[19]
+A. Sadowski and J. A. Chudziak (2025)
+
+On verifiable legal reasoning: a multi-agent framework with formalized knowledge representations.
+
+In Proceedings of the 34th ACM International Conference on Information and Knowledge Management,
+
+CIKM ’25, New York, NY, USA, pp. 2535–2545.
+
+External Links: ISBN 9798400720406,
+Link,
+Document
+
+Cited by: §2.2.
+
+[20]
+P. Rasmussen, P. Paliychuk, T. Beauvais, J. Ryan, and D. Chalef (2025)
+
+Zep: a temporal knowledge graph architecture for agent memory.
+
+External Links: 2501.13956,
+Document
+
+Cited by: §2.2.
+
+[21]
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska, D. Hassabis, C. Clopath, D. Kumaran, and R. Hadsell (2017)
+
+Overcoming catastrophic forgetting in neural networks.
+
+Proceedings of the National Academy of Sciences 114 (13), pp. 3521–3526.
+
+External Links: ISSN 1091-6490,
+Document
+
+Cited by: §2.2.
+
+[22]
+H. Li, Y. Chong, S. Stepputtis, J. Campbell, D. Hughes, C. Lewis, and K. Sycara (2023)
+
+Theory of mind for multi-agent collaboration via large language models.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,
+
+External Links: Document
+
+Cited by: §2.2,
+§2.3.
+
+[23]
+A. Kostka and J. A. Chudziak (2025)
+
+Evaluating theory of mind and internal beliefs in llm-based multi-agent systems.
+
+In Computational Collective Intelligence,
+
+pp. 18–32.
+
+External Links: ISBN 9783032093189,
+ISSN 1611-3349,
+Link,
+Document
+
+Cited by: §2.2.
+
+[24]
+P. M. Dung (1995)
+
+On the acceptability of arguments and its fundamental role in nonmonotonic reasoning, logic programming and n-person games.
+
+Artificial Intelligence 77 (2), pp. 321–357.
+
+External Links: ISSN 0004-3702,
+Document
+
+Cited by: §2.3,
+§3.
+
+[25]
+S. Nofal, K. Atkinson, and P. E. Dunne (2014)
+
+Algorithms for decision problems in argument systems under preferred semantics.
+
+Artificial Intelligence 207, pp. 23–51.
+
+External Links: ISSN 0004-3702,
+Document
+
+Cited by: §2.3,
+§4.
+
+[26]
+Y. Du, S. Li, A. Torralba, J. B. Tenenbaum, and I. Mordatch (2023)
+
+Improving factuality and reasoning in language models through multiagent debate.
+
+External Links: 2305.14325,
+Document
+
+Cited by: §2.3.
+
+[27]
+T. Liang, Z. He, W. Jiao, X. Wang, Y. Wang, R. Wang, Y. Yang, S. Shi, and Z. Tu (2024)
+
+Encouraging divergent thinking in large language models through multi-agent debate.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+
+Miami, Florida, USA, pp. 17889–17904.
+
+External Links: Document
+
+Cited by: §2.3.
+
+[28]
+G. Irving, P. Christiano, and D. Amodei (2018)
+
+AI safety via debate.
+
+External Links: 1805.00899,
+Document
+
+Cited by: §2.3.
+
+[29]
+A. Sadowski and J. A. Chudziak (2026)
+
+Structured decomposition for llm reasoning: cross-domain validation and semantic web integration.
+
+External Links: 2601.01609,
+Document
+
+Cited by: §2.3.
+
+[30]
+K. Čyras, A. Rago, E. Albini, P. Baroni, and F. Toni (2021)
+
+Argumentative xai: a survey.
+
+External Links: 2105.11266,
+Document
+
+Cited by: §2.3.
+
+[31]
+S. Modgil and H. Prakken (2014)
+
+The aspic+ framework for structured argumentation: a tutorial.
+
+Argument & Computation 5 (1), pp. 31–62.
+
+External Links: Document
+
+Cited by: §2.3.
+
+[32]
+I. Rahwan, P. Moraitis, and C. Reed (Eds.) (2005)
+
+Argumentation in multi-agent systems: first international workshop, argmas 2004, new york, ny, usa, july 19, 2004, revised selected and invited papers.
+
+Lecture Notes in Computer Science, Vol. 3366, Springer, Berlin, Heidelberg.
+
+External Links: ISBN 978-3-540-24526-1,
+Document
+
+Cited by: §2.3.
+
+[33]
+D. Haraway (1988)
+
+Situated knowledges: the science question in feminism and the privilege of partial perspective.
+
+Feminist Studies 14 (3), pp. 575–599.
+
+Cited by: §2.4.
+
+[34]
+T. Nagel (1986)
+
+The view from nowhere.
+
+Oxford University Press, New York.
+
+Cited by: §2.4.
+
+[35]
+D. Richie (Ed.) (1987)
+
+Rashomon: akira kurosawa, director.
+
+Rutgers Films in Print, Rutgers University Press.
+
+External Links: ISBN 9780813511801
+
+Cited by: §2.4.
+
+[36]
+J. Masłowski and J. A. Chudziak (2026)
+
+Heterogeneous debate engine: identity-grounded cognitive architecture for resilient llm-based ethical tutoring.
+
+External Links: 2603.27404,
+Link
+
+Cited by: §3.
+
+[37]
+J. L.C. Lee (2009)
+
+Reconsolidation: maintaining memory relevance.
+
+Trends in Neurosciences 32 (8), pp. 413–420.
+
+External Links: ISSN 0166-2236,
+Document
+
+Cited by: §4.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

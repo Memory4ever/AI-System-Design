@@ -1,0 +1,1229 @@
+QaRL: Rollout-Aligned Quantization-Aware RL for Fast and Stable Training under Training–Inference Mismatch
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Preliminaries
+
+2.1 Group Relative Policy Optimization.
+
+2.2 Quantization
+
+2.3 Training–Inference Mismatch in RL
+
+3 Methods
+
+3.1 Rollout-Aligned Quantization Aware Reinforcement Learning
+
+3.2 Trust Band Policy Optimization
+
+4 Experiments
+
+Training Setup.
+
+Evaluation.
+
+4.1 Main Results
+
+4.2 Ablation
+
+Optimize objectives
+
+Quantization Scheme
+
+Speed
+
+5 Related Work
+
+Quantization.
+
+Reinforcement Learning in LLMs.
+
+6 Conclusion and Limitations
+
+References
+
+A The Use of Large Language Models (LLMs)
+
+B Experiment Setting
+
+Training.
+
+Evaluation Dataset.
+
+Hyperparameters.
+
+C Batch invariant kernel
+
+D More Experimental Results
+
+D.1 Speed on different quant scheme
+
+D.2 More Ablation on TBPO
+
+D.3 Entropy of quantized RL training
+
+D.4 Comparsion of soft weighted methods SAPO
+
+E Detail of TBPO
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.07853v1 [cs.LG] 09 Apr 2026
+
+QaRL: Rollout-Aligned Quantization-Aware RL for Fast and Stable Training under Training–Inference Mismatch
+
+Hao Gu
+
+Affiliation: The Hong Kong University of Science and Technology
+
+Email: marcusguhao@gmail.com
+
+  
+Hao Wang
+
+Affiliation: City University of Hong Kong
+
+Email: siruihan@ust.hk
+
+  
+Jiacheng Liu
+
+Affiliation: The Hong Kong University of Science and Technology
+
+Email: yikeguo@ust.hk
+
+  
+Lujun Li
+
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Qiyuan Zhu
+
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Bei Liu
+
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Binxing Xu
+
+Affiliation: Zhejiang University
+
+  
+LEI WANG
+
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Xintong Yang
+
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Sida Lin
+
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Sirui Han
+††thanks: Corresponding authors.
+Affiliation: The Hong Kong University of Science and Technology
+
+  
+Yike Guo11footnotemark:
+1
+
+Affiliation: The Hong Kong University of Science and Technology
+
+Abstract
+
+Large language model (LLM) reinforcement learning (RL) pipelines are often bottlenecked by rollout generation, making end-to-end training slow. Recent work mitigates this by running rollouts with quantization to accelerate decoding, which is the most expensive stage of the RL loop. However, these setups destabilize optimization by amplifying the training–-inference gap: rollouts are operated at low precision, while learning updates are computed at full precision. To address this challenge, we propose QaRL (Rollout Alignment Quantization-Aware RL), which aligns training-side forward with the quantized rollout to minimize mismatch. We further identify a failure mode in quantized rollouts: long-form responses tend to produce repetitive, garbled tokens (error tokens). To mitigate these problems, we introduce TBPO (Trust-Band Policy Optimization), a sequence-level objective with dual clipping for negative samples, aimed to keep updates within the trust region. On Qwen3-30B-A3B MoE for math problems, QaRL outperforms quantized-rollout training by +5.5 while improving stability and preserving low-bit throughput benefits.
+
+1 Introduction
+
+Recent reasoning LLMs, such as OpenAI o1 (Jaech et al., 2024), have demonstrated the effectiveness of Chain-of-Thought (CoT) (Wei et al., 2022) for solving complex problems. More recently, DeepSeek-R1 (Guo et al., 2025) has shown that reinforcement learning with simple rule-based reward functions (RLVR), can induce emergent reasoning behaviors and yield gains in challenging domains such as math problem solving (Luo et al., 2025). A key driver behind these improvements is test-time scaling (Muennighoff et al., 2025): reasoning models often generate longer CoT, trade additional computation for accuracy. However, longer generations increase training-time cost, since RL continously samples long responses during optimization.
+
+Figure 1: (a) Quantized rollout alone introduces mismatch. (b) Aligned QaRL alleviates it, improving performance across model sizes, including MoE.
+
+Unlike SFT, which requires only a single forward pass, a standard RL step (Sheng et al., 2024; Hu et al., 2025) for LLMs involves three phases: (i) rollout to generate responses, (ii) a forward pass to compute token probabilities, and (iii) a backward pass to update model via policy gradients. Autoregressive decoding generates response token by token, making rollouts the dominant cost, comprising roughly 70% of RL training time. Consequently, quantizing rollout model is a natural way to accelerate RL optimization (Liu et al., 2025b). However, it also creates a training-inference mismatch challenge: responses are sampled from low bit rollout, while updates are performed by full precision learner.
+
+To addresses both efficiency and stability, in this work, we study quantization-aware RL. By executing rollouts under low-bit quantization, we substantially reduce the dominant generation cost and accelerate end-to-end RL training. To mitigate the resulting training-inference mismatch, we further perform rollout-aligned quantization-aware training on the learner side, aligning learner’s policy with the quantized behavior used for sampling.
+
+Moreover, we find a critical failure mode in quantized rollouts: noise accumulates over long generations, producing off-trajectory repetitive and garbled tokens. These error tokens are typically assigned very low probability under the policy, driving the policy ratio (and mismatch reweighting) to extreme. Such outliers are not reliably controlled by standard PPO-style clipping, breaking the intended trust region behavior and destabilizing training. To address this, we introduce a trust-band control: we apply dual clipping tailored to negative samples and perform sequence-level objectives on both the policy ratio and the mismatch weight, drop entire responses that exceed the bands.
+
+Extensive experiments on math, logic and code benchmarks demonstrate that QaRL matches BF16 training performance and outperform quantized rollout training. Even on unstable MoE models such as Qwen3-30B-A3B-Base, QaRL achieves an average math score of 51.2, close to BF16’s 52.1 and surpassing quantized rollout’s 45.7, while delivering a 1.3 training speedup over BF16. Our contributions are as follows:
+
+1.
+
+We present a practical quantized aware RL pipeline for decoupled, hybrid RL systems, and introduce QaRL to minimize the mismatch between quantized rollouts and learner-side training.
+
+2.
+
+We identify error tokens as the key cause of training instability under quantized rollouts, and propose Trust Band Policy Optimization (TBPO), a sequence-level dual-clipping strategy that keeps updates within a trust region and stabilizes convergence.
+
+2 Preliminaries
+
+2.1 Group Relative Policy Optimization.
+
+GRPO (Shao et al., 2024) is a PPO style (Schulman et al., 2017) policy gradient objective that removes the value function (critic) and uses group relative rewards as the baseline. Given a query , we sample a group of responses from the old policy . Let be the scalar (verifiable) reward for and its length. GRPO defines a group-normalized advantage (broadcast to tokens as ) and the token-level importance ratio :
+
+To prevent overly large updates and ensure the update remains within the trust region (Schulman et al., 2015), GRPO applies PPO-style clipping and defines the token-level clipped policy loss:
+
+where and controls the trust region. The GRPO optimization objective is defined as follows:
+
+2.2 Quantization
+
+Quantization accelerates LLM inference by enabling low-bit GEMM operations, where weights and activations are compressed into low bit representations that modern GPUs can process directly via Tensor Core kernels.
+
+Integer quantization. A full-precision tensor is mapped to via scale and zero-point :
+
+where denotes rounding. Quantized GEMM computes the integer matmul and rescales the result (accumulating in higher precision):
+
+(1)
+
+Floating-point quantization. For low-bit floating formats (e.g., FP8/FP4), values are cast to reduced precision with scaling:
+
+where denotes casting to and is the maximum finite representable value ( for e2m1FP4, for e4m3FP8). Low-bit GEMM performs multiplication on quantized operands and rescales:
+
+(2)
+
+with as the low-bit floating representations. We denote -bit weight and -bit activation quantization as WA.
+
+Quantization-Aware Training (QAT). To recover accuracy lost in low-bit conversion, QAT integrates quantization noise into the training loop (Liu et al., 2024). Specifically, it injects fake quant into the forward pass to simulate rounding, while master weights remain in full precision. The Straight-Through Estimator (STE) approximates gradients for non-differentiable backward pass.
+
+Fully Quantized Training (FQT). Distinct from QAT, which employs fake quant to merely simulate quantization noise while maintaining high-precision arithmetic, Fully Quantized Training (or Low-Bit Training) fundamentally executes operations using actual low-bit data types (e.g., FP8, INT8) (Xi et al., 2024; Zhao et al., 2025). By leveraging low-precision hardware kernels for both forward and backward passes, this paradigm directly reduces the computational overhead and memory footprint of the training process itself.
+
+2.3 Training–Inference Mismatch in RL
+
+Modern LLM RL pipelines are typically hybrid systems: for throughput, rollouts are generated by a high-performance inference engine (e.g., vLLM, SGLang), while policy optimization are carried out by a training backend (e.g., FSDP/Megatron). Although both components load the same parameter , the rollout and the training engine may produce different results for the same query (). This occurs because they often implement different kernels (e.g., different attention kernels, batch variant operations). As a result, the rollout engine induces a sampler policy that is not exactly the same distribution as the learner policy . We refer to this discrepancy as training–inference (learner–sampler) mismatch.
+
+Consider PPO’s clipped objective:
+
+where proximal importance sampling and is an advantage estimate. In a hybrid system, however, tokens are sampled from , while is computed using learner’s distributions:
+
+Consequently, the trust region is enforced on the sampler distribution rather than the learner distribution, causing the update to deviate from its intended target. Drawing inspiration from Decoupled PPO (Hilton et al., 2022), where a mismatch between the behavior and proximal policies is corrected via importance sampling, we can reweight the updates by multiplying with the ratio:
+
+(3)
+
+Applying yields
+
+(4)
+
+Intuitively, this correction is conceptually orthogonal to PPO proximal ratio , while rectifies the distribution shift caused by the system-level training–inference mismatch. Together, they ensure policy optimization remains within the learner’s trust region. Recent works have further explored this direction, such as TIS (Yao et al., 2025) (which truncates upper bound of ) and MIS (Liu et al., 2025a) (reject samples with overly large and apply sequence level ).
+
+3 Methods
+
+Figure 2: Overview of the QaRL pipeline in a hybrid RL system. ❶ The quantized rollout engine generates samples. ❷ The training engine maintains master weights and performs rollout-aligned low-bit GEMM to compute current logprob. ❸ Policy gradients are computed using replay buffer data to update the model via STE. ❹ The updated low-bit weights are synchronized to the rollout engine.
+
+3.1 Rollout-Aligned Quantization Aware Reinforcement Learning
+
+To alleviate the decoding bottleneck during rollouts, a practical approach is to quantize the rollout model. By lowering the precision of weights and activations (e.g., W8A8 or W4A16), we can significantly accelerate rollout generation. However, quantizing only the rollout engine (we term this Quantized Rollout Training) introduces a more severe form of training–inference mismatch.
+
+In this regime, the sampler policy becomes a quantized approximation , while the learner policy typically remains full-precision . The resulting mismatch makes the importance weight
+
+drift far away from as Fig. 4(d). When both sampler and learner operate in full precision, the mismatch is typically limited to implementation details (e.g. different kernels), so the distribution shift is mild and can often be compensated by reweighting with . In contrast, quantized rollout training introduces larger distribution gap and become more extreme. This effect is especially pronounced for long responses, quantization-induced errors accumulate across decoding steps, making the divergence grow with response length and increasingly difficult to correct. To fundamentally resolve this mismatch, we align the learner with the quantized sampler by adopting Quantization-Aware Reinforcement Learning (QaRL).
+
+But building a quantized training pipeline in a decoupled hybrid RL stack is non-trivial: rollouts are generated by an inference engine, while policy optimization runs in a separate training backend. To address this challenge, we decompose our implementation into three components: (1) low-bit rollout inference, (2) rollout aligned quantization aware training, and (3) weight synchronization from training to inference. Concretely:
+
+1. Quantized inference in the rollout engine. We deploy a low-bit rollout model in the inference engine to accelerate decoding. Empirically, for larger models (especially MoE), we observe that W4A16 can deliver higher throughput than W8A8 due to memory constraints. Therefore, we support both configurations to maximize rollout efficiency across different model regimes.
+
+2. Rollout aligned quantization aware training. On the training side, we maintain master weights in high-precision. Standard QAT simulates quantization error by inserting fake-quant operators , while computing in high precision. To minimize the gap between and , we perform on-the-fly quantization during the forward pass:
+
+Critically, rather than merely simulating quantization, we execute low-bit GEMM directly on these quantized tensors, thereby precisely mirroring the arithmetic behavior of the rollout engine. During the backward pass, gradients are computed via the Straight-Through Estimator (STE) and applied to the master weights .
+Our approach lies between fake quant QAT and end-to-end low-precision FQT: we execute the forward pass in low bit while keeping the backward pass in full precision. We avoid FQT for larger quantization error introduced by 4-bit gradients.
+
+3. Weight updates from training to inference. After each optimization step, the learner’s parameters change, requiring the rollout engine to be refreshed accordingly. Since the training engine already materializes for the aligned low-bit GEMM, we directly publish these low-bit tensors to the inference engine at each step. This avoids redundant re-quantization and ensures the sampler weights remain in the exact low-bit format learner uses during forward. The overall pipeline is illustrated in Fig. 2.
+
+Notably, unlike prior work (Wasti et al., 2025; SGLang Team, 2025) that enforces strictly bitwise consistent on-policy execution, our approach tolerates discrepancy between the sampler and learner policies and compensates for it using . Achieving bitwise alignment requires both batch and tensor-parallel invariance kernel, which is not a "free lunch", incurring an average 2 slower (He and Lab, 2025; Zhang et al., 2025). Consequently, rather than bitwise-identical kernels, we focus on using aligned low-bit forward to ensure that optimization remains robustly within the intended trust region. As for master weight precision, previous work (Qi et al., 2025) claims that using the finer granularity of can mitigate mismatch. However, we empirically find that using with dynamic loss scaling causes gradient NaN underflow, and this phenomenon does not occur with .
+
+Figure 3: Token level policy clipping regions. Axes represent token probabilities under the old and current policies, with the slope defining the , with arrows indicating the direction of the policy update.
+
+3.2 Trust Band Policy Optimization
+
+Although rollout-aligned quantized training substantially mitigates instability arising from training–inference mismatch, we observe a remaining failure mode: under-trained quantized policy tend to produce repetitive and garbled tokens in long responses, which we term error tokens, illustrated in appendix table 6. This stems from the error-amplification dynamics of autoregressive decoding: an error token at step sends the model off-trajectory, causing subsequent tokens generated from a corrupted state and amplifying degradation.
+
+Figure 4: Distribution of token level and . Lines indicate clipping boundaries.
+
+This phenomenon interacts closely with the trust-region control in PPO-style objectives. Standard PPO clipping operates directionally: for positive advantages, it constrains only the upper bound to , while for negative advantages, it constrains only the lower bound to . These prevent the updated policy drift too far from the old policy in the update direction. Recently, several works have revisited this design. For example, DAPO (Yu et al., 2025) proposes clipping higher for as C:extended region in Fig. 3(a), arguing that high-entropy which correspond to low-probability tokens, can encourage exploration.
+
+Dual Clipping. In our setting, the more critical issue emerges with negative samples. Empirically, error tokens are rare in positive trajectories but predominate in negative ones. As shown in Fig. 4(c), these negative error tokens are concentrated in the low-probability regions of both the old and current policies ( and ). In this regime, the PPO policy ratio becomes more sensitive to baseline probabilities:
+
+Here, identical absolute perturbations produce dramatically different relative changes depending on . For typical high-confidence tokens (e.g., ), the ratio remains modest at . Conversely, for low-probability tail tokens (e.g., ), the ratio explodes to . And low-prob tokens are inherently more prone to probability shifts. This effect is directly visible in Fig. 5(b): when is small, negative-advantage tokens exhibit a much heavier tail of , producing extreme ratios. Under , standard PPO clipping is one-sided (it only enforces a lower bound), so these high tail tokens can dominate the gradient magnitude, inflate variance, and break the intended trust region. To mitigate this failure mode, we leverage a negative dual clipping scheme (Ye et al., 2020): for , we not only enforce the lower bound but also impose an explicit upper bound as F:Dual region in Fig. 3(b), preventing exploding ratios from low-probability error tokens from dominating the update.
+
+Figure 5: Relationship between and old policy probability. Low-probability negative tokens are more prone to extreme .
+
+Sequence Level Objectives. Furthermore, since RLVR optimize outcome rewards, GRPO’s token-level importance sampling serves merely as a first-order approximation. Token-level clipping fails to rectify mid-response errors: once a single token deviates, the subsequent tokens no longer lie on the intended trajectory (Fig 6).
+
+To remedy this, we return to a stricter trust-region view and treat each entire response as single action. Concretely, we apply sequence-level ratios and clipping (Zheng et al., 2025), mask out the entire responses from policy update when their sequence-level ratio exceeds the bounds.
+Another advantage of sequence-level ratio is its ability to discriminate error tokens and low-prob exploration tokens, which token-level bounds cannot resolve. Error tokens typically occur in clusters, causing high variance in that readily exceeds trust-region thresholds. In contrast, exploration tokens generate more stable sequence-level ratios, as the geometric averaging over the sequence reduces sensitivity to individual perturbations.
+
+Formally, we treat the entire response as a single action and defining its sequence-level probability as the geometric mean of the token probabilities. Consequently, we formulate and :
+
+For mismatch weight, we truncate with a two-sided cap to control variance:
+
+(5)
+
+where is the TIS cap. For the proximal ratio, positive-advantage samples use the standard PPO-style bound , while negative samples are constrained by dual-sided band :
+
+Put everything together, the sequence-level surrogate (shared by all tokens in ) is
+
+Figure 6: A mid response error propagates to future tokens. Although the initial garbled tokens are clipped, the repetitive tokens induced by this error are not clipped by token-level objectives.
+
+Figure 7: Training reward curves across different models. Our QaRL TBPO demonstrates stability over quantized rollout training, and converging to reward levels nearly identical to the full-precision BF16 baseline.
+
+Model
+In-Distribution Performance
+Out-of-Distribution Performance
+
+AIME 24/25
+AMC
+MATH-500
+Minerva
+Olympiad
+Avg.
+ARC-c
+GPQA
+MMLU-Pro
+LiveCodeBench
+Avg.
+
+Qwen2.5-1.5B-Math
+4.5/2.8
+26.5
+50.8
+21.6
+20.3
+21.0
+11.7
+12.4
+10.4
+2.7
+9.3
+
+BF16 GRPO
+12.5/9.2
+43.5
+71.4
+36.2
+34.5
+34.5
+58.9
+27.8
+26.7
+11.9
+31.3
+
+w4a16 rollout GRPO
+7.9/6.4
+38.1
+65.3
+30.2
+28.9
+29.3
+50.1
+19.8
+21.2
+4.3
+23.8
+
+w4a16 QaRL TBPO
+12.5/10.4
+46.6
+69.8
+31.9
+32.6
+33.9
+57.6
+21.1
+25.3
+8.1
+28.0
+
+Qwen2.5-7B-Math
+15.0/6.4
+46.2
+67.4
+32.9
+23.9
+33.4
+62.6
+28.5
+32.1
+8.0
+32.8
+
+BF16 GRPO
+19.5/11.6
+59.6
+80.0
+45.9
+43.4
+43.3
+80.4
+38.2
+46.3
+14.6
+44.8
+
+w4a16 rollout GRPO
+19.1/9.6
+54.6
+79.1
+42.8
+40.6
+40.9
+73.9
+31.6
+40.0
+8.7
+38.5
+
+w4a16 QaRL TBPO
+19.5/13.3
+58.1
+81.8
+43.4
+45.3
+43.5
+81.1
+37.1
+45.8
+13.9
+44.4
+
+Qwen3-8B-Base
+7.9/9.6
+46.3
+74.2
+42.7
+39.3
+36.6
+44.9
+31.2
+49.5
+23.0
+37.1
+
+BF16 GRPO
+28.3/19.3
+64.3
+88.1
+54.5
+56.7
+51.8
+93.0
+46.3
+65.1
+45.7
+62.5
+
+w4a16 rollout GRPO
+20.0/12.5
+53.0
+82.2
+50.7
+45.1
+43.9
+91.6
+43.9
+61.5
+41.4
+59.5
+
+w4a16 QaRL TBPO
+26.6/16.9
+62.2
+83.6
+52.5
+51.7
+48.9
+92.3
+45.0
+63.8
+43.4
+61.0
+
+Qwen3-30B-A3B-Base
+15.4/7.9
+49.0
+67.4
+31.2
+38.1
+34.8
+61.3
+34.8
+52.5
+28.5
+44.2
+
+BF16 GSPO
+27.9/21.6
+63.2
+88.8
+54.7
+56.7
+52.1
+95.2
+50.1
+70.3
+55.8
+67.8
+
+w4a16 rollout GSPO
+22.0/18.7
+55.4
+84.0
+47.4
+47.1
+45.7
+89.3
+42.4
+65.3
+47.9
+61.2
+
+w4a16 QaRL TBPO
+27.5/22.0
+62.9
+87.2
+51.4
+56.1
+51.2
+96.6
+48.2
+68.0
+55.4
+67.05
+
+Table 1: Main results on in-distribution math and out-of-distribution benchmarks. LiveCodeBench results are reported in , while all other metrics use .
+
+4 Experiments
+
+Training Setup.
+
+We utilize OpenR1-Math-46K (Yan et al., 2025), a dataset of 46,000 mathematical problems, and conduct experiments on Qwen2.5-Math-1.5B/7B, Qwen3-8B-Base, and Qwen3-30B-A3B-Base (Yang et al., 2025). We employ GRPO with TIS for the BF16 RL baseline and quantized training, while GSPO is adopted for MoE models to enhance stability. The Muon optimizer (Jordan et al., 2024) exhibits significantly faster convergence than AdamW and is therefore used across all experiments; detailed hyperparameters are provided in Appendix B.
+
+Evaluation.
+
+We evaluate on math benchmarks (AIME2024/2025, AMC, Math-500, OlympiadBench (He et al., 2024), Minerva) and out-of-distribution benchmarks (ARC-Challenge (Clark et al., 2018), GPQA-Diamond (Rein et al., 2024), LiveCodeBench, MMLU Pro).
+
+Figure 8: Training dynamics (Reward/KL) of Qwen2.5-Math 1.5B (a-b) and 7B (c-d) across different optimization objectives.
+
+4.1 Main Results
+
+Table 1 and Fig. 7 demonstrate a consistent trend across model scales: quantized rollout training undermines stability and yields lower final accuracy than the BF16 RL baseline, whereas QaRL TBPO exhibits markedly improved stability, converging to BF16 comparable rewards. For instance, on the Qwen3-8B model, the average in-distribution math performance drops significantly from 51.8% (BF16) to 43.9% with quantized rollout training, while QaRL TBPO successfully maintain the performance to 48.9%, only 2.9% drop. Critically, QaRL TBPO recovers most of the degradation from quantized-rollout training, achieving near-baseline performance. Although quantized rollout training under GSPO still suffers from router shift at each forward pass, TBPO remains stable on MoE models, achieving an average math score of 51.2%, nearly matching the 52.1% baseline.
+
+Beyond math, QaRL TBPO improves OOD performance vs quantized rollout training while matching BF16, demonstrating that gains arise from stable optimization and better generalization rather than overfitting.
+
+4.2 Ablation
+
+Figure 9: (a) Reward curves under different quant scheme. (b) Per-step training time speedup ratio.
+
+Optimize objectives
+
+We conduct ablations to validate TBPO’s effectiveness in mitigating error-token interference under QaRL (Fig. 8). Overall: TBPO achieves stable learning, high reward, and tight KL control, while alternatives suffer from KL drift or low sample efficiency. GSPO is unstable—error tokens in negatives cause KL drift and collapse, degrading reward. MIS GSPO: Rejection sampling reduces data efficiency and limits reward ceiling. Positive GRPO: Discarding negatives loses exploration and limits performance. On-policy GRPO: Single updates per batch reduce error amplification but hurt efficiency. Dual-clip GRPO: Clipping bounds extreme ratios, yet tokens after error tokens remain contaminated, causing incorrect learning. For comprehensive analysis of SAPO, please refer to Appendix D.4.
+
+Quantization Scheme
+
+We further ablate quantization schemes in QaRL-TBPO, comparing FP8W8A8, W4A16, and W4A8 against the BF16 GRPO baseline (Fig. 9(a)). No substantial differences emerge: all bit-widths exhibit similar reward curves and nearly identical final rewards. This suggests that, once stabilized via TBPO, RL convergence is largely insensitive to the specific low-bit format, and performance gains are not tied to a particular quantization choice. We adopt W4A16 for most experiments due to its superior speed on larger models and broad hardware compatibility, whereas W4A8 requires more complex kernel support. Results of TBPO used on quantized rollout training are detailed in appendix D.2.
+
+Speed
+
+Fig. 9(b) reports per-step training time normalized to BF16. Across 7B, 8B, and 30B-A3B MoE models, both QaRL and quantized rollout training achieve speedups over BF16. For large-scale MoE models, quantized rollout training delivers a 1.4 speedup, while QaRL achieves a 1.3 speedup, since QaRL incurs modest overhead from in-training quantization. Comparison of different quantization schemes are provided in appendix 11. We opted not to implement FP8 KV quantization, as KV quant currently fails to provide meaningful throughput benefits in vLLM.
+
+5 Related Work
+
+Quantization.
+
+Quantization accelerates and compresses LLMs via post-training quantization (PTQ) or quantization-aware training (QAT). PTQ methods such as GPTQ (Frantar et al., 2022) and AWQ (Lin et al., 2024) avoid retraining but often struggle on reasoning models, where long CoT generation induces distribution shift and error accumulation beyond static calibration. QAT methods (e.g., LLM-QAT (Liu et al., 2024), EfficientQAT (Chen et al., 2025)) train with quantization noise for better robustness, while fully quantized training (Wang et al., 2025b) executes low-bit arithmetic end-to-end to further improve robustness and throughput.
+
+Reinforcement Learning in LLMs.
+
+Modern reasoning models (e.g., DeepSeek-R1, Qwen3 (Yang et al., 2025), Kimi-K2 (Moonshot AI, 2025)) commonly build on GRPO. Recent variants include DAPO (higher-bound clipping to promote exploration), GSPO (sequence-level importance sampling for MoE stability), and ASPO (Wang et al., 2025a) (asymmetric sampling for low-probability tokens). Building on this line, we focus on stabilizing RL under quantized rollouts and QAT by suppressing quantization-induced errors during generation.
+
+6 Conclusion and Limitations
+
+We propose QaRL to mitigate the severe training–inference mismatch in quantized-rollout RL via rollout-aligned training, and identify error tokens as a key driver of collapse under quantized rollouts, addressed by TBPO with a sequence-level objective and dual clipping on negative samples. Looking forward, we plan to explore fully quantized RL training, and to replace costly, low-utilization sequence-level optimization with token-level approximations that retain stability while improving efficiency and sample usage.
+
+References
+
+Chen et al. (2025)
+M. Chen, W. Shao, P. Xu, J. Wang, P. Gao, K. Zhang, and P. Luo
+
+Efficientqat: efficient quantization-aware training for large language models.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 10081–10100.
+
+Cited by: §5.
+
+Clark et al. (2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+
+arXiv preprint arXiv:1803.05457.
+
+Cited by: Appendix B,
+§4.
+
+Frantar et al. (2022)
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh
+
+Gptq: accurate post-training quantization for generative pre-trained transformers.
+
+arXiv preprint arXiv:2210.17323.
+
+Cited by: §5.
+
+Gao et al. (2025)
+C. Gao, C. Zheng, X. Chen, K. Dang, S. Liu, B. Yu, A. Yang, S. Bai, J. Zhou, and J. Lin
+
+Soft adaptive policy optimization.
+
+arXiv preprint arXiv:2511.20347.
+
+Cited by: §D.4.
+
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+
+arXiv preprint arXiv:2501.12948.
+
+Cited by: §1.
+
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, et al.
+
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 3828–3850.
+
+Cited by: Appendix B,
+§4.
+
+He and Lab (2025)
+H. He and T. M. Lab
+
+Defeating nondeterminism in llm inference.
+
+Thinking Machines Lab: Connectionism.
+
+Note: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/
+
+External Links: Document
+
+Cited by: §3.1.
+
+Hilton et al. (2022)
+J. Hilton, K. Cobbe, and J. Schulman
+
+Batch size-invariance for policy optimization.
+
+Advances in Neural Information Processing Systems 35, pp. 17086–17098.
+
+Cited by: §2.3.
+
+Hu et al. (2025)
+J. Hu, X. Wu, W. Shen, J. K. Liu, W. Wang, S. Jiang, H. Wang, H. Chen, B. Chen, W. Fang, Xianyu, Y. Cao, H. Xu, and Y. Liu
+
+OpenRLHF: a ray-based easy-to-use, scalable and high-performance RLHF framework.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, I. Habernal, P. Schulam, and J. Tiedemann (Eds.),
+
+Suzhou, China, pp. 656–666.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-334-0
+
+Cited by: §1.
+
+Huang et al. (2025)
+W. Huang, Y. Ge, S. Yang, Y. Xiao, H. Mao, Y. Lin, H. Ye, S. Liu, K. C. Cheung, H. Yin, et al.
+
+QeRL: beyond efficiency–quantization-enhanced reinforcement learning for llms.
+
+arXiv preprint arXiv:2510.11696.
+
+Cited by: §D.3.
+
+Jaech et al. (2024)
+A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney, et al.
+
+Openai o1 system card.
+
+arXiv preprint arXiv:2412.16720.
+
+Cited by: §1.
+
+Jain et al. (2024)
+N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica
+
+LiveCodeBench: holistic and contamination free evaluation of large language models for code.
+
+arXiv preprint arXiv:2403.07974.
+
+Cited by: Appendix B.
+
+Jordan et al. (2024)
+K. Jordan, Y. Jin, V. Boza, Y. Jiacheng, F. Cesista, L. Newhouse, and J. Bernstein
+
+Muon: an optimizer for hidden layers in neural networks.
+
+External Links: Link
+
+Cited by: §4.
+
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles,
+
+Cited by: Appendix B.
+
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+
+Let’s verify step by step.
+
+arXiv preprint arXiv:2305.20050.
+
+Cited by: Appendix B.
+
+Lin et al. (2024)
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han
+
+Awq: activation-aware weight quantization for on-device llm compression and acceleration.
+
+Proceedings of machine learning and systems 6, pp. 87–100.
+
+Cited by: §5.
+
+Liu et al. (2025a)
+J. Liu, Y. Li, Y. Fu, J. Wang, Q. Liu, and Y. ShenWhen speed kills stability: demystifying RL collapse from the training-inference mismatch(Website)
+
+External Links: Link
+
+Cited by: §2.3.
+
+Liu et al. (2025b)
+L. Liu, F. Yao, D. Zhang, C. Dong, J. Shang, and J. Gao
+
+FlashRL: 8bit rollouts, full power rl.
+
+External Links: Link
+
+Cited by: §1.
+
+Liu et al. (2024)
+Z. Liu, B. Oguz, C. Zhao, E. Chang, P. Stock, Y. Mehdad, Y. Shi, R. Krishnamoorthi, and V. Chandra
+
+Llm-qat: data-free quantization aware training for large language models.
+
+In Findings of the Association for Computational Linguistics: ACL 2024,
+
+pp. 467–484.
+
+Cited by: §2.2,
+§5.
+
+Luo et al. (2025)
+M. Luo, S. Tan, J. Wong, X. Shi, W. Y. Tang, M. Roongta, C. Cai, J. Luo, L. E. Li, R. A. Popa, and I. Stoica
+
+DeepScaleR: surpassing o1-preview with a 1.5b model by scaling rl.
+
+Note: https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2Notion Blog
+
+Cited by: §1.
+
+Moonshot AI (2025)
+Moonshot AI
+
+Kimi-k2: thinking and reasoning.
+
+Note: https://moonshotai.github.io/Kimi-K2/thinking.htmlAccessed: 2025-12-22
+
+Cited by: §5.
+
+Muennighoff et al. (2025)
+N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candès, and T. B. Hashimoto
+
+S1: simple test-time scaling.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 20286–20332.
+
+Cited by: §1.
+
+Qi et al. (2025)
+P. Qi, Z. Liu, X. Zhou, T. Pang, C. Du, W. S. Lee, and M. Lin
+
+Defeating the training-inference mismatch via fp16.
+
+arXiv preprint arXiv:2510.26788.
+
+Cited by: §3.1.
+
+Rein et al. (2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+
+Gpqa: a graduate-level google-proof q&a benchmark.
+
+In First Conference on Language Modeling,
+
+Cited by: Appendix B,
+§4.
+
+Schulman et al. (2015)
+J. Schulman, S. Levine, P. Abbeel, M. Jordan, and P. Moritz
+
+Trust region policy optimization.
+
+In International conference on machine learning,
+
+pp. 1889–1897.
+
+Cited by: §2.1.
+
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347.
+
+Cited by: §2.1.
+
+SGLang Team (2025)
+SGLang Team
+
+Deterministic inference.
+
+Note: Accessed: 2025-12-21
+
+External Links: Link
+
+Cited by: §3.1.
+
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+
+arXiv preprint arXiv:2402.03300.
+
+Cited by: §2.1.
+
+Sheng et al. (2024)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+
+HybridFlow: a flexible and efficient rlhf framework.
+
+arXiv preprint arXiv: 2409.19256.
+
+Cited by: Appendix B,
+§1.
+
+Wang et al. (2025a)
+J. Wang, R. Liu, L. Lin, W. Hu, X. Li, F. Zhang, G. Zhou, and K. Gai
+
+Aspo: asymmetric importance sampling policy optimization.
+
+arXiv preprint arXiv:2510.06062.
+
+Cited by: §5.
+
+Wang et al. (2025b)
+W. Wang, S. Cai, C. Xie, M. Feng, Y. Zhang, Z. Li, K. Yang, M. Li, J. Cao, and H. Yang
+
+InfiR2: a comprehensive fp8 training recipe for reasoning-enhanced language models.
+
+arXiv preprint arXiv:2509.22536.
+
+Cited by: §5.
+
+Wang et al. (2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, et al.
+
+Mmlu-pro: a more robust and challenging multi-task language understanding benchmark.
+
+Advances in Neural Information Processing Systems 37, pp. 95266–95290.
+
+Cited by: Appendix B.
+
+Wasti et al. (2025)
+B. Wasti, W. Ye, T. Rao, M. Goin, P. Zhang, T. Liu, N. Gimelshein, W. Kwon, K. You, and Z. Li
+
+No more train-inference mismatch: bitwise consistent on-policy reinforcement learning with vllm and torchtitan.
+
+Note: Accessed: 2025-12-21
+
+External Links: Link
+
+Cited by: §3.1.
+
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+Advances in neural information processing systems 35, pp. 24824–24837.
+
+Cited by: §1.
+
+Xi et al. (2024)
+H. Xi, H. Cai, L. Zhu, Y. Lu, K. Keutzer, J. Chen, and S. Han
+
+Coat: compressing optimizer states and activation for memory-efficient fp8 training.
+
+arXiv preprint arXiv:2410.19313.
+
+Cited by: §2.2.
+
+Yan et al. (2025)
+J. Yan, Y. Li, Z. Hu, Z. Wang, G. Cui, X. Qu, Y. Cheng, and Y. Zhang
+
+Learning to reason under off-policy guidance.
+
+External Links: 2504.14945,
+Link
+
+Cited by: §4.
+
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §4,
+§5.
+
+Yao et al. (2025)
+F. Yao, L. Liu, D. Zhang, C. Dong, J. Shang, and J. Gao
+
+Your efficient rl framework secretly brings you off-policy rl training.
+
+External Links: Link
+
+Cited by: §2.3.
+
+Ye et al. (2020)
+D. Ye, Z. Liu, M. Sun, B. Shi, P. Zhao, H. Wu, H. Yu, S. Yang, X. Wu, Q. Guo, et al.
+
+Mastering complex control in moba games with deep reinforcement learning.
+
+In Proceedings of the AAAI conference on artificial intelligence,
+
+Vol. 34, pp. 6672–6679.
+
+Cited by: §3.2.
+
+Ye et al. (2025)
+Y. Ye, Y. Xiao, T. Mi, and P. Liu
+
+AIME-preview: a rigorous and immediate evaluation framework for advanced mathematical reasoning.
+
+Note: https://github.com/GAIR-NLP/AIME-PreviewGitHub repository
+
+Cited by: Appendix B.
+
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al.
+
+Dapo: an open-source llm reinforcement learning system at scale.
+
+arXiv preprint arXiv:2503.14476.
+
+Cited by: §3.2.
+
+Zhang et al. (2025)
+Z. Zhang, X. Ding, J. Yuan, R. Liu, H. Mao, J. Xing, and Z. Liu
+
+Deterministic inference across tensor parallel sizes that eliminates training-inference mismatch.
+
+External Links: 2511.17826,
+Link
+
+Cited by: §3.1.
+
+Zhao et al. (2025)
+C. Zhao, C. Deng, C. Ruan, D. Dai, H. Gao, J. Li, L. Zhang, P. Huang, S. Zhou, S. Ma, et al.
+
+Insights into deepseek-v3: scaling challenges and reflections on hardware for ai architectures.
+
+In Proceedings of the 52nd Annual International Symposium on Computer Architecture,
+
+pp. 1731–1745.
+
+Cited by: §2.2.
+
+Zheng et al. (2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, et al.
+
+Group sequence policy optimization.
+
+arXiv preprint arXiv:2507.18071.
+
+Cited by: §3.2.
+
+Appdenix
+
+Appendix A The Use of Large Language Models (LLMs)
+
+A large language model was utilized for grammatical and stylistic refinement of the manuscript. Its role was strictly limited to text editing and polishing to enhance clarity. All research ideas, experimental design, and analytical content are the original work of the authors.
+
+Appendix B Experiment Setting
+
+Training.
+
+We use Verl (Sheng et al., 2024) as the training framework and vLLM (Kwon et al., 2023) as the inference engine. All experiments are conducted on NVIDIA H800 GPUs.
+
+Evaluation Dataset.
+
+We evaluate our approach on standard in distribution mathematical datasets including AIME2024, AIME2025 (Ye et al., 2025), AMC, Math-500 (Lightman et al., 2023), OlympiadBench (He et al., 2024) and Minerva. To further investigate the generalizability of quantized training, we extend evaluation to out-of-distribution benchmarks such a out-of-distribution benchmarks ARC-Challenge (Clark et al., 2018), GPQA-Diamond (Rein et al., 2024), LiveCodeBench (Jain et al., 2024), MMLU Pro (Wang et al., 2024).
+
+Hyperparameters.
+
+•
+
+seq_clip_ratio_high is ,
+
+•
+
+neg_seq_clip_ratio_high is and neg_seq_clip_ratio_low is ,
+
+•
+
+seq_tis_imp_ratio_cap is in equation 5.
+
+Appendix C Batch invariant kernel
+
+The root cause of output inconsistency across different kernel implementations lies in the finite precision of floating point accumulators. Due to the non associativity of floating point addition, where the final result is sensitive to the order of operations. To ensure bit-wise reproducibility, it is necessary to enforce a fixed summation order regardless of the batch configuration, leading to the design of a Batch-Invariant Kernel. However, imposing a strict execution order often comes at the cost of performance, as it restricts the asynchronous parallelism and dynamic scheduling inherent to GPU architectures.
+
+Parameter Name
+Value
+
+trainer.nnodes
+1
+
+trainer.n_gpu_per_node
+8
+
+data.train_batch_size
+512
+
+data.max_prompt_length
+2048
+
+data.max_response_length
+16384
+
+rollout.n
+8
+
+rollout.temperature
+1.0
+
+rollout.top_p
+1.0
+
+val_kwargs.temperature
+0.6
+
+actor.ppo_mini_batch_size
+64
+
+actor.ppo_max_token_len_per_gpu
+22528
+
+optim.opt_type
+Muon
+
+optim.lr
+1e-6
+
+optim.weight_decay
+0.01
+
+actor.use_kl_loss
+False
+
+actor.seq_clip_ratio_high
+0.0004
+
+actor.seq_clip_ratio_low
+0.0003
+
+actor.neg_seq_clip_ratio_high
+0.0007
+
+actor.neg_seq_clip_ratio_low
+0.0003
+
+actor.seq_tis_imp_ratio_cap
+2
+
+Table 2: Hyperparameters for Experiment.
+
+Appendix D More Experimental Results
+
+D.1 Speed on different quant scheme
+
+Fig. 11 illustrates the per-step training latency of various quantization schemes on Qwen3-30B-A3B (MoE), normalized to the BF16 baseline (dashed line at 1.0). Our results show that efficiency gains become increasingly significant from W8 to W4. This trend underscores that MoE training is primarily memory/IO-bound; since MoE operators are almost inherently memory-bound during decoding, the weight bit-width directly dictates computational efficiency. Furthermore, lower precision reduces the memory footprint per model instance, minimizing the required GPU count and alleviating inter-GPU communication overhead—a benefit that becomes even more pronounced when intra-node interconnects (e.g., NVLink) are fully utilized. Consequently, we adopt W4 as the default configuration for our primary experiments.
+
+D.2 More Ablation on TBPO
+
+To further evaluate the effectiveness of TBPO, particularly its capability to mitigate the negative impact of "error tokens" generated by quantized rollout engines, we conduct a ablation study against GRPO under different precision settings. As demonstrated in Table 3, TBPO achieves performance on par with GRPO under BF16 precision. However, under w4a16 quantized rollout training, TBPO exhibits markedly superior robustness by effectively neutralizing error token interference during optimization, thereby delivering an average margin of 2.9 points over GRPO. While TBPO provides some degree of mitigation for the mismatch issues arising from quantized rollout training, the fundamental resolution lies in leveraging QAT/QaRL or fully quantized training regimes to eliminate systemic inconsistencies at their core.
+
+Qwen3-8B-Base
+
+Method
+MATH-500
+AIME25
+AMC
+Avg.
+
+BF16 GRPO
+88.1
+19.3
+64.3
+57.2
+
+BF16 TBPO
+86.3
+20.0
+62.4
+56.2
+
+w4a16 GRPO
+82.2
+12.5
+53.0
+49.2
+
+w4a16 TBPO
+84.9
+13.3
+58.3
+52.1
+
+Table 3: Performance comparison between GRPO and TBPO under full-precision (BF16) and quantized (w4a16) rollout training settings.
+
+Figure 10: Comparison of RL training entropy
+
+Figure 11: Different quant scheme speed on Qwen3-30B-A3B MoE model.
+
+D.3 Entropy of quantized RL training
+
+Whereas Huang et al. (2025) Fig. 5 posits that quantization errors during training may attenuate the entropy reduction in RL, our empirical findings present a more nuanced picture. Across both quantized rollout training and QAT/QaRL paradigms (Fig. 10), quantization discrepancies are progressively assimilated throughout the optimization process, yielding no discernible entropy elevation relative to the BF16 baseline. The entropy escalation observed in the latter stages of w4a16 quantized rollout training stems from the over-optimization of error tokens, which precipitates repetitive generation patterns.
+
+Figure 12: Comparison of SAPO on QaRL
+
+D.4 Comparsion of soft weighted methods SAPO
+
+SAPO (Gao et al., 2025) introduces a soft adaptive weighting mechanism as a nuanced alternative to hard clipping, aiming to bolster optimization stability in MoE architectures. Through dynamic reweighting of token contributions—assigning diminishing importance to tokens whose advantage ratios deviate further from unity—SAPO adeptly discriminates between erroneous tokens (demanding substantial correction) and exploration tokens (that foster policy discovery). Nevertheless, as evidenced in Fig. 12, SAPO remains unable to surpass TBPO in the context of quantized RL training. We posit that this suboptimal performance stems from SAPO’s continued assimilation of responses containing error tokens, despite attenuating their individual contributions to policy updates. Critically, such response sequences are globally off-distribution, rendering them intrinsically unsuitable for stable policy learning. This observation reaffirms the paramount importance of constraining sequence-level optimization objectives within the trust region, while simultaneously attesting to the elegance and principled simplicity inherent in TBPO’s design.
+
+Figure 13: Sequence ratio and weight definition.
+
+Appendix E Detail of TBPO
+
+To effectively optimize the policy while maintaining training stability, we define the sequence-level importance weights and mismatch factors. Specifically, for a given query and its corresponding output sequence of length , we introduce the sequence-level proximity ratio and the sequence-level mismatch weight as illustrated in Fig. 13.
+
+Instead of using a simple product of token-level probabilities, which often leads to vanishing or exploding gradients in long-context scenarios, we employ the geometric mean of token-level ratios (formulated as the exponential of the average log-difference). This design ensures that the importance weights remain numerically stable across varying sequence lengths. serves to constrain the policy update within a reliable trust region by measuring the drift from the previous learner, while accounts for the distributional shift between the historical sampling policy and the current optimization baseline.
+
+Table 6: Comparison of clipping and weighting strategies. Gray highlights clipped tokens, while different colors represent varying weighting magnitudes (darker shades indicate weights further from 1). GRPO employs token-level clipping and weighting, whereas TBPO utilizes sequence-level granularity. In GRPO, the garbled tokens (marked by 1) are not clipped, while the exploration tokens (marked by 2) are clipped. In contrast, TBPO’s sequence-level approach correctly clips the garbled tokens without erroneously clipping the exploration tokens.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

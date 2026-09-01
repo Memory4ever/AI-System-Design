@@ -1,0 +1,1139 @@
+KV Cache Offloading for Context-Intensive Tasks
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+3 Context-Intensive Tasks
+
+3.1 Text2JSON: Multiple Needles in the Wild
+
+4 Evaluation & Analysis
+
+4.1 Analyzing Key Compression & Alternatives
+
+4.2 Analyzing Offloading, Local & Outlier Budgets
+
+4.3 Improving KV Selection
+
+5 Discussion
+
+References
+
+A Preliminary Benchmark Exploration & Configurations
+
+B Text2JSON construction and evaluation
+
+C Additional Experiments for Section 
+
+D Additional Experiments for Section 
+
+E Residual Quantization of Landmarks
+
+License: CC BY 4.0
+
+arXiv:2604.08426v1 [cs.LG] 09 Apr 2026
+
+KV Cache Offloading for Context-Intensive Tasks
+
+Andrey Bocharnikov*
+
+  
+HSE
+
+  
+Yandex
+
+  
+Ivan Ermakov*
+
+  
+HSE
+
+  
+Yandex
+
+  
+Denis Kuznedelev*†
+
+  
+Yandex
+
+  
+Vyacheslav Zhdanovskiy*
+
+  
+Yandex
+
+  
+Yegor Yershov*
+
+  
+Yandex
+
+  
+NSU
+
+Abstract
+
+With the growing demand for long-context LLMs across a wide range of applications, the key–value (KV) cache has become a critical bottleneck for both latency and memory usage.
+Recently, KV-cache offloading has emerged as a promising approach to reduce memory footprint and inference latency while preserving accuracy.
+Prior evaluations have largely focused on tasks that do not require extracting large amounts of information from the context.
+In this work, we study KV-cache offloading on context-intensive tasks: problems where the solution requires looking up a lot of information from the input prompt.
+We create and release the Text2JSON benchmark, a highly context-intensive task that requires extracting structured knowledge from raw text.
+We evaluate modern KV offloading on Text2JSON and other context-intensive tasks and find significant performance degradation on both Llama 3 and Qwen 3 models.
+Our analysis identifies two key reasons for poor accuracy: low-rank projection of keys and unreliable landmarks, and proposes a simpler alternative strategy that significantly improves accuracy across multiple LLM families and benchmarks.
+These findings highlight the need for a comprehensive and rigorous evaluation of long-context compression techniques.
+
+1 Introduction
+
+Large Language Models (LLMs) are becoming increasingly adept at handling long-context inputs, enabling applications such as long-document summarization Bai et al. (2024); Wang et al. (2024), large-scale codebase analysis Liu et al. (2023); Luo et al. (2024), and agentic workflows. However, processing long contexts remains challenging because the key–value (KV) cache grows linearly with sequence length. For sufficiently long sequences, the KV cache can require more memory than the model parameters themselves (Hooper et al., 2024). Moreover, as KV cache grows in size, it often becomes the primary bottleneck for LLM inference.
+Since KV cache size scales with sequence length, long-context inference can fit less sequences in accelerator memory, drastically reducing inference throughput Zhang et al. (2023); Sheng et al. (2023).
+
+The two most popular ways to reduce KV cache footprint is quantization(Hooper et al., 2024; Liu et al., 2024b; Shutova et al., 2025b; Ashkboos et al., 2024) and cache eviction (or pruning) (Xiao et al., 2024; Zhang et al., 2023; Li et al., 2024b; Tang et al., 2024).
+KV quantization has already gained significant popularity among practitioners vLLM Project (2026); NVIDIA (2026). In turn, KV eviction is not commonly used in industrial deployments Li et al. (2025b) because pruning KV entries can lead to significant performance drop for some tasks Chen et al. (2025a); Ananthanarayanan and Sengupta (2026). For instance, KV eviction struggles with problems that require processing most of input tokens: sorting a document collection, translating a book verbatim or refactoring a codebase.
+
+A promising alternative to pruning is KV-cache offloading:(Aminabadi et al., 2022; Sheng et al., 2023): instead of pruning KV entries permanently, these techniques keep the original entries in cheaper system memory and load them back when necessary. To avoid loading the full KV cache, they use method-specific heuristics to predict which KV entries will be used at every inference step Lee et al. (2024); Sun et al. (2025), reporting little to no performance degradation compared to full attention. However, evaluations in these studies have largely been restricted to widely used long-context benchmarks such as RULER (Hsieh et al., 2024) and LongBench (Bai et al., 2024). Although popular, these benchmarks may not capture the full range of real-world applications. As a result, performance drops on practically relevant tasks may go unnoticed and could be non-negligible.
+
+In this work, we systematically evaluate KV-cache offloading techniques across a broader set of benchmarks, including both publicly available tasks used in prior work and tasks we introduce. We identify settings in which these methods fail, and we hypothesize that KV-cache offloading policies are more likely to struggle on tasks that require retrieving a sufficiently large amount of information.
+
+2 Background
+
+Transformer-based LLMs typically store task-specific information in a key-value (KV) cache. This cache contains token-level vector representations that are consumed by the attention layers at each inference step (Vaswani et al., 2017). In modern LLMs, the cache is usually limited to tokens, with only a handful of extreme cases exceeding one million tokens (GLM et al., 2024; Yang et al., 2025b). Though this limit can be extended (Peng et al., 2024; Li et al., 2023; Pekelis et al., 2024), large KV caches quickly exhaust accelerator memory11
+1
+
+For example, storing 1M tokens for Qwen2.5-7B-Instruct-1M in bfloat16 requires over 180 GiB of GPU memory. and reduce inference throughput.
+
+To mitigate this, several lines of work propose KV-cache quantization (Liu et al., 2024b; Hooper et al., 2024; Ashkboos et al., 2024), eviction (pruning) (Xiao et al., 2024; Zhang et al., 2023; Li et al., 2024b), cross-layer sharing Wu et al. (2025); Yang et al. (2024); Lin et al. (2026), and related techniques. These approaches are not mutually exclusive: an inference server may evict a subset of KV entries and quantize the remainder to further reduce memory usage Li et al. (2024b); Shutova et al. (2025a). However, while quantization is already widely used in industrial deployments vLLM Team (2026); NVIDIA Corporation (2026), KV eviction has seen slower adoption. A key reason is that pruning KV-cache entries can significantly degrade performance on certain classes of problems Li et al. (2025a); Chen et al. (2025b); Ananthanarayanan et al. (2026).
+
+A more recent line of work proposes an alternative: instead of permanently removing KV-cache entries, these methods offload part of the cache to larger, but slower, system memory (Aminabadi et al., 2022; Sheng et al., 2023). To avoid reloading the entire cache, they estimate which tokens are most relevant at a given step (Lee et al., 2024; Chen et al., 2024; Sun et al., 2025; Liu et al., 2024a), using mechanisms closely related to sparse attention (Tang et al., 2024; Liu et al., 2021; Yuan et al., 2025a; Jiang et al., 2024). Unlike permanent pruning, offloading preserves the possibility of accessing the full KV cache over time, and is therefore, in principle, capable of solving problems that pruning would struggle with. In this work, we show that this promise does not always hold in practice for existing methods.
+
+3 Context-Intensive Tasks
+
+The core intuition of our work is that LLM workloads vary in how much information they need to extract in order to solve the problem correctly. On one end of the spectrum Needle in the Haystack (NIAH) Hsieh et al. (2024) requires the model to look up a single correct needle in a large prompt. On the other end, there are real-world problems that require looking up and cross-referencing many interdependent “needles” to obtain the correct answer. Such context-intensive tasks include context-aware document translation, programming in a pre-existing codebase, legal case analysis, and others.
+
+Most popular benchmarks used to evaluate KV offloading are not context-intensive. The RULER benchmark Hsieh et al. (2024), for example, consists of synthetic needle-in-a-haystack tasks. More advanced NIAH benchmarks Bianchi et al. (2025); Chen et al. (2021); Hengle et al. (2025); Wu et al. (2024); Yuan et al. (2025b) introduce more challenging domains or distractors to make finding the correct “needle” harder; however, the total amount of information required to solve each problem remains small. Similarly, LongBench Bai et al. (2024) aggregates 21 tasks with heterogeneous semantics, including single- and multi-document question answering, synthetic counting tasks, and code completion. Only a small subset of these tasks is truly context-intensive (e.g., passage_count), and these tasks are both underrepresented and often excluded from evaluation protocols Chen et al. (2024); Sun et al. (2025).
+
+Benchmarks with higher context intensity are less common in the KV compression literature Li et al. (2025c); Wang et al. (2024); Wei et al. (2025). NeedleBench v2 Li et al. (2025c) includes a subset of “MultiNeedle” retrieval tasks involving either multiple independent “needles” or a connected dependency structure (e.g., a family tree). Loong Wang et al. (2024) contains multi-document question-answering tasks in which each document contributes relevant information needed to produce the final answer. Although these tasks have not yet been widely adopted in the KV offloading literature, we find that offloading algorithms can perform poorly on both Loong and the MultiNeedle subset (see Appendix A).
+
+3.1 Text2JSON: Multiple Needles in the Wild
+
+Note that context-intensive tasks are not necessarily “hard” problems on the model itself. To decouple context-intensity from other LLM capabilities, we gather a new dataset of context-intensive problems inspired by a popular production use case: extracting structured information from bulk text.
+Our benchmark is inspired by (production) real-world use cases where the LLM is used to extract structured JSON data from large documents and websites.
+For our benchmark Text2JSON, we gather 500 samples from 4 data extraction tasks: doctor profiles, organization records, movie reviews, and product cards. To preserve privacy, the real user data is replaced with LLM-generated facts of similar structure.
+The problems vary between 10.0K and 63.5K tokens (gpt2) with an average length of 20.1K.
+The ground-truth JSON answer contains 3-20 entries (info dictionaries), each with multiple keys and values.
+To facilitate reproducibility, we avoid LLM-as-a-Judge Zheng et al. (2023).
+Instead, we compare each individual items via exact match and report IoU (Intersection over Union) accuracy.
+Additional details on Text2JSON dataset construction and evaluation are provided in Appendix B.
+
+Figure 1: Evaluation of ShadowKV offloading with different KV compression strategies for Llama-3.1-8B-Instruct on MultiNeedle (left) and Qwen3-4B-Instruct-2507 on Text2JSON (right). The X axis denotes the total percentage of tokens loaded (sparse, outlier and local tokens), see Section 4.1.
+
+4 Evaluation & Analysis
+
+We systematically analyze what causes KV offloading methods to underperform on context-intensive tasks.
+Modern KV offloading systems Lee et al. (2024); Sun et al. (2025); Chen et al. (2024) have multiple interdependent components: landmarks, SVD compression, separate buffers for outliers and recent tokens, speculative loading, etc. In this analysis, we focus on ShadowKV offloading as it combines best practices from previous works.
+
+4.1 Analyzing Key Compression & Alternatives
+
+ShadowKV uses an SVD-based decomposition to compress attention keys. Our preliminary ablation experiments suggest that this compression degrades performance on context-intensive tasks. To verify this, we evaluate two models from popular families: Llama-3.1-8B-Instruct Dubey et al. (2024) and Qwen3-4B-Instruct-2507 Yang et al. (2025a), with additional models in Appendix C. We use two datasets: the established NeedleBench V2 benchmark Li et al. (2025c) in the MultiNeedle Retrieval 128K setting, and our Text2JSON dataset introduced in Section 3.1. We compare the following KV-cache compression schemes:
+
+•
+
+Truncated SVD: the original ShadowKV uses rank 160; we additionally report ranks 256 & 512.
+
+•
+
+Uncompressed: removing key compression from ShadowKV, at the cost of slower inference.
+
+•
+
+Quantization: replacing SVD with KV-cache quantization using FP8, NVFP4, or HIGGS-4bit.
+
+For quantization, we consider three popular KV-cache compression schemes. FP8 and NVFP4 are compute-oriented quantization formats that are already widely used in deep learning Micikevicius et al. (2022) and have also been applied to KV-cache compression Qiao et al. (2025); NVIDIA (2025). For FP8, we use the E4M3 format. For NVFP4, we follow the protocol of Egiazarian et al. (2026); note that NVFP4 uses micro-scales and averages 4.5 bits per value. HIGGS, by contrast, is a memory-oriented scheme Malinovskii et al. (2024); Shutova et al. (2025a) that combines vector quantization with a random Hadamard transform to reduce quantization error; we use a grid with and , which averages 4.02 bits per value.
+
+The results in Figure 1 clearly show that the default SVD setting is insufficient to match the performance of full attention, even when we load as many tokens. We attribute this to the greater retrieval difficulty of our context-intensive tasks, where the model must repeatedly attend to correct tokens from the prompt. In this regime, coarse key compression is more likely to introduce retrieval errors. This is not a fundamental limitation of SVD: higher ranks (e.g., 512) perform better. However, at that point, compressing 128-dimensional keys (1024 total dimensions) using two projection matrices yields a worse compression ratio than FP8. HIGGS provides a better memory–accuracy trade-off than low-rank SVD, further suggesting that quantization is better suited than aggressive low-rank compression for preserving retrieval quality in these tasks.
+We provide additional evaluations in Appendix C. Based on this observation, we disable SVD in subsequent analysis.
+
+4.2 Analyzing Offloading, Local & Outlier Budgets
+
+Without SVD compression, the models can achieve near-lossless accuracy given enough token budget. However, it is not clear how best to partition the token budget between categories:
+
+•
+
+Offloaded (sparse) budget: the bulk of KV cache entries are stored in system memory and segmented into chunks. During inference, the system loads some of these chunks into GPU memory for sparse attention. The fraction of tokens loaded to GPU is called the “sparse budget”.
+
+•
+
+Outlier budget: a small portion () of outlier tokens (e.g. attention sinks Xiao et al. (2024)) stored on GPU.
+
+•
+
+Local window: ShadowKV stores a small number of most recent tokens in GPU memory.
+
+Figure 2: Evaluation of ShadowKV (w/o SVD compression) offloading for Section 4.2 with varying outlier budget (left) and local window (right) for Llama-3.1-8B-Instruct and Qwen3-4B-Instruct-2507 on MultiNeedle Retrieval 128K dataset from NeedleBench v2.
+
+For typical long-context tasks with input tokens, most of the GPU memory budget is allocated to loading tokens from RAM (“sparse budget”), while the outliers and the recent tokens occupy negligible memory. To verify this choice for context-intensive tasks, we vary each budget indepentently with everything else equal. Similarly to the previous section, we use ShadowKV recommended parameters: sparse budget 1.56%, outlier budget 384, and local window 32 tokens, but without SVD.
+
+As Figure 2 demonstrates, the default outlier and local budgets are both sufficient for context-intensive tasks (see Appendix D for additional models). Increasing either of those budgets does not have significant effect on performance22
+2
+
+On a technicality, increasing sparse and/or local budgets to infinity would eventually label the entire cache as outliers or recent tokens, making ShadowKV equivalent to full attention by not offloading anything.. In turn, the sparse budget significantly affects performance. Specifically, ShadowKV’s default sparse budget (1.56%) is not enough for either model on context-intensive tasks. There are two possible explanations: A) the model fundamentally needs to load more tokens per query or B) the offloading algorithm fails to determine which tokens are needed.
+
+Like most sparse attention methods, ShadowKV segments KV entries into chunks of 8 consecutive tokens and summarizes them with a “landmark” — a channel-wise average of keys in that chunk. The algorithm then computes the dot product between queries and landmarks and loads the highest scoring chunks to GPU. This brings the risk of missing important keys due to landmark averaging.
+
+To test this, we compare ShadowKV against an upper bound “oracle” that loads keys based on their true dot product. In Figure 3, the BF16 chunk size 1 curve is the “oracle” method and BF16 chunk size 8 is normal ShadowKV behavior. This strongly suggests that chunk landmarks are the culprit. In other words, the model needs significantly fewer tokens, but chunking & landmarks cause ShadowKV to fetch unnecessary tokens from system memory.
+
+Note, however, that the oracle token selection is not a viable algorithm because the system is constrained by its GPU memory. Ranking keys by their dot product would require either storing keys on GPU or loading all keys from RAM, which would defeat the purpose of KV offloading. In the next section, we propose and analyze alternative token selection strategies that address this problem.
+
+Figure 3: Evaluation of ShadowKV offloading with different landmark precisions and chunks sizes on MultiNeedle for Llama-3.1-8B-Instruct (left) and Qwen3-4B-Instruct-2507 (right) with varying sparse budget without low-rank key compression. Quantization details in Section 4.3.
+
+Figure 4: Evaluation of ShadowKV offloading with different landmark precisions and chunks sizes on Text2JSON for Qwen3-4B-Instruct-2507 (left) and Qwen3-30B-A3B-Instruct-2507 (right)
+without low-rank key compression.
+
+4.3 Improving KV Selection
+
+The results of the previous section indicate that chunk size is one of the key factors affecting accuracy. Intuitively, smaller chunk sizes reduce the error introduced by averaging over tokens. However, decreasing chunk size to 1 in ShadowKV would mean storing all keys on GPU as “landmarks” and only offloading values, which would not work in real-world offloading setups.
+This raises the question of how to balance model quality against the amount of data loaded into memory.
+
+A natural and straightforward approach is landmark quantization. By representing landmarks in lower precision, one may reduce the amount of memory stored in VRAM while incurring little or no loss in accuracy. In this work, we adopt the HIGGS quantizer Malinovskii et al. (2024), a data-free quantization method that offers strong empirical performance as well as theoretical guarantees.
+
+In Figures 3 and 4, we compare several landmark precisions and chunk sizes that consume the same amount of GPU memory as the original ShadowKV landmarks. Specifically, the configurations 16-bit @ chunk 8, 4-bit @ chunk 2, and 2-bit @ chunk 1 all require, on average, 2 bits per key on GPU. In contrast, BF16 @ chunk 1 serves as an “oracle” configuration, providing an upper bound on landmark selection accuracy. Overall, 2-bit and 4-bit landmarks with chunk size 1 achieve near-optimal performance, while substantially outperforming the chunk-size-8 configuration under a comparable GPU memory budget. One interesting case is Figure 3 where HIGGS chunk size 2 briefly outperforms the “oracle” due to the interaction with ShadowKV outliers.
+
+These results suggest that landmark quantization is a promising direction for improving ShadowKV. In Appendix E, we further explore this idea using two-level landmarks: we store the original ShadowKV landmarks (chunk size 8) in 4-bit precision and add a low-bit residual quantization of the difference between each individual key and its chunk average. This approach further reduces landmark storage to 1.5 bits per weight with minimal loss in accuracy.
+
+5 Discussion
+
+In this working paper, we investigated KV cache offloading on context-intensive problems. Our results demosntrate that simply increasing the total amount of information needed causes significant accuracy drops in modern offloading methods. However, unlike traditional KV eviction, offloading is fundamentally capable of solving context-intensive tasks. The failures we observe are attributed to 1) overly aggressive key compression that worked on easier problems and 2) inaccurate token selection heuristics based on landmarks.
+These are not conceptual problems with the offloading itself, but technical limitations that can be circumvented with better compression and key selection.
+Our “view from trenches” shows that KV offloading is still a good candidate for production use across both easy and context-intensive tasks. Our main takeaway from this study is that future KV offloading research should evaluate on high context-intensity tasks such as Text2JSON33
+3
+
+Data and code available at https://github.com/yandex-research/context-intensive-kv-offloading., MultiNeedle and Loong.
+
+Future work. Our findings suggest several ways to improve KV offloading. The natural next step is to combine these observations into a high-throughput inference system. This would require adapting quantized multiplication kernels (e.g. Malinovskii et al. (2024)) for landmarks and integrating offloading into inference software such as SGLang Zheng et al. (2024) and vLLM Kwon et al. (2023).
+Another direction is to further analyze which tokens need to be loaded on each inference step. Our observations suggest that some model-benchmark pairs require very large budgets (over 10%) to achieve near-lossless accuracy. However, the model may not need such large budget on every inference step at every layer. If so, offloading could be further optimized by adaptively choosing how many tokens need to be loaded at a given time (see Lin et al. (2025)).
+
+Acknowledgements. Authors thank Vladislav Kruglikov for brainstorming about practical LLM inference concerns and GPU implementation matters.
+We also thank Irina Lialikova from Yandex LLM Analytics team for helpful discussions about production workloads. Finally, we thank Gleb Rodionov for his suggestions about how to analyze accuracy drawdown in different models.
+
+References
+
+Aminabadi et al. (2022)
+R. Y. Aminabadi, S. Rajbhandari, M. Zhang, A. A. Awan, C. Li, D. Li, E. Zheng, J. Rasley, S. Smith, O. Ruwase, and Y. He
+
+DeepSpeed inference: enabling efficient inference of transformer models at unprecedented scale.
+
+In SC22: International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+Cited by: §1,
+§2.
+
+Ananthanarayanan et al. (2026)
+S. Ananthanarayanan, A. Sengupta, and T. Chakraborty
+
+Understanding the physics of key-value cache compression for llms through attention dynamics.
+
+External Links: 2603.01426,
+Link
+
+Cited by: §2.
+
+Ananthanarayanan and Sengupta (2026)
+S. Ananthanarayanan and A. Sengupta
+
+Understanding the physics of key-value cache compression for LLMs through attention dynamics.
+
+arXiv preprint arXiv:2603.01426.
+
+External Links: Link
+
+Cited by: §1.
+
+Ashkboos et al. (2024)
+S. Ashkboos, A. Mohtashami, M. L. Croci, B. Li, P. Cameron, M. Jaggi, D. Alistarh, T. Hoefler, and J. Hensman
+
+Quarot: outlier-free 4-bit inference in rotated llms.
+
+Advances in Neural Information Processing Systems 37, pp. 100213–100240.
+
+Cited by: §1,
+§2.
+
+Bai et al. (2024)
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li
+
+LongBench: a bilingual, multitask benchmark for long context understanding.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics,
+
+Cited by: §1,
+§1,
+§3.
+
+Bianchi et al. (2025)
+O. Bianchi, M. J. Koretsky, M. Willey, C. X. Alvarado, T. Nayak, A. Asija, N. Kuznetsov, M. A. Nalls, F. Faghri, and D. Khashabi
+
+Lost in the haystack: smaller needles are more difficult for llms to find.
+
+arXiv preprint arXiv:2505.18148 abs/2505.18148.
+
+External Links: Link,
+2505.18148
+
+Cited by: §3.
+
+Chen et al. (2025a)
+A. Chen, Z. Chen, M. Zhang, D. Yang, and H. Zhao
+
+The pitfalls of KV cache compression.
+
+arXiv preprint arXiv:2510.00231.
+
+External Links: Link
+
+Cited by: §1.
+
+Chen et al. (2025b)
+A. Chen, R. Geh, A. Grover, G. V. den Broeck, and D. Israel
+
+The pitfalls of kv cache compression.
+
+External Links: 2510.00231,
+Link
+
+Cited by: §2.
+
+Chen et al. (2024)
+R. Chen, Z. Wang, B. Cao, T. Wu, S. Zheng, X. Li, X. Wei, S. Yan, M. Li, and Y. Liang
+
+ArkVale: efficient generative llm inference with recallable key-value eviction.
+
+In Advances in Neural Information Processing Systems 37,
+
+Cited by: §2,
+§3,
+§4.
+
+Chen et al. (2021)
+Z. Chen, W. Chen, C. Smiley, S. Shah, I. Borova, D. Langdon, R. Moussa, M. Beane, T. Huang, B. Routledge, and W. Y. Wang
+
+FinQA: a dataset of numerical reasoning over financial data.
+
+Proceedings of EMNLP 2021.
+
+Cited by: §3.
+
+Dagdelen et al. (2024)
+J. Dagdelen, A. Dunn, S. Lee, N. Walker, A. S. Rosen, G. Ceder, K. A. Persson, and A. Jain
+
+Structured information extraction from scientific text with large language models.
+
+Nature Communications 15 (1), pp. 1418.
+
+External Links: Document,
+Link,
+ISSN 2041-1723
+
+Cited by: Appendix E.
+
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al.
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §4.1.
+
+Egiazarian et al. (2026)
+V. Egiazarian, R. L. Castro, D. Kuznedelev, A. Panferov, E. Kurtic, S. Pandit, A. Marques, M. Kurtz, S. Ashkboos, T. Hoefler, and D. Alistarh
+
+Bridging the gap between promise and performance for microscaling fp4 quantization.
+
+External Links: 2509.23202,
+Link
+
+Cited by: §4.1.
+
+GLM et al. (2024)
+T. GLM, :, A. Zeng, B. Xu, B. Wang, C. Zhang, D. Yin, D. Zhang, D. Rojas, G. Feng, H. Zhao, H. Lai, H. Yu, H. Wang, J. Sun, J. Zhang, J. Cheng, J. Gui, J. Tang, J. Zhang, J. Sun, J. Li, L. Zhao, L. Wu, L. Zhong, M. Liu, M. Huang, P. Zhang, Q. Zheng, R. Lu, S. Duan, S. Zhang, S. Cao, S. Yang, W. L. Tam, W. Zhao, X. Liu, X. Xia, X. Zhang, X. Gu, X. Lv, X. Liu, X. Liu, X. Yang, X. Song, X. Zhang, Y. An, Y. Xu, Y. Niu, Y. Yang, Y. Li, Y. Bai, Y. Dong, Z. Qi, Z. Wang, Z. Yang, Z. Du, Z. Hou, and Z. Wang
+
+ChatGLM: a family of large language models from glm-130b to glm-4 all tools.
+
+External Links: 2406.12793,
+Link
+
+Cited by: §2.
+
+Hengle et al. (2025)
+A. Hengle, P. Bajpai, S. Dan, and T. Chakraborty
+
+Multilingual needle in a haystack: investigating long-context behavior of multilingual large language models.
+
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), L. Chiruzzo, A. Ritter, and L. Wang (Eds.),
+
+Albuquerque, New Mexico, pp. 5165–5180.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-189-6
+
+Cited by: §3.
+
+Hooper et al. (2024)
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami
+
+KVQuant: towards 10 million context length llm inference with kv cache quantization.
+
+In Advances in Neural Information Processing Systems 37,
+
+Cited by: §1,
+§1,
+§2.
+
+Hsieh et al. (2024)
+C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg
+
+RULER: what’s the real context size of your long-context language models?.
+
+In Proceedings of the First Conference on Language Modeling (COLM),
+
+Cited by: §1,
+§3,
+§3.
+
+Jégou et al. (2011)
+H. Jégou, R. Tavenard, M. Douze, and L. Amsaleg
+
+Searching in one billion vectors: re-rank with source coding.
+
+In 2011 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+
+pp. 861–864.
+
+Cited by: Appendix E.
+
+Jiang et al. (2024)
+H. Jiang, Y. Li, C. Zhang, Q. Wu, X. Luo, S. Ahn, Z. Han, A. H. Abdi, D. Li, C. Lin, Y. Yang, and L. Qiu
+
+MInference 1.0: accelerating pre-filling for long-context llms via dynamic sparse attention.
+
+In Advances in Neural Information Processing Systems 37,
+
+Cited by: §2.
+
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th Symposium on Operating Systems Principles,
+
+pp. 611–626.
+
+Cited by: §5.
+
+Lee et al. (2024)
+W. Lee, J. Lee, J. Seo, and J. Sim
+
+InfiniGen: efficient generative inference of large language models with dynamic kv cache management.
+
+In Proceedings of the 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+Cited by: §1,
+§2,
+§4.
+
+Li et al. (2023)
+D. Li, R. Shao, A. Xie, Y. Sheng, L. Zheng, J. Gonzalez, I. Stoica, X. Ma, and H. Zhang
+
+How long can context length of open-source LLMs truly promise?.
+
+In NeurIPS 2023 Workshop on Instruction Tuning and Instruction Following,
+
+External Links: Link
+
+Cited by: §2.
+
+Li et al. (2024a)
+J. Li, M. Wang, Z. Zheng, and M. Zhang
+
+LooGLE: can long-context language models understand long contexts?.
+
+External Links: 2311.04939,
+Link
+
+Cited by: Appendix E.
+
+Li et al. (2025a)
+J. Li, N. Farahini, E. Iuliugin, M. Vesterlund, C. Häggström, G. Wang, S. Upasani, A. Sachdeva, R. Li, F. Fu, C. Wu, A. Siddiqua, J. Long, T. Zhao, M. Musaddiq, H. Zeffer, Y. Du, M. Wang, Q. Li, B. Li, U. Thakker, and R. Prabhakar
+
+SnapStream: efficient long sequence decoding on dataflow accelerators.
+
+External Links: 2511.03092,
+Link
+
+Cited by: §2.
+
+Li et al. (2025b)
+J. Li, Z. Wang, Y. Zhang, S. Liu, M. Liu, X. Li, J. Chen, Y. Shen, Z. Zhang, Y. Guo, X. Chen, M. Zhao, T. Chen, I. Stoica, H. Chen, L. Chen, et al.
+
+SnapStream: efficient long sequence decoding on dataflow accelerators.
+
+arXiv preprint arXiv:2511.03092.
+
+External Links: Link
+
+Cited by: §1.
+
+Li et al. (2025c)
+M. Li, S. Zhang, T. Zhang, H. Duan, Y. Liu, and K. Chen
+
+NeedleBench: evaluating LLM retrieval and reasoning across varying information densities.
+
+Transactions on Machine Learning Research.
+
+Note:
+
+External Links: ISSN 2835-8856,
+Link
+
+Cited by: Appendix A,
+§3,
+§4.1.
+
+Li et al. (2024b)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+
+SnapKV: llm knows what you are looking for before generation.
+
+In Advances in Neural Information Processing Systems 37,
+
+Cited by: §1,
+§2.
+
+Lin et al. (2025)
+C. Lin, J. Tang, S. Yang, H. Wang, T. Tang, B. Tian, I. Stoica, S. Han, and M. Gao
+
+Twilight: adaptive attention sparsity with hierarchical top- pruning.
+
+External Links: 2502.02770,
+Link
+
+Cited by: §5.
+
+Lin et al. (2026)
+H. Lin, ZhiqiBai, X. Zhang, S. Yang, J. Wang, Y. Xu, J. Liu, Y. Zhao, X. Li, Y. Xu, W. Su, and B. Zheng
+
+Reconstructing KV caches with cross-layer fusion for enhanced transformers.
+
+In The Fourteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2.
+
+Liu et al. (2024a)
+D. Liu, M. Chen, B. Lu, H. Jiang, Z. Han, Q. Zhang, Q. Chen, C. Zhang, B. Ding, K. Zhang, et al.
+
+Retrievalattention: accelerating long-context llm inference via vector retrieval.
+
+arXiv preprint arXiv:2409.10516.
+
+Cited by: §2.
+
+Liu et al. (2021)
+L. Liu, Z. Qu, Z. Chen, Y. Ding, and Y. Xie
+
+Transformer acceleration with dynamic sparse attention.
+
+arXiv preprint arXiv:2110.11299.
+
+External Links: Link
+
+Cited by: §2.
+
+Liu et al. (2023)
+T. Liu, C. Xu, and J. McAuley
+
+Repobench: benchmarking repository-level code auto-completion systems.
+
+arXiv preprint arXiv:2306.03091.
+
+Cited by: §1.
+
+Liu et al. (2024b)
+Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu
+
+KIVI: a tuning-free asymmetric 2bit quantization for kv cache.
+
+In Proceedings of the 41st International Conference on Machine Learning,
+
+Cited by: §1,
+§2.
+
+Luo et al. (2024)
+Q. Luo, Y. Ye, S. Liang, Z. Zhang, Y. Qin, Y. Lu, Y. Wu, X. Cong, Y. Lin, Y. Zhang, et al.
+
+Repoagent: an llm-powered open-source framework for repository-level code documentation generation.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing: System Demonstrations,
+
+pp. 436–464.
+
+Cited by: §1.
+
+Malinovskii et al. (2024)
+V. Malinovskii, A. Panferov, I. Ilin, H. Guo, P. Richtárik, and D. Alistarh
+
+Pushing the limits of large language model quantization via the linearity theorem.
+
+arXiv preprint arXiv:2411.17525.
+
+Cited by: Appendix E,
+§4.1,
+§4.3,
+§5.
+
+Micikevicius et al. (2022)
+P. Micikevicius, D. Stosic, N. Burgess, M. Cornea, P. Dubey, R. Grisenthwaite, S. Ha, A. Heinecke, P. Judd, J. Kamalu, N. Mellempudi, S. Oberman, M. Shoeybi, M. Siu, and H. Wu
+
+FP8 formats for deep learning.
+
+External Links: 2209.05433,
+Link
+
+Cited by: §4.1.
+
+NVIDIA Corporation (2026)
+NVIDIA Corporation
+
+Speed up inference with sota quantization techniques in tensorrt-llm.
+
+Note: https://nvidia.github.io/TensorRT-LLM/blogs/quantization-in-TRT-LLM.htmlDescribes post-training quantization (FP8, INT8, INT4), performance/accuracy trade-offs, and KV-cache quantization in TensorRT-LLM. Accessed: 2026-04-08
+
+Cited by: §2.
+
+NVIDIA (2022)
+NVIDIA
+
+NVIDIA, arm, and intel publish fp8 specification for standardization as an interchange format for ai.
+
+Note: https://developer.nvidia.com/blog/nvidia-arm-and-intel-publish-fp8-specification-for-standardization-as-an-interchange-format-for-ai/
+
+Cited by: Appendix E.
+
+NVIDIA (2025)
+NVIDIA
+
+Optimizing inference for long context and large batch sizes with nvfp4 kv cache.
+
+Note: https://developer.nvidia.com/blog/optimizing-inference-for-long-context-and-large-batch-sizes-with-nvfp4-kv-cache/
+
+Cited by: §4.1.
+
+NVIDIA (2026)
+NVIDIA
+
+Quantization.
+
+Note: https://nvidia.github.io/TensorRT-LLM/features/quantization.htmlAccessed: 2026-04-08
+
+Cited by: §1.
+
+Pekelis et al. (2024)
+L. Pekelis, M. Feil, F. Moret, M. Huang, and T. Peng
+
+Llama 3 gradient: a series of long context models.
+
+Note: https://gradient.ai/blog/scaling-rotational-embeddings-for-long-context-language-modelsGradient AI blog post
+
+Cited by: §2.
+
+Penedo et al. (2024)
+G. Penedo, H. Kydlíček, L. B. allal, A. Lozhkov, M. Mitchell, C. Raffel, L. V. Werra, and T. Wolf
+
+The fineweb datasets: decanting the web for the finest text data at scale.
+
+External Links: 2406.17557,
+Link
+
+Cited by: Appendix B.
+
+Peng et al. (2024)
+B. Peng, J. Quesnelle, H. Fan, and E. Shippole
+
+YaRN: efficient context window extension of large language models.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2.
+
+Qiao et al. (2025)
+A. Qiao, Z. Yao, S. Rajbhandari, and Y. He
+
+SwiftKV: fast prefill-optimized inference with knowledge-preserving model transformation.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.),
+
+Suzhou, China, pp. 25734–25753.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-332-6
+
+Cited by: §4.1.
+
+Sheng et al. (2023)
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, D. Y. Fu, Z. Xie, B. Chen, C. Barrett, J. E. Gonzalez, P. Liang, C. Re, I. Stoica, and C. Zhang
+
+FlexGen: high-throughput generative inference of large language models with a single gpu.
+
+In Proceedings of the 40th International Conference on Machine Learning,
+
+Cited by: §1,
+§1,
+§2.
+
+Shi et al. (2014)
+M. Shi, T. Furon, and H. Jégou
+
+A group testing framework for similarity search in high-dimensional spaces.
+
+In Proceedings of the 22nd ACM International Conference on Multimedia,
+
+MM ’14, New York, NY, USA, pp. 407–416.
+
+External Links: ISBN 9781450330633,
+Link,
+Document
+
+Cited by: Appendix E.
+
+Shutova et al. (2025a)
+A. Shutova, V. Malinovskii, V. Egiazarian, D. Kuznedelev, D. Mazur, S. Nikita, I. Ermakov, and D. Alistarh
+
+Cache me if you must: adaptive key-value quantization for large language models.
+
+In Proceedings of the 42nd International Conference on Machine Learning, A. Singh, M. Fazel, D. Hsu, S. Lacoste-Julien, F. Berkenkamp, T. Maharaj, K. Wagstaff, and J. Zhu (Eds.),
+
+Proceedings of Machine Learning Research, Vol. 267, pp. 55451–55473.
+
+External Links: Link
+
+Cited by: §2,
+§4.1.
+
+Shutova et al. (2025b)
+A. Shutova, V. Malinovskii, V. Egiazarian, D. Kuznedelev, D. Mazur, N. Surkov, I. Ermakov, and D. Alistarh
+
+Cache me if you must: adaptive key-value quantization for large language models.
+
+arXiv preprint arXiv:2501.19392.
+
+Cited by: §1.
+
+Sun et al. (2025)
+H. Sun, L. Chang, W. Bao, S. Zheng, N. Zheng, X. Liu, H. Dong, Y. Chi, and B. Chen
+
+ShadowKV: kv cache in shadows for high-throughput long-context llm inference.
+
+In Proceedings of the 42nd International Conference on Machine Learning,
+
+Cited by: §1,
+§2,
+§3,
+§4.
+
+Tang et al. (2024)
+J. Tang, Y. Zhao, K. Zhu, G. Xiao, B. Kasikci, and S. Han
+
+Quest: query-aware sparsity for efficient long-context llm inference.
+
+In Proceedings of the 41st International Conference on Machine Learning,
+
+Cited by: §1,
+§2.
+
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+
+Attention is all you need.
+
+In Advances in Neural Information Processing Systems, I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.),
+
+Vol. 30, pp. .
+
+External Links: Link
+
+Cited by: §2.
+
+vLLM Project (2026)
+vLLM Project
+
+Quantized KV cache.
+
+Note: https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache/Accessed: 2026-04-08
+
+Cited by: §1.
+
+vLLM Team (2026)
+vLLM Team
+
+Quantized kv cache.
+
+Note: https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache/Accessed: 2026-04-08
+
+Cited by: §2.
+
+Wang et al. (2024)
+M. Wang, L. Chen, F. Cheng, S. Liao, X. Zhang, B. Wu, H. Yu, N. Xu, L. Zhang, R. Luo, et al.
+
+Leave no document behind: benchmarking long-context llms with extended multi-doc qa.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 5627–5646.
+
+Cited by: Appendix A,
+§1,
+§3.
+
+Wei et al. (2025)
+J. Wei, Z. Sun, S. Papay, S. McKinney, J. Han, I. Fulford, H. W. Chung, A. T. Passos, W. Fedus, and A. Glaese
+
+BrowseComp: a simple yet challenging benchmark for browsing agents.
+
+External Links: 2504.12516,
+Link
+
+Cited by: §3.
+
+Wu et al. (2024)
+D. Wu, H. Wang, W. Yu, Y. Zhang, K. Chang, and D. Yu
+
+LongMemEval: benchmarking chat assistants on long-term interactive memory.
+
+CoRR.
+
+External Links: 2410.10813,
+Link
+
+Cited by: §3.
+
+Wu et al. (2025)
+Y. Wu, H. Wu, and K. Tu
+
+A systematic study of cross-layer kv sharing for efficient llm inference.
+
+External Links: 2410.14442,
+Link
+
+Cited by: §2.
+
+Xiao et al. (2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+
+Efficient streaming language models with attention sinks.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1,
+§2,
+2nd item.
+
+Yang et al. (2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §4.1.
+
+Yang et al. (2025b)
+A. Yang, B. Yu, C. Li, D. Liu, F. Huang, H. Huang, J. Jiang, J. Tu, J. Zhang, J. Zhou, J. Lin, K. Dang, K. Yang, L. Yu, M. Li, M. Sun, Q. Zhu, R. Men, T. He, W. Xu, W. Yin, W. Yu, X. Qiu, X. Ren, X. Yang, Y. Li, Z. Xu, and Z. Zhang
+
+Qwen2.5-1m technical report.
+
+External Links: 2501.15383,
+Link
+
+Cited by: §2.
+
+Yang et al. (2024)
+Y. Yang, Z. Cao, Q. Chen, L. Qin, D. Yang, H. Zhao, and Z. Chen
+
+Kvsharer: efficient inference via layer-wise dissimilar kv cache sharing.
+
+arXiv preprint arXiv:2410.18517.
+
+Cited by: §2.
+
+Yuan et al. (2025a)
+J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. Wei, L. Wang, Z. Xiao, Y. Wang, C. Ruan, M. Zhang, W. Liang, and W. Zeng
+
+Native sparse attention: hardware-aligned and natively trainable sparse attention.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 23078–23097.
+
+Cited by: §2.
+
+Yuan et al. (2025b)
+T. Yuan, X. Ning, D. Zhou, Z. Yang, S. Li, M. Zhuang, Z. Tan, Z. Yao, D. Lin, B. Li, G. Dai, S. Yan, and Y. Wang
+
+LV-eval: a balanced long-context benchmark with 5 length levels up to 256k.
+
+In Second Conference on Language Modeling,
+
+External Links: Link
+
+Cited by: §3.
+
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Re, C. Barrett, Z. Wang, and B. Chen
+
+H2O: heavy-hitter oracle for efficient generative inference of large language models.
+
+In Advances in Neural Information Processing Systems 36,
+
+Cited by: §1,
+§1,
+§2.
+
+Zheng et al. (2023)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, et al.
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+Advances in Neural Information Processing Systems 36, pp. 46595–46623.
+
+Cited by: §3.1.
+
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. L. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng
+
+Sglang: efficient execution of structured language model programs.
+
+In Conference on Neural Information Processing Systems (NeurIPS),
+
+External Links: Document
+
+Cited by: §5.
+
+Appendix A Preliminary Benchmark Exploration & Configurations
+
+Before our primary investigation in Sections 3 & 4, we ran preliminary experiments on a range of popular benchmarks with KV offloading. Notably, the main results of ShadowKV reproduce easily and perfectly from the official code: Llama 3.1 8B consistently scores near-losslessly on RULER and select LongBench subtasks. We then apply the same code to evaluate on more context-intensive benchmarks: Loong [54] and MultiNeedle. We use the official LOONG codebase44
+4
+
+https://github.com/mozerwang/loong using gpt-4-turbo for LLM-as-a-judge. The results for Loong are summarized in Table 1: the context-intensive benchmark (“Leave No Document Behind”) shows significant accuracy drawdowns across all levels with default ShadowKV hyperparameters. This aligns with our observations and makes Loong an important example of context-intensive multi-document QA. The only reason why we prefer MultiNeedle for Sections 4.1- 4.3 is that evaluating on Loong incurs significant API costs for LLM-as-a-Judge, making it prohibitive to run extensive budget sweeps necessary for our analysis.
+
+Table 1: Comparison of Full Attention and ShadowKV on Loong for Llama-3.1-8B-Instruct. Level 1: Spotlight Locating, level 2: Comparison, Level 3: Clustering, Level 4: Chain of Reasoning
+
+Level 1
+Level 2
+Level 3
+Level 4
+
+Method
+Score
+Perfect
+Score
+Perfect
+Score
+Perfect
+Score
+Perfect
+
+Full Attention
+63.24
+0.53
+37.20
+0.19
+25.63
+0.01
+37.27
+0.18
+
+ShadowKV
+46.15
+0.37
+25.81
+0.12
+15.70
+0.01
+24.75
+0.06
+
+Our MultiNeedle evaluations use the MultiNeedle Retrieval 128K configuration from NeedleBench v2 [26] using OpenCompass (commit id 1246210). This setup hides 11 synthetic “needles” among 128K prompt tokens and scores how many of those the model finds correctly (exact match accuracy). We use needlebench_v2_multi_retrieval_128k configuration. For experimental consistency, we use the same sample of 100 english samples instead of drawing random needles for each experiment.
+
+Table 2: Generation and extraction prompts used for each data type in Text2JSON.
+
+Subset
+
+Doctors
+
+Movies
+
+Organizations
+
+Products
+
+Generation
+
+Generate entries, each starting with a newline, in the following format:
+
+Name Surname, Doctor Specialization, City
+
+Suggest unique movies, each starting with a newline, in the following format:
+
+Movie title, Country of Production, Year of Production
+
+Generate 200 organization cards, each starting with a newline, in the following format:
+
+The name of the organization, address, site
+
+Generate 10 product cards in the following format:
+
+Product name: <Product name>
+
+* Color: <Color>
+
+* Material: <Material>
+
+* Length: <Length>
+
+* Category: <Category>
+
+Extraction
+
+Find all doctor review cards in the text and compose a JSON object with the following fields: name — doctor’s name; specialization — specialization; city — city. There is no need to reproduce the reviews. Output only JSON. Do not skip cards and do not produce duplicates.
+
+Find all movie review cards in the text and compose a JSON object with the following fields: name — movie title; country — country of production; year — year of release. There is no need to reproduce the reviews. Output only JSON. Do not skip cards and do not produce duplicates.
+
+Find all organization cards in the text and compose a JSON object with the following fields: name — the name of the organization (exactly as written in the card); address — the address; site — the website. There is no need to reproduce the reviews. Output only JSON. Do not skip cards and do not produce duplicates.
+
+Find all product cards in the text and compose a JSON object with the following fields: name — product name (exactly as written in the card); material — material; color — color. There is no need to reproduce the descriptions. Output only JSON. Do not skip cards and do not produce duplicates.
+
+Appendix B Text2JSON construction and evaluation
+
+Text2JSON is constructed from four types of entries: organization cards, doctor cards, movie review cards, and product cards. All entries are generated by GPT-5.2 using predefined prompts.
+Importantly, the benchmark contains no personal data. To build each benchmark instance, we randomly sample between 3 and 20 entries from each category and between 3 and 10 passages from FineWeb-Edu [42] and moderate the results manually. These segments are then concatenated using \n\n as a separator. We provide specific prompts for each type Table 2.
+
+Given such an input, the model is required to produce a valid JSON object containing all entries of the target type, in arbitrary order.
+We avoid LLM-as-a-Judge and use a deterministic, name-anchored metric.
+Each predicted/gold record is a dictionary with a unique name key and two additional fields.
+Evaluation first aligns prediction and gold by exact name match. Unmatched predicted names are treated as false positives, and unmatched gold names are false negatives.
+Each matched entry receives a score in : it gets 1.0 when all required fields are present and all values are correct, and it is reduced when fields are missing or values are incorrect. These per-entry scores are summed and then normalized by the total number of matched entries plus false positives and false negatives.
+This is a soft IoU-style entity metric: the denominator penalizes missing/spurious entities (set overlap behavior), while the numerator gives partial credit for attribute correctness on matched entities.
+
+Appendix C Additional Experiments for Section 4.1
+
+Figure 5: Evaluation of ShadowKV offloading with different KV compression strategies for Qwen3-4B-Instruct-2507 on MultiNeedle (left), Qwen3-30B-A3B-Instruct-2507 on Text2JSON (right) and Llama3.1-8B on Text2Json (bottom). The X axis denotes the total percentage of tokens loaded (sparse, outlier and local tokens), see Section 4.1.
+
+Appendix D Additional Experiments for Section 4.2
+
+Figure 6: Evaluation of ShadowKV (w/o SVD compression) offloading for Section 4.2 with varying outlier budget (left) and local window (right) for Llama-3.1-8B-Instruct and Qwen3-4B-Instruct-2507 on Text2Json dataset.
+
+Appendix E Residual Quantization of Landmarks
+
+Low-bit landmark compression can noticeably degrade performance, as shown in Figures 3 and 4 for the 1-bit setting. To achieve a better trade-off between the substantial performance degradation of 1-bit quantization and the near-lossless behavior of higher-precision representations, we propose residual quantization for landmarks. Specifically, we first construct landmarks at higher precision (e.g., 4-bit HIGGS) using a larger chunk size (the default chunk size of 8 used in ShadowKV), and then quantize the residual between the original keys and the quantized landmarks to a low bit width (1 bit). This configuration has the same memory footprint as 1.5-bit quantized landmarks with a chunk size of 1. We report the evaluation results of residual-quantized landmarks and vanilla HIGGS in Figure 7. The results show that residual quantization achieves performance close to that of 2-bit landmarks while incurring 25% less memory overhead.
+
+Note that residual quantization does not require reconstructing the landmarks in order to compute the highest-scoring dot products. Let , where denotes the chunk-average landmarks and the low-bit residuals. Then the query–key dot products can be written as
+
+That is, the dot products can be computed by first multiplying the query by the quantized landmarks, then repeating the resulting scores for all vectors within each chunk, and finally adding the dot product between the query and the residuals. For HIGGS-quantized landmarks, this procedure can be implemented using existing inference kernels [35].
+
+An even faster approximate top- procedure can be derived from residual quantization methods used in nearest-neighbor search [18], although related ideas had appeared earlier in other forms [46]. In our setting, the algorithm first selects a subset of landmarks with high dot products for the current query and then computes residual contributions only for keys belonging to the chunks associated with those selected landmarks.
+
+Figure 7: Comparison of 1.5-bit residual landmark quantization with 1-bit and 2-bit HIGGS. Results are shown for Llama-3.1-8B-Instruct on MultiNeedle (left), and for Qwen-3-4B-Instruct-2507 (middle) and Qwen3-30B-A3B-Instruct-2507 (right) on Text2JSON.
+
+231138
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

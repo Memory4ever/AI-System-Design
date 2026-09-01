@@ -156,6 +156,24 @@ grad(A), grad(B)    enabled
 
 Rank 也不等于任务“本质维度”的直接测量。训练成功只说明该配置足以形成某个有用 update，不证明所有任务更新都严格低秩。
 
+### Adapter 内的条件容量不能使用全局统一裁剪规则
+
+当 LoRA adapter 自身引入多个 experts 时，固定保留全部 experts 最容易复现，也避免错误删除稀有能力；随着 module 数量增长，统一 mask 又会忽略不同层的 routing concentration 与 drift。受限的演进路径是先完成 exploratory training，再按 module 分别读取 Gini、routing entropy 与 drift asymmetry，提出各自的 expert pruning mask：
+
+```text
+exploratory adapter training
+-> per-module routing and drift evidence
+-> module-specific pruning proposal
+-> quality / coverage replay
+-> commit reversible mask or restore experts
+```
+
+这改变的是 adapter 内条件容量的部署状态，不是 base MoE routing，也不证明高 rank 或更多 experts 必然有用。探索阶段本身有成本，统计噪声或长尾样本不足会错误删除必要 expert。每个 module 因此要保留最小 expert floor、mask provenance 与 rollback artifact；drift 或 quality Gate 失败时恢复原 adapter experts。作者结果只覆盖其模型与任务，不能外推到任意 base MoE、adapter 或 Serving workload。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-26340:start -->
+Adapter expert pruning 的 authority 属于逐 module evidence 与可回滚 mask，而不是一个跨层全局阈值。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-26340:end -->
+
 Update subspace 也可以从训练前静态选择，演进为由当前 activation 动态选择。以 attention Q/K feature magnitude
 生成 transient row mask，可以让 optimizer 只更新当步被选中的 rows，而不改变 inference graph：
 
@@ -427,6 +445,8 @@ LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters
 QLoRA 继续压缩冻结基座存储，merge 与动态加载则把训练选择传播到 Serving。LoRA 的完整系统价值不只在“参数少”，而在 base、adapter、objective、checkpoint 和 runtime 之间形成可管理契约。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-26340`（Status: Experimental）：exact-v1 支持 LoRA-MoE exploratory training 后的 per-module Gini、routing entropy 与 drift-aware expert pruning；不证明该策略适用于任意 base MoE、adapter、任务或生产 SLO。https://arxiv.org/abs/2604.26340v1
 
 - Code2LoRA（repository-conditioned generated adapter；Status: Experimental）:
   https://arxiv.org/abs/2606.06492

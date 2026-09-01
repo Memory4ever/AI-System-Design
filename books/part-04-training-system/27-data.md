@@ -581,6 +581,24 @@ edge authenticity、storage/cardinality 与敏感 source disclosure 问题。小
 manifest + content hash；typed graph 只在跨版本、多 derivation 和治理查询中值得。Tracing the Roots 的作者方法
 提供 Experimental lineage evidence，不证明自动抽取的所有边都真实完整。
 
+### 长交互历史需要把 Event Time 与物化边界分开
+
+把每个用户的完整 interaction history 预先物化成 fat row，在序列短、访问热点稳定时读路径简单；历史增长后，每次更新和训练读取都会重复搬运旧状态，并可能把 observation time 之后的事件误带入样本。更稳的分支把历史保存为 normalized immutable events，记录 temporal boundary、length 与 checksum；训练样本按 event time 做 bounded range scan，只为近期 mutable window 保留物化 snapshot：
+
+```text
+immutable event history + event time
+-> bounded range selected by sample cutoff
+-> length / checksum / temporal invariant
+-> packed training sample
+-> lineage to source range and snapshot revision
+```
+
+这样把“样本当时能看见什么”变成可检查 contract，并减少长历史的重复存储；代价是随机读、索引维护和 tail latency。证据来自推荐训练 workload，不提供通用数据库或在线 Serving 结论。Checksum 或 temporal invariant 失败时必须停止样本生成，回退冻结 fat-row snapshot；短序列和热点窗口继续预物化仍然合理，不能因规范化历史而一律取消。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-24806:start -->
+训练样本的 lineage 必须绑定 event-time cutoff 与实际读取 range，防止 future event 静默进入历史特征。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-24806:end -->
+
 一个 dataset version 不能只由 bucket path 表示。至少需要记录：
 
 - Source snapshot、抓取时间、许可与 provenance。
@@ -781,6 +799,8 @@ Raw sources
 provenance、合规和可复现性。数据决定能力生产的上游边界，也决定后续任何 loss 下降究竟代表什么。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-24806`（Status: Experimental）：exact-v1 支持 normalized immutable UIH、event-time bounded range scan、length/checksum invariant 与近期 snapshot 物化分支；证据绑定推荐训练 workload，不证明任意数据库、访问模式或线上 SLO。https://arxiv.org/abs/2604.24806v1
 
 - SIEVE（primitive × transition coverage 与代表性子集；Status: Experimental）:
   https://arxiv.org/abs/2607.06442v1

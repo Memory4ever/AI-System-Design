@@ -1,0 +1,1592 @@
+Learning to Learn-at-Test-Time: Language Agents with Learnable Adaptation Policies
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+Test-Time Learning
+
+LLMs as Optimizers & Prompt Evolution
+
+Meta-Learning
+
+3 Methodology
+
+3.1 Test-Time Learning Formulation
+
+3.2 Learnable Adaptation Policies for Language Agents
+
+3.3 Evolutionary Meta-Training
+
+4 Experiments
+
+4.1 Experimental Setup
+
+4.2 Main Results (RQ1)
+
+4.3 Analysis of OOD Generalization (RQ2)
+
+4.4 Analysis of Emergent Adaptation Policies (RQ3)
+
+5 Conclusion
+
+References
+
+A Expert Selection and Score Normalization
+
+Illustrative example.
+
+B Representative Optimized Meta-Prompts
+
+B.1 Jericho GPT-5 Prompt
+
+B.2 WebArena-Lite Gemini 3 Flash Prompt
+
+C Emergent Properties of the Optimized Meta-Prompt
+
+D Meta-Training Optimization Trajectory
+
+E Case Studies
+
+E.1 Detective (ID Game): Actionable vs. Generic Feedback
+
+E.2 Temple (ID Game): Diagnosing Non-Obvious Blockers
+
+E.3 Transfer to OOD Games: Structural Rules Generalize
+
+License: CC BY 4.0
+
+arXiv:2604.00830v1 [cs.LG] 01 Apr 2026
+
+Learning to Learn-at-Test-Time:
+
+Language Agents with Learnable Adaptation Policies
+
+Zhanzhi Lou
+
+Affiliation: National University of Singapore
+
+Email: hui.chen@nus.edu.sg
+
+  
+Hui Chen
+
+Affiliation: National University of Singapore
+
+Email: dcsbhk@nus.edu.sg
+
+  
+Yibo Li
+
+Affiliation: National University of Singapore
+
+  
+Qian Wang
+
+Affiliation: National University of Singapore
+
+  
+Bryan Hooi
+
+Affiliation: National University of Singapore
+
+Abstract
+
+Test-Time Learning (TTL) enables language agents to iteratively refine their performance through repeated interactions with the environment at inference time. At the core of TTL is an adaptation policy that updates the actor policy based on experience from previous episodes, thereby improving future behavior. Existing methods rely on fixed, hand-crafted adaptation policies rather than optimizing them for downstream improvement. We argue that optimal adaptation policies should be learned from task environments, not hand-engineered based on human intuition. To achieve this, we introduce Meta-TTL, a framework that formulates the discovery of effective adaptation policies as a bi-level optimization problem. Within this framework, the inner loop executes the standard TTL process, measuring how effectively a candidate adaptation policy helps an agent correct errors across sequential episodes. Guided by the agent’s performance, the outer loop employs evolutionary search over a diverse distribution of training tasks to continually optimize the adaptation policy. We evaluate Meta-TTL on Jericho and WebArena-Lite across both in-distribution (ID) and out-of-distribution (OOD) settings, using multiple meta-agent backbones. Results on both benchmarks show that Meta-TTL consistently outperforms hand-crafted baselines, suggesting that the optimized adaptation policy encodes transferable strategies that generalize beyond the training task distribution. Code is available at https://github.com/zzzlou/meta-ttl.
+
+1 Introduction
+
+Large Language Model (LLM) agents have demonstrated strong zero-shot capabilities across a wide range of tasks. In practice, however, agents deployed in novel environments often struggle to adapt on the fly (Gao et al., 2026; Fang et al., 2025). Consider a human player encountering an unfamiliar video game: they fail, diagnose what went wrong, adjust their strategy, and try again, often improving with each iteration. This capacity for Test-Time Learning (TTL), the ability to accumulate experience over repeated interactions and achieve progressively better performance (Wu et al., 2024; He et al., 2025; Wei et al., 2025), remains limited in current LLM agents. Without parameter updates or ground-truth supervision, they often treat every episode as an independent zero-shot trial, repeating the same errors regardless of how many attempts they are given (Jiang et al., 2026a).
+
+At the core of TTL is an adaptation policy that updates the actor policy based on accumulated experience. Unlike the actor policy, which determines the agent’s behavior within an episode, the adaptation policy determines how the actor policy evolves across episodes. However, most existing methods, such as Reflexion (Shinn et al., 2023), perform adaptation by relying purely on the pretrained capabilities of the underlying LLM. Fundamentally, the adaptation policy serves as a learning algorithm: it maps past experience to future behavioral improvement. Such capabilities require dedicated optimization (Thrun and Pratt, 1998; Minsky, 1995) that general-purpose language modeling does not provide (Radford et al., 2019; Li et al., 2024; Brown et al., 2020).
+
+In this work, we take the view that effective test-time adaptation is itself a learnable capability rather than a byproduct of a general-purpose LLM (Liu and van der Schaar, 2025). Instead of hand-engineering the agent’s cross-episode learning rule, we seek to learn the adaptation policy from task environments by optimizing it for downstream improvement at test time.
+
+To this end, we propose Meta-TTL, a framework that casts TTL as a meta-learning problem: given a distribution of training tasks, we formulate the discovery of effective adaptation policies as a bi-level optimization. Concretely, this bi-level structure consists of an inner TTL loop and an outer meta-training loop. In the inner loop, an LLM agent interacts with the environment over a series of episodes and adapts based on prior attempts, measuring how well a candidate adaptation policy helps the agent improve across episodes. In the outer loop, we optimize over a distribution of training tasks through evolutionary search: we iteratively evolve candidate policies, evaluate them through the inner loop, and retain those that produce stronger TTL performance. At test time, the learned adaptation policy is frozen and applied zero-shot to unseen tasks.
+
+A key distinction from prior work lies in what is being optimized (Figure 1). Existing TTL methods treat the adaptation mechanism—how the actor policy is updated between episodes—as a fixed, hand-designed component, and focus on improving the actor’s behavior within a single task session through ad-hoc verbal feedback (Shinn et al., 2023; Madaan et al., 2023) or memory accumulation (Packer et al., 2024; Xu et al., 2025). We instead treat the adaptation mechanism itself as the object of optimization: Meta-TTL learns across a distribution of training tasks how to adapt effectively, and deploys the resulting adaptation policy zero-shot at test time.
+
+Figure 1: Adaptation policies determine how the agent uses its experience up to episode to update the actor before episode . Existing methods use a fixed adaptation rule, whereas Meta-TTL learns the adaptation policy across tasks and applies it zero-shot at test time.
+
+Our contributions are as follows:
+
+•
+
+We formalize Test-Time Learning as a meta-learning problem over adaptation policies, providing a principled framework for optimizing how agents update themselves across episodes for self-improvement.
+
+•
+
+We propose Meta-TTL, which uses evolutionary optimization on a task distribution to learn an adaptation policy that generalizes to unseen environments. In our instantiation, this policy is realized as a natural-language meta-prompt that turns generic self-correction into concrete adaptation instructions.
+
+•
+
+We evaluate our framework on two language-based sequential decision-making settings and demonstrate that Meta-TTL significantly outperforms heuristic TTL baselines on both in-distribution and out-of-distribution tasks, achieving improvement in average game score on Jericho ID () and up to relative improvement in task success rate on WebArena-Lite ID (), with both gains generalizing to out-of-distribution tasks, validating that the learned adaptation policy acquires transferable adaptation strategies that generalize to unseen environments.
+
+2 Related Work
+
+Test-Time Learning
+
+Test-Time Learning (TTL) improves post-deployment performance through additional computation during deployment (Jiang et al., 2026a). Existing methods fall into two broad groups. Gradient-based methods update model weights at test time, either by fine-tuning on training examples (Akyürek et al., 2025; Acikgoz et al., 2025; Zweiger et al., 2025; Ye et al., 2026) or by test-time reinforcement learning (Zuo et al., 2025; Yuksekgonul et al., 2026). Weight-frozen methods keep model parameters fixed and perform adaptation in external state. Early work adopts the verbal reinforcement learning paradigm (Shinn et al., 2023; Madaan et al., 2023), while later methods store experience in memory to enable persistent adaptation (Wang et al., 2024; Wei et al., 2025; Chhikara et al., 2025; Suzgun et al., 2025; Zhou et al., 2025; Xu et al., 2025). Other work improves by learning the rules of a new environment through interaction (Chen et al., 2026a; Zhang et al., 2025), and EvoTest expands the scope further by evolving the agent configuration as a whole (He et al., 2025).
+
+LLMs as Optimizers & Prompt Evolution
+
+A growing body of work studies how LLMs can search over natural-language instructions. Early approaches such as APE (Zhou et al., 2023) and OPRO (Yang et al., 2024) generate and score candidate prompts iteratively, while evolutionary variants such as PromptBreeder (Fernando et al., 2023),
+EvoPrompt (Guo et al., 2025) and ReEvo (Ye et al., 2024) introduce population-based search with mutation, crossover, and reflective feedback. More recent work scales these ideas: GEPA (Agrawal et al., 2026) applies Pareto-based selection to compound AI systems, AlphaEvolve (Novikov et al., 2025) targets scientific discovery, and EvoX (Liu et al., 2026) co-evolves solutions and search strategies. On the systems side, TextGrad (Yuksekgonul et al., 2024), MetaReflection (Gupta et al., 2024) and ACE (Zhang et al., 2026) optimize compound pipelines through natural-language critiques or aggregated trial reflections. These methods show that experience on a training distribution can be distilled into improved prompts through offline optimization.
+
+Meta-Learning
+
+Meta-learning seeks to extract transferable knowledge from a task
+distribution so that a learner can adapt efficiently to new tasks
+(Thrun and Pratt, 1998; Hospedales et al., 2021). In the context of LLMs,
+in-context learning (Dong et al., 2024) has been viewed as black-box meta-learning, where
+adaptation arises through context conditioning rather than weight
+updates (Brown et al., 2020; Dherin et al., 2025). Earlier work such as STaR (Zelikman et al., 2022) and SCoRe (Kumar et al., 2024) explicitly optimizes self-improvement through self-generated rationales or RL-based self-correction, but does not learn cross-episode adaptation policies for sequential environments. Several
+concurrent works explicitly train self-improvement capabilities via RL:
+LAMER (Jiang et al., 2026b) meta-trains
+exploration strategies,
+MR-Search (Xiao et al., 2026)
+learns cross-episode self-reflection, and
+LSE (Chen et al., 2026b) trains a prompt-editing policy
+with a single-step objective. All three require fine-tuning model
+weights via policy gradients. In contrast, our framework operates entirely in
+prompt space through gradient-free search, yielding a portable text
+artifact that transfers across backbones without retraining.
+
+3 Methodology
+
+We present Meta-TTL, a bi-level framework for learning a adaptation policy for test-time learning in language agents. As shown in Figure 2, Meta-TTL couples an inner TTL loop with an outer meta-training loop. The inner loop adapts the actor across episodes by rewriting its system prompt, while the outer loop improves the meta-prompt by proposing candidates from training rollouts and retaining task-wise experts on validation tasks.
+
+Figure 2: Overview of Meta-TTL. Outer loop (meta-training): A proposer LM reflects and proposes candidate meta-prompts, which are validated locally and globally before entering a per-task expert pool. After training, a single optimized meta-prompt is selected from this pool. Inner loop (test-time learning): The meta-agent, governed by , observes the actor’s trajectory after each episode and generates verbal feedback that rewrites the actor’s system prompt for the next attempt.
+
+3.1 Test-Time Learning Formulation
+
+We model each task instance as a finite-horizon Partially Observable Markov Decision Process (POMDP),
+
+where is the latent state space, is the action space, is the transition kernel, is the observation space, is the task-specific reward function, and is the episode horizon.
+Here, denotes a single task instance, such as one Jericho game or one WebArena task.
+
+A TTL session on task consists of consecutive episodes, denoted by . After each episode, the environment resets to its initial state, so improvement across the session must come from adaptation in the agent rather than from environmental state continuity. We score a session using Weighted Area Under the Learning Curve (W-AUC):
+
+(1)
+
+where is the trajectory of episode , is its return, and is the maximum achievable return for task . Later episodes receive larger weights, rewarding sustained improvement.
+
+3.2 Learnable Adaptation Policies for Language Agents
+
+In a TTL session, two distinct policies interact. The actor policy determines behavior within a single episode—selecting actions given the current observation. The adaptation policy operates at a higher level: after each episode, it observes the accumulated experience and produces an updated actor policy for the next attempt. That is,
+
+(2)
+
+where is the trajectory history up to episode . Existing TTL methods typically hand-design (e.g., a fixed reflection prompt); our goal is to learn from a distribution of training tasks.
+
+In general, an LLM-based actor policy is jointly determined by its weights and its prompt . The adaptation policy can therefore operate along two axes: modifying (gradient-based adaptation) or modifying (prompt-based adaptation). We focus on the prompt-based instantiation, where is frozen and all behavioral change is mediated through system prompt rewriting. This avoids gradient computation at test time, making adaptation lightweight, and casts the problem as a natural-language generation task that can itself be improved through meta-training.
+
+Actor.
+A frozen LLM interacts with the environment. We designate its system prompt as the modifiable component of the context: in episode , the actor executes . Since is fixed, updating is the sole mechanism for changing the actor’s behavior across episodes.
+
+Meta-Agent.
+We instantiate the adaptation policy as a separate LLM governed by a meta-prompt . After episode , the meta-agent observes the trajectory history and generates the updated system prompt:
+
+(3)
+
+The meta-prompt fully specifies the adaptation policy: it determines what aspects of past experience the meta-agent attends to, how it diagnoses failures, and what form of guidance it produces. The learnable component is therefore itself—rather than hand-crafting it or relying on fixed heuristics, we optimize it through meta-training (§3.3).
+
+3.3 Evolutionary Meta-Training
+
+The goal of meta-training is to find a meta-prompt that maximizes expected TTL performance on the training tasks:
+
+(4)
+
+where denotes the TTL session on task run with meta-prompt .
+
+Algorithm 1 defines the RunTTL inner loop and Algorithm 2 shows the outer meta-training loop. The expert pool is initialized by scoring the seed prompt on each validation task, and denotes W-AUC in our experiments.
+
+Algorithm 1 RunTTL: Runs a TTL session consisting of episodes
+
+1:
+
+Meta-prompt ; task ; initial actor prompt ; episode budget
+
+2:
+
+Adapt: meta-agent call that generates an updated actor prompt given history (Eq. 3)
+
+3:
+
+for do
+
+4:
+
+    execute episode under current actor prompt
+
+5:
+
+  if then
+
+6:
+
+     meta-agent rewrites actor prompt for next episode
+
+7:
+
+  end if
+
+8:
+
+end for
+
+9:
+
+return
+
+Algorithm 2 Evolutionary Meta-Training of the Adaptation Policy
+
+1:
+
+Expert pool from seed meta-prompt ; training tasks ; validation tasks ; budget
+
+2:
+
+for do
+
+3:
+
+  Sample and
+
+4:
+
+    run TTL session with the parent prompt
+
+5:
+
+    reflect on parent run; propose candidate
+
+6:
+
+    local validation on the same task
+
+7:
+
+  ;
+
+8:
+
+  if then
+
+9:
+
+   continue  discard if there is no local improvement
+
+10:
+
+  end if
+
+11:
+
+  for do  global validation on all validation tasks
+
+12:
+
+   
+
+13:
+
+   
+
+14:
+
+   if then
+
+15:
+
+       Expert Pool update; see §3.3
+
+16:
+
+   end if
+
+17:
+
+  end for
+
+18:
+
+end for
+
+19:
+
+ select the top expert for deployment
+
+20:
+
+return
+
+Proposal and Local Validation.
+Each iteration samples a parent meta-prompt from the current expert pool and a training task from , and runs a TTL session on that task with the meta-agent governed by the sampled meta-prompt (Algorithm 2, lines 2–3). The proposer LLM then reads the resulting session and proposes a revised candidate (line 4). This candidate is re-evaluated on the same task; only candidates that improve W-AUC on that task proceed to global validation (lines 5–8).
+
+Expert Pool.
+Similar to the per-task candidate tracking in GEPA (Agrawal et al., 2026), the expert pool stores the best meta-prompt found so far for each task in . A candidate that passes the local validation is evaluated on all validation tasks and replaces the current expert for every task on which it achieves a new best score (Algorithm 2, lines 10–16).
+
+Expert Selection.
+After the meta-training budget is exhausted, the expert pool contains a set of specialized meta-prompts. We select a single meta-prompt for deployment by choosing the expert with the highest average validation score. When per-task reward scales differ substantially across the benchmark, we normalize via per-task z-scores before averaging to prevent easy-to-improve tasks from dominating the selection (details in Appendix A).
+
+Evaluation.
+
+At test time, is frozen and deployed on tasks from the held-out set . The meta-agent updates the actor’s system prompt between episodes exactly as during training, but itself is no longer modified.
+
+4 Experiments
+
+We evaluate Meta-TTL on two benchmarks with in-distribution (ID) and out-of-distribution (OOD) splits and study four research questions (RQs):
+
+•
+
+RQ1: Does the meta-learned adaptation policy yield stronger test-time improvement than hand-crafted or unoptimized adaptation?
+
+•
+
+RQ2: Does the learned adaptation policy generalize to out-of-distribution tasks?
+
+•
+
+RQ3: What adaptation strategies emerge from evolutionary meta-training, and what mechanisms underlie their effectiveness?
+
+4.1 Experimental Setup
+
+Benchmarks.
+We evaluate Meta-TTL on two benchmarks: Jericho (Hausknecht et al., 2020), a suite of interactive fiction games, and WebArena-Lite (Zhou et al., 2024), a web-navigation benchmark with binary rewards. For Jericho, we use three ID games (Detective, Zork 1, Temple) for meta-training and ID evaluation, and three OOD games (Balances, Library, Zork 3) for zero-shot generalization. For WebArena-Lite, we split five website domains into ID (Shopping, GitLab, Map) and OOD (Reddit, Shopping Admin), with the ID domains further divided into training, validation, and evaluation subsets. Each Jericho session consists of 6 episodes, while each WebArena-Lite session consists of 5 episodes.
+
+Models and Baselines.
+In all settings, the actor is a frozen Gemini 3 Flash, serving as the actor policy . We evaluate three meta-agent backbones for the adaptation policy —Gemini 3 Flash, GLM-5, and GPT-5—each with its own independently meta-trained . We compare Meta-TTL with four baselines: Static (no adaptation), Reflexion (Shinn et al., 2023), Memory Agent (He et al., 2025), and a Naive meta-agent that uses the same actor–meta-agent architecture but without meta-trained adaptation policy. We report Average Score and W-AUC.
+
+4.2 Main Results (RQ1)
+
+Meta-TTL consistently improves W-AUC relative to hand-crafted and unoptimized adaptation on both benchmarks. On Jericho ID games (Table 1), the gains are large for every meta-agent backbone, reaching 0.180.41 with GPT-5. On WebArena-Lite ID domains (Table 3), gains are smaller but still positive for all three backbones, up to +0.09 W-AUC with GLM-5.
+
+One plausible reason for the gap between benchmarks is the difference in reward granularity. Jericho’s dense, per-action rewards provide a fine-grained optimization signal for meta-training: even a small improvement in the candidate adaptation policy is likely to be reflected in the session score, making it easier for evolutionary search to identify and retain better candidates. On WebArena-Lite, the binary completion signal yields session trajectories that are predominantly all-zero or all-one, offering a much coarser search landscape for the outer loop.
+
+Within Jericho, Meta-TTL improves W-AUC on all six games
+(Tables 1–2). The hardest case is Zork 3, where all methods show declining scores across episodes, suggesting that effective test-time learning is difficult to achieve on this game. Even in this case, the optimized
+adaptation policy yields a higher W-AUC than the Naive baseline (e.g.,
+0.190.24 with GPT-5).
+
+Beyond aggregate W-AUC, the per-episode score trajectories offer a more direct view of how learning unfolds across episodes. Figure 3 shows that Meta-TTL produces notably more stable learning curves on all six Jericho games. This
+holds even on Zork 3, where absolute improvement is limited but the trajectory yielded by Meta-TTL is notably more stable. On Detective, there is a sharper contrast: the Naive
+meta-agent’s first feedback degrades the actor’s score (11489), whereas
+Meta-TTL yields a 2.7 improvement on the same transition (117319;
+Appendix E).
+
+Table 1: Jericho ID Results. Comparison of single-agent baselines and actor+meta-agent methods on meta-training games. Single-agent baselines are shown at the top for reference; within each meta-agent block, Meta-TTL improves overall performance over the Naive variant.
+
+Architecture
+Method
+Avg. Score
+W-AUC
+
+Detective
+Zork 1
+Temple
+Avg.
+Detective
+Zork 1
+Temple
+Avg.
+
+Single-Agent
+Baselines
+
+Static
+91.7
+38.5
+5.0
+45.1
+0.24
+0.11
+0.14
+0.16
+
+Reflexion
+100.7
+41.4
+4.3
+48.8
+0.28
+0.12
+0.12
+0.17
+
+Memory Agent
+103.7
+42.7
+5.0
+50.5
+0.28
+0.13
+0.14
+0.18
+
+Gemini 3 Flash
+(as Meta-Agent)
+
+Naive
+104.9
+40.8
+4.0
+49.9
+0.29
+0.12
+0.11
+0.17
+
+Meta-TTL
+115.6
+43.0
+7.2
+55.3
+0.33
+0.13
+0.22
+0.23
+
+GLM-5
+(as Meta-Agent)
+
+Naive
+122.7
+39.2
+3.7
+55.2
+0.37
+0.11
+0.10
+0.19
+
+Meta-TTL
+224.0
+47.3
+7.4
+92.9
+0.68
+0.14
+0.22
+0.35
+
+GPT-5
+(as Meta-Agent)
+
+Naive
+107.9
+38.7
+4.7
+50.4
+0.31
+0.11
+0.13
+0.18
+
+Meta-TTL
+270.5
+53.7
+8.1
+110.8
+0.82
+0.16
+0.24
+0.41
+
+Table 2: Jericho OOD Results. Zero-shot generalization on held-out games, with single-agent baselines shown at the top for reference. Meta-TTL generally improves performance across all three meta-agent backbones.
+
+Architecture
+Method
+Avg. Score
+W-AUC
+
+Balances
+Library
+Zork 3
+Avg.
+Balances
+Library
+Zork 3
+Avg.
+
+Single-Agent
+Baselines
+
+Static
+7.0
+4.0
+1.8
+4.3
+0.13
+0.13
+0.24
+0.17
+
+Reflexion
+7.4
+8.9
+2.0
+6.1
+0.14
+0.32
+0.28
+0.25
+
+Memory Agent
+7.7
+8.0
+1.8
+5.8
+0.15
+0.29
+0.24
+0.23
+
+Gemini 3 Flash
+(as Meta-Agent)
+
+Naive
+7.8
+8.3
+1.6
+5.9
+0.16
+0.30
+0.22
+0.23
+
+Meta-TTL
+8.7
+9.7
+2.0
+6.8
+0.18
+0.36
+0.28
+0.27
+
+GLM-5
+(as Meta-Agent)
+
+Naive
+7.7
+8.9
+1.7
+6.1
+0.15
+0.31
+0.24
+0.23
+
+Meta-TTL
+9.9
+9.3
+1.9
+7.0
+0.21
+0.32
+0.26
+0.26
+
+GPT-5
+(as Meta-Agent)
+
+Naive
+9.4
+8.9
+1.4
+6.6
+0.20
+0.30
+0.19
+0.23
+
+Meta-TTL
+11.2
+10.0
+1.8
+7.7
+0.25
+0.35
+0.24
+0.28
+
+Table 3: WebArena-Lite ID Results. Comparison of single-agent baselines and actor+meta-agent methods on in-distribution domains. Within each meta-agent block, Meta-TTL improves average performance across all meta-agent models.
+
+Architecture
+Method
+Avg. Score
+W-AUC
+
+GitLab
+Map
+Shopping
+Avg.
+GitLab
+Map
+Shopping
+Avg.
+
+Single-Agent
+Baselines
+
+Static
+0.60
+0.48
+0.70
+0.59
+0.60
+0.47
+0.70
+0.59
+
+Reflexion
+0.60
+0.44
+0.68
+0.57
+0.60
+0.46
+0.69
+0.58
+
+Memory Agent
+0.60
+0.46
+0.70
+0.59
+0.60
+0.45
+0.70
+0.58
+
+Gemini 3 Flash
+(as Meta-Agent)
+
+Naive
+0.60
+0.42
+0.70
+0.57
+0.60
+0.47
+0.70
+0.59
+
+Meta-TTL
+0.60
+0.62
+0.74
+0.65
+0.60
+0.66
+0.74
+0.67
+
+GLM-5
+(as Meta-Agent)
+
+Naive
+0.54
+0.42
+0.70
+0.55
+0.52
+0.42
+0.70
+0.55
+
+Meta-TTL
+0.58
+0.60
+0.72
+0.63
+0.59
+0.60
+0.73
+0.64
+
+GPT-5
+(as Meta-Agent)
+
+Naive
+0.58
+0.48
+0.66
+0.57
+0.57
+0.47
+0.66
+0.57
+
+Meta-TTL
+0.58
+0.46
+0.74
+0.59
+0.59
+0.47
+0.76
+0.61
+
+Table 4: WebArena-Lite OOD Results. Zero-shot generalization on out-of-distribution domains, with single-agent baselines shown at the top for reference. Meta-TTL improves OOD average performance for all meta-model backbones.
+
+Architecture
+Method
+Avg. Score
+W-AUC
+
+Reddit
+Shopping Admin
+Avg.
+Reddit
+Shopping Admin
+Avg.
+
+Single-Agent
+Baselines
+
+Static
+0.16
+0.46
+0.31
+0.16
+0.47
+0.32
+
+Reflexion
+0.16
+0.48
+0.32
+0.16
+0.48
+0.32
+
+Memory Agent
+0.16
+0.47
+0.32
+0.16
+0.46
+0.31
+
+Gemini 3 Flash
+(as Meta-Agent)
+
+Naive
+0.14
+0.45
+0.30
+0.15
+0.46
+0.31
+
+Meta-TTL
+0.18
+0.47
+0.33
+0.19
+0.49
+0.34
+
+GLM-5
+(as Meta-Agent)
+
+Naive
+0.17
+0.53
+0.35
+0.17
+0.53
+0.35
+
+Meta-TTL
+0.17
+0.56
+0.37
+0.17
+0.58
+0.38
+
+GPT-5
+(as Meta-Agent)
+
+Naive
+0.16
+0.45
+0.30
+0.16
+0.44
+0.30
+
+Meta-TTL
+0.16
+0.48
+0.32
+0.16
+0.49
+0.33
+
+Figure 3: Per-episode score trajectories on the six Jericho evaluation games. Meta-TTL exhibits clearer upward trends across episodes than the baselines, supporting W-AUC as a metric of sustained test-time improvement.
+
+4.3 Analysis of OOD Generalization (RQ2)
+
+The learned adaptation policy generalizes to out-of-distribution tasks on both benchmarks (Tables 2 and 4). On Jericho, Meta-TTL improves W-AUC on all three held-out games across all meta-agent backbones; with GPT-5, the average rises from 0.23 to 0.28. This includes Zork 3, the most challenging of the three held-out games, where all backbones still record positive gains—suggesting that the learned adaptation policy is not overfit to the training distribution and generalizes well to unseen tasks.
+
+On WebArena-Lite, OOD gains concentrate in Shopping Admin, which improves consistently across all three backbones (+0.03 to +0.05 W-AUC); Shopping Admin shares interface and task structure with the ID Shopping domain. Reddit, by contrast, is structurally unlike any training domain and shows more limited transfer: only Gemini 3 Flash records a meaningful gain (+0.04 W-AUC), while GLM-5 and GPT-5 remain flat. The overall OOD average nonetheless improves for all three backbones, driven primarily by Shopping Admin.
+
+4.4 Analysis of Emergent Adaptation Policies (RQ3)
+
+The optimized consists of task-agnostic adaptation strategies and environment-specific domain knowledge (Appendix C). The adaptation strategies include general strategies such as how the meta-agent should perform credit assignment over episode outcomes, extract and consolidate knowledge from observed trajectories, and balance exploitation of known strategies with disciplined exploration. These strategies appear consistently across both Jericho and WebArena-Lite, suggesting they reflect general principles of effective adaptation rather than surface patterns specific to either benchmark.
+
+Meta-training progressively separated adaptation strategies from domain knowledge. The optimization trajectory (Appendix D) shows that early iterations hardcode environment-specific knowledge into the meta-prompt, achieving strong performance on individual training games but transferring poorly to others. As meta-training continues, cross-task validation in the expert pool drives the adaptation policy to factor into two components: task-agnostic adaptation strategies (as described above) and conditional fact banks that activate domain knowledge only when the current episode log confirms the relevant environment. This factorization emerged from the evolutionary process as a natural consequence of satisfying all validation tasks simultaneously.
+
+The optimized meta-prompt can be viewed abstractly as a natural-language learning algorithm. The adaptation strategies it encodes are general adaptation procedures broadly applicable to agents learning from experience—expressed in natural language and executed by a language model rather than encoded as model weights, making the learned adaptation policy both interpretable and transferable across model backbones. The fact that meta-training discovers these adaptation rules from task performance alone, without hand-engineering their form, suggests that effective adaptation is itself a learnable procedure. Detailed case studies are provided in Appendix E.
+
+5 Conclusion
+
+This paper introduces Meta-TTL, a bi-level framework that learns adaptation policies for test-time learning in language agents through evolutionary meta-training across tasks. Across Jericho and WebArena-Lite, the learned adaptation policy consistently outperforms hand-crafted and unoptimized alternatives and transfers to out-of-distribution environments, while the meta-training process autonomously discovers interpretable adaptation strategies such as explicit credit assignment and disciplined exploration management. These results suggest that how an agent adapts from experience is itself a learnable component, and that progress in language-agent test-time learning may benefit from optimizing the adaptation procedure itself.
+
+References
+
+Acikgoz et al. (2025)
+E. C. Acikgoz, C. Qian, H. Ji, D. Hakkani-Tür, and G. Tur
+
+Self-improving llm agents at test-time.
+
+External Links: 2510.07841,
+Link
+
+Cited by: §2.
+
+Agrawal et al. (2026)
+L. A. Agrawal, S. Tan, D. Soylu, N. Ziems, R. Khare, K. Opsahl-Ong, A. Singhvi, H. Shandilya, M. J. Ryan, M. Jiang, C. Potts, K. Sen, A. Dimakis, I. Stoica, D. Klein, M. Zaharia, and O. Khattab
+
+GEPA: reflective prompt evolution can outperform reinforcement learning.
+
+In The Fourteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2,
+§3.3.
+
+Akyürek et al. (2025)
+E. Akyürek, M. Damani, A. Zweiger, L. Qiu, H. Guo, J. Pari, Y. Kim, and J. Andreas
+
+The surprising effectiveness of test-time training for few-shot learning.
+
+In Forty-second International Conference on Machine Learning,
+
+External Links: Link
+
+Cited by: §2.
+
+Brown et al. (2020)
+T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei
+
+Language models are few-shot learners.
+
+External Links: 2005.14165,
+Link
+
+Cited by: §1,
+§2.
+
+Chen et al. (2026a)
+A. Chen, Z. Liu, J. Zhang, A. Prabhakar, Z. Liu, S. Heinecke, S. Savarese, V. Zhong, and C. Xiong
+
+Grounded test-time adaptation for LLM agents.
+
+In The Fourteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2.
+
+Chen et al. (2026b)
+X. Chen, C. Xu, Y. Wang, B. Liu, Z. Yao, and Y. He
+
+Learning to self-evolve.
+
+External Links: 2603.18620,
+Link
+
+Cited by: §2.
+
+Chhikara et al. (2025)
+P. Chhikara, D. Khant, S. Aryan, T. Singh, and D. Yadav
+
+Mem0: building production-ready ai agents with scalable long-term memory.
+
+External Links: 2504.19413,
+Link
+
+Cited by: §2.
+
+Dherin et al. (2025)
+B. Dherin, M. Munn, H. Mazzawi, M. Wunder, and J. Gonzalvo
+
+Learning without training: the implicit dynamics of in-context learning.
+
+External Links: 2507.16003,
+Link
+
+Cited by: §2.
+
+Dong et al. (2024)
+Q. Dong, L. Li, D. Dai, C. Zheng, J. Ma, R. Li, H. Xia, J. Xu, Z. Wu, T. Liu, B. Chang, X. Sun, L. Li, and Z. Sui
+
+A survey on in-context learning.
+
+External Links: 2301.00234,
+Link
+
+Cited by: §2.
+
+Fang et al. (2025)
+J. Fang, Y. Peng, X. Zhang, Y. Wang, X. Yi, G. Zhang, Y. Xu, B. Wu, S. Liu, Z. Li, Z. Ren, N. Aletras, X. Wang, H. Zhou, and Z. Meng
+
+A comprehensive survey of self-evolving ai agents: a new paradigm bridging foundation models and lifelong agentic systems.
+
+External Links: 2508.07407,
+Link
+
+Cited by: §1.
+
+Fernando et al. (2023)
+C. Fernando, D. Banarse, H. Michalewski, S. Osindero, and T. Rocktäschel
+
+Promptbreeder: self-referential self-improvement via prompt evolution.
+
+External Links: 2309.16797,
+Link
+
+Cited by: §2.
+
+Gao et al. (2026)
+H. Gao, J. Geng, W. Hua, M. Hu, X. Juan, H. Liu, S. Liu, J. Qiu, X. Qi, Y. Wu, H. Wang, H. Xiao, Y. Zhou, S. Zhang, J. Zhang, J. Xiang, Y. Fang, Q. Zhao, D. Liu, Q. Ren, C. Qian, Z. Wang, M. Hu, H. Wang, Q. Wu, H. Ji, and M. Wang
+
+A survey of self-evolving agents: what, when, how, and where to evolve on the path to artificial super intelligence.
+
+External Links: 2507.21046,
+Link
+
+Cited by: §1.
+
+Guo et al. (2025)
+Q. Guo, R. Wang, J. Guo, B. Li, K. Song, X. Tan, G. Liu, J. Bian, and Y. Yang
+
+EvoPrompt: connecting llms with evolutionary algorithms yields powerful prompt optimizers.
+
+External Links: 2309.08532,
+Link
+
+Cited by: §2.
+
+Gupta et al. (2024)
+P. Gupta, S. Kirtania, A. Singha, S. Gulwani, A. Radhakrishna, S. Shi, and G. Soares
+
+MetaReflection: learning instructions for language agents using past reflections.
+
+External Links: 2405.13009,
+Link
+
+Cited by: §2.
+
+Hausknecht et al. (2020)
+M. Hausknecht, P. Ammanabrolu, M. Côté, and X. Yuan
+
+Interactive fiction games: a colossal adventure.
+
+External Links: 1909.05398,
+Link
+
+Cited by: §4.1.
+
+He et al. (2025)
+Y. He, J. Liu, Y. Liu, Y. Li, T. Cao, Z. Hu, X. Xu, and B. Hooi
+
+EvoTest: evolutionary test-time learning for self-improving agentic systems.
+
+External Links: 2510.13220,
+Link
+
+Cited by: §1,
+§2,
+§4.1.
+
+Hospedales et al. (2021)
+T. Hospedales, A. Antoniou, P. Micaelli, and A. Storkey
+
+Meta-learning in neural networks: a survey.
+
+IEEE transactions on pattern analysis and machine intelligence 44 (9), pp. 5149–5169.
+
+Cited by: §2.
+
+Jiang et al. (2026a)
+P. Jiang, J. Lin, Z. Shi, Z. Wang, L. He, Y. Wu, M. Zhong, P. Song, Q. Zhang, H. Wang, X. Xu, H. Xu, P. Han, D. Zhang, J. Sun, C. Yang, K. Qian, T. Wang, C. Hu, M. Li, Q. Li, H. Peng, S. Wang, J. Shang, C. Zhang, J. You, L. Liu, P. Lu, Y. Zhang, H. Ji, Y. Choi, D. Song, J. Sun, and J. Han
+
+Adaptation of agentic ai: a survey of post-training, memory, and skills.
+
+External Links: 2512.16301,
+Link
+
+Cited by: §1,
+§2.
+
+Jiang et al. (2026b)
+Y. Jiang, L. Jiang, D. Teney, M. Moor, and M. Brbic
+
+Meta-rl induces exploration in language agents.
+
+External Links: 2512.16848,
+Link
+
+Cited by: §2.
+
+Kumar et al. (2024)
+A. Kumar, V. Zhuang, R. Agarwal, Y. Su, J. D. Co-Reyes, A. Singh, K. Baumli, S. Iqbal, C. Bishop, R. Roelofs, et al.
+
+Training language models to self-correct via reinforcement learning.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §2.
+
+Li et al. (2024)
+Y. Li, C. Yang, and A. Ettinger
+
+When hindsight is not 20/20: testing limits on reflective thinking in large language models.
+
+External Links: 2404.09129,
+Link
+
+Cited by: §1.
+
+Liu et al. (2026)
+S. Liu, S. Agarwal, M. Maheswaran, M. Cemri, Z. Li, Q. Mang, A. Naren, E. Boneh, A. Cheng, M. Z. Pan, A. Du, K. Keutzer, A. Cheung, A. G. Dimakis, K. Sen, M. Zaharia, and I. Stoica
+
+EvoX: meta-evolution for automated discovery.
+
+External Links: 2602.23413,
+Link
+
+Cited by: §2.
+
+Liu and van der Schaar (2025)
+T. Liu and M. van der Schaar
+
+Position: truly self-improving agents require intrinsic metacognitive learning.
+
+In Forty-second International Conference on Machine Learning Position Paper Track,
+
+External Links: Link
+
+Cited by: §1.
+
+Madaan et al. (2023)
+A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe, U. Alon, N. Dziri, S. Prabhumoye, Y. Yang, S. Gupta, B. P. Majumder, K. Hermann, S. Welleck, A. Yazdanbakhsh, and P. Clark
+
+Self-refine: iterative refinement with self-feedback.
+
+External Links: 2303.17651,
+Link
+
+Cited by: §1,
+§2.
+
+Minsky (1995)
+M. Minsky
+
+Steps toward artificial intelligence.
+
+In Computation & Intelligence: Collected Readings,
+
+pp. 47–90.
+
+External Links: ISBN 0262621010
+
+Cited by: §1.
+
+Novikov et al. (2025)
+A. Novikov, N. Vũ, M. Eisenberger, E. Dupont, P. Huang, A. Z. Wagner, S. Shirobokov, B. Kozlovskii, F. J. R. Ruiz, A. Mehrabian, M. P. Kumar, A. See, S. Chaudhuri, G. Holland, A. Davies, S. Nowozin, P. Kohli, and M. Balog
+
+AlphaEvolve: a coding agent for scientific and algorithmic discovery.
+
+External Links: 2506.13131,
+Link
+
+Cited by: §2.
+
+Packer et al. (2024)
+C. Packer, S. Wooders, K. Lin, V. Fang, S. G. Patil, I. Stoica, and J. E. Gonzalez
+
+MemGPT: towards llms as operating systems.
+
+External Links: 2310.08560,
+Link
+
+Cited by: §1.
+
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.
+
+Language models are unsupervised multitask learners.
+
+OpenAI blog 1 (8), pp. 9.
+
+Cited by: §1.
+
+Shinn et al. (2023)
+N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and S. Yao
+
+Reflexion: language agents with verbal reinforcement learning.
+
+External Links: 2303.11366,
+Link
+
+Cited by: §1,
+§1,
+§2,
+§4.1.
+
+Suzgun et al. (2025)
+M. Suzgun, M. Yuksekgonul, F. Bianchi, D. Jurafsky, and J. Zou
+
+Dynamic cheatsheet: test-time learning with adaptive memory.
+
+External Links: 2504.07952,
+Link
+
+Cited by: §2.
+
+Thrun and Pratt (1998)
+S. Thrun and L. Pratt
+
+Learning to learn: introduction and overview.
+
+In Learning to learn,
+
+pp. 3–17.
+
+Cited by: §1,
+§2.
+
+Wang et al. (2024)
+G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and A. Anandkumar
+
+Voyager: an open-ended embodied agent with large language models.
+
+Transactions on Machine Learning Research.
+
+Note:
+
+External Links: ISSN 2835-8856,
+Link
+
+Cited by: §2.
+
+Wei et al. (2025)
+T. Wei, N. Sachdeva, B. Coleman, Z. He, Y. Bei, X. Ning, M. Ai, Y. Li, J. He, E. H. Chi, C. Wang, S. Chen, F. Pereira, W. Kang, and D. Z. Cheng
+
+Evo-memory: benchmarking llm agent test-time learning with self-evolving memory.
+
+External Links: 2511.20857,
+Link
+
+Cited by: §1,
+§2.
+
+Wu et al. (2024)
+C. Wu, Z. R. Tam, C. Lin, Y. Chen, and H. Lee
+
+StreamBench: towards benchmarking continuous improvement of language agents.
+
+External Links: 2406.08747,
+Link
+
+Cited by: §1.
+
+Xiao et al. (2026)
+T. Xiao, Y. Yuan, H. Ivison, H. Zhu, F. Brahman, N. Lambert, P. Dasigi, N. A. Smith, and H. Hajishirzi
+
+Meta-reinforcement learning with self-reflection for agentic search.
+
+External Links: 2603.11327,
+Link
+
+Cited by: §2.
+
+Xu et al. (2025)
+W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang
+
+A-mem: agentic memory for llm agents.
+
+External Links: 2502.12110,
+Link
+
+Cited by: §1,
+§2.
+
+Yang et al. (2024)
+C. Yang, X. Wang, Y. Lu, H. Liu, Q. V. Le, D. Zhou, and X. Chen
+
+Large language models as optimizers.
+
+External Links: 2309.03409,
+Link
+
+Cited by: §2.
+
+Ye et al. (2024)
+H. Ye, J. Wang, Z. Cao, F. Berto, C. Hua, H. Kim, J. Park, and G. Song
+
+ReEvo: large language models as hyper-heuristics with reflective evolution.
+
+External Links: 2402.01145,
+Link
+
+Cited by: §2.
+
+Ye et al. (2026)
+T. Ye, L. Dong, Q. Dong, X. Wu, S. Huang, and F. Wei
+
+Online experiential learning for language models.
+
+External Links: 2603.16856,
+Link
+
+Cited by: §2.
+
+Yuksekgonul et al. (2024)
+M. Yuksekgonul, F. Bianchi, J. Boen, S. Liu, Z. Huang, C. Guestrin, and J. Zou
+
+TextGrad: automatic "differentiation" via text.
+
+External Links: 2406.07496,
+Link
+
+Cited by: §2.
+
+Yuksekgonul et al. (2026)
+M. Yuksekgonul, D. Koceja, X. Li, F. Bianchi, J. McCaleb, X. Wang, J. Kautz, Y. Choi, J. Zou, C. Guestrin, and Y. Sun
+
+Learning to discover at test time.
+
+External Links: 2601.16175,
+Link
+
+Cited by: §2.
+
+Zelikman et al. (2022)
+E. Zelikman, Y. Wu, J. Mu, and N. Goodman
+
+STar: bootstrapping reasoning with reasoning.
+
+In Advances in Neural Information Processing Systems, A. H. Oh, A. Agarwal, D. Belgrave, and K. Cho (Eds.),
+
+External Links: Link
+
+Cited by: §2.
+
+Zhang et al. (2025)
+K. Zhang, X. Chen, B. Liu, T. Xue, Z. Liao, Z. Liu, X. Wang, Y. Ning, Z. Chen, X. Fu, J. Xie, Y. Sun, B. Gou, Q. Qi, Z. Meng, J. Yang, N. Zhang, X. Li, A. Shah, D. Huynh, H. Li, Z. Yang, S. Cao, L. Jang, S. Zhou, J. Zhu, H. Sun, J. Weston, Y. Su, and Y. Wu
+
+Agent learning via early experience.
+
+External Links: 2510.08558,
+Link
+
+Cited by: §2.
+
+Zhang et al. (2026)
+Q. Zhang, C. Hu, S. Upasani, B. Ma, F. Hong, V. Kamanuru, J. Rainton, C. Wu, M. Ji, H. Li, U. Thakker, J. Zou, and K. Olukotun
+
+Agentic context engineering: evolving contexts for self-improving language models.
+
+External Links: 2510.04618,
+Link
+
+Cited by: §2.
+
+Zhou et al. (2025)
+H. Zhou, Y. Chen, S. Guo, X. Yan, K. H. Lee, Z. Wang, K. Y. Lee, G. Zhang, K. Shao, L. Yang, and J. Wang
+
+Memento: fine-tuning llm agents without fine-tuning llms.
+
+External Links: 2508.16153,
+Link
+
+Cited by: §2.
+
+Zhou et al. (2024)
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig
+
+WebArena: a realistic web environment for building autonomous agents.
+
+External Links: 2307.13854,
+Link
+
+Cited by: §4.1.
+
+Zhou et al. (2023)
+Y. Zhou, A. I. Muresanu, Z. Han, K. Paster, S. Pitis, H. Chan, and J. Ba
+
+Large language models are human-level prompt engineers.
+
+External Links: 2211.01910,
+Link
+
+Cited by: §2.
+
+Zuo et al. (2025)
+Y. Zuo, K. Zhang, L. Sheng, S. Qu, G. Cui, X. Zhu, H. Li, Y. Zhang, X. Long, E. Hua, B. Qi, Y. Sun, Z. Ma, L. Yuan, N. Ding, and B. Zhou
+
+TTRL: test-time reinforcement learning.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §2.
+
+Zweiger et al. (2025)
+A. Zweiger, J. Pari, H. Guo, Y. Kim, and P. Agrawal
+
+Self-adapting language models.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §2.
+
+Appendix A Expert Selection and Score Normalization
+
+For WebArena-Lite, every task yields a binary completion signal, so the reward scales are directly comparable across tasks. We therefore select the candidate with the highest raw average success rate across validation tasks.
+
+For Jericho, score normalization requires more care. Although W-AUC already divides by the maximum attainable score (Eq. 1), games inherently differ in how easy they are to improve on. For instance, Detective is substantially easier to improve on than Temple or Zork 1, so selecting by raw W-AUC average can favor candidates overfitted to a single easy game, leading to a less generalizable expert.
+
+To correct for this, we apply a post-hoc per-game z-score normalization over the full set of candidates evaluated during meta-training. For each game , we compute the mean and standard deviation of W-AUC scores across all candidates that reached the global validation stage, normalize each candidate’s score as , and select the candidate with the highest average z-score across games.
+
+Illustrative example.
+
+In an example meta-training run, the raw-average winner is Candidate P5 (average W-AUC 0.371), while the z-score winner is Candidate P11 (average W-AUC 0.348). Table 5 shows why. P5’s raw-score lead of on Detective looks large, but Detective has a high (0.108), so this gap amounts to only . By contrast, P11’s advantage of on Zork 1 is small in raw score but Zork 1 is much harder to improve on (), making it worth . P11 is also stronger on Temple (). Overall, P11 achieves a substantially higher average z-score () than P5 (), and is selected as the more uniformly strong candidate.
+
+Table 5: Expert selection example from a representative meta-training run. P5 wins on raw W-AUC average, but P11 wins after per-game z-score normalization. The per-game row shows why: Detective is high-variance, so P5’s large raw lead there carries less weight once normalized.
+
+Candidate
+Raw W-AUC
+Z-Score
+Avg.
+
+Detective
+Zork 1
+Temple
+Detective
+Zork 1
+Temple
+
+Per-game
+0.554
+0.145
+0.197
+—
+—
+—
+—
+
+Per-game
+0.108
+0.013
+0.019
+—
+—
+—
+—
+
+P11 (z-score winner)
+
+0.675
+0.161
+0.207
+
+P5 (raw-avg winner)
+
+0.783
+0.131
+0.199
+
+Appendix B Representative Optimized Meta-Prompts
+
+We show two representative optimized meta-prompts: the GPT-5 prompt used for Jericho and the Gemini 3 Flash prompt used for WebArena-Lite. On Jericho, GPT-5’s prompt is the clearest instance of the the emergent properties analyzed in Appendix C. On WebArena-Lite, the GLM-5 prompt better reflects the benchmark-level adaptation policy than the more task-specific GPT-5 and Gemini variants. Structural skeletons are shown below; full prompts including complete fact banks are available in the supplementary material.
+
+B.1 Jericho GPT-5 Prompt
+
+We reproduce the structural skeleton below, abbreviating the per-game fact banks for space. The full prompt is available in the supplementary material.
+
+B.2 WebArena-Lite Gemini 3 Flash Prompt
+
+Appendix C Emergent Properties of the Optimized Meta-Prompt
+
+The optimized meta-prompt (), evolved through meta-training on three ID games, exhibits several qualitatively distinct features that were absent from the seed prompt and emerged entirely through the evolutionary optimization process:
+
+1.
+
+①Mandatory structured output. The meta-prompt specifies six required output sections: (1) diagnosis of what happened, (2) durable game facts, (3) next-episode priorities, (4) a recommended route with save points, (5) a concrete command script (first 15–25 moves), and (6) parser tips specific to the game. This structure forces the meta-agent to separate diagnosis, fact extraction, planning, and scripting rather than producing a monolithic narrative.
+
+2.
+
+②Explicit credit assignment protocol. The meta-prompt requires the meta-agent to itemize which actions scored points and how to reproduce them, which actions caused death or created threats, which actions wasted turns (dead ends, loops), and which actions blocked progress (locked doors, parser failures).
+
+3.
+
+③Grounded fact accumulation. A “Game facts to remember” section must record map links, required triggers, working command syntax, and non-working verbs the parser rejected. Critically, the meta-prompt constrains these facts to be evidenced by the most recent episode log, preventing hallucination.
+
+4.
+
+④Exploration management. The meta-prompt enforces a disciplined exploration policy: at most one new experiment per episode, always under a save/restore point, with an explicit fallback if two attempts at the same approach fail.
+
+5.
+
+⑤Concrete action scripts. Rather than providing abstract strategic advice, the meta-prompt requires a 15–25 command opening script that reproduces known scoring actions quickly before attempting new objectives.
+
+6.
+
+⑥Conditional fact banks. The meta-prompt includes game-specific knowledge (map layouts, scoring sequences, parser syntax, lethal traps) for each ID training game, activated only when the game identity is confirmed from the episode log. A “CRITICAL ADAPTATION RULE” ensures that irrelevant fact banks are ignored.
+
+Appendix D Meta-Training Optimization Trajectory
+
+We trace the full optimization trajectory of the GPT-5 meta-agent on the three Jericho ID games (Detective, Zork 1, Temple), which ran for 26 iterations over approximately 27 hours. The seed meta-prompt is a generic one-sentence instruction (“analyze the game trajectory and provide feedback”), achieving an aggregate validation W-AUC of 0.188. Of 26 proposals, 16 pass the local validation gate; of those, 6 achieve a new best aggregate score. Representative examples:
+
+•
+
+Iteration 1 (W-AUC: , ): The proposer discovers that structured, game-aware feedback dramatically outperforms vague advice. The proposed prompt introduces turn-budget awareness (“tight move budget 50 turns”), episode-restart semantics, and game-specific context.
+
+•
+
+Iteration 5 (): Introduces the mandatory six-section output format (diagnosis, game facts, priorities, route, command script, parser tips), forcing the meta-agent to decompose its reflection into distinct subtasks.
+
+•
+
+Iteration 7 (): Adds a critical robustness fix for multi-game generalization (detailed below).
+
+•
+
+Iteration 14 (): Refines per-game fact banks with evidence-grounding constraints (“only restate facts supported by the most recent log”).
+
+•
+
+Iteration 22 (): Integrates all prior improvements into a comprehensive prompt that becomes the final .
+
+A concrete example: discovering the game-identification fix.
+The most instructive moment occurs at iteration 7. In iterations 1–4, the proposer, having seen high-scoring Detective trajectories, hardcodes “Detective by Matt Barringer, Inform 6” into the meta-prompt. This works well for Detective (per-game W-AUC: 0.621) but provides irrelevant guidance for Zork 1 (0.141) and Temple (0.193). By iteration 7, the proposer diagnoses this failure and introduces a game-identification rule: “Do NOT assume the game is always the one named anywhere else. Identify the actual game from the log. If the log’s game differs from any stored facts, IGNORE unrelated facts.” By iteration 22, this evolves into a refined “CRITICAL ADAPTATION RULE” with conditional fact banks. This transforms the meta-prompt from a single-game specialist into a game-agnostic framework, and illustrates that each evolutionary proposal is a semantically-informed mutation—the proposer diagnoses why the current candidate fails and generates a targeted fix, rather than perturbing randomly.
+
+Appendix E Case Studies
+
+We compare the optimized meta-prompt (Opt) against the naive baseline (Naive) using the GPT-5 meta-agent with a Gemini 3 Flash actor on Jericho. Each case study highlights a different aspect of how the learned adaptation policy produces better feedback.
+
+E.1 Detective (ID Game): Actionable vs. Generic Feedback
+
+Both conditions start Episode 0 at comparable scores (114), since the actor has no meta-agent guidance yet. The key divergence occurs at Episode 1, after the first feedback.
+
+Naive produces generic interactive-fiction advice (“Core loop per room: LOOK, then EXAMINE all notable objects; SEARCH room/containers…”). This could apply to any game and does not leverage Episode 0 observations. The actor’s score drops to 89.
+
+Opt instead diagnoses the specific failure and prescribes a fix:
+
+“Blocker: confronted the dazed man without the pistol and with wrong syntax. Wasted turns: skipped the pistol in Chief’s west closet. Command script: GET PAPER / READ PAPER / WEST / GET PISTOL / … / SHOOT DAZED MAN WITH PISTOL.”
+
+The actor’s score jumps to 319—a 2.7 improvement in one feedback cycle. Over subsequent episodes, the meta-agent progressively tightens the route (diagnosing turn-budget bottlenecks, reordering scoring actions), reaching 340/360 by Episode 4. Under Naive, scores fluctuate between 89–131 with no upward trend.
+
+E.2 Temple (ID Game): Diagnosing Non-Obvious Blockers
+
+Temple (max 35 points) tests whether the meta-agent can identify unconventional actions. Under Naive, the actor never exceeds 5/35—it remains stuck in the study room because reaching the next area requires CLIMB CHARLES (climbing an NPC to retrieve a key), an action unlikely to be attempted without targeted guidance. Generic advice like “EXAMINE every object” does not surface this.
+
+Under Opt, the Episode 1 feedback pinpoints the gap: “You missed: CLIMB CHARLES for the iron key (+3), taking the vial, unlocking the oak door.” The actor reaches 8–10 points by Episode 2, nearly doubling its score.
+
+E.3 Transfer to OOD Games: Structural Rules Generalize
+
+On Balances (OOD), the Opt meta-agent has never seen this game, yet its first feedback correctly connects the actor’s observation to an available tool: “the cedarwood box is locked; your spell book already lists rezrov” recommends LEARN REZROV then CAST REZROV ON BOX. The Naive meta-agent instead lists generic spells (“memorize FROTZ, YOMIN, REZROV, BOZBAR if available”) without connecting any to the specific puzzle. The difference is that the optimized prompt’s credit-assignment and blocker-identification format (Section 4 of the output template) forces the meta-agent to match each blocker to a concrete next action, even in an unseen game. The Naive meta-agent, lacking this structure, defaults to generic advice.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

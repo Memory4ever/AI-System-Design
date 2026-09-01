@@ -1,0 +1,1194 @@
+CoLLM: A Unified Framework for Co-execution of LLMs Federated Fine-tuning and Inference
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Background and Motivation
+
+II-A GPU Multiplexing and Model Sharing
+
+II-B Co-execution: Opportunities and Challenges
+
+III CoLLM Overview
+
+III-A System Overview
+
+III-B Replica Workloads within CoLLM
+
+Fine-tuning only workload
+
+Inference-only workload
+
+Co-execution workload
+
+IV Intra-replica Model Sharing
+
+V Inter-replica Joint Coordination
+
+V-A Joint Coordination Problem
+
+V-B Two-Timescale Coordination Algorithm
+
+V-B1 FL Round-Level Scheduler
+
+V-B2 Slot-Level Dispatcher with Reactive Correction
+
+VI Implementation and Evaluation
+
+VI-A Experimental Setups
+
+VI-A1 Environment Setup
+
+VI-A2 Models Initialization and Workloads
+
+VI-A3 Baselines and Metrics
+
+VI-B End-to-End Performance
+
+VI-C Scalability
+
+VI-D Microscopic Analysis
+
+VI-D1 Inference quality improvement via model sharing
+
+VI-D2 Goodput benefits of TTCA
+
+VI-E Resource Conservation and Overhead
+
+VII Related Work
+
+VIII Conclusion
+
+References
+
+License: CC BY-NC-ND 4.0
+
+arXiv:2604.16400v1 [cs.DC] 31 Mar 2026
+
+CoLLM: A Unified Framework for Co-execution of LLMs Federated Fine-tuning and InferenceThanks: Xiaofei Wang is the corresponding author.
+
+Shaoyuan Huang1,
+Xiaokai Wang1,
+Na Yan2,
+Xiaofei Wang1,
+Wenyu Wang3,
+Yansha Deng2
+
+Affiliation: 
+
+Affiliation: 1College of Intelligence and Computing, Tianjin University, Tianjin, China
+
+Affiliation: 2King’s College London, London, United Kingdom
+
+Affiliation: 3Shanghai Zhuichu Networking Technologies Co., Ltd., Shanghai, China
+
+Affiliation: 
+
+Affiliation: {hsy_23, xiaokaiwang, xiaofeiwang}@tju.edu.cn, na.2.yan@kcl.ac.uk, yansha.deng@kcl.ac.uk
+
+Affiliation: 
+
+Abstract
+
+As Large Language Models (LLMs) are increasingly adopted in edge intelligence to power domain-specific applications and personalized services, the quality and efficiency of the LLM post-training phase—including fine-tuning and inference, have become critical due to constrained resources.
+Although recent advances in federated parameter-efficient fine-tuning (FL PEFT) and low-latency inference have improved individual task performance, fine-tuning and inference are still handled as isolated workloads, which overlooks their interdependence and results in redundant deployments and delayed improvement in inference quality.
+To address these limitations, we introduce a new co-execution framework and instantiate it with CoLLM, a system that unifies FL PEFT and inference on shared edge replicas and model parameters.
+CoLLM addresses key challenges at both replica and cluster levels through: (1) an intra-replica model sharing mechanism that enables real-time model parameter reuse via unmerged inference and shadow adapter strategies; and (2) a two-timescale inter-replica coordination algorithm that adaptively balances fine-tuning and inference workloads to jointly optimize long-term model quality gains and short-term inference efficiency.
+Extensive evaluation across diverse LLMs and real-world traces show that CoLLM consistently outperforms state-of-the-art LLM systems, achieving up to 3 higher goodput, demonstrating its effectiveness in enabling seamless LLM post-training for edge intelligence.
+
+I Introduction
+
+Large Language Models (LLMs) have become fundamental components of modern AI services, powering applications such as code assistants [1], intelligent search engines [2], and universal chatbots [3].
+To support these applications in latency-sensitive environments, e.g., mobile assistants, on-device copilots, and vertical industry agents, LLM inference is increasingly deployed at the network edge [4]. Edge deployment offers two key advantages: (i) low-latency model execution that meets stringent service-level objectives (SLOs), and (ii) privacy preservation, since user requests and contextual data remain local to the edge devices [5].
+As a result, the quality of LLM service at the edge is largely determined by inference throughput and SLO attainment under dynamic request workloads.
+
+At the same time, maintaining high-quality LLM services at the edge requires periodic post-training, in which newly collected user data is used to refine model behavior and adapt to domain-specific preferences.
+Federated parameter-efficient fine-tuning (FL PEFT) [6, 7, 8] has emerged as a natural solution for this setting, which enables distributed clients to collaboratively update lightweight adapters, e.g., low-rank decomposition (LoRA [9]), while keeping LLM backbone frozen. This allows edge nodes to regularly improve their model quality without sacrificing client privacy, while improving training performance given limited data diversity at individual edge nodes [10].
+
+In modern edge LLM services, inference operates continuously to provide real-time responses to user requests, whereas fine-tuning proceeds as a longer-running, periodically triggered process.
+Thus, in practical deployments, edge devices frequently execute both tasks concurrently—serving user requests while simultaneously refining the model, requiring both high-throughput inference and effective model improvement.
+However, current deployment practices treat these two tasks as fully separated workloads, where fine-tuning and inference are assigned to separate model replicas with disjoint computational flows.
+This separated design may introduce fundamental inefficiencies when inference and fine-tuning are inevitably executed concurrently on the same resource-constrained devices.
+
+First, resource contention becomes increasingly severe. Fine-tuning sessions typically span long durations and consume substantial GPU compute resource. When inference workloads surge, e.g., during bursty user activity—the edge node must either interrupt fine-tuning (i.e., temporal multiplexing [11]) or reload a separate inference replica (i.e., spatial multiplexing [12]). Both options lead to severe overheads: 1) reloading or maintaining multiple LLM replicas duplicates backbone memory; 2) switching between fine-tuning and inference disrupts batching efficiency; 3) and redundant deployments waste GPU cycles that could otherwise serve user requests. These inefficiencies directly degrade inference throughput and cause SLO violations during high-load periods.
+
+Second, model updates cannot be exploited promptly. Deep learning model training exhibits diminishing marginal gains: early updates often yield large improvement in model quality [13]. Yet, because inference only accesses the updated model after training completion and redeployment, these high-value early improvements remain inaccessible for a long period. This results in stale responses and lost opportunities to enhance user-experienced inference quality in real time.
+
+To overcome the fundamental limitations of the traditional separated paradigm, we introduce a unified FL PEFT and inference co-execution framework, CoLLM.
+CoLLM enables PEFT-based LLM fine-tuning and inference to be co-located on the same model replica, sharing model parameters in real time.
+Furthermore, CoLLM supports adaptive coordination of federated fine-tuning and inference workloads across replicas to optimize both inference throughput and quality.
+To achieve these goals, we propose two novel techniques in CoLLM:
+
+Intra-replica model sharing: Enabling co-execution of fine-tuning and inference on the same model replica with shared parameters requires addressing two key consistency challenges: (1) structural inconsistency, caused by default adapter-merged inference schemes in LLM PEFT, which prevents continuous fine-tuning; and (2) parameter inconsistency, arising from potential conflicts during concurrent parameter access and updates across computation flows of different tasks.
+To address these challenges, we propose a model sharing mechanism that adopts an unmerged inference paradigm to maintain a unified model structure, and a shadow adapter strategy to safely and efficiently alternate read and write operations without parameter access conflicts.
+This design unifies the fine-tuning and inference at the replica level, eliminating redundant deployments and allowing inference quality to improve continuously as fine-tuning progresses.
+
+Inter-replica coordination: At the cluster level, we propose inter-replica coordination to balance the competing objectives of fine-tuning and inference tasks. While fine-tuning enhances model quality over time, it consumes compute resources and reduces immediate inference throughput. In contrast, inference improves real-time responsiveness but can delay model updates.
+This trade-off is further complicated by dynamic inference workloads and the mutual interference introduced by co-executed tasks.
+To address these issues, we propose a two-timescale coordination algorithm that combines FL round-level fine-tuning scheduling with slot-level inference requests dispatching, enabling adaptive workload coordination in response to long-term model quality gains and short-term inference efficiency.
+
+In summary, this paper makes the following contributions.
+
+•
+
+To address the inefficiencies of the conventional separated paradigm in edge LLM services, we propose a novel co-execution framework, CoLLM, which unifies adapter-based FL PEFT and inference via coordinated mechanisms at both replica and cluster levels.
+
+•
+
+At the replica level, we introduce a model sharing mechanism to support co-execution of fine-tuning and inference on a shared LLM, thereby avoiding redundant deployment and leveraging model quality improvements in real time.
+
+•
+
+At the cluster level, we propose a two-timescale coordination algorithm to adaptively balance FL PEFT and inference workloads across replicas, optimizing both long-term model quality and short-term inference efficiency.
+
+•
+
+We evaluate CoLLM across different types of LLMs and domain-specific tasks. Experiments on real-world LLM service traces show that CoLLM improves goodput (i.e., inference quality-aware throughput) by up to 3× over state-of-the-art LLMs serving systems.
+
+II Background and Motivation
+
+Fig. 1: GPU multiplexing versus model sharing.
+
+II-A GPU Multiplexing and Model Sharing
+
+Previous studies have proposed different methods for scheduling heterogeneous workloads (in our case, FL PEFT and inference) on shared resources (e.g., GPU or end device NPU). As shown in Fig. 1(a) and (b), these methods can be broadly categorized into two paradigms: temporal multiplexing and spatial multiplexing.
+This section will discuss the limitations of these approaches in supporting LLM inference and PEFT, and highlight the critical differences between previous works and our co-execution solution.
+
+Temporal multiplexing [11, 14] allocates GPU resources to inference and fine-tuning in alternating time slices of variable lengths, enabling different task fully utilizing the GPU within its slice.
+In contrast, spatial multiplexing [12, 15] allows different tasks to execute simultaneously using the partitioned GPU computing resources, such that each task occupies a fraction of the streaming multiprocessors and GPU memory. Spatial multiplexing can be implemented on modern GPUs via CUDA multi-stream programming or NVIDIA MPS [16].
+
+While effective in improving GPU utilization, existing techniques primarily focused on resource reuse without considering model reusability. In both paradigms, fine-tuning and inference tasks are executed on isolated model replicas, requiring separate loading of the full LLM backbone and adapter. This redundancy is particularly costly in resource-constrained infrastructures (e.g., edge devices), where repeated model deployment significantly increases latency and memory overhead.
+As illustrated in Fig. 1(a), temporal multiplexing causes repeated model loading during each task switch. In practice, loading LLaMA2-7B from the hard drive onto GPU memory takes 2 minutes, whereas serving a single 240-token inference request on NVIDIA A40 only requires 1.7 seconds. In comparison, the time spent on redeployment could be used to serve over 70 inference requests.
+In spatial multiplexing, shown in Fig. 1(b), while tasks execute concurrently without frequent model reloads, each task requires a separate model instance in GPU memory. For LLaMA3-13B, duplicating the base model consumes an additional 30GB GPU memory, accounting for 60% of total fine-tuning task memory usage and greatly limiting co-located task scalability.
+
+To overcome these inefficiencies, we propose a novel model sharing mechanism, which enables co-executing fine-tuning and inference on a single replica with shared model parameters and intermediate activations without redundant deployments.
+As shown in Fig. 1(c), model sharing eliminates repeated deployment overhead by keeping the model persistently loaded across task switches (vs. temporal multiplexing), and avoids redundant memory usage by sharing a single backbone across tasks (vs. spatial multiplexing).
+In §IV, we detail the methods enabling model sharing.
+
+Fig. 2: Inference CE loss of different execution paradigms.
+
+II-B Co-execution: Opportunities and Challenges
+
+Opportunities.
+In edge computing frameworks that integrate LLM fine-tuning and inference services, conventional efficiency-oriented metrics such as throughput [17] are insufficient as they overlook the inference quality improvements derived from continuous fine-tuning. Therefore, we define goodput as a quality-aware performance metric that weights the served request rate [17] by the corresponding inference quality [18] (Q-req/s):
+
+(1)
+
+where denotes the number of inference requests successfully served within time period , and measures the inference quality of the responses, which is defined as the inverse of the token-level CE Loss11
+1
+
+We quantify inference quality using token-level cross-entropy (CE) loss, a standard metric that captures the alignment between the model’s generated tokens and the ground-truth responses from supervised instruction data.. Goodput effectively evaluates the system’s capability to deliver efficient and high-quality inference services.
+
+As illustrated in Fig. 2, compared to traditional inference-only or separated fine-tuning and inference paradigms, the proposed model sharing mechanism offers significant advantages in enhancing inference quality.
+In the separate paradigm, periodic fine-tuning improvements are propagated globally through model redeployment, benefiting only subsequent inference services while incurring significant delays.
+In contrast, co-execution enables model adapters to be updated continuously during inference, enabling real-time enhancements in inference quality. The benefits are particularly significant in the early stages of fine-tuning, when models typically achieve rapid adaptation and yield the largest quality gains.
+
+Challenges. While co-execution enables continuous goodput improvements, focusing solely on the replica level is insufficient to achieve optimal goodput, as it introduces several intertwined challenges in practical deployments.
+
+: Goodput Trade-off. Inference and fine-tuning tasks contribute to goodput in different ways: inference improves throughput by serving more requests, while fine-tuning iteratively enhances model quality for both current and future responses. Since both tasks share limited resources, naive or isolated scheduling becomes ineffective, and careful trade-offs are required to balance their contributions and workloads.
+
+: Co-execution Interference. The co-execution of fine-tuning and inference inherently induces resource contention across CPU, GPU, and memory bandwidth, causing mutual interference that affects task performance. In particular, contention can significantly impact the completion times of both tasks, invalidating single-task performance models and complicating global optimization.
+
+: Inference Load Variability. Inference request arrivals are highly dynamic and unpredictable on short timescales [17]. Given the millisecond-level Service-Level Objectives (SLOs) of inference services, this unpredictability poses significant challenges for fine-grained request dispatching.
+
+Fig. 3: CoLLM system overview.
+
+III CoLLM Overview
+
+III-A System Overview
+
+Fig. 3 provides an overview of CoLLM, a co-execution framework that unifies LLM FL PEFT and inference on shared edge clusters. CoLLM introduces two key techniques: (i) intra-replica model sharing (§IV) and (ii) inter-replica joint coordination (§V).
+
+Intra-replica Model Sharing. At the replica level, we introduce a model sharing mechanism in CoLLM to provide fundamental support for co-execution of fine-tuning and inference tasks.
+Specifically, the mechanism adopts the unmerged inference paradigm of PEFT adapters, allowing the computation flows of different tasks to be executed on a consistent model structure.
+Meanwhile, a shadow adapter strategy is introduced to ensure parameter consistency and timely integration of fine-tuning updates into inference.
+
+Inter-replica Coordination. At the cluster-wide level, CoLLM features an inter-replica coordination module that adaptively schedules fine-tuning and inference workloads across replicas to maximize overall goodput. Based on task modeling and their interference dynamics under co-execution, CoLLM employs a hierarchical two-timescale coordination algorithm to balance immediate inference responsiveness with long-term quality improvements driven by fine-tuning task.
+
+III-B Replica Workloads within CoLLM
+
+CoLLM centers on a co-execution framework that unifies federated fine-tuning and inference across a cluster of replicas .
+Each replica maintains a local dataset , fixed during the FL round , to support periodic fine-tuning.
+Inference requests for each replica arrive continuously and are batched for serving. Let denote the queue of inference requests of replica at time slot , and be the set of feasible inference batches for , where each batch is characterized by its arrival time and earliest deadline among the requests it contains.
+
+At each time slot , the co-execution framework makes two types of decisions for each replica :
+
+•
+
+Inference execution decision : whether batch is served by replica for inference at time .
+
+•
+
+Fine-tuning execution decision : the fine-tuning batch size executed on replica at time .
+
+Based on these decisions, replicas in the co-execution framework perform one of the following specific task workloads:
+
+Fine-tuning only workload
+
+Replica exclusively participates in FL PEFT without inference service, i.e., and .
+Take LoRA-based PEFT as an example, at the start of each federated round, the central server broadcasts global LoRA adapter parameters to participating replicas (clients), where matrices and satisfy the low-rank factorization .
+Replica then freezes its base LLM weights and fine-tunes only the adapters using its local dataset by minimizing the local loss:
+
+(2)
+
+where represents the loss for model on sample .
+
+After local training, replicas upload updated adapters to the server for global aggregation as follows [19]:
+
+(3)
+
+where is the set of participating replicas. The aggregated adapters are then distributed in the next round. Given the relatively small size of LoRA adapter parameters, we omit the communication latency associated with uploading local updates to the server and broadcasting aggregated adapters back to replicas [20, 6].
+
+Inference-only workload
+
+Replica exclusively serves inference requests without performing fine-tuning (i.e., ). Inference service adopts the unmerged LoRA inference paradigm, the adapters () are kept separate and dynamically applied to frozen base weights during each forward pass.
+
+Co-execution workload
+
+Replica co-executes fine-tuning and inference workloads ( and ). By leveraging the model sharing mechanism introduced in Sec. IV, the two tasks can be seamlessly transitioned and executed simultaneously.
+Therefore, the scenarios a) and b) described above can be considered as special cases within the co-execution framework, facilitating unified optimization and analysis in the joint coordination problem (§V).
+
+IV Intra-replica Model Sharing
+
+To support the co-execution of fine-tuning and inference within a single model replica, we introduce a model sharing mechanism in CoLLM empowered by unmerged inference paradigm and a shadow adapter strategy.
+Notably, the model sharing mechanism can be generalized to a wide range of PEFT methods e.g., LoRA [9], QLoRA [21], LoHA [22] and  [23].
+Since these methods introduce task-specific parameters as independent adaptation modules, whose computation flows can be decoupled from the frozen backbone model, enabling unified interface for fine-tuning updates and inference co-execution, regardless of the underlying model architecture.
+For clarity, we use LoRA as a representative adapter-based PEFT method in the following description.
+
+Fig. 4: Merged/unmerged inference vs. shadow adapter-based inference under fine-tuning co-execution with LoRA.
+
+Unmerged Inference.
+While in conventional DL models, co-locating training and inference is straightforward since both computational flows share the consistent model architecture.
+In PEFT-based LLM deployments, the adapter is typically merged into the backbone after fine-tuning, following the merged inference paradigm [9].
+This approach pre-computes the adapted weights as , eliminating the need for adapters multiplication during inference. However, while efficient for static inference serving, merged inference fundamentally breaks the parameter decoupling required by PEFT. Once merged, the adapter becomes inaccessible to the optimizer, prohibiting further fine-tuning and precluding any form of parameter sharing.
+
+To address this model structural inconsistency, we adopt the unmerged inference paradigm, where the adapter matrices e.g., and are preserved as independent modules and the update transformation is dynamically applied at each forward pass. As illustrated in Fig. 4, this design preserves the updatability of the adapter, enabling inference and fine-tuning to operate on a shared parameter space in-situ without interfering with the frozen backbone.  
+While this approach may introduce additional memory and computation consumption compared to merged inference, our experiments in §VI-E shows that the additional overhead occurred by the model sharing mechanism is negligible compared to the resource conservation benefits it provides.
+
+Overall, unmerged inference provides the structural flexibility and runtime adaptability necessary to support parameter sharing under co-execution, forming the foundation of our intra-replica model sharing mechanism. However, it raises the challenge of model parameter inconsistency.
+
+Shadow Adapter Strategy.
+Concurrent read (inference) and write (fine-tuning optimizer updates) operations on shared adapter parameters risk conflict in parameter consistency. This can lead to inference processes accessing incoherent weight states, such as mismatched parameter versions (e.g., new with old ) or partially written values—resulting in corrupted and unreliable.
+Conventionally, systems resolve such access conflicts by employing mutexes to protect shared parameters, requiring different workloads to acquire locks before accessing them.
+While conceptually straightforward, this lock-based synchronization suffers from critical limitations in latency-sensitive scenarios by introducing non-deterministic delays: low-latency inference may be blocked by fine-tuning backpropagation, and heavy inference may throttle fine-tuning.
+
+To resolve this parameter inconsistency without incurring coarse-grained locking overhead, we introduce Shadow Adapter strategy—a lock-free synchronization primitive. This mechanism maintains dual synchronized LoRA adapter instances within each replica: . The Shadow Adapter enforces isolation through strict access principles:
+all inference accesses are confined to , ensuring operations on consistent parameter states,
+while fine-tuning workflows modify exclusively , encompassing gradient computations and optimizer updates.
+This architectural separation guarantees stable inference execution amid concurrent fine-tuning.
+
+For real-time propagation of fine-tuning optimizations to inference services, the Shadow Adapter performs step-granular updates upon fine-tuning completion:
+
+(4)
+
+(5)
+
+where Eq. 4 activates new parameters for inference by atomically swapping the active and shadow adapters, and Eq. 5 initializes for the subsequent fine-tuning iteration through an async copy of the parameters to .
+This update strategy ensures inference accesses the latest optimizations within single training-step latency.
+
+Collectively, the Shadow Adapter resolves co-execution challenges through three core properties:
+Consistent parameter isolation eliminates race conditions by strictly separating access: stable is read-only for inference, while updates are confined to , ensuring deterministic outputs without partial updates;
+Non-blocking inference execution enables inference responsiveness via instantaneous atomic pointer swaps, decoupling read/write paths;
+Bounded system overhead maintains operational efficiency via dual adapters , for input/output dimensions and adapter rank , memory growth is limited to ( base model footprint),
+temporal synchronization cost is per step as in standard LoRA.
+
+TABLE I: Variables used in joint coordination MINLP.
+
+Input variables
+
+Definition
+
+Set of all candidate inference batches.
+
+Number of inference requests contained in .
+
+Arrival time of batch .
+
+Deadline (under SLO constraint) of batch .
+
+Quality utility of serving batch at time .
+
+Inference latency of batch on replica under co-execution with training batch size .
+
+GPU memory consumption of fine-tuning at replica with training batch size .
+
+GPU memory consumption of serving inference batch at replica .
+
+GPU memory capacity of replica .
+
+Decision variables
+
+Definition
+
+Whether is scheduled to replica at time .
+
+Training batch size allocated for fine-tuning at replica and time .
+
+V Inter-replica Joint Coordination
+
+In this section, we first formulate the joint coordination problem along with its key challenges in §V-A. To address these challenges, we present a novel two-timescale coordination algorithm in CoLLM (§V-B).
+
+V-A Joint Coordination Problem
+
+As stated in Sec. II-B, the goal of the co-execution framework is to maximize the overall goodput.
+However, optimizing goodput requires careful coordination between the two different types of tasks.
+The core trade-off lies in the fact that increasing fine-tuning load accelerates long-term model adaptation but delays inference responses.
+On the other hand, more instant inference load boosts immediate throughput at the expense of delayed quality improvements.
+
+Problem Definition. We denote as the expected inference quality of requests batch on replica at time , which is determined by the current adapter state and updated as fine-tuning progresses with batch size . We find that the offline coordination problem where the system has access to the complete future can be formulated as the following Mixed Integer Nonlinear Programming (MINLP):
+
+(6)
+
+s.t.
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+The MINLP constraints correspond to:
+
+(a)
+
+Each request is dispatched at most once,
+
+(b)
+
+No request can be served before its arrival,
+
+(c)
+
+Every selected batch must finish before its deadline,
+
+(d)
+
+GPU memory usage cannot exceed the capacity ,
+
+(e)
+
+A replica executes at most one batch at a time.
+
+Clearly, the optimal solution to the above MINLP is also the optimal coordination strategy. However, obtaining such an optimal is unrealistic—not only is it impractical to have access to the complete future, computing the optimal solution to the MINLP is NP-hard.
+A more viable approach is to transform the offline optimization into an online algorithm, but this process still needs to take the following issues into consideration.
+
+1) Mismatch in decision timescales.
+Inference dispatching typically require fine-grained, near real-time (millisecond-level) scheduling to maintain low latency and high throughput, whereas FL fine-tuning decisions occur at much coarser round granularity (tens of minutes to hours per round). This discrepancy in task timescales complicates unified optimization.
+
+2) Short-term inference load unpredictability.
+While long-term inference demand often exhibits stable periodic trends, accurately forecasting short-term inference workloads is challenging due to inherent request volatility. This short-term fluctuations can significantly hinder precise resource allocation.
+
+3) The marginal effect of fine-tuning.
+The model quality improvements from fine-tuning rounds exhibits diminishing returns; earlier fine-tuning iterations yield substantial gains, but these benefits progressively reduce as the model approaches convergence. This phenomenon complicates optimizing fine-tuning workload for sustained goodput improvements.
+
+V-B Two-Timescale Coordination Algorithm
+
+We propose a hierarchical Two-Timescale Coordination Algorithm (TTCA) in CoLLM to jointly coordinate FL PEFT and inference workloads across replicas. The key insight is to decouple the optimization over two interleaved timescales: (i) a coarse-grained FL round-level scheduler that determines the fine-tuning batch size and inference intensity based on long-term goodput estimation, and (ii) a fine-grained slot-level inference dispatcher that dynamically manages the served requests to meet SLO constraints and correct suboptimal fine-tuning settings under load variations.
+
+V-B1 FL Round-Level Scheduler
+
+While predicting millisecond-level request arrivals is infeasible, it is more practical to estimate coarse-grained workload trends (e.g., at the tens-of-minutes level) using lightweight predictors. In the FL round-level scheduling stage of TTCA, CoLLM adopts exponential moving average (EMA) estimators to forecast the total inference requests at the beginning of each FL round : , where is the observed workload and is a smoothing factor that controls the weight of historical data.
+
+Based on this, we abstract the per-batch scheduling variable into a coarse-grained round-level serving rate , representing the average number of requests served per unit time by replica during round . This abstraction enables us to reformulate the offline MINLP (Eq. 6) into an efficient round-level optimization problem, which determines per-round and the fine-tuning batch size for each replica to maximize goodput while respecting local resource constraints.
+Specifically, the optimization goal of the scheduler includes two terms: 1) the current-round goodput, proportional to the number of requests processed within time under quality ; 2) the potential contribution, measured by the performance improvement of local fine-tuning to the global model quality. The round-level optimization problem is defined as
+
+(7)
+
+s.t.
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+where is the total iterations for a fine-tuning round, is the per-iteration fine-tuning time, is a discount factor weighing future gain versus current utility, and model inference quality of replica at iteration and the contribution of local training of replica to the global model, respectively, which can be formalized as
+
+(8)
+
+(9)
+
+where Eq. 8 represents the model quality evolution with batch size and iteration when the learning rate remains unchanged, capturing the marginal effects of two key influencing factors [24], and Eq. 9 represents the local fine-tuning gains considering the global FL marginal effects [25].
+The above problem consists of a mix of smooth concave and piecewise-linear components. While exact solving is NP-hard due to the integer constraint on , we can further simplify the problem via replica-wise decomposition.
+
+Grid Search and Closed-Form Optimization:
+To solve the round-level optimization problem efficiently, we adopt a hybrid grid-based and analytical optimization strategy. For each replica, we enumerate over feasible values of with coarse granularity (e.g., ).
+For each candidate , the objective can be simplified to a single-variable maximization over : .
+
+Since is linear in and the constraint is convex (linear), the optimal occurs at the maximum feasible value: , where is a constant for fixed . This closed-form solution enables us to efficiently evaluate each candidate without inner optimization loops. Among all candidate batch sizes, we select the one yielding the highest total objective value.
+
+The total runtime complexity is ,
+where is the batch size search space per replica. Since the problem is decomposed, the solver is highly scalable and parallelizable across replicas.
+This hybrid strategy offers a near-optimal solution with linear complexity in practice and supports efficient deployment in large-scale federated systems.
+
+Algorithm 1 Slot-Level Dispatching for Replica
+
+Input: Planned inference rate , training batch size , request queue
+
+for each time slot in FL round do
+
+   
+1:
+Request Batching:
+
+   
+
+   
+
+   
+2:
+Reactive correction:
+
+   
+3:
+if SLO violation rate then
+
+      
+
+      
+
+   
+4:
+else if arrival rate then
+
+      
+
+      
+
+5:
+Round-end feedback:
+
+6:
+Update performance modeling coefficient
+
+7:
+Update EMA predictors for next round
+
+V-B2 Slot-Level Dispatcher with Reactive Correction
+
+As illustrated in Algorithm 1, after determining the planned inference rate and training batch size at the beginning of each FL round, the slot-level dispatcher is responsible for fine-grained dispatching of inference requests in each replica’s queue . Specifically, the dispatcher samples requests from in First-In, First-Out (FIFO) order, forming inference batches that match the target serving rate , subject to the latency SLO constraints (line 1 in Algorithm 1).
+
+Since the previous round-level scheduling decisions rely on predicted workloads (), forecasting inaccuracies and modeling simplifications inevitably lead to discrepancies between planned parameters ( and ) and actual system conditions, resulting in potential underload and overload scenarios. To mitigate these effects, we introduce a reactive correction mechanism in the Slot-Level Dispatcher.
+
+Overload Correction.
+Under the current and , if the observed SLO violation rate () of served and queued requests exceed the constraints =0.05, the replica is identified as overloaded.
+In this case, is reduced, mitigating interference and reducing inference latency (line 3 in Algo. 1).
+
+Underload Correction.
+Conversely, if the observed request arrival rate is lower than the target (=0.8), the replica is identified as underloaded. Therefore, the dispatcher increases to utilize idle compute resources better and adjusts accordingly (line 4 in Algo. 1).
+
+The control parameters used in the dispatcher decisions, such as the SLO violation threshold and the underload detection parameter , can be tuned offline based on historical operational data. In this work, we provide recommended values for these parameters in the preceding.
+Additionally, during runtime, CoLLM continuously monitors and collects performance metrics, including task latency and GPU memory usage, from both fine-tuning and inference workloads.
+These metrics are then utilized to refine the modeling coefficients defined in Sec. III-B, specifically , thus maintaining model accuracy and scheduling effectiveness.
+Finally, inference requests that receive user corrections or feedback can be systematically transformed into fine-tuning datasets via widely-adopted techniques such as user-in-the-loop labeling [26] or reinforcement learning from human feedback (RLHF [27]).
+
+Fig. 5: Inference throughput and goodput of different systems across two LLMs and two domain-specific tasks.
+
+VI Implementation and Evaluation
+
+VI-A Experimental Setups
+
+VI-A1 Environment Setup
+
+All experiments are conducted on two GPU servers, each equipped with 4NVIDIA A30 GPUs (24GB memory) and dual Intel Xeon Platinum 8457C CPUs. The servers are interconnected via an RDMA-capable high-speed network fabric.
+We configure the system as a federated edge cluster with 8 logical replicas, each bound to a single GPU, representing edge devices participating in FL PEFT and inference. One replica is designated as the edge server responsible for parameter aggregation and global adapter distribution, while the remaining replicas act as edge clients performing local PEFT and inference service.
+All components are implemented in Python using PyTorch 2.5 and HuggingFace Transformers 4.48. We employ NCCL as the backend for distributed communication across replicas.
+
+TABLE II: PEFT and Inference datasets. Each replica is assigned a distinct subset to simulate data heterogeneity, with 30% of samples reserved as inference requests.
+
+Dataset
+Name
+# of Samples
+
+Code generation
+ManimCode [28]
+4.4k
+
+CodeAlpaca [29]
+20k
+
+CodeInstruct [30]
+122k
+
+Conversation
+alpaca [31]
+50k
+
+GPTeacher [32]
+89.3k
+
+OpenInstruct [33]
+499k
+
+VI-A2 Models Initialization and Workloads
+
+To verify the generalization and efficiency of the co-execution framework, we evaluate CoLLM on two LLMs with different types and sizes: LLaMA3.1-8B and Qwen3-4B.
+All models are LoRA-instrumented and loaded once per replica.
+We apply two specific-domain tasks: instruction-following code generation and conversations.
+In each experiment, we test one type of the backbone model, and half of the replicas exclusively serve conversation while others serve code-related tasks.
+
+We utilized six open-source LLM instruction-tuning datasets to simulate fine-tuning datasets and user requests (details in Table II). These datasets contain instructions and demonstrations (used to calculate CE loss), specifically collected for instruction-tuning and evaluating the responses quality.
+To emulate realistic inference workloads, we leverage two real-world LLM inference service traces from Azure: Azure-Code and Azure-Conv [34]. Requests from different trace are replayed on the replica with corresponding task (conversations/code generation) over a duration of four hours.
+
+VI-A3 Baselines and Metrics
+
+We compare CoLLM against four state-of-the-art LLM serving systems, including three inference-only systems: (1) dLoRA [35], which supports dynamic batching and requests migration; (2) Shepherd [17], which enables SLO-aware serving of DNN workloads with optimized model assignment and batching; and (3) a vanilla PEFT [36] setup using HuggingFace’s Transformers;
+We also evaluate (4) FedLS [18], a joint federated training–inference system originally designed for CNN workloads, which we adapt by executing fine-tuning and inference in separate phases while preserving its probabilistic action policy.
+Metrics: We focus on inference throughput (req/s) and goodput (Q-req/s) as our key metrics. Following prior work on LLM serving [17, 37], we calculate throughput as the number of requests successfully served per second (with latency meeting SLO, which is set to 0.8s) and goodput weights throughput by inference quality, computed as the inverse of CE Loss. These metrics are used to validate the performance (efficiency and quality) of each system in the LLMs service.
+
+VI-B End-to-End Performance
+
+Fig. 5 summarizes the inference throughput and goodput of CoLLM in comparison with four representative baseline systems across two LLMs and two domain-specific tasks.
+
+Inference Throughput.
+Fig. 5(a) and (b) report the end-to-end inference throughput.
+On the larger LLaMA-8B model, CoLLM consistently delivers the highest throughput across both code generation and conversation tasks, achieving up to 1.5 higher throughput than FedLS on the conversation workload.
+This result highlights CoLLM’s ability to effectively mitigate the resource contention between fine-tuning and inference through lightweight model sharing and coordinated execution.
+On the smaller Qwen3-4B model, the throughput gap among systems narrows, and all inference-oriented baselines (dLoRA, Shepherd, and PEFT) achieve comparable throughput.
+This is expected, as the reduced inference latency of smaller models makes it easier for most systems to satisfy SLO constraints.
+Nevertheless, CoLLM maintains throughput on par with inference-only systems, despite concurrently performing fine-tuning.
+In contrast, FedLS consistently exhibits the lowest throughput, indicating that treating fine-tuning and inference as isolated workloads incurs non-negligible scheduling and redeployment overhead even when inference itself is lightweight.
+
+Overall, these results demonstrate that CoLLM’s intra-replica model sharing and adaptive request dispatching effectively suppress fine-tuning interference, allowing it to preserve high inference throughput comparable to state-of-the-art inference-only systems.
+
+Goodput Performance.
+The goodput results in Fig. 5(c) and (d) further reveal the key advantage of CoLLM.
+For the LLaMA-8B model on the code generation task, CoLLM achieves 2.2, 2.0, 3.0, and 1.4 higher goodput compared to dLoRA, Shepherd, PEFT, and FedLS, respectively.
+Similar trends are observed on the conversation task.
+On the Qwen3-4B model, although the absolute performance gap is reduced due to faster convergence and inference, CoLLM still achieves consistent goodput improvements of 1.6–1.9 over all baselines across both tasks.
+
+Notably, the goodput gains of CoLLM cannot be explained by throughput improvements alone.
+While inference-only systems achieve competitive throughput, they fail to incorporate fine-tuning benefits into serving, resulting in stale model quality and limited goodput.
+FedLS, although performing fine-tuning, relies on periodic model redeployment and separated execution, which delays the exposure of early fine-tuning gains and incurs additional system overhead.
+In contrast, CoLLM’s co-execution framework enables fine-tuning updates to take effect immediately during inference via model sharing, while its two-timescale coordination algorithm dynamically balances long-term quality improvement and short-term inference efficiency.
+
+In summary, across different model scales and task types, CoLLM consistently achieves inference throughput comparable to inference-only systems while substantially outperforming all baselines in goodput.
+These results confirm that CoLLM effectively decouples inference efficiency from model freshness, making it particularly well-suited for realistic edge-serving scenarios where fine-tuning and inference tasks coexist.
+
+Fig. 6: System performance under different load scales.
+
+VI-C Scalability
+
+To evaluate system scalability under varying workload intensities, we replay the larger Azure-Conv trace with increasing scales from to , while fixing the GPU resource budget and using Qwen3-4B as the backbone model. We compare CoLLM with FedLS, which also supports both federated fine-tuning and inference.
+As shown in Fig. 6, when the workload scale is low (), both systems achieve similar throughput, while CoLLM yields higher goodput due to its ability to allocate more capacity to fine-tuning under light load.
+As the workload scale increases, CoLLM exhibits a steady, near-linear increase in throughput and goodput, demonstrating its scalability.
+At high load (), FedLS suffers from performance degradation, with throughput and goodput dropping sharply due to the absence of overload mitigation.
+In contrast, CoLLM sustains high throughput and significantly outperforms FedLS in goodput by avoiding request accumulation and quality degradation through adaptive workload coordination.
+This result highlights the effectiveness of CoLLM’s two-timescale coordination algorithm in balancing workloads and mitigating overloads in dynamic edge environments.
+
+VI-D Microscopic Analysis
+
+VI-D1 Inference quality improvement via model sharing
+
+To quantify the benefit of CoLLM’s model sharing mechanism on real-time inference quality, we compare three configurations: (1) Model Sharing, (2) Separated Deployment, and (3) Inference-only.
+Fig. 7a reports the cumulative distribution of inference quality (measured as the inverse CE loss), where both Model Sharing and Separate significantly outperform Inference-only paradigm. Over 96% of response quality under Model Sharing exceed a quality score of 1, compared to fewer than 10% for Inference-only, validating the importance of fine-tuning.
+Meanwhile, Model Sharing yields significantly more consistent high-quality responses than the Separated Deployment, which only achieves the quality score of 1 for 40%.
+This gap stems from delayed adaptation in Separated Deployment, where fine-tuning improvements are not applied until model redeployment. In contrast, CoLLM’s model sharing directly integrates fine-tuning updates into ongoing inference, enabling continuous quality gains and eliminating the cold-start.
+
+VI-D2 Goodput benefits of TTCA
+
+To evaluate the effectiveness of the Two-Timescale Coordination Algorithm (TTCA), we compare CoLLM against an ablated variant, CoLLM@fixed, which disables TTCA by assigning static fine-tuning batch sizes and using round-robin request dispatching. As shown in Fig. 7b, CoLLM@fixed consistently yields lower goodput than CoLLM, with performance sensitive to the batch size setting: while a medium-sized batch (e.g., 8) achieves the best result among fixed configurations, tuning it manually remains non-trivial and unstable across dynamic inference loads.
+In contrast, CoLLM leverages TTCA to dynamically adjust the fine-tuning batch size and request dispatching, achieving over 2× higher goodput than the best fixed setting.
+
+(a) Inference quality CDF
+
+(b) Goodput under different settings
+
+Fig. 7: Effects of model sharing and TTCA.
+
+VI-E Resource Conservation and Overhead
+
+VII Related Work
+
+We organize related work into two categories: systems that improve either edge LLM fine-tuning or inference, and coordination frameworks that jointly schedule training and inference.
+
+Edge LLM fine-tuning and inference.
+Beyond the evolving federated LLM fine-tuning framework, prior work has explored optimization techniques to improve the efficiency and robustness of edge model fine-tuning, including adaptive rank selection [38], communication compression [39], and resource-aware client scheduling in federated settings [40].
+In parallel, edge-centric inference systems such as PCI [41] and EdgeLoRA [42] optimize throughput and latency via dynamic adapter management and edge-aware batching.
+Yet existing systems optimize federated fine-tuning or inference independently, when both workloads occur concurrently on resource-constrained edge devices, they fail to resolve fundamental resource contention and may lead to serve SLO violations.
+
+Joint training-inference optimization. FedLS [18], ORRIC [43], and Luo [25] explored joint scheduling of traditional DNN model training and inference, aiming to balance model quality improvements and inference latency.
+While conceptually relevant, these methods typically focused on traditional DNN workloads and assumed consistent model architectures and parameters access, which fundamentally differed from LLM-specific PEFT structures like LoRA, and thus could not be directly applied to LLM co-execution scenarios.
+
+Recent LLM systems such as LLMStation [44] and FlexLLM [45] further explore co-serving fine-tuning and inference by sharing the LLM base model at the iteration or token level, primarily to improve GPU utilization and meet inference SLOs.
+However, they still follow a fine-tune-then-serve paradigm, where fine-tuning results are exposed to inference only after coarse-grained tuning segments. As a result, early-stage fine-tuning gains—which often contribute the largest quality improvements—cannot be promptly leveraged by inference.
+In contrast, CoLLM targets federated LLM post-training at the edge and introduces a unified co-execution framework that not only improves resource efficiency and preserves inference SLOs, but also enables real-time inference quality enhancement through shared model updates.
+
+VIII Conclusion
+
+This paper presented a novel co-execution framework and its system instance CoLLM for unifying LoRA-based FL PEFT and inference in edge environments.
+CoLLM introduced two key techniques: an intra-replica model sharing mechanism that enables secure and efficient parameter reuse between concurrent fine-tuning and inference tasks, and a two-timescale inter-replica coordination algorithm that adaptively balances fine-tuning and inference workloads.
+Our extensive evaluation demonstrated that CoLLM consistently achieved superior goodput compared to state-of-the-art LLMs systems, exhibited strong scalability, and validated the effectiveness of its core mechanisms through microscopic analysis.
+
+References
+
+[1]
+GitHub Copilot (2023)GitHub copilot(Website)
+
+External Links: Link
+
+Cited by: §I.
+
+[2]
+Y. Mehdi (2023)Reinventing search with a new ai-powered microsoft bing and edge, your copilot for the web(Website)
+
+External Links: Link
+
+Cited by: §I.
+
+[3]
+OpenAI (2022)ChatGPT: optimizing language models for dialogue(Website)
+
+External Links: Link
+
+Cited by: §I.
+
+[4]
+Y. Zheng, Y. Chen, B. Qian, X. Shi, Y. Shu, and J. Chen (2025)
+
+A review on edge large language models: design, execution, and applications.
+
+ACM Comput. Surv. 57 (8).
+
+External Links: ISSN 0360-0300,
+Link,
+Document
+
+Cited by: §I.
+
+[5]
+G. Qu, Q. Chen, W. Wei, Z. Lin, X. Chen, and K. Huang (2025)
+
+Mobile edge intelligence for large language models: a contemporary survey.
+
+IEEE Communications Surveys & Tutorials.
+
+Cited by: §I.
+
+[6]
+G. Sun, U. Khalid, M. Mendieta, P. Wang, and C. Chen (2024)
+
+Exploring parameter-efficient fine-tuning to enable foundation models in federated learning.
+
+In 2024 IEEE International Conference on Big Data (BigData),
+
+Vol. , pp. 8015–8024.
+
+External Links: Document
+
+Cited by: §I,
+§III-B.
+
+[7]
+Y. J. Cho, L. Liu, Z. Xu, A. Fahrezi, and G. Joshi (2024)
+
+Heterogeneous LoRA for federated fine-tuning of on-device foundation models.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing,
+
+Miami, Florida, USA, pp. 12903–12913.
+
+External Links: Link
+
+Cited by: §I.
+
+[8]
+Z. Wang, Y. Zhou, Y. Shi, and K. B. Letaief (2025)
+
+Federated fine-tuning for pre-trained foundation models over wireless networks.
+
+Trans. Wireless. Comm. 24 (4), pp. 3450–3464.
+
+External Links: ISSN 1536-1276,
+Link,
+Document
+
+Cited by: §I.
+
+[9]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen (2022)
+
+LoRA: low-rank adaptation of large language models.
+
+In International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §I,
+§IV,
+§IV.
+
+[10]
+A. Lee, B. Miranda, and S. Koyejo (2023)
+
+Beyond scale: the diversity coefficient as a data quality metric demonstrates llms are pre-trained on formally diverse data.
+
+Proc. Int. Conf. Mach. Learn. (ICML).
+
+Cited by: §I.
+
+[11]
+Z. Chen, X. Zhao, C. Zhi, and J. Yin (2023)
+
+DeepBoot: Dynamic Scheduling System for Training and Inference Deep Learning Tasks in GPU Cluster.
+
+IEEE Transactions on Parallel and Distributed Systems 34 (9), pp. 2553–2567.
+
+External Links: Document,
+ISSN 15582183
+
+Cited by: §I,
+§II-A.
+
+[12]
+W. Chen, C. Lu, H. Xu, K. Ye, and C. Xu (2025)
+
+Multiplexing dynamic deep learning workloads with slo-awareness in gpu clusters.
+
+In Proceedings of the Twentieth European Conference on Computer Systems,
+
+EuroSys ’25, New York, NY, USA.
+
+External Links: Link
+
+Cited by: §I,
+§II-A.
+
+[13]
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei (2020)
+
+Scaling laws for neural language models.
+
+arXiv preprint arXiv:2001.08361.
+
+Cited by: §I.
+
+[14]
+J. Li, H. Xu, Y. Zhu, Z. Liu, C. Guo, and C. Wang (2023)
+
+Lyra: elastic scheduling for deep learning clusters.
+
+In Proceedings of the Eighteenth European Conference on Computer Systems,
+
+EuroSys ’23, New York, NY, USA, pp. 835–850.
+
+External Links: ISBN 9781450394871,
+Link,
+Document
+
+Cited by: §II-A.
+
+[15]
+S. Choi, S. Lee, Y. Kim, J. Park, Y. Kwon, and J. Huh (2022)
+
+Serving heterogeneous machine learning models on Multi-GPU servers with Spatio-Temporal sharing.
+
+In 2022 USENIX Annual Technical Conference (USENIX ATC 22),
+
+Carlsbad, CA, pp. 199–216.
+
+External Links: ISBN 978-1-939133-29-53
+
+Cited by: §II-A.
+
+[16]
+NVIDIA (2023)Multi-process service (mps)(Website)
+
+External Links: Link
+
+Cited by: §II-A.
+
+[17]
+H. Zhang, Y. Tang, A. Khandelwal, I. Stoica, and U. C. Berkeley (2023)
+
+Shepherd : Serving DNNs in the Wild.
+
+NSDI.
+
+External Links: ISBN 9781939133335
+
+Cited by: §II-B,
+§II-B,
+§VI-A3.
+
+[18]
+P. Han, S. Wang, Y. Jiao, and J. Huang (2024)
+
+Federated Learning while Providing Model as a Service: Joint Training and Inference Optimization.
+
+Proceedings - IEEE INFOCOM, pp. 631–640.
+
+External Links: ISBN 9798350383508,
+ISSN 0743166X
+
+Cited by: §II-B,
+§VI-A3,
+§VII.
+
+[19]
+B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas (2017)
+
+Communication-efficient learning of deep networks from decentralized data.
+
+In Artificial intelligence and statistics,
+
+Cited by: §III-B.
+
+[20]
+D. Wu, R. Ullah, P. Harvey, P. Kilpatrick, I. Spence, and B. Varghese (2022)
+
+FedAdapt: adaptive offloading for iot devices in federated learning.
+
+IEEE Internet of Things Journal 9 (21).
+
+External Links: Document
+
+Cited by: §III-B.
+
+[21]
+T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer (2023)
+
+Qlora: efficient finetuning of quantized llms.
+
+Advances in neural information processing systems 36, pp. 10088–10115.
+
+Cited by: §IV.
+
+[22]
+N. Hyeon-Woo, M. Ye-Bin, and T. Oh (2021)
+
+Fedpara: low-rank hadamard product for communication-efficient federated learning.
+
+arXiv preprint arXiv:2108.06098.
+
+Cited by: §IV.
+
+[23]
+H. Liu, D. Tam, M. Muqeeth, J. Mohta, T. Huang, M. Bansal, and C. Raffel (2022)
+
+Few-shot parameter-efficient fine-tuning is better and cheaper than in-context learning.
+
+External Links: 2205.05638,
+Link
+
+Cited by: §IV.
+
+[24]
+S. L. Smith, P. Kindermans, C. Ying, and Q. V. Le (2018)
+
+Don’t decay the learning rate, increase the batch size.
+
+ICLR.
+
+Cited by: §V-B1.
+
+[25]
+K. Luo, K. Zhao, T. Ouyang, X. Zhang, Z. Zhou, H. Wang, and X. Chen (2024)
+
+Efficient Coordination of Federated Learning and Inference Offloading at the Edge: A Proactive Optimization Paradigm.
+
+IEEE Transactions on Mobile Computing PP, pp. 1–15.
+
+External Links: ISSN 15580660
+
+Cited by: §V-B1,
+§VII.
+
+[26]
+E. Mosqueira-Rey, E. Hernández-Pereira, D. Alonso-Ríos, J. Bobes-Bascarán, and Á. Fernández-Leal (2022)
+
+Human-in-the-loop machine learning: a state of the art.
+
+Artif. Intell. Rev. 56 (4), pp. 3005–3054.
+
+External Links: ISSN 0269-2821,
+Link
+
+Cited by: §V-B2.
+
+[27]
+N. Lambert, L. Castricato, L. von Werra, and A. Havrilla (2022)
+
+Illustrating reinforcement learning from human feedback (rlhf).
+
+Hugging Face Blog.
+
+Note: https://huggingface.co/blog/rlhf
+
+Cited by: §V-B2.
+
+[28]
+thanhkt
+
+Manim_code.
+
+Note: https://huggingface.co/datasets/thanhkt/manim_code
+
+Cited by: TABLE II.
+
+[29]
+sahil2801
+
+CodeAlpaca-20k.
+
+Note: https://huggingface.co/datasets/sahil2801/CodeAlpaca-20k
+
+Cited by: TABLE II.
+
+[30]
+iamtarun
+
+Code_instructions_120k_alpaca.
+
+Note: https://huggingface.co/datasets/iamtarun/code_instructions_120k_alpaca
+
+Cited by: TABLE II.
+
+[31]
+tatsu-lab
+
+Alpaca.
+
+Note: https://huggingface.co/datasets/tatsu-lab/alpaca
+
+Cited by: TABLE II.
+
+[32]
+teknium
+
+GPTeacher-general-instruct.
+
+Note: https://huggingface.co/datasets/teknium/GPTeacher-General-Instruct
+
+Cited by: TABLE II.
+
+[33]
+hakurei
+
+Open-instruct-v1.
+
+Note: https://huggingface.co/datasets/hakurei/open-instruct-v1
+
+Cited by: TABLE II.
+
+[34]
+J. Stojkovic, C. Zhang, I. Goiri, J. Torrellas, and E. Choukse (2025)
+
+DynamoLLM: Designing LLM Inference Clusters for Performance and Energy Efficiency .
+
+In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA),
+
+Vol. , Los Alamitos, CA, USA, pp. 1348–1362.
+
+External Links: ISSN ,
+Document,
+Link
+
+Cited by: §VI-A2.
+
+[35]
+B. Wu, R. Zhu, Z. Zhang, P. Sun, X. Liu, and X. Jin (2024)
+
+dLoRA: Dynamically Orchestrating Requests and Adapters for LoRA LLM Serving.
+
+OSDI, pp. 911–927.
+
+External Links: ISBN 9781939133403
+
+Cited by: §VI-A3.
+
+[36]
+S. Mangrulkar, S. Gugger, L. Debut, Y. Belkada, S. Paul, and B. Bossan (2022)
+
+PEFT: state-of-the-art parameter-efficient fine-tuning methods.
+
+Note: https://github.com/huggingface/peft
+
+Cited by: §VI-A3.
+
+[37]
+L. Gao, J. Liu, H. Xu, S. Xu, Q. Ma, and L. Huang (2025)
+
+Accelerating End-Cloud Collaborative Inference via Near Bubble-free Pipeline Optimization.
+
+INFOCOM2025.
+
+External Links: 2501.12388
+
+Cited by: §VI-A3.
+
+[38]
+J. Liu, Y. Liao, H. Xu, Y. Xu, J. Liu, and C. Qian (2025)
+
+Adaptive parameter-efficient federated fine-tuning on heterogeneous devices.
+
+IEEE Transactions on Mobile Computing 24 (11), pp. 12533–12549.
+
+External Links: Document
+
+Cited by: §VII.
+
+[39]
+Y. Su, N. Yan, Y. Deng, M. Dohler, and R. Schober (2025)
+
+HAFLQ: heterogeneous adaptive federated lora fine-tuned llm with quantization.
+
+External Links: 2411.06581,
+Link
+
+Cited by: §VII.
+
+[40]
+M. Xu, D. Cai, Y. Wu, X. Li, and S. Wang (2024)
+
+FwdLLM: Efficient Federated Finetuning of Large Language Models with Perturbed Inferences.
+
+Proceedings of the 2024 USENIX Annual Technical Conference, ATC 2024, pp. 579–596.
+
+External Links: ISBN 9781939133410
+
+Cited by: §VII.
+
+[41]
+L. Tan, P. Zhou, S. Guo, J. Zhao, Z. Kuang, D. Qiao, and L. Yang (2025)
+
+Partitioned collaborative inference for on-device models via evolutionary reinforcement learning.
+
+In 2025 IEEE 45th International Conference on Distributed Computing Systems (ICDCS),
+
+Vol. , pp. 714–724.
+
+External Links: Document
+
+Cited by: §VII.
+
+[42]
+Z. Shen, Y. He, Z. Wang, Y. Zhang, G. Sun, W. Ye, and A. Li (2025)
+
+EdgeLoRA: An Efficient Multi-Tenant LLM Serving System on Edge Devices.
+
+Vol. 1, MobiSys.
+
+Cited by: §VII.
+
+[43]
+H. Cai, Z. Zhou, and Q. Huang (2024)
+
+Online Resource Allocation for Edge Intelligence with Colocated Model Retraining and Inference.
+
+Proceedings - IEEE INFOCOM, pp. 1900–1909.
+
+External Links: Document,
+2405.16029,
+ISBN 9798350383508,
+ISSN 0743166X
+
+Cited by: §VII.
+
+[44]
+Y. He, H. Yang, Y. Lu, A. Klimovic, and G. Alonso (2025)
+
+LLMStation: Resource Multiplexing in Tuning and Serving Large Language Models.
+
+Proceedings of the 2025 USENIX Annual Technical Conference, ATC 2025, pp. 1639–1655.
+
+External Links: ISBN 9781939133489
+
+Cited by: §VII.
+
+[45]
+G. Oliaro, X. Miao, X. Cheng, V. Kada, M. Wu, R. Gao, Y. Huang, R. Delacourt, A. Yang, Y. Wang, C. Unger, and Z. Jia (2026)
+
+FlexLLM: token-level co-serving of llm inference and finetuning with slo guarantees.
+
+In The 23rd USENIX Symposium on Networked Systems Design and Implementation,
+
+External Links: Link
+
+Cited by: §VII.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

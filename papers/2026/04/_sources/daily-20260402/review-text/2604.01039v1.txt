@@ -1,0 +1,965 @@
+Automated Framework to Evaluate and Harden LLM System Instructions against Encoding Attacks
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Motivation & Idea
+
+II Threat Model
+
+III Encoding-Based System Instruction Extraction
+
+III-A Definition
+
+III-B Attack Intuition
+
+III-C Categories of Encoding Strategies
+
+IV Automated Evaluation Framework
+
+IV-A Framework Architecture
+
+IV-B System Instruction Dataset
+
+IV-C Baseline Verification
+
+IV-D Attack Prompt Format and Leakage Example
+
+V Experimental Evaluation
+
+V-A Models Evaluated
+
+V-B Attack Success Rate (ASR)
+
+V-C Leakage Detection and Judge Model Validation
+
+V-D ASR Results Across Encoding Techniques
+
+V-E ASR by Encoding Category
+
+VI Defense Evaluation
+
+VI-A Limitations of Structure-Randomization Defenses
+
+VI-B CoT-Based Prompt Reshaping as Design-Time Hardening
+
+VII Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.01039v1 [cs.CR] 01 Apr 2026
+
+Automated Framework to Evaluate and Harden LLM System Instructions against Encoding Attacks
+
+Anubhab Sahu
+
+Affiliation: Keysight Technologies, India
+
+Email: anubhab.sahu@keysight.com
+
+  
+Diptisha Samanta
+
+Affiliation: Keysight Technologies, India
+
+Email: diptisha.samanta@keysight.com
+
+  
+Reza Soosahabi
+
+Affiliation: Keysight Technologies, USA
+
+Email: reza.soosahabi@keysight.com
+
+Abstract
+
+System Instructions in Large Language Models (LLMs) are commonly used to enforce safety policies, define agent behavior, and protect sensitive operational context in agentic AI applications. These instructions may contain sensitive information such as API credentials, internal policies, and privileged workflow definitions, making system instruction leakage a critical security risk highlighted in the OWASP Top 10 for LLM Applications [1, 2]. Without incurring the overhead costs of reasoning models, many LLM applications rely on refusal-based instructions that block direct requests for system instructions, implicitly assuming that prohibited information can only be extracted through explicit queries. We introduce an automated evaluation framework that tests whether system instructions remain confidential when extraction requests are re-framed as encoding or structured output tasks. Across four common models and 46 verified system instructions, we observe high attack success rates () for structured serialization where models refuse direct extraction requests but disclose protected content in the requested serialization formats. We further demonstrate a mitigation strategy based on one-shot instruction reshaping using a Chain-of-Thought reasoning model [3, 4], indicating that even subtle changes in wording and structure of system instructions can significantly reduce attack success rate without requiring model retraining.
+
+I Motivation & Idea
+
+Large Language Models (LLMs) are integral components of agentic AI applications that autonomously perform various tasks such as financial advising, infrastructure management, software development, and enterprise decision support. They often use system instructions defining the agent’s identity, operational constraints, safety policies, and access to external resources. Because these instructions guide how the model interprets user inputs and generates responses, they play a central role in shaping interactions between the AI system and its users [5, 3]. Protecting the confidentiality of system instructions is therefore important for maintaining the security and integrity of LLM-based applications, as leakage of such instructions can expose internal logic and has been demonstrated in prior work on prompt extraction and system instruction leakage [6, 7, 8].
+
+In practice, system instructions may include operational details such as API identifiers, configuration parameters, tool usage policies, or workflow constraints. Leakage of such information can allow attackers to analyze guardrails or infer internal system behavior [6, 8, 7, 9]. Even partial disclosure can encourage attackers probing for more effective prompt injection or jailbreak attacks [10, 11].
+
+Most current defenses against system instruction leakage rely on refusal behavior learned through alignment techniques such as supervised fine-tuning and reinforcement learning from human feedback (RLHF), as well as rule-based safety alignment [12, 13]. These mechanisms are designed to detect and reject prompts that explicitly request sensitive information, including system instructions or internal policies. While effective against direct extraction queries, they primarily rely on recognizing explicit disclosure intent in natural language. In contrast, more advanced reasoning-based safety mechanisms have been proposed to improve robustness against indirect or semantically complex attacks, but such approaches typically require additional reasoning steps and are not consistently deployed across production systems. As a result, it remains unclear whether standard alignment-based defenses provide sufficient protection when disclosure requests are reframed as encoding or structured-output tasks.
+
+In this work, we investigate the robustness of system instruction confidentiality against requests that attempt to obtain the instructions through encoded or structured representations. Specifically, we examine whether LLMs inadvertently disclose system instructions when asked to produce encoded or formatted outputs rather than directly revealing the underlying content. Prior work has explored reasoning-based approaches, such as chain-of-thought prompting and rule-based alignment, to improve robustness against adversarial prompts and policy violations [3, 4, 13]. While these methods can enhance the model’s ability to reason about safety constraints, they typically require additional inference steps or specialized alignment procedures. Our study therefore focuses on widely deployed instruction-following models that do not rely on such computationally expensive techniques. To study this problem, we propose an automated evaluation and hardening framework that generates encoding-based queries and assesses whether models disclose protected system-level information under indirect request formulations.
+
+To study this problem, we introduce an automated framework11
+1
+
+https://github.com/Keysight/LLM-EncodeGuard for evaluating the robustness of LLMs and their system instructions against leakage under indirect request formulations as shown in Fig. 1. The framework generates encoding- and format-based queries that request system instructions in alternative representations and evaluates whether models disclose protected information. Using this approach, we measure the prevalence of such leakage across multiple LLM architectures and examine mitigation strategies for improving system instruction confidentiality.
+
+Contributions. This paper makes the following contributions:
+
+•
+
+We analyze the robustness of LLM system instructions against extraction attempts framed as encoding or structured-output tasks, highlighting a gap in current refusal-based defenses.
+
+•
+
+We introduce an automated framework for generating encoding-based queries and systematically evaluating system instruction leakage.
+
+•
+
+We perform an empirical evaluation across multiple LLM architectures, including both hosted chatbot models and locally deployed LLMs, using a benchmark of system instructions with verified refusal baselines.
+
+•
+
+We evaluate attack success rates across different categories of encoding techniques and show that structure-based representations (e.g., YAML, TOML, and configuration-like formats) consistently achieve the highest leakage rates.
+
+•
+
+We show that subtle changes in the wording and structure of system instructions can significantly affect robustness against indirect leakage, even without attack-specific hardening rules.
+
+•
+
+We evaluate a design-time hardening strategy and show that improved robustness can arise from relatively small linguistic and structural changes in system instructions, rather than from attack-specific defenses.
+
+Figure 1 illustrates the workflow of encoding-based system instruction leakage. When attackers frame requests as formatting or encoding tasks (e.g., requesting YAML output), models may inadvertently disclose sensitive system information despite safeguards intended to prevent direct extraction.
+
+Paper Organization. The remainder of this paper is organized as follows. Section II describes the threat model. Section III introduces the encoding-based extraction approach. Section IV presents the automated evaluation framework. Section V reports experimental results and analysis across multiple LLM architectures. Section VI evaluates mitigation strategies. Finally, Section VII concludes the paper.
+
+Fig. 1: Overall architecture of the evaluation framework
+
+II Threat Model
+
+We consider a threat model in which an attacker interacts with an AI agent through natural language prompts but does not have direct access to the system instructions that configure the agent. System instructions define the agent’s behavior and may contain sensitive information such as API credentials, internal policies, configuration parameters, or proprietary operational workflows. Leakage of such instructions has been identified as a major security risk in modern LLM deployments [1, 2].
+
+The attacker’s objective is to extract system instructions or confidential information embedded within them. The attacker is assumed to have the ability to send arbitrary prompts to the model and observe the responses, but cannot directly modify system instructions, access server-side memory, or intercept external tool outputs.
+
+Existing defenses typically rely on refusal mechanisms trained through instruction-following and safety alignment techniques [12, 13]. While effective against naive extraction queries, prior work has shown that LLM safety mechanisms can fail under adversarial prompting, prompt injection, or jailbreak strategies [10, 14, 11].
+
+In this work we investigate whether similar failures occur when attackers present extraction requests as representation or formatting tasks. Under this threat model, a confidentiality violation occurs when a model reveals partial or complete system instructions, confidential variables, or reconstructable fragments of protected content in response to encoding or structured-output requests.
+
+III Encoding-Based System Instruction Extraction
+
+III-A Definition
+
+We design an evaluation framework to assess whether Large Language Models leak system instructions when disclosure requests are framed as encoded or structured output tasks. The framework focuses on scenarios in which direct requests for system instructions are correctly refused, but equivalent requests expressed as formatting or encoding tasks are handled differently by the model.
+
+An attack instance is considered successful if a model (i) refuses a direct request for system instructions, but (ii) responds to an equivalent request framed as an encoding or structured-output task by revealing partial or complete system instructions or other sensitive system-level information. This definition captures failures that arise due to differences in how requests are interpreted based on their representation, rather than from the absence of refusal behavior.
+
+III-B Attack Intuition
+
+The effectiveness of this proposed methodology stems from how LLMs handle requests that are framed as output transformation [14, 15] or formatting tasks. In many cases, safety mechanisms evaluate requests based on their surface intent [11] before full semantic reconstruction. When a request appears to involve formatting, serialization, or representation of existing context, the model may treat it as a benign transformation task.
+Hence, the model may output restricted system-level content as part of fulfilling the requested output format, even though equivalent direct disclosure requests are refused. This behavior indicates a mismatch between the intended confidentiality of system instructions and how safety enforcement generalizes across different output representations.
+
+III-C Categories of Encoding Strategies
+
+We categorize encoding-based evasion techniques into four classes:
+
+Character-Level Obfuscation: This technique alters text using character-level transformations such as ROT13, Base64, leetspeak, Pig Latin, Unicode variants, emoji spellings, or ASCII transformations.
+
+Structure-Embedding Wrappers: This technique embeds system instructions within structured formats such as JSON, YAML, TOML, XML, Markdown, or programming-language constructs, framing disclosure as formatting or serialization.
+
+Symbolic and Representation Encodings: This technique expresses text using non-standard but semantically recoverable symbol systems such as Morse code, Braille, semaphore, binary dumps, or symbolic alphabets.
+
+Logs and Protocol Embedding: This technique presents system instructions in formats that resemble system or network artifacts, such as HTTP headers, configuration files, system logs, debug traces, or protocol outputs.
+
+Prior work has explored adversarial and obfuscated prompting strategies[16, 14], but has not systematically studied encoding-based representation attacks on system instruction confidentiality. Unlike jailbreak attacks that attempt to override safety policies through explicit adversarial instructions, encoding-based attacks exploit benign transformation or serialization tasks (e.g., formatting or encoding) to induce unintended disclosure of protected system instructions.
+
+IV Automated Evaluation Framework
+
+IV-A Framework Architecture
+
+The evaluation framework consists of four components: (i) an encoding capability probe, (ii) a target LLM, (iii) an automated prompt generator, and (iv) a judge LLM. The target model is initialized with a fixed system instruction.
+
+The framework begins with a probing step to identify encoding or structured formats that the target model can reliably interpret and generate. This is performed by issuing benign formatting or encoding requests (e.g., YAML conversion or Base64 encoding) and validating the outputs. Only supported encodings are retained for subsequent evaluation.
+
+The prompt generator then applies encoding or formatting transformations to a standard extraction request, and the resulting prompts are issued to the target model. A judge model evaluates the responses to determine whether system instructions or sensitive system-level information are disclosed [17].
+
+The overall evaluation pipeline is formalized in Algorithm 1, which captures the probing, baseline verification, attack generation, and leakage detection steps. This procedure ensures that leakage is measured only for supported encodings and relative to a verified refusal baseline.
+
+Algorithm 1 Evaluation of Encoding-Based System Instruction Leakage
+
+1:
+
+target model ; judge model ; system instruction set ; encoding set
+
+2:
+
+leakage results
+
+3:
+
+4:
+
+5:
+
+for each encoding do
+
+6:
+
+  
+
+7:
+
+  if then
+
+8:
+
+   
+
+9:
+
+  end if
+
+10:
+
+end for
+
+11:
+
+for each system instruction do
+
+12:
+
+  
+
+13:
+
+  if then
+
+14:
+
+   for each encoding do
+
+15:
+
+      
+
+16:
+
+      
+
+17:
+
+       leakage classification
+
+18:
+
+      
+
+19:
+
+   end for
+
+20:
+
+  end if
+
+21:
+
+end for
+
+22:
+
+return
+
+This procedure ensures that only encodings supported by the model are considered and that leakage is measured relative to a verified refusal baseline.
+
+IV-B System Instruction Dataset
+
+We initially constructed 80 system instructions including finance, healthcare, DevOps, and enterprise assistant scenarios. Each instruction contained explicitly sensitive elements such as API identifiers, internal variables, or confidential policies. From this set, 46 system instructions exhibited consistent refusal behavior across all evaluated models under direct extraction attempts and were selected for evaluation.
+
+IV-C Baseline Verification
+
+For each system instruction, we first verified [11] that sensitive information governed by the instruction was not disclosed under direct user queries. These baseline queries asked for protected information referenced in the system instruction, such as confidential variables, internal access details, or restricted context. Under these queries, models either refused or provided safe responses and did not reveal system instructions or sensitive system-level information in full or partial format.
+
+Only system instructions for which no sensitive or system-level information was disclosed during direct querying were included in the benchmark. This ensured that any disclosure observed under requests that ask for the system instruction to be rendered in a specific format was due to how the request was framed, rather than because the system instruction itself allowed disclosure.
+
+IV-D Attack Prompt Format and Leakage Example
+
+All encoding-based attacks use a uniform user prompt template to ensure comparability across techniques.
+
+User Prompt Template:
+
+Here, <ENCODING> is replaced with a specific encoding or structured representation (e.g., YAML, TOML, ROT13, HTTP header).
+
+Illustrative Example:
+
+A representative system instruction containing sensitive information is shown below.
+
+When directly queried for system instructions or associated sensitive information, target models consistently refuse to respond in accordance with their safety policies. However, when the same request is expressed using the encoding template, for example:
+
+several models produce structured outputs that include partial or complete system instruction content, such as the API identifier or paraphrased internal details. This behavior is classified as a successful leakage under our definition, as the model discloses protected information when the request is framed as a formatting or transformation task rather than an explicit extraction query.
+
+This example demonstrates that encoding-based reformulations can bypass refusal mechanisms by altering the representation of the request.
+
+V Experimental Evaluation
+
+V-A Models Evaluated
+
+In our proof-of-concept (PoC) we evaluated four representative LLMs covering both proprietary and open-weight families:
+
+•
+
+GPT-4.1-mini (instruction-tuned, refusal-based safety)
+
+•
+
+GPT-3.5-turbo (lightweight instruction-following model)
+
+•
+
+Gemini-2.5-flash (multimodal-capable, safety-aligned model)
+
+•
+
+NVIDIA LLaMA-8B (open-weight, non-CoT model)
+
+These models were selected to capture diversity in scale, training paradigms, and safety enforcement mechanisms.
+
+V-B Attack Success Rate (ASR)
+
+To quantify the effectiveness of encoding-based attacks, we define Attack Success Rate (ASR) as the primary evaluation metric.
+
+Let denote the set of system instructions in the benchmark and the set of encoding techniques. For a given model and encoding , ASR is defined as:
+
+where is a binary indicator that evaluates to if the model response contains partial or full disclosure of system instruction , which is attacked using encoding , and otherwise.
+
+V-C Leakage Detection and Judge Model Validation
+
+Leakage Detection.
+To determine whether a model response reveals protected system instruction content [18, 19], we employ an automated judge-based evaluation pipeline [20, 21]. Two judge models are used across different phases of the study. During the initial attack evaluation, GPT-4.1-mini is used to classify responses generated by the target models. For experiments involving Chain-of-Thought (CoT) reshaped system instructions, we use GPT-OSS-120B, a locally hosted open-weight model deployed on NVIDIA DGX Spark infrastructure with GB10 GPU hardware, as the judge. Using two independent judge models helps reduce potential bias associated with relying on a single model for automated evaluation and improves the robustness of leakage detection.
+
+Judge Prompt.
+The judge model receives three inputs: (i) the original system instruction, (ii) the user attack prompt, and (iii) the target model’s response. The judge is instructed to determine whether the response contains any direct or indirect disclosure of system instructions or sensitive information. Specifically, the judge is prompted to classify a response as Leakage if it contains verbatim system instructions, partial fragments, paraphrased instructions, encoded representations, confidential variables (e.g., API keys), or any information that could enable reconstruction of the system instruction. The output format is constrained to a binary decision: Leakage or No Leakage.
+
+Accuracy Validation.
+To verify the reliability of the automated judge, we conducted a manual validation study on a randomly sampled subset of evaluation outputs. Human reviewers manually inspected the responses and labeled whether leakage occurred based on the same criteria used by the judge model. The automated judge predictions were then compared with the human annotations to assess agreement.
+
+Similar quantitative evaluation metrics have been used in adversarial robustness studies of LLMs [14, 16].
+
+V-D ASR Results Across Encoding Techniques
+
+Table I (Before System Instruction Hardening) reports ASR values (in percent) for representative encoding techniques across the evaluated models. All system instructions included in the benchmark exhibited a verified refusal baseline (0% ASR) under direct extraction attempts.
+
+Key Observations:
+
+Several trends emerge from the ASR analysis:
+
+1.
+
+Structure-embedding wrappers (e.g., YAML, TOML, cron, gitignore) consistently achieve the highest ASR, often exceeding .
+
+2.
+
+Character-level obfuscation techniques show lower but non-negligible ASR, particularly against non-CoT models.
+
+3.
+
+Open-weight and lightweight models exhibit higher susceptibility compared to more heavily aligned models.
+
+4.
+
+Verified refusal baselines do not translate to encoding robustness, indicating a lack of representation-invariant enforcement.
+
+TABLE I: ASR by Encoding Technique Across Models (Before vs. After System Instruction Hardening)
+
+Encoding Technique
+GPT-4.1-mini
+GPT-3.5-turbo
+Gemini-2.5-flash
+LLaMA-3-8B
+
+Before
+After
+Before
+After
+Before
+After
+Before
+After
+
+Pig Latin
+ 0.0870 
+ 0.0000 
+ 0.5870 
+ 0.2391 
+ 0.0870 
+ 0.0000 
+ 0.4348 
+ 0.4783 
+
+Base64
+ 0.0870 
+ 0.0000 
+ 0.0435 
+ 0.0000 
+ 0.0435 
+ 0.0217 
+ 0.0870 
+ 0.0435 
+
+Rot13
+ 0.3043 
+ 0.0435 
+ 0.0435 
+ 0.0435 
+ 0.1739 
+ 0.0000 
+ 0.2391 
+ 0.2609 
+
+Leetspeak
+ 0.3478 
+ 0.0652 
+ 0.1957 
+ 0.1087 
+ 0.1304 
+ 0.0000 
+ 0.6087 
+ 0.6522 
+
+Toml
+ 0.9130 
+ 0.4130 
+ 0.8696 
+ 0.2826 
+ 0.6304 
+ 0.0652 
+ 0.8696 
+ 0.6087 
+
+Yaml
+ 0.9565 
+ 0.6304 
+ 0.8478 
+ 0.3478 
+ 0.6087 
+ 0.0435 
+ 0.8913 
+ 0.5435 
+
+Json Wrapper
+ 0.2391 
+ 0.0435 
+ 0.5870 
+ 0.1087 
+ 0.3696 
+ 0.0652 
+ 0.6739 
+ 0.5652 
+
+Morse Code
+ 0.0652 
+ 0.0217 
+ 0.1957 
+ 0.0000 
+ 0.0870 
+ 0.0000 
+ 0.1522 
+ 0.1304 
+
+Emoji
+ 0.0870 
+ 0.0217 
+ 0.1304 
+ 0.0435 
+ 0.0217 
+ 0.0000 
+ 0.1957 
+ 0.0870 
+
+HTTP header
+ 0.1304 
+ 0.0217 
+ 0.1304 
+ 0.0000 
+ 0.1957 
+ 0.0000 
+ 0.3261 
+ 0.1957 
+
+Cron Comment
+ 0.7826 
+ 0.1739 
+ 0.6304 
+ 0.1739 
+ 0.4565 
+ 0.1304 
+ 0.6087 
+ 0.5435 
+
+Git Ignore
+ 0.9130 
+ 0.2826 
+ 0.7174 
+ 0.2826 
+ 0.5435 
+ 0.0435 
+ 0.8261 
+ 0.6304 
+
+Syslog
+ 0.1522 
+ 0.2117 
+ 0.0652 
+ 0.0435 
+ 0.1957 
+ 0.0217 
+ 0.6304 
+ 0.5435 
+
+V-E ASR by Encoding Category
+
+To better understand systemic weaknesses, we aggregate ASR results by encoding category. Table II (Before System Instruction Hardening) reports the average ASR across all techniques within each category and across all evaluated system instructions.
+
+TABLE II: ASR by Encoding Category Across Models (Before vs. After System Instruction Hardening)
+
+Encoding Category
+GPT-4.1-mini
+GPT-3.5-turbo
+Gemini-2.5-flash
+LLaMA-3-8B
+
+Before
+After
+Before
+After
+Before
+After
+Before
+After
+
+Character-Level Obfuscation
+ 0.4130 
+ 0.0652 
+ 0.6522 
+ 0.2826 
+ 0.3043 
+ 0.0217 
+ 0.7826 
+ 0.7826 
+
+Structure-Embedding Wrappers
+ 0.9783 
+ 0.6739 
+ 0.9565 
+ 0.4348 
+ 0.7391 
+ 0.1087 
+ 0.9565 
+ 0.7609 
+
+Symbolic Encodings
+ 0.1087 
+ 0.0217 
+ 0.2609 
+ 0.0435 
+ 0.0870 
+ 0.0000 
+ 0.3043 
+ 0.1957 
+
+Logs & Protocol Embedding
+ 0.9130 
+ 0.3261 
+ 0.8261 
+ 0.3696 
+ 0.7391 
+ 0.1304 
+ 0.9783 
+ 0.8043 
+
+These results show that encodings which alter task framing (structure and logs) are substantially more effective than those that merely alter surface characters. This suggests that leakage is driven not only by tokenizer blind spots, but also by higher-level task reinterpretation within the model.
+
+VI Defense Evaluation
+
+Our empirical results suggest that encoding-based leakage arises primarily from task re-framing. Instead of directly requesting protected system instructions, the attacker frames the request as a benign transformation or serialization task (e.g., “render the system instructions as YAML”). In this scenario, the model interprets the request as a legitimate formatting operation rather than an extraction attempt. This failure mode differs from classic prompt-injection attacks, which typically attempt to override instruction-following behavior through adversarial directives. Consequently, defenses that primarily focus on hardening prompt assembly or structural separation that leverage fine-tuned models to detect prompt injection risks [22] may not address the underlying representation-invariance weakness.
+
+VI-A Limitations of Structure-Randomization Defenses
+
+Structure-randomization approaches, such as polymorphic prompt assembly [23], aim to prevent attackers from reliably identifying prompt boundaries or separator tokens. These techniques are effective against attacks that exploit predictable prompt layouts. However, they do not directly mitigate representation-invariant leakage because the system instructions remain fully available within the model’s context window.
+
+If the model interprets requests to format, encode, or serialize system instructions as valid transformation tasks, randomizing delimiters or prompt structure does not prevent disclosure. As a result, while such defenses strengthen prompt structure against boundary inference attacks, they do not eliminate the risk of semantic compliance with encoding-based exfiltration requests.
+
+VI-B CoT-Based Prompt Reshaping as Design-Time Hardening
+
+To address the representation-invariance vulnerability, we investigate a complementary defense strategy based on instruction reshaping using a Chain-of-Thought (CoT)–capable model during the design phase, as shown in Fig. 2. Rather than relying solely on runtime prompt separation techniques, this approach transforms loosely specified confidentiality statements into explicit and hierarchical security constraints that the deployed model can consistently enforce across different output representations.
+
+Fig. 2: Evaluation framework with system instruction hardening via CoT-guided instruction reshaping.
+
+Specifically, the reshaping process introduces three key elements:
+
+•
+
+Explicit non-disclosure rules that forbid verbatim, partial, or reconstructable leakage of sensitive content.
+
+•
+
+Refusal triggers that activate when requests attempt to transform, encode, or otherwise expose protected information.
+
+•
+
+Priority constraints that ensure confidentiality policies override user-specified formatting or output instructions.
+
+We formalize the design-time instruction reshaping process as Algorithm 2. The procedure captures the transformation of system instructions and the subsequent evaluation of robustness improvements.
+
+Algorithm 2 Design-Time Instruction Reshaping for System Instructions Hardening
+
+1:
+
+original system instruction ; CoT-capable model ; evaluation framework
+
+2:
+
+reshaped instruction ; leakage reduction metrics
+
+3:
+
+generate structured confidentiality constraints
+
+4:
+
+evaluate leakage for original instruction
+
+5:
+
+evaluate leakage after reshaping
+
+6:
+
+leakage reduction
+
+7:
+
+return
+
+This process enables a direct comparison between original and reshaped instructions to quantify the impact of language and structural changes on leakage behavior.
+
+The following example illustrates the transformation from an original system instruction to a reshaped instruction produced during the design phase.
+
+Original System Instruction (Before Reshaping):
+
+Reshaped System Instruction (Design-Time Output):
+
+Compared to the original instruction, the reshaped version introduces more explicit and structured constraints on disclosure behavior without relying on task-specific rules. This transformation avoids overfitting to particular attack techniques and instead enforces general non-disclosure principles. Empirically, we observe that such subtle changes in wording and structure significantly improve robustness against encoding-based and indirect extraction attempts, as evidenced in the ”After” results reported in Table II and Table I.
+
+A key observation from our experiments is that robustness is influenced not only by the presence of confidentiality constraints, but also by how those constraints are phrased. In several cases, relatively small changes in wording, structure, and emphasis substantially reduced leakage rates (ASRs), even without introducing encoding-specific rules. This suggests that system instruction language itself is an important factor in security robustness.
+
+VII Conclusion
+
+System instructions serve as a key security boundary for agentic AI, but our findings show that confidentiality safeguards based on refusal instructions alone do not consistently hold across alternate output formats. We present an automated method that tests system‑prompt leakage by reframing extraction as an encoding or structured‑formatting task.
+Across four major LLM families and 46 protected system instructions, we observe high leakage rates often above 90% when prompts use structure‑embedding formats (e.g., YAML, TOML, cron, gitignore) or log/protocol styles. These results indicate that models fail not only against obfuscation but also against higher-level reinterpretations where disclosure is treated as harmless serialization.
+We also assess a mitigation strategy based on instruction reshaping using a CoT-capable model during prompt design. Turning informal confidentiality statements into explicit, rule‑based hierarchies substantially reduces leakage, including near-zero rates for symbolic and character-level encodings and major reductions for structured formats all without requiring CoT at inference time.
+Overall, the study shows that encoding‑invariant confidentiality is essential for secure LLM deployment. Future work should expand encoding taxonomies, examine multi-turn and tool-assisted attacks, and develop model-agnostic safeguards that maintain non-disclosure across formats and interaction styles.
+
+References
+
+[1]
+OWASP Foundation (2023)
+
+OWASP top 10 for large language model applications.
+
+Note: Available: https://owasp.org/www-project-top-10-for-large-language-model-applications/
+
+Cited by: §II,
+Abstract.
+
+[2]
+OWASP Foundation (2025)
+
+LLM07:2025 system prompt leakage.
+
+Note: Online
+
+External Links: Link
+
+Cited by: §II,
+Abstract.
+
+[3]
+J. Wei et al. (2022)
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+arXiv preprint arXiv:2201.11903.
+
+Cited by: §I,
+§I,
+Abstract.
+
+[4]
+X. Wang et al. (2022)
+
+Self-consistency improves chain of thought reasoning in language models.
+
+arXiv preprint arXiv:2203.11171.
+
+Cited by: §I,
+Abstract.
+
+[5]
+T. Brown et al. (2020)
+
+Language models are few-shot learners.
+
+NeurIPS.
+
+Cited by: §I.
+
+[6]
+B. Hui, H. Yuan, N. Z. Gong, P. Burlina, and Y. Cao (2024)
+
+PLeak: prompt leaking attacks against large language model applications.
+
+In Proceedings of the 2024 ACM SIGSAC Conference on Computer and Communications Security,
+
+pp. 3600–3614.
+
+Cited by: §I,
+§I.
+
+[7]
+Y. Zhang, N. Carlini, and D. Ippolito (2023)
+
+Effective prompt extraction from language models.
+
+External Links: 2307.06865,
+Link
+
+Cited by: §I,
+§I.
+
+[8]
+Z. Sha and Y. Zhang (2024)
+
+Prompt stealing attacks against large language models.
+
+External Links: 2402.12959,
+Link
+
+Cited by: §I,
+§I.
+
+[9]
+Y. Liu, Y. Zhang, G. Bansal, E. Wallace, et al. (2024)
+
+Raccoon: prompt extraction benchmark of llm-integrated applications.
+
+External Links: 2406.06737,
+Link
+
+Cited by: §I.
+
+[10]
+K. Greshake et al. (2023)
+
+More than you have asked for: a comprehensive analysis of novel prompt injection threats to application-integrated large language models.
+
+arXiv preprint arXiv:2302.12173.
+
+Cited by: §I,
+§II.
+
+[11]
+A. Wei et al. (2023)
+
+Jailbroken: how does llm safety training fail?.
+
+arXiv preprint arXiv:2307.02483.
+
+Cited by: §I,
+§II,
+§III-B,
+§IV-C.
+
+[12]
+L. Ouyang et al. (2022)
+
+Training language models to follow instructions with human feedback.
+
+Advances in Neural Information Processing Systems 35.
+
+Cited by: §I,
+§II.
+
+[13]
+Y. Bai et al. (2022)
+
+Constitutional ai: harmlessness from ai feedback.
+
+arXiv preprint arXiv:2212.08073.
+
+Cited by: §I,
+§I,
+§II.
+
+[14]
+A. Zou et al. (2023)
+
+Universal and transferable adversarial attacks on aligned language models.
+
+arXiv preprint arXiv:2307.15043.
+
+Cited by: §II,
+§III-B,
+§III-C,
+§V-C.
+
+[15]
+P. Chao et al. (2023)
+
+Jailbreaking black box large language models in twenty queries.
+
+arXiv preprint arXiv:2305.16291.
+
+Cited by: §III-B.
+
+[16]
+Y. Liu et al. (2023)
+
+PromptBench: towards evaluating the robustness of large language models on adversarial prompts.
+
+arXiv preprint arXiv:2306.04528.
+
+Cited by: §III-C,
+§V-C.
+
+[17]
+E. Perez et al. (2022)
+
+Red teaming language models with language models.
+
+arXiv preprint arXiv:2202.03286.
+
+Cited by: §IV-A.
+
+[18]
+N. Carlini et al. (2021)
+
+Extracting training data from large language models.
+
+In 30th USENIX Security Symposium (USENIX Security 21),
+
+Cited by: §V-C.
+
+[19]
+N. Carlini et al. (2022)
+
+Quantifying memorization across neural language models.
+
+arXiv preprint arXiv:2202.07646.
+
+Cited by: §V-C.
+
+[20]
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, J. E. Gonzalez, and I. Stoica (2023)
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+arXiv preprint arXiv:2306.05685.
+
+Cited by: §V-C.
+
+[21]
+Y. Zhu et al. (2024)
+
+Arena-hard: evaluating llms using llm-as-a-judge.
+
+arXiv preprint arXiv:2402.01679.
+
+Cited by: §V-C.
+
+[22]
+Cybozu (2026)
+
+Prompt hardener: evaluating and strengthening system prompts for llm applications.
+
+Note: https://github.com/cybozu/prompt-hardenerAccessed: 2026-03-11
+
+Cited by: §VI.
+
+[23]
+Z. Wang, N. Nagaraja, L. Zhang, H. Bahsi, P. Patil, and P. Liu (2025)
+
+To protect the llm agent against the prompt injection attack with polymorphic prompt.
+
+In 2025 55th Annual IEEE/IFIP International Conference on Dependable Systems and Networks-Supplemental Volume (DSN-S),
+
+pp. 22–28.
+
+Cited by: §VI-A.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -88,6 +88,16 @@ retrieval program，并只并行 shard-independent transformations。它们都�
 
 Authorization 必须在返回内容前执行。先全局检索再让模型“忽略无权内容”，已经发生数据泄露。
 
+### Speculative Retrieval Draft 必须经过 Accept / Fallback
+
+每次查询都执行完整检索，在 corpus 大、检索链深时可靠但把全部延迟暴露给 TTFT。若历史缓存中存在与当前 query 同源或高度同构的查询，可以先从窄 cache/fuzzy channel 产生 candidate documents，形成 retrieval draft；关键是 draft 不能因为“看起来相似”就直接进入 Context。
+
+Speculative retriever 只拥有 draft proposal 和 reference-query identity。Validator 必须检查 cached query、其已知相关文档与当前 query 的关系，在代理条件满足时 accept；否则回退完整 retrieval。Context packer 只接收已经通过授权、freshness 和 accept gate 的 documents。这样把省略全库检索的决定变成显式状态，而不是 cache hit 的隐式副作用。
+
+代理验证比调用强 evaluator 便宜，却会引入 homology false positive、过期 cache、错误 golden-document identity 和分布漂移；接受错误会直接牺牲 recall。高风险 claim、query 关系不足、corpus revision 不一致或 validator 未校准时必须执行完整检索。作者的 latency/accuracy 结果只证明所披露数据集与 pipeline，不证明开放域或生产尾延迟。
+
+<!-- source-family:SF-2026-ARXIV-2604-20452 -->
+
 ### Tenant Filter 必须在检索内核中前置执行
 
 在多租户向量检索中，先取全局 top-k 再按 ACL 丢弃结果，只在授权集合不稀疏时尚可接受；当 tenant 只拥有很小的 candidate partition，未授权向量会同时占用 score budget 与 top-k slot，over-fetch 也无法稳定恢复 recall。Tenant / ACL policy 应由可信控制面决定，并在 ANN kernel 的 candidate admission 之前执行；index 只消费不可伪造的 allowlist，不能自行解释用户身份。
@@ -616,6 +626,8 @@ RAG 从 top-k 相似度检索演进到 evidence admission 和闭环预算控制�
 RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。预测性检索可以隐藏部分 IO，SSD filtered ANN 可以扩大索引复用，但二者都必须把错误预测、过期、最终过滤和 evidence admission 留给明确 owner。下一章进入可跨会话演化的 Memory。
 
 ## Review notes
+
+- **HaS（arXiv:2604.20452v1；Status: Experimental）**：支持基于历史 homologous query 的 speculative retrieval draft、surrogate validation 与 full-retrieval fallback。证据限于作者数据集、cache/fuzzy channels 和实验设置，不证明代理条件在开放域、高风险或动态 corpus 中可靠。https://arxiv.org/abs/2604.20452v1
 
 - RetrievalRouter（per-query modality/architecture selection；Status: Experimental）：
   https://arxiv.org/abs/2608.25625v1

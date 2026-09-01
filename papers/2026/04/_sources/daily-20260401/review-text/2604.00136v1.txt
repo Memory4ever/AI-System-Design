@@ -1,0 +1,3017 @@
+1Introduction
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background and Problem
+
+2.1 Contextual Bandit Routing
+
+2.2 Context Representation
+
+2.3 Budget Constraint
+
+2.4 Non-Stationarity
+
+3 System Design
+
+3.1 Architecture Overview
+
+3.2 Budget-Paced Arm Selection
+
+Reward model and parameter estimation.
+
+Log-normalized cost.
+
+Two-layer enforcement (Adaptive mode).
+
+Theoretical status.
+
+3.3 Non-Stationary Adaptation via Geometric Forgetting
+
+Staleness-based variance inflation.
+
+Interaction with the budget pacer.
+
+3.4 Offline-to-Online Warmup Priors
+
+3.5 Computational Efficiency
+
+3.6 Runtime Portfolio Management
+
+4 Evaluation
+
+4.1 Experimental Setup
+
+Data and models.
+
+Quality evaluation.
+
+Baselines.
+
+4.2 Stationary Budget Pacing
+
+4.3 Budget Pacing under Cost Drift
+
+4.4 Silent Quality Degradation
+
+4.5 Cold-Start Model Onboarding
+
+5 Related Work
+
+Supervised and static routers.
+
+Adaptive and bandit-based routers.
+
+Constrained and non-stationary bandits.
+
+6 Conclusion
+
+Limitations.
+
+Future work.
+
+References
+
+A Hyperparameter Optimization for Non-Stationary Routing
+
+The challenge.
+
+Adaptation–horizon coupling.
+
+Multi-objective formulation.
+
+Pareto knee-point selection.
+
+Results.
+
+Cross-arm validation.
+
+sensitivity.
+
+B Cost Heuristic Validation
+
+Blending assumption.
+
+portfolio (1766 shared validation prompts; sanity check).
+
+portfolio (1766 shared validation prompts, with Gemini-Flash).
+
+Log-cost separation.
+
+Prompt-cost correlation.
+
+Cross-model cost correlation.
+
+Takeaway.
+
+C Cold-Start vs Warmup Priors
+
+Statistical methodology.
+
+Result: warmup priors reduce cold-start regret.
+
+Cold-start variability.
+
+Discussion.
+
+D Prior Mismatch Sensitivity
+
+Why not re-optimise?
+
+Design: mismatch gradient.
+
+Design: as a safety knob.
+
+Design: baseline.
+
+Design: unconstrained regime.
+
+Statistical methodology.
+
+Results.
+
+Reliability: the more important finding.
+
+Practical implications.
+
+E Reward Signal Robustness (Three-Judge Validation)
+
+E.1 Setup
+
+E.2 Population-Level Agreement
+
+Cross-judge routing regret.
+
+E.3 Per-Prompt Agreement
+
+Gap-conditioned concordance.
+
+E.4 End-to-End Regret Under Alternative Judges
+
+Protocol.
+
+Results.
+
+E.5 Summary
+
+F Routing Latency Microbenchmark
+
+Algorithmic isolation: SM vs. full inversion.
+
+Production overhead.
+
+Key findings.
+
+End-to-end latency and comparisons.
+
+Routing overhead relative to LLM inference.
+
+G Recovery Limit under Quality Degradation
+
+Setup.
+
+Recovery mechanisms.
+
+Finite-horizon recovery envelope (Figure a).
+
+Convergence dynamics (Figure b).
+
+Limitations and deployment implications.
+
+License: CC BY 4.0
+
+arXiv:2604.00136v1 [cs.LG] 31 Mar 2026
+
+marginparsep has been altered.
+
+topmargin has been altered.
+
+marginparwidth has been altered.
+
+marginparpush has been altered.
+
+The page layout violates the ICML style.
+
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+
+ 
+
+ParetoBandit: Budget-Paced Adaptive Routing
+
+for Non-Stationary LLM Serving
+
+ 
+
+Annette Taberner-Miller 1 
+
+††footnotetext: 1Independent Researcher.
+Correspondence to: Annette Taberner-Miller <annette.taberner@gmail.com>.
+
+Abstract
+
+Production LLM serving often relies on multi-model portfolios that span a cost range, where routing decisions directly trade off quality against cost. This trade-off is non-stationary: providers revise pricing, model quality can regress silently, and new models must be integrated without downtime. We present ParetoBandit, an open-source adaptive router built on cost-aware contextual bandits that, to our knowledge, is the first to simultaneously enforce dollar-denominated budgets, adapt online to such shifts, and onboard new models at runtime.
+
+ParetoBandit’s design closes these gaps through three mechanisms. An online primal–dual budget pacer enforces a per-request cost ceiling over an open-ended stream, replacing offline penalty tuning with closed-loop control. Geometric forgetting on sufficient statistics enables rapid adaptation to price and quality shifts while bootstrapping from offline priors. A hot-swap registry lets operators add or remove models at runtime, with a brief forced-exploration phase for each newcomer, after which UCB selection discovers its quality–cost niche from live traffic alone.
+
+We evaluate ParetoBandit across four deployment scenarios on 1,824 benchmark prompts routed through a three-model portfolio. Across seven budget ceilings, mean per-request cost never exceeds the target by more than . When conditions shift, the system adapts: an order-of-magnitude price cut on the costliest model yields up to a quality lift, and a silent quality regression is detected and rerouted within budget. A cold-started model reaches meaningful adoption within steps without breaching the cost ceiling. Crucially, the router discriminates rather than blindly adopting: expensive models are budget-gated and low-quality models are rejected after a bounded exploration phase. End-to-end routing latency is  ms on CPU—less than of typical LLM inference time—with the routing decision itself taking just s.
+
+1 Introduction
+
+Production LLM serving relies on multi-model portfolios spanning a cost range, yet no single model dominates on every input. This complementarity has motivated a growing line of work on learned routers that dispatch each request to the most suitable model Chen et al. (2024a); Ong et al. (2025); Chen et al. (2024b); Feng et al. (2025); Mei et al. (2025); Panda et al. (2025); Bhatti et al. (2026). The open question is no longer whether to route, but how to do so under the operational realities of deployment: dollar budgets, non-stationary pricing, and evolving model portfolios.
+
+Many existing routers learn a fixed policy offline and freeze it at serving time, whether through cascading Chen et al. (2024a), supervised classification on preference or embedding data Ong et al. (2025); Chen et al. (2024b); Feng et al. (2025), or constrained optimization with budget targets Mei et al. (2025); Bhatti et al. (2026). All navigate the quality–cost tradeoff, but none demonstrate adaptation to post-deployment shifts—despite the environment being non-stationary: providers silently update APIs in ways that shift quality Chen et al. (2023); Ma et al. (2024), pricing can shift substantially (for instance, in 2024 OpenAI cut GPT-4o input prices by roughly 50% OpenAI (2024)), and new models launch regularly. PROTEUS Bhatti et al. (2026) explicitly highlights cost-adaptive routing as an open problem.
+
+Online learning offers a path forward. Bandit-based routers update their policy from the outcome of each dispatched request Panda et al. (2025); Wang et al. (2025a); Li (2025), and continual-learning frameworks further accommodate evolving model pools Wang et al. (2025b). Yet even among these adaptive methods, two deployment gaps remain, which we detail below.
+
+Challenge 1: Closed-loop enforcement of cost ceilings.
+Several routers incorporate budget or SLA targets Panda et al. (2025); Mei et al. (2025); Bhatti et al. (2026), each tailored to a specific deployment model: PILOT Panda et al. (2025) operates over a known finite horizon, OmniRouter Mei et al. (2025) optimizes over a fixed prompt set, and PROTEUS Bhatti et al. (2026) fixes its dual variables at deployment time. Closed-loop enforcement of a per-request cost ceiling over an open-ended request stream—where the horizon is unknown and conditions may shift—remains an open problem.
+
+Challenge 2: Principled handling of non-stationarity.
+Non-stationary bandit algorithms are well studied Garivier & Moulines (2011); Russac et al. (2019). However, we are not aware of any published LLM router that (i) explicitly employs geometric discounting or sliding-window mechanisms to handle post-deployment shifts, or (ii) systematically evaluates routing behaviour under model quality degradation or changes in model pricing during deployment. In our quality-degradation experiment (Section 4.4), a bandit baseline without closed-loop budget control detects the degraded model but overshoots the cost target by up to .
+
+We address these challenges with ParetoBandit, an open-source adaptive routing system for budget-constrained, non-stationary LLM serving. ParetoBandit builds on cost-aware contextual bandits and introduces three system-level contributions:
+
+1.
+
+Autonomous budget control (Section 3.2). An online primal–dual budget pacer accepts an operator-specified per-request cost ceiling and enforces it in closed loop over an open-ended request stream with no known horizon, automatically reallocating freed budget when prices drop.
+
+2.
+
+Non-stationarity resilience (Section 3.3). Geometric forgetting gives the bandit a bounded effective memory that tracks shifts in both quality and cost. Exploration and forgetting rates are chosen via a Pareto knee-point procedure (Appendix A) anchored by a single practitioner-specified adaptation horizon.
+
+3.
+
+Runtime portfolio management (Section 3.6). A hot-swap model registry supports adding and removing models at runtime. A brief forced-exploration phase bootstraps each newcomer’s posterior, after which UCB selection discovers its quality–cost niche while the budget pacer maintains compliance. The router discriminates rather than blindly adopting (Section 4.5).
+
+We evaluate ParetoBandit on a 1,824-prompt holdout set drawn from nine public benchmarks, using a three-tier model portfolio (, with a onboarding extension) and an LLM judge with a continuous rubric (Section 4.1). Section 3 details the system design, and Section 4 evaluates it with respect to both deployment challenges.
+
+2 Background and Problem
+
+We formalize LLM routing as an online decision-making problem in which the router learns which model to dispatch for each prompt, respects an operator-specified cost ceiling, and adapts when model quality or pricing shifts after deployment. This section defines the three components of the problem; Section 3 presents our solution.
+
+2.1 Contextual Bandit Routing
+
+At each discrete step , a user prompt arrives and the router observes a context vector derived from the prompt (Section 2.2). The router selects a single model from a portfolio and dispatches the prompt. After inference, the system observes a scalar reward reflecting response quality and a realized cost in dollars. The reward may be derived from an automated LLM judge, explicit user feedback, or a task-completion metric; in our setup it is a continuous score normalized to by the judge rubric (Section 4.1). The objective is to learn a policy that maximizes cumulative quality subject to a ceiling on average cost per request (detailed in Section 2.3):
+
+(1)
+
+where is the operator’s maximum acceptable average cost per request in dollars (e.g., $0.005/req). The router may spend well below when cheaper models deliver comparable quality; it approaches the ceiling only when doing so yields a meaningful quality gain. We relax this via a per-request Lagrange multiplier whose scoring function and dynamics are detailed in Section 3.2.
+
+The router operates under bandit feedback Lattimore & Szepesvári (2020): it observes the reward and cost only for the model to which a query was routed, never the counterfactual outcomes from the alternatives. This partial observability is inherent to LLM serving, where evaluating every model on every prompt would multiply cost by .
+
+2.2 Context Representation
+
+The context vector is constructed by encoding the prompt with all-MiniLM-L6-v2, a lightweight model from the Sentence Transformers framework Reimers & Gurevych (2019), projecting to 25 PCA components whitened to unit variance, and appending a bias term, yielding . The PCA projection is fitted on disjoint LMSYS Arena prompts Zheng et al. (2023). Section 3.5 details the latency impact of this dimensionality choice.
+
+2.3 Budget Constraint
+
+Each model incurs a deterministic cost per request, typically computed from per-token API pricing. In a realistic portfolio, costs span orders of magnitude: the three-tier pool used in our experiments ranges from $0.00003/req (Llama-3.1-8B) to $0.015/req (Gemini-2.5-Pro), a spread.
+
+The rate constraint in Eq. 1 departs from the classical Bandits with Knapsacks (BwK) framework Badanidiyuru et al. (2013), which imposes a cumulative budget over a known horizon . Production LLM serving is open-ended: request volume is unknown, and the natural specification is a cost rate (dollars per request), not a finite pool. Our formulation is horizon-free and self-regulates at any traffic volume.
+
+We enforce the rate constraint through a dual variable that rises when recent spending exceeds and falls when it is below. Section 3.2 defines the smoothed dual-ascent update and the two-layer enforcement mechanism (soft penalty plus hard cost ceiling) that operationalize .
+
+2.4 Non-Stationarity
+
+We address two forms of environment drift that affect production LLM deployments. Reward drift occurs when providers silently update models behind their APIs Chen et al. (2023); Ma et al. (2024), changing the conditional expected reward. Cost drift occurs when API pricing changes significantly OpenAI (2024). The two interact: a price drop changes which models are cost-effective, requiring the router to jointly re-learn reward estimates and re-optimize the quality–cost frontier. Section 3.3 presents our approach using geometric discounting Garivier & Moulines (2011); Russac et al. (2019).
+
+3 System Design
+
+ParetoBandit jointly learns reward surfaces from bandit feedback, enforces a long-run budget constraint ceiling, and adapts to non-stationarity, a combination that, to our knowledge, ParetoBandit is the first LLM routing system to integrate. It composes four foundational ingredients: LinUCB Li et al. (2010) for contextual reward learning, BwK-inspired Lagrangian relaxation Badanidiyuru et al. (2013); Agrawal et al. (2016) for budget enforcement, geometric discounting Garivier & Moulines (2011); Russac et al. (2019) for non-stationarity, and offline-to-online warm-start priors Oetomo et al. (2023) for cold-start elimination. Their composition rests on LinUCB’s sufficient-statistic representation (, per arm): forgetting reduces to a scalar multiply, warmup to a matrix addition, and updates to Sherman–Morrison operations, while the confidence bonus , the exact posterior variance under a Gaussian linear model, provides context-dependent calibrated exploration from the first request. We chose UCB over Thompson Sampling Agrawal & Goyal (2013) because its deterministic score interacts more predictably with the Lagrangian penalty.
+
+Although each ingredient is well-established individually, combining them creates cross-component interactions. For example, geometric forgetting shrinks toward singularity over time, inflating LinUCB’s confidence bonus and making expensive but uncertain arms more attractive. The BudgetPacer’s dual variable compensates online (Section 3.2), but the upstream interaction between the forgetting rate and exploration coefficient determines exploration aggressiveness; these should be calibrated jointly, not in isolation. Appendix A describes the Pareto knee-point procedure that resolves this.
+
+3.1 Architecture Overview
+
+ParetoBandit operates as a closed-loop routing system with two data paths.
+
+Synchronous inference path. When a user prompt arrives, the feature extractor (Section 2.2) produces a PCA-reduced context vector . The BanditRouter scores every eligible model using the budget-augmented UCB rule (Section 3.2) and dispatches the prompt to the highest-scoring model .
+
+Asynchronous feedback path. After inference, the observed reward and realized cost flow back. The bandit updates its per-arm sufficient statistics with geometric forgetting (Section 3.3), while the budget pacer updates via the EMA-smoothed cost signal (Eqs. 3–4). The context vector is cached at route time so that rewards arriving hours later (e.g., human Reinforcement Learning from Human Feedback (RLHF) labels) can still update the bandit without re-encoding the prompt. Algorithm 1 consolidates the full per-step loop.
+
+3.2 Budget-Paced Arm Selection
+
+At each step , the router selects model by maximizing a budget-augmented utility:
+
+(2)
+
+The underbraced terms trade off exploitation of the current reward estimate, uncertainty-driven exploration (further inflated for stale arms via Eq. 9), and a cost penalty that discourages expensive models. The exploration rate scales the confidence bonus directly. The cost penalty has two additive components: a static weight (default 0.3) encoding the operator’s baseline cost–quality preference from the first request ( recovers quality-only routing), and a dynamic dual variable that starts at zero and rises only when recent spending exceeds , providing closed-loop enforcement. After each request, a smoothed dual-ascent step adjusts :
+
+(3)
+
+(4)
+
+where is an EMA-smoothed cost signal (, half-life requests), is the step size, and projects onto . The EMA prevents sawtooth oscillations from single expensive requests; normalizing the gradient by makes portfolio-independent. When (overspending), rises, penalizing expensive models; when below, falls, releasing the router to pursue quality.
+
+Algorithm 1 ParetoBandit: Budget-Paced Non-Stationary Routing
+
+0:
+
+ Arms ; regularization ; budget ; static cost penalty ; exploration ; forgetting ; step size ; EMA ; cap
+
+1:
+
+ Init: : , (or warmup both, §3.4), ; ; ;
+
+2:
+
+ for each request with context do
+
+3:
+
+  — Arm Selection —
+
+4:
+
+  if then
+
+5:
+
+    Hard ceiling
+
+6:
+
+  else
+
+7:
+
+   
+
+8:
+
+  end if
+
+9:
+
+  for each do
+
+10:
+
+    Exploration staleness
+
+11:
+
+    Variance inflation
+
+12:
+
+   
+
+13:
+
+  end for
+
+14:
+
+   Random tiebreak
+
+15:
+
+  ; 
+
+16:
+
+  — Observe reward , cost —
+
+17:
+
+  — Reward Update (Geometric Forgetting) —
+
+18:
+
+   Decay staleness (statistics age)
+
+19:
+
+  ;  Decay stale data
+
+20:
+
+   scalar op
+
+21:
+
+  ; 
+
+22:
+
+  Update via Sherman–Morrison
+
+23:
+
+  ; 
+
+24:
+
+  — Budget Pacer Dual Update —
+
+25:
+
+   Eq. 3
+
+26:
+
+   Eq. 4
+
+27:
+
+ end for
+
+Reward model and parameter estimation.
+
+LinUCB models the expected reward as  Li et al. (2010). The estimate is the ridge regression solution, where
+
+(5)
+
+are the per-arm sufficient statistics, the running aggregates that fully summarize past observations for parameter estimation, eliminating the need to store raw history. At cold start (), the confidence bonus is maximal, driving exploration; as observations accumulate, the confidence set shrinks toward exploitation.
+
+Log-normalized cost.
+
+The term is a log-normalized unit cost:
+
+(6)
+
+where and per 1k tokens are fixed market bounds. The logarithmic scale compresses the cost range into a bounded penalty commensurate with the reward scale (validated in Appendix B).
+
+Two-layer enforcement (Adaptive mode).
+
+The budget pacer combines two mechanisms simultaneously:
+
+•
+
+Hard ceiling (safety net): When , the candidate set excludes models whose blended price exceeds a dynamic ceiling , where is the portfolio’s most expensive rate. This acts as a circuit breaker, preventing catastrophic overspend on any single request.
+
+•
+
+Soft penalty (optimizer): The dual penalty biases the UCB score toward cheaper models proportionally to their cost, allowing fine-grained, context-dependent routing within the surviving candidate set.
+
+The hard ceiling provides per-request worst-case cost bounds independent of ; the soft penalty provides smooth, quality-maximizing allocation within those bounds.
+
+Theoretical status.
+
+Eq. 2 is a Lagrangian relaxation of Eq. 1, but four departures from the classical BwK analysis Badanidiyuru et al. (2013)—rate constraint, EMA smoothing, hard ceiling, and log-normalized costs—void the formal bounds. The smoothed dual framework of Balseiro & Gur (2019) accommodates EMA-like averaging but assumes i.i.d. contexts and a convex program structure; our non-stationary setting with geometric forgetting violates both conditions, so their formal guarantees do not apply either. Three properties nonetheless hold by construction: (1) , (2) staleness inflation ensures re-exploration of neglected arms, and (3) when , the hard ceiling caps the cost of any single request. Budget compliance is therefore validated empirically: across all conditions in Section 4, per-request cost never exceeds the ceiling by more than .
+
+3.3 Non-Stationary Adaptation via Geometric Forgetting
+
+Geometric forgetting enables ParetoBandit to override stale estimates within its effective memory window, whereas a standard LinUCB () accumulates all historical data equally and may require hundreds or thousands of new observations to do the same. Concretely, ParetoBandit applies a forgetting factor directly to the per-arm sufficient statistics. Before incorporating the new observation , the design matrix and reward accumulator for the chosen arm are exponentially discounted:
+
+(7)
+
+(8)
+
+where is the number of intervening requests since ’s last update. This batched exponentiation avoids redundant per-step multiplications for arms that were not selected. The exponential weighting Garivier & Moulines (2011) gives observations an effective half-life of steps and an e-folding time of . For , the e-folding time is steps: an observation from 333 steps ago retains weight , and after steps the prior’s contribution is reduced to .
+
+Staleness-based variance inflation.
+
+Geometric forgetting passively increases for idle arms, but this may be too slow when the environment shifts. The router explicitly inflates the UCB variance using the exploration staleness , which counts from whichever happened more recently—a statistics update or a play—so that arms dispatched but still awaiting asynchronous rewards are not prematurely re-explored:
+
+(9)
+
+Without a cap, the inflation grows without bound as , and the exploration bonus eventually dominates any finite cost penalty, forcing selection of stale expensive arms regardless of budget pressure. A capacity cap bounds the worst-case inflation to the uninflated bonus, large enough to reliably trigger re-exploration yet bounded enough that the cost signal retains meaningful influence on arm selection.
+
+Interaction with the budget pacer.
+
+Geometric forgetting interacts with budget pacing through a feedback loop. As shrinks over time, the confidence bonus grows, increasing the probability of selecting expensive arms that happen to be uncertain. This drives up , which penalizes those arms, partially counteracting the inflation. The EMA smoothing in the dual update (Eq. 3) further dampens the resulting oscillations. The parameter thus controls a bias-variance tradeoff between stability (trusting historical evidence) and plasticity (responding quickly to drift). The forgetting rate is therefore selected jointly with (Appendix A).
+
+3.4 Offline-to-Online Warmup Priors
+
+Without warmup priors, the router begins with uninformative , , and needs to explore each model on diverse prompts before learning which model excels where. ParetoBandit eliminates this cold start by loading offline sufficient statistics fitted on historical prompt-reward data. A tunable prior strength controls how many pseudo-observations the offline data contribute:
+
+(10)
+
+where is the total precision mass in the bias direction. The scaled prior is regularized with a mean-preserving correction:
+
+(11)
+
+(12)
+
+The term in prevents regularization from shrinking the posterior mean toward zero, ensuring at the desired confidence level. For models absent from the offline data, a heuristic prior places pseudo-observations at isotropic uncertainty with a bias-only reward prediction.
+
+Geometric forgetting ensures priors decay naturally (Section 3.3), so steady-state quality is determined by online evidence regardless of initialization. Priors are beneficial in deployment comparisons but not necessary—cold-start convergence is demonstrated in Section 4.5 and ablated in Appendices C–D.
+
+3.5 Computational Efficiency
+
+The router sits on the critical path of every LLM request. ParetoBandit maintains a cached and applies Sherman–Morrison rank-1 updates in ; geometric discounting adds only a scalar division . Arm selection requires one quadratic form per arm for the UCB bonus plus an dot product for the reward estimate. With and , the full route-and-update cycle completes in s (p50), sustaining  req/s on a single CPU core. Including prompt embedding and PCA projection, end-to-end routing latency is  ms—under of a typical  s inference call Ganglani (2026). PCA reduction and inverse caching together yield a throughput gain over a raw-dimension baseline (Appendix F).
+
+3.6 Runtime Portfolio Management
+
+Production model portfolios are not static. ParetoBandit supports runtime model additions and removals via add_arm() and delete_arm() without restarting the router. A newly added model is initialized with either a heuristic prior or uninformative covariance. When existing arms have strong learned posteriors and is small, the UCB exploration bonus alone may be insufficient to trigger natural exploration of a cold-start arm. Section 4.5 addresses this with a short forced-exploration burn-in (20 pulls routed unconditionally to the new arm), after which the bandit has enough evidence to discriminate and UCB selection takes over. The context vector is cached at route time so that feedback arriving later (synchronous judge scores, asynchronous RLHF labels, or batch metrics) can update the bandit without re-encoding the prompt, with both in-memory and SQLite-backed storage backends.
+
+4 Evaluation
+
+We evaluate ParetoBandit across four experiments: stationary budget pacing, budget pacing under cost drift, resilience to silent quality degradation, and cold-start model onboarding. All experiments use 20 seeds and report 95% bootstrap confidence intervals.
+
+4.1 Experimental Setup
+
+Data and models.
+
+We collect 11,983 prompts from nine public NLP benchmarks (MMLU Hendrycks et al. (2021), GSM8K Cobbe et al. (2021), HellaSwag Zellers et al. (2019), BIG-Bench Hard Suzgun et al. (2023), ARC-Challenge Clark et al. (2018), OpenBookQA Mihaylov et al. (2018), WinoGrande Sakaguchi et al. (2020), TruthfulQA Lin et al. (2022), MBPP Austin et al. (2021)) spanning reasoning, math, code synthesis, commonsense, and factual knowledge. For each prompt, all models generate responses that are judged offline, producing a full reward–cost matrix. Prompts are partitioned into three disjoint splits stratified by source: train () for fitting warmup priors, val () for online hyperparameter tuning, and test () for evaluation. The portfolio spans a cost range (Table 1).
+
+Quality evaluation.
+
+Each response is scored by DeepSeek-R1 DeepSeek-AI (2025) on three continuous dimensions: reasoning quality (weight 0.4), instruction following (0.3), and communication quality (0.3), yielding a composite reward . R1 produces the largest inter-model reward gaps among the judges we evaluated; Appendix E validates that its routing decisions capture of any alternative judge’s oracle reward.
+
+Baselines.
+
+Two conditions represent increasing routing sophistication, all sharing warmup priors (, ):
+
+1.
+
+Naive Bandit (): LinUCB with online learning but infinite memory and a static cost penalty.
+
+2.
+
+ParetoBandit (): Geometric forgetting with warmup priors and an active BudgetPacer.
+
+Experiment 2 additionally includes a Recalibrated Bandit (oracle knowledge of price changes) and a Forgetting Bandit (, no pacer) as ablations. Hyperparameters are selected via the Pareto knee-point procedure described in Appendix A.
+
+Non-stationary protocol. Experiments 2–3 follow a three-phase stress-test: normal operation (608 prompts), abrupt perturbation (608 prompts), and recovery (608 prompts). Phase 3 reuses Phase 1 prompts for a controlled within-subject comparison.
+
+Table 1: Model portfolio and budget targets. The cost spread stresses the router’s quality–cost tradeoff. Three budgets span the full operating range.
+
+Model
+Tier
+Cost ($/req)
+
+Llama-3.1-8B
+Budget
+
+Mistral-Large
+Mid-cost
+
+Gemini-2.5-Pro
+Frontier
+
+Budget
+Target
+Regime
+
+Tight
+
+Llama-dominant
+
+Moderate
+
+Llama–Mistral mix
+
+Loose
+
+Selective Gemini
+
+4.2 Stationary Budget Pacing
+
+Figure 1: Quality–cost Pareto frontier under stationary conditions (, 20 seeds). (a) ParetoBandit with BudgetPacer (blue curve) traces a continuous quality–cost frontier by accepting a dollar budget ceiling. Fixed single-model baselines shown as stars. (b) Budget compliance: realized cost vs. ceiling. Green band marks . (c) Model allocation shifts from Llama-dominant at tight budgets to Gemini-heavy at loose budgets.
+
+We first ask: can the router accept a dollar budget ceiling and automatically maximize quality beneath it, filling the quality–cost gaps between fixed single-model baselines?
+
+Figure 1a shows the quality–cost Pareto frontier on the test set. Each fixed model occupies a single point on this frontier, plotted as (mean cost per request, mean quality score): Llama at (, ), Mistral at (, ), Gemini at (, ). The BudgetPacer traces a continuous curve through these points by dynamically mixing models based on prompt context and budget pressure. At a budget of /req, the router achieves % [, ] of Gemini quality at % of its cost by blending % Llama and % Mistral. For binding ceilings, utilisation ranges from to (Figure 1b). When the ceiling is high enough that cost never binds, the cost penalty decays to zero and the router reduces to pure quality maximization, recovering % [, ] of an oracle that selects the highest-scoring model for each prompt (). In practice, this turns model selection from a discrete choice among fixed operating points into a continuous budget dial: the operator sets a dollar ceiling, and the router discovers the best quality mix beneath it (Figure 1c).
+
+4.3 Budget Pacing under Cost Drift
+
+Table 2: Budget compliance under cost drift (20 seeds).
+Each cell shows realised cost as a multiple of the ceiling ( = at ceiling); 95% bootstrap CIs are reported inline for key claims in the text.
+Bold: within 5% of ceiling.
+
+Budget
+Condition
+Phase 1
+Phase 2
+Phase 3
+
+Tight
+()
+
+Naive Bandit
+
+Recalibrated
+
+Forgetting Bandit
+
+ParetoBandit
+
+Moderate
+()
+
+Naive Bandit
+
+Recalibrated
+
+Forgetting Bandit
+
+ParetoBandit
+
+Loose
+()
+
+Naive Bandit
+
+Recalibrated
+
+Forgetting Bandit
+
+ParetoBandit
+
+We now evaluate whether the pacer automatically exploits a mid-stream price drop while maintaining compliance. Phase 1 uses normal pricing; Phase 2 drops Gemini-2.5-Pro’s pricing to $0.10/M tokens (normalized cost ); Phase 3 restores original pricing.
+
+Budget compliance is the key differentiator.
+Table 2 summarises cost/ceiling ratios across all conditions and phases. ParetoBandit is the only condition that reliably stays within the ceiling in Phase 1 ( [, ] to  [, ]) and recovers compliance in Phase 3 ( [, ] to  [, ]). The critical ablation is the Forgetting Bandit (, no pacer), which shares ParetoBandit’s learning dynamics yet produces consistently poor compliance ( [, ] at tight Phase 1,  [, ] at tight Phase 3), confirming that the BudgetPacer—not the forgetting factor—drives budget control.
+
+Figure 2: Adaptation dynamics under cost drift (, 20 seeds, 95% bootstrap CI). Normal pricing Gemini price drop at prompt  price restored at prompt . (a) Gemini-Pro selection fraction: all budget tiers surge toward Gemini during the price drop, then revert when pricing is restored. (b) Windowed mean reward: all conditions improve during Phase 2 as Gemini becomes budget-accessible. (c) Windowed average cost per request (dotted = budget ceilings): ParetoBandit tracks the ceiling in all three phases; the Forgetting Bandit overshoots from Phase 1 onward.
+
+Exploiting the price drop.
+When Gemini becomes nearly free in Phase 2, the BudgetPacer detects the cost change via its EMA signal. All three budget regimes show significant reward lifts (tight  [, ]; loose  [, ]), with the tight budget exhibiting the largest gain because its Phase 1 constraint was most binding. Figure 2 shows the dual-variable dynamics: decays as costs fall below the ceiling, increasing Gemini adoption; in Phase 3, rises and compliance recovers. This full round-trip—exploit, then recover—demonstrates bidirectional adaptation without operator intervention.
+
+4.4 Silent Quality Degradation
+
+Figure 3: Silent quality degradation dynamics (20 seeds, 95% bootstrap CI). Mistral-Large degrades at prompt  and recovers at ; cost is unchanged. (a) Gemini-Pro selection fraction rises modestly under budget constraints and sharply ( pp) without one. (b) Windowed reward: loose and unconstrained conditions recover fully in Phase 3; tighter budgets are still converging at the horizon limit (Appendix G). (c) Cost per request (dotted lines = ceilings): ParetoBandit holds compliance throughout, confirming that the degradation is invisible to the cost signal.
+
+We stress-test against a silent quality regression: Mistral-Large’s reward drops to (% below normal) while its API continues to respond and charge at normal rates. The cost signal provides no warning; only the reward reveals the problem. Phase 3 restores normal quality, testing whether the router re-discovers the recovered model.
+
+Results (Figure 3). ParetoBandit detects the quality drop purely through the reward signal, reducing Mistral allocation from % to % in Phase 2 at moderate budget. In Phase 3, geometric forgetting down-weights the corrupted estimates and staleness-driven exploration begins re-exploring Mistral, raising allocation to % and recovering Phase 3 reward to  [, ] (vs. Phase 1  [, ], recovery ratio  [, ]). Budget compliance holds throughout ( [, ] to  [, ] across all nine phase–budget cells). The unconstrained baseline is unaffected (Phase 2 reward  [, ] vs. Phase 1  [, ]) but incurs a % cost increase from over-allocating to Gemini. This % degradation lies within the system’s recovery envelope; Appendix G characterises the threshold beyond which recovery requires an extended horizon.
+
+4.5 Cold-Start Model Onboarding
+
+Figure 4: Model onboarding (; 20 seeds, 95% bootstrap CI). Flash windowed selection fraction across four budget levels after cold-start addition. (a) Good & cheap: Flash is adopted at all budgets. (b) Good & expensive: the BudgetPacer suppresses Flash under tight budgets. (c) Bad & cheap: the bandit correctly rejects Flash in every seed.
+
+After Phase 1 learning on the portfolio, Gemini-2.5-Flash is added as a fourth arm via register_model() with no warmup priors. Figure 4 shows Flash adoption across three scenario–budget combinations. In the Good & Cheap scenario (Figure 4a), all 80 trials (20 seeds 4 budget tiers) achieve sustained adoption within steps. Budget determines the equilibrium share, not whether adoption occurs: loose budgets settle at % [, ] Flash share while tight budgets plateau at % [, ]. The BudgetPacer maintains compliance throughout the transition without reconfiguration (Figure 5). Crucially, the bandit discriminates rather than blindly adopting: expensive models are budget-gated (Figure 4b) and bad models are rejected after a bounded burn-in (Figure 4c).
+
+Figure 5: Budget–quality trade-off during model onboarding (Good & Cheap; 20 seeds, 95% bootstrap CI).
+(a) Running cost per request (dotted = targets). Tight and moderate track their ceilings through the transition; loose settles below target as its constraint is only weakly binding.
+(b) Cumulative reward. Tight dips briefly at the Phase 2 boundary (20 forced-exploration pulls) before recovering; moderate rises as Flash fills a quality niche previously inaccessible at that cost tier.
+
+The trade-off relative to offline characterisation is that % of Phase 2 requests serve as online exploration, but adoption is automatically budget-gated and requires no paired preference data.
+
+5 Related Work
+
+Supervised and static routers.
+
+The simplest cost-aware strategy is cascading: FrugalGPT Chen et al. (2024a) queries models cheapest-first and stops once a quality threshold is met. Much subsequent work trains a single-dispatch classifier offline, differing mainly in the training signal—preference pairs Ong et al. (2025), contrastive or graph-structured embeddings Chen et al. (2024b); Shirkavand et al. (2025); Feng et al. (2025), or lightweight binary triage Ding et al. (2024); Pulishetty et al. (2025). OmniRouter Mei et al. (2025) goes further by formulating budget-aware routing as a batch-level constrained optimization, but still over a fixed prompt set.
+These methods perform well when deployment matches training, yet leave three structural opportunities open: promoting cost from a manually tuned weight to a closed-loop constraint, adapting autonomously to price or quality shifts, and incorporating new models without retraining.
+ParetoBandit replaces the frozen policy with online learning, enabling adaptation without retraining or downtime.
+
+Adaptive and bandit-based routers.
+
+A growing line of work frames routing as online learning, with each system targeting a different axis of the problem.
+On the cost axis, PILOT Panda et al. (2025) pairs LinUCB with an online multi-choice knapsack to respect cumulative spend limits, and PROTEUS Bhatti et al. (2026) trains a Lagrangian RL policy that minimizes cost subject to an accuracy floor .
+On the quality and generalization axis, BaRP Wang et al. (2025a) uses entropy-regularized policy gradients conditioned on a preference vector, LLM Bandit Li (2025) conditions on model-identity features to transfer across unseen models, and xRouter Qian et al. (2025) fine-tunes a small LM as a cost-aware RL orchestrator.
+MixLLM Wang et al. (2025b) further extends the scope by jointly modeling downstream latency and evolving model pools in a dynamic contextual-bandit framework.
+Despite these advances, two opportunities remain: providing closed-loop budget pacing over an open-ended stream (PILOT assumes a known horizon; BaRP and LLM Bandit optimize preference-conditioned rewards rather than explicit dollar constraints; PROTEUS freezes its dual variables at deployment), and incorporating bounded-memory adaptation with explicit evaluation under non-stationarity.
+ParetoBandit addresses both gaps using an online dual variable for rate-constrained budget pacing and geometric forgetting for bounded-memory adaptation.
+
+Constrained and non-stationary bandits.
+
+ParetoBandit composes three theoretical streams: Lagrangian relaxation for bandits with knapsacks (BwK) Badanidiyuru et al. (2013); Agrawal et al. (2016), adapted to a rate-style budget constraint with smoothed dual updates Balseiro & Gur (2019); geometric discounting for non-stationary bandits Garivier & Moulines (2011); Russac et al. (2019); and warm-start priors for contextual bandits Oetomo et al. (2023); Pan et al. (2024). Each ingredient is well studied in isolation; our contribution is their joint integration and empirical evaluation under cost drift, quality degradation, and cold-start onboarding.
+
+6 Conclusion
+
+We presented ParetoBandit, an adaptive LLM routing system that integrates cost-aware contextual bandits with online budget pacing and geometric forgetting.
+Production LLM serving is inherently non-stationary: providers revise pricing, model quality can regress silently, and new endpoints must be absorbed without downtime.
+To our knowledge, ParetoBandit is the first router evaluated under all three conditions.
+Across four experiments, the system never exceeds the ceiling by more than for any binding budget; under cost drift it exploits a price drop and maintains compliance when pricing is restored; under silent quality degradation it detects the regression, redistributes traffic, and holds budget while baselines without closed-loop cost control overshoot by up to ; and cold-start model onboarding proceeds without reconfiguration.
+
+Beyond these empirical results, the Pareto knee-point hyperparameter protocol (Appendix A) provides a principled method for jointly calibrating bandit hyperparameters across two competing production requirements: stationary routing efficiency and rapid adaptation to price and quality shifts.
+This improves on single-objective tuning, which typically selects zero forgetting.
+As multi-provider LLM portfolios become the norm, our results suggest that bandit-driven routing with integrated budget pacing and non-stationarity awareness will be essential for reliable, cost-controlled LLM serving in production.
+
+Limitations.
+
+Six limitations scope the current contribution, most of which are addressable by extending the existing framework (see Future Work).
+First, evaluation is fully offline: all experiments use a fixed reward matrix with injected non-stationarity, whereas live deployment would introduce stochastic feedback delays and additional distribution shift.
+Second, rewards are deterministic LLM-judge scores; the noise and sparsity of human-in-the-loop feedback remain untested.
+Third, we enforce a per-request rate budget , so sudden traffic spikes can still exceed an aggregate dollar cap even when per-request compliance holds.
+Fourth, online model onboarding incurs a bounded exploration cost that is paid on production traffic.
+Fifth, the current formulation is not latency-aware and does not model downstream inference delay or endpoint congestion.
+Sixth, ParetoBandit constrains cost while maximizing quality, but some deployments instead require the dual objective of minimizing cost subject to a quality floor.
+
+Future work.
+
+Live deployment (i, ii) is the most immediate next step. This requires computing prompt embeddings online rather than from a cached matrix, and tuning for settings where reward labels arrive for only a fraction of requests and with variable delay. Demonstrating that the adaptation and budget-pacing behaviours observed in simulation persist under real traffic would close the largest external-validity gap.
+
+Latency awareness (v) maps naturally onto the BwK framework as a second dual variable, allowing the router to jointly respect cost ceilings and tail-latency SLAs and thus avoid routes that are budget-optimal but violate response-time guarantees.
+Aggregate budget enforcement (iii) could be layered on via a token-bucket mechanism that caps total spend over a billing window, though practitioners who set the per-request ceiling at a profitable operating point may find an additional aggregate cap unnecessary, since higher traffic then increases both spend and revenue.
+Finally, quality-constrained routing (vi) inverts the pacer to track reward against a floor , providing an online counterpart to PROTEUS Bhatti et al. (2026) for deployments where a minimum quality SLA is binding and cost should be minimized subject to it.
+Validating these extensions under realistic deployment conditions is a natural next step.
+
+References
+
+Acquaviva (2025)
+
+Acquaviva, C.
+
+AI gateway benchmark: Kong AI Gateway, Portkey, and LiteLLM.
+
+https://konghq.com/blog/engineering/ai-gateway-benchmark-kong-ai-gateway-portkey-litellm,
+2025.
+
+Proxy-only benchmark on c5.4xlarge EKS nodes (16 vCPU). Kong p95 = 24
+ms, Portkey p95 70 ms; WireMock baseline p95 = 24 ms.
+
+Agrawal & Goyal (2013)
+
+Agrawal, S. and Goyal, N.
+
+Thompson sampling for contextual bandits with linear payoffs.
+
+Proceedings of the 30th International Conference on Machine
+Learning, 2013.
+
+Agrawal et al. (2016)
+
+Agrawal, S., Devanur, N. R., and Li, L.
+
+Linear contextual bandits with knapsacks.
+
+In Advances in Neural Information Processing Systems
+(NeurIPS), volume 29, 2016.
+
+Austin et al. (2021)
+
+Austin, J., Odena, A., Nye, M., Bosma, M., Michalewski, H., Dohan, D., Jiang,
+E., Cai, C., Terry, M., Le, Q., and Sutton, C.
+
+Program synthesis with large language models.
+
+arXiv preprint arXiv:2108.07732, 2021.
+
+Badanidiyuru et al. (2013)
+
+Badanidiyuru, A., Kleinberg, R., and Slivkins, A.
+
+Bandits with knapsacks.
+
+In Proceedings of the 54th Annual IEEE Symposium on Foundations
+of Computer Science (FOCS), pp. 207–216. IEEE, 2013.
+
+Balseiro & Gur (2019)
+
+Balseiro, S. R. and Gur, Y.
+
+Learning in repeated auctions with budgets: Regret minimization and
+equilibrium.
+
+Management Science, 65(9):3952–3968,
+2019.
+
+Bhatti et al. (2026)
+
+Bhatti, A. S., Vaddina, V., and Birru, D.
+
+PROTEUS: SLA-aware routing via Lagrangian RL for multi-LLM
+serving systems.
+
+arXiv preprint arXiv:2601.19402, 2026.
+
+Chen et al. (2023)
+
+Chen, L., Zaharia, M., and Zou, J.
+
+How is ChatGPT’s behavior changing over time?
+
+arXiv preprint arXiv:2307.09009, 2023.
+
+Chen et al. (2024a)
+
+Chen, L., Zaharia, M., and Zou, J.
+
+Frugalgpt: How to use large language models while reducing cost and
+improving performance.
+
+Transactions on Machine Learning Research (TMLR),
+2024a.
+
+URL https://openreview.net/forum?id=cSimKw5p6R.
+
+Chen et al. (2024b)
+
+Chen, S., Jiang, W., Lin, B., Kwok, J. T., and Zhang, Y.
+
+Routerdc: Query-based router by dual contrastive learning for
+assembling large language models.
+
+In Advances in Neural Information Processing Systems
+(NeurIPS), 2024b.
+
+Clark et al. (2018)
+
+Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A., Schoenick, C., and
+Tafjord, O.
+
+Think you have solved question answering? try ARC, the AI2
+reasoning challenge.
+
+arXiv preprint arXiv:1803.05457, 2018.
+
+Cobbe et al. (2021)
+
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert,
+M., Tworek, J., Hilton, J., Nakano, R., Hesse, C., and Schulman, J.
+
+Training verifiers to solve math word problems.
+
+arXiv preprint arXiv:2110.14168, 2021.
+
+DeepSeek-AI (2025)
+
+DeepSeek-AI.
+
+DeepSeek-R1: Incentivizing reasoning capability in LLMs via
+reinforcement learning.
+
+arXiv preprint arXiv:2501.12948, 2025.
+
+Ding et al. (2024)
+
+Ding, D., Mallick, A., Wang, C., Sim, R., Mukherjee, S., Ruhle, V., Levi,
+L. V., and Awadallah, A. H.
+
+Hybrid LLM: Cost-efficient and quality-aware query routing.
+
+In International Conference on Learning Representations
+(ICLR), 2024.
+
+Feng et al. (2025)
+
+Feng, T., Shen, Y., and You, J.
+
+Graphrouter: A graph-based router for LLM selections.
+
+In International Conference on Learning Representations
+(ICLR), 2025.
+
+Ganglani (2026)
+
+Ganglani, K.
+
+LLM API latency benchmarks [2026]: 5 models compared.
+
+https://kunalganglani.com/blog/llm-api-latency-benchmarks-2026,
+March 2026.
+
+Independent benchmark of five production LLM APIs (GPT-4.1,
+GPT-4.1 Mini, Gemini 2.5 Flash, Claude Haiku 4.5, Claude Sonnet 4). Three
+prompt sizes, streaming TTFT, total latency, and throughput.
+
+Garivier & Moulines (2011)
+
+Garivier, A. and Moulines, E.
+
+On upper-confidence bound policies for switching bandit problems.
+
+In Proceedings of the 22nd International Conference on
+Algorithmic Learning Theory (ALT), pp. 174–188. Springer, 2011.
+
+Hedges & Olkin (1985)
+
+Hedges, L. V. and Olkin, I.
+
+Statistical Methods for Meta-Analysis.
+
+Academic Press, Orlando, FL, 1985.
+
+Hendrycks et al. (2021)
+
+Hendrycks, D., Burns, C., Basart, S., Zou, A., Mazeika, M., Song, D., and
+Steinhardt, J.
+
+Measuring massive multitask language understanding.
+
+Proceedings of the International Conference on Learning
+Representations (ICLR), 2021.
+
+Kang et al. (2024)
+
+Kang, Y., Hsieh, C.-J., and Lee, T. C. M.
+
+Online continuous hyperparameter optimization for generalized linear
+contextual bandits.
+
+Transactions on Machine Learning Research (TMLR), 2024.
+
+arXiv:2302.09440.
+
+Lattimore & Szepesvári (2020)
+
+Lattimore, T. and Szepesvári, C.
+
+Bandit Algorithms.
+
+Cambridge University Press, 2020.
+
+Li et al. (2010)
+
+Li, L., Chu, W., Langford, J., and Schapire, R. E.
+
+A contextual-bandit approach to personalized news article
+recommendation.
+
+In Proceedings of the 19th International Conference on World
+Wide Web, pp. 661–670, 2010.
+
+Li (2025)
+
+Li, Y.
+
+LLM bandit: Cost-efficient LLM generation via
+preference-conditioned dynamic routing.
+
+arXiv preprint arXiv:2502.02743, 2025.
+
+Lin et al. (2022)
+
+Lin, S., Hilton, J., and Evans, O.
+
+TruthfulQA: Measuring how models mimic human falsehoods.
+
+Proceedings of the 60th Annual Meeting of the Association for
+Computational Linguistics, 2022.
+
+Liu et al. (2026)
+
+Liu, X., He, B., Liu, X., Luo, A., Zhang, H., and Chen, H.
+
+98 faster LLM routing without a dedicated GPU: Flash
+attention, prompt compression, and near-streaming for the vLLM semantic
+router.
+
+arXiv preprint arXiv:2603.12646, 2026.
+
+Ma et al. (2024)
+
+Ma, W., Yang, C., and Kästner, C.
+
+(why) is my prompt getting worse? rethinking regression testing for
+evolving LLM APIs.
+
+In Proceedings of the IEEE/ACM 3rd International Conference on
+AI Engineering—Software Engineering for AI (CAIN), 2024.
+
+Mei et al. (2025)
+
+Mei, K., Xu, W., Lin, S., and Zhang, Y.
+
+OmniRouter: Budget and performance controllable multi-LLM
+routing.
+
+arXiv preprint arXiv:2502.20576, 2025.
+
+Mihaylov et al. (2018)
+
+Mihaylov, T., Clark, P., Khot, T., and Sabharwal, A.
+
+Can a suit of armor conduct electricity? a new dataset for open book
+question answering.
+
+In Proceedings of the 2018 Conference on Empirical Methods in
+Natural Language Processing, 2018.
+
+Oetomo et al. (2023)
+
+Oetomo, B., Perera, R. M., Borovica-Gajic, R., and Rubinstein, B. I. P.
+
+Cutting to the chase with warm-start contextual bandits.
+
+Knowledge and Information Systems, 65(9):3533–3565, 2023.
+
+Ong et al. (2025)
+
+Ong, I., Almahairi, A., Wu, V., Chiang, W.-L., Wu, T., Gonzalez, J. E., Kadous,
+M. W., and Stoica, I.
+
+Routellm: Learning to route llms with preference data.
+
+In International Conference on Learning Representations
+(ICLR), 2025.
+
+OpenAI (2024)
+
+OpenAI.
+
+Introducing structured outputs in the API.
+
+https://openai.com/index/introducing-structured-outputs-in-the-api/,
+August 2024.
+
+gpt-4o-2024-08-06 input price cut from $5.00 to $2.50 per million
+tokens (50% cut); output from $15.00 to $10.00 (33% cut). Effective
+August 6, 2024.
+
+Pan et al. (2024)
+
+Pan, H., Tennenholtz, G., Mannor, S., Chi, C.-W., Brekelmans, R., Shah, P., and
+Tewari, A.
+
+Jump starting bandits with LLM-generated prior knowledge.
+
+In Proceedings of the 2024 Conference on Empirical Methods in
+Natural Language Processing, pp. 19858–19873, 2024.
+
+Panda et al. (2025)
+
+Panda, P., Magazine, R., Devaguptapu, C., Takemori, S., and Sharma, V.
+
+Adaptive LLM routing under budget constraints.
+
+In Findings of the Association for Computational Linguistics:
+EMNLP 2025, 2025.
+
+arXiv:2508.21141.
+
+Portkey AI (2025)
+
+Portkey AI.
+
+The most reliable AI gateway for production systems.
+
+https://portkey.ai/blog/the-most-reliable-ai-gateway-for-production-systems,
+2025.
+
+Sub-millisecond hot-path latency; 122 KB gateway footprint; 10B
+requests/month in production.
+
+Pulishetty et al. (2025)
+
+Pulishetty, R., Ghantasala, M. K., Dasoju, K. K., Mangwani, N., Garimella, V.,
+Mate, A., Chatterjee, S., Kang, Y., Nosakhare, E., Hasan, S., and Srinivasan,
+S.
+
+One head, many models: Cross-attention routing for cost-aware LLM
+selection.
+
+arXiv preprint arXiv:2509.09782, 2025.
+
+Qian et al. (2025)
+
+Qian, C., Liu, Z., Kokane, S., Prabhakar, A., Qiu, J., Chen, H., Liu, Z., Ji,
+H., Yao, W., Heinecke, S., Savarese, S., Xiong, C., and Wang, H.
+
+xrouter: Training cost-aware LLMs orchestration system via
+reinforcement learning.
+
+arXiv preprint arXiv:2510.08439, 2025.
+
+Reimers & Gurevych (2019)
+
+Reimers, N. and Gurevych, I.
+
+Sentence-bert: Sentence embeddings using siamese bert-networks.
+
+In Proceedings of the 2019 Conference on Empirical Methods in
+Natural Language Processing and the 9th International Joint Conference on
+Natural Language Processing (EMNLP-IJCNLP), pp. 3982–3992, 2019.
+
+Russac et al. (2019)
+
+Russac, Y., Vernade, C., and Cappé, O.
+
+Weighted linear bandits for non-stationary environments.
+
+In Advances in Neural Information Processing Systems
+(NeurIPS), volume 32, 2019.
+
+Sakaguchi et al. (2020)
+
+Sakaguchi, K., Le Bras, R., Bhagavatula, C., and Choi, Y.
+
+WinoGrande: An adversarial Winograd schema challenge at scale.
+
+Proceedings of the AAAI Conference on Artificial Intelligence,
+2020.
+
+Shirkavand et al. (2025)
+
+Shirkavand, R., Gao, S., Yu, P., and Huang, H.
+
+Cost-aware contrastive routing for LLMs.
+
+In Advances in Neural Information Processing Systems
+(NeurIPS), 2025.
+
+Sun et al. (2025)
+
+Sun, Z., Xue, H., Wang, J., and Tu, Z.-X.
+
+Lookahead routing for large language models.
+
+In Advances in Neural Information Processing Systems
+(NeurIPS), 2025.
+
+Suzgun et al. (2023)
+
+Suzgun, M., Scales, N., Schärli, N., Gehrmann, S., Tay, Y., Chung, H. W.,
+Chowdhery, A., Le, Q. V., Chi, E. H., Zhou, D., and Wei, J.
+
+Challenging BIG-Bench tasks and whether chain-of-thought can solve
+them.
+
+Findings of the Association for Computational Linguistics
+(ACL), 2023.
+
+Verga et al. (2024)
+
+Verga, P., Hofstätter, S., Althammer, S., Su, Y., Gupta, A., Faez, H.,
+Petroni, F., and Riedel, S.
+
+Replacing judges with juries: Evaluating LLM generations with a
+panel of diverse models.
+
+arXiv preprint arXiv:2404.18796, 2024.
+
+Wang et al. (2025a)
+
+Wang, W., Yang, T., Chen, H., Zhao, Y., Dernoncourt, F., Rossi, R. A., and
+Eldardiry, H.
+
+Learning to route LLMs from bandit feedback: One policy, many
+trade-offs.
+
+arXiv preprint arXiv:2510.07429, 2025a.
+
+Wang et al. (2025b)
+
+Wang, X., Liu, Y., Cheng, W., Zhao, X., Chen, Z., Yu, W., Fu, Y., and Chen, H.
+
+MixLLM: Dynamic routing in mixed large language models.
+
+In Proceedings of the 2025 Conference of the North American
+Chapter of the Association for Computational Linguistics (NAACL), pp. 10912–10922, 2025b.
+
+Zellers et al. (2019)
+
+Zellers, R., Holtzman, A., Bisk, Y., Farhadi, A., and Choi, Y.
+
+HellaSwag: Can a machine really finish your sentence?
+
+Proceedings of the 57th Annual Meeting of the Association for
+Computational Linguistics, 2019.
+
+Zhao et al. (2025)
+
+Zhao, J., Shin, C., Huang, T.-H., Namburi, S. S. S., and Sala, F.
+
+CARE: Confounder-aware aggregation for reliable LLM evaluation.
+
+In Advances in Neural Information Processing Systems
+(NeurIPS), 2025.
+
+Zheng et al. (2023)
+
+Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z.,
+Li, Z., Li, D., Xing, E. P., et al.
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+arXiv preprint arXiv:2306.05685, 2023.
+
+Appendix A Hyperparameter Optimization for Non-Stationary Routing
+
+The challenge.
+
+ParetoBandit’s core hyperparameters—exploration coefficient
+, prior strength , and forgetting factor
+—interact non-trivially with non-stationarity.
+Standard cross-validation optimizes a single stationary metric,
+which tends to select because forgetting
+reduces effective sample size under stationarity.
+However, fails under non-stationarity
+(Section 4.4): infinite memory retains
+stale pre-failure evidence, slowing adaptation to quality
+degradation, while optimizing solely for adaptability yields
+excessive forgetting that destabilizes the stationary policy.
+A good configuration must balance stationary efficiency against
+non-stationary recovery.
+
+Among bandit-based LLM routers we surveyed, none addresses this
+tension directly.
+PILOT Panda et al. (2025) tunes via grid search on a
+single stationary metric.
+BaRP Wang et al. (2025a) and LLM Bandit Li (2025)
+omit forgetting entirely.
+MixLLM Wang et al. (2025b) delegates adaptation to periodic
+neural retraining rather than explicit forgetting.
+In the general bandit literature,
+CDT Kang et al. (2024) performs online tuning of via a
+bandit-over-bandit scheme but remains single-objective and does
+not tune .
+Garivier and Moulines Garivier & Moulines (2011) derive
+as a function of the (unknown) number of breakpoints, which is
+not observable in production.
+
+Adaptation–horizon coupling.
+
+Rather than tuning and as independent
+statistical parameters, we reparameterize both through a single
+deployment-meaningful quantity: the adaptation horizon
+—the number of online queries after which the
+router can fully override its prior following a distributional shift.
+Under the Discounted LinUCB update Russac et al. (2019), the
+effective weight of online evidence relative to the prior reaches
+parity after
+
+(13)
+
+queries. Inverting for gives
+,
+which reduces to as
+by L’Hôpital’s rule.
+Fixing collapses the 3D grid
+to a 2D search over
+with derived.
+The practitioner sets one number they understand—the shortest
+acceptable reaction time for their service (e.g., the time to
+detect and reallocate away from a degraded model)—rather than
+two abstract statistical parameters whose interaction with
+non-stationarity is unintuitive.
+Every configuration in the resulting sweep adapts at the same
+rate; only the exploration–exploitation balance () and the
+granularity of forgetting () differ.
+
+We anchor to the catastrophic-failure
+phase length ( prompts in the
+validation split), ensuring the router can fully override its prior
+within the experimental measurement window.
+
+Multi-objective formulation.
+
+With derived, we score each
+configuration on two objectives:
+
+1.
+
+Budget-paced Pareto AUC (stationary efficiency).
+On the validation split, we sweep log-spaced budget targets with
+the BudgetPacer active, build per-seed Pareto frontiers, and
+compute the area under each frontier.
+We then average AUC over
+configurations and
+20 random seeds.
+
+2.
+
+Catastrophic-failure Phase-2 reward (non-stationary
+resilience).
+We run a two-phase simulation on the validation split: Phase 1
+(first half) uses normal rewards; Phase 2 (second half) degrades
+the failed arm’s reward to (% below normal)
+while keeping its cost fixed.
+We use a stronger degradation than Experiment 3’s
+so that the selected configuration can detect
+failures of at least this severity; the recovery-limit study
+(Appendix G) confirms the system
+handles even larger degradations.
+Mean Phase-2 reward captures how quickly the router detects the
+failure and reallocates traffic.
+We tune on a Mistral failure—the most operationally stressful
+scenario, since Mistral is the dominant arm across the broadest
+range of budget targets—and validate generalization to all
+arms post hoc.
+
+Pareto knee-point selection.
+
+We select a single configuration from the scored grid by
+constructing the Pareto frontier of non-dominated
+pairs and identifying
+the knee point.
+Concretely, we compute each frontier point’s perpendicular
+distance to the line connecting the two extreme endpoints, after
+min–max normalisation of both objectives for scale invariance,
+and choose the point with maximal distance.
+Geometrically, the knee marks the inflection beyond which
+improving either objective requires a disproportionate sacrifice
+of the other; unlike scalarisation weights or
+-constraints, it requires no user-specified trade-off
+parameter.
+Seed-level bootstrap resampling (2000 iterations) shows this
+choice is stable: 91.0% of resamples select a configuration
+within one -grid step of the knee (only 6 unique
+configurations appear), with the knee itself chosen in 50.9% of
+resamples, the modal selection by a wide margin.
+
+Results.
+
+Table 3 compares knee-point selection
+against AUC-only optimisation for both ParetoBandit (with warmup
+priors) and Tabula Rasa (cold start).
+The contrast between the two selection methods is stark.
+AUC-only optimisation selects (no forgetting) for
+both ParetoBandit and Tabula Rasa, converging on stationary optima
+that Section 4.4 shows are vulnerable under
+quality degradation.
+The knee-point method instead selects moderate forgetting for both
+variants— for ParetoBandit and
+for Tabula Rasa—trading only stationary AUC (for
+ParetoBandit) for substantially improved failure resilience.
+
+Table 3: -constrained Pareto knee-point selection.
+The knee-point method selects moderate forgetting ( / ) for both variants, while AUC-only optimisation favours near-stationary .
+Warmup priors yield higher AUC, higher Phase-2 reward, and lower variance than the cold-start baseline.
+Grid:     values; val split, 20 seeds.
+
+Variant
+Method
+
+BP AUC
+P2 Reward
+
+ParetoBandit
+AUC-only
+
+—
+
+Knee-point
+
+Tabula Rasa
+AUC-only
+
+—
+
+—
+
+Knee-point
+
+—
+
+The selected configurations generalise to the held-out test split.
+On the test split, the router–envelope AUC gap is for
+ParetoBandit and for Tabula Rasa, both within one standard
+deviation of seed variance ( and ,
+respectively), indicating that the offline protocol does not overfit.
+The forgetting tax under stationarity is negligible:
+ParetoBandit reaches  [0.9216, 0.9226] on the test split,
+only below the fixed-model envelope (),
+despite using a forgetting rate tuned for non-stationary recovery.
+Warmup priors close roughly 40% of the remaining gap to the
+envelope: ParetoBandit at  [0.9216, 0.9226] versus
+ [0.9191, 0.9208] for Tabula Rasa.
+
+Cross-arm validation.
+
+Because the Phase-2 objective is tuned on Mistral failure
+alone—the most operationally stressful scenario, as Mistral is the
+dominant arm across the widest range of budget targets—we verify
+that the selected forgetting rate generalises by evaluating the
+knee-point configuration under catastrophic failure of each of the
+arms independently (validation split, 20 seeds, 3 budget
+targets).
+Phase-2 mean reward is  [0.8140, 0.8800] under Llama
+failure,  [0.7231, 0.7393] under Mistral failure (the
+tuning target), and  [0.8852, 0.8980] under Gemini failure
+(all 95% CIs).
+Mistral failure remains the hardest case (lowest Phase-2 reward),
+so tuning on the dominant arm is a conservative choice and the
+forgetting mechanism generalises across arms.
+
+Three findings stand out from the joint selection:
+
+1.
+
+reduces the search from 3D to 2D.
+Deriving from the adaptation horizon
+(Eq. 13) collapses the
+grid to
+. The practitioner sets one
+deployment-meaningful quantity—the shortest acceptable
+reaction time—instead of two abstract statistical parameters.
+
+2.
+
+Knee-point selection enables forgetting that
+threshold methods miss.
+An -best-AUC threshold would select
+for Tabula Rasa because every
+falls outside the tolerance band. The knee-point criterion
+instead identifies where the marginal AUC cost of additional
+forgetting accelerates, and selects even on
+the steeper trade-off curve.
+
+3.
+
+Warmup priors and forgetting are synergistic.
+ParetoBandit dominates Tabula Rasa on both objectives
+( vs. AUC; vs. Phase-2
+reward).
+Forgetting () down-weights all past evidence,
+including the prior embedded in the sufficient statistics at
+initialisation.
+For Tabula Rasa the decayed prior is uninformative
+; for ParetoBandit it retains the
+structure of the warmup characterisation, providing a
+better-than-ignorance fallback even after substantial decay.
+Warmup priors therefore matter more when forgetting is active,
+because they determine the fallback the router reverts to after
+a disruption; cross-arm validation confirms that this advantage
+generalises to all arms.
+
+sensitivity.
+
+A natural concern is whether the selected configuration is sensitive
+to the anchor value , which we set to
+approximately match the catastrophic-failure phase length.
+To test robustness, we repeat the full Pareto knee-point selection
+for —a range
+spanning reaction times from rapid detection to conservative
+adaptation (Table 4).
+Three observations support robustness:
+
+1.
+
+is perfectly stable
+( at every ), as expected:
+is orthogonal to the adaptation horizon.
+
+2.
+
+shifts but remains in the
+moderate-forgetting regime.
+The selected values— (),
+(), and
+()—span only three grid steps
+(), with derived of
+, , and , respectively.
+As increases, the derived
+grows and the Pareto criterion compensates with slightly more
+aggressive forgetting.
+Crucially, every selected remains well below the
+regime with no forgetting, so the qualitative
+behaviour—moderate discounting with non-stationary
+resilience—is preserved for all anchors.
+
+3.
+
+Both objectives are effectively invariant.
+Despite the three-step shift,
+AUC varies by less than (–) and
+Phase-2 reward spans only –, with no monotonic
+trend; the performance surface near the Pareto knee is flat, so
+mainly affects the internal
+parameterisation (, ) rather than
+external routing behaviour.
+
+A practitioner can therefore set directly from an
+operational requirement—the shortest acceptable reaction
+time—knowing that the knee-point procedure will adjust and
+automatically while keeping routing performance
+essentially unchanged.
+
+Table 4: sensitivity analysis.
+Pareto knee-point selection repeated for
+, re-deriving
+from at each value.
+Grid:
+( values)
+( values),
+val split, 20 seeds.
+
+BP AUC 
+P2 Reward 
+
+Appendix B Cost Heuristic Validation
+
+The selection utility (Equation 2) uses a static
+log-normalized cost derived from each model’s blended
+per-token rate rather than the realised per-request cost.
+This is forced by decision timing: the cost penalty must be evaluated
+before the prompt is dispatched, but realised cost depends on the
+model’s output length, which is unknown until inference completes.
+A learned contextual cost predictor could in principle replace the
+static proxy, but the benefit is limited—prompt-level features
+explain less than 8% of cost variance in our portfolio (see
+“Prompt-cost correlation” below)—while the dual variable
+already corrects for any systematic mismatch by updating
+on actual costs (Eq. 4).
+
+We validate the static heuristic via two necessary conditions:
+(i)  preserves the true cost ranking across prompts,
+and (ii) within-model cost variance is small relative to inter-model
+gaps in log-cost space.
+Condition (i) is required because the cost penalty in
+Eq. 2 biases selection toward cheaper arms; if the
+heuristic mis-ranks two models, the penalty systematically favours
+the wrong one.
+Condition (ii) ensures that a single scalar per arm is a faithful
+summary of its cost distribution: if within-model variance were large
+relative to inter-model gaps, the fixed penalty could not reliably
+separate tiers and prompt-level cost estimation would be needed.
+
+Blending assumption.
+
+The heuristic blends input and output pricing with equal weight
+(i.e., a 1:1 token ratio).
+In practice the output-to-input ratio varies across models and
+prompts, so the blended rate differs from the true per-request
+effective rate.
+Because cost ranking depends only on the relative order of effective
+rates and log-normalization compresses the dynamic range, a simple
+average preserves the ranking whenever the price gap between models
+exceeds the variation introduced by differing output lengths—a
+condition satisfied for models spanning at least one order of
+magnitude in pricing.
+Note that Llama-8B’s blended rate ($0.10/M tokens) coincides with
+the market cost floor, so by
+construction; any model priced at or below the floor is treated as
+zero-cost in the utility computation.
+
+portfolio (1766 shared validation prompts; sanity check).
+
+The heuristic ordering Llama-8B Mistral-Large Gemini-Pro
+matches the per-request cost ordering on 100.0% of prompts
+(95% Wilson CI: [99.8, 100.0]%).
+All three pairwise comparisons hold at 100.0% under strict
+inequality, with zero ties observed.
+This result is unsurprising given the cost span
+between the cheapest and most expensive arm (per-model CVs in
+0.63–0.92), and serves primarily as a sanity check that the dataset
+is internally consistent
+(Figure 6a;
+Figure 7a).
+
+portfolio (1766 shared validation prompts, with Gemini-Flash).
+
+Adding a fourth arm whose pricing overlaps an existing arm provides a
+harder test of the heuristic.
+For a clean comparison, we restrict both portfolios to the shared
+prompt subset: 19 prompts from the original validation split
+are excluded because the Flash data-collection pipeline failed to
+produce a successful response or judge score for them, so they are
+absent from the data file.
+Gemini-Flash () is placed between Mistral-Large
+() and Gemini-Pro ().
+The full ordering matches on 79.7%
+(CI: [77.7, 81.5]%) of prompts.
+The closest pair (Mistral-Large vs. Gemini-Flash) preserves ranking
+on 79.7% (CI: [77.7, 81.5]%; 0 exact ties), reflecting Flash’s
+high cost variance (CV ) and the narrow heuristic gap
+()
+(Figure 6b;
+Figure 7b).
+
+Log-cost separation.
+
+To quantify tier separation without referencing the heuristic itself,
+we examine per-model distributions in
+space.
+Within-model standard deviations are 8–11% of the total inter-model
+log-cost range, confirming that prompt-level cost noise does not
+overwhelm tier separation.
+We report Cohen’s between adjacent tiers as a scale-free measure
+of how many within-model standard deviations separate each pair;
+implies that the two distributions rarely overlap, so a
+single scalar per arm faithfully distinguishes them (condition (ii)
+above).
+In the portfolio, Cohen’s for adjacent pairs ranges from
+4.39 (Llama-8B Mistral-Large) to 5.92 (Mistral-Large
+Gemini-Pro)—well above , consistent with the 100% ranking
+preservation reported above.
+In the portfolio, the Mistral-Large Gemini-Flash pair
+has ; this weakest separation corresponds to the only pair
+where the ranking inverts on of prompts.
+
+Prompt-cost correlation.
+
+Per-model cost distributions are right-skewed
+(Figure 6), so we use Spearman
+(rank-based) correlations between prompt word count and per-request
+cost.
+Correlations are statistically significant but modest in magnitude
+( to ; all ).
+Because (proportion of rank variance explained),
+prompt-level features capture only a small fraction of cost
+variation, limiting the practical benefit of a contextual cost model
+in this portfolio.
+
+Cross-model cost correlation.
+
+If per-request costs co-vary across models (e.g. because a long
+prompt elicits long outputs from every model), then prompt-level cost
+fluctuations shift all arms together, preserving relative ordering
+even when absolute costs vary.
+We again use Spearman correlations given the skewed cost
+distributions.
+Per-request costs are moderately to strongly correlated across models
+( to ), confirming this shared output-length
+factor and explaining why the static heuristic’s ranking holds
+despite high within-model CVs (0.63–1.56).
+
+Takeaway.
+
+The static heuristic is empirically well-calibrated for
+portfolios where models span at least one order of magnitude in
+pricing.
+For denser price clusters (e.g., Mistral-Large vs. Gemini-Flash,
+), the ranking holds for of prompts but
+inverts when Flash generates unusually short responses.
+Three structural properties limit downstream impact:
+(i)  enters only the soft penalty
+(Eq. 2); the hard ceiling and the pacer’s EMA cost
+signal operate on actual per-request costs, so heuristic errors
+cannot cause budget violations.
+(ii) For closely priced arms the absolute penalty gap is small
+( for Mistral–Flash at )—negligible
+relative to the reward signal.
+(iii) The dual variable updates on actual costs
+(Eq. 4), self-correcting any persistent
+over-selection of a costly arm.
+
+Figure 6: Cost heuristic validation: realised cost distributions. Panel (a) shows per-request realised cost distributions for the portfolio on the shared validation subset, and panel (b) shows the same diagnostic for the portfolio. In both cases the violin plots are ordered by the static log-normalized heuristic , illustrating that the major cost tiers are cleanly separated, with only the Mistral-Large and Gemini-Flash distributions showing substantial overlap.
+
+Figure 7: Cost heuristic validation: ranking preservation. Panel (a) shows pairwise ranking preservation for the portfolio on the shared validation subset, and panel (b) shows the same diagnostic for the portfolio. The heuristic preserves the full per-request cost ordering on 100.0% of shared-subset prompts and 79.7% of shared-subset prompts; the Mistral-Large vs. Gemini-Flash comparison is the only source of inversions.
+
+Appendix C Cold-Start vs Warmup Priors
+
+Section 3.4 introduces offline-to-online warmup priors,
+which let the router begin with informed beliefs about each model’s
+strengths by loading sufficient statistics fitted on historical data.
+The natural question is whether warmup priors reduce cold-start
+regret in practice.
+To answer this, we compare ParetoBandit with warmup priors
+(, ,
+) against Tabula Rasa
+(, ,
+), each running under its own
+Pareto-optimal hyperparameters tuned independently via the
+Pareto-knee procedure (Appendix A).
+Notably, the sweep independently selected the same
+for both conditions, so they share identical
+effective-memory windows ( steps) and the only remaining
+differences are prior strength ( vs. )
+and exploration rate ( vs. ).
+Any regret difference is therefore directly attributable to the
+informative priors, not to a memory-length confound.
+
+The comparison uses the stationary portfolio under four
+budget regimes: unconstrained (no pacer), tight
+(/request), moderate
+(/request), and loose
+(/request).
+
+Statistical methodology.
+
+We assess each comparison along two dimensions.
+The first is typical-case regret: does warmup tend to outperform
+seed by seed?
+The second is tail risk: does warmup avoid outlier runs where regret
+is disproportionately high?
+We call a seed a catastrophic failure when its cumulative regret
+exceeds the pooled median across all conditions in that
+budget regime; pooling ensures no single condition anchors the
+threshold.
+These two dimensions require different tests because a method can
+improve the median while still leaving heavy tails, or eliminate
+outliers without shifting the centre.
+
+•
+
+Sign test (exact binomial): tests whether warmup
+has lower regret seed by seed, capturing the typical case
+().
+
+•
+
+Fisher exact test on a table of
+catastrophic vs. non-catastrophic seeds: tests whether warmup
+has a lower catastrophic-failure rate, capturing tail risk
+( equal failure rates).
+
+All -values are corrected for multiplicity via the
+Holm–Bonferroni procedure across the full family of tests
+(4 sign tests and 4 Fisher tests, corrected separately per family).
+Bootstrap CIs for paired differences are likewise
+Bonferroni-corrected (4 simultaneous comparisons) to maintain 95%
+family-wise coverage.
+
+Table 5: Warmup-prior ablation results across budget regimes (20 seeds, held-out test split, ). Warmup priors are compared against Tabula Rasa and a random baseline (unconstrained only). Regret is cumulative over all 1824 test steps; R@200 is cumulative regret at test step 200. CIs are 95% percentile-bootstrap (10,000 resamples). ∗Holm–Bonferroni corrected. Cat. = catastrophic failures (regret pooled median of all conditions in each budget regime).
+
+Budget
+Condition
+Regret (95% CI)
+Std
+R@200 (95% CI)
+Rwd
+Cat.
+
+None
+Warmup
+ [54.3, 55.7]
+
+ [5.8, 6.6]
+
+0/20
+—
+—
+
+Tabula Rasa
+ [77.1, 99.0]
+
+ [11.9, 20.8]
+
+2/20
+
+Random
+ [144.4, 148.8]
+
+ [15.1, 17.0]
+
+—
+—
+—
+
+Tight
+Warmup
+ [159.1, 163.1]
+
+ [18.0, 21.0]
+
+0/20
+—
+—
+
+Tabula Rasa
+ [195.8, 232.1]
+
+ [26.4, 31.9]
+
+0/20
+
+Moderate
+Warmup
+ [129.2, 138.8]
+
+ [12.9, 16.6]
+
+0/20
+—
+—
+
+Tabula Rasa
+ [130.0, 165.3]
+
+ [19.4, 27.5]
+
+0/20
+
+Loose
+Warmup
+ [81.4, 85.9]
+
+ [8.2, 9.1]
+
+0/20
+—
+—
+
+Tabula Rasa
+ [101.1, 128.3]
+
+ [18.3, 26.0]
+
+0/20
+
+Table 5 reports per-condition
+means, bootstrap CIs, standard deviations, early-learning regret
+(R@200), mean reward, catastrophic-failure counts, and
+Holm-corrected -values; below we highlight the main findings.
+
+Result: warmup priors reduce cold-start regret.
+
+Relative to Tabula Rasa, warmup priors reduce mean cumulative regret
+across all budget regimes.
+We report the paired difference
+(positive favours
+warmup) with Bonferroni-corrected 95% bootstrap CIs (4 simultaneous
+comparisons):
+unconstrained  [19.8, 48.4],
+tight  [29.6, 76.9],
+moderate  [10.9, 38.5],
+and loose  [13.9, 49.2].
+The CI excludes zero for unconstrained, tight, and loose regimes;
+the moderate regime is inconclusive (, CI spans zero).
+These reductions correspond to 9–37% of Tabula Rasa’s total regret
+(largest in the unconstrained regime, smallest in the moderate regime
+where the CI spans zero), reflecting that the cold-start baseline
+converges within the -step effective-memory window
+afforded by .
+Much of this advantage is concentrated in the early learning phase.
+The R@200 paired differences
+(, same sign convention)
+are significant in every regime:
+unconstrained  [4.7, 15.8],
+tight  [5.5, 13.7],
+moderate  [3.6, 13.8],
+and loose  [8.2, 18.8]
+(see also per-condition R@200 CIs in
+Table 5).
+The advantage narrows as online evidence accumulates beyond the
+effective-memory window.
+
+Cold-start variability.
+
+Warmup priors produce tighter per-seed regret distributions
+(Figure 8).
+Under tight budgets, the per-seed regret standard deviation for
+warmup is compared to for Tabula Rasa
+( lower).
+Warmup records zero catastrophic failures
+(regret pooled median) across all regimes.
+Tabula Rasa produces 2/20 catastrophic failures in the
+unconstrained regime, with none under budget constraints
+(0/20 tight, 0/20 moderate, 0/20 loose); Fisher tests are
+non-significant after Holm correction
+().
+The occasional cold-start outliers confirm that starting without
+priors introduces tail risk, even when the effective-memory window
+is the same ( for both conditions).
+
+Discussion.
+
+Warmup priors are best understood as a deployment-reliability
+mechanism: they reduce cold-start regret and tighten the per-seed
+distribution.
+Warmup is optional—ParetoBandit is fully functional without it,
+and the Tabula Rasa results in
+Table 5 confirm that the bandit
+converges to comparable steady-state quality once sufficient online
+evidence accumulates.
+The warmup benefit is transient by design: geometric forgetting
+() replaces priors within
+effective-memory steps, after which warmup and tabula-rasa
+conditions converge.
+Enabling warmup priors reduces regret during this early learning
+window and tightens run-to-run variability, but practitioners who
+lack historical data or prefer a simpler deployment can omit them
+without sacrificing long-run performance.
+When warmup priors are used, these gains assume the prior is
+directionally correct; a dedicated prior-mismatch sensitivity
+analysis (Appendix D) quantifies
+trade-offs across five quality levels—from well-calibrated through
+domain-restricted to actively inverted priors.
+
+Figure 8: Per-seed cumulative regret distributions for warmup priors (blue) vs. Tabula Rasa (orange) across four budget regimes (, 20 seeds, held-out test split). Both conditions share but differ in prior strength and exploration rate (deployment-level comparison). Gray star: Random baseline median (unconstrained only). Warmup priors yield tight, unimodal distributions; Tabula Rasa exhibits heavier tails under budget constraints. Statistical tests in Table 5.
+
+Appendix D Prior Mismatch Sensitivity
+
+The warmup ablation (Appendix C) demonstrated
+that well-calibrated priors substantially reduce regret and eliminate
+catastrophic cold-start failures under stationary conditions.
+All experiments in this paper use priors trained on a representative
+training set drawn from the same distribution as the test traffic.
+In practice, however, prior quality degrades after deployment:
+the prompt distribution shifts as users adopt new workflows,
+model providers silently update weights, and the roster itself
+changes as models are added or retired.
+A practitioner deploying warmup priors needs to know how wrong the
+prior can be before cold start becomes the safer option, and whether
+a conservative prior strength can limit the damage when calibration
+quality is uncertain.
+
+Why not re-optimise?
+
+The production hyperparameters (Appendix A)
+are tuned once on a representative training set via the
+-constrained Pareto-knee procedure, which
+couples and through the adaptation horizon.
+The selected prior strength (,
+Eq. 10) implicitly assumes the prior is
+directionally correct: high tells the bandit to
+trust the offline beliefs for many observation-equivalents before
+online evidence takes over.
+If the prior is wrong, high amplifies the harm by
+delaying the point at which online data overrides the prior.
+Re-running the Pareto-knee sweep for every possible prior-quality
+level is impractical in production, so this experiment instead
+asks whether a single tunable parameter——can
+serve as a safety knob that limits damage from degraded priors
+while preserving the variance-reduction benefit for good ones.
+
+Design: mismatch gradient.
+
+We construct five prior-quality levels forming a mismatch gradient,
+ordered from ideal to adversarial:
+
+1.
+
+Well-calibrated: priors from the full training set
+()—the shipped default.
+
+2.
+
+Random-1680: a random subsample of 1,680 training
+prompts, matching the GSM8K-only count while preserving the full
+distribution. This is a sample-size control: any gap between
+Random-1680 and Well-calibrated isolates covariance-estimation
+noise from domain effects.
+
+3.
+
+MMLU-only: priors from the 1,855 MMLU prompts
+only. The prior preserves the correct model ranking
+(Gemini  Mistral  Llama) but with
+knowledge-domain-specific magnitudes.
+
+4.
+
+GSM8K-only: priors from the 1,680 GSM8K (math)
+prompts only. All models score on math, so the
+prior encodes near-zero arm differentiation.
+
+5.
+
+Inverted: priors from the full training set with
+Llama and Gemini rewards swapped, so the prior believes the
+cheapest model is best and vice versa.
+
+These levels represent failure modes that arise naturally in
+deployment: (1–2) an operator who collected representative data;
+(3) an operator who collected data from a single knowledge domain;
+(4) an operator whose data happens to come from a task where all
+models perform similarly; and (5) the worst case, where an update
+inverts the relative model ranking (e.g., because a provider
+silently degrades a model that was previously the best).
+
+Design: as a safety knob.
+
+Each quality level is tested at three values
+(10, 100, 1000), spanning three orders of magnitude.
+These values bracket a key trade-off.
+Low () treats the prior as a gentle
+nudge: the bandit overrides it within tens of observations,
+limiting the damage from a bad prior but also limiting the
+cold-start benefit from a good one.
+High () trusts the prior for
+hundreds of effective observations: beneficial when the prior is
+correct, but potentially harmful when it confidently encodes the
+wrong ranking.
+Together with the quality gradient, the grid reveals
+whether there exists an regime where any
+prior—even a domain-mismatched one—helps more than it hurts.
+
+Design: baseline.
+
+The no-prior baseline is the independently optimised Tabula Rasa
+(, ).
+As established in the warmup ablation
+(Appendix C), the Pareto-knee sweep selected
+the same for both warmup and Tabula Rasa, so
+both share the same effective memory ( steps)
+and the comparison is not driven by different forgetting horizons.
+However, because also differs between conditions
+( for warmup vs. for Tabula Rasa),
+the appendix should be interpreted as a system-level deployment
+comparison against the best no-prior baseline rather than a fully
+controlled ablation that isolates prior information while holding
+every learning hyperparameter fixed.
+This yields conditions.
+The warmup hyperparameters were not re-optimised per
+prior-quality level—matching the production scenario where prior
+quality degrades after deployment without hyperparameter adjustment.
+
+Design: unconstrained regime.
+
+Evaluation follows the same cumulative-regret protocol as the warmup
+ablation: held-out test split (), 20 seeds
+(offset, aligned for paired comparisons), unconstrained
+(no budget pacer).
+We deliberately restrict this experiment to the unconstrained regime
+for two reasons.
+First, the budget pacer constrains arm selection, which limits the
+online observations the bandit receives to correct a bad prior;
+budget-induced failures and prior-induced failures would be
+confounded.
+Second, the warmup ablation (Appendix C)
+already characterises the pacer interaction for well-calibrated
+priors vs. tabula rasa.
+Adding budget constraints here would conflate two failure modes
+without additional insight, since the prior-quality threshold for
+harm is determined by the bandit’s learning dynamics, not the pacer.
+
+Statistical methodology.
+
+We use the same paired-comparison protocol as
+Appendix C: exact binomial sign test for
+location shift and Fisher exact test on a
+catastrophic-failure table for tail risk, with Holm–Bonferroni
+correction across all 15 pairwise comparisons per baseline.
+All confidence intervals are 95% percentile-bootstrap
+(10,000 resamples, seed-level resampling);
+median CIs resample the median directly rather than relying on
+normality, which is inappropriate for the heavy-tailed baseline
+distributions observed here.
+A seed is classified as catastrophic if its regret exceeds
+the Tabula Rasa median.
+
+Results.
+
+Figure 9 summarises total regret
+across the quality–strength grid.
+
+Figure 9: Total cumulative regret for ParetoBandit across the prior-quality vs. prior-strength grid (20 seeds, unconstrained, test split). All conditions use the same ParetoBandit router; only the warmup prior varies. Tabula Rasa is the independently optimised no-prior baseline. Bold cells exceed the Tabula Rasa median; normal-weight cells fall below it.
+
+Directionally correct priors help at every strength.
+Well-calibrated priors reduce median total regret monotonically
+with , relative to the Tabula Rasa baseline
+(median  [70.7, 90.1]):
+
+•
+
+: median
+ [63.6, 67.3]
+( [6.5, 28.5] reduction).
+
+•
+
+: median
+ [60.4, 63.5]
+( [11.9, 32.1] reduction).
+
+•
+
+: median
+ [54.5, 56.2]
+( [21.7, 38.8] reduction).
+
+All well-calibrated and Random-1680 comparisons are significant after
+Holm correction at every
+( even at ),
+with the strongest effect at :
+Well-calibrated wins 20 of 20 seeds ();
+Random-1680 wins 20 of 20 ().
+
+Sample size does not matter—distributional match does.
+A practitioner might worry that the Well-calibrated prior benefits
+from a larger training set rather than better calibration.
+The Random-1680 control rules this out: it uses only 1,680
+prompts (matching the GSM8K-only count) drawn from the full
+distribution and performs comparably to Well-calibrated at every
+(e.g., median
+ [54.4, 55.9]
+vs.  [54.5, 56.2]
+at ).
+This confirms that covariance estimation saturates
+quickly—1,680 representative prompts are sufficient for
+features—and that the domain-mismatch findings
+below are not confounded by sample-count effects.
+The practical implication is that operators need a
+representative training sample, not a large one.
+
+Domain-mismatched priors still beat cold start.
+Even when the prior is trained on a single domain rather than
+representative traffic, median regret stays below the Tabula Rasa
+baseline at every —the prior never hurts.
+MMLU-only priors reduce median regret to
+ [58.1, 60.5]
+at and
+ [57.5, 58.7]
+at
+(vs. Tabula Rasa  [70.7, 90.1]),
+despite being trained on a single knowledge domain.
+GSM8K-only priors—which encode near-zero arm
+differentiation—lower median regret to
+ [65.7, 68.0]
+through
+ [59.4, 62.9]
+across values.
+These reductions are statistically significant after Holm correction
+(Holm-corrected for all domain-mismatched conditions
+at every ).
+Crucially, no domain-mismatched prior increases median regret
+at any : partial knowledge is consistently at least
+as good as no knowledge.
+
+Inverted priors cause harm that scales with .
+This is the only condition where priors hurt.
+When the prior confidently encodes the wrong model ranking
+(cheapest = best), the router initially routes traffic to the worst
+model and must accumulate online evidence to override the prior.
+Higher delays that override, so damage grows with
+prior strength (vs. Tabula Rasa median
+ [70.7, 90.1]):
+
+•
+
+: median
+ [76.3, 81.8]
+(modest; the prior is overridden quickly).
+
+•
+
+: median
+ [89.1, 91.3].
+
+•
+
+: median
+ [105.6, 108.0]—a
+increase over the baseline
+( regret units [16.3, 36.4]).
+
+Tabula Rasa wins 17 of 20 seeds
+at
+(Holm ), confirming that the
+degradation is both statistically significant and operationally
+meaningful.
+
+Reliability: the more important finding.
+
+For a practitioner, run-to-run consistency matters as much as average
+regret.
+A router that usually improves but occasionally catastrophically
+misroutes is harder to trust than one that reliably delivers moderate
+gains.
+Figure 10 shows that warmup priors
+deliver exactly this consistency: every warmup
+condition—including domain-mismatched and even inverted
+priors—produces a tight, unimodal per-seed regret distribution,
+while Tabula Rasa exhibits a wide spread
+().
+Concretely, non-inverted warmup conditions have
+(range: –); even the worst
+condition (Inverted at ) achieves
+—still far tighter than Tabula Rasa’s .
+All 15 warmup conditions record zero catastrophic failures
+(regret the Tabula Rasa median, i.e., ).
+The warmup ablation (Appendix C) shows that
+Tabula Rasa exhibits substantially higher per-seed variance
+than warmup priors across all budget regimes, with
+larger standard deviation under tight budgets;
+the present experiment extends that finding by showing that the
+reliability benefit is robust to prior degradation.
+
+Practical implications.
+
+The prior-quality threshold for harm is high: priors need to be
+actively wrong (inverting model rankings) before they degrade
+performance.
+The reliability benefit—tight, unimodal distributions vs. Tabula
+Rasa’s heavy tail—is robust across the entire quality gradient.
+The parameter serves as a safety knob:
+for representative priors
+( [21.7, 38.8] regret reduction),
+as a safe default for domain-shifted priors
+( [11.9, 32.1] reduction),
+and when quality is entirely uncertain
+(worst-case damage limited to , while non-adversarial
+priors still reduce regret by –).
+Tabula rasa is appropriate only when the prior is known to be
+systematically inverted.
+
+Figure 10: Per-seed regret distributions across prior-quality levels at each value (20 seeds, unconstrained). Tabula Rasa is the independently optimised no-prior baseline.
+
+Appendix E Reward Signal Robustness (Three-Judge Validation)
+
+All main-paper experiments use DeepSeek-R1 as the sole evaluator.
+A natural concern is whether the paper’s conclusions—the relative
+ordering of methods and the qualitative behaviour of the router—are
+artefacts of this particular judge. We address this with a
+three-judge validation aimed at a single question: would the paper’s
+conclusions change with a different evaluator?
+
+E.1 Setup
+
+We draw a stratified random sample of prompts from the
+12,000-prompt benchmark, preserving proportional representation of
+all source benchmarks. Each prompt has existing responses from all
+three candidate models (Llama-3.1-8B, Mistral-Large-2512,
+Gemini-2.5-Pro), yielding (prompt, model) evaluation pairs.
+We re-evaluate these fixed responses—no new model outputs—with two
+supplementary judges chosen for provider diversity: GPT-4.1-mini
+(OpenAI) and Claude-3.7-Sonnet (Anthropic).
+
+All three judges receive the same structured chain-of-thought
+evaluation prompt (Figure 11); DeepSeek-R1
+additionally receives a brevity instruction to limit its CoT
+verbosity. The composite reward is a weighted average
+. The judge panel spans three independent
+providers (DeepSeek, OpenAI, Anthropic), none of which overlaps with
+the routed model providers (Meta, Mistral, Google).
+
+SYSTEM:
+You are a Discriminative Router Judge. Your goal is to evaluate
+how well an LLM response addresses the given prompt.
+
+Score on three continuous dimensions (0.0-1.0). Use the FULL
+range; do NOT default to 0 or 1.
+
+1. Reasoning Quality (40%) - How sound is the reasoning?
+0.9-1.0 Flawless; every step correct and clearly justified.
+0.7-0.8 Sound overall; minor inefficiency or a trivial
+error that does not change the conclusion.
+0.5-0.6 Partially correct; approach is reasonable but
+important steps are wrong or missing.
+0.3-0.4 Weak; only fragments of correct logic.
+0.0-0.2 No coherent reasoning, or completely wrong approach.
+If the prompt needs no multi-step reasoning, score factual
+accuracy and depth of explanation.
+
+2. Instruction Following (30%) - Were all explicit and implicit
+constraints satisfied?
+0.9-1.0 Every constraint followed precisely.
+0.7-0.8 All major constraints met; one minor instruction
+partially missed.
+0.5-0.6 Some important instructions missed or only
+partially addressed.
+0.3-0.4 Multiple instructions ignored or misinterpreted.
+0.0-0.2 Response largely ignores the prompt’s requirements.
+
+3. Communication Quality (30%) - How clear, well-structured,
+and useful is the response?
+0.9-1.0 Exceptionally clear, well-organized, appropriate
+detail.
+0.7-0.8 Clear and competent; minor improvements possible.
+0.5-0.6 Adequate but noticeably unclear, verbose, or poorly
+organized.
+0.3-0.4 Hard to follow; significant clarity issues.
+0.0-0.2 Unintelligible, unhelpful, or inappropriate tone.
+
+Format your response EXACTLY as follows:
+
+## Reasoning
+<Concise chain-of-thought analysis>
+
+## Reasoning Quality
+<0.0 to 1.0>
+
+## Instruction Following
+<0.0 to 1.0>
+
+## Communication Quality
+<0.0 to 1.0>
+
+USER:
+PROMPT: {prompt}
+
+RESPONSE: {response}
+
+Figure 11: Structured CoT evaluation prompt sent to all three judges.
+The composite reward is
+.
+For DeepSeek-R1 only, the system message appends: “IMPORTANT:
+Keep the ## Reasoning section to 3--5 sentences. Be direct---identify
+errors or confirm correctness, then move to scoring.”
+Temperature is set to 0 for all judges.
+
+E.2 Population-Level Agreement
+
+The bandit’s converged policy depends on the expected reward ordering
+across arms, not on individual prompt scores.
+If this ordering is preserved across judges, the converged policy is
+invariant to evaluator choice.
+
+Table 6: Expected reward ordering under each judge (
+prompts; Bonferroni-corrected bootstrap CIs, 9 comparisons,
+).
+
+Judge
+Gemini-Pro
+Mistral-Large
+Llama-8B
+
+DeepSeek-R1
+0.935
+0.923
+0.798
+
+GPT-4.1-mini
+0.964
+0.952
+0.857
+
+Claude-3.7-Sonnet
+0.928
+0.915
+0.779
+
+Table 6 shows that all three judges rank
+the models identically: Gemini-Pro Mistral-Large Llama-8B.
+Every pairwise expected-reward gap has the same sign, with all nine
+Bonferroni-corrected bootstrap CIs excluding zero (narrowest lower
+bound 0.0046; 9 comparisons, ).
+Gap-conditioned Kendall’s  (Table 9)
+reaches 0.71 on prompts with large inter-model gaps, indicating that
+the conditional ordering is also largely
+preserved where routing decisions matter most.
+
+Because all main-paper comparisons are within-judge (same R1 rewards,
+same R1 oracle), judge choice can change the magnitude of regret
+differences but not their sign. R1’s oracle lift (0.031 per step) is
+the largest among the three judges (0.016–0.020 for the supplementary
+judges), so main-paper effect sizes correspond to the most favourable
+case for adaptive routing; all qualitative conclusions hold under every
+judge tested.
+
+Cross-judge routing regret.
+
+Even where per-prompt routing decisions differ, the practical cost is
+small. Following R1’s oracle policy and evaluating with the other
+judges’ scores yields of their own oracle reward
+(Table 7). The reverse is worse: following
+GPT-4.1-mini’s or Claude’s oracle and evaluating with R1 captures only
+of R1’s oracle reward. The asymmetry is partly mechanical:
+judges with smaller inter-model gaps inflate capture fractions for any
+routing policy, while R1’s larger gaps penalise misrouting more
+heavily.
+
+Table 7: Cross-judge routing evaluation. Each cell reports the mean
+reward achieved by following the row judge’s oracle, evaluated by the
+column judge’s scores. Parenthetical values show the fraction of the
+column judge’s own oracle reward captured ( bootstrap
+resamples).
+
+Train / Eval
+R1
+GPT-4.1-mini
+Claude-3.7
+
+R1
+0.966 (100%)
+0.955 (97.5%)
+0.923 (97.4%)
+
+GPT-4.1-mini
+0.926 (95.8%)
+0.979 (100%)
+0.915 (96.6%)
+
+Claude-3.7-Sonnet
+0.926 (95.8%)
+0.953 (97.3%)
+0.948 (100%)
+
+Panel averaging Zheng et al. (2023) compresses routing margins:
+averaging the three judges shrinks the mean inter-model gap from
+(R1 alone) to (30% compression), halving the
+fraction of actionable prompts (31% vs. 17% at a 0.05 threshold).
+Z-score calibration Hedges & Olkin (1985) and multi-judge
+aggregation methods such as PoLL Verga et al. (2024) and
+CARE Zhao et al. (2025) recover percentage points of this
+compression, indicating genuine inter-judge disagreement rather than
+pure scale mismatch. R1 alone provides the largest margins and the
+lowest per-evaluation cost.
+
+E.3 Per-Prompt Agreement
+
+Table 8 reports per-response agreement using
+distribution-independent metrics robust to ceiling-compressed rewards
+(most scores in ). Spearman’s (0.633–0.658) and
+Kendall’s (0.528–0.547) indicate moderate rank agreement;
+mean absolute deviation is and Bland–Altman limits
+of agreement remain within roughly . This level of
+LLM-as-judge noise is expected, and the key point is that it preserves
+population-level ordering and routing policies.
+
+Table 8: Per-response agreement with DeepSeek-R1 ( scored pairs
+per judge). All measures are rank-based or distribution-independent to avoid
+attenuation from ceiling-compressed rewards.
+
+Metric
+GPT-4.1-mini
+Claude-3.7-Sonnet
+
+Spearman’s
+0.658
+0.633
+
+Kendall’s
+0.547
+0.528
+
+MAD
+0.074
+0.075
+
+Mean bias (judge R1)
+
+95% Bland–Altman LoA
+[, ]
+[, ]
+
+Gap-conditioned concordance.
+
+Per-prompt best-model agreement with R1 is overall, but
+disagreements cluster on prompts where all models are nearly tied.
+Table 9 shows that when R1’s inter-model
+gap is (30% of prompts), Kendall’s and
+best-model agreement is 48–58%; when the gap is (37%
+of prompts), rises to 0.57–0.71 and best-model agreement to
+50–58%. In the low-gap region, choosing the “wrong” model costs
+at most 0.05 reward—less than per-response judge noise
+(MAD )—so disagreement is concentrated where it is
+cheap.
+
+Table 9: Routing agreement conditioned on R1’s inter-model gap.
+Kendall’s  measures three-judge concordance on the full model ranking.
+Conditioning on R1’s gap bins when validating
+R1 can introduce selection bias; we verify in the reproducibility code
+that the same monotonic trend holds when conditioning on the consensus
+(panel-median) gap.
+
+Best-model agr. vs. R1
+
+R1 gap range
+
+Kendall
+GPT-mini
+Claude
+
+603
+0.17
+57.5%
+48.3%
+
+367
+0.29
+37.6%
+37.9%
+
+294
+0.43
+44.9%
+39.5%
+
+184
+0.57
+53.3%
+49.5%
+
+552
+0.71
+56.3%
+58.0%
+
+Overall
+2,000
+0.42
+51.3%
+47.9%
+
+E.4 End-to-End Regret Under Alternative Judges
+
+We now test whether the bandit’s learning dynamics—convergence shape,
+sample complexity, and relative method ordering—are preserved when
+the reward signal comes from a different judge, by re-running the
+bandit simulation under GPT-4.1-mini and Claude-3.7-Sonnet.
+
+Protocol.
+
+We split the 2,000 judge-robustness prompts into a stratified
+ validation /  test partition
+(672 / 1,328 prompts). The bandit learns online during the
+validation burn-in (no metrics), then cumulative regret is evaluated
+on the held-out test split. To avoid any data-leakage concern, we use
+cold start (Tabula Rasa) only—no warmup priors—so this is the
+harder test; if the bandit converges from cold start, warm-start
+robustness follows. We compare Tabula Rasa against a Random baseline
+(uniform ) under four budget regimes (unconstrained, tight,
+moderate, loose), with 20 seeds per condition.
+All three judges share the same hyperparameters
+(, ), tuned originally on R1;
+judge-specific tuning would only improve the supplementary judges’
+results, so this choice is conservative.
+
+Results.
+
+The bandit converges under all three judges. Under unconstrained
+routing (Figure 12), Tabula Rasa achieves
+final cumulative regret of  [47.7, 54.4] vs.  [104.6, 107.8] for Random under R1 (52% reduction);
+vs. under GPT-4.1-mini (54% reduction); and
+vs. under Claude (61% reduction). All curves are
+sublinear with decreasing slope, consistent with progressive learning
+of the reward structure regardless of evaluator.
+
+Absolute regret scales with inter-model margins: GPT-4.1-mini’s
+Random baseline () is 32% lower than R1’s (), with
+Claude intermediate at . Supplementary/R1 regret ratios are
+stable across budget regimes
+(GPT:  [0.60, 0.68] to  [0.82, 0.97];
+Claude:  [0.70, 0.79] to  [0.87, 1.00]),
+confirming proportional compression rather than a structural change in
+learning dynamics. Tabula Rasa confidence intervals are wider than
+Random’s, reflecting higher run-to-run variance from cold-start
+exploration, but the paired difference (Random Tabula Rasa) is
+significant for all three judges. Under budget constraints, the
+qualitative pattern is identical: tighter budgets increase regret, and
+loose-budget regret approaches the unconstrained level.
+
+Figure 12: Cold-start bandit regret under three judges (1328
+test prompts drawn from the 2000-prompt judge-robustness sample).
+(A) R1:
+52% regret reduction.
+(B) GPT-4.1-mini: 54% reduction.
+(C) Claude-3.7-Sonnet: 61% reduction.
+Shaded bands show 95% bootstrap CIs over 20 seeds.
+Tabula Rasa bands are wider than the Random baseline’s due to higher
+per-seed variance from cold-start exploration. The paired difference
+(Random  Tabula Rasa) is significant for all three judges (bootstrap
+95% CI excludes zero). The summary table reports Tabula Rasa
+cumulative regret (mean 95% bootstrap CI) across all four budget
+regimes with the supplementary/R1 ratio.
+
+E.5 Summary
+
+Across three independent judges, the expected reward ordering is
+identical (Gemini-Pro Mistral-Large Llama-8B;
+Table 6), R1’s oracle captures
+of other judges’ oracle reward
+(Table 7), and the bandit’s learning dynamics
+replicate under both supplementary judges, with regret reductions of
+52%/54%/61% (R1/GPT/Claude) under unconstrained routing
+(Figure 12). R1 is therefore well-justified
+as the sole evaluator: it provides the largest inter-model margins and
+the lowest per-evaluation cost. Correlating LLM-as-judge scores with
+human preferences remains important future work, but it is orthogonal
+to the judge-consistency and routing-robustness validated here.
+
+Appendix F Routing Latency Microbenchmark
+
+We profile ParetoBandit’s per-request routing overhead to validate the
+computational-efficiency claims in Section 3.5.
+Eight configurations isolate three factors: Sherman–Morrison (SM) vs. full inversion (at the same abstraction level), production overhead
+(locks, budget pacing, forgetting), and PCA dimensionality
+( vs. ).
+All configurations use arms, synthetic whitened context
+vectors, and 4,500 measured route + update cycles (500-round
+warmup excluded).
+Contexts are drawn i.i.d. from a standard normal,
+-normalised, and augmented with a bias term, matching the
+dimensionality and unit-norm structure of real PCA-whitened embeddings.
+Synthetic inputs are appropriate here because route() and
+update() cost depends only on and , not on semantic
+content; using synthetic vectors removes dataset I/O, encoder
+inference, and PCA from the timing loop.
+The full end-to-end pipeline including embedding and PCA is profiled
+separately below (Table 11).
+
+Table 10: Per-request routing latency (s) and throughput ( arms, 4,500 measured cycles).
+Configuration groups are described in the text.
+
+Route (s)
+Update (s)
+Throughput
+
+Configuration
+p50
+p95
+p50
+p95
+(req/s)
+
+Production (full router with locks, pacing, forgetting)
+
+ParetoBandit ()
+22.5
+26.5
+20.4
+23.0
+22199
+
+ParetoBandit ()
+163.0
+234.5
+456.9
+539.0
+1582
+
+Algorithmic isolation (identical route(), only update() differs)
+
+Bare SM ()
+5.8
+6.2
+8.1
+8.4
+70459
+
+Bare SM ()
+105.2
+188.1
+320.0
+970.8
+1608
+
+Cached Inv. ()
+7.2
+8.0
+18.8
+19.3
+39687
+
+Cached Inv. ()
+138.1
+230.0
+1679.3
+2255.2
+507
+
+Worst-case baseline (never caches )
+
+Per-Route Inv. ()
+50.8
+57.3
+4.0
+5.0
+17203
+
+Per-Route Inv. ()
+4569.0
+4959.3
+132.1
+785.8
+203
+
+Table 10 reports per-request latency and throughput for
+all configurations (p50, p95, 4,500 cycles). Bare SM and
+Cached Inv. share the same route() code path, isolating the
+SM vs. full-inversion effect in update()
+only, while ParetoBandit adds production features; Per-Route Inv. never caches and serves as a worst-case baseline.
+Figure 13 visualises these comparisons on a
+log scale.
+
+Figure 13: Route latency (left), update latency (centre), and throughput
+(right) for eight router configurations on a log scale.
+Bare SM and Cached Inv. share identical route() code, so the
+route panel confirms they are equivalent; the update panel exposes
+Sherman-Morrison’s actual contribution ( vs. ).
+ParetoBandit bars quantify the additional cost of production features.
+
+Algorithmic isolation: SM vs. full inversion.
+
+Bare SM is a stripped-down LinUCB that applies only the
+Sherman–Morrison rank-1 update, with no locks, pacing, or forgetting.
+Cached Inv. is identical except that update() calls
+np.linalg.inv instead of the SM correction; both
+inherit from the same Python base class and execute literally the same
+route() method (UCB scoring via cached and
+), so any route-latency difference is measurement noise.
+
+Route latency is near-identical between Bare SM and Cached Inv. at
+each dimension ( vs. s at ;
+vs. s at
+), consistent with their shared route() code path,
+with the small residual gap likely reflecting Python object-layout
+differences between the two subclasses.
+Update latency is where SM helps: at , the SM
+update is faster than full inversion
+(s vs. s, p50); at , the gap
+narrows to (s vs. s) because
+is already fast for LAPACK.
+Per-Route Inv. never caches , paying full inversions
+on every route() call; no reasonable implementation would do
+this, but it bounds worst-case behaviour.
+
+Production overhead.
+
+ParetoBandit is the full production router. It uses the same SM
+update as Bare SM but adds a threading lock around
+select_arm() and update(), budget pacing,
+forgetting-factor decay, staleness tracking, and constraint filtering.
+Comparing ParetoBandit with Bare SM isolates the cost of these
+production features.
+
+Key findings.
+
+Production overhead is negligible.
+At the production dimension (), ParetoBandit completes a full
+route + update cycle in s (p50), adding  0.05%
+latency even to the fastest LLM call ( ms
+time-to-first-token for Llama-3.1-8B).
+The router sustains  req/s on a single CPU
+core, sufficient for all but the most extreme throughput tiers.
+
+SM’s benefit is in update cost, not routing.
+Bare SM and Cached Inv. have near-identical route latency; the improvement
+appears in update: at , SM is faster
+(s vs. s, p50), and faster
+at .
+
+Production features add bounded overhead.
+At , ParetoBandit’s route is and update
+slower than Bare SM due to locking and pacing; at
+, these ratios shrink ( route,
+update) because linear algebra dominates fixed overhead.
+
+PCA yields a throughput gain.
+Within production configs, reducing from 385 to 26 improves
+throughput from 1,487 to 21,983 req/s (),
+consistent with scaling plus fixed costs.
+
+End-to-end latency and comparisons.
+
+Table 11 breaks down ParetoBandit’s
+production CPU pipeline (MiniLM-L6-v2 embedding + PCA +
+route()) on a single Apple M-series core (200 iterations,
+50-iteration warmup).
+
+Table 11: End-to-end latency breakdown for ParetoBandit’s production
+CPU pipeline. Reported values are p50 and p95 over 200 measured
+iterations after a 50-iteration warmup; percentages are computed
+relative to the p50 total.
+
+Stage
+p50
+p95
+% of total
+
+Embed (MiniLM-L6-v2, CPU)
+ ms
+ ms
+
+PCA + whitening
+ ms
+ ms
+—
+
+route()
+ ms
+ ms
+
+Total E2E (CPU)
+ ms
+ ms
+
+The embedding step dominates at of total time ( ms
+p50), PCA + whitening adds  ms, and route()
+contributes  ms ( of total), for a  ms
+end-to-end latency (p50).
+The routing algorithm is not the bottleneck; prompt embedding is, and
+every contextual router (e.g., RouteLLM, CSCR, LLM Bandit) faces the
+same floor.
+
+Among published routers, PROTEUS Bhatti et al. (2026) reports
+ ms p50 per-query latency on an A100 GPU, dominated by a
+DeBERTa-v3-small encoder forward pass.
+ParetoBandit matches this class of latency on CPU only ( ms),
+with the routing decision itself (s at )
+faster than PROTEUS’s per-query forward pass.
+Other routing systems—LLM
+Bandit Li (2025), BaRP Wang et al. (2025a),
+MixLLM Wang et al. (2025b), RouteLLM Ong et al. (2025),
+HybridLLM Ding et al. (2024),
+OmniRouter Mei et al. (2025),
+Lookahead Sun et al. (2025)—do not report per-decision
+latency.
+
+The vLLM Semantic Router Liu et al. (2026), a system-level
+domain/safety classifier, reports – ms routing on MI300X GPUs
+depending on signal type, with embedding-based signals dominating
+latency.
+CSCR Shirkavand et al. (2025) claims “microsecond” -NN lookups
+but excludes the encoder forward pass.
+Infrastructure-layer proxies such as Portkey
+Gateway Portkey AI (2025) ( ms) and Kong AI
+Gateway Acquaviva (2025) ( ms p95) provide a lower
+bound on non-routing overhead.
+Figure 14 places these systems and
+ParetoBandit on a common log-scale alongside typical LLM inference
+latencies, showing that all routing overheads are orders of magnitude
+below model serving time.
+
+Figure 14: End-to-end routing latency (p50, single query) for published
+routing systems vs. LLM inference time (shaded region).
+
+Routing overhead relative to LLM inference.
+
+Table 12 contextualises ParetoBandit’s
+ ms E2E overhead against the inference latency of the paper’s
+own model portfolio, measured via 20 streaming API calls per
+configuration through OpenRouter.
+
+Table 12: Routing overhead as a fraction of LLM inference latency
+( portfolio, 20 streaming API calls via OpenRouter).
+TTFT = time to first token.
+Routing overhead is the  ms end-to-end CPU
+critical path (embedding + PCA + route()).
+
+LLM
+Prompt
+TTFT (ms)
+Total (ms)
+Routing / Total
+
+Llama-3.1-8B
+short
+
+Llama-3.1-8B
+medium
+
+Llama-3.1-8B
+long
+
+Mistral-Large-2512
+short
+
+Mistral-Large-2512
+medium
+
+Mistral-Large-2512
+long
+
+Gemini 2.5 Flash
+short
+
+Gemini 2.5 Flash
+medium
+
+Gemini 2.5 Flash
+long
+
+Gemini 2.5 Pro
+short
+
+Gemini 2.5 Pro
+medium
+
+Gemini 2.5 Pro
+long
+
+Even against the fastest model and shortest prompt (Gemini 2.5 Flash,
+ ms total latency), the full routing pipeline adds
+overhead; for the slowest model (Gemini 2.5 Pro,
+long prompt,  ms), routing contributes
+.
+The routing decision is effectively invisible to the end user.
+
+Appendix G Recovery Limit under Quality Degradation
+
+Experiment 03 (§4.4) showed that the system
+recovers from a silent quality regression (Mistral-Large reward
+dropping to ) within a 608-prompt Phase 3 horizon. Here we
+extend that result across a range of severities. The system trends
+toward recovery at all tested levels—including near-total
+degradation—but deeper corruption requires more Phase 3 prompts
+under normal conditions to fully converge, and our evaluation horizon
+is too short to observe complete recovery at the most extreme levels.
+We therefore characterise a finite-horizon recovery envelope: for a
+given Phase 3 length, the degradation severity up to which the system
+reaches near-Phase 1 performance, and how extending the horizon shifts
+that boundary.
+
+Setup.
+
+We sweep Mistral-Large’s degraded reward from to
+(normal reward ). Degradation severity, the x-axis in
+Figure 15a, is the fractional gap between the
+degraded reward and the Phase 1 system baseline (),
+ranging from % (mild) to % (near-total).
+Degradation is modelled as a mean shift: per-prompt rewards are
+shifted so the degraded arm’s mean equals the target level while
+retaining prompt-dependent variation (clipped to ), which is
+more realistic than constant-reward replacement. Cost is held fixed
+during Phase 2 so only the reward signal reveals the regression. All
+runs use the moderate budget
+($6.6 per prompt), 20 seeds,
+and the same hyperparameters as the main experiment. We define full
+recovery as a Phase 3/Phase 1 reward ratio %.
+
+For the extended-horizon evaluation, Phase 3 uses all non-Phase-2
+holdout prompts (1,216 prompts, the base horizon)
+without recycling, so the i.i.d. arrival assumption is preserved and
+extended-horizon results reflect recovery on fresh prompts.
+
+Recovery mechanisms.
+
+Recovery operates through two mechanisms. Geometric forgetting
+() exponentially down-weights corrupted Phase-2
+observations so that fresh Phase-3 data dominates the mean estimate;
+this is the primary driver. Staleness-driven exploration inflates UCB
+variance for non-selected arms and can trigger re-exploration, but
+under budget-constrained routing the cost penalty can exceed the
+exploration bonus, limiting this effect on its own. Both mechanisms
+act jointly, but the forgetting half-life ( steps at
+) sets the characteristic timescale.
+
+Finite-horizon recovery envelope (Figure 15a).
+
+Figure 15a plots the P3/P1 reward ratio against
+degradation severity for two Phase 3 lengths. At the 608-prompt
+horizon (solid blue), full recovery (%) is achieved for
+degradations up to %, after which the ratio declines
+smoothly to a floor of %. Doubling Phase 3 to 1,216
+unique prompts (dashed orange) uniformly lifts the curve: the 97%
+boundary shifts to % degradation, and the
+severe-degradation floor rises to %.
+
+This uniform lift is consistent with the floor being a finite-horizon
+artefact rather than a fundamental limit on recoverable severity:
+geometric forgetting continues erasing Phase-2 corruption, so more
+Phase-3 prompts yield more recovery. Within any fixed horizon,
+severity beyond % has diminishing marginal impact
+because the forgetting dynamics are unchanged; only the initial bias
+differs. At the other extreme, mild degradation (%) can
+produce P3/P1 ratios above %: Phase 2 drives the policy away
+from the degraded arm, and for some prompts the alternative routing
+discovered during degradation is genuinely better than the original
+policy.
+
+Figure 15: Recovery limit under quality degradation (moderate budget,
+20 seeds, 95% bootstrap CI).
+(a) P3/P1 reward ratio vs. degradation severity; dotted
+line = 97% full-recovery threshold.
+(b) Phase-3 recovery dynamics (50-prompt rolling window) at
+the extended horizon for four severity levels.
+
+Convergence dynamics (Figure 15b).
+
+The extended-horizon time series (50-prompt rolling window) confirm
+this interpretation. All trajectories rise monotonically toward the
+Phase 1 baseline with no sign of plateauing, but convergence speed is
+severity-dependent: milder degradations reach baseline well before
+1,216 prompts, while more severe degradations are still improving at
+the horizon. In all cases the confidence bands narrow over time,
+indicating stable convergence rather than high-variance oscillation.
+The monotonic, non-plateauing trajectories are consistent with
+recovery being rate-limited by Phase-3 length rather than
+fundamentally bounded by degradation severity, though we cannot
+confirm full convergence at the most extreme levels within our
+evaluation budget.
+
+Limitations and deployment implications.
+
+This study evaluates a single budget level and a single-arm,
+quality-only degradation; other budgets or simultaneous multi-arm
+regressions may behave differently. For typical silent regressions
+(%), ParetoBandit recovers automatically within the
+608-prompt observation window. For more severe regressions, recovery
+still proceeds but requires a longer Phase 3 horizon; operators can
+either allow additional routing time or intervene with an explicit
+model demotion to accelerate convergence.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

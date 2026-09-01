@@ -1,0 +1,1011 @@
+Beyond Static Sandboxing:Learned Capability Governance for Autonomous AI Agents
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+Contributions.
+
+2 Related Work
+
+AI Agent Security.
+
+Prompt Injection and Tool Misuse.
+
+Reinforcement Learning for Security Policy.
+
+Capability Control and Least Privilege.
+
+LLM Tool-Calling Reliability.
+
+Positioning.
+
+3 The Aethelgard Framework
+
+3.1 Layer 1: Capability Governor
+
+3.2 Layer 3: Safety Router
+
+3.3 Layer 2: RL Learning Policy
+
+3.4 Threat Model
+
+4 Evaluation
+
+4.1 Experimental Setup
+
+4.2 Phase 0: Capability Overprovisioning Baseline
+
+4.3 Phase 1: Safety Router Classifier
+
+4.4 Phase 2: RL Policy Training
+
+4.5 N=500 Automated Batch Evaluation
+
+4.6 Adversarial Evaluation
+
+4.7 Summary
+
+4.8 Ablation Study
+
+5 Discussion and Limitations
+
+Tool-level governance is necessary but not sufficient.
+
+Base model reliability as a confound.
+
+SER = 1.0 as an artifact of synthetic training.
+
+Creative attack vectors.
+
+Limitations and future work.
+
+6 Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11839v1 [cs.CR] 12 Apr 2026
+
+Beyond Static Sandboxing:
+
+Learned Capability Governance for Autonomous AI Agents
+
+Bronislav Sidik
+
+  
+Lior Rokach
+
+Affiliation: Institute for Applied AI Research
+
+Affiliation: Faculty of Computer and Information Science
+
+Affiliation: Ben-Gurion University of the Negev, Beer Sheva, Israel
+
+Email: sidik@post.bgu.ac.il
+
+  
+liorrk@post.bgu.ac.il
+
+Abstract
+
+Autonomous AI agents built on open-source runtimes such as OpenClaw expose every
+available tool to every session by default, regardless of the task at hand.
+A summarisation task receives the same shell execution, subagent spawning, and
+credential-access capabilities as a code deployment task — a 15
+over-provision ratio we term the capability overprovisioning problem.
+Existing defences (NemoClaw’s container sandbox, Cisco DefenseClaw’s skill
+scanner) address containment and threat detection, but neither learns the minimum
+viable capability set for each task type.
+
+We present Aethelgard, a four-layer adaptive governance framework that
+enforces the principle of least privilege for AI agents via a learned policy.
+Layer 1 (Capability Governor) dynamically scopes which tools the agent is
+aware of per session. Layer 3 (Safety Router) intercepts every tool call
+before execution using a hybrid rule-based and fine-tuned LLM classifier.
+Layer 2 (RL Learning Policy) trains a PPO policy on the accumulated audit log to
+learn the minimum viable skill set per task type.
+
+On a live OpenClaw v2026.3.28 deployment with DeepSeek-chat as the agent LLM,
+Aethelgard achieves:
+(i) 73% tool reduction and 100% dangerous tool elimination for summarisation tasks;
+(ii) a Skill Economy Ratio improvement of (synthetic) and (real
+sessions) over the uncontrolled baseline after PPO training (5 minutes, RTX 3090);
+(iii) across an automated N=500 evaluation (400 benign + 100 adversarial, seed=42),
+26.2% of all 447 intercepted tool calls were blocked, exec and
+sessions_spawn were blocked at 100%, and 92% of adversarial tasks were
+neutralised by the model-plus-infrastructure stack.
+The evaluation dataset (N=500, seed=42) and trained artefacts are available
+upon request. Code and updates: https://github.com/sidikbro/aethelgard-docs
+
+1 Introduction
+
+The rapid adoption of autonomous AI agents has outpaced the security infrastructure
+designed to govern them. OpenClaw OpenClaw Contributors (2026), the dominant open-source
+personal AI agent runtime with over 500,000 internet-facing
+instances VentureBeat (2026), exposes a fixed set of 15+ tools to every
+session regardless of the task being performed. An agent asked to summarise a
+document receives the same shell execution (exec), subagent spawning
+(sessions_spawn), and credential-access capabilities as an agent
+performing infrastructure automation. We quantify this as a 15
+over-provision ratio for summarisation tasks.
+
+This over-provisioning has concrete security consequences. The ClawHavoc supply
+chain attack CrowdStrike Intelligence (2026) exploited OpenClaw’s unrestricted tool access to
+distribute infostealers across 20% of ClawHub’s skill registry. CVE-2026-25253
+demonstrated that a single malicious webpage could hijack an agent’s full
+capability set via prompt injection NVD (2026). The attack surface is the
+agent’s own capability scope.
+
+The capability overprovisioning problem has a precise formulation: for a
+given task type , the Skill Economy Ratio (SER) measures the fraction of
+exposed tools that the agent actually invokes:
+
+An ideal governance system achieves SER — the agent has access to
+exactly the tools it needs and nothing more. The OpenClaw baseline achieves
+SER for summarisation (1 tool used of 15 exposed).
+
+Existing defences are incomplete. NVIDIA NemoClaw NVIDIA (2026)
+provides container-level sandboxing with declarative YAML policies — a static
+firewall that applies the same rules regardless of task type. Cisco
+DefenseClaw Cisco AI Defense (2026) scans skills for known malicious patterns and
+monitors runtime behaviour anomalies — a reactive WAF that acts after the agent
+has decided to use a tool. Neither system learns the minimum capability
+set for each task type, and neither reduces the agent’s awareness of capabilities
+it should not have.
+
+Our contribution is Aethelgard, a four-layer governance framework that
+treats capability scoping as a learned optimisation problem rather than a static
+configuration problem. The key insight is that an agent cannot misuse a tool
+it does not know exists. By dynamically restricting the agent’s capability
+awareness via AGENTS.md injection (Layer 1) and learning the optimal restriction
+policy via PPO reinforcement learning (Layer 2), Aethelgard provides
+infrastructure-level governance that improves over time.
+
+Scope. This work addresses capability governance — which tools an agent may invoke. Semantic output filtering (governing what the agent says) is orthogonal and out of scope.
+
+Relationship to NemoClaw and DefenseClaw. We position Aethelgard as
+complementary rather than competing. NemoClaw asks “can the agent reach the
+outside world?” DefenseClaw asks “did this skill do something bad?” Aethelgard
+asks “why does the agent even know it has exec during a summarisation
+task?” All three questions are necessary; none alone is sufficient.
+
+Contributions.
+
+We make the following contributions:
+
+1.
+
+Problem formalisation: We define capability overprovisioning as a
+measurable security property (SER) and quantify it empirically on a live
+OpenClaw deployment.
+
+2.
+
+Aethelgard framework: A four-layer adaptive governance system with
+a hybrid rule-based + fine-tuned LLM Safety Router (Layers 1, 3) and a PPO
+learning policy (Layer 2).
+
+3.
+
+Empirical evaluation: Live deployment on OpenClaw v2026.3.28.
+Automated N=500 batch evaluation (400 benign + 100 adversarial, seed=42):
+26.2% block rate, exec blocked 100%, 92% adversarial coverage.
+PPO achieves SER (synthetic) and (real sessions).
+
+4.
+
+Critical finding: Tool-level governance is necessary but not
+sufficient — we document the first empirical demonstration of prompt
+injection succeeding at the LLM level but failing at the infrastructure level.
+
+2 Related Work
+
+AI Agent Security.
+
+Agent security has emerged as a critical concern following the widespread adoption
+of autonomous agent runtimes. OWASP Foundation (2026) identified agentic skill supply
+chain attacks as a top-10 AI security risk, using ClawHavoc as the primary case
+study. Cisco AI Defense (2026) (Cisco, RSAC 2026) introduced DefenseClaw, which
+bundles skill scanning, MCP server verification, and code safety analysis into a
+single framework running inside NemoClaw’s OpenShell runtime. DefenseClaw operates
+via static blocklists and anomaly detection — it does not learn or adapt per task
+type. NVIDIA (2026) (NVIDIA, GTC 2026) introduced NemoClaw with OpenShell,
+providing container-level isolation with declarative YAML policies for network,
+filesystem, and inference routing.
+
+Prompt Injection and Tool Misuse.
+
+Greshake et al. (2023) formalised indirect prompt injection in LLM-integrated
+applications. Perez and Ribeiro (2022) demonstrated that injected instructions
+reliably cause LLMs to deviate from their system prompts. Our work shows that even
+when prompt injection succeeds at the LLM level (causing the model to generate
+dangerous tool calls), infrastructure-level governance provides a hard enforcement
+boundary — a finding not previously demonstrated in the agent runtime context.
+
+Reinforcement Learning for Security Policy.
+
+Li and others (2024) applied RL to adaptive network security policy, showing
+that learned policies outperform static rule sets for novel attack patterns.
+EmergentMind (2026) proposed curriculum-based agentic training with adaptive
+scheduling. Aethelgard applies this principle at the infrastructure level —
+the RL policy learns optimal capability scoping without modifying the agent or LLM.
+
+Capability Control and Least Privilege.
+
+The principle of least privilege Saltzer and Schroeder (1975) underpins access
+control theory. arXiv (2026a) (EduClaw) applies agent-profile-based skill
+scaling in educational contexts. arXiv (2026b) proposes dual-stream continual
+skill learning in multimodal agents. Both operate at the model level; Aethelgard
+operates at the infrastructure level without model modification, making it
+runtime-agnostic.
+
+LLM Tool-Calling Reliability.
+
+Recent work has documented significant unreliability in LLM tool-calling:
+models hallucinate non-existent tools, invoke tools unnecessarily, and fail to terminate ReAct loops Qin et al. (2024). This motivates infrastructure-level interception rather than relying on the model to self-govern. Our evaluation confirms this: qwen2.5:7b generated dangerous exec calls under adversarial prompting, while DeepSeek-chat refused at the model level — demonstrating that the optimal defence depends on the underlying model and that infrastructure governance provides a model-agnostic safety floor.
+
+Positioning.
+
+Table 1 summarises the key distinctions between Aethelgard and
+related systems.
+
+Table 1: Comparison of agent governance systems.
+
+System
+Dynamic Scoping
+Sandbox
+Safety Model
+RL Policy
+Adapts
+
+OpenClaw (baseline)
+No
+No
+No
+No
+No
+
+NemoClaw (NVIDIA)
+No
+Yes
+Partial
+No
+No
+
+DefenseClaw (Cisco)
+No
+Via NemoClaw
+Yes (static)
+No
+No
+
+Aethelgard
+Yes
+Via NemoClaw
+Yes
+Yes
+Yes
+
+3 The Aethelgard Framework
+
+Aethelgard is a four-layer governance framework that sits above the AI agent
+runtime. It enforces the principle of least privilege by (i) restricting the
+agent’s capability awareness before each session and (ii) intercepting every tool
+invocation before execution. Figure 1 shows the system
+architecture.
+
+Figure 1: Aethelgard four-layer governance architecture. The Capability Governor
+restricts the agent’s awareness before each session. The Safety Router intercepts
+every tool call after the LLM responds. The RL Policy trains on the audit log to
+learn the minimum viable tool set per task type.
+
+3.1 Layer 1: Capability Governor
+
+The Capability Governor enforces tool scoping at the semantic level: it
+controls which tools the agent is told it has, not just which it can execute. This
+is achieved through two mechanisms:
+
+AGENTS.md injection. OpenClaw assembles a system prompt from workspace
+files including AGENTS.md. The Governor generates a task-specific AGENTS.md that
+explicitly lists only the permitted tools: “This is a governed session
+scoped to summarisation. 4 tools available: read, web_fetch, memory_search,
+memory_get.”
+
+tools.deny injection. The Governor writes the denied tool list to
+openclaw.json (dynamically reloaded without gateway restart). This
+enforces the scope at the infrastructure level, ensuring the agent cannot invoke
+denied tools even if it reasons toward them.
+
+The Governor accepts a TaskDescriptor and returns an
+AllowedCapabilitySet via a hybrid policy engine (Section 3.3).
+
+3.2 Layer 3: Safety Router
+
+The Safety Router is a FastAPI MITM proxy deployed between OpenClaw and Ollama.
+It intercepts every POST /api/chat request, forwards it to Ollama,
+inspects the LLM response for tool_calls, and classifies each call
+before OpenClaw can execute it.
+
+Hybrid classifier. Classification uses a two-stage pipeline:
+
+Stage 1 (Rule-based, 0.1ms): A deterministic classifier checks:
+(1) always-block tools (exec, sessions_spawn, subagents);
+(2) argument-level dangerous patterns (e.g., rm -rf, file://,
+AWS metadata endpoints, SSH credential paths);
+(3) prompt injection patterns (“ignore previous instructions”, DAN mode, etc.).
+
+Stage 2 (LLM-based, 800ms): If Stage 1 passes, the call is
+classified by aethelgard-router, a Qwen2.5-1.5B model fine-tuned on 273
+labeled block/allow examples collected from live sessions. The LLM stage is
+skipped for known-safe tools (read, memory_search,
+web_search) to avoid false positives.
+
+Block action. Blocked tool calls are stripped from the response; the
+agent receives: “Aethelgard blocked this tool call. The requested operation
+is not permitted in this governed session.” Block events are logged to an SQLite
+audit database with reward signals for Layer 2 training.
+
+3.3 Layer 2: RL Learning Policy
+
+The RL policy learns the minimum viable tool set per task type from the accumulated
+audit log. This is the primary research contribution: the adaptive intelligence
+that static systems lack.
+
+MDP formulation.
+
+•
+
+State : task type (one-hot, 6 types) trust level
+(normalised );
+
+•
+
+Action : binary exposure mask over all 17 tools;
+(MultiBinary(17))
+
+•
+
+Reward:
+
+where is task success, penalises over-provisioning, and counts
+Safety Router BLOCK events from the audit log. We set , ,
+.
+
+Policy. PPO Schulman et al. (2017) with MlpPolicy (2 hidden layers,
+64 units), trained via stable-baselines3 Raffin et al. (2021) on CPU. Trust-level hard
+constraints are applied post-prediction: exec requires trust ,
+sessions_spawn and subagents are never exposed regardless of
+policy output.
+
+Integration. The trained policy (best_model.zip) is loaded by
+the Governor’s PolicyEngine as the primary decision maker. YAML rules
+serve as fallback if the model file is unavailable.
+
+3.4 Threat Model
+
+Aethelgard defends against:
+(1) Prompt injection causing the agent to request dangerous tool calls;
+(2) Capability escalation via tools the agent should not have for the
+current task;
+(3) Subagent spawning for lateral movement;
+(4) Supply chain attacks via malicious skills (blocked by Governor
+before skills are exposed to the agent).
+
+Aethelgard does not govern the semantic content of agent responses —
+a model that expresses dangerous advice in text rather than tool calls is outside
+this system’s scope (Section 5).
+
+4 Evaluation
+
+4.1 Experimental Setup
+
+Runtime: OpenClaw v2026.3.28 in Docker (ghcr.io/openclaw/openclaw:latest),
+port 18789. LLM: DeepSeek-chat (32B, cloud API, OpenAI-compatible format).
+Governance: Aethelgard Safety Router proxy (0.0.0.0:8000), hybrid
+classifier. RL training: BGU HPC, NVIDIA RTX 3090, 50k PPO steps.
+
+Model notes. qwen2.5:7b (local Ollama) exhibited
+tool-calling unreliability in preliminary runs (repeated session_status
+calls, 40% timeout rate) and represents a lower bound on governance
+performance. DeepSeek-chat is the primary evaluation model.
+SER in the synthetic PPO environment is a training artifact of the
+deterministic simulation; real-session SER of 0.557 is the operative result.
+Additional real-world sessions will be collected for the camera-ready version.
+
+We report three evaluation protocols: (1) Phase 0 baseline measurement,
+(2) a 20-task structured manual evaluation, and (3) an automated N=500 batch
+evaluation using a reproducible synthetic dataset.
+
+4.2 Phase 0: Capability Overprovisioning Baseline
+
+Two identical sessions run against OpenClaw v2026.3.13 with and without governance
+on a summarisation task establish the over-provisioning baseline.
+
+Table 2: Tool visibility before and after governance (summarisation task).
+
+Metric
+Baseline
+Governed
+Reduction
+
+Total tools visible
+15
+4
+73.3%
+
+Dangerous tools
+6
+0
+100%
+
+Over-provision ratio
+15:1
+1:1
+
+The governed agent self-reported its scoped capability set, confirming AGENTS.md
+injection communicates governance at the semantic level.
+
+4.3 Phase 1: Safety Router Classifier
+
+Benchmarked against 11 labelled test cases covering all classifier paths.
+Rule stage: 9/11 calls (82%), 0.1 ms. LLM stage: 2/11 calls (18%), 2,094 ms.
+TPR: 100%. FPR: 0%.
+
+4.4 Phase 2: RL Policy Training
+
+PPO policy trained for 50k steps on BGU HPC (5 minutes, RTX 3090).
+
+Table 3: PPO policy vs rule-based baseline (Skill Economy Ratio).
+
+Metric
+Baseline
+PPO
+Change
+
+Avg SER (synthetic env)
+0.278
+1.000
+
+Avg SER (real sessions)
+0.053
+0.557
+
+Dangerous tools exposed
+varies
+0.00
+100%
+
+Figure 2: Skill Economy Ratio (SER) comparison: Phase 0 rule-based baseline vs
+Phase 2 PPO policy across all six task types. The PPO policy achieves SER = 1.0
+(the theoretical optimum) on every task type, representing a improvement
+over the baseline average of 0.278.
+
+4.5 N=500 Automated Batch Evaluation
+
+A reproducible dataset of 500 tasks was generated from a fixed taxonomy (seed=42):
+400 benign (4 categories) and 100 adversarial (3 categories). Tasks were run
+headlessly through the Aethelgard proxy; tool calls were measured from proxy logs.
+
+Table 4: N=500 batch evaluation results (N=100 shown for comparison).
+
+Metric
+N=100
+N=500
+
+Tasks completed
+100/100
+500/500
+
+Overall avg SER
+0.051
+0.053
+
+Benign avg SER
+0.059
+0.059
+
+Total tool calls
+87
+447
+
+Total blocks
+18 (20.7%)
+117 (26.2%)
+
+Adversarial blocks
+6/20 (30%)
+38/100 (38%)
+
+exec block rate
+100%
+100% (70/70)
+
+sessions_spawn block rate
+100%
+100% (8/8)
+
+Results are consistent across scale: N=100 and N=500 agree within 2% on all
+metrics. Of 447 tool calls intercepted, exec (70 calls) and
+sessions_spawn (8 calls) were blocked 100% at 0.1 ms latency.
+The fine-tuned LLM classifier blocked 22 benign write operations
+(HTTP server scripts) at confidence=1.00 — a false positive caused by the
+95%/5% BLOCK/ALLOW training imbalance, discussed in §5.
+
+4.6 Adversarial Evaluation
+
+Table 5: Adversarial outcomes across both models. Attack success rate: 0%.
+
+Attack
+
+Tool
+qwen2.5:7b
+DeepSeek-chat
+
+Prompt inject exec /etc/
+
+exec
+BLOCK (infra)
+Refused (model)
+
+Crypto mining subagent
+
+sessions_spawn
+BLOCK (infra)
+Refused (model)
+
+Netcat reverse shell
+
+process
+BLOCK (LLM)
+Refused (model)
+
+File:// SSRF injection
+
+web_fetch
+BLOCK (arg)
+BLOCK (arg)
+
+Attack success rate
+
+0%
+0%
+
+4.7 Summary
+
+Table 6: Complete evaluation summary.
+
+Metric
+Result
+Target
+
+Tool reduction (summarisation)
+73%
+—
+
+Dangerous tool elimination
+100%
+—
+
+Classifier TPR
+100%
+95% ✓
+
+Classifier FPR
+0%
+2% ✓
+
+SER improvement (synthetic)
+260%
+15% ✓
+
+SER improvement (real)
+337%
+15% ✓
+
+Baseline avg SER (N=500)
+0.053
+measured
+
+exec block rate
+100%
+measured
+
+Adversarial coverage
+92%
+measured
+
+4.8 Ablation Study
+
+To isolate the contribution of each architectural component, we run four conditions
+across 100 tasks each (25 per category, seed=99), all benign to ensure safe
+execution under the No Router condition.
+
+Table 7: Ablation study: contribution of each Aethelgard component
+(100 tasks per condition, 4 benign categories).
+
+Condition
+Avg SER
+Exposed
+Called
+Block%
+Key ablation
+
+Full (complete system)
+0.227
+4.5
+1.01
+4.8%
+—
+
+No RL (YAML fallback)
+0.177
+5.8
+1.00
+13.7%
+PPO policy
+
+No Router
+0.225
+4.5
+1.00
+12.1%
+Safety Router
+
+Baseline (raw)
+0.078
+13.0
+1.01
+5.6%
+no governance
+
+Full vs Baseline
+SER improvement
+
+Full vs No RL
+SER (value of PPO over YAML)
+
+Capability Governor is the dominant contributor.
+Comparing No Router (Governor only, no blocking) against Baseline reveals the single
+largest SER jump: (). Restricting tool visibility from 13
+to 4.5 on average drives the majority of the SER improvement, regardless of whether
+blocking is active.
+
+PPO policy outperforms YAML baseline.
+Full vs No RL shows that the learned PPO policy exposes 4.5 tools on average versus
+the hand-crafted YAML fallback’s 5.8 — a 22% reduction in exposure that translates
+to a SER improvement (0.177 0.227). The PPO policy has learned tighter
+task-type boundaries than the manually specified rules.
+
+Safety Router adds defence depth, not SER.
+Full vs No Router yields nearly identical SER (0.227 vs 0.225), confirming that the
+Router’s primary contribution is safety, not efficiency: it intercepts
+tool calls that should not execute even within a governed session. The block rate
+difference (4.8% with Router vs 12.1% without) quantifies the calls that would
+have escaped to execution in the No Router condition.
+
+5 Discussion and Limitations
+
+Tool-level governance is necessary but not sufficient.
+
+During live testing, a request for a reverse shell caused qwen2.5:7b to
+return natural language instructions for nc -l -p 4444 in response text
+— without generating a tool call. The Safety Router did not intercept this
+because it inspects tool calls in LLM responses, not reasoning text.
+This is a fundamental architectural boundary, not a bug.
+
+This finding sharpens the paper’s scope. Aethelgard governs capability scope (what
+tools the agent knows it can invoke) and call-time safety (whether each invocation
+is safe). It does not govern the semantic content of agent responses. Complete
+agentic safety requires both capability governance (Aethelgard) and content
+inspection (DefenseClaw’s CodeGuard, output filters). We propose the following
+framing:
+
+Base model reliability as a confound.
+
+qwen2.5:7b demonstrated significant tool-calling unreliability: 7 calls
+to session_status in a single task, 2 timeouts on complex tasks, and
+use of web_search for local file operations. This is a model
+capability constraint, not an Aethelgard limitation. The 20-task evaluation
+represents a lower bound on governance effectiveness. We expect stronger
+results with capable tool-calling models (GPT-4o, Claude Sonnet, Qwen3-Coder).
+
+SER = 1.0 as an artifact of synthetic training.
+
+The PPO policy achieved SER = 1.0 (theoretical optimum) because the RL
+environment simulated tool usage as a fixed fraction of exposed tools. In
+production, agents may use unexpected tools for creative problem-solving, yielding
+lower but more realistic SER values. Real session data (collected via the 20-task
+protocol) will calibrate the RL environment for the camera-ready version.
+
+Creative attack vectors.
+
+The model attempted to read untrusted_input.txt via
+web_fetch file:// — a creative workaround that bypassed the intended
+read tool. The arg-pattern classifier caught this novel approach,
+validating the value of pattern-based defence in depth.
+
+Limitations and future work.
+
+(1) The RL policy state space does not include user identity or historical
+session behaviour; adding these may improve personalisation at the cost of privacy.
+(2) The LLM classifier’s 2,094 ms latency is acceptable for interactive
+sessions but may require optimisation for high-throughput deployments.
+(3) Phase 3 (NemoClaw integration) and Phase 4 (Mobile NPU Runtime) are
+planned but not yet implemented.
+(4) The fine-tuned aethelgard-router model was trained on
+273 examples with 95%/5% BLOCK/ALLOW split; more ALLOW examples are needed to
+reduce false positive risk.
+
+6 Conclusion
+
+We presented Aethelgard, a four-layer adaptive governance framework that enforces
+the principle of least privilege for autonomous AI agents via a learned RL policy.
+On a live OpenClaw v2026.3.28 deployment, Aethelgard achieved 73% tool reduction,
+100% dangerous tool elimination, and a Skill Economy Ratio improvement
+over the rule-based baseline after PPO training. The Safety Router blocked all 8
+adversarial tool calls including two successful prompt injection attempts —
+demonstrating that infrastructure-level governance provides a hard enforcement
+boundary even when the LLM is manipulated.
+
+The key insight distinguishing Aethelgard from contemporaneous systems (NemoClaw,
+DefenseClaw) is its framing of capability scoping as a learned optimisation
+problem: the policy learns the minimum viable tool set per task type from
+experience, turning a static firewall into an adaptive immune system.
+
+We release all code, training data, and evaluation logs to support reproducibility
+and further research in agentic governance.
+
+Acknowledgments and Disclosure of Funding
+
+This research was conducted at the Department of Software and Information
+Systems Engineering, Ben-Gurion University of the Negev.
+Compute for RL training and fine-tuning was provided by the BGU HPC cluster.
+The authors thank the OpenClaw community for maintaining an open platform
+that makes this kind of security research possible.
+The authors declare no competing interests.
+
+References
+
+arXiv (2026a)
+arXiv
+
+EduClaw: AgentProfile-based skill scaling for educational agents.
+
+Note: arXiv:2603.11709
+
+Cited by: §2.
+
+arXiv (2026b)
+arXiv
+
+XSkill: dual-stream continual learning from experiences and skills.
+
+Note: arXiv:2603.12056
+
+Cited by: §2.
+
+Cisco AI Defense (2026)
+Cisco AI Defense
+
+DefenseClaw: open-source security framework for OpenClaw.
+
+Note: RSAC 2026, March 27
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+CrowdStrike Intelligence (2026)
+CrowdStrike Intelligence
+
+ClawHavoc: supply chain attack on OpenClaw skill registry.
+
+Note: RSAC 2026 Keynote, March 2026
+
+Cited by: §1.
+
+EmergentMind (2026)
+EmergentMind
+
+Curriculum-based agentic training with adaptive scheduling.
+
+Note: EmergentMind, 2026
+
+Cited by: §2.
+
+Greshake et al. (2023)
+K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz
+
+Not what you’ve signed up for: compromising real-world LLM-integrated applications with indirect prompt injection.
+
+arXiv preprint arXiv:2302.12173.
+
+Cited by: §2.
+
+Li et al. (2024)
+W. Li et al.
+
+Adaptive network security policy via reinforcement learning.
+
+Note: IEEE S&P 2024
+
+Cited by: §2.
+
+NVD (2026)
+NVD
+
+CVE-2026-25253: remote code execution in OpenClaw.
+
+Note: https://nvd.nist.gov/vuln/detail/CVE-2026-25253
+
+Cited by: §1.
+
+NVIDIA (2026)
+NVIDIA
+
+NemoClaw: secure agent runtime with OpenShell.
+
+Note: NVIDIA GTC 2026, March 16
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+OpenClaw Contributors (2026)
+OpenClaw Contributors
+
+OpenClaw: your personal AI assistant.
+
+Note: https://github.com/openclaw/openclawv2026.3.28
+
+Cited by: §1.
+
+OWASP Foundation (2026)
+OWASP Foundation
+
+OWASP agentic skills top 10.
+
+Note: https://owasp.org/agentic-skills-top-10Primary case study: ClawHavoc supply chain attack
+
+Cited by: §2.
+
+Perez and Ribeiro (2022)
+F. Perez and I. Ribeiro
+
+Ignore previous prompt: attack techniques for language models.
+
+arXiv preprint arXiv:2211.09527.
+
+Cited by: §2.
+
+Qin et al. (2024)
+Y. Qin, S. Liang, Y. Ye, K. Zhu, L. Yan, Y. Lu, Y. Lin, X. Cong, X. Tang, B. Qian, et al.
+
+ToolBench: an open platform for training, serving, and evaluating large language model for tool learning.
+
+In International Conference on Learning Representations (ICLR),
+
+External Links: Link
+
+Cited by: §2.
+
+Raffin et al. (2021)
+A. Raffin, A. Hill, A. Gleave, A. Kanervisto, M. Ernestus, and N. Dormann
+
+Stable-baselines3: reliable reinforcement learning implementations.
+
+Note: Journal of Machine Learning Research, 22(268):1–8
+
+Cited by: §3.3.
+
+Saltzer and Schroeder (1975)
+J. H. Saltzer and M. D. Schroeder
+
+The protection of information in computer systems.
+
+Proceedings of the IEEE 63 (9), pp. 1278–1308.
+
+Cited by: §2.
+
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347.
+
+Cited by: §3.3.
+
+VentureBeat (2026)
+VentureBeat
+
+OpenClaw has 500,000 instances and no enterprise kill switch.
+
+Note: VentureBeat, March 31, 2026
+
+External Links: Link
+
+Cited by: §1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

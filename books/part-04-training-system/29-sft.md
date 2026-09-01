@@ -431,6 +431,14 @@ Delta theta represented by small trainable factors
 
 两者可以使用相同 SFT data 与 token loss。LoRA 是参数化和训练状态选择，不是另一种 supervision objective。
 
+### Trainable Subspace 也是 Continual SFT 的评估变量
+
+把 fine-tuning regime 固定后比较 continual-learning 方法，在参数预算、更新深度和任务顺序稳定时最容易复算；但 full fine-tuning、只更新上层、adapter 或其他 PEFT 并不是同一优化问题。它们把梯度投影到不同 trainable subspace，因而同时改变新任务拟合、旧能力保持和可恢复的 update state。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-21927:start -->
+所以 continual SFT 的 EvalSpec 必须把 trainable parameter set、更新深度、optimizer state 与 task order 写进 adaptation identity；方法排名若只在一个 regime 下成立，不能外推成算法本身的稳定优劣。更小的 subspace 可降低状态与遗忘面，却可能缺少目标任务所需自由度；更大的 subspace 提高可塑性，也扩大回退和旧能力损伤风险。论文只在其 task-incremental 模型与 benchmark 中展示 regime-dependent 结果，不能证明某种深度普遍最优。目标变化需要广泛表征重写时 full tuning 仍合理，数据窄、回滚与多租户 adapter 更重要时 PEFT 仍合理。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-21927:end -->
+
 ## Catastrophic forgetting 与能力回退
 
 若 SFT 数据分布很窄、learning rate 过大或训练过久，模型可能提高目标任务表现，却损伤通用能力。表现包括：
@@ -530,6 +538,25 @@ Training loss 只衡量对 demonstrations 的拟合。若 validation set 与训�
 
 <!-- source-family:SF-STABILIZING-LLM-SUPERVISED-FINE-TUNING-VIA-EXPLICIT-DISTRIBUTIONAL-CONTR -->
 
+### Demonstration 的事实目标不能静默越过 Base Knowledge Boundary
+
+SFT 常把一条完整答案视为监督目标；在任务知识已被 base model 稳定表达、答案又经过验证时，这是一条简单且高效的
+行为迁移路径。约束变化发生在 target 包含 base policy 无法可靠回忆的事实时：token-level likelihood 仍会奖励模型
+流畅复现答案，却没有告诉它“这个结论必须来自外部 evidence”或“取不到证据时应该拒绝”。训练 loss 下降于是可能
+同时增加有用回答和无依据断言。
+
+更稳健的数据合同先用冻结的 base policy、可追溯来源和受控 probe 区分三类目标：模型已有且可稳定回忆的知识、
+只有给定 evidence 才可回答的知识，以及当前无法验证的目标。前两类分别训练 parametric recall 与 evidence-conditioned
+回答，第三类训练 abstain/escalate；promotion 时再分别测 factual coverage、false refusal、unsupported claim 和
+evidence sensitivity，而不是只看平均准确率。
+
+这并不能让系统精确读出“模型内部知道什么”。行为 probe 受 prompt、sampling、checkpoint 和 evaluator 影响，过度
+保守还会把知识边界估窄并制造 false refusal。高质量、稳定、低风险领域继续可以使用普通 SFT；知识快速变化或高风险
+claim 则应优先保留 RAG/tool authority。Knowledge-aligned SFT 的作者实验只覆盖披露的 Qwen/OLMo、实体型事实任务与
+其行为式知识估计，支持这条 failure mode 与分层数据合同，不证明可获得真实的参数知识全集。
+
+<!-- source-family:SF-2026-ARXIV-2608-30987 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -592,6 +619,8 @@ SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写�
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-21927`（Status: Experimental）：exact-v1 支持把 trainable parameter subspace 形式化为 projected optimization，并显示 continual-learning 比较会随 adaptation regime 改变；证据限于披露模型、任务序列和 fine-tuning 深度，不给出跨架构最优 regime。https://arxiv.org/abs/2604.21927v1
 
 - TailSFT（under-fit tail filtering as RL initialization；Status: Experimental）：
   https://arxiv.org/abs/2608.25756v1

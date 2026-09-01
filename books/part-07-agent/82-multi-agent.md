@@ -247,6 +247,14 @@ Agent 可从 interaction history 推断 co-player 的响应策略，并据此调
 
 靠自然语言消息同步在小组短任务中足够；长工作流会出现重复行动、stale belief 与无主结果。state-oriented runtime 应把任务状态、lease、proposal、commit 与 recovery 交给明确 owner，消息只携带 transition request。收益是可恢复，代价是协议与存储开销；短期无副作用协作仍可保持消息式。<!-- source-family:SF-2026-ARXIV-2605-20563 --> exact-v1 §3–5 与 Appendix E 只支持作者环境，不证明状态机消除了语义误解。
 
+### 间接协作仍要落到 Durable State，而不是共享传闻
+
+参与者不直接通信、只观察共同环境时，stigmergic coordination 可以减少点对点协议；但把任意共享文本或 event log 当作环境事实，会重现 message 的重放、并发覆盖和不一致观察问题。Ledger-state 路径把 proposal 追加到有 schema、顺序与 commit 语义的 durable state，参与者只根据已提交 revision 决策；ledger/schema owner 决定可见性和因果顺序，Agent 只提交 transition proposal。
+
+它获得可追溯的间接协调，代价是一致性延迟、存储/共识成本、schema 演进和错误状态的持久传播。低风险、单 owner 或无需跨域审计的任务继续使用轻量 message 更合适；ledger 不可用、共识成本过高或 schema 无法表达任务语义时，应回退 workflow owner 的集中 commit。公开论文主要提供形式框架，不证明生产吞吐或容错上界。
+
+<!-- source-family:SF-2026-ARXIV-2604-03997 -->
+
 ### Latent Communication 只能压缩 Payload，不能隐藏 Identity
 
 文本消息可审计但 token/latency 成本高；共享模型族可传 latent cache 以复用中间表示，但通信 owner 仍须记录发送者、模型 revision、shape、生命周期与 fallback text。收益是减小通信，代价是版本耦合、不可解释和跨模型失配；审计或异构优先时回退显式消息。<!-- source-family:SF-2026-ARXIV-2605-22863 --> exact-v1 §3–4 与 Appendix C 支持其 latent-cache 机制，§5 不证明跨模型互操作或语义等价。
@@ -632,6 +640,8 @@ Multi-Agent 从广播全部对话演进到 typed role、message、shared state �
 Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，而不是更多对话。稳定系统依赖 typed handoffs、shared workflow state、bounded delegation 和独立 verification。下一章进入连接标准 MCP。
 
 ## Review notes
+
+- **Ledger-State Stigmergy（arXiv:2604.03997v1；Status: Experimental）**：exact-v1 支持以 durable ledger state 表达间接 coordination 的形式语义；没有披露可跨 workload 复算的生产吞吐、容错或长期运行证明。https://arxiv.org/abs/2604.03997v1
 
 - PILOT（live supervisor control 与 persistent harness promotion；Status: Experimental）：
   https://arxiv.org/abs/2608.26530v1

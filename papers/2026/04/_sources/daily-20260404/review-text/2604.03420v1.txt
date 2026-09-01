@@ -1,0 +1,2567 @@
+Zero-Shot Quantization via Weight-Space Arithmetic
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 Low-Bit Quantization
+
+2.2 Loss Landscape Geometry and Quantization Robustness
+
+2.3 Arithmetic in Weight Space
+
+3 Background
+
+3.1 Symmetric Per-Channel Weight Quantization
+
+3.2 Weight-Space Arithmetic
+
+4 Method
+
+4.1 Quantization Vector
+
+4.2 Zero-Shot Patching
+
+4.3 Evaluation
+
+5 Experimental Setup
+
+5.1 Quantization Setup
+
+5.2 Fine-Tuning Setup
+
+6 Results
+
+6.1 Quantization Vector Direction
+
+6.2 Quantization Vector Magnitude
+
+7 Limitations
+
+8 Conclusions
+
+References
+
+A Quantization Background
+
+B Baselines
+
+C Transferability of Quantization Vector Direction
+
+D Magnitude Detailed Results
+
+E ViT scales
+
+Baselines
+
+Direction Detailed Results
+
+Magnitude Detailed Results
+
+License: CC BY 4.0
+
+arXiv:2604.03420v1 [cs.CV] 03 Apr 2026
+
+Zero-Shot Quantization via Weight-Space Arithmetic
+
+Daniele Solombrino
+
+Affiliation: Sapienza University of Rome
+
+  
+Antonio Andrea Gargiulo
+
+Affiliation: Sapienza University of Rome
+
+  
+Adrian Robert Minut
+
+Affiliation: Sapienza University of Rome
+
+  
+Luca Zhou
+
+Affiliation: Sapienza University of Rome
+
+  
+Alessandro Zirilli
+
+Affiliation: Sapienza University of Rome
+
+  
+Emanuele Rodolà
+
+Affiliation: Sapienza University of Rome / Paradigma
+
+Abstract
+
+We show that robustness to post-training quantization (PTQ) is a transferable direction in weight space. We call this direction the quantization vector: extracted from a donor task by simple weight-space arithmetic, it can be used to patch a receiver model and improve robustness to PTQ-induced noise by as much as 60%, without receiver-side quantization-aware training (QAT). Because the method requires no receiver training data, it provides a zero-shot, low-cost alternative to QAT for extremely low-bit deployment. We demonstrate this on Vision Transformer (ViT) models. More broadly, our results suggest that quantization robustness is not merely a byproduct of task-specific training, but a reusable feature of weight-space geometry that can be transferred rather than retrained.
+
+1 Introduction
+
+Deep neural networks are typically trained and stored in high-precision floating-point formats, which impose substantial memory footprint and bandwidth demands during deployment.
+Integer quantization addresses this bottleneck by representing model parameters with extremely low-bit integers, reducing storage and inference costs.
+Among the available quantization strategies, post-training quantization (PTQ) (Nagel et al., 2021; Gholami et al., 2022) is particularly attractive because it can be applied to an already trained model without requiring additional optimization or access to the original training data.
+However, its convenience comes at a cost: at extremely low bit-widths, PTQ can severely distort the learned parameters, causing a marked degradation in downstream task performance.
+
+Quantization-aware training (QAT) (Jacob et al., 2018) mitigates this issue by exposing the model to PTQ effects during optimization, allowing the model to adapt to the perturbations induced by extreme low-bit quantization.
+As a result, QAT generally yields substantially better low-bit performance than naive PTQ.
+However, QAT is more demanding than PTQ, as it requires training and computational resources that may not always be available.
+This creates a practical trade-off between efficiency and robustness.
+PTQ is cheap, but often inaccurate at extremely low bit-widths, whereas QAT is robust but costly.
+
+This trade-off raises a fundamental question: can we isolate the quantization robustness learned through QAT in one task and reuse it on another?
+If possible, this would allow us to zero-shot transfer QAT resilience to new downstream tasks, bypassing compute and data bottlenecks.
+
+Figure 1: Zero-shot quantization vector patching. A donor quantization vector , extracted as the weight-space displacement between a standard fine-tuned donor checkpoint and its QAT counterpart, is added to a receiver checkpoint to obtain the patched model . The schematic situates vanilla PTQ, QV patching, and full QAT in the computational cost–3-bit accuracy plane, showing that QV patching can substantially improve low-bit robustness over PTQ while avoiding the full cost of receiver-side QAT.
+
+We investigate this question through the lens of weight-space arithmetic (Ilharco et al., 2023).
+Our central hypothesis is that the displacement between a standard checkpoint and its QAT-enabled counterpart captures the adaptation required for quantization resilience.
+In other words, rather than viewing QAT solely as a training procedure, we ask whether its effect can be isolated as a transferable direction in weight space.
+We refer to this displacement as the quantization vector (QV).
+If such a direction is at least partially task-agnostic, then it may be possible to extract it from a donor task and reuse it to improve the low-bit robustness of a receiver task, without requiring full QAT on the receiver.
+
+To test this idea, we introduce a zero-shot patching technique.
+Given a donor task for which both QAT and non-QAT checkpoints are available, we compute its QV.
+We then apply this vector to a receiver checkpoint trained without QAT on a different task.
+Our central hypothesis is that by "patching" the receiver with the donor’s QV, we are performing a zero-shot alignment of the receiver model toward a more quantization-favorable region of the weight space.
+
+This intuition is broadly compatible with recent perspectives in model editing and QAT (Ilharco et al., 2023; Zhou et al., 2025; Tabesh et al., 2025).
+In fact, prior work suggests that both task adaptation and quantization robustness may admit compact representations in weight space.
+However, unlike these works, we ask whether the robustness it induces can be extracted from one task and reused on another through simple weight-space arithmetic.
+
+We evaluate our framework across a heterogeneous collection of vision classification tasks using Vision Transformer (ViT) architectures (Dosovitskiy et al., 2021).
+We show that, across all possible donor-receiver task pairs, patching a model with a donor QV increases resilience to PTQ-induced noise, up to a 60% improvement, even when the donor and receiver tasks differ substantially.
+Moreover, we find that the magnitude of the applied vector matters, although the default unit scaling already provides a strong and broadly effective baseline.
+
+Our contributions are threefold:
+
+•
+
+We introduce quantization vectors, namely linearly composable weight-space displacements that isolate the geometric adaptation from standard to QAT-enabled checkpoints;
+
+•
+
+We propose a zero-shot cross-task patching framework that leverages donor QVs to improve receiver model resilience against low-bit PTQ degradation;
+
+•
+
+We demonstrate across heterogeneous donor-receiver pairs (i.e. coming from different tasks) that QV patching consistently outperforms vanilla PTQ, establishing that QAT-induced robustness is a partially transferable property.
+
+2 Related Work
+
+2.1 Low-Bit Quantization
+
+Quantization has long been studied to reduce the memory and computational costs of neural network inference, with post-training quantization and quantization-aware training as the two main branches.
+PTQ is attractive because it can be applied after standard training, does not require access to the original training data, and often uses a small set of calibration data.
+However, its accuracy can deteriorate sharply at very low bit-widths (3 bits and below).
+QAT addresses this limitation by incorporating quantization effects during optimization, typically yielding better low-bit performance at the expense of additional data and compute requirements (Liu et al., 2025).
+
+This trade-off becomes particularly challenging in ViTs (Dosovitskiy et al., 2021), where PTQ suffers due to non-standard activation distributions.
+As a result, many methods have focused on improving specialized quantizer design, calibration rules (Yuan et al., 2022; Li et al., 2023; Wu et al., 2024), or data-free approximation strategies such as MimiQ (Choi et al., 2025) and DFQ-ViT (Tong et al., 2025).
+
+Despite all these advancements, such approaches often still require optimization.
+Diverging from these works, our approach treats quantization robustness not as a calibration problem, but as a transferable and reusable parameter-space property.
+
+2.2 Loss Landscape Geometry and Quantization Robustness
+
+Recent literature suggests that the effect of quantization is tightly linked to the local geometry of the loss landscape (Catalan-Tatjer et al., 2025).
+Hessian-based methods have shown that curvature can predict sensitivity to low-precision perturbations (Dong et al., 2019; Dong et al., 2020), while other analyses (Nahshan et al., 2021), studying PTQ directly, have demonstrated that aggressive low-bit quantization can induce highly non-smooth or steep optimization landscapes.
+In ViTs, recent studies have further emphasized the irregularity of quantized loss surfaces and the role of geometry in determining quantization difficulty (Frumkin et al., 2023).
+
+On the training side, (Liu et al., 2021) connects quantization to sharpness-aware optimization.
+More recent works argue that QAT, or quantization-induced noise, can guide optimization toward flatter minima or a lower Hessian norm (Wang et al., 2022; Javed et al., 2025; Catalan-Tatjer et al., 2025).
+Recent work by Tabesh et al. (2025) further formalizes QAT as a multi-objective optimization problem that seeks a Pareto-optimal point between task loss minimization and quantization constraints, achieved through a curvature-aware correction term derived from the local Hessian.
+
+Our method is consistent with these views, but differs in scope: rather than optimizing a task-specific training recipe, we ask whether the displacement induced by such geometry-aware adaptation can be isolated as a reusable direction in weight space and transferred across tasks.
+
+2.3 Arithmetic in Weight Space
+
+Our work is also influenced by recent studies showing that neural networks trained from a common initialization often reside in a compatible basin, and admit meaningful linear operations in weight space (Wortsman et al., 2022).
+Task Arithmetic (Ilharco et al., 2023) introduced the notion of task vectors (TVs) as the difference between a fine-tuned and a pre-trained model, and showed that such vectors can be used to modify model behavior.
+Similarly, (Cai et al., 2023) uses weight-space directions to inject robustness to input corruptions.
+Other methods incorporate various strategies to improve the arithmetic in weight space, through finding the optimal combination of TVs (Yang et al., 2024), mitigating sign disagreement (Yadav et al., 2023), randomly dropping a fraction of the updates (Yu et al., 2024), or employing evolutionary strategies (Akiba et al., 2025; Mencattini et al., 2025). Another line of work considers TVs at the layer level, accounting for the architecture’s natural structure and significantly improving their outcome (Stoica et al., 2025; Gargiulo et al., 2025; Marczak et al., 2025).
+
+We extend this perspective to the quantization regime: rather than encoding a task or robustness to input corruptions property, our QV encodes the structural robustness required to survive low-precision quantization.
+Importantly, our method differs from (Kim et al., 2025), where quantization is applied to task displacements primarily to reduce memory cost during model merging.
+That line of work quantizes the displacement, whereas our approach applies the displacement to improve quantization robustness.
+
+To our knowledge, this is the first work to isolate the displacement induced by QAT as a reusable, zero-shot patch for cross-task transfer quantization robustness.
+
+3 Background
+
+Our framework operates at the intersection of low-bit quantization and weight-space arithmetic.
+Accordingly, in this section, we review the foundational concepts necessary to formalize our method: a fixed fake-quantization operator and vector arithmetic between checkpoints that share a common pretrained initialization.
+
+3.1 Symmetric Per-Channel Weight Quantization
+
+Because the quantity we transfer later is a displacement in parameter space, we focus on weights-only quantization. Consider a linear layer with weight matrix . In the setting of this paper, each output channel of is quantized independently with a signed symmetric integer grid. For a bit-width , the representable integer range is
+
+(1)
+
+For channel , we set the scale from the largest absolute weight in that channel and quantize by
+
+(2)
+
+Dequantization maps the integer tensor back to floating point:
+
+(3)
+
+Here denotes rounding to the nearest integer, and truncates values to the representable range. By extension, denotes the checkpoint obtained by fake-quantizing every quantized linear weight tensor in while leaving the remaining parameters unchanged.
+
+The exact quantizer matters for our method. A different bit-width, granularity, or quantization rule would in general induce a different perturbation during QAT, and therefore a different weight-space displacement. We focus on the symmetric per-channel case because this is the operator used both to create donor QAT checkpoints and to evaluate patched receivers. Throughout the paper, refers to 3-bit symmetric per-channel weight quantization.
+
+QAT inserts the same fake-quantization operator into the forward pass during training, so the model is optimized under the perturbation induced by Equation 2. Because rounding and clipping are not differentiable, gradients are typically approximated with the straight-through estimator (Bengio et al., 2013; Jacob et al., 2018).
+
+In the next section, we isolate the parameter displacement between a standard fine-tuned checkpoint and a checkpoint trained to withstand this same fake-quantization noise.
+
+3.2 Weight-Space Arithmetic
+
+The second ingredient of our framework is weight-space arithmetic, which studies linear operations between models that share a common initialization. Such checkpoints often remain within a compatible basin, allowing their parameter differences to be composed.
+
+Let be a pretrained checkpoint and let be the result of fine-tuning it on a downstream task. Task arithmetic (Ilharco et al., 2023) represents this adaptation by the displacement
+
+(4)
+
+When checkpoints share the same architecture and initialization, such displacements can often be treated as vectors in a common parameter space and added to other compatible checkpoints, producing meaningful and controllable changes in behavior (Wortsman et al., 2022).
+
+Our method adopts exactly this viewpoint, but with a different source of variation. Instead of measuring the change from pretraining to task adaptation, we will measure the change from standard fine-tuning to QAT on the same task. The common-initialization assumption is therefore essential in what follows: without it, the same coordinate-wise displacement need not correspond to the same functional change across tasks. With shared initialization, the donor-derived displacement can be interpreted in a common parameter space and added to a receiver checkpoint of the same architecture. For our purposes, no broader machinery is needed: the method only subtracts one compatible checkpoint from another to form a vector, and adds that vector to a receiver model.
+
+4 Method
+
+The core idea behind our method is to treat robustness to low-bit quantization not as a per-task training-time constraint that must be relearned for every downstream model, but as a transferable geometric alignment in weight space of a fixed architecture.
+
+We proceed in two stages: we first formalize the quantization vector through the lens of multi-objective optimization, and then describe our zero-shot patching protocol.
+
+4.1 Quantization Vector
+
+Let denote a donor dataset, and let and be two checkpoints obtained from the same pretrained initialization , fine-tuned on with and without QAT, respectively.
+
+We define the quantization vector (QV) as the displacement
+
+(5)
+
+Comparing Equations 4 and 5, we see that this definition parallels the notion of TVs in weight-space arithmetic, but the two displacements encode different effects.
+
+The TV in Equation 4 represents the adaptation from a pretrained model to a task-specific solution, and therefore captures the parameter change needed to solve a downstream task. By contrast, the QV in Equation 5 represents the adaptation from a standard fine-tuned solution to one that is more robust to low-bit quantization. Our hypothesis is that this displacement isolates a form of structural robustness to quantization noise, ideally without substantially changing the task behavior already learned by the model.
+
+This interpretation naturally leads to a geometric view of QAT. We regard QAT as moving the parameters from a task-optimized solution toward one that better balances task performance and quantization robustness. This is consistent with recent work that formulates QAT as a multi-objective problem (Tabesh et al., 2025); unlike such work, however, we do not seek to model or improve that optimization process. Our goal is instead to isolate its net effect in weight space, and study the transferability of quantization awareness. The QV is our operational representation of that effect.
+
+4.2 Zero-Shot Patching
+
+Let denote a receiver task for which we only possess a standard checkpoint trained without QAT.
+Given a donor QV , we construct a patched receiver, with improved resilience to PTQ-induced noise, by adding the donor displacement to the receiver checkpoint:
+
+(6)
+
+Here, is a scaling coefficient modulating the intensity of the robustness patch.
+Intuitively, this operation moves the receiver parameters in a direction that was previously learned to improve robustness to PTQ noise on the donor task.
+
+This protocol assumes shares the same pre-trained initialization as the donor models .
+Under this assumption, the corresponding models reside within a compatible loss basin of the weight space (Wortsman et al., 2022), making linear transfer between checkpoints meaningful.
+
+The resulting procedure is zero-shot and data-free on the receiver side, since it requires no access to ’s training data or high-order derivatives, relying entirely on the pre-computed weight-space arithmetic.
+
+4.3 Evaluation
+
+To assess the transferability of the QV across different tasks, we compare the downstream performance of the patched receiver checkpoint against the PTQ performance of the unpatched counterpart.
+
+Specifically, we apply simulated quantization to both models using Equation 3 and measure Top-1 accuracy on the receiver task.
+For a donor-receiver pair , we define the transfer gain as:
+
+(7)
+
+Here, denotes the Top-1 accuracy of a model on the evaluation set of the receiver task, and denotes the fake-quantization operator (Eq. (3)) that applies our 3-bit symmetric per-channel weight quantization to the model parameters.
+
+This provides a clear measure of transfer success: a positive indicates that the transfer successfully improves robustness.
+The donor QV effectively mitigates PTQ-induced degradation in the receiver task.
+A negative indicates that patching is harmful: the donor QV causes destructive interference in the receiver’s parameter space, worsening performance relative to vanilla PTQ.
+A value of near zero indicates that patching has a negligible impact: the donor QV neither improves nor degrades the receiver’s resilience to extremely low-bit PTQ.
+
+5 Experimental Setup
+
+5.1 Quantization Setup
+
+We apply weights-only quantization only to linear layers weights.
+Biases, normalization parameters, patch embeddings, and classification heads remain in full precision, following standard practices (Or et al., 2025).
+We employ symmetric quantization.
+We do not apply activation smoothing or rotation-based preprocessing (Xiao et al., 2023; Liu et al., 2024b).
+This design choice isolates the effect of QV transfer by preventing advanced preprocessing techniques from introducing confounding signals.
+
+5.2 Fine-Tuning Setup
+
+We fine-tune the linear layer weights of the model while keeping all other parameters frozen.
+This includes biases, normalization layers, patch embeddings, and the classification head.
+We adopt this protocol to prevent non-quantized parameters from co-adapting to and absorbing the quantization error.
+This ensures that the learned robustness is localized within the weight space of the quantized layers.
+The classification head is initialized once as a random projection and remains fixed across all experiments.
+
+Our training configuration follows the setup established by Gargiulo et al. (2025) for both standard and QAT-enabled checkpoints.
+We evaluate our method using ViT-S/16, ViT-B/16, and ViT-L/16 architectures at a resolution of 224 224 (Dosovitskiy et al., 2021).
+Experiments are conducted across a diverse suite of 22 image classification tasks: EuroSAT, DTD, Stanford Cars, SUN397, SVHN, RESISC45, MNIST, GTSRB, FER2013, PCam, CIFAR-100, Flowers102, Oxford-IIIT Pet, STL-10, KMNIST, EMNIST, Rendered SST-2, Fashion-MNIST, Food-101, CIFAR-10, ImageNet, and Tiny ImageNet.
+Detailed hyperparameters and an ablation study involving full fine-tuning are provided in the Appendix.
+
+6 Results
+
+We report results on ViT-B/16 with 3-bit symmetric, channel-wise quantization applied.
+Baselines and extended evaluations ViT-B/16 are in Appendix B, C, and D.
+Baselines and extended evaluations for the other ViTs are reported in Appendix E.
+
+6.1 Quantization Vector Direction
+
+To isolate the effect of the QV direction from its magnitude, we first set the scaling factor of Equation 6.
+Results are shown in Figure 2, providing distinct insights into transferability when read row-wise or column-wise.
+Rows show how a receiver dataset behaves when patched with available donors, revealing its receptiveness to robustness patching.
+Columns illustrate how effective a donor QV is across all possible receivers, highlighting its generalizability and strength as a robustness injector.
+Consequently, the intersection of row and column measures the net accuracy change when receiver is patched with donor QV, compared to vanilla PTQ (Equation 7).
+
+Figure 2: Quantization vector transferability for ViT/B-16. Top-1 accuracy change () from patching receiver with donor quantization vector, relative to vanilla 3-bit PTQ. Left shows transfer with a constant scaling factor, while right demonstrates that modulating the magnitude eliminates destructive interference and maximizes gains.
+
+Table 2 in Appendix C synthesize patching performances for both donor- and receiver-wise perspective shown in Fig 2.
+Appendix E shows detailed results for all ViT scales.
+
+6.2 Quantization Vector Magnitude
+
+Applying a fixed-length vector across different tasks might cause the receiver model to overshoot or undershoot the optimal robust basin.
+To investigate whether a suitable magnitude exists for the donor QV, we treat in Equation 6 as a tunable hyperparameter, similarly to (Ilharco et al., 2023).
+For every donor-receiver pair, we perform an oracle sweep across possible values and report the peak Top-1 accuracy achieved on the receiver test set.
+This approach allows us to decouple the effectiveness of the QV direction from the specific challenge of magnitude selection, providing an empirical upper bound for the performance potential of zero-shot patching.
+Figure 2 visualizes the results of this optimized protocol.
+
+The contrast with the unscaled transfer is stark.
+First, we observe a clear mitigation of destructive interference.
+The pronounced areas of negative transfer (red cells) observed under the assumption of Figure 2 are almost entirely eliminated.
+When the magnitude is correctly calibrated, the donor QV rarely degrades the receiver’s baseline PTQ performance.
+Second, there is an amplification of positive transfer.
+For pairs that already exhibited gains in Figure 2, modulating often yields further performance improvements, deepening the intensity of the green cells.
+
+Consequently, these results suggest a universality of direction.
+The near-total absence of performance degradation across the modulated heatmap strongly implies that the direction of the QV encodes a broadly applicable trajectory toward robustness against PTQ-induced noise.
+Failures in transferability in the unscaled case were largely artifacts of incorrect step sizes, rather than fundamentally incompatible parameter-space directions.
+While we identify the optimal via test-set evaluation to establish an empirical upper bound, in a realistic deployment scenario, this single scalar can be efficiently tuned with minimal held-out calibration data.
+
+7 Limitations
+
+Our study represents a foundational step toward transferring quantization robustness, yet certain aspects invite further exploration.
+
+Our identification of the optimal demonstrates the universality of the QV direction.
+However, in practical deployment scenarios, a minimal held-out calibration set should be used rather than the test set.
+Furthermore, to isolate the effect of the QV without introducing confounding variables, we intentionally employed a basic PTQ setup.
+As a result, the interplay between QV patching and more complex PTQ techniques that might inherently modify weight or activation distributions remains an open question.
+We leave these limitations as open directions for potential future work.
+
+8 Conclusions
+
+In this work, we investigated whether the robustness acquired during Quantization-Aware Training (QAT) can be isolated as a transferable property.
+We introduced the Quantization Vector (QV), defined as the weight-space displacement between a standard fine-tuned checkpoint and its QAT-enabled counterpart.
+Through extensive cross-task evaluations on Vision Transformers, we demonstrated that patching a standard model with a donor QV significantly improves its resilience to Post-Training Quantization noise.
+
+This finding aligns with the literature, which suggests that QAT serves as an implicit search for Pareto-like solutions between task performance and quantization constraints.
+Our results show QAT process captures a stable, transferable direction.
+This expands the scope of weight-space arithmetic.
+Previous work has largely focused on manipulating semantic knowledge, such as adding new tasks, languages, or styles.
+We show that weight-space directions can also encode structural and computational properties, such as the ability to survive low-precision quantization.
+Furthermore, the near-total elimination of destructive interference when rescaling the QV suggests a strong universality of direction.
+The trajectory toward quantization robustness appears broadly applicable across different tasks within the same architecture.
+
+References
+
+Akiba et al. (2025)
+T. Akiba, M. Shing, Y. Tang, Q. Sun, and D. Ha
+
+Evolutionary optimization of model merging recipes.
+
+Nature Machine Intelligence.
+
+External Links: ISSN 2522-5839
+
+Cited by: §2.3.
+
+Bengio et al. (2013)
+Y. Bengio, N. Léonard, and A. Courville
+
+Estimating or propagating gradients through stochastic neurons for conditional computation.
+
+arXiv preprint arXiv:1308.3432.
+
+Cited by: §3.1.
+
+Cai et al. (2023)
+R. Cai, Z. Zhang, and Z. Wang
+
+Robust weight signatures: gaining robustness as easy as patching weights?.
+
+In International Conference on Machine Learning,
+
+pp. 3495–3506.
+
+Cited by: §2.3.
+
+Catalan-Tatjer et al. (2025)
+A. Catalan-Tatjer, N. Ajroldi, and J. Geiping
+
+Training dynamics impact post-training quantization robustness.
+
+arXiv preprint arXiv:2510.06213.
+
+Cited by: §2.2,
+§2.2.
+
+Choi et al. (2025)
+K. Choi, H. Lee, D. Kwon, S. Park, K. Kim, N. Park, J. Choi, and J. Lee
+
+Mimiq: low-bit data-free quantization of vision transformers with encouraging inter-head attention similarity.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Vol. 39, pp. 16037–16045.
+
+Cited by: §2.1.
+
+Choukroun et al. (2019)
+Y. Choukroun, E. Kravchik, F. Yang, and P. Kisilev
+
+Low-bit quantization of neural networks for efficient inference.
+
+In 2019 IEEE/CVF International Conference on Computer Vision Workshop (ICCVW),
+
+pp. 3009–3018.
+
+Cited by: Appendix A.
+
+Dong et al. (2020)
+Z. Dong, Z. Yao, D. Arfeen, A. Gholami, M. W. Mahoney, and K. Keutzer
+
+Hawq-v2: hessian aware trace-weighted quantization of neural networks.
+
+Advances in neural information processing systems 33, pp. 18518–18529.
+
+Cited by: §2.2.
+
+Dong et al. (2019)
+Z. Dong, Z. Yao, A. Gholami, M. W. Mahoney, and K. Keutzer
+
+Hawq: hessian aware quantization of neural networks with mixed-precision.
+
+In Proc. CVPR,
+
+pp. 293–302.
+
+Cited by: §2.2.
+
+Dosovitskiy et al. (2021)
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, et al.
+
+An image is worth 16x16 words: transformers for image recognition at scale.
+
+In International Conference on Learning Representations,
+
+Cited by: §1,
+§2.1,
+§5.2.
+
+Frantar et al. (2023)
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh
+
+GPTQ: accurate post-training quantization for generative pre-trained transformers.
+
+In The Eleventh International Conference on Learning Representations,
+
+Cited by: Appendix A.
+
+Frumkin et al. (2023)
+N. Frumkin, D. Gope, and D. Marculescu
+
+Jumping through local minima: quantization in the loss landscape of vision transformers.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV),
+
+pp. 16932–16942.
+
+Cited by: §2.2.
+
+Gargiulo et al. (2025)
+A. A. Gargiulo, D. Crisostomi, M. S. Bucarelli, S. Scardapane, F. Silvestri, and E. Rodolà
+
+Task singular vectors: reducing task interference in model merging.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+
+pp. 18695–18705.
+
+Cited by: §2.3,
+§5.2.
+
+Gholami et al. (2022)
+A. Gholami, S. Kim, Z. Dong, Z. Yao, M. W. Mahoney, and K. Keutzer
+
+A survey of quantization methods for efficient neural network inference.
+
+In Low-power computer vision,
+
+pp. 291–326.
+
+Cited by: §1.
+
+Ilharco et al. (2023)
+G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and A. Farhadi
+
+Editing models with task arithmetic.
+
+In The Eleventh International Conference on Learning Representations,
+
+Cited by: §1,
+§1,
+§2.3,
+§3.2,
+§6.2.
+
+Jacob et al. (2018)
+B. Jacob, S. Kligys, B. Chen, M. Zhu, M. Tang, A. Howard, H. Adam, and D. Kalenichenko
+
+Quantization and training of neural networks for efficient integer-arithmetic-only inference.
+
+In Proceedings of the IEEE conference on computer vision and pattern recognition,
+
+pp. 2704–2713.
+
+Cited by: §1,
+§3.1.
+
+Javed et al. (2025)
+S. Javed, H. Le, and M. Salzmann
+
+QT-dog: quantization-aware training for domain generalization.
+
+In International Conference on Machine Learning,
+
+pp. 26981–27004.
+
+Cited by: §2.2.
+
+Kim et al. (2025)
+Y. Kim, S. Lee, A. Jung, B. Ryu, and S. Hong
+
+Task vector quantization for memory-efficient model merging.
+
+In Proc. ICCV,
+
+pp. 20105–20115.
+
+Cited by: §2.3.
+
+Kravchik et al. (2019)
+E. Kravchik, F. Yang, P. Kisilev, and Y. Choukroun
+
+Low-bit quantization of neural networks for efficient inference.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision Workshops,
+
+pp. 0–0.
+
+Cited by: Appendix A.
+
+Li et al. (2023)
+Z. Li, J. Xiao, L. Yang, and Q. Gu
+
+Repq-vit: scale reparameterization for post-training quantization of vision transformers.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 17227–17236.
+
+Cited by: §2.1.
+
+Liu et al. (2021)
+J. Liu, J. Cai, and B. Zhuang
+
+Sharpness-aware quantization for deep neural networks.
+
+arXiv preprint arXiv:2111.12273.
+
+Cited by: §2.2.
+
+Liu et al. (2025)
+K. Liu, Q. Zheng, K. Tao, Z. Li, H. Qin, W. Li, Y. Guo, X. Liu, L. Kong, G. Chen, Y. Zhang, and X. Yang
+
+Low-bit model quantization for deep neural networks: a survey.
+
+arXiv preprint arXiv:2505.05530.
+
+Cited by: §2.1.
+
+Liu et al. (2024a)
+Z. Liu, B. Oguz, C. Zhao, E. Chang, P. Stock, Y. Mehdad, Y. Shi, R. Krishnamoorthi, and V. Chandra
+
+Llm-qat: data-free quantization aware training for large language models.
+
+In Findings of the Association for Computational Linguistics: ACL 2024,
+
+pp. 467–484.
+
+Cited by: Appendix A.
+
+Liu et al. (2024b)
+Z. Liu, C. Zhao, I. Fedorov, B. Soran, D. Choudhary, R. Krishnamoorthi, V. Chandra, Y. Tian, and T. Blankevoort
+
+SpinQuant: llm quantization with learned rotations.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §5.1.
+
+Liu et al. (2024c)
+Z. Liu, C. Zhao, F. Iandola, C. Lai, Y. Tian, I. Fedorov, Y. Xiong, E. Chang, Y. Shi, R. Krishnamoorthi, et al.
+
+Mobilellm: optimizing sub-billion parameter language models for on-device use cases.
+
+In Forty-first International Conference on Machine Learning,
+
+Cited by: Appendix A.
+
+Marczak et al. (2025)
+D. Marczak, S. Magistri, S. Cygert, B. Twardowski, A. D. Bagdanov, and J. Van De Weijer
+
+No task left behind: isotropic model merging with common and task-specific subspaces.
+
+In International Conference on Machine Learning,
+
+pp. 43177–43199.
+
+Cited by: §2.3.
+
+Mencattini et al. (2025)
+T. Mencattini, R. A. Minut, D. Crisostomi, A. Santilli, and E. Rodolà
+
+MERGE: efficient evolutionary merging on consumer-grade gpus.
+
+In Forty-second International Conference on Machine Learning,
+
+Cited by: §2.3.
+
+Nagel et al. (2021)
+M. Nagel, M. Fournarakis, R. A. Amjad, Y. Bondarenko, M. Van Baalen, and T. Blankevoort
+
+A white paper on neural network quantization.
+
+arXiv preprint arXiv:2106.08295.
+
+Cited by: §1.
+
+Nahshan et al. (2021)
+Y. Nahshan, B. Chmiel, C. Baskin, E. Zheltonozhskii, R. Banner, A. M. Bronstein, and A. Mendelson
+
+Loss aware post-training quantization.
+
+Machine Learning 110 (11), pp. 3247–3262.
+
+Cited by: §2.2.
+
+Or et al. (2025)
+A. Or, A. Jain, D. Vega-Myhre, J. Cai, C. D. Hernandez, Z. Zheng, D. Guessous, V. Kuznetsov, C. Puhrsch, M. Saroufim, et al.
+
+TorchAO: pytorch-native training-to-serving model optimization.
+
+arXiv preprint arXiv:2507.16099.
+
+Cited by: §5.1.
+
+Stoica et al. (2025)
+G. Stoica, P. Ramesh, B. Ecsedi, L. Choshen, and J. Hoffman
+
+MODEL merging with svd to tie the knots.
+
+In International Conference on Learning Representations,
+
+Cited by: §2.3.
+
+Tabesh et al. (2025)
+S. Tabesh, M. Safaryan, A. Panferov, A. Volkova, and D. Alistarh
+
+CAGE: curvature-aware gradient estimation for accurate quantization-aware training.
+
+arXiv preprint arXiv:2510.18784.
+
+Cited by: §1,
+§2.2,
+§4.1.
+
+Tong et al. (2025)
+Y. Tong, J. Yuan, T. Zhang, J. Liu, and C. Hu
+
+DFQ-vit: data-free quantization for vision transformers without fine-tuning.
+
+arXiv preprint arXiv:2507.14481.
+
+Cited by: §2.1.
+
+Wang et al. (2022)
+Z. Wang, J. B. Li, S. Qu, F. Metze, and E. Strubell
+
+SQuAT: sharpness- and quantization-aware training for BERT.
+
+arXiv preprint arXiv:2210.07171.
+
+Cited by: §2.2.
+
+Wortsman et al. (2022)
+M. Wortsman, G. Ilharco, S. Y. Gadre, R. Roelofs, R. Gontijo-Lopes, A. S. Morcos, H. Namkoong, A. Farhadi, Y. Carmon, S. Kornblith, et al.
+
+Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time.
+
+In International conference on machine learning,
+
+pp. 23965–23998.
+
+Cited by: §2.3,
+§3.2,
+§4.2.
+
+Wu et al. (2024)
+Z. Wu, J. Chen, H. Zhong, D. Huang, and Y. Wang
+
+Adalog: post-training quantization for vision transformers with adaptive logarithm quantizer.
+
+In European Conference on Computer Vision,
+
+pp. 411–427.
+
+Cited by: §2.1.
+
+Xiao et al. (2023)
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han
+
+Smoothquant: accurate and efficient post-training quantization for large language models.
+
+In International conference on machine learning,
+
+pp. 38087–38099.
+
+Cited by: §5.1.
+
+Yadav et al. (2023)
+P. Yadav, D. Tam, L. Choshen, C. A. Raffel, and M. Bansal
+
+TIES-merging: resolving interference when merging models.
+
+In Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023,
+
+Cited by: §2.3.
+
+Yang et al. (2024)
+E. Yang, Z. Wang, L. Shen, S. Liu, G. Guo, X. Wang, and D. Tao
+
+AdaMerging: adaptive model merging for multi-task learning.
+
+In The Twelfth International Conference on Learning Representations,
+
+Cited by: §2.3.
+
+Yu et al. (2024)
+L. Yu, B. Yu, H. Yu, F. Huang, and Y. Li
+
+Language models are super mario: absorbing abilities from homologous models as a free lunch.
+
+In Proceedings of the 41st International Conference on Machine Learning,
+
+Proceedings of Machine Learning Research.
+
+Cited by: §2.3.
+
+Yuan et al. (2022)
+Z. Yuan, C. Xue, Y. Chen, Q. Wu, and G. Sun
+
+Ptq4vit: post-training quantization for vision transformers with twin uniform quantization.
+
+In European conference on computer vision,
+
+pp. 191–207.
+
+Cited by: §2.1.
+
+Zhou et al. (2025)
+L. Zhou, D. Solombrino, D. Crisostomi, M. S. Bucarelli, G. A. D’Inverno, F. Silvestri, and E. Rodolà
+
+On task vectors and gradients.
+
+In UniReps: 3rd Edition of the Workshop on Unifying Representations in Neural Models,
+
+Cited by: §1.
+
+Appendix A Quantization Background
+
+Model quantization reduces the numerical precision of weights and activations from high-precision floating-point formats (e.g., FP32 or FP16) to lower-bit-width floating-point or integer representations, thereby decreasing both memory footprint and inference latency. The dominant approach is Post-Training Quantization (PTQ), which applies a quantization recipe to an already-trained model using a small calibration dataset, without modifying the training pipeline. PTQ is favored for its simplicity and speed, and at precisions of more than 4 bits, it typically incurs marginal losses, because the representable numerical range remains sufficient to capture the distribution of most weights and activations [Choukroun et al., 2019].
+
+Below 4 bits, however, this regime breaks down fundamentally. Neural network weights are not uniformly important: a small subset of high-magnitude salient weights exerts disproportionate influence on model outputs, and at such extreme compression ratios, even small quantization errors in these parameters compound across layers, producing significant accuracy degradation that PTQ alone cannot recover from. Furthermore, uniform bit-allocation, that is, the standard assumption of most PTQ methods, becomes an unjustifiable constraint under the 4-bit level, as empirical analysis shows that optimal bit distribution across model components varies non-linearly, ranging from under 2 to over 6 bits depending on layer sensitivity [Frantar et al., 2023, Kravchik et al., 2019, Liu et al., 2024c, Liu et al., 2024a].
+
+This fundamental shift motivates a different strategy: Quantization-Aware Training (QAT). Rather than quantizing an already trained model, QAT injects fake quantization operators into the forward pass during an additional training phase, simulating the low-precision arithmetic the model will encounter at inference time. The model’s weights and activations can then adapt to the constrained representable range before the final format is achieved, providing a substantially smoother transition to extreme bit-widths and yielding considerably higher accuracy recovery than PTQ at the same compression ratio. This decision logic is illustrated in Fig. 3. Initially, PTQ is employed. If the resulting model meets the target accuracy criteria, commonly at -bit precision, the model is deployed directly. Conversely, when PTQ does not attain the required accuracy, typically at precision levels of bits, QAT is applied before deployment.
+
+Figure 3: Overview of the PTQ vs. QAT decision pipeline.
+
+Appendix B Baselines
+
+Table 1 reports the absolute Top-1 accuracies for ViT-B/16 under three conditions: standard fine-tuning (FT), PTQ to 3-bit (PTQ), 3-bit QAT (QAT).
+
+These baselines serve two purposes. First, they quantify the severity of the low-bit quantization regime considered in this work.
+Across most datasets, PTQ induces a substantial drop relative to FP, confirming that 3-bit weight-only quantization is a challenging setting in which robustness to quantization noise is far from guaranteed.
+Second, the QAT results show that much of this lost performance can be recovered when the model is explicitly trained to withstand quantization effects.
+This establishes a meaningful gap between PTQ and QAT, which is precisely the gap our Quantization Vector aims to partially bridge through zero-shot transfer.
+
+The table also highlights that the quantization difficulty is highly task-dependent.
+Some datasets remain comparatively stable under PTQ, while others collapse almost entirely, despite strong FP performance.
+This variability motivates our donor-receiver analysis: if QAT-induced robustness can be transferred across tasks, then tasks that are highly vulnerable to PTQ may benefit from robustness directions extracted from more transferable donors.
+
+Table 1: Baseline performance for ViT-B/16. Absolute Top-1 accuracy (%) for standard fine-tuning (FT), naive 3-bit PTQ (PTQ), and 3-bit QAT (QAT).
+
+Dataset
+FT
+PTQ
+QAT
+
+Stanford Cars
+72.53
+1.46
+60.05
+
+CIFAR-10
+98.38
+60.98
+96.76
+
+CIFAR-100
+90.98
+16.96
+86.47
+
+DTD
+72.98
+15.59
+69.52
+
+EMNIST
+95.07
+32.23
+94.62
+
+EuroSAT
+98.70
+37.00
+98.63
+
+Fashion-MNIST
+94.27
+40.87
+92.72
+
+FER2013
+68.86
+27.14
+64.77
+
+Flowers102
+97.35
+10.16
+86.97
+
+Food-101
+88.05
+18.42
+83.35
+
+GTSRB
+98.93
+15.42
+98.46
+
+ImageNet
+82.21
+16.15
+78.06
+
+KMNIST
+97.63
+40.98
+97.40
+
+MNIST
+99.41
+42.70
+99.59
+
+Oxford-IIIT Pet
+88.66
+20.74
+81.17
+
+PCam
+90.52
+50.09
+89.04
+
+Rendered SST-2
+54.81
+50.08
+54.59
+
+RESISC45
+94.56
+14.13
+93.10
+
+STL-10
+91.92
+44.30
+89.85
+
+SUN397
+62.15
+3.95
+52.33
+
+SVHN
+97.26
+59.32
+96.66
+
+Tiny ImageNet
+89.98
+18.80
+84.62
+
+Baseline data for ViT-T/16, ViT-S/16, and ViT-L/16 are reported in Appendix E.
+
+Appendix C Transferability of Quantization Vector Direction
+
+Table 2 provides a donor-wise and receiver-wise summary of the QV patching results for ViT-B/16 under 3-bit symmetric channel-wise quantization, with the quantization vector applied at unit scale ().
+
+These results make clear that the direction of the quantization vector already carries substantial transferable information, but that its effect is strongly modulated by the donor-receiver pair.
+From the donor perspective, some datasets produce highly reusable quantization vectors.
+In particular, ImageNet and Tiny ImageNet stand out as the strongest donors, achieving strictly positive average transfer ( and , respectively) and a positive-transfer rate across all receivers.
+Food-101, CIFAR-100, and SUN397 also emerge as robust donors, with positive mean gains and high proportions of successful transfers.
+This suggests that QAT on these datasets induces weight-space displacements that generalize well beyond the original task.
+
+At the same time, other donors are much less portable.
+Datasets such as Rendered SST-2, PCam, Oxford-IIIT Pet, GTSRB, and EuroSAT exhibit negative average transfer and low positive-transfer rates, indicating that their QVs do not reliably shift other receivers toward a quantization-resilient region.
+This heterogeneity suggests that although QAT induces a transferable robustness direction, the degree of universality of that direction depends on the task from which it is extracted.
+
+The receiver-wise view reveals a complementary pattern.
+Some receivers are highly receptive to donor patching even with no tuning of the scaling factor.
+For example, MNIST, Fashion-MNIST, EuroSAT, and PCam obtain positive average gains and majority-positive transfer rates, indicating that many donor QVs are already beneficial when applied at unit strength.
+By contrast, receivers such as EMNIST, KMNIST, CIFAR-10, STL-10, Flowers102, and Food-101 show negative average transfer under , despite often still admitting strong best-case gains.
+This indicates that the limiting factor is often not the direction itself, but the fixed magnitude at which it is applied.
+
+A particularly important observation is the gap between best-case and mean transfer.
+For many receivers, the best donor yields a large improvement even when the average donor does not.
+For instance, CIFAR-100, Tiny ImageNet, and ImageNet all achieve gains above , , and points, respectively, under at least one donor, despite near-zero or only moderately positive mean transfer.
+This pattern shows that quantization robustness is at least partially transferable across tasks, but transfer quality depends on donor selection and, as shown in the main text, on magnitude calibration.
+
+Overall, the fixed- results support two conclusions.
+First, the QV direction is meaningful: several donors consistently improve many receivers without any receiver-side optimization.
+Second, destructive interference at should not be interpreted as evidence that the transferred direction is fundamentally invalid.
+Rather, these failures motivate the magnitude sweep analyzed in the next section, where much of the negative transfer disappears once the same direction is rescaled appropriately.
+
+Table 2: Donor- and receiver-wise transfer statistics for ViT-B/16 at unit quantization vector scaling. Best, Worst, and Mean are Top-1 accuracy change relative to vanilla PTQ. Pos.% measures the proportion of positive-transfer pairs: across receivers in the Donor columns, and across donors in the Receiver columns.
+
+Dataset
+Donor
+Receiver
+
+Best
+Worst
+Mean
+Pos.%
+Best
+Worst
+Mean
+Pos.%
+
+EuroSAT
+-0.05
+-33.83
+-13.90
+0.0%
+53.93
+-25.26
+8.39
+61.9%
+
+DTD
+21.67
+-15.70
+-3.92
+23.8%
+28.24
+-13.35
+-1.51
+33.3%
+
+Stanford Cars
+39.07
+-3.81
+7.23
+81.0%
+6.72
+-1.12
+-0.08
+19.0%
+
+SUN397
+34.54
+-2.76
+10.93
+90.5%
+33.79
+-3.77
+0.91
+28.6%
+
+SVHN
+42.47
+-23.36
+-6.35
+19.0%
+31.89
+-52.62
+-2.36
+47.6%
+
+RESISC45
+14.77
+-35.39
+-4.34
+19.0%
+54.02
+-12.06
+3.39
+33.3%
+
+MNIST
+13.90
+-27.13
+-1.77
+38.1%
+53.75
+-32.90
+16.31
+71.4%
+
+GTSRB
+0.00
+-45.10
+-13.38
+0.0%
+48.12
+-14.94
+4.63
+47.6%
+
+CIFAR-100
+42.82
+-8.10
+19.43
+85.7%
+60.23
+-15.96
+-0.41
+23.8%
+
+Flowers102
+19.63
+-17.52
+0.23
+52.4%
+47.29
+-9.84
+-3.61
+14.3%
+
+Oxford-IIIT Pet
+0.00
+-42.98
+-15.60
+0.0%
+50.72
+-20.25
+0.26
+33.3%
+
+STL-10
+10.83
+-26.75
+-7.46
+14.3%
+37.39
+-34.31
+-7.52
+38.1%
+
+FER2013
+26.15
+-25.64
+-4.40
+28.6%
+28.88
+-13.79
+2.81
+47.6%
+
+PCam
+4.44
+-47.13
+-17.38
+4.8%
+26.81
+-0.62
+5.38
+81.0%
+
+KMNIST
+15.52
+-22.91
+-2.42
+28.6%
+35.75
+-30.98
+-7.65
+33.3%
+
+EMNIST
+18.73
+-15.12
+-0.73
+42.9%
+43.73
+-28.48
+-9.02
+23.8%
+
+Fashion-MNIST
+15.66
+-26.44
+-4.17
+38.1%
+46.01
+-30.87
+12.19
+71.4%
+
+Food-101
+45.05
+-2.36
+21.78
+95.2%
+43.38
+-17.42
+-4.38
+23.8%
+
+CIFAR-10
+29.12
+-20.25
+2.52
+57.1%
+34.14
+-50.98
+-7.74
+33.3%
+
+Rendered SST-2
+-0.07
+-52.62
+-20.86
+0.0%
+3.40
+-0.55
+0.47
+52.4%
+
+Tiny ImageNet
+57.58
+3.20
+32.84
+100.0%
+60.33
+-18.30
+0.35
+38.1%
+
+ImageNet
+60.33
+0.27
+38.23
+100.0%
+44.66
+-15.94
+5.71
+61.9%
+
+Appendix D Magnitude Detailed Results
+
+Table 3 reports donor- and receiver-wise transfer statistics for ViT-B/16 under 3-bit symmetric, channel-wise quantization when the quantization vector is applied with the best scaling factor.
+
+The optimized-scaling results reveal a markedly different picture from the fixed- setting.
+From the donor perspective, almost all datasets become reliable sources of transferable robustness once the magnitude is calibrated.
+In particular, ImageNet and Tiny ImageNet remain the strongest donors, with the highest mean transfer gains ( and , respectively) and a positive-transfer rate across all receivers.
+Food-101 and CIFAR-100 also stand out as highly effective donors, achieving mean gains of and , again with near-universal positive transfer.
+This shows that the strongest donor tasks do not merely provide occasional gains, but induce QVs that generalize consistently across the entire receiver suite when their step size is chosen appropriately.
+
+Equally important, donors that were weak or even harmful at unit scale become substantially more portable after tuning.
+For example, DTD, SVHN, MNIST, Flowers102, FER2013, KMNIST, EMNIST, and CIFAR-10 all achieve positive-transfer rates as donors under the optimized protocol.
+Even previously problematic donors such as EuroSAT, GTSRB, Oxford-IIIT Pet, and Rendered SST-2 now exhibit mostly positive transfer, although with lower mean gains.
+This strongly suggests that much of the negative transfer observed at was caused by magnitude mismatch rather than by an intrinsically non-transferable robustness direction.
+
+The receiver-wise view reinforces the same conclusion.
+Once is tuned, nearly all receivers benefit from donor patching with very high consistency.
+MNIST and Fashion-MNIST are among the most receptive receivers, with mean gains of and , respectively, and positive-transfer rates across donors.
+GTSRB, EuroSAT, ImageNet, and Tiny ImageNet also show strong average improvements, indicating that these tasks can be moved toward significantly more quantization-resilient solutions through zero-shot patching alone.
+Even tasks that were difficult to improve at fixed scale, such as CIFAR-10, CIFAR-100, EMNIST, Food-101, and Flowers102, become broadly receptive once the magnitude is adjusted.
+
+A key result is the near-disappearance of destructive interference.
+Under optimized scaling, the worst-case transfer is close to zero for most donor-receiver pairs, and many receivers exhibit positive transfer for all or nearly all donors.
+Only a small number of settings, such as Oxford-IIIT Pet as donor or STL-10 as receiver, still show non-negligible negative outliers.
+Thus, while transferability is not perfectly uniform, the dominant factor limiting performance in the fixed- regime appears to be the choice of step size rather than the validity of the direction itself.
+
+Overall, these findings provide strong evidence that the quantization vector encodes a broadly reusable direction toward PTQ robustness.
+Magnitude calibration does not merely improve a few isolated pairs; it systematically converts the transfer map from sparse and heterogeneous to dense and predominantly positive.
+This supports the main claim of the paper: QAT-induced robustness is not only partially transferable across tasks, but its transfer becomes highly reliable once the strength of the patch is properly controlled.
+
+Table 3: Donor- and receiver-wise transfer statistics for ViT-B/16 with optimized quantization vector scaling. Best, Worst, and Mean are Top-1 accuracy change relative to vanilla PTQ after selecting the best scaling factor for each donor-receiver pair. Pos.% measures the proportion of positive-transfer pairs: across receivers in the Donor columns, and across donors in the Receiver columns.
+
+Dataset
+Donor
+Receiver
+
+Best
+Worst
+Mean
+Pos.%
+Best
+Worst
+Mean
+Pos.%
+
+EuroSAT
+18.69
+-1.73
+3.91
+76.2%
+54.33
+-1.04
+17.73
+95.2%
+
+DTD
+32.27
+0.55
+9.39
+100.0%
+32.71
+0.05
+8.27
+100.0%
+
+Stanford Cars
+39.07
+0.00
+13.89
+95.2%
+11.76
+-0.01
+2.00
+95.2%
+
+SUN397
+35.99
+0.71
+15.79
+100.0%
+39.79
+-0.45
+7.19
+95.2%
+
+SVHN
+43.50
+0.41
+9.27
+100.0%
+33.09
+1.38
+12.58
+100.0%
+
+RESISC45
+23.09
+-0.14
+8.19
+90.5%
+57.98
+-1.30
+13.82
+90.5%
+
+MNIST
+23.15
+0.16
+9.44
+100.0%
+53.75
+2.98
+29.81
+100.0%
+
+GTSRB
+26.85
+-1.65
+3.40
+76.2%
+55.46
+3.22
+21.68
+100.0%
+
+CIFAR-100
+46.08
+2.36
+25.34
+100.0%
+62.39
+-1.20
+13.40
+90.5%
+
+Flowers102
+25.64
+0.11
+6.54
+100.0%
+60.35
+0.57
+11.15
+100.0%
+
+Oxford-IIIT Pet
+24.78
+-8.36
+3.87
+81.0%
+54.05
+-1.36
+12.41
+85.7%
+
+STL-10
+23.79
+-1.25
+7.12
+85.7%
+37.39
+-8.36
+9.38
+76.2%
+
+FER2013
+33.01
+0.33
+13.04
+100.0%
+30.58
+1.41
+11.01
+100.0%
+
+PCam
+22.93
+-0.56
+7.05
+90.5%
+31.43
+-0.02
+8.44
+85.7%
+
+KMNIST
+31.45
+0.05
+10.65
+100.0%
+35.75
+-1.73
+13.04
+95.2%
+
+EMNIST
+37.07
+0.05
+9.58
+100.0%
+45.31
+0.65
+11.55
+100.0%
+
+Fashion-MNIST
+25.22
+0.38
+7.46
+100.0%
+46.39
+9.79
+29.45
+100.0%
+
+Food-101
+45.05
+0.82
+27.97
+100.0%
+52.67
+0.29
+10.99
+100.0%
+
+CIFAR-10
+38.42
+0.55
+20.14
+100.0%
+34.40
+-0.22
+12.87
+95.2%
+
+Rendered SST-2
+9.79
+-4.19
+2.21
+81.0%
+3.40
+0.00
+0.85
+71.4%
+
+Tiny ImageNet
+58.45
+3.40
+35.89
+100.0%
+62.12
+0.78
+16.65
+100.0%
+
+ImageNet
+62.39
+3.19
+41.62
+100.0%
+46.68
+0.88
+17.47
+100.0%
+
+Appendix E ViT scales
+
+In the following section we extend evaluations of Section 6 for ViT-T/16, ViT-S/16, and ViT-L/16 with 3-bit channel-wise quantization.
+
+Baselines
+
+Table 4 reports baselines for ViT-T/16, ViT-S/16, and ViT-L/16.
+
+Table 4: Absolute Top-1 accuracy (%) for 3-bit channel-wise quantization across model sizes.
+
+ViT-T
+ViT-S
+ViT-L
+
+Dataset
+FT
+PTQ
+QAT
+FT
+PTQ
+QAT
+FT
+PTQ
+QAT
+
+Stanford Cars
+22.77
+0.60
+8.27
+36.05
+0.90
+12.68
+83.20
+16.75
+78.75
+
+CIFAR-10
+94.39
+20.76
+87.80
+96.60
+25.56
+90.48
+98.42
+66.35
+97.77
+
+CIFAR-100
+74.98
+4.76
+49.42
+87.46
+4.08
+62.85
+92.83
+34.06
+89.91
+
+DTD
+65.27
+13.40
+57.18
+72.93
+12.02
+60.85
+73.14
+39.36
+70.00
+
+EMNIST
+93.96
+5.25
+91.17
+94.81
+11.31
+93.83
+94.92
+35.60
+94.90
+
+EuroSAT
+98.07
+34.33
+97.33
+98.85
+46.74
+97.07
+98.96
+36.52
+97.85
+
+Fashion-MNIST
+92.80
+26.28
+90.87
+93.29
+31.86
+92.40
+94.27
+64.99
+93.26
+
+FER2013
+63.25
+19.49
+57.73
+64.91
+18.43
+60.84
+70.52
+38.56
+66.97
+
+Flowers102
+73.95
+1.76
+58.86
+90.54
+2.33
+68.58
+99.24
+66.71
+94.97
+
+Food-101
+67.72
+6.61
+45.08
+79.95
+5.79
+58.21
+91.05
+44.95
+88.85
+
+GTSRB
+98.35
+29.94
+97.27
+98.76
+19.18
+98.12
+99.05
+54.42
+99.03
+
+ImageNet
+47.76
+0.44
+20.33
+70.99
+1.02
+47.49
+83.53
+24.39
+81.55
+
+KMNIST
+95.16
+10.50
+90.92
+96.00
+22.85
+95.00
+97.07
+42.46
+97.44
+
+MNIST
+99.33
+19.92
+99.28
+99.42
+25.05
+99.38
+99.63
+79.05
+99.65
+
+Oxford-IIIT Pet
+79.67
+4.77
+62.96
+83.40
+4.42
+66.97
+93.57
+67.21
+85.01
+
+PCam
+88.53
+58.92
+82.93
+88.32
+54.62
+86.79
+88.78
+54.65
+91.48
+
+Rendered SST-2
+52.50
+49.97
+53.05
+53.27
+50.80
+52.66
+53.38
+50.08
+56.29
+
+RESISC45
+91.90
+17.73
+85.98
+93.17
+10.48
+89.02
+94.97
+53.73
+94.14
+
+STL-10
+90.69
+27.68
+81.42
+91.61
+23.25
+81.35
+97.05
+87.65
+92.96
+
+SUN397
+36.35
+0.54
+14.94
+55.64
+0.77
+24.41
+70.22
+29.60
+61.27
+
+SVHN
+94.94
+22.67
+91.56
+95.86
+31.64
+93.63
+96.88
+37.76
+96.97
+
+Tiny ImageNet
+56.33
+2.56
+26.56
+79.28
+3.29
+35.24
+91.22
+22.18
+87.87
+
+Direction Detailed Results
+
+Tables 5, 6, and 7 report donor- and receiver-wise transfer statistics for ViT-T/16, ViT-S/16, and ViT-L/16, respectively, when the quantization vector is applied at unit scale ().
+
+Across all model sizes, the fixed-scale results confirm the same qualitative phenomenon observed for ViT-B/16: the direction of the quantization vector already contains transferable information, but its effectiveness depends strongly on both the donor-receiver pairing and the model scale.
+Even without magnitude tuning, several donors yield clear positive gains on multiple receivers, indicating that QAT-induced robustness is not confined to a single task.
+At the same time, negative average transfer remains common, showing that unit scaling is often too rigid to match the geometry of different receiver models.
+
+For ViT-T/16, transfer at unit scale is relatively weak and heterogeneous.
+Most donors exhibit near-zero or negative mean transfer, with ImageNet standing out as the main exception, achieving a positive mean gain of and a positive-transfer rate across receivers.
+Food-101 is the only other donor with clearly positive mean transfer.
+From the receiver perspective, only a small subset of tasks, such as KMNIST, FER2013, PCam, and Rendered SST-2, obtain non-negative average gains, while many others remain slightly or substantially negative.
+This suggests that in the smallest model, the QV direction is already meaningful, but its transferability is fragile and highly sensitive to donor choice.
+
+For ViT-S/16, the picture becomes more structured.
+ImageNet again emerges as the strongest donor, with a mean gain of and a positive-transfer rate, while Tiny ImageNet, CIFAR-100, Flowers102, SUN397, and Food-101 also produce positive average transfer.
+On the receiver side, STL-10, Oxford-IIIT Pet, PCam, MNIST, and CIFAR-100 show positive mean gains, indicating that many donor QVs are already beneficial at unit strength.
+However, negative mean transfer is still frequent across donors and receivers, especially for EuroSAT, SVHN, FER2013, Fashion-MNIST, and KMNIST.
+Thus, compared to ViT-T/16, the medium-small model exhibits clearer signs of cross-task transferability, although destructive interference remains substantial.
+
+For ViT-L/16, the fixed-scale results become more polarized.
+Some donors are exceptionally strong: ImageNet and Tiny ImageNet achieve mean gains of and , respectively, while Food-101, CIFAR-100, and SUN397 also provide clearly positive average transfer.
+These results indicate that at larger scale, certain donor tasks induce highly reusable robustness directions.
+At the same time, other donors become strongly harmful when applied at unit magnitude.
+Oxford-IIIT Pet and STL-10, for instance, have strongly negative mean transfer and zero positive-transfer rate as donors.
+From the receiver perspective, the behavior is similarly uneven: datasets such as SVHN, EuroSAT, KMNIST, CIFAR-10, PCam, ImageNet, and Tiny ImageNet are comparatively receptive, whereas Stanford Cars, SUN397, Flowers102, STL-10, and Food-101 remain difficult to patch reliably at .
+This wider spread suggests that larger models may admit more powerful QV directions, but are also more sensitive to over-patching when the magnitude is not calibrated.
+
+Taken together, these results support two conclusions.
+First, the transferability of the QV direction is not specific to a single architecture scale: from ViT-T/16 to ViT-L/16, there consistently exist donor tasks whose QAT displacement improves PTQ robustness on many other receivers.
+Second, the variability of the fixed-scale results becomes more pronounced as model size increases.
+Strong donors become stronger, but harmful transfers can also become more severe.
+This reinforces the interpretation that the main limitation of the unit-scale protocol is not the absence of a transferable direction, but the mismatch between a fixed step size and the geometry of each donor-receiver pair.
+The optimized-scaling results reported next confirm this interpretation.
+
+Table 5: Donor- and receiver-wise transfer statistics for ViT-T/16 at unit quantization vector scaling. Best, Worst, and Mean are Top-1 accuracy change relative to vanilla PTQ. Pos.% measures the proportion of positive-transfer pairs: across receivers in the Donor columns, and across donors in the Receiver columns.
+
+Dataset
+Donor
+Receiver
+
+Best
+Worst
+Mean
+Pos.%
+Best
+Worst
+Mean
+Pos.%
+
+EuroSAT
+5.48
+-21.33
+-4.02
+19.0%
+27.04
+-20.70
+-5.20
+23.8%
+
+DTD
+13.10
+-13.13
+-0.71
+38.1%
+3.88
+-10.74
+-5.46
+4.8%
+
+Stanford Cars
+8.38
+-9.58
+0.02
+42.9%
+0.21
+-0.22
+0.01
+47.6%
+
+SUN397
+4.41
+-8.70
+-0.62
+47.6%
+0.33
+-0.33
+-0.08
+23.8%
+
+SVHN
+28.58
+-26.65
+-3.61
+9.5%
+13.14
+-13.86
+-0.92
+38.1%
+
+RESISC45
+4.22
+-14.71
+-2.92
+19.0%
+11.81
+-14.94
+-6.50
+9.5%
+
+MNIST
+2.82
+-18.88
+-2.07
+23.8%
+28.58
+-12.94
+-2.40
+33.3%
+
+GTSRB
+8.02
+-20.70
+-3.58
+28.6%
+-5.29
+-26.65
+-16.07
+0.0%
+
+CIFAR-100
+14.73
+-16.21
+-0.60
+33.3%
+9.21
+-3.64
+-1.53
+14.3%
+
+Flowers102
+4.47
+-12.48
+-1.57
+47.6%
+1.66
+-1.54
+-0.52
+19.0%
+
+Oxford-IIIT Pet
+7.77
+-17.28
+-0.73
+38.1%
+12.84
+-2.26
+-0.38
+19.0%
+
+STL-10
+6.29
+-21.14
+-4.25
+19.0%
+22.61
+-10.42
+-0.07
+42.9%
+
+FER2013
+0.11
+-12.96
+-4.57
+4.8%
+16.29
+-6.88
+0.48
+57.1%
+
+PCam
+0.11
+-24.89
+-6.81
+4.8%
+13.10
+-9.52
+0.54
+57.1%
+
+KMNIST
+6.24
+-20.64
+-2.70
+19.0%
+12.68
+-2.21
+2.38
+71.4%
+
+EMNIST
+4.07
+-12.97
+-3.26
+14.3%
+8.56
+-2.24
+0.15
+47.6%
+
+Fashion-MNIST
+9.00
+-19.78
+-3.28
+19.0%
+14.73
+-15.97
+-1.79
+47.6%
+
+Food-101
+12.68
+-13.62
+1.84
+71.4%
+0.30
+-5.59
+-2.57
+4.8%
+
+CIFAR-10
+2.50
+-21.65
+-4.25
+19.0%
+24.47
+-8.75
+-1.12
+33.3%
+
+Rendered SST-2
+4.85
+-9.29
+-0.91
+42.9%
+3.46
+-0.22
+0.92
+81.0%
+
+Tiny ImageNet
+9.90
+-17.94
+-1.13
+42.9%
+2.96
+-2.05
+-0.95
+14.3%
+
+ImageNet
+27.04
+-5.29
+8.45
+95.2%
+0.07
+-0.36
+-0.17
+9.5%
+
+Table 6: Donor- and receiver-wise transfer statistics for ViT-S/16 at unit quantization vector scaling. Best, Worst, and Mean are Top-1 accuracy change relative to vanilla PTQ. Pos.% measures the proportion of positive-transfer pairs: across receivers in the Donor columns, and across donors in the Receiver columns.
+
+Dataset
+Donor
+Receiver
+
+Best
+Worst
+Mean
+Pos.%
+Best
+Worst
+Mean
+Pos.%
+
+EuroSAT
+0.36
+-18.08
+-6.50
+4.8%
+27.81
+-36.30
+-9.68
+19.0%
+
+DTD
+15.84
+-11.98
+-1.40
+14.3%
+29.57
+-8.88
+-1.29
+23.8%
+
+Stanford Cars
+10.91
+-10.77
+0.15
+57.1%
+0.60
+-0.50
+-0.24
+4.8%
+
+SUN397
+13.36
+-10.67
+1.64
+71.4%
+5.39
+-0.58
+-0.02
+14.3%
+
+SVHN
+14.73
+-32.26
+-5.46
+9.5%
+27.11
+-17.27
+-3.34
+33.3%
+
+RESISC45
+11.88
+-12.02
+-3.30
+4.8%
+30.52
+-8.65
+-0.39
+33.3%
+
+MNIST
+10.21
+-16.99
+-2.27
+19.0%
+48.49
+-15.26
+1.96
+42.9%
+
+GTSRB
+1.31
+-22.00
+-4.28
+4.8%
+26.06
+-14.62
+-2.12
+38.1%
+
+CIFAR-100
+25.05
+-9.49
+5.42
+57.1%
+34.17
+-2.91
+0.53
+23.8%
+
+Flowers102
+17.52
+-10.22
+2.52
+66.7%
+6.73
+-1.77
+-0.55
+23.8%
+
+Oxford-IIIT Pet
+5.28
+-20.07
+-5.53
+9.5%
+42.49
+-2.64
+3.75
+57.1%
+
+STL-10
+6.00
+-36.30
+-7.11
+9.5%
+54.30
+-13.31
+5.07
+61.9%
+
+FER2013
+-0.16
+-24.56
+-6.87
+0.0%
+6.00
+-5.08
+-1.37
+23.8%
+
+PCam
+0.35
+-21.86
+-5.93
+4.8%
+22.41
+-4.59
+3.58
+61.9%
+
+KMNIST
+3.44
+-15.26
+-4.08
+9.5%
+8.30
+-14.47
+-7.59
+14.3%
+
+EMNIST
+3.51
+-11.06
+-1.64
+23.8%
+10.01
+-9.74
+-4.05
+9.5%
+
+Fashion-MNIST
+1.58
+-20.19
+-4.07
+4.8%
+40.09
+-21.86
+-7.34
+23.8%
+
+Food-101
+25.20
+-6.70
+2.02
+61.9%
+21.12
+-5.00
+-0.64
+23.8%
+
+CIFAR-10
+10.31
+-16.67
+-3.95
+9.5%
+38.28
+-15.90
+-3.96
+23.8%
+
+Rendered SST-2
+5.65
+-20.54
+-4.50
+9.5%
+1.10
+-3.19
+-0.79
+4.8%
+
+Tiny ImageNet
+31.52
+-14.56
+3.15
+57.1%
+33.38
+-2.64
+0.63
+23.8%
+
+ImageNet
+54.30
+0.60
+23.88
+100.0%
+1.42
+-0.97
+-0.28
+23.8%
+
+Table 7: Donor- and receiver-wise transfer statistics for ViT-L/16 at unit quantization vector scaling. Best, Worst, and Mean are Top-1 accuracy change relative to vanilla PTQ. Pos.% measures the proportion of positive-transfer pairs: across receivers in the Donor columns, and across donors in the Receiver columns.
+
+Dataset
+Donor
+Receiver
+
+Best
+Worst
+Mean
+Pos.%
+Best
+Worst
+Mean
+Pos.%
+
+EuroSAT
+6.23
+-54.77
+-16.14
+23.8%
+49.81
+-26.81
+14.84
+76.2%
+
+DTD
+30.70
+-66.14
+-7.91
+52.4%
+10.96
+-37.23
+-17.19
+14.3%
+
+Stanford Cars
+36.19
+-36.38
+3.92
+57.1%
+-1.06
+-16.40
+-12.05
+0.0%
+
+SUN397
+42.38
+-36.61
+12.66
+81.0%
+21.86
+-29.35
+-17.62
+9.5%
+
+SVHN
+19.58
+-61.23
+-5.04
+42.9%
+54.57
+-28.07
+22.73
+85.7%
+
+RESISC45
+34.28
+-62.61
+-3.91
+47.6%
+31.63
+-51.60
+-10.61
+33.3%
+
+MNIST
+24.35
+-27.80
+1.25
+61.9%
+19.84
+-55.97
+-5.46
+61.9%
+
+GTSRB
+35.38
+-73.49
+-19.19
+14.3%
+25.52
+-52.28
+-21.08
+19.0%
+
+CIFAR-100
+54.25
+-57.93
+13.08
+81.0%
+53.13
+-33.14
+2.35
+47.6%
+
+Flowers102
+9.58
+-35.52
+-9.95
+23.8%
+-1.76
+-66.30
+-44.32
+0.0%
+
+Oxford-IIIT Pet
+0.00
+-77.50
+-36.11
+0.0%
+21.23
+-63.70
+-5.58
+57.1%
+
+STL-10
+0.00
+-66.30
+-33.96
+0.0%
+6.06
+-77.50
+-17.32
+19.0%
+
+FER2013
+27.25
+-47.67
+-2.63
+47.6%
+24.71
+-23.67
+1.50
+52.4%
+
+PCam
+4.39
+-52.59
+-16.63
+14.3%
+29.89
+-4.63
+9.52
+81.0%
+
+KMNIST
+17.52
+-41.97
+-4.78
+38.1%
+44.18
+-31.32
+10.41
+61.9%
+
+EMNIST
+22.41
+-17.45
+4.36
+57.1%
+48.22
+-32.00
+-1.94
+47.6%
+
+Fashion-MNIST
+20.70
+-45.61
+-8.14
+33.3%
+27.04
+-54.29
+2.88
+71.4%
+
+Food-101
+51.01
+-7.29
+22.06
+81.0%
+35.69
+-44.00
+-9.50
+28.6%
+
+CIFAR-10
+43.72
+-65.60
+-8.02
+42.9%
+31.16
+-56.06
+8.92
+76.2%
+
+Rendered SST-2
+22.26
+-52.97
+-7.45
+38.1%
+1.21
+0.00
+0.14
+57.1%
+
+Tiny ImageNet
+53.25
+-14.54
+22.97
+90.5%
+62.86
+-21.71
+5.99
+47.6%
+
+ImageNet
+62.86
+-33.73
+25.90
+90.5%
+43.97
+-24.27
+9.73
+71.4%
+
+Magnitude Detailed Results
+
+Figures 4, 2, and 5 extend the magnitude analysis of Section 6 across model scales by reporting, for each donor-receiver pair, the best transfer obtained after sweeping the quantization-vector scaling factor . Across all architectures, the same qualitative pattern emerges: tuning the magnitude preserves the usefulness of the QV direction while removing most of the destructive interference observed at unit scale. In other words, many failures of fixed-scale transfer are not due to an intrinsically poor donor direction, but to applying an otherwise meaningful robustness displacement with the wrong step size.
+
+For ViT-T/16, optimized scaling substantially densifies the transfer map relative to the unit-scale setting. Although the smallest model exhibits the weakest raw transfer under , many donor-receiver pairs become positive once is calibrated, indicating that quantization robustness is already transferable even in the low-capacity regime. The gains remain more modest and less uniform than for larger models, suggesting that smaller backbones admit less room for robustness-preserving displacement before task behavior is disrupted.
+
+For ViT-S/16 and ViT-B/16, magnitude tuning yields the clearest evidence that the QV direction is broadly reusable. In both cases, the optimized heatmaps become predominantly positive, with most negative cells either disappearing or shrinking to near zero. Strong donor tasks such as ImageNet, Tiny ImageNet, Food-101, and CIFAR-100 consistently induce large gains across many receivers, while even weaker donors become substantially more reliable once their vectors are rescaled. This confirms that the main bottleneck in the fixed- regime is not the absence of transferability, but the mismatch between donor vector magnitude and receiver geometry.
+
+For ViT-L/16, the effect of magnitude calibration is particularly striking. The larger model exhibits the most polarized behavior at unit scale, with both very strong positive transfer and severe negative interference. After tuning , however, the transfer map becomes much more uniformly positive, showing that large models can benefit greatly from donor QVs provided the patch strength is controlled carefully. This suggests that model scale amplifies both the potential and the risk of weight-space patching: larger architectures appear to support more powerful transferable robustness directions, but they are also more sensitive to over-patching when the magnitude is fixed.
+
+Overall, the cross-scale evidence strongly supports the same conclusion as in the ViT-B/16 analysis: the QV primarily encodes a transferable direction toward PTQ robustness, while the scaling factor determines how effectively that direction can be realized on a given receiver. Magnitude calibration therefore acts less as a search for a new solution and more as a geometric alignment step, converting sparse and heterogeneous transfer at unit scale into a much denser and more reliable pattern of positive robustness transfer.
+
+Figure 4: Quantization vector transferability for ViT/T-16. Top-1 accuracy change () from patching receiver with donor quantization vector, relative to vanilla 3-bit PTQ. Left shows transfer with a constant scaling factor, while right demonstrates that modulating the magnitude eliminates destructive interference and maximizes gains.
+
+Figure 5: Quantization vector transferability for ViT/L-16. Top-1 accuracy change () from patching receiver with donor quantization vector, relative to vanilla 3-bit PTQ. Left shows transfer with a constant scaling factor, while right demonstrates that modulating the magnitude eliminates destructive interference and maximizes gains.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

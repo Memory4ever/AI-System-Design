@@ -1,0 +1,1697 @@
+Sequential KV Cache Compressionvia Probabilistic Language Tries:Beyond the Per-Vector Shannon Limit
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+The gap TurboQuant does not close.
+
+This paper.
+
+Why this is possible now.
+
+Organization.
+
+2 Background
+
+2.1 The KV Cache in Transformer Inference
+
+2.2 Per-Vector Quantization: The State of the Art
+
+2.3 Probabilistic Language Tries
+
+3 The Sequential Entropy Bound
+
+3.1 Setup and Notation
+
+3.2 The Determinism Lemma
+
+3.3 The Main Bound
+
+3.4 Tightness of the Bound
+
+4 Layer 1: Probabilistic Prefix Deduplication
+
+4.1 The Exact Prefix Sharing Baseline
+
+4.2 The PLT Trie Metric as a Deduplication Criterion
+
+4.3 Storage Under Probabilistic Prefix Deduplication
+
+5 Layer 2: Predictive Delta Coding
+
+5.1 The Prediction
+
+5.2 The Residual and Its Entropy
+
+5.3 Adaptive Quantization of Residuals
+
+6 Composition and the Full Stack
+
+6.1 Orthogonality of the Two Layers
+
+6.2 Composition with Per-Vector Quantization
+
+6.3 Asymptotic Behavior with Context Length
+
+7 Practical Implementation
+
+7.1 Efficient Prediction Computation
+
+7.2 Integration with the Inference Loop
+
+7.3 Trie-Based Prefix Index
+
+8 Related Work
+
+9 Discussion
+
+9.1 The Two Shannon Limits
+
+9.2 Implications for the “Memory Wall”
+
+9.3 Relation to the Jevons Paradox
+
+9.4 Rate-Distortion Analysis of KV Compression
+
+9.5 Connection to Speculative Decoding
+
+9.6 Limitations and Open Problems
+
+9.7 Conjectures and Open Problems
+
+9.8 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.15356v1 [cs.LG] 10 Apr 2026
+
+Sequential KV Cache Compression
+
+via Probabilistic Language Tries:
+
+Beyond the Per-Vector Shannon Limit
+
+Gregory Magarshak
+
+Email: gmagarshak@faculty.ienyc.edu
+
+Abstract
+
+Recent work on KV cache quantization, culminating in TurboQuant [13],
+has approached the Shannon entropy limit for per-vector compression of
+transformer key-value caches. We observe that this limit applies to a
+strictly weaker problem than the one that actually matters: compressing
+the KV cache as a sequence. The tokens stored in a KV cache are not
+arbitrary floating-point data—they are samples from the exact formal language
+the model was trained on, and the model is by construction a near-optimal
+predictor of that language.
+
+We introduce sequential KV compression, a two-layer architecture that
+exploits this structure. The first layer, probabilistic prefix
+deduplication, identifies semantically equivalent shared prefixes across
+sessions using the trie metric
+from Probabilistic Language Tries (PLTs) [9]. The second layer,
+predictive delta coding, stores only the residual of each new KV vector
+from the model’s own prediction of it, achieving a per-token entropy bound of
+.
+
+We prove that at typical language model perplexity—approximately 10–20 for
+fluent English text—this bound is 3.3–4.3 bits on average per token position,
+compared to TurboQuant’s 3 bits per vector component (with typical
+attention heads having 64–128 components). The theoretical compression ratio over TurboQuant is
+approximately at the Shannon limit. Even at above
+the entropy floor—a deliberately pessimistic worst-case overhead, two orders
+of magnitude above the 2–5 typical of practical source coders—the
+ratio remains over TurboQuant, with compression improving
+rather than degrading as context length grows. The two layers are orthogonal and compose with
+existing per-vector quantization methods including TurboQuant.
+
+Contents
+
+1 Introduction
+
+2 Background
+
+2.1 The KV Cache in Transformer Inference
+
+2.2 Per-Vector Quantization: The State of the Art
+
+2.3 Probabilistic Language Tries
+
+3 The Sequential Entropy Bound
+
+3.1 Setup and Notation
+
+3.2 The Determinism Lemma
+
+3.3 The Main Bound
+
+3.4 Tightness of the Bound
+
+4 Layer 1: Probabilistic Prefix Deduplication
+
+4.1 The Exact Prefix Sharing Baseline
+
+4.2 The PLT Trie Metric as a Deduplication Criterion
+
+4.3 Storage Under Probabilistic Prefix Deduplication
+
+5 Layer 2: Predictive Delta Coding
+
+5.1 The Prediction
+
+5.2 The Residual and Its Entropy
+
+5.3 Adaptive Quantization of Residuals
+
+6 Composition and the Full Stack
+
+6.1 Orthogonality of the Two Layers
+
+6.2 Composition with Per-Vector Quantization
+
+6.3 Asymptotic Behavior with Context Length
+
+7 Practical Implementation
+
+7.1 Efficient Prediction Computation
+
+7.2 Integration with the Inference Loop
+
+7.3 Trie-Based Prefix Index
+
+8 Related Work
+
+9 Discussion
+
+9.1 The Two Shannon Limits
+
+9.2 Implications for the “Memory Wall”
+
+9.3 Relation to the Jevons Paradox
+
+9.4 Rate-Distortion Analysis of KV Compression
+
+9.5 Connection to Speculative Decoding
+
+9.6 Limitations and Open Problems
+
+9.7 Conjectures and Open Problems
+
+9.8 Conclusion
+
+References
+
+1 Introduction
+
+Every time a transformer language model processes a token, it produces a pair of
+vectors—a key and a value—that are stored in the KV cache and
+reused in all subsequent attention computations. This cache is the model’s
+working memory: it contains the compressed representation of everything the model
+has processed in the current context. It is also one of the primary bottlenecks
+in large-scale inference.
+
+For a model with layers, attention heads, head dimension , and context
+length , the KV cache occupies floating-point values. At typical
+scales (, , , ), a single context in
+a 70B-parameter model requires approximately 80 GB of cache memory in fp16—more
+than the model weights themselves.
+
+A rich literature has developed to compress the KV cache. Quantization methods
+represent each cache entry in fewer bits [8, 4].
+Eviction methods discard entries unlikely to affect future attention
+scores [14, 7]. Prefix sharing methods avoid
+redundant computation when multiple sessions share a common
+prefix [10, 5]. TurboQuant [13] recently
+unified and extended the quantization line of work, achieving near-optimal
+per-vector compression via PolarQuant rotation followed by QJL residual
+correction, and proved a formal lower bound showing that no per-vector method
+can do significantly better.
+
+The gap TurboQuant does not close.
+
+TurboQuant’s lower bound is tight—for the problem it solves. That problem is:
+given an isolated KV vector drawn from the post-rotation distribution,
+what is the minimum number of bits needed to represent it? The paper’s answer
+is approximately 3 bits per component, and TurboQuant achieves it.
+
+But the KV cache is not a collection of isolated vectors. It is a
+sequence. Each vector was produced by processing a token from a specific
+position in a specific context, and both the token and its position are samples
+from a structured probability distribution—the distribution the model was
+trained to model. The information-theoretic content of the -th KV vector,
+given all prior vectors, is not its raw entropy as an isolated sample. It is its
+conditional entropy, conditioned on the model’s state after processing
+tokens through .
+
+This conditional entropy can be far smaller. For a good language model operating
+on coherent text, the next token is highly predictable—and therefore the next
+KV vector is highly predictable. The residual is small. Its entropy is bounded
+by the model’s per-token surprisal, which at typical perplexities of 10–20 is
+3.3–4.3 bits per entire token position, not per component.
+
+The gap between TurboQuant’s floor and this sequential floor is not a rounding
+error. It is the full redundancy of language—the 10–15 bits per token of
+predictable structure that Shannon identified in 1951 [11] and that
+every good language model encodes.
+
+This paper.
+
+We make this gap precise and propose sequential KV compression, a
+two-layer architecture that closes it. Our contributions are:
+
+1.
+
+The sequential entropy bound (Theorem 1):
+a formal proof that the conditional entropy of KV vectors, given all prior
+cache entries, is bounded above by the model’s per-token surprisal.
+
+2.
+
+Probabilistic prefix deduplication
+(Section 4):
+using the PLT trie metric [9], we identify semantically
+equivalent shared prefixes across sessions and store only the delta from
+the shared centroid, eliminating inter-session redundancy beyond what
+exact prefix matching achieves.
+
+3.
+
+Predictive delta coding
+(Section 5):
+within a single session, we store only the residual of each KV vector
+from the model’s own prediction, with the residual entropy bounded by the
+token-level surprisal.
+
+4.
+
+Composability (Section 6):
+both layers are orthogonal to per-vector quantization methods and can be
+stacked beneath TurboQuant or any other quantizer.
+
+5.
+
+Asymptotic behavior (Corollary 5):
+unlike per-vector methods whose compression ratio is fixed by head
+dimension, sequential compression improves with context length,
+because a model that has processed more tokens has a more precise
+predictive distribution for what comes next.
+
+Why this is possible now.
+
+The sequential structure of the KV cache is not new. What is new is a formal
+framework for exploiting it: the PLT trie metric [9] gives a
+mathematically precise definition of “distance between token sequences in
+probability space,” and the prior-guided caching theorem in that paper provides
+the theoretical foundation for using a model’s own probability estimates rather
+than empirical frequencies to identify shared structure. The present paper applies
+that framework to the specific problem of KV cache compression.
+
+Organization.
+
+Section 2 reviews the KV cache, per-vector quantization, and
+the PLT framework. Section 3 establishes the sequential
+entropy bound. Section 4 introduces probabilistic prefix
+deduplication. Section 5 introduces predictive delta coding.
+Section 6 analyzes how the layers compose.
+Section 7 discusses practical implementation.
+Section 8 situates the work relative to the literature.
+Section 9 discusses implications and open problems.
+
+2 Background
+
+2.1 The KV Cache in Transformer Inference
+
+A transformer language model with layers processes a token sequence
+by computing, at each layer and
+position , a key vector and a value
+vector . These are computed from the
+input embedding and prior layer activations via learned projection matrices:
+
+The KV cache stores all
+pairs for every layer and every processed position
+, so that subsequent tokens can attend to all prior
+positions without recomputing them. In autoregressive generation, extending the
+sequence by one token requires one forward pass plus attention operations
+over the cache; without caching it would require operations.
+
+The total cache size is values, where is the number of attention
+heads and is the per-head dimension. In fp16 (2 bytes per value), a
+128K-token context on a 70B model requires approximately 80 GB.
+
+2.2 Per-Vector Quantization: The State of the Art
+
+The dominant approach to KV cache compression is quantization: represent each
+floating-point vector component in fewer bits. The key challenge is that KV
+vectors have outlier components—individual dimensions with much larger magnitude
+than the others—that cause severe quantization error if treated uniformly.
+
+TurboQuant [13] addresses this via two operations:
+
+PolarQuant. Apply a learned rotation matrix
+to each KV vector so that the rotated components have a more uniform, predictable
+distribution. Because the rotation is applied to all vectors uniformly, it can
+be precomputed once with no per-vector overhead. This eliminates the 1–2 bits
+of overhead per component that prior outlier-aware methods spent on metadata.
+
+QJL (Quantized Johnson-Lindenstrauss). Quantize the rotated vector to
+bits per component using a precomputed quantizer. Use a single additional
+sign bit to correct the expected bias introduced by quantization, ensuring that
+attention scores computed from compressed vectors are statistically unbiased.
+
+The combined scheme achieves a compression ratio of (e.g.,
+at ) with negligible accuracy loss. The paper proves a lower bound showing
+that, for vectors treated as independent samples from the post-rotation distribution,
+no quantization scheme can achieve a higher compression ratio without accuracy loss.
+This bound is tight: TurboQuant is near-optimal for per-vector quantization.
+
+2.3 Probabilistic Language Tries
+
+We briefly recall the PLT framework [9], which provides the formal
+machinery for our sequential approach.
+
+Definition 1 (Probabilistic Language Trie [9]).
+
+Let be a finite vocabulary and a generative model over .
+The probabilistic language trie is the directed
+rooted tree whose nodes are prefixes and whose outgoing edges from
+node are labeled by tokens with weight .
+
+Definition 2 (Trie Metric [9]).
+
+For two sequences , their longest common prefix in the
+trie is —the maximal prefix shared by both sequences. The
+trie metric is:
+
+Sequences with a long, high-probability shared prefix are close in this metric;
+their KV traces share substantial structure.
+
+The trie metric has a direct compression interpretation:
+is the number of bits needed to locate the divergence point of and
+within the probability distribution. Sequences with small trie distance are
+redundant relative to each other: one can be described as a short delta from the
+other.
+
+Remark 1 (Ultrametric structure).
+
+satisfies the ultrametric inequality
+, which is stronger than the
+standard triangle inequality. Note that
+is not generally zero (it equals zero only when , a
+degenerate case). Thus is technically a pseudoultrametric on ;
+see [9] for the full metric space analysis.
+
+3 The Sequential Entropy Bound
+
+3.1 Setup and Notation
+
+Fix a transformer model with layers, heads, and head
+dimension . For a token sequence , let
+and denote the key and
+value vectors at layer and position . Denote the full KV state at
+position as:
+
+The entire cache after tokens is .
+
+For a random token sequence drawn from the model’s own distribution
+, both the tokens and the KV vectors are random
+We write for Shannon entropy and for
+conditional entropy; since KV vectors are deterministic functions of
+the discrete token sequence, all entropies here are Shannon entropy.
+
+3.2 The Determinism Lemma
+
+The key structural observation is that KV vectors are deterministic functions
+of the token sequence. There is no randomness in a transformer’s forward pass
+given fixed weights and fixed inputs.
+
+Lemma 1 (KV determinism).
+
+For a fixed model with deterministic forward pass,
+is a deterministic function of the token prefix :
+
+for some deterministic function .
+
+Proof.
+
+By definition of the transformer forward pass. Given a fixed sequence of input
+tokens , the embedding layer, all attention computations, and
+all projection matrices are deterministic (assuming no dropout or stochastic
+elements at inference time, which is standard). Therefore
+and are deterministic functions of
+.
+∎
+
+Remark 2.
+
+Lemma 1 implies that all randomness in the KV cache traces
+back to randomness in the token sequence. The KV cache contains no additional
+information beyond what is in the tokens—it is a particular learned encoding
+of the token prefix. This is the key fact that makes sequential compression
+possible: we can exploit the token-level probability structure to bound the
+entropy of the KV vectors.
+
+3.3 The Main Bound
+
+Theorem 1 (Sequential entropy bound).
+
+Let be a random token sequence drawn from
+. For any position (the bound holds trivially at since
+by Lemma 1 and data processing):
+
+The conditional entropy of the -th KV vector, given all prior cache entries,
+is bounded above by the model’s per-token surprisal at position .
+
+Proof.
+
+The proof proceeds in two steps: first establishing that , then deriving the bound.
+
+Step 1: Injectivity and sigma-algebra equivalence.
+
+We establish that is a measurable function of for
+each , by showing that the map is
+injective.
+
+Fix any context and suppose . At layer ,
+the key vector is . Since the
+embedding matrix has full column rank
+in any trained transformer (distinct tokens receive distinct embeddings; the
+set of weight matrices for which any two token embeddings coincide has measure
+zero in parameter space), we have , and since
+satisfies the generic condition that no pairwise embedding difference lies in (this holds with probability 1 over random weight matrices since the null space has dimension and there are finitely many token pairs), it follows that
+. In particular,
+.
+
+Since includes the layer-1 component
+as a subvector, the full vector distinguishes from .
+Thus is injective for each .
+(No assumption about higher-layer projections is needed: injectivity is
+witnessed by the layer-1 keys alone.)
+
+By Lemma 1, is measurable w.r.t.
+for each . By the injectivity just established, is measurable w.r.t. . Applying this inductively:
+is determined by (hence by );
+is determined by , hence by ;
+and so on.
+Therefore are jointly measurable w.r.t. , giving:
+
+(1)
+
+Step 2: The bound.
+
+Since is a deterministic function
+of , the data-processing inequality gives:
+
+Applying (1) to both sides (conditioning on
+is equivalent to conditioning on ):
+
+which is the stated inequality and equality simultaneously.
+∎
+
+Corollary 1 (Per-token surprisal bound).
+
+Let denote the perplexity of model on a
+text distribution . The average conditional KV entropy satisfies:
+
+At typical perplexities of 10–20 for fluent English:
+
+Proof.
+
+By definition of perplexity, .
+Applying Theorem 1 position-wise and averaging yields the result.
+∎
+
+Remark 3 (Comparison with TurboQuant).
+
+TurboQuant stores approximately bits per component of each KV
+vector. For a 70B-scale model with layers, heads, and per-head
+dimension , the total bits per token position (all layers and
+heads, both keys and values) under TurboQuant is:
+
+Corollary 1 bounds
+for the full KV state (all layers, all heads) at bits
+per token position. The theoretical ratio is:
+
+A practical sequential coder at above the entropy floor
+achieves – bits/token, giving a practical ratio of
+– over
+TurboQuant. Even at the entropy floor—a deliberately pessimistic
+worst-case, two orders of magnitude above the – overhead typical
+of practical arithmetic coders [12, 2]—the ratio is
+over TurboQuant.
+This is the theoretical gap between the two Shannon limits; practical
+implementations will be less efficient (Section 7).
+
+Corollary 2 (Compression ratio bounds).
+
+For a 70B-scale model (, , per head) at perplexity
+, so bits/token:
+
+(a)
+
+Theoretical vs. fp16:
+bits/token;
+ratio at .
+
+(b)
+
+Theoretical vs. TurboQuant ():
+bits/token;
+ratio at .
+
+(c)
+
+Conservative practical vs. TurboQuant:
+At above the entropy floor:
+.
+
+Items (a)–(b) are theoretical Shannon limits; item (c) uses
+overhead—a deliberately pessimistic worst-case bound, two orders of magnitude
+above the – overhead typical of practical arithmetic
+coders [12, 2]. The abstract cites item (c) as a
+worst-case lower bound on the practical ratio.
+
+Proof.
+
+Items (a) and (b) follow by substituting the stated model parameters into the
+formula and dividing by . Item (c) applies a
+overhead factor to the entropy floor bits/token,
+giving bits/token, then divides by this value.
+∎
+
+3.4 Tightness of the Bound
+
+The bound in Theorem 1 is not always tight. It is tight when
+is an injective function of alone given the prior context,
+and when all entropy in traces back to the single-token choice.
+In practice, the bound can be loose for two reasons:
+
+1.
+
+Positional and structural information. KV vectors encode not
+only the current token’s identity but also its position (via positional
+encoding) and layer-specific features. These components may carry
+additional entropy not captured by the token-level bound. However,
+positional encodings are deterministic functions of position and
+therefore carry zero entropy conditioned on knowing . Layer-specific
+features are also deterministic given the full token sequence.
+
+2.
+
+High-entropy token positions. At positions where the model is
+genuinely uncertain (low probability assigned to the actual next token),
+the KV residual will be larger. Semantically surprising tokens—a
+new entity name, an unexpected topic shift, an unusual word choice—
+produce high-surprisal positions where the bound is weakest.
+
+Conversely, the bound is nearly tight for long, coherent, predictable
+sequences—exactly the regime where long-context inference is most valuable.
+Legal documents, technical manuals, extended narratives, and code all exhibit
+low perplexity under a well-matched model, and therefore yield highly
+compressible KV caches under sequential coding.
+
+4 Layer 1: Probabilistic Prefix Deduplication
+
+4.1 The Exact Prefix Sharing Baseline
+
+Existing systems such as vLLM [5] and SGLang implement
+exact prefix sharing: when two sessions begin with the identical token
+sequence, the KV cache for their shared prefix is computed once and referenced
+by pointer. This is valuable for fixed system prompts, few-shot examples, and
+common preambles.
+
+Exact prefix sharing has a fundamental limitation: it operates at the
+lexical level. Two sessions beginning with “You are a helpful assistant.”
+and “You are an AI assistant.” share no bytes and therefore share no cache
+under exact prefix sharing. Yet their KV caches, layer by layer, will be very
+similar: both prompts steer the model toward a similar distribution over
+subsequent tokens. The difference in their KV vectors is small relative to
+the total vector magnitude.
+
+4.2 The PLT Trie Metric as a Deduplication Criterion
+
+The PLT trie metric (Definition 2) provides the right
+notion of distance for identifying deduplications that exact prefix sharing misses.
+Two prefixes and with small trie distance
+share a long, high-probability common prefix. At all positions within that shared
+prefix, their KV vectors are identical by Lemma 1
+(Proposition 1(a)). At the divergence point, the KV
+difference is bounded by the embedding spread (Proposition 1(b)).
+The trie metric thus directly controls KV cache similarity: small trie distance
+implies small KV delta, making probabilistic prefix deduplication well-founded.
+
+We formalize this as follows.
+
+Definition 3 (Semantic prefix cluster).
+
+Let be a distance threshold and
+a set of session prefixes. A semantic prefix cluster at threshold
+is a maximal subset such that for all
+:
+
+The centroid of is the prefix ,
+i.e., the most probable prefix in the cluster.
+
+Proposition 1 (KV similarity within a cluster).
+
+Let and be two session prefixes that first diverge at position
+(i.e., for and ). For a
+transformer with (the maximum per-layer Lipschitz constant; explicit formulas in terms of weight matrix operator norms appear in a companion paper on certified inference caching, forthcoming on arXiv):
+
+(a)
+
+For all positions and all layers :
+.
+
+(b)
+
+At the divergence position , for any layer :
+
+where is the token embedding map and denotes
+raised to the -th power (not a layer index).
+
+Proof.
+
+Part (a). For positions , the token inputs are identical
+( for all ), so by Lemma 1 (KV
+determinism) the KV vectors agree exactly at every layer.
+
+Part (b). At position , the embedding layer introduces a difference:
+.
+Positions were identical, so their KV vectors—which contribute to
+position ’s attention output—are identical, and introduce no additional
+error.
+
+Define as the Lipschitz constant of the composed per-layer map
+at position ,
+including the attention, MLP, layer-norm, and key/value projections
+(explicit formulas in terms of weight matrix
+operator norms are given in a companion paper on certified inference caching, forthcoming on arXiv). Applying the Lipschitz bound across layers through :
+
+Since the KV projection is
+itself part of the per-layer map with norm absorbed into :
+
+∎
+
+Remark 4.
+
+Proposition 1 shows that exact prefix sharing is a special
+case: when and are identical up to position , the KV delta is exactly
+zero. Probabilistic prefix deduplication generalizes this to the case where
+and diverge at some point but remain semantically close. In this case the
+delta is nonzero but small—and can itself be quantized and compressed.
+
+4.3 Storage Under Probabilistic Prefix Deduplication
+
+Definition 4 (Cluster-relative storage).
+
+Given a semantic prefix cluster with centroid , store:
+
+1.
+
+The full KV cache for the centroid.
+
+2.
+
+For each , the delta cache
+
+(zero at all positions before the divergence of and ).
+
+The key observation is that is sparse: it is exactly zero at
+all positions before the divergence of and , and typically small after
+the divergence (by Proposition 1). The storage cost of
+therefore scales with the length of the tail of
+after divergence from , not the full length of .
+
+Corollary 3 (Storage reduction from prefix deduplication).
+
+Suppose sessions are drawn i.i.d. from and a cluster at threshold
+covers a fraction of all sessions, with average tail length
+after the shared prefix. The storage cost per session, relative to storing full
+KV caches independently, is:
+
+When (sessions diverge early), the saving is approximately ,
+i.e., the number of full caches stored decreases by a factor of .
+
+Proof.
+
+Measure storage in units of one full -position KV cache.
+Of all sessions, fraction lie outside the cluster and each requires
+1 full unit. Fraction lie inside the cluster: their shared prefix
+positions) is stored once in the centroid and amortises
+across all cluster members, so each member stores only its -position
+tail at cost . The average per-session storage is:
+
+which is the stated bound. As (sessions diverge early
+from the centroid) the saving approaches , i.e., a factor- reduction
+in the number of full caches stored.
+∎
+
+In practice, for chat-model deployments with a fixed system prompt and few-shot
+examples, can be close to 1 (nearly all sessions share the same prefix)
+and can be small (the session-specific content is a small fraction
+of the context). Even for sessions with different system prompts, probabilistic
+clustering under the PLT metric groups semantically similar preambles and captures
+deduplication that exact matching misses entirely.
+
+5 Layer 2: Predictive Delta Coding
+
+5.1 The Prediction
+
+At each position , before writing to cache, the model has
+already computed its probability distribution over the -th token:
+
+where is the final-layer
+hidden state at position and
+is the language model head (unembedding matrix).
+This distribution induces a predicted KV vector for position : the expected
+KV vector under the model’s distribution over possible next tokens.
+
+Definition 5 (Predicted KV vector).
+
+The predicted KV vector at position , given context , is:
+
+In practice, computing exactly requires a forward pass
+for every vocabulary token, which is prohibitively expensive. Section 7
+discusses efficient approximations using the top- tokens under the model’s
+distribution.
+
+5.2 The Residual and Its Entropy
+
+Definition 6 (KV residual).
+
+The KV residual at position is:
+
+Predictive delta coding stores (compressed) rather than directly.
+
+Theorem 2 (Residual entropy bound).
+
+The conditional entropy of the KV residual satisfies:
+
+Moreover, at positions where the model assigns high probability to the actual
+next token, the residual concentrates near zero:
+
+which is small when is concentrated.
+
+Proof.
+
+The first inequality follows from the fact that
+and is a deterministic function of .
+Therefore ,
+since subtracting a constant does not change entropy. The second inequality is
+Theorem 1.
+
+For the variance bound: by Definition 5,
+, so
+.
+Therefore .
+∎
+
+Corollary 4 (Coherent text compression).
+
+Let denote the conditional entropy of the next token
+given the context (not the realized surprisal ).
+The expected residual magnitude satisfies:
+
+where is the Lipschitz constant of
+with respect to the input embedding , and
+.
+For low-entropy positions (, i.e., the model is near-certain about the next token),
+the expected residual approaches zero;
+for high-entropy positions it can be as large as .
+
+Proof.
+
+By Theorem 2, .
+By Jensen’s inequality applied to the square root:
+.
+
+The variance of over
+satisfies, by the Lipschitz property of in the embedding :
+
+For the embedding variance, we derive a bound that decays with conditional entropy
+using two standard inequalities.
+
+Step A (Popoviciu). For any random variable with
+almost surely (for some center and radius ),
+.
+Applied to with center and radius
+(half the diameter): .
+
+Step B (variance–entropy coupling). We sharpen Step A to a
+bound that vanishes as . Since
+(from Jensen applied to concave : ), we have
+,
+where the last step uses .
+By the König–Huygens identity,
+,
+where the last step uses for all .
+Since , we have
+,
+giving .
+Combining with the Popoviciu bound from Step A via the minimum:
+
+Combining. Substituting into the Lipschitz bound and taking the square root:
+
+For small (near-certain next token): ,
+giving ,
+which vanishes as and is .
+∎
+
+5.3 Adaptive Quantization of Residuals
+
+Because residual magnitude varies by position—small at predictable positions,
+large at surprising ones—a fixed bit-depth quantizer is suboptimal. The
+natural approach is adaptive quantization: use fewer bits for small
+residuals and more bits for large ones, proportional to the per-token surprisal.
+
+Definition 7 (Surprisal-adaptive quantizer).
+
+At position with surprisal , allocate bits per residual component,
+where:
+
+with a target average bit depth and the average surprisal.
+
+This adaptive scheme achieves the average entropy bound of Corollary 1
+while concentrating bits where they are needed, improving the worst-case accuracy
+at high-surprisal positions relative to a uniform low-bit quantizer.
+
+6 Composition and the Full Stack
+
+6.1 Orthogonality of the Two Layers
+
+Proposition 2 (Layer orthogonality).
+
+Probabilistic prefix deduplication (Section 4) and
+predictive delta coding (Section 5) are information-theoretically
+orthogonal: they exploit statistically independent sources of redundancy.
+
+Proof.
+
+We show that the total description length decomposes additively, with no
+bits counted twice.
+
+Let be a session drawn from and write its KV cache as
+.
+Let be the cluster centroid for (Definition 3), and
+let be the token position at which and first diverge, so that
+for and .
+
+Description of in the full stack.
+By Definition 4, the encoder writes:
+
+•
+
+Prefix (positions ): zero bits, since
+exactly (Proposition 1(a))
+and the centroid is stored separately.
+
+•
+
+Tail (positions ): for each position
+in the tail, the encoder applies predictive delta coding
+(Definition 6) and stores , using a code of
+length at most bits by standard
+source coding [2].
+
+Rate decomposition. The total rate for session is:
+
+These two terms address disjoint index sets ( and
+respectively) within the description of ’s cache. No position is
+compressed by both layers simultaneously: Layer 1 eliminates positions
+entirely by pointer to the centroid; Layer 2 applies only to
+positions . Therefore the bits saved by each layer are
+non-overlapping, and the total saving is their sum.
+
+Independence of gain statistics. The gain of Layer 1 (the fraction
+of full caches replaced by shared-prefix pointers, Corollary 3)
+depends on the overlap structure of sessions under —a
+property of the joint distribution over session pairs. The gain of
+Layer 2 at each tail position (the residual entropy )
+depends on the per-token surprisal within a single session—a
+marginal property of the language model’s token-level distribution. These
+statistics are functions of different aspects of and are
+not constrained to be equal or proportional, so improvements to one layer do
+not mechanically alter the gain of the other. This is the sense in which the
+two layers are “information-theoretically orthogonal”: each exploits a
+distinct, non-overlapping portion of the total redundancy in the KV cache.
+∎
+
+6.2 Composition with Per-Vector Quantization
+
+After applying the two sequential layers, the residuals are vectors that
+still need to be stored in finite-precision format. This is where per-vector
+quantization methods, including TurboQuant, apply.
+
+Proposition 3 (Three-layer composition).
+
+The full compression stack proceeds as follows:
+
+1.
+
+Prefix deduplication: identify the shared prefix with the
+cluster centroid; store only the tail KV delta.
+
+2.
+
+Predictive delta coding: for each token in the tail, store
+the residual .
+
+3.
+
+Per-vector quantization (e.g., TurboQuant): represent each
+in reduced precision.
+
+Proof.
+
+Steps 1 and 2 are exactly Definitions 4
+and 6. Step 3 applies any per-vector quantizer to .
+
+Correctness: is recovered as ,
+where is recomputed deterministically from prior context.
+The quantization error on the recovered equals the quantization
+error on .
+
+Rate improvement: By Corollary 4,
+.
+For low-surprisal tokens ( small), ,
+so .
+Because is small in magnitude, the dynamic range needed to represent it
+is small, and a fixed-precision quantizer with absolute error
+uses effectively bits—which
+decreases as . Therefore at low-surprisal positions the residual
+is small enough that coarse quantization suffices, making the three-layer stack
+strictly more bit-efficient than quantizing directly (whose
+magnitude does not vanish at low surprisal).
+∎
+
+6.3 Asymptotic Behavior with Context Length
+
+Corollary 5 (Compression improves with context length).
+
+Let be the average conditional entropy
+(where ) over a context of length .
+By Corollary 1:
+
+Monotone entropy condition: call a context coherent if its
+conditional entropy sequence is non-increasing: for
+all (later tokens are more predictable given more context). Under this
+condition, since
+. Thus the sequential compression bound tightens
+monotonically with context length.
+
+Empirical scope. Strict pointwise monotonicity does not hold universally:
+surprisal spikes at topic shifts, new entity names, and dialogue turn boundaries.
+The condition holds in expectation for long, topically stable documents
+(legal text, technical manuals, extended code), where it is the most practically
+relevant regime for long-context inference. For sessions with high surprisal
+variance, the asymptotic improvement applies to the running average
+rather than individual positions (and using conditional entropy rather than the realized surprisal , which is equal only in expectation).
+
+By contrast, per-vector methods (TurboQuant, KIVI, KVQuant) apply a fixed
+bit-depth per component regardless of : their memory cost is
+bits, growing at constant rate bits per token. Under
+the monotone surprisal condition, sequential compression’s marginal rate per
+token is , which is non-increasing when the coherence condition holds in expectation. Long-context inference
+becomes cheaper per marginal token under sequential compression.
+
+Proof.
+
+The bound
+is Corollary 1. The monotone decrease of under the
+stated condition follows because implies
+. The comparison to per-vector methods is immediate from
+(constant rate per token).
+∎
+
+This is a qualitative reversal of the current situation. Under TurboQuant or any
+per-vector method, memory grows linearly with context length at a fixed rate.
+Under sequential compression, the marginal cost per token decreases as
+context length grows, because the model’s growing context makes subsequent tokens
+more predictable. Long-context inference becomes cheaper, not more expensive,
+per marginal token.
+
+7 Practical Implementation
+
+We now discuss how to implement sequential KV compression efficiently, addressing
+the main engineering challenges.
+
+7.1 Efficient Prediction Computation
+
+The predicted KV vector (Definition 5) requires summing
+over all vocabulary tokens, each requiring a forward pass.
+This is prohibitively expensive. We propose two approximations:
+
+Top- approximation. Use only the top- tokens by probability:
+
+At low perplexity, 95%+ of the probability mass is concentrated in the top 5–20
+tokens, so captures the prediction accurately while requiring only 20
+forward pass evaluations instead of 50,000.
+
+Linear embedding approximation. For each layer , approximate the
+KV function as linear in the input embedding:
+
+where and are computed once per position from
+the model’s internal state. Under this approximation,
+,
+where is the expected embedding—
+computable as a single weighted sum over the vocabulary using the softmax output.
+
+7.2 Integration with the Inference Loop
+
+Unlike TurboQuant, which operates as a post-hoc quantizer with no changes to the
+model’s forward pass, predictive delta coding requires access to the softmax
+distribution at each position. This distribution is already computed during
+inference (it is the output of the final language model head before sampling).
+
+The integration points are:
+
+1.
+
+Before writing KVi to cache: compute
+using the top- approximation; subtract to obtain ; quantize and
+write .
+
+2.
+
+Before reading KVi from cache: dequantize ; add back
+(recomputed identically, since it depends only
+on prior context which is available); return .
+
+The additional compute cost per token is for the top-
+prediction, where . This is negligible relative to the
+attention computation.
+
+7.3 Trie-Based Prefix Index
+
+Probabilistic prefix deduplication requires a data structure that supports:
+
+1.
+
+Insert: add a new session prefix and its KV cache.
+
+2.
+
+Best-match lookup: given a new session prefix , find
+the stored prefix maximizing
+(equivalently, maximizing the probability of the longest common prefix).
+
+3.
+
+Evict: remove a stored prefix and its KV cache.
+
+The PLT trie naturally supports all three operations. The trie is maintained
+as a sparse structure over the high-probability prefix tree, pruned at nodes with
+probability below a threshold . Nearest-neighbor lookup is a
+trie traversal: follow the path of the query sequence until it diverges from
+all stored paths, and return the deepest stored ancestor. Insert adds a new
+path; evict removes a path and potentially prunes ancestors with no other children.
+
+All three operations run in time in the length of the prefix, with
+space for stored prefixes.
+
+8 Related Work
+
+KV cache quantization.
+KIVI [8] introduced 2-bit quantization with per-channel scaling.
+KVQuant [4] handled outliers via non-uniform quantization.
+TurboQuant [13] unified these approaches via PolarQuant rotation and
+proved a per-vector Shannon limit, which our work extends to the sequential setting.
+
+KV cache eviction.
+H2O [14] identified that attention scores concentrate on a small
+“heavy hitter” subset of tokens and evicts the rest. SnapKV [7]
+uses prefill-time attention patterns to predict which tokens will be important
+for generation. Eviction is orthogonal to compression: it reduces cache size
+by discarding tokens; compression reduces cache bit depth while retaining
+all tokens. Both approaches compose naturally with sequential compression.
+
+Prefix sharing.
+vLLM [5] introduced paged attention with exact prefix sharing.
+SGLang extended this with a radix tree for multi-prompt prefix reuse.
+Our probabilistic prefix deduplication generalizes these to semantic similarity
+under the PLT metric [9].
+
+Probabilistic Language Tries.
+The PLT framework [9] introduced the trie metric, proved the
+prior-guided caching theorem, and identified prefix KV-caching as a special
+case of PLT-based artifact memoization. The present paper applies the trie
+metric specifically to cross-session KV deduplication and proves the sequential
+entropy bound connecting token-level surprisal to KV vector entropy.
+
+Language modeling and compression.
+Delétang et al. [3] demonstrated that LLMs implicitly perform
+arithmetic coding and achieve state-of-the-art compression on text corpora.
+Shannon [11] estimated the true entropy of English at 1.3 bits
+per character via human prediction experiments. Our work draws on both results:
+the model’s near-optimal compression of its training distribution implies
+near-zero conditional entropy for KV vectors at low-surprisal positions.
+
+9 Discussion
+
+9.1 The Two Shannon Limits
+
+It is worth being precise about what we have and have not shown. TurboQuant
+proves a lower bound on the per-vector compression rate and shows it is nearly
+achieved. We prove that the per-sequence Shannon limit is lower, bounded
+by the per-token surprisal. These are genuinely different limits, and TurboQuant’s
+proof does not address ours.
+
+The per-sequence limit is lower because it exploits correlations across
+token positions—specifically, the fact that the KV vector at position is
+largely predictable from the KV vectors at positions through . Per-vector
+methods, by definition, cannot exploit these correlations.
+
+9.2 Implications for the “Memory Wall”
+
+The KV cache memory wall—the observation that cache size grows linearly with
+context length and at long contexts dominates model weight memory—is often
+framed as a hardware problem awaiting the next generation of memory technology.
+Sequential compression suggests a complementary software path: the wall is lower
+than it appears, because the marginal cost of each additional token in a coherent
+context is bounded by that token’s surprisal, which decreases with context length.
+
+This does not eliminate the need for better hardware. But it suggests that the
+software path to longer effective context windows is not exhausted by per-vector
+quantization.
+
+9.3 Relation to the Jevons Paradox
+
+Improvements in inference efficiency historically increase total demand rather
+than decreasing it: cheaper inference enables more users, longer contexts, and
+more ambitious applications. Sequential compression, if realized, would
+continue this pattern. The reduction in marginal KV cost at long contexts
+would make currently-impractical applications—real-time million-token document
+analysis, persistent agent memory, continual learning from interaction—
+economically viable, driving total memory demand upward even as per-token cost
+falls.
+
+9.4 Rate-Distortion Analysis of KV Compression
+
+The sequential entropy bound (Theorem 1) is a lossless result:
+it characterizes the minimum bits needed for exact reconstruction of KV
+vectors. Practical systems accept bounded reconstruction error; the relevant
+quantity is the rate-distortion function for position at
+distortion level .
+
+Theorem 3 (KV Rate-Distortion Bound).
+
+For position with conditional entropy and residual variance
+, the
+rate-distortion function (minimum rate to reconstruct with
+mean squared error per component) satisfies:
+
+where and the inequality uses the Gaussian upper bound
+from the KLT (Karhunen–Loève transform). Since
+
+(Corollary 4):
+
+In particular, for a target distortion satisfying
+
+(distortion exceeds the residual variance), the rate is zero:
+no bits are needed at low-surprisal positions.
+
+Proof.
+
+conditioned on is a deterministic function of the
+discrete random variable . Since has possible values, the
+distribution of has at most support points—a discrete
+distribution over a finite set of vectors. The rate-distortion function for
+this source is bounded above by the Gaussian rate-distortion function with
+the same second moment (Shannon’s source coding theorem: Gaussian maximizes R-D at fixed variance). After a KLT
+rotation diagonalizing with eigenvalues :
+
+(water-filling, where satisfies ).
+This is at most the isotropic upper bound (all ),
+which gives .
+(The actual water-filling rate can only be smaller when eigenvalues are non-uniform.)
+Substituting the variance bound from Corollary 4 completes
+the proof.
+∎
+
+Corollary 6 (Practical Bit Allocation).
+
+For a target distortion per KV component, the optimal bit allocation
+across positions assigns bits per component
+at position . The total bits per token is:
+
+At the TurboQuant operating point ( bits per component,
+uniform quantizer step , giving distortion
+):
+positions with need zero bits
+(residual variance is below the quantization noise floor).
+The waterfilling allocation assigns proportionally more bits to high-surprisal
+positions and zero bits to low-surprisal ones, strictly dominating the
+uniform--bit allocation of per-vector methods.
+
+9.5 Connection to Speculative Decoding
+
+Speculative decoding [6] uses a small draft model
+to generate candidate tokens, then verifies
+them in a single forward pass of the large model . The acceptance
+rate of token under speculative decoding is
+,
+averaging to where TV
+is the total variation distance.
+
+Theorem 4 (Speculative Decoding–KV Compression Duality).
+
+Let be the top- approximation to the predicted
+KV vector (Definition 5). Define the draft model
+the renormalized top- distribution of .
+Then:
+
+(a)
+
+The speculative decoding acceptance rate of equals
+.
+
+(b)
+
+The conditional residual variance for tokens in the top- set satisfies:
+
+This equals zero at (single token, deterministic). For
+the variance is not monotone in in general, but is bounded above
+by for all .
+
+(c)
+
+Both speculative decoding and KV residual prediction use the same
+top- distribution of . The draft forward pass
+therefore serves both objectives simultaneously at no extra cost:
+computing yields both the speculative token
+candidates and the predicted KV mean .
+As increases, acceptance rate increases; the residual variance
+at covered positions is not guaranteed to be monotone, but is bounded
+by part (b).
+
+Proof.
+
+(a) With for
+and ,
+each ,
+so acceptance rate .
+
+(b) Apply Corollary 4 to the conditional distribution
+. At : point mass, zero variance.
+For general : the variance is bounded by (Popoviciu, since embeddings have diameter ).
+
+(c) Both applications share the same top- probability computation from
+the model’s output distribution. No additional inference is needed to obtain
+the KV predictor once is computed.
+∎
+
+Remark 5 (Practical Implication).
+
+Theorem 4 shows that a system implementing top-
+speculative decoding can reuse the same draft distribution to compute the
+predictive KV residuals, with zero additional inference overhead. The draft
+forward pass serves double duty: generating speculative tokens and
+computing the predicted KV mean . Systems such
+as Medusa [1] or EAGLE already compute top- token distributions
+as a byproduct of their draft heads; they can be extended to simultaneously
+output KV predictors at negligible additional cost.
+
+9.6 Limitations and Open Problems
+
+The main open question is the tightness of the sequential entropy bound in
+practice. The theoretical bound (Corollary 1) is tight
+when KV vectors are injective functions of the token sequence, which requires
+the weight matrices to be non-degenerate. Empirical measurement of actual
+residual magnitudes and their compression ratios under practical quantizers
+is needed to assess how close to the bound a real implementation can get.
+
+A second open question is the efficient computation of the top- prediction.
+Current transformer inference frameworks do not expose the internal KV computation
+in a way that easily supports top- predictive averaging. Kernel-level
+integration (e.g., via Triton or CUDA) would be needed for production deployment.
+
+A third open question concerns non-autoregressive and non-transformer architectures.
+The bound in Theorem 1 holds for any model satisfying the
+determinism condition of Lemma 1. State-space models (SSMs,
+Mamba) maintain a fixed-size state rather than a KV cache, but the same principle
+applies: the state entropy at each step is bounded by the token-level surprisal.
+
+Future directions include:
+
+•
+
+Empirical benchmarks: measure actual residual magnitudes on
+public models (Llama, Gemma, Mistral) and text distributions, and
+compare achieved compression to the theoretical bound.
+
+•
+
+Kernel implementation: implement predictive delta coding as a
+Triton kernel, building on the open-source TurboQuant implementations.
+
+•
+
+Hierarchical prediction: use not just the model’s next-token
+distribution but also its longer-range predictions (beam search
+distributions, speculative decoding candidates) to improve prediction
+accuracy and reduce residuals further.
+
+•
+
+Lossy sequential compression: extend the rate-distortion
+analysis of PLTs [9] to the KV cache setting, allowing
+bounded distortion in exchange for additional compression beyond the
+lossless sequential limit.
+
+9.7 Conjectures and Open Problems
+
+Conjecture 1 (Tightness of the Sequential Bound for Well-Trained Models).
+
+For a transformer trained to near-zero cross-entropy on a corpus
+with stationary distribution , the sequential entropy bound is tight to within
+a constant factor:
+
+for some universal constant that does not depend on or .
+
+Evidence and partial proof sketch.
+The lower bound direction is the hard part. An upper bound follows from
+Theorem 1. For the lower bound: since is an
+injective function of given (Lemma 1),
+the data-processing inequality gives
+
+(using sigma-algebra equivalence from the proof of Theorem 1).
+The bound is therefore already tight: equality holds throughout.
+
+This is not a conjecture but an observation implicit in the proof, stated here
+to clarify the theoretical status: the sequential entropy bound is exact
+(equality, not inequality). The open question is whether practical quantizers
+can approach the bound, which requires answering: how much entropy do the
+residuals carry at low-surprisal positions under realistic token
+distributions? Equivalently: is
+small when is small for actual trained models?
+
+Conjecture 2 (Cross-Session Prefix Entropy Bound).
+
+For sessions drawn i.i.d. from , the conditional
+entropy of session ’s KV cache given the cluster centroid ’s full
+cache satisfies:
+
+where is the divergence position of and .
+
+Partial proof sketch.
+The first term bounds the “tail” entropy of session after divergence:
+positions are bounded by the sequential entropy bound exactly as in
+Theorem 1. The second term bounds the “divergence cost”:
+knowing provides partial information about which subtree
+is in (via the cluster structure), reducing the entropy of .
+The bound formalizes the Layer 1 gain: prefix deduplication saves bits on the tail
+(first term, bounded by per-token surprisal) and reduces divergence cost (second term,
+bounded by the trie metric ). A formal proof requires
+bounding the conditional mutual information between the centroid’s divergence token
+and the session’s divergence token, which depends on the cluster radius .
+
+Conjecture 3 (Sequential Bound Strictly Dominates All Per-Vector Bounds).
+
+For any per-vector compression scheme (including TurboQuant,
+KIVI, KVQuant, and all future schemes bounded by the per-vector Shannon
+limit), there exists a context length such that for all
+:
+
+where is the total bits used by sequential compression and
+is the total bits used by scheme , both for
+a context of length .
+
+Partial proof.
+for some (the
+per-vector Shannon limit is a hard floor for any per-vector scheme).
+.
+Under the monotone entropy condition (Corollary 5),
+
+as (since is the model’s entropy rate, which is
+strictly less than any fixed per-vector bit budget for a model with perplexity
+). Thus , giving the stated strict dominance for large .
+The threshold .
+The main gap in this argument: the monotone entropy condition holds only for
+coherent text; for mixed-topic sessions with high surprisal variance,
+may not converge below . Bounding for realistic session
+distributions is the key open problem.
+
+9.8 Conclusion
+
+We have shown that the Shannon limit proved by TurboQuant applies to a
+per-vector problem, and that the Shannon limit for the sequential
+KV cache compression problem is strictly lower. The gap is the information-theoretic
+redundancy of language—the predictable structure that a near-optimal language
+model has already learned.
+
+We formalized this through two results: the sequential entropy bound
+(Theorem 1), which connects KV vector entropy to per-token
+surprisal, and the PLT trie metric [9], which enables cross-session
+prefix deduplication in probability space.
+
+The combined architecture—probabilistic prefix deduplication, predictive delta
+coding, and per-vector quantization—is theoretically capable of compression
+ratios far beyond what per-vector methods can achieve, with the compression ratio
+improving rather than degrading as context length grows.
+
+TurboQuant is not the ceiling. It is the ceiling of one approach to one
+subproblem. The sequential structure of language points toward a different ceiling,
+considerably lower, and the path to it runs through the formal language the model
+has already learned.
+
+References
+
+[1]
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao (2024)
+
+Medusa: simple LLM inference acceleration framework with multiple decoding heads.
+
+arXiv preprint arXiv:2401.10774.
+
+Cited by: Remark 5.
+
+[2]
+T. M. Cover and J. A. Thomas (2006)
+
+Elements of information theory.
+
+2nd edition, Wiley-Interscience.
+
+Cited by: 2nd item,
+Corollary 2,
+Remark 3.
+
+[3]
+G. Delétang, A. Ruoss, P. Duquenne, E. Catt, T. Genewein, C. Mattern, J. Grau-Moya, L. K. Li, J. Veness, A. Gretton, et al. (2023)
+
+Language modeling is compression.
+
+arXiv preprint arXiv:2309.10668.
+
+Cited by: §8.
+
+[4]
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami (2024)
+
+KVQuant: towards 10 million context length LLM inference with KV cache quantization.
+
+arXiv preprint arXiv:2401.18079.
+
+Cited by: §1,
+§8.
+
+[5]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+
+Efficient memory management for large language model serving with PagedAttention.
+
+In Proceedings of the ACM SIGOPS Symposium on Operating Systems Principles,
+
+Cited by: §1,
+§4.1,
+§8.
+
+[6]
+Y. Leviathan, M. Kalman, and Y. Matias (2023)
+
+Fast inference from transformers via speculative decoding.
+
+arXiv preprint arXiv:2211.17192.
+
+Cited by: §9.5.
+
+[7]
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen (2024)
+
+SnapKV: LLM knows what you are looking for before generation.
+
+arXiv preprint arXiv:2404.14469.
+
+Cited by: §1,
+§8.
+
+[8]
+Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu (2024)
+
+KIVI: a tuning-free asymmetric 2-bit quantization for KV cache.
+
+arXiv preprint arXiv:2402.02750.
+
+Cited by: §1,
+§8.
+
+[9]
+G. Magarshak (2026)
+
+Probabilistic language tries: a unified framework for compression, decision policies, and execution reuse.
+
+arXiv preprint arXiv:2604.06228.
+
+Note: arXiv:2604.06228 [cs.LG]. Submitted 29 March 2026
+
+Cited by: item 2,
+§1,
+§2.3,
+§8,
+§8,
+4th item,
+§9.8,
+Definition 1,
+Definition 2,
+Remark 1,
+Abstract.
+
+[10]
+R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, J. Heek, K. Xiao, S. Agrawal, and J. Dean (2023)
+
+Efficiently scaling transformer inference.
+
+In Proceedings of Machine Learning and Systems,
+
+Vol. 5.
+
+Cited by: §1.
+
+[11]
+C. E. Shannon (1951)
+
+Prediction and entropy of printed English.
+
+Bell System Technical Journal 30 (1), pp. 50–64.
+
+Cited by: §1,
+§8.
+
+[12]
+I. H. Witten, R. M. Neal, and J. G. Cleary (1987)
+
+Arithmetic coding for data compression.
+
+Communications of the ACM 30 (6), pp. 520–540.
+
+Cited by: Corollary 2,
+Remark 3.
+
+[13]
+A. Zandieh, M. Daliri, M. Hadian, V. Mirrokni, P. Kacham, L. Gottesburen, and R. Jayaram (2026)
+
+TurboQuant: online vector quantization with near-optimal distortion rate.
+
+In International Conference on Learning Representations (ICLR),
+
+Note: arXiv:2504.19874. Google Research, NYU, Google DeepMind, KAIST
+
+Cited by: §1,
+§2.2,
+§8,
+Abstract.
+
+[14]
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, Z. Wang, and B. Chen (2023)
+
+H2O: heavy-hitter oracle for efficient generative inference of large language models.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 36.
+
+Cited by: §1,
+§8.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

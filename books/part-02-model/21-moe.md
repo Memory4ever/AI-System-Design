@@ -403,6 +403,14 @@ selector evidence 不足时，完整 standard MoE 仍是更稳妥的旧方案。
 checkpoint、corpus、task 与 validation contract 下支持“小 expert subset 可以保留更多任务表现”，不证明
 experts 已成为 faithful capability modules，也不证明 latency 会随参数子集同比下降。
 
+### 长尾 Expert 低频不等于无知识
+
+MoE SFT 中用全局 load-balancing loss 或 dense mixing 阻止 router collapse，容易实现并能保持所有 expert 获得梯度；但额外梯度也可能干扰任务相关 routing。反过来，按激活频率直接剪除低频 expert，会把“少被调用”误当成“没有贡献”。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23036:start -->
+一个实验性分支以 bias-driven routing 让任务相关 expert 保持活跃、让部分长尾 expert 稀疏化，同时增加 always-active gated condenser path，为否则可能 gradient-starved 的信息提供持续可训练通道。Router bias、sparse experts 与 condenser 分别拥有 route proposal、条件容量和共享巩固路径；它避免强制所有 expert 均匀，却新增 condenser bottleneck、route bias drift 与额外常驻计算。完整 load balancing 在 workload 多样、expert utilization 是主要瓶颈时仍合理；没有证据证明长尾信息可迁移或 condenser 稳定时，应保留原 experts 并回退现有 SFT。作者实验限于 GPT-OSS/DeepSeek MoE、选定数据与 8×H100，不给出通用 router optimum。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23036:end -->
+
 ### Post-training 后再增加可跳过路径，不等于删除旧 Experts
 
 已经完成 post-training 的 static top-k MoE 若直接减少 top-k，会改变原 router 的概率质量和行为。一个更保守的
@@ -510,6 +518,8 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23036`（Status: Experimental）：exact-v1 支持 bias routing 与 always-active gated condenser 在作者 GPT-OSS/DeepSeek MoE SFT 合同中保留长尾 expert 信息；不证明低频 expert 的通用语义、跨模型最优 routing 或生产收益。https://arxiv.org/abs/2604.23036v1
 
 - `SF-2026-ARXIV-2606-22325` — primary `arXiv:2606.22325v1`；Method=`arXiv:2606.22325v1 §2 Problem Setup; §3 Routing Dynamics and Collapse Analysis`；Evaluation=`arXiv:2606.22325v1 §4 Experiments; §5 Ablations`；Non-proof=`arXiv:2606.22325v1 §6 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

@@ -1,0 +1,1288 @@
+Tessera: Unlocking Heterogeneous GPUs through Kernel-Granularity Disaggregation
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Background & Motivation
+
+II-A GPU Heterogeneity
+
+II-B Intrinsic Kernel Heterogeneity
+
+II-C Limitations of Coarse-Grained Disaggregation
+
+III Design
+
+III-A Kernel Analyzer
+
+III-B Policy Planner
+
+III-C GPU Workers
+
+III-D Online Monitor
+
+IV Implementation
+
+V Evaluation
+
+V-A Experimental Setup
+
+V-B End-to-end Performance
+
+V-C Cluster-Scale Results
+
+V-D Performance Drilldown
+
+VI Related Work
+
+VII Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.10180v1 [cs.DC] 11 Apr 2026
+
+Tessera: Unlocking Heterogeneous GPUs through Kernel-Granularity Disaggregation
+
+Tiancheng Hu
+
+  
+Jin Qin
+
+Affiliation: University of Chinese Academy of Sciences, Beijing, China
+
+  
+Zheng Wang
+
+Affiliation: University of Leeds, West Yorkshire, England
+
+  
+Junhao Hu
+
+  
+Yuzheng Wang
+
+  
+Lei Chen
+
+Affiliation: University of Chinese Academy of Sciences, Beijing, China
+
+  
+Yizhou Shan
+
+Affiliation: ByteDance, Shanghai, China
+
+  
+Mingxing Zhang
+
+Affiliation: Tsinghua University, Beijing, China
+
+  
+Ting Cao
+
+Affiliation: Institute for AI Industry Research, Tsinghua University, Beijing, China
+
+  
+Chunwei Xia
+
+Affiliation: University of Leeds, West Yorkshire, England
+
+  
+Huimin Cui
+
+Affiliation: University of Chinese Academy of Sciences, Beijing, China
+
+  
+Tao Xie
+
+  
+Chenxi Wang
+
+Affiliation: SCS, Peking University, Beijing, China
+
+Affiliation: Key Lab of HCST (PKU), MOE, Beijing, China
+
+Abstract
+
+Disaggregation maps parts of an AI workload to different types of GPUs, offering a path to utilize modern heterogeneous GPU clusters. However, existing solutions operate at a coarse granularity and are tightly coupled to specific model architectures, leaving much room for performance improvement.
+This paper presents Tessera, the first kernel disaggregation system to improve performance and cost efficiency on heterogeneous GPUs for large model inference. Our key insight is that kernels within a single application exhibit diverse resource demands, making them the most suitable granularity for aligning computation with hardware capabilities.
+Tessera integrates offline analysis with online adaptation by extracting precise inter-kernel dependencies from PTX to ensure correctness, overlapping communication with computation through a pipelined execution model, and employing workload-aware scheduling with lightweight runtime adaptation. Extensive evaluations across five heterogeneous GPUs and four model architectures, scaling up to 16 GPUs, show that Tessera improves serving throughput and cost efficiency by up to 2.3 and 1.6, respectively, compared to existing disaggregation methods, while generalizing to model architectures where prior approaches do not apply. Surprisingly, a heterogeneous GPU pair under Tessera can even exceed the throughput of two homogeneous high-end GPUs at a lower cost.
+
+I Introduction
+
+Modern GPU data centers are increasingly heterogeneous, integrating a wide range of GPU types and generations. This heterogeneity stems from the mismatch between GPU release cycles and retirement schedules, driven by high costs and limited supply [1, 2]. For example, Google Cloud provides various types of GPUs, including high-end GPUs (e.g., A100, H100) as well as general-purpose GPUs (e.g., L4, RTX Pro 6000) [3], a trend similarly observed in other platforms such as AWS [4]. At the same time, the rapid growth of AI has dramatically increased demand for GPU resources [5]. This demand is further amplified by the emergence of agentic AI applications, where a single user request may trigger multiple sequential model invocations, significantly increasing inference workload and cost [6, 7].
+
+In this context, a primary challenge for cloud providers is to maximize the serving performance of heterogeneous GPU clusters, and improve cost efficiency (Perf/$) [8, 9]. However, existing scheduling mechanisms fail to fully exploit the architectural diversity of heterogeneous GPUs, leaving substantial performance and cost-efficiency gains untapped.
+
+State-of-the-art. 
+Recent studies [10, 11, 12, 13, 9] have attempted to leverage the GPU heterogeneity by disaggregation. These methods partition AI workloads according to their computational characteristics and route them to the most suitable GPU. This design is particularly prevalent in Transformer-based LLM inference, where distinct phases or blocks exhibit diverse resource demands. For example, prefill-decode (PD) disaggregation assigns the compute-intensive prefill phase to high-TFLOPS GPUs, while offloading the memory-bound decode phase to GPUs with higher memory bandwidth [14]. Similarly, block-level disaggregation schemes, such as Attention-FFN disaggregation [12], aim to better align computation with hardware specialization.
+
+Despite their effectiveness, existing disaggregation methods suffer from two fundamental limitations. First, they disaggregate at a coarse granularity (e.g., phases or computation blocks), which leaves substantial performance on the table when exploiting heterogeneous GPUs. For example, even within a single FFN block, different kernels may exhibit markedly different resource demands, which coarse-grained disaggregation fails to capture. Second, these approaches are often application-specific and tightly coupled to the specific model architecture, limiting their generality and making them difficult to extend to various model types.
+
+Fig. 1: Simplified example of kernel disaggregation.
+
+Key insight. 
+We observe that the effective utilization of heterogeneous GPUs requires aligning hardware heterogeneity with application heterogeneity at the right granularity. On the hardware side, modern clusters consist of diverse GPUs with complementary strengths, including differences in compute capacity, memory bandwidth, and cost efficiency (§II-A). On the application side, we find that the GPU kernel, as the basic user-level scheduling unit, provides a natural level of granularity for disaggregation. Within a kernel, finer granularities, such as thread blocks, are largely homogeneous and do not benefit from further partitioning. In contrast, coarser granularities, such as execution phases, fail to capture important variations in resource demand (§II-C). Moreover, kernels within a single application often exhibit diverse resource behaviour, for example, compute-bound versus memory-bound, indicating strong heterogeneity at the kernel level (§II-B).
+
+Our approach. 
+We present Tessera, the first system to exploit heterogeneous GPUs through fine-grained kernel disaggregation. Given a set of heterogeneous GPU resources, Tessera aligns GPU heterogeneity with kernel heterogeneity to maximize overall performance and cost efficiency. Figure 1 shows a simplified example of kernel disaggregation. Realizing this approach requires addressing three key challenges:
+
+The first challenge is how to guarantee the functional correctness of kernel disaggregation. Disaggregating kernel execution across GPUs breaks implicit data dependencies in local execution. A kernel scheduled on one GPU may depend on data produced by a preceding kernel on another GPU. To prevent data hazards, the system must analyze the memory addresses and sizes of buffers accessed by each kernel. This is difficult in modern AI frameworks, which rely on opaque kernels such as user-defined or JIT-compiled kernels whose semantics are unavailable at compile time. To address this, we design a PTX level [15] kernel analyzer. By instrumenting memory access instructions, the analyzer captures precise buffer boundaries and extracts Read After Write (RAW) dependencies, ensuring correctness (§III-A).
+
+The second challenge is how to mitigate communication overhead and GPU underutilization. Kernel disaggregation introduces extra inter-GPU communication overhead due to data dependencies. When dependent kernels are placed on different GPUs, downstream kernels must wait for upstream completion, leading to idle bubbles. To address this issue, Tessera employs a pipelined request-processing mechanism that executes multiple requests concurrently across heterogeneous GPUs. When a GPU stalls waiting for remote data, the GPU worker schedules ready kernels from other requests, overlapping communication with computation and maintaining high utilization (§III-C).
+
+The third challenge is how to design an optimized scheduling policy. An unsuitable scheduling policy may incur excessive inter-GPU communication and poor load balance, causing system-level overheads to outweigh computation gains. To address this issue, Tessera derives workload-aware scheduling policies for different optimization objectives. For offline workloads, which prioritize system throughput, Tessera formulates scheduling as a mixed-integer linear programming (MILP) problem that jointly models kernel characteristics, compute throughput, communication overhead, and GPU load balance. For latency-sensitive online workloads (e.g., LLM serving), Tessera employs a latency-oriented scheduling policy (§III-B). Meanwhile, Tessera incorporates a lightweight online monitor to dynamically adjust scheduling policies under changing request loads (§III-D).
+
+We integrate Tessera into popular vLLM [16] and PyTorch [17] frameworks, and evaluate Tessera across five heterogeneous GPUs and four model architectures, scaling up to 16 GPUs. Compared to existing disaggregation methods, Tessera improves serving throughput and cost efficiency up to 2.3 and 1.6. Furthermore, Tessera can serve 1.3 more requests under the same SLO requirement. By treating GPU heterogeneity as an optimization opportunity rather than a constraint, a heterogeneous GPU pair under Tessera can even outperform two homogeneous high-end GPUs in throughput at lower cost.
+In summary, this paper presents the following contributions:
+
+•
+
+We survey GPU architectural heterogeneity across modern data center GPUs and conduct a systematic study of kernel-level heterogeneity across diverse AI workloads.
+
+•
+
+We reveal that existing disaggregation methods are too coarse-grained to capture kernel-level heterogeneity, fundamentally limiting their ability to exploit heterogeneous GPUs.
+
+•
+
+We design and implement Tessera, the first kernel disaggregation system for heterogeneous GPUs.
+
+•
+
+We conduct a comprehensive evaluation demonstrating that Tessera consistently outperforms state-of-the-art disaggregation methods in both throughput and cost efficiency, while generalizing to model architectures where prior approaches are inapplicable.
+
+II Background & Motivation
+
+A100
+H100
+B200
+L40s
+RTX Pro 6000
+
+CUDA core
+
+(TFLOPS)
+
+19.5
+67
+80
+91.6
+120
+
+Tensor core
+
+(TFLOPS)
+
+312
+989
+2500
+366.5
+500
+
+L2 cache
+
+(MB)
+
+40
+50
+126
+96
+126
+
+Memory (GB)
+80
+80
+192
+48
+96
+
+Bw. (GB/s)
+1935
+3350
+8000
+864
+1597
+
+Price
+1.5
+2.9
+5.0
+1
+1.2
+
+TABLE I: Performance metrics and relative cost of different GPU architectures. The CUDA core and tensor core performance is specified by FP32 and BF16 types, separately. The prices are derived mainly from Google Cloud’s standard instance rates, normalized by the L40s [18].
+
+II-A GPU Heterogeneity
+
+Modern GPU clusters are inherently heterogeneous. These GPUs exhibit varying trade-offs across key architectural dimensions, including compute throughput, memory bandwidth, memory capacity, and cost efficiency.
+As shown in Table I, no single GPU dominates across all dimensions. For example, compared to the A100, the L40s delivers 4.7 higher CUDA core throughput and 1.2 higher Tensor core throughput, but provides only 45% of the A100’s memory bandwidth. Similarly, while the B200 offers near-leading performance across most hardware metrics, GPUs such as the L40s and RTX Pro 6000 achieve up to 7.4 higher compute throughput per dollar on average.
+These examples show that different GPUs present different advantages in the multi-dimensional hardware features, which makes utilizing heterogeneous GPUs both practical and economically attractive.
+
+This heterogeneity is not transient, but a sustained production trend. GPU vendors continuously release devices that make different trade-offs among multiple dimensions, so future deployments are also likely to remain heterogeneous rather than converging to a single dominant GPU type. This trend is further reinforced by platforms such as NVIDIA MGX [19], which have been adopted by multiple vendors, including Supermicro [20] and Gigabyte [21], and explicitly support heterogeneous GPU configurations within a single server. Together, these trends make systems that can exploit heterogeneous GPUs practically important.
+
+Such architectural diversity is not unique to NVIDIA. Similar heterogeneity also exists in other ecosystems, such as AMD. Although broader heterogeneity across vendors or accelerator types (e.g., GPUs and NPUs) is also possible, it introduces additional challenges, including fragmented software stacks [22] and the lack of a unified high-speed interconnect [23]. Given NVIDIA’s dominant market position and mature software ecosystem, this paper focuses on heterogeneous GPUs within the NVIDIA platform.
+
+II-B Intrinsic Kernel Heterogeneity
+
+Fig. 2: Kernel heterogeneity between A100 and L40s. (a) CDF of kernel execution time ratio (L40s/A100) based on kernel count, and (b) time-weighted percentage of L40s-faster kernels within the end-to-end (E2E) task execution time on A100.
+
+Tessera is designed to optimize computation kernels that exhibit inherent heterogeneity in modern AI workloads. To quantify the workload characteristics, we profile five representative models spanning LLMs (Llama3 8B, GPT-oss 20B, and Mamba 7B), MLLMs (Qwen2.5-VL 7B), and diffusion models (Stable Diffusion 3.5 (SD3.5)). We measure the execution performance of individual kernels on two heterogeneous GPUs, A100 and L40s.
+
+Figure 2 illustrates kernel heterogeneity from two perspectives. Figure 2(a) shows the count-based CDF of kernel execution time ratios (L40s/A100). On average, 67% of kernels execute faster on L40s across models and tasks. However, kernel counts alone do not reflect their end-to-end impact. Therefore, Figure 2(b) presents a time-weighted analysis, measuring the fraction of total execution time on A100 contributed by kernels that run faster on L40s. On average, these kernels account for 36% of total execution time, and reach up to 53% for diffusion models.
+These results reveal substantial opportunities to accelerate large-model inference on heterogeneous GPUs through fine-grained kernel disaggregation.
+
+II-C Limitations of Coarse-Grained Disaggregation
+
+Existing disaggregation approaches are coarse-grained, focusing on either phase- [10, 9] or block-level [12], leaving substantial performance untapped.
+
+Prefill-decode disaggregation [10, 9] assigns the entire prefill phase to one GPU and the decode phase to another. However, as shown in Figure 3(a), kernels within the same phase exhibit diverse GPU preferences: 45% of prefill kernels and 57% of decode kernels run faster on L40s than on A100. As a result, any phase-level disaggregation inevitably misplaces a large fraction of kernels.
+
+To understand the root causes of kernel heterogeneity, we examine two representative prefill kernels. cublasGemv [24] is a widely used matrix–vector multiplication kernel that exhibits strongly memory-bandwidth-bound behavior, with an operational intensity of approximately 1 FLOP/byte.
+According to the roofline model [25], its performance is primarily determined by memory bandwidth. A100’s HBM provides 2 higher bandwidth than L40s, yielding a 1.9 speedup.
+In contrast, FlashAttention [26] is compute-bound with high operational intensity that scales with sequence length. Its tile-based design maximizes data reuse in shared memory and the L2 cache, substantially reducing HBM traffic. As a result, performance is dominated by SM-level execution efficiency rather than memory bandwidth. Benefiting from a larger L2 cache, higher core frequency, and more efficient tensor cores, L40s achieves up to 2.1 speedup over A100.
+
+Attention-FFN disaggregation [12] operates at the block level, mapping attention and FFN to separate GPUs. However, as shown in Figure 3(b), kernels within the same block still exhibit divergent GPU preferences: 71% of attention kernels run faster on L40s, and 33% of FFN kernels run faster on L40s. Therefore, block-level disaggregation still misplaces a significant fraction of kernels, leading to suboptimal performance. These limitations motivate Tessera, which disaggregates at the kernel level to better exploit GPU heterogeneity.
+
+Fig. 3: Kernel duration ratio (L40s / A100) for GPT-oss 20B inference, grouped by (a) prefill and decode phases and (b) attention and FFN blocks. Kernels above the dashed line run faster on A100, while those below run faster on L40s.
+
+III Design
+
+Tessera is the first system that disaggregates kernel execution across heterogeneous GPUs. The key design goal is to ensure kernel disaggregation is correct and efficient.
+
+As shown in Figure 4, Tessera consists of four main components. The kernel analyzer profiles kernels offline to capture memory access patterns, extract inter-kernel data dependencies, and measure kernel latency on heterogeneous GPUs. Based on these analysis results, the policy planner derives workload-aware kernel scheduling policies that jointly consider kernel characteristics, communication overhead, and load balance. At runtime, the GPU worker performs the scheduling policy with disaggregated kernel execution. Each worker only computes the kernels assigned to it and orchestrates the required inter-GPU communication. Meanwhile, the online monitor continuously collects runtime statistics (e.g., request and kernel latency) to support dynamic policy adaptation under changing workloads.
+
+Fig. 4: Design overview of Tessera.
+
+III-A Kernel Analyzer
+
+The kernel analyzer processes the PTX code to resolve data dependencies across kernels by identifying the accessed buffer addresses and sizes for each kernel. In practice, GPU kernels fall into two categories. The first includes standard library kernels, such as cublasSgemm [24], whose semantics and memory access patterns are well defined. The second comprises opaque computation kernels. Analyzing such kind of kernels is challenging, as they are often developer-defined or JIT-compiled, making their memory access patterns difficult to observe.
+
+Memory access analysis. 
+For standard library kernels, identifying memory access patterns is straightforward because of their deterministic semantics. For example, it is easy to identify that
+cublasSgemm(.,A,B,.,C,.) reads bufferA and bufferB and writes bufferC, with the buffer sizes given in the API parameters. In contrast, opaque kernels lack exposed semantics, making their memory access patterns difficult to infer.
+
+Prior work, as represented by PhoenixOS [27], identifies accessed buffers through GPU API argument speculation and runtime validation. While this extracts buffer base addresses, it suffers from a fundamental limitation. Modern AI frameworks such as PyTorch [17] employ internal memory managers (e.g., the caching allocator [28]) that virtualize GPU memory independently of the CUDA runtime. Because CUDA allocation APIs are not invoked for every tensor creation, this approach often overestimates the actual buffer size, resulting in additional communication overhead in Tessera.
+
+Tessera handles this limitation by developing an assembly-level kernel analyzer performed on the PTX [15]. Similar to eBPF [29, 30], Tessera employs a PTX injection technique to instrument the kernel code to track memory accesses. Listing 1 illustrates how instruments can be performed on an opaque kernel. Specifically, each global memory instruction (e.g., st.global, ld.global) is instrumented to record the virtual addresses it accesses. Since the virtual addresses of buffers are contiguous, Tessera maintains only the minimum and maximum accessed addresses per instruction. These values are safely aggregated across concurrent threads using atomic operations (e.g., atom.global) to avoid data races. After kernel execution, Tessera retrieves the instruction-level intervals and aligns these aggregated intervals with the buffer base addresses to compute precise buffer sizes. Besides, the underlying instruction types (e.g., ld.global or st.global) indicate whether the identified buffer is read or written. Implementation details of the PTX analyzer are provided in §IV.
+
+⬇
+
+1
+
+.visible .entry opaque_kernel(
+
+2
+
+... // original parameters
+
+3
+
+.param .u64 inst_buf){
+
+4
+
+.reg .b64 %rd<15>; // Declare registers
+
+5
+
+.reg .b64 %unused
+
+6
+
+... // Load parameters
+
+7
+
+ld.param.u64 %rd10, [inst_buf];
+
+8
+
+... // Original kernel body
+
+9
+
+mad.wide.u32 %rd11, k, 16, %rd10;
+
+10
+
+atom.global.min.u64 %unused, [%rd11], %rd1;
+
+11
+
+atom.global.max.u64 %unused, [%rd11+8], %rd1;
+
+12
+
+// Original k-th memory access instruction
+
+13
+
+ld.global.f32 %f1, [%rd1];
+
+14
+
+... // Left kernel body
+
+15
+
+}
+
+Listing 1: PTX instrumentation logic for opaque kernel.
+
+Data dependency analysis. 
+After resolving the precise read and write semantics of each accessed buffer, Tessera constructs a data dependency graph (DDG) to capture inter-kernel data dependencies. Since kernel disaggregation preserves the original execution order, the analyzer only needs to identify true data dependencies, i.e., Read-After-Write (RAW) dependencies. Specifically, the analyzer maintains a global buffer registry that tracks the last writer of each buffer. When a kernel reads a buffer, the analyzer queries the registry to identify the most recent writer. If the writer differs from the current kernel, a dependency edge is added from the writer to the reader. By iterating over kernels in execution order, Tessera constructs a DDG where nodes represent kernels and directed edges encode RAW dependencies annotated with concrete buffer sizes. Asynchronous memory copies are treated uniformly as kernel nodes in the DDG, since their source, destination, and transfer size are explicitly specified in the API parameters.
+
+The DDG captures intra-iteration dependencies by default. For buffers present cross-iteration RAW patterns (e.g., KV caches in Transformer-based [31] models), the analyzer automatically detects them by profiling multiple iterations and flagging buffers written in one iteration and read in subsequent ones. These cross-iteration dependencies are handled during runtime via per-GPU buffer replication with asynchronous delta transfers (§IV).
+
+Inference workloads may exhibit dynamic execution patterns, for example, due to varying tensor shapes or changes in computation driven by input sequence length. In practice, this is less problematic for inference, as modern inference frameworks (e.g., vLLM [16], TensorRT [32]) increasingly use CUDA Graph [33] to reduce kernel launch overhead. Since CUDA Graph naturally requires a static execution pattern [34], Tessera can construct a separate DDG for each captured graph, capturing dynamic behaviors across different executions. For frameworks that do not yet support CUDA Graph capture, Tessera provides a preprocessing tool to automatically record the kernel execution trace and replay it under CUDA’s stream capture API to produce an equivalent CUDA Graph.
+
+In addition, the analyzer profiles the execution latency of each kernel on heterogeneous GPUs to support subsequent scheduling policy planning. Since the overall analysis is performed offline, it incurs only a one-time cost, which can usually be finished during the application warm-up phase.
+
+III-B Policy Planner
+
+The policy planner generates a kernel-to-GPU scheduling policy for each DDG given by the kernel analyzer. Because performance goals vary across scenarios (e.g., latency-critical online serving vs. throughput-driven offline processing), Tessera supports both throughput- and latency-oriented policies.
+
+Throughput-oriented policy. 
+This policy aims to maximize system throughput, making it ideal for offline inference workloads where the primary objective is to process the maximum number of requests within a given time window (e.g., batched document processing). We formulate this mapping strategy as a Mixed-Integer Linear Programming (MILP) problem, with key terminology summarized in Table II.
+
+The solver first introduces a set of binary placement variables , where indicates that kernel is assigned to GPU . Each kernel must be assigned to exactly one GPU:
+
+For each GPU , the computation time is the aggregated execution latency of all kernels assigned to it:
+
+The communication overhead captures the total transfer cost incurred by all incoming cross-GPU dependency edges targeting GPU :
+
+Here, encodes the joint placement of edge , i.e., . To keep the formulation strictly linear, Tessera applies standard boolean linearization techniques [35] to replace this quadratic term.
+
+Under pipelined asynchronous execution, each GPU alternates between computation and communication. The per-request stage time on GPU is therefore bounded by its slower component:
+
+Following prior pipeline analysis [36], the steady-state throughput of the entire system is determined by the slowest stage. Maximizing overall throughput is thus equivalent to minimizing the maximum stage time. The final objective is:
+
+TABLE II: Terminology used in the problem formulation.
+
+Symbol
+
+Description
+
+Set of available heterogeneous GPUs.
+
+Set of kernels.
+
+Set of data dependency edges in DDG.
+
+Profiled latency of kernel on the GPU .
+
+Size of the buffer transferred from kernel to .
+
+Communication bandwidth between GPU and .
+
+Base communication latency between GPU and .
+
+Data transfer overhead for edge crossing from GPU to .
+
+Binary variable; if kernel is scheduled to GPU , otherwise.
+
+Latency-oriented policy. 
+The latency-oriented policy targets online serving scenarios where the objective is to minimize per-request end-to-end latency. Under low load, Tessera cannot effectively overlap computation and communication via pipelined execution due to the limited number of concurrent requests. As a result, the per-request latency can be decomposed into two additive components: the total kernel execution time and the cumulative cross-GPU transfer overhead incurred along cut dependency edges.
+In such a condition, the objective of the MILP solver is:
+
+Once formulated, the MILP can be efficiently solved using standard MILP optimizers such as Gurobi [37]. The number of decision variables scales with , where denotes the number of kernels per DDG and the number of GPUs. In a typical setting (i.e., GPT-oss 20B on an A100+L40s node in our evaluation), with and , Gurobi solves each DDG in about 20 ms, and enumerating all execution patterns takes roughly 5 seconds in total. This overhead is negligible as MILP optimization performs offline and incurs no runtime overhead. The scalability of the MILP solver is discussed in §V-D.
+
+III-C GPU Workers
+
+The GPU worker performs disaggregated kernel execution at runtime. Tessera dispatches one GPU worker to a specific GPU and executes its assigned portion of the computation.
+
+Disaggregated kernel execution. 
+Based on the scheduling policy, each GPU worker only executes the kernels assigned to it. As disaggregated execution requires explicit cross-GPU data transfers along cut dependency edges, Tessera adopts GPU-initiated communication via InfiniBand GPUDirect Async (IBGDA) [38], as supported by NCCL [39], to eliminate control-path overhead from CPU–GPU synchronization. This CPU-bypass mechanism allows send and recv operations to be issued as GPU-side kernels.
+
+For a kernel with incoming cut dependency edges, the worker posts the corresponding recv kernels before launching . After completes, if it has outgoing cut edges, the worker posts the corresponding send kernels. To overlap communication with computation, each worker issues communication on dedicated streams separate from the compute stream, using lightweight CUDA events for inter-stream synchronization. Figure 5 illustrates the execution of a single GPU worker corresponding to GPU B in Figure 1.
+
+Fig. 5: An execution example of the GPU worker. Compute kernels and communication operations run on separate streams, synchronized via CUDA events. denotes receiving the output of kernel for kernel , denotes sending data from kernel to kernel .
+
+Dynamic execution pattern. 
+As discussed in §III-A, the dynamic execution pattern can be handled by leveraging the CUDA Graph used by modern inference frameworks. Since the kernel analyzer and policy planner have already constructed a separate DDG and scheduling policy for each CUDA Graph offline, the GPU worker only needs to select the correct policy at runtime. Each worker maintains a dispatch table that maps each CUDA Graph handle to its pre-built scheduling policy. When a CUDA Graph launch API is intercepted, the worker looks up the corresponding policy and executes accordingly. To reduce runtime overhead, Tessera can also integrate with CUDA Graph by decomposing each CUDA Graph into per-GPU subgraphs with send/recv nodes embedded alongside compute nodes, enabling low-overhead graph replay (§IV).
+
+Pipelined request processing. 
+Naive disaggregated kernel execution will lead to abundant GPU bubbles due to communication overhead. To address this issue, Tessera employs a pipelined request processing mechanism that executes multiple independent requests concurrently across heterogeneous GPUs via multi-stream [40]. Each request is assigned to a dedicated compute stream, so when one compute stream is blocked due to data dependency communication, the GPU hardware scheduler dispatches ready kernels from other streams. This asynchronous execution effectively overlaps computation with communication, eliminating idle GPU bubbles.
+However, when multiple requests execute concurrently without differentiation, they compete equally for Streaming Multiprocessor (SM) resources and tend to progress through the pipeline at similar rates. As a result, their communication phases may align, causing all streams to stall on data transfers simultaneously and leaving the GPU idle. To address this, Tessera employs a priority-aware stream scheduling mechanism that assigns lower CUDA stream priorities to later-arriving requests. This causes the GPU hardware scheduler to preferentially allocate SMs to earlier requests, allowing them to stagger their communication phases and keep the GPU continuously occupied. The effectiveness of pipelined request processing is evaluated in §V-D.
+
+III-D Online Monitor
+
+The online monitor targets serving scenarios where request arrival rates fluctuate unpredictably over time. Unlike offline workloads with fixed load, online serving must handle dynamic queueing pressure, making any statically decided policy suboptimal. A latency-oriented policy processes requests without pipelining, which underutilizes GPU resources and incurs high queueing delay under heavy load. In contrast, a throughput-oriented policy becomes less effective under light load due to limited concurrency and may introduce additional latency from suboptimal scheduling.
+
+To adapt to workload dynamics, the monitor tracks per-request latency, per-kernel-group latency, and communication time. Instead of profiling individual kernels, it measures the time between consecutive communication operations, which is a sequence of kernels, defined as a kernel group. This design reduces monitoring overhead while retaining sufficient information for effective policy selection. Based on these signals, Tessera performs queueing-aware policy switching at fixed time windows .
+
+At each window boundary, the monitor computes the average request latency and the pure execution latency , which aggregates computation and communication time while excluding queueing delay. The ratio serves as an indicator of queueing pressure. A low ratio implies negligible queueing delay and favors the latency-oriented policy, whereas a high ratio indicates that queueing dominates end-to-end latency, triggering a switch to the throughput-oriented policy to improve system processing capacity.
+
+The monitor introduces two key hyperparameters, the time window and the queueing threshold , which can be tuned according to workload characteristics. We further analyze their sensitivity and the runtime overhead of the monitor in §V-D.
+
+IV Implementation
+
+The current implementation of Tessera targets NVIDIA GPUs. It comprises approximately 3K lines of C++/CUDA code for the GPU worker runtime and around 2K lines of Python code for the kernel analyzer, including PTX instrumentation and data dependency analysis. Tessera is integrated with vLLM [16] and PyTorch [17].
+
+PTX analyzer. 
+Building upon the probe engine from NEUTRINO [29], we implement a PTX-level kernel analyzer. To instrument memory access tracking, we extend the kernel parameter list with an additional instrumentation buffer, loaded via inserted ld.param instructions. We then inject atom.global instructions around each global memory access (e.g., ld.global, st.global) to record the minimum and maximum accessed addresses per instruction. The modified PTX is compiled back to machine code via ptxas [41].
+
+A known limitation is that the analyzer cannot handle indirect access. For example, if a kernel accesses GPU buffers via global variables not listed in the kernel launch arguments, the analyzer cannot obtain the base buffer address to calculate the buffer size. However, a comprehensive study [27] shows that the most popular ML frameworks (e.g., PyTorch, vLLM) do not contain such kernels. Only one kernel in the legacy Rodinia benchmark [42] exhibits this pattern. For such rare cases, Tessera conservatively falls back to executing the kernel on the same GPU without disaggregation.
+
+CUDA Graph adaptation. 
+Tessera intercepts the CUDA Graph creation API, constructs the DDG, and partitions graph nodes into per-GPU subgraphs in topological order. Tessera then walks through the original graph in topological order and partitions its nodes into per-GPU subgraphs according to the scheduling policy. Since the cross-GPU communication is entirely GPU-initiated via IBGDA (i.e., CPU-bypass), send/recv operations can be captured as GPU-side kernels and embedded directly into the subgraphs. Decomposed subgraphs are cached using the original graph handle to enable efficient replay. The CUDA events used in inter-stream synchronization are encoded as dependency edges within each subgraph’s internal DAG, which incurs no extra runtime overhead [43].
+
+Composability with model parallelism. 
+Tessera is orthogonal to model parallelism and composes naturally with it. For example, when a model is served with tensor parallelism (TP) across a homogeneous GPU group, Tessera can pair each GPU with a heterogeneous GPU and apply kernel disaggregation within each pair. Collective operations are pinned to the original homogeneous GPU group, and Tessera schedules only the compute kernels between paired GPUs. This extends each TP rank into a heterogeneous pair without altering the communication topology, enabling additional performance gains on existing parallelism (§V-C).
+
+Memory management. 
+The current MILP formulation does not explicitly model per-GPU memory capacity constraints and naively replicates the full model weights on every GPU during model initialization, similar to PD disaggregation [10]. In practice, full replication is conservative because each GPU only accesses a subset of weight buffers, and the remaining unused buffers could be reclaimed. For offline workloads where the scheduling policy is fixed throughout execution, selective buffer reclamation can be safely applied to free memory for larger batch sizes to improve performance.
+
+As described in §III-A, buffers with cross-iteration RAW dependencies (e.g., KV caches) are handled via per-GPU replication with asynchronous delta transfers. For such buffers, Tessera maintains a replica on each GPU and propagates the delta memory to other replicas asynchronously.
+To avoid bandwidth contention with latency-critical intra-iteration transfers, Tessera uses two NCCL communicators with distinct traffic classes [39], assigning higher priority to dependency transfers. Leveraging hardware QoS enforcement based on traffic class, the dependency transfers are prioritized over background delta replication under contention [44]. The transmission overhead of delta replication accounts for less than 0.1% of the total latency, as proved in previous work [9, 10].
+
+V Evaluation
+
+V-A Experimental Setup
+
+Fig. 6: Offline throughput across five workloads and three heterogeneous GPU pairs. Left y-axis: tokens/s for LLM, MLLM, and SSM workloads, right y-axis: images/min for SD. Red X marks indicate that the disaggregation method is inapplicable.
+
+Testbeds. 
+We evaluate Tessera on two hardware configurations. Our main evaluation platform is a local setup with three heterogeneous GPU pairs: 1 A100 + 1 L40s, 1 H100 + 1 RTX Pro 6000, and 1 B200 + 1 H100. Each GPU is equipped with a 200 Gbps RDMA NIC. We further evaluate the scalability of Tessera on a cluster setup with two distributed configurations: a 2 A100 node with a 1 L40s node, and an 8 B200 node paired with an 8 H100 node. Within each homogeneous high-end GPU group, GPUs are interconnected via NVLink, while cross-node communication is conducted over 200 and 400 Gbps RDMA NICs, respectively.
+
+Workloads. 
+To validate the generality of Tessera, we evaluate across four model families:
+(1) LLMs: Llama-3 8B () [45] and GPT-oss 20B () [46], Transformer-based autoregressive models with distinct prefill and decode phases;
+(2) SSMs: Mamba-Codestral 7B () [47], which replaces attention with selective state-space layers for linear-time sequence generation;
+(3) MLLMs: Qwen2.5-VL 7B () [48], which augments an LLM decoder with a vision encoder for joint image-text reasoning;
+and (4) Diffusion models: Stable Diffusion 3.5 () [49, 50], a Multimodal Diffusion Transformer text-to-image model, which synthesizes images through iterative denoising rather than autoregressive token generation. For offline settings, LLM and SSM workloads use the Splitwise conversational dataset [9] (median input 1020 tokens, median output 129 tokens), MLLM uses images from the COCO captioning dataset [51], resized to 512512 pixels, and the diffusion model uses text prompts from the PartiPrompts dataset [52] with 10241024 resolution and 28 denoising steps. We measure the maximum sustainable throughput following common practice [53, 54]. For online settings, we focus on GPT-oss 20B inference under varied request rates with Poisson arrivals, and a real-world trace from the Azure Conversation dataset [9], as in previous work [55].
+
+Baselines. 
+We compare Tessera with two state-of-the-art disaggregation methods:
+
+•
+
+Prefill–decode disaggregation (PD Dis.): a phase-level approach following DistServe [10], which assigns the compute-intensive prefill phase and the memory-intensive decode phase to separate GPUs. This baseline does not apply to the diffusion model due to no prefill–decode separation.
+
+•
+
+Attention–FFN disaggregation (AF Dis.): a block-level approach following MegaScale-Infer [12], which maps memory-intensive attention and compute-intensive FFN operations to different GPUs. This baseline does not apply to SSM and diffusion models due to the adoption of a non-traditional Transformer architecture.
+
+We also include homogeneous-GPU performance without disaggregation. The inference engine is vLLM v0.18.0 [16], with NCCL [39] as the communication backend. We enable mainstream scheduling techniques (e.g., continuous batching) and tune each disaggregation baseline to its best-performing GPU configuration on each hardware setting for a fair comparison. To reduce latency jitter, we disable GPU dynamic voltage and frequency scaling (DVFS) [56]. Each experiment is repeated multiple times, with variance below 1%, and we report the average results.
+
+V-B End-to-end Performance
+
+Offline throughput. 
+Figure 6 reports the maximum sustainable throughput under offline settings across five workloads and three heterogeneous GPU pairs. We measure throughput as output tokens per second for LLMs, SSMs, and MLLMs, and as requests per minute for diffusion models. Across all configurations, Tessera outperforms PD disaggregation by 1.5 on average (up to 2.3) and AF disaggregation by 1.35 on average (up to 1.7).
+
+The performance gains stem from Tessera’s ability to capture kernel-level heterogeneity that coarser-grained approaches fail to capture. PD disaggregation and AF disaggregation treat an entire phase or block as a single scheduling unit, forcing kernels with diverse resource demands onto the same GPU. In contrast, Tessera schedules kernels independently, aligning fine-grained kernel heterogeneity with hardware characteristics.
+
+Another key limitation of existing disaggregation methods is their restricted applicability. AF disaggregation relies on Transformer-specific structures and does not apply to models such as Mamba or diffusion models. PD disaggregation depends on the prefill–decode separation, which does not exist in diffusion models. In contrast, Tessera is model-agnostic and applies uniformly across diverse model architectures, providing strong generality.
+
+Cost efficiency. 
+Table III reports cost efficiency (Perf/$), computed as the average throughput across five workloads divided by GPU rental cost, normalized to the homogeneous GPU (left). GPU rental prices are listed in Table I, and for disaggregation methods, the total cost is the sum of both GPUs. Across all three heterogeneous GPU pairs, Tessera consistently achieves the highest cost efficiency, outperforming PD disaggregation by 1.5 on average (up to 1.6) and AF disaggregation by 1.4 on average (up to 1.5).
+
+Remarkably, Tessera achieves higher cost efficiency than many homogeneous GPU deployments, despite paying for two GPUs. On H100+RTX Pro 6000, Tessera reaches 1.64 the cost efficiency of H100 alone while delivering 2.3 higher throughput, even exceeding the performance of two H100. This improvement stems from kernel disaggregation, which extracts sufficient throughput benefits from the cheaper GPU to more than compensate for its additional rental cost. These results suggest that cloud providers can improve cost efficiency by pairing high-end GPUs with more affordable counterparts, rather than provisioning additional expensive GPUs.
+
+TABLE III: Cost efficiency (Perf/$) on three GPU pairs, normalized to the homogeneous left GPU baseline.
+
+A100+L40s
+H100+RTX Pro 6000
+B200+H100
+
+Homo. (left)
+1.00
+1.00
+1.00
+
+Homo. (right)
+1.18
+2.01
+0.78
+
+PD Dis.
+0.87
+1.00
+0.70
+
+AF Dis.
+1.02
+1.07
+0.74
+
+Tessera
+1.21
+1.64
+1.01
+
+Online latency. 
+We evaluate online serving on GPT-oss 20B under varying Poisson request rates. We measure normalized latency as the end-to-end request latency divided by output length in tokens. Figure 7 reports normalized latency across different request rates on three GPU pairs. At low request rates, Tessera achieves 1.3 and 1.2 lower normalized latency than PD disaggregation and AF disaggregation, respectively, owing to its latency-oriented policy that minimizes per-request critical-path delay. Moreover, under an SLO target of 50 ms/token, Tessera sustains up to 1.3 higher request rate than the best baseline before violating the constraint.
+
+Compared to the offline setting, kernel disaggregation faces additional challenges in online serving. Inter-GPU transfer latency lies on the critical path of individual requests, and at low request rates, the pipeline cannot be fully saturated, limiting opportunities to overlap communication with computation. Nevertheless, Tessera still achieves the lowest latency among all disaggregation baselines, enabled by its latency-oriented policy and the queueing-aware policy switching of the online monitor.
+
+Fig. 7: Online normalized latency on GPT-oss 20B across three GPU pairs. The red dashed line marks the SLO target (50 ms/token).
+
+V-C Cluster-Scale Results
+
+Fig. 8: Cluster-scale offline throughput. (a) GPT-oss 20B on 2 A100 + 1 L40s. (b) Qwen-3 235B on 8 B200 + 8 H100.
+
+The preceding experiments validate Tessera on single heterogeneous GPU pairs. We now evaluate its scalability on asymmetric GPU clusters and its composability with model parallelism (e.g., TP) under two offline setups: GPT-oss 20B on 2 A100 + 1 L40s and Qwen-3 235B [57] on 8 B200 + 8 H100. For the asymmetric 2 A100 + 1 L40s setup, Tessera’s policy planner directly formulates a 3-GPU MILP, jointly optimizing kernel placement across all three GPUs. PD disaggregation uses L40s as the prefill instance and each A100 as an independent decode instance, and AF disaggregation runs attention on 2 A100 with TP=2 and FFN on L40s. Both baselines follow the default configurations from their original work [10, 12] and are tuned for maximum throughput. For the 8 B200+8 H100 setup, Tessera treats each B200+H100 pair as one TP rank and applies kernel disaggregation within each pair. In each setup, TP runs over NVLink within the homogeneous high-end GPU group, and the collective communication operations remain on the original GPU group.
+
+Figure 8 reports the offline throughput. Across both setups, Tessera consistently outperforms PD disaggregation by 1.5, and AF disaggregation by 1.4. The fundamental limitations of coarse-grained disaggregation persist at the cluster scale. In contrast, Tessera applies kernel disaggregation independently within each TP rank pair or takes the whole cluster as an optimization goal, reusing the same policy planner and pipelined execution. These results confirm that Tessera composes naturally with model parallelism and scales from a single GPU pair to multi-GPU clusters without requiring changes to the parallelism strategy.
+
+V-D Performance Drilldown
+
+Pipeline effectiveness. 
+We evaluate the effectiveness of pipelined request processing on GPT-oss 20B under an offline setting. Figure 9(a) reports throughput under three configurations. The red dashed line denotes the optimal throughput, assuming zero communication overhead. Without pipelining, GPUs idle during cross-GPU transfers, achieving only about half of the optimal throughput. Naive pipelining improves throughput by 1.47 through overlapping communication with computation from concurrent requests. Incorporating priority-aware scheduling further increases throughput to 96.6% of optimal. Without priority differentiation, concurrent requests may compete for SMs and reach their communication phases simultaneously, leaving the GPU idle while all requests wait for data transfers. By assigning lower stream priorities to later-arriving requests, the GPU hardware scheduler preferentially allocates SMs to earlier requests, allowing
+them to stagger their communication phases and keep the GPU
+continuously occupied.
+
+Figure 9(b) shows the time breakdown on the bottleneck GPU. With pipelining and priority scheduling, communication idle time drops from nearly half to less than 4%, confirming that the pipeline effectively hides transfer latency. This also validates the cost model in §III-B, which assumes communication can be fully overlapped under steady-state pipelining.
+
+Fig. 9: (a) Throughput under different pipeline configurations. (b) Time breakdown on the bottleneck GPU.
+
+Online monitor sensitivity. 
+
+Figure 10 illustrates the sensitivity of normalized latency and policy switch frequency to the window size and queueing threshold on GPT-oss 20B under a 360-second real-world workload trace [9]. Within each window , the monitor decides whether to trigger a policy switch based on . The key trade-off lies between switching overhead and adaptation delay.
+Each policy switch requires synchronizing all GPU workers at an iteration boundary, incurring a stall of approximately 30 ms. Aggressive configurations (e.g., =30ms or =1.1) lead to frequent switching, and the accumulated overhead increases latency by up to 1.32. In contrast, overly conservative settings (e.g., =1.5s or =3.0) delay adaptation to load changes, leaving the system in suboptimal policies during spikes and causing up to 1.55 latency degradation. We choose =300ms and =1.5 as default settings, which provide the best trade-off between responsiveness and overhead.
+
+Fig. 10: Sensitivity of normalized latency and policy switch count to window size (=1.5) and queueing threshold (=300ms) on GPT-oss 20B.
+
+Robustness on slow network. 
+We throttle the interconnect between A100 and L40s from 200 Gbps to 100, 50, and 25 Gbps and evaluate GPT-oss 20B under both offline and online settings (under a light load), as shown in Figure 11(a). For offline serving, even at 25 Gbps, Tessera’s throughput drops by less than 6%, because pipelined request processing hides the increased transfer latency behind computation from concurrent requests. For online serving under a light request load, Tessera’s latency-oriented policy accounts for the higher communication cost and shifts more kernels to the same GPU to reduce cross-GPU data transfer. Even with a 25 Gbps network, Tessera’s normalized latency remains lower than the homogeneous A100 baseline, because the latency-oriented policy planner still finds a beneficial kernel placement at this bandwidth. In the worst case, Tessera keeps all kernels on A100 with no cross-GPU transfer, gracefully degenerating to homogeneous GPU execution without any performance cliff.
+
+Fig. 11: (a) Impact of network bandwidth on GPT-oss 20B with A100+L40s. (b) MILP solver time.
+
+MILP scalability. 
+Figure 11(b) reports the MILP solver time as a function of kernel count and GPU count using Gurobi [37]. For the 2-GPU pair setting, solving a single DDG takes 0.07s for 200 kernels and 0.43s for 1000 kernels. Considering a superlarge model, DeepSeek-V3 671B [58], as a stress test, a forward iteration (one DDG) containing nearly 1500 kernels can be solved within 1s. Although the solver time grows linearly with the number of GPU types, most layers in large models share identical kernel compositions, which enables consistent placement across repetitive layers. Tessera exploits this redundancy and significantly reduces the problem size to further accelerate the MILP solver.
+
+VI Related Work
+
+Disaggregated inference serving. 
+Recent work has explored disaggregation to better align workload characteristics with hardware features. DistServe [10] and Splitwise [9] separate the prefill and decode phases of LLM inference across different GPU pools. Hexgen-2 [59] formulates the placement of disaggregated prefill and decode computations on heterogeneous GPUs as a constrained optimization problem, jointly considering resource allocation and parallelization strategies to improve serving throughput. Cronus [11] further enables fine-grained prefill partitioning to mitigate load imbalance arising from heterogeneous GPU capabilities. MegaScale-Infer [12] disaggregates execution at the block level by separating attention and FFN components across GPUs with different resource strengths.
+Despite these advances, existing approaches operate at relatively coarse granularity (e.g., phases or blocks), limiting their ability to fully exploit fine-grained performance heterogeneity and are tightly coupled to specific model architectures. In contrast, Tessera performs disaggregation at the kernel level, enabling fine-grained optimization while maintaining generality across diverse model types.
+
+Heterogeneous GPU parallelization. 
+A line of work aims at optimizing parallelization policies on heterogeneous GPU clusters. Sailor [60] automates distributed training across dynamic, heterogeneous, and geo-distributed clusters by jointly searching data, tensor, and pipeline parallelism configurations. Metis [61] proposes fast automatic distributed training on heterogeneous GPUs via workload-aware partitioning. Hetis [55] addresses the memory-compute mismatch across heterogeneous GPUs by selectively parallelizing compute-intensive operations with an online request-level dispatching algorithm to balance load across the cluster. Helix [54] formulates LLM serving over heterogeneous GPUs and network connections as a max-flow problem on directed weighted graphs, where node and edge capacities encode GPU compute power and network bandwidth, respectively. These parallel search optimization strategies are orthogonal to our work and can better utilize large-scale heterogeneous GPU clusters.
+
+VII Conclusion
+
+This paper presents Tessera, the first runtime system that exploits heterogeneous GPUs through fine-grained kernel disaggregation. Comprehensive evaluations show Tessera consistently outperforms existing disaggregation methods in both throughput and cost efficiency, and remains general to diverse model architectures.
+
+References
+
+[1]
+Z. J. Kong, Q. Xu, and Y. C. Hu
+
+PPipe: efficient video analytics serving on heterogeneous GPU clusters via pool-based pipeline parallelism.
+
+In Proceedings of the 2025 USENIX Conference on Usenix Annual Technical Conference (USENIX ATC 25),
+
+External Links: Link
+
+Cited by: §I.
+
+[2]
+J. Stojkovic, C. Zhang, Í. Goiri, and R. Bianchini (2002)
+
+Rearchitecting Datacenter Lifecycle for AI: A TCO-Driven Framework.
+
+arXiv preprint arXiv:2509.26534.
+
+External Links: Link
+
+Cited by: §I.
+
+[3]
+(2025)
+
+Compute Engine.
+
+Note: https://cloud.google.com/compute/docs/gpus
+
+Cited by: §I.
+
+[4]
+K. Wheeler (2025)
+
+How Amazon Achieved Rocketing Sales and Growth From AI.
+
+Note: https://aimagazine.com/news/how-amazonachieved-rocketing-sales-and-growth-from-ai
+
+Cited by: §I.
+
+[5]
+L. Marina (2024)
+
+60+ ChatGPT Statistics And Facts You Need to Know in 2024.
+
+Note: https://invgate.com/blog/chatgpt-statistics/
+
+Cited by: §I.
+
+[6]
+J. Kim, B. Shin, J. Chung, and M. Rhu
+
+The cost of dynamic reasoning: demystifying ai agents and test-time scaling from an ai infrastructure perspective.
+
+External Links: Link
+
+Cited by: §I.
+
+[7]
+M. Luo, X. Shi, C. Cai, T. Zhang, J. Wong, Y. Wang, C. Wang, Y. Huang, Z. Chen, J. E. Gonzalez, and I. Stoica
+
+Autellix: an efficient serving engine for llm agents as general programs.
+
+External Links: Link
+
+Cited by: §I.
+
+[8]
+B. Gao, Z. He, P. Sharma, Q. Kang, D. Jevdjic, J. Deng, X. Yang, Z. Yu, and P. Zuo (2024)
+
+Cost-efficient large language model serving for multi-turn conversations with cachedattention.
+
+In Proceedings of the 2024 USENIX Conference on Usenix Annual Technical Conference (ATC 24),
+
+External Links: Link
+
+Cited by: §I.
+
+[9]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini
+
+Splitwise: efficient generative llm inference using phase splitting.
+
+In Proceedings of the 51st Annual International Symposium on Computer Architecture (ISCA 24),
+
+External Links: Link
+
+Cited by: §I,
+§I,
+§II-C,
+§II-C,
+§IV,
+§V-A,
+§V-D,
+§VI.
+
+[10]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang
+
+DistServe: Disaggregating prefill and decoding for goodput-optimized large language model serving.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+External Links: Link
+
+Cited by: §I,
+§II-C,
+§II-C,
+§IV,
+§IV,
+1st item,
+§V-C,
+§VI.
+
+[11]
+Y. Liu, Q. Xu, and Y. C. Hu (2025)
+
+Cronus: efficient LLM inference on Heterogeneous GPU Clusters via Partially Disaggregated Prefill.
+
+arXiv preprint arXiv:2509.17357.
+
+External Links: Link
+
+Cited by: §I,
+§VI.
+
+[12]
+R. Zhu, Z. Jiang, C. Jin, P. Wu, C. A. Stuardo, D. Wang, X. Zhang, H. Zhou, H. Wei, Y. Cheng, J. Xiao, X. Zhang, L. Liu, H. Lin, L. Chang, J. Ye, X. Yu, X. Liu, X. Jin, and X. Liu
+
+MegaScale-Infer: efficient Mixture-of-Experts Model Serving with Disaggregated Expert Parallelism.
+
+In Proceedings of the 39th ACM Special Interest Group on Data Communication (SIGCOMM 25),
+
+External Links: Link
+
+Cited by: §I,
+§II-C,
+§II-C,
+2nd item,
+§V-C,
+§VI.
+
+[13]
+B. Wang, B. Wang, C. Wan, G. Huang, H. Hu, et al. (2025)
+
+Step-3 is large yet affordable: model-system co-design for cost-effective decoding.
+
+arXiv preprint arXiv:2507.19427.
+
+External Links: Link
+
+Cited by: §I.
+
+[14]
+Y. Jiang, R. Yan, and B. Yuan (2025)
+
+Hexgen-2: disaggregated generative inference of llms in heterogeneous environment.
+
+arXiv preprint arXiv:2502.07903.
+
+External Links: Link
+
+Cited by: §I.
+
+[15]
+(2025)
+
+NVIDIA. Parallel thread execution isa version 9.00ptx.
+
+Note: https://docs.nvidia.com/cuda/parallel-thread-execution/index.html
+
+Cited by: §I,
+§III-A.
+
+[16]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica (2023)
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP 23),
+
+External Links: Link
+
+Cited by: §I,
+§III-A,
+§IV,
+§V-A.
+
+[17]
+(2026)
+
+PyTorch.
+
+Note: https://github.com/pytorch/pytorch
+
+Cited by: §I,
+§III-A,
+§IV.
+
+[18]
+(2026)
+
+Google cloud. virtual machines pricing.
+
+Note: https://cloud.google.com/products/compute/pricing/accelerator-optimized
+
+Cited by: TABLE I,
+TABLE I.
+
+[19]
+(2026)
+
+NVIDIA MGX.
+
+Note: https://www.nvidia.com/en-us/data-center/products/mgx/
+
+Cited by: §II-A.
+
+[20]
+(2026)
+
+Supermicro MGX Systems.
+
+Note: https://www.supermicro.com/zh_cn/accelerators/nvidia/mgx
+
+Cited by: §II-A.
+
+[21]
+(2026)
+
+GIGABYTE MGX Server.
+
+Note: https://www.gigabyte.com/Enterprise/MGX-Server
+
+Cited by: §II-A.
+
+[22]
+R. Carratalá-Sáez, F. J. andújar, Y. Torres, A. Gonzalez-Escribano, and D. R. Llanos (2023)
+
+Open sycl on heterogeneous gpu systems: a case of study.
+
+arXiv preprint arXiv:2310.06947.
+
+External Links: Link
+
+Cited by: §II-A.
+
+[23]
+J. Liu (2025)
+
+Beyond hardware: building the software foundation for heterogeneous gpu.
+
+Note: Blog posthttps://seclee.com/post/202510_hmc/
+
+Cited by: §II-A.
+
+[24]
+(2025)
+
+Basic Linear Algebra on NVIDIA Gpus.
+
+Note: https://developer.nvidia.com/cublas
+
+Cited by: §II-C,
+§III-A.
+
+[25]
+S. Williams, A. Waterman, and D. Patterson (2009)
+
+Roofline: an insightful visual performance model for multicore architectures.
+
+Commun. ACM.
+
+External Links: Link
+
+Cited by: §II-C.
+
+[26]
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+
+FlashAttention: fast and memory-efficient exact attention with io-awareness.
+
+arXiv preprint arXiv:2205.14135.
+
+External Links: Link
+
+Cited by: §II-C.
+
+[27]
+W. Xingda, H. Zhuobin, S. Tianle, H. Yingyi, C. Rong, H. Mingcong, G. Jinyu, and C. Haibo
+
+PhoenixOS: concurrent OS-level gpu checkpoint and restore with validated speculation.
+
+In Proceedings of the ACM SIGOPS 31th Symposium on Operating Systems Principles (SOSP 25),
+
+External Links: Link
+
+Cited by: §III-A,
+§IV.
+
+[28]
+(2026)
+
+PyTorch THCCachingAllocator.
+
+Note: https://github.com/torch/cutorch/blob/master/lib/THC/THCCachingAllocator.cpp
+
+Cited by: §III-A.
+
+[29]
+S. Huang and C. Wu
+
+NEUTRINO: fine-grained gpu kernel profiling via programmable probing.
+
+In Proceedings of the 19th USENIX Conference on Operating Systems Design and Implementation (OSDI 25),
+
+External Links: Link
+
+Cited by: §III-A,
+§IV.
+
+[30]
+Y. Zheng, T. Yu, Y. Yang, Y. Hu, X. Lai, D. Williams, and A. Quinn
+
+Extending applications safely and efficiently.
+
+In Proceedings of the 19th USENIX Conference on Operating Systems Design and Implementation (OSDI 25),
+
+External Links: Link
+
+Cited by: §III-A.
+
+[31]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin (2023)
+
+Attention is all you need.
+
+arXiv preprint arXiv:1706.03762.
+
+External Links: Link
+
+Cited by: §III-A.
+
+[32]
+NVIDIA (2025)
+
+NVIDIA tensorRT.
+
+Note: https://developer.nvidia.com/tensorrt
+
+Cited by: §III-A.
+
+[33]
+(2025)
+
+Graph Management.
+
+Note: https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html
+
+Cited by: §III-A.
+
+[34]
+(2026)
+
+CUDA Graph Best Practice for PyTorch.
+
+Note: https://docs.nvidia.com/dl-cuda-graph/latest/torch-cuda-graph/handling-dynamic-patterns.html
+
+Cited by: §III-A.
+
+[35]
+G. L. Nemhauser and L. A. Wolsey (1988)
+
+Integer and combinatorial optimization.
+
+Wiley New York.
+
+Cited by: §III-B.
+
+[36]
+D. Narayanan, A. Harlap, A. Phanishayee, V. Seshadri, N. R. Devanur, G. R. Ganger, P. B. Gibbons, and M. Zaharia
+
+PipeDream: generalized pipeline parallelism for dnn training.
+
+In Proceedings of the 27th ACM Symposium on Operating Systems Principles (SOSP 19),
+
+External Links: Link
+
+Cited by: §III-B.
+
+[37]
+(2026)
+
+Gurobi Optimizer.
+
+Note: https://www.gurobi.com/
+
+Cited by: §III-B,
+§V-D.
+
+[38]
+(2022)
+
+Improving Network Performance of HPC Systems Using NVIDIA Magnum IO NVSHMEM and GPUDirect.
+
+Note: https://developer.nvidia.com/blog/improving-network-performance-of-hpc-systems-using-nvidia-magnum-io-nvshmem-and-gpudirect-async/
+
+Cited by: §III-C.
+
+[39]
+(2026)
+
+NCCL.
+
+Note: https://github.com/NVIDIA/nccl
+
+Cited by: §III-C,
+§IV,
+§V-A.
+
+[40]
+(2022)
+
+CUDA Runtime API:GPU Stream Management.
+
+Note: https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html#group__CUDART__STREAM
+
+Cited by: §III-C.
+
+[41]
+(2024)
+
+NVIDIA PTXAS.
+
+Note: https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/
+
+Cited by: §IV.
+
+[42]
+S. Che, M. Boyer, J. Meng, D. Tarjan, J. Sheaffer, S. Lee, and K. Skadron
+
+Rodinia: a benchmark suite for heterogeneous computing.
+
+External Links: Link
+
+Cited by: §IV.
+
+[43]
+(2025)
+
+CUDA Programming Guide CUDA Graphs.
+
+Note: https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html#
+
+Cited by: §IV.
+
+[44]
+(2026)
+
+NCCL Communicator Quality of Service.
+
+Note: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/communicators.html
+
+Cited by: §IV.
+
+[45]
+(2024)
+
+Meta Llama 3.
+
+Note: https://llama.meta.com/llama3
+
+Cited by: §V-A.
+
+[46]
+O. :. S. Agarwal, L. Ahmad, J. Ai, and e. Sam Altman (2025)
+
+Gpt-oss-120b and gpt-oss-20b Model Card.
+
+External Links: 2508.10925,
+Link
+
+Cited by: §V-A.
+
+[47]
+(2025)
+
+Mamba-Codestral-7B-v0.1.
+
+Note: https://huggingface.co/mistralai/Mamba-Codestral-7B-v0.1
+
+Cited by: §V-A.
+
+[48]
+Q. Team (2025)
+
+Qwen2.5-VL.
+
+Note: https://qwenlm.github.io/blog/qwen2.5-vl/
+
+Cited by: §V-A.
+
+[49]
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, D. Podell, T. Dockhorn, Z. English, K. Lacey, A. Goodwin, Y. Marek, and R. Rombach (2024)
+
+Scaling rectified flow transformers for high-resolution image synthesis.
+
+External Links: 2403.03206,
+Link
+
+Cited by: §V-A.
+
+[50]
+Stability AI (2024)
+
+Stable diffusion 3.5 medium.
+
+Note: https://huggingface.co/stabilityai/stable-diffusion-3.5-medium
+
+Cited by: §V-A.
+
+[51]
+X. Chen, H. Fang, T. Lin, R. Vedantam, S. Gupta, P. Dollar, and C. L. Zitnick (2015)
+
+Microsoft coco captions: data collection and evaluation server.
+
+External Links: 1504.00325,
+Link
+
+Cited by: §V-A.
+
+[52]
+J. Yu, Y. Xu, J. Y. Koh, T. Luong, G. Baid, Z. Wang, V. Vasudevan, A. Ku, Y. Yang, B. K. Ayan, B. Hutchinson, W. Han, Z. Parekh, X. Li, H. Zhang, J. Baldridge, and Y. Wu (2022)
+
+Scaling autoregressive models for content-rich text-to-image generation.
+
+External Links: 2206.10789,
+Link
+
+Cited by: §V-A.
+
+[53]
+K. Zhu, Y. Gao, Y. Zhao, L. Zhao, G. Zuo, Y. Gu, D. Xie, T. Tang, Q. Xu, Z. Ye, K. Kamahori, C. Lin, Z. Wang, S. Wang, A. Krishnamurthy, and B. Kasikci
+
+NanoFlow: towards optimal large language model serving throughput.
+
+In Proceedings of the 19th USENIX Conference on Operating Systems Design and Implementation (OSDI 25),
+
+External Links: Link
+
+Cited by: §V-A.
+
+[54]
+Y. Mei, Y. Zhuang, X. Miao, J. Yang, Z. Jia, and R. Vinayak
+
+Helix: serving large language models over heterogeneous gpus and network via max-flow.
+
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS 25),
+
+External Links: Link
+
+Cited by: §V-A,
+§VI.
+
+[55]
+Z. Mo, J. Liao, H. Xu, Z. Zhou, and C. Xu
+
+Hetis: serving llms in heterogeneous gpu clusters with fine-grained and dynamic parallelism.
+
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC 25),
+
+External Links: Link
+
+Cited by: §V-A,
+§VI.
+
+[56]
+Z. Tang, Y. Wang, Q. Wang, and X. Chu (2019)
+
+The impact of gpu dvfs on the energy and performance of deep learning: an empirical study.
+
+In Proceedings of the Tenth ACM International Conference on Future Energy Systems,
+
+External Links: Link
+
+Cited by: §V-A.
+
+[57]
+A. Yang et al. (2025)
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §V-C.
+
+[58]
+DeepSeek-AI and etc. (2025)
+
+DeepSeek-v3 technical report.
+
+External Links: 2412.19437,
+Link
+
+Cited by: §V-D.
+
+[59]
+Y. Jiang, R. Yan, and B. Yuan (2025)
+
+HexGen-2: disaggregated generative inference of llms in heterogeneous environment.
+
+External Links: 2502.07903,
+Link
+
+Cited by: §VI.
+
+[60]
+F. Strati, Z. Zhang, G. Manos, I. S. Périz, Q. Hu, T. Chen, B. Buzcu, S. Han, P. Delgado, and A. Klimovic
+
+Sailor: automating Distributed Training over Dynamic, Heterogeneous, and Geo-distributed Clusters.
+
+In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles (SOSP 25),
+
+External Links: Link
+
+Cited by: §VI.
+
+[61]
+T. Um, B. Oh, M. Kang, W. Lee, G. Kim, D. Kim, Y. Kim, M. Muzzammil, and M. Jeon
+
+Metis: fast Automatic Distributed Training on Heterogeneous GPUs.
+
+In 2024 USENIX Annual Technical Conference (USENIX ATC 24),
+
+External Links: Link
+
+Cited by: §VI.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

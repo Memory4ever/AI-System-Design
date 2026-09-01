@@ -105,6 +105,16 @@ terminal evidence
 
 Mutable alias 可用于 rollout，但 run 必须解析并记录实际版本。
 
+### 从完整物化到分层实例化
+
+最直接的 Agent 实例化方式，是为每个实例复制完整 definition、继承状态与工作区。实例数量少、状态小，或隔离要求高于启动成本时，这种完整物化边界清楚，也最容易调试。进入大量有状态实例后，稳定定义与共享祖先被反复复制，启动延迟、内存占用和 lineage 管理开始随实例数增长；此时需要把“一个实例是什么”与“它最终解析出的有效状态”分开。
+
+一种可行的演进是把实例状态拆成三个层次：definition substrate 保存不可变的角色、能力与 policy；reference substrate 记录继承关系和共享祖先；resolution substrate 在执行时把这些层与实例自己的 copy-on-write overlay 合成为有效状态。这样，平台而不是模型拥有定义身份、引用 lineage、解析规则与垃圾回收；`AgentRun` 只拥有本次运行的局部偏离，工具和环境仍拥有真实副作用。实例化因此不必复制全部稳定状态，但这不意味着已有“常数时间”的生产证明。
+
+分层实例化把复制成本换成了解析纪律：resolver 必须确定、可缓存、可审计，并正确处理权限继承、cache invalidation、并发写入和祖先回收。任一环节含糊，实例看到的状态就可能随执行时机变化，甚至继承不应获得的能力。状态很小、实例很少、resolver 无法给出确定语义，或安全域要求彻底隔离时，完整物化仍是更稳妥的旧路径。
+
+<!-- source-family:SF-2026-ARXIV-2604-12129 -->
+
 长任务还需要把消息、tool calls/errors、workspace effects、memory interactions、usage、branch lineage 与 evidence
 组合成一个可传递的 typed Session value。仅保存 transcript 最直观，但无法安全表达 branch、merge、persist、
 resume 与 release；只保存最终 artifact 又丢失形成它的状态和副作用。平台可以让 Session 经历：
@@ -399,6 +409,16 @@ Evidence Plane
 ```
 
 Control plane 不应阻塞每个 token，却必须控制每个高风险 transition。Execution plane 不能自行修改 policy。Evidence plane 提供 replay、incident 和 improvement 所需 observed state。
+
+### Agent Discovery 是可修复的路由状态，不是身份真值
+
+中心 registry 在规模可控、网络稳定且需要强一致权限时最清楚；节点和 Agent 都频繁上下线后，单一目录会成为可用性与扩展瓶颈。去中心化 discovery 可以用结构化 overlay 获得可预测 lookup，也可以用 gossip 让成员与邻近关系逐步收敛。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23080:start -->
+平台必须分开 node membership、agent warm/cold readiness、capability advertisement、租约/新鲜度与 cryptographic identity。Kademlia 或 Cyclon/Vicinity 一类 overlay 只拥有“到哪里找候选”的软状态，不拥有 Agent 身份、权限或真实 readiness；调用前仍需认证、版本/能力核验和失败回退。
+
+选择不是“structured 稳定、gossip 更抗 churn”的固定排序。Exact-v1 的 node-churn 实验中 Kademlia 的 discovery success 通常更稳健；gossip 的优势是较低 maintenance，并在部分 regime 提供较低 latency，面对 node 与 agent instability 叠加时呈现更渐进的退化。两者分别承担 routing-table repair 与 eventual neighborhood convergence，实际选择必须绑定 churn 类型、warm/cold 比例、维护预算与一致性要求；小规模或强一致域仍应使用中心 registry。作者只有 SimPy 的比较，不证明 Internet 生产可用性、对抗安全或最优协议。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23080:end -->
 
 ## Agent Runtime State Machine
 
@@ -766,6 +786,10 @@ Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加�
 到此，七个 Part 形成完整 Draft：从第一性原理理解模型能力，经多模态表示、环境预测与物理行动，再到能力生产、在线交付、平台治理和受控 Agent 行动。后续 refinement 应由 papers、真实系统证据和跨章 Review 驱动，而不是为了扩写而增加内容。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23080`（Status: Experimental）：exact-v1 支持在 SimPy 中比较 Kademlia 与 Cyclon+Vicinity 面对 node/agent 双层 churn 的 discovery 行为；不证明生产网络、身份认证、对抗安全或 readiness 真值。https://arxiv.org/abs/2604.23080v1
+
+- **Aethon（arXiv:2604.12129v1；Status: Experimental）**：exact-v1 第 4 节支持 definition/reference/resolution 三层分解、layered inheritance 与 copy-on-write state model；第 9 节说明 resolver complexity 等开放问题。论文是 conceptual reference design，没有实证证明 constant-time instantiation、memory savings、resolver determinism、多租户隔离或生产优势。https://arxiv.org/abs/2604.12129v1
 
 <!-- june30-review:start -->
 - **SF-2026-ARXIV-2606-30616 / arXiv:2606.30616v1**：以更长工具交互 horizon、领域 teacher route 与 on-policy distillation 替代单纯参数扩展。Method=`arXiv:2606.30616v1 — §2 Knowledge-Guided General Agent Training with Specialized Teachers; §4 Three-stage Training Recipe; §4.2 Domain-level Teacher Training`；Evaluation=`arXiv:2606.30616v1 — §5 Experimental Results; §5.1 Evaluation Setting; §5.2 Results and Observations`，主指标 pass@1、每题最多 300 turns，论文同时报告 Qwen3.5-35B-A3B 官方与复现结果；Non-proof=`arXiv:2606.30616v1 — §6 Limitation and Future Work`，不证明参数规模不再重要或其他模型、任务、生产 SLO 可外推；Hardware/Precision/Input length/Output length/Batch/Concurrency/SLO=`Not Disclosed`；Artifact=`Not Disclosed — no later artifact used`。若 horizon budget、teacher identity、工具校验或失败轨迹不完整，则缩短 horizon 并转交强模型或人工。

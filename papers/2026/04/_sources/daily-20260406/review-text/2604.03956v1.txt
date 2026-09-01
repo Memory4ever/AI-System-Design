@@ -1,0 +1,1781 @@
+VLA-Forget: Vision-Language-Action Unlearning for Embodied Foundation Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Methodology
+
+Overview.
+
+3.1 Hybrid Selective Localization
+
+Perception and projector selection.
+
+3.2 Unlearning Objectives
+
+3.3 Training and Unlearning Procedure
+
+4 Experiments
+
+4.1 Experimental Setups
+
+4.2 Experiment Results
+
+4.3 Ablation Study
+
+4.4 Qualitative Analysis
+
+4.5 Discussion
+
+5 Conclusion
+
+References
+
+A Pseudo Code
+
+Algorithm Overview.
+
+B Detailed Experimental Setting
+
+B.1 Hyper Parameters
+
+B.2 Mathematical Definition of VLA-Forget Metrics
+
+C Additional Results
+
+C.1 Ablation Study
+
+C.2 Quantitative Analysis
+
+C.3 Safety Case Study
+
+D Discussion
+
+D.1 Limitations
+
+D.2 Future Work
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.03956v1 [cs.CV] 05 Apr 2026
+
+VLA-Forget: Vision-Language-Action Unlearning for Embodied Foundation Models
+
+Ravi Ranjan
+††thanks: Corresponding author.
+
+Code available at: https://github.com/raviranjan-ai/VLA-Forget
+Affiliation: Florida International University
+
+Affiliation: Miami, USA
+
+Email: rkuma031@fiu.edu
+
+  
+Agoritsa Polyzou
+
+Affiliation: Florida International University
+
+Affiliation: Miami, USA
+
+Email: apolyzou@fiu.edu
+
+Abstract
+
+Vision-language-action (VLA) models are emerging as embodied foundation models for robotic manipulation, but their deployment introduces a new unlearning challenge: removing unsafe, spurious, or privacy-sensitive behaviors without degrading perception, language grounding, and action control. In OpenVLA-style policies, behavior is produced through a fused visual encoder, a cross-modal projector, and a language backbone that predicts tokenized robot actions, so undesirable knowledge can be distributed across perception, alignment, and reasoning/action layers rather than confined to a single module. Consequently, partial unlearning applied only to the vision stack or only to the language backbone is often insufficient, while conventional unlearning baselines designed for standalone vision or language models may leave residual forgetting or incur unnecessary utility loss in embodied settings. We propose VLA-Forget, a hybrid unlearning framework that combines ratio-aware selective editing for perception and cross-modal specificity with layer-selective reasoning/action unlearning for utility-preserving forgetting. VLA-Forget jointly optimizes three objectives: targeted forgetting, perceptual preservation, and reasoning retention, through staged updates over the visual encoder, projector, and upper action-generating transformer blocks.
+Across forget-set behavior probes and retain-task evaluations, VLA-Forget improves forgetting efficacy by 10%, preserves perceptual specificity by 22%, retains reasoning and task success by 9%, and reduces post-quantization recovery by 55% relative to strong unlearning baselines.
+
+Figure 1: Motivating failure case for VLA-Forget. Given the instruction “Pick blue cup,” the policy produces a visually plausible but semantically incorrect action by grasping the red cup. After targeted unlearning, the policy suppresses this spurious instruction-to-action association and recovers instruction-consistent behavior.
+
+1 Introduction
+
+Vision-Language-Action (VLA) models are emerging as a practical route to embodied foundation models: policies that translate natural-language instructions and raw visual observations directly into robot actions by leveraging large pretrained vision and language backbones. OpenVLA exemplifies this paradigm as an open 7B VLA trained on 970K real-world robot demonstrations from Open X-Embodiment, combining a fused (DINOv2+SigLIP) visual encoder with a Llama 2 backbone and an action-token prediction interface that enables scalable fine-tuning and deployment on commodity hardware Kim et al. (2024); O’Neill et al. (2024); Pang et al. (2025).
+
+However, deployment of VLA policies introduces an urgent governance and reliability problem that is not fully addressed by today’s training and evaluation pipelines: once a robot policy has been trained, it may retain (i) unsafe or undesirable behaviors from a subset of demonstrations, (ii) privacy or IP-sensitive content embedded in multimodal data, or (iii) spurious shortcuts that appear correct under standard benchmarks but fail under structured distribution shift. The consequences of such failures are amplified in robotics because errors translate into physical actions. Recent evidence further highlights a VLA-specific grounding failure, sometimes described as linguistic blindness where policies execute visually plausible trajectories even when the instruction is semantically contradictory, motivating stronger mechanisms for selective behavior removal and reliable grounding diagnostics Zhuang et al. (2026).
+
+Figure 1 illustrates the core VLA-specific challenge studied in this work: undesirable behavior may arise from misalignment across perception, cross-modal grounding, or action priors, causing the policy to execute a physically plausible yet instruction-inconsistent action. This motivates selective unlearning that removes a targeted erroneous behavior slice while preserving normal scene understanding and non-target task execution. Motivation is further supported by recent evidence that VLA policies remain brittle under visual corruption and grounding perturbations, underscoring the need for post hoc correction mechanisms beyond standard fine-tuning Lin et al. (2025); Orjuela et al. (2026).
+
+Machine unlearning provides a practical way to remove targeted training influence without full retraining, but VLA policies are harder to unlearn than standard vision or language models. Unlike static predictors, a VLA model is a closed-loop control policy, so failure must be judged through embodied behavior rather than output accuracy alone. In OpenVLA, continuous robot actions are represented as discrete action tokens, which means unwanted behavior can be encoded jointly in visual features, cross-modal alignment, and instruction-conditioned action priors in the language backbone Kim et al. (2024).
+
+As a result, unlearning only the vision stack or only the language model is often insufficient: removing a visual trigger may leave the downstream action prior intact, while editing language priors may preserve harmful perceptual shortcuts or incorrect visual-language bindings. Existing baselines were largely designed for unimodal settings and transfer only partially to VLA policies. For example, exact approaches such as SISA require training-time changes Bourtoule et al. (2021), while approximate methods such as SCRUB improve forget-retain trade-offs but do not directly address multimodal component entanglement or control-oriented evaluation Kurmanji et al. (2023). Moreover, VLA unlearning involves competing retain, forget, and mismatch objectives over large backbones, motivating gradient-conflict mitigation such as PCGrad Yu et al. (2020).
+
+In this work, we introduce VLA-Forget, a hybrid unlearning framework for Vision-Language-Action models that is explicitly component-aware and deployment-oriented. VLA-Forget (i) targets perception and cross-modal specificity through ratio-aware selective editing of the visual encoder and projector, (ii) targets reasoning/action utility-preserving forgetting through significance-based selective editing of action-relevant transformer blocks, and (iii) performs staged, adapter-first updates (e.g., LoRA) to enable efficient unlearning with rollback and canary deployment compatibility Hu et al. (2022); Kim et al. (2025); Liu et al. (2025a). We evaluate unlearning with robotics-centric metrics and unlearning-centric audits (including safety violation risk), along with the fact that we evaluate robustness after quantization, aligning the evaluation with the realities of VLA deployment Carlini et al. (2022); Zang et al. (2025); Zhang et al. (2024b)
+
+Key Contributions. (i) We formalize VLA unlearning as a three-goal problem targeted forgetting (efficacy), perceptual preservation (specificity), and reasoning retention (utility) in the presence of an action-token interface and multimodal component entanglement.
+(ii) We propose VLA-Forget, a novel hybrid unlearning pipeline that exploits ratio-aware selective editing for perception/cross-modal specificity with significance-based selective editing for reasoning/action utility preservation, implemented in an adapter-first manner compatible with OpenVLA fine-tuning workflows.
+(iii) We outline an evaluation protocol that couples embodied performance (task success and control stability) with unlearning audits (forget/retain scores and safety violation risk), and incorporates structured contradiction probes to diagnose and prevent spurious “fake success” under OOD instructions.
+
+2 Related Work
+
+Vision-language-action (VLA) models extend multimodal foundation models from perception and generation to embodied control. Early systems such as VIMA and RT-2 showed that robot behavior can be conditioned on interleaved visual-language prompts and represented through tokenized actions, while Open X-Embodiment and OpenVLA scaled this paradigm to diverse real-robot data and open 7B policies. Despite this progress, prior VLA research has focused mainly on scaling, transfer, and adaptation, rather than post hoc removal of unsafe behaviors, undesirable concepts, or sensitive instruction-action associations. Zhu and others (2023); Zitkovich et al. (2023); O’Neill et al. (2024); Kim et al. (2024)
+
+Machine unlearning has progressed from exact retraining-based deletion to approximate updates that balance erasure quality, efficiency, and retained utility. In language models, recent work spans gradient-ascent, retain-regularized, preference-based, and activation-space methods, while emphasizing joint evaluation of forgetting, utility preservation, and privacy leakage. Two recurring issues are especially relevant for embodied policies: broad model-wide edits often cause collateral degradation, and apparently successful forgetting can fail under deployment transformations such as quantization. These limitations motivate selective, structure-aware unlearning over indiscriminate full-model updates. Bourtoule et al. (2021); Maini et al. (2024); Yao et al. (2024); Liu et al. (2025b); Zhang et al. (2024b)
+
+Related work in vision, vision-language, and diffusion models studies forgetting of classes, identities, and concepts in multimodal transformers. SSD and SalUn localize updates through parameter importance or saliency, LoTUS improves scalable approximate unlearning with uncertainty-aware smoothing, and SLUG shows that targeted single-layer editing can sometimes suffice. In generative settings, ESD and UCE edit text-conditioned diffusion behavior at the concept level. Collectively, these methods expose a central trade-off: aggressive updates improve forgetting but may damage retention, whereas overly localized edits can fail when unwanted knowledge is distributed across layers and modalities. Foster et al. (2024); Fan et al. (2023); Spartalis et al. (2025); Cai et al. (2024); Gandikota et al. (2023); Gandikota et al. (2024)
+
+VLA unlearning differs from prior LLM- or VLM-only settings because undesired behavior may be encoded jointly in visual features, cross-modal bindings, and action-token priors, and must be evaluated through embodied execution rather than text or image outputs alone. Accordingly, VLA-Forget adopts a component-aware formulation: ratio-aware edits target perception and projector modules, while significance-based selective updates address higher-level reasoning and action-generation components. This yields a hybrid unlearning strategy tailored to embodied foundation models rather than a direct reuse of unimodal forgetting methods. Zitkovich et al. (2023); Kim et al. (2024); Fan et al. (2023); Cai et al. (2024); Yao et al. (2024)
+
+3 Methodology
+
+Overview.
+
+We propose VLA-Forget, a novel unlearning framework for vision-language-action (VLA) policies that removes targeted behaviors while preserving perceptual grounding and action reasoning. We instantiate the method on OpenVLA-style policies, where an input image and language instruction are processed by a fused visual encoder, projected into the language-model embedding space, and decoded into discretized robot action tokens. In OpenVLA, the visual stack combines DINOv2 and SigLIP, the backbone is Llama 2, and the policy predicts normalized 7-DoF actions via tokenized bins, making forgetting inherently distributed across perception, cross-modal alignment, and action generation rather than localized to a single module Kim et al. (2024).
+
+Architecture and unlearning target.
+Let a VLA policy be
+
+(1)
+
+where is the observation image, is the instruction, denotes the visual encoder, the MLP projector, and the language/action backbone. The decoder produces an action-token sequence , which is de-tokenized into a continuous action . We consider an unlearning request specifying a target concept or behavior slice, such as a sensitive object, unsafe affordance, or erroneous instruction-to-action mapping. We form three datasets: a forget set , a retain set , and a boundary set containing near-neighbor scenes or instructions that must remain intact.
+
+Why “VLA” unlearning is necessary.
+In VLA models, undesired behavior can originate from three coupled sources: (i) perceptual memorization in , (ii) erroneous visual-to-language binding in , and (iii) action priors or instruction-conditioned hallucinations in . Editing only the vision stack may suppress the visual trigger while leaving the downstream action prior unchanged; editing only the language backbone may preserve a harmful perceptual shortcut. VLA-Forget therefore combines ratio-aware editing for perception and cross-modal specificity with layer-selective unlearning for reasoning and action retention.
+
+3.1 Hybrid Selective Localization
+
+Perception and projector selection.
+
+For each candidate visual or projector layer , we compute forget and retain gradients
+
+(2)
+
+We then assign a ratio-aware score
+
+(3)
+
+and select the top visual/projector layers with highest . This favors parameters that strongly affect forgetting while minimally interfering with retained perception Yu et al. (2020).
+
+Reasoning/action layer selection.
+For the upper transformer blocks in the language-action backbone, we apply a significance ratio
+
+(4)
+
+We initialize an editable set with the top- layers under , and expand it iteratively only if forgetting criteria are unmet. This yields a minimal update set for action-relevant reasoning while avoiding unnecessary global drift Ranjan et al. (2026c); Kurmanji et al. (2023); Zhang et al. (2024b).
+
+Figure 2: Illustration of the unlearning objectives on a selected module. Eq. 6 suppresses the targeted behavior, Eq. 5 preserves non-targeted behavior, and Eq. 7 discourages shallow forgetting by pushing the updated policy away from the original forgotten response.
+
+Figure 3: Overview of VLA-Forget. Given an unlearning request, we construct forget, retain, and mismatch sets, then perform staged adapter-based selective updates over the vision encoder, projector, and LLM/action layers with multi-objective PCGrad stabilization, yielding an unlearned VLA policy with preserved interface and retained task utility.
+
+3.2 Unlearning Objectives
+
+We optimize three complementary objectives aligned with the goals of efficacy, specificity, and utility.
+
+Retain loss.
+To preserve non-targeted behavior, we minimize
+
+(5)
+
+where denotes the original model and . The first term preserves action-token prediction on retained data, while the KL anchor constrains the updated policy to remain close to the base model on benign trajectories Kim et al. (2024); Kurmanji et al. (2023).
+
+Forget loss.
+To suppress the targeted behavior, we maximize the forget-set prediction error:
+
+(6)
+
+Operationally, this is implemented as gradient ascent on  Jin et al. (2025).
+
+Mismatch loss.
+To avoid shallow forgetting and reduce recovery to the pre-unlearning behavior, we maximize distributional divergence on forgotten samples:
+
+(7)
+
+As shown in Fig. 2, the three objectives act together on the selected module to suppress the target behavior, preserve retained behavior, and reduce shallow recovery to the pre-unlearning policy.
+
+Perceptual preservation loss.
+To preserve non-targeted visual grounding, we distill internal features on :
+
+(8)
+
+where and are late visual and projector representations.
+
+Unified objective.
+The final optimization is
+
+(9)
+
+3.3 Training and Unlearning Procedure
+
+Adapter-first updates.
+We implement VLA-Forget using parameter-efficient adapters over the selected layers while freezing the remaining weights. This design is compatible with the OpenVLA training stack, which supports LoRA-based fine-tuning with target_modules=all-linear; thus unlearning can be applied without full-model retraining and can be merged or rolled back at deployment time Kim et al. (2025); Hu et al. (2022).
+
+Stage 1: perception unlearning.
+We first update LoRA parameters on to weaken targeted visual evidence while preserving general scene understanding through and . This stage removes object- or scene-level triggers with minimal disruption to unrelated perception.
+
+Stage 2: cross-modal unlearning.
+Next, we update in the projector to break the specific visual-to-language associations responsible for the unwanted behavior. This is essential when the failure is not purely visual, but rather caused by erroneous alignment between image regions and action-relevant tokens.
+
+Stage 3: reasoning/action unlearning.
+Finally, we update the selected upper backbone layers , and optionally the action-token embedding rows most implicated in the target behavior. This stage suppresses residual instruction-conditioned action priors while maintaining overall task competence.
+
+Gradient stabilization and stopping.
+Because the retain and forget objectives can conflict, we aggregate gradients using projected conflict resolution:
+
+(10)
+
+and apply optimizer steps only to the active adapter parameters. After each round, we evaluate forget efficacy on and retain utility on . If forgetting remains insufficient, we expand by the next highest-significance layer and continue; otherwise, training stops early Yu et al. (2020).
+
+Figure 3 summarizes the VLA-Forget pipeline as a staged, component-aware unlearning framework. Starting from an unlearning request, the method constructs forget, retain, and mismatch sets, decomposes the OpenVLA policy into vision, projector, and LLM/action modules, and then applies selective adapter-based updates in three stages: visual trigger removal, cross-modal binding correction, and reasoning/action prior suppression. The optimization block combines retain, forget, mismatch, and perceptual preservation objectives with PCGrad stabilization, while the final evaluation block verifies forgetting efficacy, retained utility, and deployment robustness before producing the unlearned VLA policy.
+
+Interaction with VLA policies.
+VLA-Forget is designed to preserve the native VLA interface: image and instruction inputs remain unchanged, and the model still predicts action tokens followed by the standard de-tokenization and action unnormalization pipeline used by OpenVLA. This makes the method directly deployable in existing VLA control stacks while enabling targeted post hoc removal of unsafe, private, or spurious behaviors Zang et al. (2025); Pang et al. (2025).
+
+The complete unlearning pipeline is detailed in Algorithm 1, with its associated supporting procedures provided in Algorithm 3; corresponding pseudo-code is available in Appendix A.
+
+Table 1: Unlearning result on OpenVLA-7B. Left: Open X-Embodiment. Right: lerobot/pusht_image. Higher is better for FC, RC, FAD, and TSR; lower is better for RAD and SVR. Mean standard deviation over 5 random seeds, with typical variation in the range of – points for rate-based metrics (FC, RC, TSR, and SVR) and – for distance-based metrics (FAD and RAD). Best results are shown in bold and second-best are underlined.
+
+Open X-Embodiment (OpenVLA-7B)
+lerobot/pusht_image (OpenVLA-7B)
+
+Method
+FC
+RC
+FAD
+RAD
+TSR
+SVR
+FC
+RC
+FAD
+RAD
+TSR
+SVR
+
+SSD
+78
+83
+0.70
+0.28
+68
+17
+82
+86
+0.73
+0.20
+55
+15
+
+SalUn
+89
+88
+0.76
+0.26
+71
+12
+89
+88
+0.78
+0.18
+60
+11
+
+GA
+93
+60
+0.89
+0.45
+40
+5
+94
+50
+0.91
+0.50
+22
+3
+
+NPO
+90
+88
+0.83
+0.23
+74
+8
+92
+90
+0.85
+0.15
+65
+7
+
+VLA-Forget
+93
+91
+0.88
+0.21
+78
+5
+95
+94
+0.90
+0.13
+69
+4
+
+4 Experiments
+
+4.1 Experimental Setups
+
+Models. We instantiate VLA-Forget on OpenVLA-7b, a 7B vision-language-action policy trained on large-scale Open X-Embodiment robot data Kim et al. (2024); O’Neill et al. (2024). The second model is pi0fast-base who predicts continuous robot actions via auto-regressive next-token prediction Pertsch et al. (2025).
+Following the VLA setting in our method, we construct three splits for each experiment: a forget set containing target behaviors to be removed, a retain set containing non-target behaviors whose utility should be preserved, and a boundary set containing near-neighbor samples used to reduce shallow or entangled forgetting. Unless otherwise stated, all methods start from the same pretrained checkpoint, use the same forget/retain protocol, and are trained under the same optimization budget.
+
+Datasets. We use two complementary benchmarks. First, we build a real-robot benchmark from subsets of Open X-Embodiment (OXE), downloaded via gsutil, where each trajectory is paired with a language instruction and organized into forget/retain slices at the trajectory level O’Neill et al. (2024). Second, we use lerobot/pusht_image as a controlled synthetic benchmark, where we inject a static text instruction into each instance and form matched forget/retain partitions Cadene et al. (2026). In the released OpenVLA, we use up to 512 prompted PushT instances with a forget fraction; in the lightweight ablation pipeline, we scale this to up to 4,000 instances and use a train/validation/test split, reporting forget and retain test performance after unlearning. This combination gives both a realistic OXE setting and a reproducible low-cost benchmark for rapid ablations.
+
+Baselines. We compare against four representative approximate unlearning baselines. SSD Foster et al. (2024) is a retraining-free parameter-dampening method that suppresses weights estimated to be disproportionately important to the forget data. SalUn Fan et al. (2023) is a saliency-based baseline that updates only high-importance weights, making it a strong selective vision-side unlearning comparator. GA Yao and Xu (2024) performs direct gradient ascent on the forget loss and serves as the standard language-side unlearning baseline. NPO Zhang et al. (2024a) is a preference-based alternative designed to improve forget-retain trade-offs. These baselines span both vision-oriented and language-oriented unlearning regimes, making them suitable comparators for VLA policies.
+
+Metrics. We report six metrics, Forget action loss / cross-entropy (FC) measures forgetting efficacy on ; higher FC is better because the model should become less able to reproduce the forgotten action mapping. Retain utility score (RC), derived from retain-set cross-entropy, measures preserved utility on ; higher is better. Forget Accuracy Drop (FAD) measures the reduction in action-token or exact-match accuracy on the forget split relative to the base model; higher is better. Retain Accuracy Drop (RAD) measures the corresponding degradation on retained behaviors; lower is better. Task Success Rate (TSR) evaluates closed-loop policy execution on benchmark tasks; higher is better. Safety Violation Rate (SVR) measures the frequency of unsafe or disallowed behaviors under target prompts or contradiction probes; lower is better. We follow standard VLA and robot manipulation evaluation protocols Kim et al. (2024); Liu et al. (2023). Together, these metrics capture forgetting strength, retained utility, embodied execution quality, and safety, which are all necessary for VLA unlearning.
+
+Detailed experimental setup, hyper-parameter choices, and reproducibility details are provided in Appendix B. Metric definitions and their mathematical formulations are provided in Appendix B.2.
+
+4.2 Experiment Results
+
+Result on OpenVLA. Table 1 highlights three key observations. VLA-Forget achieves the best overall balance between forgetting and retention across both benchmarks: although GA attains the strongest raw forgetting scores (FC/FAD), it severely degrades retain performance and task success, whereas VLA-Forget preserves the highest RC, the lowest RAD, and the best TSR, indicating substantially better utility preservation. The same trend is consistent on both Open X-Embodiment and PushT, suggesting that the method is not tied to a single dataset but generalizes across broader settings. Lower SVR of VLA-Forget relative to SSD, SalUn, and NPO shows more reliable suppression of undesired behaviors without inducing large action drift, which implies that its component-aware multimodal unlearning is better aligned with safe deployment than purely aggressive forgetting baselines. The safety violation plot of figure 5 shows that VLA-Forget along with GA achieves one of the lowest safety violation rates while maintaining strong overall unlearning performance, indicating a better balance between removing unsafe behaviors and preserving stable policy execution.
+
+Table 2: Unlearning results on lerobot/pi0fast-base under the Open X-Embodiment protocol. Mean standard deviation over 5 random seeds, with typical variation of – points for FC, RC, TSR, and SVR, and – for FAD and RAD. Best results are shown in bold and second-best are underlined.
+
+Open X-Embodiment (Pi0-FAST-Base)
+
+Method
+FC
+RC
+FAD
+RAD
+TSR
+SVR
+
+SSD
+76
+81
+0.68
+0.30
+65
+18
+
+SalUn
+87
+85
+0.74
+0.27
+68
+13
+
+GA
+93
+57
+0.89
+0.47
+38
+6
+
+NPO
+89
+87
+0.82
+0.24
+72
+9
+
+VLA-Forget
+94
+89
+0.88
+0.22
+75
+6
+
+Figure 4: Instruction-conditioned action behavior on pi0fast-base and Open X-Embodiments.
+
+Result on 0 fast. Table 2 shows that VLA-Forget preserves the same overall pattern as in the OpenVLA results: although GA attains very strong forgetting, it suffers from severe retain-side degradation, whereas VLA-Forget achieves the best overall trade-off by jointly maintaining the highest RC and TSR, the lowest RAD, and near-best forgetting performance.
+In Fig. 4, Canonical denotes standard retain-task instructions, while Triggered denotes target-trigger or contradictory instructions used to probe the unlearning scope. Higher Retain Succ. indicates better preserved non-target behavior, and higher Suppress Succ. indicates more effective suppression of the unwanted action. VLA-Forget achieves the best overall balance by preserving the strongest retain-task performance under canonical instructions while also maintaining high suppression under triggered instructions. Canonical corresponds to normal non-target instructions, and Triggered corresponds to target-triggered or contradiction-style instructions; in both panels, higher values are better.
+
+Figure 5: Safety violation rate (SVR) on Open X-Embodiment for different unlearning methods on OpenVLA-7B, where lower values indicate safer post-unlearning behavior.
+
+Table 3: Quantization robustness after unlearning on OpenVLA-7B with Open X-Embodiment dataset. Results report forget-side metrics under post-training 8-bit and 4-bit quantization.
+
+Method
+8-bit
+4-bit
+
+FC
+SVR
+FC
+SVR
+
+SSD
+76
+19
+72
+23
+
+SalUn
+87
+8
+78
+10
+
+GA
+82
+12
+80
+16
+
+NPO
+85
+10
+82
+13
+
+VLA-Forget
+91
+6
+88
+8
+
+Robustness Result. Table 3 demonstrates that Quantization degrades forgetting quality for all methods, but the drop is largest for broad full-model updates such as GA and NPO, whereas VLA-Forget remains comparatively stable under both 8-bit and 4-bit settings, suggesting stronger robustness to quantization-induced recovery.
+
+4.3 Ablation Study
+
+Table 4: Ablation results of VLA-Forget on OpenVLA-7B on Open X-Embodiment dataset, across different component selections.
+
+VLA-Forget applied to
+FC↑
+RC↑
+FAD↑
+RAD↓
+TSR↑
+SVR↓
+
+Vision encoder only
+85
+82
+0.80
+0.27
+65
+12
+
+Projector only
+82
+89
+0.75
+0.22
+75
+15
+
+Language backbone only
+90
+88
+0.85
+0.23
+74
+8
+
+Vision + Projector
+88
+86
+0.84
+0.24
+72
+10
+
+Projector + Language
+92
+90
+0.86
+0.22
+77
+6
+
+Vision + Language
+93
+87
+0.89
+0.25
+70
+6
+
+Full (Vision + Proj + Lang)
+93
+91
+0.88
+0.21
+78
+5
+
+Full, w/o retain-preservation
+95
+80
+0.93
+0.30
+64
+4
+
+Table 4 shows that unlearning only a single component is insufficient: the language backbone gives stronger forgetting than vision-only or projector-only updates, but the full multimodal setting achieves the best overall trade-off, indicating that undesirable action behavior is distributed across perception, alignment, and language-action reasoning modules. We further observe that removing the retain-preservation term increases raw forgetting scores, but it sharply hurts RC, RAD, and TSR, showing that strong forgetting alone is not enough for safe VLA unlearning and that retain-side regularization is essential to preserve normal task execution.
+
+Figure 6: Forget-action comparison across component-level VLA-Forget ablations on OpenVLA-7B and Open X-Embodiment.
+
+The figure 6 shows that applying VLA-Forget only to a single module yields weaker forgetting, while the full multimodal configuration achieves the strongest forget-action suppression, highlighting the distributed nature of unwanted behavior in VLA models.
+More detailed sensitivity analyzes of objective weights, schedules, and learning rates are provided in Appendix C.1.
+
+4.4 Qualitative Analysis
+
+In Figure 7, the Vision-only update reduces the visual trigger but still leaves partial target-directed behavior.
+Projector weakens cross-modal binding, leading to a mixed or ambiguous response.
+Language suppresses part of the instruction-conditioned action prior, but residual targeting remains.
+Full jointly edits perception, alignment, and action priors, yielding the cleanest behavior suppression with better preserved scene understanding.
+This figure supports the central claim that unwanted VLA behavior is distributed across the visual encoder, projector, and language/action backbone, so single-module unlearning is often insufficient.
+
+Robustness is crucial in VLA deployment, Table 3, supports the claim that, although post-training quantization weakens forgetting performance for all methods, the degradation is smallest for VLA-Forget.
+In contrast, our qualitative results highlights a different objective: targeted behavior removal, where VLA-Forget suppresses a sensitive instruction-conditioned response while preserving general scene understanding and safe non-target actions.
+
+4.5 Discussion
+
+The results reinforce that unlearning in vision language action policies is inherently multimodal. The full VLA-Forget pipeline provides a stronger forget retain trade-off, indicating that effective embodied unlearning must jointly account for perception, alignment, and action reasoning.
+
+Limitations.
+VLA-Forget remains an approximate unlearning method and does not provide a formal guarantee of complete erasure. We provide further discussion in Appendix D.
+
+Figure 7: Illustration of Module-wise qualitative analysis of VLA-Forget. Single-component unlearning only partially suppresses the targeted behavior, while full VLA-Forget more cleanly removes the unwanted action and preserves safe non-target behavior.
+
+5 Conclusion
+
+We introduced VLA-Forget, a staged and component-aware unlearning framework for vision-language-action policies. By selectively editing the vision encoder, projector, and language/action backbone with retain-aware adapter updates, the method removes unsafe, spurious, or privacy-sensitive behaviors while preserving the native OpenVLA interface and overall utility.
+
+Across OpenVLA-7B on Open X-Embodiment and PushT, VLA-Forget achieves a stronger forget-retain success trade-off than prior baselines. Ablations show that single-module edits are insufficient, while the full hybrid design is more reliable and remains comparatively robust under quantization. Overall, these results suggest that effective unlearning for embodied foundation models must be multimodal, execution-aware, and deployment-oriented.
+
+References
+
+Bourtoule et al. (2021)
+L. Bourtoule, V. Chandrasekaran, C. A. Choquette-Choo, H. Jia, A. Travers, B. Zhang, D. Lie, and N. Papernot
+
+Machine unlearning.
+
+In 2021 IEEE symposium on security and privacy (SP),
+
+pp. 141–159.
+
+Cited by: §1,
+§2.
+
+Cadene et al. (2026)
+R. Cadene, S. Aliberts, F. Capuano, M. Aractingi, A. Zouitine, P. Kooijmans, J. Choghari, M. Russi, C. Pascal, S. Palma, et al.
+
+Lerobot: an open-source library for end-to-end robot learning.
+
+arXiv preprint arXiv:2602.22818.
+
+Cited by: §4.1.
+
+Cai et al. (2024)
+Z. Cai, Y. Tan, and M. S. Asif
+
+Targeted unlearning with single layer unlearning gradient.
+
+arXiv preprint arXiv:2407.11867.
+
+Cited by: §2,
+§2.
+
+Carlini et al. (2022)
+N. Carlini, S. Chien, M. Nasr, S. Song, A. Terzis, and F. Tramer
+
+Membership inference attacks from first principles.
+
+In 2022 IEEE symposium on security and privacy (SP),
+
+pp. 1897–1914.
+
+Cited by: §1.
+
+Fan et al. (2023)
+C. Fan, J. Liu, Y. Zhang, E. Wong, D. Wei, and S. Liu
+
+Salun: empowering machine unlearning via gradient-based weight saliency in both image classification and generation.
+
+arXiv preprint arXiv:2310.12508.
+
+Cited by: §2,
+§2,
+§4.1.
+
+Foster et al. (2024)
+J. Foster, S. Schoepf, and A. Brintrup
+
+Fast machine unlearning without retraining through selective synaptic dampening.
+
+In Proceedings of the AAAI conference on artificial intelligence,
+
+Vol. 38, pp. 12043–12051.
+
+Cited by: §2,
+§4.1.
+
+Gandikota et al. (2023)
+R. Gandikota, J. Materzynska, J. Fiotto-Kaufman, and D. Bau
+
+Erasing concepts from diffusion models.
+
+In Proceedings of the IEEE/CVF international conference on computer vision,
+
+pp. 2426–2436.
+
+Cited by: §2.
+
+Gandikota et al. (2024)
+R. Gandikota, H. Orgad, Y. Belinkov, J. Materzyńska, and D. Bau
+
+Unified concept editing in diffusion models.
+
+In Proceedings of the IEEE/CVF winter conference on applications of computer vision,
+
+pp. 5111–5120.
+
+Cited by: §2.
+
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+
+Lora: low-rank adaptation of large language models..
+
+Iclr 1 (2), pp. 3.
+
+Cited by: §1,
+§3.3.
+
+Jin et al. (2025)
+X. Jin, Z. Bu, B. Vinzamuri, A. Ramakrishna, K. Chang, V. Cevher, and M. Hong
+
+Unlearning as multi-task optimization: a normalized gradient difference approach with an adaptive learning rate.
+
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),
+
+pp. 11278–11294.
+
+Cited by: §3.2.
+
+Kim et al. (2025)
+M. J. Kim, C. Finn, and P. Liang
+
+Fine-tuning vision-language-action models: optimizing speed and success.
+
+arXiv preprint arXiv:2502.19645.
+
+Cited by: §1,
+§3.3.
+
+Kim et al. (2024)
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, et al.
+
+Openvla: an open-source vision-language-action model.
+
+arXiv preprint arXiv:2406.09246.
+
+Cited by: §1,
+§1,
+§2,
+§2,
+§3,
+§3.2,
+§4.1,
+§4.1.
+
+Kurmanji et al. (2023)
+M. Kurmanji, P. Triantafillou, J. Hayes, and E. Triantafillou
+
+Towards unbounded machine unlearning.
+
+Advances in neural information processing systems 36, pp. 1957–1987.
+
+Cited by: §1,
+§3.1,
+§3.2.
+
+Li et al. (2026)
+C. Li, J. Liu, B. Li, B. Gao, Y. Yuan, Y. He, Y. Li, and J. Tang
+
+DTP: a simple yet effective distracting token pruning framework for vision-language action models.
+
+arXiv preprint arXiv:2601.16065.
+
+Cited by: §C.2.
+
+Lin et al. (2025)
+Z. Lin, J. Duan, H. Fang, D. Fox, R. Krishna, C. Tan, and B. Wen
+
+Failsafe: reasoning and recovery from failures in vision-language-action models.
+
+arXiv preprint arXiv:2510.01642.
+
+Cited by: §1.
+
+Liu et al. (2023)
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone
+
+Libero: benchmarking knowledge transfer for lifelong robot learning.
+
+Advances in Neural Information Processing Systems 36, pp. 44776–44791.
+
+Cited by: §4.1.
+
+Liu et al. (2025a)
+J. Liu, H. Chen, P. An, Z. Liu, R. Zhang, C. Gu, X. Li, Z. Guo, S. Chen, M. Liu, et al.
+
+Hybridvla: collaborative diffusion and autoregression in a unified vision-language-action model.
+
+arXiv preprint arXiv:2503.10631.
+
+Cited by: §1.
+
+Liu et al. (2025b)
+S. Liu, Y. Yao, J. Jia, S. Casper, N. Baracaldo, P. Hase, Y. Yao, C. Y. Liu, X. Xu, H. Li, et al.
+
+Rethinking machine unlearning for large language models.
+
+Nature Machine Intelligence 7 (2), pp. 181–194.
+
+Cited by: §2.
+
+Maini et al. (2024)
+P. Maini, Z. Feng, A. Schwarzschild, Z. C. Lipton, and J. Z. Kolter
+
+Tofu: a task of fictitious unlearning for llms.
+
+arXiv preprint arXiv:2401.06121.
+
+Cited by: §2.
+
+Orjuela et al. (2026)
+D. Y. G. Orjuela, L. Scappatura, V. Di Gennaro, R. A. Izzo, G. Bardaro, and M. Matteucci
+
+Improving robustness of vision-language-action models by restoring corrupted visual inputs.
+
+arXiv preprint arXiv:2602.01158.
+
+Cited by: §1.
+
+O’Neill et al. (2024)
+A. O’Neill, A. Rehman, A. Maddukuri, A. Gupta, A. Padalkar, A. Lee, A. Pooley, A. Gupta, A. Mandlekar, A. Jain, et al.
+
+Open x-embodiment: robotic learning datasets and rt-x models: open x-embodiment collaboration 0.
+
+In 2024 IEEE International Conference on Robotics and Automation (ICRA),
+
+pp. 6892–6903.
+
+Cited by: §1,
+§2,
+§4.1,
+§4.1.
+
+Pang et al. (2025)
+Y. Pang, Y. Zhao, Z. Zhou, T. Hu, and R. Hou
+
+Is openvla truly robust? a systematic evaluation of positional robustness.
+
+In Proceedings of the 14th International Joint Conference on Natural Language Processing and the 4th Conference of the Asia-Pacific Chapter of the Association for Computational Linguistics,
+
+pp. 1–6.
+
+Cited by: §1,
+§3.3.
+
+Pertsch et al. (2025)
+K. Pertsch, K. Stachowicz, B. Ichter, D. Driess, S. Nair, Q. Vuong, O. Mees, C. Finn, and S. Levine
+
+Fast: efficient action tokenization for vision-language-action models.
+
+arXiv preprint arXiv:2501.09747.
+
+Cited by: §4.1.
+
+Ranjan et al. (2026a)
+R. Ranjan, U. Grover, M. Akewar, X. Lin, and A. Polyzou
+
+CatRAG: functor-guided structural debiasing with retrieval augmentation for fair llms.
+
+arXiv preprint arXiv:2603.21524.
+
+Cited by: §C.2.
+
+Ranjan et al. (2026b)
+R. Ranjan, U. Grover, X. Lin, and A. Polyzou
+
+G-drift mia: membership inference via gradient-induced feature drift in llms.
+
+arXiv preprint arXiv:2604.00419.
+
+Cited by: §C.2.
+
+Ranjan et al. (2026c)
+R. Ranjan, U. Grover, X. Lin, and A. Polyzou
+
+RAZOR: ratio-aware layer editing for targeted unlearning in vision transformers and diffusion models.
+
+arXiv preprint arXiv:2603.14819.
+
+Cited by: §3.1.
+
+Spartalis et al. (2025)
+C. N. Spartalis, T. Semertzidis, E. Gavves, and P. Daras
+
+Lotus: large-scale machine unlearning with a taste of uncertainty.
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+
+pp. 10046–10055.
+
+Cited by: §2.
+
+Wang et al. (2025)
+H. Wang, J. Xu, Y. Xiang, J. Pan, Y. Zhou, Y. Li, and G. Dai
+
+Specprune-vla: accelerating vision-language-action models via action-aware self-speculative pruning.
+
+arXiv preprint arXiv:2509.05614.
+
+Cited by: §C.2.
+
+Yao et al. (2024)
+J. Yao, E. Chien, M. Du, X. Niu, T. Wang, Z. Cheng, and X. Yue
+
+Machine unlearning of pre-trained large language models.
+
+In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers),
+
+pp. 8403–8419.
+
+Cited by: §2,
+§2.
+
+Yao and Xu (2024)
+Y. Yao and X. Xu
+
+Large language model unlearning.
+
+Advances in Neural Information Processing Systems 37, pp. 105425–105475.
+
+Cited by: §4.1.
+
+Yu et al. (2020)
+T. Yu, S. Kumar, A. Gupta, S. Levine, K. Hausman, and C. Finn
+
+Gradient surgery for multi-task learning.
+
+Advances in neural information processing systems 33, pp. 5824–5836.
+
+Cited by: §1,
+§3.1,
+§3.3.
+
+Zang et al. (2025)
+H. Zang, M. Wei, S. Xu, Y. Wu, Z. Guo, Y. Wang, H. Lin, L. Shi, Y. Xie, Z. Xu, et al.
+
+Rlinf-vla: a unified and efficient framework for vla+ rl training.
+
+arXiv preprint arXiv:2510.06710.
+
+Cited by: §1,
+§3.3.
+
+Zhang et al. (2024a)
+R. Zhang, L. Lin, Y. Bai, and S. Mei
+
+Negative preference optimization: from catastrophic collapse to effective unlearning.
+
+arXiv preprint arXiv:2404.05868.
+
+Cited by: §4.1.
+
+Zhang et al. (2026)
+W. Zhang, A. Sun, W. Mo, X. Qu, Y. Zheng, and J. Wang
+
+From knowing to doing precisely: a general self-correction and termination framework for vla models.
+
+arXiv preprint arXiv:2602.01811.
+
+Cited by: §C.2.
+
+Zhang et al. (2024b)
+Z. Zhang, F. Wang, X. Li, Z. Wu, X. Tang, H. Liu, Q. He, W. Yin, and S. Wang
+
+Catastrophic failure of llm unlearning via quantization.
+
+arXiv preprint arXiv:2410.16454.
+
+Cited by: §1,
+§2,
+§3.1.
+
+Zhu et al. (2023)
+Y. Zhu et al.
+
+Vima: general robot manipulation with multimodal prompts.
+
+In International Conference on Learning Representations (ICLR),
+
+Cited by: §2.
+
+Zhuang et al. (2026)
+J. Zhuang, L. Lu, M. Dai, R. Hu, J. Chen, Q. Liu, and H. Hu
+
+Q cache: visual attention is valuable in less than half of decode layers for multimodal large language model.
+
+arXiv preprint arXiv:2602.01901.
+
+Cited by: §1.
+
+Zitkovich et al. (2023)
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, et al.
+
+Rt-2: vision-language-action models transfer web knowledge to robotic control.
+
+In Conference on Robot Learning,
+
+pp. 2165–2183.
+
+Cited by: §2,
+§2.
+
+Appendix
+
+Appendix A Pseudo Code
+
+Algorithm 1 VLA-Forget: Hybrid Unlearning for Vision-Language-Action Models
+
+Input : 
+Base VLA policy ;
+
+unlearning request ; candidate data pool ; budgets ;
+
+loss weights ; thresholds ;
+
+learning rate ; stage steps ; stopping criteria .
+
+Output : 
+Unlearned policy , adapter weights , and audit report .
+
+1
+Construct data splits: build forget set , retain set , and boundary set from using labels, metadata, and nearest-neighbor retrieval.
+
+2
+
+3
+
+4
+Optional influence triage:
+
+5
+
+6
+Refine and using
+
+7
+Stage 1: Vision unlearning
+
+8
+; on candidate late vision blocks only
+
+9
+
+10
+for to do
+
+   
+11
+Sample , ,
+
+   
+12
+Compute
+
+13
+
+   
+14
+
+   
+15
+if and satisfy then // early stop for vision stage
+
+      
+16
+break
+
+17
+Stage 2: Projector unlearning
+
+18
+; on projector layers only
+
+19
+
+20
+for to do
+
+   
+21
+Sample , ,
+
+   
+22
+Compute
+
+23
+
+   
+24
+
+   
+25
+if and satisfy then // early stop for projector stage
+
+      
+26
+break
+
+27
+Continue in Algorithm 2.
+
+Algorithm 2 VLA-Forget: Hybrid Unlearning for Vision-Language-Action Models (continued)
+
+1
+Stage 3: Reasoning/action unlearning
+
+2
+; on upper transformer blocks
+
+3
+
+4
+Optionally add action-token embedding rows / LM-head rows to
+
+5
+for to do
+
+   
+6
+Sample , ,
+
+   
+7
+Compute
+
+8
+
+   
+9
+
+   
+10
+if fails then // expand only if forgetting is insufficient
+
+      
+11
+
+   
+12
+if and satisfy then // global stopping
+
+      
+13
+break
+
+14
+Robustness and deployment audit:
+
+15
+Evaluate closed-loop and offline metrics on retain / forget probes
+
+16
+Evaluate quantization robustness under bf16, int8, and int4
+
+17
+Evaluate safety metrics (task success, action jerk, gripper toggles, bin saturation)
+
+18
+
+19
+Merge adapters if desired and return
+
+20
+with audit report
+
+Algorithm 3 Helper Procedures for VLA-Forget
+
+1
+Function VISION_SELECT()
+
+   
+2
+foreach layer or head do
+
+      
+3
+
+      
+4
+
+      
+5
+
+   
+6
+
+   
+7
+if then
+
+      
+8
+
+   
+9
+return
+
+10
+Function LLM_SELECT()
+
+   
+11
+foreach transformer block do
+
+      
+12
+
+   
+13
+
+   
+14
+if then
+
+      
+15
+
+   
+16
+return blocks in sorted by descending
+
+17
+Function PCGRAD()
+
+   
+18
+Shuffle gradient list
+
+   
+19
+for to do
+
+      
+20
+for to do
+
+         
+21
+if and then
+
+            
+22
+
+   
+23
+return
+
+Algorithm Overview.
+
+Algorithm 1 presents the main VLA-Forget unlearning pipeline for Vision-Language-Action models. It performs staged, component-aware unlearning across the visual encoder, cross-modal projector, and LLM backbone. First, selective updates remove unwanted visual and grounding information while preserving perceptual representations. Next, projector layers are adjusted to weaken cross-modal associations between visual features and language instructions. Finally, layer-selective updates modify reasoning and action-token generation in the LLM backbone while maintaining overall policy utility. Algorithm 3 describes the supporting procedures used within this pipeline, including ratio-based module selection, significance-based layer scoring, and PCGrad-based multi-objective optimization to balance forgetting efficacy, perceptual preservation, and reasoning retention.
+
+Appendix B Detailed Experimental Setting
+
+B.1 Hyper Parameters
+
+Table 5 summarizes the key hyper-parameter choices and reproducibility settings used for VLA-Forget, including data splits, optimization, unlearning weights, adapter settings, and reporting protocol.
+
+Table 5: Hyper-parameter choices and reproducibility details for VLA-Forget. Reported values follow the released code and uses standard defaults for stable reproduction.
+
+Category
+
+Setting
+
+Value / Details
+
+Model / data
+
+Main model
+
+openvla/openvla-7b; LoRA-based unlearning in the OpenVLA
+
+setups
+
+VLA models with vision / projector / reasoning unlearning
+
+Datasets
+
+OXE, lerobot/pusht_image and a colored-object benchmark
+
+Data scale
+
+Up to 512 instances for OpenVLA ; up to 4000 instances for main ; split 5000 / 1200 / 1200
+
+Data split
+
+Forget fraction
+
+30% of prompted PushT instances
+
+Train / val / test
+
+70 / 15 / 15 for PushT; separate train / val / test split
+
+Partition design
+
+Forget set , retain set , and boundary set
+
+Forget target
+
+Prompt-based target slice in PushT; blue object target in benchmark
+
+Evaluation
+
+Forget and retain metrics reported on held-out test data
+
+Optimization
+
+Optimizer
+
+Adam or AdamW
+
+Base training LR
+
+Unlearning LR
+
+Epochs
+
+6 epochs (main ), 8 epochs ( )
+
+Batch size
+
+32 / 64 train-eval for main ; 64 / 128 for ; 2 / 2 for OpenVLA
+
+Update budget
+
+60 steps for OpenVLA ; steps 60 / 60 / 90 (main) and 100 / 100 / 140 ( )
+
+Gradient accumulation
+
+8 for OpenVLA
+
+Gradient clipping
+
+Max grad norm
+
+Unlearning objective
+
+Stage selection
+
+Top- modules: vision , projector , reasoning or
+
+Retain weight
+
+Forget weight
+
+for OpenVLA ; for setting
+
+Mismatch weight
+
+Feature preservation
+
+KL / ratio terms
+
+,
+
+Adapter / precision
+
+LoRA setup
+
+Rank , , dropout
+
+Target modules
+
+all-linear in OpenVLA
+
+Quantization
+
+Optional 4-bit quantization; full-precision fallback supported
+
+Compute dtype
+
+bf16 when supported, otherwise fp16
+
+Action setup
+
+discrete action heads setups
+
+Reproducibility
+
+Seed
+
+42 for random, numpy, torch, and CUDA
+
+Software
+
+PyTorch with transformers, datasets, and peft
+
+Hardware
+
+Single modern GPU; CPU fallback only for lightweight tests
+
+Model selection
+
+Best checkpoint chosen using validation exact-match accuracy
+
+Reporting
+
+Report FC, RC, FAD, RAD, TSR, and SVR; final paper should report mean std over 3 seeds
+
+B.2 Mathematical Definition of VLA-Forget Metrics
+
+Let denote the forget set and the retain set, where each input contains an observation image and instruction , and is the target action-token sequence produced from the underlying continuous robot action. Since OpenVLA predicts discretized action tokens autoregressively, the natural offline evaluation quantities are token-level and token accuracy on and . Section 4.1 of the main paper defines the reported metrics FC, RC, FAD, RAD, TSR, and SVR around this setup.
+
+We first define the action-token on any split as
+
+(11)
+
+Similarly, the token-level action accuracy is
+
+(12)
+
+In lightweight evaluations, this accuracy can also be instantiated as exact-match accuracy over the full predicted action token sequence; the same forget/retain deltas are then computed from that accuracy definition.
+
+Using these primitives, the direct offline loss metric is
+
+where denotes the unlearned model. A larger means the model is less able to reproduce the forgotten action mapping, hence better forgetting.
+
+Retain utility score.
+We define the retain utility score as the negative retain-set cross-entropy,
+
+so that higher values indicate better retention. Equivalently, one may report the retain improvement relative to the base model,
+
+where larger values mean that the unlearned model preserves or improves retain-set behavior relative to the original policy. In practice, RC is reported as a scaled retain utility score for readability, so larger values indicate better retention.
+
+The two accuracy-drop metrics measure change relative to the original pretrained policy :
+
+Thus, higher is better because the forget-set action accuracy should decrease after unlearning, whereas lower is better because retained behaviors should change as little as possible. This is also the implementation-level summary used in the released VLA-Forget code, which reports forget-accuracy drop and retain-accuracy drop relative to the base model.
+
+Beyond offline token metrics, VLA-Forget also evaluates embodied execution. Let be a set of rollout episodes on LIBERO, Open X-Embodiment evaluation slices, or contradiction probes. The task success rate is
+
+where success is defined by the benchmark-specific completion criterion. Higher is better. This follows standard VLA and robot-manipulation evaluation practice, where policy quality is ultimately measured by closed-loop success over tasks rather than only token prediction quality.
+
+Finally, the safety violation rate measures how often the unlearned policy still executes unsafe or disallowed behavior under target prompts, sensitive requests, or contradiction probes:
+
+(13)
+
+Typical violations include executing the forbidden action, moving toward the wrong target object, or continuing a visually plausible trajectory under an instruction that should block execution. Hence, lower is better. This safety-oriented evaluation is especially important for VLA unlearning because embodied errors manifest as physical actions, and contradiction-style probes are useful for exposing failures of language grounding that may not be visible from success metrics alone.
+
+In summary, and quantify forgetting strength, and quantify retained utility, and and quantify embodied usefulness and safety. Together, they provide a balanced view of whether VLA-Forget removes the target behavior without destroying normal policy execution.
+
+Appendix C Additional Results
+
+C.1 Ablation Study
+
+Table 6 further confirms that the appendix experiments use the full VLA-Forget configuration, i.e., joint unlearning over the vision encoder + projector + language backbone, together with the staged update schedule. The final configuration is selected with balanced sensitivity settings, using moderate objective weights and a mid-range learning rate (), since this setting provides the best overall forget-retain trade-off: it maintains strong forgetting while preserving retain accuracy, reducing action drift, and keeping task success stable, whereas more aggressive settings improve forgetting slightly but noticeably harm retain-side utility.
+
+Table 6: Detailed appendix ablation on Open X-Embodiment using OpenVLA-7B. This table extends Table 4 with objective-sensitivity and learning-rate analyses for VLA-Forget. Higher is better for FC, RC, FAD, and TSR; lower is better for RAD and SVR.
+
+Group
+Setting / Variant
+FC
+RC
+FAD
+RAD
+TSR
+SVR
+
+A. Component selection (continuation of the main ablation table)
+
+Component
+Vision encoder only
+85
+82
+0.80
+0.27
+65
+12
+
+Component
+Projector only
+82
+89
+0.75
+0.22
+75
+15
+
+Component
+Language backbone only
+90
+88
+0.85
+0.23
+74
+8
+
+Component
+Vision + Projector
+88
+86
+0.84
+0.24
+72
+10
+
+Component
+Projector + Language
+92
+90
+0.86
+0.22
+77
+6
+
+Component
+Vision + Language
+93
+87
+0.89
+0.25
+70
+6
+
+Component
+Vision + Projector + Language (full)
+93
+91
+0.88
+0.21
+78
+5
+
+Component
+Full, w/o retain-preservation term
+95
+80
+0.93
+0.30
+64
+4
+
+B. Objective sensitivity around the full VLA-Forget configuration
+
+Objective
+Full model, (remove perceptual preservation)
+94
+83
+0.91
+0.27
+69
+5
+
+Objective
+Full model, (remove mismatch term)
+91
+88
+0.84
+0.23
+75
+7
+
+Objective
+Full model,
+89
+93
+0.81
+0.19
+79
+9
+
+Objective
+Full model,
+92
+92
+0.86
+0.20
+78
+6
+
+Objective
+Full model,
+94
+88
+0.90
+0.24
+74
+4
+
+Objective
+Full model,
+92
+91
+0.87
+0.21
+78
+6
+
+Objective
+Full model,
+93
+91
+0.88
+0.21
+78
+5
+
+Objective
+Full model,
+94
+89
+0.89
+0.23
+76
+5
+
+Objective
+Full model,
+93
+89
+0.89
+0.23
+76
+5
+
+Objective
+Full model,
+93
+91
+0.88
+0.21
+78
+5
+
+Objective
+Full model,
+91
+93
+0.84
+0.19
+79
+7
+
+C. Learning-rate sensitivity for the full configuration
+
+LR
+
+87
+94
+0.79
+0.18
+80
+11
+
+LR
+
+89
+93
+0.82
+0.19
+79
+8
+
+LR
+
+91
+92
+0.85
+0.20
+79
+7
+
+LR
+
+93
+91
+0.88
+0.21
+78
+5
+
+LR
+
+94
+88
+0.90
+0.24
+75
+4
+
+LR
+
+95
+84
+0.92
+0.27
+71
+4
+
+LR
+
+96
+78
+0.95
+0.33
+62
+3
+
+D. Stabilization / schedule controls
+
+Control
+Full model, w/o PCGrad
+94
+86
+0.90
+0.25
+73
+5
+
+Control
+Full model, single-stage joint update
+92
+87
+0.86
+0.24
+74
+6
+
+Control
+Full model update (ours)
+93
+91
+0.88
+0.21
+78
+5
+
+Control
+Full model, early-stop disabled
+95
+82
+0.92
+0.29
+66
+4
+
+Figure 8: Qualitative example illustration of targeted behavior suppression. Before unlearning, the VLA policy responds to a sensitive human-targeting instruction; after VLA-Forget, the policy suppresses the targeted behavior while preserving general scene understanding and safe non-target actions.
+
+C.2 Quantitative Analysis
+
+Figure 8 illustrates the core idea of VLA-Forget: the policy suppresses the targeted sensitive human-directed behavior after unlearning, while still preserving general scene understanding and safe non-target interaction, reflecting the paper’s goal of targeted forgetting with retained perceptual grounding and action utility. Recent VLA studies suggest that improving action reliability often depends on better visual attention control, token selection, and lightweight correction mechanisms Wang et al. (2025); Li et al. (2026); Zhang et al. (2026).
+The iterative unlearning procedure in VLA-Forget enables more precise and controlled removal of targeted behavior than a single-step gradient nudge such as G-Drift Ranjan et al. (2026b). It also operates directly on the deployed VLA policy, without requiring model restructuring or external retrieval documents as in CatRAG Ranjan et al. (2026a).
+
+The quantization result of Table 3 is very important because practical VLA deployment often relies on low-precision inference, where diffuse or overly broad parameter edits can be partially erased by quantization. In contrast, the staged and selective design of VLA-Forget appears to preserve the intended forgetting signal more reliably, indicating that its unlearning behavior is not limited to full-precision settings but remains robust under hardware-efficient deployment conditions.
+
+C.3 Safety Case Study
+
+Figure 9: Unsafe affordance suppression illustration with retained utility. Before unlearning, the policy follows an unsafe human-directed instruction and moves toward a restricted region near the hand. After VLA-Forget, the unsafe action is suppressed, while normal non-target manipulation remains preserved under a safe instruction.
+
+Figure 9 provides a qualitative safety case study for VLA-Forget. Before unlearning, the policy follows an unsafe human-directed affordance and moves toward a restricted region near the hand, despite the presence of valid non-target objects in the scene. After VLA-Forget, this targeted unsafe response is suppressed, while the retained-task panel shows that ordinary object-directed manipulation remains largely intact. This behavior is consistent with the paper’s central claim that VLA unlearning should remove a specific unsafe instruction-to-action association, rather than broadly degrade perception or manipulation ability, thereby yielding a more useful and deployment-relevant safety correction. The compact score panel reports three complementary quantities: unsafe target execution under the forget prompt, safety violation rate (SVR), and retained-task success. Together, they show that VLA-Forget suppresses the targeted unsafe behavior and reduces safety violations while preserving most non-target task utility.
+
+Appendix D Discussion
+
+The results suggest that unlearning in VLA policies should not be treated as a purely vision-side or language-side problem. In OpenVLA architectures, undesirable behavior can be distributed across perceptual features, cross-modal grounding, and instruction-conditioned action priors, so single-module edits often provide only partial suppression, whereas the full hybrid design yields a stronger forget-retain trade-off. From this perspective, VLA-Forget is most useful in settings where a deployed robot must selectively remove unsafe affordances, spurious object-action bindings, privacy-sensitive demonstrations, or benchmark-discovered failure modes without retraining the full policy.
+
+Beyond efficacy, VLA-Forget is practically attractive because it is adapter-first and preserves the native policy interface, which makes rollback, canary testing, and staged deployment more feasible in real robotic systems. This is particularly relevant for post-deployment patching, compliance-driven data removal, and fast correction of instruction-following failures under distribution shift. More broadly, our findings reinforce that VLA unlearning should be evaluated with embodied criteria, not only forget-side loss: retained task success, action stability, safety violations, and robustness under quantization are all necessary to distinguish genuine behavior removal from shallow suppression. Future work can extend this framework to longer-horizon tasks, continual unlearning requests, and broader real-world robot benchmarks.
+
+D.1 Limitations
+
+VLA-Forget remains an approximate unlearning method rather than a formal erasure guarantee. Its success depends on the quality of the forget, retain, and boundary sets, which may not fully capture all near-neighbor behaviors or latent action priors associated with the target request. In addition, the layer-selection signals used to localize edits can be sensitive to task composition and model scale, so the same selection strategy may not transfer uniformly across different VLA architectures or embodiment settings. A further limitation is that our evaluation is still centered on benchmark manipulation episodes; longer-horizon closed-loop failures, compounding control errors, and real-robot safety edge cases may reveal residual unwanted behavior that is not visible in short-horizon probes. The method also introduces iterative tuning overhead, since satisfying stronger forgetting constraints may require expanding the edited set and can increase the risk of retain-side degradation. Finally, we do not study continual or repeated unlearning requests in the same policy, where multiple sequential edits may accumulate drift and gradually reduce calibration, grounding fidelity, or action robustness.
+
+D.2 Future Work
+
+A natural next step for VLA-Forget is to improve unlearning localization beyond static component selection by making the edit scope more adaptive to the queried behavior, scene context, and action horizon. This could enable finer-grained removal of unsafe affordances or instruction-specific failure modes while further reducing retain-side degradation. Another important direction is to extend the method from short-horizon benchmark episodes to longer-horizon embodied tasks, multi-step planning settings, and real-robot deployment, where delayed failures and compounding action errors may expose forms of residual forgetting not visible in current evaluations.
+
+Future work should also strengthen robustness and auditability. In particular, VLA-Forget could be combined with explicit safety constraints, online monitoring, and rollback-aware deployment policies so that unlearning acts as a practical post-deployment patching tool. More broadly, it would be valuable to study continual unlearning under multiple sequential requests, transfer across different VLA architectures, and stronger evaluations under distribution shift, adversarial prompting, and hardware-efficient deployment settings. These directions would help move VLA unlearning from proof-of-concept benchmark results toward reliable real-world embodied correction.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

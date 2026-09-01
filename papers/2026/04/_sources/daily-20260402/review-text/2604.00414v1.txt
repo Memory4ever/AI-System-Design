@@ -1,0 +1,2626 @@
+Decision-Centric Design for LLM Systems
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+Reasoning, search, and orchestration in LLM systems.
+
+Clarification, belief modeling, and information acquisition.
+
+Decision-theoretic control in LLM systems.
+
+3 Decision-Centric Abstraction
+
+3.1 Core Components
+
+Actions .
+
+Decision context .
+
+Decision function .
+
+3.2 Canonical Instances: Routing and Inference Scaling
+
+4 Sequential Decision-Making with Evolving Context
+
+4.1 A Minimal Sequential Formulation
+
+4.2 A Multi-Signal Instantiation
+
+5 Experiments
+
+5.1 Calendar Scheduling: Clarify vs. Execute
+
+Setup.
+
+Results.
+
+5.2 Graph Disambiguation: Joint Beliefs and Correlated Updates
+
+Setup.
+
+Results.
+
+Control scenarios (S1–S3).
+
+Joint belief: action dependence (S4).
+
+Correlated belief update (S5).
+
+5.3 Modular Signals for Retrieval Control with Diagnosable Feedback
+
+Setup.
+
+Results.
+
+Takeaway.
+
+6 Conclusion
+
+References
+
+A Calendar Scheduling: Clarify vs. Execute
+
+A.1 Experimental Setup
+
+Task.
+
+Scenario Design
+
+Metrics.
+
+Shared Execution Prompt
+
+User Simulator
+
+A.2 Decision-Centric Baseline Implementation
+
+Policy.
+
+Sufficiency estimator
+
+Clarification question generation
+
+A.3 Prompt-Clarify Baseline Implementation
+
+A.4 Full Results by Ambiguity Type (Granite 4)
+
+A.5 Cross-Model Analysis (LLaMA 3)
+
+Diagnosing the failure.
+
+Explicit separation enables targeted repair.
+
+Remaining failure at unresolvable.
+
+B Graph Disambiguation
+
+B.1 Experiment Setup
+
+Controlled subgraph for S5.
+
+Scenario Specifications
+
+B.2 Decision-Centric Approach Implementation
+
+Decision Policy.
+
+Correctness Estimator
+
+B.3 Prompt Baseline Implementation
+
+Prompt-clarify system prompt (temperature ).
+
+Prompt (w/ policy) system prompt.
+
+B.4 Full Results by Scenario
+
+B.5 DC Belief Traces
+
+S4 trace (orthogonal joint belief).
+
+S5 trace (correlated belief update).
+
+C Modular Signals for Retrieval Control with Diagnosable Feedback
+
+C.1 Experimental Setup
+
+Corpus and passage construction.
+
+Difficulty buckets.
+
+C.2 Baselines Implementations
+
+Prompt.
+
+DC-Dense.
+
+DC-LLM.
+
+DC-Composite.
+
+C.3 Threshold Robustness
+
+C.4 Signal Attribution and Feedback Loop
+
+Attribution procedure.
+
+Attribution results.
+
+Implications for signal design.
+
+Feedback loop.
+
+C.5 Prompt Failure Analysis
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.00414v1 [cs.AI] 01 Apr 2026
+
+Decision-Centric Design for LLM Systems
+
+Wei Sun
+
+Affiliation: IBM Research
+
+Email: sunw@us.ibm.com
+
+Abstract
+
+LLM systems must make control decisions in addition to generating outputs:
+whether to answer, clarify, retrieve, call tools, repair, or escalate. In
+many current architectures, these decisions remain implicit within generation,
+entangling assessment and action in a single model call and making failures
+hard to inspect, constrain, or repair. We propose a decision-centric framework
+that separates decision-relevant signals from the policy that maps them to
+actions, turning control into an explicit and inspectable layer of the system. This separation supports attribution of failures to signal estimation,
+decision policy, or execution, and enables modular improvement of each
+component. It unifies familiar single-step settings such as routing and
+adaptive inference, and extends naturally to sequential settings in which
+actions alter the information available before acting. Across three controlled
+experiments, the framework reduces futile actions, improves task success, and
+reveals interpretable failure modes. More broadly, it offers a general
+architectural principle for building more reliable, controllable, and
+diagnosable LLM systems.
+
+1 Introduction
+
+Language models are increasingly deployed as components of larger AI systems, where they do more than generate text: they help route requests, allocate compute, retrieve information, call tools, and participate in multi-step workflows. In these settings, system behavior depends not only on generation quality, but also on control decisions about when and how to act. Yet in many current architectures, these decisions remain implicit within generation, making failures difficult to inspect and improve.
+
+We argue that LLM systems need an explicit decision layer. Our central design principle is simple: stochastic signals, broadly defined to include observed, contextual, and learned quantities, should be separated from the policy that selects actions. Making this interface explicit does not remove uncertainty, but it makes control inspectable. It improves traceability, enables attribution of failures to signal estimation, decision policy, or execution, and provides a natural interface for modular improvement and constraint enforcement.
+
+We formalize this idea through a decision-centric abstraction with three elements: a set of candidate actions, a decision context comprising observed, estimated, and learned quantities, and a policy that maps context to action. This abstraction captures familiar settings such as model routing and adaptive inference scaling, and extends naturally to sequential settings in which actions can change the information available for subsequent decisions. In these settings, the framework preserves a simple interface: stochastic signals may evolve over time, but action selection remains policy-driven and explicit.
+
+Our experiments are designed to validate complementary aspects of the framework. Section 5.1 isolates the core mechanism in a minimal setting, Section 5.2 tests its extension to richer signals and action spaces, and Section 5.3 studies modular signal construction and update in a more realistic retrieval-based workflow. Across these settings, making the decision layer explicit reduces futile actions, improves task success, and exposes interpretable failure modes.
+
+Our contributions are as follows:
+
+1.
+
+We introduce an explicit decision layer for LLM systems that separates stochastic signals from deterministic action selection, turning hidden control into an inspectable system component.
+
+2.
+
+We show that this separation exposes a common interface across both canonical control problems, such as routing and adaptive inference scaling, and sequential settings in which signals evolve over interaction.
+
+3.
+
+Across three complementary experiments, we show that making this layer explicit improves both behavior and diagnosis: it reduces futile actions, improves task success, localizes failures to signal estimation, decision policy, or execution, and provides a natural mechanism for enforcing structural constraints.
+
+2 Related Work
+
+Reasoning, search, and orchestration in LLM systems.
+
+A large body of work improves LLM-based systems by strengthening inference-time
+reasoning or workflow orchestration. Prompting and search-based methods such as
+Chain-of-Thought (Wei et al., 2022), Self-Consistency (Wang et al., 2023),
+Tree-of-Thoughts (Yao et al., 2023), and reasoning-oriented RL
+approaches (DeepSeek-AI, 2025) improve what the model generates or how much
+compute is used during generation. Agentic frameworks such as
+ReAct (Yao et al., 2022), Reflexion (Shinn et al., 2023),
+AutoGen (Wu et al., 2024), and LATS (Zhou et al., 2024), as well as
+multi-agent architectures (Hong et al., 2023; Dang et al., 2025), instead improve
+task-level orchestration through tool use, planning, reflection, and modular
+decomposition. Our contribution is complementary: rather than proposing a new
+prompting or orchestration strategy, we introduce an explicit decision layer for
+within-task control, governing when to act, acquire information, or revise.
+
+Clarification, belief modeling, and information acquisition.
+
+Closer to our focus is work on whether systems should gather additional
+information before acting. Prior work studies clarification through
+prompting (Deng et al., 2023; Zhang and Choi, 2023),
+uncertainty-triggered follow-up questions (Ren et al., 2023; Grand et al., 2025),
+and learned clarification policies (Sun et al., 2025; Wu et al., 2025).
+Related work also models uncertainty explicitly through beliefs updated across
+interaction, including probabilistic beliefs about latent user
+preferences (Qiu et al., 2026), question selection by expected information
+gain (Choudhury et al., 2025), and online preference elicitation through
+belief updates over item utilities (Austin et al., 2024). These works show
+that uncertainty estimates and belief states are meaningful objects in
+LLM-mediated interaction. Our contribution differs in where control lives:
+rather than leaving the act-or-clarify decision implicit in prompting or model
+training, we make the decision-relevant signals and the downstream control
+policy explicit and separable.
+
+Decision-theoretic control in LLM systems.
+
+Some of the closest work already treats action selection under uncertainty as an
+explicit decision problem. Canonical examples include model
+routing (Ong et al., 2024; Hu et al., 2024; Tsiourvas et al., 2025),
+adaptive inference scaling (Snell et al., 2025; Huang et al., 2025), and
+adaptive retrieval control (Jeong et al., 2024), where a controller selects
+actions under quality–cost tradeoffs. Value of Information
+methods (Dong et al., 2026; Raiffa and Schlaifer, 1961; Howard, 1966) formalize
+the clarify-or-commit tradeoff by weighing expected utility gain against
+information cost. Recent Bayesian work pushes this framing further:
+Amin (2026) formulate multi-LLM orchestration as sequential
+Bayesian decision-making with value-of-information calculations, while
+Papamarkou et al. (2026) argue in a position paper that agentic AI
+control layers should make Bayes-consistent decisions. We share the view that control should be explicit, but our claim is
+architectural rather than methodological. Bayesian control is one valid
+instantiation of our framework, but not the only one: the signals driving
+action selection may be Bayesian posteriors, learned uncertainty estimates,
+retrieval diagnostics, structural checks, or hard domain constraints. Our
+contribution is to make the separation between decision context, policy, and
+execution explicit as a general design principle, and to show how that
+separation extends naturally to sequential within-task control.
+
+3 Decision-Centric Abstraction
+
+We introduce a minimal abstraction that makes decision-making explicit in LLM systems by separating the information available at a decision point from the policy that selects an action.
+
+3.1 Core Components
+
+A decision point is a tuple :
+
+Actions .
+
+A finite set of candidate actions available to the system, such as selecting a model, allocating inference-time compute, choosing a retrieval strategy, or taking an execution-level action.
+
+Decision context .
+
+A representation of the information relevant for action selection at a given decision point. The context may include interaction history, previous model outputs, retrieved evidence, validation outcomes, learned or heuristic signals, and hard constraints such as budgets, latency caps, or turn limits. It may be structured or unstructured; we write abstractly for simplicity.
+
+In many current LLM systems, context interpretation, signal estimation, action selection, and output generation are entangled inside a single model call. Our framework separates these roles explicitly. An LLM may still be used inside this layer to summarize history, estimate signals, generate candidate actions, or evaluate intermediate results, but the decision interface itself is exposed. This separation improves traceability by allowing failures to be attributed to context construction, decision policy, or execution.
+
+Decision function .
+
+A decision function that maps context to an action in . In this paper, we focus on explicit deterministic decision functions: given the same exposed context and constraints, selects the same action, even if parts of that context are noisy, learned, or heuristic. The function may be rule-based, learned, or optimization-based; the key property is that action selection is explicit and repeatable.
+
+One common instantiation is constrained utility maximization:
+
+(1)
+
+where is a utility function and denotes the feasible actions under the current context.
+
+A common specification is a linear reward–cost tradeoff:
+
+(2)
+
+where denotes reward, the -th cost term, and the corresponding tradeoff weight. This is only one possible objective formulation; alternatives include regret-based (Tsiourvas et al., 2025), constraint-based (Woisetschläger et al., 2025), and ranking-based (Somerstep et al., 2025) objectives.
+
+Making the decision interface explicit does not eliminate uncertainty: the context may be noisy, and the chosen action may still be executed by a stochastic generator. Its benefit is attribution. Once context, policy, and execution are separated, failures can be localized rather than remaining entangled inside a single model call.
+
+3.2 Canonical Instances: Routing and Inference Scaling
+
+This abstraction already appears in several familiar settings. Two canonical examples are model routing and adaptive inference scaling. Table 1 highlights the shared structure.
+
+Component
+
+Model Routing
+
+Adaptive Inference Scaling
+
+Actions
+
+Candidate models
+
+Inference strategies and compute configurations
+
+Decision context
+
+Query features, predicted quality, API cost, latency, SLA
+
+Query features, difficulty signals, token budget, latency constraints
+
+Decision problem
+
+, where trades quality against cost (Eq. 1)
+
+Table 1: Two canonical settings mapped to the decision-centric abstraction (, , ). Both instantiate the same structure; they differ in what actions represent and what signals populate the context.
+
+In model routing, the action is which model to invoke, and the utility may reflect quality–cost tradeoffs, regret, or service-level objectives (Woisetschläger et al., 2025; Tsiourvas et al., 2025). In adaptive inference scaling, the action is which inference strategy to use and how much computation to allocate, for example through the number of samples, voting rounds, or search depth (Damani et al., 2025; Huang et al., 2025). These settings share the same architectural pattern: an explicit action space, a decision context, and a policy over feasible actions. In both, the context is treated as given at the moment of choice. The next section turns to sequential settings, where actions can change the information available to later decisions.
+
+4 Sequential Decision-Making with Evolving Context
+
+In sequential settings, systems repeatedly face control decisions about how to proceed from the current context. In the minimal case, this reduces to deciding whether to act immediately or seek more information. Existing approaches typically handle even this simple form of control implicitly.
+
+4.1 A Minimal Sequential Formulation
+
+In sequential settings, systems often face a recurring decision: act on the current context or
+seek more information. Existing approaches usually handle this implicitly. Retry loops act,
+validate, and try again after failure; prompt-based methods ask the model to decide within a
+single generation whether to execute or clarify. In both cases, control remains entangled with
+generation, making it difficult to inspect the basis for the decision or attribute failures to
+signal estimation, policy, or execution.
+
+In the decision-centric formulation, the decision context at turn , denoted ,
+contains the decision-relevant information available at that point, including the original
+request, prior model outputs, user responses, retrieved evidence, and validation outcomes.
+The framework does not prescribe a particular representation of this context. Its only
+architectural requirement is that whatever drives action selection be exposed explicitly,
+rather than left implicit inside a generation call.
+
+In the minimal instantiation used here, action selection depends on a single explicit signal:
+a sufficiency score , estimated from , that reflects
+whether the current context appears sufficient to act reliably. In our experiments, this
+signal is produced by an LLM-based estimator operating directly on unstructured inputs. More
+generally, the same role could be played by rule-based checks, structural completeness
+measures, retrieval scores, or learned estimators over structured or unstructured features.
+
+A policy then maps the exposed signal to an action. For example, a simple threshold rule may
+choose execute when exceeds a preset threshold and
+clarify otherwise. More generally, the policy may be learned, optimization-based, or
+constraint-driven. The key point is that control is explicit: given the same exposed signal,
+the policy selects the same action. The chosen action then produces new observations, which
+update for the next turn.
+
+This separation makes failures attributable. If the system acts too early, the source of
+error can be traced to the sufficiency estimate, the policy, or the execution itself. It also
+allows structural constraints to be enforced directly at the decision level. In
+Section 5.1, for example, a failed execute is followed by
+clarify rather than blind retry, preventing wasted turns that do not acquire new
+information.
+
+4.2 A Multi-Signal Instantiation
+
+The minimal formulation uses a single explicit signal, but the same interface also supports settings in which multiple decision-relevant quantities are exposed separately and used jointly by the policy. In this paper, we study one such instantiation with two explicit signals. This is only one realization of the broader framework: the decision layer does not require belief-based signals, only that the quantities driving action selection be made explicit.
+
+Concretely, we use a sufficiency signal, , which reflects whether the current context contains enough information to act reliably, and a correctness signal, , which reflects whether the current trajectory or intermediate result appears to be on the right track. Low sufficiency favors information acquisition before acting; low correctness after an attempted action favors revision or backtracking.
+
+The value of exposing both signals is that the optimal action can depend on their joint state, and actions can update beliefs they were not intended to target. A failed attempt may lower perceived correctness while simultaneously improving sufficiency by eliminating alternatives. This multi-signal view supports richer action spaces without changing the architectural separation between context, policy, and execution. Section 5.2 instantiates this setting in a graph disambiguation task, where sufficiency and correctness co-evolve across turns and jointly determine whether the system should clarify, continue, or backtrack.
+
+5 Experiments
+
+We evaluate the decision-centric framework through three experiments, each isolating a distinct property of explicit control. Section 5.1 studies the minimal act-versus-clarify decision under a single sufficiency signal. Section 5.2 extends this setting to multiple co-evolving signals and a richer action space. Section 5.3 tests modularity in retrieval control by holding the decision rule fixed and varying only the construction of the sufficiency signal.
+
+Unless otherwise specified, all experiments use ibm/granite4:micro (IBM Research, 2025), run locally via Ollama11
+1
+
+https://ollama.com. We compare a Prompt baseline, which leaves action selection implicit in a single LLM call, with the Decision-Centric approach (DC), which computes explicit signals and applies a deterministic policy; where relevant, we also include a Retry baseline that regenerates after failure without an explicit action decision.
+
+5.1 Calendar Scheduling: Clarify vs. Execute
+
+Setup.
+
+The task is to produce a valid calendar event from a natural-language request
+with four required fields: date, start time, duration, and attendees. Requests
+may be incomplete or ambiguous. We vary both the number of missing fields,
+, and the ambiguity type: absent, where a field is
+omitted, and unresolvable, where a field is mentioned but not specified
+in usable form (e.g., “Schedule on Jack’s usual slot”).
+
+At each turn, the system chooses between clarify and
+execute. In DC, this choice is driven by an explicit binary
+sufficiency signal indicating whether all required fields are available in
+usable form: if sufficient, the system executes; otherwise, it asks a
+clarification question. We compare Prompt-Clarify, Retry, and DC over
+runs per scenario, and report success, first-action optimality,
+wasted executions, and clarification turns. Additional implementation details
+are provided in Appendix A.1 -  A.3.
+
+Prompt-Clarify
+DC (ours)
+
+Succ.
+1st
+Wasted
+Clarif.
+Succ.
+1st
+Wasted
+Clarif.
+
+0
+100%
+90%
+0.00
+0.10
+100%
+100%
+0.00
+0.00
+
+1
+100%
+10%
+1.35
+1.25
+100%
+100%
+0.65
+1.65
+
+2
+75%
+10%
+2.20
+2.25
+100%
+100%
+0.00
+1.00
+
+3
+60%
+45%
+2.20
+2.80
+100%
+100%
+0.55
+1.55
+
+4
+10%
+10%
+2.90
+3.00
+100%
+100%
+0.10
+1.40
+
+Table 2: Calendar results by missing-field count , averaged over ambiguity types. 1st: first-action optimality; Wasted: discarded executions; Clarif.: clarification turns per run.
+
+Results.
+
+Table 2 shows the main results on Granite.
+The decision-centric system achieves 100% success in all 8 scenarios,
+while Prompt-Clarify degrades sharply as missingness increases,
+dropping to 75%, 60%, and 10% at , respectively. DC also
+incurs fewer wasted executions and uses fewer turns, showing that the
+gain comes from better control decisions rather than more favorable
+generation.
+The Retry baseline succeeds only at and fails at all
+by exhausting the turn budget on repeated executions without ever clarifying;
+it is omitted from Table 2 for space.
+
+The full per-scenario breakdown
+is given in Table 7. The gap is largest in unresolvable scenarios, where missing fields are
+referenced but not inferable. There,
+Prompt-Clarify often treats the reference as usable information
+and executes prematurely, whereas DC continues clarifying until the
+missing fields are explicitly resolved.
+
+We replicate the same experiment on LLaMA 3 (8B) (Meta AI, 2024); results are shown in Table 3. The main pattern transfers across model families:
+DC continues to outperform both Retry and Prompt-Clarify at every
+missing-field count , but the error pattern becomes non-monotonic,
+with lower performance at than at .
+
+Because the architecture separates estimation, policy, and execution,
+this irregularity can be localized rather than treated as an opaque
+model effect.
+In the main failures, the sufficiency estimator correctly
+identifies that only duration min is missing and the policy
+correctly selects clarify, but the question generator asks
+about already known fields (e.g., “What time should the meeting
+start?”).
+This prevents the system from acquiring the missing information within
+the turn budget.
+
+Constraining the question generator to ask only about fields identified
+as missing resolves these failures, restoring correct behavior without
+modifying the estimator, the controller, or the executor.
+This illustrates a core benefit of the framework: failures are
+attributable to specific components, and fixes can be applied locally
+without changing the overall decision logic. Full traces
+(Figure 1) and additional failure analysis are in
+Appendix A.5.
+
+Retry
+Prompt-Clarify
+DC (original)
+DC (constrained)†
+
+0
+100%
+70%
+100%
+100%
+
+1
+5%
+50%
+75%
+100%
+
+2
+0%
+75%
+100%
+100%
+
+3
+0%
+45%
+90%
+95%
+
+4
+0%
+30%
+100%
+100%
+
+Table 3: LLaMA success rates by missing-field count , averaged over ambiguity types. DC (original) uses the default question-generation module; †DC (constrained) restricts question generation to the listed missing fields.
+
+5.2 Graph Disambiguation: Joint Beliefs and Correlated Updates
+
+Setup.
+
+We instantiate the joint-belief setting of
+Section 4.2, in which both and
+are active and the optimal action depends on their joint
+state. The domain is a synthetic knowledge graph with 200 people, each
+described by five categorical attributes: department, role, location, project,
+and level. Given a partial description of a target person, the system
+must identify the correct node by interleaving three actions:
+clarify (ask for a missing attribute), execute (visit a
+candidate and observe its full profile), and backtrack (reject the
+current candidate and try a different one from the remaining pool). For example, the query “Find the
+person in Engineering, project Alpha, whose role is Manager” may still match
+multiple candidates, requiring the system to resolve the ambiguity within a
+fixed turn budget.
+
+We evaluate five scenarios that isolate and then couple the two signals.
+S1–S3 are controls that separate sufficiency and correctness, while S4–S5
+introduce joint-belief settings in which the optimal action depends on their
+interaction, including cases where belief updates arise indirectly through
+traversal. Details of the graph generation process and scenario design are in Appendix B.
+
+In addition to Retry, Prompt, and DC, we include a Prompt (w/ policy)
+condition, which states the decision logic in the system prompt rather than
+implementing it as an explicit decision function. This tests whether the same
+policy can be executed reliably through prompting alone.
+All methods receive the same turn-level state: the query, known and unknown
+attributes, the number of remaining and untried candidates, the last visited
+profile, and the remaining budget. The difference is purely architectural. DC
+computes explicit beliefs and applies a deterministic policy, whereas Prompt,
+Prompt (w/ policy), and Retry must infer the next action from the same state.
+
+For DC, the sufficiency signal
+measures query ambiguity and
+increases as the candidate set shrinks, either through clarification or through
+elimination after failed traversal. The correctness signal
+is estimated after each visit from local structural
+consistency: for each hidden attribute, we compute the fraction of peer
+candidates that share the visited node’s value. Rare values reduce plausibility,
+whereas common values increase it. Full implementation details are given in
+Appendix B.2 and Appendix B.3.
+
+Scenario
+Retry
+Prompt
+
+Prompt
+(w/ policy)
+
+DC
+
+S1: Clean (baseline)
+100%
+100%
+100%
+100%
+
+S2: Ambiguous ( only)
+45%
+85%
+95%
+100%
+
+S3: Unreliable ( only)
+100%
+100%
+100%
+100%
+
+S4: Orthogonal (joint, )
+65%
+95%
+100%
+100%
+
+S5: Correlated (coupled update)
+60%
+35%
+35%
+100%
+
+Table 4: Graph disambiguation success rates.
+
+Results.
+
+Table 4 summarizes the main results. DC achieves
+100% success in all scenarios, while the baselines degrade as the task
+requires more complex control. A full breakdown, including wasted
+clarifications and backtracks, is given in
+Table 10.
+
+Control scenarios (S1–S3).
+
+S1 is trivial: all methods succeed, confirming that the pipeline functions
+end-to-end. S2 isolates sufficiency. With 13 candidates and only two known
+attributes, DC reaches 100% by clarifying until the pool is small enough to
+act on. Retry drops to 45% because it executes blindly, while Prompt-clarify
+reaches 85%, occasionally acting too early without explicit sufficiency
+tracking. Prompt (w/ policy) improves to 95%, indicating that policy prose can
+help when the correct action follows directly from the observable candidate
+count. S3 isolates correctness. Here all methods succeed, since with only one
+untried candidate remaining, even Retry eventually recovers by exhaustion.
+
+Joint belief: action dependence (S4).
+
+S4 is the first joint-belief setting. After a forced decoy traversal fails, the
+correct next action depends on both signals: indicates
+rejection of the visited node, but determines whether the
+system should backtrack or clarify. Because many candidates remain, DC
+clarifies and achieves 100%. Prompt-clarify reaches 95%, failing when it
+backtracks instead of clarifying. Prompt (w/ policy) also reaches 100%,
+showing that prompt-level policy description is sufficient when the
+post-failure decision can still be read directly from the candidate state.
+
+Correlated belief update (S5).
+
+S5 is the strongest test. After an initial clarification reduces the pool from
+12 to 5 candidates, DC executes with one hidden attribute remaining. The forced
+decoy then fails, but this failure also eliminates other candidates sharing the
+decoy’s minority hidden value, shrinking the pool from 5 to 3 without any
+additional clarification. DC updates its belief state in place, backtracks into
+the reduced pool, and reaches 100%.
+
+The prompt-based methods fail for a different reason. Prompt-clarify reaches
+35%, and Prompt (w/ policy) remains at 35%, even below the Retry baseline at
+60%. Unlike S2 and S4, the bottleneck is not deciding how to act on an
+observable candidate count. Rather, the effective candidate set has already
+changed during traversal, and that state update is not available to the LLM at
+decision time. DC succeeds because it maintains and updates the belief state
+explicitly; embedding the same policy in prompt text does not recover that
+missing state.
+
+S4 and S5 thus extend the calendar setting in two ways: the correct action can
+depend on multiple explicit beliefs, and actions can update those beliefs across
+turns through their effects on the candidate state.
+
+5.3 Modular Signals for Retrieval Control with Diagnosable Feedback
+
+While the first two experiments use controlled settings to isolate decision behavior, we next evaluate the same design in a more realistic retrieval setting, where signal quality is imperfect and decisions must be made under noisy evidence.
+
+Setup.
+
+We study a retrieval sufficiency task, in which the system must decide
+whether the currently retrieved passage set is sufficient to answer a question.
+At each turn, it observes the question, the accumulated BM25 passages, and the
+remaining retrieval budget, and chooses either stop or
+expand_k, with . Success is defined
+by whether the gold answer string is present in the final passage set at stop
+time. We also report the average number of retrieval rounds per episode, which
+captures decision efficiency: strong methods stop early on easy questions while
+continuing to expand on medium ones. The retrieval budget is two rounds; once
+exhausted, the controller must stop.
+
+We evaluate 150 Natural Questions examples (Kwiatkowski et al., 2019) over
+a 2000-passage BM25 corpus, split evenly into three buckets ( each) by
+when the gold passage becomes retrievable: easy (present at round 0),
+medium (absent at round 0 but retrieved within budget), and
+hard (not retrieved within budget). Retrieval states are precomputed
+once and shared across all methods. Corpus construction and bucket definitions
+are given in Appendix C.1.
+
+We compare four methods: Prompt, DC-LLM, DC-Dense, and
+DC-Composite. Prompt maps the current state directly to
+stop or expand_k in a single LLM call, leaving sufficiency
+assessment and action selection implicit. The three decision-centric variants
+instead externalize sufficiency as an explicit scalar signal
+, interpreted as the probability that the current passage set
+is sufficient. DC-LLM derives from an LLM-based answerability
+judge; DC-Dense derives it from question–passage embedding similarity
+using all-MiniLM-L6-v2; and DC-Composite combines the two.
+
+All methods receive the same state and act over the same action set. The three
+DC variants also share the same fixed threshold controller and differ only in
+how is constructed. This isolates signal quality from control logic:
+performance differences among DC variants reflect the quality of the sufficiency
+signal rather than differences in action generation. Signal definitions are
+given in Appendix C.2.
+
+Results.
+
+Prompt
+DC-LLM
+DC-Dense
+DC-Composite
+
+Bucket
+Succ.
+RR
+Succ.
+RR
+Succ.
+RR
+Succ.
+RR
+
+Easy
+100%
+0.10
+100%
+0.62
+100%
+1.12
+100%
+0.84
+
+Medium
+14%
+0.08
+88%
+1.34
+90%
+1.66
+94%
+1.62
+
+Hard
+14%
+0.14
+18%
+1.66
+18%
+1.84
+18%
+1.84
+
+Table 5: Retrieval control results.
+Succ. = success rate; RR = avg retrieval rounds.
+
+Prompt and DC-LLM use the same LLM, retrieved passages, and action
+set; the only difference is whether sufficiency is externalized as an explicit
+scalar signal. On medium questions, where the stop-versus-expand decision is
+consequential, Prompt reaches 12% success, while DC-LLM reaches
+86%. In 64% of Prompt’s medium failures, the model explicitly states
+that the answer is absent from the current passages yet still chooses
+stop, illustrating the core failure of implicit control: the
+assessment is correct, but the action is wrong.
+
+The main contribution of this experiment, however, is modularity. The three DC
+variants share the same controller and differ only in how the sufficiency signal
+is constructed. DC-Dense behaves like a relevance signal and
+tends to over-expand; DC-LLM behaves more like an answerability signal
+and is more selective; DC-Composite combines the two and achieves the
+best medium-bucket performance at 94%. Because the controller is fixed, these
+differences isolate the effect of signal construction.
+
+Logging as a scalar trace also makes failures directly diagnosable and
+supports modular iteration: new signals can be introduced, compared, and
+evaluated under the same controller without changing the decision policy.
+
+Takeaway.
+
+Taken together, the three experiments show that the value of an explicit
+decision layer is not tied to a single task or signal type. In calendar
+scheduling, it reduces wasted actions by enforcing simple sufficiency-based
+control. In graph search, it supports multi-belief, cross-turn decisions that
+implicit prompting does not reliably recover. In retrieval, it makes sufficiency
+a modular and diagnosable signal, enabling attribution and improvement without
+changing the controller. The common benefit is architectural: once
+decision-relevant state is externalized, control becomes more reliable,
+interpretable, and easier to improve.
+
+6 Conclusion
+
+We introduced a decision-centric framework for LLM systems that separates
+explicit decision-relevant signals from the policy that maps them to actions.
+This turns control from an implicit byproduct of generation into an explicit,
+inspectable, and enforceable part of the system.
+
+Across three experiments, this separation improved different aspects of control.
+In calendar scheduling, it reduced wasted execution by making
+clarify-versus-execute decisions explicit. In graph disambiguation, it enabled
+richer sequential control with multiple signals, including backtracking when the
+current trajectory became unreliable. In retrieval, it made stopping decisions
+modular, allowing different sufficiency signals to be substituted or combined
+without changing the controller.
+
+As models become more capable, some of the gaps we observe may narrow, and
+prompt-based systems may improve with stronger models or heavier prompt
+engineering. But the underlying limitation remains: prompt-based control is
+implicit. Assessment and action are fused inside a single model call, making the
+basis for behavior hard to inspect, enforce, diagnose, or repair, especially in
+sequential settings where errors compound over time.
+
+This is where the decision-centric framework matters. By separating decision
+context, policy, and execution, it provides explicit control points for
+attribution, modular redesign, and constraint enforcement. These properties are
+useful not only when models are weak, but also as LLM systems become more
+capable and more complex.
+
+Natural extensions include hierarchical decision layers, where a high-level
+policy selects a broad action type and a lower-level policy determines how to
+realize it. The same abstraction may also apply within larger multi-step
+workflows, including agent-controlled ones, where each task exposes its own
+local signals and policy before execution proceeds. More broadly, we view
+explicit separation between decision context, policy, and execution as a useful
+principle for building more reliable, controllable, and diagnosable LLM
+systems.
+
+References
+
+Amin (2026)
+D. Amin
+
+Bayesian orchestration of multi-llm agents for cost-aware sequential decision-making.
+
+arXiv preprint arXiv:2601.01522.
+
+Cited by: §2.
+
+Austin et al. (2024)
+D. Austin, A. Korikov, A. Toroghi, and S. Sanner
+
+Bayesian optimization with LLM-based acquisition functions for natural language preference elicitation.
+
+In Proceedings of the 18th ACM Conference on Recommender Systems,
+
+pp. 74–83.
+
+Cited by: §2.
+
+Choudhury et al. (2025)
+D. Choudhury, S. Williamson, A. Goliński, N. Miao, F. Bickford Smith, M. Kirchhof, Y. Zhang, and T. Rainforth
+
+BED-LLM: intelligent information gathering with LLMs and Bayesian experimental design.
+
+External Links: 2508.21184
+
+Cited by: §2.
+
+Damani et al. (2025)
+M. Damani, I. Shenfeld, A. Peng, A. Bobu, and J. Andreas
+
+Learning how hard to think: input-adaptive allocation of lm computation.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §3.2.
+
+Dang et al. (2025)
+Y. Dang, C. Qian, X. Luo, J. Fan, Z. Xie, R. Shi, W. Chen, C. Yang, X. Che, Y. Tian, et al.
+
+Multi-agent collaboration via evolving orchestration.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+Cited by: §2.
+
+DeepSeek-AI (2025)
+DeepSeek-AI
+
+DeepSeek-R1: incentivizing reasoning capability in LLMs via reinforcement learning.
+
+arXiv preprint arXiv:2501.12948.
+
+Cited by: §2.
+
+Deng et al. (2023)
+Y. Deng, L. Liao, L. Chen, H. Wang, W. Lei, and T. Chua
+
+Prompting and evaluating large language models for proactive dialogues: clarification, target-guided, and non-collaboration.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2023,
+
+pp. 10602–10621.
+
+Cited by: §2.
+
+Dong et al. (2026)
+Y. R. Dong, T. Hu, Z. Hui, C. Zhang, I. Vulić, A. Bobu, and N. Collier
+
+Value of information: a framework for human–agent communication.
+
+External Links: 2601.06407
+
+Cited by: §2.
+
+Grand et al. (2025)
+G. Grand, V. Pepe, J. B. Tenenbaum, and J. Andreas
+
+Shoot first, ask questions later? Building rational agents that explore and act like people.
+
+arXiv preprint arXiv:2510.20886.
+
+Cited by: §2.
+
+Hong et al. (2023)
+S. Hong, M. Zhuge, J. Chen, X. Zheng, Y. Cheng, J. Wang, C. Zhang, Z. Wang, S. K. S. Yau, Z. Lin, et al.
+
+MetaGPT: meta programming for a multi-agent collaborative framework.
+
+In The twelfth international conference on learning representations,
+
+Cited by: §2.
+
+Howard (1966)
+R. A. Howard
+
+Information value theory.
+
+IEEE Transactions on Systems Science and Cybernetics 2 (1), pp. 22–26.
+
+Cited by: §2.
+
+Hu et al. (2024)
+Q. J. Hu, J. Bieker, X. Li, N. Jiang, B. Keigwin, G. Ranganath, K. Keutzer, and S. K. Upadhyay
+
+Routerbench: a benchmark for multi-llm routing system.
+
+arXiv preprint arXiv:2403.12031.
+
+Cited by: §2.
+
+Huang et al. (2025)
+J. Y. Huang, M. Damani, Y. El-Kurdi, R. Astudillo, and W. Sun
+
+Latency and token-aware test-time compute.
+
+arXiv preprint arXiv:2509.09864.
+
+Cited by: §2,
+§3.2.
+
+IBM Research (2025)
+IBM Research
+
+Granite 4.0 Micro: a compact hybrid language model.
+
+Note: https://huggingface.co/ibm-granite/granite-4.0-h-micro-baseReleased October 2, 2025
+
+Cited by: §5.
+
+Jeong et al. (2024)
+S. Jeong, J. Baek, S. Cho, S. J. Hwang, and J. C. Park
+
+Adaptive-rag: learning to adapt retrieval-augmented large language models through question complexity.
+
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),
+
+pp. 7036–7050.
+
+Cited by: §2.
+
+Kwiatkowski et al. (2019)
+T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin, K. Lee, et al.
+
+Natural questions: a benchmark for question answering research.
+
+Transactions of the Association for Computational Linguistics 7, pp. 453–466.
+
+Cited by: §C.1,
+§5.3.
+
+Meta AI (2024)
+Meta AI
+
+Meta Llama 3: the most capable openly available LLM to date.
+
+Note: https://ai.meta.com/blog/meta-llama-3/Accessed 2024
+
+Cited by: §5.1.
+
+Ong et al. (2024)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+
+RouteLLM: learning to route llms from preference data.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §2.
+
+Papamarkou et al. (2026)
+T. Papamarkou, P. Alquier, M. Bauer, W. Buntine, A. Davison, G. K. Dziugaite, M. Filippone, A. Y. Foong, V. Fortuin, D. Fouskakis, et al.
+
+Position: agentic ai systems should be making bayes-consistent decisions.
+
+Cited by: §2.
+
+Qiu et al. (2026)
+L. Qiu, F. Sha, K. Allen, Y. Kim, T. Linzen, and S. van Steenkiste
+
+Bayesian teaching enables probabilistic reasoning in large language models.
+
+Nature Communications 17, pp. 1238.
+
+External Links: Document
+
+Cited by: §2.
+
+Raiffa and Schlaifer (1961)
+H. Raiffa and R. Schlaifer
+
+Applied statistical decision theory.
+
+Harvard University Press.
+
+Cited by: §2.
+
+Ren et al. (2023)
+A. Z. Ren, A. Dixit, A. Bodrova, S. Singh, S. Tu, N. Brown, P. Xu, L. Takayama, F. Xia, J. Varley, et al.
+
+Robots that ask for help: uncertainty alignment for large language model planners.
+
+arXiv preprint arXiv:2307.01928.
+
+Cited by: §2.
+
+Shinn et al. (2023)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+
+Reflexion: language agents with verbal reinforcement learning.
+
+Advances in neural information processing systems 36, pp. 8634–8652.
+
+Cited by: §2.
+
+Snell et al. (2025)
+C. V. Snell, J. Lee, K. Xu, and A. Kumar
+
+Scaling llm test-time compute optimally can be more effective than scaling parameters for reasoning.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §2.
+
+Somerstep et al. (2025)
+S. Somerstep, F. M. Polo, A. F. M. de Oliveira, P. Mangal, M. Silva, O. Bhardwaj, M. Yurochkin, and S. Maity
+
+Carrot: a cost aware rate optimal router.
+
+arXiv preprint arXiv:2502.03261.
+
+Cited by: §3.1.
+
+Sun et al. (2025)
+W. Sun, X. Zhou, W. Du, X. Wang, S. Welleck, G. Neubig, M. Sap, and Y. Yang
+
+Training proactive and personalized LLM agents.
+
+arXiv preprint arXiv:2511.02208.
+
+Cited by: §2.
+
+Tsiourvas et al. (2025)
+A. Tsiourvas, W. Sun, and G. Perakis
+
+Causal llm routing: end-to-end regret minimization from observational data.
+
+In Annual Conference on Neural Information Processing Systems,
+
+Cited by: §2,
+§3.1,
+§3.2.
+
+Wang et al. (2023)
+X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou
+
+Self-consistency improves chain of thought reasoning in language models.
+
+In The Eleventh International Conference on Learning Representations,
+
+Cited by: §2.
+
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. V. Le, and D. Zhou
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 35.
+
+Cited by: §2.
+
+Woisetschläger et al. (2025)
+H. Woisetschläger, R. Zhang, S. Wang, and H. A. Jacobsen
+
+MESS+: dynamically learned inference-time llm routing in model zoos with service level guarantees.
+
+In Advances in Neural Information Processing Systems,
+
+Cited by: §3.1,
+§3.2.
+
+Wu et al. (2024)
+Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S. Zhang, J. Liu, et al.
+
+Autogen: enabling next-gen llm applications via multi-agent conversations.
+
+In First conference on language modeling,
+
+Cited by: §2.
+
+Wu et al. (2025)
+S. Wu, M. Galley, B. Peng, H. Cheng, G. Li, Y. Dou, W. Cai, J. Zou, J. Leskovec, and J. Gao
+
+CollabLLM: from passive responders to active collaborators.
+
+In International Conference on Machine Learning,
+
+pp. 67260–67283.
+
+Cited by: §2.
+
+Yao et al. (2023)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. Griffiths, Y. Cao, and K. Narasimhan
+
+Tree of thoughts: deliberate problem solving with large language models.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 36, pp. 11809–11822.
+
+Cited by: §2.
+
+Yao et al. (2022)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+
+React: synergizing reasoning and acting in language models.
+
+In The eleventh international conference on learning representations,
+
+Cited by: §2.
+
+Zhang and Choi (2023)
+M. J. Q. Zhang and E. Choi
+
+Clarify when necessary: resolving ambiguity through interaction with LMs.
+
+arXiv preprint arXiv:2311.09469.
+
+Cited by: §2.
+
+Zhou et al. (2024)
+A. Zhou, K. Yan, M. Shlapentokh-Rothman, H. Wang, and Y. Wang
+
+Language agent tree search unifies reasoning, acting, and planning in language models.
+
+In Forty-first International Conference on Machine Learning,
+
+Cited by: §2.
+
+Zhou et al. (2023)
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou
+
+Instruction-following evaluation for large language models.
+
+arXiv preprint arXiv:2311.07911.
+
+Cited by: §A.5.
+
+Appendix A Calendar Scheduling: Clarify vs. Execute
+
+A.1 Experimental Setup
+
+Task.
+
+The system must produce a valid structured output, i.e., a calendar event
+with four required fields (date, start_time, duration_min,
+attendees), from a natural-language request that may be incomplete
+or ambiguous. Success requires all four fields to be correct;
+fabricating a missing field does not count as success.
+
+Scenario Design
+
+Scenarios are generated programmatically from a single base fact set
+(2026-02-17, 11:30, 30, [Jack])
+by varying two independent factors:
+
+•
+
+Missing field count : the number of
+fields withheld from the initial query, chosen in a fixed omission order
+(duration_min date start_time attendees)
+so that each produces a canonically distinct scenario.
+
+•
+
+Ambiguity type: absent (field simply omitted) or
+unresolvable (field referenced but not inferable, e.g. “on Jack’s usual slot” for date).
+For the unresolvable type, the first observed field in a fixed priority
+order is replaced with a vague reference.
+
+The case has all fields present; ambiguity type does not apply.
+The unresolvable case is identical to absent (no fields
+remain to make unresolvable), so it is excluded.
+This yields unique scenarios.
+Table 6 shows all eight scenarios with their queries.
+
+Ambiguity
+
+Initial query
+
+0
+—
+
+Schedule a meeting with Jack on 2026-02-17 at 11:30 for 30 minutes.
+
+1
+Absent
+
+Schedule a meeting with Jack on 2026-02-17 at 11:30.
+
+1
+Unresolvable
+
+Schedule a meeting with Jack on Jack’s usual slot at 11:30.
+
+2
+Absent
+
+Schedule a meeting with Jack at 11:30.
+
+2
+Unresolvable
+
+Schedule a meeting with Jack at Jack’s usual time.
+
+3
+Absent
+
+Schedule a meeting with Jack.
+
+3
+Unresolvable
+
+Schedule a meeting with the usual team.
+
+4
+—
+
+Schedule a meeting.
+
+Table 6: All 8 generated scenarios. Fields withheld at each :
+: duration_min;
+: duration_min, date;
+: duration_min, date, start_time;
+: all fields.
+Private facts (ground truth) are identical across all scenarios.
+
+We set the turn budget to , the smallest budget under which the
+hardest case can still be solved without mistakes: in the worst case,
+all four missing fields must be clarified before a final execution,
+yielding a six-turn horizon. This makes the budget tight enough to penalize
+premature or wasted executions while still allowing an optimal policy to
+succeed. Each scenario is repeated for independent runs.
+
+Metrics.
+
+Success rate measures whether the final output is correct.
+First-action optimality measures whether the system’s first action matches the
+optimal (execute at ; clarify at ); it isolates the act-vs.-clarify
+decision quality before any recovery can occur.
+Wasted executions counts generation calls whose outputs were discarded because
+the system executed before it had sufficient information—a direct measure of decision
+quality independent of output quality.
+Clarifications counts how many turns were spent acquiring information:
+DC bundles all missing fields into one question, while Prompt may ask redundantly
+or execute prematurely.
+
+Shared Execution Prompt
+
+All three approaches use the same execution prompt to generate the final calendar event JSON
+(temperature ). This isolates the decision mechanism as the sole variable across approaches:
+
+You create calendar event JSON. Today is {CURRENT_DATE}.
+
+Required fields: date (YYYY-MM-DD), start_time (HH:MM), duration_min (integer), attendees (list of strings).
+
+- Scan the ENTIRE conversation for each field and use the most recently confirmed value.
+
+- Include ONLY values the user explicitly provided --- set missing fields to null (do NOT invent values).
+
+- For attendees: if any person’s name appears anywhere in the conversation, include them.
+
+- attendees MUST be a JSON array of plain strings, e.g. ["Jack"] not [{"name":"Jack"}].
+
+Return ONLY JSON with exactly those four keys.
+
+User Simulator
+
+The user simulator role-plays as a user who holds the private ground-truth facts.
+When asked a clarification question, it looks up the answer in the private facts
+and generates a natural-language reply (temperature ), answering only what
+was asked without volunteering extra information.
+For unresolvable scenarios (e.g., date referenced as “Jack’s usual slot”),
+the simulator still knows the true date and will provide it if asked directly —
+the unresolvability lies in the initial query phrasing, not in the simulator’s knowledge.
+This means the system can always recover from an unresolvable reference by asking.
+
+A.2 Decision-Centric Baseline Implementation
+
+Policy.
+
+The decision rule selects
+using a deterministic three-branch policy with no tunable parameters:
+
+The policy is explicit, deterministic, and fully attributable:
+given the same and action history,
+it always selects the same action.
+
+Branch 1 is a hard structural constraint: after a failed execution the system
+must clarify, regardless of the current signal value.
+This kind of constraint is straightforward to enforce in an explicit decision
+layer — it is a single guard before the policy branches — but is difficult
+to enforce reliably in a prompt-based system, where the model may choose to
+retry directly without any mechanism to prevent it.
+Neither baseline imposes this constraint.
+
+Sufficiency estimator
+
+The estimator makes a single LLM call on the full conversation history
+at each turn (temperature ) and returns a boolean presence indicator
+per field rather than a scalar probability:
+
+Check which scheduling fields were explicitly provided by the user in this conversation.
+
+Return ONLY JSON: {"date": true/false, "start_time": true/false, "duration_min": true/false, "attendees": true/false}
+
+- date: true if an explicit date or computable relative date appears (e.g. "2026-02-17", "next Tuesday"). false if missing or unresolvable ("Jack’s usual slot").
+
+- start_time: true if a specific time appears ("11:30", "11am", "14:30"). false if missing.
+
+- duration_min: true if a numeric duration appears ("30 minutes", "1 hour", "for 45 min"). false if vague or missing.
+
+- attendees: true if any person is named. false if missing.
+
+The sufficiency score is then computed by code as .
+A confirmed-field lock ensures that once a field is marked true,
+it remains confirmed in all subsequent turns regardless of later extractor outputs,
+preventing regression as the conversation grows.
+The full history is passed on every turn so the model can resolve
+short or ambiguous answers (e.g., “45” is correctly identified as
+duration_min given the preceding “How long?” question).
+
+Clarification question generation
+
+When the policy selects clarify, a single LLM call generates one natural
+question covering all unconfirmed fields (temperature ):
+
+You are a scheduling assistant. Today is {CURRENT_DATE}.
+
+You are collecting information to book a calendar event.
+
+Generate ONE natural question that asks the user for all the specified missing fields.
+
+Return ONLY JSON: {"question": "..."}
+
+The missing fields are passed as input (e.g., ["date", "duration_min"]),
+and the model generates a single fluent question covering all of them.
+
+A.3 Prompt-Clarify Baseline Implementation
+
+The following minimal system prompt is used by the prompt-based clarify baseline only
+(temperature ).
+
+You are a scheduling assistant. Today is {CURRENT_DATE}.
+
+You are helping book a calendar event. You need: date, start time, duration, and attendees.
+
+At each turn, choose one action:
+
+ {"action": "clarify", "question": "..."} --- ask the user for anything missing or unclear
+
+ {"action": "execute"} --- when you have everything needed to book the event
+
+A.4 Full Results by Ambiguity Type (Granite 4)
+
+Table 7 gives the per-ambiguity-type breakdown underlying Table 2, adding average turns as an efficiency metric (Granite 4 micro, , ).
+
+Ambiguity
+Approach
+Success
+Wasted
+Avg turns
+
+0
+—
+Retry baseline
+100%
+0.00
+1.00
+
+Prompt-based clarify
+100%
+0.00
+1.10
+
+Decision-centric
+100%
+0.00
+1.00
+
+1
+Absent
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+100%
+0.90
+2.90
+
+Decision-centric
+100%
+0.10
+2.20
+
+Unresolvable
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+100%
+1.80
+4.80
+
+Decision-centric
+100%
+1.20
+4.40
+
+2
+Absent
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+100%
+1.90
+4.90
+
+Decision-centric
+100%
+0.00
+2.00
+
+Unresolvable
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+50%
+2.50
+6.00
+
+Decision-centric
+100%
+0.00
+2.00
+
+3
+Absent
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+60%
+2.20
+5.60
+
+Decision-centric
+100%
+0.00
+2.00
+
+Unresolvable
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+60%
+2.20
+5.60
+
+Decision-centric
+100%
+1.10
+4.20
+
+4
+—
+Retry baseline
+0%
+6.00
+6.00
+
+Prompt-based clarify
+10%
+2.90
+6.00
+
+Decision-centric
+100%
+0.10
+2.50
+
+Table 7: Full results by missing-field count and ambiguity type.
+Granite 4 (micro), , per cell.
+“Absent”: missing fields simply omitted.
+“Unresolvable”: missing fields referenced but not inferable.
+
+DC maintains 100% on all absent scenarios and holds 100% on all unresolvable scenarios except (where it still outperforms Prompt-Clarify’s 60% with far fewer turns).
+The unresolvable condition consistently widens the gap: Prompt-Clarify drops to 50%, 60%, and 10% at unresolvable, whereas DC never fails, because it continues clarifying until fields are explicitly confirmed rather than treating vague references as resolved.
+The Retry baseline is unaffected by ambiguity type, confirming its failures are structural (never clarifying) rather than ambiguity-driven.
+
+A.5 Cross-Model Analysis (LLaMA 3)
+
+The decision function is identical across models—the same 3-branch rule, the same estimator—so performance differences are attributable entirely to model-specific component behavior, not control logic.
+Table 8 gives the full per-scenario breakdown.
+
+•
+
+DC (original) outperforms both baselines at every .
+Even before any fix, DC (original) beats Retry and Prompt-Clarify at
+every missing-field count, confirming that the explicit decision layer
+transfers across model families.
+
+•
+
+The error pattern is non-monotonic.
+Unlike Granite, where all approaches degrade monotonically with ,
+DC (original) on LLaMA 3 reaches 100% at and but only
+50%–75% at , and Prompt-Clarify peaks at absent (90%)
+before falling to 40% at unresolvable.
+Because the decision layer is explicit, this irregularity can be
+localized to a specific component rather than treated as an opaque model effect.
+
+•
+
+DC (constrained) recovers the gap.
+A targeted fix to the question-generator prompt—leaving the estimator,
+policy, and executor unchanged—restores 100% at all except
+unresolvable (90%).
+
+Retry
+Prompt-clarify
+DC (orig.)
+DC (constrained)
+
+Ambiguity
+Success
+Turns
+Success
+Turns
+Success
+Success
+
+0
+—
+100%
+1.00
+70%
+5.50
+100%
+100%
+
+1
+Absent
+10%
+5.90
+60%
+5.50
+50%
+100%
+
+Unresolvable
+0%
+6.00
+40%
+5.90
+100%
+100%
+
+2
+Absent
+0%
+6.00
+90%
+5.60
+100%
+100%
+
+Unresolvable
+0%
+6.00
+60%
+5.80
+100%
+100%
+
+3
+Absent
+0%
+6.00
+50%
+5.90
+100%
+100%
+
+Unresolvable
+0%
+6.00
+40%
+6.00
+80%
+90%
+
+4
+—
+0%
+6.00
+30%
+5.90
+100%
+100%
+
+Table 8: LLaMA 3 (8B) full per-scenario breakdown, , .
+DC (orig.): default question-generator prompt.
+DC (constrained): stricter prompt constraining question generation to missing fields only.
+The single change at absent (50%  100%) isolates the broken component:
+only the question generator was changed; all other components are identical.
+Prompt-clarify uses 5.5–6.0 turns on every scenario, exhausting the budget
+in clarification rather than executing.
+
+Figure 1: Diagnostic trace for LLaMA 3 at (before and after fix).
+Three logged values pinpoint the broken component: is
+correct; missing=[duration_min] is correct; yet the question asks about
+date and time—only the question generator is wrong.
+The fix targets only the question-generation prompt; the estimator, policy, and
+execution function are unchanged.
+
+Diagnosing the failure.
+
+DC (original) achieves only 50% at absent due to an instruction-following
+failure in the question generator: given missing_fields=["duration_min"],
+LLaMA 3 generates questions about date and time instead.
+The estimator correctly returns with duration_min
+unconfirmed—the signal and policy are correct; only the question generator is broken.
+Figure 1 shows the before/after trace where three logged values
+immediately pinpoint the component at fault.
+
+The fix tightens the question-generation prompt without changing anything else.
+LLaMA 3 has weaker instruction-following on constrained generation [Zhou et al., 2023]
+and drifts to asking about unrelated fields unless explicitly constrained:
+
+Default prompt (Granite):
+
+Generate ONE natural question that asks the user for all the specified missing fields.
+
+Constrained prompt (LLaMA 3):
+
+You must ask the user ONLY about the fields listed under "missing_fields".
+
+Do not ask about any other fields.
+
+Generate ONE question covering exactly those missing fields.
+
+The estimator, policy, and execution function are identical in both cases.
+Only this prompt string is model-dependent.
+
+Explicit separation enables targeted repair.
+
+The diagnosis points directly to a minimal fix: strengthen the
+question-generation prompt so that LLaMA 3 asks only about the listed
+missing fields. No other component changes: the estimator, decision
+policy, and execution function remain fixed. After this repair, DC
+recovers to 100% at and 95% at
+(Table 3).
+
+This is the intended benefit of the modular architecture: failures are
+attributable, repairs are surgical, and improvement is directly
+measurable. Such component-level diagnosis is possible because the
+decision layer is explicit; in prompt-based systems, there is no
+comparable separation.
+
+Remaining failure at unresolvable.
+
+The query “Schedule a meeting with the usual team” contains an unresolvable
+attendee reference. The extractor marks attendees=true from the vague
+reference—the first logged value points to the bug.
+The executor copies the vague string literally, producing ["the usual team"],
+and validation fails.
+The no-blind-retry constraint fires correctly, but the fallback confirmation question
+does not recover because the user’s “Yes” does not supply a specific name.
+This is a distinct failure from the bug: the extractor and executor jointly
+mishandle unresolvable references. Traceability again makes the cause immediate:
+confirmed_fields shows attendees=true at despite no
+named person in the query, pointing directly to the extractor as the component to fix.
+
+Appendix B Graph Disambiguation
+
+B.1 Experiment Setup
+
+The knowledge graph contains 200 nodes (people), each described by five
+categorical attributes:
+department {Engineering, Marketing, Sales, Finance},
+role {Manager, Analyst, Engineer, Lead},
+location {New York, London, Tokyo, Berlin},
+project {Alpha, Beta, Gamma, Delta}, and
+level {L1, L2, L3, L4}.
+Edges connect pairs of nodes that share at least two attribute values.
+To introduce realistic distractors, we add noisy edges equal to 15% of the
+base edge count between pairs sharing at most one attribute; these edges are
+not distinguishable from regular edges before traversal.
+
+Controlled subgraph for S5.
+
+S5 is a stress test designed to isolate a specific failure mode: correlated
+belief update, where a failed traversal passively improves sufficiency through
+elimination without any clarification turn.
+This property requires a precise structural condition, i.e., a clarification that
+leaves candidates including a minority group whose elimination is
+triggered by a subsequent traversal failure.
+At 200 nodes over a -combination attribute space, this pattern
+does not arise naturally with sufficient regularity for controlled evaluation.
+We therefore inject 10 nodes sharing
+(department=Engineering, project=Alpha, role=Manager)
+with the profiles in Table 9, chosen to instantiate the
+target structure exactly.
+These nodes participate in the graph’s edge construction identically to all
+other nodes and are indistinguishable from random nodes by any approach.
+S1–S4 are unaffected.
+
+Node
+Location
+Level
+Role in S5
+
+Target
+Tokyo
+L3
+Correct answer
+
+D
+Tokyo
+L1
+Forced first visit; triggers elimination
+
+E
+Tokyo
+L1
+Eliminated when D’s level=L1 is observed
+
+F
+Tokyo
+L2
+Survives elimination
+
+F2
+Tokyo
+L4
+Survives elimination
+
+A
+London
+L2
+Removed by location=Tokyo clarification
+
+B
+London
+L1
+Removed by location=Tokyo clarification
+
+C
+London
+L4
+Removed by location=Tokyo clarification
+
+G
+Berlin
+L2
+Removed by location=Tokyo clarification
+
+H
+Berlin
+L1
+Removed by location=Tokyo clarification
+
+Table 9: Injected S5 subgraph. All 10 nodes share
+department=Engineering, project=Alpha, role=Manager.
+After clarifying location=Tokyo: 5 candidates remain (Target, D, E, F, F2).
+After visiting D: level=L1 is minority (1 of 4 non-target peers 25%),
+so E is eliminated, leaving 3 candidates.
+
+Scenario Specifications
+
+We organize the scenarios into two tiers.
+S1–S3 are controls: S1 validates the end-to-end pipeline; S2 isolates
+in the absence of a correctness signal; and S3 isolates
+in a setting with only one remaining alternative, where
+all approaches can ultimately recover by exhaustion.
+S4–S5 are the main tests: S4 probes the joint-belief setting, where
+the optimal post-failure action depends on both signals simultaneously; S5
+probes correlated belief updates, where a failed traversal improves sufficiency
+through candidate elimination without requiring another clarification turn.
+
+•
+
+S1 – Clean (baseline).
+4 of 5 attributes known; 1 candidate (); .
+Optimal: execute accept. Sanity check.
+
+•
+
+S2 – Ambiguous ( only).
+2 of 5 attributes known; 13 candidates (); .
+Optimal: clarify 2 execute accept.
+Isolates : the decision problem is purely clarify-or-execute.
+
+•
+
+S3 – Unreliable edge ( only).
+4 of 5 attributes known; 2 candidates; forced first visit to a decoy
+with a unique hidden profile (no elimination); .
+Optimal: execute detect low backtrack accept.
+Isolates : unique profile ensures no elimination fires.
+
+•
+
+S4 – Orthogonal joint belief.
+2 of 5 attributes known; 10 candidates; forced decoy with unique hidden
+profile; .
+After the decoy fails (low ), the action depends on :
+with many untried candidates, backtracking is wasteful—clarify instead.
+The same low produces backtrack in S3 (high ,
+few alternatives) and clarify in S4 (low , many alternatives).
+
+•
+
+S5 – Correlated belief update.
+3 of 5 attributes known; 12 initial candidates; forced first execution to decoy D; .
+The defining feature: rises at from a failed traversal
+that triggers elimination, not from a clarification.
+
+B.2 Decision-Centric Approach Implementation
+
+Decision Policy.
+
+DC uses a fixed policy over the explicit signals
+, , and the current search state.
+The policy is specified a priori rather than fit from data.
+We use , so execution begins once the remaining
+candidate set is sufficiently small (e.g., ,
+whereas ), and
+, the midpoint of , as the accept/reject
+cutoff after traversal.
+
+Operationally, the policy distinguishes between two states.
+Before traversal, it decides whether the current description is specific enough
+to act on; after traversal, it decides whether to accept the visited node,
+backtrack, or request further clarification.
+
+The final pre-traversal rule handles cases in which only one attribute remains
+unobserved. In that regime, another clarification would further narrow the
+candidate set, but executing can also be efficient: a failed traversal reveals
+a concrete mismatch and supports elimination through backtracking. In S5, this
+rule favors execution once only level remains hidden, allowing the
+system to reduce the candidate set through the traversal outcome rather than
+spending an additional clarification turn.
+
+Correctness Estimator
+
+is estimated from the visited node’s hidden-attribute
+profile relative to the active peer set:
+
+1.
+
+For each hidden attribute , compute the fraction of active peer
+candidates (excluding the visited node and previously rejected nodes) that
+share the visited node’s value.
+
+2.
+
+Average these fractions across hidden attributes.
+
+3.
+
+Penalize similarity to prior rejections: if the visited node matches a
+previously rejected hidden profile on at least of hidden attributes,
+subtract –.
+
+4.
+
+Clamp the result to .
+
+B.3 Prompt Baseline Implementation
+
+Both prompt approaches receive the same per-turn JSON payload:
+query, known_attributes, unknown_attributes,
+n_candidates_matching, n_untried_candidates,
+last_visited_profile, n_rejected, turn, budget.
+They differ only in the system prompt.
+
+Prompt-clarify system prompt (temperature ).
+
+You are searching for a specific person in an organization of 200 people.
+Each person has 5 attributes: department, role, location, project, level.
+
+You have a partial description and access to search results showing how many
+people match it.
+
+At each turn, choose ONE action:
+
+ {"action": "clarify", "attribute": "<attr>"}
+
+  --- ask the user for a missing attribute to narrow down candidates
+
+ {"action": "execute"}
+
+  --- visit a candidate node to check if it’s the target
+
+ {"action": "backtrack"}
+
+  --- reject the last visited node and try a different candidate
+
+   (only if you’ve visited a node that didn’t look right AND alternatives exist)
+
+Budget is limited --- don’t waste turns.
+
+Available attributes to ask about: only those NOT already in the description.
+
+Prompt (w/ policy) system prompt.
+
+Identical to the above, with the following block added before the final line:
+
+[policy block, absent from prompt-clarify]
+
+Consider:
+
+ With many candidates (n_candidates_matching is large), clarifying
+
+ first is usually safer.
+
+ After visiting a wrong node, you can backtrack (try another) or
+
+ clarify (narrow the field first, then try again).
+
+This block specifies the decision logic that DC makes explicit.
+It improves performance when the correct action can be read directly from the
+observable candidate state: +9pp on S2, where the system should clarify before
+executing into a pool of 13 candidates, and +5pp on S4, where the correct
+post-decoy action is to clarify rather than backtrack.
+On S5, both variants remain at 35%. The bottleneck there is not failure to
+reason about the candidate count, but failure to observe that traversal has
+already reduced the pool through elimination. Because that updated state is not
+exposed in the decision-time payload, the LLM cannot act on it.
+
+B.4 Full Results by Scenario
+
+Scenario
+Approach
+Success
+Wasted
+Clarify
+Backtrack
+
+S1: Clean
+
+Retry
+100%
+0.00
+0.00
+0.00
+
+Prompt
+100%
+0.00
+0.00
+0.00
+
+Prompt (w/ policy)
+100%
+0.00
+0.00
+0.00
+
+DC
+100%
+0.00
+0.00
+0.00
+
+S2: Ambiguous
+( only)
+
+Retry
+45%
+3.70
+0.00
+0.00
+
+Prompt
+85%
+1.35
+1.55
+0.00
+
+Prompt (w/ policy)
+95%
+0.60
+2.00
+0.00
+
+DC
+100%
+1.00
+2.00
+1.00
+
+S3: Unreliable
+( only)
+
+Retry
+100%
+1.00
+0.00
+0.00
+
+Prompt
+100%
+1.00
+0.00
+0.00
+
+Prompt (w/ policy)
+100%
+1.00
+0.00
+0.00
+
+DC
+100%
+1.00
+0.00
+1.00
+
+S4: Orthogonal
+(joint, )
+
+Retry
+65%
+4.20
+0.00
+0.00
+
+Prompt
+95%
+1.05
+1.50
+0.00
+
+Prompt (w/ policy)
+100%
+0.40
+1.95
+0.00
+
+DC
+100%
+1.00
+2.00
+1.00
+
+S5: Correlated
+(coupled update)
+
+Retry
+60%
+3.50
+0.00
+0.05
+
+Prompt
+35%
+4.10
+0.05
+0.10
+
+Prompt (w/ policy)
+35%
+4.05
+0.20
+0.10
+
+DC
+100%
+0.60
+2.00
+0.00
+
+Table 10: Full graph disambiguation results (, structural estimator).
+Wasted: traversals to wrong candidates per run.
+Clarify: clarification turns per run.
+Backtrack: backtrack actions per run.
+
+B.5 DC Belief Traces
+
+S4 trace (orthogonal joint belief).
+
+Query: "Find the person whose role is Manager, at level L2."
+[10 candidates, 2 known attrs, forced decoy]
+t=1 p_suff=0.100 p_corr=1.000 cands=10 -> CLARIFY
+asked=department, answer=Marketing
+t=2 p_suff=0.333 p_corr=1.000 cands=3 -> CLARIFY
+asked=location, answer=Tokyo
+t=3 p_suff=0.500 p_corr=1.000 cands=2 -> EXECUTE
+-> decoy correct=False
+p_corr=0.375 (outlier hidden profile)
+[no elimination: unique hidden profile]
+t=4 p_suff=0.500 p_corr=0.375 untried=1 -> BACKTRACK
+-> target correct=True p_corr=0.900
+t=5 p_suff=0.500 p_corr=0.900 untried=0 -> ACCEPT
+turns=4 clarify=2 backtrack=1 success=True
+
+At t=4, the joint state is (high , low )
+backtrack. In S2 with 13 candidates, the same low
+would produce clarify, i.e., same signal, different action, driven by the joint state.
+
+S5 trace (correlated belief update).
+
+Query: "Find the person in Engineering, project Alpha, role Manager."
+[12 candidates, 3 known attrs]
+t=1 p_suff=0.083 p_corr=1.000 cands=12 -> CLARIFY
+asked=location, answer=Tokyo
+[5 candidates remain: Target, D, E, F, F2]
+t=2 p_suff=0.200 p_corr=1.000 cands=5
+[1 hidden attr remaining: level]
+last-hidden-attr rule fires -> EXECUTE
+-> S5_Decoy_D (level=L1) correct=False
+p_corr=0.250 (L1 is 25% of peers)
+[elimination: S5_Node_E (level=L1) eliminated]
+[p_suff: 0.200 -> 0.333 (5 -> 3 candidates)]
+t=3 p_suff=0.333 p_corr=0.250 untried=2 -> BACKTRACK
+-> S5_Node_F (level=L2) correct=False
+t=4 p_suff=0.333 p_corr=0.250 untried=1 -> BACKTRACK
+-> S5_Target (level=L3) correct=True
+p_corr=0.950
+turns=4 clarify=1 backtrack=2 elim=1 success=True
+
+The elimination at t=2 raises from 0.200 to 0.333 without
+a clarification turn.
+Prompt-clarify and prompt (w/ policy) both see the updated candidate count at t=3
+but have already committed their t=2 action without knowing the elimination occurred.
+In 65% of runs they spend t=2 on clarification (asking about level, which
+DC already learned structurally from the failed traversal) or backtrack randomly
+without exploiting the narrowed pool, exhausting the budget before finding the target.
+
+Appendix C Modular Signals for Retrieval Control with Diagnosable Feedback
+
+C.1 Experimental Setup
+
+Corpus and passage construction.
+
+We load 2000 items from the Natural Questions validation set [Kwiatkowski et al., 2019],
+retaining only items with both a short-answer annotation and a long-answer paragraph span.
+Each item’s passage is the long-answer paragraph extracted from the NQ document token sequence
+(HTML tags filtered), guaranteeing the gold answer string appears in the passage.
+A BM25 index is built over these 2000 annotated passages.
+
+Difficulty buckets.
+
+Buckets are defined by the BM25 rank of each item’s annotated passage under the original question—not by string matching over retrieved text.
+
+•
+
+Easy: annotated passage ranks in BM25 top- at round 0 ().
+
+•
+
+Medium: annotated passage not in top- at round 0, but retrieved by round 2 (top- or top-).
+
+•
+
+Hard: annotated passage never retrieved within budget (outside top-).
+
+This definition is independent of all signals: DC-Dense and DC-LLM never see the passage index used for bucketing.
+Retrieval states (accumulated passages at ) are precomputed once and shared across all approaches.
+
+C.2 Baselines Implementations
+
+Prompt.
+
+The same LLM as DC-LLM reads the current passages and directly outputs
+with a free-text reason string.
+No numeric signal is logged.
+The system prompt instructs the model not to use its own knowledge, identical restriction to DC-LLM, so the only structural difference is whether the sufficiency assessment is externalized.
+
+DC-Dense.
+
+Max cosine similarity between the question embedding and passage embeddings
+(sentence-transformers/all-MiniLM-L6-v2),
+linearly normalised to .
+No LLM calls.
+
+DC-LLM.
+
+LLM answerability judge with the prompt:
+“Assess whether the passages EXPLICITLY contain the answer.
+Do NOT use your own knowledge.
+Output JSON: {answerable: true or false, confidence: 0–1}”,
+temperature 0.1.
+if answerable, else ,
+then linearly normalised to .
+
+DC-Composite.
+
+, with .
+
+All DC variants apply the controller: stop if , where , else expand (forced stop at budget).
+A robustness sweep over and is reported in Appendix C.3.
+
+C.3 Threshold Robustness
+
+The parameters and were selected on a separate
+validation set (30 questions, 10 per bucket) prior to running the test set (150 questions, 50 per bucket).
+Table 11 reports the sweep on the held-out test set,
+computed offline by replaying the saved per-round signal traces without re-running any model calls.
+Easy-bucket success remains 100% throughout; the chosen setting is conservative
+rather than optimized—higher or further improves medium-bucket
+success but at the cost of more retrieval rounds on easy questions.
+The test-set results are consistent with what was observed on the validation set,
+confirming the setting was not cherry-picked.
+
+Easy Succ.
+Easy RR
+Medium Succ.
+
+0.4
+0.5
+100%
+0.66
+78%
+
+0.4
+0.6
+100%
+0.66
+78%
+
+0.4
+0.7
+100%
+0.70
+82%
+
+0.4
+0.8
+100%
+0.84
+88%
+
+0.4
+0.9
+100%
+1.16
+92%
+
+0.2
+0.8
+100%
+0.66
+78%
+
+0.3
+0.8
+100%
+0.70
+84%
+
+0.4
+0.8
+100%
+0.84
+88%
+
+0.5
+0.8
+100%
+0.92
+90%
+
+0.6
+0.8
+100%
+1.00
+90%
+
+Table 11: Offline threshold sweep for DC-Composite on the held-out test set ( per bucket).
+Parameters were selected on a separate validation set () before the test set was run.
+Top block: varying at .
+Bottom block: varying at .
+Bold row is the paper’s setting.
+Easy success is 100% throughout; the chosen operating point sits below the
+recoverable peak, trading a small gain in medium-bucket success for fewer
+wasted retrieval rounds on easy questions.
+
+C.4 Signal Attribution and Feedback Loop
+
+A benefit of the decision-centric design is that failures can be attributed
+directly to the sufficiency signals. Because each DC run logs
+and at every round, failed episodes
+can be analyzed offline without re-running the model.
+
+Attribution procedure.
+
+For each failed DC-Composite episode, we identify the round at which the wrong
+action was taken and inspect the logged signal values at that round. We assign
+the failure to one of four categories:
+
+•
+
+Early stop, dense-caused: is high and
+dominant, so dense similarity overestimates sufficiency.
+
+•
+
+Early stop, LLM-caused: is high and
+dominant, so the answerability judge is overconfident.
+
+•
+
+Early stop, both signals high: both signals support
+stop, but both are wrong.
+
+•
+
+Corpus gap (over-expand): the controller expands to budget, but
+the gold passage is never retrieved, so signal improvement alone cannot
+fix the failure.
+
+Attribution results.
+
+Table 12 reports the breakdown for DC-Composite
+(, ). The medium-bucket failures are entirely cases
+where both signals are confidently wrong. By contrast, hard-bucket failures are
+almost entirely corpus gaps: the relevant passage never appears within budget,
+so the controller has no signal-level remedy available.
+
+Bucket
+Failure type
+
+%
+
+Medium
+Early stop, both signals high
+3
+100%
+
+(3 total failures)
+
+Hard
+Corpus gap (over-expand)
+40
+98%
+
+Early stop, both signals high
+1
+2%
+
+(41 total failures)
+
+Table 12: Failure attribution for DC-Composite on the test set. Medium failures
+are dominated by cases in which both signals support an incorrect early
+stop. Hard failures are dominated by corpus gaps, where the gold
+passage is never retrieved within budget.
+
+Implications for signal design.
+
+The attribution suggests different next steps for the two buckets.
+
+Medium: both signals high (3/3).
+Here both DC-Dense and DC-LLM support stop incorrectly: dense
+similarity is high because the retrieved passages are topically related, and
+the LLM judge is overconfident even though the answer is not explicitly stated.
+Reweighting the existing signals is therefore unlikely to help. What is needed
+is a signal of a different type, for example:
+
+•
+
+Passage highlighting: require the model to quote the exact answer
+span verbatim.
+
+•
+
+Answer-type matching: check whether the passage contains an
+entity of the expected type (person, date, location, number).
+
+•
+
+Token-level overlap: measure lexical overlap between expected
+answer tokens and the passage text.
+
+Hard: corpus gap (40/41).
+Here the main limitation is retrieval, not signal quality. Improving
+will not help if the relevant passage never enters the candidate set.
+The appropriate remedy is either a stronger retriever or a corpus-exhaustion
+signal that recognizes diminishing returns and stops early rather than using the
+full expansion budget.
+
+Feedback loop.
+
+This attribution procedure instantiates the feedback loop described in
+Section 5.3. A failed outcome identifies the round where the wrong
+action was taken; the logged traces reveal which signals supported that action;
+the attribution pattern suggests what kind of signal is missing; and candidate
+signals can then be evaluated offline by replaying the saved traces. The
+controller remains unchanged throughout.
+
+C.5 Prompt Failure Analysis
+
+To analyze the prompt baseline, we log the free-text reason string produced on
+each turn. On the medium bucket, 28 of 44 failures (64%) fall into a single
+dominant pattern: the model explicitly states that the current passages do not
+contain the answer, yet still chooses stop. The remaining failures are
+split across two smaller categories. Table 13 shows
+representative examples.
+
+This pattern is important because it isolates the core weakness of implicit
+control. The model often makes the correct assessment in natural language, but
+that judgment is not bound to the action it outputs. In other words, the
+failure is not necessarily one of recognition, but of mapping recognition to
+control.
+
+Type
+
+Question / Gold answer
+
+Prompt reason action
+
+Type 1
+
+Correct assessment, wrong action
+
+(28/44)
+
+“where did Iowa State football coach come from” / Massillon, Ohio
+
+“Passages do not explicitly contain the answer…” stop
+
+“what does it mean to fuse the spine” / neurosurgical technique…
+
+“Passages do not explicitly contain the meaning…” stop
+
+Type 2
+
+Latches onto wrong passage
+
+(13/44)
+
+“who are the two teams in Super Bowl 2018” / Philadelphia Eagles
+
+“Passage 1 lists the teams as the Steelers and Patriots.” stop
+
+“where was Walking Tall filmed” / Squamish, BC
+
+“Passage 1 mentions filming in Astoria, Oregon.” stop
+
+Type 3
+
+Other
+
+(3/44)
+
+“how many Super Bowl games has the Patriots played” / ten
+
+“Passages mention the Patriots have played in 9 Super Bowls.” stop
+
+Table 13: Prompt failure modes on medium questions (test set, failures).
+Type 1 is the dominant pattern (64%): the model’s own reason string acknowledges
+the passages are insufficient, yet the fused call still outputs stop.
+This illustrates the core limitation of implicit control: a correct internal
+assessment cannot be acted upon when it is not externalized.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

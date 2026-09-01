@@ -328,6 +328,16 @@ Tier policy 必须拥有 save acknowledgment、replica validity、promotion、re
 
 ## Checkpoint 转换与发布
 
+### Checkpoint Commit 之前先验证 Update Integrity
+
+训练故障能表现为进程退出、设备错误或 NaN 时，定期 checkpoint 加失败后 resume 是合理路径。Silent data corruption 更危险：一次参数更新可以保持有限数值和合法 tensor shape，却已经把错误带入 weights；若 checkpoint writer 只验证文件完整性，就会把 corruption 固化成新的恢复基线。
+
+因此 optimizer step 与 checkpoint commit 之间需要 update-integrity gate。训练 runtime 保存本 step 的检测 evidence、可疑参数范围和 retry generation；检测命中后隔离本次 update 并重算最近 step，只有验证通过的 parameter revision 才允许 checkpoint writer 提交。这里的检测器拥有异常 proposal，不拥有 artifact commit；checkpoint registry 仍需保存前一个已验版本和硬件/数值诊断入口。
+
+收益是阻断一部分静默错误继续传播，代价是检测开销、误报和重算；未被传感器覆盖的 corruption 仍可能漏过。作者的故障注入只覆盖 LLaMA 60M、350M、1.3B 等披露设置，不能作为通用 SDC 完备性证明。异常持续或重算不一致时，应回退上一已验 checkpoint，并扩大硬件、通信与数值检查。
+
+<!-- source-family:SF-2026-ARXIV-2604-00726 -->
+
 ### Weight Trajectory Extrapolation 只能产生 Checkpoint Proposal
 
 完整 RLVR step 按序执行最清楚，却可能在短轨迹呈低秩变化时重复昂贵更新。可以把若干 weight revisions 视为状态序列，拟合低秩方向并外推 candidate checkpoint；proposal builder 只拥有候选 weights，artifact registry 不得直接 commit。Held-out training/evaluation、数值稳定性、参数约束与可加载性共同决定 admission，并始终保留最后完整 checkpoint fallback。
@@ -520,6 +530,8 @@ Checkpoint 是训练系统的状态事务。模型参数只是其中一部分；
 分片、异步保存与分层存储提高可扩展性，也引入 commit、reshard、backpressure、failure-domain placement 和验证问题。只有经过严格 restore test，并为数值表示、graph rewrite、kernel/hardware capability 和行为证据建立明确的 artifact contract，checkpoint 才能从故障恢复机制成为可发布模型资产。
 
 ## Review notes
+
+- **Exploring Silent Data Corruption as a Reliability Challenge in LLM Training（arXiv:2604.00726v1；Status: Experimental）**：exact-v1 的故障注入支持“检测后重算最近 step”在作者三种 LLaMA 规模中的缓解效果；不证明检测覆盖率、跨硬件表现或生产长期可靠性。https://arxiv.org/abs/2604.00726v1
 
 本章区分 weights-only、resumable 与 deployment artifacts，覆盖 model-state 容量、事务提交、distributed sharding、resharding、data/RNG state、async save、restore validation 和 RLHF 多模型一致性。本轮进一步将量化 deployment artifact 拆成 numerical、graph、execution 与 evidence contracts，避免把“有 4-bit tensors”误写成“已定义可部署执行语义”。具体 ZeRO/FSDP 参数生命周期留给第 39 章，GPU execution plan 留给第 49 章，框架 API 留给第 40～41 章。
 

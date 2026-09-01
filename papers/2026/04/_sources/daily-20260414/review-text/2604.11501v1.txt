@@ -1,0 +1,1520 @@
+Quantization Dominates Rank Reduction for KV-Cache Compression
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+Contributions.
+
+2 Background and Related Work
+
+KV-cache quantization.
+
+Low-rank KV compression.
+
+Sensitivity-weighted methods.
+
+Token eviction.
+
+The gap we fill.
+
+3 Why Deletion Is Worse Than Noise Under Softmax
+
+3.1 A General Framework for Compression
+
+3.2 Softmax Creates Decision Boundaries
+
+3.3 The Asymmetry Between Deletion and Noise
+
+4 Experiments
+
+Setup.
+
+4.1 Core Result: Matched-Budget Comparison
+
+4.2 Hybrid Baselines
+
+4.3 Basis Ablation
+
+4.4 Mechanism Validation
+
+4.5 Joint K+V Quantization
+
+4.6 Downstream and Cross-Dataset Validation
+
+4.7 Calibration and Stability
+
+5 Discussion and Conclusion
+
+What we show.
+
+Why it happens.
+
+What we do not claim.
+
+Practical implication.
+
+Limitations.
+
+Broader lesson.
+
+References
+
+A Mechanism: Full Analysis
+
+A.1 Influence vs Energy (Spice Ratio)
+
+A.2 Projection vs Quantization: Discrete vs Continuous
+
+A.3 Gap-Sensitive Importance
+
+A.4 Cross-Layer Propagation
+
+A.5 GQA Amplification
+
+A.6 Calibration Stability
+
+B Full Proof of the General Theorem
+
+Step 1.
+
+Step 2.
+
+Step 3.
+
+Step 4.
+
+C Loss-Theoretic Foundation
+
+Validation.
+
+D Rayleigh–Schrödinger Perturbation Analysis
+
+Subspace overlaps.
+
+E The Geometric Dissection (Experiments 68–73)
+
+E.1 Exp 68: The Gain Law
+
+E.2 Exp 69: The Angle Law
+
+E.3 Exp 70: Can We Construct the Correction?
+
+Membership test.
+
+Heuristic rotation.
+
+Structure.
+
+E.4 Exp 71: The Metric Hypothesis
+
+E.5 Exp 72: Sequential Correction
+
+E.6 Exp 73: Isotropy
+
+E.7 Summary
+
+F The Rank-Reduction Objective Hierarchy: Full Data
+
+F.1 GPT-2 Closed-Form Methods
+
+F.2 GPT-2 Learned Methods
+
+F.3 GPT-2 E2E Convergence
+
+F.4 Mistral Full Hierarchy
+
+F.5 Mistral Diagnostics
+
+Routing preservation.
+
+GQA aggregation.
+
+GQA limitation.
+
+G KQ-SVD Head-to-Head
+
+H Entropy-Weighted Metric
+
+I Quantization Stacking Under Rank Reduction
+
+J Downstream Evaluation
+
+K Ablation: 10 Structural Refinements
+
+L Experimental Details
+
+Data.
+
+V Theorem basis.
+
+Quantization.
+
+Rank reduction (comparison).
+
+KL learning.
+
+E2E.
+
+M Variance Importance: The Foundational Observation
+
+M.1 The Residual Stream Experiment
+
+Interpretation.
+
+M.2 The Sensitivity Experiment
+
+Ablation confirmation.
+
+N The Spice Ratio: Full Analysis
+
+N.1 Definition and Measurement
+
+N.2 Results (GPT-2)
+
+Global correlation.
+
+Practical application.
+
+N.3 Why Quantization Sidesteps the Spice Problem
+
+O The Road to Quantization: Every Attempt to Improve Rank Reduction
+
+O.1 Closed-Form Metric Improvements (All Converge to 82 PPL on GPT-2)
+
+O.2 Attempts to Break the Per-Head Ceiling on Mistral
+
+O.3 Skip-Layer and Variable Rank on Mistral (EXP-18, EXP-19)
+
+O.4 GQA Fix Attempts (EXP-12, EXP-13, EXP-16)
+
+O.5 Perturbation Theory Ceiling (THEORY-01)
+
+O.6 Random Matrix Theory (EXP-02)
+
+O.7 The Lesson
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11501v1 [cs.LG] 13 Apr 2026
+
+Quantization Dominates Rank Reduction for KV-Cache Compression
+
+Samuel Salfati
+
+Affiliation: fraQtl AI Research
+
+Email: samuel@fraqtl.ai
+
+Abstract
+
+We compare two strategies for compressing the KV cache in transformer inference: rank reduction (discard dimensions) and quantization (keep all dimensions, reduce precision). At matched storage budgets across five models (124M–14B, MHA and GQA), we find that quantization consistently outperforms rank reduction—by 4–364 PPL depending on model and compression level. The gap persists even when rank reduction is combined with quantization in hybrid baselines, and it grows with GQA aggressiveness. On LAMBADA, INT4 matches FP16 accuracy (+0.23 PPL on Mistral 7B, +0.58 on GPT-2) while rank-32 at identical storage collapses to 0.4%.
+
+We trace this gap to a structural asymmetry: under softmax attention routing, removing a dimension can flip which token is attended (a discrete failure), while quantization noise is bounded and typically preserves score ordering. We formalize this via a perturbation result showing projection damage exceeds quantization damage by per direction under the softmax Fisher metric. A basis ablation confirms the finding is basis-independent (spread 0.4 PPL), establishing that the advantage comes from preserving dimensions, not from a better coordinate system. Joint K+V INT4 quantization achieves 75% total KV reduction at only +0.18 PPL on Mistral 7B.
+
+1 Introduction
+
+The KV cache stores key and value activations for all previous tokens during transformer inference, consuming elements for layers, heads, dimension , and sequence length . Two strategies exist for reducing this cost: rank reduction, which projects activations to fewer dimensions, and quantization, which keeps all dimensions but represents them at lower precision. Both have active research literatures (Yang et al., 2024; Lesens et al., 2025; Hsu et al., 2022; Liu et al., 2024; Kang et al., 2024), but they are rarely compared at the same storage budget.
+
+We provide this comparison. The result is clear: in every setting we test, quantization outperforms rank reduction at matched storage. INT4 achieves near-lossless compression (+0.23 PPL on Mistral 7B at 75% reduction), while rank-32 at identical storage loses 34.77 PPL. Even hybrid approaches (rank reduction followed by quantization of the retained dimensions) cannot match full-rank quantization.
+
+This is not because rank reduction uses the wrong basis—our basis ablation shows quantization quality is independent of the coordinate system (spread 0.4 PPL). The issue is that deleting dimensions is qualitatively worse than reducing their precision in a system governed by softmax routing. We explain why through the geometry of softmax decision boundaries and formalize it with a perturbation asymmetry result.
+
+Contributions.
+
+1.
+
+An empirical comparison of quantization and rank reduction at matched storage across five models (124M–14B), two metrics (PPL, LAMBADA), two datasets (WikiText-2, C4), and hybrid baselines. No prior work provides this comparison.
+
+2.
+
+A theoretical explanation: under the softmax Fisher metric, projection damage exceeds quantization damage by per direction (Proposition 2), because deletion can flip attention routing while bounded noise typically preserves it.
+
+3.
+
+A downstream-optimal compression framework (Theorem 1) that provides the best rank-reduction basis (52% gap recovery at zero cost) and unifies PCA, Fisher-SVD, GPTQ (Frantar et al., 2022), AWQ (Lin et al., 2023), and KQ-SVD as special cases.
+
+2 Background and Related Work
+
+KV-cache quantization.
+
+KIVI (Liu et al., 2024) quantizes the KV cache at INT2/INT4 and achieves equivalent PPL to our approach (44.21 on GPT-2). GEAR (Kang et al., 2024) adds low-rank residual correction. We do not claim a better quantization method; our contribution is the matched-budget comparison and the explanation of why quantization wins.
+
+Low-rank KV compression.
+
+MatryoshkaKV (Yang et al., 2024) learns nested subspaces. KQ-SVD (Lesens et al., 2025) derives closed-form projections using ; our attention-output metric outperforms theirs by 31.6 PPL under joint compression (Appendix G).
+
+Sensitivity-weighted methods.
+
+FWSVD (Hsu et al., 2022) shows Fisher-weighted metrics beat PCA. Our framework recovers this as a special case and identifies an exact solution for attention values.
+
+Token eviction.
+
+H2O (Zhang et al., 2023) and Scissorhands (Liu et al., 2023) reduce sequence length rather than dimension; the paradigms are orthogonal.
+
+The gap we fill.
+
+KIVI evaluates quantization only. MatryoshkaKV and KQ-SVD evaluate rank reduction only. Neither compares the paradigms at matched bit budgets with perplexity and downstream validation. Our experiments provide this comparison for the first time.
+
+3 Why Deletion Is Worse Than Noise Under Softmax
+
+3.1 A General Framework for Compression
+
+The right way to compress a linear component depends on what happens downstream. We formalize this with a general result.
+
+Theorem 1 (Downstream-Optimal Compression).
+
+For a linear component feeding into differentiable , the rank- projection minimizing (first-order) uses the top- eigenvectors of , where . Exact when is linear.
+
+For attention values, is linear, giving an exact eigenbasis . This is PCA on the attention output , not on itself, and recovers 52% of rank-reduction damage at zero cost vs PCA’s 0%. The framework unifies existing methods as special cases (Appendix F).
+
+But this framework also reveals why rank reduction has a fundamental problem that quantization avoids.
+
+3.2 Softmax Creates Decision Boundaries
+
+Attention routing is governed by . The softmax Jacobian (where is row ) shows that sensitivity peaks when the score gap between the top-2 competing tokens is small. At these decision boundaries, a small perturbation can flip which token receives attention.
+
+3.3 The Asymmetry Between Deletion and Noise
+
+Proposition 2 (Perturbation Asymmetry).
+
+Under the softmax Fisher metric , direction with signal incurs:
+
+(1)
+
+(2)
+
+Ratio: (768 at INT4). This is an upper bound; wider quantization ranges decrease the ratio.
+
+The sensitivity cancels—both methods see the same softmax geometry. The difference is entirely in perturbation magnitude. Rank reduction deletes a direction’s contribution to the score gap ; if , attention flips—a discrete failure. Quantization perturbs by , crossing the boundary only when noise exceeds , which is rare at . Below 3 bits, quantization noise exceeds typical gaps, triggering the same instability (INT2: 73–138 PPL).
+
+Under GQA (Ainslie et al., 2023), a single deleted direction can flip routing for multiple query heads at different positions, amplifying the damage. This explains the growing margin: MHA (+12–52), GQA-3 (+8–55), GQA-4 (+4–35), GQA-8 (+21–364).
+
+4 Experiments
+
+Setup.
+
+Five models: GPT-2 (124M, MHA, ), Llama-3.2 3B (GQA-3, ), Mistral 7B (GQA-4, ), Qwen 3B (GQA-8, ), Qwen 14B (GQA-5, ). WikiText-2, strict three-way splits. All FP16. LAMBADA (500 examples) and C4 for validation. Rank reduction uses the V Theorem eigenbasis with K-PCA at matching rank. Quantization: per-channel symmetric, V only.
+
+4.1 Core Result: Matched-Budget Comparison
+
+Table 1: Quantization vs rank reduction at matched storage ( vs bits/token/head).
+
+Model
+Budget
+Rank (FP16)
+Quant (INT)
+Margin
+
+GPT-2 (MHA)
+256b (75%)
+96.71
+44.57
++52.14
+
+GPT-2 (MHA)
+512b (50%)
+56.30
+44.00
++12.30
+
+Llama 3.2 (GQA-3)
+512b (75%)
+69.10
+13.61
++55.50
+
+Llama 3.2 (GQA-3)
+1024b (50%)
+21.50
+13.22
++8.29
+
+Mistral 7B (GQA-4)
+512b (75%)
+44.19
+9.42
++34.77
+
+Mistral 7B (GQA-4)
+1024b (50%)
+13.07
+9.19
++3.88
+
+Qwen 3B (GQA-8)
+512b (75%)
+377.00
+12.93
++364.07
+
+Qwen 3B (GQA-8)
+1024b (50%)
+33.99
+12.69
++21.30
+
+Qwen 14B (GQA-5)
+512b (75%)
+161.54
+7.23
++154.31
+
+Qwen 14B (GQA-5)
+1024b (50%)
+13.90
+6.99
++6.91
+
+Quantization outperforms rank reduction at every budget above 3 bits on all five models (Table 1). The margin grows with GQA aggressiveness.11
+1
+
+Bit budgets count data bits only. Per-channel scale overhead: 2% at INT4 for .
+
+4.2 Hybrid Baselines
+
+Can rank reduction recover by quantizing the retained directions?
+
+Table 2: More directions at lower precision beats fewer at higher precision, at matched storage.
+
+Model (budget)
+Method
+Dirs
+PPL
+
+Mistral (512b)
+Full INT4
+128
+9.42
+
+Mistral (512b)
+Rank-64 INT8
+64
+13.06
+
+Mistral (512b)
+Rank-32 FP16
+32
+44.19
+
+Qwen 14B (512b)
+Full INT4
+128
+7.23
+
+Qwen 14B (512b)
+Rank-64 INT8
+64
+13.90
+
+Qwen 14B (512b)
+Rank-32 FP16
+32
+161.54
+
+No. Even Rank-64 INT8 fails to match full INT4 at the same budget (Table 2). The information destroyed by deleting dimensions cannot be recovered by giving more bits to what remains.
+
+Figure 1: Perplexity vs storage budget on Mistral 7B. Quantization (blue) achieves near-FP16 quality above 3 bits per dimension. Rank reduction at matched storage (red) is catastrophically worse at every budget. The gap between curves is the paper’s central finding.
+
+The Pareto frontier (Figure 1) makes the gap visual: quantization traces the FP16 baseline closely above 3 bits, while rank reduction remains orders of magnitude worse at every matched budget.
+
+4.3 Basis Ablation
+
+Table 3: Quantization quality is basis-independent (GPT-2 INT4, FP16: 43.99).
+
+Basis
+INT4 PPL
+
+Original (no rotation)
+44.21
+
+Theorem ()
+44.57
+
+PCA ()
+44.48
+
+Random orthogonal
+44.39
+
+All bases give equivalent quantization quality (spread 0.4 PPL, Table 3). Simple INT4 in the original basis matches KIVI (Liu et al., 2024). The advantage of quantization over rank reduction is not about the coordinate system—it is about preserving all dimensions.
+
+4.4 Mechanism Validation
+
+Table 4: Attention KL at matched 512-bit budget (Mistral, per-sequence, 3 seeds).
+
+Method
+Attention KL
+Flip rate
+PPL
+
+INT4 full
+0.013 0.002
+2.4%
+9.42
+
+Rank-32 FP16
+0.174 0.023
+10.4%
+44.19
+
+Figure 2: Softmax decision boundary. (a) Two tokens compete. (b) INT4 adds bounded noise—stays on correct side (flip rate 0.03% at gap 0.05). (c) Rank reduction removes a dimension—crosses the boundary (flip rate 4.6%).
+
+Figure 3: Attention routing disruption (KL divergence) predicts compression damage. Monotonic across all three methods at matched 512-bit budget on Mistral 7B.
+
+Rank-32 induces 13 larger attention KL than INT4 (Table 4). Attention KL is monotonically correlated with PPL (). At gap-conditioned thresholds (), INT4 flips 0.03% of routing decisions while rank-32 flips 4.6%. This confirms the mechanism: rank reduction causes discrete routing failures that quantization avoids.
+
+4.5 Joint K+V Quantization
+
+The results above compress V only. Joint K+V INT4 quantization achieves 75% total KV reduction:
+
+Table 5: Joint K+V quantization (Mistral 7B, FP16: 9.19).
+
+Configuration
+PPL
+
+K full + V full
+9.19
++0.00
+
+K INT8 + V INT8
+9.20
++0.01
+
+K INT4 + V INT4
+9.37
++0.18
+
+Joint INT4 costs only +0.18 PPL for 75% total KV memory reduction. K quantization adds negligible damage (+0.04 PPL alone), confirming that both K and V are safely quantizable.
+
+4.6 Downstream and Cross-Dataset Validation
+
+Table 6: LAMBADA (500 examples) at matched storage.
+
+Model
+Method
+Bits
+Accuracy
+
+GPT-2
+INT4
+256
+7.20%
+
+GPT-2
+Rank-16 FP16
+256
+0.20%
+
+Mistral
+INT4
+512
+23.00%
+
+Mistral
+Rank-32 FP16
+512
+0.40%
+
+INT4 matches FP16 accuracy on LAMBADA; rank reduction collapses (57 gap on Mistral, Table 6). On C4 validation (Mistral), INT4 achieves 10.17 PPL (+0.13) vs Rank-32 at 69.08—a 58.91 PPL margin.
+
+4.7 Calibration and Stability
+
+Eigenbasis calibration: 1.87 s (GPT-2), 9.04 s (Mistral). One-time cost. Across 3 seeds on Mistral: INT4 , Rank-32 (29 more variable). The INT4 vs Rank-32 gap is 626 the INT4 standard deviation.
+
+5 Discussion and Conclusion
+
+What we show.
+
+For KV-cache compression in the models and budgets we test, quantization consistently outperforms rank reduction. This holds across five models (124M–14B), MHA and multiple GQA configurations, perplexity and LAMBADA, WikiText-2 and C4, and even when rank reduction is combined with quantization.
+
+Why it happens.
+
+Attention is a routing system governed by softmax competition. Removing a dimension can change which token wins that competition—a discrete failure that bounded quantization noise typically avoids. The asymmetry is formalized by Proposition 2 and validated by the 13 attention KL gap.
+
+What we do not claim.
+
+We do not claim this extends to all compression settings, all models, or all tasks. Our theory provides an explanation for the observed results, not a universal law.
+
+Practical implication.
+
+Per-channel INT4 quantization of the KV cache requires no special basis, no optimization, and no retraining. At 75% KV reduction on Mistral 7B: +0.23 PPL.
+
+Limitations.
+
+Five models up to 14B; larger models untested. LAMBADA on two models. No wall-clock latency (rank reduction saves attention compute; quantization saves bandwidth). Cache-level quantization validated at INT8/INT4 only.
+
+Broader lesson.
+
+At fixed storage budgets, the dominant source of damage in attention compression is dimensional deletion rather than low-precision noise. Compression of routing-sensitive systems should preserve decision geometry, not just representation energy.
+
+References
+
+Ainslie et al. [2023]
+Ainslie, J., et al. GQA. arXiv:2305.13245, 2023.
+
+Frantar et al. [2022]
+Frantar, E., et al. GPTQ. arXiv:2210.17323, 2022.
+
+Hsu et al. [2022]
+Hsu, Y.-C., et al. FWSVD. ICLR, 2022.
+
+Kang et al. [2024]
+Kang, H., et al. GEAR. arXiv:2403.05527, 2024.
+
+Lesens et al. [2025]
+Lesens, D., et al. KQ-SVD. arXiv:2512.05916, 2025.
+
+Lin et al. [2023]
+Lin, J., et al. AWQ. arXiv:2306.00978, 2023.
+
+Liu et al. [2023]
+Liu, Z., et al. Scissorhands. NeurIPS, 2023.
+
+Liu et al. [2024]
+Liu, Z., et al. KIVI. arXiv:2402.02750, 2024.
+
+Merity et al. [2016]
+Merity, S., et al. Pointer Sentinel Mixture Models. arXiv:1609.07843, 2016.
+
+Paperno et al. [2016]
+Paperno, D., et al. LAMBADA. ACL, 2016.
+
+Yang et al. [2024]
+Yang, L., et al. MatryoshkaKV. arXiv:2410.14731, 2024.
+
+Zhang et al. [2023]
+Zhang, Z., et al. H2O: Heavy-Hitter Oracle for Efficient Generative Inference. NeurIPS, 2023.
+
+Appendix A Mechanism: Full Analysis
+
+A.1 Influence vs Energy (Spice Ratio)
+
+For direction with eigenvalue , the spice ratio measures damage per unit energy. On GPT-2, Spearman —62% of the damage ranking is invisible to energy-based methods. Block 0 exhibits 84 higher maximum spice than late blocks.
+
+A.2 Projection vs Quantization: Discrete vs Continuous
+
+Rank reduction removes a direction’s contribution to . If , the softmax flips—a discrete event. Quantization perturbs by ; the boundary is crossed only when this exceeds , rare at .
+
+A.3 Gap-Sensitive Importance
+
+Compression damage at position scales as . Near-boundary positions () are exclusively vulnerable to projection. Quantization distributes errors uniformly.
+
+A.4 Cross-Layer Propagation
+
+A routing flip at layer produces a corrupted hidden state affecting all subsequent layers. On Mistral (32 layers), top-1 agreement is 0.966 per layer under rank-64 projection, but 3.4% misrouted tokens per layer compound through residual connections (assuming approximately independent errors across layers, which provides an upper bound on accumulation). Under quantization: no routing flips, per-layer noise adds linearly, producing +0.23 PPL at INT4.
+
+A.5 GQA Amplification
+
+Under GQA, a single removed direction can flip routing for multiple query heads at different positions. Damage multiplies with the number of consumers: MHA (+12–52), GQA-3 (+8–55), GQA-4 (+5–55), GQA-8 (+21–364).
+
+A.6 Calibration Stability
+
+Three seeds on Mistral (held-out split): INT4 , Rank-32 . Gap is 626 INT4 std. Rank reduction is 29 more sensitive to calibration seed.
+
+Appendix B Full Proof of the General Theorem
+
+Step 1.
+
+.
+
+Step 2.
+
+.
+
+Step 3.
+
+Taking expectations, applying idempotency and cyclicity: .
+
+Step 4.
+
+Maximizing over : decompose . For any : . Subject to , this is maximized by .
+
+For the V Theorem: exactly (no approximation since is constant).
+
+Appendix C Loss-Theoretic Foundation
+
+Under Fisher approximation at a trained model: . With : —exactly the V Theorem objective.
+
+Validation.
+
+Full loss Jacobian: +2.3 PPL over V Theorem on GPT-2, +0.02 on Mistral. orthonormality: blocks 3–9 CV (good); block 11 CV (poor). The isotropic assumption holds for most of the network.
+
+Appendix D Rayleigh–Schrödinger Perturbation Analysis
+
+Expanding V Theorem eigenvectors around PCA via RS perturbation:
+
+Table 7: RS convergence (GPT-2, rank 32). Perturbation .
+
+Method
+PPL
+Theorem gap rec.
+/order
+
+PCA
+104.14
+0%
+—
+
+RS Order 1
+96.80
+39%
++7.35
+
+RS Order 2
+93.86
+55%
++2.94
+
+RS Order 3
+95.67
+45%
+(diverges)
+
+Padé [2/1]
+93.49
+57%
++0.37
+
+V Theorem
+85.36
+100%
+—
+
+The series converges through order 2 but diverges at order 3 ( up to 6675). This is asymptotic series behavior: the first terms are useful despite formal divergence. The correction has exactly two perturbative layers: per-direction (RS1, 39%) and pairwise interactions (RS2, +16%). The remaining 45% is genuinely non-perturbative—requiring the full eigendecomposition.
+
+Subspace overlaps.
+
+RS2 moves PCA by only 1–2% in subspace overlap—but in the right direction. The PPL improvement comes from tiny corrections concentrated in high-impact directions.
+
+Appendix E The Geometric Dissection (Experiments 68–73)
+
+E.1 Exp 68: The Gain Law
+
+Per-direction gain prediction (GPT-2, block 6, rank 64):
+
+Table 8: Gain law predictors.
+
+Predictor
+
+alone
+0.813
+
+alone
+0.511
+
+0.887
+
+Fisher
+0.018
+
+Direction 0 () alone: +26.25 PPL, closing 36% of the gap. The predicted ranking nearly matches the oracle. Fisher is useless ().
+
+E.2 Exp 69: The Angle Law
+
+, , . Best two-predictor model (, Fisher): . Combined closed-form gain prediction: .
+
+E.3 Exp 70: Can We Construct the Correction?
+
+Membership test.
+
+Swapping directions: : +1 PPL; : PPL. PCA membership is correct.
+
+Heuristic rotation.
+
+Gradient-based: zero useful signal. Restricted learning: random beats spectrum at every budget (8 dirs: 36.6% vs 23.4%; 32 dirs: 83.6% vs 63.3%).
+
+Structure.
+
+Each corrected direction: 91% self-overlap, 10% from many complement directions. Small (), distributed rotation.
+
+E.4 Exp 71: The Metric Hypothesis
+
+Fisher: 5230 PPL (). : 218 (7.6%). : 206 (23.3%). Learned: 148 (100%). Fisher-learned cosine: 0.05. No second-order matrix explains the correction.
+
+E.5 Exp 72: Sequential Correction
+
+Across all 12 GPT-2 blocks at (8% retention): 84% gap recovery. At (33%): 33%. Sequential correction propagates through residuals as coupled rotations.
+
+E.6 Exp 73: Isotropy
+
+SVD energy of correction operator : identical in PCA, Fisher, Jacobian, and sandwich bases (2.6%, 10.4%, 20.8%, 41.4% at ranks 1, 4, 8, 16). The correction is isotropic on the Grassmannian. Column norms: tail directions receive larger corrections (0.496 vs 0.080), consistent with angle law.
+
+E.7 Summary
+
+1.
+
+PCA membership correct; correction is distributed rotation (Exp 70)
+
+2.
+
+Gain law : ; angle law : (Exp 68-69)
+
+3.
+
+No heuristic, metric, or perturbation series (beyond order 2) captures the correction (Exp 70-71, THEORY-01)
+
+4.
+
+Correction operator is isotropic—no basis simplifies it (Exp 73)
+
+5.
+
+23% from second-order structure, 77% from joint interactions (Exp 71, 73)
+
+Appendix F The Rank-Reduction Objective Hierarchy: Full Data
+
+F.1 GPT-2 Closed-Form Methods
+
+Table 9: GPT-2 closed-form methods (rank 32, 50% KV dim reduction).
+
+Method
+PPL
+Gap rec.
+What it adds
+
+PCA
+130.95
+0%
+—
+
+V Theorem
+85.36
+52%
+Attention weights
+
+V Theorem +
+84.22
+54%
+Output projection
+
+V Theorem + + LN
+82.42
+56%
+LayerNorm Jacobian
+
+Entropy-weighted
+82.27
+56%
+Attention confidence
+
+Full loss Jacobian
+83.02
+55%
+Full downstream gradient
+
+Four independent methods converge to 82 PPL: the closed-form ceiling under rank reduction. This ceiling is an artifact of the rank-reduction paradigm, not of the metric.
+
+F.2 GPT-2 Learned Methods
+
+Table 10: GPT-2 learned methods (rank 32).
+
+Method
+PPL
+Gap rec.
+Steps
+
+Learned MSE
+102.17
+33%
+57K
+
+KL from PCA init
+85.26
+52%
+58K
+
+KL from theorem init
+77.74
+61%
+58K
+
+KL from entropy init
+76.73
+62%
+58K
+
+F.3 GPT-2 E2E Convergence
+
+Table 11: Theorem-init E2E convergence (GPT-2, K+V KL).
+
+Steps
+PCAE2E
+ThmE2E
+Speedup
+
+10
+99.59
+74.14
+5
+
+50
+73.73
+66.39
+2
+
+200
+62.78
+61.42
+Converging
+
+Table 12: Theorem-init KL convergence (Mistral 7B, V-only).
+
+Steps
+PCAKL
+ThmKL
+Advantage
+
+0
+15.74
+13.50
++2.24
+
+5
+15.44
+13.49
++1.95
+
+10
+15.19
+13.46
++1.73
+
+25
+14.58
+—
+Thm@0 still ahead
+
+On Mistral, theorem-init at 0 steps (13.50) beats PCA-init at 25 steps (14.58). The theorem starts ahead and PCA never catches up in the tested range.
+
+F.4 Mistral Full Hierarchy
+
+Table 13: Mistral 7B complete hierarchy (rank 64, 50% KV dim reduction).
+
+Method
+PPL
+Gap rec.
+Cost
+
+PCA
+21.04
+0%
+Free
+
+V Theorem
+16.33
+40%
+Free
+
+MSE Learned
+16.93
+35%
+150 steps/head
+
+KL Learned
+15.96
+43%
+40 steps/block
+
+MSE E2E
+11.92
+77%
++50 E2E
+
+KL E2E
+11.37
+82%
++50 E2E
+
+F.5 Mistral Diagnostics
+
+Routing preservation.
+
+V Theorem top-1 agreement: 0.966 (vs PCA 0.956). Wins 31/32 layers. Gap is value distortion through 32 residual layers, not routing error.
+
+GQA aggregation.
+
+Arithmetic (15.94), geometric (15.92), harmonic (16.20). PPL. Not the bottleneck.
+
+GQA limitation.
+
+Simulated on GPT-2: V Theorem beneficial at group=1-2, harmful at group3. Real Mistral (co-trained heads, alignment 0.75–0.89) still benefits for both rank reduction and quantization.
+
+Appendix G KQ-SVD Head-to-Head
+
+Table 14: V Theorem vs KQ-SVD (GPT-2, rank 32, 336 eval seq).
+
+Method
+V-only PPL
+K+V PPL
+
+PCA
+65.44
+131.09
+
+KQ-SVD ()
+64.22
+139.86
+
+V Theorem ()
+62.46
+108.22
+
+Combined
+63.09
+115.66
+
+KQ-SVD degrades below PCA under joint compression: their static metric doesn’t adapt to changed attention patterns. Combined metric fails—negative eigenvalues in 90% of heads.
+
+Appendix H Entropy-Weighted Metric
+
+where .
+
+Table 15: Closed-form metrics (GPT-2, K+V, 336 eval seq).
+
+Method
+PPL
+Gap rec.
+
+PCA
+130.95
+0%
+
+KQ-SVD
+99.39
+36%
+
+V Theorem
+85.38
+52%
+
+Entropy-weighted
+82.30
+56%
+
+Middle layers have focused attention (entropy 1.6–2.3) entropy weighting upweights. Early/late layers diffuse (3.7–4.4) downweighted.
+
+orthonormality: blocks 3–9 deviation 5% (theorem loss-optimal). Block 11: 18% deviation, (poor).
+
+Appendix I Quantization Stacking Under Rank Reduction
+
+Table 16: Rank reduction + INT4 (GPT-2).
+
+Method
+50% FP16
++INT4
+Quant cost
+
+PCA
+130.95
+127.25
+(helps!)
+
+V Theorem
+85.36
+87.26
++1.90
+
+Learned
+102.16
+99.25
+(helps!)
+
+E2E
+51.52
+52.85
++1.33
+
+Negative quant cost on PCA/learned: quantization noise regularizes suboptimal projections. Good projections (V Theorem, E2E) pay a small positive cost.
+
+Table 17: Mistral: rank reduction + INT4 at 87.5% total.
+
+Method
+50% FP16
++INT4
+Quant cost
+
+PCA
+18.78
+19.31
++0.53
+
+Learned
+14.48
+14.67
++0.19
+
+E2E
+10.80
+11.20
++0.40
+
+Note: These rank-reduction+INT4 results (11.20 at 87.5%) are now superseded by basis-only INT4 (9.43 at 75%) from the main experiments. Basis quantization achieves better quality at more aggressive compression.
+
+Appendix J Downstream Evaluation
+
+Table 18: LAMBADA across compression ratios (GPT-2, rank reduction). FP16: 24.2% acc.
+
+PCA
+Stage 1
+E2E
+
+Reduction
+Acc
+LogP
+Acc
+LogP
+Acc
+LogP
+
+25%
+19.7
+
+18.3
+
+17.0
+
+50%
+10.0
+
+7.2
+
+10.3
+
+75%
+0.5
+
+0.2
+
+2.3
+
+Cross-dataset PPL (WikiText-2 train): E2E transfers cleanly (85–91% gap, PPL across seeds).
+
+Reconstruction-learned worsens LAMBADA vs PCA at all ratios—magnitude weighting biases toward common patterns. PPL-LAMBADA divergence: 92% PPL recovery modest downstream gain. Perplexity alone insufficient.
+
+Appendix K Ablation: 10 Structural Refinements
+
+Table 19: Cross-architecture transferability of structural methods.
+
+Strategy
+GPT-2
+Mistral
+Transfers?
+
+V Theorem
+52%
+40%
+✓
+
+Learned PCA
+47%
+35%
+✓
+
+E2E per-layer
+80%
+82%
+✓
+
+K query-weighted
++11%
+8%
+
+K-heavy budget
++14.58
+4.08
+
+Skip layer 0
++32.69
++1.02
+
+Head-wise alloc.
+Negative
+—
+
+Position-aware (9 configs)
+Negative
+—
+
+Non-uniform rank
+—
+Negative
+
+Sequential calib.
+
+Objective-based methods transfer; structure-based do not. GPT-2: bottleneck-dominated (block 0 = +32.69). Mistral: cumulative-error-dominated (flat sensitivity). All of these refinements are moot under the quantization-in-basis paradigm, which avoids rank reduction entirely.
+
+Appendix L Experimental Details
+
+Data.
+
+WikiText-2: calibration (32 seq Mistral, 64 seq GPT-2), E2E training (64 seq), evaluation (held out). LAMBADA: 500 examples.
+
+V Theorem basis.
+
+Per head per layer: collect from calibration forward pass, compute , eigendecompose (). For GQA: average across Q heads sharing the KV cache.
+
+Quantization.
+
+Symmetric per-channel: , . Applied in the eigenbasis (rotate, quantize, store). Cache quantization: per-channel scales computed once per sequence.
+
+Rank reduction (comparison).
+
+Projection where = top- eigenvectors. Applied via weight absorption: .
+
+KL learning.
+
+Adam (lr, wd), 200 steps, QR orthogonalization. Hook: .
+
+E2E.
+
+All projections jointly, Adam (lr, batch, 80–200 steps). Gradient checkpointing.
+
+Appendix M Variance Importance: The Foundational Observation
+
+The observation that variance and importance are decoupled is the starting point of this work. We document it here as the first link in the chain from “PCA is wrong” to “quantize in the right basis.”
+
+M.1 The Residual Stream Experiment
+
+On GPT-2, the residual stream between transformer blocks has extreme variance concentration: 90% of variance in 2–7 dimensions after middle blocks. Projecting to the high-variance subspace destroys perplexity:
+
+Table 20: Residual stream projection test (GPT-2, block 6).
+
+Dims kept
+% variance
+PPL
+
+8
+95%
+3,441 (destroyed)
+
+64
+99%
+524 (destroyed)
+
+256
+99.9%
+145 (degraded)
+
+768
+100%
+47 (baseline)
+
+Interpretation.
+
+Low-variance directions carry decision-critical information invisible to PCA. The model’s predictions depend on subtle distinctions in directions that have almost no energy. This is the fundamental insight: PCA tells you where the model lives; it does not tell you how the model thinks.
+
+M.2 The Sensitivity Experiment
+
+Average per-direction perturbation sensitivity (Exp 29): all 768 directions are equally sensitive (), meaning the Jacobian Gram is approximately isotropic. Since importance , and sensitivity is uniform, importance variance on average. But this is a population average—per-token sensitivity varies massively (1–367 active directions). The divergence between variance and importance is token-conditional, not global.
+
+Ablation confirmation.
+
+Per-direction ablation importance correlates with eigenvalue at (Exp 52b)—substantial but far from . The 31% unexplained variance is the signal that energy-blind methods (like our theorem) can exploit, and why the spice ratio () is a better predictor than eigenvalue alone.
+
+Appendix N The Spice Ratio: Full Analysis
+
+N.1 Definition and Measurement
+
+The spice ratio for direction in a given head, where:
+
+•
+
+: the eigenvalue (energy/mass in the attention output)
+
+•
+
+: the toxicity—KL divergence between clean model and model with direction perturbed by standard deviations
+
+High = low energy but high damage when perturbed. These are the “jalapeño” directions: small, hot, and devastating when removed.
+
+N.2 Results (GPT-2)
+
+Table 21: Spice concentration by block (GPT-2). Max spice = max across all heads and directions.
+
+Block
+Max spice
+Mean spice
+Character
+
+0
+0.84
+0.12
+84 spicier than late blocks
+
+1
+0.31
+0.05
+Moderate
+
+3
+0.21
+0.04
+Moderate
+
+6
+0.03
+0.01
+Low
+
+9
+0.01
+0.003
+Very low
+
+11
+0.01
+0.002
+Very low
+
+Global correlation.
+
+Spearman . Energy explains only 38% of the damage ranking. The remaining 62% is invisible to any eigenvalue-based method—including PCA, the V Theorem, and KQ-SVD.
+
+Practical application.
+
+Exempting block 0 from rank-reduction compression: V Theorem PPL improves from 85.36 to 76.35 (9.01 PPL), matching 200 steps of KL optimization at zero compute. The spice ratio correctly identifies block 0 as the dominant liability without running any compression experiment.
+
+N.3 Why Quantization Sidesteps the Spice Problem
+
+Under rank reduction, high-spice (low-mass) directions are the first discarded—they have the smallest eigenvalues. But their influence is disproportionate: discarding a direction with costs 84 more per unit energy than a direction with .
+
+Under quantization, all directions are preserved. High-spice directions receive their own per-channel scale, keeping the quantized value within the correct region of the softmax decision boundary. The spice ratio becomes irrelevant because no direction is eliminated.
+
+This is the mechanistic explanation for the 34.77 PPL gap at 512 bits: rank reduction kills the jalapeños; quantization preserves them.
+
+Appendix O The Road to Quantization: Every Attempt to Improve Rank Reduction
+
+The quantization result (EXP-26) was not the starting hypothesis—it was discovered after systematically exhausting every approach to improve rank reduction. We document this journey because the negative results are informative: they establish that the barrier is the paradigm, not the implementation.
+
+O.1 Closed-Form Metric Improvements (All Converge to 82 PPL on GPT-2)
+
+Table 22: Every closed-form metric converges to the same ceiling (GPT-2, rank 32).
+
+Method
+PPL
+Gap rec.
+What it adds
+
+PCA
+130.95
+0%
+—
+
+V Theorem
+85.36
+52%
+Attention
+
+V Theorem +
+84.22
+54%
+Output projection
+
+V Theorem + + LN
+82.42
+56%
+LayerNorm Jacobian
+
+Entropy-weighted
+82.27
+56%
+Attention confidence
+
+Full loss Jacobian
+83.02
+55%
+Full backward pass
+
+Four independent approaches, four paths to the same wall.
+
+O.2 Attempts to Break the Per-Head Ceiling on Mistral
+
+Table 23: Every per-head improvement attempt on Mistral (rank 64). Baseline: V Theorem 16.33.
+
+Experiment
+PPL
+Result
+
+Full loss Jacobian (Theory-10b)
+16.35
++0.02 (nothing)
+
+Deeper linearization L1 ()
+16.01
++0.32 (marginal)
+
+Deeper linearization L2 (RMSNorm)
+16.03
++0.30 (marginal)
+
+Theorem KL per-head (EXP-20)
+15.74
++0.59 (ceiling holds)
+
+Polynomial kernel (EXP-24)
+16.30
++0.03 (noise)
+
+Learned rank-4 correction (EXP-21)
+14.24
+0.24 (worse)
+
+Learned rank-8 correction (EXP-21)
+14.47
+0.47 (worse)
+
+Learned rank-16 correction (EXP-21)
+15.27
+1.27 (worse)
+
+Per-head corrections overfit. The gap is cross-layer error accumulation, not per-head metric quality.
+
+O.3 Skip-Layer and Variable Rank on Mistral (EXP-18, EXP-19)
+
+Table 24: Layer-level strategies on Mistral (rank 64, baseline: 13.07).
+
+Strategy
+PPL
+Improvement
+
+Uniform compression (all layers)
+13.07
+—
+
+Skip worst 8 layers (EXP-18)
+11.50
++2.50
+
+Variable rank proportional to drift (EXP-19)
+44.15
+catastrophic
+
+Fragile=96, robust=48 (EXP-19)
+18.02
+worse than uniform
+
+Compression is binary: full rank or skip. Variable rank redistribution destroys the robust layers without helping the fragile ones. This is consistent with the quantization finding: every direction matters, and reducing any layer below full rank incurs non-recoverable damage.
+
+O.4 GQA Fix Attempts (EXP-12, EXP-13, EXP-16)
+
+Table 25: Attempts to fix GQA metric aggregation.
+
+Method
+Best PPL
+Outcome
+
+Arithmetic mean of per-Q metrics
+15.94
+Baseline
+
+Geometric mean
+15.92
+
+Harmonic mean
+16.20
+Worse
+
+Shared + residual (geometric)
+15.98
+
+Norm-weighted (EXP-13)
+—
+Marginal on MHA
+
+Norm + attention (EXP-13)
+—
+Catastrophic on simulated GQA
+
+Aggregation method is not the Mistral bottleneck ( PPL across all variants). Q-head alignment is 0.75–0.89—co-trained heads already share enough structure.
+
+O.5 Perturbation Theory Ceiling (THEORY-01)
+
+Rayleigh–Schrödinger perturbation recovers 55% of the PCAtheorem gap but diverges at order 3. Padé resummation adds only +2% over RS2. The correction has exactly two perturbative layers (per-direction + pairwise); the rest is non-perturbative (see Appendix D).
+
+O.6 Random Matrix Theory (EXP-02)
+
+The correction operator has eigenvalues above the Marchenko–Pastur edge (not random) with Poisson spacing (weakly localized). But extracting the spikes gives only +0.1–0.6% subspace overlap improvement. Structure exists but is not actionable.
+
+O.7 The Lesson
+
+Every approach to improve rank reduction—better metrics, deeper Jacobians, perturbation theory, random matrix theory, polynomial kernels, learned corrections, GQA fixes, variable rank, skip strategies—either hits the same ceiling or makes things worse. The breakthrough came from changing the compression operator (quantization instead of projection), not the compression basis. The theorem was right all along; we were just using it wrong.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

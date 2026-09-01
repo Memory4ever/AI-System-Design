@@ -1,0 +1,860 @@
+ModTrans: Translating Real-world Models for Distributed Training Simulator
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background
+
+2.1 Distributed Deep Learning Training
+
+2.2 ASTRA-sim
+
+2.3 ONNX
+
+3 Implementation Design
+
+3.1 Astra-SIM’s Input
+
+3.2 ModTrans Overview
+
+3.3 ModTrans Implementation
+
+4 Evaluation
+
+4.1 Experiment Setup
+
+4.2 Execution Overhead
+
+4.3 With different Models
+
+4.4 Sanity Check
+
+5 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.01607v1 [cs.DC] 02 Apr 2026
+
+ModTrans: Translating Real-world Models for
+Distributed Training Simulator
+
+Yi Lyu
+
+Affiliation: University of Wisconsin-Madison, Madison, WI, USA
+
+email: ylyu76@wisc.edu
+
+Abstract.
+
+Large-scale distributed training has been a research hot spot in machine learning systems for industry and academia in recent years. However, conducting experiments without physical machines and corresponding resources is difficult. One solution is to leverage distributed training simulator. Current distributed training simulators like ASTRA-sim do not support the import from real-world developed models to the simulator, which poses challenges for ML researchers from using the simulator. Based on this challenge, We developed ModTrans, a translator supporting format translation from any real-world model to the ASTRA-sim simulator’s input. It removes the barrier between machine learning experts and machine learning system researchers. The experiment results show that ModTrans’s cost is negligible.
+
+1. Introduction
+
+In recent years, machine learning training has become one of the most intensive workloads in data centers because of the increasing demands of machine learning applications and the complexity of the model itself. Giant models (or model experts) are considered the next-generation model, and training these models need intensive computational and communication resource. For example, a recent report from Google shows that the large model PaLM (Chowdhery et al., 2022) is trained with 81Tbps for each training step, and it takes about 6144 TPU to participate in the training process.
+
+Replicating such models’ training on a large scale is extremely difficult because of the huge amount of network and computation usage. This happens in both industry and academia. For industry, it is costly to train models without enough testing, potentially increasing the cost of deployment and management. For academia, it is difficult for educational institutions to acquire a training environment that could replicate the experiments, which poses a barrier to researchers conducting distributed training research.
+
+Distributed training simulator is a solution to the problem above. ASTRA-sim is one of the main-stream machine learning simulators in this area. It simulates distributed training by defining the network topology and the computation model, letting developers replicate the distributed training environment in a single machine. It frees users from running the distributed training job in a real machine environment and occupies the resources.
+
+However, these simulators are far away from mature. It is due to the fact that distributed training behavior is complicated, and the computation and communication modeling are sophisticated. For example, ASTRA-sim only takes model description files as input, which must be written and configured manually. In the real scenario, the simulations are conducted by machine learning system researchers, and the ML models are taken from the ML developer, which are two groups of people. Therefore, we think it is not a reasonable design that needs to be decoupled.
+
+In this paper, we developed ModTrans, a translator that would like any real-world models and extracted the necessary information needed from ASTRA-sim, making the ASTRA-sim supports simulation input directly taken from the model without manually configured. Our translator can also get classic models from the model zoo if users would like to use the simulator to simulate the model training, for example, ResNet50 and VGG16. Note that our translator is applicable to any simulator that takes layer-wise information as input to do simulation.
+
+ModTrans removes the barrier between machine learning experts and machine learning system researchers. Our experiment results show that ModTrans takes no more than 1 second to translate, and the translation results are identical to the ResNet50 model provided in the ASTRA-sim repository.
+
+2. Background
+
+In this section, we will discuss the background. The first subsection introduces the basic concepts like parallelism types in distributed deep learning training (Cheng et al., 2024b; Cheng et al., 2024a; Liao et al., 2025). The second subsection introduces the architecture of state-of-the-art distributed training simulators and the interface layer facing the user. In the final subsection, we introduce the Open Neural Network Exchange (ONNX), an open-source framework for representing AI models.
+
+2.1. Distributed Deep Learning Training
+
+Training in giant models introduces new challenges to data centers. How to train models effectively with hundreds of or thousands of computational devices (GPU/TPU) becomes an interesting question. Nvidia’s state-of-the-art Megatron-LM (Narayanan et al., 2021) model takes 3072 GPUs across 384 machines to train their large model with the combination of different training approach parallelism(Yi et al., 2025).
+
+Data parallelism and Model parallelism are two main parallelism strategies that widely use in the data center because of the simplicity of the programmable model. Data parallelism is parallelization across multiple nodes by distributing data into different nodes, which can compute based on data in parallel. Model parallelism is another parallelization method that partitions the deep learning model(Lyu et al., 2026) across multiple devices, within or across instances. However, When models get larger and the architecture becomes more complex, we need to explore better solutions to accelerate the training efficiency. One approach is to combine different types of parallelism strategies within a model according to its characteristics. For example, some layers are too huge to fit into the rare GPU memory, and we need to split them into several partitions to train (model parallelism).
+
+Model parallelism introduces dependency problems among computational devices, potentially reducing the utilization of the computational devices. Gpipe (Huang et al., 2019) and Pipedream (Narayanan et al., 2019) introduce pipeline parallelism to increase device utilization by introducing the pipelining concept. For large model training, pipeline parallelism shows great performance improvement for huge data centers. The main insight from this line of work is trying to utilize workers’ GPUs as much as possible, and they use different pipeline techniques to reduce the stall/bubble under naive execution.
+
+At the same time, it is particularly difficult to do large-scale research academically on machine learning systems based on limited resources without industrial support. For example, BytePS (Jiang et al., 2020) system uses 256 GPUs to prove its scalability, and getting the testbed with this amount of GPUs is already a huge challenge for academics. Moreover, system researchers are also exploring different deep-learning platform designs to accelerate the distributed training process. To find the best spot in the large design space, they usually need to try multiple different configurations and test the training performance. However, it is impossible to achieve that when running training jobs on the real testbed, since each training process takes such long GPU-hours. It motivates the need for distributed training simulator that can estimate the training performance to help researchers explore different design choices.
+
+2.2. ASTRA-sim
+
+As shown in Figure 1, deep learning platforms have super complex hardware (HW) and software (SW) design space. On the hardware side, multiple accelerators are interconnected in different topologies. For accelerators, FPGA, GPU, TPUs, and other special ASICs are now widely used for deep learning training. For interconnection topology, there are different inter-package and intra-package fabrics with different bandwidths. In the software design space, there are different strategies for scheduling communication and computation. For communication, the protocol and topology-aware collectives can be configured by users. The communication scheduling can be configured as LIFO or FIFO. And the framework scheduling can be configured as synchronous or asynchronous, blocking or nonblocking. With increasingly large deep learning models, both academia and industry are trying to find the best distributed training platform design point inside this complex design space. ASTRA-sim (Rashidi et al., 2020) is a distributed training simulator designed to quickly simulate the training performance when navigating the design space.
+
+Figure 1. Deep Learning Platform Software (SW) and Hardware (HW) Design Space (Rashidi et al., 2020)
+
+The ASTRA-sim is a simulator consisting of multiple layers (network layer, system layer, and workload Layer). Figure 2 shows the high-level overview of the simulator components. Its network layer uses Garnet (Agarwal et al., 2009) to simulate the network behavior under different topologies and connectivity. It is mainly used to mainly simulate the communication stage when different nodes want to exchange information in the training process. ASTRA-sim is also exploring supporting another more common network simulator ns-3, which is more flexible to configure different network protocols and communication patterns.
+The system layer provides topology-aware collective operations and generates traffic to the network layer. Also, it contains the scheduler component that pipelines the execution of the collectives across different links. Notice that the system layer deals with the logical topology while the network layer handles the actual network topology. The advantage here is that there could be a more flexible mapping between the logical and actual topologies. The workload layer runs the training loop algorithms for the specified deep learning models and generates the sets of data to be communicated during each iteration of training. There are two parts of workload parameters: compute time and communication sizes. For the compute time, it can be extracted from the DNN simulator and GPU simulator for each layer operation. For the communication size, it depends on the parallelism types and also the model itself.
+
+The ASTRA-sim simulator takes the DNN description file as input and generates the sets of data to be communicated at different training steps. As shown in Figure 3, the description file specifics the parallelism type and layer-wise information (computation & communication). For each layer inside the deep learning model, the description file contains the computation time, communication type, communication size, and local update time. Since deep learning models have more and more layers, it’s time-consuming for users to provide the DNN description file. Also, there could be potential errors when users calculate this information manually. It needs an automatic translator to generate this kind of DNN description file based on model specifications.
+
+Figure 2. Overview of ASTRAM-sim(Rashidi et al., 2020)
+
+Figure 3. DNN description file (Rashidi et al., 2020)
+
+Figure 4. Visualization on ONNX
+
+2.3. ONNX
+
+Open Neural Network Exchange (ONNX) (14) is an open-source format for AI models, both deep learning and traditional machine learning. The ONNX defines an extensible graph model and definitions of built-in operators and standard data types. It is widely supported by many frameworks, tools, and hardware. There are many industry collaborators that use the ONNX format and put it into production.
+
+The core insight of ONNX is that deep learning with neural networks is usually expressed as computation over the dataflow graph. Some frameworks use static graphs (E.g., TensorFlow) while other frameworks use dynamic graphs (E.g., Pytorch) (6). Each framework provides its own interface to construct the dataflow graphs. ONNX is designed to provide a common intermediate representation (IR) to represent the dataflow graph. It can be compared to a programming language specialized in mathematical functions. All the necessary operators are already defined in the ONNX framework. There are five parts inside the model expressed in the ONNX language: input, output, node, initializer, and attributes. The input defines the type of data that should be fed into the model in ONNX. Similarly, the output defines the type of data predicted by the model in ONNX. The initializer is used to store the constant parameters in the model, which won’t change based on the input. Nodes are the output of helper functions inside ONNX like MatMul and Add. Listing 1 is a linear regression that written in ONNX language (6)
+
+⬇
+
+1
+
+def onnx_linear_regressor(X):
+
+2
+
+"ONNX code for a linear regression"
+
+3
+
+return onnx.Add(onnx.MatMul(X, coefficients), bias)
+
+Listing 1: Linear Regression written in ONXX
+
+As shown in Figure 5, the linear regression example in ONNX represents a graph, which transforms features into ONNX graph (5). The Add and MatMul functions used in the Linear Regression model are corresponding nodes inside the ONXX graph. The arrow connecting different nodes shows the dataflow graph inside this deep learning model.
+The ONNX graph can be saved using protobuf to serialize the graph into one single block. It is used to optimize the model size as much as possible. The generated format can be directly loaded into mainstream deep-learning models. Also, some visualization tools can take this binary format model as input to show the complete ONNX graph.
+
+Figure 5. Linear Regression ONNX Graph
+
+3. Implementation Design
+
+In order to support real models in the ASTRA-sim simulator, we need to first understand the necessary information from the ONNX models.
+
+3.1. Astra-SIM’s Input
+
+The Astra-SIM simulator input includes three main sections, which are network, system, and workload. The network and the system sections specify the network topology, communication patterns for training and scheduling policies, etc. ModTrans focuses on the workload section, which is the input file that describes the detail information of the input model, specifically, it takes layer communication size and layer computation time as input in this file.
+
+The compute time of each layer is modeled by SCALE-sim (Samajdar et al., 2018), which is a low-level layer-wise computation time calculation simulator. However, the communication time, inferred from the model size, is manually extracted in the current ASTRA-sim design.
+
+3.2. ModTrans Overview
+
+The design of ModTrans is to remove the manual steps for extracting the model. In the current ASTRA-sim, if we want to simulate a model developed by ML experts, the simulator runner needs to know all the model information from the ML developer, which is not efficient and not well labor-divided. With ModTrans, ML experts only need to develop their model in PyTorch, Tensorflow, or other Machine Learning frameworks that support ONNX. ModTrans takes ONNX models and extracts the layer information for the ASTRA-sim. If developers want to use classic models, for example, ResNet50 (He et al., 2016) and  (Simonyan and Zisserman, 2014), ModTrans also supports getting the models directly from the ONNX zoo (15) by only giving the model name to ModTrans.
+
+3.3. ModTrans Implementation
+
+ModTrans is devleoped based on Python. The ONNX API is called to parse the ONNX. Since ONNX is in serialized binary format, we need to deserialize it before getting the data. Our evaluation results in Section  show that the deserialize cost is considerably small. After that, ModTrans calculates the layer size based on the parsed data, for example, the number of parameters for each layer and data type.
+
+4. Evaluation
+
+4.1. Experiment Setup
+
+Our experiments are all completed on a machine equipped with Intel(R) Xeon(R) CPU E5-2650 v3 @ 2.30GHz, and Python 3.8.10 installed. The ONNX models used in the following experiments come from the ONNX Model Zoo (15). We picked three classic machine learning models to demonstrate our results, which are ResNet50 (He et al., 2016), VGG16 (Simonyan and Zisserman, 2014), and VGG19 (Simonyan and Zisserman, 2014). In general, ModTrans can be used in any machine with correct ONNX models.
+
+4.2. Execution Overhead
+
+Figure 6. Execution Time for ModTrans
+
+The overhead of ModTrans is negligible. Our experiments (Figure 6) on three models show that the execution time for ModTrans are nearly the same and all below a second. VGG16 and VGG19 take about 0.8 seconds, and ResNet50 takes only around 0.1 seconds. The variances are also small.
+
+Besides, since ModTrans is not typically in the critical path, users can prepare the models offline. Therefore, we do not consider this is a cost that is needed to be concerned with.
+
+4.3. With different Models
+
+Our parser works for any model in the ONNX format.
+In order to demonstrate the generality of our system, we run the ModTrans and demonstrate the layer-by-layer information for VGG16 and VGG19 in Table 1 and Table 2, respectively. This information includes but is not limited to Layer Name, The Number of Variables, Data Type, and Model Size. As shown in the tables, the layer-wise information is captured.
+
+4.4. Sanity Check
+
+To validate the results of our program, we compare the results with the example ResNet50 provided by the model ASTRA-SIm. Table 3 shows the layer size of ModTrans extracted ResNet50 model and ASTRA-SIm provided ResNet50 model. The results show that all the size information in each layer is identical. This demonstrates the correctness of ModTrans and as a sanity check.
+
+Layer Name
+Variables
+Data Type
+Model Size
+
+vgg16-conv0-weight
+1728
+FLOAT
+6912
+
+vgg16-conv1-weight
+36864
+FLOAT
+147456
+
+vgg16-conv2-weight
+73728
+FLOAT
+294912
+
+vgg16-conv3-weight
+147456
+FLOAT
+589824
+
+vgg16-conv4-weight
+294912
+FLOAT
+1179648
+
+vgg16-conv5-weight
+589824
+FLOAT
+2359296
+
+vgg16-conv6-weight
+589824
+FLOAT
+2359296
+
+vgg16-conv7-weight
+1179648
+FLOAT
+4718592
+
+vgg16-conv8-weight
+2359296
+FLOAT
+9437184
+
+vgg16-conv9-weight
+2359296
+FLOAT
+9437184
+
+vgg16-conv10-weight
+2359296
+FLOAT
+9437184
+
+vgg16-conv11-weight
+2359296
+FLOAT
+9437184
+
+vgg16-conv12-weight
+2359296
+FLOAT
+9437184
+
+vgg16-dense0-weight
+102760448
+FLOAT
+411041792
+
+vgg16-dense1-weight
+16777216
+FLOAT
+67108864
+
+vgg16-dense2-weight
+4096000
+FLOAT
+16384000
+
+Table 1. Layer-by-layer sizes extracted from VGG16 ONNX model
+
+Layer Name
+Variables
+Data Type
+Model Size
+
+vgg19-conv0-weight
+1728
+FLOAT
+6912
+
+vgg19-conv1-weight
+36864
+FLOAT
+147456
+
+vgg19-conv2-weight
+73728
+FLOAT
+294912
+
+vgg19-conv3-weight
+147456
+FLOAT
+589824
+
+vgg19-conv4-weight
+294912
+FLOAT
+1179648
+
+vgg19-conv5-weight
+589824
+FLOAT
+2359296
+
+vgg19-conv6-weight
+589824
+FLOAT
+2359296
+
+vgg19-conv7-weight
+589824
+FLOAT
+2359296
+
+vgg19-conv8-weight
+1179648
+FLOAT
+4718592
+
+vgg19-conv9-weight
+2359296
+FLOAT
+9437184
+
+vgg19-conv10-weight
+2359296
+FLOAT
+9437184
+
+vgg19-conv11-weight
+2359296
+FLOAT
+9437184
+
+vgg19-conv12-weight
+2359296
+FLOAT
+9437184
+
+vgg19-conv13-weight
+2359296
+FLOAT
+9437184
+
+vgg19-conv14-weight
+2359296
+FLOAT
+9437184
+
+vgg19-conv15-weight
+2359296
+FLOAT
+9437184
+
+vgg19-dense0-weight
+102760448
+FLOAT
+411041792
+
+vgg19-dense1-weight
+16777216
+FLOAT
+67108864
+
+vgg19-dense2-weight
+4096000
+FLOAT
+16384000
+
+Table 2. Layer-by-layer sizes extracted from VGG19 ONNX model
+
+Layer Name
+Extracted Model
+ASTRA-SIM Model
+
+resnet-conv0
+37632
+37632
+
+resnet-stage1-conv0
+16384
+16384
+
+resnet-stage1-conv1
+147456
+147456
+
+resnet-stage1-conv2
+65536
+65536
+
+resnet-stage1-conv3
+65536
+65536
+
+resnet-stage1-conv4
+65536
+65536
+
+resnet-stage1-conv5
+147456
+147456
+
+resnet-stage1-conv6
+65536
+65536
+
+resnet-stage1-conv7
+65536
+65536
+
+resnet-stage1-conv8
+147456
+147456
+
+resnet-stage1-conv9
+65536
+65536
+
+resnet-stage2-conv0
+131072
+131072
+
+resnet-stage2-conv1
+589824
+589824
+
+resnet-stage2-conv2
+262144
+262144
+
+resnet-stage2-conv3
+524288
+524288
+
+resnet-stage2-conv4
+262144
+262144
+
+resnet-stage2-conv5
+589824
+589824
+
+resnet-stage2-conv6
+262144
+262144
+
+resnet-stage2-conv7
+262144
+262144
+
+resnet-stage2-conv8
+589824
+589824
+
+resnet-stage2-conv9
+262144
+262144
+
+resnet-stage2-conv10
+262144
+262144
+
+resnet-stage2-conv11
+589824
+589824
+
+resnet-stage2-conv12
+262144
+262144
+
+resnet-stage3-conv0
+524288
+2097152
+
+resnet-stage3-conv1
+2359296
+524288
+
+resnet-stage3-conv2
+1048576
+2359296
+
+resnet-stage3-conv3
+2097152
+1048576
+
+resnet-stage3-conv4
+1048576
+1048576
+
+resnet-stage3-conv5
+2359296
+2359296
+
+resnet-stage3-conv6
+1048576
+1048576
+
+resnet-stage3-conv7
+1048576
+1048576
+
+resnet-stage3-conv8
+2359296
+2359296
+
+resnet-stage3-conv9
+1048576
+1048576
+
+resnet-stage3-conv10
+1048576
+1048576
+
+resnet-stage3-conv11
+2359296
+2359296
+
+resnet-stage3-conv12
+1048576
+1048576
+
+resnet-stage3-conv13
+1048576
+1048576
+
+resnet-stage3-conv14
+2359296
+2359296
+
+resnet-stage3-conv15
+1048576
+1048576
+
+resnet-stage3-conv16
+1048576
+1048576
+
+resnet-stage3-conv17
+2359296
+2359296
+
+resnet-stage3-conv18
+1048576
+1048576
+
+resnet-stage4-conv0
+2097152
+8388608
+
+resnet-stage4-conv1
+9437184
+2097152
+
+resnet-stage4-conv2
+4194304
+9437184
+
+resnet-stage4-conv3
+8388608
+4194304
+
+resnet-stage4-conv4
+4194304
+4194304
+
+resnet-stage4-conv5
+9437184
+9437184
+
+resnet-stage4-conv6
+4194304
+4194304
+
+resnet-stage4-conv7
+4194304
+4194304
+
+resnet-stage4-conv8
+9437184
+9437184
+
+resnet-stage4-conv9
+4194304
+4194304
+
+resnet-dense0
+8192000
+8192000
+
+Table 3. Layer-by-layer sizes extracted from ResNet50 ONNX model
+
+5. Conclusion
+
+In this paper, we develop ModTrans that can extract the necessary information needed by ASTRA-sim from real-world models. It makes ASTRA-sim can support simulation directly from the model without being manually configured. The ModTrans translator can also get classic models from the model zoo if users would like to use the simulator to simulate the model training.
+
+Since distributed training simulator is increasingly important and necessary, we believe that there will be more and more researchers exploring this field. It means that our ModTrans in the future can be generalized to any simulators that take layer-wide information as input to do simulation.
+
+In the evaluation, we show that ModTrans can translate the given ONNX models in less than 1 second. And the translated result is verified to be the same as the ResNet50 model provided in the official ASTRA-sim repository. ModTrans removes the barrier for users to run different deep learning models on the simulator.
+
+References
+
+Agarwal et al. (2009)
+N. Agarwal, T. Krishna, L. Peh, and N. K. Jha
+
+GARNET: a detailed on-chip network model inside a full-system simulator.
+
+In 2009 IEEE international symposium on performance analysis of systems and software,
+
+pp. 33–42.
+
+Cited by: §2.2.
+
+Cheng et al. (2024a)
+M. Cheng, B. Zhang, Z. Wang, Z. Zhou, W. Feng, Y. Lyu, and X. Diao
+
+VeTraSS: vehicle trajectory similarity search through graph modeling and representation learning.
+
+External Links: 2404.08021,
+Link
+
+Cited by: §2.
+
+Cheng et al. (2024b)
+M. Cheng, Z. Zhou, B. Zhang, Z. Wang, J. Gan, Z. Ren, W. Feng, Y. Lyu, H. Zhang, and X. Diao
+
+Efflex: efficient and flexible pipeline for spatio-temporal trajectory graph modeling and representation learning.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops,
+
+pp. 2546–2555.
+
+Cited by: §2.
+
+Chowdhery et al. (2022)
+A. Chowdhery, S. Narang, J. Devlin, M. Bosma, G. Mishra, A. Roberts, P. Barham, H. W. Chung, C. Sutton, S. Gehrmann, et al.
+
+Palm: scaling language modeling with pathways.
+
+arXiv preprint arXiv:2204.02311.
+
+Cited by: §1.
+
+[5]
+Doc: open neural network exchange.
+
+External Links: Link
+
+Cited by: §2.3.
+
+[6]
+Github: open neural network exchange.
+
+External Links: Link
+
+Cited by: §2.3.
+
+He et al. (2016)
+K. He, X. Zhang, S. Ren, and J. Sun
+
+Deep residual learning for image recognition.
+
+In 2016 IEEE Conference on Computer Vision and Pattern
+Recognition (CVPR),
+
+Vol. , pp. 770–778.
+
+External Links: Document
+
+Cited by: §3.2,
+§4.1.
+
+Huang et al. (2019)
+Y. Huang, Y. Cheng, A. Bapna, O. Firat, D. Chen, M. Chen, H. Lee, J. Ngiam, Q. V. Le, Y. Wu, et al.
+
+Gpipe: efficient training of giant neural networks using pipeline parallelism.
+
+Advances in neural information processing systems 32.
+
+Cited by: §2.1.
+
+Jiang et al. (2020)
+Y. Jiang, Y. Zhu, C. Lan, B. Yi, Y. Cui, and C. Guo
+
+A unified architecture for accelerating distributed DNN training in heterogeneous GPU/CPU clusters.
+
+In 14th USENIX Symposium on Operating Systems Design and Implementation (OSDI 20),
+
+pp. 463–479.
+
+External Links: ISBN 978-1-939133-19-9,
+Link
+
+Cited by: §2.1.
+
+Liao et al. (2025)
+R. Liao, C. Zhao, J. Li, W. Feng, Y. Lyu, B. Chen, and H. Yang
+
+CATP: cross-attention token pruning for accuracy preserved multimodal model inference.
+
+In 2025 IEEE Conference on Artificial Intelligence (CAI),
+
+Vol. , pp. 1100–1104.
+
+External Links: Document
+
+Cited by: §2.
+
+Lyu et al. (2026)
+Y. Lyu, S. Yu, and J. Catudal
+
+Safeguard: security controls at the software defined network layer.
+
+External Links: 2601.17355,
+Link
+
+Cited by: §2.1.
+
+Narayanan et al. (2019)
+D. Narayanan, A. Harlap, A. Phanishayee, V. Seshadri, N. R. Devanur, G. R. Ganger, P. B. Gibbons, and M. Zaharia
+
+PipeDream: generalized pipeline parallelism for dnn training.
+
+In Proceedings of the 27th ACM Symposium on Operating Systems Principles,
+
+pp. 1–15.
+
+Cited by: §2.1.
+
+Narayanan et al. (2021)
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro, et al.
+
+Efficient large-scale language model training on gpu clusters using megatron-lm.
+
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+
+pp. 1–15.
+
+Cited by: §2.1.
+
+[14]
+Open neural network exchange.
+
+External Links: Link
+
+Cited by: §2.3.
+
+[15]
+ONNX Model Zoo Github Repository.
+
+Note: https://github.com/onnx/models
+
+Cited by: §3.2,
+§4.1.
+
+Rashidi et al. (2020)
+S. Rashidi, S. Sridharan, S. Srinivasan, and T. Krishna
+
+ASTRA-SIM: Enabling SW/HW Co-Design Exploration for Distributed DL Training Platforms.
+
+In IEEE International Symposium on Performance Analysis of Systems
+and Software, ISPASS 2020, Boston, MA, USA, August 22-26, 2020,
+
+Cited by: Figure 1,
+Figure 2,
+Figure 3,
+§2.2.
+
+Samajdar et al. (2018)
+A. Samajdar, Y. Zhu, P. Whatmough, M. Mattina, and T. Krishna
+
+SCALE-sim: systolic cnn accelerator simulator.
+
+arXiv preprint arXiv:1811.02883.
+
+Cited by: §3.1.
+
+Simonyan and Zisserman (2014)
+K. Simonyan and A. Zisserman
+
+Very deep convolutional networks for large-scale image recognition.
+
+arXiv preprint arXiv:1409.1556.
+
+Cited by: §3.2,
+§4.1.
+
+Yi et al. (2025)
+L. Yi, W. Feng, Y. Wang, and Y. Kan
+
+MonoM: enhancing monotonicity in learned cardinality estimators.
+
+External Links: 2512.22122,
+Link
+
+Cited by: §2.1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

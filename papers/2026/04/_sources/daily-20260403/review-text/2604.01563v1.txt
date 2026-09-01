@@ -1,0 +1,1048 @@
+Does Your Optimizer Care How You Normalize? Normalization-Optimizer Coupling in LLM Training
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+3 Experimental Setup
+
+4 Results
+
+4.1 The Factorial
+
+4.2 The Coupling Is Derf-Specific and Progressive
+
+5 Mechanistic Analysis
+
+5.1 erf’s Narrow Operating Regime
+
+5.2 Muon’s Weight Growth Drives Saturation
+
+5.3 Supports the Saturation Mechanism
+
+5.4 Per-Layer and Temporal Patterns
+
+Across layers.
+
+Over training.
+
+5.5 Ruling Out Alternative Explanations
+
+6 EMA-Blend as a Diagnostic Intervention
+
+7 Discussion
+
+Fragility vs. interaction.
+
+Muon LR ablation.
+
+sensitivity.
+
+Practical implication.
+
+8 Related Work
+
+Normalization-free transformers.
+
+The Muon optimizer.
+
+Normalization-optimizer interactions.
+
+9 Limitations
+
+10 Conclusion
+
+References
+
+A Multi-Seed Results
+
+B Statistical Summary
+
+C Failed Interventions: Details
+
+Gradient clipping.
+
+Weight decay (0.01).
+
+Alpha LR (0.1).
+
+Residual scaling.
+
+Asinh pre-compression.
+
+D EMA-Blend
+
+E DyT vs. Derf Diagnostics
+
+F 125M Results
+
+G Muon LR Probe
+
+H Additional Figures
+
+License: CC BY 4.0
+
+arXiv:2604.01563v1 [cs.AI] 02 Apr 2026
+
+Does Your Optimizer Care How You Normalize?
+
+Normalization-Optimizer Coupling in LLM Training
+
+Abdelrahman Abouzeid
+
+Affiliation: Georgia Institute of Technology
+
+Email: aabouzeid3@gatech.edu
+
+Abstract
+
+In LLM training, normalization layers and optimizers are typically treated as independent design choices. In a factorial at 1B parameters and 1000 training steps, we show this assumption can fail: Dynamic Erf (Chen et al., 2026, Derf;) suffers a large negative interaction with Muon (Jordan et al., 2024), with its gap to RMSNorm growing from 0.31 nats under AdamW to 0.97 under Muon, approximately three times larger. Dynamic Tanh (Zhu et al., 2025, DyT;), included as a bounded-normalizer control, shows no such penalty. Our evidence points to two failure modes of erf under Muon’s faster spectral-norm growth: saturation (lossy compression) and scale blindness (discarding activation magnitude). An EMA-blend that reintroduces running scale estimates recovers of the gap. Separately, reducing Derf’s from its published default (0.5 to 0.3) recovers by keeping erf in its near-linear regime, where it approximately preserves relative scale; this setting is not the published default of Chen et al. (2026). Using Derf’s published default with Muon incurs a 0.66-nat interaction penalty without producing NaNs or divergence, making the failure easy to miss in short pilot runs.
+
+1 Introduction
+
+Normalization-free architectures replace the LayerNorm/RMSNorm layers standard in transformers (Vaswani et al., 2017) with pointwise bounding functions such as Dynamic Erf (Chen et al., 2026, Derf;), which uses . By eliminating the reduction operation (computing RMS across the hidden dimension), these methods promise faster kernels and, crucially for distributed training, elimination of the cross-device allreduce required by RMSNorm under tensor parallelism. Independently, Muon (Jordan et al., 2024), a spectral optimizer, replaces AdamW’s (Loshchilov and Hutter, 2019) per-parameter adaptive scaling with Newton-Schulz orthogonalization, showing strong results on standard RMSNorm architectures. In current LLM practice, these two choices are often treated as modular.
+
+That modularity assumption has not been tested where it matters most. The Derf and DyT papers use AdamW exclusively, while the Muon and Moonlight papers use RMSNorm exclusively. To our knowledge, no prior work evaluates these components jointly. We therefore study a controlled factorial, , at 1B parameters, with DyT included as a second bounded normalizer to test whether any incompatibility is Derf-specific or generic to the class.
+
+Our central finding is that these design choices do not behave independently in the tested regime. Derf’s gap to RMSNorm is approximately three times larger under Muon than under AdamW (0.97 vs. 0.31 nats11
+1
+
+Throughout, “nats” refers to cross-entropy loss with natural logarithm. at 1000 steps), whereas DyT shows no such negative interaction (0.10). The coupling is Derf-specific.
+
+The failure mode is subtle but consequential. Derf+Muon trains to completion with no NaN or gradient explosion, yet its loss gap to RMSNorm+Muon widens progressively from step onward. Our diagnostics point to erf’s steep saturation profile: erf reaches 99% output at (vs. for tanh), i.e. at , and at the tested learning rates Muon grows weights faster than AdamW, pushing Derf into a regime where distinct inputs collapse to identical outputs (Figure 1).
+
+We make the following contributions:
+
+1.
+
+Discovery: a progressive, no-crash Derf-Muon incompatibility. In a factorial at 1B (3 seeds/cell), Derf’s penalty under Muon (0.97) is larger than under AdamW (0.31), while DyT shows no such coupling (0.10 interaction). The phenomenon is specific to Derf, not generic to bounded normalizers.
+
+2.
+
+Mechanism: the evidence points to saturation and scale blindness as joint failure modes. At the tested learning rates, Muon produces more erf saturation than AdamW (83% vs. 10% at layer 15, step 950). Reducing from 0.5 to 0.3 (non-default) recovers of the gap by keeping erf in its near-linear regime, where it approximately preserves relative scale. EMA-blend recovers a comparable via running scale estimates (Section 5.5). asinh pre-compression, which eliminates saturation without restoring scale, recovers .
+
+3.
+
+Practical implication: normalization-free methods benefit from optimizer-aware validation. The incompatibility can be addressed by tuning (zero overhead) or EMA-blend (0.15 nats residual gap, fewer allreduce operations than RMSNorm, norm-layer speedup at 8-way TP). However, fixed may not scale to longer training horizons where residual magnitudes continue to grow (Section 9).
+
+2 Background
+
+RMSNorm (Zhang and Sennrich, 2019) normalizes by the root mean square: . This requires a reduction but is lossless: if before, then after. Output has .
+
+Derf (Chen et al., 2026) uses . No reduction needed, but erf is lossy: when , inputs of magnitude 10 and 100 both map to .
+
+DyT (Zhu et al., 2025) uses with separate per sublayer. Like Derf, it is reduction-free and bounded, but lacks the learnable shift .
+
+Muon (Jordan et al., 2024) orthogonalizes the gradient for 2D weights: , . Updates have fixed spectral norm; unlike AdamW, where dampens large gradients.
+
+EMA-blend (our causal probe) keeps one running activation-scale estimate per normalization site, updates it once per training step, and blends raw and normalized inputs:
+
+(1)
+
+where is a running EMA of activation std. The normalized term restores scale information, while the raw term preserves a small growth brake. We use mixing coefficient and smoothing factor (Section 6).
+
+3 Experimental Setup
+
+We use the Llama architecture (Touvron et al., 2023, LlamaForCausalLM;) (GQA, SwiGLU, RoPE) at 1B parameters (2048 hidden, 16 layers, 32 heads, 8 KV heads, 5632 intermediate, 33 norm instances). Training: FineWeb-Edu (Penedo et al., 2024), Llama 3.2 tokenizer (Llama Team, 2024) (128K vocab), sequence length 2048, micro-batch 8, gradient accumulation 64 (1M tokens/step), 1000 steps (1B tokens), cosine decay, 100-step warmup. AdamW uses LR , , and weight decay (applied to 2D parameters only); Muon uses LR 0.02 with no weight decay. Gradient clipping max_norm1.0. Training uses bfloat16 autocast/model weights; all scalar normalization parameters (, shift , , ) and the Derf/DyT normalization forward pass remain in float32 for stability; this applies to all runs, including every intervention in Table 4. Hardware: single NVIDIA H200 SXM.
+
+We test plus EMA-blend+Muon. Derf uses , (Chen et al., 2026); DyT uses , (Zhu et al., 2025). All configs run with seeds 42, 43, 44. All main-paper runs train to completion (250 GPU-hours; training on H200 SXM, TP benchmark on H100 NVLink). Every 10 steps, we log per-layer diagnostics: activation RMS, erf saturation fraction, erf input std, weight norms, and alpha gradients. The main factorial, mechanism, and EMA results use the 1000-step runs. Table 4 summarizes targeted ablation probes, with per-intervention details in Appendix C; Exploratory 125M pilots appear in Appendix F.
+
+4 Results
+
+4.1 The Factorial
+
+AdamW
+Muon
+
+RMSNorm
+3.883  0.008
+3.322  0.003
+
+Derf
+4.192  0.003
+4.289  0.017
+
+DyT
+4.201  0.008
+3.541  0.003
+
+AdamW gap
+Muon gap
+Interaction
+
+Derf
+0.31
+0.97
+
+DyT
+0.32
+0.22
+
+Table 1: Left: Validation loss at 1000 steps (1B params, 3 seeds/cell). Right: Gap to RMSNorm under each optimizer; interaction Muon gap AdamW gap. Under AdamW, Derf and DyT have near-identical gaps (0.31, 0.32). Under Muon, Derf’s gap triples (0.66 interaction) while DyT’s shrinks (0.10). Bootstrap 95% CIs: Derf , DyT (Appendix B).
+
+Table 1 reveals an asymmetry. Under AdamW, Derf and DyT have similar penalties (0.31, 0.32). Under Muon, they diverge sharply: Derf’s gap triples to 0.97, while DyT’s gap shrinks to 0.22. Derf+Muon () is worse than Derf+AdamW (): Muon’s 0.56-nat optimizer advantage is not merely negated but reversed under Derf. In contrast, Muon benefits DyT even more than RMSNorm (0.66 vs. 0.56 nats). The interaction is Derf-specific (0.66), not inherent to bounded normalizers (DyT: 0.10).
+
+4.2 The Coupling Is Derf-Specific and Progressive
+
+Despite comparable Muon-driven weight growth, DyT reaches only 27% saturation vs. Derf’s 79% (Appendix Table 10). Two effects separate them: tanh’s 99% output occurs at vs. for erf (46% wider useful regime), and DyT’s self-corrects more aggressively under Muon (42% drop vs. 28%) because tanh retains usable gradients at lower saturation. The coupling is therefore Derf-specific: Derf’s narrow saturation geometry is incompatible with Muon’s scale dynamics, while DyT avoids the problem.
+
+The coupling also strengthens over training (Table 2).
+
+Step
+Derf+Muon gap
+EMA-blend gap ()
+
+100
+0.13
+0.43
+
+300
+0.71
+0.35
+
+500
+0.96
+0.19
+
+700
+1.01
+0.16
+
+1000
+0.97
+0.15
+
+Interaction at 1000: Muon gap 0.967, AdamW gap 0.308 +0.659
+
+Table 2: Gap to RMSNorm+Muon over training (3-seed averages). Derf+Muon widens and plateaus; EMA-blend () narrows monotonically from 0.43 to 0.15. Both trends are partially confounded with cosine decay.
+
+At step 100, the Derf gap is just 0.13; it widens over 900 steps, most steeply at near-peak LR (steps 100–300), consistent with weight-growth-driven saturation. The interaction is tight across seeds: mean , std (Appendix B).
+
+5 Mechanistic Analysis
+
+Figure 1: Overview of the optimizer-driven saturation mechanism. At the tested learning rates, Muon grows weights faster than AdamW, pushing Derf into steep saturation (83% of elements at ). AdamW’s slower growth keeps Derf closer to its useful regime (10% saturation). Muon+EMA (bottom) preserves Muon’s fast weight growth but uses a running to keep the post-blend erf argument near unit scale (std 1.3, 2% post-blend saturation), recovering of the Derf penalty. Weight and saturation numbers from layer 15, step 950 (seed 42); quality gaps at step 1000.
+
+5.1 erf’s Narrow Operating Regime
+
+Figure 2: Rescaling (RMSNorm) preserves relative magnitudes at any input scale; squashing (Derf) destroys them outside a narrow operating regime.
+
+Rescaling (RMSNorm) is invertible and scale-invariant (Figure 2): growing activations increase the divisor, maintaining unit output.
+
+Squashing (Derf): erf maps . Unlike RMSNorm’s lossless rescaling, erf introduces two failure modes that the asinh and EMA-blend probes help disentangle:
+
+•
+
+Saturation: lossy compression. When , erf collapses to , a many-to-one mapping where inputs of magnitude 10 and 100 become identical. This is a primary observed failure mode of Derf+Muon: erf input std reaches 11.8 at layer 15 by step 950 (Table 3), saturating 83% of elements. No other configuration in our factorial reaches this level; Derf+AdamW stays at 10% because, at the tested learning rates, Muon grows weights faster. asinh pre-compression (Appendix C) eliminates saturation entirely (0% at all layers) and recovers of the Derf-Muon gap (3.82 vs. 4.29 at step 900, single-seed follow-up).
+
+•
+
+Scale blindness: erf discards activation magnitude. asinh eliminates saturation but not scale information, recovering only vs. EMA-blend’s ; the 35 pp gap is consistent with scale blindness as a distinct factor beyond desaturation alone. Lowering to 0.3 (Section 5.3) recovers because in the near-linear regime () erf approximately preserves relative magnitude, addressing both failure modes with one parameter.
+
+RMSNorm and EMA-blend avoid these failures by preserving scale information; lowering delays these failures by widening the useful regime. Without one of these mechanisms, Muon’s faster weight growth pushes activations out of erf’s useful regime with no path to self-correction.
+
+5.2 Muon’s Weight Growth Drives Saturation
+
+Metric (L15, step 950)
+Derf+Muon
+Derf+AdamW
+EMA-blend
+
+MLP weight
+155.8
+69.6
+163.5
+
+erf input std
+11.8
+1.8
+1.3
+
+erf saturated (%)
+83%
+10%
+2%
+
+Table 3: Per-layer diagnostics at layer 15, step 950 of the main 1000-step seed-42 runs (per-layer breakdown in Appendix Figure 5). At the tested learning rates, Muon grows weights faster, producing more saturation. EMA-blend has Muon-scale weights but keeps the post-blend erf argument in a low-saturation regime via .
+
+At the main factorial’s learning rates, Muon produces weight norms of 156 vs. AdamW’s 70 () by step 950. The faster weight growth drives erf input std from 1.8 (AdamW) to 11.8 (Muon), pushing saturation from 10% to 83%.22
+2
+
+For vanilla Derf and AdamW, we define saturation as the fraction of elements where . For EMA-blend, we report saturation of the actual post-blend erf argument. EMA-blend retains Muon-scale weights (164) but reduces the post-blend erf input std to 1.3, with only 2% post-blend saturation. The key distinction is therefore not weight growth alone, but whether the normalizer still measures and corrects the activation scale seen by erf.
+
+5.3 Supports the Saturation Mechanism
+
+Lowering Derf’s from its published default (0.5) to 0.3 widens erf’s useful regime, keeping more elements in the near-linear region where approximately preserves relative magnitude. At , Derf+Muon reaches 3.511  0.002 (3 seeds), recovering of the 0.97-nat gap to RMSNorm+Muon (Appendix Table 7). The interaction flips sign: 0.175 (95% CI ) vs. 0.659 at . Under AdamW, is slightly worse than 0.5 (4.248 vs. 4.192), so the benefit is specific to the Muon pairing. This is not the published default of Chen et al. (2026); identifying it as a Muon-compatible operating point in the tested regime is a finding of this work.
+
+5.4 Per-Layer and Temporal Patterns
+
+Across layers.
+
+Early layers (L0–L3) are unsaturated under all configs; deep layers (L12–L15) diverge sharply between Muon and AdamW (Figure 5). EMA-blend weights grow at Muon rates () yet post-blend erf input std stays at 1.3 (vs. 11.8 for vanilla Derf+Muon), because absorbs the activation growth.
+
+Over training.
+
+Under Muon, saturation rises monotonically to . Under AdamW, it peaks early then recedes as dampens growth (Figure 7). EMA-blend post-blend saturation drops below 10% once converges and reaches by late training (Figures 6–7 in Appendix H). Notably, Derf+Muon trains to completion with no NaN or gradient explosion; the degradation is visible only as a widening loss gap from step onward (Figure 3), meaning short pilot runs would miss it.
+
+5.5 Ruling Out Alternative Explanations
+
+We test five alternative explanations for the Derf-Muon failure (Table 4; implementation details in Appendix C). Four interventions targeting gradients, weight norms, alpha adaptation, and growth rate fail to recover quality. Only desaturation (asinh) and scale restoration (EMA-blend) help, and their 35 pp recovery gap despite similar erf input distributions (std 1.08 vs. 1.19) is consistent with scale information being a distinct factor beyond desaturation alone.
+
+Hypothesis
+Intervention
+Outcome
+Conclusion
+
+Large gradients
+Grad clipping
+Silent degrad. (gap 0.97)
+Not the cause
+
+Weight norms alone
+Weight decay
+No effect (gap 0.97)
+Too weak
+
+Alpha can self-correct
+Alpha LR
+No effect (gap 0.97)
+Ineffective in saturation regime
+
+Growth rate alone
+Residual scaling
+Diverges
+Insufficient recovery
+
+Saturation alone
+asinh compress.
+49% recovery (gap 0.50)
+Helps, not sufficient
+
+Missing scale info.
+EMA-blend
+84% recovery (gap 0.15)
+Saturation + scale
+
+Table 4: Alternative-explanation tests (targeted probes). Rows 1–4 and asinh are single-seed probes; EMA-blend is replicated with 3 seeds. Only EMA-blend, which restores scale information, achieves substantial recovery. The 35 pp gap between asinh and EMA-blend (similar erf input distributions, different recovery) is consistent with scale information being a distinct factor. Percentages are relative to the full Derf+Muon gap of 0.97 nats.
+
+6 EMA-Blend as a Diagnostic Intervention
+
+EMA-blend simultaneously restores scale and reduces saturation (83% to 2% post-blend); the asinh comparison (Section 5.5) partially disentangles these effects. At 1000 steps, achieves comparable recovery (, Section 5.3); EMA-blend’s additional value lies in its adaptive scaling: the effective automatically shrinks as residual magnitudes grow, a property that fixed lacks and that may prove necessary at longer training horizons (Section 9).
+
+Figure 3: Validation loss over 1000 steps. EMA-blend () converges to within 0.15 nats of RMSNorm+Muon while outperforming RMSNorm+AdamW by 0.41 nats. Derf+Muon fails to outperform Derf+AdamW. Multi-seed variance is negligible. Three-seed results appear in Appendix A.
+
+At , EMA-blend reaches 3.476 0.001 at 1000 steps, leaving a gap of just 0.15 nats to RMSNorm+Muon (vs. 0.97 for vanilla Derf+Muon) and recovering 84% of the Derf penalty. Together with the result, this is the strongest evidence for the proposed mechanism.
+
+The method is normalization-amortized, not normalization-free: each site caches one scalar , refreshed once per step via . Since is scalar, the blend simplifies algebraically:
+
+(2)
+
+so the forward pass reduces to where , identical per-element cost to vanilla Derf. Table 5 shows the effect of varying .
+
+Val Loss
+Gap to RMS+Muon
+
+0.0 (vanilla Derf)
+4.289 0.017
+0.967
+
+0.5
+3.588 0.060
+0.267
+
+0.7
+3.504 0.003
+0.182
+
+0.9
+3.476 0.001
+0.155
+
+1.0
+6.64 0.001 (plateau)
+3.318
+
+Table 5: EMA-blend sweep over at 1B, 1000 steps. Performance improves monotonically from to , then collapses at . is best; both and are replicated with 3 seeds.
+
+All values in substantially reduce the gap, with best (gap 0.155, 3-seed avg). At , performance collapses (Appendix D): the raw component acts as a necessary growth brake, and in our sweep, 10% raw signal was the smallest tested fraction that remained effective.
+
+Method
+Allreduces / step
+Relative
+Quality
+
+RMSNorm
+33 64 2 = 4,224
+
+best
+
+Derf + EMA
+33 1 = 33
+0.008
+0.15 nats
+
+DyT
+0
+
+0.22 nats
+
+Derf (no EMA)
+0
+
+0.97 nats
+
+Table 6: Theoretical per-step allreduce operation count under tensor parallelism (forward backward). The reduction in operation count (4,224 vs. 33) translates to measured norm-layer wall-clock speedup at 8-way TP (Figure 4); the gap between theoretical and measured reflects allreduce fusion and overlap in modern TP implementations. DyT and vanilla Derf are fully reduction-free, but only DyT preserves quality with Muon.
+
+Figure 4: Tensor parallelism benchmark on H100 NVLink (1/2/4/8 GPUs; training uses a single H200, Section 3). Norm-layer wall-clock time at hidden2048. DyT and Derf are fully reduction-free; EMA requires 33 allreduces/step vs. RMSNorm’s 4,224. At 8-way TP: DyT , Derf , EMA faster than RMSNorm. At 1-GPU (no communication), the gap is pure compute: for all three, confirming the speedup scales with TP degree.
+
+7 Discussion
+
+We do not claim that Muon is generally incompatible with bounded normalizers; the DyT control argues against that. Our claim is narrower: Derf’s published operating point interacts poorly with Muon’s scale dynamics in this regime, and the failure produces no crash signal. DyT and Derf behave similarly under AdamW, yet they separate sharply under Muon because Muon magnifies Derf’s specific saturation geometry.
+
+Fragility vs. interaction.
+
+One could frame our finding as a Derf robustness failure rather than an interaction. We retain the interaction framing because the failure is pairing-specific (DyT+Muon works despite comparable weight growth; Table 10), AdamW’s partially self-corrects where Muon cannot (Figure 7), and the practical takeaway (normalizer choice is not independent of optimizer choice) holds regardless.
+
+Muon LR ablation.
+
+A single-seed LR probe is directionally consistent: lowering Muon LR from 0.02 to 0.01 reduces the Derf gap from 0.95 to 0.28; the non-monotonic result at 0.005 (0.38) reflects undertraining (Appendix Table 12).
+
+sensitivity.
+
+The result (Section 5.3) strongly supports the proposed mechanism; details and numbers appear there.
+
+Practical implication.
+
+RMSNorm+Muon remains the strongest configuration at 1B. For practitioners pursuing reduction-free training, DyT+Muon preserves most of Muon’s advantage with zero allreduces. If Derf is preferred, lowering to 0.3 recovers of the gap at zero overhead, while EMA-blend recovers with adaptive scaling that may prove necessary at longer horizons (Section 9). In this regime, normalization-free methods benefit from optimizer-aware validation rather than transfer from AdamW results alone.
+
+8 Related Work
+
+Normalization-free transformers.
+
+T-Fixup (Huang et al., 2020) trains transformers without normalization via careful initialization and scaling. DyT (Zhu et al., 2025) uses , matching RMSNorm at 34B+ but showing a gap at smaller scales. Derf (Chen et al., 2026) uses . Both were tested exclusively with AdamW; we study both with Muon and find the coupling is Derf-specific (Section 4).
+
+The Muon optimizer.
+
+Muon (Jordan et al., 2024) orthogonalizes the gradient via Newton-Schulz iterations (Bernstein, 2025). Moonlight (Liu et al., 2025) scaled Muon to 3B/16B MoE; SOAP (Vyas et al., 2025) and MuonClip (Kimi Team et al., 2026) address stability. All assume standard normalization layers.
+
+Normalization-optimizer interactions.
+
+Normalization placement (Xiong et al., 2020), depth-dependent scaling (Wang et al., 2022), and Adam’s (Kingma and Ba, 2015; Ba et al., 2016) all affect training stability. Most closely related, He et al. (2024) show that optimizer and normalization jointly affect outlier features, and Lyle et al. (2024) show normalization can mask effective-learning-rate dynamics. We focus specifically on Muon paired with bounded normalization-free layers, showing the interaction is selective to Derf and using EMA-blend as a scale-restoring probe.
+
+9 Limitations
+
+•
+
+Scale and tokens. We test at 1B parameters, 1B tokens (vs. 20B Chinchilla-optimal (Hoffmann et al., 2022)). Whether the interaction persists at 7B+ and longer schedules remains open.
+
+•
+
+EMA hyperparameters. We sweep but fix ; sweeping momentum may further improve results.
+
+•
+
+Fixed may not scale. The fix works at 1000 steps because residual magnitudes are still moderate. At Chinchilla-optimal 20K steps, continued weight growth under Muon ( faster) may push residuals beyond the current regime, and a fixed may prove insufficient to simultaneously provide useful nonlinearity early and resist saturation late. This motivates adaptive mechanisms such as EMA-blend for longer horizons.
+
+•
+
+Scope. TP benchmark is intra-node only; LlamaForCausalLM and standard Muon only. Other architectures, Muon variants, and cross-node TP are untested.
+
+10 Conclusion
+
+At 1B parameters and 1000 steps, Derf shows a large silent interaction with Muon at published defaults (0.66) while DyT does not (0.10). Reducing from 0.5 to 0.3 recovers of the gap, providing strong evidence that erf’s narrow operating regime under Muon is a primary driver of the failure; EMA-blend recovers via adaptive scaling that may prove necessary at longer horizons. In this regime, normalization-free methods benefit from joint validation with the target optimizer; behavior under AdamW does not guarantee behavior under spectral updates.
+
+Reproducibility Statement
+
+All code, training scripts, and hyperparameters are in the supplementary material. We use FineWeb-Edu and LlamaForCausalLM (HuggingFace Transformers). Training runs use a single NVIDIA H200 SXM; the TP microbenchmark uses H100 NVLink (1/2/4/8 GPUs). W&B run IDs are provided.
+
+References
+
+Ba et al. (2016)
+J. L. Ba, J. R. Kiros, and G. E. Hinton
+
+Layer normalization.
+
+External Links: 1607.06450,
+Link
+
+Cited by: §8.
+
+Bernstein (2025)
+J. Bernstein
+
+Deriving muon.
+
+External Links: Link
+
+Cited by: §8.
+
+Chen et al. (2026)
+M. Chen, T. Lu, J. Zhu, M. Sun, and Z. Liu
+
+Stronger normalization-free transformers.
+
+External Links: 2512.10938,
+Link
+
+Cited by: §1,
+§2,
+§3,
+§5.3,
+§8,
+Abstract.
+
+He et al. (2024)
+B. He, L. Noci, D. Paliotta, I. Schlag, and T. Hofmann
+
+Understanding and minimising outlier features in transformer training.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 37, pp. 83786–83846.
+
+External Links: Link
+
+Cited by: §8.
+
+Hoffmann et al. (2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A. Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc, A. Guy, S. Osindero, K. Simonyan, E. Elsen, O. Vinyals, J. Rae, and L. Sifre
+
+An empirical analysis of compute-optimal large language model training.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 35, pp. 30016–30030.
+
+External Links: Link
+
+Cited by: 1st item.
+
+Huang et al. (2020)
+X. S. Huang, F. Perez, J. Ba, and M. Volkovs
+
+Improving transformer optimization through better initialization.
+
+In Proceedings of the 37th International Conference on Machine Learning,
+
+Vol. 119, pp. 4475–4483.
+
+External Links: Link
+
+Cited by: §8.
+
+Jordan et al. (2024)
+K. Jordan, Y. Jin, V. Boza, J. You, F. Cesista, L. Newhouse, and J. Bernstein
+
+Muon: an optimizer for hidden layers in neural networks.
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§8,
+Abstract.
+
+Kimi Team et al. (2026)
+Kimi Team, Y. Bai, Y. Bao, Y. Charles, C. Chen, G. Chen, H. Chen, H. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding, M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, C. Gao, H. Gao, P. Gao, T. Gao, Y. Ge, S. Geng, Q. Gu, X. Gu, L. Guan, H. Guo, J. Guo, X. Hao, T. He, W. He, W. He, Y. He, C. Hong, H. Hu, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin, X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, E. Lu, H. Lu, L. Lu, Y. Luo, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng, R. Qin, Z. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, L. Sui, X. Sun, F. Sung, Y. Tai, H. Tang, J. Tao, Q. Teng, C. Tian, C. Wang, D. Wang, F. Wang, H. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, S. Wang, X. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, H. Wu, W. Wu, X. Wu, Y. Wu, C. Xiao, J. Xie, X. Xie, W. Xiong, B. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Xu, J. Xu, J. Yan, Y. Yan, H. Yang, X. Yang, Y. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, S. Yuan, H. Zhan, D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, H. Zhao, Y. Zhao, Z. Zhao, H. Zheng, S. Zheng, L. Zhong, J. Zhou, X. Zhou, Z. Zhou, J. Zhu, Z. Zhu, W. Zhuang, and X. Zu
+
+Kimi k2: open agentic intelligence.
+
+External Links: 2507.20534,
+Link
+
+Cited by: §8.
+
+Kingma and Ba (2015)
+D. P. Kingma and J. Ba
+
+Adam: A method for stochastic optimization.
+
+In 3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings, Y. Bengio and Y. LeCun (Eds.),
+
+External Links: Link
+
+Cited by: §8.
+
+Liu et al. (2025)
+J. Liu, J. Su, X. Yao, Z. Jiang, G. Lai, Y. Du, Y. Qin, W. Xu, E. Lu, J. Yan, Y. Chen, H. Zheng, Y. Liu, S. Liu, B. Yin, W. He, H. Zhu, Y. Wang, J. Wang, M. Dong, Z. Zhang, Y. Kang, H. Zhang, X. Xu, Y. Zhang, Y. Wu, X. Zhou, and Z. Yang
+
+Muon is scalable for llm training.
+
+External Links: 2502.16982,
+Link
+
+Cited by: §8.
+
+Llama Team (2024)
+Llama Team
+
+The llama 3 herd of models.
+
+CoRR abs/2407.21783.
+
+External Links: Link,
+Document,
+2407.21783
+
+Cited by: §3.
+
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+
+Decoupled weight decay regularization.
+
+In International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1.
+
+Lyle et al. (2024)
+C. Lyle, Z. Zheng, K. Khetarpal, J. Martens, H. van Hasselt, R. Pascanu, and W. Dabney
+
+Normalization and effective learning rates in reinforcement learning.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 37, pp. 106440–106473.
+
+External Links: Link
+
+Cited by: §8.
+
+Penedo et al. (2024)
+G. Penedo, H. Kydlíček, L. B. allal, A. Lozhkov, M. Mitchell, C. Raffel, L. V. Werra, and T. Wolf
+
+The fineweb datasets: decanting the web for the finest text data at scale.
+
+External Links: 2406.17557,
+Link
+
+Cited by: §3.
+
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes, J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan, M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M. Lachaux, T. Lavril, J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton, J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan, B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur, S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom
+
+Llama 2: open foundation and fine-tuned chat models.
+
+External Links: 2307.09288,
+Link
+
+Cited by: §3.
+
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+
+Attention is all you need.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 30.
+
+External Links: Link
+
+Cited by: §1.
+
+Vyas et al. (2025)
+N. Vyas, D. Morwani, R. Zhao, I. Shapira, D. Brandfonbrener, L. Janson, and S. M. Kakade
+
+SOAP: improving and stabilizing shampoo using adam for language modeling.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §8.
+
+Wang et al. (2022)
+H. Wang, S. Ma, L. Dong, S. Huang, D. Zhang, and F. Wei
+
+DeepNet: scaling transformers to 1,000 layers.
+
+External Links: 2203.00555,
+Link
+
+Cited by: §8.
+
+Xiong et al. (2020)
+R. Xiong, Y. Yang, D. He, K. Zheng, S. Zheng, C. Xing, H. Zhang, Y. Lan, L. Wang, and T. Liu
+
+On layer normalization in the transformer architecture.
+
+In Proceedings of the 37th International Conference on Machine Learning,
+
+Vol. 119, pp. 10524–10533.
+
+External Links: Link
+
+Cited by: §8.
+
+Zhang and Sennrich (2019)
+B. Zhang and R. Sennrich
+
+Root mean square layer normalization.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 32.
+
+External Links: Link
+
+Cited by: §2.
+
+Zhu et al. (2025)
+J. Zhu, X. Chen, K. He, Y. LeCun, and Z. Liu
+
+Transformers without normalization.
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+
+pp. 14901–14911.
+
+Cited by: §2,
+§3,
+§8,
+Abstract.
+
+Appendix A Multi-Seed Results
+
+Config
+s42
+s43
+s44
+Avg
+
+RMSNorm+Muon
+3.321
+3.319
+3.325
+3.322
+
+RMSNorm+AdamW
+3.874
+3.888
+3.888
+3.883
+
+DyT+Muon
+3.545
+3.538
+3.541
+3.541
+
+DyT+AdamW
+4.204
+4.192
+4.207
+4.201
+
+EMA-blend (=0.9)
+3.476
+3.476
+3.477
+3.476
+
+EMA-blend (=0.7)
+3.502
+3.503
+3.507
+3.504
+
+Derf+AdamW
+4.189
+4.192
+4.194
+4.192
+
+Derf+Muon
+4.271
+4.306
+4.290
+4.289
+
+Derf (=0.3)+Muon
+3.513
+3.510
+3.510
+3.511
+
+Derf (=0.3)+AdamW
+4.259
+4.228
+4.256
+4.248
+
+Table 7: Validation loss at step 1000 across seeds. All configs have 3 seeds. Std 0.017.
+
+Appendix B Statistical Summary
+
+Contrasts computed as mean sample std over 3 seeds per cell. Bootstrap CIs (10,000 resamples) are also shown but should be interpreted as lower bounds on uncertainty given .
+
+Contrast
+Mean
+95% CI
+
+Derf gap (Muon)
+0.967
+
+Derf gap (AdamW)
+0.308
+
+Derf interaction
+0.659
+
+Ratio (Muon/AdamW gap)
+
+DyT gap (Muon)
+0.220
+
+DyT gap (AdamW)
+0.318
+
+DyT interaction
+0.098
+
+EMA () gap
+0.155
+
+EMA () gap
+0.182
+
+Derf+Muon vs Derf+AdamW
+0.097
+
+Derf gap (Muon)
+0.189
+
+Derf gap (AdamW)
+0.364
+
+Derf interaction
+0.175
+
+Table 8: Key contrasts with bootstrap 95% CIs (10K resamples, /cell). CIs are lower bounds on true uncertainty given small .
+
+Appendix C Failed Interventions: Details
+
+Gradient clipping.
+
+Bounds gradient norms but loss gap continues widening. Problem is information loss, not gradient magnitude.
+
+Weight decay (0.01).
+
+Shrinks weights 0.02%/step, too slow against 16 layers of compounding growth.
+
+Alpha LR (0.1).
+
+Alpha gradient is mathematically zero in the saturation zone regardless of step size.
+
+Residual scaling.
+
+Per-sublayer scalars (init 0.5) learn differentiation (early layers 0.43, late attention 0.53) but cannot self-regulate fast enough; in the targeted probe, loss reverses by step 400 (Table 9).
+
+Layer
+attn
+ffn
+Interpretation
+
+0
+0.500.43
+0.500.42
+Early shrinks
+
+7
+0.500.50
+0.500.47
+Middle stable
+
+15
+0.500.53
+0.500.45
+FFN shrinks
+
+Table 9: Residual scaling parameters at step 400 in the targeted probe.
+
+Asinh pre-compression.
+
+with learnable . Post-asinh saturation stays at 0% at all layers; the actual erf argument has std 1.46 at L15 step 340 and 1.08 at step 900, comparable to EMA-blend’s 1.66 and 1.19 at the same steps. Alpha gradients are stronger than vanilla Derf+Muon. The 400-step warmup-200 diagnostic run ends at 4.42, close to vanilla Derf at the same horizon, but a longer single-seed follow-up run reaches step 936 with last validation logged at step 900, where it improves materially over vanilla Derf+Muon (3.82 vs. 4.29). Even so, it remains well above RMSNorm+Muon (3.33 at step 900) and EMA-blend (3.51 at step 900), so desaturating erf helps but does not close the gap.
+
+Appendix D EMA-Blend
+
+Full normalization () caused activation RMS at L15 to reach 7,214 during training. Loss plateaued at 6.64. The raw component (10% at ) acts as a necessary growth brake.
+
+Appendix E DyT vs. Derf Diagnostics
+
+Metric (L15, step 999)
+DyT+Muon
+DyT+AdamW
+Derf+Muon
+Derf+AdamW
+
+MLP weight
+144
+70
+156
+70
+
+Nonlinearity input std
+2.96
+1.92
+10.65
+1.76
+
+Saturated (%)
+27%
+12%
+79%
+9%
+
+FFN (init final)
+0.300.175
+0.300.40
+0.500.36
+0.500.44
+
+Table 10: DyT vs. Derf diagnostics at layer 15, step 999 (seed 42). Despite comparable Muon-driven weight growth, DyT has far lower saturation because tanh has a wider useful regime and DyT’s adapts more aggressively.
+
+Appendix F 125M Results
+
+Run
+Steps
+Val Loss
+Muon grad norm
+
+RMSNorm+Muon
+999
+3.79
+0.066
+
+RMSNorm+AdamW
+999
+3.89
+n/a
+
+DyT+Muon ()
+999
+4.38
+0.089
+
+Derf+Muon ()
+186∗
+6.07
+0.184
+
+Table 11: Exploratory 125M pilot results. DyT+Muon shows a moderate gap (0.59) at 125M; at 1B, DyT+Muon gap narrows to 0.22 (Table 1), consistent with DyT scaling better than Derf under Muon. ∗Derf+Muon terminated by dataset timeout, not divergence, so the 125M pilot is not used to draw scale-dependent conclusions about the Derf interaction.
+
+Appendix G Muon LR Probe
+
+Muon LR
+RMSNorm
+Derf
+Derf gap
+
+0.02
+3.321
+4.271
+0.950
+
+0.01
+3.379
+3.656
+0.277
+
+0.005
+3.577
+3.954
+0.377
+
+Table 12: Muon LR probe (val loss at step 1000; single seed s42). Lowering LR from 0.02 to 0.01 reduces the Derf gap, consistent with slower weight growth producing less saturation. The non-monotonic 0.005 result reflects undertraining.
+
+Appendix H Additional Figures
+
+Figure 5: Per-layer diagnostics at step 340 of the main 1000-step seed-42 runs. Saturation, weight growth, and erf input magnitude increase with depth. For EMA-blend, the saturation panel uses post-blend saturation of the actual erf argument. Muon drives the vanilla Derf metrics higher than AdamW, while EMA-blend decouples weight growth from erf input.
+
+Figure 6: Norm output variance by layer at step 340 of the main 1000-step seed-42 runs. Derf+AdamW and EMA-blend lines begin at layer because earlier layers have variance , below the plotted range. Counterintuitively, Derf+Muon has the highest variance among Derf configs (0.94 at L15). This is not because it preserves information, but because 80% saturation pushes outputs to , a bimodal distribution with high variance but substantially reduced representational resolution.
+
+Figure 7: erf saturation at layer 15 over 1000 training steps. Derf+Muon saturates rapidly and stays at . Derf+AdamW peaks at around step 50 then recedes as AdamW’s adaptive dampens growth, evidence that AdamW also fights Derf’s saturation, but wins the fight. For EMA-blend (labeled “post-blend”), we plot saturation of the actual erf argument after blending; it falls below 10% once converges and reaches by late training.
+
+Figure 8: Gap trajectories (1000-step cosine schedule). Left: Derf+Muon’s gap widens monotonically and plateaus. Right: EMA-blend’s gap peaks at 0.53 around step (before converges) then narrows. Both trends are partially confounded with cosine decay.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

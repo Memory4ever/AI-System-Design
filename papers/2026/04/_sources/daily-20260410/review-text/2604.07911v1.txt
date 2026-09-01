@@ -1,0 +1,1801 @@
+Dynamic Attentional Context Scoping:Agent-Triggered Focus Sessions forIsolated Per-Agent Steering in Multi-Agent LLM Orchestration
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+The context pollution problem.
+
+The DACS mechanism.
+
+Contributions.
+
+2 Related Work
+
+Single-turn context compression.
+
+Retrieval and cache bloat.
+
+Context pollution in tool-heavy agents.
+
+Multi-agent orchestration context management.
+
+Summary.
+
+3 Dynamic Attentional Context Scoping (DACS)
+
+3.1 Entities and Notation
+
+3.2 Orchestrator State Machine
+
+3.3 The SteeringRequest Protocol
+
+3.4 Context Builder
+
+3.5 Complexity Analysis
+
+Registry mode context size.
+
+Focus mode context size.
+
+Efficiency ratio.
+
+4 Experimental Setup
+
+4.1 Harness Design
+
+LLM backend.
+
+4.2 Conditions
+
+DACS.
+
+Baseline (flat context).
+
+4.3 Task Suite
+
+Phase 1 — Agent count scaling (RQ1, RQ2).
+
+Phase 2 — Agent diversity (RQ3).
+
+Phase 3 — Decision density scaling (RQ4).
+
+4.4 Metrics
+
+Metric validation.
+
+4.5 Procedure
+
+5 Results: Phases 1–3
+
+5.1 Phase 1: Agent Count Scaling
+
+5.2 Phase 2: Agent Diversity
+
+Homogeneous agents (s4).
+
+Maximum diversity (s5).
+
+Adversarial cascade (s6).
+
+5.3 Phase 3: Decision Density Scaling
+
+RQ4: Decision density amplifies the baseline’s degradation.
+
+5.4 Cumulative View
+
+6 Phase 4: Real-Agent Validation
+
+6.1 Motivation
+
+6.2 Setup
+
+Scenarios.
+
+LLMAgent.
+
+Evaluation.
+
+6.3 Results
+
+6.4 The Contamination Gap
+
+7 Discussion
+
+7.1 Why DACS Works
+
+7.2 Why High Decision Density Hurts the Baseline
+
+7.3 Relation to Hierarchical Routing
+
+7.4 Limitations
+
+Benchmark scope.
+
+Scripted agent scope (mitigated by Phase 4).
+
+Model coverage.
+
+Interrupt handling not experimentally isolated.
+
+7.5 Future Work
+
+8 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.07911v1 [cs.MA] 09 Apr 2026
+
+Dynamic Attentional Context Scoping:
+
+Agent-Triggered Focus Sessions for
+
+Isolated Per-Agent Steering in Multi-Agent LLM Orchestration
+
+Nickson Patel
+
+Affiliation: Independent Researcher
+
+Email: nicksonpatel@gmail.com
+
+Abstract
+
+Multi-agent LLM orchestration systems suffer from context pollution:
+when concurrent agents compete for the orchestrator’s context window,
+each agent’s task state, partial outputs, and pending questions contaminate
+the steering interactions of every other agent, degrading decision quality.
+We introduce Dynamic Attentional Context Scoping (DACS), a
+mechanism in which the orchestrator operates in two asymmetric modes.
+In Registry mode it holds only lightweight per-agent status
+summaries ( tokens each), remaining responsive to all agents
+and the user.
+When an agent emits a SteeringRequest, the orchestrator enters
+Focus mode, injecting the full context of agent
+while compressing all other agents to their registry entries.
+Context isolation is agent-triggered, asymmetric, and deterministic:
+the context window contains exactly during steering,
+eliminating cross-agent contamination without requiring context
+compression or retrieval.
+We evaluate DACS across four experimental phases totalling 200 trials:
+Phase 1 tests agents (60 trials);
+Phase 2 tests agent heterogeneity and adversarial dependency structures
+(60 trials);
+Phase 3 tests decision density scaling up to steering requests per
+agent (40 trials);
+Phase 4 replaces all scripted stubs with autonomous LLM agents generating
+free-form questions (40 trials, Claude Haiku 4.5).
+Across all 8 synthetic scenarios, DACS achieves – steering
+accuracy versus – for a flat-context baseline
+( throughout), with wrong-agent contamination falling from
+– to – and context efficiency ratios of up to
+.
+The accuracy advantage grows with both agent count () and decision
+density (), and keyword matching is validated by LLM-as-judge across
+all three synthetic phases (mean ).
+In Phase 4, all scripted stubs are replaced by autonomous LLM agents
+(Claude Haiku 4.5) generating free-form steering questions:
+DACS outperforms the flat-context baseline by  pp at
+() and  pp at (),
+with the advantage growing with confirmed by two independent judges.
+All code and data are released at
+github.com/nicksonpatel/dacs-agent-focus-mode.
+
+1 Introduction
+
+The deployment of LLMs as orchestrators managing multiple parallel agents
+has become a practical reality: systems such as Claude Code Agent
+Teams (Anthropic, 2025), OpenCode (Anomaly, 2025), and
+production multi-agent platforms (Zhang et al., 2025) demonstrate
+that complex long-horizon tasks can be decomposed across concurrent
+specialized agents.
+The common architectural choice is a single LLM instance (the
+orchestrator) that coordinates all agents, handles user
+interaction, and steers individual agents when they reach decision points.
+
+The context pollution problem.
+
+This architecture introduces a fundamental scaling problem.
+When agents run concurrently, each maintains its own task context:
+partial outputs, domain-specific state, pending decisions.
+In a flat-context orchestrator, all of these threads compete for space in
+a single context window.
+When agent requests steering—“should I use BFS or DFS for this
+graph traversal?”—the orchestrator’s context simultaneously holds ’s
+transformer attention survey, ’s CSV encoding problem, and so on.
+We call this context pollution: the systematic contamination of
+one agent’s steering interaction by irrelevant context from other agents.
+
+The consequences are measurable and severe.
+Prior work has documented context pollution in single-agent settings
+under tool overload (Sampath and Baskaran, 2025; Fei et al., 2025), under
+retrieval bloat (Kariyappa and Suh, 2025), and under long conversation
+histories (Cruz, 2024; Zhang et al., 2026).
+Our experiments show that in the multi-agent setting, a flat-context
+orchestrator’s steering accuracy collapses from 60% at to 21% at
+(Phase 1), and further degrades as agents become more diverse
+(Phase 2) or accumulate longer decision histories (Phase 3).
+
+The DACS mechanism.
+
+We propose Dynamic Attentional Context Scoping (DACS), which
+solves context pollution through agent-triggered asymmetric context
+isolation.
+DACS introduces two orchestrator modes:
+
+•
+
+Registry mode. The orchestrator holds only the
+registry , one compact status summary per
+agent ( tokens each).
+It monitors all agents, responds to the user, and queues incoming
+steering requests.
+
+•
+
+Focus mode. When agent emits a
+SteeringRequest, the orchestrator transitions to hold
+(the full context of : task description, prior steering exchanges,
+current partial output) plus a compressed version of
+(registry summaries for all agents except ).
+The context window contains exactly what is needed to steer ,
+and nothing from any other agent’s task thread.
+
+The key properties of DACS that distinguish it from prior context
+management approaches are:
+
+1.
+
+Agent-triggered. Context isolation fires when an agent
+needs it, not on every turn or at task-decomposition time.
+
+2.
+
+Asymmetric. The steered agent gets full fidelity;
+all others get compressed summaries.
+
+3.
+
+Exact, not approximate. No scoring function, no fidelity
+tiering (Cruz, 2024; Jiang et al., 2025), no probabilistic compression: the
+context is deterministically constructed as .
+
+4.
+
+Sub-linear in and . Focus context size is
+independent of the number of other agents; only the compressed registry
+grows with (by tokens per additional agent in our
+experiments). Accuracy is also stable as decision density increases.
+
+Contributions.
+
+1.
+
+We formally define the DACS mechanism: the Registry/
+Focus state machine, the SteeringRequest protocol,
+and the context builder invariants (§3).
+
+2.
+
+We implement a minimal, fully observable orchestration harness
+(300 lines) where every token entering each LLM call is logged,
+enabling strict experimental control (§4).
+
+3.
+
+We show large, statistically significant accuracy gains across
+Phase 1 ( scaling), Phase 2 (agent diversity and adversarial
+dependencies), and Phase 3 (decision density scaling), together
+answering four distinct research questions (§5).
+
+4.
+
+We independently validate the keyword matching metric with
+LLM-as-judge evaluations across Phases 2 and 3 (Phase 2: ;
+Phase 3: mean ), confirming that reported advantage sizes
+are robust (§5).
+
+5.
+
+We validate beyond the scripted benchmark with Phase 4: two
+real-agent experiments (40 trials, Claude Haiku 4.5, free-form questions)
+showing DACS outperforms the baseline by  pp and  pp at
+and respectively, with the advantage growing with
+(§6).
+
+6.
+
+We identify sub-linear context scaling as the mechanism’s key
+theoretical property, explain its source, and discuss conditions under
+which it holds (§7).
+
+2 Related Work
+
+Context management for LLM agents has been studied at three levels of
+granularity: single-agent memory across turns, single-agent tool/retrieval
+bloat, and multi-agent orchestration.
+DACS addresses a problem at the third level that existing work at the
+first two levels does not reach.
+
+Single-turn context compression.
+
+AFM (Cruz, 2024) assigns per-message fidelity tiers
+(Full/Compressed/Placeholder) based on a composite recency-relevance score
+and packs messages greedily under a token budget.
+It achieves 83.3% constraint-recall on its benchmark, validating that
+structured fidelity management outperforms naive truncation.
+ACE (Zhang et al., 2026) treats the agent’s context as an evolving playbook
+of itemized bullets with utility counters, using incremental delta updates
+to avoid context collapse (they observe a 18,282-token context collapsing
+to 122 tokens under iterative rewriting, dropping accuracy below the
+no-adaptation baseline).
+Both AFM and ACE operate within a single agent’s context history.
+Neither addresses concurrent agents competing for an orchestrator
+context window, and neither models wrong-agent contamination as a failure
+mode.
+
+Retrieval and cache bloat.
+
+SideQuest (Kariyappa and Suh, 2025) frames KV cache compression as an
+auxiliary task solved by the LRM itself, achieving 65% peak token
+reduction on single-agent deep research tasks.
+Lemon Agent (Jiang et al., 2025) applies three-tier progressive compression
+(full → compressed → summary) to a shared orchestrator context over task
+time in an orchestrator-worker system.
+Both treat context as a resource to compress; neither introduces asymmetric
+isolation triggered by an agent’s request.
+
+Context pollution in tool-heavy agents.
+
+Adaptive Orchestration (Sampath and Baskaran, 2025) identifies context pollution
+and attention decay as failure modes in monolithic agents loaded with too
+many tools, and proposes spawning specialist sub-agents (DMoE) to offload
+capability.
+CodeDelegator (Fei et al., 2025) separates planner and executor
+roles via Ephemeral-Persistent State Separation (EPSS): a persistent
+Delegator never receives execution traces; each Coder sub-task starts with
+a clean context.
+Both solve context pollution architecturally (at task decomposition
+time) for sequential delegation to one sub-agent at a time.
+DACS solves it dynamically at runtime, during the steering
+interaction itself, for agents running simultaneously.
+The distinction matters: CodeDelegator’s Delegator has no mechanism for
+handling the case where multiple concurrent Coders simultaneously need
+steering.
+
+Multi-agent orchestration context management.
+
+AOI (Bai et al., 2024) introduces a three-layer memory architecture for
+multi-agent IT operations, with a central Context Compressor transforming
+raw agent outputs into a compressed cache.
+Its Observer agent always holds a compressed aggregate of all
+agent activity simultaneously; there is no per-agent isolation.
+Agents execute and report results; they cannot signal the orchestrator
+for steering attention, and wrong-agent contamination is not modelled
+(AOI’s failure mode is information loss from operational data volume).
+AgentOrchestra (Zhang et al., 2025) achieves SOTA on GAIA (89.04%)
+via hierarchical delegation: a planning agent routes sub-tasks to
+domain-specific sub-agents, bounding the planner’s context footprint by
+converting global coordination into localized routing decisions.
+The paper explicitly notes that flat coordination “tends to accumulate
+irrelevant context”—independent validation of the problem DACS solves.
+However, hierarchical routing is a structural (pre-execution) partial
+solution: it reduces how much context enters the orchestrator, but
+agents still request the orchestrator’s attention concurrently at runtime,
+and the orchestrator has one flat context window for those interactions.
+DACS and AgentOrchestra are complementary: AgentOrchestra reduces the
+initial context volume; DACS controls what the orchestrator holds at the
+moment of each steering decision.
+AdaptOrch (Yu, 2025) formalizes topology selection as the
+dominant performance variable as frontier LLMs converge, showing
+–pp gains on SWE-bench/GPQA/HotpotQA from topology-aware
+routing.
+AdaptOrch makes one topology decision per task; DACS makes repeated
+context-switch decisions throughout execution.
+
+Summary.
+
+No prior work implements agent-triggered asymmetric Registry/
+Focus mode switching for per-agent context isolation in
+concurrent multi-agent orchestration.
+Table 1 summarises the key distinctions.
+
+Table 1: Comparison of context management mechanisms.
+
+System
+concurrent
+Asym. mode switch
+Agent-triggered
+Contamination metric
+
+AFM
+×
+×
+×
+×
+
+ACE
+×
+×
+×
+×
+
+AOI
+✓
+×
+×
+×
+
+AgentOrchestra
+✓
+×
+×
+×
+
+AdaptOrch
+✓
+×
+×
+×
+
+CodeDelegator
+×
+×
+×
+×
+
+Adaptive Orch.
+×
+×
+×
+×
+
+Lemon Agent
+✓
+×
+×
+×
+
+DACS (ours)
+✓
+✓
+✓
+✓
+
+3 Dynamic Attentional Context Scoping (DACS)
+
+3.1 Entities and Notation
+
+Let denote the orchestrator LLM, the set
+of concurrently running agents, and the context window token
+budget.
+Each agent has an associated focus context
+, the full set of information the orchestrator needs to steer
+: task description, previous steering exchanges between and
+, and ’s current partial output summary.
+
+The registry is a set of compact status
+snapshots, one per agent.
+Each entry contains:
+
+agent_id
+identifier
+
+task
+task description ( tokens)
+
+status
+Running Blocked Waiting Complete
+
+last_output_summary
+tokens
+
+urgency
+Low Medium High
+
+Target budget per entry: tokens.
+Full registry size for : tokens, leaving ample space for .
+
+3.2 Orchestrator State Machine
+
+The orchestrator operates as an explicit finite-state machine with three states:
+
+Registry.
+
+holds only.
+It monitors all agents, responds to user messages, and processes
+incoming SteeringRequests from the queue.
+
+Focus.
+
+holds and a compressed view
+of (all registry entries except ’s, since ’s full
+context is already in ).
+steers and cannot accept new steering requests until the
+focus session ends.
+
+UserInteract.
+
+responds to a user message using
+only (same as Registry mode, but explicitly user-facing).
+Queued steering requests are not processed until this state exits.
+
+Transitions:
+
+Registry
+
+(1)
+
+(2)
+
+(3)
+
+Registry
+
+(4)
+
+Transition (3) (the interrupt protocol) allows a
+high-urgency agent to preempt an active focus session.
+On interrupt, the current partial steering state for is saved and
+a new focus context for is built.
+After is steered, the orchestrator returns to Registry
+and resumes ’s interrupted session if it is still pending.
+
+3.3 The SteeringRequest Protocol
+
+When agent reaches a decision point it cannot resolve autonomously,
+it emits:
+
+⬇
+SteeringRequest {
+
+agent_id: str
+
+context: str -- relevant context excerpt
+
+question: str -- specific decision needed
+
+blocking: bool -- is a_i halted?
+
+urgency: LOW | MEDIUM | HIGH
+
+}
+
+High urgency can interrupt an active focus session
+(transition (3)).
+Medium requests queue; the agent continues on a default path.
+Low requests are batched.
+
+3.4 Context Builder
+
+The context builder constructs the orchestrator’s prompt before each LLM
+call.
+It enforces a hard token budget deterministically (token count is
+checked and enforced before every call; the LLM provider is never relied
+upon for truncation).
+
+build_focus_context.
+
+Returns .
+If , registry entries for lower-urgency
+agents are progressively truncated until the budget is met.
+’s focus context is never truncated.
+
+build_registry_context.
+
+Returns in full.
+Used during Registry and UserInteract modes.
+
+Invariants enforced by the context builder:
+
+1.
+
+is never simultaneously in Focus mode for more than
+one agent.
+
+2.
+
+User messages are never dropped; they are queued during
+Focus and processed on the next Registry entry.
+
+3.
+
+is always current within the last agent heartbeat (agents push
+a compact status update after each step).
+
+4.
+
+holds before every LLM call without exception.
+
+3.5 Complexity Analysis
+
+Let denote the average focus context size (task-dependent, independent
+of ) and the average registry entry size ( tokens).
+
+Registry mode context size.
+
+, growing linearly in .
+However, this mode is lightweight: the orchestrator makes no costly
+steering decisions here, only monitoring and routing.
+
+Focus mode context size.
+
+.
+The focus context is independent of .
+Only the compressed registry of agents adds tokens.
+For large and small (our target design point), this is
+approximately where .
+
+In Phase 1 experiments, – tokens per agent and
+tokens, giving ,
+empirically confirmed: 561 tokens at , 633 at , 816 at
+( tokens/agent, ).
+
+In Phase 3 (high decision density, ), grows with the
+accumulated steering history, yielding
+tokens, higher than Phase 1 in absolute terms, but isolated to exactly
+’s history.
+The flat baseline accumulates all agents’ histories simultaneously,
+reaching 6,573 tokens (2.39 ratio).
+
+Efficiency ratio.
+
+.
+As , – at our
+design point.
+Empirically, grows from 2.12 () to 3.53
+() in Phase 1, and reaches 3.24 at in Phase 3.
+
+4 Experimental Setup
+
+4.1 Harness Design
+
+We implement a minimal Python orchestration harness (300 lines
+across src/) with full context observability: every token
+entering each LLM call is logged to a .jsonl trial file.
+This is the central experimental variable.
+We use no external orchestration framework (LangGraph, CrewAI, etc.);
+their context assembly internals would add uncontrolled noise.
+
+The harness has four components:
+registry.py (per-agent state management),
+protocols.py (SteeringRequest/Response dataclasses),
+context_builder.py (token-counted context construction),
+orchestrator.py (state machine + LLM call dispatch).
+
+LLM backend.
+
+Phases 1–3 use MiniMax-M2.7 via an Anthropic-compatible API endpoint
+(context window 204,800 tokens).
+Phase 4 uses Claude Haiku 4.5 via OpenRouter (agents and orchestrator both
+use the same model, maintaining a single-model stack with no confound from
+model differences within each phase).
+Within each phase, DACS and the baseline use the identical model and endpoint.
+
+4.2 Conditions
+
+DACS.
+
+Orchestrator operates with full Registry/
+Focus mode switching as described in §3.
+
+Baseline (flat context).
+
+All agents’ full contexts are
+injected simultaneously into every steering call.
+The baseline uses the identical code path as DACS, with the single
+difference that build_focus_context is replaced by
+build_flat_context (concatenates all ).
+No other differences.
+
+4.3 Task Suite
+
+We design 8 scenarios across three experimental phases,
+each with known-correct answers defined per decision point.
+Correctness is evaluated by keyword matching: a steering response scores
+correct if it contains expected ground-truth keyword for agent
+’s current decision point.
+Each agent’s correct-answer keywords are domain-specific and orthogonal
+to all other agents; cross-agent vocabulary leakage is unambiguous.
+
+Phase 1 — Agent count scaling (RQ1, RQ2).
+
+Three canonical scenarios vary with
+decisions per agent.
+
+•
+
+s1_n3 (): Code writer (BST), research agent
+(transformer attention survey), data processor (CSV encoding).
+15 steering interactions per trial.
+
+•
+
+s2_n5 (): Above three plus graph algorithm agent
+(BFS/DFS) and RL survey agent.
+15 steering interactions per trial.
+
+•
+
+s3_n10 (): Above five plus federated learning,
+e-commerce churn, LRU cache, LLM alignment, and clinical trial
+pre-processing agents.
+30 steering interactions per trial.
+
+Phase 2 — Agent diversity (RQ3).
+
+Three scenarios probe whether the DACS advantage generalises across
+agent heterogeneity structures, including an adversarial case.
+
+•
+
+s4_n3_homogeneous (): Three agents from the
+same domain (algorithm coding: red-black tree, open-addressing hash
+table, directed weighted graph).
+Minimal-contamination case: DACS must help even when domains share
+vocabulary.
+
+•
+
+s5_n5_crossfire (): Five maximally diverse
+domains: lock-free C++ queue, diffusion model survey, genomics VCF
+ETL, C++ memory-leak debugger, clinical trial methodology.
+Guaranteed vocabulary disjointness maximises the contamination signal.
+
+•
+
+s6_n5_cascade (): Five pipeline-dependent
+agents (planner retrieval ranking feature store
+reviewer in a recommendation system).
+Adversarial for DACS: the flat baseline may benefit from seeing all
+agents’ histories simultaneously when outputs depend on each other.
+
+Phase 3 — Decision density scaling (RQ4).
+
+Two scenarios fix low but raise substantially to probe whether
+DACS advantage compounds with decision history depth.
+
+•
+
+s7_n5_dense_d2 (, 40 total steering
+interactions): Five diverse agents: async web scraper, federated
+learning survey, fraud detection pipeline, flaky-test debugger,
+distributed cache TDD.
+Doubles Phase 1’s at fixed .
+
+•
+
+s8_n3_dense_d3 (, 45 total steering
+interactions): Three agents: BERT legal-text classifier training loop,
+clinical trial hypothesis testing, post-quantum cryptography
+whitepaper.
+Quintuples Phase 1’s at fixed , the most decision-history-
+intensive scenario tested.
+
+4.4 Metrics
+
+Steering accuracy.
+
+For each steering interaction, we check whether the orchestrator’s
+response contains the expected ground-truth keywords for agent .
+Score: fraction of interactions with correct keyword hit, averaged
+across all steering interactions in the trial.
+
+Wrong-agent contamination.
+
+For each steering response targeting , we check whether the
+response contains ground-truth keywords for any , .
+Score: fraction of interactions with cross-agent keyword leakage.
+
+Context size at steering.
+
+Token count of the orchestrator’s context window at the moment the
+steering LLM call is made.
+Logged directly from the context builder.
+
+Metric validation.
+
+Keyword matching is validated at two stages via independent LLM-as-judge
+evaluations using the same MiniMax-M2.7 model.
+In Phase 2 all 400 decisions in s5_n5_crossfire were judged:
+agreement 98.0% (); Cohen’s (near-perfect).
+For Phase 3 we ran a stratified judge pass on both dense scenarios:
+100 sampled decisions from s8_n3_dense_d3 (50 DACS  50 baseline)
+and 200 from s7_n5_dense_d2 (100 DACS  100 baseline).
+Agreement: 95.0% () for s8; 97.0% () for s7;
+mean across both Phase 3 scenarios.
+All four judge evaluations () establish keyword matching
+as a valid proxy for LLM-judged correctness across the full experiment series.
+
+4.5 Procedure
+
+We run 10 independent trials per condition per scenario.
+Phases 1–3 span 160 trials (60 Phase 1, 60 Phase 2, 40 Phase 3);
+Phase 4 adds 40 real-agent trials (200 total).
+Each trial uses a fresh agent instantiation with randomised task parameter
+order. Phase 3 and Phase 4 trials were run in parallel background processes
+to exploit concurrent API capacity; file writes to the shared summary CSV
+are protected by fcntl advisory locking to prevent corruption.
+Phases 1–3 results are written to results/summary.csv;
+Phase 4 results to results_real_agent_haiku/;
+both include per-trial .jsonl logs for full context-window audit.
+
+5 Results: Phases 1–3
+
+5.1 Phase 1: Agent Count Scaling
+
+Table 2: Phase 1 results: steering accuracy, contamination, and context
+size across .
+Values are mean SE over 10 trials.
+: DACS minus baseline.
+Ctx ratio: baseline mean / DACS mean.
+
+Cond.
+Accuracy
+Contamination
+Ctx (tok)
+acc
+Ctx ratio
+
+3
+DACS
+
+pp
+
+Baseline
+
+5
+DACS
+
+pp
+
+Baseline
+
+10
+DACS
+
+pp
+
+Baseline
+
+Table 2 shows Phase 1 results.
+DACS significantly outperforms the flat-context baseline at every
+(, Welch’s -test: at , at
+, at ).
+The accuracy gap grows monotonically: pp (), pp
+(), pp (), while baseline accuracy collapses from
+60% to 21%.
+DACS context grows from 561 to 816 tokens ( tokens/agent,
+); baseline grows from 1,191 to 2,883 tokens.
+The efficiency ratio increases at every step: 2.12, 2.72, .
+The elevated DACS contamination at (, SE) reflects
+keyword vocabulary overlap rather than genuine context leakage: Phase 1
+answer keywords include generic terms (e.g., list, set,
+deep) that surface naturally in any technical response regardless
+of isolation.
+The large SE confirms this is incidental rather than systematic.
+Phase 2 scenarios were explicitly designed with disjoint vocabularies,
+eliminating this measurement confounder.
+
+Figure 1: DACS vs. flat-context baseline across
+(Phase 1).
+Error bars: SE (10 trials each).
+(a) Steering accuracy.
+(b) Wrong-agent contamination.
+(c) Average context tokens at steering time.
+
+5.2 Phase 2: Agent Diversity
+
+Table 3: Phase 2 results across homogeneous, crossfire, and cascade
+scenarios.
+Each cell: mean SE over 10 trials.
+
+Scenario
+Cond.
+Accuracy
+Contamination
+Ctx (tok)
+acc
+Ctx ratio
+
+s4 homogeneous ()
+DACS
+
+pp
+
+Baseline
+
+s5 crossfire ()
+DACS
+
+pp
+
+Baseline
+
+s6 cascade (, adversarial)
+DACS
+
+pp
+
+Baseline
+
+Table 3 answers RQ3 (does the advantage generalise
+across agent heterogeneity?): DACS wins in all three cases by large
+margins ( throughout).
+
+Homogeneous agents (s4).
+
+Even when all three agents share the same domain vocabulary (algorithm
+coding), DACS achieves pp accuracy.
+Same-domain sharing reduces baseline contamination relative to Phase 1
+heterogeneous scenarios (44% vs. 57%), but the flat context’s
+inability to focus on the current decision point still causes baseline
+accuracy to fall to 52.5%.
+
+Maximum diversity (s5).
+
+The crossfire scenario is DACS’s best case: five domains with
+guaranteed vocabulary disjointness.
+DACS achieves 96.0% accuracy with 0.0% contamination.
+The 59.0 pp gap is the second-largest observed across all experiments.
+Notably, 5 of 8 disagreements in the LLM-as-judge validation
+(§4.4) arise in the baseline condition of this
+scenario: contaminated responses that accidentally contain a keyword
+from the correct domain while addressing a different agent’s task.
+This demonstrates that keyword false positives in the baseline
+condition are themselves evidence of the contamination mechanism, and
+that reported baseline accuracy is if anything a slight overestimate.
+
+Adversarial cascade (s6).
+
+The cascade scenario is designed to challenge DACS: agents produce
+outputs that downstream agents depend on, so the flat baseline might
+benefit from knowing all agents’ histories.
+DACS wins by pp despite this. The flat context does not
+help the baseline orchestrator; it still conflates agent contexts at
+steering time.
+DACS contamination in s6 (7.3%) is elevated relative to other
+scenarios: the legitimate cross-agent references in a pipeline
+(e.g., “retrieval service decided on BM25”) cause some controlled
+vocabulary bleed. Nevertheless, accuracy is dominant.
+
+Figure 2 visualises all three metrics for the
+heterogeneity scenarios and shows that contamination suppression under
+DACS remains robust in both homogeneous and maximally diverse settings.
+
+Figure 2: Phase 2 (agent diversity) results across s4 homogeneous,
+s5 crossfire, and s6 cascade.
+Error bars: SE (10 trials each).
+(a) Steering accuracy.
+(b) Wrong-agent contamination.
+(c) Average context tokens at steering time.
+
+5.3 Phase 3: Decision Density Scaling
+
+Table 4: Phase 3 results: high-density decision scenarios.
+= decisions per agent per trial.
+Values are mean SE over 10 trials.
+
+Scenario
+Cond.
+Accuracy
+Contamination
+Ctx (tok)
+acc
+Ctx ratio
+
+s7 ()
+DACS
+
+pp
+
+Baseline
+
+s8 ()
+DACS
+
+pp
+
+Baseline
+
+Table 4 answers RQ4 (does the advantage scale with
+decision density?): yes. Both scenarios show large, highly significant
+gains (, for s7; ,
+for s8).
+
+Figure 3 shows that high decision density increases
+baseline context burden sharply while DACS remains comparatively stable,
+preserving both accuracy and contamination control.
+
+Figure 3: Phase 3 (decision density scaling) results for s7 () and s8 ().
+Error bars: SE (10 trials each).
+(a) Steering accuracy.
+(b) Wrong-agent contamination.
+(c) Average context tokens at steering time.
+
+RQ4: Decision density amplifies the baseline’s degradation.
+
+Table 5 tracks the N=3 and N=5 trajectories across all
+three phases as increases.
+
+Table 5: DACS advantage as a function of decisions per agent ,
+holding fixed. Accuracy delta and context efficiency ratio grow
+as increases for the baseline; DACS accuracy is stable.
+
+Phase
+Scenario
+
+DACS acc
+Baseline acc
+
+Ctx ratio
+
+1
+s1_n3
+3
+
+96.7%
+60.0%
+pp
+
+2
+s4_n3_homog.
+3
+4
+90.2%
+52.5%
+pp
+
+3
+s8_n3_dense_d3
+3
+15
+98.4%
+44.2%
+pp
+
+1
+s2_n5
+5
+
+96.7%
+38.7%
+pp
+
+2
+s5_n5_crossfire
+5
+4
+96.0%
+37.0%
+pp
+
+3
+s7_n5_dense_d2
+5
+8
+94.0%
+34.8%
+pp
+
+At , pushing from 3 to 15 drops baseline accuracy from 60.0%
+to 44.2%, a 15.8 pp decline, while DACS accuracy rises slightly
+(96.7% 98.4%).
+The accuracy delta jumps from pp to pp, a 17.5 pp
+increase attributable entirely to decision history depth.
+At , baseline accuracy falls moderately (38.7% 34.8% as
+doubles), while DACS stays near 94–96%.
+The context efficiency ratio reaches for s7, the highest
+recorded for , confirming that flat-context token costs grow with
+accumulated steering history while DACS costs only reflect the current
+agent’s history.
+
+DACS’s accuracy improvement with depth (98.4% at vs. 96.7%
+at ) is consistent with the mechanism design: at high , the
+focus context contains a richer per-agent history, giving the
+orchestrator more signal to make accurate steering decisions.
+The flat baseline cannot exploit this signal; it is buried under all
+other agents’ equally long histories.
+
+5.4 Cumulative View
+
+Table 6: All 8 scenarios across three phases.
+DACS accuracy is consistently high (90.0–98.4%); baseline collapses
+under agent count and decision density pressure.
+
+Phase
+Scenario
+
+DACS
+Baseline
+
+1
+s1_n3
+3
+3
+96.7%
+60.0%
+pp
+
+1
+s2_n5
+5
+3
+96.7%
+38.7%
+pp
+
+1
+s3_n10
+10
+3
+90.0%
+21.0%
+pp
+
+2
+s4_n3_homogeneous
+3
+4
+90.2%
+52.5%
+pp
+
+2
+s5_n5_crossfire
+5
+4
+96.0%
+37.0%
+pp
+
+2
+s6_n5_cascade
+5
+3
+94.0%
+56.7%
+pp
+
+3
+s7_n5_dense_d2
+5
+8
+94.0%
+34.8%
+pp
+
+3
+s8_n3_dense_d3
+3
+15
+98.4%
+44.2%
+pp
+
+Across all 8 scenarios and 160 trials (Table 6), DACS
+accuracy ranges –.
+The minimum DACS advantage is pp; the maximum is pp.
+DACS has never lost to the flat-context baseline in any scenario.
+The results answer all four research questions:
+RQ1 (Does DACS outperform the baseline?): yes, in all 8
+scenarios at .
+RQ2 (Does the advantage grow with ?): yes, from
+pp at to pp at .
+RQ3 (Does the advantage hold across agent heterogeneity?):
+yes, including the adversarial cascade scenario.
+RQ4 (Does decision density amplify the advantage?): yes,
+pp increase in the delta as quintuples at .
+
+6 Phase 4: Real-Agent Validation
+
+6.1 Motivation
+
+Phases 1–3 use scripted agent stubs: each “agent” emits pre-defined
+steering questions at pre-defined steps, providing exact experimental
+control but raising the obvious question of ecological validity.
+Do the results hold when agents are actual LLMs generating their own
+reasoning and questions?
+Phase 4 answers this with a controlled robustness check: we re-run the
+and scenarios with all stubs replaced by autonomous LLM
+agents, keeping the orchestrator, harness, and evaluation protocol
+identical.
+The goal is not to supersede Phases 1–3 (the scripted harness enables
+causal isolation that real agents cannot provide), but to confirm that
+the DACS advantage is not an artefact of the controlled evaluation regime.
+Two independent experimental paradigms pointing in the same direction are
+stronger than one perfect paradigm.
+
+6.2 Setup
+
+Scenarios.
+
+Two scenarios mirror their Phase 1 counterparts:
+ra1_n3 (: BST implementation, transformer attention survey,
+CSV pre-processing) mirrors s1_n3;
+ra2_n5 (: the above plus graph BFS/DFS/cycle-detection and
+RL policy-gradient survey) mirrors s2_n5.
+Both conditions ran 10 DACS and 10 baseline trials (40 total),
+with results written to per-trial .jsonl logs as in Phases 1–3.
+
+LLMAgent.
+
+Each agent runs an independent LLM conversation loop (Claude Haiku 4.5
+via OpenRouter; the orchestrator also uses Haiku, keeping a single-model
+stack).
+Agents emit a [[STEER: …]] marker whenever they need
+orchestrator guidance; the harness intercepts this via regex and routes it
+through the standard SteeringRequest protocol, identical to how
+scripted stubs inject requests.
+Agents may emit at most three steering requests per task, running for at
+most 12 LLM steps.
+Crucially, question text is the agent’s own free-form reasoning:
+it is not templated, varies in length and vocabulary across trials, and
+may be incomplete or imprecise, a harder evaluation regime than the
+scripted keywords admit.
+Both scenarios required agents to consult the orchestrator on each
+labelled decision category before emitting [[DONE]], achieving
+100% rubric coverage in both conditions and all 20 trials per scenario.
+
+Evaluation.
+
+Because questions are free-form, keyword matching alone is insufficient
+for the Phase 4 judge.
+We use an LLM-as-judge approach with two independent judge models:
+Claude Haiku 4.5 and GPT-4o-mini.
+Each judge receives (i) the actual question the agent asked,
+(ii) the orchestrator’s full response, and
+(iii) a per-rubric judge_context string describing the correct
+decision rationale.
+The judge emits a <verdict>CORRECT|INCORRECT</verdict> verdict.
+Running two judges allows us to check whether reported effects are
+evaluator-specific.
+Scenarios ra1_n3 and ra2_n5 define 9 and 15 rubric slots per trial
+(3 and 5 agents 3 rubrics each), yielding 180 and 300 judged
+decisions per condition pair across 10 trials.
+
+6.3 Results
+
+Table 7: Phase 4 results: real-agent -scaling validation.
+Agents are autonomous LLMs (Claude Haiku 4.5) generating free-form
+steering questions.
+Two independent judges shown.
+Phase 1 rows reproduce Table 2 values for cross-paradigm
+comparison.
+Welch’s -test significance on per-trial Haiku-judge accuracy.
+
+Scenario
+
+M1 Haiku Judge
+M1 GPT-4o-mini
+M3 Avg Ctx Tok
+
+DACS
+Base
+DACS
+Base
+DACS
+Base
+
+Phase 4 — real agents (LLMAgent, Claude Haiku 4.5, 10 trials each)
+
+ra1_n3
+3
+79.8%
+62.6%
+85.4%
+67.7%
+654
+1,361
+0.0023 **
+
+ra2_n5
+5
+83.7%
+63.3%
+89.7%
+68.2%
+799
+2,275
+0.0008 ***
+
+Phase 1 synthetic stubs (for comparison; values from Table 2)
+
+s1_n3
+3
+96.7%
+60.0%
+—
+—
+561
+1,191
+0.0001 ***
+
+s2_n5
+5
+96.7%
+38.7%
+—
+—
+633
+1,720
+0.0001 ***
+
+Figure 4: Phase 4 real-agent vs. Phase 1 synthetic results at matched
+.
+(a) M1 steering accuracy (Haiku judge) for DACS and baseline across
+both paradigms.
+(b) M3 average context tokens at steering time.
+Error bars: SE (10 trials per condition).
+DACS advantage direction and growth with are consistent across
+paradigms; absolute accuracy is lower under real agents due to the
+harder free-form question regime.
+
+Table 7 and Figure 4 show four
+findings that replicate and extend the Phases 1–3 results.
+
+(F1) DACS significantly outperforms the baseline in
+both real-agent scenarios.
+The Haiku judge records  pp at () and
+ pp at ().
+Both results are independently confirmed by GPT-4o-mini ( pp and
+ pp respectively), ruling out evaluator-specific artefacts.
+
+(F2) The advantage grows with , consistent with
+Phase 1.
+At DACS leads by  pp; at by  pp.
+The same monotonic growth was observed in Phase 1
+( pp at ,  pp at ,  pp at
+), confirming that context isolation becomes more valuable
+as the number of concurrent agents grows, regardless of whether those
+agents are scripted or autonomous.
+
+(F3) Context efficiency is preserved.
+DACS context at is tokens vs. baseline
+(); at , vs. ().
+The ratio grows with , again consistent with Phases 1–3.
+
+(F4) Absolute accuracy under real agents is lower,
+as expected.
+Real-agent DACS reaches 79.8–83.7% vs. 96.0–96.7% for scripted
+stubs.
+This is the expected cost of the harder regime: agents produce irregular,
+sometimes incomplete questions that do not always map cleanly to rubrics,
+and keyword matching at 99.2% (DACS) is not the binding constraint.
+The LLM judges capture these partial answers, lowering recorded accuracy
+relative to the synthetic benchmark.
+Critically, the relative advantage is present and significant in
+both paradigms.
+
+6.4 The Contamination Gap
+
+The most striking divergence between Phase 4 and Phases 1–3 is in M2
+contamination.
+In the synthetic experiments DACS contamination is near-zero
+(–, the upper end driven entirely by vocabulary overlap
+artefacts).
+In Phase 4, DACS contamination is at and at
+.
+
+The explanation is the nature of real agent outputs.
+During a Focus session the registry entries for all other
+agents are present as compact summaries (e.g.,
+“a2: RUNNING, transformer survey, 3/5 steps done”).
+A verbose model like Haiku tends to contextualise its advice using these
+registry labels: “unlike a2’s retrieval task, your BST inorder walk
+benefits from…”
+This cross-reference is a helpful grounding behaviour in a real
+system: the orchestrator is showing it understands which agent it is
+addressing, but it trips the M2 binary detector, which flags any response
+containing another agent’s ID.
+This is a measurement artefact, not a fidelity failure.
+
+Evidence: under DACS, M1 (decision quality) is significantly higher than
+the baseline despite the elevated M2 reading.
+Under the baseline, M2 approaches ceiling in both scenarios (95.8%),
+compared to 54.5% and 52.0% for matching synthetic scenarios, a
+– pp increase consistent with the baseline’s flat-context
+exposure causing genuine cross-agent vocabulary bleed into every response,
+not just registry citations.
+
+This gap points to two directions for future work.
+First, the DACS SteeringRequest format could be tightened:
+requiring agents to submit structured requests (“agent_id”,
+“decision_type”, “question”) rather than free text would constrain
+how the orchestrator contextualises its response, reducing
+incidental cross-references.
+Second, a richer contamination metric (e.g., tracking whether
+cross-agent vocabulary appears in the decision clause of the
+response rather than in framing or context) would separate harmful
+leakage from helpful grounding in real-agent deployments.
+
+7 Discussion
+
+7.1 Why DACS Works
+
+The mechanism’s effectiveness follows directly from what it removes from
+the context window.
+In the flat baseline, when asks “should I use recursive or
+iterative traversal for my BST inorder walk?”, the context simultaneously
+holds a research agent’s detailed transformer attention analysis and a
+data processor’s CSV encoding problem, containing domain keywords
+(“attention”, “heads”, “encoding”, “UTF-8”) that have nothing to
+do with the correct answer.
+The LLM anchors its response to whichever content pattern captures its
+attention, an effect we measure as both inaccuracy and contamination.
+
+DACS removes this anchor competition entirely.
+In Focus mode, the context contains ’s task
+description and steering history plus compact status lines for other
+agents (“a2: RUNNING, transformer survey, 3/5 steps done”).
+The correct-answer vocabulary dominates the context by construction.
+
+7.2 Why High Decision Density Hurts the Baseline
+
+Phase 3 reveals a compounding mechanism.
+As grows, the flat context accumulates not just agents’
+current states but their full steering histories.
+At , a 3-agent flat context holds 45 steering interaction pairs,
+each injecting domain vocabulary that drowns out the signal for the
+current decision.
+DACS’s focus context at holds only ’s 15-interaction
+history (precisely the relevant signal) plus three compact registry
+lines for the other agents.
+The result is that DACS accuracy at (98.4%) exceeds its
+accuracy at (96.7%): more history in the focus
+context is additive signal, not noise.
+
+7.3 Relation to Hierarchical Routing
+
+DACS is orthogonal to hierarchical agent architectures
+(AgentOrchestra (Zhang et al., 2025),
+AdaptOrch (Yu, 2025)).
+Hierarchical routing reduces how many agent threads reach the
+orchestrator at all.
+DACS controls what the orchestrator holds in its context at each
+steering moment during execution.
+A production system could combine both: hierarchical routing limits the
+active agent pool, and DACS ensures that within that pool, each steering
+interaction is isolated.
+
+7.4 Limitations
+
+Benchmark scope.
+
+The task suite uses keyword matching to evaluate steering accuracy.
+This is conservative (multi-word phrases and paraphrases are not captured)
+and may produce false-positive contamination detections when domains share
+vocabulary.
+LLM-as-judge validation across Phases 2 and 3 confirms metric validity:
+Phase 2 ; Phase 3 s8 ; Phase 3 s7
+(mean , all well above the
+“substantial agreement” threshold).
+Phase 4 uses LLM judges as the primary metric throughout, avoiding
+keyword matching for free-form agent questions entirely.
+
+Scripted agent scope (mitigated by Phase 4).
+
+Phases 1–3 agent stubs simulate decision points with pre-defined timing
+and question templates.
+Phase 4 (§6) directly addresses this: all stubs are
+replaced by autonomous LLM agents (Claude Haiku 4.5), and the M1 accuracy
+advantage replicates in both conditions (DACS  pp at ,
+;  pp at , ; confirmed by
+GPT-4o-mini), confirming that DACS’s benefits are not an artefact of
+the scripted harness.
+The remaining gap is that Phase 4 covers only at low
+decision density () and one agent model family (Haiku).
+Generalisation to , high , and other model families remains
+open future work.
+M2 contamination is less discriminative with real agents because
+chatty LLMs reference registry-provided agent IDs in focus-mode
+responses (see §6.4); M1 remains the primary quality
+indicator for real-agent deployments.
+
+Model coverage.
+
+Phases 1–3 use MiniMax-M2.7 (context window 204,800 tokens);
+Phase 4 uses Claude Haiku 4.5 via OpenRouter.
+The consistent DACS advantage across two distinct model families provides
+initial evidence of model-family independence, but generalisation to
+smaller context budgets, instruction-tuned models with different attention
+characteristics, or proprietary frontier models (GPT-4o, Claude Opus)
+has not been tested.
+
+Interrupt handling not experimentally isolated.
+
+The interrupt protocol (transition (3)) was exercised naturally in
+experiments but not ablated independently.
+
+7.5 Future Work
+
+•
+
+Full LLM-as-judge pass for Phase 3. The current judge
+validation used stratified samples (100 decisions from s8, 200 from s7).
+A full pass over all 900 decisions in s8_n3_dense_d3 would provide
+complete coverage and tighter estimates.
+
+•
+
+Phase 4 at and high . Phase 4 covers only
+at , mirroring Phase 1.
+Extending to and to the high-density regime ()
+would close the remaining ecological-validity gap for the full
+Phase 1–3 design space.
+
+•
+
+Contamination metric refinement. The binary agent-ID
+mention detector (M2) conflates helpful registry grounding
+(“unlike a2’s task…”) with genuine decision-level leakage.
+A clause-level metric that fires only when cross-agent vocabulary
+appears in the decision clause, not the framing, would provide a
+cleaner real-agent contamination signal.
+Tighter SteeringRequest formatting (structured fields rather
+than free text) would also reduce incidental cross-references.
+
+•
+
+User responsiveness. Measure latency from user message
+to orchestrator response under DACS vs. baseline at varying and
+queue depth.
+
+•
+
+Very high . Extend Phase 3 to
+to probe where, if anywhere, DACS accuracy degrades as per-agent
+history grows very large.
+
+•
+
+Cross-model generalisation. Test with agent and
+orchestrator models beyond Haiku and MiniMax-M2.7 (e.g., GPT-4o-mini
+as agent, Claude Opus as orchestrator) to probe whether the advantage
+holds under different attention and instruction-following profiles.
+
+8 Conclusion
+
+We presented DACS, a dynamic attentional context scoping mechanism that
+solves context pollution in multi-agent LLM orchestration through
+agent-triggered asymmetric focus sessions.
+The mechanism is exact (not approximate), sub-linear in agent count, and
+compatible with existing orchestration architectures.
+
+Across 160 synthetic trials in 8 scenarios spanning three phases,
+DACS achieves – steering accuracy versus –
+for the flat-context baseline, reduces wrong-agent contamination from
+– to –, and exhibits growing context efficiency
+(2.12–3.53) as increases.
+The advantage is robust to agent heterogeneity (Phase 2), holds even in
+pipeline-dependent adversarial scenarios, and compounds with
+decision density (Phase 3): quintupling from 3 to 15 causes baseline
+accuracy to fall by 15.8 pp while DACS accuracy is unchanged or improves.
+Phase 4 validates the core result beyond the scripted benchmark:
+two real-agent experiments (ra1_n3 and ra2_n5, 40 trials total,
+10 DACS 10 baseline each) replace all stubs with autonomous LLM
+agents (Claude Haiku 4.5) generating free-form steering questions:
+DACS 79.8% vs. baseline 62.6% at ( pp, );
+DACS 83.7% vs. baseline 63.3% at ( pp, ).
+Both results are independently confirmed by GPT-4o-mini.
+The advantage grows with in the real-agent setting ( pp),
+mirroring the synthetic scaling trend.
+Absolute accuracy is lower than with scripted stubs, reflecting the
+harder free-form regime, but the direction and significance of the
+DACS effect are unambiguous across both experimental paradigms.
+
+The core contribution is demonstrating that what is in the
+orchestrator’s context window at the moment of steering is the
+dominant variable for multi-agent steering accuracy, not model size,
+not topology, not memory compression, and that a simple, deterministic
+mode-switch mechanism suffices to control it effectively across a
+wide range of agent counts, diversity structures, and decision densities.
+
+References
+
+Anomaly (2025)
+Anomaly
+
+OpenCode: the open source coding agent.
+
+External Links: Link
+
+Cited by: §1.
+
+Anthropic (2025)
+Anthropic
+
+Claude code agent teams.
+
+External Links: Link
+
+Cited by: §1.
+
+Bai et al. (2024)
+Z. Bai, J. Luo, Z. Ni, E. Ge, J. Shi, Y. Zhang, J. Gu, Z. Han, R. Bao, et al.
+
+AOI: context-aware multi-agent operations via dynamic scheduling and hierarchical memory compression.
+
+arXiv preprint arXiv:2512.13956.
+
+External Links: Link
+
+Cited by: §2.
+
+Cruz (2024)
+C. Cruz
+
+Adaptive focus memory for language models.
+
+arXiv preprint arXiv:2511.12712.
+
+External Links: Link
+
+Cited by: item 3,
+§1,
+§2.
+
+Fei et al. (2025)
+T. Fei, C. Chen, Y. Pan, M. Zheng, and M. Song
+
+CodeDelegator: mitigating context pollution via role separation in code-as-action agents.
+
+arXiv preprint arXiv:2601.14914.
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+Jiang et al. (2025)
+H. Jiang, K. Ren, Z. Yin, Z. Sun, X. Gan, G. Lv, M. He, P. Wang, C. Yin, H. Pan, et al.
+
+Lemon agent technical report.
+
+arXiv preprint arXiv:2602.07092.
+
+External Links: Link
+
+Cited by: item 3,
+§2.
+
+Kariyappa and Suh (2025)
+S. Kariyappa and G. E. Suh
+
+SideQuest: model-driven KV cache management for long-horizon agentic reasoning.
+
+arXiv preprint arXiv:2602.22603.
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+Sampath and Baskaran (2025)
+S. Sampath and A. Baskaran
+
+Adaptive orchestration: scalable self-evolving multi-agent systems.
+
+arXiv preprint arXiv:2601.09742.
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+Yu (2025)
+G. Yu
+
+AdaptOrch: task-adaptive multi-agent orchestration in the era of LLM performance convergence.
+
+arXiv preprint arXiv:2602.16873.
+
+External Links: Link
+
+Cited by: §2,
+§7.3.
+
+Zhang et al. (2026)
+Q. Zhang, C. Hu, S. Upasani, B. Ma, F. Hong, V. Kamanuru, J. Rainton, C. Wu, et al.
+
+ACE: agentic context engineering: evolving contexts for self-improving language models.
+
+arXiv preprint arXiv:2510.04618.
+
+External Links: Link
+
+Cited by: §1,
+§2.
+
+Zhang et al. (2025)
+W. Zhang, L. Zeng, Y. Xiao, Y. Li, C. Cui, Y. Zhao, R. Hu, Y. Liu, Y. Zhou, et al.
+
+AgentOrchestra: orchestrating multi-agent intelligence with the tool-environment-agent (TEA) protocol.
+
+arXiv preprint arXiv:2506.12508.
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§7.3.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

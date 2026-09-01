@@ -1,0 +1,1463 @@
+SCOPE: Signal-Calibrated On-Policy Distillation Enhancement with Dual-Path Adaptive Weighting
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Preliminary Analysis
+
+2.1 Diversity Degradation
+
+The Pass@ Paradox.
+
+2.2 Rectification Inefficiency
+
+The Flawed Prefix Trap.
+
+3 Methodology
+
+3.1 Outcome-Driven Group Branching
+
+On-Policy Surrogate Formulation.
+
+3.2 Dual-Perspective Adaptive Weighting
+
+Student-guided Weight: Amplifying “Unconventional Valid Paths”.
+
+Teacher-guided Weight: Filtering Out “Context-Induced Noise”.
+
+3.3 The Overall SCOPE Objective
+
+4 Experiment
+
+4.1 Experimental Setup
+
+Training Settings and Baselines.
+
+Evaluation Benchmarks and Metrics.
+
+Implementation Details.
+
+4.2 Main Results
+
+Performance on Mathematical Reasoning.
+
+Training Dynamics.
+
+Pass@ Performance.
+
+4.3 Ablation Study
+
+Effectiveness of DPAW Mechanism.
+
+4.4 Computational Cost
+
+5 Related Work
+
+5.1 Reinforcement Learning with Verified Rewards
+
+5.2 Knowledge Distillation
+
+6 Conclusion
+
+References
+
+A Experimental Details
+
+Training Infrastructure.
+
+Hyperparameter Configuration
+
+B Impact of Weight Temperature.
+
+C Preliminary Experiment
+
+D Case Study
+
+Analysis
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.10688v1 [cs.LG] 12 Apr 2026
+
+SCOPE: Signal-Calibrated On-Policy Distillation Enhancement with Dual-Path Adaptive Weighting
+
+Binbin Zheng
+††thanks: Equal contribution.††thanks: Work done during an internship at Meituan.
+Affiliation: University of Science and Technology of China
+
+Email: binbinzheng@mail.ustc.edu.cn
+
+  
+Xing Ma
+††thanks: Corresponding author.
+Email: maxing08@meituan.com
+
+  
+Yiheng Liang
+
+  
+Jingqing Ruan
+
+  
+Xiaoliang Fu
+
+Affiliation: Meituan, Beijing, China, Nanjing University, Fudan University
+
+  
+Kepeng Lin
+
+Affiliation: Huazhong University of Science and Technology
+
+  
+Benchang Zhu
+
+  
+Ke Zeng
+
+  
+Xunliang Cai
+
+Abstract
+
+On-policy reinforcement learning has become the dominant paradigm for reasoning alignment in large language models, yet its sparse, outcome-level rewards make token-level credit assignment notoriously difficult.
+On-Policy Distillation (OPD) alleviates this by introducing dense, token-level KL supervision from a teacher model, but typically applies this supervision uniformly across all rollouts, ignoring fundamental differences in signal quality.
+We propose Signal-Calibrated On-Policy Distillation Enhancement (SCOPE), a dual-path adaptive training framework that routes on-policy rollouts by correctness into two complementary supervision paths.
+For incorrect trajectories, SCOPE performs teacher-perplexity-weighted KL distillation to prioritize instances where the teacher demonstrates genuine corrective capability, while down-weighting unreliable guidance.
+For correct trajectories, it applies student-perplexity-weighted MLE to concentrate reinforcement on low-confidence samples at the capability boundary rather than over-reinforcing already mastered ones.
+Both paths employ a group-level normalization to adaptively calibrate weight distributions, accounting for the intrinsic difficulty variance across prompts.
+Extensive experiments on six reasoning benchmarks show that SCOPE achieves an average relative improvement of 11.42% in Avg@32 and 7.30% in Pass@32 over competitive baselines, demonstrating its consistent effectiveness. Our code is publicly available at https://github.com/machine981/SCOPE.git.
+
+1 Introduction
+
+In the reasoning alignment of large language models (LLMs), on-policy reinforcement learning has become the dominant paradigm, where the model samples rollouts and updates its policy based on outcome correctness (Guo et al., 2025; Shao et al., 2024; Yu et al., 2025).
+However, the sparse, outcome-level nature of these rewards makes token-level credit assignment notoriously difficult, often demanding massive iterations to converge Peng et al. (2026); Wei et al. (2025). On-Policy Distillation (OPD) alleviates this by introducing dense, token-level KL supervision from a teacher model on the student’s self-sampled rollouts Min et al. (2024); Fu et al. (2026b), striking a balance between distribution consistency and training efficiency.
+
+Despite its effectiveness, OPD assumes the teacher’s token-level supervision is uniformly reliable across rollouts (Ko et al., 2024; Agarwal et al., 2024; Fu et al., 2026b), problematic in two respects.
+(1) For incorrect trajectories, low teacher perplexity signifies a strong reasoning grasp, enabling reliable post-error guidance. Conversely, high perplexity indicates unfamiliarity, rendering the teacher’s token-level distribution an unreliable signal.
+Distillation must therefore prioritize teacher-confident instances. As shown in §2, low teacher perplexity strongly correlates with successful error recovery (Xiong et al., 2024; Kadavath et al., 2022), validating this perplexity as a proxy for genuine corrective capability.
+(2) For correct trajectories, teacher KL supervision risks suppressing valid alternative reasoning paths where the student diverges (Agarwal et al., 2024). While Maximum Likelihood Estimation (MLE) self-reinforcement is a natural alternative, equal-weight MLE disproportionately reinforces stably mastered samples (Zhu et al., 2025), marginalizing low-confidence instances at the capability boundary. Correct trajectories should thus be weighted adaptively by the student’s perplexity to maximize learning value.
+
+The above analysis reveals a shared structural flaw in standard OPD paradigms: the absence of signal quality awareness.
+For incorrect trajectories, they fail to distinguish reliable teacher guidance from unreliable supervision.
+For the correct ones, they treat all samples as equally valuable regardless of learning utility.
+Notably, the two paths require complementary weighting perspectives, with teacher perplexity applied to the former and student perplexity to the latter, motivating a unified framework that routes trajectories by correctness and applies adaptive weighting tailored to each scenario.
+
+To this end, we propose Signal-Calibrated On-Policy Distillation Enhancement (SCOPE), a dual-path adaptive training framework. SCOPE routes on-policy rollouts by correctness into two supervision paths. For incorrect trajectories, it performs selective KL distillation weighted by teacher perplexity, up-weighting instances where the teacher demonstrates genuine corrective capability. For correct trajectories, it applies weighted MLE based on the student’s perplexity, concentrating reinforcement on samples at the capability boundary. Both paths employ a normalization mechanism that adaptively calibrates the weight distribution within each group.
+
+Our main contributions are as follows:
+
+•
+
+Empirical analysis of signal quality heterogeneity in OPD:
+We uncover a previously overlooked quality variance in OPD supervision:
+teacher and student perplexity reliably predict corrective capability on
+incorrect trajectories and capability-boundary samples on correct ones,
+respectively.
+
+•
+
+The SCOPE dual-path adaptive framework: By routing rollouts based on correctness, SCOPE directs incorrect trajectories to teacher-perplexity-weighted OPD and correct trajectories to student-perplexity-weighted MLE, achieving signal-quality-aware supervision within a unified objective.
+
+•
+
+Extensive experimental validation: On six reasoning benchmarks, SCOPE achieves an average relative improvement of 11.42% in Avg@32 and 7.30% in Pass@32 over competitive baselines, demonstrating its consistent effectiveness.
+
+2 Preliminary Analysis
+
+Before presenting our framework, we conduct two empirical studies that reveal fundamental limitations of existing on-policy optimization paradigms: the degradation of reasoning diversity when optimizing successful trajectories, and the inefficiency of rectifying failed ones. These findings directly motivate the dual-path design of SCOPE.
+
+(a) Qwen2.5-7B (PSR)
+
+(b) Distill-Qwen-1.5B (OPD)
+
+(c) Recovery Rate of Teacher
+
+Figure 1: (a)/(b) Performance changes on the AIME24 benchmark before and after training. Both (a) PSR and (b) OPD enhance pass@1 at the expense of pass@32, highlighting a clear trade-off between accuracy and reasoning diversity. (c) Error recovery rate of the teacher model across varying truncation ratios, conditioned on truncated student error trajectories as prefixes.
+
+2.1 Diversity Degradation
+
+Uniformly reinforcing the student’s self-generated successful trajectories amplifies its dominant reasoning paths, marginalizing valid but low-probability alternatives Zhu et al. (2025); Li et al. (2025); Liang et al. (2025). Conversely, imposing dense teacher signal forces it to fit the teacher’s distribution strictly, thereby suppressing the student’s own valid and diverse explorations Yuan et al. (2025). Ultimately, both paradigms inevitably lead to severe mode collapse.
+
+The Pass@ Paradox.
+
+Zhu et al. (2025) report that uniformly reinforcing a model’s own correct answers (Positive Sample Reinforcement, PSR) on Qwen2.5-7B yields a stark paradox: Pass@1 improves, yet Pass@32 severely degrades from 93.7% to 84.9% (Figure 1(a)).
+We conduct a pilot study to test whether dense teacher supervision avoids this issue. Applying OPD on correct trajectories of DeepSeek-R1-Distill-Qwen-1.5B, we observe the same pattern: Pass@1 improves, but Pass@32 drops from 76.5% to 75.0% (Figure 1(b)). Both results confirm that uniform optimization of correct trajectories inevitably sharpens the policy toward dominant reasoning modes at the expense of diversity.
+The root cause is intuitive: among correct rollouts for the same prompt, some follow the dominant reasoning mode while others arrive at the answer through rare, unconventional paths. Uniform optimization treats them identically, over-reinforcing the former and extinguishing the latter. This calls for a weighting mechanism that distinguishes well-mastered solutions from under-explored ones, allocating stronger supervision to the latter to preserve diverse reasoning capabilities.
+
+2.2 Rectification Inefficiency
+
+When the model generates incorrect trajectories, its internal knowledge is flawed. Relying solely on the model’s self-exploration to find the correct path is highly inefficient in complex reasoning tasks. While introducing an external expert (a teacher policy) to provide corrective signals seems intuitive, the on-policy nature introduces a severe bottleneck: the teacher risks being conditioned on flawed prefixes generated by the weak student. If this self-generated context is logically broken, the teacher’s guidance degenerates into noise, rendering the rectification process highly inefficient and unstable.
+
+The Flawed Prefix Trap.
+
+To investigate the efficiency of external rectification on flawed on-policy student prefixes, we conduct an Error Recovery Experiment. Specifically, we sample 2,000 problems from the DeepMath dataset (He et al., 2025b) and generate reasoning trajectories using the student model (Distill-R1-Deepseek-Qwen-1.5B), filtering the incorrect ones. We then compute the perplexity of these flawed trajectories using the teacher model (Skywork-OR1-MATH-7B) and stratify them into distinct buckets based on their perplexity scores. Finally, we truncate these prefixes at various length ratios and evaluate the teacher model’s recovery accuracy when prompted to complete the generation ( more details and case study in appendix C).
+
+As shown in Figure 1(c), at every truncation level, prefixes that induce low teacher perplexity (Q1) consistently achieve substantially higher recovery rates than high-perplexity ones (Q4), with margins up to +19.4%.
+Furthermore, as the truncation level increases, the recovery rate drops precipitously across all groups, with even the best-performing group declining significantly to roughly 35% at the 80% truncation ratio. This reveals a critical mechanism: high teacher perplexity indicates severe context degradation, which disrupts the teacher’s reasoning and generates high-entropy noise. Learning from these regions renders rectification extremely inefficient. Conversely, low perplexity ensures that the prefix remains structurally coherent, allowing the teacher to provide sharp, high-quality corrective signals. This motivated our belief that efficient rectification requires down-weighting regions with high teacher perplexity to filter out misleading noise.
+
+Figure 2: (a) Standard OPD applies uniform supervision to all samples. (b) our SCOPE framework refines the learning process by first dividing trajectories into correct and incorrect sets, applying dual-path perplexity-based weighting, and finally optimizing the weighted branches via a unified objective.
+
+3 Methodology
+
+To overcome the severe degradation of reasoning diversity and the inherent inefficiency of prefix rectification mentioned above, we present SCOPE, a dual-path training framework. As illustrated in Figure 2, SCOPE routes on-policy rollouts based on trajectory outcomes, and filters out misleading teacher noise through perplexity-calibrated adaptive weighting. We first describe the outcome-driven trajectory branching (§3.1), then detail the dual-path weighting mechanism (§3.2), and finally formulate the overall objective (§3.3).
+
+3.1 Outcome-Driven Group Branching
+
+During the on-policy rollout, for each input prompt , the student model generates a group of responses, denoted as , where each response is a sequence of tokens . Each response is subsequently evaluated by a verifier to yield a binary reward . We utilize these binary rewards as a routing signal to explicitly partition the generated trajectories into two disjoint subsets: the correct set and the incorrect set .
+
+On-Policy Surrogate Formulation.
+
+To optimize the current policy using trajectories generated by the behavior policy , we correct for the distribution shift by defining the token-level importance sampling ratio:
+
+(1)
+
+Building upon this, we design two distinct surrogate objectives for the partitioned subsets:
+
+•
+
+Valid Trajectory Exploitation (): Correct trajectories provide direct, valid reasoning steps. Rather than relying on teacher guidance, we directly leverage these successful attempts. By maximizing their likelihood through the surrogate objective, we reinforce the model’s own capabilities:
+
+(2)
+
+•
+
+Flawed Trajectory Rectification (): Incorrect trajectories lack valid ground-truth targets. To enable effective rectification, we leverage the teacher policy to provide external guidance. The on-policy distillation objective minimizes the forward KL divergence by treating the token-level log-ratio as a penalty reward, yielding the following surrogate loss:
+
+(3)
+
+where denotes parameters detached from the computational graph.
+
+3.2 Dual-Perspective Adaptive Weighting
+
+To mitigate diversity degradation and improve rectification efficiency, we introduce a novel mechanism termed Dual-Perspective Adaptive Weighting (DPAW), which operates strictly within each prompt’s group. Let denote the sequence-level log-probability. To intuitively quantify the trajectory’s intrinsic uncertainty, we formulate our weighting mechanism using sequence perplexity (PPL), where .
+
+Student-guided Weight: Amplifying “Unconventional Valid Paths”.
+
+For correct trajectories (), we want the student model to focus on instances where it successfully reaches the correct outcome through low-probability, alternative routes. To assign higher weights to these low-confidence trajectories, we apply a group-relative softmax over the length-normalized negative log-probabilities. Using the sequence probability , the student-guided weight is computed as:
+
+(4)
+
+As shown in the rightmost term, this formulation elegantly reduces to a direct group-level normalization of the student’s perplexity (scaled by a temperature ). Thus, correct but high-perplexity samples naturally receive amplified supervision.
+
+Teacher-guided Weight: Filtering Out “Context-Induced Noise”.
+
+Conversely, for incorrect trajectories (), forcing the teacher to condition on severely flawed prefixes often leads to high-entropy noise (as demonstrated in Section 2.2). To prevent the student from inheriting this noise, we only trust the teacher when it provides highly confident corrections. Therefore, we apply the softmax directly over the teacher’s length-normalized positive log-probabilities:
+
+(5)
+
+By doing so, we selectively down-weight instances where the teacher exhibits high perplexity, effectively filtering out the noise induced by flawed prefixes.
+
+3.3 The Overall SCOPE Objective
+
+Finally, we integrate the outcome-driven branches and the adaptive weights into an overall objective over the dataset . The overall SCOPE loss is formulated as:
+
+(6)
+
+Within this framework, SCOPE adaptively calibrates supervision signals at the group level: it reinforces the student’s boundary capabilities on valid paths, while distilling only informative corrections from the teacher on flawed ones.
+
+4 Experiment
+
+4.1 Experimental Setup
+
+Training Settings and Baselines.
+
+In our experiments, we employ two policy (student) models of different sizes, DeepSeek-R1-Distill-Qwen-1.5B Guo et al. (2025) and Qwen3-1.7B-Base Yang et al. (2025), paired with SkyWork-OR1-Math-7B He et al. (2025a) and Qwen3-8B-Instruct Yang et al. (2025) as their teacher models, respectively. All models are trained on the DeepMath He et al. (2025b) dataset. We compare our SCOPE with several training baselines:
+
+•
+
+Group Relative Policy Optimization (GRPO) Shao et al. (2024):
+Optimizes the policy by generating multiple responses to the same prompt and applying group-relative advantages based on verified outcome rewards.
+
+•
+
+Knowledge Distillation (KD) Kim and Rush (2016):
+Trains the student model on fixed, offline datasets of output sequences
+generated by a more capable teacher model, using these sequences as
+hard training targets via supervised learning.
+
+•
+
+On-Policy Distillation (OPD) Lu and Lab (2025):
+Enhances policy learning by applying fine-grained, token-level KL divergence supervision from a teacher model directly on the student’s self-sampled trajectories.
+
+Evaluation Benchmarks and Metrics.
+
+To comprehensively assess the reasoning capabilities of our model, we measure its performance across a wide range of datasets, including MATH500 Hendrycks et al. (2021), AIME24 MAA (2024), AIME25 MAA (2025), AMC 2023 MAA (2023), Minerva Lewkowycz et al. (2022), and OlympiadBench He et al. (2024). Our evaluation employs two key metrics: Avg@32, which reflects the model’s expected stability, and Pass@32, which highlights its upper-bound capability.
+
+Table 1: Main results on mathematical reasoning benchmarks under different teacher–student configurations. We report Avg@32 (A@32) and Pass@32 (P@32) for each benchmark. Bold denotes the best performance and underlined the second-best.
+
+Model
+AIME24
+AIME25
+AMC23
+MATH500
+Minerva
+Olympiad
+Average
+
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+
+Teacher: SkyWork-OR1-Math-7B  Student: DeepSeek-R1-Distill-Qwen-1.5B
+
+R1-Distill-Qwen-1.5B
+29.4
+76.5
+23.9
+46.9
+72.7
+94.7
+84.6
+97.3
+32.3
+55.9
+44.2
+67.5
+47.9
+73.1
+
+w/ GRPO
+35.5
+68.3
+24.5
+45.1
+75.1
+95.0
+87.0
+96.7
+35.1
+53.5
+40.5
+67.7
+49.6
+71.1
+
+w/ KD
+26.6
+71.4
+22.2
+45.6
+69.1
+96.3
+84.1
+97.4
+30.7
+54.1
+39.7
+66.9
+45.4
+72.0
+
+w/ OPD
+40.2
+75.0
+28.9
+48.5
+75.9
+95.0
+89.0
+97.7
+34.9
+53.0
+44.9
+69.3
+52.3
+73.1
+
+w/ SCOPE (Ours)
+42.7
+77.9
+30.4
+50.9
+80.9
+97.2
+89.8
+97.9
+37.8
+55.1
+49.7
+70.9
+55.2
+75.0
+
+vs. OPD
++6.22%
++3.87%
++5.19%
++4.95%
++6.59%
++2.32%
++0.90%
++0.20%
++8.31%
++3.96%
++10.69%
++2.31%
++5.54%
++2.60%
+
+Teacher: Qwen3-8B-Instruct  Student: Qwen3-1.7B-Base
+
+Qwen3-1.7B-Base
+3.7
+26.7
+3.2
+20.7
+24.6
+69.4
+54.8
+88.6
+11.2
+41.6
+16.3
+48.0
+19.0
+49.2
+
+w/ GRPO
+7.5
+27.2
+4.2
+24.5
+33.1
+60.0
+62.9
+89.8
+25.3
+49.8
+25.9
+50.9
+26.5
+50.4
+
+w/ KD
+4.6
+18.9
+5.8
+24.8
+29.8
+66.1
+50.2
+86.2
+16.6
+43.2
+13.3
+41.4
+20.1
+46.8
+
+w/ OPD
+12.2
+31.5
+10.6
+29.7
+43.1
+80.1
+67.9
+90.7
+24.2
+49.4
+25.3
+53.7
+30.6
+55.9
+
+w/ SCOPE (Ours)
+13.3
+31.5
+12.1
+35.6
+46.3
+83.0
+70.9
+93.0
+27.9
+54.0
+24.6
+54.6
+32.5
+58.6
+
+vs. OPD
++9.02%
++0.00%
++14.15%
++19.87%
++7.42%
++3.62%
++4.42%
++2.54%
++15.29%
++9.31%
+-2.77%
++1.68%
++6.21%
++4.83%
+
+Implementation Details.
+
+During training, we employ a global batch size of 256, a maximum prompt length of 4,096 tokens, a completion length of 12,288 tokens, and a rollout temperature of , a weight temperature of . For evaluation, we report performance based on a rollout temperature of , top- sampling with , and a maximum response length of 32,768 tokens. Further training and evaluation details are provided in Appendix A.
+
+4.2 Main Results
+
+Performance on Mathematical Reasoning.
+
+Table 1 illustrates the evaluation results across six challenging mathematical reasoning benchmarks. Under the primary configuration (Teacher: SkyWork-OR1-Math-7B, Student: DeepSeek-R1-Distill-Qwen-1.5B), SCOPE consistently achieves best Avg@32 performance. Compared to strong baselines, SCOPE yields an average relative improvement of +5.54% over standard OPD, with notable gains of +10.69% on Olympiad and +6.59% on AMC23. These gains stem from our teacher-guided weighting, which adaptively penalizes high-perplexity failed trajectories to bypass the “flawed prefix trap” and thereby extract precise corrective signals.
+
+Furthermore, Pass@32 metrics demonstrate SCOPE’s unique capability to preserve reasoning diversity and overcome the Pass@ paradox, a challenge that is especially severe when optimizing raw base models. As shown in the bottom half of Table 1, experiments on the Qwen3-1.7B-Base architecture reveal that standard paradigms (e.g., GRPO, KD) drastically degrade the base model’s inherent exploration ability, indicating severe mode collapse. In stark contrast, SCOPE effectively prevents this degradation and significantly elevates the multi-sample pass rate. This breakthrough is attributed to our student-guided weighting, which actively amplifies “unconventional valid paths” by assigning higher weights to correct but high-perplexity trajectories. Ultimately, SCOPE successfully translates preserved exploration diversity into a higher upper bound of correct solutions across different model architectures.
+
+(a) Dynamics of Entropy Loss
+
+(b) Dynamics of AIME24 Avg@32
+
+(c) Dynamics of AIME25 Avg@32
+
+Figure 3: Training dynamics comparing GRPO, OPD, and SCOPE (Ours): (a) entropy loss across training steps, and Avg@32 (%) performance on (b) AIME24 and (c) AIME25.
+
+(a) Pass@ on AIME24
+
+(b) Pass@ on AIME25
+
+(c) Pass@ on AMC23
+
+Figure 4: Pass@ (%) performance comparison of GRPO, OPD, and SCOPE (Ours) on the AIME24, AIME25, and AMC23 benchmarks using the DeepSeek-R1-Distill-Qwen-1.5B model.
+
+Training Dynamics.
+
+Figure 3 illustrates the training dynamics of SCOPE alongside GRPO and OPD. Figure 3(a) reveals a stark contrast in entropy evolution. While GRPO exhibits continuous entropy decay (a direct driver of the Pass@k paradox via premature exploitation), both OPD and SCOPE sustain a healthy policy entropy. However, standard OPD plateaus because its uniform supervision fundamentally ignores signal quality.
+Benefiting from this dual-path calibration, SCOPE demonstrates superior robustness and sample efficiency (Figures 3b and c).
+While GRPO persistently underperforms due to its collapsed exploration space, and OPD plateaus from noisy distillation, SCOPE’s Avg@32 consistently dominates, confirming it successfully breaks the performance bottleneck by combining diversity-preserving exploration with quality-aware error rectification.
+
+Table 2: Ablation study on the dual-path adaptive weighting mechanism (DPAW) of SCOPE. We report Avg@32 (%) and Pass@32 (%) on AIME24 and AIME25.
+
+Method
+AIME24
+AIME25
+
+Avg@32
+Pass@32
+Avg@32
+Pass@32
+
+SCOPE (Ours)
+42.7
+77.9
+30.4
+50.9
+
+Ablation on Weighting Existence (Removing Weights)
+
+   w/o DPAW
+39.9
+76.5
+29.4
+45.7
+
+   w/o Student-guided Weight
+40.0
+74.1
+30.1
+50.2
+
+   w/o Teacher-guided Weight
+41.8
+77.2
+29.6
+48.6
+
+Ablation on Weighting Direction (Reversing Weights)
+
+   w/ Opposite Student-guided Weight
+40.5
+77.1
+29.6
+48.6
+
+   w/ Opposite Teacher-guided Weight
+38.6
+71.3
+30.1
+46.4
+
+Pass@ Performance.
+
+As illustrated in Figure 4, SCOPE significantly outperforms all baselines in Pass@ metrics across AIME24/25, and AMC23. Notably, standard methods such as GRPO and OPD suffer from the previously identified Pass@ paradox, which is particularly evident in the AIME24 evaluation. They exhibit restricted diversity scaling, where performance gains from multiple samples diminish or plateau at larger .
+In contrast, SCOPE actively amplifies unconventional valid paths at the capability boundary.
+Consequently, the model preserves multiple complementary reasoning routes, consistently improving pass rates over expanded sample sizes (up to ). These gains confirm that SCOPE enhances not only greedy generation for Pass@, but also the diverse coverage of reasoning modes. This aligns perfectly with our design.
+Ultimately, by keeping awareness of signal quality, this framework successfully translates preserved reasoning diversity into superior Pass@ scaling across challenging benchmarks.
+
+4.3 Ablation Study
+
+Effectiveness of DPAW Mechanism.
+
+To validate the efficacy of the Dual-Path Adaptive Weighting (DPAW) mechanism, we conduct a systematic ablation study on the AIME24/25 benchmarks, as shown in Table 2. Removing the entire DPAW module (w/o DPAW) results in severe performance degradation. For instance, the AIME25 Pass@32 drops significantly from 50.9% to 45.7%. This demonstrates that standard uniform weighting, which fundamentally ignores signal quality, fails to optimally leverage on-policy rollouts. Furthermore, omitting the student-guided weight (w/o Student-guided Weight) severely impairs multi-sample pass rates (e.g., AIME24 Pass@32 falls from 77.9% to 74.1%). Reversing its direction (w/ Opposite Student-guided Weight) similarly hurts performance. This corroborates our earlier analysis of the Pass@ paradox: actively amplifying unconventional valid paths at the capability boundary via student perplexity is essential for sustaining generation diversity and preventing mode collapse.
+
+Conversely, removing or reversing the teacher-guided weight compromises overall accuracy. Notably, reversing the teacher-guided weight causes a drastic drop in the AIME24 Avg@32 from 42.7% to 38.6%. This empirically verifies that dynamically penalizing unreliable teacher guidance effectively filters out context-induced hallucinations and noisy distillation signals. Collectively, these findings indicate that the two components of DPAW are highly complementary: the student-guided weighting maximizes exploration diversity on successful trajectories, while the teacher-guided weighting rigorously mitigates distillation noise on failed ones.
+
+4.4 Computational Cost
+
+We analyze the per-step wall-clock time of SCOPE against the two primary baselines, GRPO and OPD, to characterize the additional overhead introduced by our method. All experiments are conducted on the same configuration and timing statistics are collected over the stable training region.
+
+While the rollout generation time is comparable to GRPO, our approach incurs an additional time overhead primarily due to teacher model queries. Notably, we use a naive synchronous training architecture where rollout and teacher logprob acquisition time do not overlap. By implementing an asynchronous strategy, the training efficiency is expected to be comparable to that of GRPO. Furthermore, the computational overhead introduced by the weight calculation itself is minimal.
+
+Table 3: Per-step wall-clock time breakdown (seconds) for each training method. Values are means over the stable training region.
+
+Component
+GRPO
+OPD
+SCOPE (Ours)
+
+Rollout-N
+8
+1
+8
+
+Generation
+264.5
+164.5
+247.7
+
+Old Logprob
+34.0
+5.2
+31.4
+
+Reward Computation
+4.8
+0.7
+4.6
+
+Actor Update
+151.8
+22.9
+154.1
+
+Teacher Scoring
+—
+31.2
+200.0
+
+Total (step)
+459.0
+227.5
+641.9
+
+5 Related Work
+
+5.1 Reinforcement Learning with Verified Rewards
+
+Reinforcement learning with verified rewards (RLVR) has recently driven major advances in the reasoning capabilities of LLMs (Guo et al., 2025; Fu et al., 2026a; Yu et al., 2025), leveraging deterministic outcome verifiers in objective domains (e.g., mathematics and code generation) to provide unambiguous signals that prevent reward hacking and incentivize autonomous exploration (Bin Tarek and Beheshti, 2025; Dong et al., 2025).
+However, standard RLVR algorithms such as GRPO (Shao et al., 2024) rely on sparse, scalar outcome rewards dispensed only at the terminal step of long reasoning trajectories, severely exacerbating credit assignment (Peng et al., 2026; Wei et al., 2025) and depriving the model of granular process supervision (Hübotter et al., 2026).
+This difficulty is further amplified for smaller LLMs, whose limited representational capacity leaves less room for autonomous credit propagation (Xu et al., 2025; Ko et al., 2026).
+While Process Reward Models (PRMs) (Lightman et al., 2023; Cui et al., 2025) can offer step-wise feedback, they demand costly human annotation and generalize poorly across domains.
+This bottleneck motivates seeking dense, token-level supervision from capable teacher models through distillation.
+
+5.2 Knowledge Distillation
+
+Knowledge distillation (KD) (Hinton et al., 2015) has become a primary paradigm for transferring teacher capabilities to compact student LLMs, predominantly through token-level logit alignment (Gu et al., 2023; Agarwal et al., 2024; Jung et al., 2025).
+Off-policy KD trains on static teacher-generated trajectories (Guo et al., 2025; Yang et al., 2025) but inherently suffers from exposure bias and distribution mismatch (Agarwal et al., 2024; Hsieh et al., 2023).
+On-Policy Distillation (OPD) addresses this by optimizing student-sampled rollouts with teacher feedback via reverse KL divergence, yielding stronger convergence (Ko et al., 2024; Lu and Lab, 2025).
+Recent RL-KD hybrids further unify verified rewards with teacher supervision within a single training loop: KDRL (Xu et al., 2025) jointly optimizes reward and KL objectives, while RLAD (Zhang et al., 2026) and REOPOLD (Ko et al., 2026) inject teacher signals through dynamic reward shaping.
+Despite their progress, all these methods implicitly assume that teacher supervision is uniformly reliable across all rollouts, overlooking the fact that teachers can be confidently wrong on specific trajectories, turning indiscriminate distillation into a vehicle for confirmation bias propagation.
+This calls for a trajectory-level adaptive mechanism that differentiates supervision strategies based on both rollout correctness and signal reliability, which is precisely the design principle behind our proposed framework.
+
+6 Conclusion
+
+In this work, we proposed Signal-Calibrated On-Policy Distillation Enhancement (SCOPE), a dual-path adaptive training framework that introduces signal quality awareness into on-policy distillation.
+SCOPE routes rollouts by correctness into two complementary supervision paths: teacher-perplexity-weighted KL distillation for incorrect trajectories to prioritize reliable corrective guidance, and student-perplexity-weighted MLE for correct trajectories to reinforce under-explored reasoning paths at the capability boundary. A unified group-level normalization adaptively calibrates weight distributions across prompts of varying difficulty.
+Extensive experiments on six mathematical reasoning benchmarks show that SCOPE achieves an average relative improvement of 11.42% in Avg@32 and 7.30% in Pass@32 over competitive baselines, with consistent gains across all benchmarks and model configurations.
+
+References
+
+Agarwal et al. (2024)
+R. Agarwal, N. Vieillard, Y. Zhou, P. Stanczyk, S. R. Garea, M. Geist, and O. Bachem
+
+On-policy distillation of language models: learning from self-generated mistakes.
+
+In The twelfth international conference on learning representations,
+
+Cited by: §1,
+§5.2.
+
+Bin Tarek and Beheshti (2025)
+M. F. Bin Tarek and R. Beheshti
+
+Reward hacking mitigation using verifiable composite rewards.
+
+In Proceedings of the 16th ACM International Conference on Bioinformatics, Computational Biology, and Health Informatics,
+
+pp. 1–6.
+
+Cited by: §5.1.
+
+Cui et al. (2025)
+G. Cui, L. Yuan, Z. Wang, H. Wang, Y. Zhang, J. Chen, W. Li, B. He, Y. Fan, T. Yu, et al.
+
+Process reinforcement through implicit rewards.
+
+arXiv preprint arXiv:2502.01456.
+
+Cited by: §5.1.
+
+Dong et al. (2025)
+G. Dong, L. Bao, Z. Wang, K. Zhao, X. Li, J. Jin, J. Yang, H. Mao, F. Zhang, K. Gai, et al.
+
+Agentic entropy-balanced policy optimization.
+
+arXiv preprint arXiv:2510.14545.
+
+Cited by: §5.1.
+
+Fu et al. (2026a)
+X. Fu, J. Lin, Y. Fang, B. Zheng, C. Hu, Z. Shao, C. Qin, L. Pan, K. Zeng, and X. Cai
+
+MASPO: unifying gradient utilization, probability mass, and signal reliability for robust and sample-efficient llm reasoning.
+
+arXiv preprint arXiv:2602.17550.
+
+Cited by: §5.1.
+
+Fu et al. (2026b)
+Y. Fu, H. Huang, K. Jiang, Y. Zhu, and D. Zhao
+
+Revisiting on-policy distillation: empirical failure modes and simple fixes.
+
+arXiv preprint arXiv:2603.25562.
+
+Cited by: §1,
+§1.
+
+Gu et al. (2023)
+Y. Gu, L. Dong, F. Wei, and M. Huang
+
+Minillm: knowledge distillation of large language models.
+
+arXiv preprint arXiv:2306.08543.
+
+Cited by: §5.2.
+
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al.
+
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning.
+
+Nature 645 (8081), pp. 633–638.
+
+Cited by: §1,
+§4.1,
+§5.1,
+§5.2.
+
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, et al.
+
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 3828–3850.
+
+Cited by: §4.1.
+
+He et al. (2025a)
+J. He, J. Liu, C. Y. Liu, R. Yan, C. Wang, P. Cheng, X. Zhang, F. Zhang, J. Xu, W. Shen, et al.
+
+Skywork open reasoner 1 technical report.
+
+arXiv preprint arXiv:2505.22312.
+
+Cited by: §4.1.
+
+He et al. (2025b)
+Z. He, T. Liang, J. Xu, Q. Liu, X. Chen, Y. Wang, L. Song, D. Yu, Z. Liang, W. Wang, et al.
+
+Deepmath-103k: a large-scale, challenging, decontaminated, and verifiable mathematical dataset for advancing reasoning.
+
+arXiv preprint arXiv:2504.11456.
+
+Cited by: §2.2,
+§4.1.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+
+Measuring mathematical problem solving with the math dataset.
+
+arXiv preprint arXiv:2103.03874.
+
+Cited by: §4.1.
+
+Hinton et al. (2015)
+G. Hinton, O. Vinyals, and J. Dean
+
+Distilling the knowledge in a neural network.
+
+arXiv preprint arXiv:1503.02531.
+
+Cited by: §5.2.
+
+Hsieh et al. (2023)
+C. Hsieh, C. Li, C. Yeh, H. Nakhost, Y. Fujii, A. Ratner, R. Krishna, C. Lee, and T. Pfister
+
+Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes.
+
+In Findings of the Association for Computational Linguistics: ACL 2023,
+
+pp. 8003–8017.
+
+Cited by: §5.2.
+
+Hübotter et al. (2026)
+J. Hübotter, F. Lübeck, L. Behric, A. Baumann, M. Bagatella, D. Marta, I. Hakimi, I. Shenfeld, T. K. Buening, C. Guestrin, et al.
+
+Reinforcement learning via self-distillation.
+
+arXiv preprint arXiv:2601.20802.
+
+Cited by: §5.1.
+
+Jung et al. (2025)
+S. Jung, S. Yoon, D. Kim, and H. Lee
+
+Todi: token-wise distillation via fine-grained divergence control.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 8089–8102.
+
+Cited by: §5.2.
+
+Kadavath et al. (2022)
+S. Kadavath, T. Conerly, A. Askell, T. Henighan, D. Drain, E. Perez, N. Schiefer, Z. Hatfield-Dodds, N. DasSarma, E. Tran-Johnson, et al.
+
+Language models (mostly) know what they know.
+
+arXiv preprint arXiv:2207.05221.
+
+Cited by: §1.
+
+Kim and Rush (2016)
+Y. Kim and A. M. Rush
+
+Sequence-level knowledge distillation.
+
+In Proceedings of the 2016 conference on empirical methods in natural language processing,
+
+pp. 1317–1327.
+
+Cited by: 2nd item.
+
+Ko et al. (2026)
+J. Ko, S. Abdali, Y. J. Kim, T. Chen, and P. Cameron
+
+Scaling reasoning efficiently via relaxed on-policy distillation.
+
+arXiv preprint arXiv:2603.11137.
+
+Cited by: §5.1,
+§5.2.
+
+Ko et al. (2024)
+J. Ko, S. Kim, T. Chen, and S. Yun
+
+Distillm: towards streamlined distillation for large language models.
+
+arXiv preprint arXiv:2402.03898.
+
+Cited by: §1,
+§5.2.
+
+Lewkowycz et al. (2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, et al.
+
+Solving quantitative reasoning problems with language models.
+
+Advances in neural information processing systems 35, pp. 3843–3857.
+
+Cited by: §4.1.
+
+Li et al. (2025)
+L. Li, Z. Zhou, J. Hao, J. K. Liu, Y. Miao, W. Pang, X. Tan, W. Chu, Z. Wang, S. Pan, et al.
+
+The choice of divergence: a neglected key to mitigating diversity collapse in reinforcement learning with verifiable reward.
+
+arXiv preprint arXiv:2509.07430.
+
+Cited by: §2.1.
+
+Liang et al. (2025)
+X. Liang, Z. Li, Y. Gong, Y. Shen, Y. N. Wu, Z. Guo, and W. Chen
+
+Beyond pass@ 1: self-play with variational problem synthesis sustains rlvr.
+
+arXiv preprint arXiv:2508.14029.
+
+Cited by: §2.1.
+
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+
+Let’s verify step by step.
+
+In The twelfth international conference on learning representations,
+
+Cited by: §5.1.
+
+Lu and Lab (2025)
+K. Lu and T. M. Lab
+
+On-policy distillation.
+
+Thinking Machines Lab: Connectionism.
+
+Note: https://thinkingmachines.ai/blog/on-policy-distillation
+
+External Links: Document
+
+Cited by: 3rd item,
+§5.2.
+
+MAA (2023)
+MAA
+
+American mathematics competitions - amc.
+
+Note: Accessed: 2023
+
+Cited by: §4.1.
+
+MAA (2024)
+MAA
+
+American invitational mathematics examination - aime.
+
+Note: Accessed: 2024
+
+Cited by: §4.1.
+
+MAA (2025)
+MAA
+
+American invitational mathematics examination - aime.
+
+Note: Accessed: 2025
+
+Cited by: §4.1.
+
+Min et al. (2024)
+Y. Min, Z. Chen, J. Jiang, J. Chen, J. Deng, Y. Hu, Y. Tang, J. Wang, X. Cheng, H. Song, et al.
+
+Imitate, explore, and self-improve: a reproduction report on slow-thinking reasoning systems.
+
+arXiv preprint arXiv:2412.09413.
+
+Cited by: §1.
+
+Peng et al. (2026)
+J. Peng, Y. Liu, R. Zhou, C. Fleming, Z. Wang, A. Garcia, and M. Hong
+
+HiPER: hierarchical reinforcement learning with explicit credit assignment for large language model agents.
+
+arXiv preprint arXiv:2602.16165.
+
+Cited by: §1,
+§5.1.
+
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+
+arXiv preprint arXiv:2402.03300.
+
+Cited by: §1,
+1st item,
+§5.1.
+
+Wei et al. (2025)
+Q. Wei, S. Zeng, C. Li, W. Brown, O. Frunza, W. Deng, A. Schneider, Y. Nevmyvaka, Y. K. Zhao, A. Garcia, et al.
+
+Reinforcing multi-turn reasoning in llm agents via turn-level reward design.
+
+arXiv preprint arXiv:2505.11821.
+
+Cited by: §1,
+§5.1.
+
+Xiong et al. (2024)
+M. Xiong, Z. Hu, X. Lu, Y. Li, J. Fu, J. He, and B. Hooi
+
+Can llms express their uncertainty.
+
+An empirical evaluation of confidence elicitation in LLMs. arXiv 2306.
+
+Cited by: §1.
+
+Xu et al. (2025)
+H. Xu, Q. Zhu, H. Deng, J. Li, L. Hou, Y. Wang, L. Shang, R. Xu, and F. Mi
+
+Kdrl: post-training reasoning llms via unified knowledge distillation and reinforcement learning.
+
+arXiv preprint arXiv:2506.02208.
+
+Cited by: §5.1,
+§5.2.
+
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §4.1,
+§5.2.
+
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al.
+
+Dapo: an open-source llm reinforcement learning system at scale.
+
+arXiv preprint arXiv:2503.14476.
+
+Cited by: §1,
+§5.1.
+
+Yuan et al. (2025)
+X. Yuan, Y. Ding, Y. Bin, W. Shao, J. Cai, J. Song, Y. Yang, and H. T. Shen
+
+More than one teacher: adaptive multi-guidance policy optimization for diverse exploration.
+
+arXiv preprint arXiv:2510.02227.
+
+Cited by: §2.1.
+
+Zhang et al. (2026)
+Z. Zhang, S. Jiang, Y. Shen, Y. Zhang, D. Ram, S. Yang, Z. Tu, W. Xia, and S. Soatto
+
+Reinforcement-aware knowledge distillation for llm reasoning.
+
+arXiv preprint arXiv:2602.22495.
+
+Cited by: §5.2.
+
+Zhu et al. (2025)
+X. Zhu, M. Xia, Z. Wei, W. Chen, D. Chen, and Y. Meng
+
+The surprising effectiveness of negative reinforcement in llm reasoning.
+
+arXiv preprint arXiv:2506.01347.
+
+Cited by: §1,
+§2.1,
+§2.1.
+
+Appendix A Experimental Details
+
+Training Infrastructure.
+
+All experiments were conducted on a high-performance distributed cluster using a total of 20 NVIDIA A100 (80GB) GPUs. Specifically, 16 GPUs (across two nodes) were allocated for training the student model, while the remaining 4 GPUs (on a single node) were dedicated to deploying the teacher model.
+
+Hyperparameter Configuration
+
+The detailed experimental settings for our study are presented in two parts. Table 4 outlines the specific training configurations, including optimization and reinforcement learning hyperparameters, for GRPO, OPD, and SCOPE. For the evaluation phase, we adopt a consistent set of generation parameters across all models, as detailed in Table 5. For Qwen3-1.7B-Base, due to severe repetition issues observed during evaluation, we increased the repetition penalty to mitigate this problem.
+
+Table 4: Training config for GRPO, OPD, and SCOPE
+
+Parameter
+GRPO
+OPD
+SCOPE
+
+Optimization Parameters
+
+Learning Rate
+
+LR Scheduler
+Constant
+Constant
+Constant
+
+Weight Decay
+0.01
+0.01
+0.01
+
+Train Batch Size (Prompts)
+256
+256
+256
+
+Mini Batch Size (Prompts)
+256
+256
+256
+
+RL & Generation Parameters
+
+Max Prompt Length
+4096
+4096
+4096
+
+Max Completion Length
+12288
+12288
+12288
+
+Number of Generations ()
+8
+1
+8
+
+Temperature
+0.6
+0.6
+0.6
+
+KL Coefficient ()
+0.0001
+–
+–
+
+Clip Ratio ()
+0.2
+–
+–
+
+Update Epochs per Batch
+1
+1
+1
+
+Table 5: Evaluation parameters for all models.
+
+Parameter
+Value
+
+Max Tokens
+32768
+
+Temperature
+0.6
+
+Top-p
+0.95
+
+Top-k
+20
+
+Repetition Penalty (Qwen3-1.7B)
+1.08
+
+Repetition Penalty (Distill-1.5B)
+1.0
+
+Samples per Prompt
+32
+
+Appendix B Impact of Weight Temperature.
+
+To investigate the impact of the sharpness of the weight distribution on model optimization, we conducted experiments by setting the temperature parameter to 0.5, 1.0, and 2.0, and analyzed the results.
+Figure 5 illustrates the impact of the temperature hyperparameter in our softmax normalization across groups (Eq. 4 and 5). We empirically adopt as the default configuration. A smaller temperature excessively sharpens the weight distribution, forcing the model to focus heavily on trajectories with extreme perplexity values. Such aggressive assignment amplifies outlier noise rather than extracting genuine corrective signals, thereby destabilizing the training process. Conversely, a larger temperature flattens the weight distribution, causing the DPAW mechanism to degenerate into the uniform weighting paradigm of standard OPD. As analyzed in Section 2, this uniform approach suffers from an absence of signal quality awareness. Specifically, it fails to filter out context-induced noise on failed trajectories (i.e., penalizing confidently wrong teacher guidance) and neglects to amplify underexplored valid paths on successful ones (i.e., rewarding boundary explorations). Consequently, this degeneration inevitably triggers the previously discussed Pass@ paradox and diversity collapse. The optimal temperature properly calibrates the variance in signal quality, striking an ideal balance between noise filtration for incorrect paths and the preservation of reasoning diversity for correct ones.
+
+Figure 5: Impact of the temperature hyperparameter on model performance across AIME24, AIME25, and AMC23. The results indicate that the default configuration of consistently yields the best performance across all benchmarks compared to and .
+
+Appendix C Preliminary Experiment
+
+We sample 2,000 problems from the DeepMath dataset and generate 4 reasoning trajectory per problem using the student model (DeepSeek-R1-Distill-Qwen-1.5B) with temperature , top-, top-, and a maximum response length of 32,768 tokens.
+
+For each incorrect trajectory, we compute its perplexity score under the teacher model (Skywork-OR1-MATH-7B) over the response tokens only (excluding the prompt), defined as:
+
+(7)
+
+where represents the wrong samples. They are stratified into four equal-sized buckets (Q1–Q4) based on their PPL scores via quartile splitting. Table 6 reports the PPL statistics for each bucket.
+
+Table 6: Teacher PPL statistics for each perplexity bucket over incorrect student trajectories.
+
+Bucket
+PPL Mean
+NLL Mean
+
+Q1 (Lowest PPL)
+1.361
+0.305
+
+Q2
+1.565
+0.448
+
+Q3
+1.710
+0.536
+
+Q4 (Highest PPL)
+2.383
+0.688
+
+Overall
+1.755
+0.494
+
+Table 7: Teacher error recovery rate (%) under different truncation ratios and PPL buckets. Each cell reports the mean accuracy over completions per sample. The Q1–Q4 gap (rightmost column) quantifies the within-truncation-level spread attributable to PPL stratification.
+
+Trunc. Ratio
+Q1
+Q2
+Q3
+Q4
+Q1–Q4 Gap
+
+0.2
+64.9
+59.7
+54.0
+45.4
++19.4
+
+0.4
+55.8
+53.2
+50.1
+40.2
++15.6
+
+0.6
+44.8
+43.1
+41.0
+34.5
++10.3
+
+0.8
+35.8
+35.3
+32.6
+28.6
++7.2
+
+For the prefix truncation experiment, each incorrect trajectory is truncated at the nearest newline boundary to the target truncation ratio , yielding a flawed prefix . The teacher is then prompted to complete the generation from using the completions API with temperature . Each prefix is completed times, and the recovery rate is computed as the mean accuracy over these completions. Table 7 presents the complete error recovery rates across all truncation ratios and PPL buckets.
+
+Appendix D Case Study
+
+We present representative incorrect student trajectories from the highest-perplexity bucket to illustrate the qualitative nature of high-perplexity errors.
+
+Analysis
+
+The cases in Tables 8–11 illustrate the Flawed Trajectory Trap across high-perplexity () errors, encompassing both structural collapse (e.g., numerical overflow in Case 1, infinite loops in Case 2) and logical hallucinations (e.g., flawed premises in Case 3, self-contradictions in Case 4). In all such instances, the severely degraded reasoning context disrupts the teacher model, flattening its predictive distribution and forcing it to output high-entropy, uninformative noise. Standard on-policy distillation on these samples disastrously compels the student to mimic this confusion. Our Dual-Perspective Adaptive Weighting (DPAW) explicitly circumvents this trap. By scaling distillation weights inversely with teacher perplexity, DPAW assigns near-zero weights to these toxic trajectories. This mechanism inherently filters out context-induced hallucinations, ensuring the student only learns from structurally coherent prefixes that elicit precise corrective signals.
+
+Table 8: Case 1: Numerical collapse.
+
+Problem
+
+Let be integers such that
+
+Find the maximum possible value of .
+
+Ground Truth
+
+Student Answer
+
+Error Type
+
+Numerical collapse
+
+Key Excerpt
+
+...
+
+9999...9 [thousands of repeated digits]
+9999...9 [continued overflow]
+That seems like I’m not doing this... The problem is just to be solved.
+
+...
+
+Table 9: Case 2: Infinite reasoning loop.
+
+Problem
+
+Determine whether the perimeter of the Mandelbrot set is finite or infinite.
+
+Ground Truth
+
+infinite
+
+Student Answer
+
+finite
+
+Error Type
+
+Repetitive reasoning loop; fails to commit to correct conclusion
+
+Key Excerpt
+
+Okay, so I have this question... I remember that the Mandelbrot set is
+
+this intricate fractal...
+
+[paragraph repeated verbatim 4 times]
+
+But the question isn’t about whether a point is in the set, it’s about
+
+the perimeter. I know that fractals often have infinite perimeters, but
+
+I’m not entirely sure about the Mandelbrot set...
+
+[loop continues without resolution]
+
+Table 10: Case 3: Incorrect application of a theorem.
+
+Problem
+
+Is a real-valued function on with bounded variation and the intermediate value property guaranteed to be continuous?
+
+Ground Truth
+
+Yes
+
+Student Answer
+
+No
+
+Error Type
+
+Incorrect application of Cantor function as counterexample
+
+Key Excerpt
+
+...the Cantor function is constant on the middle-thirds Cantor set,
+
+so it’s not continuous, but it’s still of bounded variation.
+
+[...]
+
+Therefore, it’s clear that such functions can be discontinuous.
+
+So, the answer is no, it’s not guaranteed to be continuous.
+
+Note
+
+The Cantor function does not satisfy the intermediate value property, making this a flawed counterexample. The student fails to verify the premise.
+
+Table 11: Case 4: Off-by-one arithmetic error in integral approximation.
+
+Problem
+
+Find the integer value of .
+
+Ground Truth
+
+Student Answer
+
+Error Type
+
+Incorrect integral bounds in Euler–Maclaurin approximation
+
+Key Excerpt
+
+Wait, that seems contradictory because 16 is greater than 16.888.
+
+That can’t be. Wait, maybe I misapplied the bounds.
+
+[...]
+
+But in the initial manual addition, I had the sum as about 16.888,
+
+but in reality, it’s about 17.28. Therefore, the answer is 17.
+
+Note
+
+The student correctly computes at one point, then contradicts this with an erroneous re-approximation, ultimately reporting instead of .
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

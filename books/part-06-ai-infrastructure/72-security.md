@@ -47,6 +47,43 @@ LLM/Agent
 
 单一 WAF 无法覆盖这条链。每次从一层向下一层传递，都需要验证 identity、integrity 和 authorization。
 
+### Hardware Attestation 也必须声明 Adversary Tier
+
+把硬件计量或远程证明当作绝对不可篡改真值，在商业合规且对手能力受限时可形成有用近似；供应链、固件、传感器与验证方都进入攻击面后，同一信号对 non-state 与 nation-state adversary 的含义不同。更准确的治理合同把目标从抽象的 tamper-proof 改为特定 threat tier 下的 tamper-evident assurance。
+
+Attestation owner 必须记录测量对象、hardware root、firmware/revision、证据链、验证者、freshness 和对手假设，再限定可以声明的合规边界。收益是让监管与审计机制匹配真实威胁模型，代价是供应链信任、隐私、key lifecycle 和误判；证据链缺失或对手能力越界时，应缩小结论并回退现场、多方或独立审计，而不是把硬件信号当最终事实。
+
+<!-- source-family:SF-2026-ARXIV-2604-04712 -->
+
+### Weight Streaming 的保密边界在片上明文状态才结束
+
+磁盘加密和 DRAM encryption 在模型权重静态保存、DMA 边界清晰时是合理起点，但 accelerator 最终仍要消费明文 tile；若解密发生在不可信的 host memory，保护 at-rest artifact 并没有覆盖权重进入计算单元前的最后一段数据流。更窄的设计把加密权重保持到 accelerator ingress，并在每个 64-byte AXI burst 到达时并行生成 AES-CTR keystream，只让 plaintext tile 短暂存在于隔离的 NPU SRAM：
+
+```text
+encrypted weight artifact
+-> SMMU stream-ID / address mapping
+-> burst-aligned keystream generation
+-> plaintext tile in isolated on-die SRAM
+-> compute
+-> deterministic scrub
+```
+
+这条路径减少 off-chip plaintext exposure，却把 trusted die、SMMU/IOMMU 配置、counter/nonce lifecycle、SRAM isolation 与 scrub 正确性变成新的安全前置条件。SMMU 在这里约束 stream-ID 与地址映射，并不认证 ciphertext 或 DMA payload；AES-CTR 本身也不提供完整性。论文报告的近线速结果来自 proxy hardware measurement 与 idealized accelerator model，并非已制造 NPU silicon；它也不覆盖 invasive、side-channel 或 supply-chain adversary。因此该机制只能作为可信片上边界下的优化分支。缺少可信 die 或片上隔离时，平台必须缩小 confidentiality claim，或采用能覆盖目标 adversary 的受控 TEE/独立硬件边界；page-level memory encryption 只能回退保护较窄的 at-rest/DRAM threat，不能在同一 compromised-OS/physical adversary 下冒充等价保护。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23205:start -->
+权重的 confidentiality contract 必须覆盖最后一个 off-chip plaintext boundary，而不能在 artifact 加密完成时提前结束。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23205:end -->
+
+### Runtime 优化统计也可能成为跨租户共享状态
+
+Per-tensor dynamic activation quantization 在单租户 batch 中根据当前输入计算共享 `min/max` 或 scale，可以比固定 scale 更贴合分布；当 batch 混合不同 tenant 时，同一统计却同时读取 victim 输入并改变 adversary 的 quantized logits，形成一条不经过显式 cache 的跨租户 side channel。于是量化 identity 不只包含 bit width 和 kernel，还必须包含 scale granularity、batch composition 与 tenant boundary。
+
+最直接的隔离是多租户路径采用 per-token/static scale，或在 batching 层阻止跨租户共享统计；代价分别是校准误差、额外计算或利用率下降。攻击成立还要求 co-location、logit access 与已知 quantization configuration，现有实验不证明所有 kernel 或量化方案都可利用。无法验证隔离时应关闭共享 dynamic quantization；单租户 fast path 仍可保留，而不必把性能优化整体淘汰。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-26505:start -->
+任何由多条请求共同决定、又能影响单条输出的 runtime statistic，都必须进入 tenant isolation contract。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-26505:end -->
+
 ## 隐私检测是 Policy-bound Sensor，不是安全判决
 
 把 PII/secret detector 放到 ingestion、training corpus、retrieval、logging 或分享路径之前，
@@ -255,6 +292,22 @@ retrieval set
 这不是三个互相替代的 classifier。Retrieval consensus 依赖 honest-majority 与 representation separation，面对多数污染或可查询 surrogate 会失效；attention-derived locator 是可迁移 sensor，不证明某个 span 在因果上决定了动作；learned step guard 受 synthetic taxonomy、teacher bias、false positive 与 adaptive adversary 限制。它们的收益是把污染入口、推理影响和执行动作分层定位，代价是更多 false reject、版本化 authority registry、额外 latency 与 cross-layer disagreement。
 
 旧的静态规则在强格式、低延迟和已知攻击中仍合理；高风险 action 仍必须由 scope、approval、idempotency 与 sandbox 约束。模型 sensor 可以触发降权、重新检索、询问或人工升级，但不能自行授予来源 authority，也不能成为最终 authorization owner。
+
+### Deny 也是 Information Disclosure
+
+Reference monitor 返回 allow/deny 和细粒度拒绝原因，单步调试时最透明；多步 Agent 可以把拒绝差异当作 oracle，沿字段 provenance、调用顺序和 transitive taint 逐步恢复本不应观察的因果关系。授权判定因此必须与 denial-feedback disclosure policy 共同版本化：monitor 在 action 前查询包含调用、返回字段、provenance 和 denied transition 的因果图，只释放完成当前恢复路径所必需的最小反馈。
+
+这种 denial-aware causal provenance 能阻断一部分 flat provenance 看不见的 laundering，却增加 taint graph、工具语义建模和误拒绝；错误 provenance、隐式信道或未知工具副作用仍可能绕过。证据不完整时应回退 coarse denial、人工审批与隔离执行。论文三个攻击场景和亚毫秒 policy evaluation 只属于作者协议，不是开放生产安全证明。
+
+<!-- source-family:SF-2026-ARXIV-2604-04035 -->
+
+### 多跳 Delegation 必须保留 Human Principal
+
+当前调用者的 service token 足以处理单跳委托；Agent 把任务继续委托给 Agent 或 tool 后，终端 action 可能只剩最后一跳身份，无法证明最初 human principal、每跳 scope 和完整授权链。可以让每次 delegation 追加由授权 issuer 签发的 token，绑定 principal、delegate、scope、parent 与 expiration，并在执行前验证 append-only chain。这里的 issuer signature 证明授权方记录并批准了该 hop；除非协议另外要求 delegate 持有自己的密钥并完成签名，它并不证明被命名的具体 Agent 亲自产生或认可了这一跳。
+
+这把 authorization 从 prompt/Agent 自述迁移到可核验 provenance chain，但不证明行为正确，也不替代 prompt-injection defense、sandbox 或最小权限。Key/token 生命周期、撤销、重放和 scope composition 都是新增压力；链不完整、过期或验证失败时必须 fail closed，并回退人工授权。
+
+<!-- source-family:SF-2026-ARXIV-2604-04522 -->
 
 ### 多 Agent Cascade 需要跨 Channel 的 Influence Graph
 
@@ -921,6 +974,16 @@ skill digest + injection position + task
 
 ## Availability 与 Abuse
 
+### 跨模态 Availability 先攻击决策状态，而不一定生成恶意内容
+
+文本恶意分类器在输入通道单一、攻击目标是生成有害内容时仍然有用；具备 audio sensor 与 tool/action loop 后，攻击者可以注入语义上合理的 1～5 token 音频片段，诱导 stop、acknowledgement loop 或 false alert。此时每个局部 token 都可能无害，真正被破坏的是 controller 对 source、intent 与时序的绑定，结果表现为任务无法继续而非“恶意文本被输出”。
+
+跨模态 instruction 因而应在 commit 前校验 source identity、当前 task intent 与 temporal consistency，再由独立 controller 决定是否改变行动状态。验证失败时，系统可以隔离 audio control、要求人工确认或进入 safe-stop；单靠 prompt reminder 无法拥有这条执行 authority。现有证据只来自 simulated tool-calling robot，不证明真实声学链路、开放环境或生产机器人已获得同等防护，因此物理 interlock 与 human override 仍需共存。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-24790:start -->
+跨模态安全必须验证信号如何改变 controller state，而不能只判断内容表面是否恶意。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-24790:end -->
+
 ### Exactness 保持不变时，加速路径仍可能被定向击穿
 
 <!-- semantic-body-binding:SF-MISTLETOE-STEALTHY-ACCELERATION-COLLAPSE-ATTACKS-ON-SPECULATIVE-DECODING:start -->
@@ -1414,6 +1477,14 @@ Agent 场景还要分开 trigger optimization 与 payload optimization：前者�
 AI security 必须贯穿数据、训练、artifact、serving 与 action。正确设计不依赖模型永远服从，而是让任何不可信输出都经过独立、最小权限、可审计的执行边界；来源、行为 probe、运行隔离与 rollback 分层共存，任何一层都不能单独证明安全。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23205`（Status: Experimental）：exact-v1 支持 burst-aligned AES-CTR weight streaming、隔离 SRAM plaintext window 与 proxy/idealized evaluation；不证明 fabricated NPU、invasive/side-channel/supply-chain security 或生产 SLO。https://arxiv.org/abs/2604.23205v1
+- `SF-2026-ARXIV-2604-24790`（Status: Experimental）：exact-v1 支持 simulated tool-calling robot 中短 audio injection 对 stop/acknowledgement/alert 状态的影响；不证明真实声学链路、生产机器人或 prompt defense 可替代独立 controller。https://arxiv.org/abs/2604.24790v1
+- `SF-2026-ARXIV-2604-26505`（Status: Experimental）：exact-v1 支持 cross-batch per-tensor dynamic activation scale 形成特定 threat model 下的 logit side channel；不证明所有量化 kernel、部署或攻击者能力均满足该条件。https://arxiv.org/abs/2604.26505v1
+
+- **Hardware-Level Governance of AI Compute（arXiv:2604.04712v1；Status: Experimental）**：exact-v1 提供按 adversary tier 区分可行性的 taxonomy，不提供绝对不可绕过证明或跨部署 benchmark。https://arxiv.org/abs/2604.04712v1
+- **Causality Laundering（arXiv:2604.04035v1；Status: Experimental）**：exact-v1 支持 denial-aware causal provenance 在三个披露攻击场景中的结果；不覆盖未知工具语义、隐式信道或生产攻击面。https://arxiv.org/abs/2604.04035v1
+- **HDP（arXiv:2604.04522v1；Status: Experimental）**：exact-v1 支持 human principal、scope 与 append-only delegation chain 的协议设计及其与现有 token 标准的设计点比较；v0.1 的 hop signature 由 issuer key 生成，只证明 issuer 记录了该 hop，不证明被命名 Agent 亲自签名；也不证明行为正确性、撤销完备性或生产安全。https://arxiv.org/abs/2604.04522v1
 
 - Spill the Beans（共享 CPU cache/page 与 embedding access 的 token side channel；Status: Experimental）：https://arxiv.org/html/2505.00817v1
   - 证据边界：攻击绑定论文披露的 co-location、CPU/cache、embedding endpoint 与可监控 token 集；不证明任意云、模型或并发条件均可复现，但足以要求平台把共享 page/cache 纳入租户隔离合同。

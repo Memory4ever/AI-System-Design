@@ -1,0 +1,1360 @@
+Apriel-Reasoner: RL Post-Training for General-Purpose and Efficient Reasoning
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+2.1 Reinforcement Learning with Verifiable Rewards
+
+2.2 Policy Optimization
+
+2.3 On-Policy RL for LLMs
+
+3 Related Work
+
+RL post-training of LLMs:
+
+Reasoning Length Control:
+
+4 Multi-Domain RL
+
+4.1 Adaptive Multi-Domain Sampling
+
+4.2 Difficulty-Aware Length Penalty
+
+Length Penalty (LP):
+
+Difficulty-Aware Length Penalty (DAP):
+
+5 Experiments
+
+5.1 Experimental Setup
+
+Training Domains.
+
+Model.
+
+Training Setup.
+
+Baselines.
+
+Test Benchmarks and Metrics.
+
+5.2 Main Results
+
+Accuracy–efficiency trade-off.
+
+Per-Domain Reward Progress.
+
+Impact of DAP (vs. standard length penalty).
+
+Domain Mixture Ablation.
+
+Analysis of Reasoning Traces.
+
+6 Conclusion
+
+References
+
+A Training Domains and Verifiers
+
+Mathematics:
+
+Code Generation:
+
+Instruction-Following:
+
+Logical Puzzles:
+
+Function Calling:
+
+B Training Details
+
+B.1 Hyperparameters
+
+B.2 Hyperparameter Search Space
+
+C Per-Domain Reward Curves
+
+D Details of Reasoning Trace Analysis
+
+Fewer non-productive steps and more non-linear reasoning.
+
+D.1 Example of Reasoning Trace Analysis
+
+D.2 Prompts
+
+License: CC BY 4.0
+
+arXiv:2604.02007v1 [cs.LG] 02 Apr 2026
+
+\snowdata
+
+[Affiliation]1 ServiceNow Research   † Equal senior contribution
+
+Apriel-Reasoner: RL Post-Training for General-Purpose and Efficient Reasoning
+
+Rafael Pardinas
+
+  
+Ehsan Kamalloo
+
+  
+David Vazquez
+
+  
+Alexandre Drouin
+
+Abstract
+
+Building general-purpose reasoning models using reinforcement learning with verifiable rewards (RLVR) across diverse domains has been widely adopted by frontier open-weight models. However, their training recipes and domain mixtures are often not disclosed. Joint optimization across domains poses significant challenges: domains vary widely in rollout length, problem difficulty and sample efficiency. Further, models with long chain-of-thought traces increase inference cost and latency, making efficiency critical for practical deployment. We present Apriel-Reasoner, trained with a fully reproducible multi-domain RL post-training recipe on Apriel-Base, a 15B-parameter open-weight LLM, across five domains using public datasets: mathematics, code generation, instruction following, logical puzzles and function calling. We introduce an adaptive domain sampling mechanism that preserves target domain ratios despite heterogeneous rollout dynamics, and a difficulty-aware extension of the standard length penalty that, with no additional training overhead, encourages longer reasoning for difficult problems and shorter traces for easy ones. Trained with a strict 16K-token output budget, Apriel-Reasoner generalizes to 32K tokens at inference and improves over Apriel-Base on AIME 2025, GPQA, MMLU-Pro, and LiveCodeBench while producing 30–50% shorter reasoning traces. It matches strong open-weight models of similar size at lower token cost, thereby pushing the Pareto frontier of accuracy versus token budget.
+
+Figure 1: Higher accuracy / shorter traces for Apriel-Reasoner under 32K output budget.
+
+1 Introduction
+
+Reinforcement Learning with Verifiable Rewards (RLVR) (Lambert et al., 2024; Guo et al., 2025; Kimi Team, 2025; Olmo Team et al., 2025) has become an integral stage in post-training large language models (LLMs) for reasoning. Recent open-weight models increasingly rely on multi-domain RLVR to build general-purpose reasoning capabilities, including Qwen-3.5 (Qwen Team, 2026), GLM (GLM Team et al., 2025; GLM Team et al., 2026), Kimi k2 (Kimi Team, 2025), OLMo 3 (Olmo Team et al., 2025), and Nemotron-Cascade (Wang et al., 2025a). However, despite their open weights, the underlying training recipes, domain mixtures, and multi-domain optimization details are often not fully disclosed. This limits reproducibility and understanding of which ingredients drive strong multi-domain reasoning performance.
+
+Beyond reproducibility concerns, multi-domain RLVR also introduces concrete optimization challenges.
+When training across multiple domains simultaneously, rollouts are generated asynchronously, and domains vary widely in rollout length, problem difficulty, verification latency, and sample efficiency. As a result, faster or easier domains tend to complete rollouts sooner and produce a disproportionate share of collected trajectories, shifting the training mixture away from intended domain mixture ratios. Without correction, this drift biases the model toward overrepresented domains at the expense of generalization. Existing approaches either rely on static domain mixtures (Olmo Team et al., 2025) or avoid joint optimization entirely by training domains sequentially (Wang et al., 2025a). We address this with adaptive domain sampling, which dynamically preserves target domain ratios despite heterogeneous rollout dynamics.
+
+Orthogonal to domain balancing, reasoning models trained with RLVR tend to generate long chain-of-thought traces (Chen et al., 2025), incurring high inference cost and latency. Prior approaches to controlling reasoning length range from fixed budgets that ignore problem difficulty (Muennighoff et al., 2025; Aggarwal and Welleck, 2025; Kimi Team et al., 2025) to more elaborate difficulty-aware mechanisms (Fang et al., 2025; Zhang et al., 2025; Zhang and Zuo, 2025; Shen et al., 2025; Liu et al., 2025b). We propose a simpler alternative with no additional training overhead: a difficulty-aware extension of the standard length penalty that relaxes the length penalty on harder problems while preserving the standard penalty on easier ones, without changing the policy loss.
+
+To study these ideas in practice, we present Apriel-Reasoner, a model trained with a reproducible multi-domain RL post-training recipe on Apriel-Base (Radhakrishna et al., 2025), a 15B-parameter open-weight LLM that has not been previously trained with RL, making it a clean starting point for studying multi-domain RLVR at a practical model scale. We build on PipelineRL (Piché et al., 2025), which enables asynchronous on-policy training via in-flight weight updates, so rollout generation and optimization proceed concurrently during multi-domain RL. We train across five public datasets spanning mathematics, code generation, instruction following, logical puzzles, and function calling.
+
+Despite training under a strict 16K-token output budget, Apriel-Reasoner generalizes to 32K tokens at inference, demonstrating length generalization beyond its training regime. Apriel-Reasoner consistently improves over Apriel-Base on AIME 2025, GPQA, MMLU-Pro, and LiveCodeBench while producing 30–50% shorter outputs, achieving test accuracy comparable to strong open-weight models of similar size at lower token cost and pushing the observed Pareto frontier of accuracy versus token budget in our evaluation suite, as illustrated in Figure 1. We detail all training configurations and domain mixtures to support reproducibility in multi-domain RL research.
+
+Below, we summarize our key contributions:
+
+1.
+
+Reproducible multi-domain RL post-training: We present a fully open and reproducible RL post-training recipe across five diverse domains that achieves competitive accuracy with substantially shorter reasoning traces than comparable-scale models.
+
+2.
+
+Adaptive domain sampling: We introduce an adaptive sampler that maintains target domain mixture ratios during asynchronous multi-domain RL training.
+
+3.
+
+Difficulty-Aware Length Penalty: We introduce a simple extension of the standard length penalty that accounts for problem difficulty, allowing difficult problems to reason longer while encouraging conciseness on easier ones.
+
+Figure 2: PipelineRL with the multi-domain extensions used in this work. A domain-weighted sampler draws prompts from the five training environments, environment-specific verifiers score the resulting rollouts, and the data flow through the actor, preprocessor, and trainer stages for asynchronous RL post-training.
+
+2 Background
+
+2.1 Reinforcement Learning with Verifiable Rewards
+
+Reinforcement learning is widely used as a post-training step to equip LLMs with long-form reasoning capabilities for solving complex problems (Shao et al., 2024; Lambert et al., 2024; Guo et al., 2025). The core idea is to frame auto-regressive language modeling as a sequential decision-making process, where a programmatically verifiable reward, computed by checking the correctness of the model’s output, serves as the training signal to guide the model toward producing correct solutions. This paradigm is commonly referred to as RL with Verifiable Rewards (RLVR).
+
+The training objective in RLVR is to maximize the expected reward of the response , generated by the language model policy , given a prompt :
+
+(1)
+
+where is a reward function evaluating response correctness.
+
+2.2 Policy Optimization
+
+In the LLM era, Proximal Policy Optimization (PPO) (Schulman et al., 2017) has been widely adopted over REINFORCE (Williams, 1992). PPO stabilizes training by approximating a trust region constraint (Schulman et al., 2015) and using a learned critic for per-token advantage estimation. However, in the RLVR setting, training an accurate critic from sparse, end-of-sequence rewards is difficult (Shao et al., 2024; Kazemnejad et al., 2025) and introduces significant overhead (Ahmadian et al., 2024). Group Relative Policy Optimization (GRPO) (Shao et al., 2024) sidesteps the critic by sampling multiple responses per prompt and computing advantages from their relative rewards. Yet both PPO and GRPO operate at the token level while rewards are sequence-level, a mismatch that introduces high-variance gradients and training instability (Yu et al., 2025; Zheng et al., 2025a; Zhao et al., 2026).
+
+Group Sequence Policy Optimization (GSPO) (Zheng et al., 2025a) replaces the token-level importance ratio with a sequence-level importance ratio, aligning the unit of optimization with the unit of reward. For each prompt , GSPO samples a group of responses from the current policy and computes the advantage of each response by normalizing relative to the group rewards. The objective is defined as
+
+(2)
+
+where the sequence-level importance ratio is defined as:
+
+(3)
+
+The length normalization by reduces variance and unifies the numerical range of across responses of different lengths.
+By applying a single importance weight to all tokens in a response, GSPO eliminates the high-variance per-token reweighting of GRPO and provides a more stable learning signal.
+GSPO has been adopted in the training of recent models such as Qwen3-Omni (Qwen Team et al., 2025). In this work, we adopt GSPO for the RL post-training of Apriel-Reasoner.
+
+2.3 On-Policy RL for LLMs
+
+The effectiveness of LLM post-training via RL hinges on on-policy data, where the model trains on rollouts sampled from its current parameters rather than from a stale or separate behavior policy. Because the output distribution of an autoregressive model is highly sensitive to its parameters, training on off-policy data introduces a distribution mismatch that can degrade learning (Tajwar et al., 2024; Zheng et al., 2025b; Ritter et al., 2026).
+
+PipelineRL (Piché et al., 2025) is a distributed RL system for LLM training that addresses the throughput-freshness trade-off via in-flight weight updates. Rather than enforcing a synchronization barrier between rollout and training, or fully decoupling them at the cost of policy staleness, PipelineRL runs both concurrently, i.e., inference workers continuously receive updated weights without pausing generation, keeping data near on-policy while maintaining high GPU utilization. To achieve high throughput with variable-length generations, PipelineRL incorporates standard practices from large-scale LLM training and serving, including sequence packing, dynamic batching, and sequence parallelism.
+We use PipelineRL for RL post-training throughout this work, and discuss additional changes made to the system toward post-training a general-purpose reasoning LLM.
+
+3 Related Work
+
+RL post-training of LLMs:
+
+Open-weight RL post-training recipes for general-purpose reasoning typically follow either staged domain-wise optimization or joint multi-domain optimization. Staged approaches optimize capabilities sequentially, as in Nemotron-Cascade (Wang et al., 2025a) and GLM (GLM Team et al., 2025; GLM Team et al., 2026), which simplifies optimization but can limit cross-domain transfer and requires careful management of forgetting across stages. Joint optimization instead trains across domains simultaneously, as in OLMo 3 (Olmo Team et al., 2025) and Kimi K2 (Kimi Team, 2025), allowing shared reasoning patterns to be reinforced throughout training. We follow the joint setting and focus on one of its practical challenges: preserving the intended training mixture under asynchronous multi-domain rollout dynamics.
+
+Reasoning Length Control:
+
+Reasoning models are prone to overthinking, generating excessively long reasoning traces even on relatively simple problems (Chen et al., 2025). Existing approaches control length through test-time budget forcing (Muennighoff et al., 2025), budget-conditioned training (Aggarwal and Welleck, 2025), training-time penalties (Kimi Team et al., 2025), or explicit budget tokens during rollout generation (Wen et al., 2025). More recent methods introduce difficulty awareness through routing (Fang et al., 2025; Zhang et al., 2025), adaptive policy objectives (Zhang and Zuo, 2025), preference optimization over difficulty-ranked traces (Shen et al., 2025), truncation-aware RL adjustments (Liu et al., 2025b), or explicit budget prediction (Han et al., 2025; Li et al., 2025).
+Our approach formulates length control as a difficulty-aware penalty integrated directly into the reward function, requiring no auxiliary models, no additional training phases, and no changes to the policy loss, making it straightforward to combine with multi-domain RL training where such added complexity risks destabilizing an already complex multi-domain optimization.
+
+4 Multi-Domain RL
+
+In this section, we describe the multi-domain training recipe used for Apriel-Reasoner and the two mechanisms we introduce to stabilize domain balance and control reasoning length.
+
+4.1 Adaptive Multi-Domain Sampling
+
+Training across multiple domains requires coordinating rollout generation across environments with heterogeneous characteristics. The time required to generate a rollout and compute its reward can vary substantially across domains. For example, coding problems often require longer generations, and evaluating them involves executing code in a sandbox, whereas math or logic answers can often be verified with lightweight checks.
+Within a fixed training window, some domains therefore produce completed rollouts more quickly than others. Also, zero-advantage group filtering (Yu et al., 2025) introduces an additional imbalance in the training data in that harder domains tend to yield fewer retained trajectories because successful samples are less frequent.
+Together, these effects shift the effective training mixture away from the configured domain ratios. Without adaptive correction, preserving a target mixture for each chosen domain-rate configuration would require manually resizing or sub-sampling the per-domain data for that run, undermining one of the main practical advantages of a shared multi-environment training system.
+
+To maintain target domain ratios throughout training, we implement a simple adaptive sampling strategy in PipelineRL, as illustrated in Figure 2.
+Let be the set of domains, and let denote the configured target weight for domain , where . When the actor samples a new problem for a rollout, let be the current number of completed rollouts from domain and the total up to this point. To correct for drift from the configured domain mixture, we first compute an adjustment factor:
+
+(4)
+
+Domains that have produced fewer completions than intended get and are up-weighted, while overrepresented domains are down-weighted. If a domain has no completions yet, we set . The clipping bounds prevent extreme corrections when a domain is heavily over- or under-represented. We then sample a domain with probability:
+
+(5)
+
+At the initial stages of training, we use the static distribution , i.e., the configured domain ratios, until at least 50 total completions have been collected. Once a domain is selected, a sample is drawn uniformly from that domain.
+
+4.2 Difficulty-Aware Length Penalty
+
+In this section, we present our extension to the standard length penalty in which the penalty strength is modulated by problem difficulty, which we call Difficulty-Aware Length Penalty.
+
+Length Penalty (LP):
+
+Let denote the maximum output length, and be the buffer width. For a prompt and rollout of length , the penalty is applied linearly within a buffer zone before the maximum length:
+
+(6)
+
+Rollouts shorter than incur no penalty, while those approaching are penalized proportionally. The final reward combines the task reward with this penalty:
+
+(7)
+
+where controls the penalty strength. In the standard setting, for all rollouts.
+
+Difficulty-Aware Length Penalty (DAP):
+
+The key idea behind DAP is to modulate based on problem difficulty, so that difficult problems receive a weaker penalty and are allowed to reason longer. We estimate difficulty from the solve rate within each group: given rollouts for a prompt , we compute:
+
+(8)
+
+where indicates whether rollout produced a correct answer. A low solve rate indicates a harder problem. We then set:
+
+(9)
+
+For correct rollouts, the penalty is scaled by where is a constant: when the solve rate is low (hard problem), becomes small and the penalty is relaxed, allowing the model to use more reasoning tokens. For incorrect rollouts, the penalty reduces to the standard length penalty with a fixed scaling factor . The upper-bound guard ensures that rollouts which are truncated at the maximum length without finishing always receive the full penalty, preventing degenerate solutions that exhaust the budget. DAP modifies only the reward upstream and does not alter the policy loss.
+
+In our experiments, we use and , i.e., incorrect rollouts always receive the full penalty, while the penalty on correct but overlong rollouts is scaled by the solve rate.
+
+Table 1: Summary of the five training environments used for joint multi-domain RL.
+
+Domain
+
+Training data
+
+Verifiable reward
+
+Mathematics
+
+Open-Reasoner-Zero (129K)
+
+Exact-match verification of the extracted final answer
+
+Code Generation
+
+TACO (24K)
+
+Pass/fail reward from sandboxed execution against test cases
+
+Instruction-Following
+
+IF-RLVR (95K)
+
+Fraction of output constraints satisfied
+
+Logical Puzzles
+
+INTELLECT-3 / SynLogic (12K)
+
+Task-specific programmatic verifier
+
+Function Calling
+
+BFCL v4 single-turn tasks (4K)
+
+Exact function-name match and argument-set validity
+
+5 Experiments
+
+5.1 Experimental Setup
+
+Training Domains.
+
+We train across five environments, each defined by a public dataset and a verifiable reward function. Table 1 summarizes the domains used for joint RL post-training; full dataset and verifier details are provided in Appendix A.
+
+Model.
+
+We use Apriel-1.511
+1
+
+https://huggingface.co/ServiceNow-AI/Apriel-1.5-15b-Thinker (Radhakrishna et al., 2025) as our base model, referred to as Apriel-Base throughout the paper. Apriel-1.5 is a 15B-parameter multimodal model initialized from Pixtral-12B (Agrawal et al., 2024) via depth upscaling, then continually pre-trained and instruction-tuned
+with explicit reasoning traces.
+We omit the vision encoder and use only the decoder, as multimodal reasoning is outside the scope of this work.
+Crucially, Apriel-1.5 is trained without RL or preference optimization. We choose it over the newer Apriel-1.6 (Madhusudhan et al., 2025), which incorporates RL in its post-training, and over other popular open-weight models like Qwen3 (Yang et al., 2025), which release weights but only describe their training data at a high level. In contrast, the mid-training domains, data composition, and training recipe of Apriel-1.5 are fully documented (Radhakrishna et al., 2025), making it a suitable starting point for studying the effects of RL post-training, as downstream behavior changes can be more confidently attributed to our RLVR training.
+
+Training Setup.
+
+All Apriel-Reasoner jobs were run on 8 compute nodes with 8 Nvidia H100 GPUs per node (64 GPUs total).
+Within each node, 4 GPUs are allocated to rollout generation (actor) and 4 to training. We train with GSPO and DAP (length penalty), adopting the clip-higher asymmetric clipping and dynamic sampling from DAPO (Yu et al., 2025).
+Following Khatri et al. (2025), the final vocabulary projection is computed in FP32 on both actors and training workers for numerical stability, while the rest of the model remains in BF16. We find the best domain mixture empirically by training on various mixtures and selecting the best one on held-out validation sets, i.e., 10% of training data. The selected mixture assigns 40% to mathematics (M), 25% to code (C), 15% to logical puzzles (L), 10% to instruction-following (I), and 10% to function calling (F).
+We train for 250 optimization steps (36 wall-clock hours), determined by training for 400 steps and evaluating checkpoints on held-out validation sets every 50 steps starting at step 150;
+step 250 yields the best mean validation accuracy across the five domains.
+The full training configuration and hyperparameter sweep ranges are summarized in Tables 4 and 5 in Appendix B.
+
+Baselines.
+
+We select open-weight models of comparable size to Apriel-Reasoner: (i) Nemotron-Cascade22
+2
+
+https://hf.co/nvidia/Nemotron-Cascade-14B-Thinking (Wang et al., 2025a) is a 14B reasoning model trained via sequential domain-wise RL. (ii) Qwen3-14B33
+3
+
+https://hf.co/Qwen/Qwen3-14B (Yang et al., 2025) is a 14B dense model trained with multi-stage post-training combining Supervised Fine Tuning (SFT) and RL across reasoning and general domains. (iii) Phi-4-reasoning44
+4
+
+https://hf.co/microsoft/Phi-4-reasoning (Abdin et al., 2025) is a 14B model fine-tuned from a base model using SFT on o3-mini reasoning traces followed by RLVR. To ensure a fair comparison, we rerun all baselines under analogous output token budget.
+
+Test Benchmarks and Metrics.
+
+We evaluate Apriel-Reasoner and the baselines on four external held-out reasoning benchmarks: AIME 2025 (Mathematics; Balunović et al. 2025), GPQA (Graduate-level science; Rein et al. 2024), MMLU-Pro (Multi-domain knowledge and reasoning; Wang et al. 2024), and LiveCodeBench (Coding; Jain et al. 2025).
+To reduce variance on smaller benchmarks, we repeat each evaluation multiple times under different sampling seeds and average the results: 10 times for AIME 2025 (30 problems), 5 for GPQA (198 problems),
+and 3 for LiveCodeBench (315 problems for v5 from 2024-07-01 to 2024-12-31); MMLU-Pro (12,032 problems) uses a single evaluation.
+We report pass@1 accuracy; per-problem accuracy is first averaged across problems, then across runs, and finally across two independent training seeds. To characterize reasoning efficiency under the same generation budget, we also report the average number of output tokens per completion. Following Radhakrishna et al. (2025), all generations use temperature and top- , with a maximum output length of 32K tokens, as used by Guo et al. (2025).
+
+5.2 Main Results
+
+Table 2: Test accuracy (%) and mean output tokens for Apriel-Reasoner, its fixed-length-penalty counterpart, Apriel-Base, and comparable-scale reasoning models. All models are evaluated under the same configuration with a 32K output-token cap.
+See Figure 1 for the corresponding accuracy-efficiency scatter plots.
+
+AIME-25
+GPQA
+MMLU-Pro
+LCB (v5)
+
+Model
+Size
+Acc
+Tok
+Acc
+Tok
+Acc
+Tok
+Acc
+Tok
+
+Phi-4-reasoning
+14B
+57.3
+12.5k
+64.8
+3.5k
+77.1
+3.4k
+56.9
+14.4k
+
+Qwen3
+14B
+68.0
+16.9k
+64.3
+6.7k
+77.7
+2.4k
+65.9
+12.2k
+
+Nemotron-Cascade
+14B
+76.0
+19.0k
+68.4
+10.6k
+76.8
+3.6k
+70.7
+16.0k
+
+Apriel-Base
+15B
+73.3
+16.6k
+68.8
+10.5k
+76.4
+3.5k
+61.4
+14.9k
+
+   + RLVR w/ LP
+15B
+71.7
+11.1k
+68.9
+4.5k
+75.6
+1.5k
+67.7
+7.0k
+
+Apriel-Reasoner (Ours)
+15B
+78.3
+11.3k
+69.8
+5.8k
+77.3
+1.9k
+70.8
+7.4k
+
+Accuracy–efficiency trade-off.
+
+A central goal of our RL post-training is to improve reasoning quality while avoiding overthinking. Table 2 shows that Apriel-Reasoner achieves higher accuracy with fewer output tokens than all comparable-scale baselines across all four benchmarks, making it a strong candidate for deployment scenarios where both accuracy and inference cost matter.
+On AIME-25, Apriel-Reasoner reaches the highest accuracy (78.3%) while generating
+41% fewer tokens than Nemotron-Cascade. On LiveCodeBench, it is on par with Nemotron-Cascade while generating less than half as many output tokens (7.4K vs. 16.0K). On GPQA, it achieves the highest accuracy (69.8%) while using roughly half the tokens of Nemotron-Cascade. On MMLU-Pro, all models cluster within 1 point of accuracy, but Apriel-Reasoner generates only 1.9K tokens, roughly half of the next most efficient model (Qwen3 at 2.4K).
+Relative to Apriel-Base, the reduction in output length is largest on GPQA (45%) and MMLU-Pro (46%), where the base model overthinks on straightforward questions, and smallest on AIME-25 (32%), where long traces are more often warranted.
+
+Per-Domain Reward Progress.
+
+To verify that the model learns effectively across all five domains during multi-domain RL training, we plot the mean reward for each domain over the course of training in Figure 4. All domains exhibit a clear upward trend, showing no signs of reward degradation or negative transfer across domains.
+
+Impact of DAP (vs. standard length penalty).
+
+The last two rows of Table 2 compare DAP, described in Section 4.2, against the standard length penalty. In the standard penalty, the penalty is fixed for all problems, which produces shorter outputs across all four benchmarks, but at the expense of lower test accuracy. DAP recovers this accuracy with a small increase in output length: on AIME-25, accuracy improves by 6.6% with only 2% more tokens; on LCB, by 3.1% with 6% more tokens; and on GPQA and MMLU-Pro, by 0.9% and 1.7% with approximately 28% more tokens. This suggests that DAP allocates its token budget more effectively, spending additional tokens where they are needed rather than penalizing all outputs uniformly.
+
+Table 3: Domain Mixture Ablation – Test Accuracy (%) and mean output tokens of Apriel-Reasoner trained on three domain mixtures using the same hyperparameters. Mixtures are reported in M/C/L/I/F order: Uniform = 0.20/0.20/0.20/0.20/0.20, Math & Code = 0.50/0.50/0/0/0, and Ours = 0.40/0.25/0.15/0.10/0.10 (matching Table 2). Accuracy is reported as mean standard deviation across multiple runs, except for MMLU-Pro, which uses a single evaluation.
+
+AIME-25
+GPQA
+MMLU-Pro
+LCB (v5)
+
+Model
+Acc
+Tok
+Acc
+Tok
+Acc
+Tok
+Acc
+Tok
+
+Uniform
+
+11.9k
+
+5.8k
+76.1
+1.7k
+
+6.6k
+
+Math & Code
+
+11.7k
+
+6.2k
+75.9
+1.9k
+
+7.1k
+
+Our mixture
+
+11.3k
+
+5.8k
+77.3
+1.9k
+
+7.4k
+
+Domain Mixture Ablation.
+
+To study whether all five training domains are necessary and whether our mixture ratios are well-chosen, we compare against two alternatives: a uniform mixture where all five domains contribute equally, and a math-and-code-only mixture, as these two domains have been widely adopted in RL post-training for reasoning models (Guo et al., 2025; Wang et al., 2025a).
+As shown in Table 3, our mixture achieves the highest accuracy on all four benchmarks while maintaining competitive output length. The math-and-code-only mixture is competitive on AIME-25 and GPQA but drops notably on LCB (67.2% vs. 70.8%), confirming that the remaining three domains contribute meaningfully. The uniform mixture underperforms our mixture on accuracy across the board, suggesting that equal weighting dilutes the contribution of impactful domains.
+
+Analysis of Reasoning Traces.
+
+To understand why Apriel-Reasoner produces shorter outputs without sacrificing accuracy, we segment reasoning traces from Apriel-Base and Apriel-Reasoner on AIME 2025 into discrete reasoning steps using GPT-5.4 (see Appendix D.1 for an example, and Appendix D.2 for the prompts). Figure 3(a) shows that the average number of steps per trace is comparable between Apriel-Base and Apriel-Reasoner. However, Figure 3(b) demonstrates that Apriel-Reasoner uses approximately 35% fewer tokens per step compared to Apriel-Base on correct responses. This indicates that RLVR teaches the model to express each reasoning step more concisely.
+In Appendix D, we further classify each reasoning step into eight categories, extending the taxonomy of Gandhi et al. (2025), and show that Apriel-Reasoner produces fewer non-productive steps and a higher share of non-linear reasoning behaviors compared to Apriel-Base.
+Our findings suggest that the efficiency gains of Apriel-Reasoner do not come from shallower reasoning, but from tighter expression and reduced overhead, consistent with recent work on efficient reasoning in long chain-of-thought models (Wang et al., 2025b; Su et al., 2025).
+
+(a) Average reasoning steps per trace
+
+(b) Average tokens per step
+
+Figure 3: Average number of reasoning steps per trace (3(a)) and average number of tokens per step (3(b)) for Apriel-Base and Apriel-Reasoner on AIME 2025. The number of steps is comparable, but Apriel-Reasoner expresses each step more concisely.
+
+6 Conclusion
+
+We presented Apriel-Reasoner, a 15B open-weight reasoning model trained using a reproducible multi-domain RL post-training recipe on Apriel-Base.
+Apriel-Reasoner is among the few works to provide full reproducibility, releasing a complete and openly available training pipeline alongside the model.
+Our approach combines adaptive domain sampling, which preserves target domain ratios under asynchronous multi-domain rollout dynamics, with a difficulty-aware length penalty that allocates more reasoning budget to harder problems without additional training or policy-loss changes. On challenging evaluation benchmarks, Apriel-Reasoner improves over Apriel-Base while producing substantially shorter outputs and remains effective under a 32K output token budget despite training with a 16K output budget. Overall, these results show that multi-domain RL post-training can improve both reasoning quality and inference efficiency at practical model scale.
+
+Reproducibility Statement
+
+We are committed to enabling full reproducibility of this work. Hyperparameters, search spaces, and training details are provided in Section 5.1 and Appendix B, and key design decisions are justified in their respective sections: choice of base model in Section 5.1, policy optimization objective in Section 2.2, adaptive domain sampling in Section 4.1, and length penalty in Section 4.2.
+
+Our RL training pipeline builds on PipelineRL, which is publicly available. All datasets used for training and evaluation are publicly accessible; training data sources are described in Section 5.1 with further details in Appendix A, and evaluation benchmarks in Section 5.1.
+
+Following the transparency principles advocated by the LLM360 initiative (Liu et al., 2024), we plan to release model weights, training configurations, and all code necessary to reproduce the RL post-training procedure described in this paper.
+
+References
+
+Abdin et al. (2025)
+M. Abdin, S. Agarwal, A. Awadallah, V. Balachandran, H. Behl, L. Chen, G. de Rosa, S. Gunasekar, M. Javaheripi, N. Joshi, et al.
+
+Phi-4-reasoning technical report.
+
+arXiv preprint arXiv:2504.21318.
+
+Cited by: §5.1.
+
+Aggarwal and Welleck (2025)
+P. Aggarwal and S. Welleck
+
+L1: controlling how long a reasoning model thinks with reinforcement learning.
+
+In Second Conference on Language Modeling,
+
+Cited by: §1,
+§3.
+
+Agrawal et al. (2024)
+P. Agrawal, S. Antoniak, E. B. Hanna, B. Bout, D. Chaplot, J. Chudnovsky, D. Costa, B. De Monicault, S. Garg, T. Gervet, et al.
+
+Pixtral 12b.
+
+arXiv preprint arXiv:2410.07073.
+
+Cited by: §5.1.
+
+Ahmadian et al. (2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+
+Back to basics: revisiting REINFORCE-style optimization for learning from human feedback in LLMs.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+Bangkok, Thailand, pp. 12248–12267.
+
+External Links: Document
+
+Cited by: §2.2.
+
+Balunović et al. (2025)
+M. Balunović, J. Dekoninck, I. Petrov, N. Jovanović, and M. Vechev
+
+MathArena: evaluating llms on uncontaminated math competitions.
+
+SRI Lab, ETH Zurich.
+
+External Links: Link
+
+Cited by: §5.1.
+
+Chen et al. (2025)
+X. Chen, J. Xu, T. Liang, Z. He, J. Pang, D. Yu, L. Song, Q. Liu, M. Zhou, Z. Zhang, et al.
+
+Do not think that much for 2+ 3=? on the overthinking of long reasoning models.
+
+In International Conference on Machine Learning,
+
+pp. 9487–9499.
+
+Cited by: Appendix D,
+§1,
+§3.
+
+Fang et al. (2025)
+G. Fang, X. Ma, and X. Wang
+
+Thinkless: LLM learns when to think.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+Cited by: §1,
+§3.
+
+Gandhi et al. (2025)
+K. Gandhi, A. K. Chakravarthy, A. Singh, N. Lile, and N. Goodman
+
+Cognitive behaviors that enable self-improving reasoners, or, four habits of highly effective STars.
+
+In Second Conference on Language Modeling,
+
+External Links: Link
+
+Cited by: Appendix D,
+Appendix D,
+§5.2.
+
+GLM Team et al. (2026)
+GLM Team, A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Xie, C. Wang, et al.
+
+GLM-5: from vibe coding to agentic engineering.
+
+arXiv preprint arXiv:2602.15763.
+
+Cited by: §1,
+§3.
+
+GLM Team et al. (2025)
+GLM Team, A. Zeng, X. Lv, Q. Zheng, Z. Hou, B. Chen, C. Xie, C. Wang, D. Yin, H. Zeng, J. Zhang, et al.
+
+GLM-4.5: agentic, reasoning, and coding (arc) foundation models.
+
+arXiv preprint arXiv:2508.06471.
+
+Cited by: §1,
+§3.
+
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, et al.
+
+DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning.
+
+Nature 645 (8081), pp. 633–638.
+
+External Links: Document,
+Link,
+ISSN 1476-4687
+
+Cited by: §1,
+§2.1,
+§5.1,
+§5.2.
+
+Han et al. (2025)
+T. Han, Z. Wang, C. Fang, S. Zhao, S. Ma, and Z. Chen
+
+Token-budget-aware LLM reasoning.
+
+In Findings of the Association for Computational Linguistics: ACL 2025, W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 24842–24855.
+
+External Links: Document
+
+Cited by: §3.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arber, S. Basart, E. Tang, D. Song, and J. Steinhardt
+
+Measuring mathematical problem solving with the math dataset.
+
+Advances in Neural Information Processing Systems 34, pp. 5074–5085.
+
+Cited by: Appendix A.
+
+Hu et al. (2025)
+J. Hu, Y. Zhang, Q. Han, D. Jiang, X. Zhang, and H. Shum
+
+Open-Reasoner-Zero: an open source approach to scaling up reinforcement learning on the base model.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: Appendix A.
+
+Jain et al. (2025)
+N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica
+
+LiveCodeBench: holistic and contamination free evaluation of large language models for code.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §5.1.
+
+Kazemnejad et al. (2025)
+A. Kazemnejad, M. Aghajohari, E. Portelance, A. Sordoni, S. Reddy, A. Courville, and N. Le Roux
+
+VinePPO: refining credit assignment in RL training of LLMs.
+
+In International Conference on Machine Learning,
+
+pp. 29557–29590.
+
+Cited by: §2.2.
+
+Khatri et al. (2025)
+D. Khatri, L. Madaan, R. Tiwari, R. Bansal, S. S. Duvvuri, M. Zaheer, I. S. Dhillon, D. Brandfonbrener, and R. Agarwal
+
+The art of scaling reinforcement learning compute for LLMs.
+
+arXiv preprint arXiv:2510.13786.
+
+Cited by: §5.1.
+
+Kimi Team et al. (2025)
+Kimi Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, et al.
+
+Kimi k1.5: scaling reinforcement learning with LLMs.
+
+arXiv preprint arXiv:2501.12599.
+
+Cited by: §1,
+§3.
+
+Kimi Team (2025)
+Kimi Team
+
+Kimi K2: open agentic intelligence.
+
+arXiv preprint arXiv:2507.20534.
+
+Cited by: §1,
+§3.
+
+Lambert et al. (2024)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, Y. Gu, S. Malik, V. Graf, J. D. Hwang, J. Yang, R. L. Bras, O. Tafjord, C. Wilhelm, L. Soldaini, N. A. Smith, Y. Wang, P. Dasigi, and H. Hajishirzi
+
+Tulu 3: pushing frontiers in open language model post-training.
+
+arXiv preprint arXiv: 2411.15124.
+
+Cited by: Appendix A,
+§1,
+§2.1.
+
+LI et al. (2024)
+J. LI, E. Beeching, L. Tunstall, B. Lipkin, R. Soletskyi, S. C. Huang, K. Rasul, L. Yu, A. Jiang, Z. Shen, Z. Qin, B. Dong, L. Zhou, Y. Fleureau, G. Lample, and S. Polu
+
+NuminaMath.
+
+Numina.
+
+Note: https://huggingface.co/datasets/AI-MO/NuminaMath-1.5
+
+Cited by: Appendix A.
+
+Li et al. (2023)
+R. Li, J. Fu, B. Zhang, T. Huang, Z. Sun, C. Lyu, G. Liu, Z. Jin, and G. Li
+
+TACO: Topics in Algorithmic COde generation dataset.
+
+arXiv preprint arXiv:2312.14852.
+
+Cited by: Appendix A.
+
+Li et al. (2025)
+Z. Li, Q. Dong, J. Ma, D. Zhang, K. Jia, and Z. Sui
+
+SelfBudgeter: adaptive token allocation for efficient LLM reasoning.
+
+arXiv preprint arXiv:2505.11274.
+
+Cited by: §3.
+
+Liu et al. (2025a)
+J. Liu, Y. Fan, J. Zhuo, H. Ding, Y. Hu, C. Zhang, Y. Shi, S. Weng, A. Chen, S. Chen, M. Zhang, P. Zhao, and J. He
+
+SynLogic: synthesizing verifiable reasoning data at scale for learning logical reasoning and beyond.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+Cited by: Appendix A.
+
+Liu et al. (2025b)
+S. Liu, X. Dong, X. Lu, S. Diao, M. Liu, M. Chen, H. Yin, Y. F. Wang, K. Cheng, Y. Choi, et al.
+
+DLER: doing length penalty right-incentivizing more intelligence per token via reinforcement learning.
+
+arXiv preprint arXiv:2510.15110.
+
+Cited by: §1,
+§3.
+
+Liu et al. (2024)
+Z. Liu, A. Qiao, W. Neiswanger, H. Wang, B. Tan, T. Tao, J. Li, Y. Wang, S. Sun, O. Pangarkar, R. Fan, Y. Gu, V. Miller, Y. Zhuang, G. He, H. Li, F. Koto, L. Tang, N. Ranjan, Z. Shen, R. Iriondo, C. Mu, Z. Hu, M. Schulze, P. Nakov, T. Baldwin, and E. P. Xing
+
+LLM360: towards fully transparent open-source LLMs.
+
+In First Conference on Language Modeling,
+
+External Links: Link
+
+Cited by: Reproducibility Statement.
+
+Madhusudhan et al. (2025)
+S. T. Madhusudhan, S. Davasam, and T. Scholak
+
+Apriel-1.6-15b-Thinker: cost-efficient frontier multimodal performance.
+
+Note: https://huggingface.co/blog/ServiceNow-AI/apriel-1p6-15b-thinkerHugging Face Blog
+
+Cited by: §5.1.
+
+Muennighoff et al. (2025)
+N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candes, and T. Hashimoto
+
+S1: simple test-time scaling.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+Suzhou, China, pp. 20275–20321.
+
+External Links: Document
+
+Cited by: §1,
+§3.
+
+Olmo Team et al. (2025)
+Olmo Team, A. Ettinger, A. Bertsch, B. Kuehl, D. Graham, D. Heineman, D. Groeneveld, F. Brahman, F. Timbers, H. Ivison, et al.
+
+Olmo 3.
+
+arXiv preprint arXiv:2512.13961.
+
+Cited by: Appendix A,
+§1,
+§1,
+§3.
+
+Patil et al. (2025)
+S. G. Patil, H. Mao, F. Yan, C. C. Ji, V. Suresh, I. Stoica, and J. E. Gonzalez
+
+The berkeley function calling leaderboard (BFCL): from tool use to agentic evaluation of large language models.
+
+In Forty-second International Conference on Machine Learning,
+
+Cited by: Appendix A.
+
+Piché et al. (2025)
+A. Piché, E. Kamalloo, R. Pardinas, X. Chen, and D. Bahdanau
+
+PipelineRL: faster on-policy reinforcement learning for long sequence generation.
+
+arXiv preprint arXiv:2509.19128.
+
+Cited by: §1,
+§2.3.
+
+Prime Intellect Team et al. (2025)
+Prime Intellect Team, M. Senghaas, F. Obeid, S. Jaghouar, W. Brown, J. M. Ong, D. Auras, M. Sirovatka, J. Straube, A. Baker, et al.
+
+INTELLECT-3: technical report.
+
+arXiv preprint arXiv:2512.16144.
+
+Cited by: Appendix A.
+
+Pyatkin et al. (2025)
+V. Pyatkin, S. Malik, V. Graf, H. Ivison, S. Huang, P. Dasigi, N. Lambert, and H. Hajishirzi
+
+Generalizing verifiable instruction following.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track,
+
+Cited by: Appendix A.
+
+Qwen Team et al. (2025)
+Qwen Team, J. Xu, Z. Guo, H. Hu, Y. Chu, X. Wang, J. He, Y. Wang, X. Shi, T. He, X. Zhu, et al.
+
+Qwen3-omni technical report.
+
+arXiv preprint arXiv:2509.17765.
+
+Cited by: §2.2.
+
+Qwen Team (2026)
+Qwen Team
+
+Qwen3.5: towards native multimodal agents.
+
+External Links: Link
+
+Cited by: §1.
+
+Radhakrishna et al. (2025)
+S. Radhakrishna, A. Tiwari, A. Shukla, M. Hashemi, R. Maheshwary, S. K. R. Malay, J. Mehta, P. Pattnaik, S. Mittal, K. Slimi, K. Ogueji, A. Oladipo, S. Parikh, O. Bamgbose, T. Liang, A. Masry, K. Mahajan, S. R. Mudumba, V. Yadav, S. T. Madhusudhan, T. Scholak, S. Davasam, S. Sunkara, and N. Chapados
+
+Apriel-1.5-15b-Thinker.
+
+External Links: 2510.01141
+
+Cited by: §1,
+§5.1,
+§5.1.
+
+Rein et al. (2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+
+GPQA: a graduate-level google-proof q&a benchmark.
+
+In First Conference on Language Modeling,
+
+External Links: Link
+
+Cited by: §5.1.
+
+Ritter et al. (2026)
+D. Ritter, O. Oertell, B. Guo, J. Chang, K. Brantley, and W. Sun
+
+LLMs can learn to reason via off-policy RL.
+
+arXiv preprint arXiv:2602.19362.
+
+Cited by: §2.3.
+
+Schulman et al. (2015)
+J. Schulman, S. Levine, P. Abbeel, M. Jordan, and P. Moritz
+
+Trust region policy optimization.
+
+In International conference on machine learning,
+
+pp. 1889–1897.
+
+Cited by: §2.2.
+
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347.
+
+Cited by: §2.2.
+
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+
+arXiv preprint arXiv:2402.03300.
+
+Cited by: §2.1,
+§2.2.
+
+Shen et al. (2025)
+Y. Shen, J. Zhang, J. Huang, S. Shi, W. Zhang, J. Yan, N. Wang, K. Wang, Z. Liu, and S. Lian
+
+DAST: difficulty-adaptive slow-thinking for large reasoning models.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: Industry Track,
+
+Suzhou (China), pp. 2322–2331.
+
+External Links: Document
+
+Cited by: §1,
+§3.
+
+Su et al. (2025)
+J. Su, J. Healey, P. Nakov, and C. Cardie
+
+Between underthinking and overthinking: an empirical study of reasoning length and correctness in llms.
+
+arXiv preprint arXiv:2505.00127.
+
+Cited by: §5.2.
+
+Tajwar et al. (2024)
+F. Tajwar, A. Singh, A. Sharma, R. Rafailov, J. Schneider, T. Xie, S. Ermon, C. Finn, and A. Kumar
+
+Preference fine-tuning of LLMs should leverage suboptimal, on-policy data.
+
+In International Conference on Machine Learning,
+
+pp. 47441–47474.
+
+Cited by: §2.3.
+
+Wang et al. (2025a)
+B. Wang, C. Lee, N. Lee, S. Lin, W. Dai, Y. Chen, Y. Chen, Z. Yang, Z. Liu, M. Shoeybi, B. Catanzaro, and W. Ping
+
+Nemotron-cascade: scaling cascaded reinforcement learning for general-purpose reasoning models.
+
+Cited by: §1,
+§1,
+§3,
+§5.1,
+§5.2.
+
+Wang et al. (2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, T. Li, M. Ku, K. Wang, A. Zhuang, R. Fan, X. Yue, and W. Chen
+
+MMLU-Pro: a more robust and challenging multi-task language understanding benchmark.
+
+In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track,
+
+Vol. 37, pp. 95266–95290.
+
+Cited by: §5.1.
+
+Wang et al. (2025b)
+Y. Wang, Q. Liu, J. Xu, T. Liang, X. Chen, Z. He, L. Song, D. Yu, J. Li, Z. Zhang, R. Wang, Z. Tu, H. Mi, and D. Yu
+
+Thoughts are all over the place: on the underthinking of long reasoning models.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+External Links: Link
+
+Cited by: §5.2.
+
+Wen et al. (2025)
+H. Wen, X. Wu, Y. Sun, F. Zhang, L. Chen, J. Wang, Y. Liu, Y. Liu, Y. Zhang, and Y. Li
+
+BudgetThinker: empowering budget-aware LLM reasoning with control tokens.
+
+arXiv preprint arXiv:2508.17196.
+
+Cited by: §3.
+
+Williams (1992)
+R. J. Williams
+
+Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+
+Machine learning 8, pp. 229–256.
+
+Cited by: §2.2.
+
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §5.1,
+§5.1.
+
+Yu et al. (2025)
+Q. Yu, Z. Sun, W. Shen, R. Zheng, et al.
+
+DAPO: an open-source LLM reinforcement learning system at scale.
+
+arXiv preprint arXiv:2503.14476.
+
+Cited by: §2.2,
+§4.1,
+§5.1.
+
+Zhang et al. (2025)
+J. Zhang, N. Lin, L. Hou, L. Feng, and J. Li
+
+AdaptThink: reasoning models can learn when to think.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+Suzhou, China, pp. 3716–3730.
+
+External Links: Document
+
+Cited by: §1,
+§3.
+
+Zhang and Zuo (2025)
+J. Zhang and C. Zuo
+
+GRPO-LEAD: a difficulty-aware reinforcement learning approach for concise mathematical reasoning in language models.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+
+Suzhou, China, pp. 5642–5654.
+
+External Links: Document
+
+Cited by: §1,
+§3.
+
+Zhao et al. (2026)
+Y. Zhao, Y. Liu, J. Liu, J. Chen, X. Wu, Y. Hao, T. Lv, S. Huang, L. Cui, Q. Ye, F. Wan, and F. Wei
+
+Geometric-mean policy optimization.
+
+In The Fourteenth International Conference on Learning Representations,
+
+Cited by: §2.2.
+
+Zheng et al. (2025a)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, J. Zhou, and J. Lin
+
+Group sequence policy optimization.
+
+arXiv preprint arXiv:2507.18071.
+
+Cited by: §2.2,
+§2.2.
+
+Zheng et al. (2025b)
+H. Zheng, J. Zhao, and B. Chen
+
+Prosperity before collapse: how far can off-policy RL reach with stale data on LLMs?.
+
+arXiv preprint arXiv:2510.01161.
+
+Cited by: §2.3.
+
+Zhou et al. (2023)
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou
+
+Instruction-following evaluation for large language models.
+
+arXiv preprint arXiv:2311.07911.
+
+Cited by: Appendix A.
+
+Appendix A Training Domains and Verifiers
+
+Each training domain is defined by a dataset and a verifiable reward function, which together constitute an environment. Below, we describe each domain and its corresponding verifier in more detail.
+
+Mathematics:
+
+For mathematical reasoning, we use the training data curated by Open-Reasoner-Zero (Hu et al., 2025), totaling approximately 129K math problems spanning a range of difficulty levels, from high-school mathematics to competition-level problems.55
+5
+
+Data accessed from https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero. This includes the original 57K collection, sourced from AIME (up to 2023), MATH (Hendrycks et al., 2021), NuminaMath (LI et al., 2024), and Tulu3 MATH (Lambert et al., 2024), as well as an extended 72K subset carefully filtered from OpenR1-Math-220k.66
+6
+
+https://hf.co/datasets/open-r1/OpenR1-Math-220k We use a binary reward based on answer correctness. Following standard practice, a rule-based verifier extracts the model’s final numerical or symbolic answer and compares it to the ground truth using exact match.
+
+Code Generation:
+
+The code generation domain consists of programming problems with test cases used for automatic verification. Our primary source is the TACO dataset (Li et al., 2023), which contains roughly 24K competition-style programming problems collected from online judge platforms such as CodeChef, Codeforces, HackerRank, and GeeksforGeeks, as well as prior datasets including APPS, CodeContests, and Description2Code. These problems span a broad range of algorithmic topics typical of contemporary competitive programming.
+The dataset provides difficulty annotations, from which we exclude problems labeled ‘HARD’ and ‘VERY_HARD’ resulting in 24K training problems.
+We use a sandboxed environment in which programs produced by the model during training are executed against provided test cases.77
+7
+
+https://github.com/bytedance/SandboxFusion
+The verifier returns pass/fail diagnostics, and rewards are assigned using a rule-based scheme; a reward of 1 is given only if all test cases pass, and 0 otherwise.
+
+Instruction-Following:
+
+In instruction-following, the model must complete a task such as summarization or creative writing while satisfying one or more verifiable output constraints (Zhou et al., 2023).
+We train on the IF-RLVR dataset (Pyatkin et al., 2025), containing 95K instruction-response pairs (with 550 held out for validation), which was used for training OLMo 3 (Olmo Team et al., 2025).
+The reward is computed as the proportion of constraints satisfied, ranging from 0 to 1.
+
+Logical Puzzles:
+
+This domain is adapted from the INTELLECT-3 logic environment (Prime Intellect Team et al., 2025), based on SynLogic (Liu et al., 2025a). The dataset consists of 29 puzzle types and 12K tasks spanning symbolic and deductive reasoning, constraint satisfaction, and combinatorial search, including Boolean expressions, grid-based puzzles (e.g., Sudoku), arithmetic puzzles (e.g., Game of 24), and interactive logic games (e.g., Minesweeper). Problems are programmatically generated with adjustable difficulty. Rewards are computed using task-specific verifiers from the i3-logic library.88
+8
+
+https://app.primeintellect.ai/dashboard/environments/primeintellect/i3-logic
+
+Function Calling:
+
+The goal of the function calling task is to generate a valid call to an external function or API in response to a user query (Patil et al., 2025). We train and evaluate this domain using all subcategories within the single-turn category of BFCL v4.99
+9
+
+https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html
+To compute reward, the predicted function name and arguments are extracted using Python’s ast module. Following BFCL’s evaluation protocol, a prediction is considered correct if the function name matches exactly and all argument values fall within predefined valid sets, rather than requiring exact string matches.
+
+Appendix B Training Details
+
+B.1 Hyperparameters
+
+Table 4 lists the full hyperparameters for the training configuration described in Section 5.1.
+In the Scope column, Actor means rollout generation and reward computation, Trainer denotes optimization and model weight updates, and Both refers to parameters that directly affect both sides.
+
+Table 4: Reference Apriel-Reasoner launch configuration using GSPO and DAP.
+
+Parameter
+
+Value
+
+Scope
+Status
+
+Policy loss
+
+GSPO
+
+Trainer
+Fixed
+
+FP32 lm_head
+
+true
+
+Both
+Fixed
+
+Group Size ()
+
+8
+
+Both
+Fixed
+
+Max output tokens
+
+16,000
+
+Actor
+Fixed
+
+Learning rate
+
+Trainer
+Swept
+
+Clip
+
+Trainer
+Swept
+
+DAP
+
+Actor
+Swept
+
+Domain rates (M/C/L/I/F)
+
+0.40/0.25/0.15/0.10/0.10
+
+Actor
+Swept
+
+World fractions (Actor/Preprocessor/Trainer)
+
+4/0/4
+
+Both
+Fixed
+
+B.2 Hyperparameter Search Space
+
+Table 5: Exact candidate sets used in the hyperparameter sweeps reported in this paper. Domain-rate vectors are ordered as (M/C/L/I/F) = (math, coding, logic, ifeval, function calling).
+
+Parameter
+
+Candidate values
+
+Learning rate
+
+GSPO clip
+
+Domain rates
+
+DAP
+
+Output-token budget
+
+Appendix C Per-Domain Reward Curves
+
+(a) Mathematics
+
+(b) Code Generation
+
+(c) Instruction-Following
+
+(d) Logical Puzzles
+
+(e) Function Calling
+
+Figure 4: Mean reward progress during training for each domain.
+
+Appendix D Details of Reasoning Trace Analysis
+
+Complementary to the reasoning step analysis in Section 5.2, we further analyze the structure of each reasoning step into eight categories. Four correspond to the non-linear cognitive behaviors identified by Gandhi et al. (2025):
+verification, systematically checking intermediate results against solution criteria to confirm or reject a candidate answer; backtracking, explicitly abandoning a failing line of reasoning and pivoting to an alternative approach after recognizing an error or dead end; subgoal setting, decomposing a complex problem into smaller, manageable intermediate targets before solving each one; and backward chaining, reasoning from the desired outcome back toward the inputs, asking what conditions must hold for the goal to be satisfied.
+These four behaviors represent non-linear reasoning patterns that go beyond the typical linear, monotonic chain-of-thought commonly observed in LLMs.
+
+To fully account for all content in a reasoning trace, we introduce four additional categories complementary to the above:
+problem setup for steps that translate the problem into a workable form, such as interpreting the problem statement, converting representations, or defining variables before solving begins; forward reasoning as the default category for standard linear deduction; final answer, for the steps where the model produces its final answer; and non-productive steps, which capture content that restates a previously established result without adding new computation or verification, including repeated statements of the answer, re-derivation of a conclusion already reached earlier in the trace, and filler meta-commentary that adds no new information.
+This last category relates to the overthinking phenomenon documented by Chen et al. (2025), where models waste tokens revisiting already-established results.
+
+Using the same segmentation described in Section 5.2, we classify each step into one of the eight categories above using GPT-5.4. The full step-type distribution is shown in Figure 5.
+
+Fewer non-productive steps and more non-linear reasoning.
+
+The most notable difference is in non-productive steps, which drop from 21% in Apriel-Base to 14% in Apriel-Reasoner, meaning the model wastes fewer tokens on content that does not advance the solution. Meanwhile, the combined share of non-linear reasoning behaviors (verification, backtracking, subgoal setting, and backward chaining) increases from 11% to 17%, suggesting that RL training encourages the model to engage in more of the cognitive behaviors that Gandhi et al. (2025) identified as enabling self-improvement.
+
+Figure 5: Step-type distribution for Apriel-Base and Apriel-Reasoner on AIME 2025. Apriel-Reasoner produces fewer verification and non-productive steps.
+
+D.1 Example of Reasoning Trace Analysis
+
+Figure 6: An example reasoning trace from Apriel-Base on a problem from AIME 2025, first split into reasoning steps and then classified into the eight categories defined in Section D. The model output is reformatted for readability.
+
+D.2 Prompts
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

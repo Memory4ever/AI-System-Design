@@ -1,0 +1,2201 @@
+AudioKV: KV Cache Eviction in Efficient Large Audio Language Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+Motivation 1: Modality-specialized attention heads call for audio-aware KV compression.
+
+Solution 1: Audio-aware KV cache allocation
+
+Motivation 2: Audio as a Smoothing and Continuous Signal.
+
+Solution 2: Spectral Score Smoothing (SSS)
+
+2 Related Work
+
+2.1 Attention and Speech–Text Grounding
+
+2.2 Efficient Inference under Long Context
+
+2.3 Spectral Smoothing for Sequence Importance
+
+3 Methodology
+
+3.1 Preliminaries
+
+Modality-bias in Attention Heads.
+
+Modality-aware Head-wise KV Cache Allocation.
+
+3.2 Identifying Audio-Critical Heads
+
+Word-level Audio Alignment.
+
+Aligning generated tokens to ASR words.
+
+Collecting Attention Hits to Audio Spans.
+
+Head Importance Estimation.
+
+Head-wise Cache Allocation.
+
+3.3 FFT-Based Spectral Attention Smoothing
+
+Spectral Score Smoothing for Cache Eviction.
+
+Adaptive Energy-Based Cutoff.
+
+Spectral Filtering.
+
+Reconstruction and Residual Mixing.
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Datasets and Benchmarks.
+
+Models and Baselines.
+
+Evaluation Metrics.
+
+Implementation Details.
+
+4.2 Main Results
+
+Overall Performance.
+
+ASR vs. Speech Translation.
+
+Stability Across Models and Datasets.
+
+4.3 Ablation Studies
+
+Audio-Head-Aware Cache Allocation.
+
+Spectral Score Smoothing (SSS)
+
+4.4 Generalization across AQA Benchmarks
+
+4.5 Case Studies
+
+4.6 Parameter Sensitivity Analysis of the Spectral Score Smoothing Component
+
+4.7 Efficiency Analysis
+
+5 Conclusion
+
+Acknowledgements
+
+References
+
+A Appendix
+
+A.1 Ablation Study Table
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.06694v1 [cs.SD] 08 Apr 2026
+
+AudioKV: KV Cache Eviction in Efficient Large Audio Language Models
+
+DOI: XXXXXXX.XXXXXXXConference: Proceedings of the 34th ACM International Conference on Multimedia; November 10–14,
+2026; Rio de Janeiro, BrazilISBN: 978-1-4503-XXXX-X/2026/11CCS: Computing methodologies Speech recognition
+
+Yuxuan Wang1,2, Peize He1, Xiyan Gui1, Xiaoqian Liu1, Junhao He1, Xuyang Liu1, Zichen Wen1, Xuming Hu1,3, Linfeng Zhang1
+
+Note: This work was done when Yuxuan Wang was an intern at SJTU.
+
+Affiliation: 1EPIC Lab, Shanghai Jiao Tong University  2Xidian University  3HKUST (GZ)
+
+2026
+
+Abstract.
+
+Large Audio-Language Models (LALMs) have set new benchmarks in speech processing, yet their deployment is hindered by the memory footprint of the Key-Value (KV) cache during long-context inference. While general KV cache compression techniques excel in LLMs, they often fail in the audio domain by overlooking the intrinsic temporal continuity of acoustic signals. To bridge this gap, we propose AudioKV, a novel framework that robustly prioritizes audio-critical attention heads through a hardware-friendly semantic-acoustic alignment mechanism. Specifically, we identify these modality-specialized heads by analyzing attention scores in ASR tasks and dynamically allocate KV cache budgets preferentially to them. Furthermore, we introduce Spectral Score Smoothing (SSS), an FFT-based global filtering strategy designed to suppress high-frequency noise and recover smooth global trends from importance scores, ensuring more balanced token selection with unprecedented precision. Extensive evaluations across multiple LALMs, including Qwen and Gemma series, demonstrate that AudioKV significantly outperforms baselines while enhancing computational efficiency. Notably, at a 40% compression ratio, AudioKV maintains near-full accuracy on Qwen3-Omni-30B with only a 0.45% drop, whereas traditional methods suffer from catastrophic performance degradation and repetition. Our code will be released after acceptance.
+
+Keywords: KV Cache Compression,Audio-Language Models, Long-context Inference, Efficiency
+
+1. Introduction
+
+Large Audio-Language Models (LALMs) with speech capabilities, such as Qwen2.5-Omni (Xu et al., 2025a; Xu et al., 2025b), are increasingly deployed in real-world applications involving complex multimodal interactions. However, the Key-Value (KV) cache remains a critical bottleneck, as its memory footprint grows linearly with audio duration, severely limiting on-device and streaming deployment.
+
+To effectively solve this problem, recent advances in KV cache compression for text-only LLMs show that significant memory savings are possible by retaining only salient past tokens. Methods such as SnapKV (Li et al., 2024) and AdaKV (Feng et al., 2025) rely on attention-based importance estimation and perform well in text settings. Nevertheless, their direct applicability to the audio modality remains unclear due to the fundamentally different temporal structures and redundancy patterns, motivating us to systematically study the problems and corresponding efficient solutions of KV cache eviction in LALMs.
+
+Figure 1. Visualization of audio critical heads in Qwen2.5-Omni-7B and Gemma-3n-E4B models.
+
+Motivation 1: Modality-specialized attention heads call for audio-aware KV compression.
+
+Prior studies show that attention heads in LALMs are modality-specialized (Wang et al., 2025), suggesting that only a subset of attention heads captures acoustic information in audio-centric tasks, while others focus on linguistic or cross-modal patterns. This heterogeneity suggests that uniformly compressing the KV cache across all heads is suboptimal, as it may unnecessarily degrade audio-critical representations.
+
+Solution 1: Audio-aware KV cache allocation
+
+We propose an audio-aware KV cache allocation strategy that exploits the unequal contribution of attention heads to acoustic modeling in LALMs. Specifically, we identify audio-critical heads by analyzing attention scores between paired audio tokens and decoded text tokens in an ASR task, and select heads that consistently exhibit higher audio–text attention. KV cache budgets are then allocated preferentially to these audio-critical heads, while stronger compression is applied to less relevant ones. This strategy preserves essential acoustic dependencies during decoding with substantially reduced memory overhead. As shown in Figure 1, only a small subset of attention heads exhibits strong audio relevance, indicating that acoustic modeling is concentrated in a limited number of heads and justifying the design of the proposed audio-aware KV cache allocation.
+
+Motivation 2: Audio as a Smoothing and Continuous Signal.
+
+Different from text, speech signals encode information in temporally continuous acoustic representations, where linguistic and semantic cues unfold gradually over time rather than being localized to isolated frames.
+However, as illustrated in Figure 2 (a), the original importance scores of audio tokens exhibit a strong temporal bias. Specifically, Top-K selection based on the raw importance scores tends to concentrate the preserved KV pairs within a small subset of token indices, forming dense clusters, while the remaining token indices are rarely selected, despite still carrying relevant contextual information. This uneven distribution violates the inherent temporal continuity of speech signals and leads to suboptimal KV cache utilization in practice.
+
+Figure 2. Distribution shift of Top-K token selection before and after spectral score smoothing (SSS).
+
+Solution 2: Spectral Score Smoothing (SSS)
+
+To solve this problem, we introduce a signal-processing-based strategy to stabilize token-level importance estimation. Specifically, we treat the importance scores assigned by each attention head to past tokens as a one-dimensional temporal signal. In audio, such signals naturally exhibit multi-scale structure: slowly varying components capture stable semantic relevance, while rapid oscillations often reflect spurious local alignments.
+Concretely, SSS applies an FFT-based global low-pass filter to suppress high-frequency noise and recover smooth global trends, and then interpolates the filtered signal with the original attention scores using a mixing coefficient .
+Unlike conventional pooling-based smoothing (Li et al., 2024), which is inherently local and operates over a limited neighborhood, SSS performs smoothing over the entire importance signal, enabling global redistribution of attention scores.
+As shown in Figure 2(b),
+this frequency-aware smoothing yields more balanced top- selections across the sequence, mitigating attention bias while remaining model-agnostic and computationally efficient.
+
+Based on these key insights, we propose AudioKV, a novel framework for audio-centric KV cache compression. AudioKV integrates (i) head-aware KV cache allocation, which prioritizes memory for audio-critical attention heads, and (ii) Spectral Score Smoothing (SSS), which stabilizes token importance estimation by enforcing temporal continuity in acoustic signals and is compatible with existing score-based KV eviction methods. Extensive experiments on various ASR and ST benchmarks show that AudioKV achieves a superior accuracy–memory trade-off: at the same compression ratio, it substantially mitigates ASR degradation compared to head-agnostic baselines, and in many cases preserves near-full ASR accuracy while reducing KV memory to 40% on Qwen3-Omni-30B-A3B-Instruct. These results demonstrate AudioKV as an effective and principled solution for efficient and scalable inference in LALMs.
+
+In summary, our contributions are threefold:
+
+•
+
+We identify and quantify audio-critical attention heads in five large audio-language models, revealing strong head-level modality specialization in speech-centric decoding.
+
+•
+
+We propose AudioKV, a head-aware KV cache compression framework that combines audio-head-aware budgeting with spectral score smoothing for audio tasks.
+
+•
+
+Extensive empirical experiments demonstrate that AudioKV achieves superior accuracy under KV cache eviction scenarios while maintaining the same cache budget.
+
+2. Related Work
+
+2.1. Attention and Speech–Text Grounding
+
+Attention-based ASR models, including LAS (Chan et al., 2016) and Transformer-based architectures (Vaswani et al., 2017), demonstrate that decoder attention implicitly encodes alignments between acoustic frames and output tokens. Large-scale systems such as Whisper (Radford et al., 2023) and WhisperX (Bain et al., 2023) explicitly provide word-level timestamps and confidence scores, which can serve as external alignment supervision. Existing analyses of Transformer attention heads in NLP and speech (Michel et al., 2019; Voita et al., 2019) primarily examine head behaviors at a coarse granularity, focusing on specialization or pruning effects, but they do not translate fine-grained grounding behavior into actionable inference-time policies. In contrast, our approach leverages word spans aligned by WhisperX together with top-K attention statistics to compute specific head-level audio-grounding scores, which are then effectively used to explicitly guide dynamic cache allocation strategies accurately.
+
+2.2. Efficient Inference under Long Context
+
+Prior work reduces memory usage for long-context inference through architectural sparsification, such as structured sparse attention and local attention windows (Beltagy et al., 2020), as well as efficient attention implementations including FlashAttention (Dao et al., 2022; Dao, 2023; Shah et al., 2024). 
+More recent KV-compression methods selectively retain past tokens based on token importance scores. Pioneering approaches like H2O (Zhang et al., 2023) and StreamingLLM (Xiao et al., 2024) demonstrated that retaining only heavy-hitter tokens or attention sinks can preserve generation quality. Building on this, methods such as SnapKV (Li et al., 2024) and AdaKV (Feng et al., 2025) refine these selection metrics using local pooling heuristics, while PyramidKV (Cai et al., 2025) suggests allocating variable cache budgets across different layers. Parallel to pruning, quantization methods like KIVI (Zirui Liu et al., 2023) reduce memory footprints by quantizing stored key-value pairs.
+SparseMM (Wang et al., 2025) exploits alignment signals with OCR-based supervision to learn sparse attention patterns, but primarily targets the visual domain. In contrast, our method focuses on the audio modality and introduces a head-wise cache budgeting scheme that leverages grounding statistics to allocate larger global caches to audio-critical heads while reducing cache sizes for less informative ones.
+
+2.3. Spectral Smoothing for Sequence Importance
+
+Frequency-domain analysis has proven effective in sequence modeling and signal processing.
+FNet (Lee-Thorp et al., 2021) and GFNet (Rao et al., 2021)
+established that global spectral mixing can efficiently capture long-range dependencies,
+offering a competitive alternative to self-attention. A recent related
+work (Lee et al., 2025) has also applied frequency-domain
+analysis to accelerate inference; however, it targets token pruning in the visual domain,
+whereas our work focuses on KV cache compression for audio. Building upon the context of
+noisy attention scores observed in existing methods like SnapKV, which typically relies
+on pooling that is inherently local and sensitive to high-frequency noise. To address
+this, we propose Spectral Score Smoothing (SSS). Instead of simple pooling, SSS employs
+an RFFT-based global filter with an energy-driven cutoff across the frequency spectrum to isolate essential semantic features from semantic information, functioning
+as a plug-and-play module for multi-stage compression.
+
+3. Methodology
+
+Figure 3. Overview of AudioKV.
+(A) Offline identification of audio-critical attention heads. We analyze attention distributions to measure the overlap between high-attention audio tokens and ground-truth audio spans, enabling the selection of heads that are most relevant to audio modality.
+(B) Inference-time lightweight plugin SSS, which performs spectral smoothing on importance scores to guide efficient cache allocation during decoding.
+
+3.1. Preliminaries
+
+Modality-bias in Attention Heads.
+
+Multimodal Transformers with layers and attention heads exhibit strong functional heterogeneity:
+only a small fraction of heads consistently attends to non-textual tokens, while most heads primarily
+model textual context. This sparse and stable modality bias has been observed across
+architectures and modalities. Prior work such as SparseMM (Wang et al., 2025) exploits this
+property to guide head-wise KV cache compression in the visual domain to improve overall
+inference efficiency.
+
+Modality-aware Head-wise KV Cache Allocation.
+
+To adapt KV cache allocation to non-text modalities, we associate each attention head with a scalar modality score that measures its relevance to a given modality. Let denote the collection of all head-wise scores.
+
+Given a total KV cache budget , we allocate cache capacity asymmetrically across heads according to these scores. Specifically, a head is
+
+(1)
+
+where is a fixed local window size, is a uniform baseline allocation shared by all heads, and is the remaining budget distributed proportionally based on modality relevance. This modality-agnostic formulation provides a general foundation, which we instantiate concretely for the audio modality in later sections.
+
+3.2. Identifying Audio-Critical Heads
+
+Although SparseMM has demonstrated in the visual domain that retaining only a small fraction of visual heads suffices to significantly reduce the KV cache of redundant heads, it remains unclear whether attention heads exhibit similarly consistent patterns in the audio modality.
+
+Our goal is to identify attention heads that are truly responsible for grounding ASR decoded tokens in the input audio tokens, and to leverage this information to drive a global, head-wise cache allocation policy. Drawing inspiration from SparseMM (Wang et al., 2025), we align word-level ASR supervision with token-level attention behavior, explicitly leveraging the temporal structure of the input audio signal, and derive per-head importance scores from ASR tasks.
+
+Word-level Audio Alignment.
+
+Given an input utterance, we obtain word-level timestamps and confidence scores from WhisperX.11
+1
+
+https://github.com/m-bain/whisperX Each word is represented as
+
+(2)
+
+where and denote the temporal boundaries of the word and is the alignment confidence. We retain only high-confidence words to treat them as reliable anchors.
+
+(3)
+
+We treat these identified words as reliable anchors to establish precise alignments between audio frames and textual outputs.
+
+Let denote the indices of audio tokens in the model input sequence, where is the starting index of the audio prefix. Assuming a uniform mapping between time and audio-token index, we convert each word’s timestamps into a contiguous span of audio token indices
+
+(4)
+
+with
+
+(5)
+
+Aligning generated tokens to ASR words.
+
+During decoding, the model generates a sequence of text tokens . We decode these tokens into text and greedily align them to the high-quality word set . For each word , we identify the corresponding set of decoding step indices
+
+(6)
+
+which represent the generation of that word.
+
+Collecting Attention Hits to Audio Spans.
+
+We instrument the decoder with forward hooks on all transformer layers. For each decoding step and attention head , we record the attention distribution from the newly generated token to all previous token indices
+
+(7)
+
+where is the current sequence length in indices. To focus on salient context tokens, we extract the top- attended token indices
+
+(8)
+
+with typically set to 24 in experiments.
+
+For a decoding step , we calculate the number of top- indices within the audio token span, as shown in Figure 3.
+
+(9)
+
+We then define a step-wise hit ratio
+
+(10)
+
+which measures how frequently an attention head’s most salient attention score is allocated to the correct audio token indices when generating a word.
+
+Head Importance Estimation.
+
+Aggregating over all word-aligned decoding step indices , we define a global importance score for each head:
+
+(11)
+
+Heads with high consistently allocate their most salient attention to the audio token indices corresponding to the words being generated, indicating strong audio grounding behavior.
+
+Head-wise Cache Allocation.
+
+At inference time, we use as a prior over attention heads to guide global cache allocation. Given a total cache budget , each head is assigned a cache capacity
+
+(12)
+
+This allocation strategy prioritizes heads that are empirically responsible for aligning generated words with their corresponding audio token spans, while reducing cache usage for non-audio heads.
+
+Table 1. Main results of AudioKV across various KV-cache compression budgets on ASR and ST benchmarks. For each dataset and model, the best-performing method is highlighted in bold. Numbers in the header row (e.g., 0.8, 0.6) denote the KV-cache retention ratio.
+Note: When models exhibit degenerate repetition, insertion errors escalate significantly, leading to high WER. For better readability, we report WAR as ; Entries shown as 0 indicate a failure to generate meaningful output.
+
+Methods
+Automatic Speech Recognition (ASR)
+Speech Translation (ST)
+Avg.
+
+ZH
+EN
+FR
+DE
+ES
+E2C
+C2E
+
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+
+Qwen2.5-Omni-3B
+
+Full KV
+91.8
+94.7
+90.9
+88.9
+94.0
+35.4
+25.2
+74.4
+
+SnapKV
+0.0
+0.0
+0.0
+67.0
+15.7
+0.0
+54.2
+0.0
+0.0
+0.0
+0.0
+0.0
+45.0
+0.0
+0.0
+34.6
+31.5
+24.5
+24.2
+21.2
+15.1
+15.9
+
+AdaKV
+0.0
+0.0
+0.0
+65.0
+11.5
+0.0
+37.1
+0.0
+0.0
+0.0
+0.0
+0.0
+22.4
+0.0
+0.0
+34.6
+31.9
+25.2
+24.4
+21.4
+15.8
+13.8
+
+PyramidKV
+0.0
+0.0
+0.0
+24.3
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+34.1
+27.3
+22.6
+23.7
+17.0
+13.8
+7.8
+
+H2O
+0.0
+0.0
+0.0
+39.9
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+30.3
+23.8
+14.9
+20.0
+14.6
+9.1
+7.3
+
+AudioKV
+91.7
+90.8
+0.0
+95.0
+93.9
+90.0
+89.9
+90.5
+85.8
+89.5
+90.2
+75.8
+93.9
+93.0
+91.3
+35.3
+35.0
+32.5
+25.2
+25.1
+23.2
+68.5
+
+Qwen2.5-Omni-7B
+
+Full KV
+93.5
+98.1
+83.9
+90.4
+94.5
+35.8
+25.6
+74.5
+
+SnapKV
+61.1
+0.0
+0.0
+80.7
+40.2
+0.0
+72.4
+0.0
+0.0
+64.6
+0.0
+0.0
+76.0
+0.0
+0.0
+35.3
+33.6
+27.5
+25.2
+23.4
+18.7
+26.6
+
+AdaKV
+15.8
+0.0
+0.0
+91.3
+56.0
+0.0
+70.0
+0.0
+0.0
+61.0
+0.0
+0.0
+78.7
+0.0
+0.0
+35.2
+33.6
+28.4
+25.2
+23.4
+19.3
+25.6
+
+PyramidKV
+0.0
+0.0
+0.0
+29.5
+0.0
+0.0
+14.7
+0.0
+0.0
+0.0
+0.0
+0.0
+5.3
+0.0
+0.0
+35.3
+30.0
+25.1
+26.0
+20.3
+13.8
+9.5
+
+H2O
+0.0
+0.0
+0.0
+64.0
+6.4
+0.0
+31.1
+0.0
+0.0
+5.3
+0.0
+0.0
+14.9
+0.0
+0.0
+32.7
+27.6
+17.8
+22.8
+18.6
+12.2
+12.1
+
+AudioKV
+93.1
+93.1
+0.0
+98.1
+98.0
+89.1
+83.4
+82.9
+78.7
+90.3
+90.8
+85.3
+94.5
+94.2
+91.2
+35.7
+35.2
+32.8
+25.6
+25.5
+23.5
+68.6
+
+Qwen3-Omni-30B-A3B-Instruct
+
+Full KV
+93.7
+98.3
+95.6
+95.5
+96.9
+40.1
+26.9
+78.1
+
+SnapKV
+0.0
+0.0
+0.0
+63.6
+45.2
+0.0
+68.7
+0.0
+0.0
+58.0
+0.0
+0.0
+68.2
+0.0
+0.0
+38.9
+35.0
+25.6
+25.6
+22.4
+15.3
+22.2
+
+AdaKV
+93.6
+0.0
+0.0
+81.9
+75.6
+60.6
+95.6
+90.9
+0.0
+94.8
+0.0
+0.0
+96.2
+84.8
+0.0
+40.1
+40.1
+24.1
+26.3
+24.3
+18.9
+45.1
+
+PyramidKV
+56.8
+24.2
+0.0
+66.1
+0.0
+0.0
+33.9
+0.0
+0.0
+0.6
+0.0
+0.0
+27.4
+0.0
+0.0
+39.0
+34.4
+29.9
+25.2
+23.6
+10.7
+17.7
+
+H2O
+0.0
+0.0
+0.0
+82.4
+39.9
+0.0
+0.0
+0.0
+0.0
+94.9
+89.2
+0.0
+0.0
+0.0
+0.0
+34.8
+31.3
+22.3
+21.7
+19.4
+19.0
+21.7
+
+AudioKV
+93.5
+93.0
+0.0
+98.2
+98.2
+97.8
+95.6
+95.5
+89.2
+95.5
+95.5
+86.0
+96.9
+96.8
+83.6
+40.0
+39.1
+32.1
+26.8
+26.2
+20.6
+71.4
+
+Gemma-3n-E2B
+
+Full KV
+35.6
+90.2
+57.2
+77.6
+76.9
+22.8
+12.2
+53.2
+
+SnapKV
+35.1
+32.5
+3.7
+0.0
+0.0
+0.0
+33.8
+0.0
+0.0
+54.3
+45.0
+0.0
+74.0
+47.3
+0.0
+19.2
+15.2
+5.0
+12.1
+10.2
+1.6
+18.5
+
+AdaKV
+35.0
+33.7
+13.0
+82.3
+56.9
+0.0
+49.4
+31.2
+4.1
+73.1
+55.7
+0.0
+79.0
+66.3
+0.0
+22.9
+20.9
+13.4
+12.2
+11.0
+4.6
+31.7
+
+PyramidKV
+35.0
+30.2
+14.7
+90.0
+61.9
+0.0
+50.3
+35.4
+5.1
+75.1
+66.7
+16.7
+79.7
+68.9
+6.5
+23.3
+18.5
+11.4
+11.8
+9.1
+3.2
+34.0
+
+H2O
+34.5
+33.6
+11.5
+83.0
+41.2
+0.0
+47.2
+25.3
+0.0
+71.5
+50.5
+0.0
+68.9
+36.3
+0.0
+22.8
+20.1
+12.3
+12.2
+10.8
+4.0
+27.9
+
+AudioKV
+36.3
+34.6
+31.2
+90.2
+88.5
+60.6
+66.8
+64.9
+28.9
+79.3
+75.9
+45.9
+82.9
+81.2
+36.2
+24.8
+23.1
+18.9
+12.3
+11.7
+9.0
+47.8
+
+Gemma-3n-E4B
+
+Full KV
+47.3
+92.6
+60.5
+72.7
+80.6
+29.6
+14.5
+56.8
+
+SnapKV
+44.4
+40.6
+0.0
+0.0
+0.0
+0.0
+57.8
+0.0
+0.0
+8.5
+0.0
+0.0
+73.1
+39.2
+0.0
+21.7
+17.4
+5.7
+14.0
+12.0
+2.3
+16.0
+
+AdaKV
+45.0
+43.9
+0.0
+84.7
+49.7
+0.0
+71.7
+62.1
+0.0
+68.7
+53.2
+0.0
+83.1
+72.5
+0.0
+28.1
+26.4
+13.4
+14.4
+13.2
+7.1
+35.1
+
+PyramidKV
+45.3
+44.5
+30.3
+89.3
+75.2
+3.4
+72.8
+68.6
+0.2
+70.8
+62.7
+34.0
+84.3
+79.4
+31.9
+28.3
+26.0
+18.5
+14.1
+13.2
+7.6
+42.9
+
+H2O
+44.6
+43.4
+0.0
+89.8
+54.6
+0.0
+51.6
+36.0
+0.0
+66.9
+49.8
+0.0
+74.5
+51.9
+0.0
+28.2
+25.7
+19.6
+14.0
+12.9
+6.2
+31.9
+
+AudioKV
+45.4
+44.5
+39.3
+92.6
+91.7
+80.8
+75.5
+75.2
+35.5
+72.5
+71.7
+55.4
+86.6
+86.4
+61.1
+29.7
+29.2
+24.8
+14.5
+14.4
+12.2
+54.2
+
+Algorithm 1 Spectral Score Smoothing (SSS)
+
+0:
+
+ Attention scores , cutoff ratio , mixing ratio .
+
+0:
+
+ Smoothed scores .
+
+1:
+
+ for each head to do
+
+2:
+
+  Let {Extract sequence for head }
+
+3:
+
+  , where
+
+4:
+
+  Compute energy spectrum:
+
+5:
+
+  Cumulative energy:
+
+6:
+
+  Find smallest such that
+
+7:
+
+  Construct mask:
+
+8:
+
+  
+
+9:
+
+  
+
+10:
+
+ end for
+
+11:
+
+ return
+
+3.3. FFT-Based Spectral Attention Smoothing
+
+Spectral Score Smoothing for Cache Eviction.
+
+To enhance the robustness of key-value (KV) cache selection and reduce
+high-frequency noise in attention trajectories, we introduce
+Spectral Score Smoothing (SSS), an FFT-based global filtering
+module on the per-token attention importance scores.
+Unlike pooling smoothing adopted by SnapKV (Li et al., 2024), which is inherently local, frequency-domain filtering provides a global view over the entire score sequence and enables explicit control over frequency components.
+
+Let denote the
+per-head attention importance sequence
+(for example, the averaged attention over a sliding decoding window).
+We first apply a real-valued fast Fourier transform:
+
+(13)
+
+We decompose into magnitude and phase components:
+
+(14)
+
+Adaptive Energy-Based Cutoff.
+
+To determine the spectral cutoff, we compute the cumulative energy of the
+frequency magnitudes:
+
+(15)
+
+and select the smallest index satisfying
+
+(16)
+
+where is a user-configurable cutoff ratio.
+This energy-driven cutoff automatically adapts to the smoothness of the
+score distribution, retaining the dominant low-frequency components
+while suppressing high-frequency noise.
+
+Spectral Filtering.
+
+Based on the selected cutoff frequency , we apply a low-pass spectral filter by constructing frequency mask :
+
+(17)
+
+To reduce ringing artifacts caused by sharp frequency truncation,
+we further apply a short cosine-shaped transition band around ,
+which smoothly attenuates frequencies near the cutoff.
+
+The filtered spectrum is then given by
+
+(18)
+
+where denotes element-wise multiplication.
+
+Reconstruction and Residual Mixing.
+
+We transform the filtered spectrum back into the time domain via an inverse FFT:
+
+(19)
+
+To preserve local attention structure and avoid smoothing, the final importance score is obtained through residual interpolation.
+
+(20)
+
+where controls the strength of spectral smoothing.
+
+Figure 4. Performance comparison of KV cache methods across five models with varying retain ratios on LibriSpeech-long and Multilingual LibriSpeech datasets.
+
+4. Experiments
+
+4.1. Experimental Setup
+
+Datasets and Benchmarks.
+
+To evaluate the efficacy and generalizability of AudioKV, we conduct comprehensive evaluations across diverse benchmarks spanning Automatic Speech Recognition (ASR), Speech Translation (ST), and Audio Question Answering (AQA). All experiments are performed on the official test splits to ensure fair and reproducible comparisons. For ASR, we select three representative datasets: KeSpeech (Tang et al., 2021) is a large-scale Mandarin benchmark used to assess performance across diverse dialects and conditions; LibriSpeech-long (clean) (Xu et al., 2025a; Xu et al., 2025b) serves as a long-form English benchmark designed to test model stability and KV cache efficiency under extended audio inputs; and Multilingual LibriSpeech (MLS) (Pratap et al., 2020) is employed to evaluate cross-lingual robustness, specifically on the French, German, and Spanish test sets to demonstrate broader applicability. Regarding ST benchmarks, we utilize the CoVoST2 dataset (Wang et al., 2021) for large-scale speech-to-text translation, focusing on two structurally distinct directions: English-to-Chinese (En-to-Zh) and Chinese-to-English (Zh-to-En). For AQA, we evaluate on four datasets integrated into the UltraEval-Audio (Shi et al., 2026) framework: speech-chatbot-alpaca-eval, speech-web-questions, llama-questions, and speech-triviaqa, which assess chatbot-style interactions, web-based factual QA, LLaMA-generated reasoning, and trivia-based knowledge retrieval, respectively.
+
+Models and Baselines.
+
+We validate AudioKV on a diverse set of state-of-the-art Large Audio-Language Models (LALMs) with varying architectures and parameter scales, including the Gemma-3n Series (specifically the Gemma-3n-E2B and Gemma-3n-E4B variants) (Team, 2025) and the Qwen Omni Series (including Qwen2.5-Omni-3B, Qwen2.5-Omni-7B, and the large-scale Qwen3-Omni-30B-A3B-Instruct) (Xu et al., 2025a; Xu et al., 2025b). We compare AudioKV against Full KV, which serves as the performance upper bound, and several representative KV cache compression baselines: SnapKV (Li et al., 2024), AdaKV (Feng et al., 2025), PyramidKV (Cai et al., 2025), and H2O (Lee et al., 2024).
+
+Evaluation Metrics.
+
+We adopt standard task-specific metrics to quantify performance. For ASR, we report accuracy as . Specifically, for Chinese (KeSpeech), we use Character Error Rate (CER) to account for the character-based nature of the language; for European languages (LibriSpeech and MLS), we use WER (WER). For ST, we report chrF for English-to-Chinese (En-to-Zh) translation to better capture character-level nuances, and the standard BLEU score for Chinese-to-English (Zh-to-En) translation based on modified -gram precision. For AQA, we employ LLM-as-a-Judge (Gu et al., 2025) evaluation, where model-generated answers are assessed against reference answers using Gemini-2.5-Flash (Gemini Team, 2025) as the judge model, and report accuracy based on binary correctness scores.
+
+Implementation Details.
+
+Unless otherwise specified, for all SparseMM-related parameter settings in AudioKV, we set the local window size and the uniform baseline allocation to of the total token budget, following the structural priors established in Wang et al. (2025). For the spectral attention smoothing method, hyperparameters are set to and . All experiments are conducted on NVIDIA A100 GPUs.
+
+4.2. Main Results
+
+Overall Performance.
+
+As shown in Table 1, AudioKV achieves significantly lower Word Error Rate (WER) than all baselines across a wide range of compression budgets. The performance gap becomes particularly pronounced at high compression ratios (e.g., budget = 0.4), where most baseline methods suffer catastrophic degradation. In these regimes, competing approaches often exhibit severe repetition and degeneration, leading to WER values exceeding 100 on long-form speech benchmarks.
+In contrast, AudioKV maintains strong recognition performance even under aggressive compression. Notably, on LibriSpeech-long, AudioKV remains stable and produces coherent transcriptions when other methods fail completely. When evaluated on Qwen3-Omni-30B-A3B-Instruct, AudioKV incurs only a 0.45% absolute accuracy drop even when the KV-cache is compressed to 40% of its original size, highlighting its remarkable efficiency–accuracy trade-off.
+
+ASR vs. Speech Translation.
+
+We observe that AudioKV yields more substantial improvements on ASR tasks than on Speech Translation. This discrepancy arises because, under high KV cache compression ratios, AudioKV is prone to repetition; this tendency leads to an anomalous reduction in the WER for certain samples, yielding large negative values in the error metrics relative to the baseline, thereby driving a substantial decline in the global WER.
+
+Stability Across Models and Datasets.
+
+Beyond absolute performance, AudioKV exhibits stability across different datasets and model architectures. While PyramidKV can slightly outperform AudioKV on LibriSpeech-long when applied to Gemma-3n-E2B under a mild compression setting (budget = 0.8), its performance degrades sharply as the budget is reduced to 0.4, indicating a high sensitivity to aggressive KV-cache compression.
+
+More broadly, PyramidKV exhibits uneven performance across model families under KV-cache compression, performing well on Gemma models but degrading substantially on Qwen models. In contrast, AudioKV allocates KV resources through audio-head-aware importance modeling, making it inherently robust to architectural differences.
+
+4.3. Ablation Studies
+
+Audio-Head-Aware Cache Allocation.
+
+We evaluate the effectiveness of audio-head-wise cache allocation by comparing SnapKV and AudioKV, both with and without SSS. While SnapKV allocates cache uniformly, AudioKV (w/o SSS) degenerates into SnapKV only if all heads are assigned equal importance. As shown in Figure 4, AudioKV (w/o SSS) consistently outperforms SnapKV, demonstrating the advantage of head-specific allocation. Furthermore, AudioKV’s superiority over SnapKV (w/ SSS) confirms that head-aware budget distribution is a significant contributor to the overall performance.
+
+Spectral Score Smoothing (SSS)
+
+To demonstrate the significance of Spectral Score Smoothing across SnapKV-based and AudioKV-based settings, we assess the impact of SSS by comparing (i) SnapKV vs. SnapKV (w/ SSS) and (ii) AudioKV (w/o SSS) vs. AudioKV. As reported in Figure 4, SSS consistently yields substantial performance gains under both uniform and head-wise cache allocation. Notably, SnapKV (w/ SSS) with a cache budget of 0.6 surpasses vanilla SnapKV with a larger budget of 0.8, highlighting the efficiency benefits of SSS. Similar improvements are observed for AudioKV, indicating that SSS robustly enhances cache utilization by stabilizing spectral attention.
+
+4.4. Generalization across AQA Benchmarks
+
+Table 2. Comparison of KV cache compression methods on AQA benchmarks. All experiments use a 40% KV cache budget, max_gen_tokens=64, and Gemini 2.5 Flash as the judge. Bold indicates the best performance.
+
+Method
+S-Alpaca
+Llama-Q
+S-Trivia
+S-Web
+
+Qwen2.5-Omni-3B
+
+SnapKV
+54.5
+72.0
+27.4
+44.9
+
+AdaKV
+56.1
+74.7
+30.6
+44.5
+
+PyramidKV
+56.1
+74.7
+28.3
+45.3
+
+AudioKV
+57.6
+75.0
+31.9
+46.1
+
+Qwen2.5-Omni-7B
+
+SnapKV
+64.7
+76.0
+39.6
+54.5
+
+AdaKV
+64.7
+76.0
+40.8
+54.9
+
+PyramidKV
+65.2
+76.7
+39.8
+55.1
+
+AudioKV
+66.7
+77.3
+42.2
+55.5
+
+We evaluate the generalization of various KV cache compression methods across four AQA datasets using Qwen2.5-Omni (3B and 7B), including speech-chatbot-alpaca-eval (S-Alpaca), llama-questions (Llama-Q), speech-triviaqa (S-Trivia), and speech-web-questions (S-Web). As shown in Table 2, our proposed AudioKV consistently outperforms existing methods, such as SnapKV, AdaKV, and PyramidKV, across all benchmarks.
+
+Specifically, on the Speech-TriviaQA dataset, AudioKV achieves a significant improvement of approximately 1.3% to 4.5% over other baselines. The performance gain is consistent across both model scales, demonstrating that AudioKV more effectively preserves critical acoustic information while maintaining a compact KV cache.
+
+Figure 5. Qualitative visualization of long-form decoding behavior. SnapKV falls into a repetition loop, while AudioKV remains coherent and completes the passage.
+
+4.5. Case Studies
+
+This case study shifts the focus from general robustness to a detailed error analysis of long-form ASR failure modes. While average Word Error Rate (WER) provides a baseline for accuracy, understanding model limitations requires diagnosing specific performance drops. In the SnapKV output Figure 5, a localized phrase transition triggers a self-reinforcing repetition loop, indicating that compressed KV representations lose sufficient global context to recover from near-degenerate next-token distributions. Once entered, this loop dominates the remainder of generation and causes a disproportionate WER increase despite reasonable prefix quality.
+
+In contrast, Figure 5 AudioKV preserves coherent continuation through the same semantic region and completes the paragraph without collapse, suggesting that frequency-domain-aware retention better maintains discourse-level constraints over long
+horizons. Qualitatively, the difference is not a small wording variation but a mode-level behavioral divergence: one method fails catastrophically while the other remains stable.
+
+These observations provide a technical explanation for the prevalence of zero-values in our main results. In long-form ASR, KV-cache compression failure typically manifests as a repetition loop, which causes the insertion count () in the WER formula to explode. Once significantly exceeds the reference length , the resulting Divergence (often capped or marked as 0 in evaluation scripts) represents a catastrophic mode-level collapse rather than high accuracies.
+
+Figure 6. Sensitivity analysis of SSS on LibriSpeech-long (50% KV cache). The gray plane indicates the AudioKV baseline (91.4% accuracy), to which SSS degenerates when . Our method consistently exceeds this baseline across and various , peaking at 94.7% and demonstrating strong robustness across parameter settings.
+
+4.6. Parameter Sensitivity Analysis of the Spectral Score Smoothing Component
+
+We evaluate the robustness of Spectral Score Smoothing (SSS) on LibriSpeech-long with a 50% KV cache budget (Figure 6). The gray plane denotes the AudioKV baseline (91.4% accuracy), to which our method degenerates when . When SSS is activated (), it consistently outperforms the baseline across a wide parameter space. Notably, the performance remains stable for and various . This stability is due to SSS treating importance scores as continuous signals and suppressing high-frequency noise via global frequency-domain filtering. The optimal configuration achieves 94.7% accuracy, confirming that SSS is both effective and robust to hyperparameter choices.
+
+4.7. Efficiency Analysis
+
+Figure 7. Comparison of KV cache memory footprint. We evaluate memory consumption under retention ratios . While all methods reduce overhead, our approach achieves significantly better task performance than SnapKV, AdaKV, and AudioKV under an identical memory budget, indicating higher utilization efficiency.
+
+We evaluate inference efficiency from the perspective of KV cache memory footprint. Figure 7 presents cache size under different compression ratios. Compared to the full KV cache, all compression-based methods substantially reduce memory consumption, confirming the effectiveness of KV compression in improving inference efficiency. Notably, although SnapKV, AdaKV, and AudioKV achieve similar cache sizes at the same compression ratio, our method consistently yields significantly superior task performance under an identical memory budget. This indicates a more effective utilization of the retained KV entries.
+
+5. Conclusion
+
+We proposed AudioKV, a specialized KV cache compression framework for LALMs that addresses head heterogeneity and acoustic continuity. AudioKV integrates (i) audio-aware head allocation to prioritize memory for speech-critical heads and (ii) Spectral Score Smoothing (SSS) to stabilize importance estimation by filtering high-frequency noise. Extensive evaluations on Qwen and Gemma series show that AudioKV significantly outperforms existing baselines under tight budgets. Notably, at a 40% retention ratio, AudioKV maintains near-full accuracy on Qwen3-Omni-30B with only a 0.45% drop, whereas traditional methods suffer from catastrophic degradation. These results demonstrate AudioKV as a robust and efficient solution for long-context audio inference.
+
+Acknowledgements.
+TODO: Acknowledge funding sources and contributors.
+
+References
+
+Bain et al. (2023)
+M. Bain, J. Huh, T. Han, and A. Zisserman
+
+Whisperx: time-accurate speech transcription of long-form audio.
+
+arXiv preprint arXiv:2303.00747.
+
+Cited by: §2.1.
+
+Beltagy et al. (2020)
+I. Beltagy, M. E. Peters, and A. Cohan
+
+Longformer: the long-document transformer.
+
+arXiv preprint arXiv:2004.05150.
+
+Cited by: §2.2.
+
+Cai et al. (2025)
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, Y. Li, T. Liu, K. Lu, W. Xiong, Y. Dong, J. Hu, and W. Xiao
+
+PyramidKV: dynamic kv cache compression based on pyramidal information funneling.
+
+External Links: 2406.02069,
+Link
+
+Cited by: §2.2,
+§4.1.
+
+Chan et al. (2016)
+W. Chan, N. Jaitly, Q. Le, and O. Vinyals
+
+Listen, attend and spell: a neural network for large vocabulary conversational speech recognition.
+
+In 2016 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+
+Vol. , pp. 4960–4964.
+
+External Links: Document
+
+Cited by: §2.1.
+
+Dao et al. (2022)
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré
+
+Flashattention: fast and memory-efficient exact attention with io-awareness.
+
+Advances in neural information processing systems 35, pp. 16344–16359.
+
+Cited by: §2.2.
+
+Dao (2023)
+T. Dao
+
+Flashattention-2: faster attention with better parallelism and work partitioning.
+
+arXiv preprint arXiv:2307.08691.
+
+Cited by: §2.2.
+
+Feng et al. (2025)
+Y. Feng, J. Lv, Y. Cao, X. Xie, and S. K. Zhou
+
+Ada-kv: optimizing kv cache eviction by adaptive budget allocation for efficient llm inference.
+
+External Links: 2407.11550,
+Link
+
+Cited by: §1,
+§2.2,
+§4.1.
+
+Gemini Team (2025)
+G. Gemini Team
+
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+
+External Links: 2507.06261,
+Link
+
+Cited by: §4.1.
+
+Gu et al. (2025)
+J. Gu, X. Jiang, Z. Shi, H. Tan, X. Zhai, C. Xu, W. Li, Y. Shen, S. Ma, H. Liu, S. Wang, K. Zhang, Y. Wang, W. Gao, L. Ni, and J. Guo
+
+A survey on llm-as-a-judge.
+
+External Links: 2411.15594,
+Link
+
+Cited by: §4.1.
+
+Lee et al. (2025)
+D. Lee, J. Hur, J. Choi, J. Yu, and J. Kim
+
+Frequency-aware token reduction for efficient vision transformer.
+
+External Links: 2511.21477,
+Link
+
+Cited by: §2.3.
+
+Lee et al. (2024)
+W. Lee, J. Lee, J. Seo, and J. Sim
+
+infinigen: Efficient generative inference of large language models with dynamic kv cache management.
+
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+
+pp. 155–172.
+
+Cited by: §4.1.
+
+Lee-Thorp et al. (2021)
+J. Lee-Thorp, J. Ainslie, I. Eckstein, and S. Ontañón
+
+FNet: mixing tokens with fourier transforms.
+
+CoRR abs/2105.03824.
+
+External Links: Link,
+2105.03824
+
+Cited by: §2.3.
+
+Li et al. (2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+
+SnapKV: llm knows what you are looking for before generation.
+
+In Advances in Neural Information Processing Systems, A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.),
+
+Vol. 37, pp. 22947–22970.
+
+External Links: Document,
+Link
+
+Cited by: §1,
+§1,
+§2.2,
+§3.3,
+§4.1.
+
+Michel et al. (2019)
+P. Michel, O. Levy, and G. Neubig
+
+Are sixteen heads really better than one?.
+
+CoRR abs/1905.10650.
+
+External Links: Link,
+1905.10650
+
+Cited by: §2.1.
+
+Pratap et al. (2020)
+V. Pratap, Q. Xu, A. Sriram, G. Synnaeve, and R. Collobert
+
+MLS: a large-scale multilingual dataset for speech research.
+
+ArXiv abs/2012.03411.
+
+Cited by: §4.1.
+
+Radford et al. (2023)
+A. Radford, J. W. Kim, T. Xu, G. Brockman, C. McLeavey, and I. Sutskever
+
+Robust speech recognition via large-scale weak supervision.
+
+In International conference on machine learning,
+
+pp. 28492–28518.
+
+Cited by: §2.1.
+
+Rao et al. (2021)
+Y. Rao, W. Zhao, Z. Zhu, J. Lu, and J. Zhou
+
+Global filter networks for image classification.
+
+External Links: 2107.00645,
+Link
+
+Cited by: §2.3.
+
+Shah et al. (2024)
+J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao
+
+Flashattention-3: fast and accurate attention with asynchrony and low-precision.
+
+Advances in Neural Information Processing Systems 37, pp. 68658–68685.
+
+Cited by: §2.2.
+
+Shi et al. (2026)
+Q. Shi, J. Zhou, B. Lin, J. Cui, G. Zeng, Y. Zhou, Z. Wang, X. Liu, Z. Luo, Y. Wang, et al.
+
+UltraEval-audio: a unified framework for comprehensive evaluation of audio foundation models.
+
+arXiv preprint arXiv:2601.01373.
+
+Cited by: §4.1.
+
+Tang et al. (2021)
+Z. Tang, D. Wang, Y. Xu, J. Sun, X. Lei, S. Zhao, C. Wen, X. Tan, C. Xie, S. Zhou, R. Yan, C. Lv, Y. Han, W. Zou, and X. Li
+
+KeSpeech: an open source speech dataset of mandarin and its eight subdialects.
+
+In NeurIPS Datasets and Benchmarks,
+
+External Links: Link
+
+Cited by: §4.1.
+
+Team (2025)
+G. Team
+
+Gemma 3n.
+
+External Links: Link
+
+Cited by: §4.1.
+
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+
+Attention is all you need.
+
+Advances in neural information processing systems 30.
+
+Cited by: §2.1.
+
+Voita et al. (2019)
+E. Voita, D. Talbot, F. Moiseev, R. Sennrich, and I. Titov
+
+Analyzing multi-head self-attention: specialized heads do the heavy lifting, the rest can be pruned.
+
+CoRR abs/1905.09418.
+
+External Links: Link,
+1905.09418
+
+Cited by: §2.1.
+
+Wang et al. (2021)
+C. Wang, A. Wu, J. Gu, and J. Pino
+
+CoVoST 2 and massively multilingual speech translation.
+
+In Interspeech 2021,
+
+pp. 2247–2251.
+
+External Links: Document,
+ISSN 2958-1796
+
+Cited by: §4.1.
+
+Wang et al. (2025)
+J. Wang, Z. Liu, Y. Rao, and J. Lu
+
+SparseMM: head sparsity emerges from visual concept responses in mllms.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV),
+
+pp. 23177–23187.
+
+Cited by: §1,
+§2.2,
+§3.1,
+§3.2,
+§4.1.
+
+Xiao et al. (2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+
+Efficient streaming language models with attention sinks.
+
+In International Conference on Representation Learning, B. Kim, Y. Yue, S. Chaudhuri, K. Fragkiadaki, M. Khan, and Y. Sun (Eds.),
+
+Vol. 2024, pp. 21875–21895.
+
+External Links: Link
+
+Cited by: §2.2.
+
+Xu et al. (2025a)
+J. Xu, Z. Guo, J. He, H. Hu, T. He, S. Bai, K. Chen, J. Wang, Y. Fan, K. Dang, B. Zhang, X. Wang, Y. Chu, and J. Lin
+
+Qwen2.5-omni technical report.
+
+External Links: 2503.20215,
+Link
+
+Cited by: §1,
+§4.1,
+§4.1.
+
+Xu et al. (2025b)
+J. Xu, Z. Guo, H. Hu, Y. Chu, X. Wang, J. He, Y. Wang, X. Shi, T. He, X. Zhu, Y. Lv, Y. Wang, D. Guo, H. Wang, L. Ma, P. Zhang, X. Zhang, H. Hao, Z. Guo, B. Yang, B. Zhang, Z. Ma, X. Wei, S. Bai, K. Chen, X. Liu, P. Wang, M. Yang, D. Liu, X. Ren, B. Zheng, R. Men, F. Zhou, B. Yu, J. Yang, L. Yu, J. Zhou, and J. Lin
+
+Qwen3-omni technical report.
+
+External Links: 2509.17765,
+Link
+
+Cited by: §1,
+§4.1,
+§4.1.
+
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, Z. ". Wang, and B. Chen
+
+H2O: heavy-hitter oracle for efficient generative inference of large language models.
+
+In Advances in Neural Information Processing Systems, A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.),
+
+Vol. 36, pp. 34661–34710.
+
+External Links: Link
+
+Cited by: §2.2.
+
+Zirui Liu et al. (2023)
+Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, V. Braverman, Beidi Chen, and X. Hu
+
+KIVI : plug-and-play 2bit kv cache quantization with streaming asymmetric quantization.
+
+(en).
+
+External Links: Document,
+Link
+
+Cited by: §2.2.
+
+Appendix A Appendix
+
+A.1. Ablation Study Table
+
+Methods
+Automatic Speech Recognition (ASR)
+Speech Translation (ST)
+Avg.
+
+ZH
+EN
+FR
+DE
+ES
+E2C
+C2E
+
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+0.8
+0.6
+0.4
+
+Qwen2.5-Omni 3B
+
+SnapKV
+0.0
+0.0
+0.0
+67.0
+15.7
+0.0
+54.2
+0.0
+0.0
+0.0
+0.0
+0.0
+45.0
+0.0
+0.0
+34.6
+31.5
+24.5
+24.2
+21.2
+15.1
+15.9
+
+SnapKV
+90.0
+24.3
+0.0
+90.4
+85.9
+58.5
+88.9
+87.6
+0.0
+88.9
+87.7
+0.0
+93.6
+88.6
+0.0
+35.1
+34.4
+29.6
+25.1
+24.6
+20.3
+50.2
+
+AudioKV
+90.5
+85.4
+0.0
+95.1
+94.8
+38.8
+90.7
+90.0
+0.0
+0.0
+0.0
+0.0
+93.9
+91.9
+0.0
+35.1
+34.1
+28.2
+25.1
+24.5
+18.6
+44.6
+
+AudioKV
+91.7
+90.8
+0.0
+95.0
+93.9
+90.0
+89.9
+90.5
+85.8
+89.5
+90.2
+75.8
+93.9
+93.0
+91.3
+35.3
+35.0
+32.5
+25.2
+25.1
+23.2
+68.5
+
+Qwen2.5-Omni-7B
+
+SnapKV
+61.1
+0.0
+0.0
+80.7
+40.2
+0.0
+72.4
+0.0
+0.0
+64.6
+0.0
+0.0
+76.0
+0.0
+0.0
+35.3
+33.6
+27.5
+25.3
+23.4
+18.7
+26.6
+
+SnapKV
+92.4
+85.4
+0.0
+94.9
+91.0
+61.1
+83.0
+76.9
+19.1
+86.8
+90.6
+0.0
+94.1
+91.2
+24.7
+35.7
+35.0
+31.9
+25.7
+25.3
+13.7
+55.2
+
+AudioKV
+93.4
+74.4
+0.0
+98.1
+84.0
+0.0
+83.1
+82.1
+0.0
+90.1
+87.5
+0.0
+94.4
+90.9
+0.0
+35.8
+34.4
+28.9
+25.6
+24.9
+19.7
+49.9
+
+AudioKV
+93.1
+93.1
+0.0
+98.1
+98.0
+89.1
+83.4
+82.9
+78.7
+90.4
+90.8
+85.3
+94.5
+94.2
+91.2
+35.7
+35.2
+32.8
+25.6
+25.5
+23.5
+68.6
+
+Qwen3-Omni-30B-A3B-Instruct
+
+SnapKV
+0.0
+0.0
+0.0
+63.6
+45.2
+0.0
+68.7
+0.0
+0.0
+58.0
+0.0
+0.0
+68.2
+0.0
+0.0
+38.9
+35.1
+25.6
+25.6
+22.4
+15.3
+22.2
+
+SnapKV
+0.0
+0.0
+0.0
+96.2
+90.3
+54.6
+95.1
+89.8
+0.0
+94.9
+89.2
+0.0
+96.4
+87.7
+0.0
+39.2
+37.6
+29.9
+26.3
+24.0
+19.0
+46.2
+
+AudioKV
+93.5
+90.7
+22.8
+98.3
+97.7
+71.3
+95.6
+95.2
+0.0
+95.6
+95.2
+0.0
+96.8
+96.1
+0.0
+40.0
+38.4
+24.5
+26.8
+25.6
+17.2
+58.2
+
+AudioKV
+93.5
+93.1
+0.0
+98.2
+98.2
+97.8
+95.6
+95.5
+89.2
+95.5
+95.5
+86.0
+96.9
+96.8
+83.6
+40.0
+39.1
+32.1
+26.8
+26.2
+20.7
+71.4
+
+Gemma-3n-E2B
+
+SnapKV
+35.1
+32.6
+3.7
+0.0
+0.0
+0.0
+33.8
+0.0
+0.0
+54.3
+45.0
+0.0
+74.0
+47.3
+0.0
+19.2
+15.2
+5.0
+12.1
+10.2
+1.6
+18.5
+
+SnapKV
+33.5
+31.9
+22.5
+87.6
+74.1
+0.0
+61.5
+47.2
+0.0
+75.9
+63.7
+0.0
+79.7
+48.5
+0.0
+19.2
+15.2
+5.7
+12.0
+10.2
+1.7
+32.9
+
+AudioKV
+35.6
+35.3
+31.9
+90.1
+86.0
+39.4
+63.3
+54.7
+20.9
+76.7
+75.6
+47.1
+82.6
+81.1
+35.4
+24.7
+22.6
+20.4
+12.3
+12.2
+10.5
+45.6
+
+AudioKV
+36.3
+34.6
+31.2
+90.2
+88.5
+60.6
+66.8
+64.9
+28.9
+79.3
+75.9
+45.9
+82.9
+81.2
+36.2
+24.8
+23.1
+18.9
+12.3
+11.7
+9.0
+47.8
+
+Gemma-3n-E4B
+
+SnapKV
+44.4
+40.6
+0.0
+0.0
+0.0
+0.0
+57.8
+0.0
+0.0
+8.5
+0.0
+0.0
+73.1
+39.3
+0.0
+21.7
+17.4
+5.7
+14.0
+12.0
+2.3
+16.0
+
+SnapKV
+43.3
+42.5
+14.2
+90.8
+78.5
+0.0
+71.4
+59.1
+0.0
+68.1
+50.5
+0.0
+84.0
+68.6
+0.0
+21.5
+17.5
+5.7
+14.0
+12.0
+2.3
+35.4
+
+AudioKV
+45.4
+45.0
+43.4
+92.6
+91.8
+49.8
+75.5
+74.4
+35.4
+72.7
+72.0
+54.8
+86.6
+86.1
+58.1
+29.8
+28.8
+24.7
+14.5
+14.5
+13.4
+52.8
+
+AudioKV
+45.4
+44.5
+39.3
+92.6
+91.7
+80.8
+75.5
+75.2
+35.5
+72.6
+71.7
+55.4
+86.6
+86.4
+61.1
+29.7
+29.2
+24.8
+14.5
+14.4
+12.2
+54.2
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

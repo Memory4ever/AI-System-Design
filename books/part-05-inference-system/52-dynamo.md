@@ -111,6 +111,16 @@ Agent workflow 可以声明哪个后继节点可能消费这条 state edge，却
 
 这里至少有两个提交点：Prefill complete 表示 KV 已在源端形成；Decode ready 表示目标端已获得与 kernel/layout 兼容的 KV。把第一点误当成第二点会产生 race，transfer completion 与 Decode scheduling 必须形成 happens-before。
 
+### 从静态 Striping 到声明式 Slice Transfer
+
+链路稳定、故障显式且数据对象较大时，把一次 KV transfer 固定到单一路径或预先划分的 striping plan 最容易预测；上层只需等待完成事件。Disaggregated serving 同时面对拥塞、grey failure 和多路径带宽变化后，这种静态执行计划会把 transfer intent、切片方式、路径选择与重试绑死，局部慢路径还可能造成 head-of-line blocking。
+
+更稳健的 data-movement contract 先声明 source/destination、buffer identity、完成语义和 deadline，再由 transport control plane 把对象切成带身份的 slices，依据路径健康分派、重试或重路由。控制面拥有 slice lineage、path observation 与最终 completion；数据面只执行已 admission 的 transfer，request router 仍只能在收到完整 ready evidence 后推进 Decode。收益是适应异构路径和局部故障，代价是更细的状态、观测、重组与控制面故障面。
+
+切片过细、路径信号失真、重路由成本超过收益，或控制面不能证明 exactly-once completion 时，应回退静态或单路径传输。公开实验只支持作者披露的 SGLang HiCache、拓扑和故障设置，不证明任意生产网络的吞吐、P90 TTFT 或长期容错收益。
+
+<!-- source-family:SF-2026-ARXIV-2604-00368 -->
+
 ### 从一次性模型 Offload 到迭代 Latent-State Placement
 
 把整次请求固定在设备或服务器上，是最容易推理的 placement。`all-local` 保留隐私、离线可用性和故障域，代价是设备算力与能耗；`full-remote` 把执行集中到服务端，代价是 radio latency、连接可用性和数据暴露。传统 layer split 进一步把模型切在一个固定边界，但仍假设一次请求只发生一次 ownership handoff。
@@ -362,6 +372,8 @@ Dynamo 将多个 inference engines 组织为分布式 runtime：request path 负
 下一章进入 Kubernetes 声明式控制面，观察 LLMInferenceService 怎样把 Gateway、intelligent routing、worker topology 和生命周期表达为可协调资源。
 
 ## Review notes
+
+- **TENT（arXiv:2604.00368v1；Status: Experimental）**：exact-v1 将 transfer intent 与 slice/path execution 分开，并报告其受测 SGLang HiCache 设置中的吞吐、P90 TTFT 与透明绕障结果。证据不覆盖未披露拓扑、多租户、生产 SLO 或长期控制面故障；旧的静态/单路径传输仍是明确 fallback。https://arxiv.org/abs/2604.00368v1
 
 本章基于 2026 年 7 月官方 architecture 从初始占位稿完整撰写。只保留 frontend/router、planner/operator、KV events/KVBM/NIXL 等稳定职责；具体 metadata、flags、CRD 和性能数字均视为版本相关内容。
 

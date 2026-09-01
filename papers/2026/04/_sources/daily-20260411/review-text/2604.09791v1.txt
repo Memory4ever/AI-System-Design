@@ -1,0 +1,3250 @@
+Pioneer Agent: Continual Improvement of Small Language Models in Production
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Pioneer Agent
+
+2.1 Architecture
+
+2.2 Search Procedure
+
+2.3 Data Curation
+
+Dataset Composition
+
+Quality Controls
+
+Dataset Sizing
+
+2.4 Iteration Policy
+
+2.5 Cold-Start Mode
+
+Input and Tools
+
+Task Analysis
+
+Evaluation Setup
+
+Curriculum Synthesis
+
+Training and Iteration
+
+2.6 Production Mode
+
+Input and Tools
+
+Failure Diagnosis
+
+Evaluation Setup
+
+Curriculum Synthesis
+
+Training and Iteration
+
+2.7 Structural Safeguards
+
+3 AdaptFT-Bench
+
+3.1 Stage-Based Evaluation Protocol
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Benchmark Suite
+
+Evaluation Protocols
+
+Baseline Methods
+
+4.2 Cold-Start Results
+
+4.3 Production Mode Results
+
+4.3.1 Main results.
+
+4.3.2 Controlled Baseline Comparison.
+
+4.3.3 Stage-Based Deployment Simulation.
+
+4.3.4 Qualitative analysis.
+
+4.4 Deployment Case Studies
+
+4.4.1 Intent Classification (CLINC150)
+
+4.4.2 Named Entity Recognition (CoNLL-2003)
+
+Takeaways:
+
+5 Analysis
+
+5.1 Emergent Training Strategies
+
+(1) Supervision Format and Prompting.
+
+(2) Optimization Dynamics.
+
+(3) Data Curation Decisions.
+
+5.2 Trajectory Motifs
+
+5.2.1 Broad-to-Surgical Exploration
+
+5.2.2 Rollback as a Control Mechanism
+
+5.2.3 Error-Mode-Driven Search Pivots
+
+5.2.4 Cross-Branch Fusion in Graph Search
+
+6 Discussion
+
+6.1 Cost Analysis
+
+6.2 Failure Modes
+
+6.3 Limitations
+
+7 Related Work
+
+7.1 Automated ML, Data-Centric AI, and LM-Program Optimization
+
+7.2 Agentic Search, Autonomous ML Engineering, and Post-Training
+
+7.3 Failure-Driven Adaptation, Curriculum Construction, and Continual Improvement
+
+8 Conclusion
+
+References
+
+A Monte Carlo Graph Search Algorithm
+
+B AdaptFT-Bench Details
+
+B.1 Construction Methodology
+
+B.1.1 Scenario Selection
+
+B.1.2 Synthetic Inference Log Construction
+
+B.1.3 Failure Set Construction
+
+B.1.4 Regression Set Construction
+
+B.1.5 Scenario Difficulty Tiers
+
+B.1.6 Anonymization and Reproducibility
+
+B.2 Scenario-Level Details
+
+B.3 Perturbation Pipeline
+
+C Cold-Start Experimental Details
+
+ARC-Challenge (Llama 3.2-3B).
+
+GSM8K (Llama 3.2-3B).
+
+HumanEval (Qwen3-8B).
+
+XSum (Qwen3-8B).
+
+SAMSum (Qwen3-8B).
+
+SMS Spam (GLiNER2-base).
+
+C.1 Best-Model Hyperparameters
+
+D Infrastructure and Reproducibility
+
+D.1 Tinker SDK Integration
+
+D.2 Evaluation Code
+
+D.3 Released Artifacts
+
+License: CC BY 4.0
+
+arXiv:2604.09791v1 [cs.AI] 10 Apr 2026
+
+]Fastino Labs
+\correspondence
+
+Pioneer Agent: Continual Improvement of Small Language Models in Production
+
+Dhruv Atreja
+
+  
+Julia White
+
+  
+Nikhil Nayak
+
+  
+Kelton Zhang
+
+  
+Henrijs Princis
+
+  
+George Hurn-Maloney
+
+  
+Ash Lewis
+
+  
+Urchade Zaratiana
+
+Affiliation: [
+
+Email: dhruv@fastino.ai
+
+April 10, 2026
+
+Abstract
+
+Small language models are attractive for production deployment due to their low cost, fast inference, and ease of specialization. However, adapting them to a specific task remains a challenging engineering loop, driven not by training itself but by surrounding decisions: data curation, failure diagnosis, regression avoidance, and iteration control. We present Pioneer Agent, a closed-loop system that automates this lifecycle. In cold-start mode, given only a natural-language task description, the agent acquires data, constructs evaluation sets, and iteratively trains models by jointly optimizing data, hyperparameters, and learning strategy. In production mode, given a deployed model with labeled failures, it diagnoses error patterns, constructs targeted training data, and retrains under explicit regression constraints. To evaluate this setting, we introduce AdaptFT-Bench, a benchmark of synthetic inference logs with progressively increasing noise, designed to test the full adaptation loop: diagnosis, curriculum synthesis, retraining, and verification. Across eight cold-start benchmarks spanning reasoning, math, code generation, summarization, and classification, Pioneer Agent improves over base models by 1.6–83.8 points. On AdaptFT-Bench, it improves or preserves performance in all seven scenarios, while naive retraining degrades by up to 43 points. On two production-style deployments built from public benchmark tasks, it raises intent classification from 84.9% to 99.3% and Entity F1 from 0.345 to 0.810.
+Beyond performance gains, the agent often discovers effective training strategies, including chain-of-thought supervision, task-specific optimization, and quality-focused data curation, purely from downstream feedback.
+
+1 Introduction
+
+Frontier large language models (Brown et al., 2020; Touvron et al., 2023a; Yang et al., 2025; DeepSeek-AI et al., 2025) are strong general-purpose systems (Bommasani et al., 2021). However, they are often too expensive to deploy and operate at scale (Kaplan et al., 2020), and can exhibit high latency at inference time compared to smaller models (Fu et al., 2025). In practice, teams often want a much smaller model that is cheap to serve, fast at inference, and specialized for one concrete job such as intent classification (Larson et al., 2019; Alekseev et al., 2025), entity extraction (Zaratiana et al., 2022), summarization (Rush et al., 2015; Chen and Bansal, 2018), or structured generation (Chen et al., 2021). Small language models (SLMs) in the 1B–8B parameter range are attractive for exactly this reason (Dettmers et al., 2023).
+
+The problem is that getting a small model to work well on a specific task is still a difficult engineering loop. This requires deciding what data to collect, which base model and training recipe to use, how to evaluate progress, which failures matter, and when to stop iterating. These decisions reflect broader challenges studied in AutoML and neural architecture optimization (Feurer and Hutter, 2019; Elsken et al., 2019).
+
+This loop extends beyond hyperparameter tuning. In real deployments, the primary challenges lie upstream of training: defining the task precisely, constructing and cleaning supervision, identifying boundary cases, separating true failures from labeling errors, and avoiding regressions while fixing known weaknesses. Improvements are often non-monotonic: a model can improve on one slice while degrading on another, and a larger dataset can underperform a smaller but higher-quality one (Zhou et al., 2023a; Iyer et al., 2024). Even prompt-format issues can masquerade as modeling failures. For small models, these decisions frequently dominate the final outcome (Tang et al., 2024; Ngweta et al., 2025).
+
+Existing work addresses important pieces of this problem but not the entire loop. Pareja et al. (2024) characterize effective supervised fine-tuning configurations for small LLMs, but applying these insights in practice still requires substantial manual iteration. AutoML systems (Thornton et al., 2013; Feurer et al., 2015) automate hyperparameter selection over predefined spaces. Data-centric methods (Northcutt et al., 2021; Mazumder et al., 2023; Wang et al., 2023b) focus on label quality and iterative data improvement. Prompt and LM-program optimizers (Khattab et al., 2023; Opsahl-Ong et al., 2024; Yuksekgonul et al., 2024) tune the interface to a fixed model rather than the model weights. On the agentic side, execution-grounded search has proven effective for GPU kernel optimization (Chen et al., 2026) and scientific discovery (Yamada et al., 2025; Gottweis et al., 2025), while ML engineering benchmarks (Chan et al., 2024; Nam et al., 2025) and autonomous fine-tuning environments (Li et al., 2026; Rank et al., 2026) show that LLM agents can execute substantial portions of the ML workflow. These systems are reviewed in detail in Section 7. However, they primarily address offline optimization and do not center the production adaptation problem: starting from real inference failures, determining which are fixable by training, constructing targeted supervision, retraining, and verifying that improvements do not introduce regressions.
+
+Figure 1: Pioneer Agent system architecture. An orchestrator LLM (Claude Sonnet 4.6) drives a LangGraph state machine coordinating task analysis, data curation, training, and evaluation. Cold-start mode (left) starts from a task description; production mode (right) uses judged inference traces. Both share an agent-guided iterative search over training pipelines , with explicit graph-structured MCGS in selected runs such as ARC-Challenge, executed in Modal sandboxes with the Tinker SDK.
+
+In this paper, we study that setting directly. We present the Pioneer Agent, a closed-loop system for autonomous SLM adaptation. The system operates in two modes. In cold-start mode, the input is only a natural-language task description, and the agent builds a fine-tuned model from scratch by (1) researching the task, (2) identifying and downloading real datasets—augmenting with synthetic data when needed, (3) constructing a held-out validation set before training, (4) curating supervision with structured guidelines (e.g., hard negatives, label balancing, and context-length matching), (5) training multiple configurations in parallel, and (6) iterating against the held-out validation set. In production mode, the input is a deployed model together with judged inference failures (from LLM-as-judge or human review). The agent repairs these failures by querying production traces, constructing a failure taxonomy, confirming weaknesses via targeted probing, synthesizing a corrective training curriculum (including corrected examples, hard negatives, and replay data), retraining the model, and evaluating against both the failure set and a regression set, and iterating until failures are resolved without degrading existing behavior. In Pioneer Agent, the search space includes more than model hyperparameters. The agent searches jointly over training data composition, hyperparameter configurations, and learning strategies. We implement this search using agent-guided iterative search. In selected runs (e.g., ARC-Challenge), this takes the form of Monte Carlo Graph Search (MCGS), a graph-based extension of Monte Carlo Tree Search. Each node corresponds to a complete training attempt and its measured outcome, allowing the agent to reason over trajectories of experiments rather than isolated trials. This enables it to distinguish data problems from optimization problems and to combine useful strategies discovered across different search branches.
+
+Figure 2: Cold-start performance: baseline vs. Pioneer Agent.
+Each pair of bars compares the base model score (grey) with the Pioneer Agent–trained score (orange) on the task-specific metric (accuracy, F1, pass@1, or ROUGE-2).
+Results span three model families (Llama 3B, Qwen 8B, GLiNER2) and four task categories: reasoning (ARC, TriviaQA, GSM8K), classification (SMS Spam), code generation (HumanEval), and summarization (XSum, SAMSum).
+
+The production setting changes what counts as improvement. Offline benchmark gains alone are insufficient. An effective adaptation system must operate on noisy and heterogeneous failure signals, identify whether errors arise from data issues, model limitations, or labeling noise, and satisfy regression constraints on previously correct behavior. Pioneer Agent is designed to meet these requirements. Our contributions are as follows:
+
+1.
+
+We present Pioneer Agent, a closed-loop system for autonomous adaptation of SLMs, supporting both cold-start task bootstrapping from natural language descriptions and production-time improvement from observed failures.
+
+2.
+
+We introduce a failure-driven curriculum synthesis method that constructs training data from production inference failures, using failure taxonomy construction, weakness confirmation via targeted probing, and structured dataset composition (corrected examples, hard negatives, and replay data).
+
+3.
+
+We introduce AdaptFT-Bench, a benchmark built from synthetic inference logs that evaluates autonomous model improvement across the full loop of failure diagnosis, curriculum synthesis, retraining, and regression verification.
+
+4.
+
+We demonstrate strong empirical results across eight cold-start benchmarks and multiple production scenarios, including substantial gains on math, coding, summarization, and classification tasks.
+
+5.
+
+We show that the agent consistently selects effective fine-tuning strategies—including chain-of-thought training for reasoning (Wei et al., 2022), task-specific epoch sensitivity, quality-over-quantity data curation, and system prompt engineering—based on observed performance feedback, without explicit instruction to use any particular technique.
+
+2 Pioneer Agent
+
+2.1 Architecture
+
+Pioneer Agent is built on a LangGraph state machine orchestrated by Claude Sonnet 4.6 (Anthropic, 2026) with extended thinking (32K token budget) and a 1M token context window. The agent executes in Modal sandboxes – isolated containers with 16GB memory and up to 24-hour timeouts – with access to a suite of tools for data manipulation, model training, and evaluation.
+
+The system supports two complementary model families, corresponding to encoder-based and decoder-based architectures, which together cover classification, extraction and generation tasks:
+
+•
+
+GLiNER2 (encoder): For named entity recognition (NER) and text classification. GLiNER2 (Zaratiana et al., 2025) extends GLiNER (Zaratiana et al., 2024) with multi-task training over NER and classification tasks. It retains the span-based architecture for NER and introduces a dedicated classification head trained jointly with the encoder. The model uses shared representations with task-specific output layers for each task. Variants include gliner2-base-v1, gliner2-large-v1, and gliner2-multi-v1 (multilingual). Training completes in 2–5 minutes.
+
+•
+
+Qwen/Llama (decoder): For text generation tasks. All Qwen3-8B (Qwen Team, 2025) experiments use the instruction-tuned variant; all Llama-3.2-3B (Llama Team, 2024) experiments use the base (non-instruction-tuned) variant. Training takes 10–30 minutes depending on model size.
+
+Decoder training is performed via the Tinker SDK, which provides Low-Rank Adaptation (LoRA) (Hu et al., 2021b) fine-tuning with instant inference on the resulting model. Encoder training (GLiNER2) supports both full fine-tuning and LoRA, as the smaller encoder architecture makes full parameter updates practical. The agent interacts with a set of pre-loaded helper functions (tinker_helpers.py) for dataset management, training orchestration, and inference.
+
+The agent uses a hierarchical architecture to manage context and parallelize work. The main agent orchestrates the full pipeline for up to 500 (production) or 1,500 (cold-start) LangGraph turns, where each turn is one LLM reasoning step together with its associated tool calls. A specialized Trace Analyzer sub-agent handles data-heavy SQL analysis with a 100K output-token limit, and independent sub-agents can be spawned via delegate_task for parallel work (e.g., building the next dataset while a training job runs). A proprietary Context Manager module monitors the conversation state and ensures the agent can sustain hundreds of reasoning turns without losing track of prior decisions. When the conversation approaches the context limit, the module selectively compacts older turns while preserving key decisions, evaluation results, and dataset lineage. The internal mechanism of the Context Manager is not disclosed in this paper. The agent also maintains a persistent data-curation.md log—a structured markdown file recording dataset versions, composition ratios, quality-control decisions, and per-iteration evaluation results—that is written to disk and survives compaction cycles, providing durable provenance that the agent can re-read at any point.
+
+2.2 Search Procedure
+
+We formalize autonomous fine-tuning as search over a structured configuration space that jointly captures data, optimization, and supervision choices. A training pipeline is defined as a tuple , where each component specifies a distinct but interdependent aspect of the training process:
+
+•
+
+is a dataset specification: the composition of gold examples, hard negatives, and replay data, together with the curation constraints applied (Section 2.3).
+
+•
+
+is a hyperparameter configuration: base model, LoRA rank, learning rate, batch size, number of epochs, and system prompt.
+
+•
+
+is a learning strategy: the supervision format (direct answer vs. chain-of-thought), the teacher model used for annotation (if any), and the evaluation method.
+
+Let denote the space of all valid pipelines. We define a scoring function that maps a pipeline to its held-out validation-set performance by executing the full train-then-evaluate loop. The score is the task-appropriate metric: accuracy or F1 for classification and NER, and an LLM-as-judge score normalized to for generation tasks (summarization, code, QA). We also define a regression function that counts the number of previously correct examples that the new model answers incorrectly on a held-out regression set . The optimization objective is:
+
+(1)
+
+where in practice. We adopt an absolute count rather than a relative rate for the regression constraint: in a production setting, even a single systematic regression pattern warrants investigation, whereas a relative threshold would permit proportionally more regressions on larger test sets. This conservative choice prioritizes deployment safety over search flexibility. The regression constraint is enforced only in production mode; in cold-start mode, where no prior model exists, the unconstrained objective is used instead.
+
+Figure 3: Monte Carlo Graph Search trajectory for ARC-Challenge (Llama 3.2-3B) over 11 iterations. Each node represents a completed training pipeline ; edges encode the agent’s causal reasoning about why a configuration succeeded or failed. The graph shows three key phases: format learning (Branch A, 5.3%61.3%), chain-of-thought discovery (Branch B, 68.6%), and cross-branch fusion of DeepSeek-R1 reasoning traces with validation-data expansion (Iteration 6, 72.6%). Post-fusion expansions (Iterations 7–11) all regress and are pruned, confirming convergence.
+
+Figure 4: Pioneer Agent’s two operational modes. Cold-start mode (top) takes a natural-language task specification and autonomously downloads data, constructs evaluation sets, synthesizes training curricula, and iterates via agent-guided search (MCGS in selected runs). Production mode (bottom) takes a deployed model with judged inference failures, constructs a failure taxonomy, synthesizes corrective training data (gold corrections, hard negatives, replay buffer), retrains, and accepts updates only when they pass both the failure evaluation set and a regression gate on previously correct behavior.
+
+The function has no closed-form expression and no useful gradient – each evaluation requires training a model and running inference on the full validation set. The search space is also heterogeneous: , , and interact in ways that cannot be decomposed (Feurer et al., 2022) (e.g., chain-of-thought supervision requires more epochs than direct-answer supervision; larger datasets may require lower learning rates). This rules out standard optimization over a fixed parameter grid (like grid search (Hsu et al., 2003) or random search (Bergstra and Bengio, 2012)) and motivates a search procedure that reasons about why a configuration succeeded or failed.
+
+The agent navigates using Monte Carlo Graph Search (MCGS; Du et al., 2025; Feng et al., 2026). Unlike traditional hyperparameter search, which treats each configuration independently, MCGS maintains a directed acyclic graph that encodes relationships between training attempts. Each node records a completed iteration—constructing or modifying the dataset, training a model, and evaluating it on a held-out set. An edge indicates that was derived from via a targeted modification (e.g., data curation, hyperparameter change, or supervision shift). This structure allows the agent to reason over trajectories rather than isolated trials. By preserving lineage, it can attribute performance changes to specific interventions, reuse successful patterns, and avoid unproductive regions of the search space. The graph thus captures not only what was tried but also why.
+
+This causal structure determines how grows. At each step the agent selects a leaf node and proposes a child configuration via an expansion operator:
+
+(2)
+
+where is the failure set or task specification. Expand is implemented by the orchestrator LLM (aka the Agent): it inspects the parent trajectory, diagnoses failure modes, and proposes a hypothesis-driven modification—for example, reducing epochs in response to overfitting or introducing hard negatives to resolve systematic label confusion. Because each new experiment is a reasoned response to observed failures rather than a stochastic perturbation, the search is both more efficient and more interpretable than random alternatives.
+
+Every child node is scored by executing the full pipeline: trains the model and evaluates it on the held-out validation set. While surrogate models (for example, predictors that estimate final validation accuracy from early training loss or truncated runs) could reduce cost, they introduce bias that is difficult to quantify in the presence of complex training dynamics; we therefore use no approximations. As a result, node scores reflect true task performance, and propagating these scores through ancestor statistics keeps the graph’s selection policy grounded in reliable—albeit computationally expensive—feedback.
+
+To balance exploration and exploitation, node selection uses a UCT-like score (cf. Appendix A):
+
+(3)
+
+where is the mean reward among ’s descendants, is the total number of evaluated nodes, is the visit count for , and is a time-decaying exploration coefficient. Early in the search, a large encourages broad coverage of the configuration space; as the search progresses decreases, and the agent transitions to top- exploitation—expanding only the highest-scoring nodes, where is chosen based on the current graph structure and remaining compute budget. The effect is that early iterations explore the configuration space broadly, while later iterations focus compute on refining the most promising configurations.
+
+As independent branches develop, they may discover complementary strategies. The agent can fuse the top- nodes across branches into a single candidate:
+
+(4)
+
+For example, one branch may discover that adding hard negatives resolves label confusion, while another finds that increasing the number of training epochs improves convergence; fusion produces a configuration that combines both. Fusion also serves as one of two stagnation recovery mechanisms. When the agent detects that a branch has stopped improving, it triggers either (i) evolution—a trajectory-aware mutation that tries a fundamentally different approach while preserving what worked—or (ii) fusion with a complementary branch. Together, these mechanisms prevent the search from becoming trapped in local optima.
+
+2.3 Data Curation
+
+Both modes follow the same data curation principles when constructing training datasets. Although the source of examples differs (cold-start mode relies on downloaded or synthesized data, while production mode uses corrected inference failures) the same quality controls are applied in both cases to ensure consistency.
+
+Dataset Composition
+
+Every training dataset is assembled from three slices, with target proportions that vary by mode and model maturity. Gold examples (40–60%) are correct input–output pairs sourced from downloaded benchmarks in cold-start mode or corrected failures in production mode. Hard negatives (25–35%) are confusable inputs where the correct answer differs from a plausible alternative, forcing the model to learn fine-grained decision boundaries. Replay buffer (10–20%) is sampled from the parent model’s training data to prevent catastrophic forgetting (Kirkpatrick et al., 2016); this slice is used only in production mode when improving an already fine-tuned model and is omitted (with its allocation redistributed to gold examples) when training from a base model.
+
+Empirically, we found that the use of hard negatives is essential. For every gold example at a decision boundary, the agent generates a counterexample with a similar input but a different correct output, teaching the model when not to fire rather than only when to fire. The replay buffer prevents catastrophic forgetting when improving an already fine-tuned model; when starting from a base model, the replay slice is reallocated to gold examples.
+
+Quality Controls
+
+Five constraints govern dataset quality:
+
+1.
+
+The 2-for-1 rule: For each challenging case, generate one gold example (correct label) and one hard negative (similar input, different correct answer).
+
+2.
+
+Label balancing: No single label exceeds the count of any other label. This prevents the model from learning majority-class priors.
+
+3.
+
+Context-length matching: The length distribution of training examples must match the distribution of realistic inputs (cold-start) or failing inferences (production).
+
+4.
+
+Entity diversification (NER tasks): No single entity value appears more than 2–3 times. Entity values are replaced with synthetic equivalents across examples to prevent memorization of surface forms.
+
+5.
+
+Chain-of-thought annotation (generation tasks): A teacher model (GPT-4.1, DeepSeek-R1) generates step-by-step reasoning chains for training examples, teaching the model why an answer is correct rather than only what the answer is.
+
+Additionally, each label requires 3–5 distinct surface-text patterns to enforce diversity beyond individual example counts.
+
+Dataset Sizing
+
+The agent targets compact, high-quality datasets over large noisy ones. For classification and NER tasks, 100–200 total examples is typical; for generation tasks, 500–3,000 examples depending on task complexity. Empirically, the system monitors for accuracy regression when adding data: if expanding the dataset degrades validation-set accuracy, the agent rolls back immediately (see Section 2.4).
+
+2.4 Iteration Policy
+
+Both cold-start and production modes share a common iteration policy that governs how the agent responds to evaluation results after each training run. The agent follows a structured decision tree based on the validation-set score :
+
+1.
+
+Score 0.80: The dataset needs fundamental rework. The agent analyzes remaining failures, identifies systematic gaps (missing label coverage, distribution mismatch, or insufficient hard negatives), and rebuilds the training data. This threshold treats the problem as a data problem, not a hyperparameter problem.
+
+2.
+
+Score 0.80–0.95: Tune hyperparameters first – more epochs, different learning rate, larger base model, or adjusted LoRA rank. The dataset is held fixed to isolate the effect of optimization changes.
+
+3.
+
+Score 0.95: Add 2–3 targeted examples per remaining failure pattern. At this stage, bulk data changes risk regressions, so the agent switches to surgical augmentation.
+
+4.
+
+Regression from previous iteration: Roll back to the previous dataset and configuration immediately. More data is not always better, and the agent treats any score decrease as a signal to revert rather than compensate.
+
+This policy encodes two key principles. First, the dominant source of error shifts as the score improves: a low score signals a data problem, a mid-range score signals an optimization problem, and a high score requires surgical intervention. Second, rollback is always preferred over accumulation – cascading “fixes” that each introduce new failure modes are the primary cause of stagnation in iterative fine-tuning.
+
+2.5 Cold-Start Mode
+
+In cold-start mode, the agent receives only a natural-language task description and must produce a fine-tuned model autonomously. Formally, the input is a task specification
+
+(5)
+
+where description is a natural-language instruction (e.g., “fine-tune Llama 3.2-3B on ARC-Challenge”), is the base model family, and constraints captures any user-specified requirements (target metric, output format, domain restrictions). Because no prior model exists, the agent solves the unconstrained form of the optimization objective in Eq. 1:
+
+(6)
+
+where is the held-out validation-set score of the pipeline under the task-appropriate metric. No regression constraint is applied since there is no deployed model to protect. The workflow proceeds in five stages described below.
+
+Input and Tools
+
+The agent has four tools: web_search (Exa deep research API), bash (unrestricted shell access with pre-loaded training helpers), read_file, and edit_file. The agent can also spawn sub-agents via delegate_task to parallelize work—for example, delegating data synthesis to one sub-agent while another constructs evaluation sets. Sub-agents inherit the same filesystem, so the main agent can read summaries written to disk by a sub-agent without loading raw data into its own context.
+
+Task Analysis
+
+Given , the agent must determine what kind of task this is, what data exists, and what performance is achievable. The workflow has three stages.
+
+(1) Task classification: The agent parses the task description to determine the task type (classification, NER, and generation) and selects the appropriate model family from . The task type determines the supervision format (direct labels vs. chain-of-thought), the evaluation metric (accuracy, F1, or ROUGE), and the data-curation strategy (Section 2.3).
+
+(2) Data acquisition: The agent conducts web research to locate relevant datasets, code examples, and domain knowledge. When the user specifies a known benchmark (e.g., CoNLL-2003, GSM8K), the agent downloads the actual benchmark data rather than generating synthetic substitutes. For custom tasks without public datasets, the agent uses a teacher model to synthesize seed examples, which are then validated and expanded.
+
+(3) Baseline survey: The agent surveys published baselines and state-of-the-art (SOTA) results for the target task to calibrate its performance targets. This step identifies known challenges—label ambiguity, class imbalance, domain-specific formatting requirements—that inform the data-curation strategy. When SOTA results are available, the agent sets its initial accuracy target relative to published numbers rather than using a fixed threshold.
+
+Evaluation Setup
+
+Before any training, the agent constructs a held-out evaluation set that defines success criteria. The set is composed of three complementary slices:
+
+(7)
+
+where contains correct input–output pairs covering the full label or entity range, contains negative examples (inputs that should not trigger any label), and contains confusable pairs at decision boundaries designed to test fine-grained discrimination. For generation tasks, is replaced by adversarial inputs (e.g., ill-posed questions, out-of-domain prompts) and contains problems that require multi-step reasoning or edge-case handling. This validation set is held fixed throughout iteration and is never included in the training data.
+
+The default stopping criterion requires:
+
+(8)
+
+which mirrors the score gate in production mode (Eq. 16) but omits the regression constraint since no prior model exists. The default threshold of 0.96 applies to accuracy or F1 for classification/NER and to LLM-as-judge scores for generation tasks. Crucially, this threshold is a default, not a hard constant: the agent can adjust it based on dataset characteristics and base model capabilities. Frontier LLMs are effective at recognizing genuine plateaus—for instance, when remaining failures reflect fundamental model capacity limitations (e.g., a 3B model’s inability to memorize factual knowledge) or irreducible label ambiguity rather than fixable training deficiencies. In such cases, the agent lowers the target and terminates early rather than wasting compute on unachievable goals.
+
+Curriculum Synthesis
+
+The agent assembles training data following the shared quality controls in Section 2.3. Because cold-start mode operates from a base model with , no replay buffer is needed and the resulting dataset is composed of two complementary slices:
+
+(9)
+
+where consists of correct input–output pairs sourced from downloaded benchmark data or teacher-model synthesis, and contains hard negatives—confusable inputs where the correct answer differs from a plausible alternative—generated using the 2-for-1 rule (Section 2.3). The replay allocation is redistributed to , yielding target proportions of approximately .
+
+For generation tasks, the agent selects between GPT-4.1 and DeepSeek-R1 as the teacher model. In practice, DeepSeek-R1 is preferred for mathematical and scientific reasoning (e.g., GSM8K, ARC-Challenge), while GPT-4.1 is preferred for code generation and general-knowledge tasks (e.g., HumanEval, TriviaQA).
+
+Training and Iteration
+
+The agent navigates the pipeline space using the iterative search procedure described in Section 2.2, with full MCGS when the search graph is explicitly maintained. At each iteration, it trains at least two configurations in parallel—for example, full fine-tuning vs. LoRA, or different base models—and evaluates each on the full evaluation set . Let denote the pipeline at iteration with score . The agent follows the shared iteration policy (Section 2.4): dataset rework when , hyperparameter tuning when , and targeted augmentation when . After each iteration, the agent analyzes remaining failures on to determine whether the next intervention should target the dataset , the hyperparameters , or the learning strategy (e.g., switching from direct-answer to chain-of-thought supervision).
+
+If an iteration regresses——the agent rolls back to the previous configuration immediately rather than attempting to compensate. The search terminates when the convergence criterion in Eq. 8 is met or the compute budget of 1,500 LangGraph turns is exhausted, whichever comes first.
+
+2.6 Production Mode
+
+Production mode is the system’s primary contribution. Given a deployed model with real inference failures, the agent autonomously diagnoses, fixes, and verifies improvements. Formally, the input is a deployed model and a set of judged inference traces
+
+(10)
+
+where is the input, is the model’s prediction, is the corrected output (from an LLM-as-judge or human reviewer), is the verdict, and is the judge’s reasoning. The agent’s objective is to find a training pipeline that produces an improved model satisfying
+
+(11)
+
+where denotes the pipeline (if any) that produced , is the validation-set scoring function, and counts regressions on a held-out set of previously-passing examples.
+
+Figure 5: Annotated stage-based deployment simulation on GSM8K (Qwen3-8B). At each deployment stage, the annotation shows the agent’s key decision: poison filtering, contrastive pair construction, targeted example generation from failure analysis, and automatic rollback when an iteration regresses. Naive retraining trains on all data indiscriminately and degrades sharply on the first noisy stage.
+
+⬇
+query_traces(
+
+sql_query = """
+
+SELECT input, metadata
+
+FROM inferences
+
+WHERE llmaj_verdict = ’fail’
+
+LIMIT 10000
+
+""",
+
+bash_pipeline = """
+
+python3 -c ’
+
+import sys, json
+
+rows = json.loads(sys.stdin.read())
+
+# Group failures by perturbation type
+
+by_type = {}
+
+for r in rows:
+
+for p in r["metadata"].get("perturbations_applied", []):
+
+by_type.setdefault(p, []).append(r)
+
+# Print compact summary -> agent context
+
+for k, v in sorted(by_type.items(), key=lambda x: -len(x[1])):
+
+print(f"{k}: {len(v)} failures")
+
+# Save full dataset to disk -> training pipeline
+
+with open("/tmp/failures.jsonl", "w") as f:
+
+for r in rows:
+
+f.write(json.dumps(r) + chr(10))
+
+print(f"Saved {len(rows)} rows to /tmp/failures.jsonl")
+
+’
+
+"""
+
+)
+
+Listing 1: Example query_traces call combining SQL with bash post-processing in a single tool invocation. The SQL result is piped to the bash command; only the printed summary enters the agent’s context while the full dataset is saved to disk.
+
+Input and Tools
+
+The agent has access to five tools: query_traces (SQL with optional bash post-processing), trace_analysis_subagent (delegated complex log analysis), bash (unrestricted shell with pre-loaded training helpers), read_file, and edit_file. More specifically, the query_traces tool accepts both a SQL query and an optional bash_pipeline command, piping the query result directly to the bash command’s stdin in a single invocation. This design allows the agent to filter, aggregate, and persist large result sets on disk without loading raw rows into its context window. In practice, the agent’s context rarely contains more than representative examples even when operating over databases with tens of thousands of rows.
+
+Failure Diagnosis
+
+Given a set of judged inference traces, the agent must decide what is broken, why it is broken, and what can be fixed by training. We break this into four stages: (1) trace ingestion, which partitions the logs into failure and passing sets; (2) taxonomy construction, which clusters failures into actionable categories and labels each as fixable or external; (3) live confirmation, which probes the deployed model to verify that identified weaknesses are systematic; and (4) parent model awareness, which inspects model lineage to determine whether corrective data should complement an existing training set or be built from scratch. We describe each stage in turn below.
+
+(1) Trace ingestion: The agent operates over the production inference database described above. Each record is a tuple
+
+(12)
+
+where the first five fields are as defined in Eq. 10 and encodes judge metadata (the judge model, prompt template, and evaluation criteria). The judge itself may be a deterministic scorer—such as a token-level F1 function that computes overlap against a gold reference—or an LLM judge such as DeepSeek; in the deterministic case, contains the score breakdown and reduces to the gold reference. When a human override is present, it supersedes the automated verdict. The agent queries these records via SQL with automatic row-level filtering to the current user’s data, obtaining the failure and passing sets
+
+(13)
+
+This signal tells the agent which inferences failed, why they failed, and what the corrected output should be.
+
+(2) Taxonomy construction: The agent partitions into failure clusters
+
+(14)
+
+For each cluster , the agent records its size , the dominant input characteristics (length distribution, structural patterns, entity-type composition), and a fixability label indicating whether the failures are addressable through training or are instead attributable to external factors such as prompt-design errors, schema mismatches, or genuinely ambiguous inputs. Complex analysis is delegated to a Trace Analyzer sub-agent (with higher token limits), which produces structured outputs like failure taxonomies, confusion matrices, and representative input examples, which are saved to disk. The main agent reads only the summary, preserving context for high-level decision-making.
+
+(3) Live confirmation: Before constructing training data, the agent first verifies that each identified weakness is systematic rather than an artifact of sampling noise. To do this, for each fixable cluster with , the agent synthesizes a probe set of targeted inputs designed to trigger the hypothesized failure mode, and evaluates the deployed model on .
+
+Crucially, probe construction depends on the specific failure mode: if the model confuses two labels, the agent generates boundary-case inputs that distinguish them; if long inputs cause failures, it extends previously correct short inputs to identify the breaking point; and if specific entity types are missed, it creates synthetic examples that explicitly include those entities.
+
+In practice, this step serves two roles: confirming that the weakness is systematic and generating targeted failing examples that are directly used to build the corrective training dataset.
+
+(4) Parent model awareness:
+To ensure targeted improvement, the agent first determines what supervision the model has already received. It inspects the model_id associated with failing inferences to recover the model’s training lineage, distinguishing between base checkpoints and previously fine-tuned models.
+
+Let denote the training dataset from the model’s most recent fine-tuning run, with when the deployed model is a base checkpoint. If the model is a base model (e.g., fastino/gliner2-base-v1), no prior task-specific supervision exists, so the agent builds the training dataset from scratch, using inference logs only to identify failure patterns. If the model is already fine-tuned (identified by a UUID), the agent retrieves and constructs a complementary dataset that targets uncovered failure modes rather than duplicating existing supervision. To reduce catastrophic forgetting, the agent also includes a replay buffer
+
+(15)
+
+which helps preserve previously learned behaviors while adapting the model to new errors. In all cases, training restarts from the base foundation model rather than a previously fine-tuned checkpoint. This ensures that the model’s behavior is fully determined by the current iteration’s dataset, rather than a mixture of accumulated updates from earlier runs. As a result, failures can be directly attributed to gaps or errors in the current dataset, and rollback becomes straightforward: reverting to a previous dataset cleanly restores the corresponding model behavior without needing to untangle interactions between successive fine-tuning steps.
+
+Figure 6: End-to-end closed-loop pipeline unifying both Pioneer Agent modes. In cold-start mode (left), the agent progresses from a natural-language task description through data acquisition, evaluation setup, curriculum synthesis, and agent-guided iteration. In production mode (right), judged inference failures feed into failure diagnosis, taxonomy construction, targeted curriculum synthesis, retraining with regression gating, and conditional deployment. The two modes share the same data-curation principles (Section 2.3) and iteration policy (Section 2.4), enabling a single system to handle both initial model creation and continuous post-deployment improvement.
+
+Evaluation Setup
+
+The evaluation relies on two complementary sets derived from . The evaluation set comprises the entirety of evaluated using the same judgment method that produced the original verdicts (a deterministic scorer or an LLM judge with identical criteria stored in inference table metadata). The regression set is a structured sample of previously passing inferences, constructed to cover the model’s existing strengths across relevant dimensions (e.g., label and entity types for classification/NER).
+
+Let denote the evaluation-set score and the regression count of pipeline . The default stopping criterion requires both conditions to hold simultaneously:
+
+(16)
+
+where as defined in Eq. 1. As in cold-start mode, 0.96 is the default threshold but the agent may lower it when it determines that remaining failures are not addressable by training—for example, when the failure taxonomy reveals that the dominant error cluster consists of adversarial inputs, out-of-distribution queries, or upstream label errors. The agent diagnoses these cases by analyzing failure patterns programmatically and reasoning about whether additional training data could plausibly resolve them. A candidate model is accepted only when it satisfies both gates; otherwise, the agent continues iterating or rolls back to the previous best checkpoint.
+
+Curriculum Synthesis
+
+From the confirmed fixable clusters , the agent constructs a targeted training curriculum following the shared curation principles in Section 2.3. The resulting dataset is composed of three complementary slices:
+
+(17)
+
+where consists of corrected versions of failed traces (using judge or human annotations ), contains hard negatives derived from confusion pairs—inputs for which produces plausible but incorrect outputs—and is the replay buffer defined in Eq. 15, included to preserve previously learned behavior. The relative composition () is adapted to the observed failure modes. More specifically, clusters dominated by recall errors are addressed by increasing the proportion of gold examples, while clusters characterized by precision errors (e.g., false positives or label confusion) receive a higher proportion of hard negatives.
+
+Furthermore, all examples are constrained by the quality controls described in Section 2.3, ensuring that the resulting dataset is both targeted to the observed failures and consistent with the overall data curation framework.
+
+Training and Iteration
+
+The agent trains on and evaluates the resulting model on both the evaluation set and the regression set. If , the iteration is rejected and the agent reverts to the previous best checkpoint. Iterations follow the shared policy in Section 2.4: dataset rework below 80% score, hyperparameter tuning between 80–95%, and targeted augmentation above 95%. Meanwhile, the agent can run up to 500 LangGraph turns per production run, using sub-agents for data-heavy steps such as failure analysis and trace sampling. When the stopping criterion in Eq. 16 is met, the improved model is promoted as the new deployment candidate.
+
+2.7 Structural Safeguards
+
+A central risk in autonomous fine-tuning is overfitting to production inference data, which is often noisy, biased, and temporally correlated. The mechanisms described above—hard negatives and label balancing (Section 2.3), rollback-first iteration (Section 2.4), parallel training of 2–3 configurations, and regression gating in production mode—jointly mitigate this risk by constraining both data composition and update acceptance. One additional mechanism completes the picture.
+
+Cross-checkpoint regression gate. In production mode, the evaluation set evolves over time as new failures are discovered, which creates a risk of temporal overfitting (Quionero-Candela et al., 2009; Widmer and Kubát, 1996; Gama et al., 2014; Bayram et al., 2022): a model may improve on the latest failure slice while silently degrading on previously fixed behaviors. To prevent this, once a candidate model reaches the score threshold on the current evaluation set, it is additionally evaluated on the evaluation set from the immediately preceding checkpoint. The model must satisfy (at most 2 regressions; Eq. 1) on both sets. This enforces cross-iteration consistency by requiring that improvements on newly introduced data do not come at the expense of prior gains. Combined with the replay buffer, which re-exposes earlier training signal, this produces a ratchet effect: each accepted update must preserve previously validated behavior while incorporating new improvements, yielding monotonically non-decreasing performance across successive fine-tuning rounds.
+
+Scenario
+Task
+Base Model
+Domain
+Fail
+Pass
+Tier
+
+Benchmark-derived synthetic-log scenarios
+
+GSM8K
+Math generation
+Qwen3-8B
+Math reasoning
+751
+577
+Hard
+
+GSM8K
+Math generation
+Llama 3.2-3B
+Math reasoning
+903
+425
+Hard
+
+ARC-Challenge
+Multiple choice
+Llama 3.2-3B
+Science reasoning
+765
+735
+Hard
+
+TriviaQA
+Open QA
+Llama 3.2-3B
+Trivia knowledge
+798
+702
+Hard
+
+HumanEval
+Code completion
+Qwen3-8B
+Python functions
+395
+235
+Medium
+
+XSum
+Summarization
+Qwen3-8B
+News articles
+
+Medium
+
+SAMSum
+Summarization
+Qwen3-8B
+Dialogue
+
+Medium
+
+Production-style deployment case studies
+
+CLINC150
+30-class classif.
+GLiNER2-base
+Intent detection
+453
+2,546
+Medium
+
+CoNLL-2003
+NER
+GLiNER2-base
+Entity extraction
+2,740
+280
+Hard
+
+Table 1: AdaptFT-Bench scenarios used in this paper. The first seven are benchmark-derived synthetic-log scenarios evaluated with the stage-based protocol below; CLINC150 and CoNLL-2003 are production-style deployment case studies.
+
+Confidence calibration. In production settings, model confidence is often misaligned with true correctness, especially under distribution shift (Guo et al., 2017): models tend to be overconfident on systematic failure modes. Left uncorrected, this reduces the effectiveness of human-in-the-loop annotation, as high-confidence errors are less likely to be reviewed. To address this, the adaptive annotation system tracks historical accuracy per label and adjusts raw model confidence: . A model that is overconfident on a label it historically gets wrong will have its confidence pulled down. TF-IDF similarity (Salton and Buckley, 1988) identifies related unlabeled items when a human corrects a prediction, propagating corrections to similar examples and preventing the same incorrect pattern from recurring.
+
+These safeguards were validated empirically. On the CLINC150 production improvement run (Section 4.4.1), the agent’s V2 iteration regressed from 99.3% to 98.5% – and the system correctly rolled back to V1 rather than continuing to iterate. On SMS Spam (Section C), the recall-precision balancing pattern demonstrated the hard negative safeguard in action: each iteration of adding spam examples to fix recall introduced new false positives, which the regression gate caught, triggering a corrective iteration of hard ham examples.
+
+3 AdaptFT-Bench
+
+Existing ML benchmarks evaluate model performance on static test sets. No standard benchmark exists for evaluating agents that improve models from production failures. AdaptFT-Bench fills this gap by providing reproducible scenarios where an agent must analyze a deployed model’s failures, build training data, retrain, and verify improvements – all autonomously. The benchmark answers a single question: given a deployed model with a known set of failures, can an agent autonomously fix them without breaking what already works?
+
+AdaptFT-Bench has two components. The primary benchmark consists of seven benchmark-derived synthetic inference scenarios built from public datasets using our perturbation pipeline (Appendix B.3). In addition, we report two staged deployment case studies (CLINC150 and CoNLL-2003), in which public benchmark data was deployed through the Pioneer Agent platform and the resulting inference logs with LLM-as-judge verdicts were used as input to the production improvement loop. Full benchmark construction methodology — including scenario selection, synthetic inference log construction, failure and regression set construction, difficulty tiers, and anonymization procedures — is provided in Appendix B.
+
+3.1 Stage-Based Evaluation Protocol
+
+AdaptFT-Bench has two evaluation regimes. The seven benchmark-derived scenarios (two GSM8K runs Cobbe et al. (2021), ARC-Challenge Clark et al. (2018), TriviaQA Joshi et al. (2017), HumanEval Chen et al. (2021), XSum Narayan et al. (2018), and SAMSum Gliwa et al. (2019)) use synthetic inference logs generated from benchmark data with our noise injection pipeline (Appendix B.3). CLINC150 Larson et al. (2019) and CoNLL-2003 Tjong Kim Sang and De Meulder (2003) use production-style deployment logs and are reported separately as case studies rather than inference simulations. For the stage-based scenarios, logs are organized into three deployment stages with increasing poison rates (15% 25% 40%). Each stage contributes roughly 500 new inference logs and is split 70/30 into train/test. The held-out evaluation set is the union of all stage test splits, so every checkpoint is measured on the same mixed clean+noisy slice.
+
+We distinguish fixable noise from poisonous noise. Fixable noise includes typos, misspellings, grammatical corruption, casing errors, truncation, preamble injection, and code-switching – perturbations where the original intent and answer remain valid. Poisonous noise includes false premises, label flips, off-domain queries, prompt injection, jailbreaks, gibberish, and empty inputs – cases where training on the raw example would actively teach the wrong behavior.
+
+Benchmark
+Model
+Baseline
+Fine-tuned
+
+Iters
+
+Decoder models (generation)
+
+ARC-Challenge
+Llama 3.2-3B
+5.3%
+72.6%
++67.3
+11
+
+GSM8K
+Llama 3.2-3B
+8%*
+43.7%
++35.7
+10
+
+TriviaQA
+Llama 3.2-3B
+0%*
+48.6%
++48.6
+9
+
+ARC-Challenge
+Qwen3-8B
+91.7%
+93.3%
++1.6
+13
+
+HumanEval
+Qwen3-8B
+71.3%
+92.7%
++21.4
+4
+
+XSum
+Qwen3-8B
+R2: 6.9
+17.9
++159%
+13
+
+SAMSum
+Qwen3-8B
+R2: 13.4
+25.4
++90%
+11
+
+Encoder model (classification)
+
+SMS Spam (UCI)
+GLiNER2-base
+F1: 0.159
+0.997
++83.8
+10
+
+Table 2:
+Cold-start benchmark results across eight tasks.
+The agent receives only a natural-language task name and autonomously downloads data, constructs train/test splits, synthesizes training curricula, and iterates.
+Baselines are zero-shot on the same held-out validation set.
+Improvements range from +1.6 pp (Qwen3-8B on ARC, where the base model already scores 91.7%) to +83.8 pp F1 (SMS Spam).
+* Llama 3.2-3B is a base model that cannot follow standard output formats zero-shot; GSM8K baseline is 8% with 5-shot prompting.
+
+In the synthetic benchmark, these labels are known from the perturbation pipeline. In production mode, the agent itself classifies each failing inference as fixable or poisonous during the failure-taxonomy Step (Section 4.4.1), using the LLM’s judgment about whether the original intent and correct answer are recoverable from the corrupted input. Pioneer Agent filters poisonous examples, builds contrastive pairs from fixable noise, trains on the accumulated curated data, and is allowed up to two train evaluate iterations per stage with rollback. This means the deployed adaptive curve is monotone or flat by design: if a stage-specific retrain regresses, the system keeps the previous checkpoint. By contrast, naive retraining always deploys the single checkpoint produced from the latest noisy stage.
+
+Because AdaptFT-Bench evaluates on held-out synthetic inference logs rather than the canonical benchmark test sets, the absolute values in the results tables should not be compared directly to the cold-start results. AdaptFT-Bench measures trend under accumulating production noise and the final gap to naive retraining, not clean benchmark accuracy.
+
+Benchmark
+
+Key Finding
+
+ARC-Challenge (Llama 3B)
+
+Chain-of-thought training was the largest observed lever (+21pp); DeepSeek-R1 traces outperformed GPT-4.1. Post-peak iterations with more data, higher LoRA rank, or lower learning rate all regressed.
+
+GSM8K (Llama 3B)
+
+Fewer epochs (2) with larger batch size (16) were optimal; the model overfits quickly on math patterns. Final accuracy (43.7%) is competitive for 3B-scale models.
+
+HumanEval (Qwen 8B)
+
+Cross-benchmark generalization: trained on MBPP (374 problems), evaluated on HumanEval (164). Adding GPT-4.1-generated solutions reduced performance (96.9%94.5%), indicating that external outputs can dilute the training signal.
+
+XSum (Qwen 8B)
+
+Summarization overfits rapidly—1 epoch is optimal. Fine-tuning corrected verbosity (32.6-word 21-word summaries).
+
+SAMSum (Qwen 8B)
+
+System prompt design was the primary lever: a constrained prompt (“1–3 sentences, main outcome, third person, brief”) outperformed all hyperparameter changes.
+
+SMS Spam (GLiNER2)
+
+55 targeted examples added to a 4,458-example base (+1.2%) increased F1 from 0.9834 to 0.9967 via iterative precision–recall balancing.
+
+Table 3: Key findings per cold-start benchmark. Each row highlights the most significant insight from the agent’s iteration trajectory. Full per-iteration tables appear in Appendix C.
+
+4 Experiments
+
+Figure 7: Stage trajectories across the seven AdaptFT-Bench scenarios. The deployed adaptive model (green) moves up or stays flat; naive retraining (red) trends down as poisoned logs accumulate.
+
+4.1 Experimental Setup
+
+Benchmark Suite
+
+We evaluate Pioneer Agent across nine benchmark scenarios under two settings — cold-start and production improvement — designed to capture both initial task bootstrapping and post-deployment adaptation. The evaluation spans a diverse set of task families, including reasoning (ARC-Challenge), mathematical problem solving (GSM8K), open-domain knowledge QA (TriviaQA), code generation (HumanEval), abstractive summarization (XSum, SAMSum), classification (SMS Spam, CLINC150), and named entity recognition (CoNLL-2003). These scenarios cover both encoder and decoder model families (GLiNER2, Llama, and Qwen), and include a mix of base-model initialization and already fine-tuned production systems. Metrics are task-specific and reflect standard evaluation protocols for each domain (e.g., exact match, pass@1, ROUGE, and F1). Table 1 summarizes the full benchmark suite including models and datasets used throughout our experiments.
+
+Evaluation Protocols
+
+We evaluate Pioneer Agent under two protocols corresponding to its two operational modes:
+
+(1) Cold-start protocol: The agent is given only a natural-language task specification (e.g., “fine-tune Llama 3.2-3B on ARC-Challenge”) with no pre-curated dataset or training recipe. It must autonomously acquire data, construct a held-out evaluation set before training, synthesize a training dataset, select configurations, and iteratively train and evaluate against the fixed validation set (Section 2, Cold-Start Mode). All results are reported on held-out validation sets defined prior to training.
+
+(2) Production protocol: The agent is given a deployed model with judged inference traces rather than a clean dataset. It must identify failure patterns, construct a failure taxonomy, synthesize a targeted training curriculum (corrected examples, hard negatives, replay), retrain models, and validate improvements against both a failure set and a regression set of previously correct behavior (Section 2, Production Mode). Production evaluation uses AdaptFT-Bench (Section 3), where synthetic inference logs are generated via a noise injection pipeline (Appendix B.3) and organized into three stages with increasing poison rates (15% 25% 40%). Two additional scenarios (CLINC150 and CoNLL-2003) use production-style deployment logs; full details are in Appendix B.
+
+Baseline Methods
+
+We report two baseline families for the production evaluation, capturing both controlled upper bounds and realistic deployment conditions.
+
+(1) Controlled upper-bound baselines (Table 5).
+For the held-out poison experiment on GSM8K/Qwen, we retain the original comparison set: naive retraining with oracle corrections, random augmentation, and clean-only training. These baselines isolate the value of filtering and curriculum construction under ideal supervision, where all training labels are correct. The naive retrain baseline trains once on all incoming inference data, including poisoned examples, using oracle-corrected outputs. Random augmentation follows the same procedure but augments failure cases with randomly sampled clean benchmark examples rather than a targeted curriculum. Finally, clean-only training uses exclusively clean benchmark data, with no exposure to noisy deployment logs.
+
+(2) Realistic naive retrain (Tables 4–6, Figure 7).
+To reflect real deployment conditions, we introduce a more realistic naive baseline that mirrors common production pipelines without intelligent data curation. All incoming inference data is used for training without any poison filtering. Approximately 30% of noisy failures receive no human correction, causing the model to retrain on its own incorrect outputs. Among poisonous examples, around 50% receive incorrect corrections, where annotators answer the corrupted input, while roughly 20% receive correct corrections by chance. Clean examples always receive correct labels. Training is performed once per deployment stage, with no iteration or rollback.
+
+4.2 Cold-Start Results
+
+We evaluate cold-start mode on eight benchmarks spanning reasoning, math, code generation, summarization, and classification (Figure 2). For each, the agent receives only a task name and must autonomously acquire data, construct evaluation sets, synthesize training curricula, and iterate. Improvement magnitude tracks how far the base model is from task requirements, ranging from +1.6pp on near-saturated baselines to +83.8pp F1 where no prior supervision exists.
+
+The largest gains occur when the base model lacks the required output format or reasoning strategy. On ARC-Challenge (Llama 3.2-3B), the base model scores 5.3% because it fails to follow the multiple-choice format, generating free-form continuations or new questions instead of selecting an answer; the agent improves performance to 72.6% (+67.3pp) by discovering chain-of-thought supervision with DeepSeek-R1 traces and fusing complementary search branches. TriviaQA improves from effectively 0% to 48.6%, after which the agent attributes remaining errors to the knowledge limits of a 3B model. On GSM8K, it identifies a distinct optimization regime where fewer epochs and larger batch sizes yield the best result (43.7%, +35.7pp).
+
+When the base model is already capable, the agent shifts from teaching core skills to refining behavior. HumanEval reaches 92.7% pass@1 (+21.4pp) in 4 iterations via transfer from MBPP. Summarization shows task-specific dynamics: XSum overfits after one epoch, while SAMSum is driven primarily by prompt design. SMS Spam illustrates the high-accuracy regime—after reaching F1 0.98, three rounds adding only 55 targeted examples push F1 to 0.997 via precision–recall balancing. When the baseline is strong (Qwen3-8B on ARC, 91.7%), gains are modest (+1.6pp) and require recovering from an initial performance dip.
+
+Across benchmarks, the first iteration captures only 40–70% of the final improvement; remaining gains come from diagnosing failure modes and applying targeted interventions. Table 3 summarizes the dominant finding per benchmark; full trajectories appear in Appendix C.
+
+Benchmark
+Model
+Metric
+Agent C1
+Agent Best
+Naive C1
+Naive C4
+Final Gap
+
+GSM8K
+Qwen3-8B
+Acc.
+75.9%
+81.2%
+71.6%
+64.7%
++16.5%
+
+GSM8K
+Llama 3.2-3B
+Acc.
+27.8%
+34.8%
+19.8%
+14.5%
++20.3%
+
+ARC-Challenge
+Llama 3.2-3B
+Acc.
+74.2%
+78.4%
+52.9%
+55.8%
++22.6%
+
+TriviaQA
+Llama 3.2-3B
+Acc.
+73.5%
+76.1%
+34.0%
+33.1%
++43.0%
+
+HumanEval
+Qwen3-8B
+pass@1
+89.0%
+90.3%
+74.4%
+72.5%
++17.8%
+
+XSum
+Qwen3-8B
+ROUGE-2
+38.9
+43.1
+10.9
+6.5
++36.6
+
+SAMSum
+Qwen3-8B
+ROUGE-2
+35.6
+41.4
+21.7
+16.8
++24.6
+
+Table 4: Production results across AdaptFT-Bench scenarios.
+Agent columns show the best deployed checkpoint with rollback, while naive columns correspond to single-shot retraining per stage.
+Colored cells highlight Agent performance (blue = initial, green = best).
+
+4.3 Production Mode Results
+
+We now evaluate Pioneer Agent’s production mode on the core challenge of this work: improving deployed models from noisy, real-world feedback rather than clean, static datasets. Production systems must adapt under distribution shift, imperfect or inconsistent annotations, and adversarial inputs, while preserving previously correct behavior. To stress-test these capabilities under controlled conditions, we use AdaptFT-Bench, a stage-based benchmark with synthetic inference logs that simulate accumulating noise across seven scenarios (Section 3).
+
+Table 4 summarizes results across the seven stage-based AdaptFT-Bench scenarios. Each scenario simulates a deployed model receiving three waves of production traffic with increasing poison rates (15% 25% 40%), and the table reports both the agent’s first checkpoint (C1, trained on clean data only) and its best deployed checkpoint after all three stages, alongside the naive baseline at the same points. The “Final Gap” column captures the cumulative advantage of adaptive curation over indiscriminate retraining by the end of the simulation.
+
+4.3.1 Main results.
+
+Across all seven scenarios, Pioneer Agent either improves or preserves its deployed checkpoint as noisy stages accumulate, while naive retraining consistently degrades. The largest final gaps appear on knowledge-intensive and reasoning-heavy tasks where smaller models are most fragile to corrupted training signal: TriviaQA (+43.0pp), ARC-Challenge (+22.6pp), and GSM8K/Llama (+20.3pp). In each case, the naive baseline absorbs poisoned examples—false premises, negation flips, label swaps—that actively teach incorrect associations, while the agent identifies and excludes them. Summarization exhibits the same divergence in a different metric regime: on XSum, naive retraining collapses from ROUGE-2 10.9 to 6.5 while the adaptive agent climbs to 43.1. HumanEval and SAMSum show smaller but still substantial gaps of +17.8pp and +24.6 ROUGE-2, respectively. Notably, the deployed adaptive curve remains monotone or flat by construction: whenever a stage-specific retrain regresses, the system retains the previous checkpoint rather than deploying a worse model.
+
+4.3.2 Controlled Baseline Comparison.
+
+To isolate the value of the agent’s filtering and curriculum construction from the additional messiness of incomplete human review, we conduct a controlled upper-bound experiment on GSM8K (Qwen3-8B) in which every example—including poisoned ones—receives an oracle correction. This setup gives all baselines access to perfect labels, so any remaining performance difference must arise from how the training data is selected and composed rather than from label quality.
+
+Table 5: Controlled held-out evaluation on 572 test examples (mixed noisy + clean). Accuracy (%).
+
+Method
+Overall
+Noisy
+Clean
+
+Base model (no training)
+56.6
+49.4
+66.3
+
+Naive Retrain (40% poison)
+64.4
+55.1
+76.9
+
+Naive Retrain (60% poison)
+64.3
+56.0
+75.2
+
+Random Augmentation
+68.5
+58.6
+81.7
+
+Clean Only (no poison)
+71.2
+62.6
+82.5
+
+Pioneer Agent (filtered)
+72.2
+61.7
+86.2
+
+As shown in Table 5, Pioneer Agent achieves 72.2% overall accuracy, outperforming the clean-only baseline (71.2%), random augmentation (68.5%), and both naive retrain variants (64.3–64.4%). The gap is most pronounced on the clean regression split, where the agent scores 86.2% compared to 82.5% for clean-only and 76.9% for naive retraining—indicating that the agent’s curriculum not only handles noisy inputs better but also preserves previously correct behavior more effectively. That the agent surpasses even the clean-only baseline, which never sees any poisoned data, suggests that selective exposure to fixable noise provides a form of robustness training that pure clean data cannot supply.
+
+4.3.3 Stage-Based Deployment Simulation.
+
+Table 6: GSM8K (Qwen3-8B) stage checkpoints. Accuracy (%). Pioneer Agent improves monotonically; naive retraining degrades sharply on the first noisy stage.
+
+Checkpoint
+Naive
+Agent
+
+Poison
+
+C1: Clean Base
+71.6
+75.9
++4.3
+0%
+
+C2: +Stage 1
+62.6
+77.6
++15.0
+15%
+
+C3: +Stage 2
+63.3
+79.1
++15.8
+25%
+
+C4: +Stage 3
+64.7
+81.2
++16.5
+40%
+
+We present a detailed view of the GSM8K (Qwen3-8B) scenario to illustrate the stage-based evaluation under realistic conditions (Table 6). Each deployment stage introduces roughly 440 new inference logs with a progressively higher poison rate. The naive baseline retrains once per stage on all incoming logs without filtering—approximately 30% of noisy failures go unreviewed, and among reviewed poisoned examples roughly half receive incorrect corrections. Pioneer Agent, by contrast, filters poisoned examples, constructs contrastive pairs from fixable noise, and iterates up to twice per stage with rollback.
+Despite starting from the same clean checkpoint, the trajectories diverge immediately. On the clean base checkpoint (C1), the gap is a modest 4.3pp, reflecting slightly better data curation even without noise. Once the first noisy stage arrives at 15% poison rate, naive retraining degrades sharply to 62.6%—a 9pp drop from its own baseline—while the agent improves to 77.6%, widening the gap to 15.0pp. Subsequent stages continue this pattern: the naive baseline hovers around 63–65% as incorrect signal accumulates, while Pioneer Agent climbs to 81.2%. The final 16.5pp gap reflects not a single decisive intervention but the compounding effect of correct filtering decisions across all three stages.
+
+Perturbation Type
+Count
+Fixable
+
+Agent Action
+
+Linguistic / structural noise
+
+Typo / misspelling
+74
+Yes
+
+Uses contrastive pairs to improve robustness to surface noise
+
+Syntactic / grammatical error
+50
+Yes
+
+Uses contrastive pairs to enforce correct interpretation
+
+Preamble injection
+69
+Partial
+
+Trains on clean extraction of relevant content
+
+Truncation
+28
+Partial
+
+Includes shorter contexts to improve robustness
+
+Number distractor
+50
+Yes
+
+Uses contrastive pairs to resolve numerical confusion
+
+Semantic poison
+
+Number swap
+70
+No
+
+Excluded (induces incorrect arithmetic relationships)
+
+False premise
+60
+No
+
+Excluded (invalidates problem semantics)
+
+Negation flip
+40
+No
+
+Excluded (contradicts the correct answer)
+
+Adversarial inputs
+
+Prompt injection
+49
+No
+
+Excluded (adversarial manipulation)
+
+Jailbreak attempt
+49
+No
+
+Excluded (adversarial manipulation)
+
+Table 7: Failure coverage on the GSM8K/Qwen stage benchmark. The agent separates fixable noise (linguistic and structural) from semantic poison and adversarial inputs. Fixable cases are incorporated into training via targeted supervision, while harmful examples are excluded to prevent learning incorrect behavior. Naive retraining, in contrast, trains on all types indiscriminately.
+
+4.3.4 Qualitative analysis.
+
+The mechanism underlying both gaps is semantic triage: the agent reasons about whether each failure example is safe to learn from before including it in training. Consider a poisoned math problem where “bought” has been changed to “didn’t buy,” yet the ground-truth answer still assumes the purchase occurred. Naive retraining ingests this example verbatim, reinforcing a contradictory input–label association. The agent detects that the negation alters the problem semantics and excludes the example, retaining only cases where noise is surface-level (e.g., typos, distractors) and the answer remains valid. This per-example filtering is what separates the two trajectories in Tables 5 and 6, and Figure 7 confirms that the pattern holds across all seven AdaptFT-Bench scenarios.
+
+4.4 Deployment Case Studies
+
+The production mode results above validate the agent under synthetic noise at controlled poison rates. To confirm that the same pipeline transfers to authentic deployment conditions, we evaluate on two additional tasks—CLINC150 (intent classification) and CoNLL-2003 (named-entity recognition)—where the Pioneer Agent platform serves public benchmark data, collects model predictions, and scores them automatically (exact-match for CLINC150, entity-F1 for CoNLL-2003). The production-mode agent receives these judged inference logs directly, with no synthetic perturbation applied.
+
+4.4.1 Intent Classification (CLINC150)
+
+We evaluate Pioneer Agent on a production-style deployment of CLINC150 intent classification, focusing on its ability to diagnose failure modes, construct targeted training data, and improve performance under strict regression constraints. A gliner2-base-v1 model serves 30-class intent classification over a CLINC150 subset comprising 2,999 production inferences. Under exact-match evaluation, the model passes 84.9% of inferences (2,546/2,999), leaving 453 failures for the agent to address.
+
+Figure 8: Failure taxonomy constructed by Pioneer Agent for the CLINC150 intent classification deployment. The agent clusters 453 production failures into actionable categories by querying the inference database, identifying dominant confusion pairs (e.g., flight_statustime, change_languagetranslate), and diagnosing root causes: semantically overlapping intents, counterintuitive label semantics, and surface-form similarity across decision boundaries. This taxonomy directly informs the composition of the corrective training curriculum.
+
+(1) Failure diagnosis:
+Rather than treating all 453 failures uniformly, the agent queries the production inference database and constructs the structured failure taxonomy shown in Figure 8. This analysis reveals three distinct root causes. The dominant source is semantically overlapping intents: change_language and translate exhibit fully bidirectional confusion (25 failures each), while rollover_401k is systematically misclassified as transfer in 23 of 26 cases. A second category stems from counterintuitive label semantics—inputs such as “I have no clue” belong to the maybe intent, yet the model interprets them as knowledge-seeking and fires fun_fact (17 of 29 failures), indicating that pragmatic meaning diverges from surface-level cues. The third category involves surface-form similarity across intent boundaries: both flight_status and replacement_card_duration queries begin with “how long,” causing the model to collapse them into the generic time intent (39/40 and 23/26 failures, respectively). The most failure-prone label overall is change_user_name (58 failures), of which 39 are misrouted to the catch-all what_can_i_ask_you—a pattern that suggests the model lacks sufficient training signal for this label entirely. This diagnostic step shapes every downstream decision: by identifying which confusion pairs dominate and why, the agent can construct a curriculum that targets the actual failure structure rather than sampling corrections blindly.
+
+Table 8: CLINC150 deployment results after one improvement cycle. The agent fixes nearly all failures while preserving previously correct behavior.
+
+Metric
+Before
+After
+
+Failures fixed
+453
+450 (99.3%)
+3 remaining
+
+Adjusted (excl. 1 label error)
+452
+450 (99.6%)
+2 remaining
+
+Regression on passing set
+198
+197 (99.5%)
+1 regression
+
+(2) Curriculum synthesis and training:
+Guided by the taxonomy above, the agent synthesizes a targeted training curriculum of 1,254 examples. The dataset combines corrected failure cases with systematically constructed hard negatives for each confusion pair—for instance, change_language queries phrased to resemble translate, and vice versa. In addition, contrastive pairs explicitly teach fine-grained distinctions at decision boundaries, ensuring that semantically similar intents are separated during training. To select the best adaptation strategy, the agent trains two candidate models in parallel—full fine-tuning and LoRA—on the same curriculum. Full fine-tuning achieves near-perfect performance on the first attempt, reaching 99.3% accuracy on the failure set (450/453) while preserving 99.5% of previously correct predictions (197/198). LoRA attains 99.3% on a 150-sample fast-evaluation slice but is not promoted further due to slightly lower stability on the full evaluation set. The agent therefore selects full fine-tuning as the deployment candidate (V1).
+
+(3) Residual error analysis:
+The three remaining errors fall into distinct categories, each carrying a different implication. One corresponds to a confirmed labeling error in the benchmark—“tell me about today weather” is annotated as replacement_card_duration—which represents an upstream data-quality issue that no amount of training can resolve. The second is a genuine edge case where a pto_request is phrased as a general inquiry, placing it outside the distribution the curriculum covers. The third reflects a borderline ambiguity between what_can_i_ask_you and definition, arising from intrinsic overlap in the label space rather than a systematic model shortcoming. By distinguishing these three failure types, the agent avoids the trap of treating every residual error as trainable.
+
+(4) Refinement attempt and rollback:
+To address the two legitimate remaining failures, the agent introduces 17 additional targeted examples and retrains the model (V2). However, this refinement produces a performance drop to 98.5%, indicating that the additional data introduces interference with previously learned decision boundaries—a characteristic risk in the high-accuracy regime where the curriculum already covers the vast majority of failure modes. Recognizing this regression, the agent reverts to V1 in accordance with its rollback policy (Section 2.4), which forbids dataset expansion to fix residual errors once accuracy exceeds 99%. This decision demonstrates that effective production adaptation requires not only the ability to learn, but also the discipline to stop.
+
+Table 8 summarizes the final deployment outcome. This case study highlights three properties of the production improvement loop. First, performance gains derive primarily from data quality rather than optimization: a single well-constructed curriculum achieves 99.3% accuracy without iterative hyperparameter search, confirming that the diagnostic and curriculum-synthesis stages—not the training procedure—carry the explanatory weight. Second, disciplined rollback proves essential in the high-accuracy regime, where additional data can degrade performance by disrupting established decision boundaries. Third, the agent distinguishes model failures from upstream data issues, correctly identifying a mislabeled example as unfixable and excluding it from the training objective. Together, these behaviors show that closing the last few percentage points in production requires not just learning capacity but selective restraint.
+
+Figure 9: Agent-guided recovery on CoNLL-2003 NER. Starting from a severe precision-collapse regime dominated by false positives, the agent diagnoses the error pathology, builds a precision-first curriculum with hard negatives, pivots from failed LoRA inference to full fine-tuning, and calibrates the deployment threshold. These interventions reduce sample errors from 2,740 to 821 and improve Entity F1 from 0.345 to 0.810.
+
+4.4.2 Named Entity Recognition (CoNLL-2003)
+
+We evaluate the agent on a production-style named entity recognition (NER) deployment derived from CoNLL-2003, comprising 3,020 judged inferences. In contrast to the intent classification setting (Section 4.4.1), errors are not dominated by missed predictions but by systematic over-prediction. A gliner2-base-v1 model achieves a low baseline Entity F1 of 0.345, with only 9.3% of samples passing. Failures are driven by 11,367 false positives versus 1,890 false negatives—a 6:1 FP : FN ratio—indicating that the model fires excessively even when no entity is present. After one improvement cycle, the agent raises Entity F1 to 0.810 and resolves 70% of the failure slice (Figure 9), combining data curation, training-method pivoting, and threshold tuning into a single adaptive trajectory.
+
+(1) Diagnosis and precision-oriented curriculum:
+The agent opens with six parallel SQL diagnostics against the inference database and identifies two dominant error modes: empty-ground-truth hallucination, where the model predicts entities for inputs that contain none, and cross-label duplication, where a single span receives multiple overlapping entity types. Both pathologies inflate the false-positive count, confirming that the core problem is precision rather than recall. Guided by this asymmetry, the agent builds progressively more precision-oriented datasets anchored in large numbers of hard negatives—entity-free passages that penalize hallucination and near-miss spans that penalize label duplication—rather than the balanced positive/negative mix a recall-oriented curriculum would require.
+
+(2) Training-method recovery and threshold tuning:
+The initial LoRA training run fails at inference with repeated 500 errors, an infrastructure-level failure that would terminate a fixed pipeline. Instead, the agent pivots to full fine-tuning on the same dataset and recovers the training trajectory without manual intervention. Beyond the training method, the agent treats the GLiNER2 entity-score threshold as a searchable parameter: each predicted entity is assigned a probability score, and the default decision threshold is typically 0.5. It therefore sweeps threshold values and compares model capacities between gliner2-base-v1 and gliner2-large-v1. The winning configuration pairs GLiNER2-large with a threshold of —a highly aggressive precision setting that the agent discovers is necessary precisely because the dominant failure mode is over-prediction. In contrast to CLINC150, where the optimal model emerged from a single training run, this scenario requires the agent to jointly optimize along data, architecture, and inference-time axes.
+
+Takeaways:
+
+This case study surfaces three agent capabilities absent from the CLINC150 scenario. First, the agent distinguishes precision failures from recall failures and reshapes the curriculum accordingly, rather than treating all errors as symmetric. Second, it recovers from infrastructure-level failures by switching training methods mid-trajectory instead of abandoning the run—a form of robustness that goes beyond data curation. Third, it performs deployment threshold tuning, discovering that threshold is part of the winning policy, not merely an evaluation detail. The full trajectory is analyzed in Section 5.2.3.
+
+5 Analysis
+
+5.1 Emergent Training Strategies
+
+A central question in autonomous fine-tuning is whether strong performance arises from explicitly programmed heuristics or from the agent’s ability to discover effective strategies through interaction with the task. In particular, it is unclear whether an agent operating purely from outcome-based feedback can recover the nuanced training practices that human practitioners typically design through extensive experimentation and domain knowledge. We therefore examine whether such strategies can emerge purely from feedback-driven optimization.
+
+Empirically, we find that they do. Across all experiments (both cold-start and production), no run was explicitly instructed which training strategies to use. Yet the agent consistently recovers techniques that are individually well-established in the literature—including chain-of-thought supervision, adaptive epoch scheduling, and quality-focused data curation—and composes them into effective pipelines guided solely by downstream performance feedback. We organize the findings into three groups, each of which is developed in the following subsections.
+
+(1) Supervision Format and Prompting.
+
+Two of the agent’s most impactful interventions target how examples are presented rather than which examples are used.
+
+For reasoning-intensive benchmarks, the agent consistently favored chain-of-thought over direct-answer supervision. On ARC-Challenge, this transition increased accuracy from 48% to 69%, the single largest gain across all benchmarks. The agent further discovered that DeepSeek-R1 reasoning traces outperformed GPT-4.1 traces, reaching 72.6% after fusion (Figure 10). This behavior emerged specifically for reasoning tasks, indicating that the agent correctly deduced the appropriate supervision format from observed failure modes.
+
+Separately, the agent treated the system prompt as a tunable configuration component. On SAMSum, replacing a generic prompt (“summarize this dialogue”) with a constrained specification (“1–3 sentences, main outcome, third person, brief”) produced the single largest improvement of any intervention. The agent attributed output variability to prompt under-specification rather than a data problem—a distinction that avoids wasted iterations on data augmentation.
+
+(2) Optimization Dynamics.
+
+In addition to supervision format, the agent adapts how models are trained by tuning optimization dynamics to task-specific characteristics through direct comparison.
+
+First, training duration varies markedly across tasks. The agent selects 1 epoch for XSum (where summarization overfits rapidly), 2 for GSM8K (combined with larger batch sizes to stabilize gradients), 5 for ARC-Challenge, and 8 for SAMSum (a low-data regime). To make these decisions, it jointly monitors validation and training performance to detect divergence or premature convergence, treating epoch count as the primary corrective lever.
+
+Similarly, learning rate selection follows a task-dependent pattern. Knowledge-intensive tasks (TriviaQA, ARC-Challenge) converge on lower rates () that better preserve pretrained factual knowledge, whereas format-learning tasks (HumanEval, SAMSum) tolerate higher rates (). For example, on TriviaQA, yields 46.0% compared to 48.6% at .
+
+Figure 10: Four representative Pioneer Agent trajectories spanning cold-start and production settings. Each panel compresses a full run into its diagnostic signal, the intervention sequence the agent pursued, and the final validated outcome. Despite differences in task family, tooling, and search strategy, all four trajectories follow the same closed-loop pattern: diagnose failures, construct targeted supervision, test competing interventions, and retain only updates that survive evaluation.
+
+(3) Data Curation Decisions.
+
+Finally, the agent adapts what data to train on, making selective inclusion and exclusion decisions that directly shape the training signal.
+
+First, the agent consistently favors smaller, higher-quality datasets over larger but noisier alternatives. On HumanEval, 173 curated examples outperform 348 (100% vs. 94.5%). Similarly, on SAMSum, 500 agent-selected examples outperform more than 2,000 randomly sampled instances. On ARC-Challenge, the agent identifies and discards a noisy external data mix, improving performance from 69.6% to 72.6%. These results indicate that data quality, rather than scale alone, is the dominant factor.
+
+Moreover, the agent recognizes that external model outputs can dilute the training signal. On HumanEval, incorporating GPT-4.1-generated solutions reduces performance relative to using the model’s own correct outputs (96.9%94.5%). In response, the agent reverts to self-generated labels, reasoning that stylistically mismatched external outputs conflict with the base model’s learned distribution.
+
+Taken together, these behaviors show that the agent does not treat data aggregation as monotonic, but instead actively filters and aligns the training distribution with the target model.
+
+5.2 Trajectory Motifs
+
+To validate that the architectural mechanisms from Section 2 operate as intended, we analyze behavioral patterns that recur consistently across runs. Figure 10 provides an overview of four representative trajectories spanning both agent modes, three task families, and two search strategies.
+
+We structure the analysis around four recurring motifs, each corresponding to a specific design mechanism. Full step-by-step narratives are provided in Appendix C (SMS Spam, ARC-Challenge), while concise summaries of the resulting artifacts appear in Appendix B (CLINC150, CoNLL-2003).
+
+5.2.1 Broad-to-Surgical Exploration
+
+The iteration policy (Section 2.4) predicts that the agent should begin with broad, parallel exploration and narrow to surgical augmentation as accuracy improves. This pattern appears consistently. On SMS Spam, four parallel initial jobs establish a strong baseline (F1 0.9834), after which three rounds adding only 55 total examples drive F1 to 0.9967—each round targeting a specific precision or recall failure identified by error analysis. On CLINC150, the agent invests its initial effort in failure-taxonomy construction (clustering 453 failures into five dominant groups with root-cause attribution), then builds a single 1,254-example curriculum that achieves 99.3% on the first training run. In both cases, the diagnosis phase consumes more agent reasoning turns than the training phase itself.
+
+5.2.2 Rollback as a Control Mechanism
+
+The rollback-first principle (Section 2.4, Rule 4) activates across multiple benchmarks, preventing the cascading regressions that typically plague iterative fine-tuning. On CLINC150, adding 17 targeted examples for two remaining failures regressed accuracy from 99.3% to 98.5%; the system rolled back rather than attempting to compensate with further augmentation. On ARC-Challenge, iterations 7–11 all attempted to improve on the fusion peak of 72.6% through more data, higher LoRA rank, or lower learning rates—all were pruned. On SMS Spam, successive iterations alternated between recall repair (adding spam examples) and precision repair (adding hard ham examples), with the regression gate catching each overcorrection. The pattern demonstrates that restraint at high accuracy is as important as exploration at low accuracy, and that the system’s conservative regression threshold () prevents overfitting to the most recent failure set.
+
+5.2.3 Error-Mode-Driven Search Pivots
+
+The CoNLL-2003 trajectory illustrates how failure diagnosis can fundamentally reshape the search strategy. The agent’s first action—six parallel SQL queries against the inference database—reveals a 6:1 FP:FN ratio (11,367 false positives vs. 1,890 false negatives), transforming the objective from “improve entity recall” to “suppress entity hallucination.” This finding drives three interventions, in order of priority: (1) precision-first data construction with large proportions of empty-ground-truth hard negatives, (2) threshold calibration via a sweep to 0.99, and (3) model capacity scaling from GLiNER2-base to GLiNER2-large. The ordering reflects a design principle: exhaust cheaper interventions (data, calibration) before testing whether model capacity is the bottleneck. This trajectory also demonstrates infrastructure recovery: when LoRA inference failed with repeated 500 errors, the agent diagnosed the issue as a platform-level adapter-loading problem and pivoted to full fine-tuning rather than terminating the run.
+
+5.2.4 Cross-Branch Fusion in Graph Search
+
+The ARC-Challenge MCGS trajectory (Figure 3) demonstrates how graph-structured search enables strategy recombination that linear ablation cannot achieve. Branch A establishes that format learning is necessary but insufficient (5.3%61.3%). Branch B discovers that chain-of-thought supervision is the largest observed lever (+21pp). Branch C identifies DeepSeek-R1 as a marginally better teacher than GPT-4.1 (68.9% vs. 68.6%). The winning configuration (72.6%) fuses the R1 reasoning branch with the validation-data expansion strategy from another branch—a recombination of independently discovered strategies. Post-fusion pruning confirms convergence: five subsequent expansions with varied hyperparameters all regress to the 68.7–72.4% range, validating the progressive exploit shift described in Section 2.2.
+
+6 Discussion
+
+6.1 Cost Analysis
+
+Each Pioneer Agent run incurs two primary categories of cost: LLM orchestration and training infrastructure.
+
+For orchestration, we estimate approximately 4M tokens per 12-hour run, split roughly 75/25 between input and output. This skew reflects the system’s read-heavy interaction pattern: at each reasoning step, the agent ingests evaluation results, trace data, and prior context, while producing relatively short tool calls and analyses. Under Claude Sonnet 4.6 pricing ($3/1M input tokens, $15/1M output tokens), this corresponds to approximately $24 in API fees for a full 12-hour run. Shorter runs scale proportionally; for example, the 1-hour CLINC150 run incurred under $2 in orchestration cost.
+
+Training and inference are executed on Tinker infrastructure, while the agent’s Modal sandbox (CPU-only, 16GB memory) is billed at $0.50/hour. GPU costs for LoRA fine-tuning and batch inference are included within the Tinker platform fee and vary with model size and dataset volume. In practice, encoder training (GLiNER2) typically completes within 2–5 minutes per run, whereas decoder training (Qwen3-8B, Llama 3.2-3B) requires 10–30 minutes.
+
+Overall cost is driven primarily by the number of iterations and the per-iteration training footprint. This interaction explains the variance observed across benchmarks. For instance, XSum requires 13 iterations over 3,000-example datasets, accumulating $35 in training costs alone, while HumanEval converges in 4 iterations for under $5.
+
+Table 9 summarizes representative end-to-end costs across both production improvement and cold-start settings. Total cost ranges from $3.48 to $54.98, depending on task complexity, iteration count, and branching behavior. Notably, even the most expensive runs remain substantially below the cost of equivalent manual effort, where a human ML engineer (e.g., at $150/hour) would incur significantly higher expense.
+
+Cost Breakdown
+
+Run
+
+Hours
+Claude API
+Train + Sandbox
+Total
+
+Production improvement (AdaptFT-Bench)
+
+GSM8K (3-stage, run A)
+
+11.5
+$22.98
+$10.00
+$32.98
+
+GSM8K (3-stage, run B)
+
+8.3
+$16.62
+$9.00
+$25.62
+
+CLINC150 (2 iterations)
+
+1.0
+$1.98
+$1.50
+$3.48
+
+Cold-start
+
+ARC-Challenge
+
+12.0
+$24.00
+$12.00
+$36.00
+
+HumanEval
+
+4.0
+$7.98
+$4.50
+$12.48
+
+XSum
+
+10.0
+$19.98
+$35.00
+$54.98
+
+SAMSum
+
+8.0
+$16.02
+$12.00
+$28.02
+
+Table 9: Estimated cost per benchmark run. Total cost ranges from $3.48 to $54.98. The two GSM8K rows are representative end-to-end three-stage adaptive runs; total cost varies with branching, diagnosis, and rollback overhead. A human ML engineer at $150/hour would cost substantially more for equivalent work.
+
+6.2 Failure Modes
+
+Across all experiments, several recurring failure modes emerge, reflecting both intrinsic model limitations and constraints of the fine-tuning process.
+
+Model capacity limitations.
+Certain errors stem from fundamental limitations of the base model rather than deficiencies in the training pipeline. On TriviaQA (Joshi et al., 2017) (Llama 3.2-3B), the agent correctly diagnosed that “89% of failures are genuine factual knowledge gaps” in the closed-book setting. Because these errors reflect missing parametric knowledge, additional fine-tuning data cannot resolve them at this scale. The agent converged at 48.6% and appropriately terminated further iterations.
+
+High-baseline plateaus.
+When the base model already operates near saturation (e.g., Qwen3-8B on ARC at 91.7%), fine-tuning becomes unstable and can initially degrade performance. On ARC, the first training run reduced accuracy from 91.7% to 87.8% before subsequent iterations recovered and improved it to 93.3%. This highlights the difficulty of making incremental gains in high-performance regimes, where small distribution shifts can outweigh benefits.
+
+Adversarial inputs unfixable by training.
+A subset of failures arises from inputs that violate task assumptions, such as prompt injection, jailbreak attempts, or false premises. These cases cannot be corrected through supervised fine-tuning. On GSM8K (Cobbe et al., 2021), the agent identified 17 out of 100 such examples and excluded them from training, preventing contamination of the learning signal.
+
+Overfitting in later iterations.
+Performance typically improves over the first 2–4 iterations before regressing as the model begins to overfit to increasingly narrow data slices. While the agent’s rollback mechanism mitigates permanent degradation, it does not eliminate wasted computation from unproductive runs, indicating a limit to iterative refinement without stronger regularization or stopping criteria.
+
+Instruction sensitivity.
+Agent performance is sensitive to task specification. In one adaptive fine-tuning run, accuracy dropped to 11% because evaluation was performed without the required system prompt despite explicit instructions. Providing clearer and more explicit task descriptions improved overall efficiency by 2.3, underscoring the importance of precise specification in autonomous settings.
+
+Format-specific benchmarks.
+Finally, some benchmarks impose strict output formatting constraints (e.g., regex-validated answers) that do not generalize from standard training data. The agent correctly identifies these cases as requiring format-specific supervision rather than general capability improvement, adjusting its strategy accordingly.
+
+6.3 Limitations
+
+While the results demonstrate strong performance across a range of settings, several limitations remain.
+
+Model families.
+The current system supports a limited set of model architectures: GLiNER2 (encoder) (Zaratiana et al., 2025) and Qwen/Llama (decoder) (Touvron et al., 2023a; Touvron et al., 2023b). Extending to other modalities, such as vision models or embedding models, as well as additional architectures, would require new tooling and integration work.
+
+Training methods.
+Support for training paradigms is similarly constrained. Decoder models rely exclusively on LoRA fine-tuning (Hu et al., 2021a), while encoder models (GLiNER2) support both full fine-tuning and LoRA. More advanced alignment methods, such as RLHF (Ouyang et al., 2022a) or DPO (Rafailov et al., 2023), are not yet incorporated, limiting applicability in settings that require preference optimization.
+
+Evaluation dependency.
+The production improvement setting depends on access to reliable evaluation signals, either through LLM-as-judge (Zheng et al., 2023; Jiang et al., 2024; Li et al., 2024; Chen et al., 2024; Ho et al., 2025) or human annotations on inference logs. As a result, deployments without systematic quality monitoring cannot directly benefit from the agent.
+
+Single-platform evaluation recipe.
+Empirical validation is tied to a single evaluation stack: real-world case studies are drawn from Pioneer Agent deployments, and synthetic scenarios are generated using our perturbation pipeline. The extent to which these results generalize across different platforms, logging infrastructures, or data distributions remains an open question.
+
+Agent cost.
+Finally, the agent itself incurs non-trivial cost. The orchestrator LLM (Claude Sonnet 4.6) adds fixed overhead in token usage and latency, which can dominate in lightweight settings. For simple fine-tuning tasks—such as small hyperparameter sweeps or clean datasets—this overhead may outweigh the benefits of autonomous reasoning, as a human engineer could achieve similar results more efficiently. The agent’s iterative loop (diagnosis, data construction, training, evaluation) further compounds cost through repeated cycles. However, this trade-off shifts with task complexity. In settings with noisy data or interacting failure modes, the agent’s ability to diagnose errors and build targeted training curricula can offset its overhead. It effectively replaces multiple rounds of manual debugging with a structured search process, making it most cost-effective when naive iteration is costly or unreliable.
+
+7 Related Work
+
+7.1 Automated ML, Data-Centric AI, and LM-Program Optimization
+
+Automated machine learning.
+Classical AutoML work studies automatic model selection and hyperparameter optimization over predefined search spaces. Auto-WEKA (Thornton et al., 2013) and Auto-sklearn (Feurer et al., 2015) formulate this as combined algorithm selection and hyperparameter optimization, while Hyperband (Li et al., 2017) and BOHB (Falkner et al., 2018) emphasize resource-aware search, strong anytime performance, and fast convergence. These systems automate important parts of model development, but they operate over predefined configuration spaces and do not reason directly about deployment failures or construct corrective supervision.
+
+Data-centric AI and supervision construction.
+A related line of work treats the dataset itself as the primary object of optimization. Zha et al. (2023) provide a survey of data-centric AI, organizing methods for data development, maintenance, and debugging. Cleanlab (Northcutt et al., 2021) focuses on identifying label issues and estimating label uncertainty, while DataPerf (Mazumder et al., 2023) benchmarks data-centric algorithms. Data programming (Ratner et al., 2016) and Snorkel (Ratner et al., 2020) study programmatic supervision through noisy labeling functions, Data Shapley (Ghorbani and Zou, 2019) studies the value of individual training examples, and active learning (Settles, 2009) studies strategies for selecting informative unlabeled examples to query for labeling. S3 (Wang et al., 2023b) is especially relevant because it iteratively synthesizes data by extrapolating the errors of a small model on a small real validation set.
+
+Prompt and LM-program optimization.
+Another line of work optimizes how language models are used rather than how their weights are adapted. OPRO (Yang et al., 2023), Automatic Prompt Engineer (Zhou et al., 2023b), and Promptbreeder (Fernando et al., 2023) search over prompts or instructions. DSPy (Khattab et al., 2023) and MIPROv2 (Opsahl-Ong et al., 2024) optimize modular LM programs at the level of instructions and demonstrations. TextGrad (Yuksekgonul et al., 2024) and Reflexion (Shinn et al., 2023) use textual feedback or verbal reflection to improve components of compound AI systems and agent behavior without directly updating the deployed model through a failure-driven retraining loop. GEPA (Genetic-Pareto) (Agrawal et al., 2026) combines the approaches of search-based prompt optimizers (Yang et al., 2023; Zhou et al., 2023b; Fernando et al., 2023; Khattab et al., 2023; Opsahl-Ong et al., 2024) and textual/reflection-based improvers (Yuksekgonul et al., 2024; Shinn et al., 2023). GEPA samples trajectories (e.g., reasoning, tool calls, and tool outputs) from an AI system containing one or more LLM prompts and reflects on them in natural language to diagnose problems, propose and test prompt updates, and combine complementary lessons from the Pareto frontier of its own attempts.
+
+Taken together, these lines of work automate model choice, data construction, and LM-program interfaces, but they do not study the full closed-loop adaptation problem considered here: constructing supervision from judged failures, retraining the model itself, and verifying improvement with explicit regression checks.
+
+7.2 Agentic Search, Autonomous ML Engineering, and Post-Training
+
+Execution-grounded agentic search.
+Recent systems show that LLM-guided search can be effective when coupled with execution feedback. FunSearch (Romera-Paredes et al., 2024) pairs an LLM with a systematic evaluator to evolve programs for mathematical and algorithmic discovery. AVO (Chen et al., 2026) uses autonomous coding agents as variation operators in evolutionary search and discovers GPU kernels that outperform strong hand-optimized baselines. Both systems, like ours, use real execution as the fitness signal, but they search over code transformations rather than the joint space of training data, hyperparameters, and learning strategies.
+
+Autonomous scientific discovery.
+A closely related set of works studies long-horizon scientific workflows. The AI Scientist (Lu et al., 2024) automates idea generation, experimentation, analysis, and paper writing. The AI Scientist-v2 (Yamada et al., 2025) removes reliance on human-authored code templates and uses agentic tree search to conduct end-to-end scientific research. AI co-scientist (Gottweis et al., 2025) studies a multi-agent generate–debate–evolve loop for producing and refining research hypotheses. These systems generate scientific knowledge; our system generates deployment-ready models, and our target problem is narrower: repeated model adaptation under concrete task and regression constraints.
+
+Recursive self-improvement.
+From the Gödel Machine (Schmidhuber, 2006) to recent LLM self-improvement loops (Huang et al., 2022; Yuan et al., 2024), studies have been done on systems that iteratively refine their own behavior. Huxley-Gödel Machine (Wang et al., 2025) applies clade-aware tree search to address the observation that the currently best-performing node in a search tree is not always the most productive parent for generating strong descendants.
+
+Autonomous ML and data-science agents.
+Several recent benchmarks and systems study whether agents can perform substantial portions of machine learning or data-science workflows. MLAgentBench Huang et al. (2023) evaluates end-to-end machine learning experimentation on research-style tasks. DSBench Jing et al. (2024) broadens this view to realistic data analysis and data modeling tasks. MLE-bench Chan et al. (2024) evaluates agents on Kaggle-style machine learning engineering competitions, AIDE Jiang et al. (2025) frames ML engineering as tree search in the space of code, MLE-STAR Nam et al. (2025) combines web retrieval with targeted refinement of components in the ML pipeline, and MLEvolve Du et al. (2025); Feng et al. (2026) applies MCGS to Kaggle competition solving. We adapt the same MCGS framework for fine-tuning, where nodes represent training pipelines rather than competition submissions, and our production mode adds a dimension absent in these systems: grounding the search in real deployment failures rather than static metrics. Tool-using LLM agents such as ReAct Yao et al. (2023), Voyager Wang et al. (2023a), and SWE-Agent Yang et al. (2024) demonstrate that language models can serve as effective controllers over long-horizon tool-use trajectories; OpenHands Wang et al. (2024) provides an open platform for building such agents with sandboxed execution. Our system applies this capability to the specific domain of model fine-tuning, where the “tools” are training scripts, data generators, and evaluation harnesses. Open fine-tuning frameworks such as LLaMA-Factory Zheng et al. (2024) and Axolotl OpenAccess-AI-Collective (2024) represent the standard human-operated tooling that Pioneer Agent aims to automate.
+
+Autonomous fine-tuning and post-training. Direct Preference Optimization Rafailov et al. (2023), Reinforcement Learning from Human Feedback Ouyang et al. (2022b), Kahneman-Tversky Optimization Ethayarajh et al. (2024), and constitutional AI Bai et al. (2022) are the dominant paradigms for post-training LLMs from feedback signals. But these methods focus on broad alignment from human preferences instead of our setting of task-specific adaptation from execution failures. Two recent concurrent works are especially close to our setting. FT-Dojo Li et al. (2026) introduces an interactive environment for end-to-end autonomous LLM fine-tuning across multiple domains. PostTrainBench Rank et al. (2026) studies whether agents can autonomously post-train base language models under bounded compute constraints.
+These works share our interest in autonomous model training but differ in three respects. First, they focus on offline optimization against static benchmarks; Pioneer Agent adds a production mode grounded in live inference failures. Second, their search is over training hyperparameters on a fixed dataset; Pioneer Agent searches jointly over data composition, hyperparameters, and learning strategy (; Section 2.2). Third, neither system addresses regression testing or failure-driven curriculum synthesis – the mechanisms needed to improve a model that is already deployed.
+
+7.3 Failure-Driven Adaptation, Curriculum Construction, and Continual Improvement
+
+LLM-as-a-Judge and automated quality signals.
+Our production loop assumes access to judged failures, either from human review or from an automated judge. Recent work shows that strong LLM judges can provide scalable quality signals for open-ended outputs (Zheng et al., 2023). Follow-up work trains open judge models such as Prometheus (Kim et al., 2024) and JudgeLM (Zhu et al., 2025), and recent surveys study reliability, bias, and propose evaluation methodology for LLM-as-a-Judge systems (Gu et al., 2024).
+
+Curriculum learning and adaptive example selection.
+Curriculum learning (Bengio et al., 2009) and self-paced learning (Kumar et al., 2010) study how the order or selection of examples affects learning. Teacher–Student Curriculum Learning (Matiisen et al., 2019) further automates curriculum selection by choosing subtasks based on learning progress. Pioneer Agent does not treat the training set as fixed, instead it builds a targeted curriculum from observed failures.
+
+Continual learning, replay, and model degradation.
+Continual learning studies how to adapt models over time without catastrophic forgetting (Parisi et al., 2019). Representative approaches include standard replay buffers, episodic-memory methods such as GEM (Lopez-Paz and Ranzato, 2017), and parameter-regularization methods such as EWC (Kirkpatrick et al., 2017). More recent work has studied continual learning specifically for language models. O-LoRA (Wang et al., 2023c) learns new tasks in low-rank subspaces that are constrained to be orthogonal to previously learned subspaces, reducing interference without storing replay data. OSFT (Nayak et al., 2025) preserves high-rank parameter subspaces identified by Singular Value Decomposition and constrains new updates to orthogonal low-rank subspaces, improving the trade-off between adaptation and retention. In parallel, concept-drift and model-monitoring work studies how deployed models degrade over time and how such shifts can be detected (Gama et al., 2014; Bayram et al., 2022). Our production setting also requires preserving prior behavior while responding to new failure patterns.
+
+Prior work in this bucket typically studies automated evaluation, curriculum selection, continual adaptation, or drift detection in isolation. Pioneer Agent combines these ingredients into a single closed-loop repair process: it uses judged failures to build a failure taxonomy, confirms weaknesses through targeted probing, synthesizes corrective data, retrains the model, and accepts an update only if it fixes targeted failures without introducing regressions.
+
+8 Conclusion
+
+We presented Pioneer Agent, a closed-loop system for autonomous fine-tuning of small language models. The system operates in two modes – cold-start (from task description) and production improvement (from inference failures) – and uses agent-guided iterative search—including Monte Carlo Graph Search in selected runs—to navigate the joint space of training data, hyperparameters, and learning strategies.
+
+On eight cold-start benchmarks, the agent achieves gains of +21–84% over base-model baselines—including format-learning gains for non-instruction-tuned models—with the largest improvements on SMS Spam (+83.8% F1), ARC-Challenge (+67.3pp), and TriviaQA (+48.6%). On AdaptFT-Bench, which uses synthetic inference logs with accumulating noise to simulate production drift, Pioneer Agent improves or preserves its deployed checkpoint across seven scenarios while naive retraining degrades, with final gaps of up to 43%. The same loop improves staged deployment slices from 84.9% to 99.3% on CLINC150 and from Entity F1 0.345 to 0.810 on CoNLL-2003.
+
+Beyond aggregate gains, the agent autonomously selects effective fine-tuning strategies—chain-of-thought training for reasoning, task-specific epoch tuning, quality-over-quantity data curation, and system prompt engineering—based on observed performance feedback rather than explicit instruction.
+
+The full fine-tuning lifecycle from task specification through production deployment can be substantially automated. We release the perturbation pipeline used to build the synthetic inference scenarios at https://github.com/fastino-ai/synthetic-inference-logs to support further research on autonomous model improvement agents.
+
+References
+
+Agrawal et al. (2026)
+
+Lakshya A Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista Opsahl-Ong, Arnav Singhvi, Herumb Shandilya, Michael J Ryan, Meng Jiang, Christopher Potts, Koushik Sen, Alexandros G. Dimakis, Ion Stoica, Dan Klein, Matei Zaharia, and Omar Khattab.
+
+Gepa: Reflective prompt evolution can outperform reinforcement learning, 2026.
+
+URL https://arxiv.org/abs/2507.19457.
+
+Alekseev et al. (2025)
+
+Ilya Alekseev, Roman Solomatin, Darina Rustamova, and Denis Kuznetsov.
+
+AutoIntent: AutoML for text classification.
+
+In Ivan Habernal, Peter Schulam, and Jörg Tiedemann, editors, Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, pages 707–716, Suzhou, China, November 2025. Association for Computational Linguistics.
+
+ISBN 979-8-89176-334-0.
+
+10.18653/v1/2025.emnlp-demos.53.
+
+URL https://aclanthology.org/2025.emnlp-demos.53/.
+
+Anthropic (2026)
+
+Anthropic.
+
+Claude sonnet 4.6 system card.
+
+https://www.anthropic.com/claude-sonnet-4-6-system-card, 2026.
+
+Bai et al. (2022)
+
+Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, et al.
+
+Constitutional AI: Harmlessness from AI feedback.
+
+arXiv preprint arXiv:2212.08073, 2022.
+
+Bayram et al. (2022)
+
+Firas Bayram, Bestoun S. Ahmed, and Andreas Kassler.
+
+From concept drift to model degradation: An overview on performance-aware drift detectors.
+
+Knowledge-Based Systems, 245:108632, 2022.
+
+Bengio et al. (2009)
+
+Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston.
+
+Curriculum learning.
+
+In Proceedings of the 26th International Conference on Machine Learning (ICML), 2009.
+
+Bergstra and Bengio (2012)
+
+James Bergstra and Yoshua Bengio.
+
+Random search for hyper-parameter optimization.
+
+J. Mach. Learn. Res., 13(null):281–305, February 2012.
+
+ISSN 1532-4435.
+
+Bommasani et al. (2021)
+
+Rishi Bommasani, Drew A. Hudson, Ehsan Adeli, Russ Altman, Simran Arora, Sydney von Arx, Michael S. Bernstein, Jeannette Bohg, Antoine Bosselut, Emma Brunskill, et al.
+
+On the opportunities and risks of foundation models.
+
+arXiv preprint arXiv:2108.07258, 2021.
+
+Brown et al. (2020)
+
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al.
+
+Language models are few-shot learners.
+
+Advances in Neural Information Processing Systems (NeurIPS), 2020.
+
+Chan et al. (2024)
+
+Jun Shern Chan, Neil Chowdhury, Oliver Jaffe, James Aung, Dane Sherburn, Evan Mays, Giulio Starace, Kevin Liu, Leon Maksin, Tejal Patwardhan, Lilian Weng, and Aleksander Madry.
+
+Mle-bench: Evaluating machine learning agents on machine learning engineering.
+
+arXiv preprint arXiv:2410.07095, 2024.
+
+Chen et al. (2024)
+
+Guiming Hardy Chen, Shunian Chen, Ziche Liu, Feng Jiang, and Benyou Wang.
+
+Humans or llms as the judge? a study on judgement biases.
+
+arXiv preprint arXiv:2402.10669, 2024.
+
+Chen et al. (2021)
+
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al.
+
+Evaluating large language models trained on code.
+
+arXiv preprint arXiv:2107.03374, 2021.
+
+Chen et al. (2026)
+
+Terry Chen, Zhifan Ye, Bing Xu, Zihao Ye, Timmy Liu, Ali Hassani, Tianqi Chen, Andrew Kerr, Haicheng Wu, Yang Xu, et al.
+
+Avo: Agentic variation operators for autonomous evolutionary search.
+
+arXiv preprint arXiv:2603.24517, 2026.
+
+Chen and Bansal (2018)
+
+Yen-Chun Chen and Mohit Bansal.
+
+Fast abstractive summarization with reinforce-selected sentence rewriting.
+
+arXiv preprint arXiv:1805.11080, 2018.
+
+Clark et al. (2018)
+
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+
+arXiv preprint arXiv:1803.05457, 2018.
+
+Cobbe et al. (2021)
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al.
+
+Training verifiers to solve math word problems.
+
+arXiv preprint arXiv:2110.14168, 2021.
+
+DeepSeek-AI et al. (2025)
+
+DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Jun-Mei Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiaoling Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bing-Li Wang, Bochao Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, Damai Dai, Deli Chen, Dong-Li Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Han Bao, Hanwei Xu, Haocheng Wang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jiawei Wang, JingChang Chen, Jingyang Yuan, Junjie Qiu, Junlong Li, Jiong Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang, M. Tang, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge, Ruisong
+Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, Ruiqi Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, S. S. Li, Shuang Zhou, Shao-Kang Wu, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding Zeng, Wanjia Zhao, Wen Liu, Wenfeng Liang, Wenjun Gao, Wen-Xia Yu, Wentao Zhang, Wangding Xiao, Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q. Li, Xiangyu Jin, Xi-Cheng Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan Song, Xinyi Zhou, Xianzu Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yi Xiong, Ying He, Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan Wang, Yue Gong, Yu-Jing Zou, Yujia He, Yunfan Xiong, Yu-Wei Luo, Yu mei You, Yuxuan Liu, Yuyang Zhou, Y. X. Zhu, Yanping Huang, Yao
+Li, Yi Zheng, Yuchen Zhu, Yunxiang Ma, Ying Tang, Yukun Zha, Yuting Yan, Zehui Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhen guo Zhang, Zhewen Hao, Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun Liu, Zi-An Li, Ziwei Xie, Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, and Zhen Zhang.
+
+Deepseek-r1 incentivizes reasoning in llms through reinforcement learning.
+
+Nature, 645:633 – 638, 2025.
+
+URL https://api.semanticscholar.org/CorpusID:275789950.
+
+Dettmers et al. (2023)
+
+Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer.
+
+Qlora: Efficient finetuning of quantized llms.
+
+arXiv preprint arXiv:2305.14314, 2023.
+
+Du et al. (2025)
+
+Shangheng Du, Xiangchao Yan, Dengyang Jiang, Jiakang Yuan, Yusong Hu, Xin Li, Liang He, Bo Zhang, and Lei Bai.
+
+Automlgen: Navigating fine-grained optimization for coding agents.
+
+arXiv preprint arXiv:2510.08511, 2025.
+
+Elsken et al. (2019)
+
+Thomas Elsken, Jan Hendrik Metzen, and Frank Hutter.
+
+Neural architecture search: A survey.
+
+Journal of Machine Learning Research, 2019.
+
+Ethayarajh et al. (2024)
+
+Kawin Ethayarajh, Winnie Xu, Niklas Muennighoff, Dan Jurafsky, and Douwe Kiela.
+
+Kto: Model alignment as prospect theoretic optimization.
+
+arXiv preprint arXiv:2402.01306, 2024.
+
+Falkner et al. (2018)
+
+Stefan Falkner, Aaron Klein, and Frank Hutter.
+
+BOHB: Robust and efficient hyperparameter optimization at scale.
+
+In Proceedings of the 35th International Conference on Machine Learning, 2018.
+
+Feng et al. (2026)
+
+Shiyang Feng, Runmin Ma, Xiangchao Yan, Yue Fan, Yusong Hu, Songtao Huang, Shuaiyu Zhang, Zongsheng Cao, Tianshuo Peng, Jiakang Yuan, Zijie Guo, Zhijie Zhong, Shangheng Du, Weida Wang, Jinxin Shi, Yuhao Zhou, Xiaohan He, Zhiyin Yu, Fangchen Yu, Bihao Zhan, Qihao Zheng, Jiamin Wu, Mianxin Liu, Chi Zhang, Shaowei Hou, Shuya Li, Yankai Jiang, Wenjie Lou, Lilong Wang, Zifu Wang, Jiong Wang, Wanghan Xu, Yue Deng, Dongrui Liu, Yiheng Wang, Wenlong Zhang, Fenghua Ling, Shufei Zhang, Xiaosong Wang, Shuangjia Zheng, Xun Huang, Siqi Sun, Shuyue Hu, Peng Ye, Chunfeng Song, Bin Wang, Conghui He, Yihao Liu, Xin Li, Qibin Hou, Tao Chen, Xiangyu Yue, Bin Wang, Liang He, Dahua Lin, Bowen Zhou, Bo Zhang, and Lei Bai.
+
+Internagent-1.5: A unified agentic framework for long-horizon autonomous scientific discovery.
+
+arXiv preprint arXiv:2602.08990, 2026.
+
+Fernando et al. (2023)
+
+Chrisantha Fernando, Dylan Banarse, Henryk Michalewski, Simon Osindero, and Tim Rocktäschel.
+
+Promptbreeder: Self-referential self-improvement via prompt evolution.
+
+arXiv preprint arXiv:2309.16797, 2023.
+
+Feurer and Hutter (2019)
+
+Matthias Feurer and Frank Hutter.
+
+AutoML: Methods, Systems, Challenges.
+
+Springer, 2019.
+
+Feurer et al. (2015)
+
+Matthias Feurer, Aaron Klein, Katharina Eggensperger, Jost Tobias Springenberg, Manuel Blum, and Frank Hutter.
+
+Efficient and robust automated machine learning.
+
+In Advances in Neural Information Processing Systems (NeurIPS), 2015.
+
+Feurer et al. (2022)
+
+Matthias Feurer, Katharina Eggensperger, Stefan Falkner, Marius Lindauer, and Frank Hutter.
+
+Auto-sklearn 2.0: Hands-free automl via meta-learning, 2022.
+
+URL https://arxiv.org/abs/2007.04074.
+
+Fu et al. (2025)
+
+Yonggan Fu, Xin Dong, Shizhe Diao, Matthijs Van keirsbilck, Hanrong Ye, Wonmin Byeon, Yashaswi Karnati, Lucas Liebenwein, Maksim Khadkevich, Alexander Keller, Jan Kautz, Yingyan Celine Lin, and Pavlo Molchanov.
+
+Nemotron-flash: Towards latency-optimal hybrid small language models.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+
+URL https://openreview.net/forum?id=KTDAbnFsQj.
+
+Gama et al. (2014)
+
+João Gama, Indrė Žliobaitė, Albert Bifet, Mykola Pechenizkiy, and Abdelhamid Bouchachia.
+
+A survey on concept drift adaptation.
+
+ACM Computing Surveys, 46(4):44:1–44:37, 2014.
+
+Ghorbani and Zou (2019)
+
+Amirata Ghorbani and James Zou.
+
+Data shapley: Equitable valuation of data for machine learning.
+
+In Proceedings of the 36th International Conference on Machine Learning, 2019.
+
+Gliwa et al. (2019)
+
+Bogdan Gliwa, Iwona Mochol, Maciej Biesek, and Aleksander Wawer.
+
+Samsum corpus: A human-annotated dialogue dataset for abstractive summarization.
+
+In Proceedings of the 2nd Workshop on New Frontiers in Summarization, pages 70–79, 2019.
+
+Gottweis et al. (2025)
+
+Juraj Gottweis, Wei-Hung Weng, Alexander Daryin, Tao Tu, Anil Palepu, Petar Sirkovic, Artiom Myaskovsky, Felix Weissenberger, Keran Rong, Ryutaro Tanno, et al.
+
+Towards an ai co-scientist.
+
+arXiv preprint arXiv:2502.18864, 2025.
+
+Gu et al. (2024)
+
+Jiawei Gu, Xuhui Jiang, Zhichao Shi, Hexiang Tan, Xuehao Zhai, Chengjin Xu, Wei Li, Yinghan Shen, Shengjie Ma, Honghao Liu, Saizhuo Wang, Yuanzhuo Wang, Wen Gao, Lionel Ni, and Jian Guo.
+
+A survey on LLM-as-a-judge.
+
+arXiv preprint arXiv:2411.15594, 2024.
+
+Guo et al. (2017)
+
+Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger.
+
+On calibration of modern neural networks.
+
+ArXiv, abs/1706.04599, 2017.
+
+URL https://api.semanticscholar.org/CorpusID:28671436.
+
+Ho et al. (2025)
+
+Xanh Ho, Jiahao Huang, Florian Boudin, and Akiko Aizawa.
+
+Llm-as-a-judge: Reassessing the performance of llms in extractive qa.
+
+arXiv preprint arXiv:2504.11972, 2025.
+
+Hsu et al. (2003)
+
+Chih-Wei Hsu, Chih-Chung Chang, Chih-Jen Lin, et al.
+
+A practical guide to support vector classification.
+
+2003.
+
+Hu et al. (2021a)
+
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+
+Lora: Low-rank adaptation of large language models.
+
+arXiv preprint arXiv:2106.09685, 2021a.
+
+Hu et al. (2021b)
+
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+
+Lora: Low-rank adaptation of large language models, 2021b.
+
+URL https://arxiv.org/abs/2106.09685.
+
+Huang et al. (2022)
+
+Jiaxin Huang, Shixiang Shane Gu, Le Hou, Yuexin Wu, Xuezhi Wang, Hongkun Yu, and Jiawei Han.
+
+Large language models can self-improve.
+
+arXiv preprint arXiv:2210.11610, 2022.
+
+Huang et al. (2023)
+
+Qian Huang, Jian Vora, Percy Liang, and Jure Leskovec.
+
+Mlagentbench: Evaluating language agents on machine learning experimentation.
+
+arXiv preprint arXiv:2310.03302, 2023.
+
+Iyer et al. (2024)
+
+Vivek Iyer, Bhavitvya Malik, Pavel Stepachev, Pinzhen Chen, Barry Haddow, and Alexandra Birch.
+
+Quality or quantity? on data scale and diversity in adapting large language models for low-resource translation.
+
+In Conference on Machine Translation, 2024.
+
+URL https://api.semanticscholar.org/CorpusID:271947083.
+
+Jiang et al. (2024)
+
+Xuhui Jiang et al.
+
+A survey on llm-as-a-judge.
+
+arXiv preprint arXiv:2411.15594, 2024.
+
+Jiang et al. (2025)
+
+Zhengyao Jiang, Dominik Schmidt, Dhruv Srikanth, Dixing Xu, Ian Kaplan, Deniss Jacenko, and Yuxiang Wu.
+
+AIDE: AI-driven exploration in the space of code.
+
+arXiv preprint arXiv:2502.13138, 2025.
+
+Jing et al. (2024)
+
+Liqiang Jing, Zhehui Huang, Xiaoyang Wang, Wenlin Yao, Wenhao Yu, Kaixin Ma, Hongming Zhang, Xinya Du, and Dong Yu.
+
+Dsbench: How far are data science agents to becoming data science experts?
+
+arXiv preprint arXiv:2409.07703, 2024.
+
+Joshi et al. (2017)
+
+Mandar Joshi, Eunsol Choi, Daniel Weld, and Luke Zettlemoyer.
+
+Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension.
+
+In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, pages 1601–1611, 2017.
+
+Kaplan et al. (2020)
+
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei.
+
+Scaling laws for neural language models.
+
+arXiv preprint arXiv:2001.08361, 2020.
+
+Khattab et al. (2023)
+
+Omar Khattab, Arnav Singhvi, Parth Maheshwari, Zhiyuan Zhang, Keshav Santhanam, Saumya Vardhaman, Matei Zaharia, et al.
+
+Dspy: Compiling declarative language model calls into self-improving pipelines.
+
+arXiv preprint arXiv:2310.03714, 2023.
+
+Kim et al. (2024)
+
+Seungone Kim, Jamin Shin, Yejin Choi, Joel Jang, Shayne Longpre, Hwaran Lee, Sangdoo Yun, Seongjin Shin, Sungdong Kim, James Thorne, and Minjoon Seo.
+
+Prometheus: Inducing fine-grained evaluation capability in language models.
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+Kirkpatrick et al. (2016)
+
+James Kirkpatrick, Razvan Pascanu, Neil C. Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A. Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, Demis Hassabis, Claudia Clopath, Dharshan Kumaran, and Raia Hadsell.
+
+Overcoming catastrophic forgetting in neural networks.
+
+Proceedings of the National Academy of Sciences, 114:3521 – 3526, 2016.
+
+URL https://api.semanticscholar.org/CorpusID:4704285.
+
+Kirkpatrick et al. (2017)
+
+James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A. Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwińska, et al.
+
+Overcoming catastrophic forgetting in neural networks.
+
+Proceedings of the National Academy of Sciences, 114(13):3521–3526, 2017.
+
+Kumar et al. (2010)
+
+M. Pawan Kumar, Benjamin Packer, and Daphne Koller.
+
+Self-paced learning for latent variable models.
+
+In Advances in Neural Information Processing Systems (NeurIPS), 2010.
+
+Larson et al. (2019)
+
+Stefan Larson, Anish Mahendran, Joseph J. Peper, Christopher Clarke, Andrew Lee, Parker Hill, Jonathan K. Kummerfeld, Kevin Leach, Michael A. Laurenzano, Lingjia Tang, and Jason Mars.
+
+An evaluation dataset for intent classification and out-of-scope prediction.
+
+In Proceedings of EMNLP-IJCNLP, pages 1311–1316, 2019.
+
+Li et al. (2024)
+
+Haitao Li et al.
+
+Llms-as-judges: A comprehensive survey on llm-based evaluation methods.
+
+arXiv preprint arXiv:2412.05579, 2024.
+
+Li et al. (2017)
+
+Lisha Li, Kevin Jamieson, Giulia DeSalvo, Afshin Rostamizadeh, and Ameet Talwalkar.
+
+Hyperband: A novel bandit-based approach to hyperparameter optimization.
+
+In Advances in Neural Information Processing Systems, 2017.
+
+Li et al. (2026)
+
+Qizheng Li, Yifei Zhang, Xiao Yang, Xu Yang, Zhuo Wang, Weiqing Liu, and Jiang Bian.
+
+Ft-dojo: Towards autonomous llm fine-tuning with language agents.
+
+arXiv preprint arXiv:2603.01712, 2026.
+
+Llama Team (2024)
+
+Llama Team.
+
+The llama 3 herd of models, 2024.
+
+URL https://arxiv.org/abs/2407.21783.
+
+Lopez-Paz and Ranzato (2017)
+
+David Lopez-Paz and Marc’Aurelio Ranzato.
+
+Gradient episodic memory for continual learning.
+
+In Advances in Neural Information Processing Systems, 2017.
+
+Lu et al. (2024)
+
+Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha.
+
+The AI scientist: Towards fully automated open-ended scientific discovery.
+
+arXiv preprint arXiv:2408.06292, 2024.
+
+Matiisen et al. (2019)
+
+Tambet Matiisen, Avital Oliver, Taco Cohen, and John Schulman.
+
+Teacher–student curriculum learning.
+
+IEEE Transactions on Neural Networks and Learning Systems, 31(9):3732–3740, 2019.
+
+Mazumder et al. (2023)
+
+Mark Mazumder, Colby Banbury, Xiaozhe Yao, Bojan Karlaš, William Gaviria Rojas, Sudnya Diamos, Greg Diamos, Lynn He, Alicia Parrish, Hannah Rose Kirk, et al.
+
+Dataperf: Benchmarks for data-centric ai development.
+
+In Advances in Neural Information Processing Systems (NeurIPS Datasets and Benchmarks Track), 2023.
+
+Nam et al. (2025)
+
+Jaehyun Nam, Jinsung Yoon, Jiefeng Chen, Jinwoo Shin, Sercan Ö Arık, and Tomas Pfister.
+
+Mle-star: Machine learning engineering agent via search and targeted refinement.
+
+arXiv preprint arXiv:2506.15692, 2025.
+
+Narayan et al. (2018)
+
+Shashi Narayan, Shay B. Cohen, and Mirella Lapata.
+
+Don’t give me the details, just the summary! topic-aware convolutional neural networks for extreme summarization.
+
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, 2018.
+
+Nayak et al. (2025)
+
+Nikhil Shivakumar Nayak, Krishnateja Killamsetty, Ligong Han, Abhishek Bhandwaldar, Prateek Chanda, Kai Xu, Hao Wang, Aldo Pareja, Oleg Silkin, Mustafa Eyceoz, et al.
+
+Sculpting subspaces: Constrained full fine-tuning in llms for continual learning.
+
+arXiv preprint arXiv:2504.07097, 2025.
+
+Ngweta et al. (2025)
+
+Lilian Ngweta, Kiran Kate, Jason Tsay, and Yara Rizk.
+
+Towards llms robustness to changes in prompt format styles.
+
+In North American Chapter of the Association for Computational Linguistics, 2025.
+
+URL https://api.semanticscholar.org/CorpusID:277634322.
+
+Northcutt et al. (2021)
+
+Curtis G. Northcutt, Lu Jiang, and Isaac L. Chuang.
+
+Confident learning: Estimating uncertainty in dataset labels.
+
+Journal of Artificial Intelligence Research (JAIR), 2021.
+
+OpenAccess-AI-Collective (2024)
+
+OpenAccess-AI-Collective.
+
+Axolotl.
+
+https://github.com/OpenAccess-AI-Collective/axolotl, 2024.
+
+Opsahl-Ong et al. (2024)
+
+Krista Opsahl-Ong, Michael J Ryan, Josh Purtell, David Broman, Christopher Potts, Matei Zaharia, and Omar Khattab.
+
+Optimizing instructions and demonstrations for multi-stage language model programs.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP), 2024.
+
+Ouyang et al. (2022a)
+
+Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+
+Training language models to follow instructions with human feedback.
+
+arXiv preprint arXiv:2203.02155, 2022a.
+
+Ouyang et al. (2022b)
+
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+
+Training language models to follow instructions with human feedback.
+
+Advances in Neural Information Processing Systems, 2022b.
+
+Pareja et al. (2024)
+
+Aldo Pareja, Nikhil Shivakumar Nayak, Hao Wang, Krishnateja Killamsetty, Shivchander Sudalairaj, Wenlong Zhao, Seungwook Han, Abhishek Bhandwaldar, Guangxuan Xu, Kai Xu, et al.
+
+Unveiling the secret recipe: A guide for supervised fine-tuning small llms.
+
+arXiv preprint arXiv:2412.13337, 2024.
+
+Parisi et al. (2019)
+
+German I. Parisi, Ronald Kemker, Jose L. Part, Christopher Kanan, and Stefan Wermter.
+
+Continual lifelong learning with neural networks: A review.
+
+Neural Networks, 113:54–71, 2019.
+
+Quionero-Candela et al. (2009)
+
+Joaquin Quionero-Candela, Masashi Sugiyama, Anton Schwaighofer, and Neil D. Lawrence.
+
+Dataset shift in machine learning.
+
+2009.
+
+URL https://api.semanticscholar.org/CorpusID:61294087.
+
+Qwen Team (2025)
+
+Qwen Team.
+
+Qwen3 technical report, 2025.
+
+URL https://arxiv.org/abs/2505.09388.
+
+Rafailov et al. (2023)
+
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Stefano Ermon, Christopher D. Manning, and Chelsea Finn.
+
+Direct preference optimization: Your language model is secretly a reward model.
+
+Advances in Neural Information Processing Systems, 2023.
+
+Rank et al. (2026)
+
+Ben Rank, Hardik Bhatnagar, Ameya Prabhu, Shira Eisenberg, Karina Nguyen, Matthias Bethge, and Maksym Andriushchenko.
+
+Posttrainbench: Can llm agents automate llm post-training?
+
+arXiv preprint arXiv:2603.08640, 2026.
+
+Ratner et al. (2016)
+
+Alexander Ratner, Christopher De Sa, Sen Wu, Daniel Selsam, and Christopher Ré.
+
+Data programming: Creating large training sets, quickly.
+
+In Advances in Neural Information Processing Systems, 2016.
+
+Ratner et al. (2020)
+
+Alexander Ratner, Stephen H. Bach, Henry Ehrenberg, Jason Fries, Sen Wu, and Christopher Ré.
+
+Snorkel: Rapid training data creation with weak supervision.
+
+The VLDB Journal, 29:709–730, 2020.
+
+Romera-Paredes et al. (2024)
+
+Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov, Matej Balog, M. Pawan Kumar, Emilien Dupont, Francisco J. R. Ruiz, Jordan S. Ellenberg, Pengming Wang, Omar Fawzi, Pushmeet Kohli, and Alhussein Fawzi.
+
+Mathematical discoveries from program search with large language models.
+
+Nature, 625:468–475, 2024.
+
+Rush et al. (2015)
+
+Alexander M. Rush, Sumit Chopra, and Jason Weston.
+
+A neural attention model for abstractive sentence summarization.
+
+In Lluís Màrquez, Chris Callison-Burch, and Jian Su, editors, Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing, pages 379–389, Lisbon, Portugal, September 2015. Association for Computational Linguistics.
+
+10.18653/v1/D15-1044.
+
+URL https://aclanthology.org/D15-1044/.
+
+Salton and Buckley (1988)
+
+Gerard Salton and Chris Buckley.
+
+Term-weighting approaches in automatic text retrieval.
+
+Inf. Process. Manag., 24:513–523, 1988.
+
+URL https://api.semanticscholar.org/CorpusID:7725217.
+
+Schmidhuber (2006)
+
+Jürgen Schmidhuber.
+
+Gödel machines: Self-referential universal problem solvers making provably optimal self-improvements.
+
+Artificial General Intelligence, pages 199–226, 2006.
+
+Settles (2009)
+
+Burr Settles.
+
+Active learning literature survey.
+
+Computer Sciences Technical Report 1648, University of Wisconsin–Madison, 2009.
+
+Shinn et al. (2023)
+
+Noah Shinn, Beck Labash, and Ashwin Gopinath.
+
+Reflexion: An autonomous agent with dynamic memory and self-reflection.
+
+arXiv preprint arXiv:2303.11366, 2023.
+
+Tang et al. (2024)
+
+Chenming Tang, Zhixiang Wang, and Yunfang Wu.
+
+Large language models might not care what you are saying: Prompt format beats descriptions.
+
+In Conference on Empirical Methods in Natural Language Processing, 2024.
+
+URL https://api.semanticscholar.org/CorpusID:271891859.
+
+Thornton et al. (2013)
+
+Chris Thornton, Frank Hutter, Holger H. Hoos, and Kevin Leyton-Brown.
+
+Auto-weka: Combined selection and hyperparameter optimization of classification algorithms.
+
+In Proceedings of the 19th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining (KDD), 2013.
+
+Tjong Kim Sang and De Meulder (2003)
+
+Erik F. Tjong Kim Sang and Fien De Meulder.
+
+Introduction to the conll-2003 shared task: Language-independent named entity recognition.
+
+In Proceedings of the 7th Conference on Natural Language Learning (CoNLL-2003), pages 142–147, 2003.
+
+Touvron et al. (2023a)
+
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al.
+
+Llama: Open and efficient foundation language models.
+
+arXiv preprint arXiv:2302.13971, 2023a.
+
+Touvron et al. (2023b)
+
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.
+
+Llama 2: Open foundation and fine-tuned chat models.
+
+arXiv preprint arXiv:2307.09288, 2023b.
+
+Wang et al. (2023a)
+
+Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar.
+
+Voyager: An open-ended embodied agent with large language models.
+
+arXiv preprint arXiv:2305.16291, 2023a.
+
+Wang et al. (2023b)
+
+Ruida Wang, Wangchunshu Zhou, and Mrinmaya Sachan.
+
+Let’s synthesize step by step: Iterative dataset synthesis with large language models by extrapolating errors from small models.
+
+In Findings of the Association for Computational Linguistics (EMNLP Findings), 2023b.
+
+Wang et al. (2025)
+
+Wenyi Wang, Piotr Piękos, Li Nanbo, Firas Laakom, Yimeng Chen, Mateusz Ostaszewski, Mingchen Zhuge, and Jürgen Schmidhuber.
+
+Huxley-gödel machine: Human-level coding agent development by an approximation of the optimal self-improving machine, 2025.
+
+URL https://arxiv.org/abs/2510.21614.
+
+Wang et al. (2023c)
+
+Xiao Wang, Tianze Chen, Qiming Ge, Han Xia, Rong Bao, Rui Zheng, Qi Zhang, Tao Gui, and Xuan-Jing Huang.
+
+Orthogonal subspace learning for language model continual learning.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2023, pages 10658–10671, 2023c.
+
+Wang et al. (2024)
+
+Xingyao Wang, Boxuan Ding, Yufan Peng, Zijian Liu, Jiayi Lu, Robert Yang, Yitong Shi, Rui Han, Yixuan Chen, Fangchen Zeng, et al.
+
+Openhands: An open platform for AI software developers as generalist agents.
+
+arXiv preprint arXiv:2407.16741, 2024.
+
+Wei et al. (2022)
+
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H. Chi, Quoc V. Le, and Denny Zhou.
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+arXiv preprint arXiv:2201.11903, 2022.
+
+Widmer and Kubát (1996)
+
+Gerhard Widmer and Miroslav Kubát.
+
+Learning in the presence of concept drift and hidden contexts.
+
+Machine Learning, 23:69–101, 1996.
+
+URL https://api.semanticscholar.org/CorpusID:15558554.
+
+Yamada et al. (2025)
+
+Yutaro Yamada, Robert Tjarko Lange, Cong Lu, Shengran Hu, Chris Lu, Jakob Foerster, Jeff Clune, and David Ha.
+
+The ai scientist-v2: Workshop-level automated scientific discovery via agentic tree search.
+
+arXiv preprint arXiv:2504.08066, 2025.
+
+Yang et al. (2025)
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu.
+
+Qwen3 technical report, 2025.
+
+URL https://arxiv.org/abs/2505.09388.
+
+Yang et al. (2023)
+
+Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc V. Le, Denny Zhou, and Xinyun Chen.
+
+Large language models as optimizers.
+
+arXiv preprint arXiv:2309.03409, 2023.
+
+Yang et al. (2024)
+
+John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Liber, Karthik Narasimhan, and Ofir Press.
+
+SWE-agent: Agent-computer interfaces enable automated software engineering.
+
+arXiv preprint arXiv:2405.15793, 2024.
+
+Yao et al. (2023)
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao.
+
+React: Synergizing reasoning and acting in language models.
+
+arXiv preprint arXiv:2210.03629, 2023.
+
+Yuan et al. (2024)
+
+Weizhe Yuan, Richard Yuanzhe Pang, Kyunghyun Cho, Sainbayar Sukhbaatar, Jing Xu, and Jason Weston.
+
+Self-rewarding language models.
+
+arXiv preprint arXiv:2401.10020, 2024.
+
+Yuksekgonul et al. (2024)
+
+Mert Yuksekgonul, Federico Bianchi, Joseph Boen, Sheng Liu, Zhi Huang, Carlos Guestrin, and James Zou.
+
+Textgrad: Automatic “differentiation” via text.
+
+arXiv preprint arXiv:2406.07496, 2024.
+
+Zaratiana et al. (2022)
+
+Urchade Zaratiana, Niama Elkhbir, Pierre Holat, Nadi Tomeh, and Thierry Charnois.
+
+Global span selection for named entity recognition.
+
+In Wenjuan Han, Zilong Zheng, Zhouhan Lin, Lifeng Jin, Yikang Shen, Yoon Kim, and Kewei Tu, editors, Proceedings of the Workshop on Unimodal and Multimodal Induction of Linguistic Structures (UM-IoS), pages 11–17, Abu Dhabi, United Arab Emirates (Hybrid), December 2022. Association for Computational Linguistics.
+
+10.18653/v1/2022.umios-1.2.
+
+URL https://aclanthology.org/2022.umios-1.2/.
+
+Zaratiana et al. (2024)
+
+Urchade Zaratiana, Nadi Tomeh, Pierre Holat, and Thierry Charnois.
+
+GLiNER: Generalist model for named entity recognition using bidirectional transformer.
+
+In Kevin Duh, Helena Gomez, and Steven Bethard, editors, Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 5364–5376, Mexico City, Mexico, June 2024. Association for Computational Linguistics.
+
+10.18653/v1/2024.naacl-long.300.
+
+URL https://aclanthology.org/2024.naacl-long.300/.
+
+Zaratiana et al. (2025)
+
+Urchade Zaratiana, Gil Pasternak, Oliver Boyd, George Hurn-Maloney, and Ash Lewis.
+
+GLiNER2: Schema-driven multi-task learning for structured information extraction.
+
+In Ivan Habernal, Peter Schulam, and Jörg Tiedemann, editors, Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, pages 130–140, Suzhou, China, November 2025. Association for Computational Linguistics.
+
+ISBN 979-8-89176-334-0.
+
+10.18653/v1/2025.emnlp-demos.10.
+
+URL https://aclanthology.org/2025.emnlp-demos.10/.
+
+Zha et al. (2023)
+
+Daochen Zha, Zaid Pervaiz Bhat, Kwei-Herng Lai, Fan Yang, Zhimeng Jiang, Shaochen Zhong, and Xia Hu.
+
+Data-centric artificial intelligence: A survey.
+
+arXiv preprint arXiv:2303.10158, 2023.
+
+Zheng et al. (2023)
+
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica.
+
+Judging LLM-as-a-judge with MT-bench and chatbot arena.
+
+In Advances in Neural Information Processing Systems, 2023.
+
+Zheng et al. (2024)
+
+Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, Zheyan Luo, Zhangchi Ma, and Yongqiang Ma.
+
+LlamaFactory: Unified efficient fine-tuning of 100+ language models.
+
+arXiv preprint arXiv:2403.13372, 2024.
+
+Zhou et al. (2023a)
+
+Chunting Zhou, Pengfei Liu, Puxin Xu, Srini Iyer, Jiao Sun, Yuning Mao, Xuezhe Ma, Avia Efrat, Ping Yu, Lili Yu, Susan Zhang, Gargi Ghosh, Mike Lewis, Luke Zettlemoyer, and Omer Levy.
+
+Lima: Less is more for alignment, 2023a.
+
+URL https://arxiv.org/abs/2305.11206.
+
+Zhou et al. (2023b)
+
+Yongchao Zhou, Andrei Ioan Muresanu, Ziwen Han, Keiran Paster, Silviu Pitis, Harris Chan, and Jimmy Ba.
+
+Large language models are human-level prompt engineers.
+
+In The Eleventh International Conference on Learning Representations, 2023b.
+
+Zhu et al. (2025)
+
+Lianghui Zhu, Xinggang Wang, and Xinlong Wang.
+
+Judgelm: Fine-tuned large language models are scalable judges.
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+Appendix A Monte Carlo Graph Search Algorithm
+
+Monte Carlo Graph Search (MCGS) is used to explore the space of training pipelines. The search maintains a graph of evaluated pipelines and iteratively expands promising nodes based on their observed performance. Node selection is guided by a UCT-like score:
+
+(18)
+
+where is the mean reward of ’s descendants, is the total visit count, is the visit count for , and is a time-decaying exploration coefficient. In practice, is not set to a fixed functional form; the orchestrator LLM adjusts the exploration–exploitation balance heuristically based on the iteration count, the spread of scores in the current graph, and whether recent expansions have yielded improvements. The stagnation threshold (number of consecutive non-improving expansions before triggering fusion or evolution) is similarly determined by the agent rather than a fixed constant. This means the search policy is partially implicit in the LLM’s reasoning rather than fully specified by closed-form hyperparameters—a design trade-off that increases flexibility at the cost of exact reproducibility. Of the eight cold-start benchmarks, explicit graph-structured MCGS with branching and fusion was used for ARC-Challenge (Llama 3B); the remaining benchmarks used sequential greedy iteration guided by the same diagnose–modify–evaluate loop without maintaining a formal search graph.
+
+Algorithm 1 Monte Carlo Graph Search for training pipelines. Each node stores a complete pipeline and its realized score . The agent iteratively expands promising leaves, evaluates proposed pipelines by actual train-and-test execution, backpropagates score statistics through the graph, and invokes evolution or cross-branch fusion when progress stalls.
+
+Input: failure set or task specification ; evaluation function that trains pipeline and returns its validation-set score
+
+Output: best pipeline
+
+1
+;
+
+2
+;
+
+3
+; // node = (pipeline, realized score)
+
+4
+, , ;
+
+5
+while Continue do
+
+    // Select a promising leaf node
+
+    
+6
+;
+
+    // Expand by proposing a new pipeline from the parent trajectory
+
+    
+7
+;
+
+    
+8
+;
+
+    
+9
+;
+
+    
+10
+;
+
+    
+11
+;
+
+    
+12
+;
+
+    // Backpropagate score statistics through ancestors
+
+    
+13
+Backprop;
+
+    // Recover from stagnation by evolution or fusion
+
+    
+14
+if Stagnant then
+
+        
+15
+if EvolvePreferred then
+
+            
+16
+;
+
+            
+17
+;
+
+            
+18
+;
+
+            
+19
+;
+
+            
+20
+;
+
+        
+21
+else
+
+            
+22
+;
+
+            
+23
+;
+
+            
+24
+;
+
+            
+25
+;
+
+            
+26
+;
+
+        
+27
+end if
+
+        
+28
+;
+
+    
+29
+end if
+
+30
+end while
+
+31
+;
+
+32
+return ;
+
+Notation.
+A training pipeline is , where is the dataset specification, is the hyperparameter configuration, and is the learning strategy.
+Each node stores a complete evaluated pipeline together with its realized validation-set score .
+The search graph is , where is the set of evaluated nodes and records parent–child proposal relationships.
+denotes the set of expandable leaf nodes, is the selection score from Eq. 18, Backprop updates ancestor statistics after evaluation, returns the top-scoring nodes, and Fuse combines the pipelines contained in those nodes.
+
+Stagnation recovery. When a branch stops improving (no score increase over several consecutive expansions), the agent triggers either evolution (trajectory-aware mutation within the branch) or fusion (cross-branch synthesis of the top- nodes).
+
+Appendix B AdaptFT-Bench Details
+
+B.1 Construction Methodology
+
+B.1.1 Scenario Selection
+
+AdaptFT-Bench has two components. The primary benchmark consists of seven benchmark-derived synthetic inference scenarios built from public datasets using our perturbation pipeline (Section B.3). In addition, we report two production-style deployment case studies from Pioneer Agent deployments (CLINC150 and CoNLL-2003) to show the same loop on production traces. Across both components, scenarios span:
+
+•
+
+Task types: Binary classification, multi-class classification, NER, text generation
+
+•
+
+Model maturity: Base models with many failures, fine-tuned models with residual failures
+
+•
+
+Model families: GLiNER2 (encoder) and Qwen/Llama (decoder)
+
+•
+
+Domains: SMS spam detection (classification), intent classification (multi-class), newswire NER, math reasoning (generation)
+
+B.1.2 Synthetic Inference Log Construction
+
+In addition to real production traces, we construct synthetic inference logs from benchmark tasks to study the same adaptation loop in a controlled and reproducible setting. Starting from benchmark examples, we generate perturbed user-style variants of the original inputs, run the target model on both the original and perturbed inputs, and store the resulting prompt-response pairs as inference traces. The perturbations span the main classes of production noise implemented in our pipeline, including linguistic errors, structural corruption, adversarial rewrites, off-task inputs, and repetitive or near-duplicate variants. The purpose of this construction is to provide realistic, diverse failure traces when real production logs are unavailable, while preserving the same downstream analysis, curriculum construction, and retraining procedure used for deployed systems.
+
+B.1.3 Failure Set Construction
+
+Failure sets come from two sources. For the seven synthetic scenarios, we perturb benchmark inputs, run the target model, and mark failures by comparing model outputs against the benchmark ground truth. For the two real case studies, we use judged production traces with LLM-as-judge verdicts and human overrides when available. In both settings, each failure set is constructed to satisfy the same criteria:
+
+1.
+
+Confirmed incorrect behavior with an associated gold or corrected output
+
+2.
+
+Diversity across at least three distinct failure categories
+
+3.
+
+Sufficient metadata to re-evaluate after training (benchmark ground truth for synthetic scenarios; judge criteria and prompt configuration for real case studies)
+
+B.1.4 Regression Set Construction
+
+For each scenario:
+
+1.
+
+Sample passing inferences (llmaj_verdict = ’pass’ or human_verdict = ’correct’)
+
+2.
+
+Stratified by label/entity type to cover the model’s existing strengths
+
+3.
+
+Size: 30–100% of the failure set (ensures regression detection is sensitive while remaining practical for large failure sets)
+
+B.1.5 Scenario Difficulty Tiers
+
+Table 10 defines the difficulty tiers used to categorize benchmark scenarios based on failure scale, diversity, and model maturity.
+
+Tier
+
+Description
+
+Failure count
+Failure diversity
+Model state
+
+Easy
+
+Few failures, clear patterns
+
+10–50
+1–2 clusters
+Fine-tuned
+
+Medium
+
+Many failures, systematic patterns
+
+50–500
+3–5 clusters
+Fine-tuned or base
+
+Hard
+
+Many failures, adversarial + non-fixable
+
+100–500+
+5+ clusters, incl. non-fixable
+Base model
+
+Table 10: Scenario Difficulty Tiers in AdaptFT-Bench.
+
+B.1.6 Anonymization and Reproducibility
+
+•
+
+All personally identifiable information (PII) and user-identifiable information is stripped from real inference logs
+
+•
+
+The seven synthetic scenarios are reproducible from public benchmarks plus the released perturbation pipeline
+
+•
+
+Base model weights are referenced by HuggingFace model ID (publicly available)
+
+•
+
+Judge configurations (model, criteria, prompt template) are documented for the real case studies
+
+•
+
+In this paper, CLINC150 and CoNLL-2003 are reported as anonymized case studies rather than released benchmark snapshots
+
+B.2 Scenario-Level Details
+
+Table 11 summarizes the scenario-level information needed to interpret the benchmark results in this paper. We do not reproduce the full raw failure taxonomies for every scenario here; instead, we provide the evaluation regime, metric, failure source, and the corresponding sanitized artifact when one is included in the representative bundle.
+
+Scenario
+
+Regime
+
+Base model
+
+Metric
+
+Failure source
+
+Sanitized artifact
+
+CLINC150
+
+Production-style case study
+
+GLiNER2-base
+
+Exact-match pass rate on failing slice
+
+453 judged production failures + 198 passing regression examples
+
+clinc150_trace_and_report_summary.md
+
+CoNLL-2003
+
+Production-style case study
+
+GLiNER2-base / large
+
+Entity F1 + sample pass rate
+
+2,740 judged NER failures from production-style deployment logs
+
+conll2003_ner_trace_and_report_summary.md
+
+GSM8K (Qwen3-8B)
+
+Synthetic 3-stage scenario
+
+Qwen3-8B
+
+Exact match on final #### number
+
+Benchmark-derived noisy inference logs
+
+none in representative bundle
+
+GSM8K (Llama 3.2-3B)
+
+Synthetic 3-stage scenario
+
+Llama 3.2-3B
+
+Exact match on final #### number
+
+Benchmark-derived noisy inference logs
+
+gsm8k_llama_trace_summary.md
+
+ARC-Challenge
+
+Synthetic 3-stage scenario
+
+Llama 3.2-3B
+
+Exact match on answer letter
+
+Benchmark-derived noisy inference logs
+
+arc_challenge_trace_summary.md
+
+TriviaQA
+
+Synthetic 3-stage scenario
+
+Llama 3.2-3B
+
+Case-insensitive answer-alias match
+
+Benchmark-derived noisy inference logs
+
+triviaqa_trace_summary.md
+
+HumanEval
+
+Synthetic 3-stage scenario
+
+Qwen3-8B
+
+pass@1
+
+Benchmark-derived noisy inference logs
+
+none in representative bundle
+
+XSum
+
+Synthetic 3-stage scenario
+
+Qwen3-8B
+
+ROUGE-2
+
+Benchmark-derived noisy inference logs
+
+none in representative bundle
+
+SAMSum
+
+Synthetic 3-stage scenario
+
+Qwen3-8B
+
+ROUGE-2
+
+Benchmark-derived noisy inference logs
+
+none in representative bundle
+
+Table 11: Scenario-level details for AdaptFT-Bench as used in this paper. The seven synthetic scenarios all use the shared stage-based protocol from Section 3: three stages with rising poison rates, 70/30 train-test splits per stage, and a held-out evaluation set formed by the union of stage test splits. CLINC150 and CoNLL-2003 are real judged deployment case studies reported separately from the synthetic inference benchmark.
+
+The derived artifact bundle intentionally covers only a representative subset of scenarios. We chose one encoder cold-start report (SMS Spam), three cold-start trace summaries (ARC-Challenge, GSM8K/Llama, TriviaQA), and two production-improvement case studies (CLINC150 and CoNLL-2003) because together they span the distinct trajectory motifs discussed in the paper: broad initial exploration, failure-taxonomy construction, curriculum synthesis, rollback, threshold search, and model-capacity escalation.
+
+B.3 Perturbation Pipeline
+
+To evaluate production mode, we simulate realistic production traffic by injecting noise into benchmark inputs. The pipeline partitions each benchmark’s training set into a clean training pool (used to produce the clean-trained checkpoint) and an inference pool (the remainder). Each sample in the inference pool is independently perturbed: every perturbation type rolls against its configured rate, so multiple noise types can co-occur on a single input. Temporal realism (log-normal latency jitter, batch effects, timeout/retry entries at 1.5%) is applied to the resulting log sequence.
+
+Table 12 lists all perturbation types and their default rates.
+
+Table 12: Noise injection rates for synthetic inference log generation. Each perturbation is applied independently per sample.
+
+Category
+Perturbation Type
+Default Rate
+
+Linguistic
+Typos (character transposition/insertion/deletion)
+10%
+
+Phonetic misspellings
+7%
+
+Syntactic errors (broken structure, fragments)
+6%
+
+Grammatical errors (tense, articles, agreement)
+5%
+
+Punctuation abuse (missing, excessive)
+5%
+
+Casing errors (all-lower, all-caps, random)
+4%
+
+Abbreviations and slang
+3%
+
+Code-switching (partial foreign language)
+2%
+
+Structural
+Preamble injection (conversational opener)
+7%
+
+Instruction-following attempts (format requests)
+4%
+
+Truncated inputs (mid-sentence cutoff)
+3%
+
+HTML/markup remnants
+2%
+
+Missing modality reference
+2%
+
+Intra-input duplication
+1.5%
+
+Very long inputs ( median length)
+1.5%
+
+OCR artifacts (l/1, O/0 confusion)
+1.5%
+
+Empty or near-empty inputs
+0.7%
+
+UTF-8 anomalies (smart quotes, BOM, null bytes)
+0.7%
+
+Metadata leakage (benchmark provenance)
+0.7%
+
+Adversarial
+Label-flipping adversarials
+3%
+
+Decision-boundary probes
+3%
+
+False premise questions
+3%
+
+Prompt injection (in-content instructions)
+2%
+
+Cross-benchmark contamination (wrong endpoint)
+1.5%
+
+Jailbreak attempts
+1%
+
+Off-task
+Off-domain queries
+3%
+
+Meta-questions (“What model are you?”)
+2%
+
+Context-assumption queries (assumes state)
+1.5%
+
+Verbatim benchmark recall
+1%
+
+Gibberish and keyboard mashing
+0.7%
+
+Retry storms (3–8 rapid resubmissions)
+0.7%
+
+Repetition
+Near-duplicates (Jaccard 0.8)
+5%
+
+Exact duplicates
+3%
+
+Appendix C Cold-Start Experimental Details
+
+Table 13 summarizes performance at iterations 1, 3, and best across all cold-start benchmarks. On every task, the first training run captures only 40–70% of the achievable improvement; the remaining gains come from the agent’s ability to diagnose failures, adjust training strategy (e.g., switching to chain-of-thought supervision or tuning epoch count), and iterate.
+
+Benchmark
+Model
+Iter 1
+Iter 3
+Best
+Iterations
+
+ARC-Challenge
+Llama 3B
+48.1%
+68.6%
+72.6%
+11
+
+GSM8K
+Llama 3B
+11.8%
+35%
+43.7%
+10
+
+HumanEval
+Qwen 8B
+72.0%
+85.4%
+92.7%
+4
+
+XSum
+Qwen 8B
+R2: 13.0
+R2: 16.4
+R2: 17.9
+13
+
+SAMSum
+Qwen 8B
+R2: 21.8
+R2: 24.1
+R2: 25.4
+11
+
+TriviaQA
+Llama 3B
+0.0%
+44.0%
+48.6%
+9
+
+Table 13: Cold-start performance progression across iterations. The number of iterations varies by task complexity, from 4 (HumanEval) to 13 (XSum).
+
+The per-benchmark narratives below detail the specific configuration changes at each iteration.
+
+ARC-Challenge (Llama 3.2-3B).
+
+The base model cannot answer multiple-choice questions—it generates new questions instead. Starting from 5.3%, the agent progressed through format learning (Iter 1: 48.1%), data scaling (Iter 2: 61.3%), CoT with GPT-4.1 (Iter 3: 68.6%), CoT with DeepSeek-R1 (Iter 5: 68.9%), and R1 CoT + validation data (Iter 6: 72.6%). Iterations 7–11 (more data, higher rank, lower LR) all regressed to 68.7–72.4%.
+
+GSM8K (Llama 3.2-3B).
+
+Starting from 8% (5-shot), the agent scaled from 300 examples (Iter 1: 11.8%) to 7,473 examples over 5 epochs (Iters 2–5: 30–40%), then found 2 epochs with batch size 16 optimal (Iter 6: 43.7%). Iterations 7–10 with upweighting, different LR, or rank=64 could not surpass Iter 6.
+
+HumanEval (Qwen3-8B).
+
+Trained on MBPP (374 problems), evaluated on HumanEval (164 different problems). The main result is 92.7% pass@1 from MBPP data alone. In a separate exploratory run using oracle distillation (training on the model’s own correct outputs), the agent reached 100% pass@1 with 173 examples, but adding GPT-4.1 solutions regressed performance (96.9%94.5%).
+
+XSum (Qwen3-8B).
+
+ROUGE-2 improved from 6.9 to 17.9 (+160%). The agent found that 1 epoch is optimal and training beyond 750 gradient steps degrades performance.
+
+SAMSum (Qwen3-8B).
+
+The largest single improvement came from system prompt engineering: replacing “summarize this dialogue” with a constrained specification. Final: ROUGE-1 50.5 (+36%), ROUGE-2 25.4 (+89%).
+
+SMS Spam (GLiNER2-base).
+
+The agent downloaded the UCI SMS Spam Collection (5,574 messages, 87% ham / 13% spam), split 80/20, and launched 4 parallel jobs. Best initial model: F1 0.9834 with 5 residual failures. Three surgical augmentation rounds (+26, +12, +17 examples) drove F1 to 0.9967 via precision-recall balancing.
+
+C.1 Best-Model Hyperparameters
+
+Table 14: Best training pipeline per benchmark, as selected autonomously by the agent. “–” indicates the agent used the platform default or the value was not recorded in the run artifacts.
+
+Benchmark
+Model
+Train Ex.
+Epochs
+Batch Size
+LR
+Notes
+
+ARC-Challenge
+Llama 3B
+1,119
+5
+–
+–
+R1 CoT + val data
+
+GSM8K
+Llama 3B
+7,473
+2
+16
+2e-4
+
+TriviaQA
+Llama 3B
+3,000
+4
+–
+1e-4
+
+HumanEval
+Qwen 8B
+374
+3
+–
+–
+Cross-benchmark (MBPP)
+
+XSum
+Qwen 8B
+3,000
+1
+4
+–
+
+SAMSum
+Qwen 8B
+500
+8
+–
+–
+Constrained system prompt
+
+ARC-Challenge
+Qwen 8B
+–
+5
+–
+1e-4
+CoT
+
+SMS Spam
+GLiNER2-base
+4,513
+–
+–
+–
+Full FT + 55 augmented
+
+Appendix D Infrastructure and Reproducibility
+
+Component
+
+Configuration
+
+Agent LLM
+
+Claude Sonnet 4.6, 1M context, 32K extended thinking budget
+
+Agent framework
+
+LangGraph + LangChain (Python)
+
+Sandbox
+
+Modal containers, 16GB memory, 24h timeout, 1 CPU
+
+Training backend
+
+Tinker SDK (LoRA fine-tuning, instant inference after training)
+
+Training helpers
+
+tinker_helpers.py – standalone wrappers for train(), infer(), infer_batch()
+
+Data generation LLMs
+
+OpenAI GPT-4.1/4.1-mini, DeepSeek-R1/V3, Fireworks
+
+Web search
+
+Exa deep research API
+
+Agent recursion limit
+
+1,500 turns (main), 1,000 turns (sub-agents)
+
+Trace analysis (production mode)
+
+PostgreSQL (Supabase) with per-user Row-Level Security (RLS) filtering
+
+Sub-agent LLM
+
+Claude Sonnet 4.6 (same as main agent)
+
+D.1 Tinker SDK Integration
+
+Cold-start mode uses the Tinker SDK directly for training and inference, bypassing any intermediary API. The agent’s tinker_helpers.py provides three core functions:
+
+•
+
+train(dataset_path, base_model, nr_epochs, learning_rate, batch_size, lora_rank) – Executes the full LoRA training loop: tokenize forward/backward optimize save weights. Returns a weights_ref string for immediate inference.
+
+•
+
+infer(prompt, weights_ref, base_model, ...) – Creates a Tinker SamplingClient from the saved weights and generates text. No deployment step or external service required.
+
+•
+
+infer_batch(prompts, weights_ref, ..., max_workers=20) – Parallel inference using ThreadPoolExecutor with 20 concurrent Tinker API calls.
+
+Tokenization uses the model’s own apply_chat_template for train/serve parity. Loss is computed only on assistant tokens via per-token loss weights. End-of-sequence (EOS) truncation is handled automatically for base models (Llama) that don’t stop at end-of-turn tokens.
+
+D.2 Evaluation Code
+
+Each benchmark uses its own evaluation method, set up autonomously by the agent:
+
+Benchmark
+
+Evaluation Method
+
+Code Source
+
+ARC-Challenge
+
+Exact match on answer letter (A/B/C/D)
+
+Agent-written extraction + string match
+
+GSM8K
+
+Exact match on final number after ####
+
+Agent-written regex extraction
+
+TriviaQA
+
+Case-insensitive match against answer aliases
+
+Agent-written alias matching
+
+HumanEval
+
+pass@1 – code execution against unit tests
+
+Official human_eval package
+
+XSum
+
+ROUGE-1, ROUGE-2, ROUGE-L
+
+rouge-score Python package
+
+SAMSum
+
+ROUGE-1, ROUGE-2, ROUGE-L
+
+rouge-score Python package
+
+ARC-Challenge (Qwen)
+
+Exact match on answer letter
+
+Agent-written extraction
+
+The agent downloads, installs, and configures evaluation code autonomously. For programmatic benchmarks (ARC, GSM8K, TriviaQA), the agent writes extraction functions. For standard metrics (ROUGE, pass@1), it installs and uses existing packages.
+
+D.3 Released Artifacts
+
+We do not include the raw data-curation.md logs, raw JSON trace exports, or full LangSmith traces in the paper appendix. Those internal artifacts contain tool-level execution details, code, and implementation-specific prompts that are not needed to understand the scientific claims. Instead, we include a representative bundle of derived and sanitized artifacts spanning both agent modes and the main task families in the paper: encoder classification, production repair, NER, reasoning, math, and knowledge QA.
+
+Artifact family
+
+Agent mode
+
+Benchmarks
+
+What it preserves
+
+Final reports (PDF)
+
+Cold-start
+
+SMS Spam
+
+Domain research, dataset setup, 4-iteration augmentation loop, final F1 0.9967
+
+Final reports (PDF)
+
+Production
+
+CLINC150
+
+5-cluster failure taxonomy, 1,254-example curriculum, Full FT vs. LoRA comparison, rollback decision
+
+Final reports (PDF)
+
+Production
+
+CoNLL-2003
+
+FP-dominated diagnosis, 6-iteration repair loop, threshold sweep, capacity scale-up to GLiNER2-large
+
+Derived trajectory summaries
+
+Cold-start
+
+ARC, GSM8K, TriviaQA
+
+Search trajectories, iteration-by-iteration configuration changes, evaluation outputs, and intermediate decisions distilled from internal run exports
+
+Derived trajectory summaries
+
+Production
+
+CLINC150, CoNLL-2003
+
+SQL diagnostics, delegated taxonomy analysis, dataset revisions, training/evaluation history, and stopping criteria distilled from internal traces
+
+The current representative bundle includes:
+
+•
+
+derived_run_artifacts_md/README.md
+
+•
+
+derived_run_artifacts_md/sms_spam_report_summary.md
+
+•
+
+derived_run_artifacts_md/clinc150_trace_and_report_summary.md
+
+•
+
+derived_run_artifacts_md/conll2003_ner_trace_and_report_summary.md
+
+•
+
+derived_run_artifacts_md/arc_challenge_trace_summary.md
+
+•
+
+derived_run_artifacts_md/gsm8k_llama_trace_summary.md
+
+•
+
+derived_run_artifacts_md/triviaqa_trace_summary.md
+
+These artifacts are sufficient to reconstruct the main trajectory motifs discussed in Figure 10: broad initial exploration, failure-taxonomy construction, targeted curriculum synthesis, rollback after regression, threshold search, and branch fusion. The raw internal traces were used only to derive these summaries and are not included verbatim in the paper or public artifact bundle.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

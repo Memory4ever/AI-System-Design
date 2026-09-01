@@ -1,0 +1,814 @@
+EdgeCIM: A Hardware-Software Co-Design for CIM-Based Acceleration of Small Language Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Background
+
+II-A Small Language Models
+
+II-B Compute-in-Memory
+
+III Proposed Methodology
+
+III-A Framework Overview
+
+III-B Hardware Architecture
+
+III-C Dataflow Mapping
+
+III-C1 Projection
+
+III-C2 Attention
+
+III-C3 Linear
+
+III-C4 Feed-Forward Network
+
+IV Hardware-Software Co-Optimization Process
+
+V Results and Analysis
+
+V-A Comparison with commercial edge GPUs and NPUs
+
+V-B Comparison with CIM-based accelerators
+
+VI Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.11512v1 [cs.AR] 13 Apr 2026
+
+EdgeCIM: A Hardware-Software Co-Design for CIM-Based Acceleration of Small Language ModelsThanks: J. Bazzi and A. Eltawil are with King Abdullah University of Science and Technology, Thuwal, Saudi Arabia.Thanks: M. Rakka and F. Kurdahi are with the University of California Irvine, Irvine, CA, USA.Thanks: M. Fouda is with Rain Neuromorphics Inc., San Francisco, CA, USA, Email: foudam@uci.edu
+
+Jinane Bazzi*
+
+  
+Mariam Rakka*
+
+  
+Fadi Kurdahi
+
+  
+Mohammed E. Fouda
+
+  
+Ahmed Eltawil
+
+Affiliation: *Equal contribution
+
+Abstract
+
+The growing demand for deploying Small Language Models (SLMs) on edge devices, including laptops, smartphones, and embedded platforms, has exposed fundamental inefficiencies in existing accelerators. While GPUs handle prefill workloads efficiently, the autoregressive decoding phase is dominated by GEMV operations that are inherently memory-bound, resulting in poor utilization and prohibitive energy costs at the edge. In this work, we present EdgeCIM, a hardware-software co-design framework that rethinks accelerator design for end-to-end decoder-only inference. At its core is a CIM macro, implemented in 65nm, coupled with a tile-based mapping strategy that balances pipeline stages, maximizing parallelism while alleviating DRAM bandwidth bottlenecks. Our simulator enables design space exploration of SLMs up to 4B parameters, identifying Pareto-optimal configurations in terms of latency and
+energy. Compared to an NVIDIA Orin Nano, EdgeCIM achieves up to 7.3 higher throughput and 49.59 better energy efficiency on LLaMA3.2-1B, and delivers 9.95 higher throughput than Qualcomm’s SA8255P on LLaMA3.2-3B. Extensive benchmarks on TinyLLaMA-1.1B, LLaMA3.2 (1B, 3B), Phi-3.5-mini-3.8B, Qwen2.5 (0.5B, 1.5B, 3B), SmolLM2-1.7B, SmolLM3-3B, and Qwen3 (0.6B, 1.7B, 4B) reveal that our accelerator, under INT4 precision, achieves on average 336.42 tokens/s and 173.02 tokens/J. These results establish EdgeCIM as a compelling solution towards real-time, energy-efficient edge-scale SLM inference.
+
+Index Terms: Compute-in-memory, design space exploration, hardware-software co-design, small language models
+
+I Introduction
+
+Language Models (LMs) have transformed Natural Language Processing (NLP), establishing new benchmarks in text generation, translation, summarization, and conversational AI [1, 2, 3]. These models, built on the transformer architecture [3], achieve remarkable accuracy but demand enormous computational and memory resources. While the earliest deployment of LMs was restricted to datacenters running on clusters of Graphical Processing Units (GPUs) and Tensor Processing Units (TPUs) [4], the rapid rise of agentic AI systems and the demand for interactive, privacy-preserving applications have shifted attention towards a new paradigm: running Small LMs (SLMs) closer to the user, on edge devices such as laptops, smartphones, and embedded platforms [5, 6].
+
+Decoder-only architectures, typified by autoregressive models such as GPT [7] and LLaMA [8], are a popular choice for this new paradigm. Their token-by-token decoding aligns naturally with interactive use cases like translation, voice assistants, and contextual dialogue systems. Decoder-only inference supports real-time streaming of outputs which is an essential requirement in low-latency and user-facing applications. The inference process of deconder-only SLMs can be divided into a GEneral Matrix-Matrix multiplication (GEMM)-heavy prefill phase and a GEneral Matrix-Vector multiplication (GEMV)-dominated decoding phase. Recent profiling of LLaMA inference on CPUs and NPUs confirms that decoding dominates runtime for small batch sizes typical of edge workloads, often consuming more than 70% of the total inference time [6], indicating a need to accelerate the decoding phase further.
+
+Compute-in-Memory (CIM) architectures are a promising approach to accelerate the memory-bounded decoding phase of SLMs [9]. By performing computation in memory arrays, CIM reduces data movement and enables parallel Multiply-ACcumulate (MAC) operations. Previous CIM-based accelerators have shown compelling results for neural networks, dominated by dense linear algebra [10, 11, 12]. For transformers, multiple recent CIM accelerator designs have specifically targeted the self-attention mechanism [13, 14]. Designs such as X-Former [13] and TranCIM [15] achieve SOTA results on encoder-style models such as BERT, but their evaluation neglects the unique characteristics of decoder-only inference: none of these works a) address the GEMV-dominated nature of autoregressive decoding in edge scenarios (batch size = 1) nor b) optimize for the end-to-end decoding phase where projection and linear stages of inference play an equally important role as attention. As a result, current CIM accelerators cannot be directly applied to real-time edge-scale decoder-only SLMs. This motivates the need for an end-to-end study that characterizes decoder-only inference with strategies tailored to GEMV-heavy pipelines, and explores hardware-software co-design under edge constraints, hence our work EdgeCIM: a hardware-software co-design for CIM-based acceleration of SLMs. We focus on SLMs with up to 4B parameters to ensure feasibility under strict edge compute, memory, and energy constraints, consistent with recent work [16].
+
+The key contributions of this work are:
+
+•
+
+We develop a CIM simulation and mapping framework tailored to the end-to-end decoding phase of decoder-only workloads, exposing bottlenecks of conventional accelerators and quantifying the advantages of CIM primitives while addressing key gaps in prior CIM works.
+
+•
+
+We propose a novel fine-grained tiling and pipeline strategy to balance compute throughput and DRAM bandwidth for GEMV-heavy inference pipelines.
+
+•
+
+We perform a Design Space Exploration (DSE) to identify optimal CIM configurations for all phases (projection, attention, linear, feed-forward network) of decoding workloads.
+
+•
+
+Our evaluation against commercial edge GPUs and NPUs shows that EdgeCIM achieves up to 7.3 higher throughput and 49.56 better energy efficiency on LLaMA3.2-1B compared to NVIDIA Orin Nano, and delivers 9.95 higher throughput on LLaMA3.2-3B compared to Qualcomm’s SA8255P.
+
+The remainder of this paper is organized as follows: Section II provides background on small language models and compute-in-memory technologies. Section III presents the proposed EdgeCIM framework, including the hardware architecture, dataflow mapping, and hardware-software co-optimization process. Section IV describes the design space exploration methodology and objective function. Section V presents experimental results and analysis comparing EdgeCIM against commercial edge accelerators. Finally, Section VI concludes the paper.
+
+Fig. 1: Inference Process in decoder-only SLMs.
+
+II Background
+
+II-A Small Language Models
+
+SLMs have emerged as practical tools for text generation, summarization, and translation on resource-constrained platforms. They rely on attention mechanisms to capture long-range dependencies while operating within limited compute and memory budgets. Most SLMs adopt a decoder-only architecture, consisting of an embedding layer, stacked decoder blocks with Multi-Head Attention (MHA), Feed-Forward Networks (FFNs), normalization layers, and linear projections. Recent variants such as Grouped-Query Attention (GQA), further improve memory efficiency by allowing multiple queries to share the same keys and values.
+
+The inference process of autoregressive SLMs (Fig. 1) is divided into two stages: prefill, which processes the input sequence and populates the Key-Value cache for all prompt tokens, and decoding, which generates tokens one at a time by attending to the cached KV and the newly computed KV of the current token. Prefill is dominated by highly parallel GEMMs and maps well to systolic-array accelerators, whereas decoding is dominated by GEMVs, which are memory-bound and underutilize conventional SIMD or systolic fabrics [17]. Profiling LLaMA3.2-1B on Jetson Orin (Fig. 2) shows that for input lengths of 64-1024 and output sequences up to 512 tokens, an average of 96.6% of inference time is spent in decoding (batch size = 1). This motivates the need for addressing the challenges of the GEMV-heavy decoding phase.
+
+II-B Compute-in-Memory
+
+CIM technology is a promising solution for efficient GEMV operations in parallel, enabling data to be processed where it is stored and thereby reducing costly memory transfers. CIM is realized using ReRAM [18, 19], MRAM [20, 21], or SRAM [22, 23, 24], with SRAM-based macros standing out for their fast access, low write energy, high endurance, parallelism, and compatibility with advanced CMOS nodes. These macros are typically classified into analog and digital types. Digital CIM (DCIM) avoids the non-idealities of analog designs, providing higher precision and preventing accuracy degradation. DCIM generally adopts a bit-serial input approach to maximize hardware reuse and minimize area overhead, where one input bit is processed per cycle and partial results are accumulated across cycles. This approach simplifies circuit design and enables precision reconfigurability, where higher precision is achieved by increasing the number of input cycles and combining outputs across columns with shift-and-add logic. In this work, we employ a bit-serial SRAM-based DCIM macro that supports both INT4 and INT8 precisions [25], which aligns well with recent quantization results showing that LM models can maintain high accuracy under 8-bit and even 4-bit quantization [26, 27, 28].
+
+Fig. 2: Profiling LLaMA 3.2-1B for different number of input ()/output () tokens on NVIDIA Jetson Orin GPU.
+
+Fig. 3: Proposed EdgeCIM.
+
+III Proposed Methodology
+
+III-A Framework Overview
+
+The proposed EdgeCIM is illustrated in Fig. 3. Its main objective is to explore the hardware design space and identify the optimal CIM-based hardware configuration for accelerating the decoding phase of decoder-only SLMs. The framework consists of two main components: an optimization algorithm and an analytical modeling-based simulator. It takes as input the target SLM configuration and a predefined hardware parameter search space. This search space defines the key hardware parameters considered for optimization during the DSE process. The optimization algorithm samples candidate architectures from this space and evaluates them using an objective function. Each candidate is analyzed by the simulator, which models the CIM-based architecture and reports key performance metrics. These metrics are then fed back into the optimization engine, which iteratively refines the search toward optimal solutions. The final output is the hardware configuration that minimizes the objective function, along with its optimized parameters and performance metrics. Details of the design space and the objective cost function are provided in Section IV.
+
+III-B Hardware Architecture
+
+The high-level architecture of EdgeCIM is shown in Fig. 4. To maximize throughput, SOTA CIM accelerators typically organize their compute arrays in a hierarchical manner [10, 29, 30]. Following this, EdgeCIM adopts a tiled hierarchical architecture: the chip consists of () clusters, each cluster contains () tiles, and each tile includes a () array of Processing Elements (PEs). Each PE is a 1616 SRAM-based bit-serial DCIM macro that performs GEMV using weight-stationary storage and cycle-wise accumulation [25], unlike regular PEs that rely on explicit MAC units with dedicated multipliers, adders, and intermediate registers, resulting in higher energy and area overheads. In addition to the PEs, the architecture has adder trees and accumulators to combine partial results. Buffers are employed to store intermediate and final results, while dedicated functional units handle normalization, quantization, activation, transposition, Softmax, and element-wise multiplication. A global buffer, shared across clusters, interfaces with off-chip DRAM that stores the model weights and the KV cache. The interconnect follows a 2D hierarchical bus structure to enable efficient data transfer across the architecture. For DSE, we vary parameters including the number of clusters, the total number of tiles, the number of active tiles (discussed later), the number of PEs per tile, and the bus width at each hierarchical level. In the next section, we describe how the SLM workload is mapped onto this architecture.
+
+Fig. 4: High-level architecture of the proposed design.
+
+Fig. 5: Typical decoding phase in a decoder-only SLM.
+
+III-C Dataflow Mapping
+
+Fig. 5 illustrates the dataflow of the decoder-only SLM decoding phase, where the model processes one token at a time. In this work, we fix the batch size to one, as is typical in edge deployments. The decoding phase in SLMs is typically memory-bound and exhibits very low arithmetic intensity compared to other workloads [31]. The main bottleneck arises from loading the KV cache from off-chip memory into the processing elements for attention computation. Since only one token is generated at a time, the entire KV cache must be fetched for every new token. Moreover, with batch size one, data reuse is minimal, meaning each KV cache load is used only once. As a result, memory transfers from DRAM cannot be fully hidden by computation. To mitigate this bottleneck, FlashAttention [32] partitions the KV cache into smaller blocks and retrieves them sequentially during attention computation. Inspired by this approach, our design also employs a block-based strategy for the attention mechanism. However, because we target end-to-end inference acceleration, we extend this concept beyond attention to other layers such as projection, linear, and feed-forward networks. Given the limited on-chip storage and the large size of weight matrices in these layers, we partition the matrices into smaller blocks and fold computation over time. As the architecture scales with the DSE parameters, larger configurations require larger weight partitions to fully utilize the hardware. This, however, shifts the bottleneck back to off-chip DRAM transfers, as moving large partitions dominates runtime and prevents full overlap of data transfer with computation. To alleviate this imbalance and improve pipeline efficiency, we introduce the notion of active tiles, where only a subset of the total tiles, denoted as , is used in parallel. At any given time, data is transferred only for these tiles, reducing the DRAM transfer size per pipeline stage. While computation proceeds on the active tiles, weights for the remaining tiles are prefetched, effectively overlapping transfer and compute. Moreover, is considered as a tunable parameter in our DSE framework, allowing the optimization engine to automatically identify the best trade-off between parallelism, memory bandwidth, and computational efficiency.
+
+Since the SLM decoding process consists of sequential stages, where the output of each stage becomes the input to the next (as shown in Fig. 5), we map these stages sequentially onto our hardware, as described below.
+
+III-C1 Projection
+
+In this phase, the query (), key (), and value () vectors are generated by multiplying the input token with the projection matrices , , and , respectively. In our mapping, each head (or KV head in GQA) is assigned to a cluster, with all clusters operating in parallel. If the number of heads exceeds the number of available clusters, they are processed sequentially. Within each cluster, the projection matrices are also processed sequentially. Each matrix is divided into partitions that are streamed from DRAM one at a time and mapped onto the tiles of the assigned cluster, while the input token is broadcast to all clusters. Computation and data transfer are overlapped using the active-tile mechanism introduced earlier: active tiles process the current partition while others preload the next one, as illustrated in Fig. 6. Within each tile, the PEs perform GEMV operations between the assigned weight partitions and the corresponding portion of the input token vector. Partial sums from vertically aligned PEs are reduced by tile-level adder trees, and the resulting outputs are further aggregated vertically across tiles at the cluster level. Results from vertically partitioned submatrices of the same weight matrix are accumulated using accumulators, and outputs from horizontally partitioned submatrices are concatenated to form the complete result. After computation, the key and value vectors are quantized, transposed, and written back to DRAM to be appended to the KV cache, while the query results are quantized and stored in the cluster buffer to serve as inputs in the subsequent phase.
+
+III-C2 Attention
+
+Following the projection phase, the attention mechanism computes the output . Each attention head is mapped to a cluster, with keys and values streamed from DRAM in block partitions of size . Queries are broadcast from the cluster buffer to all tiles. In the case of GQA, grouped queries reuse the same keys and values within each KV head in a pipelined fashion before fetching the next block from DRAM. Within each cluster, tiles are divided between key and value processing. PEs first perform GEMV operations between the query and the stored key block. Tile- and cluster-level adder trees then aggregate these GEMV outputs to produce block-level attention scores , which are processed by a dedicated Softmax unit operating in a block-wise manner, following [32]. The resulting attention scores are multiplied with , added across the block dimension using tile- and cluster-level adder trees, and accumulated across loaded blocks using accumulators. The final attention output from each head is then quantized and written to the global buffer, where it is concatenated with the outputs of the other heads.
+
+Fig. 6: Partition-based mapping of weights onto EdgeCIM.
+
+III-C3 Linear
+
+The output projection matrix is partitioned and mapped across the PEs of all clusters in parallel, in contrast to the projection and attention phases where clusters operate independently. Chip-level adder trees and accumulators are employed to aggregate partial results across clusters and to accumulate outputs across partitions. After multiplication, the outputs are normalized using a dedicated hardware unit and stored in the global buffer to be used in the next stage.
+
+III-C4 Feed-Forward Network
+
+Finally, the feed-forward network maps the up and gate projection matrices in partitions across clusters, with PEs divided between the two in parallel. The outputs of the gate projection are passed through a dedicated activation unit and then multiplied element-wise with the corresponding outputs of the up projection. Once all partitions of the up and gate matrices have been mapped and combined, the resulting vector is processed by the down projection matrix, which is likewise partitioned and mapped in sequence. The final output is stored in the global buffer.
+
+Auxiliary Operators: Activation, quantization, transposition, normalization, and Softmax are executed on dedicated hardware units within our architecture, and their performance overhead is incorporated into the analysis.
+
+IV Hardware-Software Co-Optimization Process
+
+We hereon formalize the optimization problem and describe the hardware-software co-optimization process in EdgeCIM. Given a predefined hardware design space , the objective is to determine the optimal CIM-based hardware configuration that minimizes a cost function capturing the trade-off between latency and energy for executing the decoding phase of a decoder-only SLM. The problem is expressed as:
+
+(1)
+
+where and denote the latency and energy of generating a specified number of tokens under configuration . The parameter is tunable and explores the latency-energy trade-off, enabling the framework to prioritize either latency or energy depending on deployment requirements. This objective is chosen to achieve scale invariance and ensure a fair trade-off between the two metrics. The cost function considers only latency and energy, as our exploration showed that the optimal configurations consistently satisfied typical area constraints for edge deployment. We solve this problem using a genetic algorithm (GA) implemented in Python with 50 generations and a population size of 20. The GA initializes with random configurations sampled from , which includes the number of vertical and horizontal clusters: , active tiles per cluster: with , total tiles per cluster: with , processing elements per tile: , on-chip bus widths, including inter-cluster, inter-tile, and intra-tile buses . Overall, this search space contains configurations. Each configuration is then evaluated by an analytical simulator, implemented in C++ with hardware components modeled as dedicated classes. The simulator captures the hierarchical organization of the architecture (PE, tile, cluster, and chip levels) and models both computation and data movement costs across the system. It incorporates dataflow-aware execution, including partitioning, pipelining, and active-tile scheduling, to accurately reflect the mapping described in Section III-C. It further accounts for inter-stage dependencies, memory transfers, and overlap between communication and computation, and reports latency, energy, and area. Configurations are ranked by the cost function, and new candidates are generated by simulated binary crossover and polynomial mutation (crossover probability = 1, distribution index = 3). This process iterates over generations, converging toward better solutions, and the best configuration is selected as the optimal architecture. For component-level modeling, we use CACTI 6.0 (65nm) [33] to estimate latency, energy, and area of buffers, while compute components are characterized using HSPICE at the same technology node. Off-chip memory is modeled as LPDDR5X DRAM with 16 channels, and the interconnect adopts the mesh parameters from [34].
+
+To explore the latency-energy trade-off captured by the cost function, we apply the proposed DSE framework across different values of on the LLaMA3.2-3B model with INT8 precision. The evaluation is performed for generating 128 tokens with 128 prefill tokens. For each , the framework selects the hardware configuration that minimizes the cost function at that value. The resulting latency and energy trends are shown in Fig. 7(a) and (b), respectively. To account for randomness in the search process, we execute the framework five times per , and the average performance across runs is shown in red. We observe that variability across runs differs with , where variance is most pronounced at the extremes. At , the search is indifferent to latency, allowing designs with similar energy but widely varying latency to emerge. At , the opposite behavior is observed, where designs converge to comparable latency yet span a wide range of energy values. For intermediate values, the joint penalty on both metrics narrows the feasible region, concentrating solutions near the Pareto knee and reducing variability. As increases overall, the optimization progressively prioritizes latency over energy, leading to a sharp reduction in latency at the cost of higher energy consumption. Conversely, smaller values emphasize energy efficiency but result in significantly higher latency.
+
+(a)
+
+(b)
+
+Fig. 7: Latency and energy trade-off across values for LLaMA3.2-3B (INT8) decoding with 128 prefill and 128 generated tokens. Red markers = averages over five GA runs.
+
+Fig. 8: Decoding phase energy-latency product for LLaMA3.2-3B (INT8) using the optimal at .
+
+To further assess the performance of the CIM-based accelerator, we investigate the impact of sequence length and prefill tokens on latency and energy. We fix to achieve a balanced trade-off between the two metrics. For LLaMA3.2-3B (INT8), the GA converges to the optimal configuration : , , , , , , and bus widths , occupying 11.83mm2. Using this accelerator, Fig. 8 shows how the energy-latency product scales with prefill and generated tokens. The cost grows rapidly with the number of generated tokens, since each additional token must be sequentially processed through all layers of the model and depends on the computations of all previously generated tokens. Increasing the number of prefill tokens also raises the cost, however, the effect is less pronounced compared to decoding tokens. This is because prefill tokens primarily impact the prefill stage of inference, whereas our evaluation focuses on decoding. During decoding, the influence of prefill tokens is limited to the attention mechanism, where a larger KV cache must be loaded and accessed.
+
+(a)
+
+(b)
+
+(c)
+
+Fig. 9: (a) Throughput, (b) energy efficiency, and (c) area across SLMs for INT4 and INT8 precision at .
+
+(a)
+
+(b)
+
+Fig. 10: (a) Throughput and (b) energy efficiency of EdgeCIM and Jetson edge GPUs for selected SLMs (INT4).
+
+V Results and Analysis
+
+Building on the previous analysis, we fix to prioritize latency, as EdgeCIM consistently achieves low energy across all settings. To evaluate
+performance under this objective, we benchmark a range of SLMs following the dataflow in Fig. 5, including TinyLLaMA-1.1B [35], LLaMA3.2 (1B, 3B) [36], Phi-3.5-mini-3.8B [37], Qwen2.5 (0.5B-3B) [38], SmolLM2-1.7B [39], SmolLM3-3B [40], and Qwen3 (0.6B-4B) [41], using 128 prefill and 128 generated tokens. Fig. 9 (a) and (b) report the throughput and energy efficiency, respectively, across all considered models, for both INT4 and INT8 precision. The results show that the proposed accelerator achieves high throughput and energy efficiency across all workloads. For example, under INT4 precision, Qwen2.5-0.5B reaches over 1000 tokens/s with an efficiency exceeding 600 tokens/J, while TinyLLaMA-1.1B delivers nearly 400 tokens/s at more than 120 tokens/J. Even for larger models such as SmolLM3-3B, the accelerator sustains 148.7 tokens/s with around 72.5 tokens/J, highlighting its ability to maintain competitive efficiency as model size increases. Precision also plays a significant role, where moving from INT8 to INT4 nearly doubles throughput and energy efficiency across models. Importantly, even though the optimization objective here is latency-only (), the accelerator continues to deliver strong energy efficiency, confirming its suitability for edge deployment of compact language models where both metrics are critical. Fig. 9(c) shows the chosen hardware configurations occupy only 18.4 to 103.6mm2, which aligns well with the area constraint of edge devices. It is worth noting that in some cases INT4 results in higher area than INT8. This occurs because the design space exploration selects different optimal configurations under each precision.
+
+Across models, two trends emerge. Smaller SLMs (TinyLLaMA-1.1B, Qwen2.5-0.5B, LLaMA3.2-1B, SmolLM2-1.7B) favor higher tile counts (16-32) with smaller PEs () to exploit tile-level parallelism. In contrast, larger models (SmolLM3-3B, Qwen2.5-3B, and the Qwen3 family) use fewer tiles (8-16) but larger PEs (), scaling at the cluster level. In all cases, the 4096-bit bus is saturated, confirming that decoding is bandwidth-bound.
+
+V-A Comparison with commercial edge GPUs and NPUs
+
+We then compare our design against edge GPUs, focusing on the subset of models for which measurements are available, namely LLaMA3.2-1B, LLaMA3.2-3B, Phi-3.5-mini-3.8B, and SmolLM2-1.7B. As shown in Fig. 10, at INT4, EdgeCIM significantly outperforms Jetson platforms in throughput. For instance, on LLaMA3.2-1B, the proposed accelerator sustains 400 tokens/s, which is about 7.3 higher than Jetson Orin Nano (54.8 tokens/s) and 2.44 higher than Jetson AGX Orin (163.9 tokens/s) [42]. Similarly, for SmolLM2-1.7B, throughput reaches 260.7 tokens/s on our design, representing a 6.36 improvement over Orin Nano (41 tokens/s) and a 4 improvement over Orin Nano Super (64.5 tokens/s). Energy efficiency improvements are even more pronounced, as illustrated in Fig. 10(b). For LLaMA3.2-1B, our design achieves 181 tokens/J, which is nearly 49.59 higher than Jetson Orin Nano (3.65 tokens/J). Across all considered models, the accelerator consistently delivers two to three orders of magnitude higher energy efficiency compared to edge GPUs, underscoring its suitability for energy-constrained edge deployment. Beyond GPUs, Table II reports throughput for LLaMA3.2-3B (INT4) across additional edge platforms, including Qualcomm SA8255P, Snapdragon X Elite, and Snapdragon 8 Elite Mobile [43]. EdgeCIM achieves 139.3 tokens/s, surpassing all platforms in the table. In particular, it provides 9.95 higher throughput than Qualcomm SA8255P, 7.57 higher than Snapdragon X Elite, and 5.93 higher than Snapdragon 8 Elite Mobile.
+
+TABLE I: Comparison of EdgeCIM with SOTA CIM accelerators.
+
+Work
+CIM Technology
+Stage(s) Optimized For
+End-to-End Optimization
+Model Supported
+
+Precision
+
+TOPS/W/mm2
+
+EdgeCIM (this work)
+CMOS
+Projection+Attention+FFN
+✓
+Decoder-only
+
+4/8 bits
+
+7.03
+
+X-Former [13]
+CMOS + ReRAM
+Projection+Attention
+✗
+Encoder-only
+
+8 bits
+
+NA
+
+TranCIM [15]
+CMOS
+Attention+FFN
+✗
+Encoder-only
+
+8+16 bits
+
+3.06
+
+ReTransformer [14]
+ReRAM
+Attention
+✗
+Encoder-decoder
+
+8 bits
+
+NA
+
+iMTransformer [44]
+CMOS + FeFET
+Attention
+✗
+Encoder-decoder
+
+8 bits
+
+1.64
+
+For : , , , , , .
+
+X-Former reports only 467.68 GOPS/W; 
+ReTransformer reports only 13440 GOPS/W.
+
+TABLE II: Throughput of LLaMA3.2-3B (INT4) on edge.
+
+Platform
+Throughput (Tokens/s)
+
+Jetson Orin Nano (Original)
+27.7
+
+Jetson Orin Nano Super
+43.07
+
+Jetson AGX Orin
+80.4
+
+Qualcomm SA8255P
+14
+
+Snapdragon X Elite
+18.4
+
+Snapdragon 8 Elite Mobile
+23.5
+
+EdgeCIM (this work)
+139.3
+
+V-B Comparison with CIM-based accelerators
+
+We next compare EdgeCIM against prior CIM-based accelerators. Existing CIM accelerators target GEMM-dominated kernels, such as those in encoder-style models, rather than the GEMV-heavy decoding pipeline. X-Former [13] uses ReRAM crossbars with CMOS logic to accelerate projection and attention kernels, but is evaluated only on encoder-style models such as BERT. TranCIM [15] employs a digital bitline-transpose CIM macro with reconfigurable parallel/pipeline modes (for attention/FFN respectively) and a sparse attention scheduler, yet its efficiency gains are limited to encoder prefill (matrix-matrix multiplications). ReTransformer [14] and iMTransformer [44] similarly focus on scaled dot-product attention in encoder-decoder settings using ReRAM and CMOS+FeFET arrays, without distinguishing prefill from decoding or optimizing the decode stage. These works emphasize isolated attention kernel, without tackling the end-to-end optimization needed for decoder-only LMs. None of these works consider the edge perspective, where the decode stage dominates runtime and efficiency hinges on tightly co-optimizing projections, attention, feed-forward layers, and GEMV operations. In contrast, EdgeCIM is the first to directly target decoder-only SLMs under edge constraints. Moreover, it optimizes for the entire autoregressive decoding pipeline: Projection, Attention, Linear, and FFN, by utilizing DSE for all the stages. The comparison in Table I highlights this distinction, showing that EdgeCIM uniquely addresses the architectural and system-level requirements of edge-scale decoder-only inference. While TranCIM and iMTransformer achieve only 3.06 and 1.64 peak TOPS/W/mm2 respectively, EdgeCIM reaches 7.03 TOPS/W/mm2, delivering substantially higher normalized efficiency while supporting full end-to-end decoding of modern SLMs, unlike prior CIM accelerators. This improvement is enabled by our DSE framework, which identifies the most effective hardware configuration, rather than relying on fixed architectures as in prior work.
+
+VI Conclusion
+
+In this work, we presented EdgeCIM, a hardware-software co-design framework for accelerating decoder-only inference of SLMs on edge devices. The framework integrates a genetic algorithm-based optimization process with an analytical simulator to explore the CIM hardware design space and identify optimal configurations. At the architectural level, EdgeCIM employs a tiled hierarchy of digital SRAM-based CIM macros and introduces an active-tile pipelined mapping strategy to optimize performance. Under INT4 precision, the accelerator sustains an average of 336.4 tokens/s and 173 tokens/J across multiple SLM benchmarks, confirming its ability to balance high performance with energy efficiency under edge constraints.
+
+References
+
+[1]
+T. B. Brown, B. Mann, N. Ryder, M. Subbiah, et al. (2020)
+
+Language models are few-shot learners.
+
+Advances in Neural Information Processing Systems 33, pp. 1877–1901.
+
+Cited by: §I.
+
+[2]
+J. Devlin, M. Chang, K. Lee, and K. Toutanova (2019)
+
+BERT: pre-training of deep bidirectional transformers for language understanding.
+
+In NAACL-HLT,
+
+pp. 4171–4186.
+
+Cited by: §I.
+
+[3]
+A. Vaswani, N. Shazeer, N. Parmar, et al. (2017)
+
+Attention is all you need.
+
+In Advances in Neural Information Processing Systems,
+
+pp. 5998–6008.
+
+Cited by: §I.
+
+[4]
+N. P. Jouppi, C. Young, N. Patil, D. Patterson, G. Agrawal, R. Bajwa, S. Bates, S. Bhatia, N. Boden, A. Borchers, et al. (2017)
+
+In-datacenter performance analysis of a tensor processing unit.
+
+In Proceedings of the 44th annual international symposium on computer architecture,
+
+pp. 1–12.
+
+Cited by: §I.
+
+[5]
+T. Tambe A. Haj-Ali et al. (2021)
+
+EdgeBERT: sentence-level energy optimizations for latency-aware multi-task nlp inference.
+
+In MICRO,
+
+pp. 830–844.
+
+Cited by: §I.
+
+[6]
+G. Gerganov and contributors (2023)
+
+Llama.cpp: a fast inference of llama models.
+
+Note: https://github.com/ggerganov/llama.cpp
+
+Cited by: §I,
+§I.
+
+[7]
+A. Radford, K. Narasimhan, T. Salimans, I. Sutskever, et al. (2018)
+
+Improving language understanding by generative pre-training.
+
+Cited by: §I.
+
+[8]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al. (2023)
+
+Llama: open and efficient foundation language models.
+
+arXiv preprint arXiv:2302.13971.
+
+Cited by: §I.
+
+[9]
+N. Verma, A. Shafiee, and et al. (2019)
+
+In-memory computing: advances and prospects.
+
+IEEE Solid-State Circuits Magazine 11 (3), pp. 43–55.
+
+Cited by: §I.
+
+[10]
+A. Shafiee, A. Nag, N. Muralimanohar, R. Balasubramonian, J. P. Strachan, M. Hu, R. S. Williams, and V. Srikumar (2016)
+
+ISAAC: a convolutional neural network accelerator with in-situ analog arithmetic in crossbars.
+
+ACM SIGARCH Computer Architecture News 44 (3), pp. 14–26.
+
+Cited by: §I,
+§III-B.
+
+[11]
+M. Rakka, R. Karami, A. M. Eltawil, M. E. Fouda, and F. Kurdahi (2024)
+
+Bf-imna: a bit fluid in-memory neural architecture for neural network acceleration.
+
+arXiv preprint arXiv:2411.01417.
+
+Cited by: §I.
+
+[12]
+L. Song, X. Qian, H. Li, and Y. Chen (2017)
+
+Pipelayer: a pipelined reram-based accelerator for deep learning.
+
+In 2017 IEEE international symposium on high performance computer architecture (HPCA),
+
+pp. 541–552.
+
+Cited by: §I.
+
+[13]
+S. Sridharan, J. R. Stevens, K. Roy, and A. Raghunathan (2023)
+
+X-former: in-memory acceleration of transformers.
+
+IEEE Transactions on VLSI Systems 31 (8), pp. 1223–1233.
+
+Cited by: §I,
+§V-B,
+TABLE I.
+
+[14]
+X. Yang, B. Yan, H. Li, and Y. Chen (2020)
+
+ReTransformer: reram-based processing-in-memory architecture for transformer acceleration.
+
+In Proceedings of the 39th International Conference on Computer-Aided Design,
+
+pp. 1–9.
+
+Cited by: §I,
+§V-B,
+TABLE I.
+
+[15]
+F. Tu, Z. Wu, Y. Wang, L. Liang, L. Liu, Y. Ding, L. Liu, S. Wei, Y. Xie, and S. Yin (2023)
+
+TranCIM: full-digital bitline-transpose cim-based sparse transformer accelerator with pipeline/parallel reconfigurable modes.
+
+IEEE Journal of Solid-State Circuits 58 (6), pp. 1798–1809.
+
+Cited by: §I,
+§V-B,
+TABLE I.
+
+[16]
+Z. Lu, X. Li, D. Cai, R. Yi, F. Liu, X. Zhang, N. D. Lane, and M. Xu (2024)
+
+Small language models: survey, measurements, and insights.
+
+arXiv preprint arXiv:2409.15790.
+
+Cited by: §I.
+
+[17]
+Y. Kim and et al. (2019)
+
+Efficient inference for autoregressive models with dynamic batching.
+
+arXiv preprint arXiv:1909.01953.
+
+Cited by: §II-A.
+
+[18]
+J. Hung, Y. Huang, S. Huang, F. Chang, T. Wen, C. Su, W. Khwa, C. Lo, R. Liu, C. Hsieh, et al. (2022)
+
+An 8-mb dc-current-free binary-to-8b precision reram nonvolatile computing-in-memory macro using time-space-readout with 1286.4-21.6 tops/w for edge-ai devices.
+
+In 2022 IEEE International Solid-State Circuits Conference (ISSCC),
+
+Vol. 65.
+
+Cited by: §II-B.
+
+[19]
+C. Xue, J. Hung, H. Kao, Y. Huang, S. Huang, F. Chang, P. Chen, T. Liu, C. Jhang, C. Su, et al. (2021)
+
+16.1 a 22nm 4mb 8b-precision reram computing-in-memory macro with 11.91 to 195.7 tops/w for tiny ai edge devices.
+
+In 2021 IEEE International Solid-State Circuits Conference (ISSCC),
+
+Vol. 64, pp. 245–247.
+
+Cited by: §II-B.
+
+[20]
+Y. Chiu, C. Yang, S. Teng, H. Huang, F. Chang, Y. Wu, Y. Chien, F. Hsieh, C. Li, G. Lin, et al. (2022)
+
+A 22nm 4mb stt-mram data-encrypted near-memory computation macro with a 192gb/s read-and-decryption bandwidth and 25.1-55.1 tops/w 8b mac for ai operations.
+
+In 2022 IEEE International Solid-State Circuits Conference (ISSCC),
+
+Vol. 65, pp. 178–180.
+
+Cited by: §II-B.
+
+[21]
+L. Liu, L. Tan, J. Gan, B. Pan, J. Zhou, and Z. Li (2023)
+
+MDCIM: mram-based digital computing-in-memory macro for floating-point computation with high energy efficiency and low area overhead.
+
+Applied Sciences 13 (21), pp. 11914.
+
+Cited by: §II-B.
+
+[22]
+J. Bazzi, R. Jamil, D. ElHajj, R. Kanj, M. E. Fouda, and A. Eltawil (2024)
+
+Reconfigurable precision sram-based analog in-memory-compute macro design.
+
+In 2024 IEEE International Symposium on Circuits and Systems (ISCAS),
+
+pp. 1–5.
+
+Cited by: §II-B.
+
+[23]
+F. Tu, Y. Wang, Z. Wu, L. Liang, Y. Ding, B. Kim, L. Liu, S. Wei, Y. Xie, and S. Yin (2022)
+
+ReDCIM: reconfigurable digital computing-in-memory processor with unified fp/int pipeline for cloud ai acceleration.
+
+IEEE Journal of Solid-State Circuits 58 (1), pp. 243–255.
+
+Cited by: §II-B.
+
+[24]
+J. Bazzi, M. E. Fouda, and A. Eltawil (2025)
+
+Reconfigurable precision int4-8/fp8 digital compute-in-memory macro for ai acceleration.
+
+In 2025 IEEE International Symposium on Circuits and Systems (ISCAS),
+
+pp. 1–5.
+
+Cited by: §II-B.
+
+[25]
+Y. Chih, P. Lee, H. Fujiwara, Y. Shih, C. Lee, R. Naous, Y. Chen, C. Lo, C. Lu, H. Mori, et al. (2021)
+
+16.4 an 89tops/w and 16.3 tops/mm 2 all-digital sram-based full-precision compute-in memory macro in 22nm for machine-learning edge applications.
+
+In 2021 IEEE International Solid-State Circuits Conference (ISSCC),
+
+Vol. 64, pp. 252–254.
+
+Cited by: §II-B,
+§III-B.
+
+[26]
+Y. Lin Y. Li et al. (2020)
+
+Towards fully 8-bit integer inference for the transformer model.
+
+IJCAI, pp. 3759–3765.
+
+Cited by: §II-B.
+
+[27]
+E. Frantar S. Ashkboos et al. (2022)
+
+GPTQ: accurate post-training quantization for generative pre-trained transformers.
+
+arXiv preprint arXiv:2210.17323.
+
+Cited by: §II-B.
+
+[28]
+Y. Wang S. Liu et al. (2023)
+
+QAT: quantization-aware training for efficient transformer inference.
+
+IEEE Transactions on Neural Networks and Learning Systems.
+
+Cited by: §II-B.
+
+[29]
+A. Ankit, I. E. Hajj, S. R. Chalamalasetti, G. Ndu, M. Foltin, R. S. Williams, P. Faraboschi, W. W. Hwu, J. P. Strachan, K. Roy, et al. (2019)
+
+PUMA: a programmable ultra-efficient memristor-based accelerator for machine learning inference.
+
+In Proceedings of the Twenty-Fourth International Conference on Architectural Support for Programming Languages and Operating Systems,
+
+pp. 715–731.
+
+Cited by: §III-B.
+
+[30]
+D. E. Kim, T. Sharma, and K. Roy (2025)
+
+HASTILY: hardware-software co-design for accelerating transformer inference leveraging compute-in-memory.
+
+IEEE Transactions on Circuits and Systems for Artificial Intelligence.
+
+Cited by: §III-B.
+
+[31]
+S. Kim, C. Hooper, T. Wattanawong, M. Kang, R. Yan, H. Genc, G. Dinh, Q. Huang, K. Keutzer, M. W. Mahoney, et al. (2023)
+
+Full stack optimization of transformer inference: a survey.
+
+arXiv preprint arXiv:2302.14017.
+
+Cited by: §III-C.
+
+[32]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+
+Flashattention: fast and memory-efficient exact attention with io-awareness.
+
+Advances in neural information processing systems 35, pp. 16344–16359.
+
+Cited by: §III-C2,
+§III-C.
+
+[33]
+N. Muralimanohar, R. Balasubramonian, and N. Jouppi (2007)
+
+Optimizing nuca organizations and wiring alternatives for large caches with cacti 6.0.
+
+In 40th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO 2007),
+
+pp. 3–14.
+
+Cited by: §IV.
+
+[34]
+W. J. Dally, Y. Turakhia, and S. Han (2020)
+
+Domain-specific hardware accelerators.
+
+Communications of the ACM 63 (7), pp. 48–57.
+
+Cited by: §IV.
+
+[35]
+P. Zhang, G. Zeng, T. Wang, and W. Lu (2024)
+
+Tinyllama: an open-source small language model.
+
+arXiv preprint arXiv:2401.02385.
+
+Cited by: §V.
+
+[36]
+Meta AI (2024)
+
+Llama 3.2: revolutionizing edge ai and vision with open, customizable models.
+
+Note: https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/
+
+Cited by: §V.
+
+[37]
+M. Abdin, J. Aneja, H. Awadalla, A. Awadallah, A. Awan, and et al. (2024)
+
+Phi-3 technical report: a highly capable language model locally on your phone.
+
+arXiv preprint arXiv:2404.14219.
+
+Cited by: §V.
+
+[38]
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, and et al. (2025)
+
+Qwen2.5 technical report.
+
+arXiv preprint arXiv:2412.15115.
+
+Cited by: §V.
+
+[39]
+L. B. Allal, A. Lozhkov, E. Bakouch, G. M. Blázquez, G. Penedo, L. Tunstall, A. Marafioti, H. Kydlíček, A. P. Lajarín, V. Srivastav, et al. (2025)
+
+SmolLM2: when smol goes big–data-centric training of a small language model.
+
+arXiv preprint arXiv:2502.02737.
+
+Cited by: §V.
+
+[40]
+E. Bakouch, L. B. Allal, A. Lozhkov, and et al. (2025)
+
+SmolLM3: smol, multilingual, long-context reasoner.
+
+Note: https://huggingface.co/blog/smollm3
+
+Cited by: §V.
+
+[41]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, and et al. (2025)
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §V.
+
+[42]
+NVIDIA
+
+NVIDIA jetson ai lab.
+
+Note: https://www.jetson-ai-lab.com/benchmarks.html
+
+Cited by: §V-A.
+
+[43]
+Qualcomm AI Hub
+
+Llama-v3.2-3B-Instruct.
+
+Note: https://aihub.qualcomm.com/models/llama_v3_2_3b_instruct?searchTerm=llama-v3
+
+Cited by: §V-A.
+
+[44]
+A. F. Laguna, M. M. Sharifi, A. Kazemi, X. Yin, M. Niemier, and X. S. Hu (2022)
+
+Hardware-software co-design of an in-memory transformer network accelerator.
+
+Frontiers in Electronics 3, pp. 847069.
+
+Cited by: §V-B,
+TABLE I.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -107,6 +107,49 @@ EvalSpec =
 
 如果目标没有被写清楚，团队往往会优化最容易计算的 proxy。模型变得更会迎合 judge，却未必更可靠；服务提高吞吐，却可能让 tail latency 和任务完成率下降。这不是模型“作弊”，而是控制系统给出了错误目标。
 
+### Continual Update 需要同步推进 Calibration State
+
+只在模型 accuracy 明显下降后重新评估，在更新稀少、分布稳定时成本最低；continual fine-tuning 会持续改变 score distribution，使旧 threshold 或 conformal set 的 coverage 在 accuracy 尚未报警时已经失效。更完整的 release identity 因而同时版本化 model artifact 与 task-specific calibration artifact，并在每次更新后执行小规模 calibration replay：
+
+```text
+model update
+-> task-specific calibration replay
+-> coverage / calibration evidence
+-> accuracy gate AND coverage gate
+-> promote model + calibration artifact
+   or freeze and rollback together
+```
+
+这把 uncertainty 从一次性 benchmark 变成 release state，却依赖 calibration sample 与部署分布的 exchangeability。现有结果覆盖三类 model family、八个以 classification/MCQ 为主的任务序列；`m=200`、低于 1% replay 的结论不能外推到开放式 generation，后者在论文中仍属探索。Exchangeability 或 coverage Gate 失败时应冻结 promotion，回退上一组 model/calibration artifacts；accuracy 与 coverage 两条 Gate 必须并存，不能相互抵消。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23987:start -->
+模型更新与 calibration 更新属于同一个 release transaction，但 accuracy evidence 与 coverage evidence 保持独立。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-23987:end -->
+
+### Stream Boundary 也是 Evaluation State
+
+连续数据流必须切成 task 才能复用传统 continual-learning benchmark；流的语义阶段清晰且边界稳定时，固定切分是最便宜的旧方案。真实 stream 的边界可有多种合理解释时，taskification 会改变每段的 plasticity/stability 压力，继而改变方法排名。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-21930:start -->
+EvalSpec 因而要版本化原始 stream identity、时间边界与 perturbation policy，并在训练前用 boundary-profile sensitivity 一类诊断检查小幅边界移动是否显著改变诱导出的任务结构。该诊断只暴露 benchmark 对切分的敏感性，不会替代训练后评估，也不会给出正确边界。它增加多切分计算与解释成本；当业务事件天然定义 task、边界由外部协议固定时，单一切分仍成立。作者结果只覆盖其 taskification family 与数据集，不能把敏感度阈值外推为通用 Gate。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-21930:end -->
+
+### Model Self-report 不能拥有输入来源真值
+
+多模态输入的来源由 ingestion path、artifact metadata 和 transform lineage 决定。若 evaluator 只问模型“这条信息来自图像还是文本”，模型可能把提示词中的 `image` 与语义或句法 cue 绑定，而不是读取真实 modality provenance。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22038:start -->
+因此 source-modality monitoring 应同时保留 authoritative provenance、受控 cue intervention 与模型 self-report：前者是真值 owner，后两者只是测量模型是否正确绑定来源的 sensor。这样能发现答案正确但归因错误的系统，却需要可追踪的 preprocessing lineage 和 matched counterfactuals；拿不到权威来源时只能报告 behavioral association。作者对 11 个 VLM 的 target-modality retrieval 结果证明该 failure mode 可被测量，不证明 self-report 可替代 provenance，也不覆盖任意 modality 与生产输入链。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22038:end -->
+
+### Observed Capability 与 Elicitation Ceiling 必须分开
+
+固定 prompt 下的最高分最容易比较，但弱 supervisor 无法可靠验证全部输出时，低分可能来自能力不足、策略性隐藏或 elicitation 失败。Evaluation 需要把模型当前自然行为、给定监督预算可诱发的最好行为，以及 supervisor/evaluator 的识别上限拆成不同证据对象。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22082:start -->
+对同一 model revision，可记录 zero-shot baseline、弱监督 SFT/RL 后的可观察提升、监督来源及其可验证范围；elicitation training 只能作为 probe，不能反向证明内部真实最大能力或“欺骗已被解决”。它换来更强的 capability lower bound，却增加训练成本、distribution shift 和对 model-organism 假设的依赖。作者在人工训练为 sandbagging 的模型及数学、科学、代码任务中观察到弱监督可恢复部分表现，不证明真实部署模型普遍可被同样方法揭示；监督不可靠或风险过高时仍需独立 verifier、权限收缩与保守 release Gate。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22082:end -->
+
 ## 第一个不变量：评估声明必须绑定完整对象
 
 AI System 的行为不只由 weights 决定。一次可复现的评估至少要绑定：
@@ -188,6 +231,14 @@ R_P(f)=\mathbb{E}_{(x,y)\sim P}[\ell(f(x),y)]
 3. scorer 的误差与业务目标之间存在可接受关系。
 
 数据量增大只会降低部分 sampling uncertainty，不能修复错误分布或错误 scorer。一百万条不相关样本不会比一千条关键业务样本更有决定力。
+
+### 从“已见切片均值”到 Blind-spot Mass
+
+平均值和已知 slices 能回答已采样区域中的表现，却不能说明 heavy-tailed operational state 还有多少概率质量落在未见或低支持状态。可以在明确的 state partition 与 support threshold 下，用 Good-Turing 类估计构造 blind-spot mass，并把总体表现拆成 supported component 与 blind component；release owner 同时保存阈值、样本分布、估计不确定性和处置，而不是把一个较高平均分当成覆盖证明。
+
+这把“也许还有长尾”变成可讨论的 coverage-risk signal，也带来 threshold sensitivity、方差和独立同分布假设。它估计的是当前抽样合同下的未充分支持质量，不是未知错误率或生产风险上界。分布漂移、样本依赖或 state definition 不稳定时，应回退分层抽样、定向补测、online canary 与保守 release gate。
+
+<!-- source-family:SF-2026-ARXIV-2604-05057 -->
 
 ## 平均值、切片与不确定性
 
@@ -415,6 +466,28 @@ In-world evaluator 可以通过原生 dialogue/action 创建 criterion-relevant 
 
 主动 probe 提高稀有行为覆盖，却可能诱发本不会出现的 failure、干扰任务、泄漏测试或造成副作用；它只能在 sandbox/
 shadow 环境和预算内运行，也不能自动 repair 或 commit。可枚举的 deterministic condition 仍应直接测试。
+
+### 验证“没有遗漏”必须先建立应出现事实的 Inventory
+
+Judge 擅长确认一段输出中已经出现的事实、引用或违规项，因为候选对象就在输入里；“没有遗漏”却要求先知道哪些
+事实本应出现。直接问同一个 judge “这份摘要完整吗”会把开放世界问题伪装成二分类，并系统性漏掉未被文本提醒的
+缺项。更强的 evaluation contract 先从权威来源建立 expected-fact inventory，再逐项检查输出中的 support、coverage
+与 exclusion boundary：
+
+```text
+authoritative source / task specification
+→ enumerate expected atomic facts and required exceptions
+→ align output claims to inventory
+→ classify present / contradicted / omitted / not-applicable
+→ aggregate with criticality and dependency, not naive probability multiplication
+```
+
+Inventory 构建本身仍可能漏项，且 clinical、legal 或开放研究任务常存在合理选择与粒度争议；因此它必须绑定来源
+revision、extractor/rubric、人工校准切片和 unknown 状态。它以额外抽取、对齐与 false-omission 成本换取对缺失信息的
+可见性，低风险短文本仍可使用普通 presence checks。Omission-blindness 的配对临床笔记实验支持“presence 与 absence
+不是同一判断任务”以及先枚举再核对的恢复方向，不证明一个模型 judge 或这套 inventory 能覆盖所有领域事实。
+
+<!-- source-family:SF-2026-ARXIV-2608-31016 -->
 
 ### Living-world Evaluation：外生变化必须进入 Run Identity
 
@@ -2368,6 +2441,14 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 它的长期不变量是：完整 subject identity、明确分布、可审计 scorer、per-example evidence、切片与不确定性、分离的 decision policy，以及从生产反馈回到新版本的受控闭环。下一章进入 Monitoring，讨论平台怎样以受控成本持续获得 observed state，而不把“发生了什么”误当成“是否足够好”。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-21930`（Status: Experimental）：exact-v1 支持 temporal taskification、profile distance 与训练前 boundary sensitivity 诊断；不证明存在唯一正确切分或通用阈值。https://arxiv.org/abs/2604.21930v1
+- `SF-2026-ARXIV-2604-22038`（Status: Experimental）：exact-v1 在 11 个 VLM 的 target-modality retrieval 中支持语义/句法 cue 会影响 source binding；模型自述不是 authoritative provenance。https://arxiv.org/abs/2604.22038v1
+- `SF-2026-ARXIV-2604-22082`（Status: Experimental）：exact-v1 支持在作者构造的 sandbagging model organisms 上用弱监督 SFT/RL 进行 elicitation probe；不证明真实欺骗模型、监督可扩展性或生产 oversight 已解决。https://arxiv.org/abs/2604.22082v1
+
+- `SF-2026-ARXIV-2604-23987`（Status: Experimental）：exact-v1 支持 continual fine-tuning 后的 task-specific calibration replay，以及作者三类模型、八个主要为 classification/MCQ 的序列实验；`m=200`、低 replay 比例依赖 exchangeability，generation 结论仍是探索性。https://arxiv.org/abs/2604.23987v1
+
+- **Blind-Spot Mass（arXiv:2604.05057v1；Status: Experimental）**：exact-v1 支持 Good-Turing coverage mass 与 supported/blind decomposition 的理论框架；它不把估计升级为生产错误率或风险上界，且依赖明确分布、support threshold 与抽样假设。https://arxiv.org/abs/2604.05057v1
 
 - Online Agent-as-a-Judge（arXiv:2606.08200v1；Status: Experimental）：用于区分 passive scoring 与 in-world coverage-seeking intervention；evaluator action 改变 trajectory，不能当作自然发生率或生产 repair authority。https://arxiv.org/html/2606.08200v1
 

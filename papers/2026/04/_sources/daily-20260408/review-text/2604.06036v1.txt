@@ -1,0 +1,1623 @@
+CoStream: Codec-Guided Resource-Efficient System for Video Streaming Analytics
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background and Motivation
+
+2.1 Video Streaming Analytics Systems
+
+2.2 Can Today’s Systems Keep up with the Load?
+
+2.3 Limitations of the Existing Systems
+
+2.4 Opportunities and Challenges
+
+2.4.1 Unlocking Optimization Opportunities with Video Codecs
+
+2.4.2 Challenges
+
+3 System Design
+
+3.1 System Overview
+
+3.2 Hardware-Accelerated Codec Processing
+
+3.3 Motion Vector-Guided Token Pruning
+
+3.3.1 Motion Vector Analysis.
+
+3.3.2 Token Pruning.
+
+3.4 Selective KVC Refresh
+
+3.4.1 Critical-Token KVC Refresh.
+
+3.4.2 Position-Consistent KVC Reuse.
+
+4 Implementation Details
+
+5 Methodology
+
+6 Evaluation
+
+6.1 End-to-End Performance
+
+6.1.1 Latency Speedup.
+
+6.1.2 Accuracy.
+
+6.1.3 Resource Savings.
+
+6.1.4 Performance Across Motion Levels.
+
+6.2 Per-Component Efficiency Analysis
+
+6.3 Sensitivity of Key Parameters
+
+6.3.1 Stride Ratio.
+
+6.3.2 MV Threshold
+
+6.3.3 GOP Size
+
+6.4 System Overhead
+
+6.5 Scope, Applicability, and Portability
+
+7 Related Work
+
+8 Conclusion
+
+Acknowledgements
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.06036v1 [cs.DC] 07 Apr 2026
+
+CoStream: Codec-Guided Resource-Efficient System for Video Streaming Analytics
+
+Yulin Zou
+
+Affiliation: Nanyang Technological University, Singapore
+
+email: yulin001@e.ntu.edu.sg
+
+,
+Yan Chen
+
+Affiliation: Beihang University, China
+
+email: chenyan2022@buaa.edu.cn
+
+,
+Wenyan Chen
+
+Affiliation: Nanyang Technological University, Singapore
+
+email: wenyan.chen@ntu.edu.sg
+
+,
+JooYoung Park
+
+Affiliation: Nanyang Technological University, Singapore
+
+email: jooyoung001@e.ntu.edu.sg
+
+,
+Shivaraman Nitin
+
+Affiliation: Institute of High Performance Computing, Singapore
+
+email: shivaran@a-star.edu.sg
+
+,
+Luo Tao
+
+Affiliation: Institute of High Performance Computing, Singapore
+
+email: luotao@a-star.edu.sg
+
+,
+Francisco Romero
+
+Affiliation: Georgia Institute of Technology, USA
+
+email: faromero@gatech.edu
+
+and
+Dmitrii Ustiugov
+
+Affiliation: Nanyang Technological University, Singapore
+
+email: dmitrii.ustiugov@ntu.edu.sg
+
+Abstract.
+
+Video streaming analytics is a crucial workload for vision-language model serving, but the high cost of multimodal inference limits scalability. Prior systems reduce inference cost by exploiting temporal and spatial redundancy in video streams, but they target either the vision transformer (ViT) or the LLM with a limited view, leaving end-to-end opportunities untapped. Moreover, existing methods incur significant overhead to identify redundancy, either through offline profiling and training or costly online computation, making them ill-suited for dynamic real-time streams.
+
+We present CoStream, a codec-guided streaming video analytics system, built on a key observation that video codecs already extract the temporal and spatial structure of each stream as a byproduct of compression. CoStream treats this codec metadata as a low-cost runtime signal to unify optimization across video decoding, visual processing, and LLM prefilling, with transmission reduction as an inherent benefit of operating directly on compressed bitstreams. This drives codec-guided patch pruning before ViT encoding and selective key-value cache refresh during LLM prefilling, both of which are fully online and do not require offline training. Experiments show that CoStream achieves an improvement in throughput of up to 3, and a reduction of up to 87% in GPU compute over state-of-the-art baselines, maintaining competitive accuracy with only 08% F1 drop.
+
+1. Introduction
+
+Video streaming analytics (Liu et al., 2024b; Chen et al., 2025a; Di et al., 2025; Niu et al., 2025) has become increasingly indispensable across diverse domains, including surveillance (Zanella et al., 2024; He et al., 2025), traffic control (Zhou et al., 2026; Sharma et al., 2026), retail operations (Ou et al., 2025; Yao et al., 2026), and industrial automation (Ribeiro et al., 2025; Kurrey et al., 2025).
+Driving this trend is the explosive growth of video sensing infrastructure: surveillance alone accounts for over 1.1 billion cameras deployed globally, with the installed base growing by more than 38% between 2020 and 2024 (Persistence Market Research, 2024; Market Reports World, 2026). The resulting volume of video data far exceeds what manual monitoring can handle, requiring models capable of reasoning across long, multimodal contexts. Traditional CNN-based approaches are inherently limited in capturing long-range temporal dependencies (Carreira and Zisserman, 2017; Wang et al., 2016; Bertasius et al., 2021), while recent vision-language models (VLMs) (Li et al., 2024a; Team, 2025a; Chen et al., 2023; Wu et al., 2024b) have demonstrated strong potential for video understanding, making them a natural foundation for these workloads.
+
+Deploying VLMs for continuous video analytics, however, is computationally demanding. A typical VLM-based pipeline consists of three stages: (1) Video streams are transmitted from edge cameras to a cloud server, where they are decoded into raw frames by video codecs. (2) A vision transformer (ViT) encoder partitions each frame into fixed-size spatial patches, encodes each patch into a visual token, and projects the resulting tokens into the LLM’s embedding space. (3) The LLM processes these visual tokens together with a text query to produce the final inference output. To preserve temporal context in continuous streams, the pipeline operates over a sliding window of frames that advances by a small stride at each step (Li et al., 2025; Fish and Gilbert, 2025; Zanella et al., 2024; Ye et al., 2025b). While this pipeline delivers powerful multimodal reasoning, it places substantial demands on GPU resources.
+
+This high per-stream cost multiplies with the sheer number of deployed cameras. Across major cities, the number of CCTVs exceeds available GPUs by 825 (Comparitech, 2025; NVIDIA, 2025b; NVIDIA, 2025a), creating a fundamental throughput bottleneck: the available GPU capacity is insufficient to sustain real-time processing across all concurrent streams. To pinpoint the performance bottlenecks in the VLM pipeline, we perform a latency breakdown analysis of video analytics workloads in § 2.2, which reveals that transmission, visual processing, and LLM prefilling account for the majority of the end-to-end latency. A key underlying driver is the substantial spatiotemporal redundancy in video streams: consecutive frames share most of their content, and the overlapping sliding windows cause the pipeline to repeatedly compute largely identical visual context.
+
+While recent systems have explored techniques to reduce redundant computation in the ViT encoder or the LLM decoder (Song et al., 2024; Hwang et al., 2025; Qin et al., 2025b; Wang et al., 2025), they suffer from two limitations. First, they optimize individual pipeline components in isolation, foregoing the holistic end-to-end gains that a unified approach could achieve. Second, several rely on expensive offline profiling (Hwang et al., 2025; Qin et al., 2025b), producing optimization policies that cannot adapt to the continuously varying content and motion patterns of live streams. Both limitations leave end-to-end efficiency gains largely unrealized.
+
+Video codecs, designed for efficient video storage and transmission (Wiegand et al., 2003; Richardson, 2024), capture this redundancy precisely as a byproduct of compression. Through inter-frame prediction, they store only motion vectors and residuals rather than full frames, as consecutive frames typically share over 95% of their pixel content. Prior video analytics systems have exploited codec signals only for preprocessing or indexing (Hwang et al., 2022; Agarwal and Netravali, 2023; Ye et al., 2025a), yet VLM serving systems universally assume decoded frame input, leaving codec metadata entirely unexploited. These same signals offer an opportunity to guide both visual processing and LLM prefilling stages online and without offline training, but doing so is fundamentally challenging. First, codec primitives are defined in the compressed domain (e.g., macroblocks, motion vectors, and residual blocks), while VLMs operate on patches, tokens, and semantic representations; bridging this gap requires converting compressed-domain signals into optimization decisions without compromising accuracy. Second, Key-Value Cache (KVC) retention in LLM prefilling is inherently semantics-sensitive: as the sliding window advances, overlapping content may remain visually unchanged, yet its contextual role can shift, making naive state reuse semantically invalid. A practical system must therefore determine when state reuse preserves semantic fidelity and when refresh and correction are necessary, while keeping decision overhead low enough to preserve the latency gains.
+
+We present CoStream, a Codec-guided Streaming video analytics system built on a key insight: codec metadata is not merely a byproduct of compression, but a low-cost runtime signal that can be exploited to co-design video decoding, visual processing, and LLM prefilling around a single unified metadata extraction pass.
+First, it integrates hardware-accelerated codec processing with single-pass decoding to eliminate redundant decoding across overlapping windows while extracting compressed-domain metadata at runtime. Second, it adopts a codec-guided token-pruning policy to identify motion-dynamic regions and prune redundant patches before ViT encoding. Third, CoStream leverages the same metadata to drive selective KVC refresh in the LLM stage, refreshing only drift-sensitive states while retaining the remaining cache entries with position correction.
+Together, these techniques systematically reduce redundant computation across visual processing and LLM prefilling while preserving temporal semantic consistency. We implement CoStream on top of vLLM (Kwon et al., 2023) and evaluate it on two representative VLMs, showing up to latency reduction (equivalently, throughput improvement) and up to 87% GPU compute reduction over state-of-the-art baselines such as Déjà Vu (Hwang et al., 2025) and VLCache (Qin et al., 2025b), with only 08% F1 drop across the two evaluated VLMs. Our main contributions are as follows:
+
+•
+
+We characterize the bottlenecks of streaming VLM serving and identify the opportunities and challenges of exploiting codec metadata holistically across transmission, visual processing, and LLM prefilling.
+
+•
+
+We present CoStream, a codec-guided streaming video analytics system that jointly optimizes all three stages via two inference optimizations: patch pruning before ViT encoding and selective KVC refresh, both driven by codec signals extracted once at video decode time, with transmission reduction as an inherent benefit.
+
+•
+
+We implement CoStream on top of commodity video decoding hardware and the production vLLM serving framework, showing that CoStream reduces the end-to-end latency by up to 3 across multiple VLMs while preserving F1 within 08% drop of the baselines.
+
+2. Background and Motivation
+
+We begin with an overview of modern video streaming applications and their supporting systems. We then identify the challenges caused by growing streaming demands under limited compute resources. Finally, we highlight the opportunity to improve scalability and reduce latency by integrating codec metadata into the inference serving pipeline.
+
+Figure 1. End-to-end serving pipeline for video streaming analytics: Video compression, bitstream transmission, decompression, preprocessing, and VLM inference (vision feature extractor (ViT) and semantic inference engine (LLM)).
+
+2.1. Video Streaming Analytics Systems
+
+A representative video streaming serving pipeline is shown in Fig. 1. Surveillance cameras at the edge compress and transmit video streams over the network to a cloud server, which decodes the bitstream into raw frames. Each frame is preprocessed and partitioned into visual patches, which are fed into a ViT. The resulting patch embeddings are then passed through a projection module to produce a compact sequence of visual tokens. The LLM then fuses these tokens with a text prompt to perform semantic inference and generate a response.
+
+Anomaly detection over live streams is a typical video analytics workload (Li et al., 2020; Wu et al., 2025; Xu et al., 2025a). In a standard deployment, the system continuously analyzes incoming video streams by partitioning them into temporal windows and applying semantic queries to each window. As illustrated in Fig. 1, each segment is processed by a VLM-based pipeline, where the model evaluates a query such as: “Describe the frames and determine if they show any abuse. Start your response with ‘Yes’ or ‘No’.”
+Whenever a window is classified as “Yes”, the system raises an alert for downstream action, thereby reducing the cognitive burden on human operators.
+
+2.2. Can Today’s Systems Keep up with the Load?
+
+Current VLM serving systems are usually executed on high-performance GPU clusters in the cloud, which are shared across many video streams. However, in an urban environment, the number of CCTVs far exceeds the number of available GPUs (Comparitech, 2025; NVIDIA, 2025b; NVIDIA, 2025a), as shown in Fig. 3. For example, even if the city of London used all available GPUs in the area only for surveillance footage analysis, the mismatch would be dramatic: there are around 130k cameras, but only 14k GPUs (Comparitech, 2025; NVIDIA, 2025b; NVIDIA, 2025a).
+This disparity reflects that for city-wide analytics to be viable, each GPU must handle an immense volume of data that far exceeds current hardware capability.
+
+Figure 2. Statistics (Comparitech, 2025; NVIDIA, 2025b; NVIDIA, 2025a) of the imbalance between CCTVs and GPUs in different regions.
+
+Figure 3. Latency breakdown. InternVL3/Qwen3-VL evaluated on 2/4 A100 (40GB) GPUs.
+
+Consider a streaming video analytics system that uses a sliding window to preserve temporal context (Ye et al., 2025b; Zanella et al., 2024; Fish and Gilbert, 2025; Li et al., 2025). The system partitions each stream into windows of size and advances the window by a stride at each step. The stride is the temporal offset between consecutive windows; adjacent windows overlap by . Based on the observation that 90% of urban crime events conclude within 40 s (Yuan et al., 2024), we use a 40 s window in our analysis. We set the stride to 8 s (20% of the window), which provides the best latency-accuracy tradeoff in our sensitivity study (§ 6.3), and adopt a sampling rate of 2 FPS (Hwang et al., 2025).
+Under this configuration, each new 8 s of video triggers a re-process of the previous window’s last 32 s. Consequently, a naive sliding-window design incurs up to the computation of a reuse-aware design that processes only newly arrived content while preserving temporal context.
+
+To ground this demand in real-world performance, our analysis in Fig. 3 shows that serving a single video stream with such a window on two A100 (40GB) GPUs using InternVL3-14B (Chen et al., 2023) incurs a total latency of up to 3.2s. Under these conditions, a single A100 GPU can barely sustain 0.6 streams in real-time (2 GPUs / 3.2s 0.6 streams / GPU). Scaling this to Singapore’s 500,000 CCTVs would theoretically require 800,000 A100 GPUs, which is a staggering 40 the size of the city’s current 20,000-unit GPU pool. This massive hardware requirement highlights a critical VLM serving efficiency opportunity:
+Naive serving strategies redundantly recompute overlapping temporal context across continuous streams. To make large-scale video analytics viable without prohibitive hardware costs, it is imperative to design serving systems that efficiently reuse temporal context and eliminate redundant computation.
+
+Latency breakdown.
+To identify the primary bottlenecks, we profile a representative baseline pipeline in which the client transmits sampled JPEG frames to a vLLM server for VLM inference, at a representative edge uplink rate of 5Mbps (Wu et al., 2024a) using two VLMs: InternVL3-14B (Chen et al., 2023) and Qwen3-VL-32B-Instruct (Team, 2025a). As shown in Fig. 3, end-to-end latency is primarily driven by transmission (up to 28%), visual processing (including preprocessing and ViT encoding, up to 31%), and LLM prefilling (up to 63%). With frames transmitted individually as JPEGs, transmission overhead is significant under limited edge bandwidth. Within visual processing, CPU-bound preprocessing dominates, lacking the parallelism needed to handle continuous frame throughput. The prefill stage is the most expensive: even with InternVL3’s internal 4 spatial compression, each frame requires 256 tokens, injecting 20,480 visual tokens per 40 s window. Because consecutive frames share substantial content and sliding windows overlap heavily, the VLM repeatedly processes largely identical tokens (Hamamci et al., 2025). These observations motivate CoStream, which targets all three bottlenecks through a unified approach that reduces redundancy across transmission, visual processing, and LLM prefilling simultaneously.
+
+Table 1. Comparison with existing VLM optimized systems.
+
+Method
+Optimization Scope
+Deployment Efficiency
+
+ViT
+LLM
+No Train
+Online
+
+Default VLM
+
+Déjà Vu (Hwang et al., 2025)
+
+CMC (Song et al., 2024)
+
+VLCache (Qin et al., 2025b)
+
+CoStream (Ours)
+
+2.3. Limitations of the Existing Systems
+
+To address the above inefficiencies, recent systems have proposed techniques to reduce redundant computation in both the ViT encoder and LLM. However, these approaches exhibit several limitations when applied to streaming video analytics workloads, as summarized in Table 1.
+
+Limitation#1: ViT-centric optimizations ignore the dominant language decoder/prefill bottleneck.
+Most existing systems primarily target the ViT encoder—e.g., by pruning or reusing patches to reduce ViT computation (Hwang et al., 2025), or by leveraging hardware acceleration for faster ViT execution (Song et al., 2024). CMC (Song et al., 2024) accelerates ViT inference via a custom hardware–software co-design that shifts expensive spatiotemporal redundancy detection from the network to the codec, yet it does not address the overlapping redundancy induced by sliding-window inference in the LLM prefill stage. Déjà Vu (Hwang et al., 2025) similarly avoids redundant ViT computation by identifying and reusing similar patches across frames, but leaves LLM prefill and decoding unchanged. Although these techniques can substantially reduce visual-encoder latency, they overlook the language decoder, which our measurements indicate is the dominant end-to-end bottleneck for many VLMs. Consequently, overall latency remains high because LLM prefill costs are not optimized.
+
+Limitation#2: High operational overhead due to training or offline profiling requirements.
+Other researchers rely on heavy offline profiling to define policies that dictate which tokens are reused or pruned.
+This inherently increases deployment and maintenance complexity (Hwang et al., 2025; Xu et al., 2025b; Qin et al., 2025b). For example, Déjà Vu (Hwang et al., 2025) requires additional training to learn patch-reuse policies, incurring extra data and compute costs while potentially degrading robustness under domain shift. Likewise, VLCache (Qin et al., 2025b) relies on offline profiling to determine layer-wise recomputation ratios, and this profiling must be repeated across models, resolutions, and window configurations. Critically, streaming video analytics is inherently non-stationary because motion patterns, scene dynamics, lighting conditions, and event characteristics can change over time, rendering static, offline-derived policies brittle and often necessitating frequent re-training or re-profiling. Such operational overheads hinder practical adoption in real-world deployments that require online adaptability with minimal tuning effort.
+
+Figure 4. Overview of the codec-guided opportunities.
+
+2.4. Opportunities and Challenges
+
+To overcome the above limitations, we seek opportunities for holistic optimization across visual encoding and LLM prefilling, while introducing minimal operational overhead. The key insight is that video streams exhibit substantial temporal redundancy: consecutive frames share much of their content, e.g., static background and predictable camera motion, and overlapping sliding windows cause the pipeline to repeatedly recompute largely identical visual context.
+Yet existing VLM serving systems operate entirely on decoded frames, overlooking the signals that the codec already derives to precisely capture this redundancy and could guide optimization across all stages.
+
+2.4.1. Unlocking Optimization Opportunities with Video Codecs
+
+Video codecs (Richardson, 2024) offer a natural mechanism for addressing the bottlenecks above. As shown in Fig. 4, codecs organize raw video into Groups of Pictures (GOPs) with hierarchical I, P, and B frames. By exploiting spatial and temporal redundancy, this structure sharply reduces data volume and compresses raw video bitrate by orders of magnitude. Prior studies report compression ratios of 100:1270:1 in medical video (Chaabouni et al., 2016) and up to roughly 1600:1 in surveillance-oriented face recognition workloads (Klare and Burge, 2010).
+
+Beyond compression, predictive coding also exposes lightweight metadata, notably motion vectors (MVs) and residuals, that can serve as useful proxies for content changes. Prior work has shown that such signals can help eliminate redundant computation in visual pipelines (Hwang et al., 2025). MVs capture block-level displacement, while residuals quantify the remaining prediction error after motion compensation. By parsing these pre-existing signals at runtime, the system obtains low-overhead guidance for identifying regions that are likely reusable versus those that require recomputation. This creates two key opportunities: reducing redundant visual token computation and enabling downstream reuse across overlapping windows.
+
+Figure 5. CDF of the similar patch ratio per frame across UCF-Crime at different MV thresholds (mv_diff).
+
+Figure 6. SM utilization trend of video stream inference with InternVL3-14B on 2 A100 GPUs of TP=2.
+
+Opportunity#1: Codec-guided patch pruning in the ViT encoder.
+Building on the extracted signals discussed previously, we can aggregate both MVs and residuals into a unified spatial mask. By mapping this mask onto the ViT patch grid, the system can identify patches that are highly likely redundant. Specifically, regions with near-zero MVs and low residuals indicate static or predictable content and can be safely pruned, while regions with large MVs or high residuals signal meaningful updates that require full computation. Since these signals are already available at runtime, the system can estimate temporal redundancy before visual encoding begins with negligible overhead.
+
+To explore this opportunity, we analyze the distribution of MVs across the UCF-Crime dataset (Dawoud et al., 2025), as illustrated in Fig. 6.
+Our analysis reveals that a significant majority of patches exhibit minimal motion. Specifically, across all tested videos, 50% of frames contain patches that are 77%94% similar when evaluated under motion and residual thresholds.
+The high redundancy in streaming video imposes substantial GPU overhead on the ViT encoder. As shown in Fig. 6, even for a single video stream input with a 40-second window at 2 FPS on InternVL3-14B, the average SM utilization across two A100 GPUs reaches 52% and 67%, respectively. This indicates that a large fraction of GPU resources is occupied by redundant computation. Together, these observations show that a large fraction of GPU cycles is spent recomputing visual content that has barely changed between adjacent frames. This directly motivates our codec-guided patch pruning strategy: by using codec metadata to identify and skip redundant patches, the system reclaims wasted compute for regions with meaningful updates.
+
+Opportunity#2: Codec-informed context-aware KVC refresh in the LLM decoder
+Sliding-window inference introduces substantial overlap across consecutive video segments, as shown in Fig. 7. While this overlap creates a structured KVC refresh opportunity, most existing KVC management methods are designed for generic memory efficiency, such as dynamic allocation, offloading, and cache reuse, rather than overlap-aware reuse under a shifting video context (Kwon et al., 2023; Prabhu et al., 2024; Yao et al., 2025a).
+Although consecutive windows share overlapping visual content, the corresponding KV states in the LLM are not directly reusable. As the window advances, the overlapping tokens are placed under a different context, and their positions in the sequence may also shift. As a result, the hidden states of the same visual content can drift across windows in deep Transformer layers. Consequently, naively reusing cached KV states from the previous window can introduce semantic drift and degrade reasoning accuracy, while full recomputation remains expensive. We further observe that not all token drifts are equally important: some regions remain stable and insensitive to context changes, whereas others, such as motion-intensive regions or newly emerging events, require refreshed features. Codec metadata provides a lightweight signal to identify these drift-sensitive tokens, enabling a selective refresh strategy that updates only critical KV states while reusing the rest.
+
+Figure 7. Illustration of overlapping redundancy in sliding-window VLM inference. When the window slides over the video stream (from Time to ), a significant amount of frames (F5F12) are overlapped between adjacent windows.
+
+2.4.2. Challenges
+
+While codec-guided optimizations present promising opportunities, realizing them in practice entails several challenges.
+
+: From codec primitives to model-compatible pruning decisions.
+Although the aforementioned codec metadata in § 2.4.1 provides valuable optimization opportunities, it is inherently expressed in the units designed for video compression rather than model inference,
+such as I/P/B frames, motion vectors, and residual changes. In contrast, the VLM operates on ViT patches to produce semantic tokens. Bridging this representation gap presents a non-trivial system challenge. First, the system must accurately map block-level change signals to patch-level decisions under dynamic rescaling, cropping, and varying resolutions. Second, it must determine the optimal pruning aggressiveness without degrading downstream semantics. For example, regions with minimal motion and small residuals might still contain semantically critical cues such as subtle human gestures, slow-moving distant targets, or persistent background objects that are vital for long-term reasoning. Consequently, a robust system design must efficiently convert these noisy, low-level codec signals into model-compatible pruning policies. These policies must generalize across diverse video contents, GOP structures, and motion patterns while strictly maintaining a negligible decision overhead.
+
+: Semantics-preserving partial refresh with position-sensitive decoding.
+Selective KVC refresh is not a purely syntactic optimization: in sliding-window video analytics, advancing the window can change the decision semantics (e.g., event boundary interpretation and which evidence the model should attend to). Thus, previously computed intermediate states may no longer be valid for the current query context.
+The core difficulty is to design a reuse mechanism that is simultaneously (i) semantic-valid, (ii) position-consistent, and (iii) low-overhead. In particular, reused KV states are entangled with token positions and cross-token interactions inside the decoder; partial refresh can introduce subtle inconsistencies (e.g., mixing recomputed and reused states across layers/positions) that are hard to detect but can significantly affect outputs. Therefore, the system must determine both where, i.e., which spatial token regions, and when, i.e., at which window positions, the reused state remains valid, or a refresh is necessary, while ensuring that the decision overhead does not erase the latency gains.
+
+3. System Design
+
+We present CoStream: a codec-guided system for efficient streaming video analytics.
+CoStream addresses the challenges outlined in § 2.4.2 by optimizing across the whole analytics pipeline, specifically transmission, ViT encoder, and LLM decoder.
+
+Figure 8. System architecture overview of CoStream.
+
+3.1. System Overview
+
+Fig. 8 shows CoStream’s architecture overview.
+The Codec Processor (❶ in Fig. 8) ingests encoded video streams from edge CCTV cameras, decoding frames while simultaneously extracting compressed-domain metadata such as motion vectors and residuals. This metadata provides essential cues for subsequent visual feature extraction. Specifically, the Motion Analyzer (❷ in Fig. 8) leverages these motion vectors to differentiate between stable and dynamic regions, enabling the Token Pruner (❸ in Fig. 8) to systematically prune redundant visual tokens.
+
+The resulting visual tokens are then fused with textual tokens and passed to the semantic inference engine, which is built on an LLM. During the inference phase, the KVC Reuser (❹ in Fig. 8) manages Key-Value Caches (KVCs) across sliding windows, while the KVC Refresher (❺ in Fig. 8) selectively refreshes critical tokens for key frames to maintain temporal semantic consistency. Finally, the LLM generates a response by synthesizing the fused multimodal embeddings. CoStream’s design emphasizes the tight integration between codec metadata and model computation, enabling effective elimination of redundant processing while minimizing accuracy loss in video understanding.
+
+3.2. Hardware-Accelerated Codec Processing
+
+Video streams typically arrive as compressed bitstreams, whose lower bitrate naturally reduces transmission ( § 2.4.1) and ingestion overhead before downstream analytics begin. While this compression benefit is provided by the codec itself, CoStream is explicitly designed to preserve and exploit the compressed representation through the front-end pipeline.
+The Codec Processor operates directly on the compressed stream using commodity GPU video engines (NVIDIA, 2026; Ye et al., 2025a; Baobaid and Méribout, 2025), e.g., NVIDIA NVDEC, which are widely available across datacenter, consumer, and edge platforms.
+In a naive sliding-window design, overlapping windows cause the same frames to be decoded multiple times, once for each window they appear in. CoStream eliminates this redundancy by decoding the bitstream sequentially in a single pass and buffering the results, so that all overlapping windows share the same decoded frames without repeated decoding.
+During decoding, the Codec Processor also extracts codec metadata for downstream token-pruning decisions. Rather than relying on expensive pixel- or token-level analysis over decoded frames, CoStream uses compressed-domain metadata as a lightweight pruning signal. Because these signals are already embedded in the encoded stream, they provide a low-overhead representation of temporal dynamics and allow CoStream to avoid the cost of explicitly computing optical flow or other motion cues.
+
+The decoded frames are preprocessed on the GPU without being transferred back to the CPU. Resizing, color-space conversion, and normalization are fused into a single batched operation over all frames. This design eliminates unnecessary CPU-GPU data movement, which would otherwise introduce substantial preprocessing overhead, directly addressing the bottleneck identified in § 2.2. The preprocessed frames are then streamed into a temporal buffer and organized into sliding windows for downstream ViT encoding.
+The previously-extracted codec metadata is also streamed for guiding later pruning decisions. Given a window size and a stride as defined in § 2.2, the -th video window covers the interval . By decoupling sequential codec processing from logical window formation, CoStream ensures that each frame is decoded only once, even if it appears in multiple overlapping windows. This design eliminates redundant codec work and improves the efficiency of online video analytics.
+
+3.3. Motion Vector-Guided Token Pruning
+
+Unlike prior systems (Bolya et al., 2023; Lee et al., 2024; Pan et al., 2022) that compute cosine similarity or token-importance scores online, CoStream directly leverages motion vectors and residuals already available in P-frames, the dominant inter-coded frames in streaming pipelines (§ 2.4.1), as lightweight signals of region-level changes relative to a reference frame (I frame). Standard ViT encoders overlook this "hint" and redundantly compute features for static or predictable patches. To address this inefficiency, CoStream implements a motion vector-guided token pruning strategy that identifies and discards these redundant patches before they enter the ViT layers, bypassing unnecessary computation without the need for additional scoring operations.
+This addresses challenge in § 2.4.2.
+
+3.3.1. Motion Vector Analysis.
+
+Motion vectors provide a compressed-domain signal of temporal variation by indicating how each coded block is predicted from a reference frame. For each block in a P-frame at time , the codec provides a motion vector that specifies the offset from the current block to its prediction region in the reference frame. We use its magnitude to quantify the degree of motion:
+
+(1)
+
+In addition to motion vectors, the codec also produces a residual signal that captures pixel-level differences after motion compensation. We quantify this signal for block using the sum of absolute differences, a standard codec-internal distortion metric (Song et al., 2024), computed between the pixel values of the current block and its motion-compensated prediction :
+
+(2)
+
+To align codec signals with the ViT input layout, we resample the block-level motion and residual maps onto the patch grid, yielding and from block position to patch position . The Motion Analyzer then constructs a patch-level motion mask:
+
+(3)
+
+where controls the relative contributions of motion displacement and residual error.
+
+In principle, both terms can improve the fidelity of motion estimation. In practice, however, motion vectors capture the primary variations in our target surveillance workloads, which are dominated by static backgrounds and relatively predictable motion. Moreover, hardware video decoders such as NVIDIA NVDEC expose only reconstructed frames and motion vectors, without providing residuals as accessible runtime outputs. Accordingly, our default hardware-decoded implementation sets and uses motion vectors alone as the pruning signal. We evaluate this design choice in § 6.3 and describe the details in § 4.
+
+Figure 9. Illustration of the motion-guided token pruning policy. Each group of neighboring patches is projected into a vision token. A token is retained if any of its constituent patches are marked dynamic, otherwise it will be discarded.
+
+3.3.2. Token Pruning.
+
+Existing pruning methods (Bolya et al., 2023; Rao et al., 2021) determine token importance by analyzing feature maps or attention weights during inference, introducing computational overhead that scales with the number of input tokens and often offsets the speedup gained from pruning. CoStream eliminates this overhead by shifting the pruning decision entirely to the compressed domain before any ViT computation is performed, thus addressing challenge in § 2.4.2. Concretely, the Token Pruner classifies each patch as dynamic or static based on whether its motion magnitude exceeds a threshold :
+
+(4)
+
+To preserve temporal consistency, the dynamic mask is accumulated within each GOP: the active set of a P-frame is defined as the union of its own detections and those of all preceding P-frames since the last I-frame. Thus, once a patch is marked dynamic, it remains active until the next I-frame resets the mask. I-frames are always fully encoded and provide the reference visual context for subsequent P-frames. This policy is illustrated in Fig. 9.
+
+After ViT encoding, VLMs typically apply a spatial downsampling projection that groups neighboring patches into fewer visual tokens before passing them to the LLM. To preserve compatibility with this operator, CoStream expands the patch-level dynamic mask to a group-complete mask: if any patch within a spatial group is dynamic, all patches in that group are retained for encoding. CoStream then executes the ViT only on the selected patches, restores their outputs to the original spatial layout, and applies the native downsampling projection. Finally, only projected tokens corresponding to dynamic spatial groups are forwarded to the LLM. This design reduces both ViT computation and the LLM prefill sequence length while preserving the spatial grouping required by the downstream projector.
+
+3.4. Selective KVC Refresh
+
+Following token pruning, the VLM enters the LLM prefilling phase to construct the KVC for the current video window. As defined in § 2.2, a small stride relative to the window size achieves the best accuracy-latency tradeoff, meaning a large fraction of visual tokens overlap between consecutive windows.
+While full reuse of previous states can eliminate this overhead, it suffers from severe contextual drift, where stale KV states fail to align with evolving video content.
+This can lead to significant accuracy degradation.
+While full recomputation avoids this accuracy degradation, it wastes computation proportional to the overlap.
+To address challenge in § 2.4.2, CoStream implements a selective KVC refresh strategy that identifies and refreshes a small set of tokens more likely to require recomputation, while reusing and correcting the remaining cache entries. Rather than relying on attention-score divergence or offline-profiled recomputation ratios (Yao et al., 2025a; Qin et al., 2025b), CoStream uses codec-derived frame-type information extracted by codec as a lightweight runtime signal for overlap-aware KV reuse.
+
+Figure 10. Example of selective KVC refresh with codec metadata.
+
+3.4.1. Critical-Token KVC Refresh.
+
+Fig. 10 shows an example with GOP=4, each including 1 I-frame and 3 P-frames, with a window size of frames and a stride of frames (33%), operating at 1 FPS.
+When the window slides from the initial position () to the next (), the raw pixels in the overlapping region () remain identical. However, their KV states are not directly reusable because the VLM computes each token representation under the full multimodal context rather than in isolation. Specifically, the newly arrived content in the incoming frames () reshapes the attention dependencies for the overlapping tokens, even though their visual appearance is unchanged. Consequently, naive KVC full reuse introduces significant approximation errors and degrades downstream reasoning quality. This creates a fundamental trade-off: while we must update KV states to maintain accuracy, recomputing the entire 12-frame window from scratch would waste 67% of the FLOPs on redundant visual data.
+
+To balance efficiency and accuracy, CoStream refreshes only a small set of anchor tokens and reuses the rest. Tokens derived from I-frames serve as anchors as they provide stable reference content within each GOP and are most sensitive to context shifts as the window advances. We also ensure that the I-frame is the first frame in the overlapped region, anchoring the reused context at a stable boundary and reducing its susceptibility to attention sink (Xu et al., 2025b).
+The KVC Refresher recomputes their KV states under the new window context by feeding cached visual embeddings back into the LLM prefill path, without re-executing the ViT encoder. Non-anchor tokens from overlapping P-frames, which mainly capture local changes relative to nearby references, are reused after position correction, trading minor approximation error for significantly reduced prefilling cost.
+
+3.4.2. Position-Consistent KVC Reuse.
+
+An additional challenge arises from the position-sensitive nature of KV states. As the window advances, reused tokens appear at different absolute positions from those in the previous window, which invalidates direct KV reuse. To restore positional consistency, CoStream applies RoPE-based position correction to the reused keys (Yao et al., 2025a). For a reused token , let and denote its position embeddings in the previous window and current window , respectively. CoStream updates the cached key as:
+
+(5)
+
+where denotes the rotary transformation. Intuitively, this operation “rotates” the existing key embedding to account for its new relative distance from other tokens in the sequence.
+This operation adjusts the reused key to remain consistent with the token’s updated relative position in the current window.
+The value state is reused directly: , as value states do not explicitly encode positional information in RoPE-based attention and can therefore be reused directly in our design.
+
+To further minimize latency, CoStream avoids the overhead of CPU-GPU memory transfers during cache updates. The KVC Reuser maintains the previous window’s KV cache resident in GPU memory and performs these updates in-place. Once the overlapping tokens’ KV states ( in Fig. 10) are thus corrected and refreshed, they are concatenated with the subsequently computed KV states of the incoming frames () to construct the complete input for the current window.
+
+At this point, the prefilling phase concludes, and the first token generation is triggered.
+By selectively refreshing anchor tokens while reusing and repositioning the rest, CoStream reduces redundant computation in the LLM prefill stage while maintaining useful contextual alignment in practice, as we evaluate in § 6.
+
+4. Implementation Details
+
+We implement CoStream on top of vLLM v0.11.0 (vLLM Team, 2026), with model-specific extensions to support token pruning and sliding-window KVC management for VLM serving.
+
+The Codec Processor is implemented as a front-end module in our VLM serving pipeline, comprising approximately 600 lines of Python code in our prototype. It ingests incoming compressed H.264 (Wiegand et al., 2003) video streams and performs codec-aware preprocessing before dispatching inputs to the VLM. Specifically, it partitions each stream into windowed clips and uses NVIDIA NVDEC for hardware-accelerated decoding. The Motion Analyzer and Token Pruner are integrated into the ViT encoder in vLLM, with approximately 3,000 lines of additional Python code in total. Since different VLMs adopt different ViT architectures and tokenization pipelines, we implement model-specific adaptations for each supported model family. These components use codec-derived motion information to identify redundant visual tokens and prune them before feature extraction.
+
+We implement the KVC Reuser and KVC Refresher by extending LMCache v0.3.9 (Team, 2026; Cheng et al., 2025) with 2,500 lines of Python code. Built on LMCache’s cache-management primitives and chunk-based indexing, our implementation supports selective KVC refresh for sliding-window video inference. We extend its indexing and cache management logic to handle overlapping clips and GOP-aligned anchor selection for KVC refresh. We further add model-specific integration so that reused KV states match each model’s transformer architecture and RoPE scheme.
+
+5. Methodology
+
+Testbed. All experiments are conducted on a high-performance server node equipped with four NVIDIA A100 (40GB, SXM4) GPUs running Linux 6.8.0-57-generic with CUDA 13.1. These GPUs are interconnected via third-generation NVLink. The system features an AMD EPYC 7713 64-Core CPU and 512GB of DDR4 system RAM, ensuring sufficient bandwidth for host-device data transfer.
+
+Table 2. Models and configurations used in evaluations.
+
+Model
+ViT Encoder
+LLM Backbone
+GPUs
+
+InternVL3 (Zhu et al., 2025)
+InternViT (300M)
+Qwen2.5-14B
+2A100
+
+Qwen3-VL (Team, 2025b)
+Qwen-ViT (600M)
+Qwen3-32B
+4A100
+
+Note: Values in parentheses (e.g., 300M and 600M) denote the number of parameters for each ViT encoder. Both InternVL3 and Qwen3-VL are served with tensor parallelism (TP=2 and TP=4, respectively)
+
+Models. We evaluate CoStream using two state-of-the-art VLMs, InternVL3 (Zhu et al., 2025) and Qwen3-VL (Team, 2025b) to cover a diverse range of model architectures and scales (see Table 2).
+
+Baselines. We compare CoStream against four baselines:
+
+•
+
+Full Comp:
+An unoptimized VLM serving baseline implemented on top of vLLM (vLLM Team, 2026), where every sampled frame is fully preprocessed and encoded by the ViT, and all resulting visual tokens are passed to the LLM without token pruning or KV-cache reuse.
+
+•
+
+Déjà Vu (Hwang et al., 2025): A VLM query engine that specifically optimizes the ViT encoding. It reduces computation across consecutive frames through reusing similar patches and further translates FLOP savings into wall-clock speedups through joint memory-compute compaction.
+
+•
+
+CacheBlend (Yao et al., 2025a): A KVC management scheme designed to accelerate the LLM prefill phase in RAG workloads. Unlike prefix caching, it supports reuse for non-prefix chunks by selectively recomputing a top- subset of tokens to blend disparate KV caches and preserve accuracy.
+
+•
+
+VLCache (Qin et al., 2025b): A multimodal cache reuse framework that accelerates the LLM prefill stage for recurring inputs. It avoids costly recomputation by caching both KV states and encoder features from prior multimodal inputs and by using a dynamic layer-aware strategy to balance efficiency and accuracy.
+
+Dataset and Request Generation.
+Experiments are conducted on the UCF-Crime dataset (Dawoud et al., 2025), a collection of 1,900 untrimmed, real-world videos spanning a wide spectrum of scene dynamics, camera angles, and motion characteristics. Our evaluation uses a 40-second sliding window sampled at 2 FPS, requiring each video to be at least 60 s to ensure multiple overlapping windows; with an average duration of approximately four minutes, the vast majority of videos comfortably meet this threshold, yielding over 3,500 minutes of eligible footage. Each sliding-window segment is paired with a textual query asking whether it contains a target anomaly, and requests are replayed in a streaming fashion to emulate online video analytics serving
+
+Metrics.
+We evaluate CoStream along three dimensions: accuracy, latency, and resource efficiency. For accuracy, we report Precision, Recall, and F1-score at the video level by aggregating predictions across the windows of each video against the ground truth labels.
+Specifically, an anomalous video is labeled as a True Positive if at least two consecutive windows produce a positive response, and as a False Negative otherwise; the inverse applies to normal videos.
+To quantify speedup, we measure stage-wise latency. Finally, we assess resource efficiency using the number of tokens after pruning and the corresponding FLOPs.
+
+6. Evaluation
+
+(a) InternVL3
+
+(b) Qwen3-VL
+
+Figure 11. Latency speedup of CoStream. HW-Dec refers to the stage with hardware-accelerated codec decoding.
+
+In this section, we evaluate CoStream along several key dimensions. We measure its latency and accuracy across different models, perform an ablation study to quantify the contribution of each component, conduct a sensitivity analysis for key parameters, and measure the runtime overhead of CoStream to ensure that these optimizations do not offset the overall gains. Unless otherwise specified, the end-to-end and component-level experiments use the parameter configuration selected from the sensitivity analysis in § 6.3: a stride of 20% of the window size, an MV threshold of 0.25 pixel, and a GOP size of 16 frames.
+
+6.1. End-to-End Performance
+
+6.1.1. Latency Speedup.
+
+To evaluate CoStream’s end-to-end latency speedup across the video analytics pipeline, we break down the total latency into transmission, codec decoding, preprocessing, ViT execution, and LLM inference. Fig. 11 reports the results. For InternVL3, CoStream achieves up to 2.97 speedup over Full-Comp, while for Qwen3-VL, it achieves 1.66 speedup. These latency speedups translate into up to 3 higher effective processing throughput under the same hardware budget, assuming sequential processing of streams on a single GPU in § 2.2).
+Breaking the gains down by stage, CoStream reduces transmission latency by 2.12, confirming the benefit of codec compression in lowering data transfer cost. For preprocessing and ViT execution, CoStream achieves 7.42 speedup for InternVL3 and 4.18 for Qwen3-VL relative to Déjà Vu, demonstrating the effectiveness of GPU-based acceleration and codec-guided token pruning. For LLM prefilling, CoStream further delivers up to 1.35 speedup over CacheBlend and 1.25 over VLCache, validating the effectiveness of efficient selective KVC refresh in reducing redundant computation.
+
+Our end-to-end gains combine two sources: (1) front-end improvements from compressed-stream ingestion, hardware decoding, and GPU preprocessing, and (2) inference-stage savings from codec-guided token pruning and selective KVC refresh. We include both because CoStream is designed as an end-to-end streaming serving system rather than an isolated model-side optimization. Accordingly, comparisons to prior work should be interpreted as end-to-end system comparisons, while the stage-wise breakdown in Fig. 11 shows where the gains arise.
+
+(a) InternVL3
+
+(b) Qwen3-VL
+
+Figure 12. Precision, Recall and F1 Score of CoStream.
+
+6.1.2. Accuracy.
+
+We also evaluate whether CoStream preserves semantic accuracy under codec-guided token pruning and selective KVC refresh. Fig. 12(a) and Fig. 12(b) report the average Precision, Recall, and F1 scores across all crime categories for InternVL3 and Qwen3-VL, respectively. CoStream maintains accuracy close to Full-Comp on both models, with only modest F1 degradation, from 0.89 to 0.81 for InternVL3 and even zero degradation for Qwen3-VL. CoStream also remains competitive with VLCache and CacheBlend on both models. Overall, these results show that CoStream preserves most of the semantic fidelity required for accurate inference while substantially reducing computation, validating codec-guided pruning and selective KVC refresh as effective optimizations with limited accuracy degradation.
+
+(a) Memory (tokens) required
+
+(b) Compute (FLOPs) required
+
+Figure 13. Memory and compute resource savings of CoStream with InternVL3.
+
+6.1.3. Resource Savings.
+
+By reducing the number of visual tokens processed by the ViT and eliminating redundant computation in the LLM prefilling stage, CoStream also delivers substantial resource savings. We quantify this benefit in terms of total processed tokens and consumed FLOPs.
+Fig. 13(a) shows that, across all tested video clips, CoStream achieves average token reductions of 85%, 60%, and 40% relative to Full-Comp, CacheBlend, and VLCache, respectively, across the two models.
+This reduction is also reflected in lower compute demand in both stages. As shown in Fig. 13(b), CoStream reduces total FLOPs by an average of 87% for InternVL3.
+Overall, these results show that CoStream not only reduces latency but also significantly lowers computational demand, improving resource efficiency and enabling higher throughput or deployment on constrained GPU resources. Since these savings depend in part on how much codec-guided pruning is exposed by a video’s motion characteristics, we next break the results down by motion level.
+
+(a) F1 Score
+
+(b) Latency Speedup
+
+Figure 14. Performance across video motion intensity levels with InternVL3.
+
+6.1.4. Performance Across Motion Levels.
+
+The aggregate results above demonstrate strong overall gains; we next analyze how these gains vary across motion levels, defined by partitioning the test videos into three equal-sized groups (low, medium, and high) based on average motion-vector magnitude.
+CoStream achieves 3.08, 2.74, and 2.49 speedup on low-, medium-, and high-motion videos, respectively. This trend broadly follows the pruning ratio: codec-guided token pruning removes 50%, 27%, and 13% of visual tokens in the three groups. Lower-motion videos expose more redundancy, while higher-motion videos expose less.
+At the same time, CoStream remains effective even in the high-motion group, delivering a 2.49 speedup with only 13% of tokens being pruned, indicating that selective KVC refresh provides a motion-independent source of savings by reusing and refreshing KV states regardless of how much token pruning achieves. For accuracy, CoStream shows limited and relatively stable F1 degradation across motion levels (0.08, 0.04, and 0.07 for high-, medium-, and low-motion videos), confirming that accuracy remains stable even as pruning grows more aggressive at lower motion levels. Overall, these results show that CoStream remains effective across substantially different motion regimes, maintaining substantial speedups even at high motion while keeping accuracy loss small and uniform.
+
+(a) Accuracy
+
+(b) Latency Speedup
+
+Figure 15. CoStream’s component performance contributions with InternVL3.
+
+6.2. Per-Component Efficiency Analysis
+
+To understand the contribution of each optimization component in CoStream, we perform an ablation study in which we selectively enable individual components on top of the vanilla baseline (Full-Comp) and measure the resulting accuracy and latency. Fig. 15 reports the results for InternVL3. Both components improve efficiency, but they contribute differently to the overall latency–accuracy tradeoff. Codec-guided token pruning alone achieves a 2.61 speedup with only a small F1 drop from 0.89 to 0.87, indicating that it captures much of the redundant visual computation while largely preserving accuracy. By contrast, selective KVC refresh alone provides a 1.64 speedup but reduces F1 to 0.79, showing that it contributes additional latency reduction at a larger quality cost. When combined, these optimizations achieve a 3.87 speedup with an F1 of 0.81, further amplified by GPU-based decoding and preprocessing. These results show that the two components are complementary: codec-guided token pruning targets spatial redundancy within individual frames before ViT encoding, while selective KVC refresh targets temporal redundancy across overlapping windows during LLM prefilling.
+The ablation shows that codec-guided token pruning provides most of the accuracy-preserving speedup, whereas selective KVC refresh contributes additional latency reduction, but also drives most of the quality tradeoff.
+
+6.3. Sensitivity of Key Parameters
+
+To identify optimal settings for these parameters, we perform a sensitivity analysis by varying each parameter while keeping the others fixed with InternVL3.
+
+(a) Accuracy
+
+(b) Norm. Latency
+
+Figure 16. Sensitivity analysis of stride ratio.
+
+6.3.1. Stride Ratio.
+
+To identify an appropriate stride ratio for sliding-window inference in the crime detection task, we perform a sensitivity analysis by varying the stride from 10% to 100% of the window size and measuring the resulting accuracy and latency. Fig. 16 reports the results. Overall, smaller strides improve detection quality by updating the VLM input more frequently, which reduces the chance of missing temporally continuous events that span window boundaries. As a result, reducing the stride from 100% (no overlap) to 20% improves the F1 score from 0.84 to 0.89. Interestingly, the trend is not strictly monotonic: a 10% stride yields slightly lower accuracy than a 20% stride. We conjecture that overly small strides introduce excessive overlap across adjacent windows, which can amplify prediction noise and lead to diminishing, or even negative, returns in semantic accuracy. For latency, larger strides increase per-inference cost because less overlap between consecutive windows reduces KVC reuse, forcing more tokens to be recomputed during prefill. Relative to the chosen 20% stride, a 100% stride incurs higher latency per inference, while a 10% stride reduces latency marginally to at the cost of lower accuracy. Since 20% achieves the highest F1 of 0.90 with favorable per-inference latency, we adopt it as the default stride ratio in CoStream.
+
+(a) Accuracy
+
+(b) Norm. Latency
+
+Figure 17. Sensitivity analysis of MV threshold.
+
+6.3.2. MV Threshold
+
+To evaluate the effect of the MV threshold on the accuracy-latency trade-off, we vary it from 0.25 to 5.0 pixels. The MV threshold controls the aggressiveness of codec-guided token pruning by determining which regions are treated as static. As shown in Fig. 17, increasing the MV threshold makes pruning more aggressive, reducing normalized latency from 1.00 to 0.83 but also degrading the F1 from 0.81 to 0.73. Conversely, a smaller threshold preserves more tokens and thus maintains higher accuracy, at the cost of smaller efficiency gains. We therefore use MV=0.25 in the remaining experiments, as it provides the best accuracy-efficiency balance: it achieves the highest F1 (0.81) in this sensitivity study and, when used in the full pipeline, still yields up to 2.97 end-to-end latency reduction over Full-Comp (Fig. 11).
+
+(a) Accuracy
+
+(b) Norm. Latency
+
+Figure 18. Sensitivity analysis of GOP.
+
+6.3.3. GOP Size
+
+To evaluate the effect of GOP size on the accuracy-latency tradeoff, we vary it among 4, 8, and 16 frames. The GOP size determines I-frame frequency and thus affects both KV reuse opportunities and refresh overhead. As shown in Fig. 18, both accuracy and latency improve monotonically with larger GOP sizes. For latency, larger GOP sizes reduce I-frame recomputation frequency, with GOP=4 incurring 1.33 the latency of GOP=16. For accuracy, smaller GOP sizes lead to more frequent KVC refreshes that disrupt temporal continuity across the sliding window, preventing the LLM from accumulating stable cross-frame context; F1 scores are 0.77, 0.79, and 0.81 for GOP sizes 4, 8, and 16, respectively. Since GOP=16 achieves both the lowest latency and the highest accuracy among the tested settings, we adopt it as the optimal configuration.
+
+6.4. System Overhead
+
+(a) Token Pruning
+
+(b) KVC Refresh
+
+Figure 19. System overheads.
+
+We quantify the runtime overhead of CoStream’s token selection before ViT encoding and during KVC refresh. As shown in Fig. 19, both operations introduce only modest overhead. For InternVL3, token pruning and KVC refresh incur average/max overheads of 48.9/50.8 ms and 0.6/0.8 ms per request, respectively; for Qwen3-VL, the corresponding overheads are 49.1/51.4 ms and 0.6/0.8 ms. Notably, scaling to the much larger Qwen3-VL increases overhead only marginally. In both cases, the combined overhead of about 50 ms accounts for just 3.9% and 4.5% of CoStream’s optimized end-to-end latency, respectively. Even with this overhead, CoStream remains up to 2.97 faster than Full-Comp across both models. These results show that CoStream’s optimization logic is lightweight, and its efficiency gains are not offset by the added overhead.
+
+6.5. Scope, Applicability, and Portability
+
+CoStream is designed for continuous video analytics workloads where a VLM processes streams over sliding windows. Its optimizations exploit two properties inherent to such workloads: temporal redundancy between frames (addressed by codec-guided token pruning) and across overlapping windows (addressed by selective KVC refresh). Since neither mechanism depends on task-specific semantics, CoStream generalizes beyond surveillance footage to any sliding-window VLM setting with recurring visual context, whether sourced from dashcams, drones, broadcast streams, or in-store cameras.
+
+We evaluate CoStream on two architecturally distinct VLMs, InternVL3 and Qwen3-VL, to demonstrate its model-agnostic design. Patch pruning operates upstream of the vision backbone and requires only knowledge of the input patch layout, while selective KVC refresh integrates at the LLM prefill stage through standard positional encoding schemes such as RoPE. Adapting CoStream to a new VLM primarily involves a one-time integration of the token layout and position correction logic, as detailed in § 4.
+
+Our current prototype targets H.264 streams decoded via NVIDIA NVDEC, the dominant codec and hardware path in deployed surveillance and streaming infrastructure. The compressed-domain signals CoStream relies on, motion vectors and frame-type metadata for GOP-aligned processing, are standard primitives shared by all major inter-frame codecs, including H.265/HEVC (Richardson, 2024), VP9 (Mukherjee et al., 2013), and AV1 (Chen et al., 2018). Porting CoStream to a new codec requires only extending the front-end Codec Processor to extract these signals, leaving the downstream optimization pipeline intact.
+
+7. Related Work
+
+Compressed-Domain Processing for Video Analytics.
+Prior work on video analytics has explored query optimization, approximation, cascades, and indexing to reduce the cost of video processing (Romero et al., 2022; Zhang et al., 2017; Kang et al., 2017; Hsieh et al., 2018). More closely related to our setting, recent systems have begun to exploit compressed-domain or motion-based signals before full pixel-domain processing. CoVA (Hwang et al., 2022) uses compressed-domain analysis to reduce decoding and inference costs, while Boggart (Agarwal and Netravali, 2023) builds motion- and tracking-based indices to accelerate retrospective video analytics. SAND (Ye et al., 2025a) improves the efficiency of GPU-accelerated video preprocessing through better pipeline abstraction and resource reuse. Our work is complementary to these efforts. Rather than optimizing conventional video analytics pipelines alone, CoStream targets online streaming VLM serving, where efficiency depends on jointly coordinating codec-guided visual token pruning with LLM prefilling.
+
+Token Reduction in ViT Encoders.
+Recent efforts reduce the cost of visual encoding by pruning, merging, or compressing redundant tokens (Bolya et al., 2023; Chen et al., 2024; Zhang et al., 2025c; Xing et al., 2024; Ye et al., 2025c; Yang et al., 2025a; Zhang et al., 2025b; Zhang et al., 2025a; Tao et al., 2025). However, these methods are designed for offline or general multimodal inference and often rely on global video visibility or post-encoding token importance estimation, making them less suitable for causal streaming settings. More recent streaming-oriented approaches adapt token reduction to sequential inputs under causality constraints (Yao et al., 2025b; Chen et al., 2025b; Jiang et al., 2026), but still face a nontrivial trade-off among efficiency, temporal awareness, and runtime overhead. In particular, hierarchical token merging and stateful compression often require cross-frame interaction, feature buffering, or extra compression logic, limiting real-time feasibility. Recent work such as CMC (Song et al., 2024), Déjà Vu (Hwang et al., 2025), and COPE (Sarkar et al., 2026) further shows that codec metadata can expose spatio-temporal sparsity early. However, these systems either reconfigure parameters after feature extraction or encode codec primitives as auxiliary tokens. In contrast, CoStream prunes tokens by mapping codec-derived motion masks directly onto the ViT patch grid before encoding, yielding substantially higher throughput and an order of magnitude lower memory usage.
+
+KVC Management for LLM Decoders.
+KVC management is critical to efficient LLM serving because it directly affects both memory footprint and decoding throughput (Xu et al., 2025b; Ning et al., 2025; Yang et al., 2025b; Zeng et al., 2025). Prior work mainly focuses on system-level memory management (Kwon et al., 2023; Prabhu et al., 2024; Ye et al., 2024; Zheng et al., 2024), cache offloading and reuse (Liu et al., 2024c; Yao et al., 2025a; Cheng et al., 2025), and fixed-budget eviction, compression, or quantization (Xiao et al., 2023; Zhang et al., 2023; Liu et al., 2023; Li et al., 2024b; Cai et al., 2024; Feng et al., 2024; Liu et al., 2024a; Liu et al., 2024d; Xiao et al., 2024). While effective for long-context text and general multimodal workloads, these methods treat KV caches as generic memory objects and thus do not exploit the strong temporal overlap across adjacent windows in streaming video analytics. More recent video-oriented approaches extend these ideas through retrieval, compression, or sparsification of video KVs (Di et al., 2025; Xu et al., 2025b; Ning et al., 2025; Yang et al., 2025b; Schneider et al., 2025; Zeng et al., 2025; Qin et al., 2025a), but still rely on online mechanisms such as cache selection, compression/decompression, retrieval, and external-memory access to identify and manage reusable KV states. In contrast, CoStream directly reuses overlapping-window states already resident in memory and selectively recomputes only drift-sensitive KV states using codec-guided frame-type cues, reducing redundant prefill computation while accelerating processing and lowering memory usage multi-fold.
+
+8. Conclusion
+
+This paper presents CoStream, a codec-guided system for efficient streaming VLM serving. Leveraging codec metadata as a low-cost runtime signal, CoStream jointly optimizes video-side transmission and decoding, codec-guided visual token reduction, and KVC refresh within LLM to reduce redundant computation across the whole serving pipeline. Experimental results show that CoStream significantly reduces end-to-end latency and the required GPU computation while preserving accuracy with negligible runtime overhead.
+
+Acknowledgements.
+This work was supported in part by Nanyang Technological University, Singapore [grant details here].
+
+References
+
+Agarwal and Netravali (2023)
+N. Agarwal and R. Netravali
+
+Boggart: Towards General-Purpose Acceleration of Retrospective Video Analytics..
+
+In Proceedings of the 20th Symposium on Networked Systems Design and Implementation (NSDI),
+
+pp. 933–951.
+
+Cited by: §1,
+§7.
+
+Baobaid and Méribout (2025)
+A. Baobaid and M. Méribout
+
+Edge-GPU Based Face Tracking for Face Detection and Recognition Acceleration..
+
+CoRR abs/2505.04524.
+
+Cited by: §3.2.
+
+Bertasius et al. (2021)
+G. Bertasius, H. Wang, and L. Torresani
+
+Is Space-Time Attention All You Need for Video Understanding?.
+
+In The 38th Annual Conference on Machine Learning (ICML),
+
+pp. 813–824.
+
+Cited by: §1.
+
+Bolya et al. (2023)
+D. Bolya, C. Fu, X. Dai, P. Zhang, C. Feichtenhofer, and J. Hoffman
+
+Token Merging: Your ViT But Faster..
+
+In The International Conference on Learning Representations 2023 (ICLR),
+
+Cited by: §3.3.2,
+§3.3,
+§7.
+
+Cai et al. (2024)
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, T. Liu, K. Lu, W. Xiong, Y. Dong, B. Chang, J. Hu, and W. Xiao
+
+PyramidKV: Dynamic KV Cache Compression based on Pyramidal Information Funneling..
+
+CoRR abs/2406.02069.
+
+Cited by: §7.
+
+Carreira and Zisserman (2017)
+J. Carreira and A. Zisserman
+
+Quo Vadis, Action Recognition? A New Model and the Kinetics Dataset..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2017 (CVPR),
+
+pp. 4724–4733.
+
+Cited by: §1.
+
+Chaabouni et al. (2016)
+A. Chaabouni, Y. Gaudeau, J. Lambert, J. Moureaux, and P. Gallet
+
+H. 264 medical video compression for telemedicine: a performance analysis.
+
+IRBM 37 (1), pp. 40–48.
+
+Cited by: §2.4.1.
+
+Chen et al. (2025a)
+J. Chen, Z. Zeng, Y. Lin, W. Li, Z. Ma, and M. Z. Shou
+
+LiveCC: Learning Video LLM with Streaming Speech Transcription at Scale..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2025 (CVPR),
+
+pp. 29083–29095.
+
+Cited by: §1.
+
+Chen et al. (2024)
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang
+
+An Image is Worth 1/2 Tokens After Layer 2: Plug-and-Play Inference Acceleration for Large Vision-Language Models..
+
+In ECCV (81),
+
+pp. 19–35.
+
+Cited by: §7.
+
+Chen et al. (2025b)
+X. Chen, K. Tao, K. Shao, and H. Wang
+
+StreamingTOM: Streaming Token Compression for Efficient Video Understanding..
+
+CoRR abs/2510.18269.
+
+Cited by: §7.
+
+Chen et al. (2018)
+Y. Chen, D. Mukherjee, J. Han, A. Grange, Y. Xu, Z. Liu, S. Parker, C. Chen, H. Su, U. Joshi, C. Chiang, Y. Wang, P. Wilkins, J. Bankoski, L. N. Trudeau, N. E. Egge, J. Valin, T. Davies, S. Midtskogen, A. Norkin, and P. D. Rivaz
+
+An Overview of Core Coding Tools in the AV1 Video Codec..
+
+In pcs18,
+
+pp. 41–45.
+
+Cited by: §6.5.
+
+Chen et al. (2023)
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu, B. Li, P. Luo, T. Lu, Y. Qiao, and J. Dai
+
+InternVL: Scaling up Vision Foundation Models and Aligning for Generic Visual-Linguistic Tasks..
+
+CoRR abs/2312.14238.
+
+Cited by: §1,
+§2.2,
+§2.2.
+
+Cheng et al. (2025)
+Y. Cheng, Y. Liu, J. Yao, Y. An, X. Chen, S. Feng, Y. Huang, S. Shen, K. Du, and J. Jiang
+
+LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference..
+
+CoRR abs/2510.09665.
+
+Cited by: §4,
+§7.
+
+Comparitech (2025)
+Comparitech
+
+Surveillance camera statistics: which city has the most cctv?.
+
+Note: https://www.comparitech.com/vpn-privacy/the-worlds-most-surveilled-cities/Accessed 2026-03-26
+
+Cited by: §1,
+Figure 3,
+Figure 3,
+§2.2.
+
+Dawoud et al. (2025)
+K. W. Dawoud, Z. Zaheer, M. Khan, K. Nandakumar, A. Elsaddik, and M. H. Khan
+
+FusedVision: A Knowledge-Infusing Approach for Practical Anomaly Detection in Real-world Surveillance Videos..
+
+In CVPR Workshops,
+
+pp. 4036–4046.
+
+Cited by: §2.4.1,
+§5.
+
+Di et al. (2025)
+S. Di, Z. Yu, G. Zhang, H. Li, T. Zhong, H. Cheng, B. Li, W. He, F. Shu, and H. Jiang
+
+Streaming Video Question-Answering with In-context Video KV-Cache Retrieval..
+
+In The International Conference on Learning Representations 2025 (ICLR),
+
+Cited by: §1,
+§7.
+
+Feng et al. (2024)
+Y. Feng, J. Lv, Y. Cao, X. Xie, and S. K. Zhou
+
+Ada-KV: Optimizing KV Cache Eviction by Adaptive Budget Allocation for Efficient LLM Inference..
+
+CoRR abs/2407.11550.
+
+Cited by: §7.
+
+Fish and Gilbert (2025)
+E. Fish and A. Gilbert
+
+PLOT-TAL: Prompt-Learning with Optimal Transport for Few-Shot Temporal Action Localization..
+
+In The International Conference on Computer Vision Workshops 2025 (ICCVW),
+
+pp. 5912–5921.
+
+Cited by: §1,
+§2.2.
+
+Hamamci et al. (2025)
+I. E. Hamamci, S. Er, S. Shit, H. Reynaud, D. Yang, P. Guo, M. Edgar, D. Xu, B. Kainz, and B. H. Menze
+
+Better Tokens for Better 3D: Advancing Vision-Language Modeling in 3D Medical Imaging..
+
+CoRR abs/2510.20639.
+
+Cited by: §2.2.
+
+He et al. (2025)
+Z. He, S. Alnegheimish, and M. Reimherr
+
+Harnessing Vision-Language Models for Time Series Anomaly Detection..
+
+CoRR abs/2506.06836.
+
+Cited by: §1.
+
+Hsieh et al. (2018)
+K. Hsieh, G. Ananthanarayanan, P. Bodík, S. Venkataraman, P. Bahl, M. Philipose, P. B. Gibbons, and O. Mutlu
+
+Focus: Querying Large Video Datasets with Low Latency and Low Cost..
+
+In Proceedings of the 13th Symposium on Operating System Design and Implementation (OSDI),
+
+pp. 269–286.
+
+Cited by: §7.
+
+Hwang et al. (2025)
+J. Hwang, D. Kim, S. Lee, Y. Kim, G. Heo, H. Kim, Y. Jeong, T. Meaza, E. Park, J. Ahn, and J. Park
+
+Déjà Vu: Efficient Video-Language Query Engine with Learning-based Inter-Frame Computation Reuse..
+
+Proc. VLDB Endow. 18 (10), pp. 3284–3298.
+
+Cited by: §1,
+§1,
+§2.2,
+§2.3,
+§2.3,
+§2.4.1,
+Table 1,
+2nd item,
+§7.
+
+Hwang et al. (2022)
+J. Hwang, M. Kim, D. Kim, S. Nam, Y. Kim, D. Kim, H. Sharma, and J. Park
+
+CoVA: Exploiting Compressed-Domain Analysis to Accelerate Video Analytics..
+
+In Proceedings of the 2022 USENIX Annual Technical Conference (ATC),
+
+pp. 707–722.
+
+Cited by: §1,
+§7.
+
+Jiang et al. (2026)
+J. Jiang, A. S. Deshmukh, K. Chumachenko, K. Sapra, Z. Yu, G. Liu, A. Tao, P. Molchanov, J. Kautz, and W. Byeon
+
+Stateful token reduction for long-video hybrid vlms.
+
+arXiv preprint arXiv:2603.00198.
+
+Cited by: §7.
+
+Kang et al. (2017)
+D. Kang, J. Emmons, F. Abuzaid, P. Bailis, and M. Zaharia
+
+Noscope: optimizing neural network queries over video at scale.
+
+arXiv preprint arXiv:1703.02529.
+
+Cited by: §7.
+
+Klare and Burge (2010)
+B. Klare and M. Burge
+
+Assessment of h. 264 video compression on automated face recognition performance in surveillance and mobile video scenarios.
+
+In Biometric Technology for Human Identification VII,
+
+Vol. 7667, pp. 325–332.
+
+Cited by: §2.4.1.
+
+Kurrey et al. (2025)
+V. Kurrey, S. Pujari, and G. R. Gupta
+
+Process Integrated Computer Vision for Real-Time Failure Prediction in Steel Rolling Mill..
+
+CoRR abs/2510.26684.
+
+Cited by: §1.
+
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+
+Efficient Memory Management for Large Language Model Serving with PagedAttention..
+
+In Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP),
+
+pp. 611–626.
+
+Cited by: §1,
+§2.4.1,
+§7.
+
+Lee et al. (2024)
+S. Lee, J. Wang, Z. Zhang, D. Fan, and X. Li
+
+Video Token Merging for Long Video Understanding..
+
+In The 38th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §3.3.
+
+Li et al. (2024a)
+F. Li, R. Zhang, H. Zhang, Y. Zhang, B. Li, W. L. 0190, Z. Ma, and C. Li
+
+LLaVA-NeXT-Interleave: Tackling Multi-image, Video, and 3D in Large Multimodal Models..
+
+CoRR abs/2407.07895.
+
+Cited by: §1.
+
+Li et al. (2025)
+Y. Li, W. Bao, B. Ye, Z. Tan, T. Chen, H. Liu, and Y. Kong
+
+Window Token Concatenation for Efficient Visual Large Language Models..
+
+In CVPR Workshops,
+
+pp. 3187–3197.
+
+Cited by: §1,
+§2.2.
+
+Li et al. (2020)
+Y. Li, A. Padmanabhan, P. Zhao, Y. Wang, G. H. Xu, and R. Netravali
+
+Reducto: On-Camera Filtering for Resource-Efficient Real-Time Video Analytics..
+
+In Proceedings of the ACM SIGCOMM 2020 Conference,
+
+pp. 359–376.
+
+Cited by: §2.1.
+
+Li et al. (2024b)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+
+SnapKV: LLM Knows What You are Looking for Before Generation..
+
+In The 38th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §7.
+
+Liu et al. (2024a)
+A. Liu, J. Liu, Z. Pan, Y. He, R. Haffari, and B. Zhuang
+
+MiniCache: KV Cache Compression in Depth Dimension for Large Language Models..
+
+In The 38th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §7.
+
+Liu et al. (2024b)
+J. Liu, Z. Yu, S. Lan, S. Wang, R. Fang, J. Kautz, H. Li, and J. M. Álvarez
+
+StreamChat: Chatting with Streaming Video..
+
+CoRR abs/2412.08646.
+
+Cited by: §1.
+
+Liu et al. (2024c)
+Y. Liu, H. Li, Y. Cheng, S. Ray, Y. Huang, Q. Zhang, K. Du, J. Yao, S. Lu, G. Ananthanarayanan, M. Maire, H. Hoffmann, A. Holtzman, and J. Jiang
+
+CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving..
+
+In Proceedings of the ACM SIGCOMM 2024 Conference,
+
+pp. 38–56.
+
+Cited by: §7.
+
+Liu et al. (2023)
+Z. Liu, A. Desai, F. Liao, W. Wang, V. Xie, Z. Xu, A. Kyrillidis, and A. Shrivastava
+
+Scissorhands: Exploiting the Persistence of Importance Hypothesis for LLM KV Cache Compression at Test Time..
+
+In The 37th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §7.
+
+Liu et al. (2024d)
+Z. Liu, J. Yuan, H. Jin, S. (. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu
+
+KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache..
+
+In The 41st Annual Conference on Machine Learning (ICML),
+
+pp. 32332–32344.
+
+Cited by: §7.
+
+Market Reports World (2026)
+Market Reports World
+
+CCTV Cameras Market Size, Share, Growth, and Industry Analysis, Forecast to 2034.
+
+External Links: Link
+
+Cited by: §1.
+
+Mukherjee et al. (2013)
+D. Mukherjee, J. Bankoski, A. Grange, J. Han, J. Koleszar, P. Wilkins, Y. Xu, and R. Bultje
+
+The latest open-source video codec vp9 - an overview and preliminary results.
+
+In 2013 Picture Coding Symposium (PCS),
+
+External Links: Document
+
+Cited by: §6.5.
+
+Ning et al. (2025)
+Z. Ning, G. Liu, Q. Jin, W. Ding, M. Guo, and J. Zhao
+
+LiveVLM: Efficient Online Video Understanding via Streaming-Oriented KV Cache and Retrieval..
+
+CoRR abs/2505.15269.
+
+Cited by: §7.
+
+Niu et al. (2025)
+J. Niu, Y. Li, Z. Miao, C. Ge, Y. Zhou, Q. He, X. Dong, H. Duan, S. Ding, R. Qian, P. Zhang, Y. Zang, Y. Cao, C. He, and J. Wang
+
+OVO-Bench: How Far is Your Video-LLMs from Real-World Online Video Understanding?.
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2025 (CVPR),
+
+pp. 18902–18913.
+
+Cited by: §1.
+
+NVIDIA (2025a)
+NVIDIA
+
+Europe builds ai infrastructure with nvidia to fuel region’s next industrial transformation.
+
+Note: https://nvidianews.nvidia.com/news/europe-ai-infrastructureAccessed 2026-03-26
+
+Cited by: §1,
+Figure 3,
+Figure 3,
+§2.2.
+
+NVIDIA (2025b)
+NVIDIA
+
+NVIDIA and partners build america’s ai infrastructure and create blueprint to power the next industrial revolution.
+
+Note: https://nvidianews.nvidia.com/news/nvidia-partners-ai-infrastructure-americaAccessed 2026-03-26
+
+Cited by: §1,
+Figure 3,
+Figure 3,
+§2.2.
+
+NVIDIA (2026)
+NVIDIA
+
+VDEC application note.
+
+External Links: Link
+
+Cited by: §3.2.
+
+Ou et al. (2025)
+T. Ou, A. Ponce, C. Lee, and A. Wu
+
+Real-time retail planogram compliance application using computer vision and virtual shelves.
+
+Scientific Reports 15 (1), pp. 43898.
+
+Cited by: §1.
+
+Pan et al. (2022)
+J. Pan, Z. Lin, X. Zhu, J. Shao, and H. Li
+
+ST-Adapter: Parameter-Efficient Image-to-Video Transfer Learning..
+
+In The 36th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §3.3.
+
+Persistence Market Research (2024)
+Persistence Market Research
+
+CCTV Cameras Market Size, Share & Forecast to 2032.
+
+External Links: Link
+
+Cited by: §1.
+
+Prabhu et al. (2024)
+R. Prabhu, A. Nayak, J. Mohan, R. Ramjee, and A. Panwar
+
+vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention..
+
+CoRR abs/2405.04437.
+
+Cited by: §2.4.1,
+§7.
+
+Qin et al. (2025a)
+M. Qin, X. Liu, Z. Liang, Y. Shu, H. Yuan, J. Zhou, S. Xiao, B. Zhao, and Z. Liu
+
+Video-XL-2: Towards Very Long-Video Understanding Through Task-Aware KV Sparsification..
+
+CoRR abs/2506.19225.
+
+Cited by: §7.
+
+Qin et al. (2025b)
+S. Qin, H. Yu, C. Wu, Z. Li, Y. Cao, Z. Zhuge, Y. Zhou, W. Yao, Y. Zhang, Z. Wang, S. Bai, J. Zhang, and J. Lin
+
+VLCache: Computing 2% Vision Tokens and Reusing 98% for Vision-Language Inference..
+
+CoRR abs/2512.12977.
+
+Cited by: §1,
+§1,
+§2.3,
+Table 1,
+§3.4,
+4th item.
+
+Rao et al. (2021)
+Y. Rao, W. Zhao, B. Liu, J. Lu, J. Zhou, and C. Hsieh
+
+DynamicViT: Efficient Vision Transformers with Dynamic Token Sparsification..
+
+In The 35th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+pp. 13937–13949.
+
+Cited by: §3.3.2.
+
+Ribeiro et al. (2025)
+A. G. Ribeiro, L. Vilaça, C. Costa, T. S. da Costa, and P. M. Carvalho
+
+Automatic Visual Inspection for Industrial Application..
+
+J. Imaging 11 (10), pp. 350.
+
+Cited by: §1.
+
+Richardson (2024)
+I. E. Richardson
+
+Coding video: a practical guide to hevc and beyond.
+
+John Wiley & Sons.
+
+Cited by: §1,
+§2.4.1,
+§6.5.
+
+Romero et al. (2022)
+F. Romero, J. Hauswald, A. Partap, D. Kang, M. Zaharia, and C. Kozyrakis
+
+Optimizing Video Analytics with Declarative Model Relationships..
+
+Proc. VLDB Endow. 16 (3), pp. 447–460.
+
+Cited by: §7.
+
+Sarkar et al. (2026)
+S. D. Sarkar, R. Pautrat, O. Miksik, M. Pollefeys, I. Armeni, M. Rad, and M. Dusmanu
+
+CoPE-VideoLM: Codec Primitives For Efficient Video Language Models..
+
+CoRR abs/2602.13191.
+
+Cited by: §7.
+
+Schneider et al. (2025)
+B. Schneider, D. Jiang, C. Du, T. Pang, and W. Chen
+
+QuickVideo: Real-Time Long Video Understanding with System Algorithm Co-Design..
+
+CoRR abs/2505.16175.
+
+Cited by: §7.
+
+Sharma et al. (2026)
+A. Sharma, P. Naman, R. Banerjee, P. Pansari, S. Gawali, M. Arya, S. Chandra, A. Josephraj, R. Ramesh, P. Rathore, et al.
+
+Scaling real-time traffic analytics on edge-cloud fabrics for city-scale camera networks.
+
+arXiv preprint arXiv:2603.05217.
+
+Cited by: §1.
+
+Song et al. (2024)
+Z. Song, C. Qi, F. Liu, N. Jing, and X. Liang
+
+CMC: Video Transformer Acceleration via CODEC Assisted Matrix Condensing..
+
+In ASPLOS (2),
+
+pp. 201–215.
+
+Cited by: §1,
+§2.3,
+Table 1,
+§3.3.1,
+§7.
+
+Tao et al. (2025)
+K. Tao, C. Qin, H. You, Y. Sui, and H. Wang
+
+DyCoke: Dynamic Compression of Tokens for Fast Video Large Language Models..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2025 (CVPR),
+
+pp. 18992–19001.
+
+Cited by: §7.
+
+Team (2026)
+L. Team
+
+LMCache.
+
+External Links: Link
+
+Cited by: §4.
+
+Team (2025a)
+Q. Team
+
+Qwen3 Technical Report..
+
+CoRR abs/2505.09388.
+
+Cited by: §1,
+§2.2.
+
+Team (2025b)
+Q. Team
+
+Qwen3-VL Technical Report..
+
+CoRR abs/2511.21631.
+
+Cited by: Table 2,
+§5.
+
+vLLM Team (2026)
+vLLM Team
+
+Easy, fast, and cheap llm serving for everyone.
+
+External Links: Link
+
+Cited by: §4,
+1st item.
+
+Wang et al. (2016)
+L. Wang, Y. Xiong, Z. Wang, Y. Qiao, D. Lin, X. Tang, and L. V. Gool
+
+Temporal Segment Networks: Towards Good Practices for Deep Action Recognition..
+
+In ECCV (8),
+
+pp. 20–36.
+
+Cited by: §1.
+
+Wang et al. (2025)
+Q. Wang, H. Ye, M. Chung, Y. Liu, Y. Lin, M. Kuo, M. Ma, J. Zhang, and Y. Chen
+
+CoreMatching: A Co-adaptive Sparse Inference Framework with Token and Neuron Pruning for Comprehensive Acceleration of Vision-Language Models..
+
+In The 42nd Annual Conference on Machine Learning (ICML),
+
+Cited by: §1.
+
+Wiegand et al. (2003)
+T. Wiegand, G. J. Sullivan, G. Bjøntegaard, and A. Luthra
+
+Overview of the H.264/AVC video coding standard..
+
+IEEE Trans. Circuits Syst. Video Technol. 13 (7), pp. 560–576.
+
+Cited by: §1,
+§4.
+
+Wu et al. (2025)
+J. Wu, S. Wu, Y. Ma, G. Yu, H. Xu, L. Zheng, and J. Duan
+
+MonitorVLM:A Vision Language Framework for Safety Violation Detection in Mining Operations..
+
+CoRR abs/2510.03666.
+
+Cited by: §2.1.
+
+Wu et al. (2024a)
+J. Wu, L. Liu, Y. Tan, J. Hao, and X. Zhang
+
+Promptus: Can Prompts Streaming Replace Video Streaming with Stable Diffusion..
+
+CoRR abs/2405.20032.
+
+Cited by: §2.2.
+
+Wu et al. (2024b)
+Z. Wu, X. Chen, Z. Pan, X. Liu, W. Liu, D. Dai, H. Gao, Y. Ma, C. Wu, B. Wang, Z. Xie, Y. Wu, K. Hu, J. Wang, Y. Sun, Y. Li, Y. Piao, K. Guan, A. Liu, X. Xie, Y. You, K. Dong, X. Yu, H. Zhang, L. Zhao, Y. Wang, and C. Ruan
+
+DeepSeek-VL2: Mixture-of-Experts Vision-Language Models for Advanced Multimodal Understanding..
+
+CoRR abs/2412.10302.
+
+Cited by: §1.
+
+Xiao et al. (2024)
+G. Xiao, J. Tang, J. Zuo, J. Guo, S. Yang, H. Tang, Y. Fu, and S. Han
+
+DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads..
+
+CoRR abs/2410.10819.
+
+Cited by: §7.
+
+Xiao et al. (2023)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+
+Efficient Streaming Language Models with Attention Sinks..
+
+CoRR abs/2309.17453.
+
+Cited by: §7.
+
+Xing et al. (2024)
+L. Xing, Q. Huang, X. Dong, J. Lu, P. Zhang, Y. Zang, Y. Cao, C. He, J. Wang, F. Wu, and D. Lin
+
+PyramidDrop: Accelerating Your Large Vision-Language Models via Pyramid Visual Redundancy Reduction..
+
+CoRR abs/2410.17247.
+
+Cited by: §7.
+
+Xu et al. (2025a)
+C. Xu, K. Xu, X. Jiang, and T. Sun
+
+PLOVAD: Prompting Vision-Language Models for Open Vocabulary Video Anomaly Detection..
+
+IEEE Trans. Circuits Syst. Video Technol. 35 (6), pp. 5925–5938.
+
+Cited by: §2.1.
+
+Xu et al. (2025b)
+R. Xu, G. Xiao, Y. Chen, L. He, K. Peng, Y. Lu, and S. Han
+
+StreamingVLM: Real-Time Understanding for Infinite Video Streams..
+
+CoRR abs/2510.09608.
+
+Cited by: §2.3,
+§3.4.1,
+§7.
+
+Yang et al. (2025a)
+S. Yang, Y. Chen, Z. Tian, C. Wang, J. Li, B. Yu, and J. Jia
+
+VisionZip: Longer is Better but Not Necessary in Vision Language Models..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2025 (CVPR),
+
+pp. 19792–19802.
+
+Cited by: §7.
+
+Yang et al. (2025b)
+Y. Yang, Z. Zhao, S. N. Shukla, A. Singh, S. K. Mishra, L. Zhang, and M. Ren
+
+StreamMem: Query-Agnostic KV Cache Memory for Streaming Video Understanding..
+
+CoRR abs/2508.15717.
+
+Cited by: §7.
+
+Yao et al. (2025a)
+J. Yao, H. Li, Y. Liu, S. Ray, Y. Cheng, Q. Zhang, K. Du, S. Lu, and J. Jiang
+
+CacheBlend: Fast Large Language Model Serving for RAG with Cached Knowledge Fusion..
+
+In Proceedings of the 2025 EuroSys Conference,
+
+pp. 94–109.
+
+Cited by: §2.4.1,
+§3.4.2,
+§3.4,
+3rd item,
+§7.
+
+Yao et al. (2025b)
+L. Yao, Y. Li, Y. Wei, L. Li, S. Ren, Y. Liu, K. Ouyang, L. Wang, S. Li, S. Li, L. Kong, Q. Liu, Y. Zhang, and X. Sun
+
+TimeChat-Online: 80% Visual Tokens are Naturally Redundant in Streaming Videos..
+
+In ACM Multimedia,
+
+pp. 10807–10816.
+
+Cited by: §7.
+
+Yao et al. (2026)
+S. Yao, N. Rashvand, A. D. Pazho, and H. Tabkhi
+
+From offline to periodic adaptation for pose-based shoplifting detection in real-world retail security.
+
+IEEE Internet of Things Journal.
+
+Cited by: §1.
+
+Ye et al. (2025a)
+J. Ye, S. Lee, H. Lim, J. Lee, U. Hong, Y. Kwon, and D. Han
+
+SAND: A New Programming Abstraction for Video-based Deep Learning..
+
+In Proceedings of the 31st ACM Symposium on Operating Systems Principles (SOSP),
+
+pp. 589–605.
+
+Cited by: §1,
+§3.2,
+§7.
+
+Ye et al. (2024)
+L. Ye, Z. Tao, Y. Huang, and Y. Li
+
+ChunkAttention: Efficient Self-Attention with Prefix-Aware KV Cache and Two-Phase Partition..
+
+In ACL (1),
+
+pp. 11608–11620.
+
+Cited by: §7.
+
+Ye et al. (2025b)
+M. Ye, W. Liu, and P. He
+
+VERA: Explainable Video Anomaly Detection via Verbalized Learning of Vision-Language Models..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2025 (CVPR),
+
+pp. 8679–8688.
+
+Cited by: §1,
+§2.2.
+
+Ye et al. (2025c)
+W. Ye, Q. Wu, W. Lin, and Y. Zhou
+
+Fit and Prune: Fast and Training-free Visual Token Pruning for Multi-modal Large Language Models..
+
+In The 39th Annual AAAI Conference on Artificial Intelligence (AAAI),
+
+pp. 22128–22136.
+
+Cited by: §7.
+
+Yuan et al. (2024)
+T. Yuan, X. Zhang, K. Liu, B. Liu, C. Chen, J. Jin, and Z. Jiao
+
+Towards Surveillance Video-and-Language Understanding: New Dataset, Baselines, and Challenges..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2024 (CVPR),
+
+pp. 22052–22061.
+
+Cited by: §2.2.
+
+Zanella et al. (2024)
+L. Zanella, W. Menapace, M. Mancini, Y. Wang, and E. Ricci
+
+Harnessing Large Language Models for Training-Free Video Anomaly Detection..
+
+In The IEEE/CVF Conference on Computer Vision and Pattern Recognition 2024 (CVPR),
+
+pp. 18527–18536.
+
+Cited by: §1,
+§1,
+§2.2.
+
+Zeng et al. (2025)
+X. Zeng, K. Qiu, Q. Zhang, X. Li, J. Wang, J. Li, Z. Yan, K. Tian, M. Tian, X. Zhao, Y. Wang, and L. Wang
+
+StreamForest: Efficient Online Video Understanding with Persistent Event Memory..
+
+CoRR abs/2509.24871.
+
+Cited by: §7.
+
+Zhang et al. (2025a)
+C. Zhang, K. Ma, T. Fang, W. Yu, H. Zhang, Z. Zhang, Y. Xie, K. P. Sycara, H. Mi, and D. Yu
+
+VScan: Rethinking Visual Token Reduction for Efficient Large Vision-Language Models..
+
+CoRR abs/2505.22654.
+
+Cited by: §7.
+
+Zhang et al. (2017)
+H. Zhang, G. Ananthanarayanan, P. Bodík, M. Philipose, P. Bahl, and M. J. Freedman
+
+Live Video Analytics at Scale with Approximation and Delay-Tolerance..
+
+In Proceedings of the 14th Symposium on Networked Systems Design and Implementation (NSDI),
+
+pp. 377–392.
+
+Cited by: §7.
+
+Zhang et al. (2025b)
+Q. Zhang, A. Cheng, M. Lu, R. Zhang, Z. Zhuo, J. Cao, S. Guo, Q. She, and S. Zhang
+
+Beyond text-visual attention: exploiting visual cues for effective token pruning in vlms.
+
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+
+pp. 20857–20867.
+
+Cited by: §7.
+
+Zhang et al. (2025c)
+Y. Zhang, C. Fan, J. Ma, W. Zheng, T. Huang, K. Cheng, D. A. Gudovskiy, T. Okuno, Y. Nakata, K. Keutzer, and S. Zhang
+
+SparseVLM: Visual Token Sparsification for Efficient Vision-Language Model Inference..
+
+In The 42nd Annual Conference on Machine Learning (ICML),
+
+Cited by: §7.
+
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. W. Barrett, Z. Wang, and B. Chen
+
+H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models..
+
+In The 37th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §7.
+
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. W. Barrett, and Y. Sheng
+
+SGLang: Efficient Execution of Structured Language Model Programs..
+
+In The 38th Annual Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §7.
+
+Zhou et al. (2026)
+W. Zhou, L. Yang, L. Zhao, R. Zhang, Y. Cui, H. Huang, K. Qie, and C. Wang
+
+Vision Technologies with Applications in Traffic Surveillance Systems: A Holistic Survey..
+
+ACM Comput. Surv. 58 (3), pp. 58:1–58:47.
+
+Cited by: §1.
+
+Zhu et al. (2025)
+J. Zhu, W. Wang, Z. Chen, Z. Liu, S. Ye, L. Gu, H. Tian, Y. Duan, W. Su, J. Shao, Z. Gao, E. Cui, X. Wang, Y. Cao, Y. Liu, X. Wei, H. Zhang, H. Wang, W. Xu, H. Li, J. Wang, N. Deng, S. Li, Y. He, T. Jiang, J. Luo, Y. Wang, C. He, B. Shi, X. Zhang, W. Shao, J. He, Y. Xiong, W. Qu, P. Sun, P. Jiao, H. Lv, L. Wu, K. Zhang, H. Deng, J. Ge, K. Chen, L. Wang, M. Dou, L. Lu, X. Zhu, T. Lu, D. Lin, Y. Qiao, J. Dai, and W. Wang
+
+InternVL3: Exploring Advanced Training and Test-Time Recipes for Open-Source Multimodal Models..
+
+CoRR abs/2504.10479.
+
+Cited by: Table 2,
+§5.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

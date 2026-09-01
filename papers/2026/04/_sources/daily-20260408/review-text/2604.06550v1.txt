@@ -1,0 +1,758 @@
+SkillSieve: A Hierarchical Triage Framework for Detecting Malicious AI Agent Skills
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract.
+
+1 Introduction
+
+2 Background and Related Work
+
+2.1 AI Agent Skill Ecosystems
+
+2.2 Known Attack Campaigns
+
+2.3 Existing Detection Approaches
+
+3 Threat Model
+
+4 The SkillSieve Framework
+
+4.1 Overview
+
+4.2 Layer 1: Static Triage
+
+4.2.1 Module A: Pattern Matching
+
+4.2.2 Module B: AST Feature Extraction
+
+4.2.3 Module C: Metadata Reputation
+
+4.2.4 Module D: SKILL.md Surface Statistics
+
+4.2.5 Classification
+
+4.3 Layer 2: Structured Semantic Decomposition
+
+4.3.1 Motivation
+
+4.3.2 Four Sub-Tasks
+
+4.3.3 Prompt Design
+
+4.3.4 Aggregation
+
+4.4 Layer 3: Multi-LLM Jury Protocol
+
+4.4.1 Motivation
+
+4.4.2 Two-Round Protocol
+
+4.4.3 Explainable Reports
+
+5 Dataset Construction
+
+5.1 Data Sources
+
+5.2 Labeling Schema
+
+5.3 Adversarial Test Set
+
+6 Evaluation
+
+6.1 Experimental Setup
+
+6.2 Main Results
+
+6.3 Why SSD Outperforms Single-Prompt Analysis
+
+6.4 Adversarial Robustness
+
+6.5 Efficiency Analysis
+
+6.6 Edge Deployment Evaluation
+
+6.7 Jury Dynamics
+
+7 Discussion
+
+8 Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.06550v1 [cs.CR] 08 Apr 2026
+
+SkillSieve: A Hierarchical Triage Framework for Detecting Malicious AI Agent Skills
+
+Yinghan Hou∗
+
+Affiliation: Department of Earth Science and Engineering
+
+Imperial College London, London, United Kingdom
+
+email: houyinghan521@outlook.com
+
+and
+Zongyou Yang∗
+
+Affiliation: Department of Computer Science
+
+University College London, London, United Kingdom
+
+email: yzy0624@outlook.com
+
+Abstract.
+
+OpenClaw’s ClawHub marketplace hosts over 13,000 community-contributed agent skills, and between 13% and 26% of them contain security vulnerabilities according to recent audits. Regex scanners miss obfuscated payloads; formal static analyzers cannot read the natural language instructions in SKILL.md files where prompt injection and social engineering attacks hide. Neither approach handles both modalities.
+
+SkillSieve is a three-layer detection framework that applies progressively deeper analysis only where needed. Layer 1 runs regex, AST, and metadata checks through an XGBoost-based feature scorer, filtering roughly 86% of benign skills in under 40ms on average at zero API cost. Layer 2 sends suspicious skills to an LLM, but instead of asking one broad question, it splits the analysis into four parallel sub-tasks (intent alignment, permission justification, covert behavior detection, cross-file consistency), each with its own prompt and structured output. Layer 3 puts high-risk skills before a jury of three different LLMs that vote independently and, if they disagree, debate before reaching a verdict.
+
+We evaluate on 49,592 real ClawHub skills and adversarial samples across five evasion techniques, running the full pipeline on a $440 ARM single-board computer. On a 400-skill labeled benchmark, SkillSieve achieves 0.800 F1, outperforming ClawVet’s 0.421, at an average cost of $0.006 per skill. Code, data, and benchmark are open-sourced.
+
+Keywords: AI agent security, supply chain security, malicious skill detection, LLM-based analysis, agent skill marketplace
+††footnotetext: ∗Equal contribution.
+
+1. Introduction
+
+AI coding agents like OpenClaw (1), Claude Code, and Cursor extend their capabilities through skills: packages of natural language instructions (a SKILL.md file) and optional scripts that tell the agent what to do. OpenClaw’s ClawHub marketplace hosts over 13,000 such skills as of early 2026 (2), with daily submissions that briefly topped 500 during the January–February rush (4). Anyone can publish a skill. There is no mandatory review.
+
+Attackers noticed. The ClawHavoc campaign pushed hundreds of malicious skills into ClawHub over six weeks; Koi Security’s audit of 2,857 skills found 341 malicious entries, 335 traced to a single coordinated operation (5). Snyk’s ToxicSkills audit found that 13.4% of 3,984 skills contained at least one critical-level security issue (4). A separate study of 42,447 skills put the vulnerability rate at 26.1% (6).
+
+Current tools each cover part of the problem. ClawVet (9) matches regex patterns but misses payloads split across files (ClawHavoc demonstrated this). SkillFortify (8) gives formal guarantees on executable code but cannot read the English-language instructions where prompt injection hides. VirusTotal’s Gemini-based scanner (10) understands language but relies on a single model with no way to handle disagreement.
+
+The root issue is that a skill is two things at once: code and prose. Detecting malice requires analyzing both. We built SkillSieve around three ideas:
+
+Triage. Most skills are obviously safe. A cheap static check (regex + AST + heuristic scoring, avg 39ms, zero API cost) filters about 86% of the volume, so expensive LLM calls go only where they are needed.
+
+Decomposed analysis. Asking an LLM “is this malicious?” in one shot gives shaky results. We split the question into four focused sub-tasks run in parallel: Does the skill do what it claims? Are its permissions justified? Does it try to hide anything? Does the code match the instructions?
+
+Jury verdict. A single LLM has blind spots. Three different models vote independently; if they disagree, they see each other’s reasoning and vote again. The final report traces evidence through all three layers.
+
+Our contributions:
+
+•
+
+SkillSieve, a three-layer triage pipeline that combines static analysis with LLM-based semantic checks, applying deeper analysis only to skills that need it (§4).
+
+•
+
+Structured Semantic Decomposition (SSD): splitting LLM security analysis into four parallel sub-tasks, each independently evaluable (§4.3).
+
+•
+
+A Multi-LLM Jury Protocol with structured debate for cross-validating high-risk verdicts (§4.4).
+
+•
+
+An open benchmark of 49,592 real skills with a 400-skill labeled test set and adversarial bypass samples across five evasion techniques, evaluated on $440 edge hardware (§5, §6).
+
+2. Background and Related Work
+
+2.1. AI Agent Skill Ecosystems
+
+AI agent skills are modular extensions that direct agent behavior through natural language instructions and optional executable scripts. The canonical skill package consists of a SKILL.md file containing YAML frontmatter (metadata, dependencies, permissions) and a markdown body (instructions to the agent), optionally accompanied by a scripts/ directory with executable code in Python, Bash, or JavaScript (3).
+
+OpenClaw’s ClawHub is the largest public skill registry, hosting over 13,000 skills as of February 2026. Skills are published via a GitHub-backed registry with minimal vetting: any user can submit a skill, and there is no mandatory security review or certification process (15). This open model mirrors the early days of npm and PyPI, where supply chain attacks exploited the absence of gatekeeping (21).
+
+The critical distinction from traditional package ecosystems is that agent skills operate with the agent’s full privileges—including access to environment variables (API keys, tokens), file system operations, and network requests—and their natural language instructions are executed implicitly by the agent without explicit user approval for each action (13, 14).
+
+2.2. Known Attack Campaigns
+
+Several large-scale attack campaigns have targeted skill ecosystems in 2026:
+
+ClawHavoc (January–February 2026): Koi Security’s audit of all 2,857 skills on ClawHub identified 341 malicious entries, 335 of which were traced to a single coordinated campaign. The operation used typosquatting (names resembling popular skills like “polymarket” and “phantom”), cross-file logic splitting, and credential exfiltration via external webhooks (5).
+
+Atomic macOS Stealer: Trend Micro documented malicious OpenClaw skills distributing the AMOS (Atomic macOS Stealer) infostealer through disguised utility skills (16).
+
+Crypto skill campaign: Malicious skills targeting cryptocurrency users compromised OpenClaw installations by exfiltrating wallet keys and exchange API credentials (17).
+
+2.3. Existing Detection Approaches
+
+Pattern-based scanning. ClawVet (9) runs six independent analysis passes with 54 static detection patterns covering reverse shells, DNS exfiltration, credential theft, obfuscation, prompt injection, and social engineering. However, the ClawHavoc campaign demonstrated that distributing malicious commands across multiple code blocks defeats single-pass and multi-pass regex scanners.
+
+Formal static analysis. SkillFortify (8) applies formal verification through abstract interpretation, capability-based sandboxing, and SAT-based dependency resolution. It achieves 96.95% F1 with zero false positives on benign skills but is limited to analyzing executable code and cannot reason about natural language instructions in SKILL.md.
+
+LLM-based analysis. VirusTotal Code Insight (10) uses Gemini to analyze skill packages. SkillScan (6) integrates static analysis with LLM-Guard’s semantic classifiers, achieving 86.7% precision and 82.5% recall on a corpus of 31,132 skills (collected from 42,447 total). SkillProbe (11) employs multi-agent collaboration for security auditing across 2,500 skills, discovering zero-day vulnerabilities through combinatorial risk simulation. However, all existing LLM-based approaches use either a single model or treat the analysis as a monolithic task, limiting both robustness and explainability. Related work on skill cloning, automated prompt injection, and security benchmarking (22, 24, 23) shows how broad the threat surface has become.
+
+Surveys and taxonomies. Xu and Yan (12) survey agent skills across architecture, acquisition, and security. Liu et al. (7) conduct a large-scale empirical study of 157 confirmed malicious skills, identifying two attack archetypes and achieving 93.6% removal through responsible disclosure. Agent Audit (25) combines dataflow analysis with credential detection for LLM agent applications. Neither proposes a hierarchical detection framework for skill marketplaces.
+
+Positioning of SkillSieve. Our work differs from prior approaches in three ways: (1) we combine static and semantic analysis in a cost-efficient hierarchical pipeline rather than applying uniform analysis depth; (2) we decompose LLM-based analysis into four structured sub-tasks rather than using monolithic prompts; and (3) we employ multi-model cross-validation with structured debate rather than relying on a single LLM.
+
+3. Threat Model
+
+Attacker. We consider an adversary who publishes malicious skills to public registries (e.g., ClawHub). The attacker’s goal is to execute unauthorized actions when their skill is installed by a victim, including: credential theft (reading API keys, tokens, SSH keys from environment variables or dotfiles), data exfiltration (sending local data to attacker-controlled servers), remote code execution (establishing reverse shells or downloading additional payloads), and social engineering (manipulating the agent into granting elevated permissions).
+
+The attacker may employ evasion techniques including: encoding obfuscation (Base64/hex encoding of malicious commands), cross-file logic splitting (distributing malicious behavior across SKILL.md and multiple scripts), conditional triggers (activating only under specific environments, usernames, or time conditions), homoglyph substitution (Unicode look-alike characters for typosquatting), and time-delayed payloads (dormant for days before activation).
+
+Defender. The defender operates a detection system that analyzes skill packages before installation or upon submission to a registry. The defender has access to the full skill package contents (all text files) but does not execute any code. The defender may call external LLM APIs for semantic analysis. The detection system must balance three objectives: high recall (minimizing false negatives to prevent malicious skills from reaching users), reasonable precision (minimizing false positives to avoid blocking legitimate skills), and practical cost (keeping API costs manageable for scanning thousands of skills). Industry guidelines (18, 28, 29, 30) emphasize these trade-offs for agentic AI deployments.
+
+Scope. We focus on detecting malicious intent in skill packages through static and semantic analysis. We do not address runtime monitoring, dynamic analysis, or attacks that require executing the skill code. We assume the skill package format follows the ClawHub specification (text-only files, no binaries).
+
+4. The SkillSieve Framework
+
+4.1. Overview
+
+SkillSieve processes each skill package through up to three layers of progressively deeper analysis (Figure 1):
+
+(1)
+
+Layer 1: Static Triage (§4.2). Four analysis modules—regex pattern matching, AST feature extraction, metadata reputation checking, and SKILL.md surface statistics—produce a feature vector scored by a weighted heuristic (15 features from 31 candidates). Skills scoring below the risk threshold are released as safe. This layer processes each skill in under 40ms on average (P95: 127ms) at zero API cost, filtering approximately 86% of the total volume.
+
+(2)
+
+Layer 2: Structured Semantic Decomposition (§4.3). Suspicious skills from Layer 1 undergo LLM-based semantic analysis decomposed into four parallel sub-tasks: intent alignment, permission justification, covert behavior detection, and cross-file consistency. Each sub-task uses a specialized prompt and produces structured JSON output. A weighted aggregation determines whether to escalate to Layer 3.
+
+(3)
+
+Layer 3: Multi-LLM Jury Protocol (§4.4). High-risk skills are adjudicated by three independent LLMs through a two-round protocol: independent voting followed by structured debate if jurors disagree. The final verdict includes an explainable report with evidence chains from all three layers.
+
+Figure 1. The SkillSieve three-layer triage architecture. Layer 1 filters 86% of benign skills via static analysis at zero cost. Layer 2 applies four parallel LLM sub-tasks to suspicious skills. Layer 3 convenes a multi-LLM jury for high-risk cases.
+
+4.2. Layer 1: Static Triage
+
+Layer 1 is designed for high recall at low cost: it aims to pass 98% of truly malicious skills to Layer 2, accepting a higher false positive rate that subsequent layers will resolve.
+
+4.2.1. Module A: Pattern Matching
+
+We scan all files in the skill package against a curated library of approximately 60 regex rules organized into five categories: reverse shell signatures, credential theft patterns, data exfiltration indicators, code obfuscation markers, and prompt injection keywords. Rules are compiled with case-insensitive matching and stored in an extensible YAML configuration.
+
+4.2.2. Module B: AST Feature Extraction
+
+We parse Python, Bash, and JavaScript files using tree-sitter (20) to extract a structural feature vector: counts of system calls, network operations, environment variable accesses, dynamic execution calls (eval/exec/subprocess), encoded string literals, and the Shannon entropy of string constants (high entropy suggesting obfuscation).
+
+4.2.3. Module C: Metadata Reputation
+
+From the SKILL.md YAML frontmatter, we extract: the minimum Levenshtein edit distance between the skill name and the top-100 most popular skill names (detecting typosquatting), whether the skill requests sensitive environment variables (keywords: key, token, secret), and whether it requires potentially dangerous binaries (curl, wget, nc, etc.).
+
+4.2.4. Module D: SKILL.md Surface Statistics
+
+Without invoking an LLM, we compute: instruction length, count of external URLs, number of permission requests, mentions of sensitive file paths (˜/.env, ˜/.ssh), urgency language density (“immediately”, “must”, “do not tell”), and the ratio of instruction length to description length.
+
+4.2.5. Classification
+
+The four modules produce a combined feature vector (15 selected from 31 candidates). We trained an XGBoost (19) classifier on 1,401 labeled skills (608 malicious, 793 benign); in 5-fold cross-validation it achieves 0.959 F1 on the triage task. However, because the training malicious samples are dominated by three known-malicious authors with similar attack patterns, the model generalizes poorly to the more heterogeneous 400-skill benchmark (hold-out F10.677 vs. heuristic 0.733). The end-to-end results in Table 1 therefore use a weighted heuristic scorer, which assigns category-specific weights to pattern matches and outputs a risk score . Skills with () are released as safe; those with are escalated to Layer 2. A more diverse labeled corpus should allow the XGBoost model to surpass the heuristic.
+
+4.3. Layer 2: Structured Semantic Decomposition
+
+4.3.1. Motivation
+
+Natural language instructions in SKILL.md are the primary attack surface for prompt injection and social engineering—attacks invisible to static analysis. However, posing a monolithic “is this malicious?” question to an LLM yields unreliable results: the model may overlook specific threat dimensions, produce vague justifications, and cannot be systematically evaluated.
+
+4.3.2. Four Sub-Tasks
+
+We decompose the semantic analysis into four independent sub-tasks, each targeting a distinct security dimension:
+
+•
+
+Task A: Intent Alignment. Does what the skill claims to do (name, description) match what it actually instructs the agent to do? Catches disguised attacks.
+
+•
+
+Task B: Permission Justification. Are the requested permissions (environment variables, file access, network, binaries) reasonable for the stated purpose? Catches over-privileged skills.
+
+•
+
+Task C: Covert Behavior Detection. Are there instructions to hide actions from the user, suppress error reporting, or bypass safety mechanisms? Catches social engineering.
+
+•
+
+Task D: Cross-File Consistency. Does the code in scripts/ actually implement what SKILL.md describes, or does it perform undeclared actions? Catches split-logic attacks.
+
+All four sub-tasks are executed in parallel via concurrent API calls, so the total latency equals the maximum single-task latency (typically 2–5 seconds), not the sum.
+
+4.3.3. Prompt Design
+
+Each sub-task prompt follows a consistent structure: (1) system role as a security analyst, (2) the full skill content (SKILL.md + scripts), (3) Layer 1 flags as context, (4) task-specific analysis instructions, and (5) a strict JSON output schema requiring a risk score, evidence quotes, and a categorical rating. Providing Layer 1 flags as context allows the LLM to focus its analysis on already-identified concerns.
+
+4.3.4. Aggregation
+
+Each sub-task returns a risk score . The Layer 2 risk score is a weighted sum:
+
+(1)
+
+where , , , , reflecting the relative importance of intent alignment (the strongest discriminator for disguised attacks). Skills with are escalated to Layer 3.
+
+4.4. Layer 3: Multi-LLM Jury Protocol
+
+4.4.1. Motivation
+
+Individual LLMs exhibit systematic biases in security judgments: some models tend toward false positives, others toward false negatives, and these biases vary by attack type. A single-model verdict provides no mechanism for quantifying uncertainty or resolving ambiguous cases.
+
+4.4.2. Two-Round Protocol
+
+Round 1: Independent Voting. Three LLMs from different vendors (Kimi 2.5, MiniMax M2.7, DeepSeek-V3 via Baidu Qianfan) independently analyze the skill with full context (skill content + Layer 1 flags + Layer 2 analysis). Each juror produces a structured JSON verdict: SAFE or MALICIOUS, with confidence, attack types, evidence, and reasoning. If all three jurors agree, the unanimous verdict is final.
+
+Round 2: Structured Debate. If jurors disagree, each receives the other jurors’ reasoning and evidence and must either maintain or change their verdict, explicitly addressing counter-arguments. After Round 2, a majority vote (2/3) determines the verdict. If no majority emerges, the skill is flagged for human review.
+
+4.4.3. Explainable Reports
+
+For malicious verdicts, SkillSieve generates a structured report containing: attack type classification, a three-layer evidence chain (Layer 1 static findings Layer 2 semantic findings Layer 3 juror opinions), and a recommended action (block, report, or escalate).
+
+5. Dataset Construction
+
+5.1. Data Sources
+
+We construct our evaluation dataset from four sources:
+
+•
+
+ClawHub full archive: We clone the openclaw/skills GitHub repository (April 4, 2026 snapshot), which archives all skills published on ClawHub. This yields 49,592 skill packages across 16,797 authors.
+
+•
+
+Snyk ToxicSkills: The snyk-labs/toxicskills-goof repository provides documented malicious skill samples with known attack payloads (4).
+
+•
+
+ClawHavoc samples: Malicious skills from the ClawHavoc campaign, identified via the prompt-security/clawsec security advisory feed and cross-referenced with the ClawHub archive.
+
+•
+
+Human-reviewed set: 400 skills (89 malicious, 311 benign) labeled via cross-validation between SkillSieve L1 and ClawVet, with all 157 disagreements resolved by a human reviewer.
+
+5.2. Labeling Schema
+
+Each skill receives three annotations: (1) a binary label (benign/malicious); (2) attack type multi-labels from a taxonomy of seven categories (prompt injection, credential theft, remote execution, data exfiltration, typosquatting, obfuscation, social engineering); and (3) a stealth rating from 1 (plaintext malicious commands) to 5 (advanced obfuscation with conditional triggers).
+
+5.3. Adversarial Test Set
+
+We construct adversarial samples covering five bypass techniques: encoding obfuscation, cross-file logic splitting, conditional triggers, homoglyph substitution, and time-delayed payloads. Each sample combines its evasion technique with a credential theft payload injected into a benign skill template. Table 2 analyzes the per-layer interception pattern for each technique. We verify these patterns at scale with 100 samples (20 per technique) in Section 6.
+
+6. Evaluation
+
+6.1. Experimental Setup
+
+Environment. All experiments run on an Orange Pi AIpro single-board computer (4-core ARM64 CPU, 24 GB LPDDR4X RAM, Ubuntu 22.04, Python 3.11). This hardware was chosen deliberately: it costs $440 and represents the low end of what a developer might have on hand. Layer 1 analysis runs entirely on-device. Layers 2 and 3 call LLM APIs over WiFi: Kimi 2.5 (Moonshot AI) for Layer 2 and three-vendor jury for Layer 3 (Kimi 2.5, MiniMax M2.7, DeepSeek-V3 via Baidu Qianfan). The evaluation dataset is the full openclaw/skills GitHub archive cloned on 2026-04-04.
+
+Baselines. We compare against four baselines: (1) ClawVet (9), a 6-pass regex scanner; (2) SkillFortify (8), a formal static analysis framework; (3) VirusTotal Code Insight, a single-LLM (Gemini) analyzer; and (4) a single-LLM baseline (Kimi 2.5 with a direct “is this malicious?” prompt).
+
+Metrics. Precision, Recall, F1, Accuracy, and False Positive Rate (FPR) for binary classification (benign vs. malicious).
+
+6.2. Main Results
+
+Table 1. End-to-end detection on 400 labeled skills (89 malicious, 311 benign). All LLM-based methods use L1 triage first; they differ in how Layer 2 analyzes the 151 suspicious skills that L1 flags.
+
+Method
+P
+R
+F1
+Acc
+FPR
+
+ClawVet (9)
+0.329
+0.584
+0.421
+0.642
+0.341
+
+SkillSieve L1
+0.583
+0.989
+0.733
+0.840
+0.203
+
+   + Single prompt
+1.000
+0.596
+0.746
+0.910
+0.000
+
+   + SSD (ours)
+0.752
+0.854
+0.800
+0.905
+0.080
+
+ClawVet’s regex scanning produces the lowest F1 (0.421) because it flags any skill containing common patterns regardless of context (precision 0.329). Layer 1 alone catches nearly everything (recall 0.989) but at the cost of flagging 20.3% of benign skills. Adding Layer 2 with SSD raises precision to 0.752 and F1 from 0.733 to 0.800, at an average cost of $0.006/skill (86% of skills are resolved at Layer 1 for free). Layer 2 clears 38 of the 63 benign skills that Layer 1 incorrectly flagged.
+
+The two Layer 2 approaches differ in how they fail. L1 + Single prompt achieves perfect precision (zero false positives) but misses 36 malicious skills (recall 0.596), because a single broad question defaults to “benign” for skills that look like legitimate tools. L1 + SSD detects 23 more threats by examining each security dimension independently, raising recall to 0.854. The cost is 25 false positives, an acceptable trade-off when missed malware is more dangerous than extra review.
+
+6.3. Why SSD Outperforms Single-Prompt Analysis
+
+Table 1 shows that L1+SSD achieves F10.800 while L1+Single-prompt achieves 0.746—both using Kimi 2.5 on the same skills. The single prompt misses 36 malicious skills that SSD catches. To understand why, we examine representative cases.
+
+Case 1: Disguised DeFi tool (maxxit-lazy-trading). The single prompt labels this skill benign, reasoning: “legitimate DeFi trading automation that uses documented APIs.” SSD’s Task B (Permission Justification) flags that the skill requests OPENAI_API_KEY despite having no AI functionality, and Task C (Covert Behavior) detects instructions to suppress transaction logging.
+
+Case 2: Fake identity service (verified-agent-identity-5). The single prompt accepts the skill as a “legitimate decentralized identity management tool.” SSD’s Task A (Intent Alignment) identifies a discrepancy: the description claims identity verification, but the instructions direct the agent to collect and transmit private keys.
+
+Case 3: Blockchain game wrapper (botcoin). The single prompt sees “documented blockchain game with transparent token economics.” SSD’s Task D (Cross-file Consistency) discovers that the setup script performs actions not described in SKILL.md—specifically, exporting environment variables to an external endpoint.
+
+The pattern is consistent: the single prompt evaluates the skill’s stated purpose and finds it plausible, while SSD’s decomposed analysis examines each security dimension independently and catches misalignments that a holistic judgment overlooks.
+
+6.4. Adversarial Robustness
+
+Table 2. Per-layer interception analysis on five bypass techniques. Each technique combines its evasion method with a credential theft payload.
+
+Technique
+
+L1 Score
+Caught by
+
+L1 Rule
+
+Encoding
+
+0.35
+L1+L2
+
+obfuscation
+
+Cross-file
+
+0.40
+L1+L2
+
+credential_theft
+
+Conditional
+
+0.70
+L1
+
+conditional_trigger
+
+Homoglyph
+
+0.80
+L1+L2
+
+prompt_injection
+
+Time-delay
+
+0.70
+L1
+
+time_delay
+
+All five techniques are intercepted. The results reveal three interception patterns based on L1 signal strength:
+
+Strong L1 signals (score 0.70): Conditional triggers and time-delayed payloads contain distinctive code constructs (if os.environ.get(, time.time() -) that regex rules catch reliably. Layer 2 confirms but is not strictly needed.
+
+Moderate L1 signals (score 0.35–0.40): Encoding obfuscation and cross-file splitting produce weaker static signatures. Layer 1 flags them but with less certainty; Layer 2’s semantic analysis is needed to confirm that base64-decoded commands or cross-file data flows constitute an attack.
+
+Compound attacks (score 0.80): Homoglyph substitution alone (a name-only attack with benign content) would evade content-focused analysis. However, real-world typosquatting skills combine name impersonation with malicious payloads—in our test case, hidden credential theft. The combination triggers both metadata (non-ASCII name) and content rules (prompt injection: “do not mention”), producing a strong composite signal.
+
+We verified these patterns at scale by generating 100 adversarial samples (20 per technique). All 100 were correctly detected (100% interception rate), confirming that the per-layer analysis generalizes across variants of each technique.
+
+6.5. Efficiency Analysis
+
+Table 3. Efficiency comparison. CVet = ClawVet, SFort = SkillFortify, VT = VirusTotal Code Insight.
+
+Metric
+CVet
+SFort
+VT
+Ours
+
+Avg latency/skill
+1 s
+5 s
+3 s
+38.8 ms†
+
+Avg cost/skill
+$0
+$0
+$0.01
+$0.006†
+
+GPU required
+No
+No
+No
+Optional
+
+†SkillSieve averages are computed over the full 49,592-skill corpus. 86% of skills are resolved at Layer 1 (38.8 ms, $0), so the average cost per skill is dominated by the zero-cost majority: /skill. By contrast, scanning every skill with a single-LLM approach would cost $0.01/skill 49,592 . SkillSieve’s triage reduces this to $297, a 1.7 saving on the full corpus; the saving grows as the benign base rate increases.
+
+6.6. Edge Deployment Evaluation
+
+To test whether SkillSieve can run outside a cloud or workstation environment, we deployed the full pipeline on an Orange Pi AIpro, a $440 ARM-based single-board computer with a 4-core ARM64 CPU and 24 GB RAM (no GPU used). This hardware costs roughly an order of magnitude less than the cloud servers typically used for security scanning at scale.
+
+Table 4. Layer 1 performance on Orange Pi AIpro (ARM64, 4-core, 24 GB RAM) scanning 49,592 real ClawHub skills.
+
+Metric
+Value
+
+Total skills scanned
+49,592
+
+Total scan time
+1,863 s (31.0 min)
+
+Avg latency / skill
+38.8 ms
+
+P95 latency / skill
+126.6 ms
+
+Skills flagged suspicious
+6,871 (13.86%)
+
+Errors (unparseable)
+1,623 (3.27%)
+
+Hardware cost
+$440
+
+API cost (Layer 1)
+$0
+
+Layer 1 ran entirely on-device with zero API calls, processing 49,592 real ClawHub skills in 31 minutes on a $440 ARM board at 38.8 ms per skill (P95: 126.6 ms). The triage filter flagged 13.86% of skills as suspicious, closely matching Snyk’s independent finding that 13.4% of 3,984 skills contained critical-level security issues (4). This means only 6,871 skills require LLM analysis instead of all 49,592, a 7.2 cost reduction.
+
+Among the flagged skills, the most frequent pattern categories were obfuscation (35,705 matches, driven by base64-encoded strings), data exfiltration (6,451), social engineering (2,652), credential theft (598), prompt injection (484), and reverse shell signatures (33). The known-malicious author hightower6eu (354 skills in our snapshot; VirusTotal (10) independently analyzed 314 from this author) was flagged in its entirety.
+
+We validated detection accuracy on 13 skills from two known-malicious authors (hightower6eu, moonshine-100rze). After Layer 2 semantic analysis via Kimi 2.5, all 13 were correctly classified as malicious (100% recall on known threats, average confidence 0.91). The hightower6eu skills use social engineering (fake “openclaw-agent” download links), while the moonshine-100rze skills embed base64-encoded reverse shell commands.
+
+Layers 2 and 3 issued HTTP requests to LLM APIs (Kimi 2.5, MiniMax M2.7, DeepSeek-V3 via Baidu Qianfan); network latency from the board’s WiFi connection added 200 ms per request but did not bottleneck the pipeline since LLM inference dominates.
+
+The triage architecture makes SkillSieve practical for self-hosted deployment in air-gapped networks (Layer 1 only), CI/CD pipelines on commodity hardware, and resource-constrained environments where cloud-based scanning is not an option.
+
+6.7. Jury Dynamics
+
+We ran the full three-layer pipeline on 20 borderline skills selected by Layer 2 confidence between 0.25 and 0.75 (the most uncertain verdicts). The jury consisted of three LLMs from different vendors: Kimi 2.5 (Moonshot AI), MiniMax M2.7, and DeepSeek-V3 (via Baidu Qianfan).
+
+Of the 20 cases, 18 reached Layer 3 (two were resolved at Layer 2). The results:
+
+Table 5. Layer 3 jury dynamics on 20 borderline skills (L2 confidence 0.25–0.75).
+
+Outcome
+Count
+
+Unanimous Round 1 (no debate)
+11
+
+Debate triggered (Round 2)
+7
+
+   Unanimous after debate
+3
+
+   Majority vote
+2
+
+   Contested (escalated to human)
+2
+
+The debate mechanism activated in 7 of 18 jury sessions (38.9%). In 3 cases, the dissenting juror changed its verdict after seeing the other two jurors’ evidence, reaching unanimous consensus. In 2 cases, the disagreement persisted but a 2-to-1 majority determined the verdict. In the remaining 2 cases, no majority emerged and the skill was flagged for human review—exactly the intended behavior for genuinely ambiguous skills.
+
+Notably, the two “contested” cases (verified-agent-identity-5 and openviking-context-database) were both skills that our human annotator also found difficult to classify, suggesting the jury’s uncertainty correlates with genuine ambiguity rather than model failure.
+
+7. Discussion
+
+Limitations. Layer 1 reads files; it cannot catch payloads fetched at runtime from a remote URL. Time-delayed attacks are the hardest case across all methods, since the malicious logic looks inert at scan time. Layers 2 and 3 depend on LLM outputs, which are non-deterministic. We set temperature to 0 and report means and standard deviations over three runs, but some variance remains.
+
+Ethics. Our adversarial samples inject malicious logic into benign skill templates for evaluation only. We do not release working exploits. Vulnerabilities found in ClawHub data during this work were reported to the OpenClaw security team before publication.
+
+Edge deployment. Running the full experiment suite on a $440 ARM board was not a stunt. Recent work on edge-based malware detection (26, 27) demonstrates growing interest in resource-constrained security analysis. Existing skill scanners assume cloud infrastructure or a developer workstation. The triage design means 86% of the work stays on-device at zero cost, making self-hosted scanning practical for air-gapped networks, CI/CD runners, and organizations that cannot send skill contents to third-party APIs.
+
+What we would do next. Runtime behavioral monitoring would catch the payloads our static approach misses. Fine-tuning a small open model on our labeled data could remove the API dependency for Layer 2. The framework currently targets OpenClaw skills, but the same architecture should transfer to MCP servers and LangChain tools with new rule sets.
+
+8. Conclusion
+
+SkillSieve detects malicious agent skills by layering cheap static checks with focused LLM analysis and multi-model voting. On a 400-skill labeled benchmark drawn from 49,592 real ClawHub skills, the two-layer pipeline achieves 0.800 F1 (0.752 precision, 0.854 recall), outperforming ClawVet’s 0.421 F1. Layer 1 alone reaches 0.989 recall at zero cost; Layer 2 then cuts false positives by 60%, raising precision from 0.583 to 0.752. The three-model jury reaches unanimous agreement on all tested malicious samples. The entire pipeline runs on a $440 ARM board in 31 minutes. All five tested bypass techniques—including conditional triggers, homoglyph-based typosquatting, and time-delayed payloads—are intercepted when combined with malicious payloads. Pure name impersonation without malicious content falls outside the scope of content-focused analysis and would require cross-registry name similarity checking (28). The tool and benchmark are open-sourced at https://github.com/xiaohou521/skillsieve.
+
+References
+
+(1)
+
+OpenClaw. OpenClaw: Your own personal AI assistant. https://github.com/openclaw/openclaw, 2026.
+
+(2)
+
+OpenClaw. ClawHub: Skill directory for OpenClaw. https://github.com/openclaw/clawhub, 2026.
+
+(3)
+
+OpenClaw. Skill format specification. https://github.com/openclaw/clawhub/blob/main/docs/skill-format.md, 2026.
+
+(4)
+
+Snyk Labs. ToxicSkills: Malicious AI agent skills in ClawHub. https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/, February 2026.
+
+(5)
+
+Koi Security. ClawHavoc: 341 malicious skills found by the bot they were targeting. https://www.koi.ai/blog/clawhavoc-341-malicious-clawedbot-skills-found-by-the-bot-they-were-targeting, February 2026.
+
+(6)
+
+Liu, Y., Wang, W., Feng, R., Zhang, Y., Xu, G., Deng, G., Li, Y., and Zhang, L. Agent skills in the wild: An empirical study of security vulnerabilities at scale. arXiv:2601.10338, January 2026.
+
+(7)
+
+Liu, Y., Chen, Z., Zhang, Y., Deng, G., Li, Y., Ning, J., Zhang, Y., and Zhang, L.Y. Malicious agent skills in the wild: A large-scale security empirical study. arXiv:2602.06547, February 2026.
+
+(8)
+
+Bhardwaj, V.P. Formal analysis and supply chain security for agentic AI skills. arXiv:2603.00195, February 2026.
+
+(9)
+
+Shaikh, M. ClawVet: Skill vetting & supply chain security for the OpenClaw ecosystem. https://github.com/MohibShaikh/clawvet, 2026.
+
+(10)
+
+VirusTotal. From automation to infection: How OpenClaw agent skills are being weaponized. https://blog.virustotal.com/2026/02/from-automation-to-infection-how.html, February 2026.
+
+(11)
+
+Guo, Z., Chen, Z., Nie, X., Lin, J., Zhou, Y., and Zhang, W. SkillProbe: Security auditing for emerging agent skill marketplaces via multi-agent collaboration. arXiv:2603.21019, March 2026.
+
+(12)
+
+Xu, R. and Yan, Y. Agent skills for large language models: Architecture, acquisition, security, and the path forward. arXiv:2602.12430, February 2026.
+
+(13)
+
+AuthMind. OpenClaw’s 230 malicious skills: What agentic AI supply chains teach us about the need to evolve identity security. https://www.authmind.com/blogs/openclaw-malicious-skills-agentic-ai-supply-chain, 2026.
+
+(14)
+
+1Password. From magic to malware: How OpenClaw’s agent skills become an attack surface. https://1password.com/blog/from-magic-to-malware-how-openclaws-agent-skills-become-an-attack-surface, 2026.
+
+(15)
+
+HKCERT. OpenClaw’s rapid adoption exposes skills supply chain and fake installer risks in a high-privilege AI agent platform. https://www.hkcert.org/blog/openclaw-s-rapid-adoption-exposes-skills-supply-chain-and-fake-installer-risks-in-a-high-privilege-ai-agent-platform, March 2026.
+
+(16)
+
+Trend Micro. Malicious OpenClaw skills used to distribute Atomic macOS Stealer. https://www.trendmicro.com/en_us/research/26/b/openclaw-skills-used-to-distribute-atomic-macos-stealer.html, February 2026.
+
+(17)
+
+Paubox. Malicious crypto skills compromise OpenClaw AI assistant users. https://www.paubox.com/blog/malicious-crypto-skills-compromise-openclaw-ai-assistant-users, 2026.
+
+(18)
+
+OWASP. OWASP Agentic Skills Top 10. https://owasp.org/www-project-agentic-skills-top-10/, 2026.
+
+(19)
+
+Chen, T. and Guestrin, C. XGBoost: A scalable tree boosting system. In KDD, 2016.
+
+(20)
+
+Tree-sitter. Official documentation / project page. https://tree-sitter.github.io/tree-sitter/.
+
+(21)
+
+Ohm, M. et al. Backstabber’s knife collection: A review of open source software supply chain attacks. In DIMVA, 2020.
+
+(22)
+
+Zhu, J., Zhang, L., Guo, W., and Liu, Y. SkillClone: Multi-modal clone detection and clone propagation analysis in the agent skill ecosystem. arXiv:2603.22447, March 2026.
+
+(23)
+
+Wang, L., Wang, Z., and Xu, A. SkillTester: Benchmarking utility and security of agent skills. arXiv:2603.28815, March 2026.
+
+(24)
+
+Jia, X., Liao, J., Qin, S., Gu, J., Ren, W., Cao, X., Liu, Y., and Torr, P. SkillJect: Automating stealthy skill-based prompt injection for coding agents with trace-driven closed-loop refinement. arXiv:2602.14211, February 2026.
+
+(25)
+
+Zhang, H., Nian, Y., and Zhao, Y. Agent Audit: A security analysis system for LLM agent applications. arXiv:2603.22853, March 2026.
+
+(26)
+
+Rondanini, C., Carminati, B., Ferrari, E., Gaudiano, A., and Kundu, A. Malware detection at the edge with lightweight LLMs: A performance evaluation. arXiv:2503.04302, March 2025.
+
+(27)
+
+Rondanini, C., Carminati, B., Ferrari, E., Lardo, N., and Kundu, A. LoRA-based parameter-efficient LLMs for continuous learning in edge-based malware detection. arXiv:2602.11655, February 2026.
+
+(28)
+
+OWASP. Top 10 for Agentic Applications for 2026. https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/, December 2025.
+
+(29)
+
+JFrog. OpenClaw can be hazardous to your software supply chain. https://jfrog.com/blog/giving-openclaw-the-keys-to-your-kingdom-read-this-first/, 2026.
+
+(30)
+
+Semgrep. OpenClaw security engineer’s cheat sheet. https://semgrep.dev/blog/2026/openclaw-security-engineers-cheat-sheet/, 2026.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

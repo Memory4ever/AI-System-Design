@@ -1,0 +1,1205 @@
+Combee: Scaling Prompt Learning for Self-Improving Language Model Agents
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background and Motivation
+
+2.1 Prompt Learning
+
+Relationship to Prompt Engineering
+
+2.2 The Problem: Context Overload from Naive Parallel Scaling
+
+Quantitative Evidence
+
+Qualitative Evidence
+
+3 Design of Combee
+
+3.1 Parallel Scan Aggregation
+
+3.2 Augmented Shuffling
+
+3.3 Dynamic Batch Size Controller
+
+4 Results
+
+4.1 Experiment Setup
+
+Tasks and Datasets
+
+Frameworks and Baselines
+
+4.2 Results on Agent Benchmarks
+
+4.3 Results on Domain Specific Benchmarks
+
+4.4 Extended Analysis
+
+5 Related Work
+
+Memory Mechanism for LLMs and Agents
+
+Parallel Agents
+
+6 Conclusion
+
+References
+
+A Use of Large Language Models (LLMs)
+
+B Limitations and Future Work
+
+C Extended Problem Formulation
+
+D Analogy to Distributed Training
+
+E Qualitative Examples of Context Overload
+
+License: CC BY 4.0
+
+arXiv:2604.04247v1 [cs.AI] 05 Apr 2026
+
+Combee: Scaling Prompt Learning for Self-Improving Language Model Agents
+
+Hanchen Li
+
+  
+Runyuan He
+
+  
+Qizheng Zhang
+
+Affiliation:  Stanford University
+
+  
+Changxiu Ji
+
+Affiliation:  Stanford University
+
+  
+Qiuyang Mang
+
+Affiliation:  UC Berkeley
+
+  
+Xiaokun Chen
+
+Affiliation:  Tensormesh
+
+  
+Lakshya A Agrawal
+
+Affiliation:  UC Berkeley
+
+  
+Wei-Liang Liao
+
+Affiliation:  UC Berkeley
+
+  
+Eric Yang
+
+Affiliation:  Gradient Network* Equal contribution
+
+  
+Alvin Cheung
+
+Affiliation:  UC Berkeley
+
+  
+James Zou
+
+Affiliation:  Stanford University
+
+  
+Kunle Olukotun
+
+Affiliation:  Stanford University
+
+  
+Ion Stoica
+
+Affiliation:  UC Berkeley
+
+  
+Joseph E. Gonzalez
+
+Affiliation:  UC Berkeley
+
+Abstract
+
+Recent advances in prompt learning allow large language model agents to acquire task-relevant knowledge from inference-time context without parameter changes.
+For example, existing methods (like ACE or GEPA) can learn system prompts to improve accuracy based on previous agent runs.
+However, these methods primarily focus on single-agent or low-parallelism settings.
+This fundamentally limits their ability to efficiently learn from a large set of collected agentic traces.
+It would be efficient and beneficial to run prompt learning in parallel to accommodate the growing trend of learning from many agentic traces or parallel agent executions.
+Yet without a principled strategy for scaling, current methods suffer from quality degradation with high parallelism.
+To improve both the efficiency and quality of prompt learning, we propose Combee, a novel framework to scale parallel prompt learning for self-improving agents.
+Combee speeds up learning and enables running many agents in parallel while learning from their aggregate traces without quality degradation.
+To achieve this, Combee leverages parallel scans and employs an augmented shuffle mechanism; Combee also introduces a dynamic batch size controller to balance quality and delay.
+Evaluations on AppWorld, Terminal-Bench, Formula, and FiNER demonstrate that Combee achieves up to 17 speedup over previous methods with comparable or better accuracy and equivalent cost.
+
+1 Introduction
+
+Figure 1: Summary of improvement snapshot. Combee achieves close-to-optimal quality with significantly reduced training time by increasing the content in the prompt learnt under high parallelism. Experiments with DeepSeek-V3.1 on AppWorld.
+
+Large language models (LLMs) achieve strong performance in tasks such as mathematics and programming (Lu et al., 2024; Jimenez et al., 2024; Agarwal et al., 2024).
+However, real-world problem solving usually requires learning from information that is only available at inference time (Dou et al., 2026; Mang et al., 2025).
+This information is typically provided as context (such as documents, examples, tool traces, or execution histories), serving as additional input at inference time that cannot be incorporated through offline training alone.
+
+Recent work has shown that language agents can engage in prompt learning to improve current or future task performance: extracting task-relevant knowledge from rich inference-time inputs (trajectories, documents, tool traces) and consolidating it into reusable artifacts such as playbooks or rules, without any weight updates (Khattab et al., 2024; Zhang et al., 2025a; Agrawal et al., 2025; Shinn et al., 2023; Wang et al., 2023).
+For example, ACE (Zhang et al., 2025a) enables agents to adapt during inference by consolidating experience into structured playbooks, while GEPA (Agrawal et al., 2025) optimizes prompts based on performance feedback from contextual examples.
+These approaches demonstrate that inference-time context can serve as a powerful learning medium without updating parameters.
+
+However, existing prompt learning methods (including ACE and GEPA) were designed around sequential or low-parallelism updates, where one or a small number of trajectories are reflected on and consolidated at a time, and thus provide no principled strategy for scaling the reflection-and-aggregation step to high parallelism.
+This is increasingly limiting: as agentic systems grow in scale, agents produce large volumes of interaction traces (Wang et al., 2024b; Zhao et al., 2024; Yang et al., 2024) that ideally would be learned from concurrently, and parallel multi-agent deployments are becoming standard practice in academia (Li et al., 2024; Hong et al., 2023; Qian et al., 2024a) and industry (Cursor, 2026; Anthropic, 2026).
+Yet naively increasing parallelism creates a bottleneck: the aggregator LLM responsible for consolidating many reflections must process increasingly long-horizon reflective context at once, and becomes overwhelmed.
+We refer to this context overload.
+Concretely (§2.2), scaling from batch 1 to batch 100 on the Formula dataset (Wang et al., 2025a) drops accuracy from 87.0% to 72.5%, and qualitative analysis reveals that the aggregator only retained generic patterns while discarding the specific, high-value entries that drive downstream performance.
+Prompt-level mitigations such as summarization and top-K retrieval do not resolve this (§4).
+This bottlenecks both efficient learning from large-scale agent traces and timely adaptation in parallel agent scenarios (Snell et al., 2024; Li et al., 2024).
+
+To address this problem, we propose Combee, a distributed framework for scalable prompt learning.
+Combee adopts a Map-Shuffle-Reduce paradigm: multiple agents process distinct context shards in parallel (Map), reflections are duplicated and shuffled to prevent information loss (Shuffle), and a hierarchical parallel scan algorithm aggregates local updates into a coherent global context without overloading the LLM context curator (Reduce).
+A dynamic batch size controller further balances quality and training delay automatically across iterations.
+Combee is framework-agnostic and integrates with existing prompt learning methods with minimal changes: we prototype it on both ACE and GEPA, and expect it to generalize to other generate-reflect-update frameworks.
+Evaluations on agentic benchmarks, AppWorld (Trivedi et al., 2024) and Terminal-Bench (Merrill et al., 2026) and domain-specific tasks, FiNER (Loukas et al., 2022) and Formula (Wang et al., 2025a) demonstrate that Combee achieves up to 17 speedup over baselines with comparable or improved accuracy while maintaining equivalent cost. The implementation is available in https://github.com/gepa-ai/gepa and https://github.com/ace-agent/ace.
+
+To summarize, our contributions are to:
+
+Identify the problem of efficient scaling for prompt learning and failure of previous methods (§2.2).
+
+Design Combee, a novel framework for scalable prompt learning featuring parallel scan aggregation, augmented shuffling, and a dynamic batch size controller (§3).
+
+Prototype Combee on top of ACE and GEPA, and expect it to generalize to other generate-reflect-update frameworks with minimal changes.
+
+Perform evaluations on Terminal-Bench 2.0, AppWorld, Formula, and FiNER to show that Combee achieves up to 17 speedup with comparable or improved accuracy and equivalent cost over baselines (§4).
+
+2 Background and Motivation
+
+2.1 Prompt Learning
+
+Prompt learning is an emerging inference-time learning paradigm in which an agent extracts task-relevant knowledge from rich inputs (execution trajectories, tool traces, documents) and consolidates it into reusable artifacts such as playbooks, memories, or skill libraries that improve current or future performance without any weight updates (Zhang et al., 2025a; Agrawal et al., 2025; Suzgun et al., 2025; Wang et al., 2025b).
+
+In this work, we focus on methods that follow a generate-reflect-update loop: an agent executes a task, reflects on its trajectory to extract useful insights, and updates a shared context artifact for future iterations.
+Our goal is to scale this loop to high parallelism, spinning up multiple agents concurrently per iteration, while preserving the quality of the resulting context updates.
+This paradigm is broadly adopted: some systems distill skills or programs from trajectories into reusable libraries (Wang et al., 2023; Wang et al., 2025b; Zhang et al., 2026; Xia et al., 2026), while others evolve structured memories, playbooks, or system prompts from accumulated experience (Zhang et al., 2025a; Agrawal et al., 2025; Zhao et al., 2024; Suzgun et al., 2025; Ouyang et al., 2025; Shinn et al., 2023; Zhou et al., 2025).
+The breadth of this family confirms that generate-reflect-update is a well-established foundation, making its parallel scaling a natural and important problem.
+We also note that “prompt learning” has been used with varying scope in recent work (Dou et al., 2026); throughout this paper, we use it specifically to refer to this generate-reflect-update paradigm.
+
+Relationship to Prompt Engineering
+
+Prompt engineering methods focus on crafting a fixed prompt a priori, either manually or through an offline search procedure (Wei et al., 2022; Zhou et al., 2022), that is then deployed without further modification at inference time.
+In contrast, prompt learning as studied in this work treats the prompt (or more broadly, the context artifact) as a living object that evolves during deployment through a generate-reflect-update loop: agents interact with tasks, reflect on outcomes, and iteratively revise the shared context based on accumulated experience.
+The key distinction is that prompt engineering optimizes what to say to the model before deployment, whereas prompt learning optimizes what the model knows from experience as it runs.
+
+2.2 The Problem: Context Overload from Naive Parallel Scaling
+
+Figure 2: Context overload from naive scaling. As batch size increases, the aggregator LLM produces monotonically fewer and less useful context updates, directly degrading final accuracy across benchmarks.
+
+A natural approach to scale prompt learning for the general generate-reflect-update paradigm mentioned above is to increase the batch size of reflections before generating context updates, which can aggregate more feedback signals before updating the context.
+Here, batch size refers to the number of parallel agent trajectories or reflections aggregated before producing one context update in an iteration.
+This is appealingly simple, but fails in practice due to a phenomenon we call context overload: as batch size grows, the aggregator LLM must distill an increasingly large volume of reflections into a single context update, producing far fewer and lower-quality entries.
+Critically, this degradation occurs even when all reflections fit within the model’s context window (we use DeepSeek-V3.1 with 128K context), ruling out simple truncation as the cause.
+Instead, the aggregator appears to perform lossy compression: when presented with many reflections simultaneously, it defaults to retaining broad, generic patterns while discarding the specific, high-value insights that disproportionately drive downstream accuracy.
+
+Quantitative Evidence
+
+Figure 2 demonstrates the information loss from naive scaling across Formula (numerical reasoning) (Wang et al., 2025a) and FiNER (financial entity recognition) (Loukas et al., 2022).
+In both settings, the number of context updates drops monotonically with batch size: on Formula from 264 (batch 1) to 21 (batch 100), on FiNER from 246 to 11.
+Accuracy follows the same trend: Formula drops from 87.0% to 72.5%, FiNER from 76.0% to 70.6%.
+The same pattern holds on agentic tasks: on AppWorld (Trivedi et al., 2024), scaling from batch 1 to batch 40 reduces accuracy from 58.1 to 55.7, approaching the no-context-learning baseline of 53.3 (Table 1).
+
+Qualitative Evidence
+
+The degradation goes beyond quantity.
+In ACE, the final system prompt learnt is a playbook with many entries. Each entry is marked helpful (h) or harmful (r) during inference, providing a measure of entry utility.
+Under sequential learning (batch 1), the Formula playbook accumulates 174 total helpful hits across 264 entries, with 19 entries reaching and a maximum of ; the FiNER playbook accumulates 331 helpful hits across 246 entries, with 38 entries reaching .
+Under naive scaling, these high-value entries vanish entirely: the batch 100 Formula playbook retains zero entries with (total helpful hits: 5), and the batch 125 FiNER playbook retains zero (total helpful hits: 4).
+Appendix E provides concrete playbook snapshots illustrating how task-specific strategies (e.g., formula-specific edge-case handling, precise rounding protocols) collapse into generic reminders under high parallelism.
+
+This reveals a fundamental tension: increasing parallelism reduces wall-clock training time, but naive aggregation destroys the fine-grained knowledge that makes prompt learning effective.
+The sweet spot for naive scaling, small batch sizes that partially avoid overload, yields only modest speedups, while the large batch sizes needed for meaningful acceleration collapse quality toward the no-context-learning baseline.
+
+Figure 3: Overall design of Combee (top) vs. naive scaling (bottom). Combee follows a Map-Shuffle-Reduce paradigm: the Map phase dispatches parallel agents to execute queries and reflect; the Shuffle phase applies augmented shuffling; and the Reduce phase hierarchically combines reflections via parallel scan aggregation. In contrast, naive scaling feeds all reflections directly into a single prompt update, causing context overload.
+
+3 Design of Combee
+
+We present Combee, a framework that enables scalable prompt learning through parallel generation and adaptation.
+Combee extends prompt learning from previous work (Zhang et al., 2025a; Agrawal et al., 2025; Li et al., 2024) to support high degrees of parallelism while maintaining quality.
+
+To address the challenges of context overload, Combee introduces three key components:
+parallel scan aggregation, augmented shuffling and dynamic batch size controller.
+These components work together to ensure that the learning process remains stable and efficient under high parallelism:
+(1) To solve the context overload problem, we employ a parallel scan algorithm for aggregating learned experience from multiple trajectories.
+(2) To make sure that important information is not missed out, Combee applies augmented shuffling before dispatching reflections to the aggregation tree, giving each reflection multiple chances to be incorporated.
+(3) For learning from a large number of traces, we introduce a dynamic batch size controller that dynamically determines an efficient yet safe batch size at run time.
+These optimizations allow Combee to coordinate between multiple parallel agents and improve itself over time without manual tuning, just like a bee colony where agents work together to efficiently build and maintain the system.
+
+3.1 Parallel Scan Aggregation
+
+One core design inside Combee is the parallel scan aggregation algorithm,
+which is designed to efficiently aggregate learning experience from multiple parallel trajectories while avoiding the context overload problem observed in §2.2.
+
+In order to solve this problem, Combee employs a multi-level parallel scan algorithm to aggregate learning experience from multiple trajectories in a way that prevents overloading the aggregator.
+Given the generated trajectories, Combee can choose to first separate them into subgroups, each containing trajectories.
+Instead of directly feeding all the reflections from the trajectories to the aggregator,
+Combee can first aggregate the reflections within each subgroup of trajectories into context updates.
+Then, Combee can further aggregate the context updates into a single update for this round.
+Conceptually, this is similar to the parallel scan algorithm used in parallel computing for performing prefix sum operations (Blelloch, 1990) and recently adopted in sequence modeling (Gu and Dao, 2024). This approach also draws inspiration from MapReduce-style decomposition for LLM processing of long documents (Zhou et al., 2024). By default, Combee sets equal to so that each level of the aggregation tree processes similar count of entries
+: the first level generates context updates based on reflections per group,
+while the second level aggregates updates.
+Moreover, this design empirically achieves better quality as shown later in Figure 7.
+
+3.2 Augmented Shuffling
+
+Popular context engineering methods, including GEPA (Agrawal et al., 2025) and ACE (Zhang et al., 2025a), all incorporate reflection steps to extract past insights from rollouts.
+These reflections usually have higher information density:
+although they consist of a small number of tokens, they contain crucial information necessary for the agent’s improvement.
+To fully leverage this dense information during parallel learning without losing vital insights,
+Combee introduces an augmented shuffling mechanism.
+Specifically, given a set of generated reflections,
+Combee duplicates each reflection times (default ) and shuffles the augmented set before issuing them to the worker nodes.
+By giving each reflection multiple opportunities to contribute to the learning process, echoing the principle behind self-consistency (Wang et al., 2022), Combee increases the chances that the aggregator can learn from the reflections even under large batch sizes.
+This improves the robustness of the parallel learning pipeline despite increased batch size.
+
+3.3 Dynamic Batch Size Controller
+
+Parallel scan aggregation and augmented shuffling ensure that learning quality is maintained across a wide range of batch sizes.
+The batch size selection therefore primarily reduces to a speed question: as the batch size increases, per-epoch delay decreases (more samples are processed in parallel); but with diminishing returns, analogous to the critical batch size concept from distributed training (McCandlish et al., 2018).
+That said, excessively large batch sizes may still degrade learning quality, so we would like to stay within a reasonable range.
+We therefore select the largest batch size that still yields meaningful delay reduction, while enforcing an upper bound to avoid unnecessary risk of quality degradation (Smith et al., 2017; Goyal et al., 2017).
+
+To find this point, we profile the delay by running trial iterations at a set of default candidate batch sizes .
+For each candidate , we run one iteration to measure the delay and convert it to estimated epoch time:
+
+where is the training set size. We fit a power-law delay curve through measurements:
+
+Given the fitted curve, we select the batch size at which the marginal delay reduction falls below a fixed threshold 11
+1
+
+In our experiments,
+we set to of the peak slope size. This means we stop increasing batch size once each new unit reduces epoch time by less than of the steepest improvement rate..
+Solving yields:
+
+4 Results
+
+Our main takeaways from evaluating Combee are:
+
+Combee integrates with existing prompt learning methods such as ACE and GEPA to enable efficient learning at scale, achieving comparable or even better performance with significantly reduced training time.
+
+Combee’s specialized design including parallel scan aggregation and augmented shuffle
+prevents context overload and improves on previous parallel methods.
+
+Combee remains robust across different models, tasks, and learning settings with cost comparable to previous methods.
+
+4.1 Experiment Setup
+
+Tasks and Datasets
+
+We evaluate Combee on agentic and domain-specific benchmarks.
+
+Agentic Benchmarks:
+AppWorld (Trivedi et al., 2024) evaluates multi-step API tasks via Task Goal Completion (TGC) and Scenario Goal Completion (SGC).
+We reuse the training set of 90 tasks and evaluate on the held out Test-Normal dataset.
+Terminal-Bench 2.0 (Merrill et al., 2026) contains 89 command-line tasks testing software engineering capabilities. We train on 60 Deepseek 3.2 trajectories released on huggingface (Lee, 2026)
+and evaluate average Accuracy@1 across three runs on 29 held-out tasks.
+
+Domain-Specific Benchmarks: We use two finance NLP datasets: FiNER (Loukas et al., 2022) for fine-grained entity typing in XBRL documents, and Formula (Wang et al., 2025a) for numerical reasoning over structured filings.
+
+Frameworks and Baselines
+
+For majority of experiments, we use DeepSeek-V3.1 provided by Together AI as the base LLM.
+Combee is agnostic to the base prompt learning method: We implement Combee on top of two prompt learning: ACE (Zhang et al., 2025a), which accumulates strategies into text-based playbooks, and GEPA (Agrawal et al., 2025), which optimizes system prompts via evolutionary search. Both follow a generate-reflect-update loop that Combee extends for parallel scaling.
+We also compared with two methods on top of ACE and GEPA: Top-K Retrieval and Summarization. Top-K Retrieval embeds reflections, clusters them into K groups, and feeds one reflection from each group to the curator. Summarization summarizes reflections before feeding them into the curator.
+
+4.2 Results on Agent Benchmarks
+
+Method
+Batch
+Playbook
+Training
+Training
+Test-Normal
+
+Size
+Size (tokens)
+Time (min)
+Cost
+TGC
+SGC
+Avg
+
+ReAct
+–
+–
+0
+$0
+63.7
+42.9
+53.3
+
+ReAct + ACE
+1
+1,578
+86
+$1.62
+66.1
+50.0
+58.1
+
+Parallel Prompt Learning
+
+ReAct + ACE
+5
+4,697
+30
+$1.68
+70.2
+57.1
+63.7
+
+ReAct + ACE
+10
+2,329
+19
+$1.50
+72.0
+58.9
+65.4
+
+ReAct + ACE
+20
+954
+10
+$1.40
+67.9
+48.2
+58.1
+
+ReAct + ACE
+40
+526
+5
+$1.40
+66.7
+44.6
+55.7
+
+ReAct + Combee
+40
+6,887
+7
+$1.67
+70.8
+60.7
+65.8
+
+Table 1:
+Parallel prompt learning results with ReAct agent for AppWorld.
+
+Method
+Batch
+Playbook
+Training
+Training
+Average
+
+Size
+Size (tokens)
+Time (min)
+Cost
+Accuracy @ 1
+
+Terminus-2
+–
+–
+0
+$0
+32.2%
+
+Terminus-2 + ACE
+1
+9,067
+42.4
+$0.24
+37.9%
+
+Parallel Prompt Learning
+
+Terminus-2 + ACE
+5
+4,983
+10.2
+$0.17
+29.9%
+
+Terminus-2 + ACE
+10
+3,967
+5.6
+$0.15
+33.3%
+
+Terminus-2 + ACE
+30
+3,150
+2.1
+$0.13
+31.0%
+
+Terminus-2 + Combee
+30
+8,023
+2.4
+$0.17
+35.6%
+
+Table 2:
+Parallel prompt learning results with Terminus-2 agent for Terminal-Bench 2.0.
+We trained on existing open-source traces instead of generating trajectories on the fly. We report the average accuracy over three runs.
+
+Table 1 shows results on AppWorld.
+The results reveal a clear trade-off in naive parallel scaling: the sequential baseline (batch 1) takes 86 minutes to complete one epoch, whereas increasing the batch size reduces training time but suffers from context overload.
+The sweet spot for naive scaling is batch 10; beyond this point, quality degrades sharply, and batch 40 drops to barely above the no-context-learning baseline.
+This confirms that increasing parallelism without proper aggregation is harmful.
+
+Combee breaks this trade-off.
+At batch size 40, where naive scaling degrades severely, Combee achieves the highest average score and SGC across all methods, with a 12 speedup over the sequential baseline at comparable cost.
+A key reason is that Combee’s playbook retains 6,887 tokens compared to only 526 for naive batch 40, indicating that parallel scan aggregation preserves far more information from reflections.
+
+Table 2 shows results on Terminal-Bench 2.0.
+The same pattern emerges: the sequential baseline achieves the highest accuracy but requires 42 minutes of training, while larger batch sizes degrade due to context overload: batch 5 even falls below the no-context-learning baseline.
+Combee at batch 30 recovers most of the sequential quality while reducing training time by over 17.
+Notably, Combee’s playbook size (8,023 tokens) is much closer to the sequential baseline (9,067 tokens) than other batched variants, again confirming that parallel scan aggregation retains more information.
+
+4.3 Results on Domain Specific Benchmarks
+
+Figure 4 and Figure 5 show results on the two finance benchmarks, FiNER and Formula, using GEPA and ACE respectively.
+Since there are a large number of training samples in Formula (500) and FiNER (1000), we employ the dynamic batch size controller to dynamically adjust the batch size during training.
+For summarization and Top K retrieval baselines, we use batch size 50 as it has similar delay with Combee. We set and use openai/text-embedding-3-large as the embedding model.
+
+Base LLM   Summarization + GEPA   TopK + GEPA   GEPA   Combee + GEPA
+
+Figure 4: Combee achieves superior quality-delay trade off on GEPA for finance benchmarks.
+
+Base LLM   Summarization + ACE   TopK + ACE   ACE   Combee + ACE
+
+Figure 5: Combee achieves superior quality-delay trade off on ACE for finance benchmarks.
+
+The same quality–speed trade-off from the agent benchmarks persists across both tasks and both frameworks: small batch sizes yield higher accuracy but require long training times, while large batch sizes are fast but suffer from context overload: on GEPA FiNER, batch 100 even falls below the base LLM.
+Combee consistently reaches the Pareto frontier, matching or exceeding the best fixed-batch accuracy while training significantly faster than quality-matching setups.
+With GEPA (Figure 4), Combee matches the best fixed-batch accuracy on FiNER and achieves competitive accuracy on Formula with less than half of the time by fixed-batch baseline.
+With ACE (Figure 5), Combee achieves the highest accuracy on Formula and FiNER, while training more than 2.4 faster than the quality-comparable baselines.
+The Top K and Summarization baselines achieved much worse generation quality compared with Combee or naive ACE methods.
+These results confirm that Combee’s design is framework-agnostic and effective for domain-specific tasks.
+
+4.4 Extended Analysis
+
+We conduct ablation study and robustness analysis on the Formula dataset.
+
+Baseline  Normal parallel  Combee  
+
+Figure 6: Combee’s dynamic batch size adaptation saves delay besides maintaining high accuracy
+
+w/ augmented shuffling
+
+w/o augmented shuffling
+
+Figure 7: Combee’s augmented shuffling improves learning robustness across subgroup sizes used for prompt updates.
+
+Figure 7 ablates the dynamic batch size controller by comparing Combee against a variant that uses a fixed batch size throughout training on the Formula dataset.
+Without a dynamic controller, Combee with a fixed batch size may choose a necessarily small batch size, causing a delay increase with little quality change. This demonstrates the effectiveness of the batch size controller of Combee.
+
+Figure 7 demonstrates the effectiveness of the augmented shuffling for Combee.
+We compared Combee against the plain parallel scan variant across different group sizes.
+The batch size is set to be 50.
+Without augmented shuffling, quality fluctuates and is significantly worse than Combee, confirming the necessity of our design.
+Moreover, when subgroup size is around , the quality is usually higher, which validates our design in §3.1.
+
+Baseline  Normal parallel  Combee
+
+Figure 8: Combee achieves similar improvement with GPT-OSS 120B.
+
+Figure 8 evaluates Combee on top of GPT-OSS 120B on the same Formula dataset.
+The batch size controller and parallel scan aggregator transfer seamlessly across model families,
+and Combee with GPT-OSS follows the same pattern: superior quality over fixed-batch baselines with much reduced training time.
+
+5 Related Work
+
+Memory Mechanism for LLMs and Agents
+
+Prompt learning has been extensively used to help language models and language agents improve over time by maintaining and updating an external non-parametric memory.
+Dynamic Cheatsheet (Suzgun et al., 2025; Xu et al., 2025; Shinn et al., 2023) demonstrates that compact, evolving textual memory can help language agents adapt at inference time by accumulating reusable guidance from past experience.
+ReasoningBank (Ouyang et al., 2025) similarly investigates how agents can store and reuse distilled reasoning traces or experience to support future problem solving.
+Agentic Plan Caching (Zhang et al., 2025b) extends this direction by caching reusable plans from prior executions to reduce repeated reasoning and improve efficiency.
+These works, along with ACE (Zhang et al., 2025a), GEPA (Agrawal et al., 2025), ExpeL (Zhao et al., 2024), Voyager (Wang et al., 2023), Agent-Pro (Zhang et al., 2024a), and TextGrad (Yuksekgonul et al., 2024), primarily focus on what information to store, retrieve, or reuse across tasks.
+In contrast, our work focuses on how to scale the context-learning process itself: rather than proposing a new memory abstraction, we study how multiple workers can learn in parallel and how context updates can be aggregated effectively under high concurrency.
+The parallel abstraction we proposed is expected to work along with existing memory frameworks.
+
+Parallel Agents
+
+Recent work has explored parallel agent systems, where multiple agents or workers collaborate to solve tasks concurrently (Hong et al., 2023; Qian et al., 2024a).
+Learning to Share (LTS) (Fioresi et al., 2026) studies how agents can share useful intermediate information while avoiding redundant computation.
+In practice, modern agentic coding systems such as Claude Code (Anthropic, 2025), OpenHands (Wang et al., 2024b), and SWE-agent (Yang et al., 2024) also increasingly rely on parallel task decomposition and concurrent execution to improve throughput on complex workloads (Li et al., 2024; Qian et al., 2024b). However, these systems are primarily concerned with parallelizing task solving (Zhang et al., 2024b; Zhou et al., 2024; Wang et al., 2024a). Our focus is orthogonal: we study how to parallelize learning from experience, i.e., how multiple workers can independently produce local context updates and how those updates can be merged into a coherent global context. Thus, while prior work on parallel agents improves execution efficiency, our work addresses the systems challenges of scalable context adaptation.
+
+6 Conclusion
+
+We presented Combee, a novel framework for scalable context learning that enables parallel agents to acquire and consolidate knowledge efficiently.
+By combining parallel-scan aggregation, augmented shuffling, and dynamic batch-size control, Combee addresses the context overload issue that emerges when existing context learning methods are scaled naively.
+Across agentic benchmarks (AppWorld and Terminal-Bench 2.0) and domain-specific tasks (FiNER and Formula), Combee delivers substantial speedups and maintains or improves quality with negligible cost variations.
+We believe prompt learning is entering a new era of scale, and Combee is a first step toward making that possible.
+
+Acknowledgement
+
+We thank students and faculties from UCB and Stanford for their helpful insights and feedback, especially Matei Zaharia, Alexander Du, Dacheng Li, Alex Dimakis, Parth Asawa, Melissa Pan, Abby O’Neill, Shulu Li. This work was generously supported by UCB Sky Lab, Professor Kunle Olukotun’s group, and Gradient Network.
+
+Reproducibility Statement
+
+We clearly describe the experimental setup used in our study, including the language models, datasets, and hyperparameters, so that readers with appropriate compute resources should be able to reproduce our results.
+All experiments in this paper are conducted on publicly available benchmarks.
+The source code will be released upon publication.
+
+References
+
+Abadi et al. (2016)
+M. Abadi, P. Barham, J. Chen, Z. Chen, A. Davis, J. Dean, M. Devin, S. Ghemawat, G. Irving, M. Isard, et al.
+
+tensorflow: A system for large-scale machine learning.
+
+In 12th USENIX symposium on operating systems design and implementation (OSDI 16),
+
+pp. 265–283.
+
+Cited by: Appendix D.
+
+Agarwal et al. (2024)
+R. Agarwal, A. Singh, L. Zhang, B. Bohnet, L. Rosias, S. Chan, B. Zhang, A. Anand, Z. Abbas, A. Nova, et al.
+
+Many-shot in-context learning.
+
+Advances in Neural Information Processing Systems 37, pp. 76930–76966.
+
+Cited by: §1.
+
+Agrawal et al. (2025)
+L. A. Agrawal, S. Tan, D. Soylu, N. Ziems, R. Khare, K. Opsahl-Ong, A. Singhvi, H. Shandilya, M. J. Ryan, M. Jiang, et al.
+
+GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning.
+
+arXiv preprint arXiv:2507.19457.
+
+Cited by: §1,
+§2.1,
+§2.1,
+§3.2,
+§3,
+§4.1,
+§5.
+
+Anthropic (2025)
+Anthropic
+
+Claude code.
+
+Note: https://claude.ai/code
+
+Cited by: §5.
+
+Anthropic (2026)
+Anthropic
+
+Building a c compiler with a team of parallel claudes.
+
+Note: https://www.anthropic.com/engineering/building-c-compilerAnthropic Engineering Blog
+
+Cited by: §1.
+
+Blelloch (1990)
+G. E. Blelloch
+
+Prefix sums and their applications.
+
+Cited by: §3.1.
+
+Cursor (2026)
+Cursor
+
+Scaling long-running autonomous coding.
+
+Note: https://cursor.com/blog/scaling-agentsAccessed: 2026-02-25
+
+Cited by: §1.
+
+Dean et al. (2012)
+J. Dean, G. Corrado, R. Monga, K. Chen, M. Devin, M. Mao, M. Ranzato, A. Senior, P. Tucker, K. Yang, et al.
+
+Large scale distributed deep networks.
+
+Advances in neural information processing systems 25.
+
+Cited by: Appendix D.
+
+Dou et al. (2026)
+S. Dou, M. Zhang, Z. Yin, C. Huang, Y. Shen, J. Wang, J. Chen, Y. Ni, J. Ye, C. Zhang, et al.
+
+CL-bench: A Benchmark for Context Learning.
+
+arXiv preprint arXiv:2602.03587.
+
+Cited by: §1,
+§2.1.
+
+Fioresi et al. (2026)
+J. Fioresi, P. P. Kulkarni, A. Vayani, S. Wang, and M. Shah
+
+Learning to Share: Selective Memory for Efficient Parallel Agentic Systems.
+
+arXiv preprint arXiv:2602.05965.
+
+Cited by: §5.
+
+Goyal et al. (2017)
+P. Goyal, P. Dollár, R. Girshick, P. Noordhuis, L. Wesolowski, A. Kyrola, A. Tulloch, Y. Jia, and K. He
+
+Accurate, large minibatch sgd: training imagenet in 1 hour.
+
+arXiv preprint arXiv:1706.02677.
+
+Cited by: §3.3.
+
+Gu and Dao (2024)
+A. Gu and T. Dao
+
+Mamba: linear-time sequence modeling with selective state spaces.
+
+In First conference on language modeling,
+
+Cited by: §3.1.
+
+Hong et al. (2023)
+S. Hong, M. Zhuge, J. Chen, X. Zheng, Y. Cheng, J. Wang, C. Zhang, Z. Wang, S. K. S. Yau, Z. Lin, et al.
+
+MetaGPT: meta programming for a multi-agent collaborative framework.
+
+In The twelfth international conference on learning representations,
+
+Cited by: §1,
+§5.
+
+Jimenez et al. (2024)
+C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan
+
+SWE-bench: can language models resolve real-world github issues?.
+
+External Links: 2310.06770,
+Link
+
+Cited by: §1.
+
+Khattab et al. (2024)
+O. Khattab, A. Singhvi, P. Maheshwari, Z. Zhang, K. Santhanam, S. Vardhamanan, S. Haq, A. Sharma, T. T. Joshi, H. Moazam, H. Miller, M. Zaharia, and C. Potts
+
+DSPy: compiling declarative language model calls into self-improving pipelines.
+
+Cited by: §1.
+
+Lee (2026)
+Y. Lee
+
+TerminalBench trajectories.
+
+Hugging Face.
+
+Note: Dataset, accessed 2026
+
+External Links: Link
+
+Cited by: 1st item.
+
+Li et al. (2024)
+J. Li, Q. Zhang, Y. Yu, Q. Fu, and D. Ye
+
+More agents is all you need.
+
+arXiv preprint arXiv:2402.05120.
+
+Cited by: §1,
+§3,
+§5.
+
+Li et al. (2014)
+M. Li, D. G. Andersen, J. W. Park, A. J. Smola, A. Ahmed, V. Josifovski, J. Long, E. J. Shekita, and B. Su
+
+Scaling distributed machine learning with the parameter server.
+
+In 11th USENIX Symposium on Operating Systems Design and Implementation (OSDI 14),
+
+Cited by: Appendix D.
+
+Loukas et al. (2022)
+L. Loukas, M. Fergadiotis, I. Chalkidis, E. Spyropoulou, P. Malakasiotis, I. Androutsopoulos, and G. Paliouras
+
+FiNER: financial numeric entity recognition for xbrl tagging.
+
+arXiv preprint arXiv:2203.06482.
+
+Cited by: §1,
+§2.2,
+2nd item.
+
+Lu et al. (2024)
+P. Lu, H. Bansal, T. Xia, J. Liu, C. Li, H. Hajishirzi, H. Cheng, K. Chang, M. Galley, and J. Gao
+
+MathVista: evaluating mathematical reasoning of foundation models in visual contexts.
+
+External Links: 2310.02255,
+Link
+
+Cited by: §1.
+
+Mang et al. (2025)
+Q. Mang, W. Chai, Z. Li, H. Mao, S. Zhou, A. Du, H. Li, S. Liu, E. Chen, Y. Wang, et al.
+
+FrontierCS: evolving challenges for evolving intelligence.
+
+arXiv preprint arXiv:2512.15699.
+
+Cited by: §1.
+
+McCandlish et al. (2018)
+S. McCandlish, J. Kaplan, D. Amodei, and O. D. Team
+
+An empirical model of large-batch training.
+
+arXiv preprint arXiv:1812.06162.
+
+Cited by: §3.3.
+
+Merrill et al. (2026)
+M. A. Merrill, A. G. Shaw, N. Carlini, B. Li, H. Raj, I. Bercovich, L. Shi, J. Y. Shin, T. Walshe, E. K. Buchanan, et al.
+
+Terminal-bench: benchmarking agents on hard, realistic tasks in command line interfaces.
+
+arXiv preprint arXiv:2601.11868.
+
+Cited by: §1,
+1st item.
+
+Ouyang et al. (2025)
+S. Ouyang, J. Yan, I. Hsu, Y. Chen, K. Jiang, Z. Wang, R. Han, L. T. Le, S. Daruki, X. Tang, et al.
+
+ReasoningBank: Scaling Agent Self-Evolving with Reasoning Memory.
+
+arXiv preprint arXiv:2509.25140.
+
+Cited by: §2.1,
+§5.
+
+Qian et al. (2024a)
+C. Qian, W. Liu, H. Liu, N. Chen, Y. Dang, J. Li, C. Yang, W. Chen, Y. Su, X. Cong, et al.
+
+Chatdev: communicative agents for software development.
+
+In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers),
+
+pp. 15174–15186.
+
+Cited by: §1,
+§5.
+
+Qian et al. (2024b)
+C. Qian, Z. Xie, Y. Wang, W. Liu, K. Zhu, H. Xia, Y. Dang, Z. Du, W. Chen, C. Yang, et al.
+
+Scaling large language model-based multi-agent collaboration.
+
+arXiv preprint arXiv:2406.07155.
+
+Cited by: §5.
+
+Recht et al. (2011)
+B. Recht, C. Re, S. Wright, and F. Niu
+
+Hogwild!: a lock-free approach to parallelizing stochastic gradient descent.
+
+Advances in neural information processing systems 24.
+
+Cited by: Appendix D.
+
+Shinn et al. (2023)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+
+Reflexion: Language Agents with Verbal Reinforcement Learning.
+
+Advances in Neural Information Processing Systems 36, pp. 8634–8652.
+
+Cited by: §1,
+§2.1,
+§5.
+
+Smith et al. (2017)
+S. L. Smith, P. Kindermans, C. Ying, and Q. V. Le
+
+Don’t decay the learning rate, increase the batch size.
+
+arXiv preprint arXiv:1711.00489.
+
+Cited by: §3.3.
+
+Snell et al. (2024)
+C. Snell, J. Lee, K. Xu, and A. Kumar
+
+Scaling llm test-time compute optimally can be more effective than scaling model parameters.
+
+arXiv preprint arXiv:2408.03314.
+
+Cited by: §1.
+
+Suzgun et al. (2025)
+M. Suzgun, M. Yuksekgonul, F. Bianchi, D. Jurafsky, and J. Zou
+
+Dynamic Cheatsheet: Test-Time Learning with Adaptive Memory.
+
+arXiv preprint arXiv:2504.07952.
+
+Cited by: §2.1,
+§2.1,
+§5.
+
+Trivedi et al. (2024)
+H. Trivedi, T. Khot, M. Hartmann, R. Manku, V. Dong, E. Li, S. Gupta, A. Sabharwal, and N. Balasubramanian
+
+AppWorld: A Controllable World of Apps and People for Benchmarking Interactive Coding Agents.
+
+arXiv preprint arXiv:2407.18901.
+
+Cited by: §1,
+§2.2,
+1st item.
+
+Wang et al. (2025a)
+D. Wang, J. Patel, D. Zha, S. Y. Yang, and X. Liu
+
+FinLoRA: benchmarking lora methods for fine-tuning llms on financial datasets.
+
+arXiv preprint arXiv:2505.19819.
+
+Cited by: §1,
+§1,
+§2.2,
+2nd item.
+
+Wang et al. (2023)
+G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and A. Anandkumar
+
+Voyager: an open-ended embodied agent with large language models.
+
+arXiv preprint arXiv:2305.16291.
+
+Cited by: §1,
+§2.1,
+§5.
+
+Wang et al. (2024a)
+J. Wang, J. Wang, B. Athiwaratkun, C. Zhang, and J. Zou
+
+Mixture-of-agents enhances large language model capabilities.
+
+arXiv preprint arXiv:2406.04692.
+
+Cited by: §5.
+
+Wang et al. (2024b)
+X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, et al.
+
+Openhands: an open platform for ai software developers as generalist agents.
+
+arXiv preprint arXiv:2407.16741.
+
+Cited by: §1,
+§5.
+
+Wang et al. (2022)
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou
+
+Self-consistency improves chain of thought reasoning in language models.
+
+arXiv preprint arXiv:2203.11171.
+
+Cited by: §3.2.
+
+Wang et al. (2025b)
+Z. Z. Wang, A. Gandhi, G. Neubig, and D. Fried
+
+Inducing programmatic skills for agentic tasks.
+
+arXiv preprint arXiv:2504.06821.
+
+Cited by: §2.1,
+§2.1.
+
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+Advances in neural information processing systems 35, pp. 24824–24837.
+
+Cited by: §2.1.
+
+Xia et al. (2026)
+P. Xia, J. Chen, H. Wang, J. Liu, K. Zeng, Y. Wang, S. Han, Y. Zhou, X. Zhao, H. Chen, et al.
+
+SkillRL: evolving agents via recursive skill-augmented reinforcement learning.
+
+arXiv preprint arXiv:2602.08234.
+
+Cited by: §2.1.
+
+Xu et al. (2025)
+W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang
+
+A-mem: agentic memory for llm agents.
+
+arXiv preprint arXiv:2502.12110.
+
+Cited by: §5.
+
+Yang et al. (2024)
+J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press
+
+Swe-agent: agent-computer interfaces enable automated software engineering.
+
+Advances in Neural Information Processing Systems 37, pp. 50528–50652.
+
+Cited by: §1,
+§5.
+
+Yuksekgonul et al. (2024)
+M. Yuksekgonul, F. Bianchi, J. Boen, S. Liu, Z. Huang, C. Guestrin, and J. Zou
+
+Textgrad: automatic” differentiation” via text.
+
+arXiv preprint arXiv:2406.07496.
+
+Cited by: §5.
+
+Zhang et al. (2026)
+H. Zhang, Q. Long, J. Bao, T. Feng, W. Zhang, H. Yue, and W. Wang
+
+MemSkill: learning and evolving memory skills for self-evolving agents.
+
+arXiv preprint arXiv:2602.02474.
+
+Cited by: §2.1.
+
+Zhang et al. (2025a)
+Q. Zhang, C. Hu, S. Upasani, B. Ma, F. Hong, V. Kamanuru, J. Rainton, C. Wu, M. Ji, H. Li, et al.
+
+Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models.
+
+arXiv preprint arXiv:2510.04618.
+
+Cited by: Appendix D,
+§1,
+§2.1,
+§2.1,
+§3.2,
+§3,
+§4.1,
+§5.
+
+Zhang et al. (2025b)
+Q. Zhang, M. Wornow, G. Wan, and K. Olukotun
+
+Agentic Plan Caching: Test-Time Memory for Fast and Cost-Efficient LLM Agents.
+
+arXiv preprint arXiv:2506.14852.
+
+Cited by: §5.
+
+Zhang et al. (2024a)
+W. Zhang, K. Tang, H. Wu, M. Wang, Y. Shen, G. Hou, Z. Tan, P. Li, Y. Zhuang, and W. Lu
+
+Agent-pro: learning to evolve via policy-level reflection and optimization.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 5348–5375.
+
+Cited by: §5.
+
+Zhang et al. (2024b)
+Y. Zhang, R. Sun, Y. Chen, T. Pfister, R. Zhang, and S. Ö. Arık
+
+Chain of agents: large language models collaborating on long-context tasks.
+
+Advances in Neural Information Processing Systems 37, pp. 132208–132237.
+
+Cited by: §5.
+
+Zhao et al. (2024)
+A. Zhao, D. Huang, Q. Xu, M. Lin, Y. Liu, and G. Huang
+
+Expel: llm agents are experiential learners.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Vol. 38, pp. 19632–19642.
+
+Cited by: §1,
+§2.1,
+§5.
+
+Zhou et al. (2025)
+H. Zhou, Y. Chen, S. Guo, X. Yan, K. H. Lee, Z. Wang, K. Y. Lee, G. Zhang, K. Shao, L. Yang, et al.
+
+Memento: fine-tuning llm agents without fine-tuning llms.
+
+arXiv preprint arXiv:2508.16153.
+
+Cited by: §2.1.
+
+Zhou et al. (2022)
+Y. Zhou, A. I. Muresanu, Z. Han, K. Paster, S. Pitis, H. Chan, and J. Ba
+
+Large language models are human-level prompt engineers.
+
+In The eleventh international conference on learning representations,
+
+Cited by: §2.1.
+
+Zhou et al. (2024)
+Z. Zhou, C. Li, X. Chen, S. Wang, Y. Chao, Z. Li, H. Wang, R. An, Q. Shi, Z. Tan, et al.
+
+LLMxMapReduce: Simplified long-sequence processing using large language models.
+
+arXiv preprint arXiv:2410.09342.
+
+Cited by: §3.1,
+§5.
+
+Appendix A Use of Large Language Models (LLMs)
+
+This work focuses on developing algorithms and system frameworks for effective context adaptation in large language models (LLMs).
+Accordingly, our experiments employ LLMs for the empirical evaluation of the proposed methods.
+For paper preparation, we used LLMs only to polish writing (e.g., correcting grammatical errors), and not to generate new text from scratch.
+We also use Claude Code and Cursor in the empirical experiment development process.
+
+Appendix B Limitations and Future Work
+
+While Combee demonstrates consistent improvements across our evaluation settings, several aspects remain open for future work.
+First, our experiments focus on two base prompt learning frameworks (ACE and GEPA).
+Although both follow the generate-reflect-update paradigm and Combee’s design is intended to be framework-agnostic, we plan to further validate integration with methods that maintain structurally different context artifacts (e.g., program libraries or retrieval-augmented skill stores).
+Second, the dynamic batch size controller relies on a power-law delay model with a fixed marginal-reduction threshold (), which performed well in our settings but may require adjustment for workloads with substantially different latency profiles.
+Finally, the current design assumes synchronous parallel execution within each iteration; exploring asynchronous or partially-synchronous variants, analogous to asynchronous SGD in distributed training, could further improve throughput in heterogeneous deployment environments and is an interesting direction we leave for future investigation.
+
+Appendix C Extended Problem Formulation
+
+We formalize the problem of Prompt Learning at Scale here.
+For the previous single-threaded prompt learning pipeline, agents first execute the task,
+and then reflect upon their execution to update their context.
+Mathematically, let denote the agent context at iteration , the environment, the interaction trajectory, and the feedback extracted from the trajectory. The process can be written as
+
+For the new paradigm of prompt learning at scale, we adopt a Map–Reduce style approach. For each iteration, we spin up parallel agents to interact with the environment and collect feedback . Each agent produces its own trajectory and feedback signal. We then aggregate the feedback through an aggregation function to update the global agent context. Mathematically, the pipeline can be represented as
+
+Appendix D Analogy to Distributed Training
+
+We motivate the research vision by drawing an analogy between parallel prompt learning and distributed training of machine learning models.
+In distributed training, learning is parallelized across multiple workers, each processing a shard of data and computing local gradients.
+These gradients are periodically aggregated, either synchronously or asynchronously, by a parameter server or through collective communication, yielding a globally improved model without requiring any single worker to observe the full dataset (Recht et al., 2011; Dean et al., 2012; Li et al., 2014; Abadi et al., 2016).
+
+Prompt Learning at Scale follows a similar pattern, but replaces parameter updates with contextual adaptation.
+Instead of updating shared weights, multiple agents or workers independently interact with tasks, environments, or documents, and learn from their local contexts during inference.
+Each worker acquires task-relevant knowledge, such as rules, heuristics, plans, or summaries, which can be represented as prompts, memories, files, or structured artifacts like playbooks (Zhang et al., 2025a).
+These context-level updates can then be optionally consolidated, accumulated, or shared across workers, enabling downstream agents to benefit from experience they did not directly observe.
+
+Under this analogy, contexts play a role similar to gradients: they are locally generated learning signals that encode how an agent should behave on future inputs.
+Accumulating contexts across workers resembles gradient aggregation, while curating, compressing, or distilling these artifacts parallels techniques such as gradient averaging, compression, or delayed synchronization in distributed systems.
+Crucially, this process scales learning capacity without modifying model parameters, allowing systems to improve continuously under strict inference-time and deployment constraints.
+
+This highlights context as a first-class medium for scalable learning, suggesting that many principles from distributed training, such as parallelism, aggregation strategies, communication efficiency, and consistency trade-offs, can inspire the design of large-scale prompt learning systems.
+
+Appendix E Qualitative Examples of Context Overload
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

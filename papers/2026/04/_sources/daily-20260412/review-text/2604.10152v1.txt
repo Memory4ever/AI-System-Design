@@ -1,0 +1,1192 @@
+SpecMoE: A Fast and Efficient Mixture-of-Experts Inference via Self-Assisted Speculative Decoding
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+I Introduction
+
+II Background and Motivation
+
+II-A Mixture-of-Experts Architecture
+
+II-B Speculative Decoding
+
+III SpecMoE: An Efficient MoE Inference System using Self-Assisted Speculative Decoding
+
+III-A High-level Overview
+
+III-B (Algorithm) Self-Assisted Speculative Decoding
+
+III-C (System) CPU Offloading-based MoE Inference
+
+IV Methodology
+
+V Evaluation
+
+V-A Generated Tokens Per Verification Phase
+
+V-B Performance
+
+V-C Efficiency and Scalability
+
+VI Discussion
+
+VI-A Effect of Affinity-based Expert Selection
+
+VI-B Effect of Draft Expert Number on SpecMoE
+
+VI-C SpecMoE Effectiveness on MoE Models with Low Expert Activation Hotness
+
+VI-D SpecMoE with SSD-Offloading
+
+VII Related Work
+
+VIII Conclusion
+
+References
+
+License: CC BY-NC-ND 4.0
+
+arXiv:2604.10152v1 [cs.AI] 11 Apr 2026
+
+SpecMoE: A Fast and Efficient Mixture-of-Experts Inference via Self-Assisted Speculative Decoding
+
+Jehyeon Bang2 Eunyeong Cho2 Ranggi Hwang41 Jinha Chung2 Minsoo Rhu2
+
+Affiliation: 2KAIST
+
+{jehyeon.bang, eunyeong.cho, jinha.chung, mrhu}@kaist.ac.kr
+
+Affiliation: 4UNIST
+
+ranggi.hwang@unist.ac.kr
+
+Abstract
+
+The Mixture-of-Experts (MoE) architecture has emerged as a promising approach to mitigate the rising computational costs of large language models (LLMs) by selectively activating parameters.
+However, its high memory requirements and sub-optimal parameter efficiency pose significant challenges for efficient deployment.
+Although CPU-offloaded MoE inference systems have been proposed in the literature, they offer limited efficiency, particularly for large batch sizes.
+In this work, we propose SpecMoE, a memory-efficient MoE inference system based on our self-assisted speculative decoding algorithm.
+SpecMoE demonstrates the effectiveness of applying speculative decoding to MoE inference without requiring additional model training or fine-tuning.
+Our system improves inference throughput by up to 4.30, while significantly reducing bandwidth requirements of both memory and interconnect on memory-constrained systems.
+
+11footnotetext: Work done while at KAIST.††footnotetext: This is an extended version of our work, which is accepted for publication at the 63rd Design Automation Conference (DAC), 2026.
+
+I Introduction
+
+The advent of large language models (LLMs) has transformed language processing, achieving state-of-the-art performance across various tasks. Models like GPT-3 [5], Llama [50], and Gemini [14] have made significant advancements by scaling up model sizes and increasing training data. However, as model size grows, computational costs increase quadratically with the number of parameters, making large-scale deployment challenging [24, 35, 25]. To mitigate this, the Mixture-of-Experts (MoE) architecture [41] introduces sparse activation, where only a subset of parameters (known as experts) is selected and utilized for each input token. This approach enables MoE models to expand capacity while maintaining computational efficiency, leading to their adoption in high-performance LLMs such as Llama-4 [30], DeepSeek-R1 [10], GPT-4 [32], and Gemini Pro [15].
+
+However, serving MoE models on real systems remains challenging due to their large memory requirements and low parameter efficiency. For example, the increased memory demands of MoE models require additional GPUs just to store model parameters in GPU memory. Despite this, the computational costs of MoE models remain roughly the same as those of their dense counterparts, leading to significant underutilization of GPU computing resources. A common approach to mitigate this inefficiency is to store only a small fraction of model parameters in GPU memory while offloading the rest to slower-tier memory devices, such as CPU DRAM. In this method, model parameters are divided into two groups based on their activation patterns: (1) expert parameters, which are conditionally activated and are thus prime candidates for offloading to CPU memory, and (2) non-expert parameters, which are always activated in a dense manner and are therefore kept in GPU memory. Although CPU offloading for MoE models reduces the number of GPUs required for inference and helps address GPU resource underutilization, migrating experts from CPU to GPU over the narrow PCIe channel significantly increases end-to-end inference latency.
+
+Previous work primarily employs two strategies to mitigate excessive expert migration latency: (1) overlapping expert migration latency with expert computation or (2) caching frequently accessed experts in GPU memory. The latency-hiding approach [22, 56, 51, 12] overlaps expert migration latency with expert computation, which is effective when GPU compute latency and CPU-to-GPU communication latency are comparable. However, this method becomes less effective at larger batch sizes (1) because migration latency increases proportionally with batch size, whereas GPU compute latency does not. As a result, migration latency can easily become exposed, especially in batched model-serving scenarios [26, 57]. The caching-based approach [19, 55, 56, 12] partially addresses this issue by analyzing expert access patterns to identify frequently accessed experts, which are then stored in GPU memory. This reduces the number of experts that must be transferred from CPU to GPU memory during inference, thereby decreasing CPU-to-GPU communication over PCIe. However, expert caching faces two key challenges. First, due to limited GPU memory, most expert parameters must remain in CPU memory, leading to a high cache miss rate. Second, in batched inference—an increasingly critical aspect of modern AI model serving—the number of activated experts that must be transferred over PCIe rises significantly as batch size increases, further diminishing the effectiveness of caching.
+
+In summary, the limitations of prior work primarily stem from its focus on addressing the memory capacity constraints of MoE while neglecting the excessive expert migration latency between the CPU and GPU. Serving MoE models based on CPU-offloading approaches is fundamentally constrained by the CPU-to-GPU communication bandwidth over PCIe. Thus, reducing the data transfer size (i.e., the volume of expert parameters migrated from CPU to GPU) is key to designing an efficient and scalable MoE inference system.
+
+To this end, we propose SpecMoE, a high-performance and memory-efficient MoE inference system that utilizes speculative decoding [47, 28] to effectively address the memory capacity and communication bandwidth limitations of CPU offloading-based MoE systems. SpecMoE introduces innovations in both algorithms and MoE inference system design, as detailed below.
+
+•
+
+(Algorithm) Speculative decoding [47, 28] employs a small draft model to generate a sequence of tokens, which the larger target model then verifies before using them as output. However, applying this technique to MoE models presents challenges because MoE models are significantly larger than dense models. Consequently, creating a separate draft model sufficiently large enough to generate high-quality tokens is both impractical and resource-intensive. Our first key contribution is the development of the self-assisted speculative decoding algorithm, which leverages parts of the target MoE model as the draft model. This approach eliminates the need to train a separate draft model from scratch, significantly reducing both development costs and the memory required for storage.
+To the best of our knowledge, our work is the first solution that leverages MoE model characteristics to enable speculative decoding for MoE inference.
+
+•
+
+(System) The SpecMoE system offers the key advantage of significantly reducing the data transfer size between the CPU and GPU. In conventional MoE systems that rely on CPU offloading, generating an output token requires fetching sparsely activated expert parameters from CPU memory at every token generation step. This process places a heavy demand on communication bandwidth, especially as batch sizes increase. With our self-assisted speculative decoding, multiple output tokens can be generated on average per expert parameter retrieval. This approach effectively reduces the total volume of data transferred over PCIe and helps alleviate the communication bandwidth bottleneck.
+
+We implement SpecMoE on top of an open-source CPU offloading-based inference system and evaluate its performance using representative MoE models. Our results show that SpecMoE achieves 4.30 of performance improvement in throughput over other baselines without introducing any additional memory overhead. Furthermore, SpecMoE significantly reduces CPU-to-GPU data transfer by up to 76.73%, helping to alleviate the communication bandwidth bottleneck. Overall, SpecMoE provides a fast and efficient solution for CPU offloading-based MoE inference.
+
+II Background and Motivation
+
+II-A Mixture-of-Experts Architecture
+
+Sparsely activated MoE block.
+Transformer-based LLMs generally achieve higher accuracy as model parameters increase [24, 5, 17, 35], but their computational cost grows quadratically, making it impractical to design and train these models using conventional methods. To address this scaling challenge, the Mixture-of-Experts (MoE) architecture [41, 13, 27] sparsely activates only a subset of parameters, thereby reducing computational overhead. As shown in Figure 1, an MoE Transformer block replaces the feed-forward network (FFN) with a gate function and multiple experts, each with the same dimension size as the FFN layer. During execution, the gate selects the top- experts per token, activating only a fraction of the model parameters. This sparse activation strategy significantly increases model capacity compared to conventional dense models while maintaining similar computational requirements.
+
+Fig. 1:
+(a) Conventional dense Transformer block and
+(b) sparsely activated MoE block.
+The number of activated experts chosen per token () is set during training, and the model is referred to as a top- gating model (e.g., top-2 gating in NLLB-MoE [49]).
+
+Challenges in MoE model inference.
+MoE models typically contain tens of billions of parameters, requiring multiple GPUs for inference [36, 21]. However, their sparse activation leads to significant underutilization of GPU resources. In multi-GPU inference systems, experts are distributed across multiple GPUs using expert parallelism [13, 27], but only a subset of experts is activated for each inference request. As a result, GPUs holding inactive experts remain idle. This underutilization arises from the low parameter efficiency of MoE models compared to dense models. While MoE models require significantly more memory capacity, their computational demands remain similar to those of dense models.
+
+One solution is to offload sparsely activated experts to lower memory tiers, such as CPU DRAM or storage, and fetch them into GPU memory on demand (Figure 2). This approach (MoE-OnDemand ) improves GPU utilization and reduces the required number of GPUs, thereby lowering inference costs. However, expert migration latency from offloaded devices to the GPU can significantly impact end-to-end latency and severely degrade overall performance. In Figure 3(a), we present the MoE decoding latency in a CPU offloading-based inference system. As shown, expert migration latency accounts for up to 90.11% of the total inference latency, highlighting that MoE inference is heavily communication bandwidth-bound. As the number of input tokens increases with larger batch sizes, more experts are activated and fetched from CPU memory. In Figure 3(b), we compare the data size of non-expert parameters with that of the activated expert parameters. As the size of activated expert parameters grows with larger batches, the CPU-to-GPU communication size increases proportionally. This results in a transfer size exceeding 28 GB per decoding step at a batch size of 256, leading to significant delays due to the narrow PCIe channel. Consequently, limited I/O bandwidth restricts MoE inference scalability and performance.
+
+Fig. 2: Overview of CPU offloading-based MoE inference system.
+Dense layers are always activated and stored on the GPU, while sparse layers are offloaded to the CPU.
+In this example, three input tokens activate Exp #0 and Exp #2, fetched from CPU memory.
+
+Limitation of prior work.
+Prior work addressing expert migration latency in CPU-offloaded MoE inference can be categorized into two main strategies, each with its unique challenges: (1) compute-communication latency overlap, and (2) expert caching.
+Section V analyzes the applicability and performance of these two prior approaches in greater detail.
+
+•
+
+Compute-communication latency overlap.
+Prior work has proposed overlapping the communication latency of expert migration with expert computation latency (referred to as MoE-Overlap ) [12, 22, 56]. However, these methods require architectural modifications to the MoE model to enable expert prefetching. This is because expert activation is dynamically determined by the gate function at runtime, just before experts are executed, rendering performance-efficient prefetching of experts infeasible under the conventional MoE architecture.
+Such modifications can also reduce model accuracy and necessitate additional training [22]. More critically, MoE-Overlap is effective only when communication latency is comparable to computation latency. As shown in Figure 3, communication latency dominates inference latency, accounting for up to 74.8% at a batch size of 128, severely limiting the effectiveness of latency overlap to small-batch inference. However, small-batch inference is becoming less practical as real-world systems increasingly adopt batched inference for cost-efficient serving (e.g., vLLM [26], ORCA [57], and Sarathi [1]).
+
+•
+
+Caching frequently accessed experts.
+Another line of work has analyzed the expert activation patterns and proposed to cache frequently accessed experts in GPU memory to minimize expert migration latency [19, 55, 12] (referred to as MoE-Caching ). While this approach reduces the number of experts fetched from CPU to GPU, it encounters significant challenges at larger batch sizes. This is particularly true for MoE models with a large number of experts (e.g., NLLB-MoE [49] has 128 experts). Due to the severely limited capacity of GPU memory, only a small fraction of the experts can be cached. Consequently, most experts must be stored in CPU memory, which becomes a critical limitation. In other words, as batch sizes grow, more experts are activated and all must be migrated over the slow PCIe. This limitation makes caching mechanisms ineffective in batched LLM inference.
+
+Overall, both MoE-Overlap and MoE-Caching only partially mitigate expert migration latency under limited conditions (e.g., single-batch inference) and yield minimal performance gains in practical multi-batch LLM inference scenarios. In summary, they fail to address the critical bottlenecks in CPU offloading-based inference systems: the frequent and large volume of expert migrations between the CPU and GPU over the narrow interconnect bandwidth.
+
+Fig. 3:
+(a) Latency breakdown of a single NLLB-MoE’s decoding step with different batch sizes using MoE-OnDemand on a CPU offloading-based system with a single NVIDIA H100 GPU.
+(b) The size of activated expert parameters vs. non-expert parameters when varying the input batch size in NLLB-MoE.
+The non-MoE parameters (black) are kept in the GPU while the activated experts (yellow) are migrated over the PCIe channel on-demand.
+
+II-B Speculative Decoding
+
+Algorithm.
+Speculative decoding is an acceleration technique for LLM inference that reduces end-to-end latency by using a lightweight draft model alongside the original target model.
+Each speculative decoding step consists of two phases: speculation and verification (Figure 4). During the speculation phase, the draft model, which is much smaller and has significantly lower inference latency than the target model, speculatively generates several output tokens (the draft tokens in Figure 4) in an autoregressive manner. These draft tokens are sent to the target model as inputs for verification during the verification phase, allowing them to potentially serve as the final output tokens.
+During the verification phase, the target model determines how many of the speculated tokens can be accepted. It does this by calculating the output logit values of all the input draft tokens in parallel, allowing the verification phase to identify which draft tokens will be accepted and which should be rejected.
+During this process, one additional output token is generated (“best” in Figure 4), which is concatenated to the accepted tokens (“experts”, “share”, and “their”) and used as the final output for this decoding step. As a result, a single speculative decoding step can generate multiple tokens while loading the entire model’s parameters into GPU memory only once.
+
+Fig. 4:
+Workflow of a speculative decoding step.
+The draft model generates speculated tokens auto-regressively (e.g., 5 tokens in the figure) and feeds them into the target model.
+The earliest rejected token (“own”) and all following tokens are discarded (“own”, “skills”), while the corrected token (“best”) is appended to the list of accepted tokens.
+In this example, 3 tokens (“experts”, “share”, “their”) are accepted and 4 tokens (“experts”, “share”, “their”, “best”) are generated in a single speculative decoding step.
+
+Expected speedup.
+Equation 1 shows the expected speedup of speculative decoding. Let represent the latency to process input tokens in parallel using the target model, where is defined as the latency when (i.e., ). For instance, is the latency of processing the five draft tokens in Figure 4. denotes the ratio of the draft model’s latency to (s.t. ). Since the decoding step is heavily bound by memory bandwidth when loading the model parameters, is approximately equal to for suitable values of . In other words, the latency difference between processing a single draft token and draft tokens using the target model is negligible.
+Let be the average number of tokens generated per speculative decoding step from draft tokens. Then, to generate tokens, standard decoding executes the target model times, incurring a total latency of . In contrast, speculative decoding takes for speculation plus for verification. Thus, the expected speedup is:
+
+(1)
+
+Hence, greater speedup () can be achieved with (1) a more memory-efficient draft model (i.e., smaller ) or (2) a high-quality draft model that generates draft tokens with a higher likelihood of being accepted during the verification phase of speculative decoding (i.e., larger ). However, these factors often counteract with each other, as the quality of a draft model is closely tied to its model size, making optimal draft model selection challenging.
+
+Key challenges in applying speculative decoding for MoEs.
+Despite its potential, speculative decoding faces two main challenges for MoE inference.
+First, unlike the inference of dense LLM models, the latency of an MoE model inference with multiple input tokens is much larger than that of a single input token (i.e., ). This is because having multiple input tokens usually translates into a larger number of experts to be activated, increasing the amount of model parameters fetched from memory. This results in to become multiples of , significantly reducing the expected speedup shown in Equation 1.
+This problem becomes even worse for CPU offloading-based inference, where expert parameters need to be fetched from lower memory tiers through the slow PCIe channel.
+In Figure 3(b), for example, with 8 input tokens, more than 6 times more experts are activated compared to a single input token on average, leading to roughly 6 times longer expert migration latency.
+
+Furthermore, speculative decoding requires balancing the draft model’s acceptance rate with its execution time (i.e., balancing and ). Optimizing the draft model’s size and quality for these competing demands is non-trivial, making draft model selection a key hurdle in designing MoE-based LLM serving systems with speculative decoding.
+This challenge is exacerbated for models with few smaller variants, since the draft model must share the target model’s tokenizer.
+
+For these reasons, prior work that tried to apply speculative decoding to MoE inference systems resort to drafter-free speculative decoding methods [6] or reuse parts of the target model to reduce the training cost of the draft model [29, 11, 18, 59].
+Nonetheless, these methods still require retraining of some sort, leaving retraining-free solutions for MoE desired.
+To the best of our knowledge, no prior work has proposed solutions for effectively designing a draft model for speculative decoding-based MoE inference that avoids the need for a separate MoE model fine-tuning process, facilitating immediate adoption in practical model serving scenarios.
+
+III SpecMoE: An Efficient MoE Inference System using Self-Assisted Speculative Decoding
+
+III-A High-level Overview
+
+SpecMoE holistically addresses the memory capacity and communication bandwidth challenges of CPU offloading-based MoE inference via speculative decoding. As discussed in Section II-B, applying speculative decoding to MoE models introduces unique challenges in both the development and optimal deployment of the draft model. We propose a self-assisted speculative decoding algorithm that uses parts of the target MoE model as its draft model. This completely eliminates the need for additional training or separate draft model development. Figure 5 provides an overview of SpecMoE. We detail the design of our draft model and inference system in the following sections.
+
+Fig. 5:
+High-level overview of SpecMoE system for a top-1 gating MoE model.
+All non-expert model parameters and a few selected experts are on the GPU (green), while the remaining experts are offloaded to the CPU (blue).
+As a self-assisted speculative decoding model, SpecMoE utilizes parts of the target model (parameters in green) as the draft model.
+With this draft model, whose parameters are entirely on the GPU, speculated draft tokens are generated.
+The target model then verifies the speculated tokens by accessing the required experts, which are fetched from CPU if they are not already on GPU memory (experts in blue).
+To maintain high draft model quality, the experts used to form the draft model are periodically replaced with our proposed expert replacement policy.
+
+III-B (Algorithm) Self-Assisted Speculative Decoding
+
+SpecMoE draft model design.
+To create an effective draft model from the original target model, we begin by categorizing the model parameters into two groups: (1) non-expert parameters, which are always used and remain pinned in GPU memory, and (2) expert parameters, which are conditionally activated and offloaded to CPU memory. Since non-expert layers always reside in GPU memory and contribute minimally to latency, we construct our draft model using them, allowing our approach to naturally share its parameters with the target MoE model to ensure high quality.
+
+Prior work has observed that, during the training phase of MoE models, a subset of experts is routed more frequently than others [23, 19, 49]. This results in a skewed distribution of expert activation patterns, referred to as expert activation hotness, where certain experts within a single MoE block are more likely to be activated. In Figure 6, we illustrate the expert activation hotness observed in NLLB-MoE, where a small subset of hot experts accounts for a large portion of activations. Based on the observation that hot experts are utilized more frequently and have a greater influence on outputs, we hypothesize that our self-assisted draft model may not require all experts to generate high-quality draft tokens. In other words, by keeping only a few hot experts in GPU memory and routing exclusively to these hot experts, we can create a lightweight version of the target MoE model that performs sufficiently well as a draft model. The intuition behind this approach is that hot experts are routed most of the time, making this new MoE-based draft model an accurate approximation of the original target model.
+
+Fig. 6:
+Expert hotness of NLLB-MoE in the English-French translation task on the WMT-14 dataset [4]. NLLB-MoE contains 6 MoE blocks, each containing 128 experts. All the MoE blocks within this MoE model (y-axis, showing different MoE block ID) are depicted, showing how different experts within an MoE block (x-axis, showing expert ID within that MoE block) exhibit different hotness.
+
+Based on these insights, Figure 7 provides an illustrative example of SpecMoE’s self-assisted speculative decoding algorithm, highlighting its speculation and verification phases. In this example, the experts statically pinned in GPU memory (Exp #3 for MoE block #0, and Exp #0 for MoE block #1) are assumed to be part of the draft model and are referred to as draft experts. Because our self-assisted draft model is designed as an MoE architecture, these draft experts serve as a substitute for the MoE blocks in the original target MoE model. Throughout this paper, we refer to the number of draft experts pinned in the GPU as , where for top- gating MoE models. Essentially, our self-assisted draft model becomes a smaller MoE model in itself, routing to experts out of experts in each MoE block. With this design, no experts are migrated from CPU to GPU memory during the speculation phase, as the activated experts are exclusively those already pinned in GPU memory as part of the draft experts. This approach leverages natural expert activation hotness to maintain high draft model quality and eliminates the cost of training a separate draft model from scratch.
+
+Fig. 7:
+The workflow of SpecMoE’s self-assisted speculative decoding algorithm. Example assumes a top-1 gating MoE model.
+For each MoE block, only =1 expert is pinned in the GPU as a draft expert and used to generate draft tokens (i.e., draft experts in green).
+The draft tokens are then verified by the target MoE model, migrating any required experts not already on the GPU (experts in blue) from the CPU, on demand.
+During verification, the temporally hot experts for each MoE block are identified (e.g., Exp #1 of MoE block #0 is assumed as the most activated expert in this example).
+Consequently, the identified temporally hottest experts are pinned in the GPU as the next draft expert, evicting any draft experts that were not identified as the hottest experts.
+In this example, the draft experts in MoE block #0 changes from Exp #3 to Exp #1, while those in MoE block #1 remains unchanged.
+
+Expert replacement policy.
+Given the limited GPU memory capacity, the decision regarding which experts to choose for the draft model and pin in GPU memory is critical.
+To maintain high quality of the draft tokens generated by the draft model, SpecMoE’s self-assisted speculative decoding algorithm also includes an expert replacement mechanism. SpecMoE’s replacement policy leverages the temporal locality of expert activation patterns [23, 55] to determine which experts should remain pinned on the GPU to be utilized as the next speculative decoding step’s draft experts. We observe that, across different inference runs, there is a temporal shift in expert activation patterns. Specifically, even though some experts are activated more frequently than others, the degree of expert hotness and the skewness of the activation pattern gradually shift during model inference.
+
+To fully leverage these characteristics, SpecMoE monitors expert activations during the verification phase to identify the temporally hot experts.
+At the end of the verification phase, it selects which experts to pin as draft experts for the next decoding step based on their temporal locality.
+Figure 7 provides an example of how expert replacement policy is employed in SpecMoE. During the verification phase, SpecMoE counts which experts were activated the most for the speculated tokens in that round.
+For example, in MoE block #0, Exp #3 was the draft expert during the previous speculation phase, but now Exp #1 emerges as the top- expert (=1) as a temporally hot expert. Consequently, SpecMoE replaces the previously pinned Exp #3 with Exp #1, while in MoE block #1, Exp #0 remains unchanged for the next speculation phase.
+Importantly, this replacement incurs no extra CPU-to-GPU migration since the new draft experts are already in GPU as they have been brought from CPU during the verification phase (i.e., Exp #1 of MoE block #0 was brought into GPU memory during verification, as indicated by the blue-colored Exp #1 in step ).
+By periodically refreshing the pinned experts to match shifting activation patterns, SpecMoE dynamically enhances draft quality and maximizes speedup.
+As discussed in Section VI-C, this locality-aware replacement is effective even for MoE models with relatively low expert hotness (e.g., Mixtral-8x7B [23]).
+
+Fig. 8: Affinity-based expert selection mechanism in the SpecMoE speculation phase. (a) Expert selection when the number of draft experts () equals to the number of routed experts per token (). (b) When , each token is routed to the most suitable experts among draft experts by referring to the affinity table.
+
+Affinity-based expert selection mechanism.
+Since SpecMoE utilizes the target model’s gate function as the draft model’s gate function as-is, without fine-tuning, some tokens may be routed to experts that are not currently among the draft experts stored in GPU memory.
+To address this, we adopt an affinity-based expert selection mechanism illustrated in Figure 8.
+Let be the number of draft experts pinned in GPU memory (with ). When , as shown in Figure 8(a), all draft experts are used in the draft model computation. However, if , the gating function may select an expert that is not pinned in GPU memory. In that case, SpecMoE consults an affinity table to find the draft expert that best approximates the target expert. The affinity table contains the precomputed similarity of all possible expert pairs among the experts in the target model using L2 distance. For example, as illustrated in Figure 8(b), if the gating function selects an expert that is not a draft expert (e.g., Exp #1), SpecMoE checks the affinity table to identify the draft expert that most closely resembles it (e.g., Exp #3) and routes the token to that expert instead.
+The precomputed affinity table requires only an offline, one-time cost and uses minimal memory (under 200KB for NLLB-MoE with 128 experts per block), all while preserving token quality by closely approximating the original expert’s response.
+Overall, this mechanism enables SpecMoE to maintain high token acceptance rates and robust speculative decoding across diverse MoE models, even when hotness patterns are less pronounced.
+
+Fig. 9:
+Comparison of data transfer size for expert migration between MoE-OnDemand and SpecMoE. SpecMoE reduces transfers by keeping frequently activated draft experts in GPU and minimizing redundant migrations. With (top-1 gating), SpecMoE retains Exp #1 in GPU, while MoE-OnDemand offloads all experts to CPU. In (a), MoE-OnDemand incurs CPU-to-GPU transfers every step. In (b), SpecMoE avoids migration in the speculation phase by generating all speculated tokens with Exp #1 in GPU. Migration occurs only in the verification phase when experts are accessed based on the gating function. Here, only Exp #0 and Exp #3 migrate once over 5 tokens, significantly reducing data transfer. (c) shows execution timelines, highlighting SpecMoE’s efficiency.
+
+III-C (System) CPU Offloading-based MoE Inference
+
+Speculative decoding for CPU offloaded systems.
+SpecMoE targets CPU offloading-based MoE inference systems, significantly reducing the volume of expert parameters migrated from CPU memory over PCIe.
+We use the example in Figure 9 to highlight SpecMoE’s benefits by comparing it against MoE-OnDemand, but the key intuitions hold similarly for MoE-Overlap and MoE-Caching.
+For MoE-OnDemand, as depicted in Figure 9(a), the activated experts must be migrated from CPU to GPU for each generated token.
+Due to the auto-regressive nature of LLMs, tokens are generated sequentially and cannot be overlapped with each other.
+Thus, even though Exp #1 and Exp #3 are used twice, their migrations cannot be coalesced and must happen separately, causing high communication overhead over PCIe.
+However, in the SpecMoE system (Figure 9(b)), because the draft models do not require any expert migration, no communication is involved in the speculation phase.
+During the verification phase, all expert migrations required by the target model are coalesced.
+The verification of the four draft tokens occurs simultaneously and in parallel, amortizing the data transfer overhead of expert migration.
+This approach enables SpecMoE to significantly reduce net data transfer compared to MoE-OnDemand by coalescing migration requests and minimizing the number of expert migrations.
+
+It is worth emphasizing that batched LLM inference is becoming standard practice in LLM serving scenarios, due to the enormous cost associated with these large-scale generative AI model serving [33, 44, 34]. This trend has led to the widespread adoption of high-performance batched LLM solutions like vLLM [26].
+These industry trends highlight the importance of SpecMoE, which delivers even greater performance benefits for batched inference scenarios compared to the three aforementioned CPU offloading-based MoE inference systems. Below we elaborate on SpecMoE’s expected speed for batched speculative decoding-based inference.
+
+Expected speedup with batched speculative decoding.
+As discussed in Section II, batched inference and speculative decoding pose their own challenges when applied to offload-based MoE systems, making them unfavorable choices in deployment.
+However, we demonstrate how applying them simultaneously holds great potential for speeding up offload-based MoE systems.
+For a given batch size and draft token length of , let denote the performance gap between (a) the latency incurred in the verification phase, (where the target model verifies tokens), and (b) the latency incurred in executing a single forward pass of the target model over the batch size , , so that .
+By applying this relationship to Equation 1, which quantifies the expected speedup with speculative decoding (), we can re-write this equation to express the speedup in the batched inference context as follows:
+
+(2)
+
+Given this, consider a CPU offloading-based inference system where the expert migration latency generally dominates the end-to-end performance. In this context, can be estimated by analyzing the data transfer size associated with expert migration, as it directly impacts and (as described in Section II-B).
+Assuming the experimental setup shown in Figure 3(a), for a single-batch inference with , verifying tokens results in over six times more data transfers. This can be observed by comparing the data transfer sizes for batch sizes of 1 and 8 in Figure 3(a), leading to .
+However, this performance gap () decreases significantly as the batch size increases. For instance, at , verifying tokens requires only about twice as much data transfer, resulting in . The key takeaway is that increasing the batch size significantly reduces , which in turn boosts the speedup .
+This makes our system design of batched speculative decoding an effective approach for CPU offloading-based MoE inference.
+
+TABLE I: MoE model configurations. For brevity, we only include information about the decoder blocks for NLLB-MoE. Skewness is the portion of routed tokens covered by the top-25% hottest experts. A higher skewness means the model has a more skewed expert activation distribution.
+
+Model
+Experts
+
+Layers
+
+(MoE / total)
+
+Routing
+Skewness
+
+Capacity
+
+(GB)
+
+NLLB-MoE
+128
+6 / 24
+Top-2
+0.84
+
+54
+
+Mixtral-8x7B
+8
+32 / 32
+Top-2
+0.32
+
+94
+
+Llama-4-Scout
+16
+48 / 48
+Top-1
+0.59
+
+218
+
+IV Methodology
+
+Hardware and software.
+We evaluate SpecMoE on a CPU-GPU system with two Intel Xeon Platinum 8558 CPUs containing 1 TB of DDR5 CPU memory and a single NVIDIA H100 GPU with 96 GB of HBM3.
+The CPU and GPU communicate over PCIe 5.0, providing 64 GB/s uni-directional communication bandwidth. Our software environment includes PyTorch 2.5.0 with CUDA 12.6, along with the Hugging Face Transformers 4.51.0 and Accelerate 1.6.0 libraries [52, 20]. The Hugging Face Transformers library’s implementation of speculative decoding does not support batched inference and it also requires static draft model weights for execution. Because SpecMoE dynamically selects a subset of the target model’s MoE block weights as its draft model, we develop a custom implementation of our self-assisted speculative decoding.
+
+Model and dataset.
+We evaluate SpecMoE using three representative MoE models whose weights are publicly available (Table I). In Section V, we focus our evaluation on NLLB-MoE [49] with the English–French translation task on the WMT-14 [4] dataset. The effectiveness of SpecMoE on MoE models with less pronounced expert hotness is examined in Section VI-C, where we evaluate Mixtral-8x7B [23] and Llama-4-Scout [30] on the CNN-DailyMail [16, 40] dataset for text completion.
+
+Baseline system configurations.
+We evaluate three baseline systems: MoE-OnDemand, MoE-Overlap, and MoE-Caching.
+All three baselines utilize the GPU memory to store the non-expert parameters while the sparse expert parameters are offloaded to the CPU memory as shown in Figure 2.
+All inference-related computation is conducted using the GPU for all three baseline systems. However, MoE-OnDemand fetches activated experts from the CPU memory in an on-demand manner while MoE-Overlap overlaps expert migration with computations to hide the expert migration latency.
+This is usually implemented by fetching the next layer’s experts based on speculation or by modifying the model architecture as suggested in Pre-gated MoE [22]. For a conservative evaluation, we establish an oracular version of MoE-Overlap where the expert migration latency is completely overlapped with computation to maximize the expert migration latency hiding benefits of MoE-Overlap.
+As for MoE-Caching, we keep the top 10% most frequently accessed experts on GPU memory.
+
+SpecMoE configuration.
+For SpecMoE’s self-assisted speculative decoding, we utilize 4 draft experts per MoE block for constructing our draft model, configuring =10, where represents the number of speculated draft tokens per speculation phase.
+Using the greedy speculative decoding algorithm [47], SpecMoE’s verification phase accepts only speculated draft tokens that precisely match the target model’s greedy decoding results.
+
+TABLE II:
+Average number of generated tokens () for different expert selection policies (batch size: 256) and their effect on end-to-end inference performance (speedup normalized to Random). =10 in our evaluations.
+
+Metric
+Random
+HotGlobal
+HotTemporal
+
+Tokens generated per step
+6.812
+7.220
+7.265
+
+Performance speedup
+1.000
+1.084
+1.143
+
+V Evaluation
+
+The section focuses on the evaluation of NLLB-MoE, presenting the number of tokens generated per verification phase to show the robustness of our self-assisted speculative decoding algorithm (Section V-A).
+We then evaluate the end-to-end inference latency and throughput (Section V-B) to demonstrate SpecMoE’s performance improvements, followed by a quantitative analysis of the effect of SpecMoE on CPU-to-GPU data transfers (Section V-C), which explains the primary reasons behind SpecMoE’s performance gains.
+
+V-A Generated Tokens Per Verification Phase
+
+The key to SpecMoE’s success is maximizing the number of speculated tokens actually accepted during verification.
+If too few of the speculated tokens are accepted, the time spent speculating those tokens is essentially wasted, resulting in slower generation speeds compared to other baseline systems.
+Furthermore, during the verification phase, SpecMoE retrieves the activated experts for all speculated tokens, regardless of whether those tokens are eventually accepted or not.
+This may lead to unnecessary migration of experts even for incorrectly speculated tokens, causing a miss penalty that aggravates the CPU-to-GPU communication bottleneck.
+
+In Table II, we explore three different expert selection policies for the draft model to determine their effect on the speculated token acceptance rate.
+Tokens generated per step refers to the number of tokens generated within a single speculative decoding step.
+That is, it includes both the number of speculated tokens and the resampled token during the verification phase (Figure 4).
+Under the Random policy, the draft experts are chosen randomly from each MoE block.
+HotGlobal identifies the hot experts that are accessed most frequently (e.g., Figure 6) within each MoE block, and statically chooses them as the draft experts.
+HotTemporal is the policy in use by our SpecMoE algorithm, which dynamically captures and replaces temporally hot experts during each verification phase.
+According to our evaluation, Random generates 6.812 tokens on average per verification phase.
+This result shows the algorithmic robustness of our self-assisted draft model design approach, even under a random selection policy.
+With access to the expert activation hotness information, HotGlobal generates 7.220 tokens.
+Finally, by taking the temporal shift in expert activation hotness into account, HotTemporal generates up to 7.265 tokens per speculative decoding step, demonstrating the effectiveness of SpecMoE in improving token generation performance, providing an additional 6% end-to-end speedup over HotGlobal.
+By enabling the draft model to generate speculated tokens closely aligned with the target model, SpecMoE with HotTemporal enhances the overall performance.
+
+V-B Performance
+
+End-to-end inference latency.
+Figure 10 compares SpecMoE’s end-to-end latency vs. the three baselines over a batch size ranging from 1 to 256. While today’s LLM inference systems are optimized for large batches (underscoring the importance of system-level solutions like vLLM [26] and others [57, 42, 53, 8, 34]), we nonetheless include extremely low batch inference scenarios like batch size of 1 for the completeness of our study.
+SpecMoE’s latency reduction benefit becomes proportionally higher as batch size increases, incurring only 23% of the MoE-OnDemand’s latency at the batch size of 256. These results highlight SpecMoE’s ability to minimize CPU-to-GPU expert migration traffic, which is the primary bottleneck of CPU offloading-based MoE inference over large batch sizes.
+
+Fig. 10:
+Normalized end-to-end inference latency (NLLB-MoE).
+
+Fig. 11:
+End-to-end inference throughput (tokens per second).
+
+It is worth noting that MoE-Caching show slightly shorter end-to-end latency than SpecMoE under the batch size 1 inference scenario.
+This is because the model activates only 2 out of the 128 total experts per MoE block under batch 1 inference, and MoE-Caching likely has these experts already loaded in GPU memory, as it caches 10% of the total experts on the GPU.
+Nevertheless, addressing SpecMoE’s inefficiency under low-batch inference scenarios in real-world LLM inference systems is straightforward. This is because disabling SpecMoE’s speculative decoding feature under low batch sizes can be easily implemented at the software level without any modifications to the MoE model or causing additional hardware resource usage.
+This ensures SpecMoE’s seamless adaptability for real LLM serving scenarios while preserving our proposal’s significant advantage under large-batch inference settings.
+
+Token generation throughput.
+We also show the changes in inference throughput (measured using the number of tokens generated per second, Figure 11) as batch sizes change.
+All evaluated systems generally achieve an increase in inference throughput as batch size is increased.
+However, the rate in which throughput is increased is the highest and most pronounced with SpecMoE, achieving up to 123.0 tokens/sec and outperforming all other design points that exhibit only limited throughput improvements.
+This is because the baseline systems can only partially mitigate the expert migration latency, showing limited effectiveness in large batch inference. Under large batches where a larger number of experts are activated and fetched from CPU to GPU, the three baseline systems exhibit a near-linear increase in latency, as shown in Figure 3, limiting its throughput increase with large batches.
+
+Unlike these baseline systems, SpecMoE demonstrates a proportional increase in throughput with larger batch sizes, achieving up to a 4.30 speedup over MoE-OnDemand. This improvement is due to SpecMoE delaying all expert migration requests for draft tokens until the verification phase. By doing so, experts that are activated multiple times during the speculation and verification phases are migrated exactly once, eliminating redundant expert migrations (Figure 9). In summary, the significant throughput improvements achieved by SpecMoE result from its efficient handling of data transfers and its ability to generate multiple tokens per single target model execution. The details of this reduction in data transfer will be examined further in the following section.
+
+Fig. 12:
+CPU-to-GPU data transfer size in end-to-end inference.
+
+V-C Efficiency and Scalability
+
+Figure 12 compares the size of expert parameters migrated during the CPU-to-GPU communications.
+MoE-OnDemand fetches required experts from the CPU to the GPU at every decoding step, resulting in substantial data transfers.
+Similarly, while MoE-Overlap tries to hide the migration latency by overlapping it with computation time, it still needs to transfer the same amount of expert parameters over PCIe, resulting in no improvement over MoE-OnDemand in terms of data transfer size.
+MoE-Caching can reduce expert migration traffic compared to the other two baselines by caching the frequently accessed experts in the GPU memory.
+However, MoE-Caching’s reduction in data transfer size for the non-cached experts is almost non-existent, resulting in MoE-Caching to achieve a moderate 30% reduction in overall data transfer size.
+SpecMoE, on the other hand, directly tackles the problem of excessive data transfers, minimizing the CPU-to-GPU communication traffic by up to 76.73% compared to MoE-OnDemand and MoE-Overlap, and by 71.89% compared to MoE-Caching.
+Interestingly, SpecMoE achieves such high reduction in data transfer size while using much less GPU memory than MoE-Caching, which caches 13 (10% of 128) hot experts while SpecMoE caches only 4 experts to construct its draft model.
+
+The advantages of SpecMoE become clearer as the batch size increases.
+The three baseline systems experience sharp increases in data transfer size with larger batches; for instance, when increasing the batch size from 1 to 256, the data transfer size grows 45.28 for MoE-OnDemand/MoE-Overlap and 50.97 for MoE-Caching.
+SpecMoE achieves a much smaller increase of only 10.96 during the same batch size increase interval.
+SpecMoE’s efficiency in minimizing data transfers stems from our self-assisted speculative decoding algorithm, where multiple tokens are validated altogether during the verification phase.
+As the batch size grows, the number of tokens processed simultaneously in the verification phase grows significantly.
+Consequently, the likelihood of these tokens being routed to identical experts also increases, reducing redundant expert migrations and further optimizing data transfer size.
+In summary, unlike other baselines that migrate the same experts repeatedly, SpecMoE optimizes the data transfer between CPU and GPU, demonstrating superior scalability as the batch size grows.
+
+VI Discussion
+
+Fig. 13: Average number of tokens generated per speculative decoding step as the number of draft tokens varies (batch size: 128).
+
+VI-A Effect of Affinity-based Expert Selection
+
+As explained in Section III-B, SpecMoE refines the routing results from the gating function using the precomputed affinity table during the speculation phase.
+To evaluate the effectiveness of our affinity-based expert selection mechanism, we perform an ablation study on the expert selection policy. Figure 13 illustrates the average number of tokens generated per speculative decoding step () as the number of draft tokens () varies from 10 to 20. We compare two approaches: randomly selecting experts (Random) and using our affinity-based expert selection (Affinity-based).
+As shown in the figure, the affinity-based approach consistently outperforms the random selection, generating 7.23% more tokens per step on average.
+These results provide compelling evidence that our affinity-based expert selection method effectively approximates the original computation by selecting experts that are most similar to those to which tokens should be routed, thereby leading to high-quality draft generation.
+
+VI-B Effect of Draft Expert Number on SpecMoE
+
+TABLE III:
+Average number of tokens generated per step () and achieved throughput for when the number of draft experts () is changed in NLLB-MoE (batch size: 256).
+
+Metric
+Number of experts in draft model ()
+
+2
+
+4
+
+8
+
+16
+
+Tokens generated per step
+
+6.929
+
+7.265
+
+7.620
+
+7.819
+
+Throughput (tokens/sec)
+
+116.401
+
+122.974
+
+121.309
+
+117.157
+
+This section evaluates how the number of experts in the draft model affects SpecMoE performance.
+Table III presents the number of tokens generated per speculative decoding step as the number of draft experts () varies from 2 to 16 (our evaluation in Section V used 4 draft experts per MoE block for NLLB-MoE). As shown, the number of generated tokens increases with a larger number of draft experts. However, the end-to-end inference throughput does not scale proportionally with the number of tokens generated per step and even declines in certain cases. When more experts are included in the draft model (i.e., as increases), the latency to execute these experts also rises. This results in lower compute utilization because the number of tokens processed per step remains the same. Therefore, a larger does not always lead to better end-to-end performance. To maximize efficiency, SpecMoE should identify the optimal value of , balancing the acceptance of more speculated tokens against the cost of sequential computations in the draft MoE blocks. We therefore chose =4 as NLLB-MoE’s draft model in Section V to balance draft model quality and end-to-end performance.
+
+VI-C SpecMoE Effectiveness on MoE Models with Low Expert Activation Hotness
+
+For the completeness of our work, we evaluate an MoE model that exhibits a relatively uniform expert activation distribution: Mixtral-8x7B [23] and Llama-4-Scout [30]. To measure how uniform (or how skewed) an MoE model is, we define skewness of an MoE model as the portion of tokens that are routed to the top 25% frequently activated experts, averaged throughout all layers. Skewness is a value between 0.25 and 1 where the closer it is to 0.25, the more uniformly activated its experts are. As reported in Table I, NLLB-MoE is highly skewed and is biased to activate certain hot experts.
+In contrast, Mixtral-8x7B and Llama-4-Scout, with a skewness of 0.32 and 0.59, respectively, are models whose experts are relatively uniformly activated compared to NLLB-MoE.
+Because expert activation hotness is not strongly observed, it becomes more challenging for SpecMoE’s draft model to include the optimal set of draft experts. This results in a lower draft token acceptance rate compared to MoE models with skewed expert hotness.
+To address this, we set the number of speculated draft tokens () to 5 for these models. This lower value of , compared to NLLB-MoE’s =10, compensates for the reduced number of generated tokens per step. A higher value in such case would unnecessarily increase speculation overhead without significant improvements in the number of tokens generated per step ().
+
+Fig. 14: End-to-end inference throughput of Mixtral-8x7B.
+
+Fig. 15: End-to-end inference throughput of LLama-4-Scout.
+
+With this design decision, we configure the verification phase of SpecMoE to use the sampling-based methodology introduced in [28]. We perform the text completion task on the CNN-DailyMail dataset with a temperature of 1.
+As a result, SpecMoE presents slightly lower performance than MoE-Caching for small batch sizes (less than or equal to 4) similar to the results observed in Figure 11.
+Nevertheless, for batch sizes larger than 4, SpecMoE consistently outperforms the three baseline CPU offload–based systems.
+As shown in Figure 14 and Figure 15, SpecMoE achieves up to 2.17 and 1.42 improvements in throughput over MoE-OnDemand for Mixtral-8x7B and Llama-4-Scout, respectively. By contrast, MoE-Overlap and MoE-Caching deliver maximum improvements of only 1.53 and 1.15 for Mixtral-8x7B and Llama-4-Scout, respectively.
+These results highlight that SpecMoE delivers noticeable performance gains even for MoE models that do not exhibit a skewed distribution of expert activation hotness, underscoring its robust design.
+
+Importantly, SpecMoE achieves this speedup without additional resources or modifications to the target model architecture.
+Recent best practices for draft-model development select models roughly 1% the size of the target [28, 31, 48, 9, 46, 39].
+Applying this ratio to Mixtral-87B and Llama-4-Scout still requires draft models with several billion parameters.
+Generating draft tokens with such draft models consumes significant GPU memory for both the draft model weights and associated KV caches, which is especially critical in resource-constrained, offloading-based inference systems.
+Furthermore, selecting an appropriate draft model is a challenging task. For example, Llama-4-Scout is the smallest model of the Llama-4 family (i.e., there is no smaller model that uses the same tokenizer). Thus, applying speculative decoding to this model would require creating a new, smaller model or adopting drafter-free approaches, both of which demand modifications to the target model architecture and additional efforts for training.
+In contrast, SpecMoE employs a self-assisted speculative decoding approach that requires no extra GPU memory for draft model parameters or KV caches.
+
+VI-D SpecMoE with SSD-Offloading
+
+Prior work [56, 22] explored the efficacy of offloading MoE experts to SSDs as a means to deploy even larger LLMs.
+SSD-offloading introduces higher data transfer latency due to the limited I/O bandwidth of SSDs, making expert migration latency dominate the end-to-end execution. As shown in Figure 16, SpecMoE achieves on average a 2.25 throughput improvement over MoE-OnDemand, while MoE-Overlap and MoE-Caching demonstrate only 1.05 and 1.29 average speedups, respectively.
+The subpar performance of these two baselines stems from the limited I/O bandwidth, which exacerbates expert migration latency and reduces the effectiveness of latency overlapping and expert caching.
+Because SpecMoE fundamentally minimizes the data transfer size by eliminating redundant expert migrations, it is able to consistently provide speed boosts compared even when the experts are offloaded to SSDs.
+These results highlight SpecMoE’s utility in high-latency, bandwidth-constrained environments such as SSDs.
+
+Fig. 16: Normalized end-to-end inference throughput of NLLB-MoE when expert parameters are offloaded to the SSD.
+
+VII Related Work
+
+Offload-based systems.
+ZeRO-offload [38] and ZeRO-infinity [37] offload model parameters to slower-tier memory, enabling large AI model training. FlexGen [43] introduces a scheduling algorithm to maximize throughput in GPU-constrained, offloading-based environments. However, these approaches do not account for sparse activation and are therefore not applicable to MoE models. Our implementations of MoE-OnDemand and MoE-Overlap from Section II-A are based on Hugging Face Accelerate [20] and Pre-gated MoE [22], respectively. SE-MoE [56] and Huang et al. [19] each propose expert-offloading schemes for MoE using methods similar to those described for MoE-Overlap and MoE-Caching, respectively. However, these methods do not address the data transfer bottleneck during batched inference, a challenge addressed in our SpecMoE.
+PowerInfer [45] characterizes column-/row-wise activation sparsity in weight parameters and leverages this insight to offload cold parts of the weight parameters to the CPU while retaining hot parts on the GPU, reducing GPU memory usage and data transfers.
+However, this approach is less effective to models that do not use ReLU functions, which is common in state-of-the-art LLMs.
+
+Efficient MoE serving.
+To address the inefficiency inherent in the sparse activation patterns of MoE, DeepSpeed-Inference [3] and SE-MoE [56] propose new model architectures based on knowledge distillation. However, these approaches incur additional training costs and result in model accuracy degradation. Duplex [58] introduces a hardware accelerator for batched MoE inference but its applicability is limited to a specific type of attention mechanism, grouped query attention [2]. SpecMoE incurs no additional training costs, maintains accuracy, and is applicable to any MoE model.
+
+Speculative decoding.
+Blockwise [47], Leviathan et al. [28], and SpS [7] introduced the concept of speculative decoding applied in our work.
+Several prior work proposes to store speculated tokens in tree-like structures, with [46] applying a new speculative decoding scheme to the draft models, SpecInfer [31] introducing hardware-friendly tree attention mechanism, and Sequoia [9] optimizing and deepening the tree-like structure.
+SpecExec [48] introduces tree-based speculation with a verification algorithm that caches and reuses the target model’s logits, demonstrating this approach’s efficacy on consumer GPUs. EdgeLLM [54] proposes a compute-efficient token-tree generation mechanism and an inference pipeline that continues speculation during verification, enabling speculative decoding on edge devices.
+Overall, these works require the help of a separately trained draft model, requiring additional compute resources, and are limited to applications to dense models.
+SpecMoE proposes a training-free draft model for MoEs.
+
+In an attempt to reduce the training cost of the draft model, EAGLE [29] reuses the target model’s embedding layer and LM head. By focusing on the output logit distribution rather than the output token, it is able to quickly retrain the draft model to achieve a moderate draft model quality.
+Nonetheless, Eagle still requires retraining to maintain its output generation quality, while the draft model proposed in SpecMoE is completely training-free.
+
+LayerSkip [11], Speed [18], and Draft&Verify [59] reuse parts of the target model to create the draft model and use early exit mechanisms to accelerate generation speed and reduce draft model training costs. These techniques, however, are generally designed for dense LLMs and cannot be directly applied to MoE models. Additionally, LayerSkip requires retraining of the target model.
+Medusa [6] eliminates the need for a separate draft model by adding multiple LM heads at the end of target dense LLMs, enabling the generation of multiple output tokens in a single forward pass. However, this approach still incurs additional compute overhead to align the LM heads with the model.
+In contrast, SpecMoE requires no retraining and is compatible with all MoE architectures.
+
+VIII Conclusion
+
+SpecMoE proposes self-assisted speculative decoding to address the challenges of CPU-to-GPU communication overhead in CPU offloading-based MoE inference.
+By composing the draft model from parts of the target model and dynamically reconstructing it at runtime, the speculation phase of SpecMoE generates quality tokens while residing entirely in the GPU.
+The verification phase of SpecMoE alleviates the data transfer overhead by coalescing any duplicate expert migrations, effectively removing all redundant transfers over the PCIe channel.
+On top of that, SpecMoE avoids the need for any separate draft model training, saving on training compute costs.
+Overall, SpecMoE is an efficient hardware-aware, software-only solution that incurs no additional training cost that can be generally applied to any MoE serving systems.
+
+References
+
+[1]
+A. Agrawal, A. Panwar, J. Mohan, N. Kwatra, B. S. Gulavani, and R. Ramjee (2023)
+
+SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills.
+
+In arxiv.org,
+
+Cited by: 1st item.
+
+[2]
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai (2023)
+
+GQA: Training Generalized Multi-query Transformer Models from Multi-Head Checkpoints.
+
+In arxiv.org,
+
+Cited by: §VII.
+
+[3]
+R. Y. Aminabadi, S. Rajbhandari, A. A. Awan, C. Li, D. Li, E. Zheng, O. Ruwase, S. Smith, M. Zhang, J. Rasley, and Y. He (2022)
+
+DeepSpeed-Inference: Enabling Efficient Inference of Transformer Models at Unprecedented Scale.
+
+In Proceedings of the International Conference on High Performance Computing, Networking, Storage and Analysis (SC),
+
+Cited by: §VII.
+
+[4]
+O. Bojar, C. Buck, C. Federmann, B. Haddow, P. Koehn, J. Leveling, C. Monz, P. Pecina, M. Post, H. Saint-Amand, R. Soricut, L. Specia, and A. Tamchyna (2014)
+
+Findings of the 2014 Workshop on Statistical Machine Translation.
+
+In Proceedings of the Ninth Workshop on Statistical Machine Translation,
+
+Cited by: Fig. 6,
+§IV.
+
+[5]
+T. B. Brown (2020)
+
+Language Models are Few-shot Learners.
+
+In arxiv.org,
+
+Cited by: §I,
+§II-A.
+
+[6]
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao (2024)
+
+Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads.
+
+In arxiv.org,
+
+Cited by: §II-B,
+§VII.
+
+[7]
+C. Chen, S. Borgeaud, G. Irving, J. Lespiau, L. Sifre, and J. Jumper (2023)
+
+Accelerating Large Language Model Decoding with Speculative Sampling.
+
+In arxiv.org,
+
+Cited by: §VII.
+
+[8]
+L. Chen, Z. Ye, Y. Wu, D. Zhuo, L. Ceze, and A. Krishnamurthy (2024)
+
+Punica: Multi-tenant LoRA Serving.
+
+Proceedings of Machine Learning and Systems.
+
+Cited by: §V-B.
+
+[9]
+Z. Chen, A. May, R. Svirschevski, Y. Huang, M. Ryabinin, Z. Jia, and B. Chen (2024)
+
+Sequoia: Scalable, Robust, and Hardware-aware Speculative Decoding.
+
+In arxiv.org,
+
+Cited by: §VI-C,
+§VII.
+
+[10]
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang (2025)
+
+DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning.
+
+In arxiv.org,
+
+Cited by: §I.
+
+[11]
+M. Elhoushi, A. Shrivastava, D. Liskovich, B. Hosmer, B. Wasti, L. Lai, A. Mahmoud, B. Acun, S. Agarwal, A. Roman, A. Aly, B. Chen, and C. Wu (2024)
+
+LayerSkip: Enabling Early Exit Inference and Self-speculative Decoding.
+
+In arxiv.org,
+
+Cited by: §II-B,
+§VII.
+
+[12]
+A. Eliseev and D. Mazur (2023)
+
+Fast Inference of Mixture-of-Experts Language Models with Offloading.
+
+In arxiv.org,
+
+Cited by: §I,
+1st item,
+2nd item.
+
+[13]
+W. Fedus, B. Zoph, and N. Shazeer (2022)
+
+Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity.
+
+Journal of Machine Learning Research.
+
+Cited by: §II-A,
+§II-A.
+
+[14]
+G. T. Google (2023)
+
+Gemini: A Family of Highly Capable Multimodal Models.
+
+In arxiv.org,
+
+Cited by: §I.
+
+[15]
+G. T. Google (2024)
+
+Gemini 1.5: Unlocking Multimodal Understanding Across Millions of Tokens of Context.
+
+In arxiv.org,
+
+Cited by: §I.
+
+[16]
+K. M. Hermann, T. Kociský, E. Grefenstette, L. Espeholt, W. Kay, M. Suleyman, and P. Blunsom (2015)
+
+Teaching Machines to Read and Comprehend.
+
+In Proceedings of the International Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §IV.
+
+[17]
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A. Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc, A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre (2022)
+
+Training Compute-Optimal Large Language Models.
+
+In arxiv.org,
+
+Cited by: §II-A.
+
+[18]
+C. Hooper, S. Kim, H. Mohammadzadeh, H. Genc, K. Keutzer, A. Gholami, and S. Shao (2023)
+
+Speed: Speculative Pipelined Execution for Efficient Decoding.
+
+In arxiv.org,
+
+Cited by: §II-B,
+§VII.
+
+[19]
+H. Huang, N. Ardalani, A. Sun, L. Ke, H. S. Lee, A. Sridhar, S. Bhosale, C. Wu, and B. Lee (2023)
+
+Towards MoE Deployment: Mitigating Inefficiencies in Mixture-of-Expert (MoE) Inference.
+
+In arxiv.org,
+
+Cited by: §I,
+2nd item,
+§III-B,
+§VII.
+
+[20]
+HuggingFace (2022)
+
+Hugging Face Accelerate.
+
+External Links: Link
+
+Cited by: §IV,
+§VII.
+
+[21]
+C. Hwang, W. Cui, Y. Xiong, Z. Yang, Z. Liu, H. Hu, Z. Wang, R. Salas, J. Jose, P. Ram, J. Chau, P. Cheng, F. Yang, M. Yang, and Y. Xiong (2023)
+
+Tutel: Adaptive Mixture-of-Experts at Scale.
+
+In arxiv.org,
+
+Cited by: §II-A.
+
+[22]
+R. Hwang, J. Wei, S. Cao, C. Hwang, X. Tang, T. Cao, and M. Yang (2024)
+
+Pre-gated MoE: An Algorithm-system Co-design for Fast and Scalable Mixture-of-Expert Inference.
+
+In Proceedings of the International Symposium on Computer Architecture (ISCA),
+
+Cited by: §I,
+1st item,
+§IV,
+§VI-D,
+§VII.
+
+[23]
+A. Q. Jiang, A. Sablayrolles, A. Roux, A. Mensch, B. Savary, C. Bamford, D. S. Chaplot, D. de las Casas, E. B. Hanna, F. Bressand, G. Lengyel, G. Bour, G. Lample, L. R. Lavaud, L. Saulnier, M. Lachaux, P. Stock, S. Subramanian, S. Yang, S. Antoniak, T. L. Scao, T. Gervet, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed (2024)
+
+Mixtral of Experts.
+
+In arxiv.org,
+
+Cited by: §III-B,
+§III-B,
+§III-B,
+§IV,
+§VI-C.
+
+[24]
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei (2020)
+
+Scaling Laws for Neural Language Models.
+
+In arxiv.org,
+
+Cited by: §I,
+§II-A.
+
+[25]
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei (2020)
+
+Scaling Laws for Neural Language Models.
+
+In arxiv.org,
+
+Cited by: §I.
+
+[26]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica (2023)
+
+Efficient Memory Management for Large Language Model Serving with PagedAttention.
+
+In Proceedings of the ACM Symposium on Operating System Principles (SOSP),
+
+Cited by: §I,
+1st item,
+§III-C,
+§V-B.
+
+[27]
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen (2020)
+
+GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding.
+
+In arxiv.org,
+
+Cited by: §II-A,
+§II-A.
+
+[28]
+Y. Leviathan, M. Kalman, and Y. Matias (2023)
+
+Fast Inference from Transformers via Speculative Decoding.
+
+In Proceedings of the International Conference on Machine Learning (ICML),
+
+Cited by: 1st item,
+§I,
+§VI-C,
+§VI-C,
+§VII.
+
+[29]
+Y. Li, F. Wei, C. Zhang, and H. Zhang (2024)
+
+EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty.
+
+In Proceedings of the International Conference on Machine Learning (ICML),
+
+Cited by: §II-B,
+§VII.
+
+[30]
+Meta AI (2024)
+
+Llama 4 and Multimodal AI: Expanding Intelligence Across Modalities.
+
+External Links: Link
+
+Cited by: §I,
+§IV,
+§VI-C.
+
+[31]
+X. Miao, G. Oliaro, Z. Zhang, X. Cheng, Z. Wang, Z. Zhang, R. Y. Y. Wong, A. Zhu, L. Yang, X. Shi, C. Shi, Z. Chen, D. Arfeen, R. Abhyankar, and Z. Jia (2024)
+
+Specinfer: Accelerating Large Language Model Serving with Tree-based Speculative Inference and Verification.
+
+In Proceedings of the International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Cited by: §VI-C,
+§VII.
+
+[32]
+OpenAI (2023)
+
+GPT-4 Technical Report.
+
+In arxiv.org,
+
+Cited by: §I.
+
+[33]
+P. Patel, E. Choukse, C. Zhang, Í. Goiri, B. Warrier, N. Mahalingam, and R. Bianchini (2024)
+
+Characterizing Power Management Opportunities for LLMs in the Cloud.
+
+In Proceedings of the International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+
+Cited by: §III-C.
+
+[34]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini (2024)
+
+Splitwise: Efficient Generative LLM Inference using Phase Splitting.
+
+In Proceedings of the International Symposium on Computer Architecture (ISCA),
+
+Cited by: §III-C,
+§V-B.
+
+[35]
+J. W. Rae, S. Borgeaud, T. Cai, K. Millican, J. Hoffmann, F. Song, J. Aslanides, S. Henderson, R. Ring, S. Young, E. Rutherford, T. Hennigan, J. Menick, A. Cassirer, R. Powell, G. van den Driessche, L. A. Hendricks, M. Rauh, P. Huang, A. Glaese, J. Welbl, S. Dathathri, S. Huang, J. Uesato, J. Mellor, I. Higgins, A. Creswell, N. McAleese, A. Wu, E. Elsen, S. Jayakumar, E. Buchatskaya, D. Budden, E. Sutherland, K. Simonyan, M. Paganini, L. Sifre, L. Martens, X. L. Li, A. Kuncoro, A. Nematzadeh, E. Gribovskaya, D. Donato, A. Lazaridou, A. Mensch, J. Lespiau, M. Tsimpoukelli, N. Grigorev, D. Fritz, T. Sottiaux, M. Pajarskas, T. Pohlen, Z. Gong, D. Toyama, C. de Masson d’Autume, Y. Li, T. Terzi, V. Mikulik, I. Babuschkin, A. Clark, D. de Las Casas, A. Guy, C. Jones, J. Bradbury, M. Johnson, B. Hechtman, L. Weidinger, I. Gabriel, W. Isaac, E. Lockhart, S. Osindero, L. Rimell, C. Dyer, O. Vinyals, K. Ayoub, J. Stanway, L. Bennett, D. Hassabis, K. Kavukcuoglu, and G. Irving (2022)
+
+Scaling Language Models: Methods, Analysis & Insights from Training Gopher.
+
+In arxiv.org,
+
+Cited by: §I,
+§II-A.
+
+[36]
+S. Rajbhandari, C. Li, Z. Yao, M. Zhang, R. Y. Aminabadi, A. A. Awan, J. Rasley, and Y. He (2022)
+
+Deepspeed-MoE: Advancing Mixture-of-Experts Inference and Training to Power Next-generation AI Scale.
+
+In Proceedings of the International Conference on Machine Learning (ICML),
+
+Cited by: §II-A.
+
+[37]
+S. Rajbhandari, O. Ruwase, J. Rasley, S. Smith, and Y. He (2021)
+
+Zero-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning.
+
+In Proceedings of the international conference for high performance computing, networking, storage and analysis,
+
+Cited by: §VII.
+
+[38]
+J. Ren, S. Rajbhandari, R. Y. Aminabadi, O. Ruwase, S. Yang, M. Zhang, D. Li, and Y. He (2021)
+
+ZeRO-Offload: Democratizing Billion-scale Model Training.
+
+In USENIX Annual Technical Conference (ATC),
+
+Cited by: §VII.
+
+[39]
+SambaNova Systems (2025)
+
+Speculative decoding.
+
+External Links: Link
+
+Cited by: §VI-C.
+
+[40]
+A. See, P. J. Liu, and C. D. Manning (2017)
+
+Get to The Point: Summarization with Pointer-generator Networks.
+
+In Proceedings of the ACL (Association for Computational Linguistics),
+
+Cited by: §IV.
+
+[41]
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean (2017)
+
+Outrageously Large Neural Networks: The Sparsely-gated Mixture-of-Experts Layer.
+
+In arxiv.org,
+
+Cited by: §I,
+§II-A.
+
+[42]
+Y. Sheng, S. Cao, D. Li, C. Hooper, N. Lee, S. Yang, C. Chou, B. Zhu, L. Zheng, K. Keutzer, J. E. Gonzalez, and I. Stoica (2023)
+
+S-LoRA: Serving Thousands of Concurrent Lora Adapters.
+
+In arxiv.org,
+
+Cited by: §V-B.
+
+[43]
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, D. Y. Fu, Z. Xie, B. Chen, C. Barrett, J. E. Gonzalez, P. Liang, C. Ré, I. Stoica, and C. Zhang (2023)
+
+FlexGen: High-throughput Generative Inference of Large Language Models with a Single GPU.
+
+In arxiv.org,
+
+Cited by: §VII.
+
+[44]
+C. Snell, J. Lee, K. Xu, and A. Kumar (2024)
+
+Scaling LLM Test-time Compute Optimally can be More Effective Than Scaling Model Parameters.
+
+In arxiv.org,
+
+Cited by: §III-C.
+
+[45]
+Y. Song, Z. Mi, H. Xie, and H. Chen (2024)
+
+PowerInfer: Fast Large Language Model Serving with a Consumer-grade GPU.
+
+In Proceedings of the ACM Symposium on Operating System Principles (SOSP),
+
+Cited by: §VII.
+
+[46]
+B. Spector and C. Re (2023)
+
+Accelerating LLM Inference with Staged Speculative Decoding.
+
+In arxiv.org,
+
+Cited by: §VI-C,
+§VII.
+
+[47]
+M. Stern, N. Shazeer, and J. Uszkoreit (2018)
+
+Blockwise Parallel Decoding for Deep Autoregressive Models.
+
+Advances in Neural Information Processing Systems.
+
+Cited by: 1st item,
+§I,
+§IV,
+§VII.
+
+[48]
+R. Svirschevski, A. May, Z. Chen, B. Chen, Z. Jia, and M. Ryabinin (2024)
+
+SpecExec: Massively Parallel Speculative Decoding For Interactive LLM Inference on Consumer Devices.
+
+In Proceedings of the International Conference on Neural Information Processing Systems (NeurIPS),
+
+Cited by: §VI-C,
+§VII.
+
+[49]
+N. Team, M. R. Costa-jussà, J. Cross, O. Çelebi, M. Elbayad, K. Heafield, K. Heffernan, E. Kalbassi, J. Lam, D. Licht, J. Maillard, A. Sun, S. Wang, G. Wenzek, A. Youngblood, B. Akula, L. Barrault, G. M. Gonzalez, P. Hansanti, J. Hoffman, S. Jarrett, K. R. Sadagopan, D. Rowe, S. Spruit, C. Tran, P. Andrews, N. F. Ayan, S. Bhosale, S. Edunov, A. Fan, C. Gao, V. Goswami, F. Guzmán, P. Koehn, A. Mourachko, C. Ropers, S. Saleem, H. Schwenk, and J. Wang (2022)
+
+No Language Left Behind: Scaling Human-centered Machine Translation.
+
+In arxiv.org,
+
+Cited by: Fig. 1,
+2nd item,
+§III-B,
+§IV.
+
+[50]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample (2023)
+
+LLaMA: Open and Efficient Foundation Language Models.
+
+In arxiv.org,
+
+Cited by: §I.
+
+[51]
+Y. Wei, J. Du, J. Jiang, X. Shi, X. Zhang, D. Huang, N. Xiao, and Y. Lu (2024)
+
+APTMoE: Affinity-aware Pipeline Tuning for MoE Models on Bandwidth-constrained GPU Nodes.
+
+In Proceedings of the International Conference on High Performance Computing, Networking, Storage and Analysis (SC),
+
+Cited by: §I.
+
+[52]
+T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, J. Davison, S. Shleifer, P. von Platen, C. Ma, Y. Jernite, J. Plu, C. Xu, T. L. Scao, S. Gugger, M. Drame, Q. Lhoest, and A. M. Rush (2020)
+
+HuggingFace’s Transformers: State-of-the-art Natural Language Processing.
+
+In arxiv.org,
+
+Note: https://github.com/huggingface/transformers
+
+Cited by: §IV.
+
+[53]
+B. Wu, R. Zhu, Z. Zhang, P. Sun, X. Liu, and X. Jin (2024)
+
+dLoRA: Dynamically Orchestrating Requests and Adapters for LoRALLM Serving.
+
+In Proceedings of the USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §V-B.
+
+[54]
+D. Xu, W. Yin, H. Zhang, X. Jin, Y. Zhang, S. Wei, M. Xu, and X. Liu (2024)
+
+EdgeLLM: Fast On-Device LLM Inference With Speculative Decoding.
+
+IEEE Transactions on Mobile Computing.
+
+Cited by: §VII.
+
+[55]
+R. Yi, L. Guo, S. Wei, A. Zhou, S. Wang, and M. Xu (2023)
+
+EdgeMoE: Fast On-device Inference of MoE-based Large Language Models.
+
+In arxiv.org,
+
+Cited by: §I,
+2nd item,
+§III-B.
+
+[56]
+D. Yu, L. Shen, H. Hao, W. Gong, H. Wu, J. Bian, L. Dai, and H. Xiong (2022)
+
+MoESys: A Distributed and Efficient Mixture-of-Experts Training and Inference System for Internet Services.
+
+In arxiv.org,
+
+Cited by: §I,
+1st item,
+§VI-D,
+§VII,
+§VII.
+
+[57]
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun (2022)
+
+Orca: A Distributed Serving System for Transformer-based Generative Models.
+
+In Proceedings of the USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+
+Cited by: §I,
+1st item,
+§V-B.
+
+[58]
+S. Yun, K. Kyung, J. Cho, J. Choi, J. Kim, B. Kim, S. Lee, K. Sohn, and J. H. Ahn (2024)
+
+Duplex: A Device for Large Language Models with Mixture of Experts, Grouped Query Attention, and Continuous Batching.
+
+In arxiv.org,
+
+Cited by: §VII.
+
+[59]
+J. Zhang, J. Wang, H. Li, L. Shou, K. Chen, G. Chen, and S. Mehrotra (2023)
+
+Draft & Verify: Lossless Large Language Model Acceleration via Self-speculative decoding.
+
+In arxiv.org,
+
+Cited by: §II-B,
+§VII.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -1,0 +1,1698 @@
+From Myopic Selection to Long-Horizon Awareness:Sequential LLM Routing for Multi-Turn Dialogue
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Preliminaries
+
+3.1 Multi-Turn Dialogue and User Intent Fulfillment
+
+3.2 Multi-Turn Routing Problem Formulation
+
+4 DialRouter
+
+4.1 Simulation-Based Search Trajectory Generation
+
+4.2 Search-Guided Routing Policy Learning
+
+5 Extending Reward Function with Cost
+
+6 Experiments
+
+6.1 Experimental Setup
+
+6.2 Main Results
+
+6.3 Results of Cost-aware Routing
+
+6.4 Ablation Study
+
+7 Conclusion
+
+References
+
+A Details of MCTS
+
+B Details of Datasets
+
+B.1 Dataset Sources and Characteristics
+
+B.2 Data Splits
+
+B.3 Topic Distribution of ShareGPT
+
+B.4 User Profiling and Checklist Construction
+
+C Details of Candidate LLMs
+
+C.1 Implementation of Candidate LLMs
+
+C.2 Pricing of Closed-Source LLMs
+
+D Training and Inference Time and GPU Resources of DialRouter
+
+E Evaluator Preference Bias Analysis
+
+F Analysis of DialRouter’s Routing Behavior
+
+G Prompting Details
+
+H Case Studies
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.12385v1 [cs.CL] 14 Apr 2026
+
+From Myopic Selection to Long-Horizon Awareness:
+
+Sequential LLM Routing for Multi-Turn Dialogue
+
+Jiarui Zhang
+
+Affiliation: School of Computer Science, Shanghai Jiao Tong University, Shanghai, China
+
+  
+Xiangyu Liu
+
+Affiliation: WeChat, Tencent Inc, Beijing, China
+
+  
+Yong Hu
+
+Affiliation: WeChat, Tencent Inc, Beijing, China
+
+  
+Chaoyue Niu
+
+Affiliation: School of Computer Science, Shanghai Jiao Tong University, Shanghai, China
+
+Correspondence to: rvince@sjtu.edu.cn
+
+  
+Hang Zeng
+
+Affiliation: School of Computer Science, Shanghai Jiao Tong University, Shanghai, China
+
+  
+Shaojie Tang
+
+Affiliation: University at Buffalo, New York, United States
+
+  
+Fan Wu
+
+Affiliation: School of Computer Science, Shanghai Jiao Tong University, Shanghai, China
+
+  
+Guihai Chen
+
+Affiliation: School of Computer Science, Shanghai Jiao Tong University, Shanghai, China
+
+Abstract
+
+Multi-turn dialogue is the predominant form of interaction with large language models (LLMs). While LLM routing is effective in single-turn settings, existing methods fail to maximize cumulative performance in multi-turn dialogue due to interaction dynamics and delayed rewards. To address this challenge, we move from myopic, single-turn selection to long-horizon sequential routing for multi-turn dialogue. Accordingly, we propose DialRouter, which first performs MCTS to explore dialogue branches induced by different LLM selections and collect trajectories with high cumulative rewards. DialRouter then learns a lightweight routing policy from search-derived data, augmented with retrieval-based future state approximation, enabling multi-turn routing without online search. Experiments on both open-domain and domain-specific dialogue tasks across diverse candidate sets of both open-source and closed-source LLMs demonstrate that DialRouter significantly outperforms single LLMs and existing routing baselines in task success rate, while achieving a superior performance-cost trade-off when combined with a cost-aware reward.
+
+1 Introduction
+
+(a) LLM Routing in Single-turn Interaction.
+
+(b) LLM Routing in Multi-turn Dialogue.
+
+Figure 1: Illustration of LLM routing in single-turn interaction (a) and multi-turn dialogue (b). Green arrows indicate ideal routing decisions. In multi-turn dialogue, different LLM selections induce different user queries. Rewards are distributed across turns, while the total reward reflects overall user intent fulfillment.
+
+Multi-turn dialogue is the dominant paradigm of user interaction with large language models (LLMs). In everyday general-purpose applications such as ChatGPT (Achiam et al., 2023), Gemini (Comanici et al., 2025), Qwen (Yang et al., 2025) and DeepSeek (Liu et al., 2024a), user engagement rarely consists of isolated queries; instead, users naturally participate in iterative conversations, providing clarification, feedback, and refinements as tasks progress (Yi et al., 2025). This multi-turn interaction pattern is also evident across diverse LLM-driven vertical applications, including e-commerce customer service (Li et al., 2024), medical consultation (Zhang et al., 2023), educational tutoring (Liu et al., 2024b), emotional support (Chen et al., 2023), and programming assistance (Nam et al., 2024).
+
+Multi-turn dialogues encompass diverse user intents that impose varying demands on LLM capabilities. Meanwhile, different LLMs exhibit complementary strengths in instruction following, knowledge coverage, and reasoning (Liang et al., 2022). To leverage this complementarity, LLM routing selects the most suitable LLM for each query from a pool of pre-deployed LLMs (Chen et al., 2025) and has been shown to outperform strong individual LLMs (Hu et al., 2024; Chen et al., 2024b; Zhang et al., 2025b). However, existing routing methods are developed and evaluated in single-turn interaction settings, rather than multi-turn dialogue. This gap raises a natural question: How should LLM routing be designed for multi-turn dialogue, where model selection decisions unfold sequentially in the evolving context?
+
+As illustrated in Figure 1(a), in single-turn interaction, users seek a correct answer to a clearly defined query, and the router simply selects the best-performing LLM. In contrast, in multi-turn dialogue, users progressively advance a set of interrelated core intents across turns, with success defined by whether these intents are collectively fulfilled throughout the dialogue. As shown in Figure 1(b), multi-turn dialogue routing is an evolving decision process, where the router selects a LLM at each turn, receiving immediate rewards for intent progression and a total reward reflecting overall intent fulfillment. Notably, selecting different LLMs under the same context can elicit different follow-up user queries in subsequent turns, causing the dialogue to evolve along distinct trajectories and highlighting its dynamic nature. Moreover, overall intent fulfillment can only be assessed after the dialogue unfolds, exhibiting clear delayed rewards.
+
+Due to the dynamic and delayed-reward nature of multi-turn dialogue, per-turn observable signals often fail to capture the long-term impact of LLM selection. As illustrated in Figure 1(b), a locally optimal choice at a given turn does not necessarily yield a globally optimal dialogue outcome. Beyond performance, inference costs accumulate over turns, and frequent model switching disrupts cache reuse11
+1
+
+https://platform.openai.com/docs/guides/prompt-caching, making locally cost-optimal routing suboptimal at the dialogue level. We thus argue for a shift from myopic, per-turn selection to long-horizon LLM routing in multi-turn dialogue.
+
+In this work, we propose DialRouter, a sequential LLM routing framework for multi-turn dialogue. We first employ Monte Carlo Tree Search (MCTS) together with a user simulator to explicitly explore dialogue branches induced by different LLM selections. By rolling out complete dialogue trajectories and evaluating their cumulative returns with a reward model, we collect routing trajectories with high long-term returns. The reward model adopts a checklist-based formulation, well suited to fine-grained user intent fulfillment in multi-turn dialogue. Offline policy learning is then performed on these trajectories via behavior cloning. Since relying solely on the current dialogue state is insufficient to infer the long-term impact of routing decisions, motivated by the idea that approximated future states can provide guidance on potential dialogue evolution and ease routing decisions, we introduce a retrieval-based future state approximation derived from search trajectories to assist routing. Through policy learning, DialRouter distills long-horizon knowledge from search into an efficient routing policy, enabling high-quality multi-turn routing without online search.
+
+Our main contributions are summarized as follows:
+
+•
+
+To the best of our knowledge, we are the first to advance LLM routing from myopic single-turn selection to long-horizon routing for multi-turn dialogue.
+
+•
+
+We propose DialRouter, which leverages MCTS-discovered trajectories and behavior cloning with retrieval-based future state approximation to enable search-free multi-turn routing.
+
+•
+
+We extend the reward formulation to incorporate LLM inference costs and KV cache reuse, facilitating performance-cost trade-offs.
+
+•
+
+Extensive experiments across three dialogue domains and multiple open- and closed-source LLM candidate sets show that DialRouter consistently outperforms the strongest single LLMs and existing routing baselines in task success rate, while achieving superior performance–cost trade-offs under cost-aware settings.
+
+2 Related Work
+
+LLM Routing. Existing LLM routing methods mainly target single-turn interaction. Representative works such as RouteLLM (Ong et al., 2025) and EmbedLLM (Zhuang et al., 2025) learn compact query and model representations via matrix factorization to predict routing correctness. RouterDC (Chen et al., 2024b) applies dual contrastive learning to capture query–model compatibility. RouterBench (Hu et al., 2024) systematically evaluates a range of simple yet effective routing strategies, including KNN-based methods and lightweight MLPs. Avengers (Zhang et al., 2025b) proposes a training-free routing approach that performs model selection through query embedding clustering and response score ranking. Router-R1 (Zhang et al., 2025a) decomposes complex queries into sub-queries and performs routing sequentially over these components. GMTRouter (Xie et al., 2025) leverages user-LLM interaction histories to enable personalized routing decisions. Although Blending (Lu et al., 2024) considers multi-turn dialogue with multiple LLMs, it adopts random response selection instead of explicitly learning routing decisions. In contrast, DialRouter adopts a holistic multi-turn dialogue perspective and formulates LLM routing as a long-horizon decision-making problem, explicitly modeling the impact of LLM selection on future dialogue evolution and final user intent fulfillment.
+
+Multi-turn Dialogue Planning. Different from LLM routing, which focuses on selecting among multiple LLMs, existing work on multi-turn dialogue planning typically based on a single LLM and applies search or learning methods over a limited space of prompting strategies to accomplish predefined cooperative or adversarial dialogue tasks. GDP-Zero (Yu et al., 2023) combines MCTS with LLM prompting to optimize policy selection. PPDPP (Deng et al., 2024) equips LLMs with an external planner and trains the planner via RL for strategy prediction. Inspired by AlphaZero (Silver et al., 2017), methods such as DPDP (He et al., 2024) and DMNA (Liu et al., 2025) integrate MCTS with learning algorithms to enhance policy networks for dialogue planning. Although effective in dialogue control, these methods focus on selecting among predefined prompting strategies, rather than choosing which LLM should be used. In more general dialogue settings, heterogeneous LLM capabilities elevate planning to the level of LLM selection. In this work, we study the LLM routing problem in multi-turn dialogue.
+
+3 Preliminaries
+
+3.1 Multi-Turn Dialogue and User Intent Fulfillment
+
+A multi-turn dialogue can be represented as an interaction sequence , where and denote the user input and the system response at turn , respectively, and is the terminal turn of the dialogue.
+
+To characterize the dialogue-level fulfillment of user intents in , inspired by fine-grained evaluation criteria (Cook et al., 2024; Viswanathan et al., 2025), we explicitly decompose the user’s high-level goal into a set of assessable task requirements, forming a dialogue-level checklist , where each item corresponds to a key constraint or sub-goal associated with the user’s intent over the course of the dialogue. At the end of the dialogue, each checklist item is evaluated based on the overall dialogue trajectory as fulfilled, partially fulfilled, or unfulfilled, and is assigned a score , respectively, yielding the checklist completion score . The partially fulfilled signal captures incremental intent progress that would be missed by a binary reward. Checklist construction details are provided in Appendix B.4.
+
+3.2 Multi-Turn Routing Problem Formulation
+
+LLM routing in multi-turn dialogues is formulated as a sequential decision-making problem, where at each turn the router selects an LLM from a candidate set to generate a system response with the objective of maximizing the dialogue-level completion score . At turn , the router observes the current state , consisting of the dialogue history up to the previous turn and the current user input . Given the state , the router selects a LLM from to produce a system response. We denote this selection as the action , and the response is generated as , after which the dialogue history is updated to . The user subsequently issues the next query based on the current dialogue and the router observes the updated state , entering the next turn of LLM selection.
+
+Since checklist items may be progressively addressed over the dialogue, we define as the checklist completion score at (with ), and define the immediate reward for action in state as the incremental checklist completion,
+
+(1)
+
+Under this formulation, the objective of multi-turn LLM routing is to learn a routing policy that maximizes the expected cumulative reward,
+
+(2)
+
+This objective is equivalent to maximizing the dialogue-level completion score , since admits an additive decomposition across turns as .
+
+In contrast, single-turn routing focuses on selecting, at each interaction, the LLM that maximizes the immediate reward, without accounting for the impact of LLM choices on future interactions. In multi-turn dialogues, however, LLM response influences subsequent user behavior , rendering routing strategies based only on immediate rewards inherently myopic and often suboptimal with respect to dialogue-level objectives. Only in the special case where future user inputs are independent of the preceding dialogue context does multi-turn dialogue LLM routing degenerate into a set of independent single-turn routing problems.
+
+4 DialRouter
+
+In this section, we present DialRouter, an LLM routing framework for multi-turn dialogue, as illustrated in Figure 2 and Figure 3. Section 4.1 describes search-derived trajectory generation, where MCTS with a user simulator is used to explore dialogue branches induced by different LLM selections and collect routing decision trajectories with high cumulative rewards. Section 4.2 describes routing policy learning, where a routing model is trained via behavior cloning on the expert data and augmented with a retrieval-based future state approximation, enabling multi-turn routing without search at inference time.
+
+4.1 Simulation-Based Search Trajectory Generation
+
+User Query Simulation. In multi-turn dialogue settings, routing decisions exhibit strong dynamics, as responses generated by different LLMs at the same turn can induce different user behaviors in subsequent turns, leading the dialogue to evolve along different trajectories and affecting the overall dialogue outcome. To capture this dynamic interaction process, we adopt an LLM-based user simulator to generate subsequent user responses. Specifically, the user simulator is responsible for producing the next user query and determining dialogue termination; conditioned on a predefined user profile and the current dialogue history , it generates the next user input as .
+
+Figure 2: Overview of DialRouter. MCTS with a user simulator and reward model is used to explore dialogue branches and collect high-quality routing trajectories, which are then used for offline policy learning via behavior cloning to train a search-free router.
+
+LLM Response Branch Exploration. Given a mechanism for simulating subsequent user queries, the remaining challenge is to systematically explore the dialogue branches induced by different LLM responses and assess their long-term impact on dialogue outcomes. We adopt MCTS to search over routing decision sequences. In the search process, each dialogue state is treated as a node in the search tree, with the current state as the root. For a given state, candidate LLMs correspond to different action branches, which are expanded by invoking the selected model to generate a system response. Each generated response is evaluated by an LLM-based reward model: given the task checklist , the current dialogue state , and the system response , the reward model outputs per-item completion scores , which form the basis for computing path-level returns. A user simulator then generates the next user input, driving the dialogue state to the next turn. By repeatedly expanding branches in the simulated environment, evaluating turn-level completions with the reward model, and advancing dialogue evolution via the user simulator, MCTS compares the cumulative returns of dialogue paths and identifies routing decision paths with superior overall performance. For each dialogue task in the training set, MCTS yields a routing decision sequence, which is decomposed into state–action pairs to construct a search-derived dataset , where denotes the routing action selected by MCTS at state .
+
+Details of the user simulator, reward model, and MCTS are provided in Appendices G and A.
+
+Figure 3: Routing process of DialRouter in multi-turn dialogue. At each turn, the current dialogue state and a retrieved future state approximation from are jointly encoded and fused to predict the LLM selection.
+
+4.2 Search-Guided Routing Policy Learning
+
+Retrieval-based Future State Approximation. The routing model takes the current dialogue state as input and outputs a predicted probability distribution over actions. However, in the search-derived data, the optimal action is obtained through search and corresponds to the dialogue branch that maximizes future cumulative rewards, making it challenging for the routing model to directly learn such long-horizon dependencies. Inspired by prior work (Pascanu et al., 2017; Hafner et al., 2019), we posit that if the router could “imagine” an ideal future dialogue state when making the current decision, even in the form of a coarse-grained semantic representation, the difficulty of routing would be substantially reduced. To this end, we introduce a long-term-aware state modeling strategy that augments the current state with an approximate future state , capturing the potential trend of future dialogue evolution.
+
+However, the real next state is unobservable, and predicting future states via parameterized generation in natural language or semantic space is difficult for a lightweight routing model. Therefore, we adopt a retrieval-based approximation. For a given current state , we employ a fixed retriever to retrieve a semantically similar state
+
+(3)
+
+from the search-derived dataset , and use its successor state along the corresponding search-derived trajectory as an approximation of the future evolution of . This approximate future state is incorporated as an auxiliary signal during training and is likewise used at inference time, enabling the routing policy to capture potential future dialogue trends under limited current semantic information.
+
+Routing Model Architecture. As shown in Figure 3, We use a dialogue state encoder to encode the current state and the retrieved approximate future state as
+
+(4)
+
+To balance the information from the current state and the potentially noisy retrieved future state, we introduce a trainable gating mechanism for adaptive fusion:
+
+(5)
+
+The fused representation is then fed into the classification head to produce the final routing policy output , based on which the candidate model is selected.
+
+Long-term-aware Supervision. As the training dataset is obtained via planning with respect to long-term cumulative rewards, it provides supervision signals that are aligned with long-term outcomes, enabling long-term-aware learning of the routing policy. We adopt a behavior cloning approach, treating the MCTS routing policy as the expert and training the routing model to imitate its decision behavior. The training objective is to minimize the cross-entropy loss between and the actions:
+
+(6)
+
+In this way, the router can absorb the long-horizon planning knowledge implicit in MCTS during training, and perform long-term decision at inference time without explicit search.
+
+5 Extending Reward Function with Cost
+
+LLM routing decisions jointly impact dialogue quality and monetary invocation cost, motivating the incorporation of cost modeling into the reward function. To this end, we extend the original reward design with an explicit cost component. Rather than treating cost as a simple linear function, our cost formulation is directly grounded in the publicly available API pricing rules22
+2
+
+https://openai.com/index/api-prompt-caching of major cloud providers.
+
+Specifically, closed-source LLMs typically employ a KV cache mechanism to store historical context: when the same model is invoked in consecutive turns, cached context tokens are charged at a lower cost, whereas switching models invalidates the cache33
+3
+
+Due to the complexity of real-world dialogues, we consider the worst-case scenario for model switching, in which the KV cache is assumed to be completely invalidated., requiring the entire dialogue history to be re-encoded and billed at the standard input cost. As a result, the invocation cost in multi-turn dialogue routing depends not only on which model is selected, but also on the sequence of model choices.
+
+For each candidate model , the response cost consists of two components: output and input cost. Let denote the per-token output cost, standard input cost, and cache-hit input cost of , respectively, with .
+
+Suppose at dialogue turn , the previous dialogue history , the current user query , and the response generated by model have token counts , , and , respectively. The output cost reward is defined as:
+
+(7)
+
+The input cost accounts for cache hits: if the same model is used in consecutive turns, cached history tokens is charged at the lower cache cost, while the remaining tokens are charged at the standard input cost; if the model switches, all tokens are charged at the standard input cost:
+
+(8)
+
+where is the token size of a KV cache block. The total cost reward is then defined as . Accordingly, the original reward function (Eq. 1) can be extended as:
+
+(9)
+
+where is a hyperparameter controlling the trade-off between dialogue quality and cost. This extension allows MCTS search and routing policy training to jointly consider performance and cost, achieving a balanced trade-off.
+
+Table 1: Performance comparison of DialRouter and various baselines across different dialogue tasks using Qwen and Llama candidate sets. Results of stochastic methods (Random, Greedy Router, and MCTS Router) are averaged over three random seeds. The best results among practical methods are shown in bold, and the second-best are underlined.
+
+Qwen Series Set
+Llama Series Set
+
+ShareGPT
+JDDC
+MedDG
+
+ShareGPT
+JDDC
+MedDG
+
+Method
+SR
+AT
+SR
+AT
+SR
+AT
+SR
+SR
+AT
+SR
+AT
+SR
+AT
+SR
+
+Qwen3-4B / Llama3.2-1B-Instruct
+81.75
+5.09
+73.45
+3.82
+71.04
+5.03
+75.41
+63.03
+6.62
+48.07
+4.43
+43.61
+6.97
+51.57
+
+Qwen3-8B / Llama3.2-3B-Instruct
+82.80
+5.03
+76.14
+3.50
+71.82
+5.02
+76.92
+73.77
+5.92
+70.65
+3.94
+60.78
+6.44
+68.40
+
+Qwen3-14B / Llama3.1-8B-Instruct
+83.24
+5.11
+77.19
+3.36
+72.50
+5.27
+77.64
+79.24
+5.60
+73.21
+3.59
+65.35
+6.19
+72.60
+
+Random (Lu et al., 2024)
+81.50
+4.95
+76.60
+3.52
+71.46
+4.86
+76.52
+76.16
+6.12
+68.97
+4.00
+61.11
+6.34
+68.75
+
+Prompt LLM (Feng et al., 2025)
+82.85
+4.92
+76.49
+3.50
+72.74
+5.29
+77.36
+79.19
+5.79
+72.49
+3.91
+65.35
+6.19
+72.34
+
+KNN Router (Hu et al., 2024)
+83.37
+5.01
+78.44
+3.32
+71.99
+4.75
+77.93
+81.71
+5.77
+74.82
+3.72
+64.58
+6.05
+73.70
+
+MF Router (Ong et al., 2025)
+82.41
+5.13
+76.59
+3.73
+72.41
+4.97
+77.14
+80.01
+5.67
+72.06
+3.66
+66.19
+6.30
+72.75
+
+RouterDC (Chen et al., 2024b)
+82.72
+4.94
+77.19
+3.36
+72.50
+5.27
+77.47
+80.94
+5.68
+73.78
+3.60
+66.09
+6.36
+73.60
+
+Avengers (Zhang et al., 2025b)
+83.93
+5.00
+78.39
+3.57
+71.69
+5.00
+78.00
+80.38
+5.61
+73.99
+3.70
+66.14
+6.65
+73.50
+
+DialRouter (Ours)
+87.46
+4.96
+83.45
+3.47
+79.03
+4.98
+83.31
+85.82
+5.72
+80.16
+3.90
+70.65
+6.16
+78.88
+
+Greedy Router
+88.50
+5.12
+83.60
+3.54
+79.71
+4.95
+83.94
+85.75
+5.73
+80.83
+3.73
+72.51
+6.30
+79.70
+
+MCTS Router
+94.11
+4.97
+88.42
+3.55
+86.77
+4.77
+89.77
+91.94
+5.76
+85.28
+3.86
+82.38
+6.41
+86.53
+
+6 Experiments
+
+6.1 Experimental Setup
+
+Datasets. We conduct experiments on multi-turn dialogue tasks using three real-world datasets, including one open-domain dataset, ShareGPT44
+4
+
+https://sharegpt.com, collected from real user–LLM conversations, and two domain-specific datasets, JDDC (Jing Dong Dialogue Corpus) (Chen et al., 2020), collected from real-world e-commerce customer-service interactions, and MedDG (Liu et al., 2022), collected from real online medical consultation scenarios. Instead of directly using the original dialogue utterances, we extract user profiles and checklists from each dialogue instance to construct user simulators and reward model, thereby enabling interactive environments for corresponding multi-turn dialogue tasks.
+
+To evaluate domain generalization, we hold out a subset of ShareGPT centered on legal and financial topics, forming a domain-generalization test set, denoted as ShareGPT-LF, which is completely non-overlapping with the training data. Further details of the datasets are provided in Appendix B.
+
+Candidate LLM Sets. We selected mainstream large language models of different series and scales, forming four candidate sets: (i) Qwen series (Yang et al., 2025): Qwen3-4B, Qwen3-8B, Qwen3-14B; (ii) Llama series (Grattafiori et al., 2024): Llama3.2-1B-Instruct, Llama3.2-3B-Instruct, Llama3.1-8B-Instruct; (iii) Mixed series: a combination of six models from the Qwen and Llama series; (iv) Closed-source LLMs: Qwen3-Max, DeepSeek-Chat-V3.2, GPT-5.1. Implementation details and pricing information are provided in Appendix C; among the closed-source LLMs, DeepSeek is priced significantly lower than the others.
+
+Evaluation Metrics. We use Success Rate (SR) to measure the completion of dialogue tasks. For a single task, SR is defined as the average completion of checklist items at the final dialogue turn :
+
+(10)
+
+reflecting the cumulative dialogue reward without considering costs, where a higher SR indicates better task performance. Average Turns (AT) measures the mean number of dialogue turns required to complete a task, with lower values being better. For the closed-source LLM, we further introduce Cost, defined as the total monetary expense of model invocations over a dataset based on API pricing rules.
+
+Baselines. We compare DialRouter with a range of baseline methods, including: Single Fixed LLM, which uses a single model for all tasks; Random LLM (Lu et al., 2024), which selects models randomly; Prompt LLM (Feng et al., 2025), which leverages meta-prompts for model selection; RouterDC (Chen et al., 2024b), which employs contrastive learning to align query and LLM embeddings; KNN Router (Hu et al., 2024), which relies on the historical performance of similar queries; Matrix Factorization (MF) (Ong et al., 2025; Zhuang et al., 2025), which reconstructs LLM correctness patterns via low-rank latent spaces; and Avenger (Zhang et al., 2025b), which selects models based on clustering. Additionally, we include two simulation-based routing methods that utilize the user simulator and reward model: Greedy Router, which performs one-step greedy search, and MCTS Router, which conducts MCTS.
+
+Implementation Details. For MCTS, we use simulations, an exploration coefficient , and a discount factor . The maximum dialogue turn is set to . For retrieval-based future state approximation, we employ BGE-M3 (Chen et al., 2024a) as the fixed retriever. The DialRouter is trained with a Qwen2.5-0.5B-based state encoder, where all but the last three transformer layers are frozen to mitigate overfitting. The user simulator and the reward model are implemented using Qwen3-Max. The routing model is optimized using AdamW (Loshchilov and Hutter, 2017) with a learning rate of , a batch size of 32, and trained for 15 epochs. All experiments are conducted on a single NVIDIA RTX 4090D GPU.
+
+6.2 Main Results
+
+Oracle Analysis. The results in Table 1 reveal a clear tiered performance pattern, characterized by a large performance gap between the MCTS and the Greedy Router, as well as a consistent gap between the Greedy Router and the strongest single LLMs. Although simulation-based routing is impractical at inference time, the MCTS Router provides a search-based reference that serves as an approximate, oracle-like upper bound on achievable performance under the current candidate set. Notably, the consistent gap between MCTS and the Greedy Router further highlights the critical role of long-term awareness in multi-turn dialogue routing.
+
+Comparison with Single LLMs. Table 1 reports the performance of DialRouter on multi-turn dialogue tasks over the Qwen and Llama candidate sets. DialRouter achieves an average success rate of 83.31% on the Qwen series, surpassing Qwen3-14B by 5.67%, and 78.88% on the Llama series, exceeding Llama3.1-8B-Instruct by 6.28%, consistently outperforming the strongest single LLM in each set. These results indicate that DialRouter can effectively exploit the complementary strengths of heterogeneous models, thereby breaking the performance ceiling of individual LLMs.
+
+Comparison with Baseline Routers. Compared with representative routing baselines, DialRouter improves the average success rate by more than 5% over KNN Router, Avengers, and RouterDC across both candidate sets, and achieves overall performance comparable to the simulation-based Greedy Router. This aligns with our motivation that long-term awareness is crucial for effective multi-turn dialogue routing beyond myopic decisions, showing that learning a router grounded in long-horizon planning enables high-quality routing without requiring online search. Although the average turns slightly increases in some scenarios, DialRouter maintains consistently higher task success rates.
+
+Table 2: Performance comparison of DialRouter and baselines on ShareGPT using mixed candidate set of Qwen and Llama models.
+
+Method
+SR
+AT
+
+Random (Lu et al., 2024)
+79.50
+5.74
+
+KNN Router (Hu et al., 2024)
+84.23
+5.22
+
+Avengers (Zhang et al., 2025b)
+84.72
+5.12
+
+DialRouter (Ours)
+88.32
+5.21
+
+Greedy Router
+90.06
+5.17
+
+MCTS Router
+94.99
+5.13
+
+Adaptability on Mixed Series Candidate Sets. To evaluate the generalization and decision robustness of DialRouter when the candidate set includes multiple LLM families, we conducted experiments on ShareGPT with the Mixed series, which combines the Qwen and Llama series. As shown in Table 2, DialRouter achieves an SR of 88.32%, surpassing the baseline routers by over 3.60%, demonstrating its strong adaptability in selecting among heterogeneous LLM architectures. Notably, DialRouter performs even better on the mixed candidate set than on single-series candidate sets, indicating its ability to cross LLM families and effectively identify and integrate the complementary strengths of different LLMs within a larger candidate pool.
+
+Cross-Domain Generalization. To evaluate the cross-domain generalization of DialRouter, we conduct experiments on ShareGPT-LF. As shown in Table 3, all methods are trained on ShareGPT, which excludes legal and financial topics. DialRouter achieves success rate improvements of 1.95%–3.45% on the Qwen series and 1.56%–2.85% on the Llama series over the best single LLM and other baselines. These results demonstrate that DialRouter maintains a performance advantage in unseen domains, indicating that the learned routing policy can effectively leverage LLM complementarity to achieve robust cross-domain generalization.
+
+Table 3: Cross-domain generalization results on ShareGPT-LF.
+
+Qwen Series Set
+Llama Series Set
+
+Method
+SR
+AT
+SR
+AT
+
+Qwen3-4B / Llama3.2-1B-Instruct
+80.24
+4.80
+62.25
+6.44
+
+Qwen3-8B / Llama3.2-3B-Instruct
+80.66
+4.68
+75.17
+5.36
+
+Qwen3-14B / Llama3.1-8B-Instruct
+81.74
+4.65
+80.18
+5.09
+
+Random (Lu et al., 2024)
+81.03
+4.67
+77.62
+5.76
+
+KNN Router (Hu et al., 2024)
+81.64
+4.56
+81.47
+5.15
+
+Avengers (Zhang et al., 2025b)
+81.30
+4.67
+80.18
+5.09
+
+DialRouter (Ours)
+83.69
+4.64
+83.03
+5.48
+
+Greedy Router
+87.18
+4.53
+86.47
+5.26
+
+MCTS Router
+91.46
+4.50
+90.07
+5.14
+
+6.3 Results of Cost-aware Routing
+
+Table 4: Performance and cost comparison of DialRouter and baselines on ShareGPT using Closed-source model candidate set. Cost-aware rewards are applied in the Balance setting. Cost ($) refer to the total monetary cost for the test set.
+
+Performance First
+Balance
+
+Method
+SR
+AT
+Cost
+SR
+AT
+Cost
+
+Qwen3-Max
+84.09
+4.53
+0.30
+84.09
+4.53
+0.30
+
+DeepSeek-Chat-V3.2
+85.13
+4.66
+0.04
+85.13
+4.66
+0.04
+
+GPT-5.1
+84.57
+4.80
+1.05
+84.57
+4.80
+1.05
+
+Random (Lu et al., 2024)
+84.41
+4.57
+0.52
+84.41
+4.57
+0.52
+
+KNN Router (Hu et al., 2024)
+85.91
+4.56
+0.50
+85.13
+4.66
+0.04
+
+Avengers (Zhang et al., 2025b)
+84.54
+4.56
+0.32
+85.13
+4.66
+0.04
+
+DialRouter (Ours)
+89.92
+4.59
+0.44
+88.69
+4.63
+0.09
+
+Greedy Router
+91.80
+4.66
+0.53
+91.28
+4.43
+0.20
+
+MCTS Router
+96.11
+4.52
+0.46
+95.93
+4.44
+0.19
+
+Overall Performance under Cost-aware Routing. Table 4 reports the results of DialRouter on the closed-source LLM candidate set with cost reward on ShareGPT. Under the Performance First setting (), DialRouter achieves the highest success rate of 89.92%, substantially outperforming strong single closed-source LLMs such as DeepSeek-Chat-V3.2 (+4.97%) and GPT-5.1 (+5.35%), as well as all routing baselines. Under the Balance setting (), incorporating cost reward reduces the average cost from 0.44 to 0.09, corresponding to an approximately 80% reduction, while the success rate only decreases to 88.69%, amounting to a relative drop of about 1.4%. In contrast, several baselines exhibit clear policy degradation, effectively collapsing to a single low-cost DeepSeek selection, thereby abandoning the decision-making role expected of a router. These results demonstrate that, with cost reward, DialRouter achieves a more balanced performance-cost trade-off than baseline methods, substantially reducing inference cost with only a limited degradation in task performance.
+
+Figure 4: SR and cost of DialRouter, Greedy Router, and MCTS Router under different values of the cost weight . Dashed horizontal lines correspond to the ratio-based reward setting.
+
+Cost and Performance under Varying Cost Weights . As shown in Figure 4, we analyze the SR and cost of DialRouter, Greedy Router, and MCTS Router under different . Overall, increasing consistently reduces cost for all methods, accompanied by a moderate decline in SR. When increases from 0 to 5, cost is substantially reduced with only a slight SR drop, indicating that a small can effectively lower inference cost with minimal performance impact. As increases from 5 to 50, both SR and cost become relatively insensitive to , corresponding to a stable performance-cost trade-off regime. Across all , DialRouter consistently incurs lower cost than MCTS, which can be attributed to behavior cloning bias toward high-frequency low-cost actions in MCTS trajectories, underrepresenting infrequent yet performance-critical high-cost decisions; this results in lower overall cost with a SR degradation. We further evaluate a ratio-based reward , shown as dashed lines in Figure 4; under this formulation, Greedy Router almost always selects DeepSeek due to its dominant low price, while both MCTS Router and DialRouter also exhibit performance degradation, indicating that ratio-based rewards fail to stably capture the performance–cost trade-off in candidate sets with substantial price disparities.
+
+6.4 Ablation Study
+
+Table 5: Ablation study of DialRouter components, showing the effects of removing MCTS-based policy discovery, the retrieval module, and using alternative information fusion strategies across three dialogue datasets using the Qwen candidate set.
+
+ShareGPT
+JDDC
+MedDG
+
+Method
+SR
+AT
+SR
+AT
+SR
+AT
+SR
+
+DialRouter (Ours)
+87.46
+4.96
+83.45
+3.47
+79.03
+4.98
+83.31
+
+w/o MCTS
+83.64
+4.99
+80.74
+3.63
+74.93
+4.94
+79.77
+
+w/o Ret
+84.78
+5.09
+80.37
+3.64
+74.92
+4.94
+80.02
+
+Random Ret
+83.99
+5.10
+79.87
+3.49
+73.06
+5.04
+78.97
+
+DialRouter (Add Fus.)
+85.27
+5.21
+81.35
+3.42
+75.92
+4.80
+80.85
+
+DialRouter (Concat Fus.)
+84.85
+5.02
+81.40
+3.55
+76.05
+4.93
+80.77
+
+Effect of MCTS-based Data. As shown in Table 5, removing MCTS-based data (w/o MCTS) and training the router solely with one-step greedy decisions results in an average SR drop of 3.54%. This shows that relying only on myopic routing decisions is insufficient to capture long-term effects in multi-turn dialogues, whereas MCTS-generated data provide global, long-term-aware supervision critical to DialRouter’s performance gains.
+
+Effect of Retrieval-based Future State Approximation. Table 5 also shows that removing the retrieval module (w/o Ret) or using random retrieval (Random Ret) reduces the average SR by 3.29% and 4.34%, respectively, both significantly lower than the complete model. The larger performance drop with random retrieval is primarily due to the introduction of irrelevant information, which amplifies noise and further impairs routing decisions. In contrast, semantically relevant retrieved future states provide more targeted cues, helping the router capture potential dialogue evolution trends and mitigating the difficulty of making long-term decisions based solely on the current state, while incurring only a negligible retrieval overhead of 0.01s per decision.
+
+Effect of Fusion Strategies for Future States. As shown in Table 5, simply incorporating future states without differentiation (Concat Fusion or Add Fusion) yields some improvement but still underperforms the full model with gating. This suggests that state information from different sources varies in reliability and relevance, and a learnable gating mechanism to adaptively fuse them helps suppress retrieval noise and balance current versus future approximated information, resulting in more robust routing decisions.
+
+7 Conclusion
+
+In this paper, we present the first systematic study of LLM routing in multi-turn dialogue settings and propose DialRouter, a long-term-aware routing approach for multi-turn dialogue. DialRouter learns routing policies from MCTS-based data, enabling long-horizon routing decisions without online search, and further incorporates retrieval-based approximate future states to assist LLM selection. Experiments across diverse multi-turn dialogue tasks demonstrate that DialRouter effectively integrates the complementary strengths of multiple LLMs, significantly outperforming the strongest single LLMs and existing routing baselines based on local rewards in terms of task success rate; moreover, when augmented with cost-aware rewards, DialRouter achieves a more favorable performance-cost trade-off.
+
+Impact Statement
+
+This paper proposes a long-horizon LLM routing method for multi-turn dialogue, which dynamically selects appropriate models based on the dialogue state to optimize long-term conversational objectives without relying on online search, while effectively reducing inference cost without compromising response quality. The broader impact of this work lies in improving user experience and service quality in multi-turn LLM applications, such as customer service, medical consultation. For service providers deploying multiple models, the proposed approach enables more efficient model coordination, thereby enhancing the usability and sustainability of large language model systems.
+
+References
+
+Achiam et al. (2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al.
+
+Gpt-4 technical report.
+
+arXiv preprint arXiv:2303.08774.
+
+Cited by: §1.
+
+Chen et al. (2024a)
+J. Chen, S. Xiao, P. Zhang, K. Luo, D. Lian, and Z. Liu
+
+M3-embedding: multi-linguality, multi-functionality, multi-granularity text embeddings through self-knowledge distillation.
+
+In Findings of the Association for Computational Linguistics ACL 2024,
+
+pp. 2318–2335.
+
+Cited by: §6.1.
+
+Chen et al. (2020)
+M. Chen, R. Liu, L. Shen, S. Yuan, J. Zhou, Y. Wu, X. He, and B. Zhou
+
+The jddc corpus: a large-scale multi-turn chinese dialogue dataset for e-commerce customer service.
+
+In Proceedings of the Twelfth Language Resources and Evaluation Conference,
+
+pp. 459–466.
+
+Cited by: §B.1,
+§6.1.
+
+Chen et al. (2024b)
+S. Chen, W. Jiang, B. Lin, J. Kwok, and Y. Zhang
+
+Routerdc: query-based router by dual contrastive learning for assembling large language models.
+
+Advances in Neural Information Processing Systems 37, pp. 66305–66328.
+
+Cited by: §1,
+§2,
+Table 1,
+§6.1.
+
+Chen et al. (2023)
+Y. Chen, X. Xing, J. Lin, H. Zheng, Z. Wang, Q. Liu, and X. Xu
+
+SoulChat: improving llms’ empathy, listening, and comfort abilities through fine-tuning with multi-turn empathy conversations.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2023,
+
+pp. 1170–1183.
+
+Cited by: §1.
+
+Chen et al. (2025)
+Z. Chen, J. Li, P. Chen, Z. Li, K. Sun, Y. Luo, Q. Mao, M. Li, L. Xiao, D. Yang, et al.
+
+Harnessing multiple large language models: a survey on llm ensemble.
+
+arXiv preprint arXiv:2502.18036.
+
+Cited by: §1.
+
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al.
+
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+
+arXiv preprint arXiv:2507.06261.
+
+Cited by: §1.
+
+Cook et al. (2024)
+J. Cook, T. Rocktäschel, J. Foerster, D. Aumiller, and A. Wang
+
+Ticking all the boxes: generated checklists improve llm evaluation and generation.
+
+arXiv preprint arXiv:2410.03608.
+
+Cited by: §3.1.
+
+Coulom (2006)
+R. Coulom
+
+Efficient selectivity and backup operators in monte-carlo tree search.
+
+In International conference on computers and games,
+
+pp. 72–83.
+
+Cited by: Appendix A.
+
+Deng et al. (2024)
+Y. Deng, W. Zhang, W. Lam, S. Ng, and T. Chua
+
+Plug-and-play policy planner for large language model powered dialogue agents.
+
+In ICLR,
+
+Cited by: §2.
+
+Feng et al. (2025)
+T. Feng, Y. Shen, and J. You
+
+GraphRouter: a graph-based router for LLM selections.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: Table 1,
+§6.1.
+
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §6.1.
+
+Hafner et al. (2019)
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi
+
+Dream to control: learning behaviors by latent imagination.
+
+arXiv preprint arXiv:1912.01603.
+
+Cited by: §4.2.
+
+He et al. (2024)
+T. He, L. Liao, Y. Cao, Y. Liu, M. Liu, Z. Chen, and B. Qin
+
+Planning like human: a dual-process framework for dialogue planning.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 4768–4791.
+
+Cited by: §2.
+
+Hu et al. (2024)
+Q. J. Hu, J. Bieker, X. Li, N. Jiang, B. Keigwin, G. Ranganath, K. Keutzer, and S. K. Upadhyay
+
+Routerbench: a benchmark for multi-llm routing system.
+
+arXiv preprint arXiv:2403.12031.
+
+Cited by: Table 13,
+§1,
+§2,
+Table 1,
+§6.1,
+Table 2,
+Table 3,
+Table 4.
+
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+
+Efficient memory management for large language model serving with pagedattention.
+
+In Proceedings of the 29th symposium on operating systems principles,
+
+pp. 611–626.
+
+Cited by: §C.1.
+
+Li et al. (2024)
+Y. Li, S. Ma, X. Wang, S. Huang, C. Jiang, H. Zheng, P. Xie, F. Huang, and Y. Jiang
+
+Ecomgpt: instruction-tuning large language models with chain-of-task tasks for e-commerce.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Vol. 38, pp. 18582–18590.
+
+Cited by: §1.
+
+Liang et al. (2022)
+P. Liang, R. Bommasani, T. Lee, D. Tsipras, D. Soylu, M. Yasunaga, Y. Zhang, D. Narayanan, Y. Wu, A. Kumar, et al.
+
+Holistic evaluation of language models.
+
+arXiv preprint arXiv:2211.09110.
+
+Cited by: §1.
+
+Liu et al. (2024a)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al.
+
+Deepseek-v3 technical report.
+
+arXiv preprint arXiv:2412.19437.
+
+Cited by: §1.
+
+Liu et al. (2024b)
+J. Liu, Z. Huang, T. Xiao, J. Sha, J. Wu, Q. Liu, S. Wang, and E. Chen
+
+SocraticLM: exploring socratic personalized teaching with large language models.
+
+Advances in Neural Information Processing Systems 37, pp. 85693–85721.
+
+Cited by: §1.
+
+Liu et al. (2022)
+W. Liu, J. Tang, Y. Cheng, W. Li, Y. Zheng, and X. Liang
+
+Meddg: an entity-centric medical consultation dataset for entity-aware medical dialogue generation.
+
+In CCF International Conference on Natural Language Processing and Chinese Computing,
+
+pp. 447–459.
+
+Cited by: §B.1,
+§6.1.
+
+Liu et al. (2025)
+Y. Liu, L. Shi, R. Song, and H. Xu
+
+A dual-mind framework for strategic and expressive negotiation agent.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 23840–23860.
+
+Cited by: §2.
+
+Loshchilov and Hutter (2017)
+I. Loshchilov and F. Hutter
+
+Decoupled weight decay regularization.
+
+arXiv preprint arXiv:1711.05101.
+
+Cited by: §6.1.
+
+Lu et al. (2024)
+X. Lu, Z. Liu, A. Liusie, V. Raina, V. Mudupalli, Y. Zhang, and W. Beauchamp
+
+Blending is all you need: cheaper, better alternative to trillion-parameters llm.
+
+arXiv preprint arXiv:2401.02994.
+
+Cited by: §2,
+Table 1,
+§6.1,
+Table 2,
+Table 3,
+Table 4.
+
+Nam et al. (2024)
+D. Nam, A. Macvean, V. Hellendoorn, B. Vasilescu, and B. Myers
+
+Using an llm to help with code understanding.
+
+In Proceedings of the IEEE/ACM 46th International Conference on Software Engineering,
+
+pp. 1–13.
+
+Cited by: §1.
+
+Ong et al. (2025)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+
+RouteLLM: learning to route LLMs from preference data.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2,
+Table 1,
+§6.1.
+
+Pascanu et al. (2017)
+R. Pascanu, Y. Li, O. Vinyals, N. Heess, L. Buesing, S. Racanière, D. Reichert, T. Weber, D. Wierstra, and P. Battaglia
+
+Learning model-based planning from scratch.
+
+arXiv preprint arXiv:1707.06170.
+
+Cited by: §4.2.
+
+Silver et al. (2017)
+D. Silver, J. Schrittwieser, K. Simonyan, I. Antonoglou, A. Huang, A. Guez, T. Hubert, L. Baker, M. Lai, A. Bolton, et al.
+
+Mastering the game of go without human knowledge.
+
+nature 550 (7676), pp. 354–359.
+
+Cited by: Appendix A,
+Appendix A,
+§2.
+
+Viswanathan et al. (2025)
+V. Viswanathan, Y. Sun, S. Ma, X. Kong, M. Cao, G. Neubig, and T. Wu
+
+Checklists are better than reward models for aligning language models.
+
+arXiv preprint arXiv:2507.18624.
+
+Cited by: §3.1.
+
+Xie et al. (2025)
+E. Xie, Y. Sun, T. Feng, and J. You
+
+GMTRouter: personalized llm router over multi-turn user interactions.
+
+arXiv preprint arXiv:2511.08590.
+
+Cited by: §2.
+
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: §1,
+§6.1.
+
+Yi et al. (2025)
+Z. Yi, J. Ouyang, Z. Xu, Y. Liu, T. Liao, H. Luo, and Y. Shen
+
+A survey on recent advances in llm-based multi-turn dialogue systems.
+
+ACM Computing Surveys 58 (6), pp. 1–38.
+
+Cited by: §1.
+
+Yu et al. (2023)
+X. Yu, M. Chen, and Z. Yu
+
+Prompt-based monte-carlo tree search for goal-oriented dialogue policy planning.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,
+
+pp. 7101–7125.
+
+Cited by: §2.
+
+Zhang et al. (2025a)
+H. Zhang, T. Feng, and J. You
+
+Router-r1: teaching llms multi-round routing and aggregation via reinforcement learning.
+
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+
+Cited by: §2.
+
+Zhang et al. (2023)
+H. Zhang, J. Chen, F. Jiang, F. Yu, Z. Chen, G. Chen, J. Li, X. Wu, Z. Zhiyi, Q. Xiao, et al.
+
+Huatuogpt, towards taming language model to be a doctor.
+
+In Findings of the association for computational linguistics: EMNLP 2023,
+
+pp. 10859–10885.
+
+Cited by: §1.
+
+Zhang et al. (2025b)
+Y. Zhang, H. Li, C. Wang, L. Chen, Q. Zhang, P. Ye, S. Feng, D. Wang, Z. Wang, X. Wang, et al.
+
+The avengers: a simple recipe for uniting smaller language models to challenge proprietary giants.
+
+arXiv preprint arXiv:2505.19797.
+
+Cited by: Table 13,
+§1,
+§2,
+Table 1,
+§6.1,
+Table 2,
+Table 3,
+Table 4.
+
+Zhuang et al. (2025)
+R. Zhuang, T. Wu, Z. Wen, A. Li, J. Jiao, and K. Ramchandran
+
+EmbedLLM: learning compact representations of large language models.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2,
+§6.1.
+
+Appendix A Details of MCTS
+
+In this section, we describe the details of Monte Carlo Tree Search (MCTS) (Coulom, 2006; Silver et al., 2017). Starting from the current dialogue state as the root node, MCTS repeatedly performs four phases—Selection, Expansion, Simulation, and Backpropagation—for a total of iterations, progressively exploring dialogue trajectories induced by different model selections and estimating their long-term returns.
+
+Selection. Starting from the root node , MCTS recursively selects child nodes until reaching a leaf node that is not fully expanded. During this process, we adopt the Upper Confidence Tree (UCT) (Silver et al., 2017) criterion to balance exploration and exploitation:
+
+(11)
+
+where denotes the estimated cumulative return of taking action at state , is the number of visits to state , is the number of times action has been selected at state , and is a constant controlling the degree of exploration. At each step, the action maximizing is selected.
+
+Expansion. Upon reaching a leaf node, MCTS selects an unexplored action, corresponding to a model routing decision for the next dialogue turn, and generates a new dialogue state, which is then added to the search tree.
+
+Simulation. From the newly expanded node, MCTS performs an approximate rollout to estimate its potential return. Specifically, we adopt a one-step greedy routing strategy, selecting at each turn the currently estimated optimal model, and advance the dialogue using the user simulator until termination (e.g., when the user simulator outputs a termination signal or the maximum dialogue length is reached).
+
+Backpropagation. After a simulation terminates, the accumulated return is propagated backward along the simulated trajectory from the leaf node to the root. For each state on the trajectory, the return is defined as the discounted cumulative reward from that state until the end of the dialogue:
+
+(12)
+
+where is the discount factor. Subsequently, for each encountered state–action pair , the visit count and value estimate are updated as:
+
+(13)
+
+After completing all search iterations, we select, at the root node , the action with the highest estimated value as the optimal model choice for the current state:
+
+(14)
+
+Appendix B Details of Datasets
+
+B.1 Dataset Sources and Characteristics
+
+ShareGPT55
+5
+
+https://sharegpt.com is an English open-domain multi-turn dialogue dataset collected from real user–LLM interactions, where users voluntarily share conversation links generated on the ChatGPT web interface. The dataset covers a wide range of general-purpose tasks, including information seeking, writing assistance, code generation, and daily conversations, reflecting diverse real-world usage scenarios of conversational AI systems.
+
+JDDC (Jing Dong Dialogue Corpus) (Chen et al., 2020) is a Chinese e-commerce customer-service multi-turn dialogue dataset released by JD.com, derived from real interaction logs between users and customer-service systems. The dataset focuses on task-oriented dialogue scenarios in the e-commerce domain, covering typical business processes such as product inquiry, order management, logistics, and after-sales support.
+
+MedDG (Liu et al., 2022) is a Chinese medical multi-turn dialogue dataset collected from real online health consultation communities, recording multi-turn interactions between users and medical professionals or consultation systems. The dataset centers on medical consultation scenarios and includes tasks such as symptom description, disease diagnosis, and health advice, exhibiting strong domain specificity and long-term information dependencies.
+
+B.2 Data Splits
+
+Table 6: Statistics of dialogue-level data splits. All splits are performed at the dialogue level.
+
+Dataset
+# Training Dialogues
+# Test Dialogues
+Avg. # Checklist Items
+
+ShareGPT
+750
+90
+6.70
+
+JDDC
+750
+100
+4.99
+
+MedDG
+750
+100
+4.94
+
+ShareGPT-LF
+-
+66
+6.58
+
+As shown in Table 6, for JDDC and MedDG, we randomly sample dialogue instances and split them into training and test sets. For ShareGPT, to ensure consistent intent decomposition and checklist-based evaluation, we apply a data filtering step that retains multi-turn dialogues with moderate lengths and coherent intent flows, while removing instances involving sensitive or unsafe content that may trigger API-level safety refusals. Based on the filtered ShareGPT data, we further construct ShareGPT-LF by isolating dialogues from the legal and financial domains to evaluate cross-domain generalization, and randomly split the remaining data into training and test sets.
+
+B.3 Topic Distribution of ShareGPT
+
+Table 7: Coarse-grained topic distribution of the ShareGPT dataset.
+
+Topic
+Programming
+Science
+Health
+Technology
+Culture
+Law
+Finance
+Others
+
+Train
+419
+187
+23
+23
+20
+0
+0
+78
+
+Test
+48
+21
+6
+4
+2
+0
+0
+9
+
+SharGPT-LF
+0
+0
+0
+0
+0
+22
+44
+0
+
+We analyze the topic distribution of ShareGPT using coarse-grained categories. As shown by Tabel 7, the dataset is dominated by programming and science related dialogues, while also covering a diverse range of topics such as health, technology, and culture. The topic distributions of the training and test splits are broadly consistent.
+
+B.4 User Profiling and Checklist Construction
+
+For each dialogue instance in the dataset, we prompt Qwen3-Max to extract a structured user profile and a corresponding checklist. Representative examples are shown in Tables 8, 9, and 10. The extracted user profiles and checklists are designed to capture dialogue-level user intent and evaluation criteria, while allowing for domain-specific variations across datasets.
+
+For ShareGPT, the user profile represents an intent chain with explicit triggering logic, capturing the deterministic progression of user interests, while the checklist focuses on content correctness and coverage, adherence to formatting and instruction constraints, and overall dialogue coherence. For JDDC, the user profile includes user behavior patterns, contextual background, and explicit goals in the customer-service setting, and the checklist emphasizes effective user guidance, correctness of information delivery, and high-quality emotional support and need fulfillment. For MedDG, the user profile captures the chief complaint, detailed symptom descriptions, treatment history, and basic consultation goals, whereas the checklist evaluates proper information elicitation and clarification, correctness of medication and examination recommendations, accuracy of disease assessment, and the provision of appropriate health advice and patient reassurance.
+
+We formalize each dialogue task as a tuple , where denotes the extracted user profile, the checklist, and the initial user query of the dialogue instance. For JDDC, we additionally extract domain-specific customer-service prior knowledge and provide it to all candidate models to ensure alignment on required business rules.
+
+Table 8: An example dialogue from ShareGPT used for user profiling and checklist construction. Some content is omitted for brevity.
+
+Category
+Content Details
+
+Dialogue Instance
+
+User: What are the classic cocktails that every bartender should know how to make and what are their ingredients?
+Assistant: 1. Old Fashioned: Ingredients - bourbon or rye whiskey, sugar, bitters, ice, orange twist or cherry for garnish. 2. Martini: Ingredients - gin or vodka, dry vermouth, ice, olives or lemon twist …
+User: I’ve had all of these classic cocktails, but I’m looking for something new to try. Do you have any recommendations?
+Assistant: Sure, here are a few modern cocktail recommendations to try…
+User: The Elderflower Sour sounds interesting. I love trying new cocktails with unique ingredients.
+Assistant: The Elderflower Sour is a great cocktail…
+User: Definitely going to try the Elderflower Sour tonight! Do you have any other unique cocktail recommendations with interesting flavors? I’m in the mood to experiment.
+Assistant: Sure, here are a few more unique cocktail recommendations…
+User: The Smoked Maple Old Fashioned sounds intriguing. How exactly do you use a smoking gun in a cocktail?
+Assistant: To use a smoking gun in a cocktail like the Smoked Maple Old Fashioned…
+User: Wow, I never knew you could use a smoking gun in cocktails. That’s a really cool technique! Do you have any other creative cocktail techniques that I should know about?
+Assistant: Yes, there are several creative cocktail techniques…
+User: Wow, these techniques are really cool! I’ve never heard of fat-washing before. Do you have any tips for getting the proportions right?
+Assistant: Fat-washing is a fun technique…
+
+User Profile
+
+User Intent Chain with Trigger Logic:
+(I1) Request classic cocktails with ingredients and preparation methods; triggered initially when the user seeks foundational cocktail knowledge and re-triggered if recipes are insufficient.
+(I2) Request modern cocktail recommendations with recipes; triggered after (I1) is fulfilled and re-triggered if preparation details are incomplete.
+(I3) Request unique or creative cocktail recipes with distinctive flavors; triggered when the user expresses interest in experimentation and re-triggered if diversity is lacking.
+(I4) Request creative cocktail-making techniques; triggered when the user shows interest in how creative cocktails are prepared and re-triggered if key techniques are omitted.
+
+Checklist
+
+(1) Whether the model’s recommended classic cocktails include Old Fashioned and Bloody Mary.
+(2) Whether the model’s recommended modern cocktails include Elderflower Sour.
+(3) Whether the model’s output includes at least 5 classic cocktails.
+(4) Whether the model’s output includes at least 5 modern cocktails.
+(5) Whether the model provides the recipe and basic preparation method for each cocktail.
+(6) Whether the model avoids repeating cocktails or other information already provided.
+(7) Whether the model avoids self-contradictions across multiple turns.
+
+Table 9: An example dialogue from JDDC used for user profiling and checklist construction. The original dialogue, user profile, and checklist are in Chinese and are translated into English for presentation, with some content omitted for brevity.
+
+Category
+Content Details
+
+Dialogue Instance
+
+User: Can you help me change the delivery address for my order?
+(可以帮我改下订单的地址吗？)
+Customer Service: If the address is within the same city, you can contact the courier to update it.
+(同一市内可以联系配送员直接修改的哦。)
+User: It’s not the same city. The current address is in Shanghai, but I’ll be returning to Anhui tomorrow.
+(不在同一个城市，现在地址是上海，但是我明天要回安徽。)
+Customer Service: Sorry, cross-city address changes are not supported. We recommend placing a new order instead.
+(抱歉，地址在不同城市不能操作的，只能建议您重新下单哦。)
+User: If I cancel the order, how long will it take to receive the refund?
+(那我取消订单的话退款多久到账呢？)
+Customer Service: Refund times depend on the payment method: one business day for digital wallets, 1–7 business days for debit cards, and 1–15 business days for credit cards.
+(微信零钱1个工作日内到账，储蓄卡1-7个工作日内到账，信用卡1-15个工作日内到账的哦！)
+User: Why can’t the address be changed? This is really inconvenient.
+(为什么不能改地址，你们这也太不方便了。)
+Customer Service: We apologize for the inconvenience. Our logistics system still has limitations.
+(非常抱歉，我们物流还有待完善呢。)
+User: This is quite troublesome—I need the item urgently.
+(这也太麻烦了，我还急着用呢。)
+Customer Service: We understand your urgency and will continue to improve our service.
+(非常抱歉！如果是我的话我也会很着急的，我们会改进的！)
+User: Alright.
+(行吧。)
+Customer Service: Thank you for your understanding. Is there anything else we can help with?
+(谢谢您的理解！还有什么能帮到您的吗？)
+
+User Profile
+
+Behavior Patterns: Attempts to change the delivery address across cities; expresses urgency and dissatisfaction; proactively inquires about refund timing.
+General Context: Currently in Shanghai and returning to Anhui the next day; has an urgent need for the item.
+User Goals:
+(1) Change the delivery address from Shanghai to Anhui.
+(2) Inquire about the refund processing time if the order is canceled.
+
+Checklist
+
+(1) Whether the agent identifies or confirms the location involved in the address change request.
+(2) Whether the agent clearly explains that delivery addresses can only be modified within the same city and explicitly states that cross-city address changes are not supported.
+(3) Whether the agent acknowledges and soothes the user’s urgency and dissatisfaction.
+(4) Whether the agent suggests placing a new order as an alternative solution.
+(5) Whether the agent provides accurate refund processing times for different payment methods.
+
+Table 10: An example dialogue from MedDG used for user profiling and checklist construction. The original dialogue, user profile, and checklist are in Chinese and are translated into English for presentation, with some content omitted for brevity.
+
+Category
+Content Details
+
+Dialogue Instance
+
+User: Since yesterday, I have been experiencing persistent abdominal pain and intermittent diarrhea, about 7–8 times. Last night my temperature was 37.3∘C. What medication should I take? (Female, 30 years old)
+(从昨天开始到今天肚子一直痛，断断续续拉了7.8次大便，昨晚测量体温37.3度，请问医生我该吃点什么药?（女，30岁）)
+Doctor: Have you eaten any contaminated food, greasy or spicy food, or consumed alcohol? Do you smoke, feel stressed, or have poor sleep? Have you undergone any medical examinations or taken any medication? Acute gastroenteritis is a possible cause. You may take montmorillonite powder and levofloxacin capsules.
+(你好，请问你是吃不干净的东西了吗？有没有油腻食物，辛辣刺激性食物，喝酒抽烟，精神压力大，睡眠不好之类有没有做过什么其他检查，有吃过什么药物吗。考虑急性肠胃炎可能性比较大。可以吃蒙脱石散，左氧氟沙星胶囊。)
+User: I ate some greasy food a few days ago. I have not had any examinations recently and have not taken any medication.
+(前几天吃了点油腻的食物，近期也没有做什么检查，也没有吃什么药。)
+Doctor: That is fine. Both medications are available at pharmacies. I recommend having a stool routine test.
+(嗯呢。可以的。这两种药药店都有。建议查一个大便常规。)
+User: Okay, thank you.
+(好的，谢谢。)
+Doctor: Good health relies on self-care rather than only doctors or medications. Sunlight, a positive mindset, and reducing stress are also important.
+(健康，是靠自己的养护，不是靠医生，和药物，阳光，微笑，就是健康，别给自己压力太大，加油哦。)
+User: Hello doctor, my spouse still has diarrhea after taking the medication, with abdominal pain and diarrhea shortly after meals. Should we continue the medication and observe?
+(”医生你好，我爱人吃了药后，还是拉稀，和刚吃完饭后，肚子痛，又闹肚子，这个还要接着吃药，看看吗。)
+Doctor: Have you had a stool test or blood test? I suggest going to the emergency department for further evaluation. We need to check for possible electrolyte imbalance and abnormal blood counts. Further treatment may be required, and it is difficult to assess without examinations.
+(有没有做大便检查。抽血了吗。建议你去急诊看看。观察有没有电解质紊乱和血象增高。是需要进一步治疗的。不化验不好说。)
+
+User Profile
+
+Demographics: Female, 30 years old.
+Chief Complaint: Abdominal pain and diarrhea.
+Symptom Details:
+(1) Abdominal pain: Located in the lower abdomen; cramping in nature.
+(2) Diarrhea: 7–8 episodes; watery stool; no blood observed.
+(3) Fever: Body temperature of 37.3∘C; duration within one day.
+Suspected Trigger: Consumption of greasy food a few days prior.
+Medical History: None reported.
+Current Medication: None.
+User Goals: (1) Symptom assessment; (2) Medication recommendation; (3) Examination recommendation; (4) Diagnosis clarification.
+
+Checklist
+
+(1) Whether the doctor identifies the patient’s key symptoms, including abdominal pain, diarrhea, and fever.
+(2) Whether the doctor recommends appropriate medications, such as montmorillonite powder and levofloxacin capsules, for treating diarrhea and abdominal pain.
+(3) Whether the doctor advises relevant examinations, such as a stool routine test.
+(4) Whether the doctor determines the underlying condition to be acute gastroenteritis.
+
+Appendix C Details of Candidate LLMs
+
+C.1 Implementation of Candidate LLMs
+
+For open-source models, we obtain the model weights from the HuggingFace66
+6
+
+https://huggingface.co and deploy them locally using the vLLM framework (Kwon et al., 2023). For closed-source models, we invoke the APIs of Qwen3-Max77
+7
+
+https://bailian.console.aliyun.com, DeepSeek-Chat-V3.288
+8
+
+https://platform.deepseek.com, and GPT-5.199
+9
+
+https://platform.openai.com/docs/models/gpt-5.1 through their respective official platforms. Since our study focuses on dialogue flow control and task fulfillment rather than complex long-chain reasoning, all candidate models are configured in non-reasoning mode, with the generation temperature set to 0 to reduce randomness and ensure stable and comparable responses across models.
+
+C.2 Pricing of Closed-Source LLMs
+
+Table 11: Pricing of closed-source language models.
+
+Model
+Input ($/1M tokens)
+Cached Input ($/1M tokens)
+Output ($/1M tokens)
+
+Qwen3-Max
+0.459
+0.0918
+1.836
+
+DeepSeek-Chat-V3.2
+0.28
+0.028
+0.42
+
+GPT-5.1
+1.25
+0.125
+10
+
+Pricing information for closed-source models is obtained from the official billing specifications1010
+10
+
+https://www.alibabacloud.com/help/en/model-studio/model-pricing1111
+11
+
+https://api-docs.deepseek.com/quick_start/pricing1212
+12
+
+https://platform.openai.com/docs/pricing of their respective providers, as shown in Table 11. In general, the input cost under cache hits is substantially lower than the standard input cost. Among the closed-source models considered, DeepSeek-Chat-V3.2 exhibits significantly lower input and output costs than the other models. Note that the cost weight in the reward function is defined with respect to the per-token cost.
+
+Appendix D Training and Inference Time and GPU Resources of DialRouter
+
+Table 12: Time and GPU memory consumption for MCTS, training, and inference.
+
+MCTS
+Training
+Inference
+
+Time
+3h 40min (750 dialogues)
+1.3 s / batch
+0.03 s / decision
+
+GPU Memory
+–
+18.9 GB
+3636 MiB
+
+Training data are generated by running MCTS in parallel across dialogue instances. Processing 750 training dialogues for a single dataset takes approximately 3 hours and 40 minutes. All experiments are conducted on a single NVIDIA RTX 4090D GPU. DialRouter contains 472.9M parameters in total, with 44.42M trainable parameters. DialRouter is trained offline using the collected data. During training with a batch size of 32, the peak GPU memory usage is 18.9 GB, and the training throughput is approximately 1.3 seconds per batch. At inference time, routing decisions are made online, requiring 3636 MiB of GPU memory and only 0.03 seconds per decision (including a lightweight retrieval step taking approximately 0.01 seconds). Overall, DialRouter is lightweight and computationally efficient.
+
+Appendix E Evaluator Preference Bias Analysis
+
+Table 13: Task success rates evaluated by two independent evaluators (Qwen3-Max and GPT-5.1), with Spearman’s indicating consistent method rankings across domains.
+
+ShareGPT ()
+JDDC ()
+MedDG ()
+
+Method
+Qwen3-Max
+GPT-5.1
+Qwen3-Max
+GPT-5.1
+Qwen3-Max
+GPT-5.1
+
+Qwen3-14B
+83.24
+77.77
+77.19
+78.76
+72.50
+70.17
+
+KNN Router (Hu et al., 2024)
+83.37
+76.45
+78.44
+78.67
+71.99
+68.74
+
+Avengers (Zhang et al., 2025b)
+83.93
+78.29
+78.34
+78.14
+71.69
+69.29
+
+DialRouter (Ours)
+87.46
+81.01
+83.45
+84.39
+79.03
+76.26
+
+MCTS Router
+94.11
+87.00
+88.42
+89.30
+86.77
+83.54
+
+To assess robustness to evaluator choice and potential preference bias, we evaluate methods using two independent evaluators, Qwen3-Max and GPT-5.1. As shown in Table 13, method rankings remain largely consistent across all three dialogue domains, with high Spearman’s values. DialRouter consistently outperforms single LLMs and routing baselines under both evaluators, indicating that its performance gains are robust to evaluator-specific preferences.
+
+Appendix F Analysis of DialRouter’s Routing Behavior
+
+(a) ShareGPT (Qwen)
+
+(b) ShareGPT (Llama)
+
+(c) JDDC (Qwen)
+
+(d) JDDC (Llama)
+
+(e) MedDG (Qwen)
+
+(f) MedDG (Llama)
+
+Figure 5: Per-turn routing selection distributions (stacked proportion plots) and inter-turn routing transition heatmaps for the Qwen (left) and Llama (right) candidate sets across three datasets. The stacked areas show the proportion of dialogue trajectories selecting each model at each turn; the total height decreases in later turns as fewer dialogues extend to longer horizons.
+
+This section analyzes routing behaviors across different dialogue scenarios by visualizing multi-turn LLM routing trajectories. As shown in Figure5, we present per-turn LLM selection distributions (stacked proportion plots) and inter-turn transition patterns (transition matrices) on three datasets to characterize the dynamic evolution of routing strategies over dialogue stages. By comparing different candidate LLM sets within the same dataset, we examine how routing adapts to task contexts and dialogue phases, highlighting differences in exploration, convergence, and stability.
+
+On ShareGPT, the Qwen candidate set favors medium-sized models in early turns and gradually shifts toward smaller models as the dialogue progresses, with the transition matrix indicating frequent fallback transitions from larger to smaller models, resulting in a clear strong-to-weak convergence pattern. In contrast, the Llama candidate set more often maintains or returns to larger models in later turns, with higher self-loop and back-transition probabilities, suggesting sustained reliance on high-capacity models in open-domain multi-turn conversations.
+
+On JDDC, the Qwen candidate set quickly converges to large models in the initial turns and remains relatively stable thereafter, with a transition structure dominated by self-loops, indicating limited cross-model switching once a routing strategy is established. By comparison, the Llama candidate set is largely dominated by medium and large models in early turns and exhibits noticeable transitions from medium to large models, reflecting a preference for high-capacity models in task-constrained e-commerce dialogue scenarios.
+
+On MedDG, the Qwen candidate set strongly prefers large models at the beginning of the dialogue, followed by a stage-wise shift toward medium and smaller models in later turns, with frequent transitions from large to medium models, capturing strategy adjustments during information gathering and verification phases in medical conversations. In contrast, the Llama candidate set consistently concentrates on large models across most turns, with dominant self-loop transitions, indicating sustained reliance on high-capacity models under high-stakes and safety-critical medical settings.
+
+Appendix G Prompting Details
+
+We use Qwen3-Max as both the user simulator and the reward model, and design corresponding system prompts for ShareGPT, JDDC, and MedDG, which are instantiated with the user profile and the checklist extracted from each dialogue instance. The user simulator and evaluator of open-domain ShareGPT are not tied to a specific domain, enabling a general and reusable simulation and evaluation for new domains. The detailed system prompts are illustrated in Figures 6–11.
+
+Figure 6: System prompt for the ShareGPT user simulator.
+
+Figure 7: System prompt for the ShareGPT reward model.
+
+Figure 8: System prompt for the JDDC user simulator.
+
+Figure 9: System prompt for the JDDC reward model.
+
+Figure 10: System prompt for the MedDG user simulator.
+
+Figure 11: System prompt for the MedDG reward model.
+
+Appendix H Case Studies
+
+As shown in Figures 13, 14, and 12, the three case studies cover distinct multi-turn dialogue scenarios, including script writing in ShareGPT, medical consultation in MedDG, and e-commerce customer service in JDDC, where user requirements progressively evolve and become more specific as the dialogue unfolds. Across these scenarios, DialRouter is able to perceive the dialogue stage and select models that better match the current requirement structure, thereby maintaining decision consistency across turns and incrementally completing key information. By employing higher-capacity models for high-risk or critical decision stages and more lightweight or stable models for execution details and supplementary explanations, DialRouter ultimately achieves full coverage of the checklist items. In contrast, some baseline methods rely on a fixed model or lack stage awareness, leading them to overlook newly introduced constraints or details in later turns and fail to fully satisfy dialogue-level objectives, while others switch models without a holistic understanding of dialogue stages and risk, resulting in oscillations or drift along critical decision paths.
+
+Overall, these cases consistently demonstrate that success in multi-turn dialogue does not depend on producing the strongest possible response at each individual turn, but rather on the router’s ability to perceive dialogue stages and make long-horizon model selection decisions, thereby jointly ensuring directional correctness, detail completeness, and risk control throughout the evolving interaction and ultimately achieving stable dialogue-level goal fulfillment.
+
+Figure 12: Case study on multi-turn e-commerce customer service in JDDC with Llama candidate set.
+
+Figure 13: Case study on multi-turn script writing in ShareGPT with closed-source LLM candidate set.
+
+Figure 14: Case study on multi-turn medical consultation in MedDG with Qwen candidate set.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

@@ -1,0 +1,843 @@
+Fast Heterogeneous Serving: Scalable Mixed-Scale LLM Allocation for SLO-Constrained Inference
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 System Model and Problem Formulation
+
+2.1 System Model
+
+2.2 Optimization Problem
+
+3 Solution Approach
+
+3.1 Three Constraint-Aware Mechanisms
+
+M1 - Constraint-Aware Configuration Selection
+
+M2 - Cost-Per-Effective-Coverage Ranking:
+
+M3 - Parallelism Upgrade for Active GPUs:
+
+3.2 Greedy Heuristic (GH)
+
+3.3 Adaptive Greedy Heuristic (AGH)
+
+3.4 Complexity Analysis
+
+4 Numerical Results
+
+4.1 Simulation Setup
+
+4.2 Performance Evaluation
+
+4.3 Rolling-Horizon Adaptation
+
+5 Conclusion
+
+References
+
+License: arXiv.org perpetual non-exclusive license
+
+arXiv:2604.07472v1 [cs.LG] 08 Apr 2026
+
+Fast Heterogeneous Serving: Scalable Mixed-Scale LLM Allocation for SLO-Constrained Inference
+
+Jiaming Cheng
+
+  
+Duong Tung Nguyen
+
+Affiliation: Arizona State University, Tempe, AZ, 85281, USA
+
+E-mail {jiaming,duongnt}@asu.edu
+
+Abstract
+
+Deploying large language model (LLM) inference at scale requires jointly selecting base models, provisioning heterogeneous GPUs, configuring parallelism, and distributing workloads under tight latency, accuracy, and budget constraints. Exact mixed-integer linear programming (MILP) approaches guarantee optimality but scale poorly. We propose two constraint-aware heuristics: a Greedy Heuristic (GH) for single-pass allocation, and an Adaptive Greedy Heuristic (AGH) that enhances GH via multi-start construction, relocate-based local search, and GPU consolidation. Three constraint-aware mechanisms—TP-aware feasibility selection, cost-per-effective-coverage ranking, and TP upgrade—ensure feasibility under tightly coupled memory, delay, error, and budget constraints. On workloads calibrated with the Azure LLM Inference Trace (2025), both heuristics produce feasible solutions in under one second, with AGH closely approaching optimal cost while achieving over speedup on large-scale instances. Under out-of-sample stress tests with up to 1.5 parameter inflation, AGH maintains controlled SLO violations and stable cost, whereas the exact solver’s placement degrades sharply.
+
+Keywords: LLM inference, GPU provisioning, workload allocation, parallelism configuration, adaptive greedy heuristic
+
+1 Introduction
+
+Large language models (LLMs) have become central to modern AI services, powering applications from conversational assistants and code generation to multimodal content creation [1]. Serving diverse query types at scale requires LLM service providers (SPs) to jointly orchestrate multiple interrelated decisions—selecting base models, provisioning heterogeneous GPUs, configuring parallelism strategies, and routing workloads—all under tight service-level objectives (SLOs) on latency, accuracy, and budget.
+
+A growing body of work has advanced LLM inference efficiency along individual axes. Serving engines such as vLLM [2] and DistServe [3] optimize memory management and disaggregate prefill from decoding. DynamoLLM [4] reconfigures parallelism and GPU frequency for energy efficiency; Helix [5] formulates heterogeneous placement as a max-flow MILP; Jiang et al. [6] co-optimize GPU composition, deployment, and workload assignment via MILP scheduling. Kim et al. [12] study cost-efficient serving with heterogeneous VMs and KV cache offloading, SeaLLM [9] enables multi-LLM resource sharing, and SkyLB [11] proposes locality-aware cross-region load balancing. These works demonstrate the importance of heterogeneity-aware management but share a common limitation: they either rely on exact solvers whose runtime grows exponentially, or employ system-level heuristics that do not jointly optimize parallelism configuration with workload allocation under coupled SLO constraints.
+
+Despite this progress, the joint optimization of model selection, GPU provisioning, TP configuration, and workload distribution under coupled resource and SLO constraints remains underexplored from an algorithmic perspective. Existing systems either fix parallelism a priori and optimize routing alone [4], decompose into independent subproblems [12, 9], or embed TP/PP in a monolithic MILP without scalable alternatives [5, 6]. The tight coupling—GPU memory limits feasible TP degrees, TP affects both prefill and decode latency, delay and error bounds jointly constrain allocatable workload—means that naive greedy strategies frequently produce infeasible solutions. Our algorithms integrate parallelism selection into the allocation loop via three constraint-aware mechanisms that jointly enforce memory, delay, error, and budget feasibility at every step.
+
+This paper shifts focus from exact MILP formulations to fast, constraint-aware heuristic algorithms. Rather than relying on commercial solvers whose runtime can reach minutes to hours, we develop lightweight algorithms that produce feasible, near-optimal solutions in under one second—enabling real-time re-optimization as demand or GPU availability changes. Beyond computational efficiency, the algorithms exhibit robust operational performance: under out-of-sample stress tests with up to 1.5 delay and error inflation, the heuristics maintain stable cost and controlled SLO violations, whereas the exact solver’s placement degrades sharply.
+
+Figure 1: System model: users submit queries classified by type, routed to heterogeneous GPU tiers hosting foundation models under TP/PP configurations.
+
+Table 1 summarizes how our approach differs from prior work across five design dimensions. Compared to MILP-based systems [5, 6] that achieve optimality but become intractable at scale, our heuristics provide over speedup while maintaining near-optimal cost. Unlike system-level heuristics [4, 12] that optimize a single axis, our algorithms jointly determine parallelism, provisioning, and routing in a single allocation loop. Critically, the constraint-aware mechanisms (M1–M3) are not merely cost optimizations—they are feasibility prerequisites: our experiment shows that removing M1 or M3 renders solutions infeasible, a failure case absent from prior greedy approaches. Moreover, the sub-second runtime of AGH enables rolling re-optimization every 5 minutes, saving up to 48% over a static MILP under high demand volatility. Finally, our two-stage evaluation reveals that cost-minimal exact solutions are fragile under operational uncertainty, while the heuristics’ built-in conservatism provides inherent robustness—an advantage not demonstrated by prior work.
+
+Table 1: Comparison with related approaches across key design dimensions.
+
+System
+TP/PP
+Coupled
+Scalable
+Stress
+Constr.-
+
++ route
+SLOs
+solver
+robust
+aware
+
+DynamoLLM [4]
+–
+✓
+✓
+–
+–
+
+Helix [5]
+✓
+–
+–
+–
+–
+
+Jiang et al. [6]
+✓
+✓
+–
+–
+–
+
+Kim et al. [12]
+–
+✓
+✓
+–
+–
+
+SeaLLM [9]
+–
+–
+✓
+–
+–
+
+GH / AGH (ours)
+✓
+✓
+✓
+✓
+✓
+
+Contributions.
+(C1) We formulate the joint model selection, GPU provisioning, joint TP/PP parallelism configuration, and workload allocation problem as a MILP with a two-phase delay model capturing TTFT and generation latency under TP/PP configuration. The formulation integrates memory, delay, and accuracy constraints.
+(C2) We propose a Greedy Heuristic (GH) using three constraint-aware mechanisms—(M1) constraint-aware configuration selection, (M2) cost-per-effective-coverage ranking, and (M3) parallelism upgrade for active GPUs—and an Adaptive Greedy Heuristic (AGH) that enhances GH via multi-start construction, relocate-based local search, and consolidation.
+(C3) Using workloads from the Azure LLM Inference Trace [13], we show that AGH matches or closely approaches optimal cost while achieving over speedup on large-scale instances where the exact solver exceeds time limits, and maintains stable cost and controlled SLO violations under 1.5 out-of-sample stress where the exact solver degrades sharply.
+
+2 System Model and Problem Formulation
+
+2.1 System Model
+
+We consider a service provider (SP) that rents heterogeneous GPU instances from a cloud platform to serve LLM inference workloads over a planning horizon . Users submit inference requests that are classified into distinct query types (e.g., summarization, code generation, translation), each characterized by an arrival rate (queries/hour), an average input length of tokens, and an expected output length of tokens. The aggregate token count per query is .
+
+1) Foundation Models:
+The SP maintains a catalog of pre-trained foundation models , spanning a range of capacities from lightweight (e.g., 1B parameters) to large-scale (e.g., 70B). Each model  has a weight size of (GB) and a per-token key–value (KV) cache memory footprint of (bytes/token). Larger models generally yield higher output quality but impose greater memory and computational demands.
+
+2) GPU Resource Tiers:
+Inference jobs execute on resource tiers , where each tier pairs a specific GPU hardware type with a numerical precision level (e.g., H100–FP16, A6000–INT8). Tier  is characterized by its GPU memory capacity (GB), compute throughput (TFLOPs), and per-GPU hourly rental cost ($/hr). Higher-precision modes yield better inference accuracy but incur larger per-token latency and rental expense; quantized modes (INT8, INT4) trade accuracy for reduced cost.
+
+3) Parallelism Configuration:
+For each deployed model–tier pair , the SP selects both a tensor parallelism (TP) degree and a pipeline parallelism (PP) depth. TP partitions the model’s weight matrices across co-located GPUs within a single pipeline stage, reducing per-device memory requirements and accelerating the compute-bound prefill phase at the cost of inter-GPU communication overhead during autoregressive decoding. PP distributes the model’s layers across sequential pipeline stages, enabling larger models to fit across multiple GPU groups at the cost of pipeline bubble overhead.
+
+Formally, the SP selects a TP degree from a hardware-dependent feasible set (e.g., ) and a PP depth from a system-wide feasible set (e.g., ). Binary variable indicates whether model  on tier  uses the joint configuration , and deployment flag records whether model  is active on tier . The total number of tier- GPUs allocated to model  is:
+
+(1)
+
+These GPUs are organized as tensor-parallel devices within each of pipeline stages, yielding the identity . This decomposition enters the model in two ways: TP governs per-stage memory and computation in the delay model (2), while PP determines inter-stage communication overhead and introduces pipeline bubble inefficiency captured by the factor  in the compute constraint (5g).
+
+4) Processing Delay:
+We decompose the processing delay into TTFT (prefill) and generation (decode) phases.
+The TTFT for query type  on is ,
+where is the per-token computational cost.
+The generation delay includes inter-stage communication under pipeline parallelism:
+,
+where is the per-token communication delay and is the number of pipeline stages.
+The aggregate processing delay is:
+
+(2)
+
+where . Substituting and via the joint selector yields the MILP-compatible form:
+
+(3)
+
+The product is bilinear (continuous binary). We linearize via McCormick envelopes: for each product we introduce auxiliary with and , satisfying:
+
+(4)
+
+Since TP and PP are selected jointly by the binary , no trilinear terms arise—a single McCormick layer suffices.
+We define the per-configuration delay shorthand , a constant for given , so that . Increasing TP reduces computation in both phases, while increasing PP adds inter-stage communication overhead that scales with .
+
+2.2 Optimization Problem
+
+The SP jointly determines: (1) resource provisioning and deployment flag ; (2) parallelism configuration via with ; (3) workload routing fractions with placement indicator ; and (4) unserved demand . The deterministic placement problem minimizes total operational cost:
+
+(5a)
+
+s.t. 
+
+(5b)
+
+(5c)
+
+(5d)
+
+(5e)
+
+(5f)
+
+(5g)
+
+(5h)
+
+(5i)
+
+(5j)
+
+(5k)
+
+Objective. The five terms capture: (i) GPU rental at rate ; (ii) model weight storage at rate ; (iii) token data storage (: per-token size); (iv) delay penalty weighted by ; and (v) unmet demand penalty weighted by .
+
+Constraints.
+Constraint (5b) enforces supply–demand balance, recording any residual as unmet demand .
+Constraints (5d)–(5e) select exactly one (TP, PP) configuration per active model–tier pair, with .
+Constraint (5f) ensures the per-GPU model weight shard plus KV cache (scaled by token count and residency time ) fits within GPU memory ; PP further reduces per-GPU memory by distributing layers across pipeline stages.
+Constraint (5g) bounds aggregate throughput against available FLOPs, where is per-token compute cost (GFLOP/token), aligns token units with TFLOPs, converts seconds to hours, and captures PP bubble overhead.
+Constraint (5h) caps total storage at ;
+(5i)–(5j) enforce delay () and error () SLOs;
+and (5k) restricts routing to deployed configurations.
+Problem has continuous and binary variables, motivating scalable heuristics.
+
+3 Solution Approach
+
+The MILP formulation can be solved exactly for moderate instances but its runtime grows exponentially as the problem scales. Moreover, the SP may need to re-solve the allocation problem frequently as demand shifts, requiring solutions in seconds rather than minutes. A fast heuristic that produces feasible, near-optimal solutions is therefore operationally essential. A key challenge specific to this problem is that the constraints are tightly coupled: GPU memory limits which TP degrees are feasible, TP choice directly affects processing delay, delay and error bounds jointly limit the allocatable workload fraction, and the budget caps the total number of activated GPUs. A standard greedy strategy that ranks candidates by cost alone ignores these dependencies and frequently yields infeasible solutions. This motivates the three constraint-aware mechanisms described below, which are shared by both the GH and AGH algorithms.
+
+3.1 Three Constraint-Aware Mechanisms
+
+M1 - Constraint-Aware Configuration Selection
+
+For each candidate placement , the algorithm determines the minimum-cost feasible (TP, PP) configuration that simultaneously satisfies GPU memory capacity and the delay threshold:
+
+(6)
+
+If no feasible exists, the candidate is discarded entirely. This prevents placements where the model does not fit in GPU memory or the resulting delay violates the SLO.
+
+M2 - Cost-Per-Effective-Coverage Ranking:
+
+Candidates are ranked not by raw cost but by cost per unit of effective demand served. The marginal cost of placing query  on configuration includes activation, storage, and delay penalty:
+
+(7)
+
+where is the required (TP, PP) configuration and is the extra GPU cost (zero for already-active configurations). The effective coverage is the maximum allocatable fraction, limited by both the error and delay budgets:
+
+(8)
+
+where is the remaining unserved demand and track cumulative error and delay from prior placements. Candidates are sorted by where prioritizes full-coverage candidates and is the unit cost.
+
+M3 - Parallelism Upgrade for Active GPUs:
+
+When query  is routed to an already-active configuration with current GPU allocation , but the current delay exceeds , the algorithm seeks a higher-parallelism configuration:
+
+(9)
+
+Rather than activating a new pair from scratch, this adds only extra GPUs to the existing configuration, reusing the already-loaded model weights.
+
+Algorithm 1 Greedy Heuristic (GH)
+
+0:
+
+ Data
+
+0:
+
+ Allocation
+
+1:
+
+ Initialize , , , ,
+
+2:
+
+ // Phase 1: Coverage pre-allocation
+
+3:
+
+ while and budget do
+
+4:
+
+  Compute via (10) and via (11),
+
+5:
+
+  Activate ; update , budget,
+
+6:
+
+ end while
+
+7:
+
+ // Phase 2: Sequential allocation
+
+8:
+
+ for each query sorted by descending do
+
+9:
+
+  for each candidate do
+
+10:
+
+   Step 1: Determine via M1 (6) or M3 (9)
+
+11:
+
+   Step 2: Compute via (8); discard if
+
+12:
+
+   Step 3: Compute via (7); record
+
+13:
+
+  end for
+
+14:
+
+  Sort candidates by ascending
+
+15:
+
+  for each in sorted order while do
+
+16:
+
+   Step 4: Verify (5f)–(5h) and budget
+
+17:
+
+   if all constraints satisfied then
+
+18:
+
+    ;  
+
+19:
+
+    Update , , , budget
+
+20:
+
+   end if
+
+21:
+
+  end for
+
+22:
+
+ end for
+
+23:
+
+ return
+
+3.2 Greedy Heuristic (GH)
+
+GH performs a single-pass allocation in two phases (Algorithm 1), invoking M1–M3 throughout to ensure feasibility at every step.
+
+Phase 1: Coverage pre-allocation (lines 2–5) operates as a greedy set-cover, ensuring every query type has at least one feasible configuration. The feasible coverage set and activation cost for each pair are:
+
+(10)
+
+(11)
+
+The algorithm greedily selects and repeats until all types are covered or the budget cap () is reached.
+
+Phase 2: Sequential allocation (lines 6–20) processes queries in descending order. For each query  and candidate : (1) determine via M1 (6) or M3 (9), discarding infeasible candidates; (2) compute effective coverage via (8); (3) rank by where prioritizes full-coverage and is unit cost via (7); and (4) verify constraints (5f)–(5h) and budget  before committing .
+
+3.3 Adaptive Greedy Heuristic (AGH)
+
+While GH is efficient, its single-pass structure has three limitations: (i) the solution quality depends on the order in which query types are processed; (ii) once a workload fraction is assigned, it cannot be revised even if a better candidate appears later; and (iii) GPUs activated early may remain underutilized. AGH (Algorithm 2) addresses these via three enhancements:
+
+•
+
+Multi-start construction (lines 2–5): generates deterministic orderings (ascending/descending for each of , , storage footprint, and error tightness) plus random permutations, retaining the best GH solution.
+
+•
+
+Relocate (lines 6–9): up to passes of local search, moving active assignments to alternative when feasible and cost-improving.
+
+•
+
+Consolidate (lines 10–12): redistributes queries from lightly loaded GPUs to other active configurations and deactivates freed instances, reducing GPU rental cost.
+
+Algorithm 2 Adaptive Greedy Heuristic (AGH)
+
+0:
+
+ Data, random starts, max local search iterations
+
+0:
+
+ Best allocation
+
+1:
+
+ 
+
+2:
+
+ Generate orderings
+[ adaptive, see Remark.1]
+
+3:
+
+ for each ordering do
+
+4:
+
+   [M1, M2, M3]
+
+5:
+
+  // Local Search: relocate
+
+6:
+
+  for iter do
+
+7:
+
+   for each with do
+
+8:
+
+    Try move to ; accept if feasible & cost-improving
+
+9:
+
+   end for
+
+10:
+
+  end for
+
+11:
+
+  // Local Search: consolidate
+
+12:
+
+  for each active in ascending order of load do
+
+13:
+
+   Redistribute queries; deactivate if feasible & improving
+
+14:
+
+  end for
+
+15:
+
+  if then
+
+16:
+
+   ;  update best_obj
+
+17:
+
+  end if
+
+18:
+
+ end for
+
+19:
+
+ return
+
+3.4 Complexity Analysis
+
+Remark 1
+
+GH runs in , dominated by the Phase 1 set-cover ( iterations, each ) and Phase 2 sorting ( per query). AGH executes starts—8 deterministic orderings (ascending/descending , , storage, ) plus random—each with GH construction, relocate passes in , and consolidation absorbed by relocate, yielding . The random start count adapts to problem scale : for , for , for , otherwise; construction terminates early after five consecutive non-improving orderings; .
+
+4 Numerical Results
+
+4.1 Simulation Setup
+
+We consider query types (Summarization, Code, Translation, Math Solving, Image, Video), Llama-3.x models (1B–70B, – GB, KV cache – B/token) [14], and GPU tiers spanning A6000 (24 GB), RTX 4090 (24 GB), A100-40 GB, and H100-80 GB with FP16/INT8/INT4 precision.11
+1
+
+GPU memory 24–80 GB, bandwidth 768–3350 GB/s, compute 40.7–1484 TFLOPS; from NVIDIA datasheets.
+TP degrees ; PP depths ; the joint selector yields bilinear (not trilinear) delay terms, requiring only a single McCormick layer.
+Arrival rates (queries/h) range from 1,000–3,000 (Video Gen.) to 18,000–25,000 (Summarization) [17]; delay SLOs – s [4]; error thresholds –%.
+GPU rental –/h [10]; budget ; horizon  h; storage capacity  GB; Phase-1 budget fraction .
+Storage price  $/GB/h (cloud object-storage pricing).
+Delay penalty  ($/ms/query) is task-dependent: for text tasks (Summarization, Translation), for Math Solving, and for Image/Video Generation.
+Unmet-demand penalty  ($/dropped query): $1,000–$1,500 for text tasks, $2,000–$3,000 for media-generation tasks.
+Token storage footprint (KB/token) [2]: 10–14 (text), 40–60 (image), 80–120 (video).
+GPU utilization efficiency  [18]; time conversion  s/h converts GPU compute (TFLOPS) to per-hour capacity in (5g); all cost terms involving are multiplied by .
+
+Per-token compute cost is derived from model FLOPs scaled by tier precision; residency time ; communication delay follows from NVLink bandwidth (600–900 GB/s) and activation size.
+Computation delays follow the memory-bandwidth-bound decode model [15]: , where is task-specific overhead, is the quantization scale (FP16: 1, INT8: 0.5, INT4: 0.25) [16], and is GPU memory bandwidth.
+Quantized modes inflate error by (INT8) and (INT4) [16]; KV cache from model architecture [2]. All experiments are conducted based on Python 3.13, Gurobi 11 [8]. Source code is available at https://github.com/JJmingcc/FastLLM.
+
+4.2 Performance Evaluation
+
+We employ a two-stage evaluation with scenarios (delays/errors perturbed , arrivals ).
+Stage 1 (Decision): Each algorithm computes from nominal parameters.
+Stage 2 (Operation): Placement is fixed; for each scenario with realized we solve:
+
+(12a)
+
+s.t.  
+
+(12b)
+
+(12c)
+
+(12d)
+
+(12e)
+
+(12f)
+
+where absorbs the unit-scaling factor from (5g). Since placements are fixed, is a pure LP. We report expected total cost and SLO violation rate .
+
+Table 2: Stage-2 evaluation under varied budget and penalty settings.
+
+Scenario
+Algo.
+Pay.
+Cost ()
+Viol. (%)
+
+S2: Tight
+
+GH
+63.1
+314.4
+1.5
+
+AGH
+53.8
+136.6
+0.6
+
+Gap
+
+S3: Critical
+
+GH
+63.1
+1162.0
+14.2
+
+AGH
+35.5
+343.0
+3.7
+
+Gap
+
+S4: Hi. pen.
+
+GH
+63.1
+964.0
+1.5
+
+AGH
+53.8
+140.0
+0.6
+
+Gap
+
+S5: Hi. pen.
+
++ critical
+
+GH
+63.1
+1811.0
+14.2
+
+AGH
+35.5
+344.0
+3.7
+
+Gap
+
+scales (Image Gen.) & (Video Gen.). S1 (baseline, ): GHAGH$145.8.
+
+(a) Actual cost
+
+(b) SLO violation (%)
+
+(c) Cost breakdown
+
+(d) Varying and
+
+(e) Varying and
+
+(f) Varying and
+
+Figure 2: (a)–(c): Model comparison under delay/error stress. (d)–(f): AGH sensitivity analysis over SLO thresholds , , budget , and rental cost .
+
+Model comparison: Figs. 2(a)–2(b) compare all three methods under 1.2 and 1.5 delay/error inflation. Under nominal conditions, the exact MILP solver (DM) achieves the lowest cost. However, under stress, both GH and AGH achieve lower actual cost and SLO violation rates—a result explained by Fig. 2(c): the heuristics allocate moderately higher GPU rental (the dominant term), provisioning headroom that absorbs demand fluctuations, whereas DM’s cost-minimal placement incurs large unmet demand penalties () when parameters deviate. This conservatism arises naturally from the constraint-aware mechanisms, which select TP degrees with feasibility margins and favor configurations that cover more query types per GPU. Under tight and critical budgets (Table 2), AGH’s advantage over GH becomes pronounced: at (S3), AGH reduces actual cost by 70% and SLO violations by 74% relative to GH. The multi-start construction explores diverse allocations, while consolidation eliminates fragmented GPU usage—effects that compound under budget pressure.
+
+Key insight 1: The constraint-aware mechanisms implicitly provision headroom, yielding placements that are nominally suboptimal but more robust under perturbation—periodic heuristic re-optimization thus outperforms a single exact solve. Moreover, AGH’s advantage over GH compounds under budget pressure, achieving up to 81% cost reduction at critical budgets (S5).
+
+Sensitivity analysis: Figs. 2(d)–2(f) vary parameters pairwise. Tightening forces higher TP degrees while stricter restricts feasible pairs—both increase cost, with delay the stronger driver (Fig. 2(d)). Rising shifts AGH toward fewer, higher-capacity tiers (Fig. 2(e)); relaxing enables lower TP degrees, reducing GPU count and cost (Fig. 2(f)).
+
+Ablation: Table 3 disables each mechanism individually. Removing M1 or M3 renders solutions infeasible (memory violation and delay violation, respectively); removing M2 preserves feasibility but inflates cost by 50%.
+
+Key insight 2: M1 and M3 are feasibility prerequisites—not mere optimizations—distinguishing constraint-aware allocation from standard GRASP heuristics [7] where ranking affects quality but not feasibility.
+
+Table 3: Ablation of constraint-aware mechanisms.
+
+Configuration
+Feasible?
+Cost ($)
+
+AGH (all mechanisms)
+Yes
+89.88
+
+w/o M1 (TP selection)
+No (memory/delay violation)
+—
+
+w/o M2 (cost ranking)
+Yes
+134.52 (>50%)
+
+w/o M3 (TP upgrade)
+No (delay violation)
+—
+
+Run time: Table 5 shows MILP runtime grows exponentially, exceeding the 600 s limit at , while GH remains sub-second and AGH stays under 10 s—over speedup at . This makes both algorithms practical as a planning layer re-invoked periodically or on-demand alongside serving engines such as vLLM [2].
+
+4.3 Rolling-Horizon Adaptation
+
+The sub-second runtime of GH and AGH enables a practical advantage unavailable to the MILP solver: rolling re-optimization. We divide the 24-hour rental period ( h) into -minute windows and let demand evolve as a geometric random walk, , where is the per-step (5-min) volatility. Five levels are tested, producing cumulative demand standard deviations of roughly , , , , and over the full horizon. Static methods (DM-24h, GH-24h, AGH-24h) solve once at and keep the same configuration for the entire 24 hours; the rolling method (AGH-5min) re-solves every 5 min and adopts the new configuration only if it improves upon the incumbent (keep-best strategy). Table 4 reports meanstd over 30 independent trials with 288 windows each.
+
+Table 4: Rolling-horizon re-optimization: meanstd cost ($) over the 24-hour rental period (30 trials, 288 windows each). Bold marks the lowest mean cost at each .
+
+DM-24h
+
+GH-(Any)†
+
+AGH-24h
+
+AGH-5min
+
+AGH-5 min vs AGH-24 h
+
+AGH-5 min vs DM-24 h
+
+†GH-5min and GH-24h produce identical costs; GH’s deterministic ordering is
+
+invariant to demand drift, making re-optimization frequency irrelevant.
+
+Three observations emerge. First, GH is immune to re-optimization: its deterministic ordering by preserves the same relative ranking after demand drifts, so re-solving reproduces the static solution in every trial (cost rises only across all ). Second, AGH benefits substantially once volatility is high: at , AGH-5min saves – over static AGH-24h while reducing cost variance by – ($23–$56 vs. $173–$214 std), because its stochastic multi-start construction discovers genuinely different solutions when demand shifts. Third, the static MILP degrades sharply: DM-24h is optimal at ($381) but exceeds $793–$909 at , while AGH-5min saves up to .
+
+Key insight 3: The sub-second runtime of AGH creates a compounding operational advantage: by re-solving every 5 minutes with updated observations, the SP accumulates frequent low-cost adjustments that a deterministic heuristic (GH) structurally cannot exploit and a MILP solver cannot support at the same granularity.
+
+Table 5: Runtime scaling with network size (seconds).
+
+Method
+
+DM
+0.39
+4.2
+13.04
+601.12
+
+GH
+
+0.3
+0.5
+0.9
+
+AGH
+0.0149
+0.113
+0.57
+1.09
+2.3
+
+5 Conclusion
+
+We proposed GH and AGH for joint model selection, GPU provisioning, parallelism configuration, and workload allocation under coupled delay, error, memory, compute, and budget constraints. The three constraint-aware mechanisms are feasibility prerequisites—not mere optimizations—as the ablation confirms. AGH closely approaches optimal cost while achieving 260 speedup, and maintains stable performance under 1.5 out-of-sample stress where the exact solver degrades sharply. Sub-second runtimes enable rolling-horizon re-optimization: re-solving every 5 minutes with updated observations compounds frequent adjustments into robust performance without explicit uncertainty modeling. Future work will incorporate stochastic optimization, queuing and continuous batching dynamics, and real cluster validation.
+
+References
+
+[1]
+
+A. Chien, L. Fan, and H. Yeung, “Reducing the carbon impact of generative AI inference (today and in 2035),” arXiv preprint arXiv:2304.03271, 2023.
+
+[2]
+
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C.H. Yu, J. Gonzalez, H. Zhang, and I. Stoica, “Efficient memory management for large language model serving with PagedAttention,” in Proc. SOSP, 2023.
+
+[3]
+
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang, “DistServe: Disaggregating prefill and decoding for goodput-optimized large language model serving,” in Proc. OSDI, 2024.
+
+[4]
+
+J. Stojkovic, C. Zhang, İ. Goiri, J. Torrellas, and E. Choukse, “DynamoLLM: Designing LLM inference clusters for performance and energy efficiency,” in Proc. HPCA, IEEE, 2025.
+
+[5]
+
+Y. Mei, Y. Zhuang, X. Miao, J. Yang, Z. Jia, and R. Vinayak, “Helix: Serving large language models over heterogeneous GPUs and network via max-flow,” in Proc. ASPLOS, 2025.
+
+[6]
+
+Y. Jiang, F. Fu, X. Yao, G. He, X. Miao, A. Klimovic, B. Cui, B. Yuan, and E. Yoneki, “Demystifying cost-efficiency in LLM serving over heterogeneous GPUs,” in Proc. ICML, 2025.
+
+[7]
+
+T. A. Feo and M. G. C. Resende, “Greedy randomized adaptive search procedures,” J. Global Optim., vol. 6, pp. 109–133, 1995.
+
+[8]
+
+Gurobi Optimization, LLC, “Gurobi optimizer reference manual,” 2024. [Online]. Available: https://www.gurobi.com
+
+[9]
+
+Y. Zhao, J. Chen, P. Sun, L. Li, X. Liu, and X. Jin, “SeaLLM: Resource sharing for multi-LLM services,” in Proc. NSDI, 2025.
+
+[10]
+
+G. Wilkins, S. Keshav, and R. Mortier, “Offline energy-optimal LLM serving,” arXiv preprint arXiv:2407.04014, 2024.
+
+[11]
+
+T. Xia, Z. Mao, J. Kerney, E.J. Jackson, Z. Li, J. Xing, S. Shenker, and I. Stoica, “SkyLB: Locality-aware cross-region load balancing for LLM serving,” in Proc. SIGCOMM, 2025.
+
+[12]
+
+K. Kim, et al., “Cost-efficient LLM serving with heterogeneous VMs and KV cache offloading,” in Proc. EuroSys, 2025.
+
+[13]
+
+Microsoft Research, “Azure LLM inference trace,” 2025. [Online]. Available: https://github.com/Azure/AzurePublicDataset
+
+[14]
+
+A. Dubey, A. Jauhri, A. Pandey, et al., “The Llama 3 herd of models,” arXiv preprint arXiv:2407.21783, 2024.
+
+[15]
+
+R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, J. Heek, K. Xiao, S. Agrawal, and J. Dean, “Efficiently scaling transformer inference,” in Proc. MLSys, vol. 5, 2023.
+
+[16]
+
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh, “GPTQ: Accurate post-training quantization for generative pre-trained transformers,” in Proc. ICLR, 2023.
+
+[17]
+
+P. Patel, et al., “Splitwise: Efficient generative LLM inference using phase splitting,” in Proc. ISCA, 2024.
+
+[18]
+
+D. Narayanan, et al., “Efficient large-scale language model training on GPU clusters using Megatron-LM,” in Proc. SC, 2021.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

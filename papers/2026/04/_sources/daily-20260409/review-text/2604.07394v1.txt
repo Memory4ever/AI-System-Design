@@ -1,0 +1,2124 @@
+Flux Attention: Context-Aware Hybrid Attention for Efficient LLMs Inference
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Preliminary
+
+2.1 Functional Heterogeneity in Attention Mechanisms
+
+2.2 Rethinking Hybrid Attention Mechanisms
+
+2.3 Motivational Observations
+
+Settings
+
+Results
+
+3 Methodology
+
+3.1 Context-Aware Layer Router Design
+
+Architecture and Feature Extraction
+
+Differentiable Training via Soft Routing
+
+Deterministic Inference via Hard Routing
+
+3.2 Training Objective and Sparsity Constraint
+
+3.3 Efficient Deployment
+
+4 Experiments
+
+4.1 Settings
+
+Training and Data
+
+Evaluation
+
+4.2 Evaluation Results
+
+Real-world Long-context Tasks
+
+Length Extrapolation Capability Testing
+
+Long-form Reasoning and Math Tasks
+
+4.3 Overall Inference Efficiency
+
+End-to-End Prefill Acceleration
+
+Kernel-Level Decode Acceleration
+
+Router Overhead Analysis
+
+5 Analysis
+
+5.1 Dynamic Allocation Strategy of the Layer Router
+
+Task-Level Dynamic Sparsity
+
+Context-Aware Intra-Task Sparsity
+
+5.2 Impact of Target Sparsity Allocation
+
+5.3 Scalability via Backbone Adaptation
+
+6 Conclusion
+
+References
+
+A Code & Model
+
+B Related Work
+
+B.1 Sparse Attention Mechanisms
+
+B.2 Hybrid Architectures and Dynamic Allocation
+
+B.3 Dynamic Routing in Neural Networks
+
+C Sparsification Setup and Latency Profiling Implementation
+
+C.1 Layer Entropy Score Calculation
+
+C.2 Progressive Sparsification Strategy
+
+C.3 Latency Measurement Implementation
+
+Implementation of Sparsity Baselines
+
+D Implementation Details
+
+D.1 Training Configuration and Hyperparameters
+
+D.2 Baseline Implementation Details
+
+D.3 Sparsity and Kernel Configuration
+
+E Analysis
+
+E.1 Impact of Data Composition on Task Differentiation
+
+E.2 Impact of Input Truncation on Task Identification
+
+E.3 Loss Curves and Performance Metrics
+
+Optimization Stability.
+
+Differentiation in Flux Attention Allocation.
+
+Adaptive Coefficients.
+
+F Error Analysis
+
+License: CC BY 4.0
+
+arXiv:2604.07394v1 [cs.LG] 08 Apr 2026
+
+Flux Attention: Context-Aware Hybrid Attention for Efficient LLMs Inference
+
+Quantong Qiu
+
+Affiliation: School of Computer Science and Technology, Soochow University
+
+  
+Zhiyi Hong
+
+Affiliation: School of Computer Science and Technology, Soochow University
+
+  
+Yi Yang
+
+Affiliation: School of Computer Science and Technology, Soochow University
+
+  
+Haitian Wang
+
+Affiliation: School of Computer Science and Technology, Soochow University
+
+  
+Kebin Liu
+
+Affiliation: Baidu Inc, China
+
+  
+Qingqing Dang
+
+Affiliation: Baidu Inc, China
+
+  
+Juntao Li
+††thanks:   Corresponding author: ljt@suda.edu.cn
+Affiliation: School of Computer Science and Technology, Soochow University
+
+  
+Min Zhang
+
+Affiliation: School of Computer Science and Technology, Soochow University
+
+Abstract
+
+The quadratic computational complexity of standard attention mechanisms presents a severe scalability bottleneck for LLMs in long-context scenarios.
+While hybrid attention mechanisms combining Full Attention (FA) and Sparse Attention (SA) offer a potential solution, existing methods typically rely on static allocation ratios that fail to accommodate the variable retrieval demands of different tasks.
+Furthermore, head-level dynamic sparsity often introduces severe computational load imbalance and synchronization long-tails, which hinder hardware acceleration during autoregressive decoding.
+To bridge this gap, we introduce Flux Attention, a context-aware framework that dynamically optimizes attention computation at the layer level.
+By integrating a lightweight Layer Router into frozen pretrained LLMs, the proposed method adaptively routes each layer to FA or SA based on the input context.
+This layer-wise routing preserves high-fidelity information retrieval while ensuring contiguous memory access, translating theoretical computational reductions into practical wall-clock speedups.
+As a parameter-efficient approach, our framework requires only 12 hours of training on 8A800 GPUs.
+Extensive experiments across multiple long-context and mathematical reasoning benchmarks demonstrate that Flux Attention achieves a superior trade-off between performance and inference speed compared with baseline models, with speed improvements of up to and in the prefill and decode stages.
+
+1 Introduction
+
+(a) Performance vs. sparsity.
+
+(b) Decoding latency and speedup.
+
+Figure 1: Impact of sparsity on performance and decoding efficiency. (a) Certain tasks suffer performance collapse beyond a specific threshold. (b) Layer-level sparsity achieves substantial decoding speedup, while head-level sparsity yields marginal speedup.
+
+Large Language Models (LLMs) have demonstrated strong capabilities in handling extended context windows for tasks such as document analysis, long-form reasoning, and question answering [26, 31]. However, the standard Full Attention (FA) mechanism [41] scales quadratically with sequence length, creating severe memory and computational bottlenecks during prefilling and autoregressive decoding. Sparse Attention (SA) mechanism addresses this by restricting computations to a subset of tokens to reduce the memory footprint [5, 51].
+
+Modern architectures frequently employ hybrid attention mechanisms that integrate both FA and SA within a single network to balance inference efficiency and generation quality [52]. Conventional hybrid models typically rely on a static allocation of dense and sparse computation. However, downstream applications exhibit highly varied computational demands, as detailed in our preliminary study (Section 2.3). Retrieval-intensive tasks require dense token interactions to locate specific information, whereas context-holistic tasks focus on overarching semantics and remain stable under high sparsity [33]. Consequently, a static configuration risks performance degradation on retrieval tasks and wastes valuable computational resources on holistic tasks.
+
+To achieve dynamic allocation, recent works [38] have explored fine-grained routing at the head level by assigning varying sparsity ratios to individual attention heads based on the input. While algorithmically flexible, this fine-grained routing introduces severe hardware inefficiencies during the memory-bandwidth-bound decode phase. Varying context lengths across heads lead to heterogeneous computational workloads within the same layer. This forces thread blocks executing sparse heads to idle while waiting for retrieval heads, creating a synchronization long-tail that prevents theoretical FLOP reductions from translating into actual wall-clock decoding speedups.
+
+To overcome these challenges, we propose Flux Attention, a context-aware framework that dynamically optimizes attention computation at the layer level. Instead of managing individual heads, we introduce a lightweight Layer Router. By evaluating the semantic context of the input prompt, the router infers the underlying task demands and adaptively assigns each layer to FA or SA mode. This coarse granularity inherently preserves contiguous memory access, enabling the GPU to completely bypass the memory-intensive loading of historical KV tensors when SA is selected.
+
+During training, we freeze all backbone LLM parameters and update only the lightweight Layer Router module. We employ a Gumbel-Softmax [17] relaxation for differentiable soft routing, allowing the model to smoothly learn the correlation between context complexity and computational budget. During inference, this soft formulation is discretized into deterministic hard routing, successfully translating theoretical computational savings into substantial wall-clock speedups.
+
+Extensive evaluations on models such as Qwen-3 [49] and Llama-3.1 [12] demonstrate that Flux Attention successfully adapts sparsity levels across diverse tasks. Our parameter-efficient training converges in just 12 hours on an 8-GPU A800 node. Flux Attention achieves a superior performance-efficiency trade-off compared to existing baselines, delivering up to a 2.7x speedup during the prefill phase and a 2.0x acceleration during autoregressive decoding.
+
+2 Preliminary
+
+2.1 Functional Heterogeneity in Attention Mechanisms
+
+During long-context inference, attention mechanisms in Large Language Models (LLMs) specialize functionally based on their sensitivity to historical context and computational demands. Specialized retrieval heads are essential for high-fidelity information recovery, as they precisely locate relevant tokens across extensive sequences [42]. UnComp [46] observe that heads with abnormally high entropy tend to aggregate at specific model depths to capture long-range dependencies. Layers dominated by these heads function as retrieval layers. To ensure precise retrieval, they require a Full Attention (FA) mode, where the Query () interacts with all historical states Key () and Value ():
+
+(1)
+
+where the scaling factor is omitted for clarity. While FA preserves the complete context, its computational complexity is quadratic with sequence length , posing challenges for efficient inference.
+
+A substantial portion of heads instead focus on local semantic structures and are robust to context truncation. Layers predominantly composed of these sparse heads operate as sparse layers. Sparse layers employ a Sparse Attention (SA) mechanism to reduce computational overhead in long-sequence processing. SA optimizes efficiency by performing attention operations on a condensed subset of the most critical historical elements ( and ):
+
+(2)
+
+2.2 Rethinking Hybrid Attention Mechanisms
+
+To balance generation quality and inference efficiency, various hybrid attention mechanisms have been proposed. Existing methods, such as PruLong [4], DuoAttention [43], and LycheeDecode [25], adopt a static allocation strategy. They identify retrieval heads offline and permanently assign them full historical states, while uniformly sparsifying the context for the remaining heads across all tasks.
+
+However, the demand for precise information retrieval varies depending on the specific task and input prompt. Elastic Attention [38] suggests dynamic, context-aware sparsity at the head level, which adjusts the retention of historical states dynamically. Although this fine-grained allocation optimizes the theoretical efficiency-performance trade-off, it yields limited actual decoding acceleration. The dynamic adjustment at the head level introduces significant system-level overhead and irregular memory access patterns during deployment, limiting the achievable speedup during the decode phase.
+
+2.3 Motivational Observations
+
+To investigate the limitations of existing sparsity mechanisms, we formalize the quantification of model-level sparsity. The Model Sparsity Ratio () quantifies the overall proportion of sparse attention mechanisms applied across the model:
+
+(3)
+
+where denotes the assigned attention mode (FA or SA) for head in layer , and is the indicator function.
+
+Settings
+
+To investigate the impact of varying sparsity ratios () on long-context LLMs, we profile task accuracy and decode latency.
+For the accuracy evaluation in Figure 1(a), we use a matrix entropy metric based on UnComp [46] to quantify the information density of individual layers.
+We rank the layers using these calculated entropy scores and progressively replace the lowest-scoring ones with SA.
+Model performance is then evaluated across real-world tasks from LongBench [1].
+For hardware efficiency (Figure 1(b)), we compare the decode latency and achievable speedup of our layer-level sparsity against a static head-level sparsity baseline.
+Appendix C provides details on the entropy scoring formulation and latency measurement implementation.
+
+Results
+
+Our analysis reveals two bottlenecks in current hybrid attention mechanisms.
+First, as shown in Figure 1(a), model performance does not degrade linearly with increasing .
+Instead, accuracy drops sharply for retrieval-intensive tasks once a specific sparsity threshold is exceeded.
+This indicates that static sparsity assignments do not adapt to varying contextual demands, necessitating a context-aware dynamic retention strategy for historical states.
+Second, Figure 1(b) demonstrates a distinct discrepancy in hardware efficiency.
+While head-level sparsity provides algorithmic flexibility, it introduces severe hardware bottlenecks during the memory-bandwidth-bound decode phase.
+It creates a severe synchronization long-tail effect. Thread blocks executing sparse heads finish quickly but must idle while waiting for memory-intensive retrieval heads within the same layer.
+This intra-layer load imbalance yields only marginal wall-clock speedups.
+In contrast, layer-level sparsity ensures uniform computational workloads across all thread blocks. By completely bypassing historical KV loading for designated layers, it eliminates synchronization stalls, effectively translating theoretical FLOP reductions into substantial decode acceleration.
+
+These observations present a fundamental dilemma. Fine-grained head-level sparsity is hardware-unfriendly during decode, whereas static sparsity risks performance collapse. To address this, we propose a dynamic, context-aware hybrid attention mechanism operating at the layer level to balance model performance with inference efficiency.
+
+3 Methodology
+
+We introduce a Flux Attention mechanism to address the hardware inefficiencies of fine-grained sparsity and the rigidity of static allocations. As illustrated in Figure 2, our architecture relies on a dynamic Layer Router that adaptively assigns each layer to either FA or SA based on the input query. This approach is parameter-efficient: the original LLM backbone parameters remain strictly frozen during training. Optimization only updates the lightweight components of the Layer Router, ensuring rapid convergence while preserving pre-trained weights.
+
+Figure 2: Overview of our dynamic layer-level routing architecture. The model incorporates a Layer Router that assigns each layer to either FA or SA based on the input query .
+
+3.1 Context-Aware Layer Router Design
+
+Within the Flux Attention module, a lightweight Layer Router determines the optimal attention mechanism for a given context.
+
+Architecture and Feature Extraction
+
+As shown in Figure 2, the router receives the incoming query tensor as input, where represents the sequence length, denotes the number of heads, and indicates the head dimension.
+To efficiently extract semantic context, we apply a Prefill-Suffix Pooling operation to to extract representations of the initial and final prompt tokens. This operation efficiently aggregates the token-level features into a single sequence-level descriptor.
+Subsequently, a Context Encoder (MLP) processes this pooled representation to capture contextual dependencies, after which a Router Head (MLP) projects these features into unnormalized routing logits, denoted as and .
+
+Differentiable Training via Soft Routing
+
+Optimizing the Layer Router is challenging because the binary routing decisions are discrete and non-differentiable.To address this, we apply the Gumbel-Softmax relaxation [17] to enable end-to-end backpropagation.
+During training, we sample continuous routing weights , which represent the probability of selecting the FA mechanism. This computation is defined as follows:
+
+(4)
+
+where are independent and identically distributed samples drawn from the Gumbel distribution, and denotes the temperature parameter. The output of the Flux Attention layer is then computed as a convex combination:
+
+(5)
+
+The temperature controls the smoothness of the routing distribution. We employ a temperature annealing schedule to minimize the train-test discrepancy. Initially, is set to a high value to encourage exploration and ensure smooth gradient flow. As training progresses, linearly decays towards a small value.
+
+Deterministic Inference via Hard Routing
+
+During the inference phase, the router outputs a binary decision using an operation over the generated logits.
+When , the layer executes the SA mechanism.
+
+3.2 Training Objective and Sparsity Constraint
+
+We formulate the training objective as a constrained optimization problem to balance generation quality and computational efficiency. Without intervention, the router tends to degenerate by sending all queries to the FA mode, which trivially minimizes the language modeling loss.
+
+A dynamic penalty mechanism controls the inference budget. Let denote the target computational budget for sparse computation (i.e., the permissible fraction of SA layers, corresponding to ).
+Notably, instead of enforcing a rigidly fixed for each task, we impose task-dependent non-tight constraints with predefined lower and upper bounds, since the optimal sparsity for a given task is inherently unknown. We therefore define the sparsity deviation as , which represents the gap between the expected sparse routing probability across all layers and the allocated budget. We solve the overall optimization objective via Lagrangian relaxation:
+
+(6)
+
+where represents the trainable parameters of the Layer Router, and is the standard cross-entropy loss. The Lagrangian multipliers and are task-specific trainable Lagrange multipliers optimized via gradient ascent [4], which decouple the sparsity–performance trade-offs across tasks and mitigate optimization conflicts.
+
+3.3 Efficient Deployment
+
+To translate theoretical sparsity gains into real-world inference acceleration and memory savings, Flux Attention decouples routing computation between the prefill and decode phases, with a sparse-decode implementation aligned with our experimental settings.
+
+The Layer Router infers only once during the prefill phase, generating a deterministic hard routing decision () per layer based on the input context. This decision is cached and reused across all decoding steps, eliminating per-token routing overhead. Our sparse-decode configuration further optimizes efficiency: for sparse layers, we only maintain the minimal KV cache required by the sparse kernel, fully bypassing full historical KV access and storage; for retrieval layers, complete KV cache is retained to preserve retrieval performance. This design delivers significant decoding speedups and KV cache reduction in long-context scenarios.
+
+Table 1: Performance on LongBench-E [1]. We report average performance (Perf.) and per task category.
+The 1st and the 2nd performance in each comparison group are highlighted with bold font and underlined, respectively. Gray-shaded rows denote the sparse-decode configuration.
+
+Method
+S-Doc QA
+M-Doc QA
+Summ
+In-Context
+Synthetic
+Code
+Avg.
+
+Qasper
+
+MF-en
+
+HotQA
+
+2Wiki
+
+Gov.
+
+M.News
+
+TREC
+
+TQA
+
+SAMS
+
+PCount
+
+PRe
+
+RB-P
+
+Lcc
+
+Perf.
+
+Qwen3-4B backbone model
+
+Qwen3-4B
+35.21
+52.16
+44.81
+32.15
+33.47
+23.45
+70.67
+88.22
+39.74
+2.33
+96.84
+50.84
+57.93
+48.45
+-
+
++ DuoAttention
+35.83
+49.84
+47.09
+32.24
+33.32
+23.70
+69.33
+85.87
+39.75
+4.50
+94.57
+50.56
+57.43
+48.22
+0.50
+
++ PruLong
+34.15
+50.78
+44.48
+32.89
+32.96
+23.53
+67.67
+88.69
+39.55
+3.17
+90.17
+49.00
+54.07
+47.16
+0.50
+
++ TriangleMix
+35.55
+52.02
+45.37
+31.76
+33.32
+23.70
+69.00
+88.20
+39.74
+3.83
+91.51
+48.58
+56.38
+47.72
+0.50
+
++ FluxAttn (FA-SSA)
+35.02
+49.44
+49.64
+32.27
+33.26
+23.48
+69.33
+88.29
+39.78
+1.50
+94.56
+53.44
+59.69
+48.72
+0.44
+
++ FluxAttn (FA-XA)
+35.74
+51.70
+45.83
+32.34
+33.57
+23.66
+69.00
+87.23
+39.81
+3.50
+93.74
+50.81
+59.28
+48.32
+0.53
+
++ FluxAttn (FA-TA)
+35.02
+50.89
+45.17
+34.24
+33.02
+23.53
+69.00
+88.08
+40.38
+3.94
+96.06
+51.68
+60.00
+48.76
+0.47
+
++ FluxAttn (FA-SSA)
+35.10
+51.68
+49.65
+32.86
+33.04
+23.42
+69.33
+88.00
+40.00
+1.67
+94.47
+51.40
+58.68
+48.59
+0.44
+
+Qwen3-8B backbone model
+
+Qwen3-8B
+41.22
+49.92
+58.98
+44.21
+33.27
+23.42
+71.33
+86.77
+41.83
+2.00
+98.33
+56.08
+66.31
+52.16
+-
+
++ DuoAttention
+41.78
+51.55
+55.96
+41.70
+33.24
+23.34
+69.33
+89.35
+41.62
+0.50
+98.93
+57.54
+69.39
+52.13
+0.50
+
++ PruLong
+37.95
+51.20
+51.94
+36.48
+33.11
+23.36
+69.00
+87.90
+42.11
+1.00
+98.00
+57.05
+67.66
+50.80
+0.50
+
++ TriangleMix
+40.82
+51.31
+57.57
+44.51
+33.32
+23.35
+71.33
+86.73
+41.79
+2.00
+94.33
+55.04
+65.89
+51.65
+0.50
+
++ FluxAttn (FA-SSA)
+40.30
+50.49
+56.02
+40.90
+33.01
+23.55
+71.67
+88.31
+41.61
+0.33
+100.00
+59.46
+68.27
+52.18
+0.46
+
++ FluxAttn (FA-XA)
+40.41
+50.26
+57.78
+40.57
+33.27
+23.51
+69.67
+87.19
+42.12
+1.33
+99.33
+55.41
+65.51
+51.57
+0.51
+
++ FluxAttn (FA-TA)
+41.00
+49.76
+58.19
+44.36
+33.32
+23.35
+70.00
+88.77
+41.70
+1.33
+99.67
+55.60
+67.22
+52.22
+0.47
+
++ FluxAttn (FA-SSA)
+39.92
+50.04
+55.72
+40.81
+33.03
+23.50
+72.00
+88.48
+40.96
+0.33
+99.22
+58.57
+69.46
+52.05
+0.46
+
+Llama-3.1-8B-Instruct backbone model
+
+Llama-3.1-8B-Instruct
+44.06
+53.44
+59.62
+44.08
+34.50
+26.02
+71.00
+90.54
+42.94
+12.67
+99.33
+47.78
+63.85
+53.28
+-
+
++ DuoAttention
+34.63
+50.74
+49.70
+36.41
+34.25
+25.78
+70.00
+91.45
+42.13
+9.80
+97.33
+53.59
+68.55
+52.11
+0.50
+
++ PruLong
+41.51
+52.36
+50.46
+37.57
+34.25
+25.86
+66.33
+89.93
+41.72
+9.07
+97.00
+56.84
+66.23
+51.68
+0.50
+
++ TriangleMix
+45.10
+54.60
+56.67
+41.88
+34.09
+25.51
+71.33
+90.93
+42.63
+10.62
+94.67
+43.64
+59.35
+51.67
+0.50
+
++ FluxAttn (FA-SSA)
+45.25
+54.42
+54.54
+41.34
+34.54
+26.16
+68.33
+91.91
+42.17
+9.00
+97.67
+47.74
+65.35
+52.28
+0.51
+
++ FluxAttn (FA-XA)
+42.14
+53.13
+58.53
+43.50
+34.66
+26.06
+70.67
+91.46
+43.13
+8.00
+99.67
+50.91
+64.78
+53.07
+0.72
+
++ FluxAttn (FA-TA)
+44.77
+54.12
+57.35
+43.43
+34.31
+25.80
+72.33
+91.32
+42.62
+9.33
+98.33
+45.48
+60.70
+52.42
+0.62
+
++ FluxAttn (FA-SSA)
+43.76
+53.41
+57.36
+39.43
+32.96
+25.63
+70.33
+91.27
+42.20
+11.00
+98.67
+45.60
+66.17
+52.30
+0.51
+
+4 Experiments
+
+4.1 Settings
+
+Training and Data
+
+We select Qwen3 (4B and 8B) [49] and Llama-3.1-8B-Instruct [12] as the backbone LLMs. We construct the training dataset by combining five sources: ChatQA2-Long-SFT-data [47], MuSiQue [40], CoLT-132K [22], GovReport [16], and XSum [32]. This dataset covers both retrieval-intensive tasks (Single-Doc QA and Multihop QA) and context-holistic tasks (code completion, summarization, and in-context learning). The resulting dataset spans sequence lengths ranging from 1K to 64K tokens, and contains approximately 0.74B tokens in total. For the context-holistic and retrieval-intensive task categories, we empirically set and , respectively, as motivated by Section 2.3. We conduct the training process using eight A800 GPUs, and each run completes within 12 hours. We provide additional training details in the Appendix D and list the hyperparameters in the table 3.
+
+Evaluation
+
+We compare our method with representative sparsity approaches: DuoAttention [44], PruLong [4], and TriangleMix [14]. The computation modes for sparse layer attention include Streaming Sparse Attention (SSA) [45], XAttention (XA) [48], and Triangle Attention (TA).
+The configurations for layer computation follow the format of “{Retrieval Layer mode}-{Sparse Layer mode}” (e.g., FA-SSA denotes the use of FA for retrieval layers and SSA for sparse layers). All evaluations are conducted using the LOOM-Eval framework [39].
+
+4.2 Evaluation Results
+
+Real-world Long-context Tasks
+
+Table 1 presents the evaluation results on LongBench-E [1], a real-world long-context benchmark that comprises 14 tasks across 6 categories with varying context lengths.
+FluxAttn maintains the performance of the model on long-context tasks while achieving substantial context compression.
+Across the Qwen3 series, variants of FluxAttn frequently match or slightly exceed the average performance of the full attention baselines.
+We further evaluate the effect of applying sparse attention during the decode phase, as indicated in the shaded rows.
+The method remains competitive under sparse decode. On Qwen3-4B, the sparse-decode configuration achieves an average score of 48.59, which remains above the full attention baseline.
+For Qwen3-8B and Llama-3.1-8B-Instruct, the average scores (52.05 and 52.30, respectively) demonstrate only a slight degradation compared to the standard dense decoding approach.
+
+Length Extrapolation Capability Testing
+
+To further assess the ability of the models to handle extreme context lengths, we evaluated our method on the RULER benchmark [15], which tests length extrapolation capabilities from 8K to 256K tokens. The results are summarized in Table 2.
+Overall, FluxAttn demonstrates robust length extrapolation, maintaining information retrieval and reasoning capabilities even at the 256K context boundary, where many existing sparse attention baselines experience severe performance degradation.
+Consistent with our findings in real-world tasks, we also observe that extending sparsity to the decode phase (shaded rows) preserves the extrapolation capabilities.
+The sparse-decode configuration of FluxAttn on Qwen3-4B achieves an average score of 67.19 (the highest among all methods in the comparison group) and a score of 56.00 at 256K. This result further validates that our method can achieve comprehensive efficiency gains without compromising ultra-long context understanding.
+
+Long-form Reasoning and Math Tasks
+
+We further evaluate our models on the long-context reasoning benchmark LongBench-V2 [2], as well as the mathematical reasoning tasks GSM8K [6] and AIME24 [30]. Table 2 demonstrates that FluxAttn exhibits strong performance across both domains. On LongBench-V2, the proposed method attains the highest scores on both the easy and hard subsets among all baselines.
+Furthermore, our approach improves the performance on the mathematical benchmarks, yielding the best results on GSM8K and AIME24.
+This proves that FluxAttn robustly preserves complex logical reasoning capabilities.
+
+4.3 Overall Inference Efficiency
+
+To evaluate the hardware acceleration of our method, we benchmark the inference speedup of FluxAttn against the standard dense baseline and existing sparse methods across varying context lengths. Figure 3 presents the speedup metrics for both the prefill and decode phases.
+
+End-to-End Prefill Acceleration
+
+Figure 3(a) shows the end-to-end latency reduction during the compute-bound prefill phase. As the context window expands, the quadratic complexity of standard attention becomes a bottleneck, allowing our dynamic routing mechanism to demonstrate substantial gains. At a 256K context length, our method (configured with Full + Triangle) achieves up to a 2.8 end-to-end speedup, outperforming static baselines such as PruLong and TriangleMix.
+
+Kernel-Level Decode Acceleration
+
+The advantage of layer-level routing is evident during the memory-bandwidth-bound decode phase, as shown in Figure 3(b). While prior approaches like PruLong struggle to translate theoretical sparsity into proportional wall-clock speedups due to fragmented memory access, FluxAttn solves this bottleneck by operating at the layer level. Our method achieves a scalable kernel speedup, approaching 2.0 at a 256K context length. This result empirically shows that our context-aware, layer-wise routing aligns with modern GPU execution patterns to deliver improved inference efficiency.
+
+Router Overhead Analysis
+
+A critical requirement for dynamic routing is minimizing its own computational cost. As illustrated in Figure 9, our router incurs a negligible overhead, averaging only 0.20 ms per layer. Notably, the design exhibits length-invariant stability, maintaining a constant execution speed across sequence lengths ranging from 512 to 1M tokens. This ensures that the routing mechanism itself does not become a bottleneck at extreme context lengths, thereby preserving the substantial speedups achieved in the prefill phase.
+
+Table 2: Model performance on RULER [15], LongBench-v2 [2] and some Math tasks [6, 30]
+
+.
+
+Models
+RULER
+LongBench-v2
+Math
+
+8K
+16K
+32K
+64K
+128K
+256K
+Perf.
+Easy
+Hard
+Perf.
+GSM8K
+AIME24
+Perf.
+
+Qwen3-4B backbone model
+
+Qwen3-4B
+87.49
+86.82
+60.05
+70.98
+53.19
+43.27
+66.00
+32.67
+22.18
+25.96
+39.70
+30.35
+35.03
+
++ DuoAttention
+79.38
+76.08
+52.91
+69.02
+43.28
+44.96
+60.67
+31.33
+24.06
+26.68
+39.70
+37.05
+38.38
+
++ PruLong
+74.21
+75.72
+47.88
+59.27
+47.10
+45.69
+60.25
+28.00
+25.56
+26.44
+39.70
+30.35
+35.03
+
++ TriangleMix
+87.42
+85.10
+58.73
+67.94
+50.97
+44.47
+63.74
+31.33
+22.18
+25.48
+40.30
+37.25
+38.78
+
++ FluxAttn (FA-SSA)
+81.58
+82.11
+58.73
+72.89
+52.81
+56.91
+66.95
+29.33
+28.57
+28.85
+40.30
+37.05
+38.68
+
++ FluxAttn (FA-XA)
+86.79
+84.94
+59.52
+68.82
+51.77
+43.43
+63.67
+30.00
+24.06
+26.20
+42.20
+40.35
+41.28
+
++ FluxAttn (FA-TA)
+84.28
+84.53
+60.58
+68.60
+51.91
+51.64
+65.55
+31.33
+26.32
+28.12
+45.00
+40.35
+42.68
+
++ FluxAttn (FA-SSA)
+80.36
+80.75
+56.08
+71.49
+59.17
+56.00
+67.19
+28.00
+28.20
+28.12
+39.90
+37.25
+38.58
+
+Qwen3-8B backbone model
+
+Qwen3-8B
+89.69
+85.62
+63.23
+82.39
+65.84
+66.71
+75.74
+39.33
+27.82
+31.97
+40.60
+32.35
+36.48
+
++ DuoAttention
+86.68
+86.01
+63.23
+77.52
+61.50
+61.95
+72.41
+40.67
+25.56
+31.01
+41.20
+35.65
+38.43
+
++ PruLong
+83.85
+80.86
+60.05
+77.25
+62.54
+61.49
+70.97
+36.00
+28.20
+31.01
+40.40
+32.35
+36.38
+
++ TriangleMix
+81.01
+75.67
+63.49
+73.76
+61.54
+66.84
+70.47
+36.00
+27.44
+30.53
+41.20
+44.15
+42.68
+
++ FluxAttn (FA-SSA)
+84.09
+81.90
+60.58
+79.30
+64.74
+65.27
+73.03
+36.67
+29.32
+31.97
+46.90
+42.35
+44.63
+
++ FluxAttn (FA-XA)
+85.88
+85.54
+65.08
+81.95
+65.09
+65.38
+74.65
+32.67
+32.71
+32.69
+43.20
+35.65
+39.43
+
++ FluxAttn (FA-TA)
+87.49
+86.17
+60.85
+78.72
+60.75
+63.03
+73.51
+37.33
+27.44
+31.01
+43.00
+39.05
+41.03
+
++ FluxAttn (FA-SSA)
+83.54
+81.00
+59.79
+77.93
+64.83
+65.12
+72.51
+39.33
+28.20
+32.21
+45.30
+43.20
+44.25
+
+Llama-3.1-8B-Instruct backbone model
+
+Llama-3.1-8B-Instruct
+92.88
+92.83
+89.46
+70.79
+80.12
+72.34
+83.47
+32.00
+33.08
+32.69
+42.30
+30.35
+36.33
+
++ DuoAttention
+91.71
+86.35
+85.65
+62.65
+62.30
+38.69
+70.33
+26.67
+28.57
+27.88
+44.40
+33.65
+39.03
+
++ PruLong
+86.96
+76.55
+70.65
+54.52
+48.18
+30.00
+59.87
+30.00
+24.44
+26.44
+41.30
+29.85
+35.58
+
++ TriangleMix
+92.44
+90.76
+86.75
+68.00
+78.25
+64.39
+80.46
+29.33
+25.56
+26.92
+46.30
+37.05
+41.68
+
++ FluxAttn (FA-SSA)
+82.88
+78.09
+70.39
+52.29
+62.20
+50.73
+76.75
+34.00
+28.95
+30.77
+45.30
+37.05
+41.18
+
++ FluxAttn (FA-XA)
+92.43
+90.85
+88.23
+68.56
+75.86
+60.80
+79.51
+36.00
+31.95
+33.41
+44.40
+33.65
+39.03
+
++ FluxAttn (FA-TA)
+92.72
+90.53
+86.45
+67.78
+80.63
+67.09
+81.50
+34.67
+28.95
+31.01
+46.90
+38.30
+42.60
+
++ FluxAttn (FA-SSA)
+90.11
+79.39
+79.22
+56.08
+62.94
+59.39
+73.67
+34.67
+30.08
+31.73
+45.90
+37.35
+41.63
+
+(a) End-to-end speedup in the prefill phase.
+
+(b) Kernel speedup in the decode phase.
+
+Figure 3: Speedup comparison across different context lengths. The dotted line represents the dense baseline performance (1.0x).
+
+5 Analysis
+
+5.1 Dynamic Allocation Strategy of the Layer Router
+
+Figure 4: Overview of the layer-wise routing activation frequencies in Llama-3.1-8B-Instruct. Dark blue indicates layers consistently routed to FA across all six tasks in LongBench-E, whereas light blue denotes layers consistently routed to SA.
+
+Task-Level Dynamic Sparsity
+
+Different downstream tasks impose inherently distinct requirements on attention sparsity. As shown in the upper region of Figure 4, retrieval-intensive tasks frequently activate FA (dark blue) to support the dense token interactions required for fact-finding. Conversely, context-holistic tasks predominantly route the mid-to-high layers to SA, which validates that high-level holistic semantic understanding is highly robust to attention sparsification.
+This demonstrates that Flux Attention replaces static allocations with task-aware dynamic sparsity.
+
+Context-Aware Intra-Task Sparsity
+
+Beyond cross-task adaptation, the router further captures the intrinsic sparsity requirements of individual input contexts, rather than merely memorizing coarse-grained task-level patterns.
+This instance-level variance is evident where intermediate activation frequencies (, light blue) within a single task show the router adjusting to the complexity of different inputs.
+We also find that specific layers (e.g., layers 0, 1, 5, 13, and 15–17) are consistently routed to FA across all tasks. This indicates the router preserves the universal architectural properties of the backbone while allocating the remaining computational budget based on specific task and context demands.
+
+Notably, the emergence of this fine-grained, task-aware routing relies on a well-balanced training curriculum. An unbalanced data distribution can cause the router to collapse into a homogenized routing strategy, as extensively analyzed in Appendix E.1.
+Furthermore, we find that a prefill-suffix pooling operation on the boundary 100 tokens is highly effective in driving this context-aware routing, as it isolates essential instruction signals from sequence noise (detailed in Appendix E.2).
+
+Figure 5: Comparison of performance and test-time among different training sparsity target settings. The bar chart denotes the performance and the line chart denotes in each task.
+
+5.2 Impact of Target Sparsity Allocation
+
+We study the impact of target sparsity on model performance.
+Specifically, we fix the target sparsity of context-holistic tasks to 1, while progressively decreasing target sparsity for retrieval-intensive tasks () from 0.55 to 0.25.
+As shown in Figure 5, decreasing causes the resulting () allocated by the model exhibits slightly greater task-level differentiation across different tasks.
+However, does not strictly match the target .
+This discrepancy arises because we use task-dependent and non-tight constraints, which do not force the model to exactly satisfy the prescribed sparsity.
+We provide full training curves and further explanations in Appendix E.3.
+Additionally, when is set too low (e.g., 0.25) to allocate a higher proportion of FA computation, the overall performance can even surpass that of the backbone model.
+Conversely, setting too high causes the performance on retrieval-intensive tasks to drop sharply, consistent with the observations in Section 2.3.
+To optimize inference efficiency, we adopt in our main experiments, which achieves a favorable balance between strong overall performance and computational cost.
+
+5.3 Scalability via Backbone Adaptation
+
+Figure 6: Performance trajectories during continued training with a frozen Layer Router. The backbone effectively adapts its representations to the established sparse pathways, demonstrating steady improvement over time.
+
+To evaluate the flexibility of Flux Attention, we investigate how well the method supports continued training. A critical question for dynamic sparsity methods is whether the routing mechanism can be decoupled from the backbone for subsequent model adaptation. To test this, we freeze the weights of the trained Layer Router, which fixes its learned dynamic allocation strategy, and continue training the model backbone using the data mixture from Section 4.1.
+
+As Figure 6 illustrates, continued training yields steady performance improvements across different models. Notably, both Qwen3-8B and Qwen3-4B rapidly surpass their original backbone performance (dashed lines) within just 50 steps and maintain a significant gain. While Llama3.1-8B-Instruct initially falls below its baseline, it demonstrates strong and continuous recovery throughout the training process, steadily closing the performance gap.
+We attribute this delayed convergence to the heightened sensitivity of instruction-tuned models, which require additional steps to realign their complex representations under forced sparsity constraints.
+These trends indicate that the backbone can effectively adapt its representations to the prescribed sparse pathways. Flux Attention thus offers practical post-training flexibility, allowing users to lock in an efficiency budget and fine-tune for downstream applications without disrupting the routing dynamics.
+
+6 Conclusion
+
+We introduce Flux Attention, a context-aware dynamic routing framework mitigating the quadratic computational bottleneck of Large Language Models in long-context scenarios.
+Unlike existing hybrid attention mechanisms relying on rigid static allocations or hardware-inefficient head-level routing, our approach employs a lightweight Layer Router adaptively assigning each transformer layer to full or sparse Attention based on task and input demands.
+Extensive evaluations demonstrate our parameter-efficient method, requiring only 12 hours of training, achieves speedups up to 2.8 during prefilling and 2.0 during autoregressive decoding.
+Crucially, it preserves high-fidelity information recovery across diverse long-context benchmarks, establishing a superior and scalable trade-off between generation quality and inference efficiency for modern LLMs.
+
+References
+
+[1]
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li (2024)
+
+LongBench: a bilingual, multitask benchmark for long context understanding.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+Bangkok, Thailand, pp. 3119–3137.
+
+External Links: Link,
+Document
+
+Cited by: §2.3,
+Table 1,
+Table 1,
+§4.2.
+
+[2]
+Y. Bai, S. Tu, J. Zhang, H. Peng, X. Wang, X. Lv, S. Cao, J. Xu, L. Hou, Y. Dong, et al. (2025)
+
+Longbench v2: towards deeper understanding and reasoning on realistic long-context multitasks.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+
+pp. 3639–3664.
+
+Cited by: §4.2,
+Table 2,
+Table 2.
+
+[3]
+I. Beltagy, M. E. Peters, and A. Cohan (2020)
+
+Longformer: the long-document transformer.
+
+arXiv:2004.05150.
+
+Cited by: §B.1.
+
+[4]
+A. Bhaskar, A. Wettig, T. Gao, Y. Dong, and D. Chen (2025)
+
+Cache me if you can: how many kvs do you need for effective long-context lms?.
+
+arXiv preprint arXiv:2506.17121.
+
+Cited by: §B.2,
+§D.2,
+§2.2,
+§3.2,
+§4.1.
+
+[5]
+R. Child (2019)
+
+Generating long sequences with sparse transformers.
+
+arXiv preprint arXiv:1904.10509.
+
+Cited by: §1.
+
+[6]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman (2021)
+
+Training verifiers to solve math word problems.
+
+External Links: 2110.14168,
+Link
+
+Cited by: §4.2,
+Table 2,
+Table 2.
+
+[7]
+T. Dao and A. Gu (2024)
+
+Transformers are ssms: generalized models and efficient algorithms through structured state space duality.
+
+External Links: 2405.21060,
+Link
+
+Cited by: §B.2.
+
+[8]
+DeepSeek-AI (2025)
+
+DeepSeek-v3.2-exp: boosting long-context efficiency with deepseek sparse attention.
+
+Cited by: §B.1.
+
+[9]
+W. Fedus, B. Zoph, and N. Shazeer (2022)
+
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity.
+
+External Links: 2101.03961,
+Link
+
+Cited by: §B.3.
+
+[10]
+Y. Gao, Z. Zeng, D. Du, S. Cao, H. K. So, T. Cao, F. Yang, and M. Yang (2024)
+
+SeerAttention: learning intrinsic sparse attention in your llms.
+
+arXiv preprint arXiv:2410.13276.
+
+Cited by: §B.1.
+
+[11]
+P. Glorioso, Q. Anthony, Y. Tokpanov, J. Whittington, J. Pilault, A. Ibrahim, and B. Millidge (2024)
+
+Zamba: a compact 7b ssm hybrid model.
+
+External Links: 2405.16712,
+Link
+
+Cited by: §B.2.
+
+[12]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al. (2024)
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+Cited by: §D.1,
+§1,
+§4.1.
+
+[13]
+J. Guo, H. Tang, S. Yang, Z. Zhang, Z. Liu, and S. Han (2024)
+
+Block Sparse Attention.
+
+GitHub.
+
+Note: https://github.com/mit-han-lab/Block-Sparse-Attention
+
+Cited by: §D.3.
+
+[14]
+Z. He, Y. Zhang, C. Zhang, H. Jiang, Y. Yang, and L. Qiu (2025)
+
+TriangleMix: accelerating prefilling via decoding-time contribution sparsity.
+
+External Links: 2507.21526,
+Link
+
+Cited by: §B.1,
+§D.2,
+§4.1.
+
+[15]
+C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg (2024)
+
+RULER: what’s the real context size of your long-context language models?.
+
+arXiv preprint arXiv:2404.06654.
+
+Cited by: §4.2,
+Table 2,
+Table 2.
+
+[16]
+L. Huang, S. Cao, N. Parulian, H. Ji, and L. Wang (2021)
+
+Efficient attentions for long document summarization.
+
+In Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,
+
+Online, pp. 1419–1436.
+
+External Links: Link,
+Document
+
+Cited by: §4.1.
+
+[17]
+E. Jang, S. Gu, and B. Poole (2016)
+
+Categorical reparameterization with gumbel-softmax.
+
+arXiv preprint arXiv:1611.01144.
+
+Cited by: §1,
+§3.1.
+
+[18]
+X. Ji, H. Zhang, F. Fu, and B. Cui (2025)
+
+SALE : low-bit estimation for efficient sparse attention in long-context llm prefilling.
+
+External Links: 2505.24179,
+Link
+
+Cited by: §B.1.
+
+[19]
+H. Jiang, Y. Li, C. Zhang, Q. Wu, X. Luo, S. Ahn, Z. Han, A. H. Abdi, D. Li, C. Lin, et al. (2024)
+
+Minference 1.0: accelerating pre-filling for long-context llms via dynamic sparse attention.
+
+Advances in Neural Information Processing Systems 37, pp. 52481–52515.
+
+Cited by: §B.1.
+
+[20]
+J. Ku, E. Nguyen, D. W. Romero, G. Brixi, B. Yang, A. Vorontsov, A. Taghibakhshi, A. X. Lu, D. P. Burke, G. Brockman, S. Massaroli, C. Ré, P. D. Hsu, B. L. Hie, S. Ermon, and M. Poli (2025)
+
+Systems and algorithms for convolutional multi-hybrid language models at scale.
+
+External Links: 2503.01868,
+Link
+
+Cited by: §B.2.
+
+[21]
+X. Lai, J. Lu, Y. Luo, Y. Ma, and X. Zhou (2025)
+
+FlexPrefill: a context-aware sparse attention mechanism for efficient long-sequence inference.
+
+In The Thirteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §B.1.
+
+[22]
+J. Li, H. Zhu, H. Liu, X. Shi, H. Zong, Y. Dong, K. Zhang, S. Jiang, Z. Jin, and G. Li (2025)
+
+AiXcoder-7b-v2: training llms to fully utilize the long context in repository-level code completion.
+
+arXiv preprint arXiv:2503.15301.
+
+Cited by: §4.1.
+
+[23]
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen (2024)
+
+Snapkv: llm knows what you are looking for before generation.
+
+arXiv preprint arXiv:2404.14469.
+
+Cited by: §B.1.
+
+[24]
+O. Lieber, B. Lenz, H. Bata, G. Cohen, J. Osin, I. Dalmedigos, E. Safahi, S. Meirom, Y. Belinkov, S. Shalev-Shwartz, O. Abend, R. Alon, T. Asida, A. Bergman, R. Glozman, M. Gokhman, A. Manevich, N. Ratner, N. Rozen, E. Shwartz, M. Zusman, and Y. Shoham (2024)
+
+Jamba: a hybrid transformer-mamba language model.
+
+External Links: 2403.19887,
+Link
+
+Cited by: §B.2.
+
+[25]
+G. Lin, D. Li, Z. Chen, Y. Shi, X. Chen, B. Hu, and M. Zhang (2026)
+
+LycheeDecode: accelerating long-context LLM inference via hybrid-head sparse decoding.
+
+In The Fourteenth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §2.2.
+
+[26]
+J. Liu, D. Zhu, Z. Bai, Y. He, H. Liao, H. Que, Z. Wang, C. Zhang, G. Zhang, J. Zhang, et al. (2025)
+
+A comprehensive survey on long context language modeling.
+
+arXiv preprint arXiv:2503.17407.
+
+Cited by: §1.
+
+[27]
+Z. Liu, A. Desai, F. Liao, W. Wang, V. Xie, Z. Xu, A. Kyrillidis, and A. Shrivastava (2024)
+
+Scissorhands: exploiting the persistence of importance hypothesis for llm kv cache compression at test time.
+
+Advances in Neural Information Processing Systems 36.
+
+Cited by: §B.1.
+
+[28]
+I. Loshchilov and F. Hutter (2019)
+
+Decoupled weight decay regularization.
+
+External Links: 1711.05101,
+Link
+
+Cited by: §D.1.
+
+[29]
+E. Lu, Z. Jiang, J. Liu, Y. Du, T. Jiang, C. Hong, S. Liu, W. He, E. Yuan, Y. Wang, Z. Huang, H. Yuan, S. Xu, X. Xu, G. Lai, Y. Chen, H. Zheng, J. Yan, J. Su, Y. Wu, N. Y. Zhang, Z. Yang, X. Zhou, M. Zhang, and J. Qiu (2025)
+
+MoBA: mixture of block attention for long-context llms.
+
+External Links: 2502.13189,
+Link
+
+Cited by: §B.1.
+
+[30]
+MAA (2024)
+
+American invitational mathematics examination (aime).
+
+URL https://maa.org/math-competitions/aime.
+
+Cited by: §4.2,
+Table 2,
+Table 2.
+
+[31]
+L. Mei, J. Yao, Y. Ge, Y. Wang, B. Bi, Y. Cai, J. Liu, M. Li, Z. Li, D. Zhang, et al. (2025)
+
+A survey of context engineering for large language models.
+
+arXiv preprint arXiv:2507.13334.
+
+Cited by: §1.
+
+[32]
+S. Narayan, S. B. Cohen, and M. Lapata (2018)
+
+Don’t give me the details, just the summary! Topic-aware convolutional neural networks for extreme summarization.
+
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,
+
+Brussels, Belgium.
+
+Cited by: §4.1.
+
+[33]
+D. Peng, Z. Fu, Z. Ye, Z. Song, and J. Wang (2025)
+
+Accelerating prefilling for long-context llms via sparse pattern sharing.
+
+arXiv preprint arXiv:2505.19578.
+
+Cited by: §1.
+
+[34]
+D. Peng, Z. Fu, Z. Ye, Z. Song, and J. Wang (2025)
+
+Accelerating prefilling for long-context llms via sparse pattern sharing.
+
+External Links: 2505.19578,
+Link
+
+Cited by: §B.1.
+
+[35]
+D. Raposo, S. Ritter, B. Richards, T. Lillicrap, P. C. Humphreys, and A. Santoro (2024)
+
+Mixture-of-depths: dynamically allocating compute in transformer-based language models.
+
+External Links: 2404.02258,
+Link
+
+Cited by: §B.3.
+
+[36]
+L. Ren, Y. Liu, Y. Lu, Y. Shen, C. Liang, and W. Chen (2024)
+
+Samba: simple hybrid state space models for efficient unlimited context language modeling.
+
+arXiv preprint.
+
+External Links: Link
+
+Cited by: §B.2.
+
+[37]
+N. Shazeer, *. Mirhoseini, *. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean (2017)
+
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer.
+
+In International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §B.3.
+
+[38]
+Z. Tang, Q. Qiu, Y. Yang, Z. Hong, H. Xiang, K. Liu, Q. Dang, J. Li, and M. Zhang (2026)
+
+Elastic attention: test-time adaptive sparsity ratios for efficient transformers.
+
+External Links: 2601.17367,
+Link
+
+Cited by: §B.2,
+§1,
+§2.2.
+
+[39]
+Z. Tang, H. Wang, Q. Qiu, B. Ji, R. Sun, K. Zhou, J. Li, and M. Zhang (2025)
+
+LOOM-scope: a comprehensive and efficient long-context model evaluation framework.
+
+arXiv preprint arXiv:2507.04723.
+
+Cited by: §4.1.
+
+[40]
+H. Trivedi, N. Balasubramanian, T. Khot, and A. Sabharwal (2022)
+
+MuSiQue: multihop questions via single-hop question composition.
+
+Transactions of the Association for Computational Linguistics 10, pp. 539–554.
+
+Cited by: §4.1.
+
+[41]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+
+Attention is all you need.
+
+Advances in neural information processing systems 30.
+
+Cited by: §1.
+
+[42]
+W. Wu, Y. Wang, G. Xiao, H. Peng, and Y. Fu (2024)
+
+Retrieval head mechanistically explains long-context factuality.
+
+arXiv preprint arXiv:2404.15574.
+
+Cited by: §2.1.
+
+[43]
+G. Xiao, J. Tang, J. Zuo, J. Guo, S. Yang, H. Tang, Y. Fu, and S. Han (2024)
+
+DuoAttention: efficient long-context llm inference with retrieval and streaming heads.
+
+arXiv.
+
+Cited by: §B.2,
+§2.2.
+
+[44]
+G. Xiao, J. Tang, J. Zuo, S. Yang, H. Tang, Y. Fu, S. Han, et al. (2025)
+
+DuoAttention: efficient long-context llm inference with retrieval and streaming heads.
+
+In The Thirteenth International Conference on Learning Representations,
+
+Cited by: §D.2,
+§4.1.
+
+[45]
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis (2024)
+
+Efficient streaming language models with attention sinks.
+
+In The Twelfth International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §B.1,
+§4.1.
+
+[46]
+J. Xiong, J. Shen, F. Ye, C. Tao, Z. Wan, J. Lu, X. Wu, C. Zheng, Z. Guo, M. Yang, L. Kong, and N. Wong (2025)
+
+UNComp: can matrix entropy uncover sparsity? — a compressor design from an uncertainty-aware perspective.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.),
+
+Suzhou, China, pp. 4179–4199.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-332-6
+
+Cited by: §C.1,
+§2.1,
+§2.3.
+
+[47]
+P. Xu, W. Ping, X. Wu, Z. Liu, M. Shoeybi, and B. Catanzaro (2024)
+
+ChatQA 2: bridging the gap to proprietary llms in long context and rag capabilities.
+
+arXiv preprint arXiv:2407.14482.
+
+Cited by: §4.1.
+
+[48]
+R. Xu, G. Xiao, H. Huang, J. Guo, and S. Han (2025)
+
+XAttention: block sparse attention with antidiagonal scoring.
+
+In Proceedings of the 42nd International Conference on Machine Learning (ICML),
+
+Cited by: §B.1,
+§4.1.
+
+[49]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu (2025)
+
+Qwen3 technical report.
+
+External Links: 2505.09388,
+Link
+
+Cited by: §D.1,
+§1,
+§4.1.
+
+[50]
+J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. Wei, L. Wang, Z. Xiao, Y. Wang, C. Ruan, M. Zhang, W. Liang, and W. Zeng (2025)
+
+Native sparse attention: hardware-aligned and natively trainable sparse attention.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 23078–23097.
+
+External Links: Link,
+Document,
+ISBN 979-8-89176-251-0
+
+Cited by: §B.1.
+
+[51]
+M. Zaheer, G. Guruganesh, K. A. Dubey, J. Ainslie, C. Alberti, S. Ontanon, P. Pham, A. Ravula, Q. Wang, L. Yang, et al. (2020)
+
+Big bird: transformers for longer sequences.
+
+Advances in neural information processing systems 33, pp. 17283–17297.
+
+Cited by: §1.
+
+[52]
+C. Zhang, Y. Bai, J. Li, A. Gui, K. Wang, F. Liu, G. Wu, Y. Jiang, D. Bu, L. Wei, et al. (2025)
+
+Efficient context scaling with longcat zigzag attention.
+
+arXiv preprint arXiv:2512.23966.
+
+Cited by: §B.2,
+§1.
+
+[53]
+J. Zhang, C. Xiang, H. Huang, J. Wei, H. Xi, J. Zhu, and J. Chen (2025)
+
+Spargeattn: accurate sparse attention accelerating any model inference.
+
+In International Conference on Machine Learning (ICML),
+
+Cited by: §B.1.
+
+[54]
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. W. Barrett, Z. Wang, and B. Chen (2023)
+
+H2O: heavy-hitter oracle for efficient generative inference of large language models.
+
+In Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023, A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.),
+
+Cited by: §B.1.
+
+[55]
+W. Zhao, Z. Zhou, Z. Su, C. Xiao, Y. Li, Y. Li, Y. Zhang, W. Zhao, Z. Li, Y. Huang, A. Sun, X. Han, and Z. Liu (2025)
+
+InfLLM-v2: dense-sparse switchable attention for seamless short-to-long adaptation.
+
+External Links: 2509.24663,
+Link
+
+Cited by: §B.1.
+
+Appendix A Code & Model
+
+We open-source our code and model as follows: https://github.com/qqtang-code/FluxAttention.
+
+Appendix B Related Work
+
+B.1 Sparse Attention Mechanisms
+
+To mitigate the quadratic complexity of standard attention mechanisms, existing research has broadly advanced along two trajectories: inference-time heuristics and training-aware sparsification.
+Inference-time heuristics typically employ static patterns, such as fixed sliding windows or strides [45, 14, 3], to restrict the receptive field.
+To capture dynamic dependencies more effectively, content-aware approaches have been proposed. For instance, token eviction policies discard uninformative tokens based on accumulated importance scores [54, 23, 27], whereas kernel-based estimators identify salient blocks to bypass redundant computations [19].
+Complementarily, prefill optimizers leverage importance-driven selection to accelerate the processing of long contexts [21, 48, 53, 34, 18].
+Despite the effectiveness of these heuristic methods, they frequently rely on sensitive hyperparameters, thereby limiting their robustness across diverse tasks.
+
+In contrast, training-aware sparsification internalizes sparsity within the optimization objective to align the training process with sparse inference.
+A prominent direction in this area involves learnable selection. For instance, SeerAttention [10], NSA [50], and MoBA [29] employ learnable gates and hierarchical constraints to approximate ground-truth attention patterns.
+To bridge the gap between dense pre-training and sparse adaptation, InfLLM-v2 [55] introduces a dense-sparse switchable mechanism via parameter-free pooling, whereas DSA [8] utilizes a lightning indexer alongside a two-stage training strategy to efficiently filter the top- key-value pairs.
+However, the majority of these methods focus on fine-grained, block-level or token-level selection within a fixed attention framework, rather than dynamically adapting the overarching attention mode itself based on input complexity.
+
+B.2 Hybrid Architectures and Dynamic Allocation
+
+To balance computational efficiency and model performance, hybrid architectures strategically integrate Full Attention (FA) with linear-complexity operators.
+The dominant paradigm, inter-layer hybridization, interleaves linear layers with standard attention layers to recover associative recall capabilities [20, 7]. Notable large-scale implementations, such as Jamba [24], utilize fixed block-wise ratios, whereas variants optimize memory utilization through shared global blocks [11] or sliding windows [36].
+More recently, intra-layer hybridization has emerged as a strategy to refine structural granularity. For example, PruLong [4] and DuoAttention [43] combine FA and Sparse Attention (SA) within individual layers by assigning different attention heads to different computational modes. Furthermore, LongCat [52] proposes the LoZA mechanism, constructing a static ZigZag topology by replacing low-sensitivity Multi-head Latent Attention (MLA) modules with linear-complexity SA.
+A critical limitation of these approaches is their reliance on static topologies or pre-defined ratios established prior to inference, lacking the flexibility required to dynamically distinguish diverse tasks.
+
+To address the rigidity of static designs, recent studies have explored dynamic allocation strategies. For instance, Elastic Attention [38] dynamically allocates varying sparsity at the head level based on contextual importance. While offering algorithmic flexibility, such head-level dynamic sparsity introduces severe hardware inefficiencies. Specifically, varying context lengths across different attention heads lead to severe synchronization bottlenecks, as fast-executing sparse heads must wait for memory-intensive retrieval heads within the same layer. This creates significant memory bandwidth bottlenecks, severely hindering hardware acceleration and limiting practical speedups, especially during the autoregressive decoding phase.
+
+B.3 Dynamic Routing in Neural Networks
+
+Dynamic routing and conditional computation have long been studied to decouple model capacity from inference cost. Traditional approaches, such as Mixture-of-Experts (MoE) [37, 9], effectively route tokens to specialized Feed-Forward Network (FFN) experts. Recent advancements like Mixture-of-Depths (MoD) [35] extend this concept by dynamically skipping specific layers for uninformative tokens to optimize compute allocation.
+
+While these methods successfully route computation dynamically, they predominantly focus on FFNs or complete layer-skipping, leaving the dynamic optimization of the attention mechanism itself largely underexplored. Unlike fine-grained or head-level allocation schemes that disrupt memory continuity, our proposed Flux Attention introduces a context-aware, layer-level routing mechanism. By utilizing a lightweight Layer Router to dynamically toggle entire layers between FA and SA, our approach bridges the gap between context-aware algorithmic flexibility and hardware-friendly contiguous memory access, translating theoretical computational reductions into substantial wall-clock speedups.
+
+Appendix C Sparsification Setup and Latency Profiling Implementation
+
+This section details the layer importance identification, the progressive sparsification strategy, and the hardware latency measurement protocol mentioned in Section 2.3.
+
+C.1 Layer Entropy Score Calculation
+
+Following the methodology proposed by UnComp [46], we identify and rank Transformer layers based on their informational density and uncertainty when processing long contexts.
+We use a matrix entropy-based profiling method, quantifying the information content of each layer over long-context validation datasets to estimate its inherent structural sparsity.
+
+For a given layer , we calculate its Entropy Score () by measuring the truncated matrix entropy of its hidden representations.
+Formally, let be the input sequence length, be the hidden dimension, and be the hidden states matrix of layer . We first derive the trace-normalized covariance matrix . The score is computed as the von Neumann entropy over its top- eigenvalues:
+
+(7)
+
+where denotes the -th largest eigenvalue of , and is the truncation threshold used to filter out noise.
+A lower indicates lower information density (i.e., lower uncertainty) and higher redundancy, making the layer a suitable candidate for sparsification.
+
+C.2 Progressive Sparsification Strategy
+
+Based on the computed entropy scores , we evaluate the information density of all layers across the model. As defined in the main text, the Model Sparsity Ratio () represents the proportion of layers converted to sparse attention.
+To simulate the varying levels of sparsity reported in our experiments (e.g., ), we use a thresholding mechanism based on these scores. We first determine the number of layers to preserve as full attention via . The layers with the highest entropy scores are retained as retrieval layers to ensure global information integration and preserve complex contextual pathways. The remaining layers with the lowest entropy scores are replaced with sparse layers.
+
+C.3 Latency Measurement Implementation
+
+To evaluate the hardware efficiency of different sparsity paradigms, we profile latency during the autoregressive decoding phase. All latency measurements are performed on a single NVIDIA A800 GPU (80GB) using PyTorch with BF16 precision.
+
+To simulate realistic long-context retrieval scenarios while isolating the decoding bottleneck, we fix the batch size to 1 and evaluate across varying prompt sequence lengths. For each configuration, we perform 10 warm-up steps to initialize the CUDA context and stabilize GPU clocks, followed by 50 profiling iterations. The reported latency is the average wall-clock time required to generate a single token.
+
+Implementation of Sparsity Baselines
+
+For the head-level sparsity baseline, we retain a subset of attention heads for dense computation while the remaining heads operate sparsely. However, highly optimized attention kernels (e.g., FlashAttention) lack hardware-level support for processing mixed context lengths across different heads within the same layer. Consequently, enforcing head-level sparsity results in fragmented, non-contiguous memory access patterns. The GPU memory bandwidth is still consumed by loading the full historical KV cache into SRAM, leading to only marginal wall-clock speedups despite the theoretical FLOP reduction.
+
+In contrast, our layer-level sparsity implementation avoids this issue. When a layer operates sparsely, the decoding step fetches only the locally required KV states, bypassing the global historical KV tensors. This layer-level routing allows contiguous memory loading, translating theoretical sparsity into proportional decoding acceleration. We calculate the speedup as the ratio of the latency of the full dense model to that of the sparsified model for a given input length.
+
+Appendix D Implementation Details
+
+This section details the training configurations, baseline implementations, and system-level optimizations for efficient long-context processing.
+
+D.1 Training Configuration and Hyperparameters
+
+We evaluate the proposed approach on models of various sizes, including Qwen3-4B, Qwen3-8B [49], and Meta-Llama-3.1-Instruct [12]. We freeze the pre-trained backbone and update only the parameters of the Layer Router to maintain the general capabilities of the model. For task representation, we apply a Prefill-Suffix Pooling operation to aggregate the first 100 and the last 100 tokens of the sequence, as these segments typically contain the system instructions and user queries required to identify the task.
+
+We train all models with a sequence length of tokens in bfloat16 precision using the AdamW optimizer [28] (). Training is conducted on a distributed cluster with Fully Sharded Data Parallel (FSDP) under a hybrid sharding strategy. To balance the convergence of the router and sparsity regularization, we apply a decoupled learning rate schedule. The Layer Router uses a learning rate of for rapid adaptation to retrieval patterns, while the sparsity regularization terms use a higher learning rate of . The dual regularization coefficients and are randomly initialized and optimized alongside the router parameters. A cosine decay learning rate schedule is applied after a linear warmup phase over the first 20% of the training steps.
+
+D.2 Baseline Implementation Details
+
+We compare the proposed approach with several state-of-the-art sparse attention mechanisms, categorizing them into training-free and training-based methods. For training-free baselines, we evaluate TriangleMix 11
+1
+
+https://github.com/microsoft/MInference/tree/main/TriangleMix [14], which relies on heuristic-based sparsity without parameter updates. For training-based baselines, including PruLong 22
+2
+
+https://github.com/princeton-pli/PruLong [4] and DuoAttention 33
+3
+
+https://github.com/mit-han-lab/duo-attention [44], we follow a unified fine-tuning protocol. We train all baselines in identical environments and on the same dataset while maintaining their original hyperparameter settings.
+
+D.3 Sparsity and Kernel Configuration
+
+We use Block-Sparse-Attention [13] for efficient streaming inference to control the granularity and retention policy of the attention mechanism. We set the block size to 64 to define the minimum unit of sparsity, and the chunk size to 16,384 to process ultra-long sequences. A sink token size of 128 is maintained to preserve the attention sink phenomenon, ensuring stability during streaming generation. Additional kernel parameters, such as stride, normalization, and selection modes, are detailed in the Sparsity Config section of Table 3.
+
+Table 3: Hyperparameters: General configuration.
+
+Hyperparameter
+Value
+
+Model & Training
+
+Base Model
+Qwen, Llama
+
+Sequence length
+65536
+
+Precision
+bfloat16
+
+Global Batch Size
+48
+
+Training Steps
+300
+
+Mask / Reg. LR
+/
+
+Warmup Ratio
+0.2
+
+AdamW Momentum ()
+
+Weight Decay
+0.1
+
+Learning Rate Schedule
+Cosine
+
+Sparsity Config
+
+Pool Size
+100
+
+Sink / Local Size
+128 / 2048
+
+Block / Chunk Size
+64 / 16384
+
+Stride / Threshold
+16 / 0.9
+
+Selection Mode
+Inverse
+
+Appendix E Analysis
+
+E.1 Impact of Data Composition on Task Differentiation
+
+In previous sections, we have established that Flux Attention dynamically tailors sparsity to specific task demands. To fully unleash this capability, we discover that a well-balanced training curriculum acts as a crucial catalyst. To empirically validate this, we analyze the routing dynamics—specifically, the evolution of sparsity levels across training steps—under different data distribution settings.
+
+Figure 7 (Left) illustrates the sparsity trajectories when the router is trained on a well-balanced dataset. Driven by this diverse curriculum, the router successfully disentangles the underlying task demands and exhibits a clear divergence in its routing behavior. Notably, after an initial shared exploration phase, retrieval-intensive tasks converge to a lower sparsity level to preserve critical historical keys and values. In contrast, context-holistic tasks confidently sparsify the context, diverging toward higher sparsity levels. This demonstrates that a balanced mixture effectively teaches the router to establish robust, task-specific boundaries.
+
+Conversely, Figure 7 (Right) demonstrates the routing behavior when the training data is heavily skewed (e.g., dominated by context-holistic tasks). Under this setting, the router faithfully optimizes for the predominant data distribution. Rather than maintaining distinct task boundaries, the sparsity trajectories fail to clearly diverge after the initial phase, naturally converging toward a shared target sparsity. This results in a more homogenized routing strategy tailored to the specific domain it was exposed to.
+
+This analysis yields an important insight into the training dynamics of the Layer Router: the router intrinsically aligns its allocation strategy with the global optimization landscape provided by the training data. Therefore, to train a general-purpose model capable of fine-grained, context-aware sparsification across diverse tasks, constructing a balanced task mixture during training is the optimal and highly effective practice.
+
+Figure 7: Evolution of sparsity levels across training steps under different data distributions. Left: Training on a well-balanced dataset, where the router successfully disentangles tasks into distinct sparsity levels. Right: Training on an unbalanced dataset dominated by context-holistic tasks, leading to homogenized routing.
+
+E.2 Impact of Input Truncation on Task Identification
+
+Figure 8:
+Impact of pooling window size on downstream performance and routing sparsity ().
+We evaluate varying truncation budgets (), retaining only the sequence boundaries (prefix and suffix).
+Increasing the pooling size beyond 100 tokens introduces context noise, which disrupts the routing mechanism. Consequently, the router misclassifies task features and assigns excessive sparsity to retrieval-intensive tasks, thereby degrading the overall performance.
+
+To optimize the trade-off between routing efficiency and accuracy, we investigate the sensitivity of the layer router to the input sequence length. Specifically, we analyze how varying the truncation budget influences the capacity of the router to distinguish between task types and allocate appropriate sparsity patterns. Figure 8 illustrates the performance and sparsity trends as the pooling window expands from 50 tokens (boundary-only) to the full sequence.
+
+Our default strategy extracts only the first and last 100 tokens. This design leverages the structure of long-context prompts, where task-defining instructions typically appear at the beginning of the sequence, and specific user queries are appended at the end. The intermediate content primarily consists of raw context. Although this context is necessary for generation, it acts as noise during the routing process, which focuses on macro-level task identification.
+
+Contrary to the assumption that additional context improves routing, Figure 8 demonstrates a drop in performance when the pooling size exceeds 100 tokens.
+We attribute this phenomenon to the limited capacity of the lightweight MLP within the routing module. As the pooling window expands, the task identification signals are diluted by the document tokens. The MLP struggles to filter out this noise and fails to capture the semantic features necessary for classification.
+Consequently, the router makes suboptimal decisions, such as assigning high sparsity levels () to retrieval-intensive tasks that require denser attention.
+This misallocation causes the observed decrease in the quality of generation. These findings support the choice of a 100-token boundary window to maintain an optimal signal-to-noise ratio and facilitate accurate feature extraction.
+
+E.3 Loss Curves and Performance Metrics
+
+We examine the training stability and dynamic routing behavior of Flux Attention by visualizing the optimization dynamics in Figure 10. This analysis decomposes the training process into the primary language modeling loss, the sparsity regularization loss, the evolution of the routed sparsity metric (), and the adaptive coefficients ().
+
+Figure 9: Router latency analysis. The router incurs negligible overhead (avg. 0.20 ms). Our design ensures length-invariant stability, maintaining constant speed from 512 to 1M tokens.
+
+Optimization Stability.
+
+As shown in Figures 10(a) and 10(b), the joint optimization of the language modeling objective and Layer Router parameters remains stable. The LM loss decreases rapidly and plateaus around 1.8, suggesting that the lightweight Layer Router and the introduced sparsity do not impede convergence. Meanwhile, the sparsity regularization loss drops significantly within the first 100 steps. This indicates that the continuous relaxation scheme via Gumbel-Softmax effectively guides the router toward the specified sparsity constraints.
+
+Differentiation in Flux Attention Allocation.
+
+Figure 10(c) provides empirical support for our motivation in Section 1, showing that downstream tasks exhibit varying sensitivities to attention sparsity. Starting from a neutral initialization, the Layer Router learns to differentiate between task types automatically. Retrieval-intensive tasks converge to higher values, representing a larger allocation of Full Attention to preserve performance. In contrast, context-holistic tasks stabilize at lower values near the target threshold. This confirms that Flux Attention identifies tasks capable of tolerating higher sparsity, thereby improving inference throughput without redundant computation.
+
+Adaptive Coefficients.
+
+Figure 10(d) tracks the evolution of the Lagrangian multipliers (), which dynamically scale the penalty for sparsity violations. We observe that increases most aggressively for certain tasks, suggesting the model prioritizes meeting density requirements where necessary. This adaptive mechanism balances the trade-off between computational cost and model quality automatically, eliminating the need for manual, task-specific tuning.
+
+(a) Language Modeling Loss
+
+(b) Sparsity Regularization Loss
+
+(c) during the training process
+
+(d) Adaptive Coefficients ()
+
+Figure 10: Decomposition of Training Objectives for Flux Attention. We visualize the training dynamics of the Layer Router, separating the total loss into (a) the primary language modeling objective and (b) the sparsity regularization term. Subfigures (c) and (d) illustrate the task-level differentiation in sparsity allocation () and adaptive coefficients (), demonstrating how the model automatically distinguishes between context-holistic and retrieval-intensive tasks.
+
+Appendix F Error Analysis
+
+In Table 11, 12, and 13, we present representative model outputs comparing our method with other baselines.
+Due to the extensive length of the contexts, only a partial input context is shown.
+We observe that the primary source of performance improvement stems from our method’s ability to accurately identify and respond to the key contextual segments relevant to the query.
+
+Figure 11: Comparison on a long-context reading comprehension task. Our model accurately extracts and verifies the severity statistics of outdated cooking methods in Africa compared to global figures, while all baselines consistently fall for the same unsupported distractor regarding carbon markets.
+
+Figure 12: Qualitative comparison on identifying the core argument in a philosophical legal text. Our model successfully synthesizes the text to identify the underlying argumentative strategy (refutation via analogy), whereas baselines are easily distracted by literal sentences from the title and opening hook.
+
+Figure 13: Qualitative comparison on extracting technical methodology from a machine learning paper. Our model accurately identifies the specific bounding box encoding strategy, whereas all baselines suffer from hallucination, confidently generating plausible but incorrect architectural details (Fourier embeddings) not supported by the text.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

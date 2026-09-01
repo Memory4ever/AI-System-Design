@@ -1,0 +1,622 @@
+DualDiffusion: A Speculative Decoding Strategy for Masked Diffusion Models
+
+Report GitHub Issue
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Background
+
+2.1 Masked Diffusion Models
+
+2.2 The KV-Caching Bottleneck in MDMs
+
+Timestep-variant representations.
+
+Non-sequential decoding order.
+
+2.3 Existing Acceleration Methods
+
+FastDLLM.
+
+dKV-Cache.
+
+Limitations of existing methods.
+
+2.4 Speculative Decoding in Autoregressive Models
+
+3 Methodology
+
+3.1 DualDiffusion Pipeline Overview
+
+Drafting Phase.
+
+Verification Phase.
+
+3.2 Verification Algorithms
+
+3.2.1 Trust Verifier
+
+3.2.2 KL Divergence-Based Remasking
+
+Threshold-based remasking.
+
+Probabilistic remasking.
+
+3.2.3 Confidence-Based Remasking
+
+3.3 Algorithm
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Datasets.
+
+Models.
+
+Metrics.
+
+Hyperparameters.
+
+4.2 Main Results
+
+MMLU Results.
+
+Memory Overhead.
+
+GSM8K Results.
+
+4.3 Discussion
+
+5 Conclusion
+
+References
+
+License: CC BY 4.0
+
+arXiv:2604.05250v1 [cs.LG] 06 Apr 2026
+
+DualDiffusion: A Speculative Decoding Strategy for Masked Diffusion Models
+
+Satyam Goyal
+
+Affiliation: Department of Computer Science and Engineering, University of Michigan, Ann Arbor, MI, USA
+
+Correspondence to: sagoyal@umich.edu
+
+  
+Kushal Patel
+
+Affiliation: Department of Computer Science and Engineering, University of Michigan, Ann Arbor, MI, USA
+
+  
+Tanush Mittal
+
+Affiliation: Department of Computer Science and Engineering, University of Michigan, Ann Arbor, MI, USA
+
+  
+Arjun Laxman
+
+Affiliation: Department of Computer Science and Engineering, University of Michigan, Ann Arbor, MI, USA
+
+Abstract
+
+Masked Diffusion Models (MDMs) offer a promising alternative to autoregressive language models by enabling parallel token generation and bidirectional context modeling. However, their inference speed is significantly limited by the inability to cache key-value pairs due to bidirectional attention, requiring computations at each generation step. While recent methods like FastDLLM and DkvCache improve inference speed through attention approximations and caching strategies, they achieve speedups at the cost of generation quality. We propose DualDiffusion, a speculative decoding framework for MDMs that combines fast drafter models (using efficient approximations) with slower, more accurate verifier models. By running multiple steps of a lightweight drafter followed by a single verification step, DualDiffusion achieves a superior Pareto frontier between generation steps and accuracy compared to existing approaches. We evaluate our method on MMLU and GSM8K, demonstrating that DualDiffusion maintains high accuracy while reducing the number of generation steps required, effectively pushing the quality-efficiency trade-off curve for masked diffusion language models.
+
+Keywords: Machine Learning, ICML
+††affiliationnotice: Equal contribution
+
+1 Introduction
+
+Masked Diffusion Models (MDMs) have emerged as a compelling alternative to autoregressive (AR) language models (Sahoo et al., 2024; Austin et al., 2021). Unlike AR models that generate tokens sequentially from left to right, MDMs can unmask multiple tokens in parallel at each generation step while leveraging bidirectional attention over the entire sequence. This paradigm offers several advantages: faster generation through parallelization, improved controllability, and the ability to iteratively refine predictions using full sequence context.
+
+Despite these benefits, MDMs face a critical computational bottleneck. The bidirectional attention mechanism that enables their superior context modeling prevents the use of key-value (KV) caching—a fundamental optimization in AR models. Consequently, each forward pass requires attention computations over the full sequence length , making inference significantly slower than cached AR generation, particularly for long sequences. This computational overhead limits the practical deployment of MDMs despite their theoretical advantages.
+
+Recent work has attempted to address this efficiency gap through various approximation strategies. FastDLLM introduces caching approximations that fix previously generated tokens, while DkvCache employs dynamic cache management strategies. Esoteric Language Models (Yang et al., 2025) explore hybrid approaches combining causal and bidirectional attention patterns. However, these methods fundamentally trade generation quality for speed: by constraining the attention mechanism or fixing token representations, they sacrifice the iterative refinement capability that makes MDMs powerful. Our work aims to resolve the quality tradeoff these methods have.
+
+Speculative decoding has proven highly effective for accelerating AR models (Leviathan et al., 2023; Chen et al., 2023). The key insight is to use a fast, approximate ”drafter” model to propose multiple tokens, which are then verified by a slower, accurate model in a single forward pass. This preserves the output distribution of the accurate model while amortizing its computational cost. However, applying this technique to MDMs presents unique challenges: unlike AR models where token probabilities are conditionally independent given the prefix, MDM token generation is iterative, meaning that it requires multiple steps to achieve the same expected quality from a verifier. Standard verification strategies from AR speculative decoding cannot directly transfer.
+
+We introduce DualDiffusion, a speculative decoding framework designed specifically for masked diffusion models. Our approach runs multiple unmasking steps using a fast drafter model (which may employ approximations like FastDLLM or DkvCache), then performs a single verification step with an accurate verifier model (e.g., LLaDA (Sahoo et al., 2024)). We develop novel verification algorithms that probabilistically remask tokens based on confidence scores or divergence measures between drafter and verifier predictions. This allows us to recover from drafter errors while maintaining the iterative refinement benefits of MDMs.
+
+Our contributions are as follows:
+
+•
+
+We propose DualDiffusion, the first speculative decoding framework for masked diffusion language models, combining fast approximate drafters with accurate verifiers.
+
+•
+
+We introduce three verification algorithms—Trust Verifier, KL Divergence-based, and Confidence-based remasking—to selectively correct drafter predictions.
+
+•
+
+We demonstrate that DualDiffusion achieves a superior Pareto frontier on the accuracy-efficiency trade-off, maintaining high accuracy with fewer generation steps compared to baseline MDMs and existing acceleration methods.
+
+•
+
+We provide empirical validation on MMLU and GSM8K benchmarks, showing consistent improvements over LLaDA and FastDLLM baselines.
+
+2 Background
+
+2.1 Masked Diffusion Models
+
+Masked Diffusion Models (MDMs) represent a prominent class of discrete diffusion models for text generation (Sahoo et al., 2024; Austin et al., 2021). In MDMs, the forward process progressively masks tokens in a sequence, while the reverse process iteratively unmasks them to generate coherent text.
+
+Given a sequence of tokens of length , the forward masking process at continuous time is defined as:
+
+(1)
+
+where is a noise schedule that increases from 0 to 1, and denotes a special [MASK] token. At , the sequence is clean (), while at , all tokens are masked ().
+
+The reverse denoising process learns to predict the original tokens given a masked sequence. A denoising model is trained to maximize the evidence lower bound (ELBO):
+
+(2)
+
+where denotes the set of masked token positions in .
+
+During generation, MDMs start from a fully masked sequence and iteratively unmask tokens over steps. At each step , the model predicts probabilities for masked positions, and a subset of high-confidence tokens are unmasked based on a selection algorithm. This process continues until all tokens are revealed.
+
+2.2 The KV-Caching Bottleneck in MDMs
+
+A fundamental efficiency advantage of autoregressive (AR) models is key-value (KV) caching. During sequential generation, AR models cache the key and value tensors and from previously generated tokens. At step , only the new token’s query needs to be computed:
+
+(3)
+
+where and . This reduces per-step complexity from to .
+
+However, MDMs employ bidirectional attention, where every token can attend to all positions in the sequence. This breaks two critical assumptions required for KV caching:
+
+Timestep-variant representations.
+
+In AR models with causal attention, the cached keys and values and remain fixed across all future steps. In MDMs, bidirectional attention means that the representation of a token at position can change at every denoising step as the context evolves. Formally, for , preventing direct reuse of cached states.
+
+Non-sequential decoding order.
+
+AR models generate tokens strictly left-to-right, enabling deterministic computation of , , at position . MDMs unmask tokens in arbitrary orders based on confidence scores or random sampling, making it impossible to predict which positions will be updated at each step.
+
+These constraints force MDMs to recompute full attention over all tokens at every denoising step, resulting in complexity per step and total complexity for steps, compared to for cached AR models.
+
+2.3 Existing Acceleration Methods
+
+Recent work has attempted to address MDM inference inefficiency through two main strategies: caching approximations and parallel decoding optimizations.
+
+FastDLLM.
+
+Fast-dLLM (Wu et al., 2025) introduces a block-wise approximate KV cache mechanism. The key insight is to divide the sequence into blocks and cache KV states from previously decoded blocks. Within each block, the cache is reused across multiple denoising steps and refreshed after block completion. Additionally, FastDLLM proposes confidence-aware parallel decoding, which dynamically selects tokens exceeding a confidence threshold for simultaneous unmasking rather than a fixed number per step. This mitigates degradation from the conditional independence assumption in parallel sampling. FastDLLM achieves up to 27.6 speedup with DualCache (caching both prefix and suffix blocks) but requires careful tuning of block size and threshold hyperparameters.
+
+dKV-Cache.
+
+dKV-Cache (Ma et al., 2025) observes that token representations in MDMs stabilize after being decoded, not during their decoding step. This motivates a delayed caching strategy: KV states are cached one step after a token transitions from [MASK] to its decoded form. The method introduces two variants: (1) dKV-Cache-Decode, which maintains long-term caches with periodic refreshing to handle representation drift, and (2) dKV-Cache-Greedy, which restricts computation to a local window around the current decoding position, reducing complexity to overall but with more aggressive cache eviction. Both variants achieve 2–10 speedup with minimal accuracy loss.
+
+Limitations of existing methods.
+
+While FastDLLM and dKV-Cache improve inference speed, they achieve these gains through architectural or caching approximations that inherently trade quality for efficiency. Block-wise caching in FastDLLM fixes token representations within blocks, preventing iterative refinement. dKV-Cache’s delayed strategy and periodic refreshing introduce temporal inconsistencies. Both methods fundamentally constrain the bidirectional attention mechanism that makes MDMs powerful, resulting in a suboptimal Pareto frontier between generation quality and computational cost.
+
+2.4 Speculative Decoding in Autoregressive Models
+
+Speculative decoding has proven highly effective for accelerating AR model inference (Leviathan et al., 2023; Chen et al., 2023). The core idea is to use a small, fast drafter model to propose multiple candidate tokens in parallel, which are then verified in a single forward pass by a larger, more accurate verifier model. Accepted tokens are retained, while rejected tokens are corrected. This preserves the output distribution of the verifier while amortizing its computational cost across multiple tokens.
+
+The key guarantee in AR speculative decoding is that verification is deterministic: given a prefix, if the verifier would have generated token with probability , and the drafter proposed , then is accepted. This works because AR generation is conditionally independent given the prefix.
+
+However, this guarantee does not directly transfer to MDMs. In masked diffusion, token probabilities are not conditionally independent—the model simultaneously considers the entire bidirectional context. A verifier evaluating a drafter’s proposals cannot simply check because the context itself may contain drafter errors that affect . This necessitates novel verification strategies tailored to the non-autoregressive, context-dependent nature of MDMs.
+
+3 Methodology
+
+3.1 DualDiffusion Pipeline Overview
+
+We propose DualDiffusion, a speculative decoding framework that combines fast drafter models with accurate verifier models to achieve superior quality-efficiency trade-offs for masked diffusion language models. The key insight is that while approximate acceleration methods like FastDLLM and dKV-Cache can generate candidates quickly, they sacrifice the iterative refinement capability that makes MDMs effective. By using these fast methods as drafters and correcting their errors with a high-quality verifier, we can maintain accuracy while reducing the total number of generation steps required.
+
+The DualDiffusion pipeline operates in two phases:
+
+Drafting Phase.
+
+Starting from a masked sequence at diffusion timestep , we run unmasking steps using a fast drafter model . The drafter may employ any acceleration technique—such as FastDLLM’s block-wise KV cache or dKV-Cache’s delayed caching—that trades quality for speed. After drafter steps, we obtain a partially unmasked sequence where a subset of tokens have been decoded.
+
+Verification Phase.
+
+We perform a single forward pass using an accurate verifier model (e.g., LLaDA with full bidirectional attention) on the drafter’s output . The verifier computes probability distributions for all token positions. A verification algorithm then compares the drafter’s predictions with the verifier’s probabilities and selectively remasks tokens that are deemed unreliable. This corrected sequence becomes the input for the next drafting phase.
+
+By repeating this draft-verify cycle, DualDiffusion amortizes the cost of the expensive verifier across drafter steps while maintaining the quality of the full model. The effectiveness of this approach depends critically on the verification algorithm’s ability to identify and correct drafter errors without unnecessary remasking.
+
+3.2 Verification Algorithms
+
+The verification phase must address a fundamental challenge: unlike AR speculative decoding, where token acceptance is deterministic given the prefix, MDM verification is inherently probabilistic due to bidirectional dependencies. We propose three verification strategies with increasing levels of sophistication.
+
+3.2.1 Trust Verifier
+
+The simplest approach is to accept the drafter’s output without modification:
+
+(4)
+
+This strategy provides maximum speedup by eliminating verification overhead, but offers no error correction. It is only effective when the drafter’s quality is already high, such as when using dKV-Cache-Decode with frequent cache refreshing. The Trust Verifier serves as an ablation baseline to quantify the benefit of more sophisticated verification.
+
+3.2.2 KL Divergence-Based Remasking
+
+To detect tokens where the drafter and verifier disagree significantly, we compute the KL divergence between their predicted distributions at each unmasked position , where denotes the set of tokens decoded by the drafter:
+
+(5)
+
+Tokens are remasked using one of two strategies:
+
+Threshold-based remasking.
+
+We remask position if , where is a hyperparameter. This produces a binary decision based on distribution mismatch.
+
+Probabilistic remasking.
+
+We remask position with probability proportional to the normalized divergence:
+
+(6)
+
+This stochastic approach allows gradual error correction and can improve sample diversity.
+
+The KL divergence criterion directly measures distributional disagreement between drafter and verifier, making it well-suited for identifying positions where the drafter’s approximations (e.g., stale KV cache) have led to poor predictions.
+
+3.2.3 Confidence-Based Remasking
+
+An alternative approach exploits the verifier’s confidence in its own predictions. For each unmasked position , we compute the verifier’s confidence as:
+
+(7)
+
+where is the vocabulary. Low confidence indicates that the verifier is uncertain even after observing the drafter’s output, suggesting that position should be remasked for further refinement.
+
+As with KL divergence, we support both threshold-based () and probabilistic (remask with probability ) remasking strategies.
+
+Confidence-based remasking has the advantage of being unilateral—it depends only on the verifier’s output, not on comparing drafter and verifier distributions. This makes it more robust when the drafter employs aggressive approximations that produce qualitatively different distributions.
+
+3.3 Algorithm
+
+Algorithm 1 summarizes the complete DualDiffusion pipeline. The procedure alternates between drafting with steps of the fast model and verification with a single step of the accurate model. The number of drafter steps controls the speedup-quality trade-off: larger reduces verifier calls but may accumulate more drafter errors.
+
+Algorithm 1 DualDiffusion: Speculative Decoding for MDMs
+
+0:
+
+ Drafter model , verifier model , sequence length
+
+0:
+
+ Drafter steps per cycle , verification algorithm
+
+1:
+
+ Initialize {Fully masked sequence}
+
+2:
+
+  {Current diffusion timestep}
+
+3:
+
+ while do
+
+4:
+
+  {Drafting Phase: Run steps with fast drafter}
+
+5:
+
+  for to do
+
+6:
+
+    {Drafter unmasking step}
+
+7:
+
+  end for
+
+8:
+
+  
+
+9:
+
+  {Verification Phase: Single step with accurate verifier}
+
+10:
+
+  Compute for all positions
+
+11:
+
+   {Apply verification algorithm}
+
+12:
+
+  
+
+13:
+
+   {Use verified sequence for next cycle}
+
+14:
+
+  
+
+15:
+
+ end while {Fully unmasked sequence}
+
+The choice of verification algorithm depends on the application requirements. Trust Verifier maximizes speed when drafter quality is acceptable. KL divergence-based remasking is effective when distributional alignment between drafter and verifier is critical. Confidence-based remasking is most robust when the drafter uses aggressive approximations that may produce overconfident but incorrect predictions.
+
+4 Experiments
+
+4.1 Experimental Setup
+
+Datasets.
+
+We evaluate DualDiffusion on two benchmarks: (1) MMLU (Massive Multitask Language Understanding) (Hendrycks et al., 2021) for assessing logical reasoning across diverse domains, and (2) GSM8K (Cobbe et al., 2021) for grade-school mathematical problem solving requiring multi-step arithmetic reasoning.
+
+Models.
+
+We use LLaDA (Sahoo et al., 2024) as the verifier model and FastDLLM (Wu et al., 2025) as the drafter model. LLaDA employs full masked diffusion with bidirectional attention, while FastDLLM uses block-wise KV caching for acceleration. We compare DualDiffusion against: (1) LLaDA (verifier only, no acceleration), (2) FastDLLM (drafter only, maximum speedup), and (3) DualDiffusion with KL divergence-based verification (our method).
+
+Metrics.
+
+We report three metrics: (1) Accuracy on task-specific evaluation, (2) Runtime (seconds) for end-to-end generation, and (3) Peak memory usage (GB) during inference. All experiments are conducted on NVIDIA A40 GPUs with batch size 1.
+
+Hyperparameters.
+
+For DualDiffusion, we set the number of drafter steps and use KL divergence threshold for remasking. Additional ablations on and verification algorithms are provided in Section .
+
+4.2 Main Results
+
+Table 1: Performance on MMLU benchmark.
+
+Method
+Accuracy
+Time (s)
+Memory (GB)
+
+FastDLLM
+0.39
+21.3
+15.2
+
+LLaDA
+0.48
+320.5
+16.8
+
+DualDiffusion
+0.47
+82.0
+31.7
+
+Speedup vs. LLaDA: 3.9
+
+Table 2: Performance on GSM8K benchmark.
+
+Method
+Accuracy
+Time (s)
+Memory (GB)
+
+FastDLLM
+0.21
+18.7
+15.2
+
+LLaDA
+0.57
+298.3
+16.8
+
+DualDiffusion
+0.25
+75.4
+31.7
+
+Speedup vs. LLaDA: 4.0
+
+MMLU Results.
+
+DualDiffusion achieves 0.47 accuracy on MMLU, representing only a 0.01 degradation from the full LLaDA verifier (0.48) while delivering a 3.9 speedup (82.0s vs. 320.5s). This demonstrates that the KL divergence-based verification successfully corrects drafter errors in logical reasoning tasks. As expected, FastDLLM achieves the fastest runtime (21.3s) but suffers significant accuracy loss (0.39), confirming that aggressive caching approximations sacrifice quality.
+
+Figure 1 illustrates the accuracy-runtime Pareto frontier. DualDiffusion effectively bridges the gap between FastDLLM’s speed and LLaDA’s accuracy, achieving a superior trade-off compared to using either model alone.
+
+Figure 1: Accuracy vs. runtime on MMLU. DualDiffusion (orange) achieves near-verifier accuracy at significantly reduced latency.
+
+Memory Overhead.
+
+The primary cost of DualDiffusion is memory consumption. Maintaining both drafter and verifier weights in memory results in 31.7 GB peak usage, nearly double that of individual models (16 GB). However, in deployment scenarios where GPU memory is abundant but latency is critical, this trade-off is favorable. Future work could explore model distillation or shared-parameter architectures to reduce this overhead.
+
+GSM8K Results.
+
+On GSM8K, DualDiffusion achieves 0.25 accuracy, substantially below the LLaDA verifier’s 0.57 performance. This degradation reveals limitations in the current verification strategy for multi-step mathematical reasoning. Unlike MMLU’s diverse logical questions, GSM8K requires precise sequential arithmetic where a single incorrect token can cascade into complete solution failure.
+
+Analysis of the verification patterns indicates that the drafter frequently produces low-confidence predictions on arithmetic operations, but the KL divergence threshold () is insufficiently aggressive to remask these errors. When the drafter struggles on high-variance arithmetic tasks, the verifier’s single correction step cannot recover the full solution path. This suggests that mathematical reasoning may benefit from: (1) more aggressive verification thresholds, (2) multi-step verification rather than single-step correction, or (3) domain-specific verification algorithms that prioritize numerical consistency.
+
+Figure 2: Accuracy comparison on GSM8K. DualDiffusion underperforms on mathematical reasoning, indicating sensitivity to drafter quality in multi-step tasks.
+
+Despite the accuracy gap, DualDiffusion maintains a 4.0 speedup over LLaDA on GSM8K (75.4s vs. 298.3s), demonstrating that the pipeline remains computationally efficient even when verification is less effective. This highlights an important direction for future work: adaptive verification strategies that increase scrutiny on tasks where the drafter is unreliable.
+
+4.3 Discussion
+
+DualDiffusion successfully achieves a better Pareto frontier on MMLU, maintaining near-verifier accuracy while delivering substantial speedups. The results demonstrate that speculative decoding is viable for masked diffusion models when the drafter and verifier distributions are sufficiently aligned. However, performance on GSM8K reveals that current verification strategies are insufficient for high-precision, multi-step reasoning tasks.
+
+The discrepancy between MMLU and GSM8K performance highlights a fundamental challenge in MDM speculative decoding: unlike AR models where token-level errors are localized, errors in bidirectional generation can propagate unpredictably through the entire sequence. Future work should explore: (1) adaptive verification that adjusts scrutiny based on task difficulty, (2) multi-step verification rather than single-shot correction, and (3) confidence-calibrated verification that accounts for drafter uncertainty on specific token types (e.g., numerical digits).
+
+5 Conclusion
+
+We introduce DualDiffusion, a speculative decoding framework for masked diffusion language models that combines fast drafter models with accurate verifier models to improve the quality-efficiency Pareto frontier. Our approach runs multiple unmasking steps with an accelerated drafter (e.g., FastDLLM or dKV-Cache) and performs selective error correction using a single verifier step, thereby amortizing the computational cost of high-quality generation.
+
+We propose three verification algorithms—Trust Verifier, KL Divergence-based remasking, and Confidence-based remasking—that balance correction accuracy with computational overhead. Experiments on MMLU demonstrate that DualDiffusion achieves near-verifier accuracy (0.47 vs. 0.48) while delivering 3.9 speedup compared to running LLaDA alone. This confirms that speculative decoding is viable for MDMs when drafter and verifier distributions are sufficiently aligned.
+
+However, results on GSM8K reveal current limitations: DualDiffusion achieves only 0.25 accuracy compared to the verifier’s 0.57, indicating that single-step verification is insufficient for multi-step mathematical reasoning where drafter errors cascade through solution paths. This task-dependent performance highlights fundamental challenges in adapting speculative decoding to non-autoregressive generation, where bidirectional context dependencies complicate error localization and correction.
+
+Our work establishes DualDiffusion as an effective acceleration strategy for MDMs on logical reasoning tasks while identifying critical directions for future research. Key areas for improvement include: (1) Adaptive verification that increases scrutiny on high-variance tasks like arithmetic, (2) Multi-step verification where the verifier performs multiple correction passes rather than single-shot remasking, (3) Task-aware verification algorithms that specialize for numerical consistency, sequential reasoning, or other domain-specific constraints, and (4) Memory-efficient architectures such as parameter sharing between drafter and verifier to reduce the current 2 memory overhead.
+
+More broadly, DualDiffusion demonstrates that the speculative decoding paradigm can extend beyond autoregressive models to non-causal generation frameworks. By developing verification strategies tailored to bidirectional attention and iterative refinement, we show that the quality-efficiency trade-offs inherent in approximate MDM acceleration can be mitigated through strategic combination of fast and accurate models. This opens possibilities for applying similar techniques to other non-autoregressive architectures in machine translation, structured prediction, and controllable generation.
+
+References
+
+Austin et al. (2021)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. Van Den Berg
+
+Structured denoising diffusion models in discrete state-spaces.
+
+In Advances in Neural Information Processing Systems,
+
+pp. 17981–17993.
+
+Cited by: §1,
+§2.1.
+
+Chen et al. (2023)
+C. Chen, S. Borgeaud, A. Mensch, I. Sutskever, L. Sifre, O. Vinyals, et al.
+
+Accelerating large language model decoding with speculative sampling.
+
+arXiv preprint arXiv:2302.01318.
+
+Cited by: §1,
+§2.4.
+
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+
+Training verifiers to solve math word problems.
+
+arXiv preprint arXiv:2110.14168.
+
+Cited by: §4.1.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+
+Measuring massive multitask language understanding.
+
+Proceedings of ICLR.
+
+Cited by: §4.1.
+
+Leviathan et al. (2023)
+Y. Leviathan, M. Kalman, and Y. Matias
+
+Fast inference from transformers via speculative decoding.
+
+arXiv preprint arXiv:2211.17192.
+
+Cited by: §1,
+§2.4.
+
+Ma et al. (2025)
+X. Ma, R. Yu, G. Fang, and X. Wang
+
+DKV-cache: the cache for diffusion language models.
+
+arXiv preprint arXiv:2505.15781.
+
+Cited by: §2.3.
+
+Sahoo et al. (2024)
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Braverman, V. Kuleshov, J. T. Chiu, and A. M. Rush
+
+Simple and effective masked diffusion language models.
+
+In Advances in Neural Information Processing Systems,
+
+Cited by: §1,
+§1,
+§2.1,
+§4.1.
+
+Wu et al. (2025)
+C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie
+
+Fast-dllm: training-free acceleration of diffusion llm by enabling kv cache and parallel decoding.
+
+arXiv preprint arXiv:2505.22618.
+
+Cited by: §2.3,
+§4.1.
+
+Yang et al. (2025)
+Z. Yang, S. S. Sahoo, Y. Akhauri, J. Liu, D. Singh, Z. Cheng, Z. Liu, E. Xing, J. Thickstun, and A. Vahdat
+
+Esoteric language models.
+
+arXiv preprint arXiv:2506.01928.
+
+Cited by: §1.
+
+Experimental support, please
+view the build logs
+for errors. Generated by
+
+L
+A
+T
+E
+
+xml
+
+.
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+
+Click the "Report Issue" () button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+
+Major funding support from

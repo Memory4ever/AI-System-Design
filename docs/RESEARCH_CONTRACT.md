@@ -54,11 +54,19 @@ Source Family ID
 ```
 
 - 同一论文的 v1、revision、正式发表、作者项目页和代码发布共享一个 Source Family，但可以形成不同 event node。
-- 论文通常以 arXiv v1 或可核验的首次公开正文日期归周；正式发表日不会覆盖更早的公开日期。
+- 论文通常以可核验的首次公开正文日期归属 Daily/Weekly；正式发表日不会覆盖更早的公开日期。对 arXiv，
+  `submitted` / version history 只证明作者提交与版本 provenance，不等同于公众可见时间。若审核、hold 或延迟公告
+  使 submission 与公开 listing 分离，必须以官方 announcement/listing receipt 的首次公开时间归属；无法恢复该
+  receipt 时保持 date ownership 未验证，不能仅凭 submission timestamp 把论文写入更早窗口。
 - release、RFC、model/system card 和代码 artifact 按各自首次公开日期记录，并声明它们在 family 中承担的证据角色。
-- discovery feed 的推荐日、索引收录日和搜索发现日不能代替事件日期。
+- discovery feed 的推荐日、第三方索引收录日和搜索发现日不能代替事件日期；但 primary repository 自身的公开
+  announcement/listing 是 first-public 证据，不应与第三方 discovery feed 混同。
 - 同一 Source Family 在一份 Report 的候选分母中只能出现一次。Daily 先跨历史记录去重，再以 canonical primary
   event 的 first-public time 判断是否进入本轮窗口；HF、搜索索引或其他 discovery feed 的推荐日不能改变归属。
+- 用户明确重建 Historical Daily 时，“跨历史记录去重”只能读取 canonical primary identity、原始来源 metadata
+  与已经独立重建的 Daily。既有 Weekly 是下游聚合产物，不得提供 discovery seed、候选、评分、Review、Books
+  disposition 或漏项校准；Weekly 只能在 Daily 闭环后重新聚合。ISO owner week 仍可由日期计算，但不能借此复用
+  Weekly 内容。
 - feed 在本轮首次暴露、但 primary event 属于更早窗口的 family，只建立 delayed-discovery recovery 通知，不进入
   当前 Daily 候选分母，也不阻塞当前 Daily Gate。它不是零分或静默忽略：恢复任务必须重开真实 owner Report，并在
   owner 中完成 Score V2、Source Review、Books Decision 与必要的 Weekly reconciliation。
@@ -383,6 +391,8 @@ delta、演进关系、证据边界和最终 Decision。它不是把评分或 We
 - `Review Ref` 可定位；
 - Stable Node ID 可在 `ROADMAP.md` 解析；
 - 目标及相邻章节已审阅，并留下 `Books Review Ref`；
+- 目标、相邻章节与 existing proposition 均定位到当前 Books 中真实存在的文件和标题锚点；占位锚点、
+  自动关键词片段或仅能证明“主题相似”的引用不能通过 Books Gate；
 - 结论达到长期知识门槛。
 
 分数只负责初始审阅路由，不直接决定 Books。低分 correction、Books conflict 或已由全文证据确认的

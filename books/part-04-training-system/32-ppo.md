@@ -106,6 +106,14 @@ L_value(psi) = E[(V_psi(s_t) - R_target_t)^2]
 
 若 value estimate 很差，advantage 噪声会直接污染 policy update。
 
+### Final-only Reward 到 Temporally Coherent Prefix Value
+
+只在 response 末尾训练 reward score，与 pairwise preference 数据最匹配，也避免为中间 token 虚构标签；但若把这个 head 的每个 prefix 输出用于 credit 或 process monitoring，未受约束的中间值往往只是噪声。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22981:start -->
+一个条件分支把 prefix score 解释为“给定当前前缀、沿当前 continuation policy 继续生成时，最终 reward-model score proxy 的条件期望”，在 Bradley–Terry final-preference loss 之外加入 Monte Carlo 与 temporal-difference coherence regularizer。Reward model 拥有独立的 prefix-value state，policy 仍只通过明确的 advantage/reward construction 消费它；coherence 提供更密的 critic signal，却不等于 ground-truth reward、逐步过程正确性或因果 credit，并会随 continuation policy 和 response distribution 改变。Regularizer 错配、off-policy drift 或中间分数未经校准时，应回退 final-only reward 与独立 process verifier。作者在 preference、ProcessBench 与 PPO 设置中的结果支持该建模分支，不证明 token score 是通用 truth signal。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-22981:end -->
+
 ### Critic 稳定性是一个联合合同
 
 “Critic 不稳定”不能只归因于 value model 容量不足。Critic 输出什么范围、向什么 target 回归、怎样进入
@@ -382,6 +390,8 @@ PPO 把 policy rollout、advantage estimation 和受限更新组织成循环。P
 代价是训练状态与系统复杂度显著上升：actor、critic、reference、reward、rollout 和 old logprobs 必须版本一致。PPO 提供优化稳定性机制，不提供 reward 正确性证明。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22981`（Status: Experimental）：exact-v1 支持在 Bradley–Terry 目标上加入 MC/TD temporal coherence，使 prefix 输出逼近 policy-distribution-dependent 的条件期望；不证明中间值具有过程正确性或因果归因。https://arxiv.org/abs/2604.22981v1
 
 - SPPO（prompt-level scalar Critic；Status: Experimental）: https://arxiv.org/abs/2604.08865
 
