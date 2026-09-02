@@ -138,6 +138,28 @@ fail closed，而不能“尽量猜回”。该机制用图构建、`O(n·k)` �
 的完备防护。Regex/NER 继续承担确定性基线，生成式 rewrite 处理更强语义改写，DP 则拥有发布级数学边界；三者是
 分层与替代分支，不应被一个 sanitization 分数合并。
 
+### Privacy Boundary 必须覆盖全部 Observable Channels
+
+把隐私审计限定在数据库、Memory 或日志中，隐含假设是敏感状态只有一个静态存储出口。Agent pipeline 会把同一
+属性投影到 prompt、tool arguments、intermediate summaries、routing metadata、timing 和最终 response；即使某个
+组件没有“保存”原文，具备相应观察权限的 attacker 仍可能从组合 channel 反演。因而审计对象应从 storage object
+扩展为端到端 observable data flow：
+
+```text
+protected attribute + privacy unit
+→ versioned agent pipeline
+→ enumerated observable channels and observer permissions
+→ channel-specific / combined attacker
+→ leakage measurement with calibrated evaluator
+→ mitigation and re-test under the same observation contract
+```
+
+这种测量只能证明在声明的 attacker、目标属性、pipeline revision 与 evaluator 下观察到了多少可恢复信号，不能
+自动给出 DP 式发布保证。它的收益是暴露跨组件泄漏和“未落盘但可观察”的通道，代价是 channel inventory、
+组合攻击、敏感 trace 保存和 evaluator 校准；遗漏一个 side channel 仍可能产生错误 all-clear。单组件测试在边界
+确实隔离时继续有用，但不得外推成端到端安全。真正需要数学发布边界时，仍须回到下一节的 privacy unit、
+adjacency、composition 与 accountant。<!-- source-family:SF-2026-ARXIV-2603-22751 -->
+
 ## Differential Privacy 先定义被保护对象，再选择机制
 
 PII redaction 尝试识别内容；Differential Privacy（DP）则限制相邻数据集变化对已发布结果

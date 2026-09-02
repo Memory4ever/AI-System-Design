@@ -98,6 +98,14 @@ KV bytes = 2 * L * B * T * H_kv * d_h * b
 
 公式里的 `2` 表示 Key 与 Value，不是 double buffering。
 
+这里的“容量”只应理解为 tensor 元素数或乘上 dtype 后的物理存储量。`2 * H_kv * d_h` 表示一个 token、一个 layer 留下两组各含 `H_kv * d_h` 个数值的 K/V 状态；它不是 Shannon entropy，也不能单凭 shape 推出多少 bit 是独立、可压缩或对任务有效的信息。KV dimensions 可能相关、冗余或未被充分利用，因而必须区分：
+
+```text
+logical elements       = 2 * H_kv * d_h
+physical bytes         = logical elements * b
+effective information  = cannot be derived from tensor shape alone
+```
+
 这个写法假设 batch 内每个请求都按同一长度 `T` 计量。若活跃请求长度分别为 `T_r`，更准确的逻辑元素数是：
 
 ```text
@@ -188,9 +196,9 @@ MQA H_kv=1   -> cache约为MHA的1/32
 
 ## Position 与 Cache 的一致性
 
-缓存的 K 通常已经应用对应位置的 RoPE 或其他位置机制。Decode 新 token 必须使用正确 position index，否则新 Query 与历史 Keys 的相对几何错误。
+缓存的 K 通常已经应用对应位置的 RoPE 或其他位置机制。Decode 新 token 必须使用正确 position index，否则新 Query 与历史 Keys 的相对几何错误。位置编码不会阻止同一请求继续复用 cache：历史 token 在后续 Decode steps 中仍处于原位置，所以它的 K 不需要重算。
 
-Prefix reuse 也要求模型配置、token ids、position ids、adapter 和相关 Attention 语义兼容。文本看起来相同但 normalization、special tokens 或 position 编号不同，cache 都未必可复用。
+跨请求的 Prefix reuse 则更严格：模型配置、token ids、position ids、adapter 和相关 Attention 语义都要兼容。文本看起来相同但 normalization、special tokens 或起始 position 不同，cache 都未必可复用；除非模型与 runtime 明确定义并验证了位置变换，不能把位于不同 offset 的 K 当作同一对象。Prefix Cache 是对这段已验证 KV state 的物理复用索引，不是另一种 Attention 语义，也不是“按文本相似度命中”的语义缓存。
 
 ## Cache 没有解决什么
 
@@ -261,6 +269,8 @@ Decoder-only autoregressive loop
 8. GQA/MQA 通过哪个变量降低 cache？
 9. Position id 错误为什么会污染 cached K？
 10. 第19、45、47、56章分别负责 KV Cache 的哪一层问题？
+11. 为什么 `2 * H_kv * d_h` 是元素数量而不是信息熵？
+12. RoPE 为什么不妨碍同一请求复用历史 K，却会约束跨请求 Prefix reuse？
 
 ## 小结
 

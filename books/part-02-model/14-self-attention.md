@@ -70,7 +70,7 @@ V = X W_V    [B,T,d_h]
 
 **Trade-off、failure、共存与回退。** 等价定理依赖 value projection 的秩/子空间条件；小模型从头训练不证明可无损转换既有大模型，50% 是 attention-cache tensor 而非端到端显存。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
 
-#### Review notes
+#### Source evidence boundary
 
 - `SF-2026-ARXIV-2606-21848` — primary `arXiv:2606.21848v1`；exact-v1 URL=`https://arxiv.org/html/2606.21848v1`；Method=`https://arxiv.org/html/2606.21848v1 — §2 Method; §3 Value-only Cache in Autoregressive Inference`；Evaluation=`https://arxiv.org/html/2606.21848v1 — §5 Experiments`；Non-proof=`https://arxiv.org/html/2606.21848v1 — §2.2 equivalence conditions; §6 Limitations`。
 <!-- daily-20260621:model-self-attention:end -->
@@ -237,6 +237,24 @@ PagedAttention  管理运行时 KV Cache 物理存储
 ```
 
 这些技术共享 Attention 背景，却属于不同知识树节点。
+
+Dense attention 的另一条演进不是减少参与交互的 token，而是减少 Q/K 用于匹配的 feature。Token sparsity
+假设只有少数位置值得读取；feature sparsity 则假设内容路由可以由稀疏 feature code 近似，同时让 Value
+aggregation 继续保留被选关系的语义。若只是把 Q/K 置零、仍交给 dense GEMM，算法稀疏不会自动产生 IO
+收益；它需要与 sparse-code layout、索引生成和能直接消费该布局的 kernel 联合设计：
+
+```text
+dense token × dense feature matching
+→ sparse token selection, or sparse Q/K feature coding
+→ layout-aware score kernel
+→ exact / dense fallback for unsupported shapes
+```
+
+这条分支把控制权从 token admission 移到 feature code 与 kernel contract。它可能在长序列、稀疏结构稳定且
+专用 kernel 可摊销时降低计算与内存流量，却增加编码、索引、负载不均和碰撞/漏配风险；稀疏关系也不等于
+语义上不重要。中短序列、feature 稀疏度不足或 backend 不支持时，dense FlashAttention 仍是更成熟的基线。
+现有证据只支持作者模型和实现中的 accuracy/throughput operating point，不能证明 feature sparsity 普遍优于
+sequence sparsity。<!-- source-family:SF-2026-ARXIV-2603-22300 -->
 
 ## 数值与实现边界
 

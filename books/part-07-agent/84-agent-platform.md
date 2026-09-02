@@ -473,6 +473,26 @@ Agent Platform 同时面对多个时间尺度：
 
 Agent waiting 不应占用模型/GPU。Runtime 可在 event 到来时重新组装 Context。Tool/API concurrency、rate limits 和 external quotas 也成为 capacity。
 
+当并发 Agent 共享 execution lanes、provider rate limits 与有限 Context 时，FIFO 只在任务成本相近且没有僵尸执行时足够。AgentRM 把这些跨 run 资源提升为平台状态：MLFQ lane scheduler 根据运行行为调整优先级，zombie reaper 回收失去进展的 execution，rate-limit-aware admission 避免 provider quota cascade，DRF-inspired policy 近似分配共享资源；Context Lifecycle Manager 另行管理分层存储、compaction 与 hibernation，resource monitor 为这些控制器提供反馈。它把调度与 Context 生命周期从 Workflow 中剥离，却新增错误分类、饥饿、reaper 误杀和压缩损失；单 Agent、短任务或固定资源时，简单队列仍更可验证。`arXiv:2603.13110v1` 的 §IV 只支持上述 middleware 组件，§VI 结果绑定由观察模式构造的 simulated agent workloads，§VII-C 之外不证明生产语义公平、durable workflow commit、versioned lease 或 lease recovery。<!-- source-family:SF-2026-ARXIV-2603-13110 -->
+
+### Resume 是新的状态转换，不是简单读回 Checkpoint
+
+仅恢复进程内存或 workflow cursor，在外部世界没有改变时是合理的 crash-recovery baseline。Agent 会等待审批、调用外部工具、产生不可回滚副作用，且重放时的 model/tool 还可能已换版；此时“字节级恢复成功”不等于“恢复到一个曾经真实存在的世界历史”。
+
+平台因而应把 resume 实现为带前置条件的 transition：
+
+```text
+load internal checkpoint
+→ reconcile external dependency versions
+→ verify recorded side effects and idempotency keys
+→ detect stale assumptions / nondeterministic replay boundary
+→ resume, compensate, restart or escalate
+```
+
+Checkpoint owner 只能证明内部状态已恢复；Tool/Environment 拥有外部副作用，Policy plane 拥有继续授权，Workflow owner 必须根据对账结果提交 resume。这会增加 event receipt、dependency snapshot、compensation 和人工升级成本；短、无副作用、可完全重算的 run 仍可直接从头执行，不必引入重型恢复协议。现有实验证明多个 Agent framework 存在这类 execution-continuity 缺口，却不证明一种恢复算法已对任意工具链完备。
+
+<!-- source-family:SF-2026-ARXIV-2608-29381 -->
+
 Runtime 还需要显式的 **stop controller**。固定 step/token cap 在成本可预测、缺少可靠 outcome sensor 时仍最安全，但它会让已经收敛的 trajectory 继续消耗资源，也可能在尚有高价值下一步时粗暴终止。更细的 controller 在每个可恢复边界估计下一步的 expected task value，并与 marginal energy、token/tool cost、deadline risk 和 failure exposure 比较：
 
 ```text

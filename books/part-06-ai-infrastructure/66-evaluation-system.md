@@ -184,6 +184,31 @@ serialization、retry 和 stop behavior。公平比较应验证 adapter 的 sema
 
 统一 harness 降低重复建设，却引入新的兼容层、版本漂移与运行成本。孤立且长期稳定的任务仍可使用专用脚本，但也必须冻结脚本、环境和 scorer 身份，不能把一次聚合分数当作脱离执行条件的模型属性。
 
+### Agent Regression Testing 需要分配 Evidence Budget
+
+确定性的单元测试可以运行一次并把 pass/fail 当成稳定证据；Agent workflow 同时受模型采样、工具状态和环境变化
+影响，同一 case 一次通过不能区分真实回归、偶然失败与 flaky dependency。最直接的做法是把全部 trajectory 和断言
+重复多次，却会让 token、环境调用与人工诊断成本随 case 数和重复次数相乘。
+
+因此 regression owner 需要把测试选择与重复预算建模为 evidence acquisition，而不是固定 test loop：先从 workflow
+spec 与历史 trace 生成可执行 assertions，再依据失败信息量、非确定性和覆盖缺口选择 case，并在有限 token budget 下
+分配重复次数；最终同时保存原始 trajectory、assertion outcome、执行环境和不确定性，而不是只发布聚合 pass rate。
+
+```text
+versioned workflow + executable assertions
+-> candidate regression cases
+-> information / uncertainty-aware selection
+-> repeated runs under a fixed environment identity
+-> claim-level evidence and release decision
+```
+
+这种自适应测试用较少运行换取更集中的回归证据，却引入 selection bias：未被选中的 case 仍可能包含未知失败，历史上
+稳定的 case 也会因环境变化而失效。系统必须保留随机 audit slice、最低覆盖预算与 deterministic critical-path tests；
+高风险副作用不能因为模型预测“信息量低”而跳过。AgentAssay 的公开实现和实验只支持作者 workflow、selection policy
+与 token budget 下的效率，不证明其 selector 对所有生产故障保持完备。
+
+<!-- source-family:SF-2026-ARXIV-2603-02601 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-01771:start -->
 同一条要求也适用于**过程指令**。模型在最终文本中承诺“已查证”“按步骤执行”只是一条 self-report；若任务要求调用指定工具、保存证据或遵守操作顺序，评估必须观察真实 tool-call trace、环境 affordance 和 effect receipt。只看回答内容的 observer 永远无法区分真实执行与流畅叙述。
 
@@ -353,6 +378,23 @@ trajectory/outcome gate 才决定发布。FinTrace 在其金融工具集上支�
 - 成功是否来自环境泄漏或 verifier 缺陷。
 
 四层不是四套互不相干的平台。它们共享 subject identity、dataset/environment version、run、result、trace 和 decision contracts，只是 scorer 与风险不同。
+
+### RAG 端到端评估必须保留阶段级归因
+
+分别测 retrieval recall 和 generator answer quality，在组件开发阶段成本最低，也能快速定位单个实现；进入真实 RAG 服务后，corpus、retriever、reranker、generator、并发和 judge 会共同决定质量、延迟与成本。把各自最优的离线数字拼接成“系统能力”，无法判断一个失败来自未召回、重排、context assembly、生成，还是 measurement client。
+
+更完整的 evaluation object 应冻结整条 pipeline，同时保留阶段 receipts：
+
+```text
+corpus snapshot + query distribution
+→ retriever / reranker revisions and candidates
+→ assembled context and provenance
+→ generator / decoding contract
+→ concurrency and hardware profile
+→ stage metrics + end-to-end quality decision
+```
+
+Pipeline owner 保存 artifact graph，harness 拥有 workload 与阶段计时，scorer 只判断其声明的 quality contract；单个平均分不能吞掉阶段失败。端到端合同提高可归因性与可复现性，却扩大实验矩阵、数据版本和 evaluator 成本；只验证某个 retriever 或 kernel 时，局部 microbenchmark 仍应保留。`arXiv:2603.10765v1` 的 §3.1–§3.5 支持可配置 pipeline、workload 与 profiler 设计，§5.2–§5.8 才覆盖 latency、throughput、accuracy、update、resource、sensitivity 与 measurement overhead；§2.1 只是背景。证据仅绑定论文披露的 corpus、模型、硬件和 evaluator，不把具体排名外推到其他系统或生产 SLO。<!-- source-family:SF-2026-ARXIV-2603-10765 -->
 
 Document Agent 还应把 retrieval、navigation、grounding 与 effort 分开。只报告 final answer accuracy，会让更多
 tool calls 掩盖低质量 first action，也无法区分 document miss、page miss、visual parsing、cross-document synthesis

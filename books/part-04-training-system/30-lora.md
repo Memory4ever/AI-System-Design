@@ -286,6 +286,32 @@ shared base model
 
 所以 LoRA 从训练技巧自然延伸为 Model Registry 和 Serving 的模型组合协议。
 
+### 多租户 Fine-tuning：从共享权重转向复用 Backbone 执行
+
+每个租户独立运行 LoRA job，隔离清楚、失败域小，且在租户数量少或数据到达稳定时仍最容易复算；但当大量小任务
+同时微调同一 base model 时，系统会反复加载相同冻结权重、执行相似 backbone 路径，并让短 job 的空隙碎片化 GPU。
+只共享模型副本可以减少 weight memory，却没有自动消除不同 step、shape 与 adapter state 带来的执行空洞。
+
+更进一步的 multiplexing 同时利用空间与时间两个维度：空间上让兼容任务共享一次 backbone execution、只在
+tenant-specific adapter/update path 分叉；时间上根据各任务 ready state 和资源空隙交错推进。Runtime 因而需要显式
+拥有以下身份与状态：
+
+```text
+base revision + optimizer / precision contract
+tenant adapter and optimizer state
+batch / step compatibility
+spatial sharing group + temporal schedule epoch
+failure and cancellation boundary
+```
+
+这条路线获得更高 backbone 复用和更少显存重复，却把简单 job isolation 换成跨租户耦合：一个 straggler、OOM 或
+numerical mismatch 可能拖累 sharing group，调度也不能静默改变每个任务的 effective batch、sample order 或 optimizer
+step。数据、gradient 和 adapter state 必须保持租户隔离，不能因为共享 forward 就共享 authority。负载低、任务异构、
+需要强故障隔离或 sharing overhead 超过重复计算时，独立 job 仍更合理。MuxTune 的结果只属于作者模型、GPU、任务组合
+与实现，不构成多租户训练的通用吞吐结论。
+
+<!-- source-family:SF-2026-ARXIV-2603-02885 -->
+
 ### Repository-conditioned Adapter 是派生索引，不是代码真值
 
 稳定 repository 可以直接检索相关文件或为每个 repo 训练 adapter；前者保留可引用证据但增加每请求 Context，

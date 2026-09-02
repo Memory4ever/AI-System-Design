@@ -154,6 +154,29 @@ HTTP authorization 解决 client 代表 resource owner 访问 server 的协议�
 
 <!-- source-family:SF-2026-ARXIV-2605-24248 -->
 
+Server admission 解决“谁可以进入能力目录”，跨 Agent delegation 还要解决“权限怎样沿调用链收窄并可被事后
+验证”。单一 bearer token 在单 hop、同一信任域里简单有效；经过 MCP、A2A 或代理转发后，转交完整 token 会让
+下游获得原 principal 的全部权限，也无法证明中间节点实际委托了什么。更强的链路把短期 session identity 与
+可衰减 authorization chain 分开：每个 holder 只能追加限制，最终 invocation 与可选的 holder-signed completion
+claim 共同绑定
+principal、scope、resource、deadline 与调用上下文。
+
+```text
+authenticated principal
+→ session identity token
+→ attenuable multi-hop delegation chain
+→ effect-time authorization for canonical action
+→ optional self-reported signed completion block
+```
+
+协议证明的是 identity、delegation provenance 与约束没有被中间 holder 放大，不证明 tool 本身安全或结果真实。
+签名只证明该 holder 对 completion claim 的作者身份与上下文绑定，不构成独立执行证明，更不等价于 failure
+receipt。它增加 key lifecycle、clock/revocation、policy evaluation 和跨实现兼容成本；密钥泄漏、撤销未传播或
+self-reported completion 未绑定真实 side effect 时仍会失败。单 hop 内部服务可以继续使用短期 scoped token，
+高权限或跨信任域链路则应要求可验证衰减，并由外部 observer、deterministic verifier 或人工确认生成独立 effect
+receipt。事件时结果只覆盖作者的实现、攻击集和 transport 组合，不能外推为所有
+MCP/A2A deployment 的安全证明。<!-- source-family:SF-2026-ARXIV-2603-24775 -->
+
 ## Sampling、Elicitation 与递归能力
 
 在 `2025-11-25` implementation 或仍提供相应 extension 的系统中，Server 请求 client

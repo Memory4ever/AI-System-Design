@@ -130,6 +130,26 @@ request_latency
 
 它还应传播 trace context 与 request identity，让后端 metrics/logs/traces 可关联。高层路由不能只消费瞬时 GPU utilization，应使用经过聚合、带 freshness 和 fallback 的 signals，避免控制环振荡。
 
+当 Gateway 同时做 provider evaluation 与 routing 时，直接为每种模型、任务和故障各加一列指标，短期可读，长期
+却会产生名称漂移、不可比较的 evaluator 和丢失 lineage 的临时规则。一个 typed schema 可以把 Context、intent、
+response issue、quality evidence 与 operational measurements 分开建模，再用显式 relation 将一次 route decision
+连接到输入版本、候选 provider、evaluator revision 和最终 outcome：
+
+```text
+request identity + typed context
+→ candidate route set
+→ versioned quality / operational evidence
+→ policy decision
+→ response and outcome receipt
+→ evaluator / routing recalibration
+```
+
+Schema 只提供可查询、可追溯的控制面语言，不保证自动 evaluator 已校准，也不应取代 Engine 对 token/KV 的实时
+调度权。它获得跨 provider 对照与事后解释，代价是字段治理、迟到数据、join consistency 和 evaluator coupling；
+schema 过宽会把未知值误当作可比较事实。单 provider、单指标服务仍可使用薄 telemetry；异构 provider 和持续
+策略学习场景才值得支付关系化成本。事件时论文只展示其 schema population 与 routing case，不证明固定字段集合
+适用于所有业务。<!-- source-family:SF-2026-ARXIV-2603-26728 -->
+
 ### 条件化机制分支与共存边界
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。

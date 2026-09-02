@@ -291,6 +291,25 @@ episodes
 
 删除必须传播到 embeddings、cache、summaries 和 backups policy。
 
+语义 Memory 还存在一个不能靠“再调 threshold”消失的容量边界。在有限维、局部连续的表示空间中，让相近输入
+更容易互相召回可以提高类比与鲁棒性，却也扩大彼此影响的邻域；随着写入密度上升，interference 和 false recall
+会同步增加。把所有 state 都做成更平滑的 semantic kernel，不能同时获得无限容量、完美可分性与零遗忘：
+
+```text
+exact key / namespace archive
+→ semantic neighborhood for flexible recall
+→ growing overlap and interference
+→ consolidation, expiry or capacity expansion
+→ evidence verification before commitment
+```
+
+因此 forgetting 不只是实现缺陷，也是 representation、capacity 与 continuity 的 trade-off。Memory owner 应把 exact
+identity/provenance archive 与 semantic index 分层：前者服务身份关键事实和审计，后者承担近似发现；召回结果在
+进入行动或事实提交前仍需 verification。增加维度、分区或 expert pool 可以推迟冲突，却会增加路由、迁移与一致性
+成本，并不会让局部连续表示获得无界可分性。事件时定理只覆盖作者定义的 continuous kernel-threshold memory
+类，不能否定 symbolic key、显式 ACL/provenance 或 exact/semantic hybrid；这些正是旧方案继续成立的边界。
+<!-- source-family:SF-2026-ARXIV-2603-27116 -->
+
 ### 并行经验汇总需要 Bounded Fan-in 与 Context Version
 
 Sequential generate→reflect→update 容易形成单点瓶颈；让多个 workers 读取同一 context version 并行产生

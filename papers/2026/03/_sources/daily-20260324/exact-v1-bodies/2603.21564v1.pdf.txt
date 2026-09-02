@@ -1,0 +1,585 @@
+Published as a conference paper at ICLR 2026
+
+T OWARD A T HEORY OF H IERARCHICAL M EMORY FOR
+L ANGUAGE AGENTS
+Yashar Talebirad
+University of Alberta
+talebira@ualberta.ca
+
+arXiv:2603.21564v1 [cs.IR] 23 Mar 2026
+
+Amirhossein Nadiri
+York University
+anadiri@yorku.ca
+
+Ali Parsaee
+University of Alberta
+Parsaee@ualberta.ca
+
+Csongor Y. Szepesvari
+University of Alberta
+csongor@ualberta.ca
+
+Osmar Zaiane
+University of Alberta
+zaiane@ualberta.ca
+
+A BSTRACT
+Many recent long-context and agentic systems address context-length limitations
+by adding hierarchical memory: they extract atomic units from raw data, build
+multi-level representatives by grouping and compression, and traverse this structure to retrieve content under a token budget. Despite recurring implementations,
+there is no shared formalism for comparing design choices. We propose a unifying theory in terms of three operators. Extraction (α) maps raw data to atomic
+information units; coarsening (C = (π, ρ)) partitions units and assigns a representative to each group; and traversal (τ ) selects which units to include in context given a query and budget. We identify a self-sufficiency spectrum for the
+representative function ρ and show how it constrains viable retrieval strategies
+(a coarsening-traversal coupling). Finally, we instantiate the decomposition on
+eleven existing systems spanning document hierarchies, conversational memory,
+and agent execution traces, showcasing its generality.
+
+1
+
+I NTRODUCTION
+
+Language agents increasingly rely on large external corpora and long interaction histories, but larger
+context windows do not reliably improve information use. Models underweight mid-context evidence (Liu et al., 2024), struggle with single-fact retrieval in long documents (Hsieh et al., 2024),
+and often degrade as context grows (“context dilution”/“context rot”). This reveals a gap between
+capacity (more tokens) and control (what to surface, and when). Hierarchical memory is a recurring
+response: RAPTOR (Sarthi et al., 2024), GraphRAG (Edge et al., 2024), xMemory (Hu et al., 2026),
+H-MEM (Sun & Zeng, 2025), and SimpleMem (Liu et al., 2026) build multi-level representations
+by grouping, compressing, and selectively expanding under a budget; analogous ideas appear in
+agent execution-trace memory, including reasoning-focused traces (MemoBrain (Qian et al., 2026),
+StackPlanner (Zhang et al., 2026)) and action/state traces (InfiAgent (Yu et al., 2026a)). Yet these
+systems are usually presented as isolated design points, making it hard to compare assumptions.
+We show that, every hierarchical memory system, whether it operates on stored knowledge or live
+agent execution traces, instantiates a single three-operator pipeline (Figure 1). Extraction (α) maps
+raw data to a graph of atomic information units. Coarsening (C = (π, ρ)) partitions units into groups
+and produces a representative for each group, yielding a smaller graph, and iterating this produces
+the hierarchy. Traversal (τ ) takes the hierarchy, a query, and token budget, and returns a subset of
+atomic units to include in context. The central theoretical observation is that the representative function ρ varies along a self-sufficiency spectrum: a detailed summary preserves most of the group’s
+information, while a category label preserves almost none. This property constrains which retrieval
+strategy works. Self-sufficient representatives support collapsed search over all levels (RAPTOR),
+while referential representatives require top-down refinement (H-MEM, xMemory). We call this
+constraint the coarsening-traversal (C–T) coupling.
+Prior efforts classify memory systems but do not formalize hierarchy construction. CoALA (Sumers
+et al., 2024) organizes memory by cognitive type (working, episodic, semantic, procedural), and
+1
+
+Published as a conference paper at ICLR 2026
+
+Figure 1: The (α, C, τ ) pipeline: D is extracted (α) into atoms G0 ; coarsening C1 , C2 , C3 yields
+layers G1 , G2 , G3 ; traversal τ takes a query and budget and returns a subset S of atoms.
+MemEngine (Zhang et al., 2025b) implements multiple systems from shared primitives. We provide
+a mathematical unification, extended to agent execution traces: a formal (α, C, τ ) decomposition
+with information monotonicity, a self-sufficiency spectrum with C–T coupling, and an instantiation
+of this decomposition across eleven data and trace systems.
+
+2
+
+T HE F RAMEWORK
+
+2.1
+
+C ORE D EFINITIONS
+
+Natural language exhibits multiscale structure (themes, topics, individual facts), and queries may
+target any scale. We define three operators that build multiresolution representations of this structure.
+Information units. Let F = F1 × · · · × Fp be a product of feature spaces with one distinguished
+factor Fc = Σ∗ (text). A unit u ∈ F has projections ϕi (u); ϕc (u) is the content. Typical attributes
+include embeddings ϕemb , timestamps ϕtime , entities ϕent , and structural paths ϕpath .
+Unit graph. G = (U, E) with U a finite set of units and E ⊆ U × U . The edge set may be empty
+(a flat bag of units, as in SimpleMem), may encode entity-entity relationships (a knowledge graph,
+as in GraphRAG), or may encode sequential adjacency (a conversation stream, as in xMemory).
+Extraction. The first operator maps raw data into structured units. α : D → G maps raw data
+D to a unit graph G0 = (U0 , E0 ). All preprocessing (chunking, named entity recognition, path
+assignment) happens inside α, and thus, each unit is self-contained in the resulting graph G0 .
+Coarsening. A coarsening operator on G = (U, E) is C = (π, ρ): (i) π : U ↠ [m] is a surjective
+grouping that induces the partition {Gj = π −1 (j)}; (ii) ρ : 2U → F is a representative function
+such that ρ(Gj ) ∈ F . We assume |U ′ | = m < |U |, where U ′ = {ρ(Gj ) : j ∈ [m]}.1
+Hierarchy. Iterating Ci produces a hierarchy H = (G0 , C1 , . . . , CL ) with Gℓ = Cℓ (Gℓ−1 ).2
+Denote the node set of Gℓ as Vℓ . Level 0 is thus the atom set V0 ; each application of Cℓ builds
+the next layer Vℓ from Vℓ−1 by grouping nodes (via πℓ ) and assigning one representative per group
+(via ρℓ ), with edges from each representative to its children. The hierarchy can thus be viewed as
+a multi-layer graph: the bottom layer holds fine-grained units, and each higher layer is a coarsened
+1
+
+Some systems (RAPTOR’s GMM soft clustering, overlapping community detection) allow a unit to belong
+to multiple groups, replacing π : U → [m] with π : U → 2[m] \ ∅; the hierarchy then becomes a DAG.
+2
+H lists the initial graph G0 and the coarsening operators; the graphs G1 , . . . , GL are the results of applying
+them, not separate entries in the tuple. The “layers” in the multi-level view are these derived graphs.
+
+2
+
+Published as a conference paper at ICLR 2026
+
+graph whose nodes summarize the subgraph below (Figure 1). Each Cℓ may use a different grouping
+and representative strategy (e.g., xMemory uses temporal grouping at level 1, semantic grouping at
+level 2, and thematic grouping at level 3).
+2.2
+
+M ULTI -R ESOLUTION R EPRESENTATION
+
+Assume the input data D is drawn from a distribution over D. Since V0 = α(D) and each
+Vℓ = Cℓ (Vℓ−1 ), every level inherits randomness from D, and the entropies below are well defined. Let H = (G0 , C1 , . . . , CL ), and assume each Cℓ is deterministic and information-losing
+with positive probability under D (equivalently, not almost surely invertible). Then: (i) H(V0 ) >
+H(V1 ) > · · · > H(VL ), since determinism gives H(Vℓ ) ≤ H(Vℓ−1 ) and strict information loss on a
+nonzero-probability set makes the inequality strict; (ii) for any query variable Q with query-agnostic
+coarsening (i.e., Vℓ depends only on Vℓ−1 and not on Q), I(Q; V0 ) ≥ I(Q; V1 ) ≥ · · · ≥ I(Q; VL ),
+since learning Vℓ provides no additional information about Q once Vℓ−1 is known; equivalently,
+Q–Vℓ−1 –Vℓ forms a Markov chain (and the Data Processing Inequality applies).
+This formalizes that every coarsening step loses information.3 The atoms V0 set the information
+ceiling; finer extraction increases H(V0 ) and raises the ceiling on downstream retrieval quality.4
+2.3
+
+S ELF -S UFFICIENCY AND THE C–T C OUPLING
+
+The representative function ρ is where systems diverge most, and its properties determine the behavior of the entire hierarchy. The self-sufficiency of ρ at group Gj measures how much of the group’s
+information the representative preserves: 5
+SS(ρ, Gj ) =
+
+I(Gj ; ρ(Gj ))
+H(Gj | ρ(Gj ))
+=1−
+.
+H(Gj )
+H(Gj )
+
+(1)
+
+Assume H(Gj ) > 0; if H(Gj ) = 0, define SS = 1. When self-sufficiency is high (close to 1), the
+representative preserves most of the group’s content and can answer queries on its own (e.g., LLMgenerated summaries). When self-sufficiency is low (close to 0), the representative serves only as
+a routing label, indicating what the group contains without reproducing it (e.g., domain names).
+For any query Q, I(Q; Gj ) − I(Q; ρ(Gj )) ≤ H(Gj | ρ(Gj )), so high self-sufficiency bounds the
+information loss incurred by reading the representative rather than the children.
+C–T coupling. Self-sufficiency constrains which traversal strategies are viable, reflecting a ratedistortion tradeoff. Self-sufficient ρ operates at low distortion: coarse nodes carry enough information to answer queries directly, so collapsed search suffices (single-shot decoding; RAPTOR).
+Referential ρ operates at high distortion: coarse nodes serve only as routing labels, so top-down refinement is needed to recover the lost detail (successive refinement; H-MEM, xMemory). Mismatching ρ and traversal wastes budget: collapsed search over referential representatives spends tokens on
+uninformative labels, while top-down routing through self-sufficient representatives spends tokens
+on unnecessary expansion. Existing evidence is consistent with this observation, but a controlled
+comparison across the spectrum remains open.
+2.4
+
+T RAVERSAL
+
+A traversal τ : P
+(H, q, B) → S ⊆ V0 takes a hierarchy, query, and token budget and returns
+atoms satisfying u∈S |ϕc (u)| ≤ B. By pruning via hierarchy structure, traversal can reduce relevance evaluations from O(n) (flat search) to O(log n) under bounded compute. Four patterns recur:
+top-down refinement (H-MEM, xMemory), collapsed search across levels (RAPTOR), multi-view
+parallel retrieval (SimpleMem), and reasoning-based navigation (PageIndex (Zhang et al., 2025a),
+MemWalker (Chen et al., 2023)).6 This reflects a dual role of H: with referential ρ, it mainly serves
+3
+This also aligns with the Information Bottleneck principle (Tishby et al., 1999): as compression becomes
+more aggressive at each level of H, representations move along a trade-off curve between retained detail and
+compactness, suggesting a multi-resolution structure.
+4
+Appendix B relates data size, context window, and compression ratio to the number of levels needed.
+5
+A computable LLM-based SSθ and a query-dependent refinement SSQ are developed in Appendix A.
+6
+Pseudocode appears in Appendix D.
+
+3
+
+Published as a conference paper at ICLR 2026
+
+Table 1: Data and agent execution-trace systems as (α, C, τ ). Type: D = data, T = trace.
+System
+
+Type
+
+α
+
+π; ρ (SS)
+
+τ
+
+RAPTOR
+GraphRAG
+xMemory
+H-MEM
+SimpleMem
+Mastra’s OM
+PageIndex
+MemoBrain
+StackPlanner
+AgeMem
+InfiAgent
+
+D
+D
+D
+D
+D
+D
+D
+T
+T
+T
+T
+
+100-tok chunks
+entity/rel extract
+episode boundaries
+episode + profile
+window + density
+token threshold
+structural parse
+episode → thought
+task stack entries
+turns → entries
+artifacts → files
+
+UMAP+GMM; LLM summary (high)
+Leiden; community report (high)
+guided split/merge; fact distill (mid)
+LLM 4-level; domain labels (low)
+online synthesis; consolidated (high)
+all-in-one; Reflector (high)
+doc structure; titles/summaries (mid)
+dep.-subgraph; Fold (high) / Flush (low)
+segment; Condensation (high) / Pruning (low)
+learned; SUMMARY (high) / FILTER (low)
+state consolidation (mid)
+
+collapsed / top-down
+global / entity fan-out
+top-down + expand
+top-down FAISS
+multi-view parallel
+full log
+reasoning-based
+context projection
+stack top + retrieval
+RETRIEVE + FILTER
+bounded g(Ft , at−k:t−1 )
+
+as an index for top-down routing; with self-sufficient ρ, it also serves as a representation whose
+non-leaf nodes often answer broad queries directly (collapsed search).
+
+3
+
+I NSTANTIATION
+
+3.1
+
+DATA AND T RACE S YSTEMS
+
+To showcase generality, Table 1 maps eleven systems to (α, C, τ ). Data memory systems operate
+on stored content: batch document hierarchies (RAPTOR, GraphRAG), online conversational memory (xMemory, H-MEM, SimpleMem), observational compression (Mastra’s Observational Memory (Barnes, 2026)), and structured navigation (PageIndex). Agent execution-trace systems operate
+on execution: α segments traces, C groups/compresses them (e.g., MemoBrain’s Fold/Flush, StackPlanner’s Condensation/Pruning), and τ reconstructs working context. In trace memory, coherence
+is causal-functional (steps for the same subproblem) rather than semantic, and the training signal
+is task reward (DPO, GRPO) rather than retrieval metrics. AgeMem (Yu et al., 2026b) exposes
+store/retrieve/summarize/filter/discard as tool actions, while InfiAgent uses bounded reconstruction
+from workspace state Ft and recent actions (Yu et al., 2026a).7
+
+4
+
+D ISCUSSION AND F UTURE W ORK
+
+The (α, C, τ ) decomposition provides a common language for comparing systems. Table 1 shows
+that data-memory and agent-trace systems converge on the same pipeline despite different motivations. The C–T coupling suggests that ρ and τ should be chosen jointly, and the Fano bound
+(Appendix B) quantifies how representative quality caps branching factor. Current grouping functions π mostly assume unweighted, deterministic edges, but real unit graphs are often weighted or
+uncertain. Local community mining and search methods for weighted (SIWOw (Zafarmand et al.,
+2023)) and uncertain (USIWO (Talebirad et al., 2023)) graphs motivate extending π to exploit edge
+strength/confidence and improve partition coherence (Appendix C).
+As agent execution traces grow, most prior steps become irrelevant to the current subtask, creating
+a similar context pressure that motivates hierarchical organization of stored knowledge. This convergence suggests that complex agentic tasks involve three coupled hierarchies: the data hierarchy
+Hdata (stored knowledge), the trace hierarchy Htrace (reasoning, interaction, and action traces), and
+the task hierarchy Htask (problem decomposition). Each node in Htask induces a traversal through
+Hdata and generates nodes in Htrace ; the inter-hierarchy alignment constraints remain open.
+The central limitation is the assumption of a static hierarchy. In practice, hierarchies evolve via
+insertion/restructuring (xMemory’s split/merge, MemTree (Rezazadeh et al., 2025)), and retrieval
+can reshape memory by reinforcement or decay. Both dynamics break the Markov-chain argument
+of Section 2.2: query-conditioned ρ makes Vℓ depend on Q, and stateful coarsening couples τ and
+C into a feedback loop. Formalizing this setting (likely via adaptive information theory or online
+learning) is the most pressing open problem. Empirical next steps are validating SSθ as a predictor
+of retrieval quality, testing C–T coupling with matched ρ/τ variants, and computing IB-optimal ρ.
+7
+Bounded context forces a scope–nuance trade-off, which explains convergence on “capture at full granularity, coarsen iteratively, reconstruct on demand via τ ”.
+
+4
+
+Published as a conference paper at ICLR 2026
+
+R EFERENCES
+Tyler Barnes. Observational memory: 95% on longmemeval. Mastra Research Blog, February
+2026. URL https://mastra.ai/research/observational-memory. Observational Memory (OM).
+Howard Chen, Ramakanth Pasunuru, Jason Weston, and Asli Celikyilmaz. Walking down the memory maze: Beyond context limit through interactive reading. arXiv preprint arXiv:2310.05029,
+2023. MemWalker; Meta AI Research.
+Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt,
+and Jonathan Larson. From local to global: A graph RAG approach to query-focused summarization. arXiv preprint arXiv:2404.16130, 2024.
+Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang
+Zhang, and Boris Ginsburg. RULER: What’s the real context size of your long-context language
+models? In Conference on Language Modeling (COLM), 2024. arXiv:2404.06654.
+Zhanghao Hu, Qinglin Zhu, Hanqi Yan, Yulan He, and Lin Gui. Beyond RAG for agent memory:
+Retrieval by decoupling and aggregation. arXiv preprint arXiv:2602.02007, 2026.
+Jiaqi Liu, Yaofeng Su, Peng Xia, Siwei Han, Zeyu Zheng, Cihang Xie, Mingyu Ding, and Huaxiu
+Yao. SimpleMem: Efficient lifelong memory for LLM agents. arXiv preprint arXiv:2601.02553,
+2026.
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and
+Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the
+Association for Computational Linguistics, 12:157–173, 2024. arXiv:2307.03172.
+Hongjin Qian, Zhao Cao, and Zheng Liu. Memobrain: Executive memory as an agentic brain for
+reasoning. arXiv preprint arXiv:2601.08079, 2026.
+Alireza Rezazadeh, Zichao Li, Wei Wei, and Yujia Bao. From isolated conversations to hierarchical schemas: Dynamic tree memory representation for LLMs. In International Conference on
+Learning Representations, 2025. MemTree; arXiv:2410.14052.
+Parth Sarthi, Salman Abdullah, Aditi Tuli, Shubh Khanna, Anna Goldie, and Christopher D. Manning. RAPTOR: Recursive abstractive processing for tree-organized retrieval. In International
+Conference on Learning Representations, 2024.
+Theodore R. Sumers, Shunyu Yao, Karthik Narasimhan, and Thomas L. Griffiths. Cognitive architectures for language agents. Transactions on Machine Learning Research, 2024.
+arXiv:2309.02427.
+Haoran Sun and Shaoning Zeng. Hierarchical memory for high-efficiency long-term reasoning in
+LLM agents. arXiv preprint arXiv:2507.22925, 2025.
+Yashar Talebirad, Mohammadmahdi Zafarmand, Osmar R. Zaiane, and Christine Largeron.
+USIWO: A local community search algorithm for uncertain graphs. In Proceedings of the International Conference on Advances in Social Networks Analysis and Mining, pp. 187–194, 2023.
+Naftali Tishby, Fernando C. Pereira, and William Bialek. The information bottleneck method. In
+Proceedings of the 37th Annual Allerton Conference on Communication, Control, and Computing,
+1999.
+Chenglin Yu, Yuchen Wang, Songmiao Wang, Hongxia Yang, and Ming Li. Infiagent: An infinitehorizon framework for general-purpose autonomous agents. arXiv preprint arXiv:2601.03204,
+2026a.
+Yi Yu, Liuyi Yao, Yuexiang Xie, Qingquan Tan, Jiaqi Feng, Yaliang Li, and Libing Wu. Agentic
+memory: Learning unified long-term and short-term memory management for large language
+model agents. arXiv preprint arXiv:2601.01885, 2026b. AgeMem.
+5
+
+Published as a conference paper at ICLR 2026
+
+Mohammadmahdi Zafarmand, Yashar Talebirad, Eric Austin, Christine Largeron, and Osmar R.
+Zaı̈ane. Fast local community discovery relying on the strength of links. Social Network Analysis
+and Mining, 13(1):112, 2023.
+Mingtian Zhang, Yu Tang, and PageIndex Team. Pageindex: Next-generation vectorless, reasoningbased rag. PageIndex Blog, September 2025a. https://pageindex.ai/blog/pageindex-intro.
+Ruizhe Zhang, Xinke Jiang, Zhibang Yang, Zhixin Zhang, Jiaran Gao, Yuzhen Xiao, Hongbin Lai,
+Xu Chu, Junfeng Zhao, and Yasha Wang. StackPlanner: A centralized hierarchical multi-agent
+system with task-experience memory management. arXiv preprint arXiv:2601.05890, 2026.
+Zeyu Zhang, Quanyu Dai, Xu Chen, Rui Li, Zhongyang Li, and Zhenhua Dong. Memengine:
+A unified and modular library for developing advanced memory of LLM-based agents. arXiv
+preprint arXiv:2505.02099, 2025b.
+
+A
+
+A LTERNATE S ELF -S UFFICIENCY M EASURES
+
+To make the C–T coupling testable in practice, we need proxies for self-sufficiency that can be
+estimated on real systems. The measures below separate what can be assessed at construction time
+from what is revealed only under concrete queries.
+Computable proxy (SSθ ). Shannon entropy is not directly computable for natural language, so
+we use an LLM Pθ as a practical proxy:
+SSθ (ρ, Gj ) = 1 −
+
+− log Pθ (Gj | ρ(Gj ))
+.
+− log Pθ (Gj )
+
+(2)
+
+Intuitively, this measures how much the representative helps the model predict the group’s contents.
+Since many systems use LLMs to generate representatives, SSθ directly affects downstream quality.
+If ρ hallucinates (adds facts not supported by the children), then Pθ (Gj | ρ) drops: the representative no longer predicts the actual children and may actively mislead. The same drop occurs if ρ
+blurs important distinctions (e.g., by merging dissimilar items into a vague summary), because the
+representative fails to disambiguate.
+These failure modes suggest that SSθ is a reasonable signal of the reliability of ρ. The decision
+rule linking SS to traversal choice (Section 2.3) holds only when SSθ indicates that ρ is reliable.
+When SSθ is low (due to aggressive compression, hallucination, or incoherent grouping), the system
+should default to treating ρ as referential, regardless of the nominal compression ratio.
+Query-dependent refinement (SSQ ). Both SS and SSθ are query-independent: they measure the
+fraction of a group’s total information preserved by ρ. A query Q may need only a small portion of
+Gj ’s information. The query-dependent self-sufficiency
+SSQ (ρ, Gj , Q) =
+
+I(Q; ρ(Gj ))
+I(Q; Gj )
+
+(3)
+
+measures the fraction of query-relevant information preserved by ρ(Gj ) when I(Q; Gj ) > 0 (if
+I(Q; Gj ) = 0, define SSQ = 1). Since ρ(Gj ) is a deterministic function of Gj , the chain Q–Gj –
+ρ(Gj ) is Markov and the Data Processing Inequality gives SSQ ∈ [0, 1].
+Define query relevance rQ = I(Q; Gj )/H(Gj ). From I(Q; Gj | ρ(Gj )) ≤ H(Gj | ρ(Gj )) and the
+identity SSQ = 1 − I(Q; Gj | ρ(Gj )) / I(Q; Gj ):
+SSQ ≥ 1 −
+
+1 − SS
+.
+rQ
+
+(4)
+
+When rQ is large, SS is a tight lower bound on SSQ . When rQ is small, the bound does not provide
+a meaningful constraint, and low-SS representatives can still achieve high SSQ . This explains why
+referential representatives (category labels, hash keys, B-tree boundary keys) are effective for routing: the routing query requires very little of the group’s total information (rQ ≈ 0), so even SS ≈ 0
+is compatible with SSQ ≈ 1.
+6
+
+Published as a conference paper at ICLR 2026
+
+SS is the appropriate construction-time metric, since no query is available when ρ is built. At design
+time, SS determines the default traversal strategy via the C–T coupling (Section 2.3). At query time,
+SSQ determines whether the representative suffices or the children must be expanded. Operationally,
+SS is a prior over expected query-time behavior and should be calibrated on a target workload by
+comparing SS against empirical means of SSQ . Accordingly, the C–T coupling is a practical default:
+high SS suggests more queries are answerable from the representative (collapsed search), while low
+SS suggests more queries require expansion (top-down refinement).
+
+B
+
+FANO B OUND AND B RANCHING FACTOR
+
+The Fano inequality constrains how many groups a level can contain given the discriminative quality
+of the representative.
+Theorem (Fano). Let Z ∈ {1, . . . , nk } be the correct group index and O the observable routing
+evidence. For any estimator Ẑ = g(O) with error probability pe = P [Ẑ ̸= Z]:
+pe ≥ 1 −
+
+I(Z; O) + 1
+.
+log2 nk
+
+Corollary (from xMemory (Hu et al., 2026)). If I(Z; O) ≤ B bits and pe ≤ ε, then nk ≤
+2(B+1)/(1−ε) .
+In our framework, B is determined by the information content of ρ: low-SS representatives (small
+B) force coarser partitions, while high-SS representatives permit finer ones. P
+Composing across L
+levels with per-level error εℓ , the total routing failure probability is bounded by ℓ εℓ (union bound).
+Optimal branching. Assuming a balanced tree, uniform per-node cost, and no caching, top-down
+retrieval with beam width k and branching factor b has total cost L · k · b. With n = |V0 | = bL ,
+substituting L = ln n/ ln b yields cost ∝ b/ ln b, which is minimized at b = e. The Fano constraint
+caps b at 2(B+1)/(1−ε) ; if this is below e, the cap binds. The optimal depth is L∗ = ⌈ln n/ ln b∗ ⌉.
+Depth bound. A related structural constraint governs hierarchy depth. If total data comprises N
+tokens, the context window holds C tokens, and each coarsening level compresses content by a
+factor r, the top level fits in context only when L ≥ ⌈logr (N/C)⌉.
+
+C
+
+A FFINITY AND C OHERENCE
+
+Traversal quality depends not only on how informative representatives are, but also on whether
+grouping preserves meaningful neighborhood structure. Here, we make the hidden assumption behind top-down pruning more explicit: grouping must preserve local relevance geometry well enough
+that parent-level decisions remain predictive at child level. The C–T coupling (Section 2.3) concerns
+the representative ρ; the grouping π also constrains traversal. Every hierarchical system implicitly assumes that units placed in the same group are in some sense alike, whether by embedding
+similarity (RAPTOR), graph connectivity (GraphRAG), or structural path (PageIndex). Without a
+principled notion of “which units belong together,” the partition is arbitrary and top-down pruning
+has no guarantee: a low-relevance parent might have highly relevant children in another topic that
+happened to be grouped with it. We formalize the notion of “alike” as an affinity and require that the
+partition respect it; that is what makes top-down traversal safe. The definitions below are an attempt
+to make this notion more precise.
+Definition 1 (Affinity) An affinity on a unit graph G = (U, E) is a symmetric function W : U ×
+U → R≥0 .
+Definition 2 (W -coherent partition) A partition π : U ↠ [m] is W -coherent if within-group affinity exceeds between-group affinity:
+Eu,v:π(u)=π(v) [W (u, v)] > Eu,v:π(u)̸=π(v) [W (u, v)].
+7
+
+Published as a conference paper at ICLR 2026
+
+System
+
+Affinity W (u, v)
+
+Partition method
+
+RAPTOR
+GraphRAG
+H-MEM
+xMemory
+SimpleMem
+Mastra’s OM
+PageIndex
+
+cos(ϕemb (u), ϕemb (v))
+connectivity in E
+LLM-judged domain co-membership
+cosine + sparsity-semantic score
+semantic + temporal proximity
+temporal contiguity
+|lcp(ϕpath (u), ϕpath (v))|
+
+UMAP + GMM
+Leiden community detection
+LLM 4-level classification
+guided split/merge
+online LLM synthesis
+token-count threshold
+structural parsing
+
+Systems derive W from different signals:
+In Table 1, Leiden community mining (used in GraphRAG) is the clearest example of global graph
+partitioning. The graph-mining literature also studies community search, which identifies a local
+dense subgraph around given query nodes without processing the full graph (Zafarmand et al., 2023).
+This suggests a local variant of π: rather than committing to a single global partition at construction
+time, the system could perform ad-hoc, on-demand coarsening around the regions of the unit graph
+most relevant to the current query. This way, the quality of π depends directly on the fidelity of the
+graph signals used by the mining step. Furthermore, real-world unit graphs frequently carry edge
+weights or probabilistic edges encoding uncertainty in the underlying facts, as commonly arises in
+knowledge-graph predicates with uncertain truth values. Incorporating such richer signals into W
+can tighten the coherence gap γℓ = E[Wwithin ] − E[Wbetween ] and improve the quality of π.
+The affinity W is why π should group certain units together, but π need not compute W explicitly.
+In structural parsing, π reads off path prefixes directly. For agent execution traces, a symmetric
+pairwise affinity is often a poor fit: MemoBrain groups reasoning thoughts by causal co-resolution
+(thoughts connected via directed dependencies that jointly resolve a subproblem), and StackPlanner groups stack entries by contiguous stack membership. In both cases, the grouping criterion is
+structural and directed rather than similarity-based, so we omit these systems from the table. The
+underlying principle still holds, however: W -coherence is what makes top-down traversal efficient,
+and its analogue in trace systems is that steps addressing the same subproblem should cluster, ensuring that parent relevance predicts child relevance. The key intuition is relevance monotonicity: if
+a parent node has low relevance to the query, its children are unlikely to have high relevance, with
+the gap controlled by the coherence gap γℓ at that level. This justifies top-down pruning in H-MEM,
+xMemory, and MemWalker, and the same logic applies to MemoBrain’s Fold and Flush: if a summarized sub-trajectory is irrelevant to the current reasoning state, its constituent steps are also likely
+irrelevant. Systems with poor coherence (e.g., noisy LLM partitions) should use wider beams or
+prefer collapsed search. A formal characterization of how γℓ bounds child relevance conditioned on
+parent relevance remains open.
+
+D
+
+T RAVERSAL A LGORITHMS
+
+The algorithms below operationalize the same design trade-off discussed in the main text: spend
+budget on broad routing first or on direct content evidence.
+Algorithm 1: Top-down refinement (H-MEM, xMemory). Given H, query q, budget B, beam
+widths
+kL , . . . , k0 : set SL ← Top-kL (VL , r(q, ·)). For ℓ = L−1, . . . , 0: expand candidates ←
+S
+v∈Sℓ+1 children(v), then Sℓ ← Top-kℓ (candidates, r(q, ·)). Return S0 truncated to budget B.
+SL
+Algorithm 2: Collapsed search (RAPTOR). Pool all nodes across all levels: pool ← ℓ=0 Vℓ .
+Retrieve S ← Top-k(pool, r(q, ·)). Expand any non-leaf in S to its atoms. Return atoms within
+budget B.
+Algorithm 3: Reasoning-based navigation (PageIndex, MemWalker). Initialize context ←
+ϕc (root(H)). While budget is not exhausted: the LLM selects a child node from context given
+q. If the node is a leaf, collect it. Otherwise, expand: context ← context ∪ ϕc (children(node)).
+Return collected atoms.
+8
+
+Published as a conference paper at ICLR 2026
+
+Algorithm 4: Multi-view parallel retrieval (SimpleMem).
+Decompose the query:
+(qsem , qlex , qsym , d) ← Plan(q). Set candidate limit n ← f (d). Retrieve in parallel: Rsem ←
+Top-n(V0 , rsem (qsem , ·)), Rlex ← Top-n(V0 , rlex (qlex , ·)), Rsym ← Top-n(V0 , rsym (qsym , ·)). Return Rsem ∪ Rlex ∪ Rsym truncated to budget B.
+Algorithm 4 uses a flat multi-view design: each view indexes the same atoms V0 using a different
+signal (semantic similarity, lexical overlap, symbolic metadata), and taking the union ensures that a
+relevant atom missed by one view can still be recovered by another. More generally, a system can
+maintain multiple hierarchies {Hi } over the same atom set V0 , each organizing atoms according to
+a different principle (e.g., one by temporal–thematic coherence, another by embedding similarity).
+This can be beneficial because any single grouping π is inevitably lossy: semantically related atoms
+may land in different branches, and the severity grows with partition granularity. A second hierarchy
+provides an alternative traversal path: an atom mis-partitioned in H1 may be correctly grouped in
+H2 , so retrieval failure requires mis-partition in both views rather than just one. Multi-attribute
+queries benefit further because constraints of different types (e.g., topical relevance vs. temporal
+range) decompose naturally into per-hierarchy retrievals, which can be combined via set intersection
+for precision or union for recall; when constraints are independent, each retrieval can be parallelized.
+
+E
+
+TASK AND AGENT H IERARCHIES
+
+In Section 4, we mention three coupled hierarchies and note that Htask has dynamics different from
+data memory. A useful extension is to separate two orthogonal structures: the task hierarchy (what
+to solve) and the agent hierarchy (which solver tier handles each part).
+Define Gtask = (Vtask , Edep ) as a directed acyclic graph, which is gradually constructed during
+execution to represent dependencies among tasks; its hierarchical, coarse-to-fine ordering is denoted
+as Htask . Let (A, ≤A ) represent a set of agent tiers, partially ordered by capability (and usually by
+cost as well). In this setup, Gtask expresses the structure of the problem by specifying which subtasks
+depend on others, while (A, ≤A ) characterizes the solvers—showing which agent tiers are equipped
+to handle tasks of increasing difficulty and generality.
+Assignment of tasks to agents can then be handled by a routing map R : Vtask → A. To ensure
+coherence, a natural constraint is monotonicity: if t is an ancestor of t′ in Gtask , then R(t) ≥A R(t′ ).
+This means that higher-level planning is given to more capable (typically more expensive) agents,
+while specific, lower-level execution is delegated to less capable tiers.
+
+9
+
+

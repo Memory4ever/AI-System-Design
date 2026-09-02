@@ -46,6 +46,8 @@ Persistent executor 在进程启动时常驻少量 GPU resources，由 host 把 
 
 代价是常驻 thread blocks 会与大 kernel 竞争资源，spin polling 消耗功率，backoff 又可能抬高 tail latency；ring buffer saturation、unsupported operator、顺序依赖和 persistent-kernel failure 也需要显式恢复。规则 shape 继续优先 graph capture，粗粒度算子继续独立 launch；只有 profile 证明 launch-bound 且 coexistence 不破坏目标 SLO 时，persistent executor 才值得进入 plan。
 
+在决定使用 graph capture、persistent executor 或继续逐 kernel launch 之前，必须先知道 host overhead 落在哪一层。只看总 “framework tax” 会把执行栈压成一个残差；TaxBreak 把每个 kernel 的 host orchestration 精确拆为 framework translation、CUDA-library front-end translation 与 kernel-launch floor，再用 HDBI 对照 host orchestration 和 device-active time。它是 execution-stack diagnosis，不是 scheduler protocol：profile 可以说明应优化哪一层，却不拥有 request admission、placement 或 plan revision。更细归因会引入 instrumentation cost，且各分量比例随模型、硬件和软件版本改变；大算子已经 device-bound 时，粗粒度 profile 仍可能足够。`arXiv:2603.12465v1` 的证据只覆盖 §III 的三段分解与 HDBI，以及 §IV–§VI 所披露的测试条件，不支持把 request/stage identity 或其他 profiler taxonomy 归因给该论文。<!-- source-family:SF-2026-ARXIV-2603-12465 -->
+
 <!-- source-family:SF-2026-ARXIV-2604-17861 -->
 
 ### Execution Plan 可以修订，但只能在安全边界 Commit
@@ -96,6 +98,16 @@ dependency graph + transfer epoch
 这种 overlap 用 signal state、wraparound/late-message 处理和更难的 hang diagnosis 换吞吐；它没有把网络语义交给 kernel 自由猜测。通信库、内存可见性或故障恢复不支持精确 signal 时，粗粒度同步仍是正确且可审计的旧分支。
 
 <!-- source-family:SF-PERSEUS-MEGAKERNEL-SIGNAL-ORDERING -->
+
+#### 从手写 Host Collective 到可验证的 Device-initiated Kernel
+
+host 驱动的 NCCL collective 把同步边界留在 kernel launch 之间，在拓扑固定、overlap 需求有限时最容易审计；把通信下沉进 kernel 后，backend、communication placement、同步范围、issuer granularity 与 chunk size 会共同决定程序是否合法和是否真正隐藏了通信。此时分别调 compute 与 communication 已不再拥有封闭的可实现域，靠通用模型从训练记忆直接生成代码也容易混淆新 API 的内存与同步语义。
+
+一个更强但更昂贵的 execution-plan pipeline 先把这些维度写成显式 directive，并注入 backend API、硬件拓扑和 correctness rules；correctness-first fast path 从静态依赖图生成可编译、可对照 host baseline 的保守 seed，performance slow path 再在带历史测量的有界空间中演化 fusion、stream overlap 与 split put/wait。Compiler/runner 拥有代码生成、编译、正确性判定和测量，Agent 只提出候选，不能因为代码通过编译就提交语义真值。
+
+这种路径减少手工 co-design，却增加搜索预算、judge/测试盲区、测量噪声、工具链版本耦合和错误 kernel 的隔离责任。API 成熟、shape/拓扑稳定或可靠规则已经覆盖时，手工模板与库 collective 仍更可预测。exact-v1 的四组 multi-GPU workload 同时包含训练与推理算子，只支持作者公开环境中的候选生成与延迟结果；不证明 Agent 搜索对任意集群优于专家规则，也不替代训练收敛、故障恢复或 production SLO 验证。第 36 章提供训练 collective 的语义输入，本章拥有从该输入到 executable fused-kernel plan 的验证与 admission。
+
+<!-- source-family:SF-2026-ARXIV-2603-02376 -->
 
 #### 异步工作不必永久绑定固定 Physical Core
 
@@ -210,6 +222,34 @@ C     [M,N]
 ```
 
 Attention 的 Q/K/V/O projections、MLP 的 up/gate/down projections，最终都会产生不同 `M/N/K`、dtype、layout 和 epilogue 的矩阵乘。数学式相同，不代表执行成本相同：大 `M` 的 Training/Prefill、很小 `M` 的 Decode、多个不同 `M_e` 的 MoE experts，会形成不同 kernel search spaces。
+
+### Execution Plan 先拥有 State，再选择 Kernel
+
+序列形式的算子在 Training/Prefill 阶段便于并行，Decode 若每个 token 都从片外重新装载完整历史或递归状态，瓶颈首先是 state traffic，而不是算术单元。状态可放入片上容量时，一个专用分支把 recurrent state 变成长寿命对象，并围绕单 token update dependency 组织 dataflow；每步只搬运新输入和必要输出：
+
+```text
+versioned recurrent state layout
+→ keep authoritative state on chip
+→ ingest one-token inputs
+→ execute dependent update stages
+→ atomically publish next state and output
+```
+
+Executor 拥有 state layout、lifetime 与 commit frontier，kernel 只推进一次合法更新。它减少片外带宽，却受片上容量、固定布局与 operator coverage 限制；短序列、状态过大或模型经常变化时，通用外存路径仍更灵活。`arXiv:2603.05931v1` 只在 §IV-E System Overview、§VI-E Ablation Analysis 与 §VIII Conclusion 所披露的 FPGA、算子和精度上支持这条边界，不证明 GPU 或其他线性 Attention 有相同比例收益。<!-- source-family:SF-2026-ARXIV-2603-05931 -->
+
+手写 recurrent kernel 能利用上述状态生命周期，但每个模型特例都要重新证明序列形式与递归形式等价。若算子满足可推导的 state-space duality，编译器可以从 sequence semantics 生成固定大小的 autoregressive state、初始化和 update program；Build-time verifier 保存变换、数值假设与 fallback，Runtime 只实例化通过验证的 plan：
+
+```text
+sequence operator semantics
+→ derive equivalent recurrent form
+→ lower state / init / update into backend IR
+→ differential and numeric validation
+→ portable autoregressive execution
+```
+
+这不是 Speculative Decoding：没有 proposal/acceptance 分支。正确性责任也不是一个由论文提供的形式化 transformation verifier，而是 build/test contract：记录 sequence→recurrent 改写成立的假设，再把 JAX/XLA lowering 与 reference 做 token-for-token greedy decoding 和数值容差下的 differential validation。收益是减少手写特化并复用后端，代价是 IR 语义、数值漂移、unsupported operator 与 compiler-version lifecycle；duality 不成立或验证 Gate 失败时必须回退原始序列执行。Exact-v1 证据只支持 `arXiv:2603.09555v1` §3 的 compiler-suitability 条件、§4.2–§4.3 的 recurrent state/cache 实现与 §5.2–§5.7 的数值和性能评测；§5.8 之外不证明未覆盖精度、算子族或编译目标。<!-- source-family:SF-2026-ARXIV-2603-09555 -->
+
+即使数学与状态形式已确定，稀疏 Attention 的工作量仍可能随 head 改变。按 head 数静态切分在 token budget 均匀时控制成本最低；S-HPLB 先用 calibration 为不同 head 冻结差异化 token budget，这一步已经选择了 approximation/accuracy trade-off，再以这些预算的估计工作量做 greedy head-to-device assignment，后一步只负责 load balance，不能在运行时悄悄改写预算。收益来自减少 straggler，但代价是 calibration artifact、预算漂移和跨设备通信；负载均匀时静态并行更简单，而分布漂移、互联退化时需要重新校准或回退——这是系统设计推论，不是论文单独证明的 failure guarantee。`arXiv:2603.10353v1` 只在 §3.2–§3.3 和 §5.1–§5.4 所披露的模型、稀疏配置与实验环境中支持预算和放置机制。<!-- source-family:SF-2026-ARXIV-2603-10353 -->
 
 最朴素的 GEMM 可以让每个 output element 独立遍历 `K`。问题是相邻 outputs 会反复从 HBM 读取相同的 A rows 和 B columns。现代 kernel 将输出切成 `B_M x B_N` tiles，并沿 `K` 以 `B_K` 分段：
 
@@ -455,6 +495,10 @@ buffer generation + expected producer progress
 ```
 
 同步没有消失，而是从全量 readiness barrier 迁移到 buffer generation、memory ordering、validation 和 retry。负载不均会提高误判与重试；额外 buffers 增加 HBM 占用；switch reduction 与 Megakernel integration 也限制了 portability。作者 headline 绑定单节点 8×H200、NVSwitch、TP=8、FP8、ISL=1000、OSL=1000 的端到端配置，16K 只属于输入长度 sensitivity；不能把延迟和吞吐数字外推到跨节点 fabric、较大 batch 或其他 runtime。不支持该 commit protocol 时，传统 collective 仍是更稳健的分支；TP algebra 与 collective 语义回指第 36、37 章，本章只拥有 inference execution commit。
+
+Switch offload 还可以从“GPU 发起、交换芯片协助归约”推进为“交换芯片拥有 collective schedule”。前者复用 accelerator load/store 语义，部署边界较小，但归约结果可能先返回发起 GPU 再广播，并且难以承载不可分解为既有 memory semantic 的算子。Switch-centric controller 若能直接访问共享地址空间，可以由网络侧发起 load/reduce/writeback，消除冗余回程，并把 quantize–reduce–dequantize 之类的数据面变换纳入 collective plan。
+
+控制权下沉并没有免费消除同步：participant set、buffer generation、completion、数值格式与 fallback 必须共同版本化，交换芯片也成为新的容量、可编程性和故障域。小消息 Decode 可能受益于更低 launch/同步开销，大消息 Prefill 更依赖带宽；传统 NCCL/NVLS 在通用部署、故障隔离或算子不适合网络内执行时仍成立。`arXiv:2603.28239v1` 的证据只覆盖 §3、§4.5 与 §6 的 FPGA prototype、simulator、8-GPU LLaMA-2 配置及所披露量化，不证明生产交换芯片、多租户、跨节点或其他精度的收益。<!-- source-family:SF-2026-ARXIV-2603-28239 -->
 
 ## FlashAttention 在这里的位置
 
@@ -772,6 +816,20 @@ Generator、constraint solver、compiler、numerical verifier、benchmark harnes
 measurement noise 与 compiler drift。Fragment search 还会带来大量 compile work、artifact explosion 和
 hardware coupling。旧 compiler/template 在 coverage、determinism、cold start 与维护成本优先时继续成立。
 
+### Kernel Verification 需要从孤立输入扩展到 Model–Kernel Interface
+
+只给 CUDA kernel 生成随机 tensor 能发现局部越界，却不知道真实模型会传入哪些 shape、stride、launch config 和动态 buffer extent；只跑端到端模型又难以穷举线程交错和边界条件。更完整的 admission path 先在无 GPU 模型执行中恢复 call graph，把配置决定的固定参数与请求决定的变量分开，再把这些 interface constraints 交给面向 CUDA memory/thread semantics 的 symbolic executor：
+
+```text
+model revision + operator call graph
+→ model-side shape / buffer / launch constraints
+→ kernel symbolic paths and thread-memory checks
+→ concrete counterexample replay
+→ versioned kernel admission or reference fallback
+```
+
+Model probe 拥有可达调用与输入合同，symbolic executor 拥有路径探索，compiler/runtime 最终拥有 admission；任何一层都不能把“未找到 bug”宣称成完备证明。该组合扩大了真实边界覆盖，却受 path explosion、unsupported tensor method、动态控制流和模型配置采样限制；接口简单或 reference kernel 已充分验证时，常规 unit/fuzz test 仍更便宜。`arXiv:2603.24595v1` 的证据只覆盖 §4.1、§4.2、§5 与 §6 所披露的 HFProbe/cuKLEE 实现及缺陷实验，不证明所有 CUDA kernel 或模型调用路径均安全。<!-- source-family:SF-2026-ARXIV-2603-24595 -->
+
 #### 搜索 Candidate 之前，先选择 Implementation Space
 
 即使 compiler 与 verifier 分责，默认“所有任务都直接搜索 custom CUDA”仍把最重要的先验藏起来：单算子、
@@ -1074,6 +1132,10 @@ chip-wide DVFS 用单一频率域换 timing closure、控制简单和可预测�
 它用额外调度、packing、CPU 资源和一致性状态换取更高吞吐；路由偏斜、token group 太小、互连拥塞或 CPU 抢占都可能反向放大尾延迟。模型可完全驻留 GPU 或单设备执行已足够时，旧路径仍更简单。exact-v1 证据仅覆盖所披露 MoE、AMX/GPU 平台、batch 与吞吐设置，不证明跨硬件或 latency-sensitive workload 的普遍收益。
 
 <!-- source-family:SF-2026-ARXIV-2605-17889 -->
+
+低 batch MoE 在另一类硬件上会遇到相反约束：不是 expert group 太碎需要聚合，而是单个 expert 权重太大，无法在 chiplet 的局部 SRAM 中常驻。把 expert 完全分片后按层同步搬运最容易保证正确，却会让 die-to-die transfer 串在每个 sparse layer 前。若相邻层的 router trajectory 具有可预测性，runtime 可以把 expert shard 切成 micro-slices，沿预测的 expert path 提前流式搬运，并让 transfer 与当前 expert execution 重叠。
+
+Router 仍拥有 token→expert 真值；trajectory predictor 只拥有 prefetch 顺序，执行前必须验证所需 shard 已到达，误预测则等待 authoritative transfer 而不能跳过 expert。收益是把低 batch 的 weight movement 藏进执行，代价是额外 shard metadata、chiplet synchronization、预测器和片间带宽占用；batch 足够大、expert 可驻留或路由剧烈漂移时，标准 Expert Parallel/常驻权重仍更稳。`arXiv:2603.27624v1` 的证据只覆盖 §IV 的 FSE-DP/Micro-Slice Flow、§V 的 MoE trajectory scheduler，以及 §VI-C–§VII 所披露架构和实验，不证明其他 chiplet、互连或大 batch workload。<!-- source-family:SF-2026-ARXIV-2603-27624 -->
 
 ## In-flight Batching 的位置
 

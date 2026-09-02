@@ -31,6 +31,29 @@ total_cost
 
 因此应先比较单 Agent、单 Agent + deterministic verifier、单 Agent + parallel tools，再判断多 Agent 是否有增量价值。
 
+这个 baseline 还可以写成一个信息上界：如果所有 agents 只看到同一 evidence、使用等价 policy，且通信与 voting
+没有引入新的 observation，那么多跳 delegated decision network 并不会创造额外信息。更精确地说，论文比较的
+上界是一个观察同一组 exogenous signals 的理想 centralized Bayes decision maker；结论依赖 bounded loss、
+ancillary randomization 在给定 exogenous information 后与目标条件独立，以及 common-evidence 情形不再获得新信息
+等假设。它不是在断言受固定 compute、latency 或 context 限制的现实单 Agent 一定能模拟任意 DAG。
+Multi-Agent 的正当理由因此不是“讨论带来智慧”，而是
+系统确实引入了新的信息、并行环境交互、异构能力、隔离权限或可验证的独立误差：
+
+```text
+same evidence + same policy replicas
+→ coordination without information gain
+
+independent observation / tool effect / heterogeneous model / authority split
+→ explicit message and evidence contract
+→ aggregation with provenance
+```
+
+集中化可以减少 coordination tax，却也会形成容量、信任和可用性单点；多 Agent 则用通信、合并和一致性成本换
+新增信息或责任隔离。若这些增量无法在 equal-budget baseline 中被测量，单 Agent + Workflow 仍应优先。该理论
+边界不否定拥有独立 sensors、tools、人审或不同模型的系统，只禁止在同信息、同假设下把同源复述当作信息增益；
+它也没有证明真实的固定预算单 Agent 能复现分布式并行所提供的算力、延迟或故障隔离。数值例子不能外推为任意
+开放环境中的绝对优劣。<!-- source-family:SF-2026-ARXIV-2603-26993 -->
+
 ## 扩展 Agent 数量之前，先测量 Coordination Tax
 
 Multi-Agent 的技术演进并不是从单 Agent 线性增加副本，而是：

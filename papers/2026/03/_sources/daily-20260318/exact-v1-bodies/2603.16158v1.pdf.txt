@@ -1,0 +1,810 @@
+E XECUTION -G ROUNDED C REDIT A SSIGNMENT FOR
+GRPO IN C ODE G ENERATION∗
+Abhijit Kumar†
+abhijitkumar4293@gmail.com
+
+Natalya Kumar
+natalya2kumar@gmail.com
+
+arXiv:2603.16158v1 [cs.LG] 17 Mar 2026
+
+Shikhar Gupta
+shik1470@gmail.com
+
+A BSTRACT
+Critic-free reinforcement learning with verifiable rewards (RLVR) improves code
+generation by optimizing unit-test pass rates, but GRPO-style updates suffer from
+coarse credit assignment: a single outcome signal is spread uniformly across long
+programs even when failure stems from a localized semantic error.
+We propose Execution-Grounded Credit Assignment (EGCA), which localizes
+GRPO updates using execution traces. For programs that satisfy algorithmic constraints but fail tests, EGCA executes the candidate and a canonical reference
+solution (curated once offline; used for analysis, not supervision) under identical
+instrumentation, identifies the earliest semantic divergence, and assigns advantage
+only to the corresponding token span while masking downstream tokens.
+EGCA is a drop-in modification requiring no critic, auxiliary loss, or learned verifier, yielding 82.1% pass@1 on HumanEval (+3.1 over GRPO) and 68.9% on
+MBPP (+1.5) with 18% wall-clock overhead.
+
+1
+
+I NTRODUCTION
+
+Reinforcement learning with verifiable rewards (RLVR), where generated programs are evaluated
+by unit tests, has become a standard post-training approach for improving code generation models.
+Critic-free objectives such as GRPO (Shao et al., 2024) are appealing: they avoid a value function and directly optimize functional correctness. As base models improve, however, the nature of
+failures shifts. Modern models increasingly produce code that is syntactically valid, structurally
+plausible, and fully executable, yet still fails unit tests due to subtle semantic mistakes—an incorrect
+condition, a misplaced update, or a misinterpreted invariant.
+Unit tests provide a reliable correctness signal, but it is temporally coarse: it applies to the entire
+program rather than to the specific decisions that caused failure. Group-based policy gradients
+distribute this signal uniformly, so near-correct solutions receive gradients too diffuse to correct
+localized reasoning errors.
+This paper addresses the problem of semantic credit assignment in critic-free RLVR for code generation and targets the near-correct regime where further gains depend on precise attribution rather
+than coarse feedback.
+The following are our key contributions:
+1. We show that credit assignment—not reward sparsity—is the main bottleneck in critic-free RL
+for code generation once models already produce syntactically valid and structurally reasonable
+programs.
+2. We introduce EGCA, which routes each sample through deterministic failure-mode gates (syntax/constraint/logic) and, for near-correct candidates, localizes the earliest execution divergence
+against a reference trace to concentrate the GRPO advantage on the causal token span.
+∗
+†
+
+Accepted to the ICLR 2026 Workshop on Scaling Post-Training for LLMs (SPOT).
+Lead author and corresponding author; primary contribution to this work.
+
+1
+
+Figure 1: Motivation: credit smear vs. localized updates. Sequence-level RLVR objectives apply
+unit-test outcomes uniformly across long programs, penalizing large spans of correct code for a
+localized semantic bug. EGCA concentrates gradient mass on the earliest semantically divergent
+span (identified via execution) while masking downstream tokens, improving credit assignment in
+the near-correct regime.
+3. We show the approach is agnostic to the debugger’s code-generation ability: the trained student
+surpasses a 1.5B-parameter debugger by +8.2 points, ruling out knowledge distillation as the
+mechanism.
+
+2
+
+R ELATED W ORK
+
+We situate EGCA against five lines of work that densify credit in RLVR for code. The shared
+limitation is that none reliably localizes failure to semantically causal regions of fully executing
+programs.
+Richer outcome signals. Methods such as RLTF (Liu et al., 2023) enrich outcome feedback from
+execution beyond binary pass/fail, but the signal remains outcome-anchored and does not identify
+where within a program failure originated.
+Execution-aware masking. StepCoder (Dou et al., 2024) masks unexecuted tokens during updates,
+reducing spurious blame. However, when programs execute to completion, all tokens are executed,
+and masking provides no disambiguation among them.
+Group-structure credit. Prefix-tree methods such as TEMPO/P2T (Tran et al., 2025) derive tokenlevel updates from textual branching points within sample groups. This provides cleaner credit
+than sequence-level baselines, but textual divergence does not necessarily coincide with the causal
+location of semantic failure in code.
+Learned evaluators. Process reward models (Li et al., 2025; Lightman et al., 2023) train step-level
+scorers for RL shaping. These meaningfully densify supervision but inherit challenges around label
+noise and distribution shift from the learned evaluator.
+Execution semantics and actor–critic. CodeRL+ (Jiang et al., 2025) adds auxiliary executionalignment objectives, and actor–critic methods (Le et al., 2022; Shojaee et al., 2023) provide dense
+shaping via learned value functions. Both depart from the critic-free regime.
+2
+
+Figure 2: EGCA pipeline. We extract constraints from a canonical reference, sample and execute a
+group of programs, route each into SYNTAX/CONSTRAINT/LOGIC/CORRECT via deterministic gates,
+and apply token-level GRPO by localizing advantage (compiler span for SYNTAX, earliest referencetrace divergence for LOGIC) while masking downstream tokens.
+
+Concurrent directions. Concurrent work explores complementary directions: RLEF (Gehring
+et al., 2024) grounds code LLMs in execution feedback via RL; multi-turn rewards (Jain et al.,
+2025) study single-step reward shaping across turns; and MURPHY (Ekbote et al., 2025) applies
+multi-turn GRPO for self-correction. EGCA differs in localizing credit to the earliest divergence
+within a single generation.
+Summary and gap. Existing methods densify feedback or reduce noise, but do not reliably attribute failure to semantically causal regions of otherwise well-formed, constraint-following programs. EGCA targets this gap: for near-miss programs that execute but fail due to a localized
+reasoning error, it identifies the causal span via reference-trace comparison and concentrates the
+GRPO advantage there.
+
+3
+
+M ETHOD
+
+3.1
+
+P ROBLEM S ETTING
+
+Let x denote a programming problem and let πθ be a code generation policy that samples programs
+y ∼ πθ (· | x). Programs are evaluated using unit tests, producing a base verifiable score R̂(y) ∈
+[0, 1] (fraction of tests passed). We incorporate algorithmic constraints by defining the reward used
+for optimization as
+R(y) = R̂(y) IC (y),
+
+(1)
+
+so that a program receives full reward only when it both passes all tests and satisfies the extracted
+constraints.
+3
+
+We adopt Group Relative Policy Optimization (GRPO) (Shao et al., 2024). For each problem x, we
+sample a group of G programs {yi }G
+i=1 and compute group-relative advantages
+G
+
+Ai = R(yi ) −
+
+3.2
+
+1 X
+R(yj ).
+G j=1
+
+(2)
+
+C ANONICAL S OLUTIONS AS A S TRUCTURAL P IVOT
+
+For each problem x, we assume access to a canonical reference solution y ref , curated once offline.
+The reference is not used as a target for imitation. Instead, it serves as a non-parametric pivot for (i)
+extracting algorithmic constraints, (ii) defining a reference execution behavior, and (iii) anchoring
+semantic comparisons. This requirement limits applicability to settings where at least one correct
+solution exists (e.g., competitive programming and function synthesis with tests); extending EGCA
+to open-ended generation without references remains future work.
+3.3
+
+C ONSTRAINT-G UIDED S AMPLING
+
+Constraint extraction.
+rithmic constraints
+
+A debugging-oriented teacher model extracts from (x, y ref ) a set of algoC = {c1 , . . . , cM },
+
+(3)
+
+where each constraint specifies a permitted or forbidden structural property (e.g., control-flow form,
+permitted data structures, or complexity targets). Constraints are non-executable, non-token-level,
+and solution-agnostic.
+Sampling with constraints.
+
+Constraints are injected as soft guidance via a prompt suffix:
+yi ∼ πθ (· | x ∥ C).
+
+(4)
+
+This biases sampling toward programs that are structurally comparable to y ref , increasing the density
+of samples for which semantic divergence is meaningful.
+Constraint satisfaction.
+in C, and 0 otherwise.
+
+We define a deterministic indicator IC (y) = 1 if y satisfies all constraints
+
+In addition, semantic divergence is only well-defined when a candidate is comparable to the reference at a coarse structural level. We therefore compute a comparability indicator Icmp (y) ∈ {0, 1}
+via normalized AST/CFG validation (Section 3.4). Candidates that fail this gate are treated as constraint violations in m(·).
+3.4
+
+S TRUCTURAL VALIDATION (C OMPARABILITY G ATE )
+
+We parse y and y ref into ASTs, construct normalized CFGs, compute structural similarity scores,
+and declare a candidate comparable if scores exceed fixed thresholds, yielding Icmp (y) ∈ {0, 1}.
+3.5
+
+FAILURE M ODES AND C REDIT O PERATOR
+
+Let m(y) ∈ {CORRECT, CONSTRAINT, SYNTAX, LOGIC} denote a deterministic failure-mode classifier defined by the following priority order:
+
+
+SYNTAX
+y raises a compile/runtime error,
+
+
+CONSTRAINT I (y) = 0 ∨ I
+C
+cmp (y) = 0,
+m(y) =
+(5)
+
+CORRECT
+R̂(y)
+=
+1
+∧
+I
+C (y) = 1,
+
+
+LOGIC
+otherwise.
+(Note that the priority ordering ensures Icmp (y) = 1 for any sample reaching the CORRECT or
+LOGIC cases.)
+4
+
+We handle syntactic failures before CFG-based validation, since syntax errors can prevent reliable
+AST/CFG construction; compiler/interpreter diagnostics then provide a precise localization signal
+for token-level credit assignment.
+For a sampled completion yi of length Ti , EGCA defines token-level advantages ai,t as a piecewise
+function of m(yi ) and a small set of diagnostic spans.
+Syntax span. If m(yi ) = SYNTAX, the compiler/interpreter returns a location; we map it to a token
+span Terr ⊂ {1, . . . , Ti } and localize credit to that span, bypassing semantic divergence analysis.1
+Divergence span. If m(yi ) = LOGIC, we localize the earliest semantic divergence against a reference execution to obtain a boundary index k ∗ and an associated token span Tk∗ ⊂ {1, . . . , Ti }
+(defined below).
+Token-level advantage operator. We then set
+
+Ai
+
+
+m(yi ) = CORRECT,
+
+
+Ti
+
+
+
+A
+
+i
+
+m(yi ) = CONSTRAINT,
+
+T
+i
+ai,t =
+(6)
+Ai
+
+
+1[t ∈ Terr ] m(yi ) = SYNTAX,
+
+
+|Terr |
+
+
+
+Ai
+
+
+1[t ∈ Tk∗ ] m(yi ) = LOGIC.
+
+|Tk∗ |
+PTi
+The operator is normalized so that t=1
+ai,t = Ai for every mode, while only localizing credit
+when blame can be attributed to a specific span.
+3.6
+
+E XECUTION -G ROUNDED D IVERGENCE L OCALIZATION
+
+We apply divergence localization only when m(yi ) = LOGIC, i.e., for candidates that are both
+constraint-satisfying and comparable to the reference.
+Semantic divergence.
+
+Let d be the first failing unit test input. We define execution boundaries
+B(yi ) = (b1 , . . . , bK ),
+
+(7)
+
+each mapping to a token span Tk ⊂ {1, . . . , Ti }. Executing both programs yields state traces
+ref
+τ (y ref , d) = (S1ref , . . . , SK
+).
+
+τ (yi , d) = (S1 , . . . , SK ),
+
+(8)
+
+We define the earliest semantic divergence boundary
+k ∗ = min{k : Sk ̸= Skref }.
+
+(9)
+
+Because static alignment alone cannot reliably map trace mismatches to fault regions, a debuggingoriented LLM localizes k ∗ over the aligned structure and paired traces; it is not used as a correctness
+oracle.
+3.7
+
+F INAL GRPO O BJECTIVE
+
+The overall GRPO objective with token-level advantages is
+L(θ) = −
+
+Ti
+G X
+X
+
+
+ai,t log πθ yi,t | x, yi,<t .
+
+(10)
+
+i=1 t=1
+
+No teacher gradients, auxiliary losses, or imitation terms are introduced.
+1
+Our implementation uses Python AST for CFG construction; therefore programs that fail to parse are
+routed to SYNTAX mode. Extending structural checks with tolerant parsing is possible but not required for the
+method.
+
+5
+
+Table 1: Main performance (pass@1, %) on HumanEval and MBPP.
+Method
+HumanEval MBPP
+DeepSeek-Coder (6.7B) base
+SFT
+Vanilla PPO
+GRPO
+RLTF
+StepCoder-mask
+CodeRL+
+EGCA (Ours)
+
+4
+
+E XPERIMENTS
+
+4.1
+
+B ENCHMARKS AND DATA
+
+78.6
+71.9
+78.0
+79.0
+77.9
+78.7
+81.6
+82.1
+
+65.4
+60.3
+65.6
+67.4
+64.5
+67.0
+67.4
+68.9
+
+We train our models on APPS+, a curated version of the APPS dataset designed for RL-based code
+generation. Each problem provides a natural-language specification, a set of executable unit tests,
+and a canonical reference solution. We focus on Python programs, which dominate APPS+ and
+allow reliable execution and tracing.
+4.1.1
+
+C ANONICAL R EFERENCE S OLUTIONS
+
+Each APPS+ problem includes canonical reference solutions used as described in Section 3.2; they
+are never used as training targets.
+4.1.2
+
+E VALUATION B ENCHMARKS
+
+We evaluate on HumanEval (Chen et al., 2021) and MBPP (Austin et al., 2021), reporting pass@1.
+No benchmark problems appear in training.
+4.2
+
+T RAINING S ETUP AND I MPLEMENTATION D ETAILS
+
+We initialize from DeepSeek-Coder-Instruct-6.7B (Guo et al., 2024) and use Qwen2.5-Coder-7BInstruct (Hui et al., 2024) as the default debugger/localizer. We train with GRPO (G=16 rollouts,
+AdamW, lr = 5 × 10−7 , β = 0.05, ε = 0.2) on APPS+ following StepCoder’s RL protocol (Dou
+et al., 2024). Full hyperparameters are in Appendix H.
+4.3
+
+BASELINES
+
+We compare against representative reinforcement learning–based post-training baselines for code
+generation, differing primarily in how execution feedback and credit assignment are handled. All
+baselines use the same backbone model (DeepSeek-Coder-Instruct-6.7B), APPS+ training split, decoding parameters, execution environment, and training budget. The baselines include GRPO with
+uniform token-level credit assignment, StepCoder, which masks unexecuted code regions during
+policy updates, RLTF, which leverages multi-granularity unit test feedback without explicit localization of semantic errors, and CodeRL+, which augments reinforcement learning with an auxiliary
+execution-semantics alignment objective. We follow each method’s original training objective and
+do not introduce constraint guidance, structural validation, or execution-grounded localization into
+any baseline.
+4.4
+
+M AIN R ESULTS
+
+Table 1 reports pass@1 on HumanEval and MBPP after training on APPS+ with DeepSeek-CoderInstruct-6.7B. All methods use identical rollout budgets (G=16), decoding parameters, and execution environments.
+6
+
+Table 2: Code-generation capability of debugger LLMs (pass@1, %).
+Model
+HumanEval MBPP
+Qwen2.5-Coder-1.5B-Instruct
+Qwen2.5-Coder-7B-Instruct
+
+70.7
+84.8
+
+69.2
+79.2
+
+Table 3: EGCA performance when varying the debugger/localizer LLM (pass@1, %).
+Debugger model
+HumanEval MBPP
+Qwen2.5-Coder-1.5B-Instruct
+Qwen2.5-Coder-7B-Instruct
+Claude 4.5 Sonnet
+
+78.9
+82.1
+83.7
+
+66.1
+68.9
+67.8
+
+EGCA achieves 82.1% on HumanEval and 68.9% on MBPP. Against vanilla GRPO (79.0/67.4), this
+corresponds to gains of +3.1 and +1.5 absolute points. Against StepCoder, which masks unexecuted
+tokens during updates, EGCA improves by +3.4 and +1.9. This gap suggests that executed-token
+masking alone is insufficient in the near-correct regime: when programs run to completion, the key
+question is not which tokens were irrelevant, but which executed decision caused the first semantic
+deviation.
+EGCA also outperforms CodeRL+ (81.6/67.4) by +0.5 on HumanEval and +1.5 on MBPP, despite
+introducing no auxiliary loss or critic. The improvement derives entirely from reweighting where
+gradient mass is applied within the standard GRPO objective.
+4.5
+
+RULING O UT T EACHER L EAKAGE
+
+EGCA uses canonical reference solutions and a debugging-oriented LLM to localize divergences,
+raising a natural concern: do gains stem from distilling teacher knowledge rather than improved
+credit assignment? We include three controls that suggest the benefit primarily comes from localization.
+Distillation baselines underperform.
+Student exceeds the debugger’s generation capability. When Qwen2.5-Coder-1.5B-Instruct
+serves as the debugger, EGCA achieves 78.9% on HumanEval. The same model, used directly
+as a code generator under the same evaluation protocol, achieves 70.7%. The student thus surpasses
+the debugger by +8.2 points, indicating that EGCA extracts a localization signal rather than codewriting competence.
+Supervised fine-tuning on teacher-generated code (Teacher SFT) achieves 60.9/58.1, worse than the
+base model. Using the teacher as a dense reward signal (Teacher-critique RL) achieves 76.3/66.1,
+still 5.8 points below EGCA on HumanEval. Neither imitation nor teacher-as-judge matches the
+gains from execution-grounded localization.
+Scaling the debugger shows diminishing returns. Moving from a 1.5B to 7B debugger improves
+EGCA by +3.2 on HumanEval, while a substantially stronger debugger (Sonnet 4.5) adds only
++1.6 more. If EGCA were primarily distilling solver competence, gains would be expected to track
+debugger capability; instead, improvements saturate as localization quality stabilizes.
+
+5
+
+L IMITATIONS AND F UTURE W ORK
+
+EGCA’s localization pipeline assumes access to a debugger LLM that can parse execution traces
+and reason about semantic divergence between two programs. This model need not generate correct
+code itself—our experiments confirm that even a 1.5B-parameter debugger whose own pass@1 falls
+well below the student’s still yields meaningful gains—but it must understand code well enough to
+produce coherent constraints and to compare candidate versus reference traces. When the debugger
+7
+
+Table 4: Distillation controls (pass@1, %).
+Method
+HumanEval MBPP
+Teacher SFT
+Teacher-critique RL
+EGCA (Ours)
+
+60.9
+76.3
+82.1
+
+58.1
+66.1
+68.9
+
+lacks this minimum competence, constraint quality degrades, structural comparability judgments
+become noisy, and the localization signal loses precision.
+A related consequence is that EGCA’s value is stage-dependent. The method targets the near-correct
+regime: programs that compile, execute, satisfy structural constraints, and fail only due to localized
+logical errors. In our training distribution roughly 35% of samples fall into this LOGIC mode; the
+remaining 65% are handled by uniform or compiler-grounded updates that do not require divergence
+localization. As the base policy improves, the fraction of near-correct samples grows and EGCA’s
+advantage compounds. Conversely, for weak initializations where most failures are syntactic or
+structural, the localization machinery triggers rarely and the method offers little beyond standard
+GRPO. EGCA is therefore most impactful as a later-stage refinement technique applied after the
+policy already produces broadly reasonable code.
+Finally, all experiments here use a 6.7B policy. Scaling EGCA to larger base models, longer programs, and multi-file generation remains open. Larger policies will produce more near-correct samples by default, amplifying the regime where EGCA operates, but the debugger LLM and trace infrastructure must scale accordingly. When multiple structurally distinct solutions are valid, EGCA’s
+constraint extraction and comparability gate may exclude correct but divergent approaches. Correct solutions using structurally divergent approaches may fail the comparability gate; in practice
+this appears rare in our setting, and such cases could be handled by bypassing constraint checks for
+programs that pass all tests.
+
+6
+
+C ONCLUSION
+
+Credit assignment—not reward sparsity—is the binding constraint on critic-free RL for code generation once models reliably produce executable, structurally sound programs. EGCA addresses
+this by converting a coarse unit-test outcome into a token-level policy-gradient operator grounded in
+runtime semantics: it routes each sample through deterministic failure-mode gates, localizes the earliest execution divergence against a reference trace for near-correct candidates, and concentrates the
+GRPO advantage on the causal span while masking everything downstream. The method introduces
+no critic, no auxiliary loss, and no learned verifier; it changes only which tokens receive gradient
+mass within the standard objective.
+Empirically, EGCA achieves 82.1% on HumanEval and 68.9% on MBPP, improving over vanilla
+GRPO by +3.1 and +1.5 points and over the strongest baseline (CodeRL+) by +0.5 and +1.5,
+with 18% wall-clock overhead. Ablations (Appendix F) confirm that gains require localizing to
+the causally correct span: random or late-divergence targeting collapses toward the uniform baseline, and softening the mask monotonically erodes performance. Teacher-leakage controls show
+the student surpassing its own debugger by over 8 points, ruling out knowledge distillation as the
+primary mechanism.
+The core insight is simple: for near-correct code, knowing where a program first goes wrong is
+more valuable than knowing that it goes wrong. EGCA operationalizes this insight within GRPO,
+converting execution traces into precise credit without leaving the critic-free regime.
+
+8
+
+R EFERENCES
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan,
+Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles Sutton. Program synthesis with large
+language models. arXiv preprint arXiv:2108.07732, 2021.
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique de Oliveira Pinto, Jared Kaplan,
+Harri Edwards, Yura Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language
+models trained on code. arXiv preprint arXiv:2107.03374, 2021.
+Shihan Dou, Yan Liu, Haoxiang Jia, Enyu Zhou, Limao Xiong, Junjie Shan, Caishuang Huang,
+Xiao Wang, Xiaoran Fan, Zhiheng Xi, Yuhao Zhou, Tao Ji, Rui Zheng, Qi Zhang, Tao Gui, and
+Xuanjing Huang. Stepcoder: Improving code generation with reinforcement learning from compiler feedback. In Proceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (ACL), pp. 4571–4585, 2024.
+Pratik Ekbote et al. Murphy: Multi-turn grpo for self-correction in code generation. arXiv preprint,
+2025.
+Jonas Gehring et al. Rlef: Reinforcement learning from execution feedback for code generation.
+arXiv preprint, 2024.
+Daya Guo, Qihao Zhu, Dejian Yang, Runxin Xu, Yuxiang Wu, Fei Huang, and Furu Wei. Deepseekcoder: When the large language model meets programming. arXiv preprint arXiv:2401.14196,
+2024.
+Bo Hui, Jian Yang, Zeyu Cui, et al.
+arXiv:2409.12186, 2024.
+
+Qwen2.5-coder technical report.
+
+arXiv preprint
+
+Rishabh Jain et al. Multi-turn rewards for code generation: Single-step reward shaping across turns.
+arXiv preprint, 2025.
+Xue Jiang, Yihong Dong, Mengyang Liu, Hongyi Deng, Tian Wang, Yongding Tao, Rongyu
+Cao, Binhua Li, Zhi Jin, Wenpin Jiao, Fei Huang, Yongbin Li, and Ge Li. Coderl+: Improving code generation via reinforcement with execution semantics alignment. arXiv preprint
+arXiv:2510.18471, 2025.
+Hung Le, Aditi Thakur, Aohan Zeng, Anuj Sharma, Zhen Yang, Tao Chen, Rami Alouni,
+Yuxuan Zhou, and Steven C. H. Hoi. Coderl: Mastering code generation through pretrained models and deep reinforcement learning, 2022.
+NeurIPS 2022; OpenReview:
+https://openreview.net/forum?id=WaGvb7OzySA.
+Qing Li, Xinyi Dai, Xiaohan Li, Wei Zhang, Yifan Wang, Ruixiang Tang, and Yong Yu. Codeprm:
+Execution feedback-enhanced process reward model for code generation. In Findings of ACL, pp.
+8169–8182, 2025.
+Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan
+Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. arXiv preprint
+arXiv:2305.20050, 2023.
+Xinrun Liu, Hongyi Zhang, Yixin Wan, Bo Zhang, Kaixuan Song, Mingjie Yang, Haonan Wang, Luyi Yang, Weiwen Zhang, Zihan Lin, Xianfeng Du, Zhen Zhang, Jian
+Xiao, Chao Zhang, Xu Chen, and Jie Zhou.
+Reinforcement learning from unit test
+feedback.
+Transactions on Machine Learning Research (TMLR), 2023.
+OpenReview:
+https://openreview.net/forum?id=R40uZX1R29.
+Zihan Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junjie Song, Xiao Bi, Haowei Zhang, Mingchuan
+Zhang, Y. K. Li, Yuxiang Wu, Daya Guo, Jie Zhou, and Furu Wei. Deepseekmath: Pushing the
+limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300,
+2024.
+Parshin Shojaee, Miltiadis Allamanis, Marc Brockschmidt, and Charles Sutton. Ppocoder: Learning
+code generation with policy gradient methods. arXiv preprint arXiv:2301.13816, 2023.
+9
+
+Nhat Tran, Daphne Ippolito, Jian Mao, Shizhe Diao, Yuxiang Lin, Hao Li, Ruoyu Zhang, Haoran
+Xu, Jiatao Gu, Andrew Liu, et al. Token-level credit assignment without critic: Prefix tree group
+relative policy optimization. arXiv preprint arXiv:2509.18314, 2025.
+
+10
+
+A
+
+A DDITIONAL D ETAILS FOR R EPRODUCIBILITY
+
+A.1
+
+A PPENDIX A. R EPRODUCIBILITY S UMMARY
+
+Compute and schedule. We fine-tune using 8× NVIDIA A100 80GB GPUs with global batch
+size 64, training for 3 epochs with 0.3-epoch warmup and a linear learning-rate decay to zero.
+A.2
+
+A PPENDIX B. RL O PTIMIZATION AND G ENERATION S ETTINGS
+
+Optimizer hyperparameters. During GRPO training, we use a policy learning rate of 5 × 10−7
+with AdamW. Following the critic-free GRPO formulation (Shao et al., 2024), no separate value
+network is trained.
+Note on learning rate. Our policy learning rate is more conservative than DeepSeekMath and
+CodeRL+ (both report 10−6 ). We found this smaller learning rate necessary for stable training when
+combined with token-level credit localization.
+Rollouts per prompt. For each training example, we sample G = 16 rollouts using nucleus
+sampling with temperature = 0.8, top-p = 0.9, and maximum output length = 8192 tokens.
+KL regularization and clipping. We apply a token-level KL penalty with coefficient β = 0.05
+and clip the policy ratio with ε = 0.2.
+Evaluation-time decoding.
+A.3
+
+For inference, we use temperature = 0.2 and top-p = 0.95.
+
+A PPENDIX C. E XECUTION E NVIRONMENT AND R EWARD C OLLECTION
+
+Runtime. Reward collection and evaluations are conducted in a deterministic Python 3.10 sandbox
+with standard library execution.
+A.4
+
+A PPENDIX D. EGCA C OMPONENTS (I MPLEMENTATION D ETAILS )
+
+This appendix records implementation-specific details for EGCA.
+D.1 Execution boundary construction. We segment program execution into an ordered sequence
+of boundary blocks B = {B1 , . . . , BK }, where each Bk corresponds to a contiguous token span
+and an execution snapshot captured immediately after that span executes.
+D.2 Failure-mode routing. Each sampled program is assigned to one of four mutually exclusive
+modes: (i) SYNTAX—parse/compile failure, (ii) CONSTRAINT—violates extracted algorithmic constraints or fails structural comparability, (iii) LOGIC—executes but fails tests, (iv) CORRECT—passes
+all tests. Divergence localization is triggered only for LOGIC mode.
+D.3 Divergence localization. For near-correct samples (LOGIC mode), we identify the earliest
+boundary index k ∗ at which the candidate execution diverges from the reference execution under
+aligned inputs. The localizer LLM (Qwen2.5-Coder-7B-Instruct by default) operates over aligned
+traces; it is not used as a correctness oracle.
+D.4 Token-weighted credit operator. Let Ai denote the scalar advantage for sample i under the
+base GRPO objective. EGCA converts Ai into token-wise advantages ai,t = wi,t Ai , where wi,t is
+concentrated within the localized boundary block and zero elsewhere for LOGIC/SYNTAX modes.
+Setting all wi,t = 1/Ti recovers the uniform baseline.
+A.5
+
+A PPENDIX E. OVERHEAD ACCOUNTING
+
+To make the runtime footprint auditable, we report:
+11
+
+Table 5: Overhead accounting (averages across APPS+ training).
+Metric
+Value
+Fraction in SYNTAX mode
+Fraction in CONSTRAINT mode
+Fraction in LOGIC (near-correct) mode
+Fraction in CORRECT mode
+Average boundaries K per sample
+Wall-clock overhead vs. vanilla GRPO
+Localization trigger rate
+
+A.6
+
+∼ 8%
+∼ 12%
+∼ 35%
+∼ 45%
+12.4
++18%
+35% of samples
+
+A PPENDIX F. A DDITIONAL A BLATIONS (C REDIT A SSIGNMENT VALIDITY )
+
+Table 6: Ablations on localization target under identical training budgets.
+Target
+HumanEval MBPP
+Earliest divergence (EGCA default)
+Last divergence
+Random executed boundary
+No localization (uniform)
+
+82.1
+80.2
+79.6
+79.0
+
+68.9
+67.5
+67.1
+67.4
+
+F.1 Localization target.
+A.7
+
+A PPENDIX G. Q UALITATIVE C ASE S TUDY: L OCALIZED S EMANTIC E RRORS
+
+We provide a qualitative analysis showing how execution-grounded localization yields a concentrated learning signal for near-correct programs.
+Problem: longest increasing subsequence (MBPP-style).
+Write a function that returns the length of the longest strictly increasing
+subsequence in a given list of integers.
+Example:
+>>> longest_increasing_subsequence([10, 9, 2, 5, 3, 7, 101, 18])
+4
+def longest_increasing_subsequence(nums):
+if not nums:
+return 0
+n = len(nums)
+dp = [1] * n
+for i in range(1, n):
+for j in range(i):
+if nums[i] >= nums[j]: # BUG: should be strictly greater (>)
+dp[i] = max(dp[i], dp[j] + 1)
+return max(dp)
+GRPO output (fails unit tests).
+def longest_increasing_subsequence(nums):
+if not nums:
+return 0
+12
+
+n = len(nums)
+dp = [1] * n
+for i in range(1, n):
+for j in range(i):
+if nums[i] >= nums[j]: # BUG: should be strictly greater (>)
+dp[i] = max(dp[i], dp[j] + 1)
+return max(dp)
+Unit test result: FAILED on input [1, 3, 3, 5] (expected 3; got 4).
+EGCA output (passes unit tests).
+def longest_increasing_subsequence(nums):
+if not nums:
+return 0
+n = len(nums)
+dp = [1] * n
+for i in range(1, n):
+for j in range(i):
+if nums[i] > nums[j]: # CORRECT
+dp[i] = max(dp[i], dp[j] + 1)
+return max(dp)
+Execution trace divergence (first semantic mismatch). For input [1, 3, 3, 5], the first
+semantic divergence occurs at (i=2, j=1) when comparing equal elements (3 vs. 3).
+Table 7: Trace comparison for [1,3,3,5]. The first divergence occurs when the candidate uses
+≥ while the reference uses >.
+Step i j nums[i] nums[j] Divergence?
+1
+2
+3
+
+1
+2
+2
+
+0
+0
+1
+
+3
+3
+3
+
+1
+1
+3
+
+No
+No
+Yes
+
+Credit assignment contrast. Under uniform sequence-level GRPO, the negative advantage is
+spread across all tokens in the program, so the comparison operator receives the same penalty weight
+as many unrelated tokens. EGCA maps the divergence to the span containing the comparison operator and concentrates the full advantage on that span while masking downstream tokens.
+A.8
+
+A PPENDIX H. F ULL H YPERPARAMETER TABLE
+
+13
+
+Table 8: Hyperparameters used in our experiments.
+Hyperparameter
+Value
+SFT learning rate
+SFT epochs
+SFT warmup
+SFT LR schedule
+
+2 × 10−5
+3
+0.3 epochs
+Linear decay to zero
+
+GRPO policy learning rate
+GRPO optimizer
+Rollouts per prompt (G)
+Train sampling temperature
+Train sampling top-p
+Max generation tokens
+KL coefficient (β)
+Clip epsilon (ε)
+
+5 × 10−7
+AdamW
+16
+0.8
+0.9
+8192
+0.05
+0.2
+
+Eval decoding temperature
+Eval decoding top-p
+
+0.2
+0.95
+
+Hardware
+Global batch size
+
+8× A100 80GB
+64
+
+14
+
+

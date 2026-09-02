@@ -65,6 +65,26 @@ compact state 可能需要 invalidation、retraining 或重新验证，不能只
 示例；它澄清了 representation identity，却不是 learned world model 的开放世界经验性证明。工程上仍需用
 action-conditioned outcome、counterfactual coverage 和 calibration 分别验证各 channel。
 
+同一边界也解释了为什么面向实时 steering 的 World Model 不必总生成完整画面。若决策只需在执行前淘汰明显危险
+的 action proposal，可以从当前 policy latent 与 planned action 蒸馏一个较小的 language-outcome predictor，
+先描述决策相关后果，再用该描述或 latent score 做 rejection sampling：
+
+```text
+policy latent + candidate action
+→ compressed, decision-relevant outcome proposal
+→ risk / utility screening
+→ accepted action enters controller
+→ real observation remains transition authority
+```
+
+这是一条 support-restricted prediction branch，不是完整 environment simulator。它以低延迟换掉 pixels、contact、
+geometry 和部分不可语言化状态，因此 language description 只能提出风险证据，不能拥有物理安全 commit。Predictor
+identity 必须绑定 policy、action schema、distillation data、语言/latent representation 与 rejection threshold；policy
+更新或动作越出 support 时需要拒绝、重验或回退高保真 simulator。窄动作空间、低频风险筛选可以使用该压缩分支；
+接触密集、分布外 action 或需要反事实规划时，视觉/物理 World Model 与真实 observation 仍不可替代。事件时实验
+只支持所测 policy/task 的 failure prevention 和 latency，不证明语言摘要保存了全部安全变量。
+<!-- source-family:SF-2026-ARXIV-2603-23149 -->
+
 ## 为什么旧的 Simulator 仍然合理
 
 传统 simulator 用显式规则、物理方程或游戏引擎推进 state。它可解释、可重复、能执行 counterfactual action，也容易定义 invariant；但建模成本高，难覆盖开放世界视觉和长尾交互。
@@ -149,6 +169,31 @@ o_hat = D(z)
 
 它可以更快 rollout，却可能丢失 contact、object identity 或安全关键细节。reconstruction 好不证明 latent 对 control sufficient；必须用 action-conditioned outcome 验证。
 
+#### 从重建 Observation 到预测可推进的 Representation
+
+像素或 observation reconstruction 给出了直观监督：预测结果越接近下一帧，模型越可能捕获环境变化。在视觉连续性
+重要、下游任务尚不明确时，这仍是合理 baseline；但 reconstruction objective 会把大量容量用于纹理和局部外观，
+并不能保证 latent 保存 planner 真正需要的 object、action consequence 与可达性信息。
+
+Next-embedding prediction 把预测目标前移到 representation space：encoder 先把未来 observation 变成 target embedding，
+dynamics model 在当前 state 与 action 条件下预测该 embedding，下游 policy 或 task head 再检验它是否保留可推进信息。
+改变的不是“完全不预测未来”，而是未来状态由 pixel fidelity 转为 task-relevant representation contract：
+
+```text
+observation_t + action_t
+-> latent transition
+-> predicted future embedding
+-> downstream decision / control evidence
+```
+
+它减少高维生成成本并可能强化语义状态，却新增 encoder identity、target drift 与 representation collapse。Embedding
+接近只证明在给定 encoder metric 下相似，不证明物理状态正确、因果变量完备或 long-horizon rollout 已校准；必须继续
+用 action-conditioned outcome、intervention 与 closed-loop task 检查。需要视觉生成、可审计几何或安全关键细节时，
+pixel/structured simulator 仍不可替代。作者实验只支持其模型、数据与下游任务中的表示收益，不外推为通用 world model
+objective 优越性。
+
+<!-- source-family:SF-2026-ARXIV-2603-02765 -->
+
 #### 从黑盒 Transition 到 Operator-structured Dynamics
 
 单体 `F(z_t, a_t)` 在数据充分、状态语义不稳定时最灵活；若环境 transition 具有可组合结构，可把 latent evolution
@@ -205,6 +250,27 @@ observed fact -> derived belief -> imagined branch
 ```
 
 每条状态必须带 provenance、timestamp、confidence 和 supersession relation。
+
+### 视觉连贯不证明模型保存了不可见状态
+
+传统 video predictor 可以依靠近期 frames 生成连贯画面，在不需要记住被遮挡实体、未可见变量或可逆 action effect 时这很合理。问题是 pixel loss 只监督可见输出；某个状态若暂时不出现在 token 中，更多 denoising 步数也不会自动创造对它的监督。
+
+因而要区分两种表面上都叫“预测下一帧”的系统：
+
+```text
+append-only visual context
+→ re-derive hidden arrangement from full history
+
+mutable predictive state
+→ update hidden arrangement in place
+→ carry the revised state across chunks
+```
+
+第一条路径简单、与 Transformer KV 自然兼容，短 horizon 和可见状态已足够时仍然应作为 baseline。当任务要求在多个 chunk 之间保存并修改未可见状态时，需要显式 recurrent / fast-weight state，或一个能表达可逆 transition 的状态更新机制。它获得长 horizon state tracking，却引入状态初始化、更新稳定性、checkpoint/recovery 和 model revision compatibility 问题。
+
+这项证据的重要性在于 evaluation contract，而不是某个架构排名：受控 hidden-state intervention 任务把渲染质量与状态追踪拆开。训练 horizon 内拟合、reward prediction 或画面逼真都不能代替跨 horizon 的 intervention fidelity。它也不证明任意 linear attention 或 fast-weight 机制都会成功；有效的是“可修改状态 + 受控干预验证”这个系统契约。
+
+<!-- source-family:SF-2026-ARXIV-2608-30692 -->
 
 #### Open Schema 仍需要 Promotion 与 State-lifetime Boundary
 

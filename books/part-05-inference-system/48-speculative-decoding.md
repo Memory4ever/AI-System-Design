@@ -286,6 +286,10 @@ target feature snapshot
 
 这条路线新增 target-feature interface、block denoising schedule、feature/cache compatibility 与专用 runtime；draft 更快也可能因接受率、verification batch 或并发机会成本而得不偿失。Autoregressive drafter 在实现成熟、target coupling 低或短 draft 足够时继续成立。
 
+若 block-diffusion 模型在 block size 收缩为 1 时本身退化成 autoregressive factorization，同一组权重还可以在两个执行模式间切换：正常 block decoding 负责并行 proposal，block-size-1 路径负责逐 token verification。它避免维护独立 verifier 或再蒸馏一个模型，但没有消除额外 forward；因此轻量 router 只能根据当前状态决定“本轮验证是否可能回本”，而不能改变 acceptance 与 commit 规则。
+
+这种 self-speculation 把风险从 model-version mismatch 转成 mode-switch correctness、router calibration、两种 cache/state layout 的一致性和失败后的重算。接受率低、block 很短或 router 开销接近节省时，直接 diffusion decode 仍更合理；需要严格 target-distribution 等价时，仍必须证明 block-size-1 路径就是 authoritative verifier。`arXiv:2603.25702v1` 只在 §4.1–§4.4 的 same-model block-size-one verifier、routing policy 与 fallback，以及 §5–§6 所披露的模型、任务和实验边界内支持该分支，不证明其他 diffusion 架构或 serving workload 获得相同收益。<!-- source-family:SF-2026-ARXIV-2603-25702 -->
+
 Hybrid backbone 的 self-speculation 还取决于 **component composition topology**，不能从“模型包含 local attention、SSM 或 recurrent block”直接推出某一层可以成为 drafter。可用的 proposal path 必须保留目标函数所需的信息流，并为被跳过组件定义可重放的 provisional state；target 拒绝候选时，KV、recurrent state、SSM state 与 token frontier 要回到同一 commit point。
 
 ```text
@@ -426,6 +430,21 @@ Target weights、chat template、domain mix 或 runtime kernel 改变后，accep
 漂移而 correctness tests 仍通过。平台因此要同时做 compatibility gate、acceptance/SLO
 canary、rollback 和 provenance。作者报告的 speedup 只在其模型、数据、硬件、batch 和
 参数条件内成立；不能把某个 draft bundle 当成可跨 target 通用的加速插件。
+
+### 动态候选树必须编译为 Accelerator-safe Commit Plan
+
+在 GPU 上逐层扩展候选树、动态裁枝并回滚 KV，控制流灵活且容易根据 acceptance 调整；专用加速器若要求静态 shape、规则 batch 和预先规划的 memory layout，同一算法会被 host orchestration、动态分支与不可表达的回滚吞掉。此时不能取消 target verification，而应把候选树编译成静态批结构，并显式分开 provisional candidates、verification result、accepted prefix 与 KV commit frontier：
+
+```text
+dynamic candidate tree
+→ flatten with ancestor / position identity
+→ static accelerator batch
+→ target verification
+→ ordered acceptance
+→ atomic KV and output commit
+```
+
+Tree builder 仍只拥有 proposal；target verifier 拥有 acceptance，runtime 拥有 KV/output commit。静态化降低动态控制开销，却可能计算更多无效候选、限制树形自适应，并把 mask、position 与 rollback correctness 写进 execution plan；接受率低或静态批浪费较大时，普通 Decode 或较小固定 proposal 仍更稳健。`arXiv:2603.08088v1` 的 §3.1–§3.3 支持 branchable KV、tree flattening/mask/position 语义与 fused teacher 机制，§4.5 只定义 timing methodology，§5.1–§5.2 才构成所测 Ascend NPU 的实验边界；Limitations 之外不证明其他 draft/target、加速器或生产 SLO 获得相同收益。<!-- source-family:SF-2026-ARXIV-2603-08088 -->
 
 ### 一个 Target 可以对应多个 Workload-specific Proposal Artifacts
 

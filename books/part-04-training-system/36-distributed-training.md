@@ -174,6 +174,20 @@ GPU local links
 
 PyTorch、Megatron 等上层 runtime 可以选择或组合不同 backend。Backend 支持矩阵也具有版本和硬件边界：例如 PyTorch 文档中的 XCCL 指向 Intel XPU backend，并不是可以替换成任意厂商库的通用占位符。
 
+### 从静态通信配置到受验证的 Collective Policy
+
+固定 topology、collective 和 chunk policy 最容易重放，也是规模较小、网络稳定时的合理默认。集群扩大后，payload、链路拥塞和 rank placement 会随 step 或 phase 改变；若仍依赖动态 hook 或运维脚本修改通信路径，实际执行的 policy、顺序和失败边界就无法与训练 step 一起复算。一个更受约束的分支把 policy 编译为受限执行单元，在 collective 边界先验证其可组合性、资源访问和 ABI，再允许它影响传输或调度：
+
+```text
+versioned collective policy
+→ restricted policy program
+→ verifier and ABI check
+→ collective-boundary execution
+→ completion / failure receipt
+```
+
+通信 runtime 仍拥有 collective 语义、participant ordering 与 completion；policy 只拥有已授权的选择空间，不能改写 tensor、group 或 optimizer-step identity。这提高了策略演进的可审计性，却以表达能力、verifier 维护和版本兼容为代价；固定拓扑或策略很少变化时，静态 NCCL 配置仍更简单。Verifier acceptance 只排除了受限程序中的 memory/control-safety 风险，并不证明策略在语义和性能上合理：一个 memory-safe 的错误 collective policy 仍可能通过验证并显著降低吞吐，因此上线前还需要 operator 语义检查、性能验证与回退条件。Exact-v1 证据只覆盖 `arXiv:2603.11438v1` §3.3 的架构、§5.1 的 CPU/GPU 开销、§5.2 的 verifier rejection 与 hot reload，以及 §5.3 的 policy case studies；§7 所述边界不支持外推到任意策略、故障条件或生产集群。<!-- source-family:SF-2026-ARXIV-2603-11438 -->
+
 ### 单一路径 P2P 到可重放的多路径传输
 
 单一 NVLink 或 PCIe/host 路径在消息小、拓扑稳定或额外调度成本占主导时最简单。单一路径成为瓶颈而另一条链路仍有余量时，可把同一 GPU transfer 拆到多个 transport，并把固定的 launch、copy 与 synchronization 序列捕获为可重放执行图。
@@ -467,6 +481,22 @@ N ~= D * TP * PP * CP * EP
 | EP | Expert weights/compute | Dynamic token All-to-All | 第21、40章 |
 
 一项机制可能产生次级收益，但选择时应先匹配其直接作用对象。
+
+### MoE 多维并行必须共享一份 Token Dispatch Contract
+
+Dense 模型可以先分别选择 DP、TP、PP，再以相对稳定的 tensor shape 组合；MoE 又引入 token→expert routing、容量约束和 All-to-All，原先可局部优化的并行维度会在同一个 critical path 上耦合。把 EP 视作 dense plan 之后的附加开关，会遗漏 token permutation、dispatcher layout、load balance 与不同 rank groups 之间的顺序依赖。
+
+更完整的 runtime contract 是先冻结 router 输出与 token identity，再由同一配置共同决定 EP、TP、DP、PP 和 dispatcher；执行完成后再把 expert outputs 逆置换回原 token 顺序。Router 拥有语义选择，dispatcher 拥有 permutation 和 transfer，parallel runtime 拥有 rank groups 与 collective completion，optimizer 只提交完整 step：
+
+```text
+token identity + router decision
+→ capacity / load-balance policy
+→ token permutation and expert dispatch
+→ EP × TP × DP × PP execution
+→ inverse permutation and step commit
+```
+
+这让并行布局可以围绕真实 MoE dataflow 联合优化，却扩大配置空间、collective 干扰和 straggler 风险；小规模、路由收益不明显或网络较弱时，dense 路径或更少并行维度仍更可控。`arXiv:2603.07685v1` 的 §2.1 只建立 token dispatch 语义，真正支持 parallel folding 与 EP/TP/DP/PP 多维组合的是 §3.3，§8 才给出所测模型和集群配置；§11 之外不能外推极端路由倾斜、未覆盖网络或失败恢复条件。<!-- source-family:SF-2026-ARXIV-2603-07685 -->
 
 ### Expert Parallel 从静态放置到动态 Token + Weight Spill
 
@@ -860,7 +890,7 @@ FeLoG 用 embedding-quality feedback 优先 undertrained node；activity-aware s
 
 **Trade-off、failure、共存与回退。** quality feedback 可能偏置 sampling，选择同步会制造 stale embedding；graph workloads 与硬件不证明 LLM training 或最终收敛等价。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
 
-#### Review notes
+#### Source evidence boundary
 
 - `SF-2026-ARXIV-2606-22180` — primary `arXiv:2606.22180v1`；exact-v1 URL=`https://arxiv.org/html/2606.22180v1`；Method=`https://arxiv.org/html/2606.22180v1 — §5 FeLoG; §5.1 Feedback-coupled Sampling-Training Model; §5.2 Activity-aware Communication`；Evaluation=`https://arxiv.org/html/2606.22180v1 — §6 Experimental Results; §6.1 Experimental Setup`；Non-proof=`https://arxiv.org/html/2606.22180v1 — §7 Conclusions and experimental generalizability boundary`。
 <!-- daily-20260621:train-distributed-training:end -->
@@ -1072,6 +1102,18 @@ policy revision
 
 <!-- source-family:SF-2026-ARXIV-2605-15565 -->
 
+当 Agent rollout 在模型生成与长尾 tool wait 之间反复切换时，step-level FIFO 只看当前可运行 token，无法解释一条 trajectory 何时结束、应放在哪个 worker，也无法阻止少量长尾轨迹拖住整轮同步。更细的控制面把 trajectory context、tool frontier、已生成 token、policy revision 和预测剩余工作视为一份可迁移状态，再联合决定何时继续、在哪里恢复以及给谁更高优先级：
+
+```text
+versioned trajectory + current tool frontier
+→ progressively estimate remaining model / tool work
+→ choose queue priority and rollout placement
+→ resume model or wait for external result
+→ publish completed trajectory to the trainer barrier
+```
+
+Scheduler 只拥有 rollout execution order 与 placement，不能改变 action、reward 或 policy semantics。它可以缩短同步批次被长尾轨迹占据的时间，却增加 prediction drift、context migration、fairness、stale policy 和 tool-result cancellation；短轨迹、工具调用少或严格 FIFO 更重要时，普通 worker queue 仍更清楚。`arXiv:2603.28101v1` 的证据只覆盖 §4、§7.1 与 §8 所披露的 Agentic RL rollout 系统和实验，不证明任意工具分布、集群或训练同步策略都有相同收益。<!-- source-family:SF-2026-ARXIV-2603-28101 -->
+
 ### 小规模仿真只能验证 Control Path，不能替代真实规模证据
 
 直接占用完整集群最接近生产，却昂贵且难以复现故障。另一条分支只执行少量真实 ranks，其余参与者由通信/计算模型虚拟化，使 process-group、collective schedule 与 failure-control path 能在小硬件上重放。Emulator 拥有虚拟时间和 participant state，训练语义仍由真实 rank 与冻结 graph 决定。
@@ -1165,6 +1207,8 @@ gradient event
 代价是显存碎片、cache/SM 争用、通信重叠和更复杂的性能模型；平均利用率上升也可能恶化 step tail。干扰超过预算、module shape 不稳定或隔离要求更高时，应退回独占/时间复用。exact-v1 仅支持其选择的多模态架构、module mixture 与 GPU，未证明任意训练图或大规模拓扑都能保持相同收益。
 
 <!-- source-family:SF-2026-ARXIV-2605-18710 -->
+
+当训练 collective 进一步进入 fused、device-initiated kernel 时，计算与通信的联合 code generation、合法性验证和执行计划搜索不再由训练并行策略拥有；这些责任交给第 49 章。训练侧只提供 dependency、并行语义、topology 与 correctness contract，并继续用收敛、恢复和端到端 step time 验收生成的执行计划。
 
 ## 小结
 

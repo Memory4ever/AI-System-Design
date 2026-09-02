@@ -177,6 +177,18 @@ o_t = S_t q_t
 
 `alpha_t` 控制全局 state decay，`beta_t` 与 delta term 控制当前 key 方向的定向替换。它把显式的 `T` 个历史 KV 压缩为 recurrent state，并通过 chunkwise parallel form 让训练仍可使用大块矩阵计算；交换条件是 state capacity、association collision、顺序依赖和专用 kernel。论文自身仍把 Gated DeltaNet 与 sliding-window attention 组成 hybrid，说明 fixed-state recall 与显式局部 token access 是互补关系，而不是线性状态已经无条件替代 softmax Attention。
 
+Gated DeltaNet-2 继续细分这个 update contract：channel-wise decay 负责背景遗忘，erase gate `b_t` 决定沿当前 key 清除哪些旧内容，write gate `w_t` 决定提交哪些新 value channels。原 Gated DeltaNet 用同一个标量 update gate 耦合定向擦除与写入，因而“需要纠正旧关联但只少量写入”和“保留旧关联但大量写入”不能独立表达。解耦获得更细的 memory editing，自身代价是更多 gate state、反向与 kernel 复杂度；作者的 1.3B/100B-token 实验只能作为该 recipe 的受限证据，不能证明它普遍优于 softmax 或其他 recurrent architectures。
+
+这种思想与 LSTM 共享“有限状态需要学习保留和遗忘”的祖先，但 state contract 不同。LSTM 主要维护向量 cell state，并用 input/forget/output gates 做逐维递归更新；DeltaNet 一类机制维护矩阵 fast-weight state，用 Query 读取、用 key-value association 与 prediction error 定向改写。前者更像更新当前序列摘要，后者显式暴露内容寻址的关联结构。两者都把历史压进固定状态，都会碰撞、覆盖和遗忘；Gated DeltaNet 的 chunkwise parallel algorithm 改善的是训练执行路径，不会把有损状态变成完整 token archive。
+
+### Context switch 与重复表述暴露固定状态的真实边界
+
+同一序列从问题 A 切到无关问题 B 时，recurrent state 不会自动变成两个隔离 namespace。理想情况是边界 token 触发 decay/erase，新 Query 不命中旧 association，新写入逐步接管状态；但这些都是训练得到的软行为，不保证彻底清空或未来可恢复。安全隔离必须由 runtime 在独立请求、用户和 session 之间分配或 reset state，不能依赖模型 gate 猜测边界。
+
+相同语义的不同表述也可能生成不同 keys，造成重复写入与 state churn。Delta rule 在当前 state 已能沿该 key 预测目标 value 时只写 prediction error，可以减小重复更新；它却不保证 paraphrases 落到同一 key，也不能避免相近 associations 在固定矩阵中干扰。Gated DeltaNet-2 的独立 erase/write gates 增加编辑自由度，但 gate 仍需计算，也不是语义去重器或 hard skip scheduler。
+
+因此它把 full Attention“保存并反复读取显式历史”的代价，转换为“持续维护有损摘要”的代价。局部 softmax Attention、recurrent state 与外部 retrieval 分别保留精确近邻、压缩工作记忆和可恢复证据；是否组成 hybrid，应由目标任务的 context switch、精确回看、延迟和 state capacity 一起决定。
+
 ### Cross-layer Routing 必须先对齐 Receiver 的表示基底
 
 跨层复用 recurrent state 能缩短信息路径，但“发送方的 update signal”不一定是“接收方可消费的 state”。尤其
@@ -655,6 +667,8 @@ Long Context 的第一阶段是扩大可见窗口，随后压力依次转移到�
 10. 生产容量为什么不能只依据最大 context window？
 11. Hybrid linear/softmax、native sparse 与 test-time memory 分别改变了哪一种状态？
 12. Gated DeltaNet 的 memory-transition gate 与 gated softmax attention 的 output gate 分别控制什么？
+13. Gated DeltaNet-2 为什么要把 erase 与 write 解耦，它没有解决什么？
+14. 为什么同一序列的 context switch 不能等同于 runtime 的请求隔离？
 
 ## 小结
 
@@ -684,6 +698,8 @@ Primary-source 校验入口：
 - Hanshi Sun et al., "ShadowKV: KV Cache in Shadows for High-Throughput Long-Context LLM Inference", 2024: https://arxiv.org/abs/2410.21465
 - MiniMax et al., "MiniMax-01: Scaling Foundation Models with Lightning Attention", 2025: https://arxiv.org/abs/2501.08313
 - Songlin Yang et al., "Gated Delta Networks: Improving Mamba2 with Delta Rule", 2025: https://arxiv.org/abs/2412.06464
+- Ali Hatamizadeh et al., "Gated DeltaNet-2: Decoupling Erase and Write in Linear Attention", 2026（Status: Experimental）: https://arxiv.org/abs/2605.22791
+- Klaus Greff et al., "LSTM: A Search Space Odyssey", 2015: https://arxiv.org/abs/1503.04069
 - Zihan Qiu et al., "Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free", 2025（Status: Experimental）: https://arxiv.org/abs/2505.06708
 - Jingyang Yuan et al., "Native Sparse Attention", 2025: https://arxiv.org/abs/2502.11089
 - DeepSeek-AI, "DeepSeek-V3.2", 2025: https://arxiv.org/abs/2512.02556

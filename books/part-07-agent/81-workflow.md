@@ -544,6 +544,20 @@ versioned DAG
 
 <!-- source-family:SF-2026-ARXIV-2605-15132 -->
 
+#### Resource Lease 不能隐藏在 Agent 的控制流里
+
+小规模单 Agent 可以由 workflow 直接持有 token、tool、memory 和 concurrency budget；当多个 stages、agents 与外部 tools 竞争资源后，把这些额度散落在 prompt 或节点代码中，会让 preemption 改变行为语义，也无法回答一次失败消耗了什么。更稳定的边界是让独立 resource manager 保存 typed resource descriptor、allocation、lease、preemption 与 accounting；workflow 只在租约有效时调度 execution attempt：
+
+```text
+workflow-ready task + resource request
+→ policy / quota admission
+→ versioned lease
+→ bounded execution and usage receipt
+→ renew, release, preempt or compensate
+```
+
+Resource manager 拥有容量、配额和运行资源状态，Workflow 仍拥有 DAG、action authorization、retry 与最终 commit；资源层不能凭利用率改写任务依赖或副作用。租约、usage receipt 和抢占补偿是本章给出的 workflow/platform 接口设计要求，不由某个资源调度案例自动证明；AgentRM 的具体 MLFQ、zombie reaping 与 context lifecycle 机制归 Ch84 Agent Platform。
+
 ### 编译器反馈可以增量前移，但只能验证已封闭前缀
 
 完整生成后再编译最通用，却把早期 syntax/type 错误拖到末尾；每个 token 都调用 compiler 又会遇到未完成定义和巨大开销。一个中间分支维护可封闭的 program prefix、增量 compiler state 与 verified checkpoint，只有在前缀满足语言边界时触发检查，并把失败回滚到最近有效点：

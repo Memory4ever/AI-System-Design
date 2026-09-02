@@ -1,0 +1,8 @@
+# Books Writeback Queue — 2026-03-10
+
+**Status:** Pending root serial writeback and fresh-context prewrite audit. 本文件不证明 Books 已修改。
+
+| Source Family | Exact Source | Stable Node | Target | Adjacent | Existing Proposition | Proposed Durable Mechanism | Evidence Boundary | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2603-07685 | arXiv:2603.07685v1 | TRAIN-DISTRIBUTED-TRAINING | books/part-04-training-system/36-distributed-training.md | books/part-04-training-system/35-checkpoint.md; books/part-04-training-system/37-tensor-parallel.md | 本章只建立总决策框架。第 37～39 章分别展开 Tensor Parallel、Pipeline Parallel 和 ZeRO；第 40～41 章再讨论 Megatron 与 DeepSpeed 如何组合这些机制。 | 该工作在 Megatron Core 中把 expert parallel、tensor/data/pipeline parallel 及 dispatcher 实现组合为统一训练配置，并显式管理 token permutation 与负载均衡。 | 只支持 arXiv:2603.07685v1 §2.1. MoE Layer Architecture and Forward Pass 的机制与 §8. Performance Evaluation 的公开 workload；§11. Conclusion 之外不外推生产 SLO、多租户、跨硬件或长期可靠性。 | applied_postwrite_verified |
+| SF-2026-ARXIV-2603-08088 | arXiv:2603.08088v1 | INFER-SPECULATIVE-DECODING | books/part-05-inference-system/48-speculative-decoding.md | books/part-05-inference-system/47-pagedattention.md; books/part-05-inference-system/49-tensorrt-llm.md | 本章的核心判断是：**Speculative Decoding 用额外且便宜的 proposal work，换取一次 target-model verification 推进多个 output tokens；经典算法通过 acceptance 与 residual sampling 保持 target distribution，而不是用 draft model 改写模型行为。** | EAGLE-Pangu 将候选树展平为加速器可执行的静态批结构，并把验证、接受和 KV 提交边界重新组织为硬件安全路径。 | 只支持 arXiv:2603.08088v1 §3.1–§3.3 的 branchable KV、tree flattening/mask/position 与 fused teacher 机制，以及 §4.5、§5.1–§5.2 的 Ascend timing/实验合同；Limitations 之外不外推生产 SLO、多租户、跨硬件或长期可靠性。 | applied_postwrite_verified |

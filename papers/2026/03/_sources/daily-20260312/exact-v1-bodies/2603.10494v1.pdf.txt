@@ -1,0 +1,903 @@
+VERI-DPO: Evidence-Aware Alignment for Clinical Summarization via Claim
+Verification and Direct Preference Optimization
+Weixin Liu, BS1 , Congning Ni, PhD2 , Qingyuan Song, MEng1 , Susannah L. Rose, PhD2 ,
+Christopher Symons, PhD3 , Murat Kantarcioglu, PhD4 , Bradley A Malin, PhD1,2 , Zhijun Yin,
+PhD1,2
+1 Vanderbilt University, Nashville, TN, USA;
+2 Vanderbilt University Medical Center, Nashville, TN, USA
+3 Lirio, Knoxville, TN, USA
+
+arXiv:2603.10494v1 [cs.CL] 11 Mar 2026
+
+4 Virginia Tech, Blacksburg, VA, USA
+
+Abstract
+Brief Hospital Course (BHC) narratives must be clinically useful yet faithful to fragmented EHR evidence 1,2 .
+LLM-based clinical summarizers still introduce unsupported statements 3 , and alignment can encourage omissions
+(“say-less” degeneration) 4 . We introduce VERI-DPO, which uses claim verification to mine preferences and distill
+them into the summarizer with DPO 5 . On MIMIC-III-Ext-VeriFact-BHC 6,7 (100 ICU patients; patient-level splits), we
+train a retrieval-augmented verifier to label claim–evidence pairs as Supported, Not Supported, or Not Addressed via a
+single-token format. The verifier scores sentence-level claims from sampled BHC candidates and aggregates margins
+into a coverage-aware utility to mine length-controlled, contradiction-anchored preference pairs. On held-out patients,
+verifier-mined preferences separate candidates by contradiction density, and VERI-DPO reduces Not Supported claim
+rates from 10.7% to 1.9% (local verifier judge) and from 11.6% to 6.4% (GPT-4o judge) 8 , while improving validity from
+76.7% to 82.5% and maintaining informative length.
+Introduction
+The Brief Hospital Course (BHC) is a core narrative component of the discharge summary, intended to provide
+a concise yet clinically actionable account of the inpatient trajectory for handoff across care settings. 1,9 As such, it
+must be both informative enough to support downstream decision-making and faithful to what is documented in the
+electronic health record (EHR). 1,9
+Automating BHC generation is difficult because the evidence needed to justify summary statements is fragmented
+across longitudinal notes with heterogeneous structure, variable quality, and time-dependent context. 10 A summarization
+model must correctly attribute diagnoses, medications, procedures, and temporal relations to the record, and avoid
+producing plausible but unsubstantiated statements. Even a small number of unsupported claims can have outsized
+impact because clinical narratives are treated as authoritative documentation and errors may propagate into follow-up
+care and documentation workflows. 2
+Large language models (LLMs) have advanced clinical summarization via instruction tuning 11 and retrievalaugmented generation 12 , while evaluation has increasingly shifted away from surface-level similarity toward factualityoriented assessment, motivated by evidence that overlap metrics are poorly aligned with clinically meaningful errors. 3,13
+Nevertheless, reliably faithful long-form summaries remain challenging.
+Two practical barriers limit progress. First, factuality supervision is expensive and granular: verifying a BHC
+requires decomposing it into many statements and mapping each statement to supporting evidence, which is difficult to
+scale with clinician annotation. 6 Second, alignment under imperfect or indirect signals can induce shortcut behavior, such
+as producing shorter or vaguer narratives that make fewer checkable claims (degeneration-by-omission). 4 These issues
+motivate methods that operationalize statement-level verification at scale while explicitly preserving informativeness.
+Claim verification offers an evidence-linked framework for modeling the relationship between a claim and supporting
+evidence (e.g., entailment/contradiction/unknown), but in clinical text it must contend with incomplete documentation,
+temporal dependence, and retrieval artifacts. 14,15 Preference-based alignment methods, including Direct Preference
+Optimization (DPO) 5 , can shape generation behavior from pairwise preferences rather than token-level labels, but
+require preference signals that are tightly coupled to evidence to avoid omission-style shortcuts. 4
+In this paper, we introduce VERI-DPO (Verifier-Driven Direct Preference Optimization), an evidence-aware
+alignment pipeline that uses a compact verifier as an auditable intermediate signal and distills verifier-driven preferences
+into the summarizer via DPO. 5 As illustrated in Figure 1, the workflow has three stages: (i) fine-tune a lightweight
+retrieval-augmented verifier to predict Supported, Not Supported, or Not Addressed for a claim paired with patient-specific
+evidence using a constrained single-token decision format; (ii) sample multiple candidate BHCs for an evidence-window
+prompt, score sentence-level claims with the verifier, and aggregate claim-level outputs into a coverage- and length-aware
+
+Figure 1. Overview of VERI-DPO. (A) Verifier training: a compact retrieval-augmented verifier predicts single-token labels
+A/B/C for each (evidence, claim) pair: A=Supported, B=Not Supported (error/hallucination), and C=Not Addressed (omission / not in
+retrieved evidence). (B) Verifier-driven preference mining: for each sampled BHC candidate, we decompose it into sentence-level
+claims, retrieve per-claim evidence, and score claims with the verifier; we aggregate claim-level signals into a utility 𝑈 (𝑦) that
+penalizes contradictions (NS/HCNS) while discouraging degeneration-by-omission, and select (𝑦 + , 𝑦 − ) under utility and
+length/coverage constraints (HCNS: B under biasprec with margin Δ > 𝛿). (C) DPO alignment: mined pairs are used to optimize a
+single-sample policy that internalizes verifier preferences, avoiding inference-time reranking.
+
+utility that penalizes contradiction signals; and (iii) mine length-controlled, contradiction-anchored preference pairs and
+apply DPO to shift the summarizer toward evidence-consistent outputs, amortizing verifier guidance into a single-sample
+policy.
+Compared with existing approaches that use factuality primarily for evaluation 3,13 , our approach elevates evidencelinked verification into a scalable and inspectable training signal. The verifier produces intermediate artifacts (claim-level
+labels, evidence identifiers, and confidence margins) that support auditing and provide a simple calibration knob for
+controlling the precision–recall trade-off used in preference construction. On VeriFact-BHC (100 patients; patient-level
+72/8/20 train/dev/test splits), DPO distills verifier-mined preferences into a summarizer that reduces unsupported-claim
+rates under both a local verifier judge and an external GPT-4o claim-level judge while maintaining validity and
+informative length. 8 We summarize our major contributions as follows:
+• We develop a retrieval-augmented, lightweight clinical claim verifier trained with patient-level splits, and evaluate
+accuracy and calibration on held-out patients.
+• We introduce verifier-driven preference mining for long-form clinical summaries, including high-confidence
+contradiction anchoring and constraints that control length and claim-coverage mismatch.
+• We apply Direct Preference Optimization (DPO) on mined pairs to distill verifier supervision into a singlesample summarizer, achieving reduced unsupported-claim rates under dual-judge evaluation while mitigating
+degeneration-by-omission. 4
+Methods
+Data and Preprocessing
+Dataset. We use the MIMIC-III-Ext-VeriFact-BHC dataset 6 under credentialed PhysioNet access 16 for patientspecific factual verification of long-form clinical summaries against each patient’s EHRs. The dataset is a de-identified
+derivative of the MIMIC-III Clinical Database v1.4. 7 It contains 100 patients (125 hospital admissions) and two BHC
+narratives per patient: (i) a human-written BHC extracted from the discharge summary and (ii) an LLM-generated
+BHC produced by summarizing the patient’s longitudinal notes. 6 The patient-specific reference EHRs exclude the final
+discharge summary note by dataset construction and include 4,787 clinical notes in total (median 25 notes per patient;
+IQR 16–47; range 10–314). Note categories span 14 types, with the most frequent being Nursing (1,228), Physician
+(1,223), Radiology (1,134), Respiratory (471), and electrocardiogram (ECG) (306).
+Proposition-level supervision. Each BHC narrative is decomposed into proposition-level units at two granularities:
+sentence propositions and atomic claim propositions (single predicate-like statements), yielding 13,070 proposition
+
+Table 1. Paraphrased examples of proposition-level annotations in VeriFact-BHC. These are for illustration only and do not
+reproduce any individual patient record verbatim.
+Source
+
+Type
+
+Proposition (claim)
+
+Label
+
+Example evidence snippet
+
+Human
+
+Sentence
+
+Started broad-spectrum antibiotics for Supported
+pneumonia.
+
+Medication list notes initiation of IV antibiotics;
+progress note documents pneumonia treatment.
+
+LLM
+
+Atomic
+
+Creatinine improved after fluids.
+
+Not Addressed
+
+Reference notes include fluids but no mention
+of creatinine trend in the provided window.
+
+LLM
+
+Sentence
+
+Underwent coronary bypass surgery dur- Not Supported
+ing admission.
+
+Operative/procedure notes list no CABG; cardiology note contradicts surgery history.
+
+instances. 6 Table 1 provides paraphrased examples illustrating the proposition format and three-way labels.
+Reference EHRs and labels. Clinicians label extracted propositions as Supported, Not Supported, or Not Addressed
+with respect to each patient’s reference EHRs; ground truth is established via majority vote across three clinicians with
+adjudication for disagreements. 6 In verifier preprocessing, we treat each labeled proposition as a candidate training
+instance (retaining proposition_type for analysis), apply claim-validity filtering before retrieval/JSONL construction,
+and exclude note row identifiers associated with discharge-summary sources used to derive propositions. In this dataset
+release, the reference EHRs already exclude the final discharge summary note; we verify that the additional row-id
+exclusion does not remove extra reference notes.
+Research Pipeline
+Objective. We aim to investigate 1) claim verification: given retrieved relevant evidence chunks and a claim,
+predict one of three labels (Supported / Not Supported / Not Addressed); and 2) evidence-aware alignment: generate a
+BHC summary that maximizes supported content while minimizing unsupported statements. Figure 1 illustrates our
+three-stage end-to-end evidence-aware alignment pipeline, which is described as follows:
+Running example (EHR-to-BHC)
+To ground the pipeline in the EHR-to-BHC setting, consider an admission where the EHR evidence window contains:
+(E1) a progress note documenting treatment for pneumonia with IV antibiotics; (E2) a procedure list without CABG;
+and (E3) labs showing creatinine values without a clear improving trend. A sampled BHC candidate may include the
+sentence-level claims: (C1) “Started broad-spectrum antibiotics for pneumonia” (supported by E1), (C2) “Underwent
+coronary bypass surgery during admission” (not supported given E2), and (C3) “Creatinine improved after fluids” (not
+addressed if E3 does not support the stated trend). The verifier labels each (evidence, claim) pair as A/B/C and these
+claim-level signals are aggregated into a utility that penalizes contradictions (e.g., C2) while maintaining coverage;
+preference mining then selects a higher-utility candidate with fewer B labels under length constraints, which is distilled
+into the summarizer via DPO.
+Stage A: Retrieval-augmented verifier training
+We construct training instances for verifier fine-tuning as one record per claim, pairing each proposition with
+retrieved, patient-specific evidence from the reference EHRs. Starting from proposition-level annotations, we merge
+proposition texts with clinician-derived ground-truth labels and link them to the corresponding reference notes. We split
+the dataset at the patient level using group-based shuffling (72/8/20 patients for train/dev/test; dev denotes the validation
+split used for model selection and calibration) and ensure that retrieval and preprocessing are performed strictly within
+split boundaries. After filtering, we retain 9,217/895/2,644 training instances for train/dev/test.
+To prevent source overlap between labeled propositions and the retrieval corpus (i.e., avoid retrieving dischargesummary source documents used to derive the propositions), we remove such notes before indexing. Concretely, we
+exclude note row identifiers that match each patient’s discharge-summary provenance prior to building the retrieval
+index. We segment each note into coarse evidence units while preserving newline structure. We then further segment
+these units into sentence-like spans to form retrieval candidates. We retain spans above a minimum length threshold, and
+also keep short but information-dense lines (e.g., labs or medication fragments). Overly long spans are truncated into
+fixed-size segments, and all units are lightly normalized for tokenization. For each claim, we perform two-stage lexical
+retrieval within the patient’s reference EHR. In the first stage, we rank notes using BM25 17 , a term-based relevance
+function that scores documents by query–term matches with length normalization, and select the top 𝑁 notes (default
+𝑁=35). In the second stage, we rank candidate evidence units within those notes using BM25, select the top 𝐾 units
+(default 𝐾=50), and enforce lightweight diversity constraints by deduplicating near-identical units and capping units
+per originating note. We apply strict claim validity filters to remove empty strings, template fragments, and overly
+short/low-alphanumeric claims. Each retained instance is stored as a structured record with fields: {proposition_id,
+
+subject_id, hadm_id, claim, label, evidence, evidence_meta, retrieval}.
+We fine-tune relatively small instruction-following LLMs (8B-class backbones) as claim verifiers using a next-token
+classification formulation with single-token labels. Each training instance is formatted as an instruction-following
+prompt containing i) a brief policy describing the three-way decision rule, ii) retrieved evidence snippets, and iii) the
+claim. The model is trained to output exactly one token corresponding to one of three labels: A (Supported), B (Not
+Supported), or C (Not Addressed). The loss is computed only at the label position using a restricted candidate set of
+the three label tokens. We train with 4-bit quantization (NormalFloat4; NF4) 18 and Low-Rank Adaptation (LoRA) 19
+adapters applied to attention and multilayer perceptron (MLP) projection modules, and use gradient accumulation to
+achieve an effective batch size of 64 with a maximum sequence length of 2,048 tokens. Evidence is packed under a
+fixed token budget using up to 50 retrieved items; each item is truncated and ordered by retrieval score and time. During
+training, we apply evidence dropout by randomly removing a small fraction of retrieved evidence snippets from the
+prompt, which simulates missing or noisy retrieval and improves robustness to imperfect evidence retrieval. To mitigate
+class imbalance, we use tempered inverse-frequency class weights and label smoothing, and optionally apply a focal
+loss–style modulating factor that down-weights easy instances and emphasizes hard misclassified examples 20 .
+Given the three candidate logits for the single-token labels (A/B/C), we optionally calibrate the verifier’s decision
+boundary by adding a scalar logit bias 𝑏 to the Not Supported logit (class B) and re-decoding by argmax over the
+adjusted logits 21 . This simple one-parameter adjustment provides an explicit precision–recall trade-off for B under class
+imbalance and is used only for verifier calibration and downstream preference mining (it is independent of the DPO
+optimization itself). We sweep 𝑏 over a grid on the development (validation) set and select the best bias according to the
+bias-tuning objective:
+Jbias (𝑏) = MacroF1(𝑏) + 𝜆 · RecallNS (𝑏),
+𝜆 = 0.10.
+Here 𝜆 is a small weight that slightly prioritizes Not Supported recall while keeping MacroF1 as the primary selection
+criterion; we set 𝜆 = 0.10 based on a coarse development-set sweep over a small candidate set and found performance
+to be stable around this value. This provides an explicit trade-off between aggressive Not Supported detection and
+preserving performance for the majority Supported class. This bias is used for reporting verifier metrics; preference
+mining uses a separate, conservative precision-stage bias (see below) to prioritize high-precision hallucination filtering
+when constructing DPO pairs.
+Stage B: Verifier-driven preference mining
+For each prompt, we sample multiple BHC candidates, decompose each candidate into sentence-level claims, score
+each claim with the verifier, and aggregate claim-level signals into a summary-level utility. We extracted DPO preference
+pairs on the training split only, using the development split solely to select the precision-stage verifier bias (biasprec );
+the test split was not accessed during the training process. For each training subject, we constructed a time-ordered
+corpus of evidence units from raw NOTEEVENTS. To prevent source overlap between proposition sources and the retrieval
+corpus, we excluded note ROW_IDs corresponding to discharge-summary sources used to derive labeled propositions
+before indexing the retrieval corpus. For each subject, we sampled 30 prompts; each of which included 18 evidence
+units (stride 8 with small jitter). We generated 8 candidates per prompt using nucleus sampling (temperature 0.8,
+top-𝑝=0.95) 22 . Each candidate was cleaned, segmented into sentence-level claims, and scored for up to 24 claims. For
+each claim, we retrieved top-𝑘 (=50) evidence units from the subject corpus and queried the verifier under an “A/B/C”
+single-token formulation to obtain logits.
+HCNS and two-stage biasing. To obtain high-precision contradiction anchors while maintaining sufficient mining
+yield, we used a conservative precision-stage bias when defining high-confidence Not Supported (HCNS) and a separate
+recall-stage bias for yield control. We define HCNS as follows:
+HCNS ⇐⇒ 𝑦ˆ biasprec = B ∧ Δ > 𝛿,
+
+Δ = ℓ𝐵 − max(ℓ 𝐴, ℓ𝐶 ),
+
+where ℓ 𝐴, ℓ𝐵 , ℓ𝐶 are the verifier (pre-softmax) logits for labels A/B/C. We set the margin threshold to 𝛿 = 0.8 as a
+conservative cutoff chosen on the development split to favor precision of contradiction anchors (i.e., only treating
+sufficiently separated B predictions as HCNS); mining-level results were qualitatively stable under small perturbations
+of 𝛿 around this value (Table 8). For yield control, we introduced a recall-stage bias and set biasrecall = +1.10 based on
+a coarse development-set sweep to ensure a sufficient number of B/HCNS predictions for efficient pair mining. We then
+selected biasprec on the development split to trade off HCNS precision and yield under a minimum-yield constraint
+(at least 10 HCNS predictions), using a coarse-to-fine sweep over [−0.8, 1.6]. In the full run, the selected value was
+biasprec = −0.34.
+Candidate utility and pair constraints. Let (𝑛 𝐴, 𝑛 𝐵 , 𝑛𝐶 ) be the counts of verifier predictions under biasprec among
+the scored claims, and let 𝑛 be the number of scored claims. We compute a summary-level utility:
+𝑈 = 𝜆 𝐴 · 𝑛 𝐴 − 𝜆 𝐵 · 𝑛 𝐵 − 𝜆𝐶 · 𝑛𝐶 + 𝜆 cov · min(𝑛, 𝑛0 ) − 𝜆 dup · (dup_frac · 𝑛) − 𝜆 meta · meta_hits.
+
+Table 2. Preference mining summary (training split only).
+Metric
+
+Value
+
+Training subjects / prompts per subject / samples per prompt
+Total mined pairs
+biasprec / biasrecall / 𝛿
+Frac. chosen has fewer predicted B than rejected
+Avg. #B (chosen / rejected)
+Avg. score gap 𝑈𝑐 − 𝑈𝑟
+
+72 / 30 / 8
+1513
+−0.34 / +1.10 / 0.8
+0.9802
+0.4891 / 4.6616
+20.2958
+
+The weights in 𝑈 are treated as hyperparameters that encode an importance ranking over error types and anti-degeneration
+factors: Not Supported contradictions are penalized most heavily, Not Addressed receives a milder penalty (often
+reflecting missing evidence rather than direct contradiction), and additional terms encourage adequate claim coverage
+while discouraging duplication and meta text. In this paper, we empirically set 𝜆 𝐴=1.0, 𝜆 𝐵 =3.0, 𝜆𝐶 =0.5, 𝜆cov =0.25,
+𝑛0 =12, 𝜆dup =2.0, and 𝜆meta =2.0 based on development-set mining diagnostics, aiming to achieve large contradiction
+separation between chosen and rejected candidates while controlling coverage/length mismatch and avoiding “say-less”
+degeneration.
+For each prompt, we select a (chosen, rejected) pair only if all of the following constraints are satisfied: i) the
+utility gap exceeds a minimum margin, 𝑈chosen − 𝑈rejected ≥ 𝜏𝑈 ; ii) the number of scored claims differs by at most 𝜏𝑛 ,
+|𝑛chosen − 𝑛rejected | ≤ 𝜏𝑛 ; iii) the chosen candidate contains at most 𝜏HCNS HCNS claims and at most 𝜏𝐵 predicted B
+claims; and iv) the rejected candidate contains at least one HCNS claim. We empirically set 𝜏𝑈 =2.0, 𝜏𝑛 =6, 𝜏HCNS =1,
+and 𝜏𝐵 =2 based on development-set mining diagnostics to obtain high-contrast preference pairs while limiting coverage
+mismatch. We store the mined preference pairs (𝑥, 𝑦 + , 𝑦 − ) for DPO training, where 𝑥 is the prompt and (𝑦 + , 𝑦 − ) are
+the chosen and rejected summaries. Unless otherwise stated, we use this full preference-mining procedure (HCNS
+anchoring, the utility definition, and the pair constraints above) to construct the training preference dataset for DPO.
+Stage C: DPO alignment
+𝑁
+We construct a preference dataset D = {(𝑥𝑖 , 𝑦 +𝑖 , 𝑦 𝑖− )}𝑖=1
+from the verifier-driven mining stage, where 𝑥 denotes the
+summarizer prompt (a window of patient-specific EHR evidence units) and (𝑦 + , 𝑦 − ) are two candidate BHC summaries
+for the same prompt. The “chosen” summary 𝑦 + is selected to have fewer contradiction signals (fewer verifier-predicted
+Not Supported claims) under length and coverage constraints, while the “rejected” summary 𝑦 − contains at least one
+high-confidence contradiction signal. Following the standard DPO formulation 5 , let 𝜋 𝜃 (𝑦 | 𝑥) denote the trainable
+summarizer policy and 𝜋ref (𝑦 | 𝑥) denote a fixed reference policy (the pre-DPO base model). We define:
+
+
+
+𝑠 𝜃 (𝑥, 𝑦 + , 𝑦 − ) = 𝛽 log 𝜋 𝜃 (𝑦 + | 𝑥) − log 𝜋 𝜃 (𝑦 − | 𝑥) − log 𝜋ref (𝑦 + | 𝑥) − log 𝜋ref (𝑦 − | 𝑥) ,
+and optimize the logistic loss:
+
+
+LDPO (𝜃) = −E ( 𝑥,𝑦 + ,𝑦 − )∼D log 𝜎 𝑠 𝜃 (𝑥, 𝑦 + , 𝑦 − ) ,
+where 𝛽 > 0 controls the strength of the preference signal. We train DPO using the Transformers Reinforcement
+Learning (TRL) library’s DPOTrainer implementation on the mined preference pairs (𝑁 = 1513; mined from the
+training split only). The base summarizer is llama3.1-8b-Instruct 23 . We apply LoRA adapters to attention and
+MLP projection modules (q/k/v/o, gate/up/down) with rank 𝑟=16, 𝛼=32, dropout 0.05. Training uses bfloat16
+(BF16), gradient checkpointing, per-device batch size 1, gradient accumulation 8, max prompt length 2048, and max
+sequence length 3072. We sweep 𝛽 ∈ {0.05, 0.10, 0.20} and epochs ∈ {1, 2, 3}, and include an additional probe setting
+(𝛽=0.30, epochs = 2). The learning rate is fixed at 1 × 10−5 for all runs.
+To contextualize gains, we include two baselines. First, a supervised fine-tuning (SFT) baseline tests whether improvements can be explained by learning the output format rather than factual alignment: we discard the rejected response and
+optimize next-token log-likelihood on (𝑥, 𝑦 + ) pairs only, using the same backbone (llama3.1-8b-Instruct), LoRA
+configuration (q/k/v/o, gate/up/down, 𝑟=16, 𝛼=32, dropout 0.05), sequence lengths, and learning rate (1 × 10−5 ).
+SFT uses only training-mined pairs (no test access) and does not use GPT-4o signals. Second, a verifier-guided
+Best-of-𝐾 reranking baseline measures how much factuality can be gained without retraining the summarizer: for
+each prompt, we sample 𝐾 candidates from the base summarizer using the same decoding setup as other runs, score
+each candidate with the local verifier judge under the same precision-stage bias (biasprec = −0.34), and select the
+candidate with the best summary-level utility; we report 𝐾=8 as a representative compute-heavy baseline. Clinically,
+this corresponds to generating multiple candidate BHC drafts for the same admission (e.g., 𝐾=8 versions from the same
+EHR evidence window) and using an evidence-checking verifier to select the draft with fewer unsubstantiated statements
+while maintaining comparable coverage and length—analogous to selecting the most evidence-consistent discharge
+narrative among several automated drafts for clinician review.
+
+Experimental Setup
+We evaluate the verifier using macro-F1, accuracy, and class-wise precision/recall (emphasizing Not Supported).
+Bias calibration is selected on the development set for reporting verifier metrics; specifically, we sweep a scalar
+bias 𝑏 added to the Not Supported logit and choose 𝑏 by maximizing MacroF1 + 0.10 · RecallNS , prioritizing Not
+Supported recall while maintaining overall class balance. For summarizer evaluation, we additionally report results
+under the same precision-stage verifier bias used in preference mining (biasprec = −0.34) to ensure consistency with
+the training signal. We estimate the rate of unsupported claims using two judges: (i) the local verifier judge (same
+single-token ABC formulation) and (ii) an external GPT-4o claim judge operating at the claim level using only the
+provided evidence snippets. We additionally report validity/degeneration checks (e.g., minimum length after cleaning,
+duplication thresholds) and use anti-degeneration constraints in development-set selection.
+For the external judge, each generated BHC is split into sentence-like claims. For each claim, we provide GPT-4o
+with the same evidence snippets used in the summarizer prompt (labeled excerpts [E1], [E2], . . . ) and ask it to output
+a JSON label: Supported (S), Not Supported (NS), or Not Addressed (NA), along with a confidence score in [0, 1] and
+the evidence ids used. We define HCNS as an NS label with confidence ≥ 0.8 and compute:
+NS-rateGPT =
+
+𝑛𝑁 𝑆
+.
+𝑛𝑆 + 𝑛 𝑁 𝑆 + 𝑛 𝑁 𝐴
+
+This GPT-4o evaluation is used only for reporting and is not used to train or tune the summarizer. For model selection,
+we evaluate DPO checkpoints on a small development subset: we sample 8 development subjects and generate 6 prompts
+per subject (48 prompt instances). Each prompt consists of a time-ordered window of 18 evidence units (stride 8
+with small random jitter), truncated to 220 words per unit. We generate one BHC per prompt using nucleus sampling
+(temperature 0.8, top-𝑝 0.95, max new tokens 420). Each generated BHC is cleaned to remove meta text and split
+into sentence-like claims; after deduplication and basic validity filtering, we score up to 24 claims per BHC. For each
+claim, we retrieve top-𝑘=50 evidence units from the subject-specific corpus and query the verifier using the ABC
+single-token scheme (A=Supported, B=Not Supported, C=Not Addressed). We apply the precision-stage verifier bias
+biasprec = −0.34 and obtain per-BHC counts (𝑛 𝐴, 𝑛 𝐵 , 𝑛𝐶 ) over the scored claims. Let
+𝑛used = 𝑛 𝐴 + 𝑛 𝐵 + 𝑛𝐶
+denote the total number of scored claims. We report a hallucination proxy:
+NS-rate =
+
+𝑛𝐵
+.
+𝑛used
+
+We define HCNS by a margin threshold 𝛿=0.8:
+HCNS ⇐⇒ 𝑦ˆ biasprec = B ∧ (ℓ𝐵 − max(ℓ 𝐴, ℓ𝐶 )) > 𝛿.
+where ℓ 𝐴, ℓ𝐵 , ℓ𝐶 are the verifier (pre-softmax) logits for labels A/B/C. We mark a generation as invalid if it is too short
+after cleaning, contains meta patterns, or has too few claims. We apply duplication filters based on the fraction of
+duplicate claims after deduplication (strict: ≤ 0.25; relaxed: ≤ 0.35). To avoid selecting degenerate models that reduce
+hallucinations by “saying less”, we impose constraints relative to the baseline summarizer on the relaxed-valid subset:
+(i) minimum valid fraction ≥ 0.80, (ii) average length in characters ≥ 0.95× baseline, and (iii) average number of scored
+claims not worse than baseline by more than 0.5.
+Results
+Clinical interpretation of metrics
+We decompose each generated BHC into sentence-level claims and label each claim as Supported, Not Supported
+(unsubstantiated or contradicted by the available EHR evidence), or Not Addressed. We report NS-rate and #NS as
+proxies for statements requiring clinician correction, and report Valid and output length/claim counts to ensure gains are
+not achieved via degeneration-by-omission (“say-less”).
+Verifier performance and calibration
+We first report verifier performance and calibration, then present preference-mining diagnostics and DPO alignment
+outcomes on the development and test splits. Clinically, the verifier serves as an automated evidence-checking component
+that flags potentially unsubstantiated statements in a candidate BHC draft, supporting both preference mining during
+training and error localization during evaluation. Table 3 reports verifier performance on held-out TEST patients for two
+8B backbones under our single-token (A/B/C) formulation with a DEV-selected logit bias 𝑏 added to the Not Supported
+(class B) logit. We select 𝑏 on the development set by maximizing MacroF1 + 0.10 · RecallNS , which favors improved
+
+Not Supported recall while preserving overall class balance. Under this criterion, the selected biases are 𝑏 = 0.4 for the
+Llama-3.1 verifier and 𝑏 = 0.0 for Med42 (Table 3); all TEST verifier metrics are reported using these DEV-selected
+biases. Llama-3.1 benefits from a positive bias that increases NS recall, whereas Med42 24 achieves higher accuracy
+with near-zero biasing but lower NS recall, reflecting a trade-off between contradiction sensitivity and overall class
+balance. For preference mining we use a separate conservative precision-stage bias (biasprec = −0.34) to prioritize
+high-precision contradiction filtering, since overly large positive biases can over-trigger class B and reduce macro-F1.
+Table 3. Verifier performance on held-out TEST patients. Bias 𝑏 is added to the Not Supported logit and tuned on DEV.
+Backbone
+Llama-3.1-8B-Instruct
+Llama3-Med42-8B
+
+Best 𝑏 (B-logit)
+
+Dev Macro-F1
+
+Test Macro-F1
+
+Accuracy
+
+NS Prec.
+
+NS Rec.
+
+0.4
+0.0
+
+0.5768
+0.5814
+
+0.5781
+0.5835
+
+0.7039
+0.7496
+
+0.2214
+0.2477
+
+0.4094
+0.2752
+
+Development-set model selection and baselines
+To address whether improvements from preference optimization could be explained by simply learning the output
+format, we trained an SFT baseline (LoRA) on the screened preference pairs (training split only) using only the (prompt,
+chosen) targets. On a held-out development-set evaluation subset, SFT does not reduce unsupported content relative to
+the base summarizer: NS-rate slightly increases (0.118 vs. 0.104) and the average #Not Supported claims increases
+(2.28 vs. 1.92), despite comparable length and claim coverage (Table 4). In contrast, verifier-guided Best-of-𝐾 reranking
+(𝐾=8) substantially reduces unsupported content without retraining the summarizer (NS-rate 0.033; 𝑛 𝐵 0.61) and also
+improves validity (0.917). The selected DPO checkpoint achieves the lowest NS-rate and 𝑛 𝐵 among single-sample
+methods, while improving validity and increasing output length and the number of scored claims relative to the baseline,
+suggesting that the reduction in unsupported content is not explained by shorter or less informative generations.
+We conducted a DPO hyperparameter sweep using the mined preference pairs (1513 pairs) and selected checkpoints
+using the development-set evaluation subset protocol. Table 5 reports the top sweep settings ranked by NS-rate; across
+the grid, moderate 𝛽 values (0.05–0.10) with 2–3 epochs perform best under the anti-degeneration constraints, while
+larger 𝛽 tends to reduce validity or increase instability.
+Test-set main results under dual judges
+We next evaluate all trained and baseline systems on the held-out TEST split (120 prompts; relaxed validity) under
+two judges: our local verifier judge and an external GPT-4o claim-level judge. Table 6 summarizes the main TEST
+results. Under the local verifier judge (Med42-8B 24 ; ABC single-token; biasprec = −0.34), DPO reduces hallucinations
+substantially: NS-rate drops from 10.7% to 1.9% and #NS from 1.98 to 0.36. Under GPT-4o, the absolute rates are
+higher due to stricter labeling and more NA assignments, but the trend is consistent: NS-rate decreases from 11.6%
+to 6.4% and #NS from 2.14 to 1.26. Importantly, validity improves (76.7% → 82.5%) and supported-claim counts
+increase, indicating that gains are not driven by “say-less” degeneration. Finally, SFT does not improve factuality
+over the base model, whereas verifier-guided Best-of-𝐾 reranking (𝐾=8) reduces NS but requires multiple samples at
+inference time; DPO achieves the best factuality as a single-sample policy.
+Clinical interpretation of main results
+In practical terms, the base summarizer produces 1.98 Not Supported claims per BHC under the local verifier judge,
+while our DPO-aligned model reduces this to 0.36, with increased supported-claim counts and longer outputs. Under the
+external GPT-4o judge, the same trend holds (2.14 → 1.26 Not Supported claims per BHC), suggesting the improvement
+is not an artifact of a single judge. For example, a Not Supported claim may state that a patient “underwent coronary
+bypass surgery during admission” when procedure notes do not document CABG, or assert a lab trend (e.g., “creatinine
+improved after fluids”) when the available evidence window does not support the stated change.
+Preference mining diagnostics and robustness
+To validate that the verifier-driven preference signal is not an artifact of candidate sampling or brittle hyperparameter
+choices, we report mining-level diagnostics computed on the training split only mining run (no test access). We analyze
+how different pair-selection strategies affect contradiction separation and length/coverage mismatch, and evaluate
+stability under small perturbations of 𝛿 and biasprec (Tables 7–8). Random pairing produces minimal separation in
+predicted contradictions between chosen and rejected (Δ#𝐵 ≈ 0.10), indicating a weak supervision signal. Removing
+HCNS anchoring increases contradictions in chosen outputs (higher #𝐵𝑐 ), consistent with greater false-positive
+contamination. Removing length/coverage incentives maintains contradiction separation but shifts chosen outputs
+toward shorter generations (negative Δchars and Δ𝑛used ), consistent with “say-less” degeneration. Under the full
+strategy, length/coverage mismatch between 𝑦 + and 𝑦 − is small (Δ𝑛used = + 0.290 and Δchars=+22.9), indicating that the
+preference signal is not driven by “saying less” but by reduced contradictions. In the ablations below, we modify one
+
+Table 4. Development-set evaluation subset (48 prompts; relaxed validity). Lower NS-rate and 𝑛 𝐵 are better; higher validity, 𝑛 𝐴, and
+length indicate reduced “say-less” degeneration. Bold denotes the best value in each column and underline denotes the second best.
+Run
+
+Valid
+
+NS-rate
+
+𝒏𝑩
+
+𝒏𝑨
+
+𝒏𝑪
+
+Frac. 𝑛 𝐵 >0
+
+Claims
+
+Chars
+
+Base (single)
+SFT (single)
+Verifier rerank (Best-of-8)
+
+0.7708
+0.6667
+0.9167
+
+0.1041
+0.1181
+0.0334
+
+1.9189
+2.2813
+0.6136
+
+14.1892
+15.1563
+17.7727
+
+1.4054
+0.8125
+0.7273
+
+0.6486
+0.5938
+0.3636
+
+17.5135
+18.2500
+19.1136
+
+1805.3
+1903.0
+1876.2
+
+DPO (Ours, best)
+
+0.8958
+
+0.0163
+
+0.2791
+
+18.3256
+
+0.2558
+
+0.2093
+
+18.8605
+
+2071.9
+
+Table 5. Top-10 DPO sweep settings on Development-set (relaxed validity), ranked by lowest NS-rate, lowest 𝑛 𝐵 , and highest 𝑛 𝐴.
+Run
+
+𝜷
+
+Ep
+
+Valid
+
+NS-rate
+
+𝒏𝑩
+
+𝒏𝑨
+
+Chars
+
+beta0p05_ep3
+beta0p1_ep3
+beta0p05_ep2
+beta0p1_ep2
+beta0p2_ep3
+beta0p3_ep2
+beta0p2_ep2
+beta0p2_ep1
+beta0p1_ep1
+beta0p05_ep1
+
+0.05
+0.10
+0.05
+0.10
+0.20
+0.30
+0.20
+0.20
+0.10
+0.05
+
+3
+3
+2
+2
+3
+2
+2
+1
+1
+1
+
+0.8958
+0.8542
+0.8750
+0.8333
+0.8333
+0.7917
+0.8750
+0.8542
+0.7708
+0.7500
+
+0.0163
+0.0267
+0.0281
+0.0313
+0.0323
+0.0411
+0.0570
+0.0700
+0.0724
+0.0831
+
+0.2791
+0.4878
+0.5000
+0.5750
+0.6500
+0.6842
+0.8571
+1.2195
+1.2703
+1.3889
+
+18.3256
+18.7073
+18.0000
+17.6000
+17.7250
+16.9737
+17.1429
+15.5366
+16.0541
+15.6944
+
+2071.9
+2105.4
+2022.1
+2019.7
+2035.8
+1994.9
+1927.5
+1850.1
+1912.1
+1792.4
+
+component at a time while keeping all other mining settings fixed.
+Because 𝛿 (HCNS margin threshold) and biasprec directly affect which candidates qualify as “high-confidence”
+contradictions, we conduct a mining-level robustness check (no DPO retraining). For each prompt, we reuse the same
+sampling protocol and apply identical validity filters and pair constraints, while varying only 𝛿 or biasprec . Table 8
+shows that pair yield and contradiction separation remain stable across a small grid: the mined dataset consistently
+exhibits a large gap in predicted contradictions between rejected and chosen summaries (Δ#𝐵 ≈ 3.9–4.4), with similar
+pair counts (1.50k–1.54k), suggesting the preference signal is not a fragile artifact of a single threshold choice.
+Limitations
+There are several limitations to this investigation that should be acknowledged. First, our experiments were conducted
+on a small cohort (100 patients) from a single intensive care unit (ICU)-focused dataset. Documentation practices, note
+availability, and clinical language vary across institutions and specialties, and both verifier behavior and alignment
+effects may shift under domain change. Second, the approach is retrieval-dependent: both verification and preference
+construction assume that relevant supporting evidence can be retrieved from the reference corpus. Missing, poorly
+indexed, or temporally misaligned evidence may lead to incorrect Not Addressed assignments or missed contradictions,
+and these retrieval artifacts can propagate into mined preferences and downstream DPO updates. Third, evaluation
+relies on automated judges (a local verifier and a GPT-4o claim-level judge) rather than clinician end-to-end review of
+generated BHCs; while the dual-judge setup provides complementary perspectives, absolute NS-rates should be treated
+as proxies, and judge disagreement may reflect differences in calibration, evidence sensitivity, or handling of clinical
+uncertainty. Finally, several design choices in the evidence-window construction and retrieval/verification pipeline
+(e.g., evidence-window size and stride, evidence packing budget, retrieval depth, and the number of scored claims)
+were selected empirically. A rigorous sensitivity analysis over these hyperparameters would require a large-scale,
+computationally expensive grid search. However, we expect moderate variations of these hyperparameters to be unlikely
+to overturn the main trends, as suggested by the robustness checks in Table 8.
+Conclusion
+We introduced VERI-DPO, a verifier-driven DPO framework for evidence-aware alignment in long-form clinical
+summarization. By training a compact retrieval-augmented claim verifier and using its claim-level predictions and
+confidence margins to curate preference pairs under explicit coverage and length constraints, VERI-DPO provides
+scalable, inspectable supervision for DPO. Empirically, verifier-mined preferences separate candidates by contradiction
+density, and DPO distills this signal into a single-sample summarizer that reduces unsupported claims under both a local
+verifier and an external GPT-4o judge while preserving validity and informative length, mitigating the common “say-less”
+failure mode or omission. Beyond factuality gains, VERI-DPO produces evidence-linked intermediate artifacts—claim
+labels, confidence margins, and retrieved evidence identifiers—that enable efficient error localization, clinician review,
+
+Table 6. Main Results on the test split (120 prompts). Comparison of baselines vs. DPO across two judges. NS-rate: Fraction of
+claims labeled Not Supported (lower is better). #NS: Average count of Not Supported claims per summary. Valid: Percentage of
+summaries meeting length and format constraints. Bold denotes the best value in each column and underlining denotes the second
+best. Key Finding: SFT fails to reduce hallucinations compared to the Base model, whereas DPO achieves the lowest NS-rate under
+both judges while maintaining high validity and output length.
+Local Verifier Judge (L)
+
+GPT-4o Judge (G)
+
+Overall
+
+NS-rate ↓ #NS ↓ #Supp. ↑ NS-rate ↓ #NS ↓ #Supp. ↑ Valid ↑ Chars ↑
+
+Method
+Base (Llama-3.1)
+SFT Baseline
+Verifier Rerank (𝐾=8)
+
+10.7%
+10.1%
+3.4%
+
+1.98
+1.92
+0.69
+
+15.0
+14.4
+18.9
+
+11.6%
+10.0%
+8.3%
+
+2.14
+2.04
+1.76
+
+12.0
+12.8
+14.4
+
+76.7%
+64.2%
+85.0%
+
+1855
+1865
+1900
+
+DPO (Ours)
+
+1.9%
+
+0.36
+
+19.1
+
+6.4%
+
+1.26
+
+14.6
+
+82.5%
+
+2159
+
+Table 7. Ablation diagnostics for preference mining on the training split (all strategies evaluated under the same verifier with
+biasprec = −0.34). #𝐵𝑐 and #𝐵𝑟 denote the average number of verifier-predicted B (Not Supported) claims in the chosen and rejected
+summaries, respectively. We define Δ#𝐵 = #𝐵𝑟 − #𝐵𝑐 (higher indicates better contradiction separation). Δchars and Δ𝑛used are
+computed as (chosen − rejected), where 𝑛used is the number of scored claims; values closer to 0 indicate smaller length/coverage
+mismatch. Positive values mean the chosen summary is slightly longer / uses more scored claims than the rejected summary.
+Strategy
+Full (default)
+Random (no-verifier)
+No-HCNS anchoring
+No length/coverage incentives
+
+#Pairs
+
+#𝑩𝒄 ↓
+
+#𝑩𝒓
+
+𝚫#𝑩 ↑
+
+𝚫chars (closer to 0 is better)
+
+𝚫𝒏used (closer to 0 is better)
+
+1533
+1899
+1882
+1576
+
+0.410
+2.364
+0.947
+0.301
+
+4.295
+2.466
+4.921
+4.644
+
+3.886
+0.102
+3.973
+4.343
+
++22.9
++5.4
++32.5
+-22.1
+
++0.290
+-0.177
++0.451
+-1.637
+
+and post-hoc auditing without inference-time reranking.
+Funding Acknowledgement. This research was, in part, funded by the Advanced Research Projects Agency for
+Health (ARPA-H). The views and conclusions contained in this document are those of the authors and should not be
+interpreted as representing the official policies, either expressed or implied, of the United States Government.
+References
+[1] Adams G. Generating Faithful and Complete Hospital-Course Summaries from the Electronic Health Record.
+Columbia University; 2024.
+[2] Kripalani S, LeFevre F, Phillips CO, Williams MV, Basaviah P, Baker DW. Deficits in communication and
+information transfer between hospital-based and primary care physicians: implications for patient safety and
+continuity of care. Jama. 2007;297(8):831-41.
+[3] Maynez J, Narayan S, Bohnet B, McDonald R. On faithfulness and factuality in abstractive summarization. arXiv
+preprint arXiv:200500661. 2020.
+[4] Stiennon N, Ouyang L, Wu J, Ziegler D, Lowe R, Voss C, et al. Learning to summarize with human feedback.
+Advances in neural information processing systems. 2020;33:3008-21.
+[5] Rafailov R, Sharma A, Mitchell E, Manning CD, Ermon S, Finn C. Direct preference optimization: Your language
+model is secretly a reward model. Advances in neural information processing systems. 2023;36:53728-41.
+[6] Chung P, Swaminathan A, Goodell A, Kim Y, Reincke M, Han L, et al.. MIMIC-III-ext-VeriFact-BHC: labeled
+propositions from Brief Hospital Course summaries for long-form clinical text evaluation. April; 2025.
+[7] Johnson AE, Pollard TJ, Shen L, Lehman LwH, Feng M, Ghassemi M, et al. MIMIC-III, a freely accessible
+critical care database. Scientific data. 2016;3(1):1-9.
+[8] Hurst A, Lerer A, Goucher AP, Perelman A, Ramesh A, Clark A, et al. Gpt-4o system card. arXiv preprint
+arXiv:241021276. 2024.
+[9] Hauschildt KE, Hechtman RK, Prescott HC, Iwashyna TJ. Hospital discharge summaries are insufficient following
+ICU stays: a qualitative study. Critical care explorations. 2022;4(6):e0715.
+
+Table 8. Preference-signal stability for training-split preference mining under small perturbations of 𝛿 and biasprec . #𝐵𝑐 and #𝐵𝑟
+denote the average number of verifier-predicted B (Not Supported) claims in the chosen and rejected summaries, respectively.
+Δ#𝐵 = #𝐵𝑟 − #𝐵𝑐 (higher indicates better contradiction separation). Δchars is computed as (chosen − rejected); values closer to 0
+indicate smaller length mismatch (positive values mean the chosen summary is slightly longer). Absolute #pairs may differ from
+Table 2 due to re-sampling under a different random seed; trends are reported for robustness.
+#Pairs
+
+𝚫#𝑩 ↑
+
+#𝑩𝒄 ↓
+
+#𝑩𝒓
+
+𝚫chars (closer to 0 is better)
+
+Vary 𝛿 (fixed biasprec = −0.34)
+𝛿 = 0.6
+1503
+𝛿 = 0.8 (base)
+1520
+𝛿 = 1.0
+1524
+
+4.140
+4.212
+4.258
+
+0.456
+0.508
+0.543
+
+4.596
+4.720
+4.801
+
++19.8
++14.3
++12.4
+
+Vary biasprec (fixed 𝛿 = 0.8)
+biasprec = −0.54
+1536
+biasprec = −0.34 (base)
+1520
+biasprec = −0.14
+1495
+
+3.930
+4.212
+4.434
+
+0.438
+0.508
+0.555
+
+4.368
+4.720
+4.989
+
++12.5
++14.3
++19.6
+
+Setting
+
+[10] Perkonoja K, Auranen K, Virta J. Methods for generating and evaluating synthetic longitudinal patient data: a
+systematic review. Journal of Healthcare Informatics Research. 2025:1-39.
+[11] Ouyang L, Wu J, Jiang X, Almeida D, Wainwright C, Mishkin P, et al. Training language models to follow
+instructions with human feedback. Advances in neural information processing systems. 2022;35:27730-44.
+[12] Amugongo LM, Mascheroni P, Brooks S, Doering S, Seidel J. Retrieval augmented generation for large language
+models in healthcare: A systematic review. PLOS Digital Health. 2025;4(6):e0000877.
+[13] Kryściński W, McCann B, Xiong C, Socher R. Evaluating the factual consistency of abstractive text summarization.
+In: Proceedings of the 2020 conference on empirical methods in natural language processing (EMNLP); 2020. p.
+9332-46.
+[14] Thorne J, Vlachos A, Christodoulopoulos C, Mittal A. FEVER: a large-scale dataset for fact extraction and
+VERification. arXiv preprint arXiv:180305355. 2018.
+[15] Wadden D, Lin S, Lo K, Wang LL, van Zuylen M, Cohan A, et al. Fact or fiction: Verifying scientific claims.
+arXiv preprint arXiv:200414974. 2020.
+[16] Goldberger AL, Amaral LA, Glass L, Hausdorff JM, Ivanov PC, Mark RG, et al. PhysioBank, PhysioToolkit, and
+PhysioNet: components of a new research resource for complex physiologic signals. circulation. 2000;101(23):e21520.
+[17] Robertson S, Zaragoza H, et al. The probabilistic relevance framework: BM25 and beyond. Foundations and
+trends® in information retrieval. 2009;3(4):333-89.
+[18] Dettmers T, Pagnoni A, Holtzman A, Zettlemoyer L. Qlora: Efficient finetuning of quantized llms. Advances in
+neural information processing systems. 2023;36:10088-115.
+[19] Hu EJ, Shen Y, Wallis P, Allen-Zhu Z, Li Y, Wang S, et al. Lora: Low-rank adaptation of large language models.
+ICLR. 2022;1(2):3.
+[20] Lin TY, Goyal P, Girshick R, He K, Dollár P. Focal loss for dense object detection. In: Proceedings of the IEEE
+international conference on computer vision; 2017. p. 2980-8.
+[21] Guo C, Pleiss G, Sun Y, Weinberger KQ. On calibration of modern neural networks. In: International conference
+on machine learning. PMLR; 2017. p. 1321-30.
+[22] Holtzman A, Buys J, Du L, Forbes M, Choi Y. The curious case of neural text degeneration. arXiv preprint
+arXiv:190409751. 2019.
+[23] Grattafiori A, Dubey A, Jauhri A, Pandey A, Kadian A, Al-Dahle A, et al. The llama 3 herd of models. arXiv
+preprint arXiv:240721783. 2024.
+[24] Christophe C, Kanithi PK, Raha T, Khan S, Pimentel MA. Med42-v2: A suite of clinical llms. arXiv preprint
+arXiv:240806142. 2024.
+
+

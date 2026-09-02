@@ -1,0 +1,1982 @@
+d-HNSW: A High-performance Vector Search Engine on
+Disaggregated Memory
+
+arXiv:2603.13591v1 [cs.DB] 13 Mar 2026
+
+FEI FANG, YI LIU, and CHEN QIAN, University of California, Santa Cruz, United States
+Efficient vector search is essential for powering large-scale AI applications, such as LLMs. Existing solutions are
+designed for monolithic architectures where compute and memory are tightly coupled. Recently, disaggregated
+architecture breaks this coupling by separating compution and memory resources into independently scalable
+pools to improve utilization. However, applying vector database on disaggregated memory system brings
+unique challenges to system design due to its graph-based index. We present d-HNSW, the first RDMA-based
+vector search engine optimized for disaggregated memory systems. d-HNSW preserves HNSW’s high accuracy
+while addressing the new system-level challenges introduced by disaggregation: 1) network inefficiency
+from pointer-chasing traversals, 2) non-contiguous remote memory layout induced by dynamic insertions, 3)
+redundant data transfers in batch workloads, and 4) resource underutilization due to sequential execution.
+d-HNSW tackles these challenges through a set of hardware-algorithm co-designed techniques, including
+1) balanced clustering with a lightweight representative index to reduce network round-trips and ensure
+predictable latency, 2) an RDMA-friendly graph layout that preserves data contiguity under dynamic insertions,
+3) query-aware data loading to eliminate redundant fetches across batch queries, and 4) a pipelined execution
+model that overlaps RDMA transfers with computation to hide network latency and improve throughput. Our
+evaluation results in a public cloud show that d-HNSW achieves up to < 10−2 × query latency and > 100×
+query throughput compared to other baselines, while maintaining a high recall of 94%.
+CCS Concepts: • Networks → Storage area networks.
+Additional Key Words and Phrases: Vector similarity search; HNSW; Distributed graph computing
+
+1 INTRODUCTION
+Similarity search on vectors [4, 17, 28, 44, 53, 57, 70, 73, 74] aims to identify the most similar
+vectors from a large dataset given a query vector. Instead of exact nearest neighbor search in
+vector data, approximate nearest neighbor (ANN) algorithms can accelerate search by orders of
+magnitude while sacrificing a little accuracy [3, 17, 18, 20, 28, 68, 69]. Vector databases leverage
+ANN search techniques to support efficient retrieval, making them a core building block for a wide
+range of machine learning applications [29, 31] such as recommendation systems [49] and retrievalaugmented generation (RAG) [19, 21, 22] for large language models (LLMs) [31]. For example,
+they power semantic search engines by indexing text and multimedia embeddings for relevance
+ranking [39]. In recommendation systems [49], items and users are embedded into high-dimensional
+vectors so that nearest neighbor search finds similar products or content for personalization. In
+RAG systems [22], a vector database retrieves semantically relevant documents based on the user
+prompt’s embedding, allowing LLMs to generate responses with external knowledge rather than
+being limited to the information encoded in model parameters. As these AI-driven applications [14,
+49] continue to grow in scale and complexity, the demand for high-performance, scalable vector
+databases has exploded, transforming them from a useful tool into a critical part of the AI systems
+stack for the next generation of AI.
+Disaggregated memory systems [25, 58, 62] represent a significant shift from traditional monolithic architectures by decoupling memory and computation into separate, scalable pools. In this
+design, compute pools consist of nodes equipped with rich CPU resources, while memory pools
+consist of nodes configured with abundant DRAM and storage. This paradigm is enabled by highperformance network fabrics like Remote Direct Memory Access (RDMA) [23]. RDMA provides
+high throughput (40-800 Gbps) and microsecond-level latency, allowing compute nodes to access
+memory on remote machines directly, bypassing the remote CPU to reduce overhead and improve
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+2
+
+Fei Fang, Yi Liu, and Chen Qian
+
+efficiency. Leveraging RDMA, the disaggregated architecture has been successfully applied to a wide
+range of data-intensive systems, including file systems [60, 63], key-value stores [27, 32, 48, 65, 76],
+and transactional databases [71, 72]. For example, recent industry efforts, such as DeepSeek’s
+3FS [8, 11], have demonstrated RDMA’s benefits for demanding AI workloads. The unique challenges posed by the complex data structures and access patterns of vector search have hindered
+the adoption of disaggregated designs.
+Layer 2
+Entry
+Modern vector datasets exhibit heterogeneous
+point
+and dynamic resource demands. For example,
+Queried
+Layer
+1
+vector
+compute-intensive query workloads often fluctuGreedy
+ate independently of storage demands as dimenrouting
+Layer 0
+sions scale. Disaggregation [51, 58] is uniquely suited
+to address this imbalance by enabling independent
+scaling of memory pools and compute instances. Fig. 1. Graph-based vector search index: HNSW.
+However, no existing design has applied RDMA-based disaggregated memory to vector
+databases. We argue that this architectural gap presents a vital, unexplored opportunity.
+To understand why this gap exists, we examine the internal mechanics of the most prominent
+ANN algorithms [13, 43, 53, 59]. Among the various similarity search algorithms, graph-based
+approaches [12, 36] have consistently demonstrated state-of-the-art performance, offering a superior
+trade-off between accuracy and query latency. Hierarchical Navigable Small World (HNSW) [36] has
+emerged as a widely adopted graph-based index that balances vector search accuracy and efficiency.
+HNSW constructs a multi-layered graph where nodes are vectors and edges represent proximity.
+This hierarchical structure enables a greedy search that is both fast and accurate: long-range edges
+in upper layers allow for rapid traversal across the vector space, while shorter edges in lower layers
+facilitate precise, fine-grained navigation.
+In this work, we introduce d-HNSW, a fast, RDMA-based vector similarity search engine designed
+for disaggregated memory system. d-HNSW aims to bridge the gap between high-performance
+vector similarity search and the emerging disaggregated architecture in datacenters, ensuring
+scalability and efficiency in handling high-throughput data queries. The disaggregated memory
+pool provides abundant memory resources, allowing us to store both the HNSW index and all
+original floating-point vector data on it. The disaggregated compute instances handle data requests
+and reply on one-sided RDMA primitives to directly access the index and vectors, bypassing the
+memory instances’ CPUs. d-HNSW addresses the following four challenges that have not
+been resolved in the existing systems.
+The first challenge stems from adapting HNSW’s greedy search [67] to a networked environment,
+specifically regarding the issue of "pointer-chasing": each memory access depends on the result of
+the previous one, because the next distance computation candidate will be decided from neighbors
+of vectors in the last rounds. The algorithm navigates the index by traversing an unpredictable
+search path, where each expansion compares the query vector against a set of candidate nodes,
+including the current node and its neighbors. In a disaggregated system, fetching each vector along
+this path would trigger an independent, high-latency network round-trip, making the process
+prohibitively slow. To mitigate this excessive pointer-chasing over the network, we partition the
+dataset into smaller clusters. A lightweight representative index is used to identify which clusters
+are most likely to contain the top-𝑘 nearest neighbors, and only these targeted partitions need to
+be read from remote memory. It is crucial that this process yields balanced clusters, ensuring each
+partition contains a similar number of vectors. Balanced partitions provide predictable performance
+and uniform network cost.
+Second, when new vectors are inserted, they need to be stored in available memory while
+ensuring fast index access for different partitions. To maximize memory efficiency, remote data are
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+3
+
+typically stored in a dense, contiguous layout. However, this design leaves little reserved capacity
+for in-place insertions. In disaggregated memory systems, relocating large volumes of remote data
+incurs high computational and network costs, forcing newly inserted vectors to be appended to a
+global memory region. This append-only design scatters vectors from the same partition across
+non-contiguous memory locations, requiring multiple RDMA_READ during query processing and
+increasing latency. To address this, we propose an RDMA-friendly graph index layout that enables
+efficient data queries while supporting dynamic vector insertions.
+Third, processing queries independently [29] often leads to repeated data requests, as different
+queries may require the same data partition. Given the limited DRAM cache in the compute pool,
+avoiding redundant data transfers becomes particularly important. To address this, we introduce
+query-aware data loading, a technique that analyzes the requirements of an entire batch, eliminates
+repeated data fetching, and ensures each required partition is fetched from the memory pool only
+once. This design significantly reduces network traffic and improves overall query throughput.
+The fourth challenge is overcoming the inefficiency of sequential execution of operations in
+disaggregated memory, where valuable CPU resources remain idle during I/O-intensive network
+operations. We design a pipelined execution model that orchestrates network transfers and CPU
+computations to run in parallel. Specifically, d-HNSW overlaps the RDMA transfer of one subHNSW data partition with the CPU-intensive search computation of a previously fetched partition.
+This approach reduces exposed latency by overlapping data movement with computation, enabling
+high utilization of both network and CPU resources. By carefully managing this pipeline, d-HNSW
+significantly reduces query latency and improves overall system throughput.
+The design of d-HNSW is distinct from the existing distributed vector search engines [41, 57, 57].
+Unlike disaggregated architectures, these systems couple computation resources and data together
+tightly, relying on host-centric execution and RPC-based access. As a result, they cannot efficiently
+handle the above four challenges. In contrast, d-HNSW is a hardware-algorithm co-design, aligning
+its search algorithms and data structures directly with RDMA fabric. Our solution enables efficient
+graph-based vector searches in disaggregated memory. Evaluation results show that d-HNSW
+achieves < 10−2 × query latency and up to > 100× query throughput compared to other state-ofthe-art vector search baselines, while preserving high accuracy. In summary, we make the following
+contributions:
+• We present d-HNSW, to the best of our knowledge, the first RDMA-based vector similarity
+search engine designed for disaggregated memory.
+• We propose a suite of co-designed techniques to overcome the limitations of running graphbased search over a network. These include (a) balanced data partitioning to ensure predictable
+performance, (b) an RDMA-friendly memory layout for efficient dynamic updates, (c) queryaware data loading to minimize network traffic, and (d) a pipelined execution model to hide
+network latency.
+• We implement d-HNSW as a prototype running in a public cloud platform [46]. The evaluation
+shows that d-HNSW reduces query latency and improves query throughput by more than two
+orders of magnitude. An anonymous repository is available [30] for review purposes.
+2 BACKGROUND, OPPORTUNITIES, AND CHALLENGES
+This section first provides essential background on graph-based vector search with HNSW and
+the architecture of RDMA-based disaggregated memory. We then detail the core challenges of
+implementing HNSW in this architecture, which motivate the design of d-HNSW.
+2.1
+
+Vector similarity search
+
+Vector similarity search is crucial for retrieving high-dimensional data in modern ML applications,
+such as RAG [22] for LLMs. While traditional methods like KD-trees [43] and LSH [13] struggle
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+4
+
+Fei Fang, Yi Liu, and Chen Qian
+
+with the curse of dimensionality, graph-based ANN search algorithms [12, 36] become the dominant
+approach, offering superior performance. These methods construct a navigable graph where nodes
+represent data points and edges represent their proximity, enabling fast query traversal.
+Among all ANN search algorithms, Hierarchical Navigable Small World (HNSW) [36] is a widely
+adopted algorithm that balances search accuracy and efficiency. HNSW constructs a multi-layered
+graph where each layer is a subset of the one below it, as illustrated in Fig. 1. The number of
+vectors in each layer decreases exponentially towards the top, with the uppermost layer (𝐿𝑚𝑎𝑥 )
+serving as a coarse-grained “express lane” for long-range navigation, while the bottom layer (𝐿0 )
+contains all vectors in the dataset for fine-grained search refinement. HNSW builds a hierarchical,
+multi-layer graph by assigning new vectors to randomly determined maximum layers following an
+exponentially decaying probability distribution. Vectors are inserted by greedy routing from the
+top layer down to the appropriate level, establishing bidirectional links with their nearest neighbors
+at each layer. The density of connections, controlled by the degree of graph connectivity, and the
+dynamic candidate list size, impacts accuracy, memory usage, and construction speed, creating a
+fundamental trade-off in graph-based ANN indexing.
+In HNSW, a query search starts at a global entry point in the top layer and greedily traverses
+the graph to find the local optimum, which becomes the entry point for the next lower layer. At
+each layer, the algorithm maintains a candidate list of promising nodes during graph traversal,
+with its size controlled by the parameter 𝑒. This layer-by-layer descent continues, with the search
+becoming progressively finer-grained. Upon reaching the bottom layer (𝐿0 ), the search continues
+until the candidate list converges, after which the final top-𝑘 nearest neighbors are returned. A
+higher 𝑒 typically improves recall (the proportion of correctly returned data records out of all top-𝑘
+records in the dataset) by exploring more nodes but increases query latency.By leveraging this
+multi-layered, small-world graph structure, HNSW avoids the need for exhaustive comparisons
+and significantly prunes the search space, making it one of the most effective and widely-used
+ANN algorithms in modern vector databases [5, 29, 36, 54–57].
+2.2 RDMA-based disaggregated memory
+Modern datacenters increasingly adopt disaggregated memory architectures to overcome the scaling
+limitations of traditional monolithic servers [17, 18, 51, 58, 68]. In these architectures, compute and
+memory resources are decoupled into independent pools, enabling memory to scale without adding
+underutilized CPUs and compute to scale independently of memory, leading to flexible hardware
+scalability, high resource utilization, and efficient data sharing. Compute nodes, typically equipped
+with abundant CPU resources but limited local DRAM, access a large pool of remote memory
+hosted on dedicated memory nodes via a high-performance network fabric. Prior work has explored
+KV stores [27, 51, 75, 76] and tree-based indexes [34, 60, 61, 63] over RDMA-based disaggregated
+memory. These systems typically issue one-shot or bounded remote accesses, yielding a small and
+predictable set of RDMA reads per request, which aligns well with one-sided RDMA execution.
+RDMA technologies (e.g., RoCE [38], Infiniband [23]) enable reliable and in-order packet delivery,
+making them well-suited for indexing structures in disaggregated memory systems. RDMA bypasses
+the kernel network stack and allows user-space applications to directly read from or write to remote
+memory. Different from two-sided RDMA systems [24, 32] that require remote CPU involvement,
+one-sided RDMA systems [27, 35, 37, 60, 76] avoid remote CPU intervention, making them more
+suitable for building low-latency, high-throughput systems in disaggregated architectures by
+reducing additional latency and CPU overhead on memory nodes.
+2.3
+
+Opportunity and Challenges
+
+Opportunity. Traditional monolithic server architectures present a significant challenge for deploying large-scale vector databases. These systems impose fixed CPU and memory resources,
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+esearch = 16
+esearch = 48
+
+0
+1000 2000 3000
+Pointer-Chasing Ops/Query
+
+Fig. 2. CDF of HNSW pointerchasing operations per query for
+different search candidate list size
+on SIFT1M.
+
+500
+250
+
+Noncontiguous
+Noncontiguous
++ doorbell
+d-HNSW
+
+Latency(us)
+
+1
+0.75
+0.5
+0.25
+0
+
+Latency(us)
+
+CDF
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+5
+
+3000
+2000
+1000
+
+Noncontiguous
+Noncontiguous
++ doorbell
+d-HNSW
+
+1000 2000 3000 4000 5000
+Batch Size
+
+1000 2000 3000 4000 5000
+Batch Size
+
+(a) SIFT1M
+(b) GIST1M
+Fig. 3. Search latency after 10K insertions.
+
+CDF
+
+leading to inefficient resource allocation. For instance, a workload that is memory-intensive but
+computationally light (e.g., serving a large, static index) would leave expensive CPU cores idle.
+Conversely, a compute-heavy workload (e.g., batch indexing or complex queries) on a smaller
+dataset would waste memory capacity. This tight coupling results in inefficient resource utilization,
+with either compute or memory resources often left idle. Disaggregated systems address this imbalance by decoupling compute and memory into independent, scalable pools. Then, resources can be
+provisioned on demand to match workload requirements. Expensive memory can be pooled and
+shared across multiple compute instances, while CPU resources can be dynamically allocated to
+handle fluctuating query loads. This elasticity not only improves hardware utilization and reduces
+operational costs but also enables more efficient and scalable vector database deployments.
+Challenge 1: Network Latency incurred by Pointer1
+Chasing in Graph. Algorithms like HNSW use greedy search
+0.75
+with unpredictable traversal paths [67], requiring comparisons
+0.5
+at each step. Consequently, HNSW exhibits pronounced pointer0.25
+chasing. The traversal repeatedly follows data-dependent links
+0
+to neighbors unknown in advance, and resolves that neigh0 1 2 3 4 5 6 7
+Fetch Count per Partition
+bor’s vector before it can perform the next round of distance
+Fig. 4. CDF of fetch count per
+comparisons and decide subsequent hops. This induces an irpartition in one batch.
+regular access pattern that is difficult to prefetch effectively.
+The number of such unpredictable pointer-chasing operations varies substantially across queries
+and search candidate size. Fig. 2 illustrates the magnitude and variability of this overhead: the CDF
+of pointer-chasing operations is routinely on the order of hundreds to thousands of operations,
+with a heavy tail approaching ∼3,000 ops/query. We use the number of distance computations as a
+proxy for pointer chasing, since each comparison typically requires retrieving a neighbor vector
+from memory. Moreover, these neighbor vectors are scattered across memory and accessed in a
+data-dependent order, offering limited spatial locality opportunity for effective prefetching. In disaggregated systems, these dependent accesses translate into many network round-trips, substantially
+slowing down search. Partitioning the dataset can reduce these round-trips by restricting the search
+to a small subset of clusters, but keeping partitions balanced while preserving search quality is
+hard. State-of-the-art partitioning strategies like k-means [33] and KAHIP [45] often create uneven
+cluster sizes, leading to unpredictable performance: queries to large partitions are slow, while
+others are fast. Also, even if similar vectors were assigned to different partitions, recall will drop
+because relevant candidates could be missed during searching. This causes high tail latency and
+low accuracy. To address this, we use a lightweight representative index to find promising clusters
+for each query and apply balanced clustering that preserves vector similarity within partitions
+while ensuring uniform partition sizes.
+Challenge 2: Static Data Layout under Dynamic Updates. The second challenge involves
+organizing data in remote memory to support both efficient access and dynamic vector insertions.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+6
+
+Fei Fang, Yi Liu, and Chen Qian
+
+Memory Instance
+
+CPU Instance
+Clients
+Load Balancer
+
+§4.1 Representative
+index caching
+
+§4.4 Pipelining networks
+and computation
+
+§4.3 Batched query-
+
+aware data fetch
+
+Index data transfer
+
+Compute Pool
+
+§4.2 RDMA-friendly
+graph index layout
+§4.5 Index Rebuild
+Mechanism
+
+Memory Pool
+
+Fig. 5. Overview of d-HNSW.
+
+When new vectors are inserted into the system, they must be stored in available memory while
+maintaining efficient access patterns for existing partitions. Naïve allocation strategies place newly
+inserted vectors into a global append-only space, causing data belonging to the same partition to
+become scattered across non-contiguous remote memory regions. As a result, query processing
+must issue multiple RDMA_READ operations to retrieve data that logically belongs to a single
+partition, each incurring network latency and PCIe overhead. This effect becomes more severe as
+the database scales and undergoes frequent updates. To isolate the impact of memory fragmentation
+under dynamic updates, we run a microbenchmark that measures query latency after inserting
+10,000 vectors into a SIFT1M and GIST1M. We compare our RDMA-friendly layout (d-HNSW) with
+two non-contiguous baselines that append newly inserted vectors outside the original memory
+region and record the partition they belong to. During search, this non-contiguous memory design
+requires multiple RDMA_READs to fetch both the original partition and the appended updates for
+the same partition, increasing effective RTTs. We additionally evaluate a doorbell-batched variant
+that posts these RDMA_READ together to reduce RTT. We vary the query batch size (1k–5k) and
+report average per-query latency. As shown in Fig. 3, doorbell batching reduces the latency of
+fragmented layouts by roughly 2×, but d-HNSW consistently outperforms both non-contiguous
+baselines by 1.8-2.1× across all batch sizes and datasets, demonstrating the importance of RDMAfriendly data layout under dynamic inserts. Designing data layouts that are aware of NIC-level
+architectural constraints is essential for efficient RDMA usage. So we tackle this challenge by
+designing an RDMA-friendly graph index layout that enables efficient data queries while supporting
+dynamic vector insertions through careful memory organization. As a result, an entire partition
+can later be fetched via one RDMA_READ even after many updates.
+Challenge 3: Redundant Data Fetching in Batch Processing. Batch processing often leads
+to redundant data fetching when multiple queries need the same partitions. Fig. 4 illustrates the
+frequency with which each partition is fetched across queries within a batch, showing that a
+substantial fraction of partitions are repeatedly accessed (fetch count ≥ 2) by multiple queries in the
+same batch. As a result, without coordination, the system may fetch the same data repeatedly, wasting network bandwidth and overloading the limited DRAM cache. As batch sizes grow and queries
+show spatial locality, this redundancy causes cache thrashing, with frequently used partitions
+repeatedly evicted and re-fetched, degrading performance. To address this, we use query-aware
+data loading that analyzes the entire batch, eliminates repeated fetches, and fetches each partition
+only once.
+Challenge 4: Resource Underutilization During Sequential Execution. A naive sequential
+approach alternates between data fetching and computation, leaving CPUs idle during transfers and
+wasting network bandwidth during computation. This underutilization is costly in disaggregated
+systems, where network transfer times can be significant. The challenge lies in reducing stalls
+caused by data dependencies, ensuring that computation can proceed without waiting for remote
+data. We address this by using a pipelined execution model that overlaps RDMA transfers with CPU
+search, hiding network latency behind computation.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+Compute
+Instance
+
+7
+
+Representative index:
+Meta-HNSW
+
+Memory
+Instance
+
+Sub-HNSW clusters
+
+Fig. 6. Meta-HNSW and Sub-HNSW.
+
+In summary, these four challenges highlight the need for specialized techniques that can effectively bridge the gap between traditional vector search algorithms and the constraints of disaggregated memory system architectures. Motivated by this gap, d-HNSW bridges this gap by
+co-designing the index and execution under RDMA constraints, combining a representative index
+with balanced clustering that restricts traversal to a limited subset, RDMA-friendly layouts maintain
+near-contiguous index under insertions, query-aware loading to avoid redundant transfers, and
+pipelined execution overlaps RDMA transfers with CPU search. Together, these techniques convert
+irregular vector-graph access into predictable RDMA operations.
+3
+
+d-HNSW DESIGN OVERVIEW
+
+We present the design of d-HNSW, a high-performance vector similarity search engine built for
+a disaggregated memory environment, which includes four main techniques. d-HNSW exploits
+the characteristics of RDMA-based memory data accessing and graph-based index HNSW to
+realize fast vector query processing. d-HNSW achieves this through a set of tightly integrated
+techniques: representative index caching (Sec. 4.1), RDMA-friendly graph index storage layout
+(Sec. 4.2), query-aware batched data loading (Sec. 4.3), pipelined execution model (Sec. 4.4) and
+index rebuild mechanism (Sec. 4.5). Here we provide a brief overview of d-HNSW as Fig. 5 shows.
+d-HNSW consists of an offline part and a runtime part.
+Offline. d-HNSW first partitions the dataset into balanced subsets using an index balancer that
+applies K-Means++[2] initialization with approximate sampling, followed by a priority queue-based
+assignment phase to enforce capacity constraints while minimizing intra-subset distances. This
+balanced partitioning ensures that each subset contains a uniform number of vectors, bringing
+predictable network transfer and uniform compute load across the distributed system. During
+offline construction, the system partitions the dataset into balanced subsets and derives a centroid
+set for routing. The memory nodes construct a lightweight representative index over these centroids,
+forming a meta-HNSW that is stored in the disaggregated memory pool as query-time routing
+metadata, then builds sub-HNSWs and materializes the index structures directly in disaggregated
+memory pool. Compute nodes fetch metadata from memory nodes (e.g., the meta-HNSW, sub-HNSW
+offset ranges, and overflow descriptors) and cache this metadata for subsequent query routing and
+loading. Under dynamic workloads, as the reserved overflow gap is consumed by insertions, the
+system triggers rebuild operations to rebalance partitions, preserve search quality, and support
+subsequent insertions. Here, “overflow” denotes the excess vectors that surpass a sub-HNSW’s
+designated capacity due to workload dynamics or uneven data insertions. Each compute instance
+also caches an offset table that records the start and end memory positions of each sub-HNSW
+index within its local address space.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+8
+
+Fei Fang, Yi Liu, and Chen Qian
+
+Runtime. At runtime, d-HNSW processes vector queries that arrive at the system. d-HNSW
+supports multiple distance metrics (e.g., Euclidean, angular) to accommodate diverse vector search
+scenarios. d-HNSW has the following three major components in the query runtime.
+1. Query routing. After a query arrives at a compute instance, d-HNSW performs a search
+on the cached meta-HNSW to identify the top-𝑏 candidate sub-HNSWs that are most likely to
+contain relevant vectors for the query. This coarse-grained classification efficiently narrows down
+the search space to a small subset of relevant partitions without requiring network access. For a
+batch of B queries 𝑞 1, 𝑞 2, ..., 𝑞𝐵 , each query requires searching the top-𝑘 closest vectors from its 𝑅
+closest sub-HNSWs, resulting in up to 𝑅 × 𝐵 required sub-HNSW accesses.
+2. Query-aware loading. The batch optimizer analyzes the required sub-HNSWs across all
+queries in the batch and ensures that each sub-HNSW is loaded from the memory pool only once,
+even if multiple queries require the same sub-HNSW cluster. Given that the DRAM resources
+in the compute instance can only accommodate and cache 𝑐 sub-HNSWs, the system schedules
+data transfers to minimize network overhead. The system also retains the most recently loaded 𝑐
+sub-HNSWs for subsequent batches to further reduce data transfer overhead.
+3. Pipelined executor. The pipelined executor orchestrates the vector search pipeline with
+network data transfer to optimize performance. It overlaps the data transfer of sub-HNSW clusters
+with the computation of both meta-HNSW and sub-HNSW search operations. When a sub-HNSW
+cluster is required, the compute instance issues an RDMA_READ command to retrieve the cluster
+along with its corresponding shared overflow memory space, ensuring that newly inserted vectors
+are accessed contiguously with the original data in a single operation. The pipeline carefully
+manages scheduling to effectively hide the latency of transferring sub-HNSW data within the
+vector search time of the previous batch, thereby minimizing overall query latency. After finishing
+the computation of all required sub-HNSWs in a batch, the executor returns the final top-𝑘 results
+to the client.
+4. Rebuild mechanism. To sustain performance under dynamic insertions, d-HNSW monitors
+the utilization of the overflow region and triggers a rebuild when the reserved capacity is exhausted.
+The rebuild is performed by constructing a shadow copy of the updated index in a new epoch
+buffer and atomically switching to the new epoch after serialization into a fresh RDMA region.
+During the transition, compute instances continue serving queries on the old epoch, while newly
+inserted vectors remain query-visible via a shared insertion buffer organized by LSH buckets. After
+the epoch switch, buffered inserts are merged into the rebuilt index, and compute instances refresh
+routing metadata and invalidate stale cached sub-HNSWs.
+4
+
+d-HNSW DESIGN
+
+In this section, we present the design of d-HNSW that includes four main techniques. 1) Representative index caching to enable more scalable and resource efficient designs (Sec. 4.1). 2) RDMA-friendly
+graph index storage in remote memory to support contiguous data placement and one-sided RDMA
+insertion with high throughput under insertions (Sec. 4.2). 3) Query-aware batched data loading
+to enable efficient batched operations (Sec. 4.3). 4) Orchestrating vector search and network data
+transfer pipeline to reduce query latency by overlapping computation and data transfer (Sec. 4.4).
+4.1
+
+Representative index caching
+
+Graph-based vector search schemes [12, 36] rely on greedy routing to iteratively navigate toward
+the queried vector. However, the search path can span the entire graph, potentially covering
+distant vectors. HNSW exhibits small-world properties, allowing long-range connections between
+vectors that are far apart. However, loading the entire graph index from the memory pool to the
+compute pool for each query is impractical because the compute pool has limited memory in a
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+Sub-HNSW-1
+
+Sub-HNSW-2
+
+Serialize
+
+Sub-HNSW-𝑚
+
+Serialize
+
+Serialize
+
+9
+
+Sub-HNSW-(𝑚+1)
+
+Serialize
+
+Memory Area
+Global metadata
+(e.g.,sub-hnsw offsets)
+
+…
+
+…
+
+Serialized group for two consecutive
+sub-hnsw clusters
+Overflowed data
+Sub-HNSW-1 metadata
+Shared
+overflow
+Graph (e.g., neighbors array)
+memory space
+FP vectors
+
+Sub-HNSW-2 metadata
+Graph data
+FP vectors
+
+Fig. 7. RDMA-friendly sub-HNSW indexing data layout in remote memory.
+
+disaggregated system. This approach would not only consume excessive bandwidth by transferring
+a significant portion of untraversed vectors but also introduce additional latency, thereby degrading
+the overall search efficiency. To enable efficient graph-based vector search in disaggregated memory
+environments, d-HNSW adopts a hierarchical indexing strategy that partitions the dataset into
+balanced subsets while maintaining high recall and low query latency. This strategy comprises the
+following two key components:
+4.1.1 Index Balancer. We apply K-Means++ [2] initialization with approximate sampling, followed
+by a priority queue-based assignment phase to enforce capacity constraints while minimizing intrasubset distances. This balanced partitioning ensures that each subset contains a uniform number of
+vectors, resulting in predictable network transfer and balanced per-partition computation, thereby
+preserving pipeline efficiency during large-scale query processing. Based on this partitioning,
+d-HNSW derives a set of centroids that are later used for query routing.
+4.1.2 Representative Metadata. To efficiently route queries to the relevant partitions, as shown
+in Fig. 6, we utilize a lightweight three-layer hierarchical HNSW graph over partition centroids
+from the sampled metadata introduced by Sec. 4.1.1, referred to as meta-HNSW. The meta-HNSW
+serves as representative metadata, enabling coarse-grained classification to efficiently identify a
+small subset of relevant partitions for a given query. We cache the meta-HNSW on every compute
+instance. At query time, the compute instance performs a search on the cached meta-HNSW to
+identify the top candidate sub-HNSWs, fetching only those sub-HNSWs from the memory pool via
+one-sided RDMA operations for subsequent search.
+4.2
+
+RDMA-friendly graph index storage layout in remote memory
+
+RDMA-Friendly Sub-HNSW Layout. RDMA enables efficient data access to targeted remote
+memory addresses. To efficiently read and write sub-HNSW cluster data in remote memory, an
+intuitive approach is to serialize all sub-HNSW clusters in the registered memory.
+When new vectors are inserted, the size of each sub-HNSW cluster may exceed the allocated
+space. However, shifting all stacked sub-HNSW clusters is impractical, newly inserted vectors
+in the same partition and their metadata may be placed in non-contiguous memory regions if
+they are simply appended at the tail of the available area. This fragmentation increases access
+latency and reduces query throughput due to the higher cost of scattered index access. In our
+design, we allocate and register a continuous memory space in the memory node to store both
+the serialized HNSW index and floating-point vectors, as shown in Fig. 7. At the beginning of this
+memory space, a global metadata block records the offsets of each sub-HNSW cluster, as their sizes
+vary. The remaining memory space is divided into groups, each of which is capable of holding
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+10
+
+Fei Fang, Yi Liu, and Chen Qian
+
+two sub-HNSW clusters. Within each group, our RDMA-friendly layout incorporates two levels
+of reserved space to accommodate dynamic insertions. First, we introduce internal gaps within
+individual sub-HNSW clusters between critical data structures—specifically between the levels
+array, offsets array, neighbors array, and floating-point vectors. These internal gaps enable in-place
+expansion of these arrays without requiring data reorganization. Second, between each pair of
+sub-HNSW clusters, we allocate a shared overflow memory gap to accommodate larger insertions
+that exceed the internal gap capacity. The first section of each group stores the first serialized
+sub-HNSW cluster, which includes its metadata, neighbor array for HNSW, and the associated
+floating-point vectors. The second sub-HNSW cluster is placed at the end of the group. This dualgap design ensures that newly inserted vectors and their metadata can be stored contiguously with
+the original sub-HNSW data, enabling RDMA access without fragmented remote reads.
+RDMA-Aware Operation Mechanism.
+Sub-HNSW-1 Sub-HNSW-2 Sub-HNSW-3 Sub-HNSW-4
+When a vector query requires loading a subHNSW cluster, the compute instance issues an
+RDMA_READ command to retrieve the cluster
+along with its corresponding shared overflow Query q1
+memory space. This layout ensures that newly Query q2
+inserted vectors are stored continuously with Query q3
+the original sub-HNSW data, enabling them to Query q4
+be read back with a one-time RDMA_READ
+Fig. 8. Query-aware sub-HNSW clusters loading.
+command. To optimize memory usage, each
+pair of adjacent sub-HNSW clusters shares a single overflow memory space for accommodating
+newly inserted vectors rather than allocating a separate one for each cluster. Also, the insertion
+mechanism leverages this RDMA-friendly layout for fast updates. Insertions are first routed to
+their target sub-HNSWs via the meta-HNSW. If the target sub-HNSW is already cached at the
+compute instance, the insertion is performed locally; otherwise, the target sub-HNSW is fetched
+from the memory pool and cached before applying the update. Rather than writing back the entire
+sub-HNSW, d-HNSW tracks all modifications in an UpdateCommit, which records metadata updates
+and data appends. The commit process utilizes doorbell batching to write all changes, minimizing
+insertion latency. Doorbell batching reduces CPU overhead and PCIe signaling cost by allowing
+applications to post a batch of Work Queue Elements (WQEs) with a single doorbell write. This
+optimization requires only one memory-mapped I/O (MMIO) operation per batch, in contrast
+to the default WQE-by-MMIO approach, where each WQE incurs a separate MMIO, leading to
+significantly higher CPU and PCIe overhead. Newly inserted vectors are first placed using the
+reserved internal gaps within each sub-HNSW cluster, enabling in-place growth of critical arrays
+without data reorganization. When an insertion exceeds the remaining internal gap capacity, the
+system appends the vector and its metadata sequentially to the shared overflow region for that
+sub-HNSW group. When any shared overflow region becomes full, the system triggers a rebuild, as
+detailed in Sec. 4.5. This design avoids memory fragmentation and adapts to dynamic workloads,
+while maintaining low insertion overhead and preserving the efficiency of RDMA-based access.
+4.3
+
+Query-aware batched data loading
+
+To reduce network traffic for transferring graph index and improve query efficiency, we propose
+merging sub-HNSW index loading for queried vectors in the same batch.
+Given a batch of queried vectors {𝑞 1 ,𝑞 2 , ...,𝑞𝐵 } and a total of 𝑃 sub-HNSW clusters, each queried
+vector requires searching the top-𝑘 closest vectors from the 𝑅 closest sub-HNSWs. However, the
+DRAM resources in the compute instance can only cache 𝑐 sub-HNSWs. To optimize loading, we
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+11
+
+(a)
+(b)
+(c)
+
+C
+
+Fig. 9. Orchestrating vector search and network data transfer pipeline.
+
+analyze the required 𝑅 × 𝐵 sub-HNSWs accesses induced by the batch online and ensure that each
+required sub-HNSW is loaded from the memory pool only once in one batch.
+For example, as shown in Fig. 8, queried vector 𝑞 1 requires sub-HNSWs 𝑆 1 and 𝑆 2 , while queried
+vector 𝑞 4 searches the same two clusters. Similarly, query 𝑞 2 and query 𝑞 4 both require sub-HNSW
+𝑆 2 . By identifying such overlaps across queries, the system avoids repeatedly loading the same
+sub-HNSWs within a batch. In the doorbell mode (see Sec. 4.4), sub-HNSW loading is further
+batched at the RDMA level. For example, given a doorbell batch size of 2 for accessing sub-HNSWs,
+the compute instance can issue an RDMA_READ command to fetch index 𝑆 1 and 𝑆 2 in one network
+round-trip, then compute the top-𝑘 closest vectors candidates for queries {𝑞 1 ,𝑞 3 ,𝑞 4 } first. 𝑞 1 and 𝑞 4
+complete their search at this step, while query 𝑞 3 requires an additional access to 𝑆 4 . 𝑞 2 , which is
+routed to 𝑆 3 and 𝑆 4 , is handled in subsequent loading steps. Intermediate results are temporarily
+buffered and merged as additional sub-HNSWs are fetched to produce the final query results. To
+meet service-level objectives (SLOs), the system dynamically truncates batches in time. Specifically,
+if query arrivals are sparse or delayed, the doorbell batch is closed once the maximum waiting time
+threshold is reached, ensuring bounded query latency.
+To further optimize fetch scheduling, we observe that some sub-HNSW clusters are shared by
+multiple queries within the batch and thus have higher query loads. We prioritize these clusters for
+earlier loading to further reduce latency in Sec. 4.4.
+Once all required sub-HNSW clusters for the batched queried vectors have been loaded and
+traversed, the query results will be returned. Additionally, we employ an LRU-based local cache
+that retains the most recently loaded 𝑐 sub-HNSWs for the next batch. If the required sub-HNSWs
+are already in the compute instance, they do not need to be loaded again, further reducing data
+transfer overhead.
+4.4 Orchestrating vector search and network data transfer pipeline
+As shown in Fig. 9(a), the original execution processes network data transfers and vector search
+sequentially, causing the CPU to stall while waiting for remote data and leading to inefficient query
+execution. To address this limitation, we propose a pipelined execution model that overlaps RDMA
+data transfers with vector search computation.
+To optimize overall performance, we orchestrate the vector search pipeline with the network data
+transfer. Specifically, we overlap the data transfer of the sub-HNSW index with the computation of
+both meta-HNSW and sub-HNSW search. As illustrated in Step 1 of Fig. 9, by carefully managing
+the pipeline, the latency of transferring sub-HNSW data can be effectively hidden within the vector
+search time of the last batch
+To further improve cache utilization and reduce cold-start latency, we reorder sub-HNSW fetches
+based on query demand, where sub-HNSW clusters with higher query loads are prioritized for
+earlier fetching based on per-cluster query frequency statistics collected from cached meta-HNSW
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+12
+
+Fei Fang, Yi Liu, and Chen Qian
+
+After Rebuild
+
+During Rebuild During Rebuild
+Insertions
+
+Compute node LSH
+Buffer
+(master)
+
+Memory
+node
+Compute node
+LSH
+Buffer
+(master)
+
+Index queries
+queries
+Shadow
+(Epoch N) Copy
+Compute node
+Compute node
+Queries
+(Queries
+Epoch
+Overflow
+N+1)
+Region
+Compute node
+
+After Rebuild
+
+Insertions
+
+Memory node
+Index
+
+(Epoch N)
+Overflow
+Region
+
+Shadow
+Copy
+(Epoch
+N+1)
+
+Compute node
+
+Compute node
+(master)
+Compute node
+
+Compute node
+Memory node Memory nod
+Insertions (master)
+Insertions
+New Index
+New Index
+(
+Epoch
+N+1
+)
+Queries
+Empty (Epoch N+1) Empty
+Queries
+Compute node
+Overflow
+
+Compute node
+
+Region
+New
+Metadata
+Compute node
+
+Space
+
+New
+Metadata
+
+Overflow
+Region
+
+(a) Serving queries and insertions during rebuild
+(b) Switching epochs after rebuild
+Fig. 10. Workflow of the index rebuild mechanism.
+
+routing results. This design follows the reversed pipeline order shown in Step 2 of Fig. 9. Since
+sub-HNSW clusters with more queries require longer search computation time, we leverage this
+extended computation time on previous clusters to overlap additional data transfers.
+The detailed pseudocode of the data query and insertion algorithms are provided in Appendix A.1
+and Appendix A.2.
+4.5
+
+Index Rebuild Mechanism
+
+As d-HNSW runs over time, dynamic insertions gradually consume the reserved overflow gap,
+eventually exhausting the available index capacity. In this situation, a rebuild is required to rebalance the index and restore its ability to accommodate further insertions. The key challenge
+is to perform such rebuilds while sustaining high query throughput, minimizing disruption to
+ongoing query processing, and preserving the visibility of newly inserted vectors. To address this
+challenge, d-HNSW adopts an epoch-based shadow-copy rebuild mechanism that enables online
+index reconstruction atomic epoch transitions and ensures that newly inserted vectors remain
+visible to queries throughout the rebuild process.
+d-HNSW monitors the utilization of overflow region and triggers a rebuild once the overflow
+region is full (Fig. 10a 1 ). Upon triggering, a designated master compute node responsible for
+insert coordination initiates a rebuild on the server side, which prepares a new epoch buffer and
+rebuilds the updated d-HNSW index in a shadow copy (Fig. 10a 2 ), including updated sub-HNSW
+layouts and refreshed meta-HNSW routing metadata. The rebuilt state is serialized into a new
+RDMA region, after which the system commits the new epoch and safely transitions queries from
+the old epoch to the new one.
+During the transition, query processing proceeds uninterrupted on the old index. To preserve
+query freshness, newly inserted vectors are temporarily buffered in a shared auxiliary structure
+organized by LSH buckets (Fig. 10a 3 ), which is searched alongside the old-epoch sub-HNSWs
+during search (Fig. 10a 4 ). This ensures that recent inserts remain immediately query-visible even
+before the rebuild commits. After the rebuild completes, the system atomically commits the new
+epoch (Fig. 10b 5 ). Following the epoch switch, compute instances refresh routing metadata and
+invalidate stale cached sub-HNSWs (Fig. 10b 6 ). Once all queries have transitioned to the new
+epoch, the system safely deallocates the old index (Fig. 10b 7 ). Overall, this design enables online
+rebuilds that restore index balance and insertion capacity while preserving a continuous query
+service and consistent search results.
+4.6
+
+Performance Modeling and Analysis
+
+To better understand the performance characteristics of d-HNSW, we develop analytical models
+for both the offline indexing stage and the online query serving stage.
+4.6.1 Indexing Model. The indexing model captures the time to partition the dataset, build
+sub-HNSW graphs, and construct the meta-HNSW. The indexing phase consists of four stages.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+Space
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+13
+
+Table 1. Key notations in the design.
+Symbol
+
+Description
+
+𝑁
+𝑑
+𝑃
+𝑘
+𝑒 build
+𝑒 meta
+𝑒 sub
+𝐵
+𝑆
+𝑃 fetch
+𝑇build
+𝑇
+𝑇meta
+𝑇net
+𝑇deser
+𝑇comp
+𝑊net
+
+Total number of database vectors.
+Dimensionality of each vector.
+Number of sub-HNSW.
+Top-𝑘 result size for each query.
+HNSW construction candidate list size.
+Search candidate list size for meta-HNSW.
+Search candidate list size for sub-HNSW.
+Query batch size.
+Average size (in bytes) of a serialized sub-HNSW.
+Number of uncached sub-HNSWs fetched per batch.
+Total indexing time.
+Serving latency for one batch.
+Meta-HNSW search time for one batch.
+Network transfer time for fetching sub-HNSWs.
+Sub-HNSW deserialization time per batch.
+Sub-HNSW search computation time per batch.
+RDMA network bandwidth.
+
+Phase 1: Approximate K-Means++ Initialization. d-HNSW uses an approximate K-Means++
+sampling strategy to select initial cluster centers. For each of the 𝑃 centers, the algorithm samples
+a constant number of candidates (denoted 𝑐 sample ) and selects the one maximizing the minimum
+distance to existing centers. The time complexity is: 𝑇init = 𝑂 (𝑃 · 𝑐 sample · 𝑃 · 𝑑) = 𝑂 (𝑃 2 · 𝑑)
+Phase 2: Capacity-Constrained K-Means Clustering. The clustering algorithm runs for a
+fixed number of iterations 𝐼 max . Each iteration involves:
+• Distance computation between all 𝑁 vectors and 𝑃 centroids: 𝑂 (𝑁 · 𝑃 · 𝑑)
+• Maintaining the top-𝐿 nearest centroids per vector using a heap: 𝑂 (𝑁 · 𝑃 · log 𝐿)
+• Capacity-constrained assignment via a global priority queue: 𝑂 (𝑁 · log 𝑁 )
+• Centroid recomputation: 𝑂 (𝑁 · 𝑑)
+Since 𝐿 is a small constant and 𝑃 · 𝑑 typically dominates log 𝑁 , the total clustering time is: 𝑇cluster =
+𝑂 (𝐼 max · 𝑁 · 𝑃 · 𝑑) = 𝑂 (𝑁 · 𝑃 · 𝑑)
+Phase 3: Sub-HNSW Construction. Each of the 𝑃 sub-HNSWs is built independently over
+approximately 𝑁 /𝑃 vectors. Assuming balanced
+ partitions, the HNSW construction complexity
+for a single sub-index is 𝑂 𝑁𝑃 · log 𝑁𝑃 · 𝑒 build · 𝑑 . Since sub-index construction is in parallel, with 𝑃
+
+threads, the elapsed time is: 𝑇sub = 𝑂 𝑁𝑃 · log 𝑁𝑃 · 𝑒 build · 𝑑
+(Assumption: Partitions are approximately balanced. The capacity-constrained clustering ensures
+each partition contains at most ⌈𝑁 /𝑃⌉ vectors. This assumption is validated in Sec. 5.8.)
+Phase 4: Meta-HNSW Construction. The meta-HNSW is built over 𝑃 partition centroids.
+Computing centroids requires a single pass over all vectors: 𝑂 (𝑁 ·𝑑). Constructing the meta-HNSW
+graph takes 𝑂 (𝑃 · log 𝑃 · 𝑒 build · 𝑑). Thus: 𝑇meta_build = 𝑂 (𝑁 · 𝑑 + 𝑃 · log 𝑃 · 𝑒 build · 𝑑)
+Total Indexing Time. Combining all phases: 𝑇build = 𝑇init + 𝑇cluster + 𝑇sub + 𝑇meta_build For typical
+configurations where 𝑁 ≫ 𝑃 and 𝑃 · 𝑑 ≫ log 𝑁 , the clustering phase and sub-HNSW construction
+dominate, yielding 𝑇build = 𝑂 (𝑁 · 𝑃 · 𝑑 + 𝑁𝑃 · log 𝑁𝑃 · 𝑒 build · 𝑑).
+4.6.2 Serving Model. The serving model characterizes per-batch latency for online query processing. The serving path consists of two main phases: meta-HNSW search followed by a three-stage
+pipelined sub-search.
+Phase 1: Meta-HNSW Search. For a batch of 𝐵 queries, the meta-HNSW (containing 𝑃 centroid
+vectors) is searched to identify the top-R candidate
+partitions per query. Using parallelization across
+
+𝐵
+queries: 𝑇meta = 𝑂 𝑛threads · 𝑑 · 𝑒 meta · log 𝑃 , where 𝑛 threads is the number of threads for meta-search.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+14
+
+Fei Fang, Yi Liu, and Chen Qian
+
+Phase 2: Pipelined Sub-Search. After meta-search identifies a set of candidate partitions, the
+system processes them through a three-stage pipeline with dedicated worker threads:
+• Fetch Stage (𝑇net ): Uncached sub-HNSWs are fetched from remote memory via RDMA_READ.
+Let 𝑃fetch denote the number of unique sub-HNSWs that are not in the local LRU cache. Each
+fetch ·𝑆
+(Note: 𝑃 fetch depends on the cache hit ratio.)
+fetch transfers 𝑆 bytes on average: 𝑇net = 𝑃𝑊
+net
+• Deserialization Stage (𝑇deser ): Fetched raw bytes are parsed into in-memory HNSW index
+structures. The implementation uses a DirectMemoryIOReader that reads directly from the
+fetch buffer, reducing but not eliminating memory copies. The deserialization cost scales with
+the data size: 𝑇deser = 𝑂 (𝑃 fetch · 𝑆)
+• Search Stage (𝑇comp ): HNSW search is executed on each required sub-index. Let 𝑀 denote the
+total number of (sub-index, query) pairs to process. Each sub-HNSW contains approximately
+𝑁 /𝑃 vectors: 𝑇comp = 𝑂 𝑀 · 𝑑 · 𝑒 sub · log 𝑁𝑃
+Pipeline Latency Analysis. The three stages operate concurrently via dedicated threads
+(𝑖 )
+(𝑖 )
+(𝑖 )
+communicating through thread-safe queues. Let 𝑡 fetch
+, 𝑡 deser
+, and 𝑡 search
+denote the per-task time for
+the 𝑖-th sub-index in each stage, where 𝑖 ∈ {1, . . . , 𝑃fetch }.
+For a classic three-stage pipeline processing 𝑃 fetch tasks, the total latency consists of:
+• Bottleneck stage: The slowest stage determines steady-state throughput.
+• Fill latency: Time for the first task to reach the final stage.
+• Drain latency: Time for the last task to complete after entering the pipeline.
+Assuming roughly uniform per-task times within each stage, let 𝑡¯fetch = 𝑇net /𝑃fetch , 𝑡¯deser =
+𝑇deser /𝑃 fetch , and 𝑡¯search = 𝑇comp /𝑃fetch . The pipeline latency is: 𝑇pipeline = max{𝑇net,𝑇deser,𝑇comp } +
+𝑡¯fill + 𝑡¯drain where 𝑡¯fill = 𝑡¯fetch + 𝑡¯deser (first task traverses fetch and deserialize before search begins)
+and 𝑡¯drain = 𝑡¯deser + 𝑡¯search (last task completes deserialize and search after final fetch). In practice,
+d-HNSW further amortizes the fill and drain overheads via a fetch reordering policy (Sec. 4.4),
+which prioritizes sub-HNSW clusters with higher query loads for earlier fetching.
+Simplifying to 𝑇pipeline = max{𝑇net,𝑇deser,𝑇comp }+𝑡¯fetch +2𝑡¯deser +𝑡¯search , When 𝑃 fetch is large, the fill/drain overhead becomes negligible relative to the bottleneck stage, and𝑇pipeline ≈ max{𝑇net,𝑇deser,𝑇comp }.
+Thus, the total query latency for processing a batch of 𝐵 queries is: 𝑇 = 𝑇meta + 𝑇pipeline .
+5 EVALUATION
+In this section, we provide evaluation results on our prototype implementation of d-HNSW. The
+results demonstrates its query latency vs recall (Sec. 5.2), provides analysis on throughput scaling
+behavior (Sec. 5.3) and latency under mixed search and insert workloads (Sec. 5.4), conduct an
+ablation study of our design (Sec. 5.5), provide a detailed pipeline latency breakdown (Sec. 5.7) and
+examine cache effectiveness (Sec. 5.6) and evaluate balanced clustering strategy (Sec. 5.8).
+5.1
+
+Methodology
+
+Hardware and environments. We develop and evaluate the prototype of d-HNSW on CloudLab [46] using real-world hardware. Our testbed consists of four Dell PowerEdge R650 servers,
+each equipped with two 36-core Intel Xeon Platinum CPUs, 256GB RAM, a 1.6TB NVMe SSD, and
+a Mellanox ConnectX-6 100Gb NIC. Three servers act as a compute pool, while one serves as the
+memory instance. We use up to 30 workers from the compute pool and up to 300 sub-HNSW
+clusters from the memory pool.
+The system prototype of d-HNSW with 18.4K lines of code in C++ is based on Faiss [29], a
+state-of-the-art vector query processing system adopted by many vector databases.
+Workloads. These five datasets are commonly used in previous ANN research [6, 40, 50, 57].
+TEXT10M [1] consists of 10M 200-dimensional vectors under inner-product similarity. As a crossmodal dataset, it can be used to enhance the training and evaluation of multimodal LLMs. In our
+prototype, it occupies 47.29 GB of memory, while the meta-HNSW index is lightweight at 227.8
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+15
+
+Base
+Query
+Memory Meta-HNSW
+Dim vectors
+vectors Distance footprint
+size
+TEXT10M 200
+10M
+10K
+Angular
+47.3 GB
+227.8 KB
+SIFT10M 128
+10M
+10K
+Euclidean 32.4 GB
+171.6 KB
+DEEP10M 96
+10M
+10K
+Euclidean 26.4 GB
+146.6 KB
+GIST1M 960
+1M
+1K
+Euclidean 16.4 GB
+671.6 KB
+SIFT1M
+128
+1M
+10K
+Euclidean
+2.9 GB
+72.2 KB
+Dataset
+
+Table 2. Datasets benchmarked in Evaluation.
+
+KB, making it feasible to cache entirely on the client side. We also use SIFT10M [16], which is
+based on the Scale-Invariant Feature Transform (SIFT), a widely used computer vision algorithm
+for identifying and describing local features in images. We further evaluate DEEP10M [1], a 10
+million vector dataset with 96 dimensions based on deep feature representations, using Euclidean
+distances. DEEP10M occupies 26.40 GB of memory with a compact meta-HNSW index of 146.6
+KB. GIST1M [10] contains 1 million GIST feature vectors that capture the global characteristics of
+images, including color, texture, and spatial structure. GIST1M poses a significant challenge for
+vector search algorithms due to its high dimensionality despite its smaller size. In our prototype,
+it occupies 16.44 GB of memory, and its meta-HNSW index size is 671.6 KB. In addition, we
+include SIFT1M [16], a smaller dataset containing 1 million SIFT feature vectors that serves as a
+standard benchmark for assessing ANN system recall and latency at the million-scale with moderate
+dimensionality. It requires only 2.97 GB of memory, with a meta-HNSW index size of 72.2 KB.
+Baselines. To the best of our knowledge, there is no existing vector similarity search engine
+designed for disaggregated memory systems. To enable comparison with d-HNSW, we extend
+Pyramid [9] to support disaggregated memory and implement a naive HNSW baseline using RPC
+over RDMA and include distributed-faiss, a gRPC-based distributed FAISS HNSW system that
+neither leverages RDMA nor operates under a disaggregated memory architecture.Specifically, we
+compare d-HNSW to the following two RDMA-based baselines and one external distributed ANN
+baseline while keeping the same searching parameters under fine-tuned batch sizes:
+• d-Pyramid. We implement a version of Pyramid [9], a recent distributed HNSW system, in
+disaggregated memory and name it d-Pyramid. While Pyramid partitions the dataset into subdatasets for index building and assigns queries to relevant partitions for efficient distributed
+processing, d-Pyramid extends this framework to operate over RDMA-based remote memory.
+Specifically, d-Pyramid stores Pyramid’s index structures in memory instances while caching
+the meta-HNSW graph on compute instances. Upon receiving a query, d-Pyramid first performs
+a search on the meta-HNSW to identify relevant partitions and then fetches the corresponding
+sub-datasets from the memory instances to perform searches for final query processing.
+• d-HNSW RPC. To provide a straightforward baseline for comparison, we implement d-HNSW
+RPC, a naive HNSW baseline over disaggregated memory using RPC over RDMA. In this design,
+the entire index is stored on remote memory instances, and compute instances issue search
+requests via RPC, leveraging RDMA to transfer data between compute and memory nodes.
+Upon receiving a query, the compute instance sends it to the memory instance, which performs
+the vector similarity search locally and returns the results to the compute instance. Unlike
+d-HNSW, which only uses one-sided RDMA and requires no remote CPU involvement during
+query processing, d-HNSW RPC incurs CPU overhead on memory instances for each query.
+• distributed-faiss (gRPC, non-disaggregated). We adopt the state-of-the-art distributed
+implementation of HNSW in distributed-faiss [41] as an additional gRPC-based baseline.
+The system shards the dataset across server processes, while each shard builds an independent
+FAISS HNSW index. Query requests are distributed to all shards through standard TCP-based
+RPCs, and a central coordinator merges the partial top-𝑘 results to form the final answer.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+16
+
+Fei Fang, Yi Liu, and Chen Qian
+
+(a) SIFT1M@1
+
+( ) SIFT1M@10
+
+(b) GIST1M@1
+
+(c) DEEP10M@1
+
+(d) SIFT10M@1
+
+(e) TEXT10M@1
+
+(g) GIST1M@10
+
+(h) DEEP10M@10
+
+(i) SIFT10M@10
+
+(j) TEXT10M@10
+
+Fig. 11. Search Recall@1/10 latency Performance.
+
+5.2 Overall Performance
+We evaluate the query latency and recall of d-HNSW against d-Pyramid and d-HNSW RPC across
+five types of vector datasets (1M to 10M vectors) under both top-1 and top-10 recall settings.
+For each dataset, we consider both top-1 and top-10 recall settings. We denote each workload as
+Dataset@k, where, for example, SIFT1M@1 indicates top-1 recall evaluation on the 1-million-scale
+subset of the SIFT dataset. To ensure fair SLO compliance, we gracefully tune the batch sizes for all
+baselines, maximizing their throughput while respecting the latency target.
+As shown in Fig. 11, d-HNSW consistently achieves sub-millisecond to low-millisecond
+query latency while preserving high recall across diverse workloads, representing two to three
+orders of magnitude lower latency than existing disaggregated-memory baselines. Across all
+evaluated datasets, d-HNSW completes queries within approximately 140–7,800 𝜇s, even at the 10M
+scale and under top-10 recall settings. By avoiding repeat partition loading and CPU bottlenecks,
+d-HNSW significantly reduces both latency and system overhead. Through query-aware batched
+data loading and a pipelined execution model that overlaps RDMA transfers with computation,
+d-HNSW approaches the practical lower bound of latency in disaggregated settings. Compared
+to d-Pyramid, d-HNSW shows 150–730× speedup across workloads. Frequent remote sub-dataset
+fetching in d-Pyramid causes significant network overhead. For instance, on SIFT1M@1, d-HNSW
+achieves a latency of only 142.00 𝜇s, compared to over 97.65 ms for d-Pyramid, resulting in a 656×
+improvement. Similarly, on high-dimensional workload GIST1M@1, d-HNSW completes queries in
+1172 𝜇s versus 862.87 ms for d-Pyramid. Even on large-scale datasets like DEEP10M@10, d-HNSW
+achieves 1824.21 𝜇s, compared to 342.90 ms for d-Pyramid, corresponding to a 188× speedup.
+d-HNSW also significantly outperforms d-HNSW RPC, achieving 40-2,100× lower latency. dHNSW RPC incurs high CPU load on memory nodes, leading to severe contention and overhead.
+For example, on SIFT1M@1, d-HNSW achieves a latency of just 142.00 𝜇s compared to 265.76 ms
+for d-HNSW RPC—a 1,871× improvement. Even on larger workloads like DEEP10M@10, d-HNSW
+reduces query latency from 134.08 ms to 1,824.21 𝜇s, achieving a 74× speedup.
+Despite operating in a much lower latency regime, d-HNSW provides comparable recall across
+all workloads across diverse scales and dimensionalities. d-HNSW maintains similar or better
+recall compared to both baselines while achieving much lower latency. For example, in small-scale
+workload SIFT1M@1, compared to d-Pyramid, d-HNSW achieves a significantly higher recall
+(94.24% vs. 84.87%) under the same number of partitions and identical 𝑒𝑠𝑒𝑎𝑟𝑐ℎ . This indicates that
+d-HNSW’s partitioning strategy more accurately routes queries to the correct sub-HNSW, enabling
+better candidate coverage. On high-dimensional workloads such as GIST1M@1, d-HNSW achieves
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+17
+
+Throughtput (ops/sec)
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+(a) SIFT1M
+
+(b) GIST1M
+
+(c) DEEP10M
+
+(e) TEXT10M
+
+(d) SIFT10M
+
+Fig. 12. Throughput under different worker counts.
+×103
+
+5:5
+
+7:3
+
+9:1
+
+0:10
+
+Workload Composition
+(Insert:Search)
+
+log10
+
+5:5
+
+7:3
+
+9:1
+
+0:10
+
+Workload Composition
+(Insert:Search)
+
+(a) SIFT1M
+(b) GIST1M
+Fig. 13. Operation batch latency under varying searchinsert workload ratios.
+
+4
+3
+2
+
+R: Regroup
+D: Doorbell
+P: Pipeline
+
+Naive +R +R+D+R+D+P
+
+5
+
+Latency ( s)
+
+2
+1.5
+1
+0.5
+0
+
+Latency ( s)
+
+2
+1.5
+1
+0.5
+0
+
+Latency (ms)
+
+Latency (ms)
+
+×103
+
+4
+3
+
+log10
+
+R: Regroup
+D: Doorbell
+P: Pipeline
+
+Naive +R +R+D+R+D+P
+
+(a) SIFT1M
+(b) GIST1M
+Fig. 14. Ablation study of search latency.
+
+79.63% recall, which is above d-Pyramid’s 73.30% and comparable to d-HNSW RPC’s 78.92%. Similar
+trends hold for large-scale workloads. On DEEP10M@10, d-HNSW reaches a recall of 93.93%,
+significantly outperforming d-Pyramid’s 80.30% under identical partitioning and search settings,
+and closely matching d-HNSW RPC’s 92.76%.
+Finally, d-HNSW operates in a fundamentally lower latency regime compared with distributedfaiss, a distributed HNSW system using gRPC, achieving comparable recall with sub-millisecond
+to low-millisecond latency, whereas distributed-faiss requires tens to hundreds of milliseconds to
+approach high-recall operating points across workloads. For example, on SIFT1M@1, distributedfaiss achieves approximately 91% recall at 2.32 ms, while further increasing recall (e.g., to 99.3%)
+comes at the cost of substantially higher latency (over 14 ms). In contrast, d-HNSW achieves
+comparable recall with sub-millisecond latency. On large-scale workloads such as TEXT10M@10,
+distributed-faiss requires over 200 ms to reach 88% recall, whereas d-HNSW achieves similar recall
+within 7–8 ms, resulting in more than an order-of-magnitude latency reduction. This trend persists
+across larger-scale and higher-dimensional datasets, highlighting the large latency gap between
+gRPC-based distributed ANN and RDMA-based disaggregated designs.
+5.3 Throughput with Varied Number of Workers
+We further evaluate how throughput of d-HNSW and baselines scales with increasing numbers of
+compute workers. Specifically, we measure the system throughput under 5, 10, 15, 20, 25, and 30
+workers across five workloads, as shown in Fig. 12.
+d-HNSW demonstrates strong throughput scalability as the number of workers increases. On
+smaller workloads like SIFT1M and GIST1M, d-HNSW demonstrates near-linear throughput growth
+up to 25 workers. For example, on SIFT1M, d-HNSW reaches a throughput of 202K queries per
+second with 30 workers, which is 2.58× higher than the 5-worker configuration. On larger datasets
+such as SIFT10M and Deep10M, throughput improves significantly up to 10-15 workers and then
+with slower but steady gains beyond that point, reflecting increasing memory access overhead
+when querying large sub-HNSW clusters. Interestingly, on TEXT10M, d-HNSW shows consistent
+throughput scaling, improving nearly 4× from 1,324 queries/s at 5 workers to 4,952 queries/s at 30
+workers, suggesting better parallelism and lower compute node bottlenecks.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+18
+
+Fei Fang, Yi Liu, and Chen Qian
+
+In contrast, the baselines exhibit significantly weaker scalability. While d-Pyramid shows a little
+throughput improvement when increasing from 5 to 10 workers, the benefit quickly plateaus, and
+in cases like DEEP10M, adding more workers brings diminishing returns due to partition loading
+overhead and network contention. d-HNSW RPC also scales poorly with additional compute
+workers, mainly constrained by the remote CPU bottleneck on memory nodes, leading to underutilization of additional compute workers. Distributed-faiss achieves moderate throughput scaling
+as the number of workers increases, but remains fundamentally constrained by server-side CPU
+execution and TCP-based RPC communication. As a result, while distributed-faiss benefits from
+additional workers, its absolute throughput remains lower than d-HNSW across all workloads.
+These results indicate that d-HNSW effectively utilizes additional compute resources to scale
+throughput in disaggregated environments, even without scaling server-side network or bandwidth
+resources. Unlike d-Pyramid, d-HNSW RPC, and distributed-faiss, which suffer from network
+bottlenecks or remote CPU overhead when adding more workers, d-HNSW fully offloads query
+processing to compute nodes through one-sided RDMA operations. Notably, d-HNSW achieves up
+to 124× higher throughput than baselines.
+5.4
+
+Latency under Mixed Search and Insert Workloads
+
+To demonstrate d-HNSW ’s support for dynamic insertions, we measure the latency of processing
+query batches under mixed workloads with different search-to-insert ratios. Fig. 13 reports batch
+processing time for fixed-size query batches (batch size = 8000) on SIFT1M and GIST1M datasets.
+d-HNSW supports concurrent search and insert operations. As the proportion of insert operations
+increases, batch latency grows due to resource contention from concurrent index updates. For
+example, on SIFT1M, batch latency increases from 438K 𝜇s (100% search) to 1.46M 𝜇s (50% insert),
+demonstrating that d-HNSW remains functional under high insert rates while maintaining bounded
+latency. These results demonstrate the ability of d-HNSW to support runtime insertions along with
+query processing.
+5.5 Ablation Study
+To quantify the impact of each optimization in d-HNSW, we perform an ablation study on SIFT1M
+and GIST1M datasets, measuring per-query latency while progressively enabling key system
+optimizations. Fig. 14 presents the comparison of per-query latency under four configurations:
+• Naive: a baseline disaggregated HNSW setup without any optimization;
+• + Regroup: adds query-aware batched data loading to minimize redundant memory accesses
+(see Sec. 4.3);
+• + Regroup + Doorbell: incorporates RDMA doorbell batching to reduce network overhead;
+• + Regroup + Doorbell + Pipeline: replaces fixed doorbell batching with adaptive batching
+based on system load, additionally enabling pipelined execution to overlap computation and
+data transfer (see Sec. 4.4).
+The results show that each optimization yields additional latency reductions. On SIFT1M, per-query
+latency decreases from 34.8 ms in the naive design to 80.9 𝜇s after applying all designs, achieving
+over 430× improvement. Similarly, latency reduces from 107.9 ms to 924.5 𝜇s with full optimizations,
+a 117× improvement on GIST1M.
+5.6
+
+Query Latency under Different Cache Ratio
+
+We evaluate how the cache ratio of sub-HNSW affects query latency by varying the proportion of
+cached sub-HNSW from 0% to 20%. As shown in Fig. 15, increasing the cache ratio consistently
+reduces query latency by reducing remote memory access frequency. For example, on SIFT1M,
+latency drops from 120.6 𝜇s at 0% cache to 75.6 𝜇s at 10%. Considering the trade-off between memory
+usage and query latency, we select a 10% cache ratio as the default setting of d-HNSW.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+19
+
+100
+
+Latency ( s)
+
+Latency ( s)
+
+Meta HNSW Search
+Fetch
+
+50
+0
+
+0% 5% 10% 15% 20%
+
+Cached Sub HNSW (%)
+
+Amortized
+Latency
+Pipeline
+Breakdown
+
+750
+500
+0
+
+Amortized
+Latency
+Pipeline
+Breakdown
+
+0% 5% 10% 15% 20%
+
+Cached Sub HNSW (%)
+
+4
+2
+0
+
+100
+
+150
+
+200
+
+Number of Clusters
+
+×105
+1
+0
+
+200
+
+250
+
+300
+
+Number of Clusters
+
+(a) GIST1M
+(b) DEEP10M
+Fig. 17. Cluster size dist. with different partition rules.
+
+5.7
+
+60
+
+80
+
+Latency ( s)
+
+100
+
+120
+
+140
+
+0
+
+200
+
+400
+
+600
+
+Latency ( s)
+
+800
+
+1000
+
+Fig. 16. Pipeline latency breakdown.
+×104
+
+d-HNSW
+KAHIP
+k-means
+
+2
+
+40
+
+Amortized Latency
+
+(b) GIST1M
+
+Throughput (QPS)
+
+d-HNSW
+KAHIP
+k-means
+
+Cluster Size Distrib.
+
+Cluster Size Distrib.
+
+×104
+
+20
+
+250
+
+(a) SIFT1M
+(b) GIST1M
+Fig. 15. Search latency under different cache ratios.
+
+6
+
+0
+
+Deserialize
+Sub HNSW Search
+(a) SIFT1M
+
+rebuild
+
+20
+10
+0
+
+0
+
+200
+
+400
+
+Time (s)
+
+600
+
+800
+
+Fig. 18. Throughput over time under index
+rebuilding.
+
+Pipeline Latency Breakdown
+
+To validate the effectiveness of the pipelined execution, we break down the per-query latency into
+individual components: meta-HNSW search, RDMA fetch, deserialization, and sub-HNSW search.
+Fig. 16 reports the execution time of each component individually, as well as the query latency
+under pipelined execution.
+We observe that the total amortized latency is significantly smaller than the sum of the individual
+stage times, indicating that d-HNSW successfully overlaps computation and data transfer through
+pipelined execution. For instance, on SIFT1M, while the sum of stage times exceeds 144 𝜇s, the
+actual per-query latency is only 81.0 𝜇s. Similarly, the total of all stages exceeds 1050 𝜇s, the actual
+per-query latency is only 617.8 𝜇s on GIST1M.
+5.8 Balanced Partitioning Strategy
+As Fig. 17 shows, we analyze the cluster size distributions of d-HNSW, KaHIP [45] (used by dPyramid), and standard k-means [33] on GIST1M and DEEP10M datasets. KaHIP (Karlsruhe High
+Quality Partitioning) is a multilevel graph partitioning framework designed to minimize edge cuts
+while balancing partition sizes. d-HNSW produces a near-balanced partitioning, with cluster sizes
+tightly concentrated and low variance. In contrast, both KaHIP and K-Means suffer from substantial
+size variance and and generate skewed clusters.
+5.9 Rebuild
+We evaluate the d-HNSW’s ability to sustain throughput during online index rebuilding with one
+memory node, two search computing node (each running 10 workers), and one master computing
+node issuing a mixed workload of 20% inserts and 80% queries on the SIFT1M dataset.
+Fig. 18 plots the aggregated throughput of all three computing nodes over an 800-second interval,
+with the rebuild window (approximately 120 seconds) highlighted. Before rebuild, the system
+operates in a steady state, maintaining a stable throughput of approximately 190K queries per
+second under the mixed insert and query workload.
+Once rebuild is triggered (at 𝑡 ≈ 480s), the throughput briefly increases before exhibiting a
+significant drop. This transient increase happens because insert operations switch from issuing RDMA_WRITE to the server to buffering locally at the insert client, thereby eliminating
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+20
+
+Fei Fang, Yi Liu, and Chen Qian
+
+RDMA_WRITE on the memory node. During this period, search workers continue serving queries
+using the old epoch while checking a small LSH buffer. The subsequent sharp throughput drop,
+falling to approximately 70K queries per second, coincides with the epoch transition. During this
+interval, search workers must suspend standard query processing to ensure safe handover between
+epochs. Specifically, workers stop issuing new search batches, wait for all in-flight RDMA operations
+referencing the old epoch to complete. Following this, an atomic metadata swap redirects pointers
+to the newly reconstructed index. After all clients acknowledge the new epoch, throughput rapidly
+returns to the level observed before the rebuild, indicating that the reconstructed index achieves
+comparable performance after the rebuild.
+Overall, the results show that d-HNSW enables high-throughput query serving even during
+online index maintenance.
+6
+
+RELATED WORK
+
+Disaggregated memory system. Disaggregated memory systems [7, 14, 42, 47, 52, 58, 62, 64, 66]
+have received increasing attention due to the ability to allocate flexible resources and improve
+hardware utilization in data centers. For example, recent works [27, 76] addressed how to build
+high-performance key-value stores on disaggregated memory by exploiting one-sided RDMA
+operations to bypass remote CPU involvement. Outback [32] proposes an RDMA RPC-based index
+by separating a dynamic minimal perfect hashing index into compute-heavy and memory-heavy
+components placed at compute and memory nodes. However, these systems cannot be applied to
+graph-based vector databases, as analyzed in Sec. 2.3. d-HNSW is orthogonal to these works.
+Approximate vector similarity search. Approximate similarity search has become a fundamental technique for efficiently retrieving high-dimensional data vectors in datasets. To balance
+accuracy and efficiency, prior work has developed a variety of indexing techniques, including treebased structures (e.g., KD-trees [43]), graph-based navigable small-world graphs (e.g., HNSW [36]),
+and quantization-based approaches (e.g., product quantization [16]).
+Among these, HNSW has emerged as a widely adopted method due to its excellent recall and
+low query latency. In contrast to prior works [15, 26, 44, 50, 70, 73, 74] focused on monolithic or
+hardware-accelerated designs, d-HNSW is the first to disaggregate the HNSW index into compute
+and memory pools over RDMA networks. Recent studies have also explored near-data-processing
+approaches using specialized hardware such as FPGAs or SmartNICs to execute ANN search
+directly within memory nodes [20, 28]. While effective in reducing data movement, these designs
+require custom hardware and increase system cost and deployment complexity, whereas d-HNSW
+achieves high performance using commodity RDMA NICs without introducing additional hardware
+dependencies.
+7
+
+CONCLUSION
+
+In this paper, we present d-HNSW, the first RDMA-based vector similarity search engine specifically
+designed for disaggregated memory architectures. d-HNSW addresses the fundamental challenges
+of deploying graph-based vector search algorithms like HNSW in disaggregated memory systems.
+d-HNSW enhances vector request throughput and minimizes data transfer overhead through an
+RDMA-friendly data layout optimized for memory nodes. The system further optimizes batched
+vector queries by implementing query-aware data loading that eliminates redundant vector transfers,
+significantly reducing network bandwidth consumption and improving cache utilization. Through
+comprehensive evaluation across various datasets, we demonstrate that d-HNSW outperforms other
+RDMA-based baselines by up to over 100× in throughput. These results validate the effectiveness
+of our co-designed approach that aligns vector search algorithms with the characteristics of RDMAbased disaggregated memory systems.
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+21
+
+REFERENCES
+[1] 2023. Yandex Billion-Scale Datasets. https://research.yandex.com/datasets/biganns. Accessed: 2025-07-15.
+[2] David Arthur and Sergei Vassilvitskii. 2006. k-means++: The advantages of careful seeding. Technical Report. Stanford.
+[3] Martin Aumüller, Erik Bernhardsson, and Alexander Faithfull. 2020. ANN-Benchmarks: A benchmarking tool for
+approximate nearest neighbor algorithms. Information Systems 87 (2020), 101374.
+[4] Qi Chen, Haidong Wang, Mingqin Li, Gang Ren, Scarlett Li, Jeffery Zhu, Jason Li, Chuanjie Liu, Lintao Zhang, and
+Jingdong Wang. 2018. SPTAG: A library for fast approximate nearest neighbor search.
+[5] Qi Chen, Haidong Wang, Mingqin Li, Gang Ren, Scarlett Li, Jeffery Zhu, Jason Li, Chuanjie Liu, Lintao Zhang, and
+Jingdong Wang. 2018. SPTAG: A library for fast approximate nearest neighbor search. https://github.com/Microsoft/
+SPTAG
+[6] Qi Chen, Bing Zhao, Haidong Wang, Mingqin Li, Chuanjie Liu, Zengzhong Li, Mao Yang, and Jingdong Wang. 2021.
+Spann: Highly-efficient billion-scale approximate nearest neighborhood search. Advances in Neural Information
+Processing Systems 34 (2021), 5199–5212.
+[7] Xinyi Chen, Liangcheng Yu, Vincent Liu, and Qizhen Zhang. 2023. Cowbird: Freeing CPUs to Compute by Offloading
+the Disaggregation of Memory. In Proceedings of the ACM SIGCOMM 2023 Conference. 1060–1073.
+[8] DeepSeek. [n. d.]. https://www.deepseek.com/.
+[9] Shiyuan Deng, Xiao Yan, KW Ng Kelvin, Chenyu Jiang, and James Cheng. 2019. Pyramid: A general framework for
+distributed similarity search on large-scale datasets. In 2019 IEEE International Conference on Big Data (Big Data). IEEE,
+1066–1071.
+[10] Matthijs Douze, Hervé Jégou, Harsimrat Sandhawalia, Laurent Amsaleg, and Cordelia Schmid. 2009. Evaluation of gist
+descriptors for web-scale image search. In Proceedings of the ACM international conference on image and video retrieval.
+1–8.
+[11] Fire flyer file system. [n. d.]. https://github.com/deepseek-ai/3FS/.
+[12] Cong Fu, Chao Xiang, Changxu Wang, and Deng Cai. 2019. Fast Approximate Nearest Neighbor Search With The
+Navigating Spreading-out Graphs. PVLDB 12, 5 (2019), 461 – 474. https://doi.org/10.14778/3303753.3303754
+[13] Aristides Gionis, Piotr Indyk, Rajeev Motwani, et al. 1999. Similarity search in high dimensions via hashing. In Vldb,
+Vol. 99. 518–529.
+[14] Cunchen Hu, Heyang Huang, Junhao Hu, Jiang Xu, Xusheng Chen, Tao Xie, Chenxi Wang, Sa Wang, Yungang Bao,
+Ninghui Sun, et al. 2024. Memserve: Context caching for disaggregated llm serving with elastic memory pool. arXiv
+preprint arXiv:2406.17565 (2024).
+[15] Junhyeok Jang, Hanjin Choi, Hanyeoreum Bae, Seungjun Lee, Miryeong Kwon, and Myoungsoo Jung. 2023. CXLANNS:Software-Hardware collaborative memory disaggregation and computation for Billion-Scale approximate nearest
+neighbor search. In 2023 USENIX Annual Technical Conference (USENIX ATC 23). 585–600.
+[16] Herve Jegou, Matthijs Douze, and Cordelia Schmid. 2010. Product quantization for nearest neighbor search. IEEE
+transactions on pattern analysis and machine intelligence 33, 1 (2010), 117–128.
+[17] Wenqi Jiang, Hang Hu, Torsten Hoefler, and Gustavo Alonso. 2025. Fast graph vector search via hardware acceleration
+and delayed-synchronization traversal. Proceedings of the VLDB Endowment 18, 11 (2025), 3797–3811.
+[18] Wenqi Jiang, Shigang Li, Yu Zhu, Johannes de Fine Licht, Zhenhao He, Runbin Shi, Cedric Renggli, Shuai Zhang,
+Theodoros Rekatsinas, Torsten Hoefler, et al. 2023. Co-design hardware and algorithm for vector search. In Proceedings
+of the International Conference for High Performance Computing, Networking, Storage and Analysis. 1–15.
+[19] Wenqi Jiang, Suvinay Subramanian, Cat Graves, Gustavo Alonso, Amir Yazdanbakhsh, and Vidushi Dadu. 2025. Rago:
+Systematic performance optimization for retrieval-augmented generation serving. In Proceedings of the 52nd Annual
+International Symposium on Computer Architecture. 974–989.
+[20] Wenqi Jiang, Marco Zeller, Roger Waleffe, Torsten Hoefler, and Gustavo Alonso. 2023. Chameleon: a heterogeneous
+and disaggregated accelerator system for retrieval-augmented language models. arXiv preprint arXiv:2310.09949 (2023).
+[21] Wenqi Jiang, Shuai Zhang, Boran Han, Jie Wang, Bernie Wang, and Tim Kraska. 2025. Piperag: Fast retrieval-augmented
+generation via adaptive pipeline parallelism. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery
+and Data Mining V. 1. 589–600.
+[22] Chao Jin, Zili Zhang, Xuanlin Jiang, Fangyue Liu, Xin Liu, Xuanzhe Liu, and Xin Jin. 2024. Ragcache: Efficient
+knowledge caching for retrieval-augmented generation. arXiv preprint arXiv:2404.12457 (2024).
+[23] Anuj Kalia, Michael Kaminsky, and David G Andersen. 2016. Design guidelines for high performance RDMA systems.
+In 2016 USENIX annual technical conference (USENIX ATC 16). 437–450.
+[24] Anuj Kalia, Michael Kaminsky, and David G Andersen. 2016. FaSST: Fast, scalable and simple distributed transactions
+with Two-Sided RDMA datagram RPCs. In 12th USENIX Symposium on Operating Systems Design and Implementation
+(OSDI 16). 185–201.
+[25] Seung-seob Lee, Yanpeng Yu, Yupeng Tang, Anurag Khandelwal, Lin Zhong, and Abhishek Bhattacharjee. 2021. Mind:
+In-network memory management for disaggregated data centers. In Proceedings of the ACM SIGOPS 28th Symposium
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+22
+
+Fei Fang, Yi Liu, and Chen Qian
+
+on Operating Systems Principles. 488–504.
+[26] Conglong Li, Minjia Zhang, David G Andersen, and Yuxiong He. 2020. Improving approximate nearest neighbor
+search through learned adaptive early termination. In Proceedings of the 2020 ACM SIGMOD International Conference
+on Management of Data. 2539–2554.
+[27] Pengfei Li, Yu Hua, Pengfei Zuo, Zhangyu Chen, and Jiajie Sheng. 2023. ROLEX: A Scalable RDMA-oriented Learned
+Key-Value Store for Disaggregated Memory Systems. In 21st USENIX Conference on File and Storage Technologies (FAST
+23). 99–114.
+[28] Yiwei Li, Yuxin Jin, Boyu Tian, Huanchen Zhang, and Mingyu Gao. 2025. ANSMET: Approximate Nearest Neighbor
+Search with Near-Memory Processing and Hybrid Early Termination. In Proceedings of the 52nd Annual International
+Symposium on Computer Architecture. 1093–1107.
+[29] A
+library
+for
+efficient
+similarity
+search
+and
+clustering
+of
+dense
+vectors.
+[n. d.].
+https://github.com/facebookresearch/faiss.
+[30] Artifact link of d-HNSW. [n. d.]. https://anonymous.4open.science/r/dhnsw-E122/.
+[31] Di Liu, Meng Chen, Baotong Lu, Huiqiang Jiang, Zhenhua Han, Qianxi Zhang, Qi Chen, Chengruidong Zhang, Bailu
+Ding, Kai Zhang, et al. 2024. Retrievalattention: Accelerating long-context llm inference via vector retrieval. arXiv
+preprint arXiv:2409.10516 (2024).
+[32] Yi Liu, Minghao Xie, Shouqian Shi, Yuanchao Xu, Heiner Litz, and Chen Qian. 2024. Outback: Fast and Communicationefcient Index for Key-Value Store on Disaggregated Memory. PVLDB 18, 2 (2024), 335 – 348. https://doi.org/10.14778/
+3705829.3705849
+[33] Stuart Lloyd. 1982. Least squares quantization in PCM. IEEE transactions on information theory 28, 2 (1982), 129–137.
+[34] Baotong Lu, Kaisong Huang, Chieh-Jan Mike Liang, Tianzheng Wang, and Eric Lo. 2024. DEX: Scalable Range Indexing
+on Disaggregated Memory. Proceedings of the VLDB Endowment 17, 10 (2024), 2603–2616.
+[35] Xuchuan Luo, Pengfei Zuo, Jiacheng Shen, Jiazhen Gu, Xin Wang, Michael R Lyu, and Yangfan Zhou. 2023. SMART: A
+High-Performance Adaptive Radix Tree for Disaggregated Memory. In 17th USENIX Symposium on Operating Systems
+Design and Implementation (OSDI 23). 553–571.
+[36] Yu A Malkov and Dmitry A Yashunin. 2018. Efficient and robust approximate nearest neighbor search using hierarchical
+navigable small world graphs. IEEE transactions on pattern analysis and machine intelligence 42, 4 (2018), 824–836.
+[37] Christopher Mitchell, Kate Montgomery, Lamont Nelson, Siddhartha Sen, and Jinyang Li. 2016. Balancing CPU and
+network in the cell distributed B-Tree store. In 2016 USENIX Annual Technical Conference (USENIX ATC 16). 451–464.
+[38] Radhika Mittal, Alexander Shpiner, Aurojit Panda, Eitan Zahavi, Arvind Krishnamurthy, Sylvia Ratnasamy, and Scott
+Shenker. 2018. Revisiting network support for RDMA. In Proceedings of the 2018 Conference of the ACM Special Interest
+Group on Data Communication. 313–326.
+[39] James Jie Pan, Jianguo Wang, and Guoliang Li. 2024. Survey of vector database management systems. The VLDB
+Journal 33, 5 (2024), 1591–1615.
+[40] Zhen Peng, Minjia Zhang, Kai Li, Ruoming Jin, and Bin Ren. 2023. iqan: Fast and accurate vector search with efficient
+intra-query parallelism on multi-core architectures. In Proceedings of the 28th ACM SIGPLAN Annual Symposium on
+Principles and Practice of Parallel Programming. 313–328.
+[41] Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Dmytro Okhonko, Samuel Broscheit, Gautier Izacard, Patrick
+Lewis, Barlas Oguz, Edouard Grave, Wen-tau Yih, and Sebastian Riedel. 2021. The Web Is Your Oyster - KnowledgeIntensive NLP against a Very Large Web Corpus. CoRR abs/2112.09924 (2021). arXiv:2112.09924 https://arxiv.org/abs/
+2112.09924
+[42] Ruoyu Qin, Zheming Li, Weiran He, Mingxing Zhang, Yongwei Wu, Weimin Zheng, and Xinran Xu. 2024. Mooncake:
+A kvcache-centric disaggregated architecture for llm serving. arXiv preprint arXiv:2407.00079 (2024).
+[43] Parikshit Ram and Kaushik Sinha. 2019. Revisiting kd-tree for nearest neighbor search. In Proceedings of the 25th acm
+sigkdd international conference on knowledge discovery & data mining. 1378–1388.
+[44] Jie Ren, Minjia Zhang, and Dong Li. 2020. HM-ANN: Efficient Billion-Point Nearest Neighbor Search on Heterogeneous
+Memory. In Advances in Neural Information Processing Systems, H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and
+H. Lin (Eds.), Vol. 33. Curran Associates, Inc., 10672–10684. https://proceedings.neurips.cc/paper_files/paper/2020/file/
+788d986905533aba051261497ecffcbb-Paper.pdf
+[45] Peter Sanders and Christian Schulz. 2013. Think Locally, Act Globally: Highly Balanced Graph Partitioning. In
+Proceedings of the 12th International Symposium on Experimental Algorithms (SEA’13) (LNCS, Vol. 7933). Springer,
+164–175.
+[46] CloudLab: Flexible scientific infrastructure for research on the future of cloud computing. [n. d.].
+https://www.cloudlab.us.
+[47] Yizhou Shan, Yutong Huang, Yilun Chen, and Yiying Zhang. 2018. LegoOS: A disseminated, distributed OS for hardware
+resource disaggregation. In 13th USENIX Symposium on Operating Systems Design and Implementation (OSDI 18). 69–87.
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+23
+
+[48] Jiacheng Shen, Pengfei Zuo, Xuchuan Luo, Tianyi Yang, Yuxin Su, Yangfan Zhou, and Michael R Lyu. 2023. FUSEE: A
+fully Memory-DisaggregatedKey-Value store. In 21st USENIX Conference on File and Storage Technologies (FAST 23).
+81–98.
+[49] Wentao Shi, Xiangnan He, Yang Zhang, Chongming Gao, Xinyue Li, Jizhi Zhang, Qifan Wang, and Fuli Feng. 2024.
+Large language models are learnable planners for long-term recommendation. In Proceedings of the 47th International
+ACM SIGIR Conference on Research and Development in Information Retrieval. 1893–1903.
+[50] Yongye Su, Yinqi Sun, Minjia Zhang, and Jianguo Wang. 2024. Vexless: A Serverless Vector Data Management System
+Using Cloud Functions. Proceedings of the ACM on Management of Data 2, 3 (2024), 1–26.
+[51] Shin-Yeh Tsai, Yizhou Shan, and Yiying Zhang. 2020. Disaggregating persistent memory and controlling them remotely:
+An exploration of passive disaggregated Key-Value stores. In 2020 USENIX Annual Technical Conference (USENIX ATC
+20). 33–48.
+[52] Chenxi Wang, Haoran Ma, Shi Liu, Yuanqi Li, Zhenyuan Ruan, Khanh Nguyen, Michael D Bond, Ravi Netravali,
+Miryung Kim, and Guoqing Harry Xu. 2020. Semeru: A Memory-Disaggregated managed runtime. In 14th USENIX
+Symposium on Operating Systems Design and Implementation (OSDI 20). 261–280.
+[53] Jianguo Wang, Eric Hanson, Guoliang Li, Yannis Papakonstantinou, Harsha Simhadri, and Charles Xie. 2024. Vector
+Databases: What’s Really New and What’s Next?(VLDB 2024 Panel). Proceedings of the VLDB Endowment 17, 12 (2024),
+4505–4506.
+[54] Jingdong Wang and Shipeng Li. 2012. Query-driven iterated neighborhood graph search for large scale indexing. In
+ACM Multimedia 2012. 179–188.
+[55] Jing Wang, Jingdong Wang, Gang Zeng, Zhuowen Tu, Rui Gan, and Shipeng Li. 2012. Scalable k-NN graph construction
+for visual descriptors. In CVPR 2012. 1106–1113.
+[56] Jingdong Wang, Naiyan Wang, You Jia, Jian Li, Gang Zeng, Hongbin Zha, and Xian-Sheng Hua. 2014. Trinary-Projection
+Trees for Approximate Nearest Neighbor Search. IEEE Trans. Pattern Anal. Mach. Intell. 36, 2 (2014), 388–403.
+[57] Jianguo Wang, Xiaomeng Yi, Rentong Guo, Hai Jin, Peng Xu, Shengjun Li, Xiangyu Wang, Xiangzhou Guo, Chengming
+Li, Xiaohai Xu, et al. 2021. Milvus: A purpose-built vector data management system. In Proceedings of the 2021
+International Conference on Management of Data. 2614–2627.
+[58] Jianguo Wang and Qizhen Zhang. 2023. Disaggregated database systems. In Companion of the 2023 International
+Conference on Management of Data. 37–44.
+[59] Mengzhao Wang, Xiaoliang Xu, Qiang Yue, and Yuxiang Wang. 2021. A comprehensive survey and experimental
+comparison of graph-based approximate nearest neighbor search. arXiv preprint arXiv:2101.12631 (2021).
+[60] Qing Wang, Youyou Lu, and Jiwu Shu. 2022. Sherman: A write-optimized distributed b+ tree index on disaggregated
+memory. In Proceedings of the 2022 international conference on management of data. 1033–1048.
+[61] Ruihong Wang, Chuqing Gao, Jianguo Wang, Prishita Kadam, M TamerÖzsu, and Walid G Aref. 2024. Optimizing
+LSM-based indexes for disaggregated memory. The VLDB Journal (2024), 1–24.
+[62] Ruihong Wang, Jianguo Wang, Stratos Idreos, M Tamer Özsu, and Walid G Aref. 2022. The case for distributed
+shared-memory databases with rdma-enabled memory disaggregation. arXiv preprint arXiv:2207.03027 (2022).
+[63] Ruihong Wang, Jianguo Wang, Prishita Kadam, M Tamer Özsu, and Walid G Aref. 2023. dlsm: An lsm-based index for
+memory disaggregation. In 2023 IEEE 39th International Conference on Data Engineering (ICDE). IEEE, 2835–2849.
+[64] Zhonghua Wang, Yixing Guo, Kai Lu, Jiguang Wan, Daohui Wang, Ting Yao, and Huatao Wu. 2024. Rcmp: Reconstructing RDMA-Based Memory Disaggregation via CXL. ACM Transactions on Architecture and Code Optimization 21,
+1 (2024), 1–26.
+[65] Xingda Wei, Rong Chen, Haibo Chen, and Binyu Zang. 2021. Xstore: Fast rdma-based ordered key-value store using
+remote learned cache. ACM Transactions on Storage (TOS) 17, 3 (2021), 1–32.
+[66] Xingda Wei, Rongxin Cheng, Yuhan Yang, Rong Chen, and Haibo Chen. 2023. Characterizing Off-path SmartNIC for
+Accelerating Distributed Systems. In 17th USENIX Symposium on Operating Systems Design and Implementation (OSDI
+23). 987–1004.
+[67] Yipeng Xing, Yongkun Li, Zhiqiang Wang, Yinlong Xu, and John CS Lui. 2023. LightTraffic: On Optimizing CPU-GPU
+Data Traffic for Efficient Large-scale Random Walks. In 2023 IEEE 39th International Conference on Data Engineering
+(ICDE). IEEE, 882–895.
+[68] Ziming Yuan, Lei Dai, Wen Li, Jie Zhang, Shengwen Liang, Ying Wang, Cheng Liu, Huawei Li, Xiaowei Li, Jiafeng
+Guo, et al. 2025. NeuVSA: A Unified and Efficient Accelerator for Neural Vector Search. In 2025 IEEE International
+Symposium on High Performance Computer Architecture (HPCA). IEEE, 790–805.
+[69] Shulin Zeng, Zhenhua Zhu, Jun Liu, Haoyu Zhang, Guohao Dai, Zixuan Zhou, Shuangchen Li, Xuefei Ning, Yuan
+Xie, Huazhong Yang, et al. 2023. DF-GAS: A distributed FPGA-as-a-service architecture towards billion-scale graphbased approximate nearest neighbor search. In Proceedings of the 56th Annual IEEE/ACM International Symposium on
+Microarchitecture. 283–296.
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+24
+
+Fei Fang, Yi Liu, and Chen Qian
+
+[70] Minjia Zhang and Yuxiong He. 2019. Grip: Multi-store capacity-optimized high-performance nearest neighbor search
+for vector search engine. In Proceedings of the 28th ACM International Conference on Information and Knowledge
+Management. 1673–1682.
+[71] Ming Zhang, Yu Hua, and Zhijun Yang. 2024. Motor: Enabling Multi-Versioning for Distributed Transactions on
+Disaggregated Memory. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24).
+801–819.
+[72] Ming Zhang, Yu Hua, Pengfei Zuo, and Lurong Liu. 2022. FORD: Fast one-sided RDMA-based distributed transactions
+for disaggregated persistent memory. In 20th USENIX Conference on File and Storage Technologies (FAST 22). 51–68.
+[73] Zili Zhang, Chao Jin, Linpeng Tang, Xuanzhe Liu, and Xin Jin. 2023. Fast, Approximate Vector Queries on Very
+Large Unstructured Datasets. In 20th USENIX Symposium on Networked Systems Design and Implementation (NSDI 23).
+995–1011.
+[74] Zili Zhang, Fangyue Liu, Gang Huang, Xuanzhe Liu, and Xin Jin. 2024. Fast Vector Query Processing for Large
+Datasets Beyond GPU Memory with Reordered Pipelining. In 21st USENIX Symposium on Networked Systems Design
+and Implementation (NSDI 24). 23–40.
+[75] Pengfei Zuo, Jiazhao Sun, Liu Yang, Shuangwu Zhang, and Yu Hua. 2021. One-sided RDMA-Conscious extendible
+hashing for disaggregated memory. In 2021 USENIX Annual Technical Conference (USENIX ATC 21). 15–29.
+[76] Pengfei Zuo, Qihui Zhou, Jiazhao Sun, Liu Yang, Shuangwu Zhang, Yu Hua, James Cheng, Rongfeng He, and Huabing
+Yan. 2022. RACE: one-sided RDMA-conscious extendible hashing. ACM Transactions on Storage (TOS) 18, 2 (2022),
+1–29.
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+A
+A.1
+
+25
+
+APPENDIX
+Query Execution Algorithm
+
+The pseudocode of the query execution procedure and the fetch routine are outlined in Algorithm 1
+and Algorithm 2, respectively.
+Algorithm 1 Pipelined Query Execution Overview
+Require: Query batch 𝑄 [1..𝑛]
+Ensure: Top-𝑘 results: labels 𝐿[1..𝑛] [1..𝑘]
+//𝐿[𝑖] [ 𝑗] is the label of the 𝑗-th nearest neighbor of query 𝑄 [𝑖]
+1: 𝐿𝑚 ← MetaSearch(𝑄)
+2: Build query-to-subindex map S from 𝐿𝑚
+3: S ← SortByQueryCount(S, desc)
+4: Split S into:
+5: F : uncached shards
+6: R: cached shards
+7: Initialize queues: FetchQ ← F , ReadyQ ← R
+8: /* The following are executed in parallel threads */
+thread 1: Fetch Worker (persistent across batches)
+9: while FetchQ not empty do
+10:
+FetchWorker(FetchQ, DeserQ)
+11: end while
+Thread 2: Deserialize Worker (persistent across batches)
+12: while DeserQ not empty do
+13:
+𝑠 ← Deqeue(DeserQ)
+14:
+𝑠 ← InPlaceDeserialize(𝑠)
+// reconstruct sub-HNSW 𝑠 directly from memory buffer
+15:
+DeserQ ← ReadyQ ∪ { 𝑠 }
+16: end while
+Thread 3: Search Worker (persistent across batches)
+17: while ReadyQ not empty do
+18:
+𝑠 ← Deqeue(ReadyQ)
+19:
+𝐿 ← SubHNSWSearch(𝑠, 𝑄𝑠 , 𝐿)
+// perform local search on sub-HNSW 𝑠 for query set 𝑄𝑠 and merge top-𝑘 results into 𝐿
+20: end while
+21: return 𝐿
+
+A.2
+
+Insert Execution Algorithm
+
+The pseudocode of the query execution procedure and the commit for update are outlined in
+Algorithm 3 and Algorithm 4, respectively.
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+26
+
+Fei Fang, Yi Liu, and Chen Qian
+
+Algorithm 2 FetchWorker: Load sub-HNSW indices into DeserQ
+Require: Fetch queue FetchQ, Deserialize queue DeserQ, Cached offset Offset, Cached shared
+overflow offset Overflow
+// Offset records the start and end positions of each sub-HNSW in the memory pool. See Sec. 3 for
+details.
+// Overflow records prior overflow areas caused by in-place updates. See Sec. 4.2 for details.
+1: if doorbell mode enabled then
+// doorbell mode details see Sec. 4.4
+2:
+Select up to 𝑚 sub-HNSW shards 𝑠 1, . . . , 𝑠𝑚 from FetchQ
+// 𝑚 is current cache capacity, typically smaller than the maximum doorbell batch size
+3:
+DoorbellList ← ∅
+4:
+for all 𝑠𝑖 in {𝑠 1, . . . , 𝑠𝑚 } do
+5:
+DoorbellList ← DoorbellList ∪{Offset[𝑠𝑖 ]}
+6:
+if Overflow[𝑠𝑖 ] is defined then
+7:
+DoorbellList ← DoorbellList ∪{Overflow[𝑠𝑖 ]}
+8:
+end if
+9:
+end for
+10:
+IssueDoorbellRDMA(DoorbellList)
+11:
+if FetchStatus[DoorbellList] = Success then
+12:
+DeserQ ← DeserQ ∪ { {𝑠 1, . . . , 𝑠𝑚 } }
+13:
+end if
+14: else
+15:
+𝑠 ← Deqeue(FetchQ)
+16:
+if Overflow[𝑠𝑖 ] is defined then
+17:
+Issue doorbell RDMA command with Offset[𝑠] and Overflow[𝑠]
+18:
+IssueDoorbellRDMA(Offset[𝑠], Overflow[𝑠])
+19:
+else
+20:
+IssueRDMARead( Offset[𝑠])
+21:
+end if
+22:
+if FetchStatus[𝑠] = Success then
+23:
+DeserQ ← DeserQ ∪ { 𝑠 }
+24:
+end if
+25: end if
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+d-HNSW: A High-performance Vector Search Engine on Disaggregated Memory
+
+27
+
+Algorithm 3 Insertion Execution Overview
+Require: Insert batch 𝐼 [1..𝑛], Cache capacity 𝑐
+Ensure: Insertion status in remote memory pool
+1: 𝐿𝑚 ← MetaSearch(𝑄)
+2: Build query-to-subindex map S from 𝐿𝑚
+3: Split S into:
+4: C: cached shards
+5: U: uncached shards
+Process cached sub-HNSW:
+6: for all 𝑖 ∈ C do
+7:
+sub_index ← cache[𝑠]
+8:
+PrepareAndCommitUpdate(𝑖, S [𝑖])
+9: end for
+Process uncached sub-HNSW:
+10: for all 𝑖 ∈ U do
+11:
+sub_index ← FetchSubHNSW(𝑖)
+12:
+cache[𝑠] ← sub_index
+13:
+cache_lru.push_front(𝑖)
+14:
+if |cache| > 𝑐 then
+15:
+EvictFromCache( )
+16:
+end if
+17:
+PrepareAndCommitUpdate(𝑖, S [𝑖])
+18: end for
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+28
+
+Fei Fang, Yi Liu, and Chen Qian
+
+Algorithm 4 PrepareAndCommitUpdate: Update sub-HNSW and commit via RDMA
+Require: sub-HNSW 𝑖, Insertion data S [𝑖], Cached Offset Offset, Cached shared overflow offset
+Overflow
+Ensure: Successful update and RDMA commit of sub-HNSW 𝑖
+// Extract current metadata from 𝑖
+1: Define 𝑀 = {𝑛𝑡𝑜𝑡𝑎𝑙, 𝑒𝑛𝑡𝑟𝑦_𝑝𝑜𝑖𝑛𝑡, 𝑚𝑎𝑥_𝑙𝑒𝑣𝑒𝑙, 𝑛𝑒𝑖𝑔ℎ𝑏𝑜𝑟𝑠_𝑠𝑖𝑧𝑒, 𝑙𝑒𝑣𝑒𝑙𝑠_𝑠𝑖𝑧𝑒, 𝑜 𝑓 𝑓 𝑠𝑒𝑡𝑠, 𝑥𝑏_𝑠𝑖𝑧𝑒𝑠}
+2: Define 𝐺 = {levels, offsets, xb} // Extract current data structure from 𝑖, except for neighbors
+3: 𝐼 .add(S [𝑖]) // Perform local insertion
+// Prepare commit record
+4: Initialize commit record: C ← {.sub_index = 𝑖}
+5: Identify modified metadata fields: Δ𝑀 ← {𝑚 ∈ 𝑀 | 𝐼 .𝑚 ≠ 𝑀.𝑚}
+6: for all 𝑚 ′ ∈ Δ𝑀 do
+7:
+C ← {.overwrite = {𝑚 ′, Offset[m]}, 𝑠𝑖𝑧𝑒𝑜 𝑓 (𝑚 ′ )}
+8: end for
+9: Identify data structure growth for 𝑙𝑒𝑣𝑒𝑙𝑠, 𝑜 𝑓 𝑓 𝑠𝑒𝑡𝑠, 𝑥𝑏 with overflow management: Δ𝐺 ← {𝑔 ∈
+𝐺 | sizeof(𝑠.𝑔) > sizeof(𝐺 .𝑔)}
+10: for all 𝑔′ ∈ Δ𝐺 do
+11:
+C ← {.overwrite = {𝑚 ′, Offset[i][m]}, 𝑠𝑖𝑧𝑒𝑜 𝑓 (𝑚 ′ )}
+12:
+if internal gap size in Offset[i][g’] ≥ required size then
+13:
+Append write to C.append ← {𝑔′, Offset[𝑖] [𝑔′ ], 𝑠𝑖𝑧𝑒𝑜 𝑓 (𝑔′ )}
+14:
+else if internal gap + overflow gap ≥ required size then
+15:
+Fill available space in Offset[i][g’] to C.append
+16:
+if 𝑖 is the first sub-HNSW in its pair(details in Sec. 4.2) then
+17:
+remainder in Overflow[i][g’] append regions to C.append in forward direction
+18:
+else
+19:
+remainder in Overflow[i][g’] append regions to C.append in backward direction
+20:
+end if
+21:
+Append both regions to C.append
+22:
+else
+23:
+Trigger reconstruction
+24:
+end if
+25: end for
+26: Identify dirty regions for 𝑛𝑒𝑖𝑔ℎ𝑏𝑜𝑟𝑠: Δ𝑁 ← {[𝑠, 𝑒] | 𝐼 .𝑛𝑒𝑖𝑔ℎ𝑏𝑜𝑟𝑠 [𝑠 : 𝑒] ≠ 𝑀.𝑛𝑒𝑖𝑔ℎ𝑏𝑜𝑟𝑠 [𝑠 : 𝑒]}
+27: for all region [𝑠, 𝑒] ∈ Δ𝑁 do
+28:
+if 𝑒 < 𝑛 neighbors then
+29:
+Append write to C.overwrites ← {𝑠, Offset[i][neighbors]}, 𝑒 − 𝑠}
+30:
+else
+Handle append-only growth for 𝑛𝑒𝑖𝑔ℎ𝑏𝑜𝑟𝑠 similar to 𝑙𝑒𝑣𝑒𝑙𝑠, 𝑜 𝑓 𝑓 𝑠𝑒𝑡𝑠, 𝑥𝑏 (see lines 12–23)
+31:
+32:
+end if
+33: end for
+// Execute RDMA batch commit
+34: Prepare RDMA operations: ops ← BuildRDMAOps(C)
+35: ExecuteRDMABatch(ops)
+36: Update Overflow
+
+, Vol. 1, No. 1, Article . Publication date: March 2026.
+
+

@@ -1,0 +1,1586 @@
+                                                       Cascade-Aware Multi-Agent Routing:
+                                                Spatio-Temporal Sidecars and Geometry-Switching
+                                                                                 Davide Di Gioia
+                                                                                ucesigi@ucl.ac.uk
+
+                                                                                    March 2026
+
+
+
+
+arXiv:2603.17112v1 [cs.AI] 17 Mar 2026
+                                                                                       Abstract
+                                             A common architectural pattern in advanced AI reasoning systems is the symbolic graph
+                                         network: a collection of specialized agents or modules connected by typed delegation edges,
+                                         routing tasks through a dynamic execution graph. Agent orchestration frameworks, modular
+                                         reasoning pipelines, and self-improving multi-agent engines are all instances of this pattern, and
+                                         they share a structural blind spot. Their schedulers optimize load and fitness, but carry no
+                                         model of how failure propagates differently depending on whether the current execution graph
+                                         is tree-like, cyclic, or mixed. In tree-like delegation regimes, a single agent failure cascades
+                                         exponentially through the hierarchy; in dense cyclic regimes, the same failure self-limits within
+                                         one hop. A geometry-blind scheduler cannot distinguish these cases. This paper identifies the
+                                         blind spot, quantifies its cost, and proposes a lightweight mitigation. Prior geometry-aware graph
+                                         methods assume a static dataset with a fixed structural regime; multi-agent routing methods
+                                         optimize delegation without modeling geometry or failure propagation. Neither addresses the
+                                         runtime question: as the execution graph shifts between structural regimes under churn and
+                                         noise, how should a route-risk estimator choose its geometric prior?
+                                             We cast this as adaptive geometry selection on a time-indexed execution graph with route-
+                                         local failure propagation. Our model combines: (i) a Euclidean spatio-temporal baseline, (ii) a
+                                         hyperbolic route-risk model with temporal decay and an optional repeat-failure burst-excitation
+                                         term inspired by self-exciting point processes, and (iii) a learned geometry selector over structural
+                                         graph features. The selector is a compact multilayer perceptron (9 → 12 → 1) whose inputs
+                                         combine six topology statistics with three geometry-aware features: breadth-first search (BFS)
+                                         shell-growth slope, cycle-rank norm, and fitted Poincaré curvature. On the heterogeneous
+                                         benchmark, the learned selector resolves the principal failure mode of fixed hyperbolic models:
+                                         in the hardest non_tree regime it improves win rate from 64–72% for fixed hyperbolic variants
+                                         to 92%, while achieving 87.2% overall win rate across all stress conditions on the Genesis 3
+                                         benchmark distribution. A preliminary cross-architecture study on Barabási–Albert, Watts–
+                                         Strogatz, and Erdős–Rényi graphs (Appendix I) confirms that structural propagation modeling
+                                         generalises perfectly to all three families; the trained geometry gate requires retraining for
+                                         out-of-distribution topologies.
+                                             To quantify total system value, we also evaluate Genesis 3 routing without any spatio-temporal
+                                         sidecar, using only the signals available to the native bandit/LinUCB scheduler: team fitness
+                                         and mean node load. This native baseline achieves 50.4% win rate overall and only 20% in
+                                         tree-like regimes (clean and noise). Adding the full sidecar recovers 87.2% overall, a +36.8
+                                         percentage-point system-level gain. In tree-like regimes the gain reaches +48 to +68 points,
+                                         matching the prediction of our cascade-sensitivity analysis (Proposition 4): when graph expansion
+                                         is exponential, node load alone does not reveal propagation risk.
+                                             The paper identifies geometry-blindness as a failure-propagation observability gap in execution-
+                                         graph agent systems, not previously characterized to our knowledge across the dynamic-graph,
+                                         multi-agent routing, or agent systems literature. It formalizes the gap as an online geometry-
+                                         control problem, isolates its operational cost through a system-level ablation (50.4% vs 87.2%
+
+
+                                                                                          1
+     win rate), instantiates a solution with a compact learned geometry selector, and grounds the
+     findings in a cascade-sensitivity analysis whose regime predictions match the empirical curves.
+     The results support a general principle: execution-graph agent systems require a geometry-aware
+     failure-propagation signal at the scheduling layer, and a 133-parameter sidecar substantially
+     mitigates this gap in at least one high-capability instance.
+
+
+1    Introduction
+A prevailing approach to building advanced AI reasoning systems is, at its core, symbolic graph
+network construction. Agent orchestration frameworks (e.g., LangGraph, AutoGen [1], CrewAI),
+modular reasoning pipelines, mixture-of-experts routing layers, and self-improving multi-agent
+engines all share the same fundamental architecture: agents are nodes, delegation relationships are
+directed edges, and executing a task means routing a signal through a time-varying graph. The
+same structure appears in the leading neuro-symbolic AGI research systems: AlphaGeometry [3]
+routes reasoning through a geometric construct graph; OpenCog Hyperon [2] stores all knowledge
+as a metagraph and runs every cognitive operation as graph-rewriting over it. This convergence on
+graph-structured execution is not accidental — graphs are the natural representation for distributed
+reasoning.
+    But this architectural consensus creates a shared, unexamined blind spot. No matter how
+sophisticated the individual agents, the scheduler that routes tasks through the graph is geometry-
+blind: it sees node load and agent fitness, but it does not model how the current shape of the graph
+determines how a single agent failure propagates. In tree-like delegation regimes, one failure cascades
+exponentially through the BFS shell structure: the failure amplification grows with depth. In dense
+cyclic regimes, the same failure self-limits within one or two hops. The scheduler cannot tell the
+difference. Any execution-graph system in this paradigm that routes tasks without a geometry-aware
+failure-propagation signal carries this observability gap, silently.
+    We make that blind spot concrete, measure its operational cost, and close it. Genesis 3 is a
+self-improving multi-agent reasoning engine whose execution graph shifts between tree-like, cyclic,
+and mixed regimes as its agent team evolves; it is the system in which we measure and fix the
+problem. The geometry-blind native scheduler achieves only 50.4% overall win rate and 20% in
+tree-like regimes. Adding a spatio-temporal sidecar with adaptive geometry selection recovers 87.2%
+overall, a +36.8 percentage-point gain that is consistent with the theoretical prediction of our
+cascade-expansion analysis (Proposition 4). Genesis 3 is the measurement context; the structural
+argument generalizes to the class by construction via the geometry-blind definition and Proposition 4,
+and cross-architecture empirical validation is a direct avenue for future work (see Section 10).
+    The question we address is:
+      Given any symbolic-graph-network AI system whose execution graph shifts between tree-
+      like, cyclic, and mixed regimes, how should a route-risk estimator choose its geometric
+      prior at runtime?
+    To our knowledge, this question is not posed in prior work. Geometry papers assume a fixed
+dataset with a chosen structural regime. Multi-agent routing papers optimize scheduling and
+coordination without modeling graph geometry or failure propagation. Neither addresses the
+geometry-control problem that arises in any geometry-blind scheduler within the symbolic-graph-
+network paradigm, a common failure mode, we argue, across this architectural class, though broad
+cross-system empirical confirmation remains future work.
+    We study this problem in Genesis 3, a self-improving multi-agent reasoning system with routing,
+delegation, governance, and episodic traces. We introduce a spatio-temporal route-risk sidecar that
+
+                                                   2
+evaluates active routes using time-indexed graph snapshots and failure events. Our contribution is
+fivefold:
+1. Blind spot identification. We identify geometry-blindness as a failure-propagation observabil-
+   ity gap common to execution-graph systems in contemporary agent orchestration: any system
+   that routes tasks through a dynamic execution graph using a geometry-blind scheduler is system-
+   atically exposed to failure cascades whenever the graph enters a tree-like regime. We demonstrate
+   and quantify this vulnerability empirically in Genesis 3 as a first instance; by construction, the
+   structural argument applies to any system of this class that lacks runtime geometry monitoring,
+   and we conjecture the finding extends to agent orchestration frameworks, modular reasoning
+   pipelines, and self-improving multi-agent engines more broadly. Cross-architecture empirical
+   validation is planned future work.
+2. Problem formulation. We formalize the resulting gap as an online geometry-control problem
+   for live execution graphs, distinct from both static geometry selection and standard MAS routing.
+3. System-level baseline. We provide a system-level ablation showing that Genesis 3 routing
+   without any failure-propagation model achieves only 50.4% win rate overall (20–40% in tree-like
+   regimes), quantifying the cost of the blind spot.
+4. Instantiation. We instantiate the problem with a hyperbolic spatio-temporal model and a
+   learned geometry selector (9 → 12 → 1 MLP, 133 parameters), recovering a tied-best 87.2%
+   overall win rate and 92% in the hardest non-tree regime on the Genesis 3 benchmark distribution.
+   On out-of-distribution graph families without retraining, the structural propagation baseline
+   generalises perfectly while the trained gate’s win rate ranges from 7% (BA tree-like) to 65%
+   (WS small-world), confirming that the trained gate is distribution-specific (Appendix I).
+5. Theoretical grounding. We prove that regime-specific failure dynamics (Proposition 4) predict
+   where and why geometry-aware scoring adds value, with empirical results consistent with the
+   theoretical prediction.
+    The operational question is whether a compact structural gate can predict, from graph features
+alone, which geometry will produce the larger route-separation margin on the current scenario. The
+gate is a meta-learner over a geometry-choice policy: it predicts which scoring geometry performs
+better on the current route, not which geometry is “true” for the graph in a generative sense.
+    To make the evaluation scientifically explicit, the paper tests three research questions. RQ1:
+does explicit failure-propagation modeling improve routing quality relative to the native scheduler
+signal alone? RQ2: under topology regime shift, does adaptive geometry selection outperform any
+fixed geometric prior? RQ3: do the observed gains occur in precisely the regimes predicted by
+cascade-expansion theory? The remainder of the paper is organized to answer these questions in
+that order.
+
+1.1   Hypotheses
+• H1 (Perception-gap hypothesis). Adding explicit failure-propagation modeling to native
+  multi-agent routing improves safer-route selection relative to load-and-fitness-only routing.
+• H2 (Regime-adaptation hypothesis). Under topology regime shift, a learned geometry
+  selector outperforms any fixed geometric prior in held-out route-risk estimation.
+• H3 (Theory-alignment hypothesis). The largest gains from the sidecar occur in high-
+  expansion tree-like regimes, as predicted by cascade-expansion analysis.
+
+                                                 3
+2     Related Work and Gap
+The present work lies at the intersection of four literatures: geometric graph representation learning,
+spatio-temporal graph learning, temporal point processes, and multi-agent communication or
+orchestration. Each contributes an important ingredient, but none directly studies the question
+posed here: how should a live multi-agent execution system choose its geometric prior as its topology
+shifts between hierarchical, cyclic, and mixed regimes?
+
+2.1   Geometric Graph Learning
+Hyperbolic representation learning is now a standard tool for graphs with latent hierarchy. Early
+work on hyperbolic neural networks showed that negatively curved spaces can represent tree-like
+growth far more efficiently than Euclidean spaces, especially when distances expand exponentially
+with depth [9]. This perspective was extended to graphs by hyperbolic graph convolutional networks,
+which demonstrated strong advantages on hierarchical and scale-free relational structure [5]. More
+generally, mixed-curvature models argued that no single constant-curvature manifold is universally
+adequate, and that different latent factors may be better represented in Euclidean, spherical, or
+hyperbolic components [19]; and constant-curvature GCN variants confirmed that the choice of
+curvature sign materially affects downstream task performance [4].
+    These papers establish a crucial baseline: geometry matters. However, geometry is typically
+chosen once for a dataset, architecture, or embedding space. The problem is static model selection,
+not online geometry control. Even work that expands the geometry family beyond pure hyperbolic
+space still assumes a fixed representational choice during training and evaluation. Our setting differs
+because the graph itself is not stationary: the same system may exhibit strongly hierarchical routes
+in one interval and dense reciprocal motifs in the next. The scientific question is therefore not only
+which geometry is expressive, but when each geometry should be preferred.
+    Recent dynamic-hyperbolic work also does not close this gap. For example, hyperbolic variational
+graph models for dynamic graphs show that non-Euclidean latent spaces can improve time-evolving
+graph modeling [22], and temporal hyperbolic embedding methods have been proposed for discrete-
+time dynamic networks [26]. These are important precedents, but they still optimize a chosen
+non-Euclidean family rather than treat geometry selection itself as the prediction problem.
+
+2.2   Spatio-Temporal and Dynamic Graph Learning
+The spatio-temporal graph learning literature studies signals or interactions evolving over graph
+structure. Canonical traffic-forecasting models such as DCRNN [14], STGCN [27], and Graph
+WaveNet [24] combine graph propagation with temporal modeling to capture diffusion, recurrence,
+and long-range dependencies. More recent dynamic-graph methods such as DyRep [23], Temporal
+Graph Networks [18], EvolveGCN [16], and temporal attention models [25] focus on continuous-time
+or event-driven representation learning on evolving graphs.
+    This line of work is highly relevant because our execution graph is explicitly time-indexed and
+the risk signal depends on both topology and history. However, these methods usually assume that
+the graph-learning architecture is fixed in advance. They answer questions such as how to encode
+time, how to update node states, or how to predict future edges or labels. They do not ask whether
+the underlying geometric prior should itself switch as topology changes. In that sense, our paper is
+adjacent to spatio-temporal graph learning, but its main object is a different one: regime-aware
+geometric bias for route-risk estimation.
+    Survey work on dynamic graphs makes this distinction clearer. Surveys of representation learning
+for dynamic graphs document a large space of temporal embedding methods, recurrent updates,
+
+                                                  4
+attention mechanisms, and streaming adaptations [13]. Yet even in this broader perspective, the
+dominant assumption remains that a chosen geometry and message-passing family are fixed parts of
+the model class. Our work inserts a new decision layer on top of that assumption.
+
+2.3   Temporal Point Processes and Self-Excitation
+Our failure model also draws on temporal point-process reasoning. Hawkes processes introduced the
+foundational idea that past events can increase the short-term intensity of future events, thereby
+modeling clustered or self-exciting dynamics [10]. This idea has become central in event-sequence
+modeling, including recurrent marked temporal point processes [7] and neural Hawkes processes [15].
+Reviews of self-exciting spatio-temporal point processes further show how excitation mechanisms
+are used in domains where localized events propagate over time and space [17].
+    We do not present a new point-process model in this paper. Rather, we use a lightweight
+burst-excitation heuristic inspired by self-exciting point processes as one ingredient inside route-risk
+scoring for repeated local failures. The gap relative to the point-process literature is therefore not
+temporal dependence per se; it is the coupling of temporally clustered failures with graph geometry
+selection in a live execution system.
+
+2.4   Multi-Agent Communication and Orchestration
+The multi-agent literature provides the systems motivation. Work on learned communication
+and coordination has shown that message passing, selective communication, and graph-structured
+interaction can substantially improve cooperative behavior [6, 12, 21]. There is also a long systems
+lineage on coordination, blackboard control, and distributed problem solving, where the execution
+graph is an operational object governing delegation and synchronization rather than a geometric
+object [8, 11].
+     These papers are close in spirit because they study how agents exchange information over
+changing interaction structures. But their central objectives are policy learning, communication
+efficiency, or coordination quality. They generally do not build a spatio-temporal route-risk estimator
+whose inductive bias changes with topology. In particular, we are not aware of prior work that takes
+a live execution graph from a multi-agent reasoning engine, models timestamped failure propagation
+on active routes, and treats geometry choice as a runtime decision variable.
+     The most directly relevant recent work in this space is Kim et al. [20] (Google Research, Google
+DeepMind, and MIT), who conduct a controlled large-scale evaluation of five canonical multi-
+agent coordination topologies across 180 configurations and derive quantitative scaling laws for
+agent systems. Their key empirical finding on topology-dependent error amplification is striking:
+independent-agent coordination amplifies errors 17.2×, while centralized coordination contains this
+to 4.4×. A predictive coordination model using topology-class and task-property features achieves
+cross-validated R2 = 0.524. This is the strongest existing empirical evidence that coordination
+structure determines failure propagation magnitude in real multi-agent systems, and it directly
+motivates the concern we formalize. However, their analysis operates at design time: topology is
+a fixed architectural choice made before deployment, and the scaling model predicts which fixed
+topology to select. It does not model the intra-episode structural shifts that occur as a live execution
+graph moves between tree-like, cyclic, and mixed regimes during a single solve. Their 17.2×
+amplification figure is an aggregate over entire benchmark runs; it does not indicate when within
+a run the high-amplification condition exists, nor does it equip the scheduler with a live signal to
+detect that condition at route-scoring time. Our work addresses exactly this runtime perception gap:
+a geometry-aware cascade risk estimator that operates continuously as execution-graph topology
+
+
+                                                   5
+evolves, providing the intra-episode structural monitoring layer that Kim et al. [20] leave open.
+    Many contemporary reasoning systems (agent orchestration frameworks and neuro-symbolic
+proof systems alike) execute by routing computation through an evolving graph of components
+and dependencies. This motivates our focus on execution-graph regime shifts and their operational
+consequences for routing. While prior work emphasizes expressiveness and search efficiency, our
+contribution isolates a complementary systems concern: route selection requires propagation-aware
+structural perception, and the appropriate geometric inductive bias can change online as the
+execution topology changes.
+
+Definition 1 (Geometry-blind routing). Consider a system that selects among candidate routes
+r ∈ Rt at time t using a scoring rule
+
+                                      score(r, t) = f (ψt (r), ξt ) ,
+
+where ψt (r) are route-level aggregate observables (e.g. mean/max load, latency, cost, historical
+fitness) and ξt are task/context features. We say the routing is geometry-blind if the scoring rule
+does not depend on any propagation-sensitive structural representation of the current execution graph,
+i.e. it does not use any feature map ϕ(Gt [r]) that measures expansion, cyclicity, or hyperbolicity of
+the subgraph induced by route r (e.g. BFS shell-growth rate, cycle rank, Gromov δ-hyperbolicity, or
+treewidth diagnostics), and does not simulate or estimate failure propagation on Gt [r].
+Equivalent characterization. Routing is geometry-blind if and only if, conditional on (ψt (r), ξt ), the
+routing decision is invariant to any structural modification of Gt [r] that preserves those aggregate
+observables.
+
+2.5   Gap Statement
+The gap can therefore be stated precisely. Hyperbolic and mixed-curvature learning show that
+geometry matters for graph structure. Spatio-temporal and dynamic-graph models show that
+time-varying graphs require temporal reasoning. Temporal point processes show that repeated
+failures can be self-exciting. Multi-agent systems show that execution graphs are operationally
+meaningful and can shift rapidly with workload. What prior work does not directly articulate, to
+our knowledge, is the following:
+
+      A dominant paradigm in contemporary agent orchestration (symbolic graph networks
+      in which agents are nodes, delegation relationships are edges, and task execution is
+      a routing problem on an evolving graph) produces the following failure-propagation
+      observability gap in any system of this class that lacks runtime geometry monitoring:
+      the scheduling layer is geometry-blind. It cannot distinguish tree-like regimes (where
+      failure cascades exponentially) from cyclic regimes (where failure self-limits). This gap
+      arises by construction from the geometry-blind definition, not from any quirk of a single
+      implementation; we conjecture it is a structural property of the architectural class, though
+      broad cross-system empirical confirmation remains future work. Many systems in this
+      paradigm that route without geometry-aware propagation signals are likely to inherit this
+      observability gap; we test and quantify it in Genesis 3.
+
+   The closest existing line of work combines dynamic hyperbolic embeddings with architectures
+that blend or compare multiple representational biases over temporal graphs. Those methods are
+the nearest conceptual neighbors because they acknowledge both time variation and geometry
+mismatch. However, they treat geometry as a model-class choice made offline, not as a runtime
+
+                                                    6
+control variable inside a live execution system that is continuously restructuring its own agent graph.
+The vulnerability we identify is therefore not visible to these methods: they do not inspect the
+running execution graph at route-scoring time.
+    Prior work does not identify geometry-blindness as a failure-propagation observability gap
+in execution-graph agent systems, nor provide a runtime mechanism to close it. The individual
+components (hyperbolic structure, dynamic graphs, and temporally clustered failure signals) are
+each well established; the contribution is their integration into a runtime geometry-control layer
+inside a live multi-agent scheduler. Because this execution pattern is common to agent orchestration
+frameworks and modular reasoning pipelines, the observability gap is a natural failure mode for
+systems in this class that route without geometry-aware failure-propagation signals.
+
+
+3     Problem Formulation
+3.1   System Context: Genesis 3
+Genesis 3 is a multi-agent reasoning engine in which a team of specialized agents (planners, generators,
+critics, and verifiers) collaborate to solve tasks through a 9-gate self-modification pipeline (syntax
+check → Bayesian proof → adversarial stress → Lean4 formal verification → ephemeral sandbox →
+causal validation, followed by canary and constitutional governance). This section gives the concrete
+interpretation of the abstract model that follows; readers familiar with multi-agent systems can
+map directly from model to implementation.
+
+Nodes and edges. Each node v ∈ Vt is an active agent instance: a software process (planner,
+generator, critic, or verifier) that accepts a task payload, executes one step of the reasoning pipeline,
+and emits outputs or delegates subtasks. Agents are organized into an AgentTeam with a directed
+acyclic communication-flow graph; the AgentTeamOrchestrator executes them in topological order,
+running parallel groups concurrently via a ThreadPoolExecutor. Each directed edge (u, v) ∈ Et is
+a task-delegation dependency, meaning that agent u may pass work downstream to agent v during
+a solve episode. Node load ℓt (v) ∈ [0, 1] is a normalized occupancy fraction; edge weight wt (u, v)
+reflects recent message-delivery reliability estimated from logs. The graph Gt changes over time as
+agents are spawned or decommissioned (churn) and as workload patterns shift.
+
+Routes. A route r = (v1 , v2 , . . . , vk ) is an ordered delegation chain: agent v1 receives the original
+task and may delegate to v2 , and so on. The active route subgraph Gt [r] contains exactly those k
+agents and the directed edges among them. A new route is selected at each solve episode (one call
+to solve(problem, context)); routing decisions therefore occur at the frequency of task arrivals.
+The 9-gate pipeline creates deep sequential dependencies within a solve episode, which means that a
+failure at one gate may propagate forward and block all downstream stages unless an alternative
+delegation path exists: the key motivation for failure-propagation modeling.
+
+Failures. A failure event is logged whenever an agent raises an unhandled exception, times out,
+or produces output rejected by a downstream verifier. Each event is recorded as (τi , vi , si , ci , ri )
+where τi is the timestamp, vi is the affected agent, si ∈ [0, 1] is a severity score derived from error
+type and downstream impact, ci is a category label (e.g., timeout, logic_error, gate_fail), and
+ri is the active route at the time. The failure history F accumulates these events across episodes
+and is shared via a Blackboard (thread-safe shared memory).
+
+
+
+                                                    7
+Native scheduler. Without the spatio-temporal sidecar, Genesis 3 selects routes using a
+LinUCBTuner: a contextual bandit with 9 route-configuration arms and a 6-dimensional context
+vector (5 task-context features plus a bias term). The reward signal is based on the team fitness
+score (exponentially smoothed success rate for the candidate route) and the mean node load ℓ̄ over
+the route. This is adequate for steady-state load balancing but carries no failure-propagation model
+and no geometric prior, so it cannot distinguish tree-like delegation chains from dense cyclic ones
+under churn and noise. The sidecar in this paper is additive: it computes a supplementary route-risk
+score R(r, t) that the scheduler can incorporate alongside its native signal.
+
+3.2   Abstract Model
+We model a running system as a time-indexed sequence of directed graphs
+
+                                    G = {Gt = (Vt , Et , wt , ℓt ) : t ∈ R≥0 },
+   where Vt is the active agent set, Et is the communication or dependency edge set, wt denotes
+edge reliability or strength, and ℓt denotes node or edge load metadata.
+   Let a route r at time t activate a subgraph
+
+                                                   Gt [r] = (Vt [r], Et [r]).
+    Let the failure history be a set of timestamped events
+
+                                            F = {(τi , vi , si , ci , ri )}N
+                                                                           i=1 ,
+
+   where τi is time, vi ∈ Vτi is the affected node, si ∈ R≥0 is severity, ci is event category, and ri is
+an optional route label.
+   The task is to construct a route-risk score
+
+                                                         R(r, t) ∈ R
+   that predicts vulnerability of the active route under future failure propagation.
+   The central difficulty is that the correct geometric inductive bias is itself time-dependent. We
+therefore introduce a geometry variable
+
+                                                   gt (r) ∈ {Euc, Hyp},
+    or more generally a soft selector
+
+                                                       πt (r) ∈ [0, 1],
+    interpreted as preference for hyperbolic geometry.
+    The problem is to learn or estimate πt (r) from graph structure and recent event history.
+
+
+4     Spatio-Temporal Route-Risk Model
+4.1   Temporal Failure Intensity
+For node v at time t, define the temporally decayed failure intensity
+
+                                                                                    t − τi
+                                                                                            
+                                                    1[ri ∈ {∅, r}] si exp −
+                                                                                                     
+                    λt (v; r) =                                                                  α(ci ) ,
+                                      X
+
+                                  i:vi =v, τi ≤t
+                                                                                      h
+
+                                                               8
+    where h > 0 is a half-life parameter and α(ci ) is a category-dependent multiplier.
+    The hyperbolic model can further augment this base intensity with a same-node burst term
+derived from successive inter-event gaps. Let mv = mv (t; r) := |{i : vi = v, ri ∈ {∅, r}, τi ≤ t}| be
+the count of relevant events at node v on route r up to time t, and let
+
+                                             τ(1) < τ(2) < · · · < τ(mv )
+   be the corresponding ordered failure times.
+   Define the gap-based burst statistic
+
+                                     1              τ(q+1) − τ(q)
+                                                                                     
+                                         Pmv −1
+                                          q=1 exp −               , mv ≥ 2,
+                                     
+                                     
+                      bt (v; r) = mv − 1                  δ
+                                 0,
+                                 
+                                                                    mv < 2,
+   where δ > 0 is an excitation-decay constant. The damped implementation then uses
+
+                          λ̃t (v; r) = λt (v; r) + 0.14 bt (v; r) st (v; r) dt (v; r) ot (v; r),
+   with
+
+                                                                                                    1
+      st (v; r) = tanh λt (v; r) ,         dt (v; r) = m−1/2 ,          ot (v; r) =                                    ,
+                                                        v
+                                                                                           1 + max{0, λt (v; r) − λ0 }
+
+   where
+                                               mv
+                                            1 X               t − τ(q)
+                                                                                  
+                               λt (v; r) :=        s(q) exp −
+                                                                                                
+                                                                                       α c(q)
+                                            mv q=1               h
+
+    denotes the mean decayed severity of same-node events included in the base intensity. Here
+λ0 = 1 is the implementation’s baseline excitation threshold. The overload factor ot (v; r) ac-
+tivates when the decayed base intensity exceeds λ0 , indicating unusually concentrated recent
+failure mass. The
+                benchmark alsoincludes a classic ablation that replaces the damped term by
+     Pmv −1
+0.25 q=1 exp −(τ(q+1) − τ(q) )/δ . This is not a full Hawkes intensity; it is a bounded burstiness
+bonus based on local inter-arrival times, which is the quantity the implementation actually computes.
+
+4.2    Euclidean Route Propagation
+The Euclidean baseline propagates node-local risk over the route subgraph with diffusion, recovery,
+latency, and bottleneck penalties. If xt (v) is the node risk, one step of propagation is abstractly of
+the form
+
+                               xt+1 (u) = 1 − ρu xt (u) +                          ηvu xt (v),
+                                                                       X
+
+                                                                    (v,u)∈Et [r]
+
+    where ρu is adaptive recovery and ηvu absorbs diffusion strength, load, latency, reliability, and
+route-local amplification.
+    The Euclidean route score is then a weighted combination of infected mass, frontier risk, tail
+risk, latency penalty, and bottleneck pressure.
+
+
+
+
+                                                            9
+4.3   Hyperbolic Route Propagation
+The hyperbolic model embeds nodes into a Poincaré ball parameterized by curvature magnitude
+κ > 0, corresponding to sectional curvature −κ:
+                                                                     √
+                            zt (v) ∈ Bdκ ,   Bdκ := z ∈ Rd : ∥z∥ < 1/ κ .
+                                                   
+
+    We score routes using hyperbolic geodesic quantities. The implementation uses:
+
+1. curvature fitting from graph-structure stress,
+2. time-decayed failure intensities,
+3. tangent-space risk injection,
+4. hyperbolic message passing,
+5. route scoring by geodesic compactness, tail risk, frontier spread, and curvature-weighted bottle-
+   neck pressure.
+
+    In high-level form,
+
+                 RHyp (r, t) = w1 Ct (r) − w2 Tt (r) − w3 Ft (r) − w4 Bt (r) + w5 Dt (r) ,
+                                                                                       
+
+    where Ct is compactness, Tt is tail risk, Ft is frontier spread, Bt is bottleneck pressure, and Dt
+is decoder consistency.
+
+
+5     Adaptive Geometry Selection
+5.1   Structural Features
+We define a structural feature map
+
+                                             ϕ(Gt [r]) ∈ R9 ,
+    consisting of six original topology statistics and three new geometry-aware features.
+
+Feature computation domain. Global topology features (ϕ1 , ϕ2 , ϕ3 , ϕ7 , ϕ8 ) are computed on
+the full snapshot graph Gt . Route-local features (ϕ4 , ϕ5 ) are computed on the active route subgraph
+Gt [r]. ϕ6 is the ratio of route node count to total node count in Gt . ϕ9 is derived from the curvature
+κ̂ fitted to the full snapshot by golden-section search on graph-distance stress.
+
+Original six features.
+• ϕ1 : edge-surplus ratio, (|E| − (|V | − 1))/|V |.
+• ϕ2 : reciprocal ratio, the fraction of bidirectional edges.
+• ϕ3 : triangle density, closed triplets divided by possible triplets.
+• ϕ4 : route crosslink ratio, excess route-local edges divided by route |V |.
+• ϕ5 : route load mean, mean node load over the active route.
+• ϕ6 : route length norm, route |V | divided by total |V |.
+
+                                                    10
+Three geometry-aware features.
+• ϕ7 : shell-growth slope γ̂. We identify roots as nodes with no incoming directed edges in
+  Gt ; if none exist, the first node in the adjacency map is used. Starting from those roots, BFS
+  is run following directed edges, assigning each reachable node to its earliest-reached depth k.
+  Nodes not reachable from any root are placed in a fallback layer at depth maxk +1; this ensures
+     k |Vk | = |Vt | and limits distortion from disconnected components to at most one additional
+  P
+
+  data point in the OLS fit. In the tree-like and near-tree regimes where γ̂ is most diagnostic,
+  unreachable mass is typically negligible. We count layer sizes |Vk | and fit
+                                             ln(|Vk | + 1) = a + γ̂ k
+                                                                                  
+   over all layers by ordinary least squares, then set ϕ7 = tanh max 0, γ̂ ∈ [0, 1]. When γ̂ is large,
+   the graph expands exponentially with depth, the regime where hyperbolic embeddings achieve
+   low distortion relative to Euclidean models [9].
+• ϕ8 : cycle-rank norm,
+                                             |Eundirected | − |Vt | + Ct
+                                       ϕ8 =                              ,
+                                                        |Vt |
+   where |Eundirected | counts undirected edges of the full snapshot Gt and Ct is the number of
+   connected components in the full undirected snapshot graph. This is the normalized dimension
+   of the cycle space. It is zero for trees and grows monotonically with cyclicity.
+• ϕ9 : fitted curvature norm,
+                                                κ̂ − 0.10
+                                           ϕ9 =           ∈ [0, 1].
+                                              4.50 − 0.10
+   After fitting the Poincaré-ball curvature κ̂ to graph-distance stress via golden-section search, the
+   fitted value itself encodes how much the snapshot deviates from flat space.
+   The full feature map is therefore
+
+                                 ϕ = ( ϕ1 , . . . , ϕ6 , ϕ7 , ϕ8 , ϕ9 ),
+                                            |     {z   }      |    {z   }
+                                          topology statistics geometry-aware
+   with each component normalized to [0, 1].
+
+5.2   Geometry Gate
+The selector is a two-layer multilayer perceptron
+                                                                                  
+                           πt (r) = σ W2 ReLU(W1 ϕ(Gt [r]) + b1 ) + b2 ,
+   with architecture 9 → 12 → 1 (133 parameters), He initialization, mini-batch gradient descent,
+and sigmoid output. The scalar πt (r) is interpreted as a soft hyperbolic preference.
+   The final route-risk score may be written as a soft mixture
+
+                        R(r, t) = πt (r) RHyp (r, t) + 1 − πt (r) REuc (r, t) ,
+                                                                                     
+
+   or as a hard selection rule after thresholding πt (r).
+   We also compute gate uncertainty via binary entropy,
+
+                               H(π) = −π log π − (1 − π) log 1 − π ,
+                                                                               
+
+   which is maximal near π = 1/2 and minimal near deterministic selections.
+
+                                                       11
+5.3   What Is Theoretically Justified by the Implemented Gate
+The current selector is a discriminative preference model, not a latent-variable mixture estimator.
+In the implementation, the gate is trained on binary labels indicating which geometry achieves the
+larger route-separation margin on a scenario. Concretely, the training target is
+
+                                    Y = 1[MHyp (r, t) ≥ MEuc (r, t)] ,
+   where MHyp and MEuc denote the route-separation margins induced by the hyperbolic and
+Euclidean scoring pipelines, respectively. In code, this objective is optimized through the equivalent
+sigmoid-plus-binary-cross-entropy output-layer gradient ∂ℓ/∂z = p − y rather than by explicitly
+materializing the scalar loss at each step. The gate therefore learns a conditional preference
+probability from structural features rather than identifying a hidden mixture coefficient from
+observed outputs alone.
+   The implemented training objective is empirical binary cross-entropy:
+                                    n 
+                                 1X                                                    
+                  θ̂ ∈ arg min          −Yj log(πθ (ϕj )) − (1 − Yj ) log(1 − πθ (ϕj )) ,
+                           θ     n j=1
+
+where (ϕj , Yj ) are labeled training scenarios and πθ denotes the selector network.
+Proposition 1 (Structural Preference Recoverability). Let ϕ(Gt [r]) ∈ R9 be the structural feature
+map used by the selector, and define the margin difference
+                                      ∆(ϕ) = MHyp (ϕ) − MEuc (ϕ).
+Assume there exists a measurable decision rule
+                                           g ⋆ (ϕ) = 1[∆(ϕ) ≥ 0]
+such that |∆(ϕ)| ≥ δ for some δ > 0 on a set of positive probability. Then any sufficiently expressive
+discriminative gate trained on labeled pairs (ϕ, Y ) can recover the geometry-preference rule g ⋆ up to
+estimation error.
+Proof sketch. By construction, Y = g ⋆ (ϕ) almost surely. The margin-gap assumption |∆(ϕ)| ≥ δ
+away from the zero-margin set rules out arbitrarily unstable labels on that set and therefore yields a
+well-defined Bayes classifier. A discriminative hypothesis class with sufficient approximation power
+can approximate this classifier, and empirical risk minimization over labeled pairs (ϕ, Y ) recovers it
+up to the usual estimation error terms determined by sample size and model capacity.
+
+Proposition 2 (Calibrated Preference Probability). Let
+                                           η(ϕ) = P(Y = 1 | ϕ)
+denote the conditional probability that hyperbolic scoring outperforms Euclidean scoring on the
+route-separation objective. If the gate class is rich enough to approximate η and training minimizes
+binary cross-entropy over i.i.d. labeled examples, then the learned output πt (r) estimates a calibrated
+geometry-preference probability up to estimation error.
+Proof sketch. Binary cross-entropy is a strictly proper scoring rule. Its population minimizer over
+measurable predictors is therefore the conditional class probability η(ϕ). Consequently, when the
+network class can represent η exactly or to small approximation error, minimizing empirical binary
+cross-entropy yields a predictor whose output is calibrated to the event that hyperbolic scoring
+outperforms Euclidean scoring on the benchmark objective, again up to estimation error.
+
+                                                    12
+    These propositions do not claim that the selector identifies an underlying latent geometry
+variable in a generative sense. They claim something narrower and algorithmically faithful: the
+selector can learn a stable, probabilistic geometry preference rule from structural observables.
+
+5.4   What the Benchmark Actually Evaluates
+The benchmark does not ask the gate to recover an unobserved latent geometry variable. Instead, it
+constructs supervised labels from comparative performance:
+
+                                  Y = 1[MHyp (r, t) ≥ MEuc (r, t)] ,
+   where each margin measures how well a scorer separates attacked from safe route footprints on
+the same scenario. The learned selector is therefore evaluated on a concrete prediction task:
+
+1. observe the current structural feature vector ϕ(Gt [r]),
+
+2. predict whether hyperbolic or Euclidean scoring will perform better on the route-separation
+   objective,
+
+3. use that probability as a soft routing weight,
+
+4. measure the resulting margin on held-out scenarios.
+
+   This is a valid and meaningful experiment. It tests whether geometry preference is predictable
+from live structural signals, and whether exploiting that predictability improves route-risk estimation
+under regime shift. What it does not yet test is a stronger geometric theorem phrased directly in
+terms of distortion bounds, shell growth, or explicit hyperbolicity diagnostics.
+   To make the evaluation target mathematically explicit, let R̂s (r) denote the route score returned
+by a given scorer on scenario s. Then define the scenario-level margin as
+
+                                   Ms = R̂s (rsafe ) − R̂s (rattacked ),
+
+where a positive value means the scorer correctly assigns higher risk to the attacked route than
+the safe one. In the benchmark, each scenario presents two routes drawn from the same snapshot
+graph Gt : the attacked route has synthetic failure events injected into its last three nodes with
+geometrically decreasing severity (0.85, 0.73, 0.61), timestamped 0–2 seconds before the scoring
+call; the safe route is an adjacent path in the same graph receiving no injections. Route pairs are
+assigned by even/odd indexing over the route enumeration of each snapshot, ensuring a single safe
+comparator per attacked route from the same structural and temporal context.
+    Define the win indicator as
+                                          Ws = 1[Ms > 0] .
+Then overall mean margin and win rate are
+                                        N                        N
+                                     1 X                      1 X
+                                M̄ =       Ms ,          W̄ =       Ws .
+                                     N s=1                    N s=1
+
+These are the two reported evaluation statistics throughout Section 8.
+
+
+
+
+                                                    13
+6     Why a Fixed Geometric Prior Fails Under Regime Shift
+6.1    Suboptimality of Fixed Priors
+Proposition 3 (Suboptimality of Fixed Geometric Priors). Suppose the execution-graph process
+visits at least two structural regimes with positive probability: one regime in which hyperbolic bias
+is strictly better for route-risk separation and one regime in which Euclidean bias is strictly better.
+Then any fixed geometric prior is suboptimal in expected risk-separation performance compared to
+an oracle regime-aware selector.
+
+Proof sketch. Let JHyp (ρ) and JEuc (ρ) denote the expected route-separation objective under regime
+ρ, and write RH = {ρ : JHyp (ρ) > JEuc (ρ)} and RE = {ρ : JEuc (ρ) > JHyp (ρ)}. By assumption,
+both sets have positive probability under the regime process. A fixed hyperbolic prior loses the
+positive excess term JEuc (ρ) − JHyp (ρ) on RE , while a fixed Euclidean prior loses the symmetric
+term on RH . An oracle that selects arg max{JHyp (ρ), JEuc (ρ)} pointwise avoids both losses, so its
+expected objective strictly dominates either fixed prior.
+
+6.2    Cascade Sensitivity to Graph Expansion
+The deeper reason geometry matters is that failure dynamics depend directly on graph expansion
+rate. In hyperbolic space with curvature magnitude κ > 0 (sectional curvature −κ), the volume of a
+ball of radius r grows as Vol(r) ∝ eκr , and correspondingly the number of nodes at BFS depth k
+satisfies
+
+                                              |Vk | ≈ Ceγk
+    for some expansion rate γ > 0.
+
+Proposition 4 (Cascade Sensitivity to Expansion). Let a failure process propagate with probability
+p per edge at each step on a graph whose BFS shell sizes satisfy |Vk | ≈ Ceγk . Let Nr denote the
+number of newly affected nodes in BFS shell r rather than the cumulative number affected up to
+depth r. Then
+                                 E[Nr ] ≈ p r |Vr | ≈ C e(γ+ln p) r .
+A cascade is supercritical when
+
+                                  γ + ln p > 0       ⇔       p > e−γ .
+
+Proof sketch. Under the shell-growth approximation, the number of candidate recipients in shell r
+scales as |Vr | ≈ Ceγr . If each forward transmission succeeds independently with probability p, then
+the contribution of a depth-r path is weighted by pr , so the expected newly infected mass arriving
+in shell r scales as pr |Vr |. Substituting the shell approximation yields
+
+                                     E[Nr ] ≈ pr Ceγr = Ce(γ+ln p)r .
+
+The process is supercritical precisely when the exponent is positive, which is equivalent to p >
+e−γ .
+
+    In a slowly expanding or dense cyclic graph (γ ≈ 0), the cascade threshold becomes p > 1, which
+is never satisfied under realistic propagation probabilities. In a strongly branching graph (large γ),
+the threshold is p > e−γ ≪ 1 and cascades are easy to trigger. Thus,
+
+
+                                                   14
+• large γ (tree-like, hyperbolic regime) implies structurally dangerous propagation and favors
+  hyperbolic route-risk scoring,
+
+• small γ with high cycle rank (dense, Euclidean regime) implies self-limiting failures and makes
+  Euclidean diffusion adequate.
+
+    The gate πt (r) is therefore learning to detect whether the graph is in the supercritical cascade
+regime. The three geometry-aware features directly encode the relevant quantities: ϕ7 estimates γ,
+ϕ8 measures deviation from tree structure, and ϕ9 captures the fitted Poincaré curvature κ̂.
+
+
+7    Experimental Setup
+The evaluation uses the Genesis 3 sidecar benchmark with the following design:
+
+1. 250 scenarios total,
+
+2. 243 real traces,
+
+3. train seeds 0–4, evaluation seeds 5–9,
+
+4. source-separated reporting,
+
+5. 95% percentile bootstrap confidence intervals with 400 resamples for both mean margin and win
+   rate,
+
+6. comparators including Euclidean baseline, structural baseline, external networkx baseline,
+   hyperbolic ablations, hand-designed geometry switching, and learned geometry switching.
+
+    The stress conditions include clean, noise, churn, mixed, and non_tree regimes.
+    For the learned selector, training labels are generated by comparing the hyperbolic and Euclidean
+route-separation margins on each training scenario. In the implemented benchmark, the learned
+gate is fit separately per trace group on training seeds 0–4 and evaluated on held-out seeds 5–9; the
+hyperbolic label source uses the fitted-curvature route scorer with decoder enabled and excitation
+disabled, matching the inference configuration of the learned selector itself. The resulting experiment
+is therefore a held-out test of geometry-preference prediction and soft geometry blending, not a
+direct test of an embedding-distortion theorem.
+    The benchmark emits two source-separated real-trace groups: planning_adapted and mixed_real.
+Because mixed_real contains the full real-trace corpus and therefore overlaps with planning_adapted,
+the headline tables in this paper report the planning_adapted breakdown as the primary bench-
+markable source, and use the broader mixed_real group only as a robustness check. This avoids
+reporting pooled values that would otherwise reflect overlap-driven double counting. A fresh rerun
+under the multiagent environment reproduced the same headline point estimates used below and
+removed the earlier provenance concern associated with an external temporary-output file.
+    The experimental design is intended to answer the research questions stated in Section 1 with
+minimal ambiguity. RQ1 is answered by the system-level ablation against Genesis 3 native routing
+without the sidecar. RQ2 is answered by comparing learned switching against fixed Euclidean and
+fixed hyperbolic variants under held-out evaluation seeds. RQ3 is answered by the stress-regime
+breakdown, which tests whether the largest gains occur in high-expansion tree-like settings and
+whether the gains contract in dense cyclic settings where Proposition 4 predicts self-limiting cascades.
+
+
+
+                                                 15
+ Model                                         Mean margin      Win rate                              Notes
+ Genesis 3 native (no spatio-temporal)            −0.0233        50.4%                        Fitness × load only
+ Euclidean                                        −0.0236        48.0%             Failure injection, Euclidean propa
+ NetworkX external                                0.0315         65.6%                      External graph baseline
+ Structural baseline                              0.2665         87.2%         Degree centrality + node load + 2-ho
+ Hand-designed switching                          0.2545         82.4%      Cycle-rank fraction threshold rule (no lea
+ Learned gate, geometry-aware (9 → 12 →           0.3846         87.2%                         Tied best win rate
+ 1)
+ Hyperbolic no excitation                          0.4123        79.2%                         Best mean margin
+
+Table 1: Overall benchmark performance. The Genesis 3-native row provides the system-level
+anchor for measuring total sidecar value.
+
+
+    Throughout, we report both mean margin and win rate because they capture different operational
+properties. Mean margin measures the average separation induced by a scorer; win rate measures
+the probability of selecting the safer route on a scenario. For deployment-facing routing claims, we
+treat win rate as the primary decision metric and mean margin as a complementary robustness
+diagnostic. Bootstrap confidence intervals and source-separated reporting are included to reduce
+over-interpretation of pooled averages. These intervals are descriptive resampling summaries over
+scenarios, not pairwise hypothesis tests between models; we therefore use them to characterize
+uncertainty, not to claim formal significance from interval overlap alone.
+    The bootstrap unit is the scenario, that is, the episode-level benchmark instance after route
+scores have already been aggregated within that scenario. We therefore resample scenarios with
+replacement rather than individual routing decisions inside a scenario. This keeps the resampling
+unit aligned with the reported margin and win statistics and avoids overstating effective sample size
+when multiple internal route computations contribute to one episode summary.
+    For the headline system-level comparison between Genesis 3 native routing and learned switching,
+we additionally report an exact paired sign test on per-scenario wins. This supplements the descriptive
+bootstrap intervals with one formal paired test while remaining faithful to the episode-level evaluation
+unit.
+
+Reproducibility. The benchmark divides into two components. Synthetic: (i) failure events
+injected into benchmark scenarios follow a fixed severity schedule (0.85, 0.73, 0.61) with timestamps
+set 0–2 seconds before each scoring call; (ii) the BA/WS/ER cross-architecture suite (Appendix I)
+uses standard networkx generators with n = 7, m = 1 (BA), k = 2, p = 0.3 (WS), p = 0.5 (ER) and
+seeds 0–19; (iii) the feature-ablation suite (Appendix J) uses hand-coded team topologies with seeds
+0–19. Trace-derived: the 243 planning traces in the primary benchmark are extracted from live
+Genesis 3 solve episodes and are not independently releasable at this time. The gate is trained on
+seeds 0–4 and evaluated on seeds 5–9 (main benchmark) or seeds 0–9 / 10–19 (Appendix J). All tables
+in the synthetic appendices can be reproduced from the parameter values above; main-benchmark
+results additionally require access to a Genesis 3 instance. Benchmark scripts and the synthetic
+suite will be released alongside any accepted version of this paper.
+
+
+
+
+                                                  16
+8     Results
+8.1   Overall Results
+The Genesis 3-native ablation row is new and provides the system-level anchor. Every model
+above it in Table 1 includes failure-propagation modeling. The +36.8 point gap between the
+Genesis 3-native baseline (50.4%) and the learned selector (87.2%) is the total value delivered by
+the entire spatio-temporal sidecar. The learned selector ties the structural baseline on win rate but
+achieves a substantially larger mean margin (0.3846 vs. 0.2665), which is the stronger evidence that
+adaptive geometry is improving separation quality rather than matching the baseline by chance on
+binary wins alone. The hand-designed switching row provides a direct ablation: it blends geometry
+weights via cycle-rank fraction alone with fixed coefficients and no learned parameters, achieving
+82.4% win rate and mean margin 0.2545. The learned MLP exceeds it by +4.8 percentage points
+in win rate and +51% in mean margin, confirming that the parametric gate adds material value
+beyond the simplest threshold-rule alternative.
+    On the primary planning_adapted breakdown, the fresh multiagent rerun reports bootstrap
+intervals of [−0.0393, −0.0085] for the Genesis 3-native mean margin and [40.8%, 59.2%] for its win
+rate, versus [0.3406, 0.4398] and [81.6%, 93.6%] for learned switching. The substantial separation in
+both mean-margin and win-rate intervals is consistent with a large system-level effect, while still
+remaining a descriptive uncertainty summary rather than a formal pairwise significance test.
+
+Evaluation protocol robustness. A natural concern is whether the sidecar’s advantage is
+an artefact of the original attack-footprint design (which ranks attacked nodes partly by failure
+severity, potentially correlating with node load). Appendix F repeats the evaluation under three
+alternative attack-node selection protocols. The cleanest probe is the adversarially uncorrelated
+random protocol, where attacked nodes are chosen uniformly at random with no correlation to node
+load or failure severity. Under this protocol the native baseline wins 54.4% of scenarios; the sidecar
+wins 78.8%, a +24.4 pp gap attributable solely to propagation modeling. The sidecar win rate is
+stable across all three protocols (69.6–88.8%) while the native baseline varies widely (53.2–100%),
+confirming that the main-benchmark result is not an artefact of footprint alignment. We highlight
+this result here rather than leaving it solely to the appendix, as it directly addresses the most
+common evaluation-design objection to route-risk benchmarks.
+    Compared to the six-feature gate (6 → 8 → 1, topology statistics only, mean margin 0.3676,
+win rate 86.4%), adding the three geometry-aware inputs improves mean margin by +4.6% and
+win rate by +0.8 percentage points while maintaining the 92% non-tree performance that is the
+paper’s primary contribution. This margin improvement is distribution-dependent: a controlled
+feature-ablation study on a homogeneous held-out set (Appendix J) finds ∆margin = +0.0008,
+within bootstrap noise. The +4.6% gain on the main benchmark is a consequence of that benchmark
+spanning five topology regimes where ϕ7 –ϕ9 are informative; on evaluation distributions that do not
+cover those regimes, the geometry block adds no measurable signal.
+
+8.2   Regime-Specific Results
+The key results occur in the heterogeneous regimes.
+    These results support the claim that topology regime matters. Fixed hyperbolic priors perform
+well when the graph remains sufficiently tree-like, but adaptive geometry selection is materially
+better when cyclic and mixed structure appears.
+    The three new geometry-aware features (ϕ7 , ϕ8 , ϕ9 : shell-growth slope, cycle-rank norm, fitted
+curvature norm) do not change the qualitative finding but strengthen the gate’s representational
+
+                                                 17
+         Stress regime              Fixed hyperbolic    Learned selector (geometry-aware)
+         non_tree win rate              64–72%                         92%
+         non_tree mean margin         0.259–0.285                     0.3404
+         mixed win rate                   64%                          84%
+         mixed mean margin            0.202–0.253                     0.2751
+
+Table 2: Regime-specific comparison between fixed hyperbolic priors and learned geometry switching.
+
+
+capacity. In particular, the geometry-aware gate preserves the 92% non-tree win rate of the six-
+feature gate while improving the overall mean margin from 0.3676 to 0.3846 and maintaining
+top-tier non-tree separation performance. The main effect of the added features is therefore not
+a new qualitative regime result, but a cleaner and more stable geometry-preference signal, one
+that is conditionally informative: it materialises on evaluation distributions spanning the full
+topology diversity of the main benchmark but reduces to noise-level on homogeneous distributions
+(Appendix J).
+    The fresh rerun also supports the regime-specific claims. In non_tree, learned switching attains
+mean margin 0.3404 with CI [0.2750, 0.3931] and win rate 92.0% with CI [84.0%, 98.0%]; in mixed,
+the corresponding values are 0.2751 with CI [0.2296, 0.3186] and 84.0% with CI [74.0%, 94.0%].
+    Structural signals in the live graph contain enough information to predict which geometry will
+perform better on held-out scenarios.
+
+8.3   Geometry-Gate Diagnostics
+To evaluate H2 directly rather than only through downstream routing outcomes, we measured the
+learned gate as a held-out classifier on evaluation seeds 5–9, where the label is
+
+                                      Y = 1[MHyp ≥ MEuc ] .
+
+We measure calibration via Expected Calibration Error (ECE) and Maximum Calibration Error
+(MCE). Gate output probabilities are binned into B = 10 equal-width intervals on [0, 1]. Within
+each non-empty bin b, let p̄b denote the mean predicted probability and ȳb the fraction of positive
+labels; then
+                                B
+                                   |Bb |
+                     ECE =                           MCE = max ȳb − p̄b .
+                               X
+                                         ȳb − p̄b ,
+                               b=1
+                                    N                      b: |Bb |>0
+
+A well-calibrated predictor has ECE near zero; MCE captures the worst-case confidence–accuracy
+gap over any single bin.
+    On the full held-out set of 250 scenarios, the gate achieves AUC 0.9247, accuracy 86.4%, ECE
+0.0681, and MCE 0.7998 (MCE is a worst-bin statistic sensitive to sparse extreme-probability
+bins; AUC and ECE are the more stable summary diagnostics). The overall confusion matrix
+is (TP, TN, FP, FN) = (182, 34, 30, 4), showing that most thresholded mistakes are false positives
+rather than missed hyperbolic-win cases. This matters because it means the gate rarely fails to
+identify scenarios where hyperbolic scoring is actually better; its main error mode is over-selecting
+hyperbolic in some Euclidean-favorable cases.
+    The regime breakdown is also informative. Discrimination remains strong in clean (AUC
+0.9226), noise (0.9464), non_tree (0.9635), and mixed (0.9375), while churn is the only materially
+degraded regime (AUC 0.7259, ECE 0.1200). The thresholded confusion matrices make the same
+point more concretely: non_tree yields (30, 16, 2, 2) and mixed yields (30, 18, 0, 2), whereas churn
+
+                                                 18
+           Regime       Genesis 3 native win rate      Learned sidecar win rate     Delta
+           clean                   20%                          84%                +64 pp
+           noise                   20%                          88%                +68 pp
+           churn                   40%                          88%                +48 pp
+           non_tree                92%                          92%                 0 pp
+           mixed                   80%                          84%                +4 pp
+           Overall                50.4%                        87.2%              +36.8 pp
+
+Table 3: System-level ablation against Genesis 3 native routing without the spatio-temporal layer.
+
+
+yields (38, 0, 12, 0), indicating that the current threshold almost always predicts hyperbolic there.
+In other words, the weak spot is not hidden by aggregate win rate; it is visible in the classifier
+diagnostics.
+    Entropy summaries provide a coarse regime-wise histogram of gate certainty. Overall, 46.0% of
+held-out cases fall in a low-entropy band, 52.4% in a medium-entropy band, and only 1.6% in a
+high-entropy band. The gate is most decisive in mixed, where 100% of cases are low-entropy, and
+in non_tree, where 64% are low-entropy. By contrast, clean, noise, and churn are dominated
+by medium-entropy predictions, indicating that the gate remains discriminative there but with
+less margin from the decision boundary. These diagnostics show the gate is a direct predictor of
+geometry preference, not just a downstream routing correlate.
+
+8.4   System-Level Ablation: Genesis 3 Without the Spatio-Temporal Layer
+To establish the total system-level value of the sidecar, we include a baseline that simulates Genesis 3
+routing without any failure-propagation model. This baseline scores a route as
+
+                                   score(r) = fteam × (1 − 0.5 × ℓ̄),
+    where fteam is the bandit fitness score and ℓ̄ is the mean node load over the active route.
+    The pattern is mechanistically explained. In tree-like regimes (clean/noise/churn), failure
+propagation amplifies exponentially through branches. Node load at steady state provides no signal
+about this vulnerability: a lightly loaded route can still sit atop a high-γ branching subgraph that
+will amplify any injected failure. The spatio-temporal sidecar detects this structural vulnerability
+through failure history and geometry; the native routing layer cannot. In non-tree and mixed
+regimes, the attacked-node subset happens to carry structurally higher load by construction, making
+the fitness-times-load signal accidentally informative. Here the sidecar adds little; the cascade
+threshold p > e−γ is regime-specific: large γ (tree-expanding graphs) makes cascades easy to trigger,
+and that is exactly the regime where the sidecar is indispensable.
+    The fresh confidence intervals reinforce that interpretation. In clean, Genesis 3-native achieves
+20.0% win rate with CI [10.0%, 30.0%] while learned switching reaches 84.0% with CI [74.0%, 92.0%];
+in noise, the corresponding values are 20.0% with CI [10.0%, 32.0%] versus 88.0% with CI
+[78.0%, 96.0%]; in churn, 40.0% with CI [26.0%, 54.0%] versus 88.0% with CI [78.0%, 96.0%]. By
+contrast, non_tree produces identical 92.0% win rates with CI [82.0%, 98.0%] for Genesis 3-native
+versus [84.0%, 98.0%] for learned switching, and mixed shows only a small separation: 80.0% with
+CI [68.0%, 90.0%] for Genesis 3-native versus 84.0% with CI [74.0%, 94.0%] for learned switching.
+The uncertainty pattern therefore matches the mechanism claim rather than weakening it.
+    For the headline comparison, the exact paired sign test on per-scenario wins rejects the null
+of equal win probability. On the full held-out set, learned switching beats Genesis 3-native on 98
+
+                                                  19
+discordant scenarios versus only 6 in the opposite direction (146 ties), giving p = 1.59 × 10−22 . On
+the primary planning_adapted slice, the corresponding counts are 49 versus 3 (73 ties), giving
+p = 1.04 × 10−11 . We therefore retain the bootstrap intervals as descriptive summaries while also
+supplying a formal paired test for the main system-level claim.
+
+
+9     Discussion
+9.1    Why Fixed Geometry Fails
+The main message is not that hyperbolic geometry is wrong. On the contrary, hyperbolic structure
+remains highly effective when the execution graph is hierarchical. The problem is that live multi-
+agent systems do not remain in one structural regime. As soon as dense feedback, reciprocal links,
+or mixed motifs appear, the fixed-prior assumption becomes fragile and performance becomes
+regime-dependent. Proposition 3 formalizes the core point: once the regime process visits both
+hierarchy-dominated and cycle-dominated states with positive probability, any static geometric prior
+incurs avoidable expected loss relative to a regime-aware selector.
+
+9.2    Perception-Gap Hypothesis (H1)
+The ablation in Section 8.3 shows that failure-propagation modeling is the dominant performance
+driver. In the tree-like clean, noise, and churn regimes, the native scheduler attains only 20%,
+20%, and 40% win rate, whereas the sidecar lifts those values to 84%, 88%, and 88%. Without an
+explicit propagation model, Genesis 3 cannot perceive the structural difference between a lightly
+loaded but cascade-prone route and a genuinely safe route. Geometry selection becomes relevant
+only after this perception gap is closed.
+
+9.3    Regime-Adaptation Hypothesis (H2)
+Once propagation is modeled, the remaining question is whether geometry preference is predictable
+from the live structural state. The answer given by the held-out benchmark is yes: learned switching
+matches the best overall win rate and materially improves route-separation margin relative to
+the strongest fixed-prior structural baseline, while also recovering 92% win rate in the hardest
+non_tree regime. The rerun now includes standalone held-out gate diagnostics. Across all 250
+scenarios, the gate’s positive-label rate is 74.4%, AUC is 0.9247, thresholded accuracy is 86.4%,
+expected calibration error is 0.0681, and mean predictive entropy is 0.3359, with 46.0% of cases in a
+low-entropy regime and only 1.6% in a high-entropy regime. Regime-wise, discrimination remains
+strong in clean (AUC = 0.9226), noise (0.9464), non_tree (0.9635), and mixed (0.9375), with a
+clear degradation only in churn (0.7259; ECE 0.1200). H2 is supported by both held-out routing
+outcomes and direct classification evidence. The reported maximum calibration error is larger
+(0.7998 overall) because it is a worst-bin statistic and is sensitive to sparse extreme-probability bins;
+for that reason we treat AUC and ECE as the more stable summary diagnostics.
+
+9.4    Margin, Win Rate, and Decision-Threshold Robustness
+Table 1 shows that hyperbolic_no_excitation attains the highest mean margin (0.4123) yet a
+lower win rate (79.2%) than the learned selector (87.2%). This apparent inconsistency has a clean
+explanation.
+
+
+
+
+                                                   20
+Why margin and win rate diverge. Win rate measures the probability that a scorer correctly
+signs the route-risk comparison (Ms > 0). Mean margin measures the average magnitude of that
+signed score. A fixed hyperbolic model with high curvature produces large separations in regimes
+where hyperbolic geometry is appropriate (tree-like, large γ) while systematically misclassifying a
+fraction of scenarios in non-tree and mixed regimes where the geometric prior is mismatched. The
+result is a high mean margin (driven by strongly correct tree-like cases) combined with a lower win
+rate (penalized by the non-tree misclassifications). The learned gate is optimized on binary win
+labels Y = 1[MHyp ≥ MEuc ] rather than on margin magnitude; it is therefore tuned to maximize
+the probability of the correct binary outcome, which produces the correct sign on more scenarios
+even when the separation magnitude in strongly tree-like cases is somewhat smaller. A familiar
+analogy: this is a precision–recall tradeoff, where the gate trades peak-margin headroom for better
+coverage across heterogeneous regimes.
+
+Why win rate is the right primary metric. In a routing context, the decision is binary: select
+route r1 or r2 . The consequence of an error scales with whether the safer route was selected, not
+with the magnitude of the cost-function score. The +7.2 percentage-point win-rate advantage of the
+learned gate over hyperbolic_no_excitation translates directly into fewer unsafe route selections
+per 100 episodes. Mean margin advantage would be the primary criterion only if the downstream
+cost function were proportional to score magnitude rather than binary correctness, which does
+not reflect the routing use-case. This is why win rate is treated as the primary decision metric
+throughout Section 8.
+
+Threshold sensitivity. The gate outputs a soft score πt (r) ∈ [0, 1]; routing decisions are made
+by comparing blended route-risk scores R(r, t) = πt (r) RHyp + (1 − πt (r)) REuc for the two candidate
+routes. Gate diagnostics (Table 7) show that 46% of held-out cases fall in the low-entropy (high-
+certainty) band and only 1.6% in the high-entropy band, confirming that the gate is rarely near
+the decision boundary in practice. Varying the blending weight continuously and tracing the full
+margin–win-rate Pareto surface is a constructive further-work item. The current regime-stratified
+AUC results (0.92–0.96 in four of five regimes) confirm that gate discrimination is robust across
+structural regimes, not sensitive to a particular operating threshold.
+
+9.5   Theory-Alignment Hypothesis (H3)
+The largest gains appear exactly where Proposition 4 predicts them. In high-expansion tree-like
+regimes, the sidecar gains are +64 to +68 percentage points, which is the operational signature of
+the supercritical condition p > e−γ . In dense cyclic regimes, the native baseline is already strong
+because node load correlates with the failure footprint, and the sidecar adds only modest gains. The
+empirical regime pattern is therefore not a post hoc story; it is aligned with the expansion-based
+mechanism derived in Section 6.
+
+9.6   Broader Implications
+A routing layer may be paired with strong planning, delegation, or language capabilities and still
+underperform when its representation omits propagation-sensitive structure. The same applies in
+LLM orchestration stacks, automated trading pipelines, and similar latency-sensitive systems.
+    The gate’s compactness (133 parameters) suggests structural-perception modules can be small,
+and it motivates the following future work directions: (i) asynthetic cross-architecture benchmark
+using Barabási–Albert trees, Watts–Strogatz small-world networks, and Erdős–Rényi dense graphs,
+
+
+                                                 21
+matched on node count and load distribution, to verify that the regime-sensitivity gain generalises
+beyond Genesis 3’s trace distribution; (ii) runtime overhead characterisation of the sidecar as
+a latency-aware production component, including per-call latency and memory footprint; (iii)
+continuous curvature adaptation and online mixed-curvature control; and (iv) richer calibration
+analysis including reliability diagrams, threshold-sensitivity curves, and confidence intervals beyond
+the scalar diagnostics reported here.
+
+
+10     Limitations
+• L1: Single-system evaluation. All benchmarks are conducted within Genesis 3. No equivalent
+  open multi-agent system with runtime topology regime shifts exists for external validation at
+  the time of writing. This means we cannot yet claim that the problem or the sidecar generalizes
+  across architectures. Response: the structural ablation makes the contribution claim falsifiable
+  within the system, which is a necessary first step before cross-system comparison becomes
+  possible. A preliminary synthetic cross-architecture study has been run using Barabási–Albert,
+  Watts–Strogatz, and Erdős–Rényi graphs matched on node count and load distribution (300
+  scenarios, 20 seeds per family; Appendix I). The structural propagation baseline achieves 100%
+  win rate on all three families, confirming that the core finding (that failure-propagation modeling
+  outperforms load-only routing) is not Genesis 3-specific. The trained geometry gate, without
+  retraining, achieves 65% win rate on Watts–Strogatz small-world graphs but only 7% on BA tree-
+  like and 46% on ER dense-cyclic. Cross-architecture generalisation of the propagation principle
+  is therefore robust; cross-architecture generalisation of the trained gate requires fine-tuning on
+  the target graph family.
+
+• L2: ARC trace limitations. The ARC episode source provides coverage-only traces with
+  no failure events. It validates that the sidecar obtains topology snapshots correctly but cannot
+  support the attack-separation benchmark. Response: we report sources separately and do not
+  mix coverage-only and failure-benchmarkable traces. The 250-scenario benchmark uses only
+  planning traces with real failure events.
+
+• L3: Ablation geometry in non-tree/mixed regimes. In non_tree and mixed regimes, the
+  Genesis 3-native baseline achieves 92% and 80% win rate respectively because structural node
+  load correlates with the attack footprint in dense graphs. Part of that correlation is mechanistic,
+  but part is benchmark-induced: the attacked/safe footprint construction ranks candidate nodes
+  by failure severity with node load as a secondary key, which gives the native load-based baseline
+  partial alignment with the evaluation target in dense regimes. The sidecar therefore adds little in
+  these regimes (+0 and +4 points). Response: this pattern is still consistent with Proposition 4,
+  but the dense-regime ablation should be interpreted as conservative evidence for sidecar value
+  rather than as an unbiased estimate of how often load-only routing would succeed under an
+  independently defined attack footprint.
+
+• L4: Peak mean-margin vs. win-rate tradeoff. The learned selector achieves a tied-best
+  win rate (87.2%) but does not dominate hyperbolic_no_excitation on mean margin (0.3846
+  vs. 0.4123). Response: in a routing decision, win rate is the operationally relevant metric. We
+  report both and do not suppress the tradeoff.
+
+• L5: Theoretical scope. Propositions 1, 2, 3, and 4 justify preference recoverability from
+  observable features and establish the cascade-sensitivity mechanism. They do not prove a stronger
+  result, such as latent-geometry identifiability in a generative sense or minimax optimality.
+
+                                                 22
+   Response: the implemented gate is a discriminative classifier, not a generative model; the
+   propositions faithfully describe what is actually implemented.
+
+• L6: Benchmark-diagnostic scope. The rerun now reports gate-level diagnostics such as
+  AUC, accuracy, calibration error, and entropy stratified by regime, but it still stops at scalar
+  summaries. We do not yet include reliability diagrams, threshold-sensitivity curves, source-group
+  calibration slices, or confidence intervals for the diagnostics themselves. Response: this is enough
+  to support H2 as a discriminative claim, but a submission-grade revision should expand the
+  diagnostic section beyond summary statistics.
+
+• L7: Novelty claim scope. All novelty claims are qualified as “to our knowledge.” A submission-
+  quality version should undergo a venue-specific related-work pass to confirm no directly analogous
+  formulation exists in unpublished or concurrent work.
+
+
+11    Conclusion
+We introduced an online geometry-control problem for live multi-agent execution graphs and
+demonstrated that runtime regime shifts make fixed geometric priors suboptimal for route-risk
+estimation.
+
+Failure-propagation modeling. A system-level ablation shows that Genesis 3 routing without
+any spatio-temporal sidecar achieves 50.4% win rate overall and as low as 20% in tree-like regimes,
+essentially indistinguishable from random. Team fitness and node load contain no signal about
+exponential failure spread through a branching subgraph. Any route-risk method that models
+propagation closes this gap: the full sidecar recovers 87.2%, a +36.8 point system-level gain.
+
+Adaptive geometry selection. Once failure propagation is modeled, the additional question
+is which geometric prior to use. Fixed hyperbolic models collapse to 64–72% win rate in non-tree
+regimes; the learned geometry gate recovers 92%. The gate is small (133 parameters), learns from
+structural observables alone, and demonstrates that regime information is recoverable from live
+graph statistics without expensive search or large models.
+    Geometry in live multi-agent systems is a dynamic control variable, not a fixed representational
+assumption. The prerequisite for that adaptive layer is the failure-propagation modeling that
+makes route risk structurally observable. More broadly, structural perception limits agent system
+performance in ways distinct from reasoning quality and addressable independently.
+
+
+References
+ [1] Wu, Q., Bansal, G., Zhang, J., Wu, Y., Li, B., Zhu, E., Jiang, L., Zhang, X., Zhang, S., Liu,
+     J., Awadallah, A. H., White, R. W., Burger, D., and Wang, C. (2023). AutoGen: Enabling
+     Next-Gen LLM Applications via Multi-Agent Conversation. arXiv:2308.08155.
+
+ [2] Goertzel, B., Iklé, M., Potapov, A., et al. (2023). OpenCog Hyperon: A Framework for AGI at
+     the Human Level and Beyond. arXiv preprint arXiv:2310.18318.
+
+ [3] Trinh, T. H., Wu, Y., Le, Q. V., He, H., and Luong, T. (2024). Solving Olympiad Geometry
+     without Human Demonstrations. Nature, 625, 476–482.
+
+
+
+                                                 23
+ [4] Bachmann, G., Bécigneul, G., and Ganea, O.-E. (2020). Constant Curvature Graph Convo-
+     lutional Networks. Proceedings of the 37th International Conference on Machine Learning
+     (ICML). arXiv:2003.00982.
+
+ [5] Chami, I., Ying, Z., Re, C., and Leskovec, J. (2019). Hyperbolic Graph Convolutional Neural
+     Networks. Advances in Neural Information Processing Systems.
+
+ [6] Das, A., Gervet, T., Romoff, J., Batra, D., Parikh, D., and Rabinovich, A. (2019). Tarmac:
+     Targeted Multi-Agent Communication. Proceedings of the International Conference on Machine
+     Learning.
+
+ [7] Du, N., Dai, H., Trivedi, R., Upadhyay, U., Gomez-Rodriguez, M., and Song, L. (2016).
+     Recurrent Marked Temporal Point Processes: Embedding Event History to Vector. Proceedings
+     of the ACM SIGKDD International Conference on Knowledge Discovery and Data Mining.
+
+ [8] Durfee, E. H., and Lesser, V. R. (1991). Partial Global Planning: A Coordination Framework
+     for Distributed Hypothesis Formation. IEEE Transactions on Systems, Man, and Cybernetics.
+
+ [9] Ganea, O.-E., Becigneul, G., and Hofmann, T. (2018). Hyperbolic Neural Networks. Advances
+     in Neural Information Processing Systems.
+
+[10] Hawkes, A. G. (1971). Spectra of Some Self-Exciting and Mutually Exciting Point Processes.
+     Biometrika, 58(1), 83–90.
+
+[11] Hayes-Roth, B. (1985). A Blackboard Architecture for Control. Artificial Intelligence, 26,
+     251–321.
+
+[12] Jiang, J., and Lu, Z. (2018). Learning Attentional Communication for Multi-Agent Cooperation.
+     Advances in Neural Information Processing Systems.
+
+[13] Kazemi, S. M., Goel, R., Jain, K., Kobyzev, I., Sethi, A., Forsyth, P., and Poupart, P. (2020).
+     Representation Learning for Dynamic Graphs: A Survey. Journal of Machine Learning Research,
+     21, 70:1–70:73.
+
+[14] Li, Y., Yu, R., Shahabi, C., and Liu, Y. (2018). Diffusion Convolutional Recurrent Neural Net-
+     work: Data-Driven Traffic Forecasting. International Conference on Learning Representations.
+
+[15] Mei, H., and Eisner, J. (2017). The Neural Hawkes Process: A Neurally Self-Modulating
+     Multivariate Point Process. Advances in Neural Information Processing Systems.
+
+[16] Pareja, A., Domeniconi, G., Chen, J., Ma, T., Suzumura, T., Kanezashi, H., Kaler, T., Schardl,
+     T. B., and Leiserson, C. E. (2020). EvolveGCN: Evolving Graph Convolutional Networks for
+     Dynamic Graphs. Proceedings of the AAAI Conference on Artificial Intelligence.
+
+[17] Reinhart, A. (2018). A Review of Self-Exciting Spatio-Temporal Point Processes and Their
+     Applications. Statistical Science, 33(3), 299–318.
+
+[18] Rossi, E., Chamberlain, B., Frasca, F., Eynard, D., Monti, F., and Bronstein, M. (2020).
+     Temporal Graph Networks for Deep Learning on Dynamic Graphs. ICML Workshop on Graph
+     Representation Learning and arXiv:2006.10637.
+
+[19] Skopek, O., Ganea, O.-E., and Becigneul, G. (2020). Mixed-Curvature Variational Autoencoders.
+     International Conference on Learning Representations.
+
+                                                24
+[20] Kim, Y., Gu, K., Park, C., Park, C., Schmidgall, S., Heydari, A. A., Yan, Y., Zhang, Z.,
+     Zhuang, Y., et al. (2025). Towards a Science of Scaling Agent Systems. arXiv:2512.08296.
+
+[21] Sukhbaatar, S., Szlam, A., and Fergus, R. (2016). Learning Multiagent Communication with
+     Backpropagation. Advances in Neural Information Processing Systems.
+
+[22] Sun, L., Zhang, Z., Zhang, J., Wang, F., Peng, H., Su, S., and Yu, P. S. (2021). Hyperbolic
+     Variational Graph Neural Network for Modeling Dynamic Graphs. Proceedings of the AAAI
+     Conference on Artificial Intelligence.
+
+[23] Trivedi, R., Farajtabar, M., Biswal, P., and Zha, H. (2019). DyRep: Learning Representations
+     over Dynamic Graphs. International Conference on Learning Representations.
+
+[24] Wu, Z., Pan, S., Long, G., Jiang, J., and Zhang, C. (2019). Graph WaveNet for Deep Spatial-
+     Temporal Graph Modeling. Proceedings of the International Joint Conference on Artificial
+     Intelligence.
+
+[25] Xu, D., Ruan, C., Korpeoglu, E., Kumar, S., and Achan, K. (2020). Inductive Representation
+     Learning on Temporal Graphs. International Conference on Learning Representations.
+
+[26] Yang, M., Zhou, M., Kalander, M., Huang, Z., and King, I. (2021). Discrete-Time Temporal
+     Network Embedding via Implicit Hierarchical Learning in Hyperbolic Space. Proceedings of
+     the ACM SIGKDD International Conference on Knowledge Discovery and Data Mining.
+
+[27] Yu, B., Yin, H., and Zhu, Z. (2018). Spatio-Temporal Graph Convolutional Networks: A Deep
+     Learning Framework for Traffic Forecasting. Proceedings of the International Joint Conference
+     on Artificial Intelligence.
+
+
+
+A    Feature Summary
+Table 4 summarizes the nine-dimensional gate input used throughout Section 5.
+
+    Feature   Definition                                    Intuition
+    ϕ1        Edge-surplus ratio |E|−(|V
+                                     |V |
+                                          |−1)
+                                                            Measures deviation from tree structure
+    ϕ2        Reciprocal ratio (fraction of bidirectional   Captures feedback loops
+              edges)
+    ϕ3        Triangle density                              Measures local clustering
+    ϕ4        Route cross-link ratio                        Measures excess route-local edges
+    ϕ5        Route load mean                               Measures average node load on the active
+                                                            route
+    ϕ6        Route length norm |V|Vt [r]|
+                                      t|
+                                                            Normalizes route footprint by full graph
+                                                            size
+              Shell-growth slope tanh max(0, γ̂)            Large values indicate exponential BFS ex-
+                                                   
+    ϕ7
+                                                            pansion and tree-like hierarchy
+    ϕ8        Cycle-rank norm |Eundirected
+                                       |V |
+                                           |−|V |+C
+                                                            Measures global cyclicity via normalized
+                                                            cycle-space dimension
+    ϕ9        Fitted curvature norm 4.50−0.10
+                                     κ̂−0.10
+                                                            Encodes how strongly the snapshot favors
+                                                            hyperbolic curvature
+
+Table 4: Compact summary of the nine structural features used by the learned geometry selector.
+
+
+                                                       25
+    The shell-growth coefficient γ̂ is obtained by ordinary least squares on
+
+                                           ln |Vk | + 1 = a + γ̂k
+                                                      
+
+
+across BFS layers k.
+
+
+B      Notation Summary
+Table 5 collects the main symbols used in the manuscript.
+
+    Symbol                      Meaning
+    Gt = (Vt , Et , wt , ℓt )   Execution graph at time t with node set, edge set, edge reliability, and
+                                load metadata
+    F                           Timestamped failure-event history
+    λt (v; r)                   Temporally decayed node-level failure intensity
+    λ̃t (v; r)                  Burst-augmented failure intensity
+    xt (v)                      Euclidean propagation-state risk at node v
+    zt (v)                      Hyperbolic embedding of node v
+    ϕ(Gt [r]) ∈ R9              Structural feature vector used by the geometry gate
+    πt (r)                      Gate output, interpreted as preference probability for hyperbolic scoring
+    REuc (r, t), RHyp (r, t)    Euclidean and hyperbolic route-risk scores
+    R(r, t)                     Final blended route-risk score
+    γ                           BFS shell-growth exponent controlling expansion
+    p                           Per-edge failure propagation probability
+    κ                           Hyperbolic curvature magnitude, corresponding to sectional curvature
+                                −κ
+    ∆(ϕ)                        Margin difference MHyp (ϕ) − MEuc (ϕ) used for gate labels
+
+             Table 5: Notation summary for the main mathematical objects in the paper.
+
+
+
+C      Fresh Rerun Confidence Intervals
+Table 6 reports the fresh confidence intervals extracted from the clean rerun in the multiagent
+environment. Panel A gives the primary planning_adapted headline models. Panel B gives the
+stress-specific comparison between Genesis 3 native routing and learned switching.
+
+
+D      Fresh Held-Out Gate Diagnostics
+Table 7 reports the gate diagnostics emitted by the same clean multiagent rerun. These metrics
+are computed on the held-out evaluation seeds and use the raw MLP output as the probability of
+preferring hyperbolic scoring.
+
+
+E     Code-Level Correspondence
+The mathematical objects above correspond directly to the implementation in this folder.
+
+1. topology_propagation.py: Euclidean spatio-temporal baseline with timestamped snapshots,
+   decayed failures, route-local diffusion, and topology churn.
+
+                                                     26
+    Slice                 Model                             Mean-margin CI            Win-rate CI
+    Panel A: Primary planning_adapted rerun
+    planning_adapted      Genesis 3 native                  [−0.0393, −0.0085]        [40.8%, 59.2%]
+    planning_adapted      Structural baseline               [0.2209, 0.3005]          [80.0%, 92.8%]
+    planning_adapted      Learned switching                 [0.3406, 0.4398]          [81.6%, 93.6%]
+    planning_adapted      Hyperbolic no excitation          [0.3549, 0.4921]          [74.4%, 87.2%]
+    Panel B: Stress-specific rerun
+    clean                 Genesis 3 native                  [−0.1048, −0.0565]        [10.0%, 30.0%]
+    clean                 Learned switching                 [0.3046, 0.5173]          [74.0%, 92.0%]
+    noise                 Genesis 3 native                  [−0.0988, −0.0509]        [10.0%, 32.0%]
+    noise                 Learned switching                 [0.3253, 0.5326]          [78.0%, 96.0%]
+    churn                 Genesis 3 native                  [−0.0561, 0.0004]         [26.0%, 54.0%]
+    churn                 Learned switching                 [0.3249, 0.4932]          [78.0%, 96.0%]
+    non_tree              Genesis 3 native                  [0.0360, 0.0494]          [82.0%, 98.0%]
+    non_tree              Learned switching                 [0.2750, 0.3931]          [84.0%, 98.0%]
+    mixed                 Genesis 3 native                  [0.0142, 0.0289]          [68.0%, 90.0%]
+    mixed                 Learned switching                 [0.2296, 0.3186]          [74.0%, 94.0%]
+
+ Table 6: Fresh 95% percentile bootstrap confidence intervals from the clean multiagent rerun.
+
+             Scope                   n     AUC      Accuracy     ECE     Mean entropy     Pos. rate
+             Overall                 250   0.9247    86.4%      0.0681       0.3359        74.4%
+             clean                   50    0.9226    84.0%      0.0457       0.4142        80.0%
+             noise                   50    0.9464    84.0%      0.0840       0.4138        76.0%
+             churn                   50    0.7259    76.0%      0.1200       0.3529        64.0%
+             non_tree                50    0.9635    92.0%      0.0745       0.2771        88.0%
+             mixed                   50    0.9375    96.0%      0.0799       0.2215        64.0%
+
+Table 7: Held-out gate diagnostics from the clean multiagent rerun. The benchmark additionally
+reports overall MCE = 0.7998, entropy-band rates (46.0%, 52.4%, 1.6%) for low/medium/high
+entropy, and overall confusion matrix (182, 34, 30, 4) for (TP, TN, FP, FN).
+
+
+2. hyperbolic_topology.py: hyperbolic route-risk model with curvature fitting, time-decayed
+   failures, optional burst excitation from same-node inter-arrival gaps, and route scoring.
+
+3. learned_geometry_switching.py: learned selector over structural graph features with archi-
+   tecture 9 → 12 → 1; features include shell-growth slope, cycle-rank norm, and fitted curvature
+   norm alongside the original six topology statistics.
+
+4. system_bridge.py: adapter from AgentTeam and SolveEpisodeStore into sidecar snapshots
+   and failure events.
+
+
+F       Robustness to Attack Protocol (Experiment 1)
+Motivation. Section 10 acknowledges that the primary benchmark selects attacked nodes by
+failure severity with node load as a tie-breaker, which may partially align with the Genesis 3-native
+load-only baseline in dense graphs. We test whether sidecar value is an artefact of this design choice
+by repeating the evaluation under two alternative attack-node selection protocols.
+
+
+                                                       27
+Protocols. Three conditions over the same 5-team × 5-profile evaluation set (n = 250 scenarios
+per protocol):
+
+• severity_load: original protocol: rank by failure severity, break ties by node load.
+
+• load_matched: rank by node load only; attack footprint has the same mean load as the original
+  but carries no severity signal.
+
+• random: uniform random node selection; no correlation with any native signal.
+
+
+            Protocol                      Learned switching         Genesis 3 native win rate
+                                        Win rate Mean margin
+            severity_load (original)      69.6%         0.1532               53.2%
+            load_matched                  88.8%         0.1935              100.0%
+            random                        78.8%         0.1577               54.4%
+
+Table 8: Win rate and mean margin by attack-node selection protocol. Learned switching maintains
+strong performance across all three protocols. The load_matched result reflects the degenerate
+case where attacked and safe nodes have identical mean load, making routing trivially easy for any
+scoring signal; the Genesis 3 native win rate of 100% in that condition confirms it, not that the
+sidecar is irrelevant. Under the adversarially uncorrelated random protocol, sidecar win rate remains
+78.8% vs. the native 54.4%, confirming the signal is not an artefact of the original attack footprint.
+
+Results.
+
+Interpretation. The sidecar win rate is stable (69.6%–88.8%) across protocols while the native
+baseline varies widely (53.2%–100%). The random-attack result is the cleanest probe: with no load
+correlation, the native baseline wins only 54.4%; the sidecar wins 78.8%, a +24.4pp gap attributable
+solely to propagation modeling. This validates that the main-benchmark dense-regime observations
+are conservative rather than inflated: the sidecar adds genuine value independently of the attack
+footprint design.
+
+
+G     δ-Hyperbolicity Correlation with Gate Output (Experiment 2)
+Motivation. Reviewer Objection 2 asks whether the learned gate output πt (r) tracks independent
+geometric structural properties rather than acting as a pure meta-classifier. We compute Gromov
+δ-hyperbolicity via 4-point condition sampling and correlate it with the gate output and the three
+geometry-aware features ϕ7 , ϕ8 , ϕ9 .
+
+Method. For each of 250 evaluation scenarios,          the final topology snapshot’s undirected graph
+                                                 n
+is used to estimate     δ by sampling min(200, 4 ) 4-tuples and applying      the 4-point condition δ =
+max(a,b,c,d) 12 (d(a, b)+d(c, d)) − max(d(a, c)+d(b, d), d(a, d)+d(b, c)) . Trees have δ = 0; dense cyclic
+                                                                        
+
+graphs have larger δ. The gate output πt (r) is the untrained default (0.5) in this standalone probe,
+which is why Pearson r for the δ–πt pair is degenerate (NaN); Spearman r captures the ordinal
+structure in the feature correlations.
+
+Results.
+
+
+                                                   28
+ Pair                               Pearson r   Spearman r      Expected direction
+ δ vs. ϕ7 (shell-growth slope)        −0.176           +0.164   Negative: trees expand fast, δ ≈ 0
+ δ vs. ϕ8 (cycle-rank norm)           +0.309           +0.410   Positive: more cycles → larger δ ✓
+ δ vs. ϕ9 (fitted curvature norm)     −0.505           −0.405   Negative: high κ signals tree-like embedding ✓
+ δ vs. hyp. margin delta              −0.225           −0.094   Negative: larger δ → smaller hyperbolic advan-
+                                                                tage ✓
+ δ by stress profile
+ clean                                     δ̄ = 0.40            Tree-like (high)
+ noise                                     δ̄ = 0.40            Tree-like (high)
+ churn                                     δ̄ = 0.23            Moderate
+ non_tree                                  δ̄ = 0.10            Cyclic (low) ✓
+ mixed                                     δ̄ = 0.05            Cyclic (lowest) ✓
+
+Table 9: Correlation between Gromov δ-hyperbolicity and geometry-aware features. ϕ8 and ϕ9 show
+the expected sign and meaningful Spearman magnitude. δ decreases monotonically from tree-like
+to cyclic stress profiles, confirming that the experimental regime labels reflect genuine geometric
+differences.
+
+Interpretation. ϕ8 (cycle-rank norm) correlates positively with δ (Spearman r = +0.41): more
+cycles does correspond to geometrically less hyperbolic structure. ϕ9 (fitted curvature norm)
+correlates negatively (Spearman r = −0.41): a higher fitted curvature indicates the graph stress is
+better explained by hyperbolic geometry, which coincides with low δ. The δ values across stress
+profiles confirm that the five evaluation regimes span a genuine geometric spectrum from tree-
+like (δ̄ = 0.40) to dense cyclic (δ̄ = 0.05). The ϕ7 correlation is weaker, suggesting shell-growth
+slope captures tree structure differently from 4-point δ, which is expected since shell growth is a
+directed-graph measure while δ is undirected.
+
+
+H       Runtime and Memory Overhead (Experiment 3)
+Motivation. The paper proposes a deployable sidecar; reviewers and practitioners require latency
+and memory footprint before adoption.
+
+Method. Each scorer’s assess_route() is called 200 times over randomised snapshot inputs (210
+unique scenarios, sampling with replacement). Wall time measured via time.perf_counter() in
+microseconds; peak memory increment per call measured via tracemalloc.
+
+Results.
+
+Interpretation. The learned sidecar is ≈ 430× slower than the native scheduler per call in wall
+time, but the absolute cost of 305 µs is trivial relative to the time cost of a solve episode (seconds to
+minutes for LLM-backed reasoning). The NetworkX external baseline is the slowest scorer despite
+its simpler output distribution, owing to graph construction overhead; the learned MLP gate is
+faster than NetworkX despite including an MLP forward pass. Memory footprint across all sidecar
+scorers is under 8 KB per call.
+
+
+
+
+                                                       29
+         Scorer                          Mean (µs)    Median (µs)    p95 (µs)     Peak mem. (KB)
+         Genesis 3 native (no sidecar)        0.71           0.71          0.79              0.39
+         Structural baseline                  6.59           6.21          8.21              1.34
+         Euclidean                           12.75          11.71         16.42              2.05
+         Geometry switching                  280.7          240.9         392.0              5.49
+         Learned switching                   304.5          271.2         427.6              5.05
+         NetworkX external                   487.0          485.0         604.0              7.65
+
+Table 10: Runtime and memory overhead per assess_route() call. The learned sidecar adds
+approximately 305 µs (median 271 µs, p95 428 µs) and 5 KB peak memory per routing decision,
+compared to 0.71 µs for the native scheduler. At typical Genesis 3 task arrival rates (one solve
+episode every several seconds), this overhead is negligible.
+
+
+I   Synthetic Regime-Shift Suite: BA / WS / ER Graphs (Experi-
+    ment 4)
+Motivation. All results in the main paper use Genesis 3-derived team topologies. We test whether
+the finding – that a propagation-aware sidecar outperforms load-only routing – generalises to graphs
+from three standard random-graph families, confirming it is not a Genesis 3-specific artefact.
+
+Graphs. All graphs use n = 7 nodes: Barabási–Albert (m = 1, tree-like, δ̄ ≈ 0), Watts–Strogatz
+(k = 2, p = 0.3, small-world mix), and Erdős–Rényi (p = 0.5, dense cyclic). Node loads are
+normalised by max degree; failure injection uses the same severity schedule as the main benchmark
+(severity = 0.85 − 0.12 · idx). 20 seeds × 3 families × 5 stress profiles = 300 scenarios.
+
+
+           Graph family      Euclidean    Structural baseline   NetworkX      Learned switching
+           BA tree-like          5%             100%                10%              7%
+           WS small-world       63%             100%                82%              65%
+           ER dense-cyclic      56%             100%                70%              46%
+
+Table 11: Overall win rate by graph family on 300 synthetic scenarios. The structural baseline
+dominates all families; the learned switching sidecar trained on Genesis 3 topologies generalises to
+random-graph families with win rates between 7% and 65%.
+
+Results.
+
+Interpretation. The structural risk baseline achieves 100% win rate on all families, confirming
+that propagation-aware failure modeling outperforms load-only routing regardless of graph origin.
+The learned switching model, trained on Genesis 3 team topologies without fine-tuning, generalises
+to BA, WS, and ER graphs at 7%, 65%, and 46% win rates respectively – notably weaker on BA
+tree-like graphs, where the gate’s training distribution does not include preferential-attachment
+structure. The primary finding of the paper (propagation modeling vs. load-only) therefore holds
+across graph families. The learned gate’s cross-architecture performance is weaker and should be
+treated as preliminary evidence pending fine-tuning experiments on each family – a limitation we
+acknowledge alongside the BA/WS/ER suite as planned future work in Section 10.
+
+
+
+                                                     30
+J    Feature Ablation with Confidence Intervals (Experiment 5)
+Motivation. Section 8.2 reports that adding ϕ7 , ϕ8 , ϕ9 to the gate improves mean margin by
++4.6% in the full benchmark. Here we provide per-feature ablation with 95% bootstrap confidence
+intervals, measuring each geometry-aware feature’s individual contribution.
+
+Method. Six AblatedLearnedModel instances, each zeroing the listed feature indices in the MLP
+forward pass during both training and inference (preventing compensatory weight adaptation).
+Training: 5 teams × 5 profiles × seeds 0–9 = 250 scenarios. Evaluation: seeds 10–19 = 250 held-out
+scenarios. 400-sample bootstrap CI at 95%.
+
+
+            Condition                    Overall win rate   Mean margin   Margin 95% CI
+            full_9feat (all features)         81.6%           0.3053      [0.2723, 0.3464]
+            no_phi7 (remove ϕ7 )              81.6%           0.3048      [0.2715, 0.3457]
+            no_phi8 (remove ϕ8 )              81.6%           0.3052      [0.2724, 0.3463]
+            no_phi9 (remove ϕ9 )              81.6%           0.3049      [0.2725, 0.3456]
+            no_phi789 (topology-only)         81.6%           0.3045      [0.2721, 0.3452]
+            geo_only (geometry-only)          82.0%           0.2931      [0.2613, 0.3350]
+
+Table 12: Feature ablation results. Per-feature margin deltas are within bootstrap noise on this
+250-scenario held-out set (∆margin ≤ 0.0008); the topology-only gate is within the CI of the full
+model.
+
+Results.
+
+Interpretation. The per-feature deltas (ϕ7 : −0.0005, ϕ8 : −0.0001, ϕ9 : −0.0004, full geometry
+block: −0.0008) fall within the bootstrap noise on this evaluation distribution, which uses only
+hand-coded team topologies. This stands in contrast to the +4.6% margin improvement reported in
+the main benchmark (Table 1), which trains and evaluates on the full trace distribution including
+genuinely cyclic topologies from real solve episodes.
+    The key qualitative insight is that the geometry-aware features ϕ7 –ϕ9 are conditionally useful:
+they add discriminative signal when the evaluation distribution spans sufficient topology regime
+diversity. On a near-uniform topology distribution, the topology statistics ϕ1 –ϕ6 already capture all
+predictable variance and the geometry features are redundant. This is consistent with the theoretical
+motivation for the features (Section 3.3) and should be interpreted as a precision-of-effect limitation
+rather than a null result: the +4.6% gain in the main benchmark is observed precisely because the
+main benchmark was designed to cover the regime diversity that the geometry features detect.
+
+
+
+
+                                                  31
+

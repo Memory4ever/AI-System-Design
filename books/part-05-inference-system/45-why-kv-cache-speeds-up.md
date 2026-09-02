@@ -155,6 +155,12 @@ Verifier 只拥有 score readout，不拥有 trajectory truth；Search 决策层
 
 Access plan 必须绑定 model、prompt / tokenization、KV layout、knowledge revision 与 compiler version。收益来自减少 HBM traffic，代价是 plan staleness、irregular gather、漏掉因果依赖和 fallback 成本；短 Context、访问稠密或 gather kernel 不成熟时，dense FullKV 仍更合理。第 76 章拥有 relevance 与 provenance，本章拥有 plan 到 physical KV read 的执行接口，第 49 章拥有 kernel realization。
 
+只读取既有 KV 的前提是这些 row 已包含当前组合上下文需要的因果信息。独立文档分别 Prefill 后再拼接 cache 时，这个前提可能失效：每个 chunk 内部状态从未看到其他 chunk。全量重新 Prefill 最可靠，却放弃了复用收益；选择性重算则把 access plan 从“读哪些 row”扩展为“哪些局部状态必须在完整上下文中修复”。一个可行的 proposal 可以联合 token semantic relevance 与 positional influence 选择重算目标，让复用路径和 causal repair 共用同一份 versioned selection contract。
+
+这种方法节省的不是任意 Prefill，而是被判定为无需修复的部分；代价包括 selection error、额外估计开销和 optimized kernel 难以高效执行的 irregular causal mask。未选 token 仍可能影响答案，作者实验也不能证明选择器跨模型、任务和长度分布保持充分。因此高风险请求、依赖稠密、短 Context 或选择置信不足时，应回退 full-context Prefill；只有模型、chunking、position、selection rule 与 KV layout identity 全部兼容时，局部重算结果才可复用。
+
+<!-- source-family:SF-2026-ARXIV-2603-05353 -->
+
 #### 稀疏 KV 保留的是派生状态，不只是被抽样的 Token
 
 Full-context KV 把每个源 token 对应的派生表示都保留下来，最容易解释和回退；简单 token sampling 则默认“删除源
@@ -242,6 +248,22 @@ backpressure 和 exactly-once output illusion。短音频、低重连率或 stat
 当 HBM 不足时，系统可以拒绝请求、evict 并 recompute、offload 到 CPU/远端层级，或 preempt 请求让其他工作先运行。
 
 Offload 只在 transfer cost 小于 recomputation 或 SLO 损失时有价值。更大的远端容量不会自动变成更高性能。
+
+#### 从主动 Offload 到按需分页的 Context Residency
+
+固定窗口、整段常驻或由 scheduler 主动 offload，都假设 runtime 能预先决定下一阶段需要哪些 context。这个假设在访问密集、context 较短或 HBM 充足时最可预测；当逻辑 Context 很长、访问具有局部性而 HBM 无法全量容纳时，静态截断会把物理容量问题误写成语义删除，预先搬运又可能移动从未被访问的状态。
+
+Demand paging 把逻辑可寻址性与物理驻留分开：context page 保留稳定 identity，page table 记录其 HBM/host/storage 位置；访问未驻留 page 时产生 fault，由 memory manager 完成换入、淘汰和可见性提交后，Attention 才能消费它：
+
+```text
+logical context page identity
+→ residency lookup
+→ hit: consume resident state
+→ miss: fault, fetch, validate and publish
+→ update replacement state
+```
+
+Memory manager 拥有 residency、eviction、transfer completion 与 fault recovery，Attention runtime 只拥有本轮可见 page 的读取权。它用更大可服务 Context 换取 page-fault tail、抖动、replacement metadata 和跨层恢复复杂度；访问接近全量或 Context 较短时，完整常驻仍是更稳定的基线。这里描述的是 KV tensor 的物理 residency；消息和工具结果的 prompt working set 属于 Ch75 Agent Context，不能因同样使用 “paging” 类比而混为同一机制。
 
 ### 从固定 Top-k 到按 Attention Mass 自适应的 Top-p
 
@@ -420,6 +442,26 @@ projection 开销返还；prefix reuse、continuous batching、PD 分离和多�
 仍是更简单的基线。事件时论文只提供其离线/单 runtime 合同，未披露的 hardware、precision、batch、concurrency
 和 tail SLO 不能从 headline compression 或 tok/s 反推。
 
+跨层冗余还允许另一种更激进、但责任边界更清楚的取舍：不保存某些层的 K/V，而是在需要时从该位置的
+residual stream 重新执行对应 projections。它把容量问题从“怎样近似已经 materialize 的 KV”改写为
+“哪些 KV 值得持久化，哪些可以由更小的上游状态重建”：
+
+```text
+all layers materialize exact KV
+→ identify architecture- and layer-specific reconstructable regions
+→ retain residual state + reconstruction contract
+→ recompute selected K/V on demand
+→ fall back to exact KV where reconstruction error or latency is unacceptable
+```
+
+这一分支获得的是 memory-compute exchange，而不是免费删除缓存。Cache identity 必须同时绑定 residual
+representation、可重建 layer set、projection weights、position semantics 与 reconstruction policy；executor
+拥有重算和完成顺序，不能在 K/V 尚未重建时让 attention 消费半成品。它在 memory-bound、算力尚有余量且
+架构冗余稳定时可能有价值，却会增加 token-path compute、kernel 编排和 tail-latency 波动。尤其 sliding-window
+或 retrieval-sensitive layers 可能并不满足同样的冗余假设，因此按模型与层回归验证是启用条件。算力稀缺、
+TPOT 严格或可重建性未经验证时，FullKV 仍是正确基线。事件时证据只支持所测模型中的 layer-specific 结果，
+不能外推为 Transformer KV 普遍冗余。<!-- source-family:SF-2026-ARXIV-2603-19664 -->
+
 ### 从“保留或删除”到 Exact Main 与 Approximate Residual
 
 #### Sliding Window 也可以留下 Fast-weight L2
@@ -481,6 +523,10 @@ MosaicKV 的实验只支持其模型、Decode workload 和实现路径中的可�
 一个 training-free 分支先离线建立 model-side PCA basis，再在每个 request prefill 中估计各层 reconstruction curve，用 water-filling 在总 KV budget 下分配 variable rank。它不删除 token，而是改变每个 region 保留的 feature subspace；basis revision、request statistic、rank map、packed offsets、codec precision 与 reuse scope 都必须进入 cache identity。Prefix reuse 只有在 basis、model、RoPE 与 rank policy 兼容时才能共享，Decode kernel 若不能直接消费 variable layout，projection/gather 成本会返还 memory 节省。
 
 该路线获得更细的 quality-memory operating point，却增加 prefill estimation、metadata、codec latency 与不规则 kernel。FullKV 在 correctness-first 场景成立，uniform rank 在 spectrum 稳定时更简单，token eviction 在稀疏 retrieval workload 中仍可能更合适。作者的 LongBench、单 A100、greedy、单请求合同没有验证 continuous batching、多租户或 tail SLO，因此保持 Experimental。
+
+另一条更激进的分支不再要求压缩结果由原始 token 的 K/V 条目组成，而把“小缓存”直接当作可优化的连续状态：用保留区 query 与合成 future queries 约束 Attention 输出，将长缓存蒸馏成少量 synthetic K/V。这样把组合式 token selection 改成连续优化，能够表达原缓存条目的混合；代价是 token provenance 和可解释 eviction 不再成立，cache identity 必须额外绑定 distillation objective、query distribution、optimizer、synthetic-query generator 与 source-cache revision。
+
+蒸馏缓存只在训练 query 覆盖真实后续读取时近似有效。分布漂移、长 horizon、RoPE/adapter 变化或离线优化未收敛都可能产生不可恢复的 Attention 偏差，且每 request/layer 的优化成本可能超过节省的 Decode 工作。因此它应作为离线或 amortized 的 lossy artifact 接受 full-KV regression 与 fallback，而不是替代所有选择、量化和低秩路径；动态、未知 workload 或 correctness-first 场景仍应保留原始 KV。`arXiv:2603.27819v1` 的证据只覆盖 §3.2、§5.1 与 §6 的蒸馏目标、作者实验和限制，不证明任意未来 query、engine 或 SLO 下的等价性。<!-- source-family:SF-2026-ARXIV-2603-27819 -->
 
 ### 从昂贵 Oracle 到 Learned Eviction Policy
 
@@ -547,6 +593,26 @@ resident/cold location 与 transfer completion；attention runtime 只有在 rec
 storm、head-role drift、host contention 和 TP ranks 间可见性不一致。短 context、HBM 充足或 TPOT 极严时
 FullKV 仍最好；互联慢且 recall 不可隐藏时，精心校准的不可逆 compression 也可能更合适。作者分类和收益
 只在其模型、数据、budget 与 PCIe contract 下成立，不能把 head taxonomy 写成模型通则。
+
+当 cold tier 从单一 host memory 扩展到多块 SSD，容量不再是主要矛盾，访问并行度和数据布局才是。简单
+hash 或 round-robin striping 假设每个 KV block 独立且请求分布均匀；实际检索若经常共同激活一组历史 blocks，
+它们落到同一设备就会形成热点。可选分支可以离线学习 co-activation graph，把相关 block 分散到不同设备，
+在线再协同 fetch、更新 hot cache：
+
+```text
+single cold tier
+→ capacity striping across SSDs
+→ co-activation-aware placement
+→ parallel recall + hot-cache promotion
+→ profile drift detection and relayout / fallback
+```
+
+Placement owner 必须保存 profile revision、block lineage、device mapping 与迁移 frontier；request scheduler 只有在
+所需 blocks 全部可见后才能提交本轮 attention。收益来自把相关读请求映射到并行设备，代价是 profiling、
+relayout、write amplification 和更复杂的故障恢复。Workload drift 会使旧图失效，单盘故障也可能扩大为一次
+请求的多块缺失；因此需要保守 fallback 与重新布局触发器。KV 较小、DRAM 足够或访问近似均匀时，普通 striping
+仍更简单；作者在特定 GPU、DDR5、NVMe 与负载上的结果不能外推为任意存储拓扑的收益常数。
+<!-- source-family:SF-2026-ARXIV-2603-17803 -->
 
 Recoverable tiering 需要额外存储层，另一条较窄的分支是在既有 eviction 结果内寻找“保留项与误删项之间的
 可替代冗余”。若某个被删 token（orphan）的注意力重要性高于一个仍被保留、但与其他保留项高度冗余的 token
@@ -652,6 +718,19 @@ previous committed state
 ```
 
 这个机制改变的是 transfer timing，不是 correctness owner。真正 token 仍由当前模型路径提交；预测失败必须能够回退或补取，不能把 speculative selector 当作 attention truth。Layer-scoped buffer 可以缩短 KV 的 GPU residency，但会增加双 token pipeline、预测状态、prefetch miss、PCIe contention 和调度耦合。长上下文、host tier 可用且 transfer 能被计算覆盖时它可能成立；短上下文、链路拥塞、相邻 query 漂移或 continuous batching 使 overlap 不稳定时，反应式 retrieval、固定 hot set 或 FullKV 仍可能更好。
+
+跨请求 Prefix Reuse 把同一问题从“下一步需要哪些 token”提升为“等待队列中的哪个请求会消费哪个完整前缀”。只在请求被调度后才从 SSD/CPU 取回命中前缀，命中本身可能正确，搬运却仍落在 TTFT critical path；因此 cache manager 可以先在 prefix tree 中解析等待请求的复用关系，用 look-ahead replacement policy 预留下一个高价值前缀，再按 layer 把 SSD→CPU、CPU→GPU 传输与当前层计算重叠：
+
+```text
+waiting-request prefix identity
+→ prefix-tree lookup + future-use estimate
+→ tier-aware prefetch reservation
+→ layer-wise transfer / compute overlap
+→ admission-time identity validation
+→ consume prefetched KV or fall back to ordinary load
+```
+
+这里预测器只拥有 residency hint，模型、adapter、tokenizer、position policy、KV layout 与前缀 digest 仍决定复用是否合法。收益来自隐藏已知的层级传输，而不是凭空减少必须搬运的数据；预测错误会污染 CPU/GPU 容量，突发到达会使等待队列过期，分层 pipeline 还引入 I/O contention、取消和 starvation。复用弱、SSD 路径不稳定或请求排序高度动态时，反应式加载与普通 LRU 仍更稳。`arXiv:2603.23049v1` 的证据只覆盖 §4.1、§6.1 与 §8 所披露的 RAG workload、存储层级和实现，不证明任意 engine、并发或 tail-SLO 都获益。<!-- source-family:SF-2026-ARXIV-2603-23049 -->
 
 另一种复用粒度不是 request prefix，而是把每个稳定 document 的 derived KV 包装成 immutable packet，再在请求
 时组合。它可以避免相同文档反复 prefill，却必须处理 position-dependent representation：

@@ -141,6 +141,25 @@ Graph owner 只拥有诊断 view，不得改写原 trace；candidate root cause 
 依赖图不完整或低频新故障中仍是正确旧方案；结构化 slicing 适合重复 pipeline 和可见度足够的系统。STRACE
 提供了 structure-guided attribution 的实验性证据，不证明 observational trace 本身已经识别真实因果。
 
+Root-cause graph 之外还有一类更直接的审计问题：Agent 是否明知 system instruction 或 task rule，却在后续决策中
+违背它。只检查最终 outcome 会把“偶然成功但过程越权”和“合规执行但环境失败”混在一起；只对单个 span 打分又
+看不到 rule 如何跨对话、规划与 tool event 传播。一个受限的 trace auditor 可以先从版本化 instruction 中抽取
+可检查规则，再以整条 trace 为 evidence 对每条规则作判断：
+
+```text
+versioned prompt / system policy
+→ extracted behavioral rules with provenance
+→ dialogue + decision + tool-event trace
+→ rule-conditioned process judgment
+→ deterministic effect receipt / human review for consequential actions
+```
+
+这样 outcome 与 process evidence 被分离，规则违反可以定位到具体 transition；代价是 rule extraction、judge
+一致性、trace 隐私和存储成本。模型 judge 只能作为 sensor，不能替代确定性 authorizer 或真实 side-effect receipt；
+规则抽错、instruction 冲突或 trace 缺失时必须输出 Unknown，而不是“未发现违规”。短且确定性的 workflow 仍应
+优先使用状态机断言；语义 trace auditor 适合规则难以完全形式化、但所有关键事件均可见的路径。作者评估只支持
+所测 Agent traces 的检测能力，不构成生产合规率。<!-- source-family:SF-2026-ARXIV-2603-23806 -->
+
 ### 从 Root-cause Hypothesis 到受限 Repair
 
 Root-cause graph 缩小调查范围后，还不能把诊断直接提升为修改生产行为的权威。多轮 Agent 的下游症状可能由上游 tool error、环境漂移或模型判断共同造成，因此应把四类状态分开版本化：trace evidence 记录实际发生的 span 与 artifact；diagnoser 只提交带依据的 causal hypothesis；repair controller 根据 side-effect class、权限和回滚条件决定是否允许 patch/rerun；rerun result 再成为新的 evidence。

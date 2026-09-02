@@ -1,0 +1,1758 @@
+AgentRaft: Automated Detection of Data Over-Exposure in
+LLM Agents
+
+arXiv:2603.07557v1 [cs.SE] 8 Mar 2026
+
+YIXI LIN∗ and JIANGRONG WU∗ , Sun Yat-sen University, China
+YUHONG NAN† , Sun Yat-sen University, China
+XUEQIANG WANG, University of Central Florida, USA
+XINYUAN ZHANG, Sun Yat-sen University, China
+ZIBIN ZHENG, Sun Yat-sen University, China
+The rapid integration of Large Language Model (LLM) agents into autonomous task execution has introduced
+significant privacy concerns within cross-tool data flows. In this paper, we systematically investigate and define
+a novel risk termed Data Over-Exposure (DOE) in LLM Agent, where an Agent inadvertently transmits
+sensitive data beyond the scope of user intent and functional necessity. We identify that DOE is primarily
+driven by the broad data paradigms in tool design and the coarse-grained data processing inherent in LLMs.
+In this paper, we present AgentRaft, the first automated framework for detecting DOE risks in LLM agents.
+AgentRaft combines program analysis with semantic reasoning through three synergistic modules: (1) it
+constructs a Cross-Tool Function Call Graph (FCG) to model the interaction landscape of heterogeneous tools;
+(2) it traverses the FCG to synthesize high-quality testing user prompts that act as deterministic triggers
+for deep-layer tool execution; and (3) it performs runtime taint tracking and employs a multi-LLM voting
+committee grounded in global privacy regulations (e.g., GDPR, CCPA, PIPL) to accurately identify privacy
+violations. We evaluate AgentRaft on a testing environment of 6,675 real-world agent tools. Our findings reveal
+that DOE is indeed a systemic risk, prevalent in 57.07% of potential tool interaction paths. AgentRaft achieves a
+high detection accuracy and effectiveness, outperforming baselines by 87.24%. Furthermore, AgentRaft reaches
+near-total DOE coverage (∼99%) within only 150 prompts while reducing per-chain verification costs by 88.6%.
+Our work provides a practical foundation for building auditable and privacy-compliant LLM agent systems.
+Additional Key Words and Phrases: LLM Agent Security, Data Over-Exposure, Program Analysis, Cross-tool
+Data Flow
+
+1
+
+Introduction
+
+The evolution of Large Language Models (LLMs) has catalyzed a paradigm shift in artificial intelligence, transitioning from passive conversationalists to action-oriented agents capable of autonomous
+task execution [25, 46, 54]. By integrating with external tool ecosystems, these agents serve as
+a “sophisticated brain,” orchestrating closed-loop workflows that involve interpreting user intentions, planning sub-tasks, and coordinating data flow across diverse components. This capability
+allows agents to handle complex requests, such as retrieving a file [11], extracting specific content, and emailing it to a colleague [9], by chaining multiple tool invocations (e.g., read_file →
+send_email). However, this architectural advancement introduces a complex, multi-stage data
+flow that inherently heightens the risk of unintended data exposure during autonomous execution.
+In this paper, we refer to this privacy risk as Data Over-Exposure (DOE) in LLM Agents, which
+arises when the agent’s autonomous execution is misaligned with the user’s intention regarding
+data transmissions. Our observation is that two inherent characteristics of today’s LLM agent
+∗ Both authors contributed equally to this research and are ranked in alphabetical order.
+† Corresponding author.
+
+Authors’ Contact Information: Yixi Lin, linyx98@mail2.sysu.edu.cn; Jiangrong Wu, wujr28@mail2.sysu.edu.cn, Sun Yat-sen
+University, Zhuhai, Guangdong, China; Yuhong Nan, Sun Yat-sen University, Zhuhai, Guangdong, China, nanyh@mail.sysu.
+edu.cn; Xueqiang Wang, University of Central Florida, Orlando, Florida, USA, xueqiang.wang@ucf.edu; Xinyuan Zhang,
+Sun Yat-sen University, Zhuhai, Guangdong, China, zhangxy797@mail2.sysu.edu.cn; Zibin Zheng, Sun Yat-sen University,
+Zhuhai, Guangdong, China, zhzibin@mail.sysu.edu.cn.
+
+designs make DOEs more likely to occur and persist in near-future LLM agents. First, Overly
+broad data provision by tools. In order to support flexibility and task versatility, LLM agents are
+often designed to receive a broad range of data from the tools they integrate, without explicit
+consideration of whether the data are strictly necessary for a given task (sometimes, tasks are
+vaguely defined in prompts, making it difficult for agent developers to determine whether the data
+are actually required). Second, Lack of contextual privacy awareness of LLMs. While LLMs can be
+tuned to detect sensitivity of individual data points, prior research [34, 37] shows that in real-world
+contexts of complex tasks they often fail to determine which data should not be exposed, further
+compounded by inherent model limitations such as hallucinations. For example, in a real-world
+LLM Agent app Pokee [10], a user ask an agent to “extract the payment date from a transaction
+log and email it to an auditor.” While the user only wants to share the date, the upstream tool
+(read_file) may return a full data schema containing sensitive financial details. At the same time,
+the LLM fails to enforce a strict data boundary, and inadvertently pass the whole information
+(including credit card number and cvv) to the downstream tool (send_email), resulting in a privacy
+violation where a third party receives significantly more data than intended [1–3].
+While similar DOE issues have been discussed in traditional systems such as mobile apps [50, 57]
+and IoT platforms [38], detecting such risks in LLM agents poses unique challenges to existing
+techniques. For example, prior research [16, 50] often analyzes prescribed lines of code of software
+with deterministic data processing and data flows. However, in LLM agents, sensitive data usage is
+driven by dynamic, non-deterministic tool orchestration, where the LLM determines which tools to
+invoke and how to process data at runtime. As a result, techniques that rely on modeling data flows
+from static software code would likely fail, leaving dynamic analysis as the most viable approach
+to understand and monitor data flows. Complicating the dynamic analysis of data flows, however,
+is that, unlike traditional software, where test cases for triggering execution are often available or
+documented, manually creating a fixed set of test cases for LLM agents is not only time-consuming
+but also difficult, due to the unconstrained and probabilistic nature of tool executions. Therefore, the
+need for a framework that can thoroughly explore the data flows of LLM agents with comprehensive
+test cases and identify potential privacy issues, such as DOEs, is more urgent than ever before.
+Our Work. In this paper, we propose the first automated, generic framework for detecting data
+over-exposure risks in LLM agents. In particular, given an Agent, we aim at generating a rich-set of
+valid user prompts that can fully trigger various tools provided by the agents, and further confirm
+if there is any potential user un-intended data exposure during the agent usage.
+To achieve this goal, we must overcome three primary technical challenges: (1) Comprehensively
+model agent usage across various tools; (2) Synthesize high-valid user prompts; (3) Observe potential
+data exposure. First, we need to comprehensively model the interaction landscape across various
+tools of Agent, as complex tool-to-tool combinations can create hidden data-flow leakage channels.
+Second, we must synthesize high-valid user prompts that act as deterministic triggers to drive the
+agent through specific execution paths for valid DOE discovery. Finally, we need to accurately
+observe potential data exposure and distinguishing between data that is functionally necessary for
+a tool and data that is genuinely over-exposed.
+To address these challenges, we adopt program analysis techniques, specifically call graph
+construction and data-flow analysis, to build AgentRaft. Our framework formalizes the agent’s
+tool interactions into a structured execution space and operates through three synergistic stages.
+First, to address Challenge-1, AgentRaft constructs a Cross-Tool Function Call Graph (FCG) by
+modeling agent tools as inter-dependent function calls. This stage maps the underlying data-flow
+dependencies and transitive relationships across various tools and scenarios. Second, to overcome
+Challenge-2, AgentRaft traverses the FCG to identify reachable execution call chains and synthesizes
+
+2
+
+high-fidelity user prompts. These prompts act as deterministic triggers that drive the agent to
+execute specific, multi-step tool invocation. Finally, to tackle Challenge-3, AgentRaft performs
+runtime data-flow tracking during execution. The framework can observe any data transmissions by
+capturing fine-grained data traces along the call chain. Moreover, to accurately distinguish between
+functional necessity and over-exposure, AgentRaft implement a multi-LLM voting mechanism
+grounded in global privacy regulations (GDPR [1], CCPA [2], PIPL [3]) to judge whether the
+transmitted data is strictly required for the task or violates the user’s intent boundaries.
+We evaluate AgentRaft by building a testing environment derived from 6,675 real-world tools
+crawled from MCP.so [8], focusing on four dominant application scenarios: Data Management,
+Software Development, Enterprise Collaboration, and Social Communication. Our findings reveal
+that DOE is a systemic and severe risk, with 57.07% of potential tool call chains across all tested
+domains exhibiting unauthorized sensitive data exposure. At a finer granularity, 65.42% of the
+total transmitted data fields are identified as over-exposed, highlighting a critical misalignment
+between current Agent execution patterns and the fundamental principle of data minimization.
+From a technical perspective, AgentRaft demonstrates a significant performance over the baseline
+approaches. Compared to non-guided random search methods which struggle to exceed 20%
+vulnerability coverage even after 300 attempts, AgentRaft achieves a discovery rate of 69.15%
+within only 50 prompts and reaches near-total coverage (∼99%) at 150 prompts. Furthermore, our
+multi-LLM voting mechanism resolves the reasoning bottlenecks of single-model judges, improving
+DOE identification by 87.24% within 150 prompts and successfully verifying deep-seated risks.
+Moreover, AgentRaft optimizes auditing economics by reducing per-chain verification costs by
+88.6% compared to non-guided baselines, thereby proving the feasibility of large-scale, cost-effective
+privacy verification for autonomous agents.
+AgentRaft provides practical security/privacy benefits for developers, platforms, and end-users.
+Developers can use the framework to perform systematic privacy vetting to identify and remediate
+data over-exposure risks before release. This ensures that agents follow the “Data Minimization”
+principle[1] and protects user privacy from unintended data leaks. Additionally, hosting platforms
+can use AgentRaft for automated compliance checks to verify that third-party agents adhere to
+regulations like GDPR and PIPL. By proactively finding these flaws, AgentRaft helps build a more
+trustworthy and secure agent ecosystem for all users.
+Contribution. In summary, this paper makes the following contributions:
+• We perform the first systematically investigation regarding Data Over-Exposure risk specifically
+within the cross-tool data flows of LLM Agents. We provide a formal definition of this problem,
+characterizing it as a violation of the privacy boundary between user-intended data and the
+execution of LLM Agent.
+• We develop AgentRaft, an automated framework that leverages program analysis to detect
+DOE risks in LLM Agents. AgentRaft constructs a novel Function Call Graph (FCG) to map tool
+dependencies and synthesizes precise user prompts to trigger deep-layer execution paths. It then
+performs runtime data-flow tracking and multi-model auditing to identify privacy violations
+along the call chain.
+• We conduct an extensive evaluation of AgentRaft with testing environment derived from 6,675
+real-world tools across four representative Agent scenarios. Our findings reveal that DOE is a
+systemic risk prevalent in 57.07% of tool interaction paths. Furthermore, we demonstrate that
+AgentRaft achieves superior detection efficiency on DOE, proving the practical feasibility and
+scalability of automated privacy verification for the LLM Agent ecosystem.
+
+3
+
+2
+2.1
+
+Background and Problem Statement
+LLM Agent Architecture
+
+A typical LLM agent consists of an LLM integrated with various tools. Given a task, the agent
+typically follows a “Reasoning-Action-Observation” loop: the LLM first parses the user request to
+formulate a plan, then autonomously selects and invokes appropriate available tools, and finally
+observes the returned data to update its internal state or proceed to the next execution step.
+LLM Integrations. Large Language Models (LLMs) serve as the core and logical center of LLM
+Agents, forming the foundation for autonomous decision-making, task comprehension, and crosscomponent coordination. The LLM-based brain first performs intention decoding to align autonomous actions with core user requirements through semantic understanding. It subsequently
+manages task planning and tool orchestration by decomposing complex requests into actionable
+sub-steps based on functional descriptions. Finally, the model structures tool-returned intermediate
+data into compatible formats to ensure consistent data flow across the execution chain.
+Agent Tools. An Agent tool is a collection of functions designed to interact with external environments in specific scenarios. These tools serve as the “hands” of the Agent, interacting with
+external resources and returning raw or processed data to the LLM for subsequent execution steps.
+Functionally, Agent tools are categorized based on task requirements: information extraction tools
+retrieve raw data from external sources (e.g., email or web content); data processing tools perform
+computations or structured queries; and interactive transmission tools deliver results to designated
+third-party targets.
+
+Fig. 1. A typical interaction between Agent tool (function) calls with LLM Reasoning.
+
+Cross-tools Interactions. Cross-tool interaction in a LLM Agent is characterized by the LLM’s
+ability to orchestrate sequential function calls and facilitate semantic data transfer between tools.
+As illustrated in the Figure 1, the LLM acts as a reasoning bridge: it first invokes a retrieval function
+(e.g., read_file) to obtain raw data, then parses this output to serve as a functional argument for
+a subsequent tool (e.g., send_email). While this “output-to-input” dependency is fundamental for
+executing complex, multi-step tasks, it inherently creates a risk of data over-exposure, as private
+information retrieved at the source may be transmitted to an external sink beyond the user’s
+original intent.
+
+4
+
+2.2
+
+Problem Statement
+
+Motivating Example. Figure 2 presents a real-world DOE case: the Agent inappropriately disclosed
+the user’s credit card number and CVV to a third-party auditing platform (through read_file ->
+send_email), despite the user only requesting the transmission of partial information.
+
+Fig. 2. Example scenario of data over-exposure in a real-world agent [12].
+
+Definition of DOE. We formally define Data Over-Exposure specific to LLM Agents to clarify the
+scope of this research. We define a source function as the initial data retrieval node (e.g., read_file)
+and a sink function as the terminal node interacting with third parties (e.g., send_email).
+DOE occurs when an Agent transmits data to a sink beyond the scope of functionally necessary
+and user-specified data. Formally, given 𝐷𝑡𝑜𝑡𝑎𝑙 (all data retrieved at source), 𝐷𝑡𝑟𝑎𝑛𝑠 (data transmitted
+to sink), 𝐷𝑖𝑛𝑡 (user-intended data), and 𝐷𝑛𝑒𝑐 (data strictly necessary for the sink’s operation and
+user intent), the over-exposed data 𝐷𝑂𝐸 is defined as:
+
+𝑫 𝑶𝑬 = (𝑫 𝒕 𝒓𝒂𝒏𝒔 \ (𝑫 𝒏𝒆𝒄 ∪ 𝑫 𝒊𝒏𝒕 )) ∩ 𝑫 𝒕 𝒐𝒕𝒂𝒍
+This formulation ensures that 𝐷𝑂𝐸 captures sensitive elements that are neither authorized by the
+user nor required for the task execution.
+Research Goal. Our primary goal is to develop an automated framework to uncover potential
+DOE risks in LLM Agents. To achieve this, our research focus on complementing two critical
+sub-tasks: (i) High-quality User Prompt Generation for exposing potential DOEs, which explores
+diverse tool combinations by synthesizing targeted user requests to activate specific call chain
+execution; and (ii) Data Flow Inspection for DOE confirmation, which performs runtime monitoring
+and data flow tracking to verify whether the transmitted data strictly adheres to the defined 𝐷𝑖𝑛𝑡
+and 𝐷𝑛𝑒𝑐 boundaries. By combining structural mapping with dynamic flow analysis, we aim to
+provide a rigorous auditing solution for the emerging LLM agent ecosystem.
+3
+
+Overview of AgentRaft
+
+Challenges and Solutions. To achieve systematic and in-depth privacy testing of LLM Agent
+systems, there are three challenges that we need to overcome:
+• C1: Highlighting valid tool usage combinations. DOE risks are often hidden within the vast
+space of potential tool combinations. Exhaustively testing all permutations is computationally
+prohibitive and frequently yields semantically invalid paths. The primary challenge lies in
+precisely modeling the semantic connectivity between heterogeneous tools to identify valid data
+dependencies across an expansive interaction space.
+Solution: Graph-based function call chain generation. We construct a cross-tool Function Call Graph
+(FCG) to formalize the Agent’s potential tool interaction landscape. By employing a hybrid strategy of efficiency-driven static type-pruning and precision-oriented LLM validation, we provide
+a structural blueprint of reachable data-flow channels, ensuring hidden risks in diverse tool
+combinations are captured.
+• C2: Generating valid prompts along the execution path. Even with identified dependency
+tool call chains, the probabilistic nature of LLM decision-making makes guiding an Agent through
+5
+
+a specific 𝑠𝑜𝑢𝑟𝑐𝑒 → 𝑠𝑖𝑛𝑘 sequence difficult. Standard user prompts often fail to activate complex,
+multi-step tool chains required for risk validation.
+Solution: Call chain-driven prompt synthesis. We transform FCG paths into high-fidelity user
+prompts by instantiating nodes with specific assets and logical constraints. These prompts
+serve as deterministic triggers that enforce traversal along intended execution paths, enabling
+the systematic validation of complex call chains.
+• C3: Distinction between necessary data propagation and data over-exposure. Identifying
+privacy violations is non-trivial because the boundary of “necessary data” is dynamic and taskdependent. Transmitted data may exceed the user’s explicit intent (𝐷𝑖𝑛𝑡 ) yet remain strictly
+required for the tool to fulfill the specific task requested by the user (𝐷𝑛𝑒𝑐 ). Rigid auditing fails to
+capture this nuance, leading to high false-positive rates.
+Solution: Multi-model vote-based auditing. We implement a runtime module utilizing a committee
+of LLMs to analyze intercepted data (𝐷𝑡𝑟𝑎𝑛𝑠 ) alongside user intent and tool metadata. Guided by
+global privacy regulations (GDPR [1], CCPA [2], PIPL [3]), the committee semantically delimits
+the 𝐷𝑛𝑒𝑐 boundary (Data minimization principle), ensuring only data falling outside both 𝐷𝑖𝑛𝑡
+and 𝐷𝑛𝑒𝑐 is flagged as 𝐷𝑂𝐸 .
+
+Fig. 3. Workflow of AgentRaft.
+
+3.1
+
+Overall Design
+
+AgentRaft is a novel framework designed to identify fine-grained data over-exposure risks in LLM
+Agent systems. Its core is to treat the Agent’s tool ecosystem as a structured execution space, where
+potential leakage paths are identified via dependency modeling and activated through intent-driven
+prompt synthesis. As shown in Figure 3, AgentRaft comprises three synergistic modules: Cross-Tool
+Function Call Graph Generation, User Prompt Synthesis, and Data Over-Exposure Detection.
+Cross-Tool Function Call Graph Generation. To uncover the latent privacy risks concealed
+within complex, multi-stage tool orchestrations, this module performs data dependency construction of the Agent’s tool execution logic to build a Cross-Tool Function Call Graph (FCG). Rather than
+6
+
+blindly navigating the exponential combinatorial space of potential tool permutations, AgentRaft
+performs Function Pair Dependency Modeling and Call Edge Generation & Combination to transform
+the chaotic tool interaction landscape into a structured, traversable call graph. This process effectively prunes semantically invalid call chains and isolates only valid data-flow channels, providing a
+formal roadmap that captures how sensitive information propagates through multi-hop call chains
+for subsequent privacy auditing.
+User Prompt Synthesis. This module transforms abstract call chains into executable test cases to
+evaluate the Agent’s privacy behavior. The primary objective is to generate high-valid user prompts
+that deterministically trigger specific cross-tool call chains for data-flow inspection. To achieve
+this, AgentRaft extracts reachable paths (from source to sink) from the FCG and converts them into
+structured prompt templates. These templates are then instantiated with concrete user assets (the
+actual information of the user), which are partitioned into User Intent Data (𝐷𝑖𝑛𝑡 ) and Over-exposure
+Candidates. By strictly constraining the resulting prompt to 𝐷𝑖𝑛𝑡 , AgentRaft establishes a clear
+intent boundary in user prompt (representing user intent).
+Data Over-Exposure Detection. To quantitatively determine privacy violations, this module
+monitors the Agent’s runtime execution by executing the synthesized user prompt provided
+by previous module. AgentRaft reproduces the target data flow and captures the fine-grained
+runtime data trace, including all intermediate data processed by the LLM. We then apply the
+formal over-exposure paradigm: a violation is identified if the data transmitted to the sink contains
+candidates beyond the scope of functional necessity (𝐷𝑛𝑒𝑐 ) and explicit user intent (𝐷𝑖𝑛𝑡 ). This
+module effectively distinguishes between legitimate tool-servicing data and unintended sensitive
+exposure, providing an automated verdict on the system’s privacy integrity. Finally, the AgentRaft
+output all the call chains that affected by DOE risk.
+4
+4.1
+
+Core Design of AgentRaft
+Cross-Tool Function Call Graph Generation
+
+The primary objective of this module is to construct the data-flow landscape of the Agent system
+by identifying inter-tool and intra-tool function dependencies. By formalizing these relationships
+into a Cross-Tool Function Call Graph (FCG), AgentRaft provides a structural blueprint that
+supports subsequent targeted and in-depth data flow analysis. Figure 4 illustrate the whole process
+of this module, which combined Function Pair Dependency Modeling and Call Edge Generatin.
+Formal Definitions of FCG. To provide a rigorous basis for graph construction, we define the
+following core components:
+• Cross-Tool Function Call Graph: Formally, 𝐺 = (𝑁 , 𝐸) is a directed graph representing the
+potential interaction landscape of an Agent’s toolset. Unlike traditional call graph in software
+engineering that describe fixed, hard-coded execution paths, the Agent FCG serves as an overapproximation of all semantically valid tool combinations. While individual tools act as atomic
+operators for specific sub-tasks, the transitions between them are dynamically orchestrated by
+the LLM’s reasoning. Thus, our FCG formalizes the space of all possible logical associations that
+the LLM might navigate during runtime.
+• Entry Node: A virtual node representing the user’s initial input point, which serves as the
+trigger for the entire execution sequence.
+• Function Node: Each function node 𝑛 ∈ 𝑁 represents an individual function within the Agent’s
+toolset (e.g., read_email).
+• Call Edge: An edge 𝑒 (𝑛𝑖 , 𝑛 𝑗 ) represents an abstract action instruction that guides the LLM to
+invoke function 𝑛 𝑗 with the output of 𝑛𝑖 . For example, a chain from Entry → read_email →
+7
+
+send_email is connected by edges representing the logic of “reading content of the email” and
+“transmitting that content via email.”
+
+Fig. 4. The process of Cross-Tool Function Call Graph generation.
+
+4.1.1 Function Pair Dependency Modeling. To accurately identify true data dependencies between
+tool functions while managing computational overhead, AgentRaft employs a hybrid strategy
+of Static Function Analysis and LLM-based Validation. While a naive LLM-only approach could
+theoretically determine associations, it suffers from prohibitive token costs and latency when
+dealing with extensive toolsets.
+Stage 1: Compatible Pairs Extraction. We first perform rapid static analysis on function
+signatures to obtain all compatible function pairs of the whole tool function set, and eliminate the
+incompatible function pairs that never transmit data.. Specifically, AgentRaft checks whether the
+return type of one function and the input type of another satisfy the following relationships (as
+shown in Table 9). (1) Type equivalence: The input type of one function matches the return type
+of another; (2) Type subset: The input/return type of one function is a subset of the return/input
+type of another; (3) Type conversion: The return type of one function can be converted to the input
+type of another. If the function pair follow the above rules, AgentRaft flag them as compatible. For
+custom objects and containers, AgentRaft recursively scans nested member variables to ensure no
+potential data-flow link is overlooked.
+Stage 2: Dependency Validation. Since static analysis only infers “type-level” possibility, it
+may produce false positives where the semantics are logically disjoint (e.g., read_email and read_file
+in Figure 4). Equipped with strong natural language understanding, the AgentRaft leverages LLM
+to judge whether the output of a preceding function is logically relevant to serve as the input
+of a subsequent function, based on functional descriptions and parameter names (e.g., “extract
+email body”, “send text message”). This step precisely filters false-positive dependencies generated
+by static analysis, ensuring the accuracy of final dependency relationships. Ultimately, AgentRaft
+outputs all function pairs with data dependencies.
+4.1.2 Call Edge Generation & Combination. Once valid function pairs are identified, AgentRaft
+generates an action prompt that connects the function pairs into a Call Edge (drive the Agent to
+invoke function pairs). To avoid semantic drift and ensure consistent path activation, we adopt a
+“Semantic Extraction + Structured Template” strategy.
+First, AgentRaft extracts the core Verb (action) and Object (target) from each function’s natural
+language description. Then, AgentRaft fill these entities into a deterministic template to generate
+8
+
+an abstract action instruction (i.e., Call edge). Call Edge Template: “Based on the {object1} {verb1}
+by the previous step, the next step is to {verb2} {object2} based on the {object1}.”
+For instance, for the read_email → send_email pair, the call edge is “Based on the [email content]
+[read] by the previous step, the next step is to [send] [the email] based on that [content].” This structured generation ensures that the resulting user prompts are precise enough to drive the Agent
+through the intended data-flow path without ambiguity. At last, by integrating all validated function
+pairs and their corresponding call edges, AgentRaft produces a comprehensive Function Call Graph,
+which serves as the foundation for the subsequent prompt generation and data over-exposure
+detection.
+4.2
+
+User Prompt Synthesis
+
+To effectively detect data over-exposure, AgentRaft must ensure that the Agent not only has the
+capability to interact with tools but is also deterministically driven to traverse specific “source-tosink” paths. This module transforms the static topological paths of the Function Call Graph (FCG)
+into executable, high-fidelity user prompts. The synthesis process follows a two-stage pipeline: Call
+Chain Retrieval and Call Chain User Prompt Instantiation, ensuring that the resulting user prompts
+are both semantically coherent and focused on fine-grained data fields.
+
+Fig. 5. The process of User Prompt Synthesis.
+
+4.2.1 Call Chain Retrieval. The primary goal of this stage is to exhaustively extract all reachable
+execution call chain from a designated source node to a sink node, and further generate the prompt
+template of the call chain. Given the FCG constructed in previous module, we employ a BreadthFirst Search (BFS) algorithm to traverse the graph and identify all acyclic paths. As detailed in
+Algorithm 3, the retrieval process validates the existence of the source-sink pair and maintains a
+queue of explored functional chains. To ensure testing efficiency and prevent infinite loops, we
+explicitly prune cyclic trajectories. After that, AgentRaft obtains a set of call chains from source to
+sink, each chain representing a potential data-flow channel that requires privacy validation.
+Furthermore, as a call chain is essentially constituted by a sequence of validated call edges,
+AgentRaft synthesizes a dedicated call chain prompt template by concatenating the individual
+instructions of these constituent edges (Figure 5). By merging the standardized semantic templates
+of each edge from the call chain (Section 4.1.2), AgentRaft constructs a logically coherent workflow
+instruction template. This resulting Call Chain Prompt Template serves as the foundational structure
+for subsequent user prompt instantiation. It ensures that the final trigger accurately encapsulates
+the multi-step execution logic required to drive the Agent through the entire data-flow call chain
+from source to sink.
+9
+
+4.2.2 User Prompt Instantiation along the Call Chain. While a retrieved call chain prompt template
+provides a structural workflow description, it remains an abstract template “skeleton.” This stage
+involves transforming the prompt template into a concrete natural language user prompt that an
+Agent can execute.
+As shown in Figure 5, AgentRaft starts by performing fine-grained labeling on the user’s accessible
+assets, such as local files or contact lists. Within these assets, a subset of data fields is designated as
+user intent data (𝐷𝑖𝑛𝑡 ), representing the specific information the user “officially” requests to transmit
+(i.e., Payment date, Amount). While the remaining data is labeled as over-exposure candidates,
+such as credit card and cvv/cvc. This partitioning creates a controlled testing environment where
+any transmission of the candidates constitutes a potential violation risk. To ensure the Agent
+successfully invokes the call chain, AgentRaft then performs entity instantiation by leveraging
+an LLM to resolve abstract placeholders within the template into concrete entities. By processing
+the call chain, function metadata, and the labeled 𝐷𝑖𝑛𝑡 , generic terms like “[path]” are replaced
+with specific identifiers such as “./trans.history,” and the user prompt is strictly constrained to the
+processing of fine-grained data 𝐷𝑖𝑛𝑡 , such as extracting only the payment date and amount.
+By focusing the user prompt exclusively on the transmission of 𝐷𝑖𝑛𝑡 , AgentRaft creates a rigorous
+intent boundary. If the Agent subsequently transmits data from the over-exposure candidates
+during the user prompt execution, it provides undeniable evidence of potential data over-exposure.
+4.3
+
+Data Over-Exposure Detection
+
+The final module of AgentRaft performs a quantitative assessment of privacy integrity by monitoring
+the Agent’s runtime behavior and verifying data boundaries. As illustrated in Figure 3(c), this
+module is designed to detect whether unauthorized sensitive data leaks through the function call
+chain via the data flow tracking mechanism and automated judging pipeline. At last, the AgentRaft
+output all the call chains that affected by DOE risk.
+4.3.1 Taint Data Tracking. In this phase, AgentRaft executes the synthesized prompts within a
+controlled Agent Runtime Environment to reproduce the execution path. The core of our tracking
+lies in the fine-grained labeling of data retrieved at the source function. Specifically, once the source
+function returns the full dataset 𝐷 total , AgentRaft identifies data elements that fall beyond the
+specified user intent (𝐷 int ) and assigns them a Taint Label (marked as target in our trace).
+To provide a deterministic view of data propagation, AgentRaft captures payloads at three critical
+observation points through the Agent Trace (i.e., Agent execution log): (i) the Source_function,
+to ensure tainted data and 𝐷 int are correctly isolated; (ii) the Tool_function, to track intermediate
+processing; and (iii) the Sink_function, to intercept the final packet delivered to external parties.
+This process monitors whether tainted candidates persist throughout the functional chain. For
+more details, the whole LLM Agent taint propagation algorithm is shown in Algorithm 1.
+4.3.2 Over-Exposure Judging. To determine whether the transmitted data 𝐷 trans constitutes a
+violation, AgentRaft implements a multi-LLM voting consensus grounded in standard privacy
+regulation (GDPR [1], CCPA [2], and PIPL [3]). According to our problem formulation, data is
+considered over-exposed if it falls outside the union of user-intended data (𝐷 int ) and functionally
+necessary data (𝐷 nec ).
+While 𝐷 int is explicitly defined in the prompt synthesis, identifying 𝐷 nec requires a nuanced
+understanding of the Data Minimization and Least Privilege principles. To achieve this, AgentRaft
+provides the intercepted data transmitted to sink, the user’s intent, and the sink function’s metadata
+to a committee of multiple LLMs. These models are prompted with security specifications derived
+from three global privacy regulations (GDPR, CCPA, PIPL) to judge whether each data field is
+strictly essential for the sink’s functionality. The final verdict on 𝐷 nec is reached through a majority
+10
+
+vote among the LLMs, which significantly mitigates individual model bias and enhances detection
+accuracy. If the final 𝐷 trans contains elements that are neither in 𝐷 int nor 𝐷 nec , AgentRaft flags a
+Data Over-exposure result. The prompt of the committee of multiple LLMs to judge DOE is shown
+in Section Appendix A.3 due to the space limitation.
+5
+
+Evaluation
+
+5.1
+
+Evaluation Setup
+
+Dataset. To systematically evaluate Data Over-exposure (DOE) risks in the current LLM Agent
+ecosystem, we construct a testing environment based on real-world tools. More specifically, we
+crawled 6,675 tools from MCP.so [8], one of the largest markets for the Agent tool. Our analysis
+(Table 10) revealed that the ecosystem is dominated by four primary scenarios: Data Management
+& Analysis (58.5%), Software Dev & IT Ops (56.6%), Enterprise Collaboration (39.8%), and
+Social Platform Communication (21.7%). The detailed distribution of agent tools across different
+scenarios is shown in Table 10, Appendix.
+Table 1. Characteristics of major LLM Agent app scenarios including func, source, and sink.
+Scenario of Agent
+Introduction
+Enterprise Collaboration (Enterprise) General office agent scenarios for organizational
+collaboration.
+Software Dev & IT Ops (DevOps)
+Professional agent scenarios for technical R&D.
+Social Platform Comm. (Social)
+Data Management & Analysis (Data)
+Total
+
+Toolset
+# Func # Source 1 # Sink 1
+WhatsApp, Claude23
+14
+6
+Post, Notes, Chrome
+
+GitHub, DesktopCommander, Filesystem,
+MySQL
+Social agent scenarios for Chrome,
+RedNote,
+individuals or small teams. WhatsApp, Discord
+Intelligent agent scenarios Filesystem, MySQL,
+for data-driven tasks.
+Excel, QuickData
+-
+
+36
+
+27
+
+5
+
+34
+
+13
+
+6
+
+28
+
+6
+
+7
+
+121
+
+60
+
+24
+
+Given the distribution of real-world tools, our evaluation is centered on four representative
+Agents crafted by our own, as shown in Table 1, each Agent is designed to correspond to one of
+these major scenarios while encompassing the general functionalities inherent to those domains.
+Note that we cannot directly evaluate proprietary commercial agents2 because the inaccessibility
+of their internal execution environments precludes the collection of fine-grained runtime traces,
+which are essential for data flow inspection. To this end, we selected the top-four scenarios as our
+primary evaluation targets, because they represent the vast majority of the ecosystem. For each
+scenario, we utilized an LLM to assist in curating a comprehensive toolset for the respective Agent,
+ensuring it covers the most common functional requirements of that domain.
+Environment Setting. We choose to implement our framework on AgentDojo [21] primarily
+because its extensible open-source architecture allows for full customization of core agent components while delivering the comprehensive runtime traceability. Furthermore, this architecture
+makes our implementation easily reproducible and scalable, providing a standardized platform for
+future research to follow and optimize. We implemented real-world tool functionalities crawled
+from MCP.so into the AgentDojo ecosystem.
+For internal modules, we adopted a modular model strategy: DeepSeek-V3.2 [4] for Cross-Tool
+Function Call Graph Generation, Qwen3-Plus [7] for User Prompt Synthesis, and a voting committee
+1 we manually label the source and sink functions of toolset for each Agent. The source refers to the functions that
+
+return/obatin the user information, the sink refers to the functions that send the data to third-parties. The whole source and
+sink functions are shown in Table 11, Appendix.
+2 While developers can independently deploy AgentRaft for internal privacy vetting of their own proprietary tools, auditing
+the ad-hoc agent/tool usage of individual end-users remains outside the scope of this work.
+
+11
+
+(GPT-4.1 [5], Qwen3-Plus [7], DeepSeek-V3.2 [4]) for DOE detection. The details of model selection
+is in Section 5.3. The tested agents are consistently powered by GPT-5.1 [6]. Note that the choice of
+specific LLM only represents different Agent implementation configurations and has nothing to do
+with the detection mechanism or effectiveness of AgentRaft.
+Regarding user assets, we leverage DeepSeek-V3.2 to automatically generate specific resources
+based on the environment schema and tools of each Agent. These assets are strategically populated
+with a controlled mixture of simulated Personally Identifiable Information (PII) and business data to
+provide a rigorous foundation for evaluating data over-exposure risks across the selected scenarios.
+Research Questions. We evaluate AgentRaft by answering the following four research questions:
+• RQ1: Overall Effectiveness. How effectively can AgentRaft identify Data Over-Exposure (DOE)
+risks across diverse LLM Agent app scenarios?
+• RQ2: Effectiveness of Individual Components. What are the specific contributions and performance of AgentRaft’s core modules, including call graph construction, user prompt generation,
+DOE identification (over-exposure judge)?
+• RQ3: Comparison with Baseline Approach. How does AgentRaft perform compared to the
+baseline methods in DOE detection?
+• RQ4: Performance Overhead. What are the computational and temporal costs associated with
+deploying AgentRaft for automated auditing?
+Table 2. Overall result of DOE prevalence across different levels: call chain, user prompt, and exposed data.
+Scenario
+
+Call Chain (Source → Sink)
+
+Generated User Prompt
+
+Data Fields
+
+Total
+
+Involving DOE
+
+Total
+
+Involving DOE
+
+Involving DOE
+
+Enterprise
+
+154
+
+94 / 154 (61.04%)
+
+770
+
+321 / 770 (41.69%)
+
+539 / 841 (64.09%)
+
+DevOps
+
+233
+
+145 / 233 (62.23%)
+
+1,160
+
+449 / 1,160 (38.71%)
+
+655 / 993 (65.93%)
+
+Social
+
+89
+
+56 / 89 (62.91%)
+
+445
+
+196 / 445 (44.04%)
+
+224 / 354 (63.28%)
+
+Data
+
+132
+
+52 / 132 (39.39%)
+
+660
+
+192 / 660 (29.09%)
+
+385 / 568 (67.78%)
+
+Total
+
+608
+
+347 / 608 (57.07%)
+
+3,035
+
+1,158 / 3,035 (38.15%)
+
+1,803 / 2,756 (65.42%)
+
+Note: Each call chain is tested with five user prompts for robustness (154 chains × 5 = 770 user prompts). “Involving DOE” counts
+instances at both chain, prompt, and data field levels. The ratio 𝑋 /𝑌 in Data Fields reflects over-exposed fields (𝑋 ) relative to
+the total fields transmitted (𝑌 ) within user prompts involving DOE (e.g. 321 instances in Enterprise scenario).
+
+5.2
+
+RQ1: Overall Effectiveness
+
+The overall result of DOE is shown in Table 2, we quantify the results at three different level: call
+chains, user prompts, and exposed data fields.
+DOE Discovery at Call Chain. Our framework extracts a total of 608 potential call chains across
+the four scenarios through FCG generation and traverse all path from source to sink. AgentRaft
+successfully identifies that 347 chains (57.07%) involve DOE risks, where sensitive data from
+sources reached sinks without functional necessity and misalign with user intent. Specifically, the
+Software Dev & IT Ops scenario exhibits the highest number of vulnerable paths (145 chains), while
+the Data Management & Analysis scenario shows a significant risk surface with 52 identified DOE
+chains. These results indicate that DOE is a systemic risk prevalent in diverse Agent applications.
+DOE Risks at User Prompt Level. To verify the DOE risks in the analyzed Agents, AgentRaft
+synthesizes a total of 3,035 user prompts, the framework creates 5 prompts for each identified
+call chain to ensure auditing robustness. Among these, 1,158 prompts (38.2%) have at least one
+DOE instance. This also highlights the pervasive nature of DOE risks across various agent tasks.
+12
+
+Beyond simply triggering leaks, the effectiveness of prompt synthesis is further evidenced by its
+high execution validity. More specifically, the majority of generated high-valid prompts successfully
+steer the Agent to follow the targeted tool call chain from the FCG, a detailed evaluation of the
+validity of generated user prompt is presented in Section 5.3.
+Exposure of Specific Data Fields. We analyze the specific data fields transmitted during the
+1,158 DOE-triggering prompts. Out of 2,756 total data fields transmitted to sinks, 1,803 fields
+(65.42%) are identified as over-exposed. This high leakage ratio, ranging from 63.28% in Social
+Platforms to 67.78% in Data Management, highlights the severity of the risk. Agents frequently
+transmit sensitive PII or business data that is irrelevant to the user’s specific request, confirming
+that current Agent designs lack sufficient data minimization principles. We present two real-world
+DOE cases in Section Appendix A.3 for more details.
+Takeaway for RQ1. The widespread discovery of DOE instances across all tested domains
+suggests that such risks are highly likely to exist in real-world LLM Agents, posing significant
+privacy and security risks.
+5.3
+
+RQ2: Effectiveness of Individual Components
+
+Scenario
+Enterprise
+DevOps
+Social
+Data
+Total
+
+Table 3. Evaluation of Function Call Graph Construction.
+Call Graph Size
+TP
+FP
+FN
+Precision (%)
+Recall (%)
+Nodes
+Edges
+22
+74
+70
+1
+3
+98.59
+95.89
+36
+117
+101
+6
+10
+94.39
+90.99
+21
+68
+62
+2
+4
+96.88
+93.94
+28
+73
+68
+2
+3
+97.14
+95.77
+107
+332
+301
+11
+20
+96.47
+93.77
+
+F1 (%)
+97.22
+92.66
+95.38
+96.45
+95.10
+
+Note: Metrics are evaluated at the granularity of functional edges. TP: Correctly identified edges; FP: Over-reported edges; FN:
+Missed edges. TN is omitted as it represents the vast majority of non-existent edges in sparse call graphs and does not
+meaningfully reflect detection precision.
+
+Robustness of Constructed FCG. To demonstrate the robustness of the structural foundation
+Cross-Tool Function Call Graph (FCG) of AgentRaft, we evaluated the accuracy of the FCG generator
+across four scenarios (107 nodes and 332 edges). The results is shown in Table 3, demonstrate
+that AgentRaft achieves high-fidelity mapping of tool interactions, with an overall Precision of
+96.47%, a Recall of 93.77%, and a robust F1-score of 95.10%. The consistently high recall across all
+scenarios indicates that the generated call chains can sufficiently cover the vast majority of valid
+tool interaction paths, effectively narrowing the search space for subsequent targeted user prompt
+generation while minimizing the risk of missing deep-seated DOE instances.
+Despite the high accuracy, our analysis identifies 11 False Positives (FPs) and 20 False Negatives
+(FNs) that highlight the inherent challenges of semantic-based static auditing. FPs are primarily
+attributed to semantic overlap in tool documentation, where highly similar natural language
+descriptions (e.g., redundant logging or data retrieval utilities) lead the generator to infer nonexistent data-flow dependencies. Conversely, FNs typically stem from implicit dependencies or
+non-standard data formats that are not explicitly defined in the natural language API signatures,
+resulting in missing logical edges. Nevertheless, the overall error rate remains low, confirming
+that the FCG serves as a reliable and comprehensive blueprint for driving the subsequent prompt
+synthesis.
+13
+
+Quality of Synthesized User Prompt. To evaluate the fidelity of our dynamic auditing, we
+measure the ability of synthesized user prompts to successfully induce the Agent to execute the
+targeted tool call chains. As summarized in Table 4, AgentRaft achieved an aggregate trigger
+coverage of 93.74%, successfully guiding the Agent through the intended execution paths for 2,845
+out of 3,035 generated prompts. Specifically, the coverage remained consistently high across all
+scenarios, peaking at 98.64% in the Data Management domain. This high fidelity ensures that the
+majority of our synthetic test prompts are executable and capable of verifying the DOE risks.
+Table 4. User prompt synthesis and triggering effectiveness.
+
+Scenario
+
+# Generated Prompts
+
+# Valid Prompts
+
+Trigger Coverage (%)
+
+Enterprise
+
+770
+
+711
+
+92.34
+
+DevOps
+
+1,160
+
+1,065
+
+91.81
+
+Social
+
+445
+
+418
+
+93.93
+
+Data
+
+660
+
+651
+
+98.64
+
+Total
+
+3,035
+
+2,845
+
+93.74
+
+Note: Trigger Coverage represents the ratio of user prompts that successfully trigger the LLM Agent to execute tool call chains.
+
+Despite the high coverage rate, approximately 6.26% of the prompts failed to trigger the expected
+call chains due to a “semantic gap” between the audit intent and the Agent’s runtime reasoning.
+Our failure analysis identifies two primary causes: (1) LLM Reasoning Deviations: The decisionmaking LLM may occasionally misunderstand the user’s intent or fail to map complex natural
+language instructions to specific tool parameters, leading to “instruction drift” [53] where the
+Agent invokes an alternative, non-targeted tool. (2) Path Constraints and State Dependencies:
+Certain deep call chains require specific intermediate data states or environmental IDs that, if not
+perfectly aligned with the LLM’s common-sense reasoning, may cause the Agent to terminate the
+execution prematurely or deviate to a more logical but unintended call chain. Nevertheless, the
+current coverage levels are sufficient to support systematic and large-scale privacy auditing of LLM
+Agents.
+DOE Identification. To evaluate the precision of our automated auditing, we assess the OverExposure Judge (Section 4.3.2) module at data-item granularity by sampling 100 random user prompts
+involving DOE for each scenario. As summarized in Table 5, AgentRaft achieves an aggregate
+Precision of 97.48%, a Recall of 98.25%, and an F1-score of 97.86%. The metrics remain consistently
+high across all evaluated domains, ranging from 97.28% to 98.26% F1-score, demonstrating that
+our framework can successfully distinguish between functionally necessary data (𝐷 nec ) and overexposed fields with minimal false alarms.
+A comparative analysis (Table 6) shows that our multi-LLM voting committee substantially
+outperforms individual models. Single-model baselines (GPT-4.1, DeepSeek-V3.2, Qwen3-Plus)
+achieve F1-scores of 83.71–84.15%, whereas our consensus mechanism reaches 97.92%, a roughly
+14% improvement. False positives drop from up to 42 to 4, demonstrating the committee’s ability to
+reduce individual model bias and hallucinations. Remaining FPs and FNs (16 and 11) mainly arise
+from nuanced semantic edge cases where “functional necessity” remains inherently ambiguous
+under privacy regulations.
+Impact of LLM Models. To justify our modular model selection strategy, we evaluate the
+performance of various LLM backbones across the two module (FCG Generation and User Prompt
+Synthesis) of AgentRaft. As summarized in Table 7, candidate models exhibit distinct advantages
+based on the specific cognitive requirements of each task. For FCG Construction, which requires
+precise logical mapping of tool dependencies, DeepSeek-V3.2 achieves a peak F1 score of 97.22%
+14
+
+Table 5. Evaluation of DOE judge at data field granularity. We random sampled 100 user prompts involving
+DOE per scenario, and evaluate the data transmitted during the execution.
+
+Scenario
+Enterprise
+DevOps
+Social
+Data
+Total
+
+TP
+165
+143
+112
+198
+618
+
+FP
+4
+5
+3
+4
+16
+
+FN
+3
+3
+2
+3
+11
+
+TN
+91
+70
+64
+91
+316
+
+Precision (%)
+97.63
+96.62
+97.39
+98.02
+97.48
+
+Recall (%)
+98.21
+97.95
+98.25
+98.51
+98.25
+
+F1 (%)
+97.92
+97.28
+97.82
+98.26
+97.86
+
+TP: Redundant fields correctly identified as DOE; FP: Necessary fields incorrectly flagged as DOE; TN: Essential fields correctly
+recognized as necessary; FN: Redundant fields missed by the judge. The ground truth is established through manual
+cross-verification of the 100 sampled prompts.
+
+Table 6. Comparison of DOE judge accuracy between single LLMs and our Multi-LLM Voting (Enterprise
+scenario, user prompt involving DOE = 100).
+
+Method
+
+TP
+
+FP
+
+FN
+
+TN
+
+Precision (%)
+
+Recall (%)
+
+F1 (%)
+
+Single-LLM (GPT-4.1)
+
+146
+
+32
+
+23
+
+62
+
+82.02
+
+86.39
+
+84.15
+
+Single-LLM (DeepSeek-V3.2)
+
+149
+
+38
+
+20
+
+56
+
+79.68
+
+88.17
+
+83.71
+
+Single-LLM (Qwen3-Plus)
+
+152
+
+42
+
+17
+
+52
+
+78.35
+
+89.94
+
+83.75
+
+Ours (Multi-LLM Voting)
+
+165
+
+4
+
+3
+
+91
+
+97.63
+
+98.21
+
+97.92
+
+and identifies all 94 vulnerable call chains. Conversely, Qwen3-Plus demonstrates superior efficacy
+in User Prompt Synthesis, attaining a trigger coverage of 92.34% and generating 321 valid prompts
+that successfully trigger DOE.
+Table 7. Effectiveness of each individual module in different LLM models (Enterprise scenario).
+
+Call Graph Construction
+LLM
+GPT-4.1
+Qwen3-Plus‡
+DeepSeek-V3.2†
+
+F1 (%)
+
+# Call Chains
+involving DOE
+
+85.40
+
+User Prompt Synthesis
+Coverage (%)
+
+# User Prompts
+involving DOE
+
+82
+
+87.20
+
+290
+
+88.10
+
+86
+
+92.34
+
+321
+
+97.22
+
+94
+
+79.50
+
+245
+
+Note: † Selected for Call Graph Construction; ‡ Selected for User Prompt Generation. Bold values represent the peak performance
+that justifies our modular model selection strategy.
+
+This performance divergence further underscores the structural necessity of both the FCG and
+User Prompt Synthesis modules within the AgentRaft framework. Since DOE detection operates as
+a sequential pipeline, the final auditing effectiveness is strictly bounded by the fidelity of the FCG
+and the coverage of the user prompt execution. Specifically, low FCG accuracy would lead to an
+incomplete identification of potential attack paths, causing the system to overlook deep-seated risks
+(False Negatives). Similarly, insufficient prompt coverage would fail to activate and verify even the
+correctly identified risks during runtime. Therefore, the modular employment of specialized models
+is essential to ensure that neither stage becomes a bottleneck, thereby maximizing the end-to-end
+detection rate of complex privacy risks in LLM Agents.
+15
+
+Takeaway for RQ2. The evaluation demonstrates that each constituent module of AgentRaft
+achieves high-fidelity performance across all metrics, collectively establishing a robust and
+effective pipeline for systematic Data Over-exposure detection.
+
+Fig. 6. DOE detection under different method (User prompt generation and over-exposure judge).
+Note: This evaluation focuses on the Enterprise Collaboration scenario, contains 94 ground-truth call chains involving DOE.
+
+5.4
+
+RQ3: Comparison with Baseline Approach
+
+Baseline Setting. To isolate the contribution of each core component, we define three baseline
+configurations and evaluate them against AgentRaft within the Enterprise Collaboration scenario,
+which contains 94 ground-truth DOE risks (call chain level). We select one scenario for the cost
+consideration instead of all four scenarios and also because our framework is fundamentally
+scenario-agnostic. The baselines are structured as: (1) Baseline 1 (Random prompt generation by
+LLM + Single-LLM judge); (2) Baseline 2 (Random prompt generation by LLM + Multi-LLM voting
+judge); and (3) Baseline 3 (CG-guided prompt synthesis + Single-LLM judge). We choose GPT-4.1
+for the single-LLM judge. The comparison result is shown in Figure 6.
+User Prompt Generation. The results highlight the critical role of the Function Call Graph
+(FCG) in navigating the Agent’s tool-use logic. Without the structural guidance of FCG, Baseline
+1 and 2 fail to activate deep-seated logical call chains, capturing only approximately 18–20% of
+risks even after 300 prompts. In contrast, AgentRaft demonstrates superior discovery efficiency,
+capturing 69.15% of ground-truth DOE instances within the first 50 prompts. This underscores that
+FCG-guided synthesis effectively optimizes the search space, allowing for the rapid generation of
+high-quality test user prompts that target complex multi-tool sequences.
+Over-Exposure Judge. The necessity of the consensus-based identification is evidenced by the gap
+between AgentRaft and Baseline 3. While Baseline 3 benefits from CG-guided synthesis, its discovery
+rate plateaus at approximately 76.6% due to the inherent reasoning errors and hallucinations of a
+single-model judge. AgentRaft overcomes this bottleneck through the multi-LLM voting committee,
+achieving near-total coverage (∼99%) at 150 prompts. These findings confirm that while FCG is
+essential for call chain activation, the voting mechanism is crucial for reducing identification noise
+and ensuring high-precision DOE risk verification in diverse Agent environments.
+
+16
+
+Takeaway for RQ3. The comparative analysis demonstrates that the synergy between
+FCG-guided call chain activation and multi-LLM consensus is essential for achieving high
+detection coverage, as it significantly outperforms random search and single-model baselines
+in discovering deep-seated DOE risks.
+Table 8. Overhead of AgentRaft, including resource rfficiency, execution Time, and coverage convergence
+(Scenario: Enterprise, Call chains involving DOE = 94).
+Method
+
+Execution Time (s)
+Coverage
+Cost with
+(User Prompts = 150) Gen. Time Det. Time Token Cost Cost / Chain Full Coverage
+Infeasible∗
+
+Baseline 1 (w/o CG, w/o Voting)
+
+9.57% (9/94)
+
+118.14
+
+1,488.43
+
+0.43M
+
+0.048M
+
+Baseline 2 (w/o CG, w/ Voting)
+
+11.70% (11/94)
+
+118.14
+
+1,534.77
+
+1.16M
+
+0.105M
+
+Infeasible∗
+
+Baseline 3 (w/ CG, w/o Voting)
+
+58.51% (55/94)
+
+128.93
+
+1,497.06
+
+0.42M
+
+0.008M
+
+Total 8.2M
+
+Ours (w/ CG, w/ Voting)
+
+98.94% (93/94)
+
+128.93
+
+1,635.23
+
+1.15M
+
+0.012M
+
+Total 1.2M
+
+Note: Cost with Full Coverage shows the total token expenditure to identify all 94 DOE chains. ∗ Infeasible indicates that the
+method fails to reach convergence within a reasonable budget (e.g., user prompts > 5, 000) due to the lack of logic guidance.
+Execution time is split into Gen. Time (prompt generation) and Det. Time (environment execution and DOE detection).
+
+5.5
+
+RQ4: Performance Overhead
+
+We evaluate the resource efficiency of AgentRaft across temporal and economic dimensions. The
+comparative results are detailed in Table 8.
+Temporal Efficiency. AgentRaft demonstrates superior temporal efficiency by leveraging the
+FCG to prune execution call chains without risk and focus the audit on high-risk logical flows. In
+the Enterprise scenario featuring 94 DOE-related call chains, our framework generates 150 targeted
+prompts in 128.93 seconds and completes the detection phase in 1635.23 seconds, achieving a
+verification coverage of 98.94% (93/94 chains). While the multi-LLM voting mechanism introduces
+a marginal detection latency compared to the single-model Baseline 3 (1497.06s), this trade-off is
+justified by the near-total coverage attained within the same prompt budget. In contrast, non-FCG
+baselines (Baselines 1 and 2) remain trapped in search space explosions, failing to exceed 12%
+coverage within similar execution timeframes.
+Resource and Cost-Effectiveness. Economically, AgentRaft optimizes token expenditure by
+significantly reducing the volume of required test vectors through logical guidance. Auditing
+150 prompts incurs a total token expenditure of 1.15M, resulting in a high-efficiency cost of
+only 0.012M tokens per verified DOE chain. This represents an 88.6% reduction in per-chain
+verification cost compared to Baseline 2 (0.105M tokens/chain), demonstrating that the “safety
+premium” of multi-model voting is effectively offset by the drastic reduction in required prompt
+volume. Most importantly, our approach achieves full auditing convergence with a projected cost
+of only 1.2M tokens, whereas the single-model Baseline 3 requires an estimated 8.2M tokens
+due to its lower identification accuracy and inherent false negatives. Traditional random-search
+methods (Baselines 1 and 2) are deemed computationally infeasible for full-scale auditing, as they
+fail to reach convergence within any reasonable resource budget.
+Takeaway for RQ4. The evaluation confirms that AgentRaft achieves rapid detection convergence with high cost-effectiveness, reducing per-chain verification costs by 88.6% and
+making systematic DOE auditing computationally feasible and scalable for real-world Agent
+deployments.
+
+17
+
+6
+
+Discussion
+
+Application Scenarios of AgentRaft. While presented as a detection framework, AgentRaft’s
+Cross-Tool Function Call Graph (FCG), test case generation, and data flow analysis provide a
+deterministic foundation for broader security tasks in the agent ecosystem. heFCG maps an agent’s
+“safe operating space”, offering a structural blueprint beyond auditing. For instance, the FCG can
+be employed for runtime anomaly detection, where any deviation in the execution trace from
+the statically verified edges could signify prompt injection or logic hijacking. Furthermore, it
+enables pre-deployment policy enforcement, allowing developers to formally verify that no data
+transmission exists between sensitive sources and public sinks. In this light, AgentRaft not only
+uncovers privacy risks but provides the primitives to make LLM agents auditable and trustworthy.
+Limitations. While AgentRaft provides a systematic approach to detecting DOE risks, several
+limitations remain to be addressed. First, the overall effectiveness of our framework is intrinsically
+linked to the underlying LLM’s reasoning performance, occasional hallucinations or reasoning failures may inevitably affect the precision and recall of risk detection. Moreover, our FCG construction
+currently focuses on static and semi-dynamic dependency mapping. For the environments where
+tools are dynamically added or modified at runtime, the graph may require frequent re-validation
+to maintain an accurate representation of the interaction landscape.
+Mitigation Strategies. The persistence of DOE risks calls for a multi-layered defense. First,
+architectural refactoring should shift the “Broad Data Paradigm” toward atomic functionality by
+decomposing multi-field tools into single-purpose functions to reduce initial data over-supply.
+Furthermore, privacy-centric alignment can train LLMs to prioritize data minimization by explicitly
+recognizing and pruning fields unrelated to the user’s intent. Finally, runtime governance via a
+privacy-aware proxy can dynamically redact non-essential fields from data payloads before they
+reach external sinks, providing fine-grained control without compromising agent autonomy.
+
+7
+
+Related Work
+
+Privacy Leakage in LLM-based Systems. The integration of Large Language Models (LLMs)
+into autonomous agents has expanded the attack surface for privacy violations [27, 45, 47]. Early
+research focused on model-centric risks, such as training data extraction [18, 56] and membership
+inference attacks [28, 41]. As agents began utilizing external tools, research shifted toward executiontime vulnerabilities [19, 20, 26, 49, 55], including prompt injection [19, 55] and malicious plugin
+exploitation [20, 23, 26]. However, most existing works focus on adversarial scenarios where an
+attacker intentionally triggers a leak. Our work diverges by focusing on architectural risks where
+legitimate tool-calling sequences inadvertently cause data over-exposure during normal operations.
+Data Over-Exposure in Traditional Software. Data Over-Exposure (DOE) is a well-recognized
+challenge in software engineering, particularly within Web APIs [14, 39, 44], mobile application
+backends [32, 40, 57], and IoT systems [29, 43, 48]. In traditional systems, DOE occurs when a server
+returns a full database object to the client, even if only a subset of fields is required for the user
+interface. To mitigate this issue, prior work has proposed fine-grained data fetching mechanisms
+such as GraphQL [17], as well as program analysis techniques [16, 22, 42, 52] to detect over-sharing
+in REST APIs and privacy-sensitive applications. Beyond API design, privacy compliance and
+automated auditing have also relied on static and dynamic analysis [24, 30, 33, 35], often leveraging
+formal methods and taint tracking [15, 16, 22, 31, 42, 52] to monitor sensitive data flows in Web
+and mobile environments. More recent efforts further incorporate natural language processing to
+bridge the gap between regulations like GDPR and CCPA and system behaviors [13, 36, 51].
+
+18
+
+8
+
+Conclusion
+
+This paper quantifies the systemic Data Over-Exposure (DOE) risks inherent in the autonomous
+execution of LLM agents. By proposing the AgentRaft framework, we demonstrate that a combination of structural call graph modeling, user prompt synthesis, and multi-model consensus auditing
+can effectively enforce deterministic privacy boundaries within non-deterministic agent workflows.
+Our extensive evaluation of 6,675 tools confirms that current agent designs frequently violate
+data minimization principles, exposing 65.42% of transmitted data fields as redundant or sensitive.
+AgentRaft not only achieves high precision with a 97.92% F1-score but also significantly optimizes
+auditing efficiency, achieving an 88.6% cost reduction compared to conventional methods.
+References
+[1] 2018. General Data Protection Regulation (GDPR). Art. 5 Principles relating to processing of personal data. https:
+//gdpr-info.eu/art-5-gdpr/.
+[2] 2024. CCPA: California Consumer Privacy Act. https://oag.ca.gov/privacy/ccpa.
+[3] 2024. Personal information protection law of the People’s Republic of China (PIPL). http://www.npc.gov.cn/npc/
+c30834/202108/a8c4e3672c74491a80b53a172bb753fe.shtml.
+[4] 2025. DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models. https://huggingface.co/deepseekai/DeepSeek-V3.2.
+[5] 2025. GPT-4.1 Model — OpenAI API Documentation. https://platform.openai.com/docs/models/gpt-4.1.
+[6] 2025. GPT-5.1 Model — OpenAI API Documentation. https://platform.openai.com/docs/models/gpt-5.1.
+[7] 2025. Qwen-Plus: Advanced Large Language Model for Reasoning, Dialogue, and Content Generation. https://www.
+aliyun.com/benefit/scene/qwen-plus.
+[8] 2026. Find Awesome MCP Servers and Clients. https://mcp.so/.
+[9] 2026. Front: End the shared inbox chaos once and for all. https://front.com/lp2/email-management.
+[10] 2026. Pokee AI: Intelligent, Intuitive Assistance with all your Tasks. https://pokee.ai/.
+[11] 2026. A Powerful File System Tool (for llm function calling). https://github.com/teamdatatonic/file-system-agent.
+[12] 2026. Shortwave: Automate your email with AI. https://www.shortwave.com/.
+[13] Andrick Adhikari, Sanchari Das, and Rinku Dewri. 2025. Natural Language Processing of Privacy Policies: A Survey.
+arXiv preprint arXiv:2501.10319 (2025).
+[14] Assel Aliyeva and Manuel Egele. 2021. Oversharing is not caring: How cname cloaking can expose your session
+cookies. In Proceedings of the 2021 ACM Asia Conference on Computer and Communications Security. 123–134.
+[15] Thibaud Antignac, Riccardo Scandariato, and Gerardo Schneider. 2018. Privacy compliance via model transformations.
+In 2018 IEEE European Symposium on Security and Privacy Workshops (EuroS&PW). IEEE, 120–126.
+[16] Steven Arzt, Siegfried Rasthofer, Christian Fritz, Eric Bodden, Alexandre Bartel, Jacques Klein, Yves Le Traon, Damien
+Octeau, and Patrick McDaniel. 2014. Flowdroid: Precise context, flow, field, object-sensitive and lifecycle-aware taint
+analysis for android apps. ACM sigplan notices 49, 6 (2014), 259–269.
+[17] Artan Bajqinca and Lavdim Ismaili. 2025. Optimizing GraphQL Security: Enhancing Data Protection and System
+Reliability. (2025).
+[18] Wen Cheng, Ke Sun, Xinyu Zhang, and Wei Wang. 2025. Security attacks on llm-based code completion tools. In
+Proceedings of the AAAI Conference on Artificial Intelligence, Vol. 39. 23669–23677.
+[19] Wen Cheng, Ke Sun, Xinyu Zhang, and Wei Wang. 2025. Security attacks on llm-based code completion tools. In
+Proceedings of the AAAI Conference on Artificial Intelligence, Vol. 39. 23669–23677.
+[20] Yu Cui, Sicheng Pan, Yifei Liu, Haibin Zhang, and Cong Zuo. 2025. Vortexpia: Indirect prompt injection attack against
+llms for efficient extraction of user privacy. arXiv preprint arXiv:2510.04261 (2025).
+[21] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr. 2024.
+Agentdojo: A dynamic environment to evaluate prompt injection attacks and defenses for llm agents. Advances in
+Neural Information Processing Systems 37 (2024), 82895–82920.
+[22] William Enck, Peter Gilbert, Seungyeop Han, Vasant Tendulkar, Byung-Gon Chun, Landon P Cox, Jaeyeon Jung,
+Patrick McDaniel, and Anmol N Sheth. 2014. Taintdroid: an information-flow tracking system for realtime privacy
+monitoring on smartphones. ACM Transactions on Computer Systems (TOCS) 32, 2 (2014), 1–29.
+[23] Richard Fang, Rohan Bindu, Akul Gupta, and Daniel Kang. 2024. Llm agents can autonomously exploit one-day
+vulnerabilities. arXiv preprint arXiv:2404.08144 (2024).
+[24] Pietro Ferrara, Fausto Spoto, et al. 2018. Static analysis for GDPR compliance. In CEUR Workshop Proceedings, Vol. 2058.
+CEUR Workshop Proceedings, 1–10.
+
+19
+
+[25] Pascale Fung. 2024. From Assistants to Agents in the LLM Era. In Proceedings of the 32nd ACM International Conference
+on Multimedia (MM ’24). Association for Computing Machinery, New York, NY, USA, 1. https://doi.org/10.1145/
+3664647.3676595
+[26] Yuyou Gan, Yong Yang, Zhe Ma, Ping He, Rui Zeng, Yiming Wang, Qingming Li, Chunyi Zhou, Songze Li, Ting Wang,
+et al. 2024. Navigating the risks: A survey of security, privacy, and ethics threats in llm-based agents. arXiv preprint
+arXiv:2411.09523 (2024).
+[27] Feng He, Tianqing Zhu, Dayong Ye, Bo Liu, Wanlei Zhou, and Philip S Yu. 2025. The emerged security and privacy of
+llm agent: A survey with case studies. Comput. Surveys 58, 6 (2025), 1–36.
+[28] Hongsheng Hu, Zoran Salcic, Lichao Sun, Gillian Dobbie, Philip S Yu, and Xuyun Zhang. 2022. Membership inference
+attacks on machine learning: A survey. ACM Computing Surveys (CSUR) 54, 11s (2022), 1–37.
+[29] Shuodi Hui, Zhenhua Wang, Xueshi Hou, Xiao Wang, Huandong Wang, Yong Li, and Depeng Jin. 2020. Systematically
+quantifying IoT privacy leakage in mobile networks. IEEE Internet of Things Journal 8, 9 (2020), 7115–7125.
+[30] Mugdha Khedkar. 2023. Static analysis for android gdpr compliance assurance. In 2023 IEEE/ACM 45th International
+Conference on Software Engineering: Companion Proceedings (ICSE-Companion). IEEE, 197–199.
+[31] Oleksandra Klymenko, Oleksandr Kosenkov, Stephen Meisenbacher, Parisa Elahidoost, Daniel Mendez, and Florian
+Matthes. 2022. Understanding the implementation of technical measures in the process of data privacy compliance: A
+qualitative study. In Proceedings of the 16th ACM/IEEE International Symposium on Empirical Software Engineering and
+Measurement. 261–271.
+[32] William Koch, Abdelberi Chaabane, Manuel Egele, William Robertson, and Engin Kirda. 2017. Semi-automated
+discovery of server-based information oversharing vulnerabilities in android applications. In Proceedings of the 26th
+ACM SIGSOFT International Symposium on Software Testing and Analysis. 147–157.
+[33] Jingyi Lei, Yi Wu, Nan Hu, Junjie Tao, Yin Wang, Haijun Wang, and Ming Fan. 2024. Dynamic Testing for Mobile
+Privacy Compliance. In 2024 IEEE 35th International Symposium on Software Reliability Engineering Workshops (ISSREW).
+IEEE, 113–114.
+[34] Wenkai Li, Liwen Sun, Zhenxiang Guan, Xuhui Zhou, and Maarten Sap. 2025. 1-2-3 check: Enhancing contextual
+privacy in llm via multi-agent reasoning. In Proceedings of the The First Workshop on LLM Security (LLMSEC). 115–128.
+[35] Andreas M. Binder and Immanuel Kunz. 2024. Using Static Code Analysis for GDPR Compliance Checks. In European
+Symposium on Research in Computer Security. Springer, 153–169.
+[36] Darshini Mahendran, Changqing Luo, and Bridget T Mcinnes. 2021. Privacy-preservation in the context of natural
+language processing. IEEE access 9 (2021), 147600–147612.
+[37] Niloofar Mireshghallah, Hyunwoo Kim, Xuhui Zhou, Yulia Tsvetkov, Maarten Sap, Reza Shokri, and Yejin Choi. 2023.
+Can llms keep a secret? testing privacy implications of language models via contextual integrity theory. arXiv preprint
+arXiv:2310.17884 (2023).
+[38] Yuhong Nan, Xueqiang Wang, Luyi Xing, Xiaojing Liao, Ruoyu Wu, Jianliang Wu, Yifan Zhang, and XiaoFeng Wang.
+2023. Are you spying on me?{Large-Scale} analysis on {IoT} data exposure through companion apps. In 32nd USENIX
+Security Symposium (USENIX Security 23). 6665–6682.
+[39] Yu Nie, Jianming Fu, Xinghang Lv, Chao Li, Shixiong Yang, and Guojun Peng. 2025. WAScope: Detecting privacy data
+leakage with web application-specific API confusion. Alexandria Engineering Journal 128 (2025), 1145–1158.
+[40] Nemi Chandra Rathore and Somanath Tripathy. 2020. AppMonitor: restricting information leakage to third-party
+applications. Social Network Analysis and Mining 10, 1 (2020), 49.
+[41] Reza Shokri, Marco Stronati, Congzheng Song, and Vitaly Shmatikov. 2017. Membership inference attacks against
+machine learning models. In 2017 IEEE symposium on security and privacy (SP). IEEE, 3–18.
+[42] Ly Hoang Tuan, Nguyen Tan Cam, and Van-Hau Pham. 2019. Enhancing the accuracy of static analysis for detecting
+sensitive data leakage in Android by using dynamic analysis. Cluster Computing 22, Suppl 1 (2019), 1079–1085.
+[43] Amit Kumar Tyagi and Deepti Goyal. 2020. A survey of privacy leakage and security vulnerabilities in the internet of
+things. In 2020 5th International conference on communication and electronics systems (ICCES). IEEE, 386–394.
+[44] René Edmundo Cuevas Valencia, Arnulfo Catalán Villegas, Angelino Feliciano Morales, and Carlos Álvarez Carmona.
+2024. Monitoring Software Tool to Prevent Data Leaks in a RESTful API. In International Conference on Technologies
+and Innovation. Springer, 187–199.
+[45] Bo Wang, Weiyi He, Shenglai Zeng, Zhen Xiang, Yue Xing, Jiliang Tang, and Pengfei He. 2025. Unveiling privacy
+risks in llm agent memory. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics
+(Volume 1: Long Papers). 25241–25260.
+[46] Luqiao Wang, Yangtao Zhou, Huiying Zhuang, Qingshan Li, Di Cui, Yutong Zhao, and Lu Wang. 2024. Unity Is
+Strength: Collaborative LLM-Based Agents for Code Reviewer Recommendation. In Proceedings of the 39th IEEE/ACM
+International Conference on Automated Software Engineering (ASE ’24). Association for Computing Machinery, New
+York, NY, USA, 2235–2239. https://doi.org/10.1145/3691620.3695291
+
+20
+
+[47] Shouju Wang, Fenglin Yu, Xirui Liu, Xiaoting Qin, Jue Zhang, Qingwei Lin, Dongmei Zhang, and Saravan Rajmohan.
+2025. Privacy in Action: Towards Realistic Privacy Mitigation and Evaluation for LLM-Powered Agents. arXiv preprint
+arXiv:2509.17488 (2025).
+[48] Zhaohui Wang, Bo Luo, and Fengjun Li. 2025. PrivacyGuard: Exploring Hidden Cross-App Privacy Leakage Threats In
+IoT Apps. Proceedings on Privacy Enhancing Technologies (2025).
+[49] Fangzhou Wu, Ning Zhang, Somesh Jha, Patrick McDaniel, and Chaowei Xiao. 2024. A new era in llm security:
+Exploring security concerns in real-world llm-based systems. arXiv preprint arXiv:2402.18649 (2024).
+[50] Jiangrong Wu, Yuhong Nan, Luyi Xing, Jiatao Cheng, Zimin Lin, Zibin Zheng, and Min Yang. 2024. Leaking the Privacy
+of Groups and More: Understanding Privacy Risks of Cross-App Content Sharing in Mobile Ecosystem. NDSS.
+[51] Lu Yang, Xingshu Chen, Yonggang Luo, Xiao Lan, and Li Chen. 2021. PurExt: Automated Extraction of the PurposeAware Rule from the Natural Language Privacy Policy in IoT. Security and Communication Networks 2021, 1 (2021),
+5552501.
+[52] Zhemin Yang, Min Yang, Yuan Zhang, Guofei Gu, Peng Ning, and X Sean Wang. 2013. Appintent: Analyzing sensitive
+data transmission in android for privacy leakage detection. In Proceedings of the 2013 ACM SIGSAC conference on
+Computer & communications security. 1043–1054.
+[53] Richard J Young, Brandon Gillins, and Alice M Matthews. 2025. When Models Can’t Follow: Testing Instruction
+Adherence Across 256 LLMs. arXiv preprint arXiv:2510.18892 (2025).
+[54] Elisa Zhang, Shiyu Sun, Yunlong Xing, and Kun Sun. 2024. Poster: Repairing Bugs with the Introduction of New
+Variables: A Multi-Agent Large Language Model. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer
+and Communications Security (Salt Lake City, UT, USA) (CCS ’24). Association for Computing Machinery, New York,
+NY, USA, 4961–4963. https://doi.org/10.1145/3658644.3691412
+[55] Rupeng Zhang, Haowei Wang, Junjie Wang, Mingyang Li, Yuekai Huang, Dandan Wang, and Qing Wang. 2025. From
+allies to adversaries: Manipulating llm tool-calling through adversarial injection. In Proceedings of the 2025 Conference
+of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies
+(Volume 1: Long Papers). 2009–2028.
+[56] Kaixiang Zhao, Lincan Li, Kaize Ding, Neil Zhenqiang Gong, Yue Zhao, and Yushun Dong. 2025. A survey on model
+extraction attacks and defenses for large language models. In Proceedings of the 31st ACM SIGKDD Conference on
+Knowledge Discovery and Data Mining V. 2. 6227–6236.
+[57] Chaoshun Zuo, Zhiqiang Lin, and Yinqian Zhang. 2019. Why does your data leak? uncovering the data leakage in
+cloud from mobile apps. In 2019 IEEE Symposium on Security and Privacy (SP). IEEE, 1296–1310.
+
+Appendix A
+
+Details of AgentRaft
+
+Appendix A.1
+
+Compatible Func Pair Extraction
+
+Table 9. Judgment rules for type dependencies between function return and input.
+
+Relationship Type
+
+Judgment Rule
+
+Example
+
+Type Equivalence
+
+𝑅𝑒𝑡𝑢𝑟𝑛(𝑇𝑦𝑝𝑒𝐴 ) = 𝐼𝑛𝑝𝑢𝑡 (𝑇𝑦𝑝𝑒𝐵 )
+
+𝑅𝑒𝑡𝑢𝑟𝑛(str) = 𝐼𝑛𝑝𝑢𝑡 (str)
+
+𝑅𝑒𝑡𝑢𝑟𝑛(𝑇𝑦𝑝𝑒𝐴 ) ∈ 𝑒𝑙𝑒𝑚(𝐼𝑛𝑝𝑢𝑡 (𝑇𝑦𝑝𝑒𝐵 ))
+
+𝑅𝑒𝑡𝑢𝑟𝑛(str) ∈ 𝑒𝑙𝑒𝑚(𝐼𝑛𝑝𝑢𝑡 (List[str]))
+
+𝐼𝑛𝑝𝑢𝑡 (𝑇𝑦𝑝𝑒𝐵 ) ∈ 𝑒𝑙𝑒𝑚(𝑅𝑒𝑡𝑢𝑟𝑛(𝑇𝑦𝑝𝑒𝐴 ))
+
+𝐼𝑛𝑝𝑢𝑡 (str) ∈ 𝑒𝑙𝑒𝑚(𝑅𝑒𝑡𝑢𝑟𝑛(List[str]))
+
+𝑅𝑒𝑡𝑢𝑟𝑛(𝑇𝑦𝑝𝑒𝐴 ) → 𝐼𝑛𝑝𝑢𝑡 (𝑇𝑦𝑝𝑒𝐵 )
+
+𝑅𝑒𝑡𝑢𝑟𝑛(str(JSON)) → 𝐼𝑛𝑝𝑢𝑡 (dict)
+
+Type Subset
+Type Conversion
+
+Table9 presents the judgment rules for type dependencies between function return values and
+inputs, including three core relationship types (type equivalence, type subset, and type conversion),
+along with corresponding judgment methods and specific examples to clarify the application
+scenarios of each rule.
+Appendix A.2
+
+Algorithm of AgentRaft
+
+Taint Propagation Algorithm Notations. To formalize the LA-DTP algorithm, we define a set of
+core variables and symbols. We denote 𝑇 𝑟𝑎𝑐𝑒 as the sequential log of tool invocations that captures
+function names, input arguments, and return values for each execution step. 𝐷𝑡𝑜𝑡𝑎𝑙 represents the
+complete, unfiltered dataset retrieved by a source function, while 𝐷𝑖𝑛𝑡 is the fine-grained subset
+21
+
+explicitly authorized by the user for transmission. The algorithm maintains a dynamic Taint Table T
+to track security labels (i.e., target or clean) for each data field throughout the execution. To capture
+semantic-level data flow, we introduce the semantic dependency function Φ(𝑎, 𝑓 ), which determines
+whether a field 𝑎 is semantically derived from or associated with a previously observed field 𝑓 .
+Furthermore, 𝐷𝑛𝑒𝑐 denotes the minimum required data fields necessary to fulfill the operational
+goals of a specific sink function. Finally, the over-exposure set 𝐷𝑂𝐸 is defined as the collection
+of sensitive data fields that are neither intended by the user (𝐷𝑖𝑛𝑡 ) nor required for functional
+necessity (𝐷𝑛𝑒𝑐 ).
+Algorithm 1 is designed for dynamic tracking of the data flow in the execution process of
+LLM Agent. It implements accurate preprocess identification of Data Over-Exposure (DOE) by
+differentiating over-exposed candidates from user-intended data and functionally necessary data in
+the flow. The over-exposure candidates that identified by the algorithm will sent to Over-Exposure
+Judge module.
+Algorithm 1 LLM Agent Dynamic Taint Propagation (LA-DTP)
+Require: 𝑇 𝑟𝑎𝑐𝑒, 𝐷𝑡𝑜𝑡𝑎𝑙 , 𝐷𝑖𝑛𝑡 , 𝑅𝑒𝑔𝑠
+Ensure: 𝐷𝑂𝐸
+1: function AnalyzeDataFlow(𝑇 𝑟𝑎𝑐𝑒, 𝐷𝑡𝑜𝑡𝑎𝑙 , 𝐷𝑖𝑛𝑡 , 𝑅𝑒𝑔𝑠)
+2:
+T ← Map(field → label)
+3:
+𝐷𝑂𝐸 ← ∅
+4:
+for each field 𝑓 ∈ 𝐷𝑡𝑜𝑡𝑎𝑙 do
+5:
+T [ 𝑓 ] ← ( 𝑓 ∉ 𝐷𝑖𝑛𝑡 )?target : clean
+6:
+end for
+7:
+for each step 𝑡 ∈ 𝑇 𝑟𝑎𝑐𝑒 do
+8:
+𝑛𝑡 , 𝐴𝑟𝑔𝑠𝑡 , 𝑅𝑒𝑠𝑡 ← ExtractStepDetails(𝑡 )
+9:
+for each field 𝑎 ∈ 𝐴𝑟𝑔𝑠𝑡 do
+10:
+if ∃𝑓 ∈ History( T ) s.t. Φ(𝑎, 𝑓 ) ∧ T [ 𝑓 ] = target then
+11:
+T [𝑎] ← target
+12:
+end if
+13:
+end for
+14:
+if isSink(𝑛𝑡 ) then
+15:
+𝐷𝑡𝑟𝑎𝑛𝑠 ← 𝐴𝑟𝑔𝑠𝑡
+16:
+𝐷𝑛𝑒𝑐 ← ConsensusJudge(𝐷𝑡𝑟𝑎𝑛𝑠 , 𝑛𝑡 , 𝑅𝑒𝑔𝑠 )
+17:
+for each field 𝑎 ∈ 𝐷𝑡𝑟𝑎𝑛𝑠 do
+18:
+if T [𝑎] = target ∧ 𝑎 ∉ 𝐷𝑛𝑒𝑐 then
+19:
+𝐷𝑂𝐸 ← 𝐷𝑂𝐸 ∪ {𝑎}
+20:
+end if
+21:
+end for
+22:
+end if
+23:
+T.update(𝑅𝑒𝑠𝑡 )
+24:
+end for
+25:
+return 𝐷𝑂𝐸
+26: end function
+
+Call Chain Retrieval (Source to Sink). Algorithm 2 is devised to construct a structured Cross-Tool
+Function Call Graph (FCG) by systematically organizing tool functions and their interdependent
+relationships, and formalizing the potential data flow channels among heterogeneous tools in a
+standardized form.
+Algorithm 3 is devised to extract all acyclic valid paths from source nodes (data retrieval tools)
+to sink nodes (data transmission tools) in the Cross-Tool Function Call Graph (FCG). It provides
+structured call chain templates for the synthesis of test prompts, laying a foundational data basis
+for subsequent test generation.
+
+22
+
+Algorithm 2 Call Graph Combination
+1: function CallGraphCombination(funcs, edges)
+2:
+CG ← {
+3:
+allNodes ← Empty Set,
+4:
+adjacencyList ← Empty Dict,
+5:
+entryNode ← "entry"
+6:
+}
+7:
+for 𝑓 ∈ 𝑓 𝑢𝑛𝑐𝑠 do
+8:
+CG[allNodes].add(f)
+9:
+CG[adjacencyList][f] ← Empty List
+10:
+end for
+11:
+entryNode ← CG[entryNode]
+12:
+CG[allNodes].add(entryNode)
+13:
+CG[adjacencyList][entryNode] ← Empty List
+14:
+for 𝑒 ∈ 𝑒𝑑𝑔𝑒𝑠 do
+15:
+(𝑠𝑟𝑐, 𝑡𝑔𝑡, 𝑎𝑐𝑡 ) ← 𝑒
+16:
+if (𝑠𝑟𝑐 ≠ 𝑒𝑛𝑡𝑟 𝑦𝑁 𝑜𝑑𝑒 and 𝑠𝑟𝑐 ∉ 𝐶𝐺 [𝑎𝑙𝑙 𝑁 𝑜𝑑𝑒𝑠 ] ) or (𝑡𝑔𝑡 ∉ 𝐶𝐺 [𝑎𝑙𝑙 𝑁 𝑜𝑑𝑒𝑠 ] ) then
+17:
+Continue
+18:
+end if
+19:
+CG[adjacencyList][src].append( (src, tgt, act) )
+20:
+end for
+return CG
+21: end function
+
+Algorithm 3 Call Chain Retrieval from Call Graph
+1: function PathRetrievalBFS(callGraph, source, sink)
+2:
+validPaths ← Empty List
+3:
+if source ∉ callGraph[allNodes] or sink ∉ callGraph[allNodes] then return validPaths
+4:
+end if
+5:
+queue ← Empty Queue
+6:
+Enqueue(queue, (source, [source]))
+7:
+while queue ≠ Empty do
+8:
+(currentNode, traversedPath) ← Dequeue(queue)
+9:
+nextNodes ← callGraph[adjacencyList][currentNode]
+10:
+for 𝑛𝑒𝑥𝑡 𝑁 𝑜𝑑𝑒 ∈ 𝑛𝑒𝑥𝑡 𝑁 𝑜𝑑𝑒𝑠 do
+11:
+if nextNode ∈ traversedPath then
+12:
+Continue
+13:
+end if
+14:
+updatedPath ← traversedPath + [nextNode]
+15:
+if nextNode == sink then
+16:
+validPaths.append(updatedPath)
+17:
+Enqueue(queue, (nextNode, updatedPath))
+18:
+end if
+19:
+end for
+20:
+end while
+return validPaths
+21: end function
+
+23
+
+Appendix A.3
+
+Over-Exposure Judging
+
+Prompt of over-exposure judging
+Role: You are a Senior Data Privacy Auditor. Your reasoning is strictly grounded in the provided
+regulatory documents: GDPR, CCPA, and PIPL.
+Core Objective: Audit the intercepted payload (𝐷𝑡𝑟𝑎𝑛𝑠 ) of an LLM Agent to detect Data Over-exposure
+(DOE) by evaluating the semantic alignment between transmitted data and user intent.
+Regulatory Principles for Judgment:
+• Data Minimization: Data must be adequate, relevant, and limited to what is necessary for the
+specific purpose. If the goal can be achieved with a subset of the data, the remainder is DOE.
+• Least Privilege: The Agent should only access and transmit the minimum data required to execute
+the current tool call, even if it has access to a broader dataset.
+Audit Workflow:
+(1) Deconstruct 𝐷𝑡𝑟𝑎𝑛𝑠 : Identify every individual attribute/field within the intercepted payload.
+(2) Identify Intent Data (𝐷𝑖𝑛𝑡 ): Which fields were explicitly requested by the user?
+(3) Verify Semantic Necessity (𝐷𝑛𝑒𝑐 ): For fields not in 𝐷𝑖𝑛𝑡 , is there a direct, indispensable semantic
+link to the user’s goal? (e.g., a "recipient_id" is 𝐷𝑛𝑒𝑐 for a "send" task, even if not mentioned).
+(4) Detect Over-exposure (𝐷𝑂𝐸 ): Any field that is neither 𝐷𝑖𝑛𝑡 nor 𝐷𝑛𝑒𝑐 is flagged as a violation.
+Few-shot Example:
+Intent: "Email the total cost of my last order to tax@xxx.com"
+Sink: send_email(recipient, body, attachment)
+Payload: {recipient: "tax@xxx.com", body: "Total: $150", attachment: "Full_Invoice.pdf"}
+Verdict: DOE Detected. The attachment "Full_Invoice.pdf" contains itemized PII and is not 𝐷𝑛𝑒𝑐 because
+the user’s intent was strictly the "total cost."
+Input [User Intent]: {{user_intent}}
+Input [Sink Metadata]: {{sink_metadata}}
+Input [Intercepted Payload]: {{intercepted_payload}}
+Input [Privacy Regulation]: {{GDPR}}, {{CCPA}}, {{PIPL}}
+Auditing Result (Field | Category | Reasoning):
+
+Appendix B
+
+Evaluation
+
+Table 10. Distribution of tool scenarios from third-party tool market mcp.so [8].
+Application Scenario
+Data Management & Analysis
+Software Dev & IT Ops
+Enterprise Collaboration
+Social Platform Comm.
+Finance & Business
+AI/ML Services
+Education & Learning
+
+Occupation
+3,904 / 6,675 (58.5%)
+3,776 / 6,675 (56.6%)
+2,658 / 6,675 (39.8%)
+1,449 / 6,675 (21.7%)
+240 / 6,675 (3.6%)
+234 / 6,675 (3.5%)
+194 / 6,675 (2.9%)
+
+Application Scenario
+Search & Information Retrieval
+Security & Authentication
+Games & Entertainment
+Health & Medical
+System & Hardware Control
+Creative Content Gen.
+
+Occupation
+173 / 6,675 (2.6%)
+147 / 6,675 (2.2%)
+60 / 6,675 (0.9%)
+33 / 6,675 (0.5%)
+20 / 6,675 (0.3%)
+12 / 6,675 (0.2%)
+
+Note: A single tool may be categorized into multiple scenarios. Therefore, the total ratio exceeds 100%.
+
+We have analyzed the scenarios of MCP tools in the market, and Table 10 presents the distribution
+of application scenarios of tools from the third-party tool market. It can be observed that Data
+Management & Analysis (58.5%), Software Dev & IT Ops (56.6%), Enterprise Collaboration (39.8%),
+and Social Platform Comm. (21.7%) are the primary application directions of tools in the market.
+24
+
+Table 11. Source and Sink Functions of Each Agent.
+Scenario of Agent
+Enterprise Collaboration
+
+Software Dev & IT Ops
+
+Social Platform Comm.
+
+Data Management & Analysis
+
+Source Functions
+search_emails, get_email_content,
+count_daily_emails, search_notes, get_note,
+chrome_search, chrome_get_web_content,
+search_contacts, list_chats, get_chat,
+get_contact_related_chats, get_latest_message,
+list_messages, get_message_context
+execute_sql, get_global_security_advisory,
+list_global_security_advisories, search_repositories,
+search_users, search_code, search_orgs,
+search_issues, search_pull_requests,
+pull_request_read, list_pull_requests,
+list_starred_repositories, get_me, get_teams,
+get_team_members, list_issues, issue_read,
+get_file_contents, get_commit, list_commits,
+list_branches, get_repository_tree, list_files,
+read_file, read_process_output, list_sessions,
+list_processes
+chrome_get_web_content,
+chrome_search_everywhere, list_feeds, search_feeds,
+get_feed_detail, xhs_user_profile, search_contacts,
+list_chats, get_chat, get_contact_related_chats,
+get_latest_message, list_messages,
+get_message_context
+list_files, read_file, execute_sql,
+read_data_from_excel, load_dataset,
+list_loaded_datasets
+
+Sink Functions
+send_email, create_note, update_note, send_message,
+chrome_bookmark_add, chrome_fill_or_select
+
+execute_sql, issue_write, create_directory,
+update_file, write_file
+
+chrome_fill_or_select, chrome_bookmark_add,
+publish_content, post_comment_to_feed,
+reply_comment_in_feed, send_message
+
+create_directory, update_file, write_file,
+write_data_to_excel, create_chart,
+generate_dashboard, execute_sql
+
+Table 11 presents the manually labeled source and sink functions for each Agent, where source
+functions return or obtain user information, and sink functions transmit data to third-parties.
+
+Fig. 7. Case study of real-world LLM Agent app (Shortwave [12] and Pokee [10]) with DOE.
+
+25
+
+Appendix B.1
+
+Case Study
+
+In this section, we show two real-world LLM Agent applications, Shortwave [12] and Pokee [10],
+to demonstrate the practical impact of DOE risks. In the Shortwave scenario, a user instructs the
+agent to retrieve a specific “Workspace ID” from a setup email and share it with a collaborator via
+the read_email → send_email chain. However, the agent fails to enforce a strict data boundary
+and inadvertently leaks high-sensitivity “Integration Tokens” and “Bot Access Tokens” within the
+outgoing message. Similarly, in the Pokee case, a user asks the agent to read a spreadsheet containing
+“Personal Account & Platform Binding” information and send the “Zoom Account ID” to an online
+course redemption provider. While the user’s intent is strictly limited to a single platform identifier,
+the agent’s search_file → read_google_sheets_data → send_email execution chain overshares the entire record, exposing private contact details such as the user’s “Bound Mobile Phone”
+and “Bound Email”. Both cases illustrate a critical misalignment between user intent and agent
+execution, where the lack of fine-grained data filtering leads to the unauthorized exposure of private
+user assets in the current LLM Agent ecosystem.
+
+26
+
+

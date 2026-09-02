@@ -241,6 +241,33 @@ r = r_phi(x,y)
 
 Reward Model score 本身没有告诉系统哪个 token 导致好坏。长序列、稀疏 reward 和延迟反馈会增加方差。
 
+### Harm Horizon：Sequence Reward 的 Gradient 可能天然局部
+
+把一个 sequence-level harm score 分配给整条 response，看似让所有 token 都收到安全信号；但 policy gradient 只会
+沿“当前 token 改变未来期望 harm”的条件依赖传播。若在某个位置之后，继续生成已不能改变终局 harm 的条件期望，
+这些 token 的期望 gradient 就会消失。因而浅层 alignment 不一定只是优化器或数据不足，也可能来自 objective 定义
+出的 **harm horizon**。
+
+Martingale decomposition 可以把逐前缀的条件期望 harm 写成一系列 innovation，再由 gradient characterization 识别
+哪些位置真正携带 harm information。这提供了一种诊断顺序：先检查 harm function、prefix state 与可恢复路径是否让
+后续 action 仍能改变 outcome，再讨论增加样本、调学习率或扩大 KL penalty。若希望错误出现后仍奖励恢复行为，objective
+必须显式定义 recovery event 与 penalty，而不能期待同一个终局标量自动产生深层 credit。
+
+```text
+prefix-conditioned expected harm
+-> per-token harm innovation
+-> gradient support / harm horizon
+-> optional recovery-aware objective
+```
+
+这种分析换来更清楚的 credit boundary，却依赖 harm 定义、模型参数化和论文中的正则条件；共享参数还会造成跨位置
+耦合，理论上的零梯度不等于实际训练中所有相关参数完全不动。Recovery penalty 也可能诱导表面纠错、拖长有害轨迹，
+或与终止策略冲突。终局 outcome 已充分表达任务、错误不可恢复或 hard safety gate 必须立即阻断时，原 sequence reward
+仍是合理 baseline。现有证据以理论刻画和补充证明为主，不证明任意 RLHF pipeline 都存在同一 horizon，或提出的恢复
+目标已经解决部署安全。
+
+<!-- source-family:SF-2026-ARXIV-2603-04851 -->
+
 ### 从持久权重更新到条件化 Activation Intervention
 
 RLHF/DPO 把偏好持久写入 weights，适合需要稳定行为变化的部署；dense representation steering 或 static

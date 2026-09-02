@@ -292,6 +292,8 @@ location、选择分数和 raw-artifact fallback，并把 document revision、se
 
 把全部历史塞回 prompt 在短会话中最忠实；长任务中可维护一个小型 orientation map，只保存主题、位置、freshness 与 provenance pointer，再按需读取原文。它降低 assembly cost，却新增 map 漂移、错误指针和遗漏风险，因此 map 不能拥有事实 authority，命中后仍须回源；任务短或证据不可寻址时，直接 context 仍合理。<!-- source-family:SF-2026-ARXIV-2605-19932 --> exact-v1 §3–4 支持其 orientation cache，§5 不证明该摘要在开放长期任务中无损。
 
+当 tool result 可按 path/hash 重新寻址时，完整保留所有消息并不是唯一的 correctness baseline。一个受限分支是在透明 Messages-API proxy 中先驱逐或压缩匿名、短寿命的输出，把完整 conversation 留在 client backing store，并在可寻址内容的位置插入 retrieval handle；后续重复读取触发 fault，再按 path/hash 取回并 pin 住该内容。Context manager 因而拥有 visible message working set、handle 与 pin state，backing store 仍拥有原始事实；这不是把 KV tensor 从 HBM page 到 host/storage。它以 fault tail、错误驱逐和 hash/path 失效风险换取 token 空间，短会话、高风险审计或工具输出不可稳定寻址时仍应完整携带。`arXiv:2603.09023v1` 的 §3 支持该 L1/L2 机制，§5 只评测 message eviction 与 fault-driven pinning；L3 只完成实现而未做规模评测，L4 仅是接口，因此不能把分层设计外推为已验证的通用 Context storage。<!-- source-family:SF-2026-ARXIV-2603-09023 -->
+
 Context 参与模型行为身份。至少需要记录：
 
 - segment digest/source/version；

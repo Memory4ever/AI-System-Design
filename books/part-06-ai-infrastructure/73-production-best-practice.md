@@ -124,6 +124,33 @@ feature/schema revision + fading policy
 
 ## Capacity、Failure 与 Recovery
 
+### 硬件 Variation 要跨 Device、Runtime 与 Training 共同闭环
+
+数字加速器通常把已写入权重视为稳定 bit pattern；在 compute-in-memory 等模拟或混合信号路径中，器件 variation
+会让“写入成功”变成带分布的状态，平均误差很小也可能在少数 cell、layer 或输入上被逐层放大。只做一次离线校准
+在 variation 稳定、模型 margin 足够大时仍合理；当写入噪声具有长尾且重写成本高时，production contract 需要同时
+覆盖 artifact materialization 与模型鲁棒性。
+
+一条跨层恢复链可以先对高风险写入执行 selective write-verify，只重试未达到容差的单元；训练侧再使用与设备观测
+一致的 noise model，使 optimizer 看见被截断或删失的 variation，而不是把未观测 tail 当成零误差：
+
+```text
+quantized artifact + device variation profile
+-> selective write / verify / retry
+-> censored-noise-aware training or calibration
+-> layer- and slice-level reliability evidence
+-> admission, fallback or replacement
+```
+
+这把可靠性从单一 accuracy test 扩展为 device state、写入策略、noise-model revision 与 model artifact 的组合身份。
+收益是避免对所有 cell 重复写入，并让训练面向真实故障分布；代价是 verify latency、写入寿命、profile drift 和
+simulator-to-device mismatch。Noise model 只是一种 sensor，不能证明未观测 variation 已被覆盖；高风险 slice 失败时
+仍应回退更高精度、数字执行路径或替换器件。事件时 exact-v1 是对三项既有工作的跨层总结，能够支持这条设计路线与
+适用边界，但自身不提供一份新的、可独立复现的端到端实验合同；各子机制的定量结论必须回到所总结的原始工作核验，
+也不能外推为普通 GPU 或所有器件都需要相同机制。
+
+<!-- source-family:SF-2026-ARXIV-2603-03491 -->
+
 <!-- daily-20260621:platform-production:start -->
 ### Load test 是 SLO boundary search
 

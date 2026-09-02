@@ -303,7 +303,7 @@ WiSP 把低资源 MoE inference 表述为 expert-weight 与 KV cache 的联合 w
 
 **Trade-off、failure、共存与回退。** Qwen3/Kimi 的受限设备结果是在 94 GiB H100 上用 gpu-memory-utilization cap 模拟，并非真实小卡；预测错误还会同时触发 expert miss 与 KV pressure，质量保持也不等于 tail SLO。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
 
-#### Review notes
+#### Source evidence boundary
 
 - `SF-2026-ARXIV-2606-21868` — primary `arXiv:2606.21868v1`；exact-v1 URL=`https://arxiv.org/html/2606.21868v1`；Method=`https://arxiv.org/html/2606.21868v1 — §3 Working-Set Predictor and Runtime Integration`；Evaluation=`https://arxiv.org/html/2606.21868v1 — §4 Routing Signal and Decode Throughput; §5 Working-Set Value`；Non-proof=`https://arxiv.org/html/2606.21868v1 — §6 Limitations; simulated-constrained-device disclosure`。
 <!-- daily-20260621:infer-scheduling:end -->
@@ -424,6 +424,50 @@ partial failure recovery 与任意 graph 划分仍未被证明。因此在需求
 中的 partial failure、backpressure、fairness 与 stale plan 负责。Ultra-low-latency fused path、低 QPS、小模型、
 operator heterogeneity 很弱或 multi-tenant interference 未建模时，完整模型副本仍是更好的故障域。Operator-level
 elasticity 是 stage disaggregation 的继续细化，不是无条件的下一代替代。
+
+### GPU 调度之前，Host Control Plane 也要有容量合同
+
+多 GPU 推理常把 CPU 当作近似免费的发射器；host 线程、tokenization、collective progress 和进程间状态广播充足时，这个抽象确实成立。但 GPU kernel 缩短、卡数增加或 Agent 前后处理变重后，CPU run queue、launch delay 与 collective progress 会直接制造 GPU idle。此时 scheduler 不能只看 HBM 和 GPU utilization，还必须为每个 replica/phase 记录 host-core affinity、launch queue、tokenization budget、shared-memory channel 与 progress-thread reservation：
+
+```text
+request stage + GPU execution plan
+→ host work and launch/progress budget
+→ CPU affinity / isolation / queue admission
+→ GPU kernel and collective submission
+→ attribute GPU idle back to host or device cause
+```
+
+增加 CPU 或隔离核心只在 host path 已成为 critical path 时有效；它会提高成本、降低 consolidation，并可能把瓶颈移回 GPU、NUMA 或 fabric。薄 host path、GPU 本就饱和或异步 runtime 已能覆盖 launch 时，原来的 GPU-first capacity model 仍成立。`arXiv:2603.22774v1` 的证据只覆盖 §IV、§V 与 §VI-C 的多 GPU workload 和 CPU bottleneck characterization，不证明任意模型、拓扑或 CPU 配比的通用收益。<!-- source-family:SF-2026-ARXIV-2603-22774 -->
+
+### 异质 DAG 需要 Readiness、Residency 与 Deadline 共享一条控制链
+
+单模型 request queue 假设请求进入后沿相似路径推进，Continuous Batching 只需在 token iteration 间选择谁获得执行机会。实时多模态生成把输入流、编码、生成和输出 chunk 连接成异质 pipeline 后，同一请求的不同 stage 会以不同 cadence 就绪；只优化单个 kernel 或只看队列长度，会让上游占满中间状态而下游错过 deadline。Scheduler 因而需要同时持有 stage readiness、chunk frontier、deadline、memory lease 与 backpressure，并在阶段准入时决定 batch composition：
+
+```text
+stream / request identity
+→ stage and chunk readiness
+→ deadline- and memory-aware admission
+→ stage-local batching and execution
+→ downstream publication or backpressure
+```
+
+这提升异质阶段之间的利用率，却增加取消、partial result、队列传播和中间状态失效；离线、同质且无严格 deadline 的生成仍适合静态流水线。`arXiv:2603.05800v1` 只在 §4.7 Implementation、§5 Evaluation 与 §7 Conclusions 所披露的模型、设备和请求分布上支持这条机制，不证明跨集群、多租户或生产 SLO。<!-- source-family:SF-2026-ARXIV-2603-05800 -->
+
+即使所有请求共享同一 MLLM，输入模态也会让 Prefill 前的 preprocessing、encoding 时间和显存需求相差数个数量级。FCFS 在纯文本服务时间相近时公平且简单；视频等重请求进入同一队列后却会同时占住 compute、encoder state 和 KV capacity，形成 head-of-line blocking。Modality-aware scheduler 因而可先用可测的时间/内存特征把请求划入 resource classes，再用动态优先级让轻量交互请求越过重请求，同时用 aging 保留重请求的最终进度。
+
+Class 只是一种 scheduling hint，不得改变 modality pipeline 或 request correctness；profile drift、误分类、aging 参数和多队列 starvation 都必须可观测。它用更好的交互 TTFT 换取顺序语义和大请求尾延迟，离线吞吐、单一模态或严格 arrival-order 场景仍适合 FCFS/chunked prefill。`arXiv:2603.26498v1` 的证据只覆盖 §3.1–§3.7 的 system design 与 §4.1–§4.4 所披露的 MLLM、request mix、memory pressure 与 SLO，不证明任意模态比例或生产 workload 的相同改善。<!-- source-family:SF-2026-ARXIV-2603-26498 -->
+
+MoE 进一步让 stage 内的权重也具有稀疏生命周期。所有 experts 常驻 GPU 在热度稳定、冷启动昂贵时最直接；长尾 experts 大量闲置后，可以把 expert 映射为弹性实例，让 dense shared path 保持常驻，而 scheduler 根据 router heat、instance readiness、weight movement 与 cold-start budget 决定稀疏路径放置。Router 仍拥有 token→expert 语义，elastic controller 只拥有实例生命周期和 placement；回收降低 idle cost，却把冷启动和跨节点传输带入 token critical path。高且稳定的 expert 利用率、网络较弱或 tail SLO 严格时，常驻 expert 仍更可靠。`arXiv:2603.06350v1` 的边界仅为 §3.2 Architecture and Workflow、§6 Evaluation 与 §8 Conclusion 所披露的 serverless workload。<!-- source-family:SF-2026-ARXIV-2603-06350 -->
+
+当一个请求展开成固定的 compound-inference task graph，逐模型独立部署会把端到端 latency、accuracy 与 GPU cost 的联合约束拆散。JigsawServe 先注册 graph、各 task 的 model variants 与 SLO，profiler 保存 variant × batch × MIG/MPS segment 的测量表，MILP controller 再选择 variant、replica 和 GPU spatial partition，并在 workload 变化时触发重配置；frontend 与 workers 只在该配置内路由和执行。它把局部资源选择对齐到端到端目标，却引入 profile 成本、求解与重配置开销；图简单、variant 单一或负载稳定时，固定部署仍更可控。`arXiv:2603.08797v1` 的机制定位是 §3.1–§3.3，§4–§5 只证明所测 compound workloads 和 GPU 配置，不支持 runtime dependency frontier、中间 artifact residency 或任意动态 Agent graph。<!-- source-family:SF-2026-ARXIV-2603-08797 -->
+
+Agent 请求从外部工具返回后会产生 resume prefill；若把它与 cold prefill、decode 放进同一无反馈队列，长上下文恢复可能破坏交互请求的 TPOT。AgentServe 因而显式区分 cold prefill、resume prefill 与 decode，并由 feedback scheduler 根据观测 TPOT 调整 resume-prefill token budget 和保留给 decode 的 SM 数；CUDA Green Contexts 只负责隔离两类 GPU 资源。它以 feedback oscillation、SM fragmentation 和单机调参成本换取恢复阶段的 tail control；prefill 很短或 GPU 不拥塞时，普通调度仍更简单。`arXiv:2603.10342v1` 的机制只由 §III-A–§III-C 支持，完整评测边界是 §IV 的单 consumer-GPU testbed，不证明多 GPU 或生产隔离。工具状态、action 与外部副作用仍由 Ch81 Workflow 管理，不能从该来源推导 checkpoint/resume 语义。<!-- source-family:SF-2026-ARXIV-2603-10342 -->
+
+Any-to-any 多模态模型把上述问题扩展为跨模型的分布式数据流，但不能把所有决定都笼统交给一个 scheduler。Cornserve 中 Gateway、Resource Manager 与 Task Managers 管理 graph deployment 和 replicas，Task Dispatcher 只拥有 invocation routing；每个 GPU 的 Sidecar 管理 intermediate-tensor transfer/completion，Task Executors 才拥有执行与 batching。分层可以减少异质资源失配，却扩大 backpressure、transfer failure 和中间数据生命周期。其 record-and-replay 优化还要求同一请求的 composite task path 可确定；data-dependent control flow 必须留在 application 层，用真实结果决定下一步。`arXiv:2603.12118v1` 仅由 §2.1–§2.2 支持该控制面/数据面分工，§3 只覆盖所测模型与集群；纯文本、固定 modality 或动态分支占主导时，独立 engine 或 application orchestration 仍可能更合适。<!-- source-family:SF-2026-ARXIV-2603-12118 -->
+
+执行计划的 attribution 会影响调度判断，但诊断本身不拥有 admission 或 placement；TaxBreak 的 canonical mechanism 因此归 Ch49 的 execution stack，而本章只消费其 profile 结果。
+
+最后，异构资源不应因为“空闲”就自动进入容量池。CPU Attention 可以在 GPU request 间隙 piggyback，前提是 online controller 同时执行 admission、核算 SLO slack 和资源占用，并通过 task queue 与 residual correction 保持 CPU/GPU 分支的输出一致性。它以状态同步、预测误差和 tail-risk 换取混合负载下的有效容量；同质负载、GPU 未饱和、NUMA/transfer 不可预测或 deadline 很紧时，单 GPU 路径仍更可控。`arXiv:2603.12831v1` 的 §3.3.2–§3.3.6 支持 online scheduling/admission，§4 支持 queue 与 residual correctness，§5 只证明其 A100/CPU testbed；§6 之外不能外推到其他 topology、model 或生产 SLO。<!-- source-family:SF-2026-ARXIV-2603-12831 -->
 
 ### Relational Query Plan 把 KV Residency 变成 Pipeline State
 
@@ -555,6 +599,16 @@ model/precision、shape range、parallel mapping、workload distribution 与 SLO
 Replica 已固定时，scheduler 只需在同构候选中 placement；边缘设备、精度容忍和带宽差异同时出现后，请求真正选择的是 `(model family, size, quantization, device)`。先为 accuracy、latency、resource 与 response size 建立版本化预测，再在 request tolerance、capacity、bandwidth、concurrency 与 deadline 下联合 admission，可以避免把一个质量不满足的快速配置误当可行解。
 
 预测器只是 proposal state，不拥有结果真值。其 identity 必须绑定 query/task slice、model artifact、quantization、device/runtime、measurement window 与 calibration error；调度后还要把 realized quality/latency 回写，触发 drift、fallback 或重新校准。联合搜索扩大了可行空间，也新增 predictor staleness、组合爆炸、deferred-queue starvation 与模型切换成本。Catalog 小、quality contract 固定、tail SLO 强或缺少可靠 per-query evaluator 时，预先认证的少量静态配置仍更容易验证。
+
+### 从 Request Count 到 Token-pool 资源合同
+
+只按 request 数量分配队列或并发槽，在输出长度相近、请求完成快且资源占用差异很小时足够简单；输入长度、`max_tokens`、KV 占用和 SLO 分化后，相同的一个请求名额可能代表完全不同的未来负担。更细的 admission contract 可以同时声明吞吐、KV 容量与并发，并在请求开始前检查 `input tokens + max_tokens` 是否落在 entitlement 的剩余预算内。这里的 token budget 是准入上界，不是 runtime 每生成一个 token 都更新的在线账本。
+
+执行完成后，gateway 再通过 callback 上报实际 token 消耗和 latency，由授权/配额层更新 burst 与 service-debt 状态，为后续请求排序。这条反馈把“执行前的保守准入”和“执行后的实际成本核算”连接起来，但没有改变当前请求已经提交的 token，也不能把 completion callback 误解为逐 token 控制。作者实验支持的是选择性拒绝低优先级新请求以及 elastic workload 的 debt-based fair-share；preemptible service class 虽定义了终止 active request、回收 KV 和杀死 pod 的分支，却未在该实验中验证，本文也未建立 requeue 语义。
+
+更细粒度合同会支付未来长度高估、capacity calibration、debt 参数和跨 replica 状态同步成本。请求同质、运行时间短或缺少可靠预算模型时，静态槽位与简单队列仍是更容易验证的基线；现有 exact-v1 证据也不支持把单 replica、Qwen3-8B-NVFP4 的结果外推为 PD 分离或生产公平性结论。
+
+<!-- source-family:SF-2026-ARXIV-2603-00356 -->
 
 ### 从线性外推到 Saturation-aware Capacity Model
 

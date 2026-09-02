@@ -110,6 +110,14 @@ z = [1.0, 0.0, 0.2, 0.8]    shape [4]
 
 多个 heads 是否真的分别对应“语法头”“指代头”，需要实验验证。可视化某个 attention pattern 只能提供行为线索，不能保证每个 head 有稳定、单一的人类概念。
 
+## Head 怎样分化，又为什么会冗余
+
+`H` 是训练前写进架构的超参数，不是模型先观察问题、再像 MoE router 一样动态决定要启动多少个 heads。标准 MHA/GQA 的一次 forward 会生成全部 Query heads，并沿 checkpoint 固定的分组执行 Attention；MoE router 选择的是 FFN Experts，不能替代 Attention head 的路由语义。
+
+不同 heads 接收同一批 token、服务同一个最终 loss，但各自拥有不同投影参数，并通过不同 score matrix、concat 位置与 `W_O` 路径接收梯度。随机初始化和训练过程会打破完全对称，使它们可能形成互补路由；这不是“每个 head 被分配一个领域”的监督，也不保证最终彼此独立。即使初始化时令投影近似正交，联合优化也可以再次把它们推向相关子空间。
+
+因此，多头结构提供的是**可分化的表达路径**，不是 `H` 份必然有效的独立能力。已有剪枝研究表明，特定训练模型和任务中的一些 heads 可在较小质量变化下移除；这能证明冗余可能存在，却不能推出所有层、所有输入都有同一组“无效 heads”，也不能把 post-hoc 分析直接等同于生产加速。真正跳过 head 需要训练期 pruning、gating 或稀疏执行 contract，并让 checkpoint、kernel 与评估共同支持。
+
 ## 为什么 head 数不是越多越好
 
 给定固定 `d_model`，增加 `H` 通常会减小 `d_h`。更多 heads 提供更多独立路由分布，但每个 head 的表示维度更小。
@@ -159,6 +167,10 @@ V [B,H_kv,T,d_h]
 ```
 
 GQA 把 Query heads 分组，同一组共享一个 KV head，在 MHA 表达自由度与 MQA cache 效率之间折中。
+
+这里的“共享”是一项架构约束与 inductive bias，不是先证明组内若干 KV heads 数学上相似，再做无损合并。从头训练 GQA 时，每组从一开始就只有一套 `W_K/W_V`，Query heads 会共同适应该表示；把既有 MHA checkpoint 转成 GQA 时，才需要聚合旧 K/V projections 并继续训练，转换结果也不是 runtime 等价改写。
+
+MQA 把约束推到极端：不同 Query heads 仍能产生不同 attention weights，决定“查哪些位置”，但所有 heads 共用同一套 Key 索引特征和 Value 内容表示。GQA 保留多个 KV groups，使不同组还能学习不同的“怎样被匹配”和“取回什么”。所以从 MHA 到 GQA 再到 MQA，是 `H_kv`、KV 带宽与表示瓶颈之间的连续取舍，不是发现所有 KV heads 都相似后的必然终点。
 
 ## 一个 GQA 分组例子
 
@@ -247,6 +259,8 @@ Single-head Self Attention
 8. 为什么 runtime 不能为任意 checkpoint 无损切换 MHA 到 MQA？
 9. Head layout 为什么会约束 Tensor Parallel？
 10. Attention head 的可视化为什么不等于完整机制解释？
+11. 为什么同一 loss 可以让 heads 分化，却不能保证每个 head 都独立有效？
+12. GQA 的共享为什么是训练约束，而不是组内 KV 相似性的定理？
 
 ## 小结
 
@@ -263,5 +277,6 @@ Primary-source 校验入口：
 - Multi-Head Low-Rank Attention（Status: Experimental）: https://arxiv.org/abs/2603.02188
 
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762
+- Paul Michel et al., "Are Sixteen Heads Really Better than One?", 2019: https://arxiv.org/abs/1905.10650
 - Noam Shazeer, "Fast Transformer Decoding: One Write-Head is All You Need", 2019: https://arxiv.org/abs/1911.02150
 - Joshua Ainslie et al., "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints", 2023: https://arxiv.org/abs/2305.13245

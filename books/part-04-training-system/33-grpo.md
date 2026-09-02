@@ -216,6 +216,25 @@ less learned value state
 
 最佳 group size 依赖 policy 当前成功率。若任务成功率接近 0 或 1，即使增加 `G`，有效 mixed-outcome groups 仍可能稀少，需要调整 curriculum、reward 或任务分布。
 
+### Group-relative Gradient 不是独立样本均值
+
+把同一 prompt 的 `G` 条 response 当成普通 minibatch，容易误以为增加 `G` 只是增加独立样本数。实际上每条
+response 的 advantage 都使用同组统计量，样本经由共同 baseline 相互耦合；改变或删除一条 response，会同时改变
+其他 response 的更新权重。因而这里的统计对象更接近对一组样本定义的对称核，而不是 `G` 个独立 gradient 的简单平均。
+
+U-statistic 视角把这层依赖显式化：先定义组内相对比较产生的 gradient kernel，再用 Hoeffding decomposition 区分
+一阶有效信号与高阶组内交互。它解释了为什么 group size 会通过有限样本 variance decomposition 改变 MSE，同时影响
+有效 prompt 数和 rollout 成本，也提醒实现不能用独立样本公式直接估计不确定性。收益是能够在明确的
+bounded-reward、smoothness 等假设下分析 MSE
+与有限样本行为；代价是统计估计和 batch 设计更复杂，而且理论假设并不自动覆盖 non-stationary judge、相关采样或
+distributed rollout 的版本漂移。
+
+这不是要求所有 GRPO 系统都采用新的 estimator。组很小、reward 简单且只做工程回归时，现有 group-normalized
+实现仍是合理 baseline；需要比较 group size、报告 gradient variance 或据此分配 rollout budget 时，才必须把组内依赖
+纳入 measurement contract。现有证据证明论文设定中的统计结构与实验趋势，不证明某个固定 `G` 对所有模型和任务最优。
+
+<!-- source-family:SF-2026-ARXIV-2603-01162 -->
+
 当 rollout 很贵、group 很小时，系统可以把当前小样本统计与一个跨任务 value prior 做 shrinkage，再按“多采一次
 能减少多少估计误差”决定继续或停止。它位于无 critic 的 group mean 与完整 learned value function 之间：
 
@@ -231,6 +250,29 @@ fresh group measurement + versioned generalist prior
 失配时增加采样或回退到标准 group mean。V0.5 的数学与作者 math-RL 实验支持这一折中在其 contract 中成立，
 不证明极小 group、non-stationary judge 或多域 rollout 都会收敛。Rollout 便宜或 prior 不可信时，标准 GRPO
 仍更无偏；dense state value 可可靠学习时，同步 critic 仍是有效分支。
+
+组采样还暴露了另一类浪费：不是所有 prompt 都同样容易产生有区分度的 group。均匀重采最简单，也最少引入
+selection bias；但当少数 prompt 曾经产生高方差或 mixed-outcome group 时，把下一轮预算继续均匀分给已经稳定
+全对或全错的 prompt，会降低有效 gradient density。一个受限分支可以记录近期的 prompt-level signal，只重放
+高信号 prompt，并且**始终用当前 policy 重新 rollout**：
+
+```text
+uniform prompt sampling
+→ versioned prompt-level outcome statistics
+→ select recent high-signal prompts
+→ current-policy rollout produces a new group
+→ ordinary GRPO scoring and update
+```
+
+这里复用的是 prompt admission evidence，不是旧 trajectory、旧 log-prob 或旧 advantage。Prompt replay owner
+需要绑定 policy/reward revision、统计窗口、选择阈值与采样概率；旧 response 只能解释“为什么再采一次”，不能
+直接进入 on-policy update。它用较高的 sample efficiency 换取 curriculum bias：困难或偶然高方差的任务可能被
+持续放大，尚未产生正信号的任务反而被饿死；policy 演进后旧 signal 也会迅速过期。因此应保留 exploration
+quota、重要性监控和均匀采样回退。任务信号近似均匀、统计不稳定或分布覆盖比短期吞吐更重要时，标准 prompt
+sampling 仍更合理；现有证据只支持 early training-time / sample-efficiency 改善：作者曲线随后更早 plateau，
+最终接近 baseline，cooldown ablation 又受 spurious reward 干扰且没有多 seed 显著性验证。它不证明最终质量提升、
+稳定超过 baseline，或任何 GRPO workload 都应重放高信号 prompt。
+<!-- source-family:SF-2026-ARXIV-2603-21177 -->
 
 ## 从 GRPO 到 DAPO：后续演化不是单线版本升级
 
@@ -406,6 +448,30 @@ measurement noise 放大到 gradient。
 路径，并报告 naive timing reward 会被 noise、sparsity 与 GRPO instability 淹没。其具体
 数据集、reward recipe 与收益仍是单篇预印本的实验结论；本章吸收的长期原则是：
 **verifiable reward 的测量系统也是被优化接口，必须与 policy 一起设计和审计。**
+
+### 长上下文 RL 还要验证 Context 是否真正被使用
+
+终局答案可验证时，只给 correctness reward 最简单，也能避免把不可靠的过程 judge 写进 objective；但在长上下文任务中，
+模型可能凭参数记忆、题目先验或局部线索得到正确答案，而没有学习检索和使用提供的 evidence。此时 correctness 仍为真，
+训练目标却无法区分“基于当前 context 求解”与“绕过 context 猜中”。
+
+更严格的分支把 reward 拆成两个职责不同的 signal：答案项继续衡量 outcome correctness，context 项则用
+chunk-label 调制的 F-score 衡量回答与给定上下文的对齐。论文把二者相加为 `r_total = r_ans + r_ctx`，因此它不是
+“两个 hard gate 均通过才接纳”的布尔合同，而是让两类证据共同影响 trajectory 的相对权重：
+
+```text
+answer-quality reward + context-alignment reward
+-> total reward
+-> group-relative comparison and update
+```
+
+这能惩罚明显绕开 context 的 shortcut，并把 retrieval/read state 纳入训练合同；代价是额外标注、evidence provenance
+与 reward specification gaming。尤其要注意，chunk-label F-score 只能证明输出与标注片段更一致，不能证明模型在因果上
+使用了这些证据；开放研究和多跳解释仍可能把“复述了证据”误当成“证据支持结论”。短任务、闭卷能力训练或 context
+本就不是 authority 时，单一 outcome reward 仍更合适。作者实验只支持其长上下文任务、模型和 reward construction，
+不证明开放域 grounding 已被解决。
+
+<!-- source-family:SF-2026-ARXIV-2603-02146 -->
 
 ### Reasoning Cost 也是版本化的 Reward Prior
 

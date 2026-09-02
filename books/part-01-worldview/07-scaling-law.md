@@ -96,6 +96,25 @@ define target metric and budget
 -> re-fit when recipe or constraints change
 ```
 
+这里还要区分“观察到一条近似抛物线”与“估计到了真实 compute-optimal frontier”。沿每个 compute budget 只取
+少量点、再分别拟合局部二次曲线，计算简单，也适合近似对称且采样覆盖充分的局部诊断；当 loss surface 非对称、
+最优点靠近采样边界或 grid 偏心时，这个两阶段过程会把实验设计偏差写进 exponent。更稳健的分支是直接对联合
+surface 拟合，并用 variable projection 等方法同时估计共享参数与每条 curve 的 nuisance terms：
+
+```text
+sparse IsoFLOP grid
+→ per-budget local parabola minima
+→ joint surface fit with explicit parameter coupling
+→ recovery test on synthetic truth
+→ held-out frontier validation
+```
+
+联合拟合减少结构性偏差，却提高初始化、数值条件和实验设计要求；若观测区域太窄，它也只会更精确地拟合一段
+缺少外推信息的数据。因而 scaling study 不只要报告最终 exponent，还要保存 grid geometry、objective、optimizer、
+数据 recipe、拟合器与 uncertainty。局部抛物线在只做邻域插值时仍有价值；跨数量级容量决策则必须检验参数恢复与
+外推稳定性。事件时证据证明的是特定拟合方法在 synthetic 与公开 IsoFLOP 数据上的偏差，不直接证明任何新的
+通用 token/parameter 常数。<!-- source-family:SF-2026-ARXIV-2603-22339 -->
+
 ## 为什么会出现相对平滑的规律
 
 目前没有一个简单理论完整解释所有神经网络 scaling 现象，但可以建立几个不越界的直觉。

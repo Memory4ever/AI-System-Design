@@ -214,6 +214,46 @@ Paging、prefix sharing 和更精确 admission 减少预留与碎片，却不改
 
 CPU/SSD/off-node cache 扩大总容量，却加入 transfer latency、bandwidth contention 和 consistency。它们把“装不下”改成“何时值得搬”。
 
+最简单的 offload 在当前 layer 请求某页后才开始搬运，容易保持正确顺序，却会把 CPU selection、PCIe transfer
+和 GPU attention 串在 token critical path 上。当相邻 layer 的访问具有可预测结构时，可以让 CPU 提前一层计算
+下一层候选集，并把 selection/transfer 与当前 GPU layer 重叠：
+
+```text
+reactive offload fetch
+→ layer-ahead CPU candidate computation
+→ asynchronous transfer with generation-tagged completion
+→ GPU consumes only ready state at the target layer
+→ miss / lag falls back to ordinary attention or a larger resident set
+```
+
+这不是让 CPU 取得 attention truth；它只拥有 pre-computation/prefetch proposal，目标 layer 的 GPU execution 与
+cache owner 仍决定最终可见状态。收益取决于 CPU 核数、host memory bandwidth、PCIe 和 layer compute 是否足以
+隐藏准备时间；CPU 落后、候选错误或同步过多时，预计算会变成浪费并拉高 tail latency。KV 能驻 HBM、Context 较短
+或 host 很弱时，普通 GPU attention/offload 仍更稳定。事件时证据只覆盖 exact-v1 §3.2–§3.4 的 layer-ahead
+CPU attention estimation、异步预取与 pipeline integration，以及 §4.3 的作者模型、batch 与硬件配置；不能把重叠
+比例外推为跨平台常数。<!-- source-family:SF-2026-ARXIV-2603-27138 -->
+
+### 层级的管理权不应默认属于 Framework
+
+最初的 offload 实现往往由 model runtime 显式管理：它按 expert 或 layer 统计热度、固定 pinning，并决定何时从慢层加载。这在 workload 稳定、需要可预测尾延迟时最容易校验，但它也另建了一套与操作系统内存回收并行的 residency policy。
+
+当 expert pool 超过 DRAM，而权重本来就以文件页形式存在时，可以让 kernel page cache 拥有 eviction / reclaim，runtime 只提供 model-aware admission 和预测建议。这把“专用 expert cache”重写为一个分层契约：
+
+```text
+kernel owns page residency and reclaim
+runtime owns expert identity, admission and lookahead advice
+scheduler owns capacity / latency SLO
+```
+
+收益是复用成熟的 recency 与回收机制，并在 domain shift 下避免静态热度表过期；代价是 page-cache hit/reclaim path 的额外开销，以及 cgroup、MGLRU、`mlock`、balloon 和 kernel revision 都会进入结果身份。因此 kernel-managed 不是一个通用更快结论；当回收路径不可控、SLO 极严或 expert working set 完全可常驻时，专用 arena 与静态 placement 仍然更稳定。
+
+另一层容易被忽略的开销发生在“文件页已经可被 accelerator 读取”之后。普通 framework loader 仍会把它复制到自己的 allocation，产生额外的 ingestion copy。在 integrated 或 coherent-memory topology 上，producer 可以用 `MAP_SHARED` 映射 tensor，封装成 no-copy GPU buffer，再通过 DLPack 把同一存储导入 framework。但 zero-copy import 本身不够：activation residency 和 GPU ordering 也必须一起成立，否则只是把一次拷贝换成更慢的执行路径。
+
+这个分支用 topology-specific implementation、页生命周期和 ordering 约束换取减少副本、缩短首次加载并让页继续可共享、可回收。跨 PCIe 或设备不能高效直读 file pages 时，resident copy 或 overlapped streaming 仍是正确路径。所以文件页 adoption 必须由 memory topology 决定，不能被封装成无条件的 loader 优化。
+
+<!-- source-family:SF-2026-ARXIV-2608-12103 -->
+<!-- source-family:SF-2026-ARXIV-2608-12114 -->
+
 权重 offload 也应从“整层搬运”进一步区分到 conditional-compute state。MoE 的 active expert 由 router
 决定，静态把全部 experts 常驻 HBM 最简单且延迟稳定；固定 offload 一部分 experts 能扩容，却忽略请求
 分布变化。Router-conditioned expert cache 可按实际激活维护 hot set，进一步用前序层或历史路由预测下一

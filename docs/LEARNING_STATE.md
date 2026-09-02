@@ -19,6 +19,16 @@ from multimodal representation through generative paradigms and World Models to
 Embodied/VLA action; former Training, Inference, Infrastructure and Agent chapters
 have moved to Parts IV～VII without changing their durable content.
 
+## 2026-09-02 Conversation Attention / Recurrent-State Books Integration
+
+Status: `MODEL-MULTI-HEAD-ATTENTION`, `MODEL-KV-CACHE` and `MODEL-LONG-CONTEXT` refined; chapters remain Draft
+
+- Multi-head Attention now separates architectural parallel paths from guaranteed head specialization: head count and grouping are fixed checkpoint contracts, joint loss can produce both differentiation and redundancy, and MoE routing does not dynamically select Attention heads.
+- GQA sharing is framed as a trained inductive bias rather than a theorem about similar KV heads; MHA/GQA/MQA now expose the joint trade-off among Query diversity, KV representation spaces and runtime state.
+- KV shape/bytes are explicitly separated from Shannon information, while position-aware cache reuse distinguishes same-request continuation from cross-request Prefix Cache identity.
+- Long-context recurrent state now connects Gated DeltaNet, Gated DeltaNet-2 and LSTM through their different state/update contracts, then makes context switching, paraphrase-driven state churn and request-level isolation explicit failure boundaries.
+- Recent Gated DeltaNet-2 claims were limited to the primary paper's experimental scope. ROADMAP and DECISIONS remain unchanged; no staging, commit or push was performed.
+
 ## 2026-09-01 Daily Research 与 Books Integration
 
 - 严格北京时间 `[2026-08-31 09:00, 2026-09-01 09:00)` 窗口已闭环：1060 条 arXiv v1 identity
