@@ -257,13 +257,11 @@
 ### Owner-merged minimal text
 
 - **SF-2026-ARXIV-2606-24143**：将 rollout、teacher scoring、student update 解耦为 queue stages；learner 用 current-student recomputation 修正 reverse-KL stale signal，并以 multi-sample MC 避免 cached top-k support bias。 实验限单节点 8 GPU、sparse/MC estimator；dense full-vocabulary KL、跨节点扩展与更长 staleness 未验证，cache/queue 压力过大时应回退 bounded-staleness 或同步 OPD。
-- **SF-2026-ARXIV-2606-24369**：把 visual diffusion RL 的 generation/training 解耦，并沿 generation 与 timestep 两轴并行；trainer bubble 临时借给 generator，TCSS 以 trajectory-consistent point 控制权重同步。 收益绑定论文 diffusion workload、资源组合与 stale policy 容忍度；异构故障、跨作业隔离和 reward/model drift 未验证，质量偏离时回退同步或 bounded-staleness。
 - **SF-2026-ARXIV-2606-24722**：把 end-to-end backprop 的全局 hidden-target ownership拆成 block-local diffusion objective；edge worker 独立更新 block，coordinator 只按版本/acceptance rule 接收异步 update，同一 block protocol 也支撑分布式 inference。 real-text small model、virtual edge worker 与 WAN smoke test 不证明大模型质量、Byzantine worker、激励或大规模收敛；acceptance 失败时回退同步/集中训练。
 
 ### Source-specific Review notes
 
 - SF-2026-ARXIV-2606-24143: `arXiv:2606.24143v1`; exact-v1 URL=`https://arxiv.org/html/2606.24143v1`; Method=`https://arxiv.org/html/2606.24143v1 — §4 Forward- and Reverse-KL OPD Under Staleness; 7 AsyncOPD`; Evaluation=`https://arxiv.org/html/2606.24143v1 — §7 AsyncOPD Experimental Results; G Scheduler Details`; Non-proof=`实验限单节点 8 GPU、sparse/MC estimator；dense full-vocabulary KL、跨节点扩展与更长 staleness 未验证，cache/queue 压力过大时应回退 bounded-staleness 或同步 OPD。`; Artifact=`https://github.com/furiosa-ai/async-opd`
-- SF-2026-ARXIV-2606-24369: `arXiv:2606.24369v1`; exact-v1 URL=`https://arxiv.org/html/2606.24369v1`; Method=`https://arxiv.org/html/2606.24369v1 — §3 DigenRL: System Design; GAP/TSP/TAG/TCSS`; Evaluation=`https://arxiv.org/html/2606.24369v1 — §5 Evaluation; End-to-End Time and TCSS Effectiveness`; Non-proof=`收益绑定论文 diffusion workload、资源组合与 stale policy 容忍度；异构故障、跨作业隔离和 reward/model drift 未验证，质量偏离时回退同步或 bounded-staleness。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
 - SF-2026-ARXIV-2606-24722: `arXiv:2606.24722v1`; exact-v1 URL=`https://arxiv.org/html/2606.24722v1`; Method=`https://arxiv.org/html/2606.24722v1 — §2 Protocol; Block-Local Diffusion Objective; Decentralized Execution`; Evaluation=`https://arxiv.org/html/2606.24722v1 — §3 Real-Text Experiments; 4 Decentralization and Asynchrony`; Non-proof=`real-text small model、virtual edge worker 与 WAN smoke test 不证明大模型质量、Byzantine worker、激励或大规模收敛；acceptance 失败时回退同步/集中训练。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
 
 ## TRAIN-GRPO — books/part-04-training-system/33-grpo.md

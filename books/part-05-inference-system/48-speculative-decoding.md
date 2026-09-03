@@ -338,6 +338,40 @@ parallel proposal backbone
 kernel 更快。Domino 与 Draft-OPD 分别为这两条分支提供受限实验；其结果绑定作者的 Qwen、A100、Transformers/
 SGLang、低并发和训练合同，不能外推为通用倍数。经典独立 AR drafter 在实现简单、数据有限或可独立升级时仍合理。
 
+### Drafter 更新从离线训练演进为受 Gate 的在线状态循环
+
+离线训练并冻结 drafter 的做法并没有错：当 target revision、请求分布与接受率长期稳定时，它把训练故障隔离在
+Serving 之外，也让 rollback 只需切换一个经过验证的 artifact。约束在流量持续漂移时改变——drafter 训练时看到的
+prefix 与线上 target 真正访问的状态逐渐分离，固定 artifact 的 proposal cost 仍在，却不再稳定换来 accepted progress。
+
+第一步演进可以复用 target 在正常服务中已经产生的 hidden states，作为 drafter 的训练信号，而不重新加载 target
+或为训练重复 target forward。Serving runtime 只拥有请求执行与 hidden-state capture；独立 trainer 拥有 gradient、
+optimizer 与 candidate draft revision；控制器根据观测到的接受率、训练开销和 GPU 机会成本决定是否启用 speculation
+及训练。target verifier 仍是 correctness owner，线上信号不能越权成为 acceptance authority。
+
+```text
+committed target serving state
+→ bounded hidden-state capture
+→ decoupled draft training
+→ candidate revision evaluation
+→ gated promotion or rollback
+```
+
+这样可以降低重复 target compute，却新增 signal retention、privacy、训练资源争用和 revision lineage。训练信号若偏向
+高频租户，还会把少数 workload 的 drafter 质量掩盖在平均接受率里；预期节省不能覆盖训练与同步成本时，应关闭在线
+训练并继续使用离线 drafter。<!-- source-family:SF-2026-ARXIV-2602-05145 -->
+
+第二步演进把更新变成持续的 on-policy loop：专用异步 training server 消费 serving traces，生成新 draft revision，
+再经版本化同步送往 inference workers。异步化避免训练直接进入 Decode critical path，但也使 serving 中可能同时存在
+多个 draft revision；因此同步频率、promotion epoch、worker pinning 与 rollback point 必须成为显式状态。训练服务器
+只能提出 revision，Evaluation/acceptance telemetry 才能授权发布，request 一旦开始则应绑定已提交版本，不能在中途
+静默换权重。
+
+这条路线用对 domain shift 的更快适应，换来 stale-gradient、短期过拟合、跨 worker 版本偏斜和同步流量。线上轨迹
+并不天然代表未来分布，错误 proposal 也可能形成自我强化；无独立 holdout、接受率校准或稳定 rollback 时，周期性离线
+刷新仍更容易审计。`arXiv:2602.06932v1` 只支持作者披露的异步 on-policy 架构与控制关系；本轮 exact-v1 packet
+没有独立 Evaluation locator，因此不吸收性能 headline。<!-- source-family:SF-2026-ARXIV-2602-06932 -->
+
 当 drafter 与 verifier 为了独立扩缩容、异构并行或 failure isolation 被拆成不同进程，原本同进程隐含的
 committed prefix、future branch 和 rollback state 必须升级成协议。Verifier 应是唯一 commit/client-stream owner，
 Drafter 只能发布带 base-version 的 provisional buffer：
@@ -739,6 +773,15 @@ Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 
 至此第46～48章分别从 batch membership、KV placement 和 serial target steps 三个正交方向优化 runtime。下一章开始把这些机制映射到实际 Serving stacks。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-05145`（TIDE；Status: Experimental）：exact-v1 的 §3.1 定义从 target serving
+  hidden states 复用训练信号、解耦 inference/training 及 runtime activation gate；§A.4 披露 heterogeneous GPU
+  evaluation configuration；§6 不证明线上训练在任意 workload、隐私边界或 GPU 配置下都值得启用。
+  https://arxiv.org/html/2602.05145v1
+- `SF-2026-ARXIV-2602-06932`（Aurora；Status: Experimental）：exact-v1 的 §3.1 定义 dedicated
+  asynchronous training server、on-policy serving traces、GPU-aware RPC 与 draft synchronization；Evaluation=
+  `Not Disclosed — exact-v1 packet 未提供独立 Evaluation locator`；§7 不证明持续更新可避免 domain shift、
+  revision staleness 或生产 rollback 风险。https://arxiv.org/html/2602.06932v1
 
 - Block Drafting Information Floor（realized-prefix information 与 model gap 分解；Status: Experimental）：
   https://arxiv.org/abs/2608.27339v1

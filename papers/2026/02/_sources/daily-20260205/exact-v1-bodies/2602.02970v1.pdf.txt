@@ -1,0 +1,1686 @@
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Shrenik Patel † 1 Christine Truong † 2
+
+arXiv:2602.02970v1 [cs.LG] 3 Feb 2026
+
+Abstract
+
+performing joint behavior (Brunke et al., 2022). The problem is amplified by partial observability and interactiondriven dynamics. Even when agents share the same reward
+objective, safety failures often emerges from coordination
+breakdowns in timing, intent, or mutual awareness, rather
+than from conflicting incentives (Omidshafiei et al., 2015;
+Calzolari et al., 2026). As a result, purely reactive constraint
+handling can be slow to correct the underlying cause of
+violations, while heavy-handed penalties can make learning
+brittle (Brunke et al., 2022).
+
+Constrained multi-agent reinforcement learning
+(MARL) faces a fundamental tension between
+exploration and safety-constrained optimization.
+Existing leading approaches, such as Lagrangian
+methods, typically rely on global penalties or centralized critics that react to violations after they occur, often suppressing exploration and leading to
+over-conservatism. We propose Co2PO, a novel
+MARL communication-augmented framework
+that enables coordination-driven safety through selective, risk-aware communication. Co2PO introduces a shared blackboard architecture for broadcasting positional intent and yield signals, governed by a learned hazard predictor that proactively forecasts potential violations over an extended temporal horizon. By integrating these
+forecasts into a constrained optimization objective, Co2PO allows agents to anticipate and navigate collective hazards without the performance
+trade-offs inherent in traditional reactive constraints. We evaluate Co2PO across a suite of
+complex multi-agent safety benchmarks, where
+it achieves higher returns compared to leading
+constrained baselines while converging to costcompliant policies at deployment. Ablation studies further validate the necessity of risk-triggered
+communication, adaptive gating, and shared memory components.
+
+We introduce Co2PO, a coordinated constrained policy optimization framework that targets these coordination-driven
+safety failures through selective, risk-aware coordination.
+Rather than treating communication as a persistent channel, Co2PO uses it as a sparse control mechanism: agents
+write to a shared blackboard only when they predict elevated near-term hazard risk. Each write contains compact
+safety-relevant signals—a positional state summary, an intent vector, and a yield flag—that other agents can retrieve
+to condition their actions. This design preserves decentralized action selection while providing coordination signals
+precisely when interaction risk is most acute.
+Across cooperative multi-agent safety benchmarks, Co2PO
+improves feasible performance and reaches cost-compliant
+policies at evaluation under the same training budget. We
+observe transient violations early in training, when hazard
+prediction and coordination behavior are still being learned,
+but final policies satisfy the cost constraint during evaluation.
+Our contributions are as follows:
+Contributions.
+
+1. Introduction
+
+• We introduce Co2PO, enabling selective coordination
+via a shared blackboard with decentralized actions.
+
+Constrained multi-agent reinforcement learning (MARL)
+aims to maximize collective return while satisfying safety
+constraints, but in cooperative settings this tension is especially sharp: aggressive exploration can incur costly violations, while overly conservative updates can prematurely
+suppress learning and prevent agents from discovering high-
+
+• We propose hazard-triggered writes of compact signals
+(state, intent, yield) with adaptive write-rate control.
+• We evaluate on cooperative multi-agent safety benchmarks with ablations isolating blackboard and gating.
+
+†
+Equal contribution 1 Rutgers University, New Brunswick, NJ
+Carnegie Mellon University, Pittsburgh, PA. Correspondence to:
+Shrenik Patel <shrenik.patel@rutgers.edu>, Christine Truong
+<cmtruong@andrew.cmu.edu>.
+2
+
+2. Problem Setup and Preliminaries
+
+Preprint. February 4, 2026.
+
+We study constrained cooperative multi-agent reinforcement
+learning (MARL) under partial observability. Agents seek
+high return while satisfying an expected cost budget at eval1
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+2.5. Risk Events and Hazard Labels
+
+uation, and we summarize performance with feasible return.
+
+We construct a proactive hazard label from dense per-step
+costs. Let cit be the instantaneous cost for agent i. Define a
+hazard event
+
+
+zti = 1 cit > δ ,
+(7)
+
+2.1. Constrained Cooperative Markov Game
+We model the environment as a cooperative constrained
+Markov game (CMG) with n agents (Littman, 1994):
+
+and a lookahead label with horizon H,
+
+
+i
+i
+ht = 1
+max
+zτ = 1 ,
+
+G = ⟨N , S, {Oi }i∈N , {Ai }i∈N , P, r, c, γ, ρ0 , d⟩.
+Agent i observes oit ∈ Oi and selects ait ∈ Ai , yielding joint
+action at = (a1t , . . . , ant ) and transition st+1 ∼ P (· | st , at )
+from s0 ∼ ρ0 . The environment emits a shared reward
+rt = r(st , at ) and safety cost ct = c(st , at ).
+Qn
+Policies factorize as π(a | o) = i=1 πi (ai | oi ) with
+o = (o1 , . . . , on ). The discounted return and cost are
+"∞
+#
+X
+JR (π) = Eπ
+γ t r(st , at ) ,
+(1)
+
+τ ∈{t,...,t+H}
+
+(8)
+
+computed within episode boundaries. We use hit to supervise the hazard predictor used for selective coordination in
+Section 3.
+
+3. Methodology
+
+with cost budget d.
+
+We present Co2PO, a constrained MARL method that augments decentralized policies with selective shared-memory
+coordination. Each agent predicts near-term hazard risk
+from its local observation and writes a compact message
+to a shared blackboard only when predicted risk exceeds a
+threshold. Agents then read a fixed-size context from the
+blackboard and condition their actions on the retrieved information. Training uses a constrained actor–critic objective
+with reward and cost critics, a dual variable for constraint
+enforcement, supervised hazard forecasting, and a penalty
+that discourages excessive writing.
+
+2.2. CTDE Preliminaries
+
+3.1. Per-Timestep Interaction Protocol
+
+We use centralized training with decentralized execution
+(CTDE): critics may condition on centralized information
+during training, while each actor πi conditions only on its
+local observation (and any permitted message/memory) at
+execution (Lowe et al., 2020; Yu et al., 2022).
+
+We consider E parallel environment instances and n agents.
+At timestep t in environment e: (1) write-info each agent
+computes hazard probability and message contents from
+its observation; (2) write agents gate writes and update
+the blackboard; (3) read each agent retrieves up to k other
+agents’ messages to form a fixed-length context; (4) act
+each agent selects an action conditioned on its observation
+and retrieved context. The blackboard is maintained per
+environment instance and cleared on episode termination.
+
+t=0
+
+JC (π) = Eπ
+
+"∞
+X
+
+#
+t
+
+γ c̄(st , at ) ,
+
+(2)
+
+t=0
+
+where c̄ is the team cost used for enforcement. We seek
+max JR (π)
+π
+
+s.t.
+
+JC (π) ≤ d,
+
+(3)
+
+2.3. Safety Metric: Feasible Return
+We report feasible return to reflect deployment-time cost
+constraints:
+JF (π) = JR (π) · 1[JC (π) ≤ d] .
+
+3.2. Blackboard: State, Write, and Read
+
+(4)
+
+Stored fields. For each environment e and agent i, the
+blackboard stores a single current entry
+e,i
+e,i
+e,i
+e,i 
+Bte,i = xe,i
+,
+(9)
+t , ut , y t , p t , wt
+
+2.4. Lagrangian Relaxation
+We optimize a Lagrangian relaxation of Equation (3), following standard constrained policy optimization formulations
+(Achiam et al., 2017):
+
+max min L(π, λ) = JR (π) − λ JC (π) − d , (5)
+π
+
+e,i
+d
+d
+where xe,i
+t ∈ R is a compact state summary, ut ∈ R is
+e,i
+a learned intent vector, yt ∈ [0, 1] is a learned yield flag,
+e,i
+pe,i
+t ∈ [0, 1] is the hazard probability, and wt ∈ {0, 1} is
+the write indicator.
+
+λ≥0
+
+with the dual variable λ updated online. Actor–critic updates
+commonly use a hybrid advantage (Tessler et al., 2018; Ray
+et al., 2019; Zhang et al., 2020)
+C
+Ahyb
+= AR
+t
+t − λ At .
+
+Write information from local observation. Each agent
+computes message fields and a hazard score from its observation:
+(ℓit , uit , yti ) = Fθ (oit ),
+
+(6)
+2
+
+pit = σ(ℓit ),
+
+(10)
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+where ℓit is a hazard logit and σ(·) is the sigmoid.
+
+3.5. Learning Objective
+Constrained policy optimization. We optimize the Lagrangian objective (Equation (5)) using a hybrid advantage
+Ahyb,i
+= AR,i
+− λAC,i
+t
+t
+t , with λ ≥ 0 updated by projected
+primal–dual learning.
+
+Event-triggered writes.
+
+Writes are gated by a threshold:
+h
+i
+wte,i = 1 pe,i
+>
+τ
+,
+(11)
+t
+t
+
+and only entries with wte,i = 1 are valid for reads.
+
+Actor loss. Let rti (ϕi ) denote the importance ratio between current and behavior policies. We use a clipped surrogate objective augmented with hazard supervision and a
+write penalty (Schulman et al., 2017):
+
+Similarity-based read (top-k) with fixed-length context.
+At each timestep, agent i forms a query vector from its own
+state summary, qte,i = xe,i
+t . It then considers the set of active
+entries written by other agents in the same environment
+instance, { Bte,j : j ̸= i, wte,j = 1 }, and scores each
+candidate j by cosine similarity (Das et al., 2020):
+*
++
+qte,i
+xe,j
+t
+e
+,
+,
+st (i, j) =
+e,i
+∥xe,j
+t ∥2 + ε ∥qt ∥2 + ε
+
+
+ 
+Liactor = Liclip Ahyb,i + αwrite E wti
+(16)
+
+
++ αhaz E WBCE ℓit , hit − αent H(πϕi ) .
+Here WBCE is weighted binary cross-entropy, H is policy
+entropy, and αwrite , αhaz , αent ≥ 0 are coefficients.
+
+where ε > 0 is a small constant for numerical stability.
+Agent i retrieves the k highest-scoring active entries and,
+for each retrieved sender j, constructs
+
+e,j
+e,j
+e,j 
+ψ(Bte,j ) = xe,j
+∈ R2d+2 .
+t ; ut ; y t ; p t
+
+Hazard supervision, critics, and dual update. We supervise the hazard head with the lookahead label hit (Section 2.5). Reward and cost critics are trained by value regression to their respective returns, and the dual variable λ
+is updated via a projected step driven by observed constraint
+violations.
+
+The memory context is the concatenation of up to k such
+vectors in ranked order, zero-padded if fewer than k entries
+are active:
+
+
+e,j1
+me,i
+); . . . ; ψ(Bte,jk ) ∈ Rk(2d+2) .
+(12)
+t = ψ(Bt
+
+3.6. Algorithm
+Algorithm 1 C O 2PO: one rollout step at timestep t (for all
+envs e and agents i).
+
+3.3. Threshold Control (Optional)
+
+e,i
+
+We allow adaptation of τt online to target a desired write
+rate ρ⋆ . Let ρt be the observed mean write rate and ρ̄t its
+exponential moving average (Stooke & Abbeel, 2020):
+ρ̄t = β ρ̄t−1 + (1 − β) ρt ,
+
+
+τt+1 = clip τt + η(ρ̄t − ρ⋆ ), τmin , τmax ,
+
+e,i
+
+e,i
+
+e,i
+
+e,i
+
+1: Write-info: compute (ℓt , pt , ut , yt ) from ot for
+
+all (e, i)
+e,i
+
+2: Gate & write: set wt
+
+blackboard entries Bte,i
+
+← 1[pe,i
+> τt ] and update
+t
+
+3: Adapt: optionally update τt using Equations (13)
+
+(13)
+
+and (14)
+e,i
+
+4: Read: for each (e, i), form mt by top-k retrieval from
+
+(14)
+
+active entries (Equation (12))
+e,i
+e,i
+∼ πϕi (· | oe,i
+t , enc(mt )) and step
+environments
+e,i
+e,i
+6: Store: add transitions (including mt and wt ) to
+buffer; clear blackboard for terminated envs
+5: Act: sample at
+
+where β ∈ (0, 1), step size η > 0, and bounds (τmin , τmax )
+prevent degenerate write thresholds.
+3.4. Policy and Critics
+Memory-conditioned decentralized actor. Each actor
+conditions on its observation and the retrieved context:
+
+ait ∼ πϕi · | oit , enc(mit ) ,
+(15)
+
+4. Experimental Setup
+4.1. Benchmarks
+
+where enc(·) maps Equation (12) to an embedding concatenated with oit .
+
+We evaluate on cooperative multi-agent safety benchmarks from the S AFE PO suite, which builds on S AFETYG YMNASIUM and provides a consistent multi-agent interface (Ji et al., 2024). Each task emits a per-step reward and
+safety cost; our goal is to maximize return while meeting an
+episodic cost budget.
+
+Centralized critics. Under CTDE, we learn reward and
+cost critics V R (·) and V C (·) to compute reward and cost
+advantages for policy optimization.
+3
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Velocity family. In multi-agent velocity tasks, agents
+must coordinate to achieve velocity-tracking objectives
+while avoiding unsafe behavior under task-specific safety
+costs (Todorov et al., 2012). These tasks are coordinationstressing because agents share a space: one agent’s behavior
+can perturb others’ motion, making it harder to maintain
+target speeds without constraint violations.
+
+4.4. Training and Evaluation Protocol
+We follow the standard S AFE PO on-policy training loop:
+collect rollouts with E parallel environment instances, perform multiple epochs of minibatch updates per iteration, and
+periodically evaluate the current policy in separate evaluation rollouts (Ji et al., 2024). Evaluation uses deterministic
+action selection and reports means (± standard deviation)
+over three independent random seeds.
+
+MultiGoal family. In multi-agent MultiGoal tasks, agents
+navigate shared spaces with safety costs arising from unsafe
+states or contacts (e.g., hazards) (Ji et al., 2024). They stress
+partial observability, interaction-driven hazards, and implicit
+negotiation to remain cost-compliant.
+
+5. Results
+We evaluate Co2PO on coordination-intensive environments
+under constrained multi-agent learning. Across all settings,
+Co2PO achieves higher feasible returns than leading baselines while maintaining evaluation-time cost compliance at
+convergence. To facilitate comparison across heterogeneous
+tasks, we aggregate feasible performance and evaluationtime cost by environment type.
+
+4.2. Baselines
+We compare against constrained MARL baselines implemented in S AFE PO: MAPPO (Yu et al., 2022), HAPPO
+(Kuba et al., 2022), MACPO (Gu et al., 2023), and MAPPOLagrangian (Gu et al., 2023). All methods are run under
+a matched training budget and evaluation protocol. When
+available, we use S AFE PO’s standard hyperparameter configurations for each baseline and environment to avoid unfair
+retuning. All hyperparameters for all methods (including
+method-specific settings) are reported in Appendix D for
+reproducibility.
+
+Table 1. Mean feasible return across Velocity and Multi-goal
+environments, and mean final evaluation cost for Velocity tasks.
+Method
+
+4.3. Metrics
+Let an episode have horizon T with n agents. Following
+the S AFE PO convention, we aggregate reward and cost
+across agents by averaging per-step signals over agents and
+summing over time:
+T
+−1
+X
+
+T
+−1
+X
+
+n
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+
+866
+1593
+738
+1023
+
+3.38
+7.09
+0.69
+13.00
+
+525.34
+1.54
+6.94
+536.05
+
+Co2PO
+
+1709
+
+10.00
+
+12.30
+
+5.1. Feasible Performance Under Safety Constraints
+Co2PO consistently identifies higher-quality feasible solutions throughout training. Across velocity-based environments, Co2PO achieves a mean feasible-return improvement of approximately 7% relative to MAPPO-Lag, with
+a median improvement of 7% (Table 1). These gains are
+consistent across all velocity tasks, ranging from 6.5% to
+7.9% depending on the environment.
+
+n
+
+1X i
+C =
+c.
+n i=1 t
+t=0
+
+1X i
+r,
+R =
+n i=1 t
+t=0
+
+Rfeas (Vel.) Rfeas (Multi.) Cfinal (Vel.)
+
+(17)
+
+We evaluate policies at checkpoints t ∈ T during training;
+bt , C
+bt denote mean episodic return/cost over evaluation
+let R
+episodes at checkpoint t. We report:
+
+In the coordination-intensive multi-goal environment with a
+feasible region, Co2PO achieves an absolute feasible-return
+improvement of 2.91 over MAPPO-Lag (see Appendix A
+for all per-environment statistics). Although the percentage
+gains are inflated by small baseline values, the absolute improvement confirms Co2PO’s effectiveness in coordinationheavy regimes.
+
+bt and C
+bt at the
+• Final return/cost (Rfinal , Cfinal ): R
+last
+last
+last checkpoint tlast .
+bt , capturing the worst
+• Peak cost (Cpeak ): maxt∈T C
+evaluated cost over training.
+• Violation rate: fraction of evaluation episodes whose
+episodic cost exceeds the budget d (i.e., Pr[C > d]).
+• Feasible return (Rfeas ): best evaluation return among
+checkpoints that satisfy the cost budget,
+n
+o
+bt : C
+bt ≤ d .
+Rfeas = max R
+(18)
+
+Co2PO demonstrates consistent deployment readiness on
+the Velocity family: final evaluation costs stabilize across
+seeds, and cost-compliant checkpoints are reliably reached
+while maintaining strong returns. In all MultiGoal settings,
+no method reaches the cost budget within the training horizon, so we focus on return–cost tradeoffs rather than feasible
+return (Section 6).
+
+t∈T
+
+• Time-to-feasible: the earliest training step correspondbt ≤ d; if no checkpoint is
+ing to a checkpoint t with C
+feasible, we report “–”.
+4
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Figure 1. Results on seven S AFE PO cooperative safety benchmarks. We report both evaluation return and cost.
+
+5.2. Learning Dynamics and Exploration–Safety
+Tradeoff
+
+contrast, methods that aggressively suppress early violations
+exhibit lower peak cost but slower reward growth and ultimately converge to lower feasible return (Section 5.1). By
+tolerating transient violations while enforcing constraints
+at convergence, Co2PO accelerates learning toward higherquality, deployable policies.
+
+Table 2. Mean early return and peak episodic cost for velocity
+environments.
+Cpeak (Vel.)
+
+Rearly (Vel.)
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+
+855
+2
+79
+792
+
+1023
+881
+622
+1124
+
+Co2PO
+
+231
+
+1221
+
+Method
+
+5.3. Deployment Safety and Stability
+We evaluate deployment safety using final evaluation cost
+Cfinal and violation statistics at convergence. Across velocity environments, Co2PO exhibits stable and bounded cost
+behavior at evaluation time, with low variation across tasks
+(coefficient of variation, CV ≈ 0.20), indicating predictable
+deployment performance. This stability is comparable to
+that of constrained baselines (MAPPO-Lag CV ≈ 0.29,
+MACPO CV ≈ 1.53), showing that Co2PO’s constraint
+satisfaction generalizes consistently across environments.
+
+Peak episodic cost Cpeak characterizes worst-case constraint
+violations during training and highlights differences in exploration behavior. Co2PO permits bounded early violations, incurring higher peak cost than conservative constrained baselines while remaining substantially below unconstrained methods (Table 2). This behavior is confined
+to early training and reflects an intentional relaxation of
+constraint enforcement to promote exploration.
+
+Safety constraint satisfaction at convergence is consistent,
+with a mean standard deviation of approximately 8% across
+velocity environments. Final costs remain within a feasible
+range (mean Cfinal = 12.30, range 8.85–15.17), indicating
+reliable constraint enforcement without erratic cost dynamics. The low cost variance, bounded violations, and reli-
+
+This relaxation enables faster reward acquisition. Over the
+first 106 environment steps, Co2PO achieves higher early
+evaluation return than MAPPO-Lag and MACPO, indicating
+more rapid learning progress under partial observability. In
+5
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+6. Ablations
+
+able feasibility attainment indicate that Co2PO’s constraint
+satisfaction at convergence is consistent and suitable for
+deployment, rather than brittle or noise-sensitive.
+
+We ablate Co2PO’s coordination components to isolate
+which mechanisms drive improvements in feasible performance. We focus on three representative environments
+that span fast locomotion with interaction-driven hazards
+(H ALF C HEETAH V EL, A NT V EL) and a harder navigationand-coordination setting (A NT M ULTI G OAL). All ablations
+keep the same training budget and settings as the full method.
+We additionally study the effect of the hazard lookahead
+horizon in Appendix B.
+
+5.4. Environment-Dependent Behavioral Patterns
+Co2PO’s performance varies systematically with coordination demands. The largest improvements occur in environments requiring explicit multi-agent coordination, such as
+A NT V EL, where Co2PO achieves substantially higher feasible return and more reliable constraint satisfaction than constrained baselines (Rfeas ≈ 1,450 vs. ≈ 1,350 for MAPPOLag across A NT V EL environments; Appendix A). In these
+settings, reactive and unconstrained baselines frequently
+fail to converge to compliant solutions within the training
+horizon: MAPPO and HAPPO do not achieve feasibility
+in all of the environments, including H ALF C HEETAH V EL
+variants.
+
+Takeaway. Figure 3 and Table 3 shows that removing either (i) shared-memory coordination (w/o Blackboard) or
+(ii) selective gating (Always-Write) reduces feasible performance on the Velocity tasks. The most pronounced degradation occurs when removing hazard supervision (w/o Hazard
+Loss), which substantially worsens both feasibility and performance in A NT V EL.
+
+In contrast, environments with simpler dynamics and weaker
+inter-agent coupling, such as single-direction H ALF C HEE TAH V EL variants, exhibit more modest but consistent gains
+(Rfeas ≈ 1,950 vs. ≈ 1,850), while maintaining comparable stability at convergence. A similar trend appears in
+multi-goal environments, where Co2PO yields large relative improvements (approximately 40% over MAPPO-Lag;
+Appendix A). Overall, Co2PO’s benefits are environmentdependent rather than uniform, scaling with coordination
+demands while generalizing across diverse tasks.
+
+6.1. Shared Memory Is Beneficial for Feasible
+Performance
+w/o Blackboard removes inter-agent shared context, while
+keeping the rest of training unchanged. On H ALF C HEE TAH V EL and A NT V EL , this consistently lowers feasible
+return relative to Co2PO (e.g., 2054 → 1907 on H ALF C HEE TAH V EL and 1468 → 1365 on A NT V EL), indicating that the
+blackboard context is contributing useful coordination information beyond what is recoverable from local observations
+alone. Final evaluation costs remain below budget in these
+Velocity settings, suggesting the main effect of removing
+the blackboard is reduced feasible performance rather than
+purely increased constraint violations.
+
+5.5. Comparative Safety–Performance Analysis
+The evaluated baselines exhibit distinct safety–performance
+tradeoffs. Unconstrained methods such as HAPPO and
+MAPPO achieve high returns but incur substantial costs
+and elevated violation rates. MAPPO-Lag reliably enforces
+constraints but converges to overly conservative policies,
+resulting in markedly reduced feasible return. MACPO occupies an intermediate regime, mitigating some violations
+while allowing limited exploration, but consistently underperforms Co2PO across all evaluated environments.
+
+In A NT M ULTI G OAL, none of the compared methods
+reaches the budget within the plotted horizon; we therefore report final return instead of feasible return. Here,
+removing the blackboard increases Rfinal but also increases
+Cfinal (Table 3), highlighting that this environment exhibits
+a different trade-off regime where constraint satisfaction is
+not yet achieved by any method in the training budget we
+consider.
+
+Co2PO differs by enabling proactive constraint enforcement.
+Through hazard prediction and selective inter-agent communication, Co2PO permits controlled early exploration
+without sacrificing constraint satisfaction at convergence.
+This yields a consistently improved safety–performance
+tradeoff, combining both higher feasible return and reliable
+deployment-time safety.
+
+6.2. Selective Writes Matter
+Always-Write disables sparsity by forcing all agents to
+write every timestep, while keeping the same message format and read mechanism. Across the Velocity tasks, AlwaysWrite underperforms the full method in feasible return (e.g.,
+2054 → 1915 on H ALF C HEETAH V EL and 1468 → 1284 on
+A NT V EL), with final costs that remain broadly comparable.
+This supports the practical motivation for selective coordination: indiscriminate writing does not reliably improve
+feasible performance under a fixed training budget, and can
+introduce additional noise into the retrieved context.
+
+Overall, these results suggest that coupling selective coordination with predicted risk provides a practical mechanism
+for balancing exploration and constraint satisfaction. Importantly, Co2PO’s gains do not stem from constraint enforcement alone, but from improved coordination efficiency that
+allows agents to reach higher feasible returns.
+6
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Figure 2. Ablations on three environments. We report both evaluation return and cost.
+Table 3. Ablation summary. For Velocity tasks we report feasible return and the final evaluation cost Cfinal at the last checkpoint. For
+A NT M ULTI G OAL, no method reaches the budget within the plotted horizon, so we report final return Rfinal instead.
+HalfCheetahVel
+
+AntVel
+
+Method
+
+Rfeas ↑
+
+Cfinal ↓
+
+Rfeas ↑
+
+Cfinal ↓
+
+C O 2PO
+C O 2PO w/o Blackboard
+C O 2PO (Always-Write)
+C O 2PO w/o Hazard Loss
+
+2054 ± 70 15.2 ± 7.9 1468 ± 43 11.3 ± 8.8
+1907 ± 65 12.3 ± 6.4 1365 ± 40 13.7 ± 10.6
+1915 ± 65 16.6 ± 8.6 1284 ± 38 14.9 ± 11.6
+1936 ± 66 23.1 ± 12.0 566 ± 17 28.2 ± 21.9
+
+AntMultiGoal
+Rfinal ↑
+
+Cfinal ↓
+
+2.59 ± 0.32
+3.46 ± 0.42
+3.07 ± 0.38
+1.98 ± 0.24
+
+78.8 ± 20.8
+84.4 ± 22.3
+67.0 ± 17.7
+74.6 ± 19.7
+
+On A NT M ULTI G OAL, Always-Write yields a lower final
+cost than the full method but does not resolve infeasibility;
+all variants remain above the budget. We treat this setting as
+a stress test as none of the baselines reach compliance with
+regard to the set cost target.
+
+cost while still remaining under budget on average (Table 3),
+and yields a modest drop in feasible return relative to the
+full method. On A NT M ULTI G OAL, removing hazard supervision decreases final return without materially changing
+the overall infeasibility regime.
+
+6.3. Hazard Supervision Is Important for Feasibility
+
+7. Related Work
+
+w/o Hazard Loss removes explicit supervision of the hazard predictor while leaving the coordination pathway intact.
+This ablation has the most severe impact on A NT V EL: feasible return collapses (1468 → 566) and final cost rises above
+the budget (11.3 → 28.2). The learning curves in Figure 3
+are consistent with the intuition that without direct hazard
+learning signal, the write trigger becomes less aligned with
+safety-relevant events, reducing the effectiveness of selective coordination and degrading constraint satisfaction.
+
+Constrained Reinforcement Learning. Constrained reinforcement learning (CRL) addresses policy optimization
+under explicit safety, resource, or performance constraints,
+most commonly via Lagrangian relaxation that embeds
+costs into the objective through adaptive penalty coefficients
+(Zhang et al., 2019). Single-agent methods such as CPO
+(Achiam et al., 2017), PPO with Lagrangian relaxation (Ray
+et al., 2019), and FOCOPS (Zhang et al., 2020) enforce constraints in expectation, but are often sensitive to penalty tuning and rely on reactive updates that correct violations only
+after they occur, which can slow learning or induce conserva-
+
+On H ALF C HEETAH V EL, the same ablation increases final
+
+7
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+8. Discussion
+
+tive behavior (Stooke & Abbeel, 2020). Extensions to multiagent settings adopt similar principles, employing centralized critics or shared multipliers (e.g., MAPPO-Lagrangian
+and MACPO) to enforce global constraints. While effective
+at reducing violations, these approaches largely rely on reactive, penalty-based constraint handling and can suppress
+exploration in coordination-intensive environments.
+
+Why Co2PO helps. Our central hypothesis is that many
+safety failures in cooperative MARL are coordinationinduced: violations arise from mismatched timing, intent,
+or mutual awareness under partial observability. Co2PO addresses this by turning communication into a risk-triggered
+control signal. Agents only broadcast when their hazard predictor anticipates near-term risk, and the blackboard carries
+compact, safety-relevant semantics (state summary, intent,
+yield, hazard probability) that other agents can immediately
+condition on. This differs from purely reactive constraint
+handling, where penalties increase after violations and can
+suppress exploration globally (Brunke et al., 2022; Gu et al.,
+2023).
+
+Safe Multi-Agent Reinforcement Learning. Safe multiagent reinforcement learning (Safe MARL) further considers cooperative settings where safety violations arise from
+collective interactions rather than isolated actions. Most
+safe MARL methods operate under the centralized training
+with decentralized execution (CTDE) paradigm and augment standard MARL backbones such as MAPPO with
+global cost critics or shared constraint signals (HernandezLeal et al., 2019; Foerster et al., 2024), rather than valuefactorization approaches such as QMIX (Sunehag et al.,
+2017; Rashid et al., 2018). However, safety is typically
+enforced through aggregated penalties that provide limited guidance for resolving coordination-induced violations,
+leading to slow learning dynamics or overly conservative
+policies (Gu et al., 2023). Prior work in hierarchical MARL
+demonstrates that explicit coordination improves task performance, suggesting that similar mechanisms may be beneficial for safety-constrained multi-agent settings.
+
+Empirical takeaways. Across seven S AFE PO benchmarks,
+Co2PO consistently finds higher-quality feasible checkpoints than strong constrained baselines, especially on the
+Velocity family where interaction-driven hazards are common (Figure 1). The learning curves also reflect an explicit
+exploration–safety strategy: Co2PO tolerates bounded early
+violations (higher Cpeak ) to acquire reward faster, then improves constraint satisfaction and stabilizes by deployment
+(Section 5). Ablations isolate the key mechanisms, justifying the role of the blackboard, selective writes, and hazard
+supervision (Figure 3 and Table 3). In the appendix, varying
+the lookahead horizon further supports the role of proactive
+labeling as nonzero horizons can improve the return–cost
+tradeoff relative to H = 0 (Section B).
+
+Communication and Memory in MARL. Communication
+has been widely studied as a means of improving coordination in MARL, particularly under partial observability,
+through message passing or graph-based information sharing (Sukhbaatar et al., 2016; Kim et al., 2019; Das et al.,
+2020; Jiang et al., 2020). Existing approaches primarily use
+communication to enhance task performance and learning
+stability (Peng et al., 2021; Calzolari et al., 2026), without
+explicitly targeting safety constraints. Some methods combine communication with safety mechanisms by coupling
+MAPPO-style training with execution-time safety filters or
+shields (Alshiekh et al., 2017), while others incorporate
+shared cost signals during training to enforce constraints.
+In both cases, safety is handled reactively via centralized
+penalties or post-hoc intervention, and communication is
+rarely conditioned on anticipated risk or collective hazard.
+
+Limitations and future work. First, Co2PO is designed to
+target deployment-safe policies under a fixed training budget, rather than zero-violation training-time safety (Alshiekh
+et al., 2017; Berkenkamp et al., 2017): peak violations can
+be larger than conservative baselines, which may be unacceptable in some real systems. Second, our hazard labels
+rely on dense per-step costs and a hand-chosen threshold
+δ (and horizon H), which may not be available or stable
+across domains; learning hazard signals from sparse events,
+uncertainty-aware predictors, or model-based rollouts is a
+natural extension (Yang et al., 2020; Calzolari et al., 2026).
+Third, the Multi-Goal regime remains challenging under our
+fixed budget, suggesting we need training signals that better
+reflect delayed coordination effects (e.g., when early yielding prevents later conflicts). Finally, we have not yet stressed
+scalability: blackboard retrieval and message semantics may
+need compression, structured routing, or graph-based selection as agent counts grow (Goeckner et al., 2024). Together,
+these directions would broaden Co2PO’s applicability and
+improve robustness of risk-triggered coordination across
+domains, horizons, and agent scales.
+
+Co2PO departs from prior work by coupling communication
+with safety objectives as part of the learning process, rather
+than engineering safety as an external rule. In addition to
+Lagrangian constraint penalties, Co2PO leverages hazard
+prediction to selectively trigger communication and coordination when safety risks are anticipated. Communication is
+neither constant nor purely performance-driven, but explicitly conditioned on predicted constraint violations, allowing
+more targeted and efficient safety coordination.
+
+8
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Impact Statement
+
+Jiang, J., Dun, C., Huang, T., and Lu, Z. Graph convolutional reinforcement learning, 2020. arXiv:1810.09202.
+
+This work advances methods for learning policies under
+safety constraints in multi-agent environments. Improved
+constrained MARL can reduce unsafe behavior in highstakes domains where multiple decision-makers interact.
+Potential risks include misuse in adversarial settings or
+deployment without adequate monitoring; we encourage
+careful evaluation, transparent reporting of training-time
+violations, and robust safety testing prior to real-world use.
+
+Kim, J., Park, J., Kim, Y., and Park, S. Learning to schedule
+communication in multi-agent reinforcement learning,
+2019. arXiv:1902.01554.
+Kuba, J., Jiang, Y., Wei, W., and Hao, J. Trust region multiagent policy optimization, 2022. arXiv:2109.11251.
+Littman, M. L. Markov games as a framework for multiagent reinforcement learning. In Proceedings of the 11th
+International Conference on Machine Learning (ICML),
+pp. 157–163, 1994.
+
+References
+Achiam, J., Held, D., Tamar, A., and Abbeel, P. Constrained
+policy optimization, 2017. arXiv:1705.10528.
+
+Lowe, R., Wu, Y., Tamar, A., Harb, J., Abbeel, P., and Mordatch, I. Multi-agent actor-critic for mixed cooperativecompetitive environments, 2020. arXiv:1706.02275.
+
+Alshiekh, M., Bloem, R., Ehlers, R., Könighofer, B.,
+Niekum, S., and Topcu, U. Safe reinforcement learning via shielding, 2017. arXiv:1708.08611.
+Berkenkamp, F., Turchetta, M., Schoellig, A. P., and Krause,
+A. Safe model-based reinforcement learning with stability
+guarantees, 2017. arXiv:1705.08551.
+
+Omidshafiei, S., akbar Agha-mohammadi, A., Amato, C.,
+and How, J. P. Decentralized control of partially observable markov decision processes using belief space
+macro-actions, 2015. arXiv:1502.06030.
+
+Brunke, L. et al. Safe learning in robotics: From guarantees
+to implementations, 2022. arXiv:2108.06266.
+
+Peng, Z., Vuong, Q., Amos, B., et al. Coordinated policy
+optimization, 2021. arXiv:2110.13827.
+
+Calzolari, G., Sumathy, V., Kanellakis, C., and Nikolakopoulos, G. Safe heterogeneous multi-agent rl with communication regularization for coordinated target acquisition,
+2026. arXiv:2601.08327.
+
+Rashid, T., Samvelyan, M., de Witt, C. S., Farquhar, G.,
+Foerster, J., and Whiteson, S. Qmix: Monotonic value
+function factorisation for deep multi-agent reinforcement
+learning, 2018. arXiv:1803.11485.
+
+Das, A., Gervet, T., Romoff, J., Batra, D., Parikh, D., Rabbat, M., and Pineau, J. Tarmac: Targeted multi-agent
+communication, 2020. arXiv:1810.11187.
+
+Ray, A., Achiam, J., and Amodei, D. Benchmarking safe exploration in deep reinforcement learning, 2019. OpenAI
+Technical Report.
+
+Foerster, J., Farquhar, G., Afouras, T., Nardelli, N., and
+Whiteson, S. Counterfactual multi-agent policy gradients,
+2024. arXiv:1705.08926.
+
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and
+Klimov, O. Proximal policy optimization algorithms,
+2017. arXiv:1707.06347.
+
+Goeckner, A., Sui, Y., Martinet, N., Li, X., and Zhu, Q.
+Graph neural network-based multi-agent reinforcement
+learning for resilient distributed coordination of multirobot systems, 2024. arXiv:2403.13093.
+
+Stooke, A. and Abbeel, P. Responsive safety in reinforcement learning by pid lagrangian methods, 2020.
+arXiv:2007.03964.
+
+Gu, Z., Fu, Q., and Dong, H. Safe multi-agent reinforcement learning for multi-robot real-time systems, 2023.
+arXiv:2110.02793.
+
+Sukhbaatar, S., Szlam, A., and Fergus, R. Learning
+multiagent communication with backpropagation, 2016.
+arXiv:1605.07736.
+
+Hernandez-Leal, P., Kaisers, M., Baarslag, T., and de Cote,
+E. M. A survey of learning in multiagent environments:
+Dealing with non-stationarity, 2019. arXiv:1707.09183.
+
+Sunehag, P., Lever, G., Gruslys, A., Czarnecki, W. M., Zambaldi, V., Jaderberg, M., Lanctot, M., Sonnerat, N., Leibo,
+J. Z., Tuyls, K., and Graepel, T. Value-decomposition
+networks for cooperative multi-agent learning, 2017.
+arXiv:1706.05296.
+
+Ji, J., Zhang, B., Zhou, J., Pan, X., Huang, W., Sun, R.,
+Geng, Y., Zhong, Y., Dai, J., and Yang, Y. Safetygymnasium: A unified safe reinforcement learning benchmark, 2024. arXiv:2310.12567.
+
+Tessler, C., Mankowitz, D. J., and Mannor, S. Reward constrained policy optimization, 2018. arXiv:1805.11074.
+9
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Todorov, E., Erez, T., and Tassa, Y. Mujoco: A physics
+engine for model-based control. In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems,
+pp. 5026–5033, 2012. doi: 10.1109/IROS.2012.6386109.
+Yang, Y., Luo, R., Li, M., Zhou, M., Zhang, W., and Wang,
+J. Mean field multi-agent reinforcement learning, 2020.
+arXiv:1802.05438.
+Yu, C., Velu, A., Vinitsky, E., Gao, J., Wang, Y., Bayen,
+A., and Wu, Y. The surprising effectiveness of ppo in
+cooperative, multi-agent games, 2022. arXiv:2103.01955.
+Zhang, K., Yang, Z., and Başar, T. Multi-agent reinforcement learning: A selective overview of theories and algorithms, 2019. arXiv:1911.10635.
+Zhang, Y., Vuong, Q., and Ross, K. W. First order constrained optimization in policy space, 2020.
+arXiv:2002.06506.
+
+10
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+A. Complete Evaluation Metrics
+Table 4. Full evaluation metrics aggregated across runs.
+Rfinal
+
+Rfeas
+
+Cfinal
+
+Cpeak
+
+Violation rate
+
+Time-to-feasible
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+3068 ± 491
+1882 ± 74
+657 ± 22
+2878 ± 143
+2018 ± 61
+
+1094 ± 43
+1904 ± 86
+663 ± 16
+1362 ± 95
+2054 ± 57
+
+667.17 ± 164.13
+1.10 ± 0.51
+0.48 ± 0.21
+532.04 ± 21.41
+15.17 ± 6.46
+
+712
+3
+0
+583
+133
+
+0.71 ± 0.02
+0.00 ± 0.00
+0.00 ± 0.00
+0.72 ± 0.02
+0.30 ± 0.01
+
+–
+16000
+16000
+–
+1704000
+
+Safety2x4AntVelocity
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+1386 ± 242
+1038 ± 89
+378 ± 29
+2041 ± 405
+1330 ± 41
+
+704 ± 37
+1315 ± 51
+493 ± 22
+933 ± 60
+1418 ± 42
+
+286.34 ± 64.61
+1.39 ± 0.52
+0.53 ± 0.28
+427.80 ± 99.41
+13.82 ± 4.80
+
+305
+3
+1
+494
+133
+
+0.50 ± 0.04
+0.00 ± 0.00
+0.00 ± 0.00
+0.54 ± 0.02
+0.45 ± 0.04
+
+–
+16000
+16000
+–
+2810667
+
+Safety4x2AntVelocity
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+1486 ± 254
+1253 ± 103
+459 ± 20
+1966 ± 290
+1308 ± 121
+
+698 ± 38
+1374 ± 92
+559 ± 22
+749 ± 42
+1468 ± 35
+
+341.95 ± 65.31
+1.47 ± 0.64
+1.47 ± 0.66
+444.63 ± 67.31
+11.34 ± 7.19
+
+383
+4
+2
+570
+126
+
+0.55 ± 0.03
+0.00 ± 0.00
+0.00 ± 0.00
+0.61 ± 0.02
+0.42 ± 0.03
+
+–
+16000
+16000
+–
+2528000
+
+Safety6x1HalfCheetahVelocity
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+3381 ± 4
+1754 ± 15
+1159 ± 70
+3249 ± 238
+1829 ± 79
+
+968 ± 47
+1778 ± 16
+1236 ± 17
+1047 ± 35
+1894 ± 55
+
+805.90 ± 9.45
+2.19 ± 0.98
+25.29 ± 2.43
+739.71 ± 51.41
+8.85 ± 4.65
+
+826
+4
+27
+838
+154
+
+0.76 ± 0.02
+0.00 ± 0.00
+0.01 ± 0.00
+0.82 ± 0.01
+0.29 ± 0.04
+
+–
+16000
+2912000
+–
+1614667
+
+SafetyAntMultiGoal-0
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+2.44 ± 0.93
+6.08 ± 0.63
+0.14 ± 0.29
+10 ± 1
+8.13 ± 1.05
+
+3.38 ± 1.73
+7.09 ± 0.34
+0.69 ± 0.05
+13 ± 1
+10 ± 1
+
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+
+0
+0
+0
+0
+0
+
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+
+16000
+16000
+16000
+16000
+16000
+
+SafetyAntMultiGoal-1
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+1.66 ± 0.24
+1.93 ± 0.15
+−0.12 ± 0.05
+8.84 ± 0.85
+2.59 ± 0.26
+
+–
+–
+–
+–
+–
+
+78.21 ± 20.21
+56.30 ± 7.64
+76.46 ± 5.70
+47.38 ± 12.59
+78.77 ± 17.02
+
+137
+116
+121
+149
+135
+
+1.00 ± 0.00
+1.00 ± 0.00
+1.00 ± 0.00
+1.00 ± 0.00
+1.00 ± 0.00
+
+–
+–
+–
+–
+–
+
+SafetyAntMultiGoal-2
+
+MAPPO
+MAPPO-Lag
+MACPO
+HAPPO
+Co2PO
+
+1.60 ± 0.72
+1.17 ± 0.21
+−0.07 ± 0.20
+3.72 ± 1.48
+1.11 ± 0.03
+
+–
+–
+–
+–
+–
+
+83.46 ± 2.57
+76.27 ± 16.08
+59.42 ± 11.00
+86.57 ± 2.35
+71.27 ± 0.45
+
+124
+127
+122
+151
+133
+
+1.00 ± 0.00
+1.00 ± 0.00
+1.00 ± 0.00
+1.00 ± 0.00
+1.00 ± 0.00
+
+–
+–
+–
+–
+–
+
+Environment
+
+Method
+
+Safety2x3HalfCheetahVelocity
+
+11
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+B. Effect of Hazard Lookahead Horizon
+We study how the hazard lookahead horizon H used to construct the proactive label hit in Equation (8) affects final
+performance. We compare Co2PO variants with H ∈ {0, 3, 5, 8}, using the same training budget (3,000,000 steps) and
+evaluation protocol. Table 5 summarizes final-timestep statistics.
+Overall, adding a nonzero lookahead yields consistent improvements on the coordination-intensive Velocity family: all H > 0
+variants reduce average final cost relative to H = 0 (while slightly increasing average final reward). The clearest improvement
+appears at the highest horizon (H = 8). We also observe that higher horizons increase the number of environments that are
+cost-compliant at the final checkpoint (from 4/7 to 5/7). Longer lookahead (H = 8) remains better than H = 0 on Velocity
+costs, but does not further improve the harder MultiGoal settings in our runs (where final costs remain above budget for
+most methods).
+Table 5. Hazard lookahead horizon H (final-timestep). We report averages over the four Velocity environments (H ALF C HEETAH V EL
+and A NT V EL) and the provided averages over all 7 environments. “Feasible envs” counts how many environments satisfy Cfinal ≤ d at
+the final checkpoint (budget d = 25).
+Method
+
+H
+
+Rfinal (Vel)↑
+
+C final (Vel)↓
+
+Feasible envs ↑
+
+C O 2PO
+C O 2PO
+C O 2PO
+C O 2PO
+
+0
+3
+5
+8
+
+1607.79
+1621.88
+1639.69
+1644.18
+
+19.34
+12.30
+16.32
+9.42
+
+4/7
+4/7
+5/7
+5/7
+
+Takeaway. These results are consistent with the intuition behind proactive labeling: predicting hazards a few steps ahead
+provides a cleaner trigger for coordination, improving the safety–performance tradeoff on interaction-driven Velocity tasks.
+
+12
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+C. Method Diagram
+NO
+(R Only)
+
+Hazard
+Head
+
+Hazard 
+
+Prob pti
+
+YES
+
+Gate
+
+pti > 𝜏t ?
+
+(R & W)
+
+Supervision
+Signal
+
+Observation oti
+
+Memory Context mti
+
+Agent i
+
+Policy π
+
+Global Memory M
+
+(shared blackboard for all
+agents)
+
+kNN
+Retrieval
+
+Action ati
+
+Env Cost cti
+Training Supervision
+
+H-step 
+
+Lookahead ht
+Figure 3. Co2PO Framework Diagram
+
+13
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+D. Detailed Hyperparameters
+
+Table 6. Key method hyperparameters (1/3). Common run settings are in Table 8b.
+(b) MAPPO-L AG
+
+(a) C O 2PO
+Hyperparameter
+
+Value
+
+Hyperparameter
+
+Value
+
+Hidden size
+MLP layers
+Discount γ
+GAE λ
+PPO clip ϵ
+Target KL
+Update epochs
+Minibatches
+Actor LR
+Critic LR
+Entropy coef.
+Max grad norm
+
+256
+2
+0.96
+0.95
+0.2
+0.016
+10
+2
+5.0 × 10−4
+5.0 × 10−3
+0.0
+10.0
+
+Hidden size
+MLP layers
+Discount γ
+GAE λ
+PPO clip ϵ
+Target KL
+Update epochs
+Minibatches
+Actor LR
+Critic LR
+Entropy coef.
+Max grad norm
+
+256
+2
+0.96
+0.95
+0.2
+0.016
+10
+2
+9.0 × 10−5
+5.0 × 10−3
+0.0
+10.0
+
+Cost budget d
+Dual init (λ0 )
+Dual step
+
+25
+0.1
+5.0 × 10−4
+
+Cost budget d
+Dual init (λ0 )
+Dual step
+
+25
+0.78
+1.0 × 10−5
+
+Top-k reads (k)
+Memory embed dim
+Hazard lookahead H
+Hazard cost thresh. δ
+Write penalty coef.
+Hazard loss coef.
+Adaptive threshold
+Init. threshold τ
+Target write rate ρ⋆
+Threshold LR
+Threshold bounds
+
+3
+64
+8
+0.1
+0.001
+0.5
+True
+0.10
+0.05
+0.05
+[0.05, 0.95]
+
+14
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Table 7. Key method hyperparameters (2/3). Common run settings are in Table 8b.
+(a) MAPPO
+
+(b) MACPO
+
+Hyperparameter
+
+Value
+
+Hyperparameter
+
+Value
+
+Hidden size
+MLP layers
+Discount γ
+GAE λ
+PPO clip ϵ
+Target KL
+Update epochs
+Minibatches
+Actor LR
+Critic LR
+Entropy coef.
+Max grad norm
+
+256
+2
+0.96
+0.95
+0.2
+0.016
+10
+2
+9.0 × 10−5
+5.0 × 10−3
+0.0
+10.0
+
+Hidden size
+MLP layers
+Discount γ
+GAE λ
+PPO clip ϵ
+Target KL
+Update epochs
+Minibatches
+Actor LR
+Critic LR
+Entropy coef.
+Max grad norm
+
+256
+2
+0.96
+0.95
+0.2
+0.016
+10
+2
+9.0 × 10−5
+5.0 × 10−3
+0.0
+10.0
+
+Cost budget d
+Safety γ
+Step fraction
+CG iters
+g-step dir coef.
+b-step dir coef.
+Fraction coef.
+EPS
+
+25
+0.09
+0.5
+10
+0.1
+0.1
+0.1
+1.0 × 10−8
+
+15
+
+Co2PO: Coordinated Constrained Policy Optimization for Multi-Agent RL
+
+Table 8. Key method hyperparameters (3/3) Common run settings listed here.
+(b) Common run settings (all methods)
+
+(a) HAPPO
+Hyperparameter
+
+Value
+
+Setting
+
+Value
+
+Hidden size
+MLP layers
+Discount γ
+GAE λ
+PPO clip ϵ
+Target KL
+Update epochs
+Minibatches
+Actor LR
+Critic LR
+Entropy coef.
+Max grad norm
+
+256
+2
+0.96
+0.95
+0.2
+0.016
+10
+2
+5.0 × 10−4
+5.0 × 10−4
+0.0
+10.0
+
+Total environment steps
+Num parallel environments (--num-envs)
+Num seeds (for uncertainty bands)
+
+3,000,000
+16
+3
+
+16
+
+

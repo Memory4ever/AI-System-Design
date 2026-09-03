@@ -1650,6 +1650,28 @@ def _validate_v21_completion_interfaces(
             )
             if review_segment is not None:
                 review_body_sha256 = _normalized_body_sha256(review_segment)
+                declared_dispositions = {
+                    value.strip()
+                    for value in re.findall(
+                        r"(?:Books\s+)?Disposition\s*[：:]\s*`([^`]+)`",
+                        review_segment,
+                        flags=re.IGNORECASE,
+                    )
+                }
+                if len(declared_dispositions) > 1:
+                    errors.append(
+                        f"candidate {family}: Source Review declares conflicting Disposition values: "
+                        + ", ".join(sorted(declared_dispositions))
+                    )
+                elif declared_dispositions:
+                    declared_disposition = next(iter(declared_dispositions))
+                    ledger_disposition = candidate.get("Books Disposition", "").strip("`")
+                    if declared_disposition != ledger_disposition:
+                        errors.append(
+                            f"candidate {family}: Source Review Disposition "
+                            f"{declared_disposition!r} does not match Candidate Ledger "
+                            f"Books Disposition {ledger_disposition!r}"
+                        )
 
         provenance = receipt.get("Review Provenance ID", "").strip("`")
         if result == "pending":
@@ -2574,6 +2596,20 @@ def validate_report_text(
 
     for source_id, row_number in sorted(conditionally_due_required_receipts.items()):
         if source_id not in used_supporting_source_ids:
+            historical_daily_arxiv_zero_receipt = (
+                source_id == "SRC-ARXIV"
+                and report_type == "Daily"
+                and coverage_mode == "Full Replay"
+                and "Historical Daily Full Replay" in text
+                and seen_coverage[source_id].get("Result") == "no_hit"
+            )
+            if historical_daily_arxiv_zero_receipt:
+                # A later registry Effective Date means the source was not required
+                # for the historical window.  An explicit user-requested owner replay
+                # may nevertheless preserve a closed zero-hit arXiv receipt; because
+                # it carries no family, it does not enlarge the historical candidate
+                # denominator or make other later-added sources retroactively due.
+                continue
             errors.append(
                 f"source coverage row {row_number}: non-due Required source {source_id} must be omitted"
             )

@@ -1,9 +1,14 @@
 # Daily Research — 2026-08-26
 
 **Research Date:** 2026-08-26
+
 **Timezone:** Asia/Shanghai
-**Window:** 2026-08-25 09:00:00 ～ 2026-08-26 09:00:00（北京时间，左闭右开）
-**Status:** Complete；Coverage、Evidence、Books 与 fresh-context Semantic Audit 均已通过；Wednesday，不生成 provisional Weekly
+
+**Strict Window:** 2026-08-25 09:00:00 ～ 2026-08-26 09:00:00（北京时间，左闭右开）
+
+**Contract:** V2.1 Full Replay
+
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
 
@@ -118,35 +123,6 @@
 | SF-2026-SPO-PLUSPLUS | arXiv:2608.24870v1 | paper-v1:2608.24870 | 2026-W35 | 2026-08-25 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-SPO-PLUSPLUS | self | — | new_in_window | TRAIN-GRPO | No Change — Existing Coverage | books-review:SF-2026-SPO-PLUSPLUS | yes |
 | SF-2026-ACTION-WORLD-MODEL-EVAL | arXiv:2608.24885v1 | paper-v1:2608.24885 | 2026-W35 | 2026-08-25 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ACTION-WORLD-MODEL-EVAL | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-ACTION-WORLD-MODEL-EVAL | yes |
 
-### Benchmark Contracts
-
-以下均为作者论文的 evaluation contract；未披露字段保持 `Not Disclosed`，不同论文的 speedup、accuracy 或 success rate 不相加。
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-TP-VS-KV | synthetic W1/W2 memory-bound serving | Llama-2 7B/70B；7-model feasibility sweep | profiled A100 80GB, A40 48GB, H100 80GB；作者无 GPU 实测 | KV 16/8/4-bit；weights按论文假设 | max context 4096；synthetic context/batch sweep | per-token decode | simulator-defined | TP 1/2/4/8 and matched cache relief | cost per million tokens、latency、capacity；无 quality SLO | profiled simulator + closed-form feasibility |
-| SF-2026-RAGSENTINEL | NQ, HotpotQA, MS MARCO；3 poison attacks | Phi-3.5-mini, Llama-3.1-8B, Qwen-2.5-7B；BGE-M3 surrogate | 3×L40S 48GB | Not Disclosed | top-k=10 retrieved documents；100 queries/dataset | QA answer | query-level；3 seeds | offline attacks | ACC and ASR under honest-majority setting | reference answers + attack target |
-| SF-2026-MCP-TOOL-DISCOVERY | 49-query retrieval set + PayPal production catalog | six MCP clients；embedding model/version Not Disclosed | production Milvus/OpenAI embedding stack；SKU Not Disclosed | Not Disclosed | 2,000+ tools / 200+ servers；200k context | top-k schemas then tool calls | top-k default 5 | 1,921 requests/24h；8,209/7d latency sample | Hit@1/5, MRR, token share, p50/p95, fallback rate | author labels + production telemetry |
-| SF-2026-AGENTSPEC | five agent workloads + non-agent benchmark | four target/draft model families | paper-specified GPU setup；SKU按 Appendix A.1 | Not Disclosed | block- and task-specific | agent reasoning/tool blocks | batched inference | batch/workload-specific | end-to-end latency、acceptance、up to 2.02× author speedup | target-token exactness + workload completion |
-| SF-2026-ATTNLOCATE | 10 model/attack configurations for prompt/tool injection | paper-listed agent LLMs + attention-feature locator | Not Disclosed | Not Disclosed | mixed provider/user/tool contexts | localized span + authorization verdict | benchmark-specific | offline | localization and unauthorized-behavior metrics | attack labels + provider authority policy |
-| SF-2026-VISCACHE | ActCap, DREAM1K, NExTQA, ActQA, EgoSchema, MVBench | Qwen2.5-VL 3B/32B；CLIP ViT-B/32 scout | 4×A100 80GB；single-path latency tables | Not Disclosed | long videos；retention 40/28/19% | 64/128-token latency sweeps among tasks | Not Disclosed | offline single-model evaluations | VQA/VS quality, FLOPs, memory, TTFT/TPOT/E2E | task metrics and author latency instrumentation |
-| SF-2026-PONDERPOUNCE | RoboMME + RoboCasa-DC | Qwen3.5-9B context model + 3–3.6B controller | training 8×B200；serving H100/A100 batch 1 | bf16 serving | 0.8K–14K context；16K cache | cognition and 45-token subgoal fires | global batch 32 training；batch 1 serving | single control loop | success rate and p50/p95 component latency | simulator task gates + held-out task success |
-| SF-2026-METARAG | seven QA benchmarks + BrowseComp-Plus | Qwen2.5 3B/7B；robustness on Llama3.2-3B/Qwen3-14B | 8×A100 single node | Not Disclosed | search history up to 4 turns | answer or Search/Answer action | recipe-specific | rollout groups | EM accuracy, searches/question, AUROC/PRR | exact match + internal belief probe + external diagnostic |
-| SF-2026-MAS-FAULT-INJECTION | 30 ProgramDev tasks；demo and one real LLM-MAS | underlying systems/models Not Disclosed | Not Disclosed | Not Disclosed | Planner→Coder traces | workflow output and span traces | paired baseline/fault runs | controlled injection | latency amplification and trace alignment | OpenTelemetry spans + run artifacts |
-| SF-2026-FARCA | factual QA/reasoning tasks in author setup | paper-listed policy/reference models | Not Disclosed | Not Disclosed | atomic-fact decomposed responses | reasoning answer | RL recipe-specific | rollout-specific | factuality and reasoning metrics | fact extractor/verifier + counterfactual attribution |
-| SF-2026-RESISPEC | multi-candidate speculative decoding benchmarks | paper-listed target/draft models | paper-specified GPU；exact SKU varies | Not Disclosed | prompt/verify lengths按 setup | autoregressive tokens | benchmark-specific | candidate count sweep | throughput/latency and distributional exactness | target distribution + empirical path marginals |
-| SF-2026-JUDGE-DELTA-VALIDITY | target-changing and target-preserving contrast arms | multiple judge models；pinned artifact revisions | Not Disclosed | provider-specific | sentence/claim contrasts | judge verdict | paired items；3 human annotators | offline | sensitivity lower bound and invariance lower bound | human codebook + frozen intervention protocol |
-| SF-2026-UQ-ENSEMBLES | 9 datasets；short/long QA and Python code | Gemini-2.5 Flash/Pro, GPT-4o/mini | provider APIs；Not Disclosed | provider-specific | response/claim/task-specific | answer/code + 10 samples for sampling scorers | 25 stratified 70/30 splits | offline | AUROC and ECE | references/tests/FactScore；Gemini grader + 400-item human audit |
-| SF-2026-SMITH-TOOLS | Reasoning-Gym, TabMWP-Hard, GQA, BFCL v4 no-web | Qwen3 4B/8B；30B-activated judge | Not Disclosed | Not Disclosed | one Python function + JSON schema per tool | tool artifact + answer/call | mixed build/use batches | on-policy rollout | task success, transfer and tool-call accuracy | executable reward + format/judge reward |
-| SF-2026-SIMTHESIZER | KV quantization, speculation, hybrid Mamba simulator extensions | vLLM-based real system + Codex synthesis agent | profiled system hardware按 repository；not one frozen SKU | Not Disclosed | dynamic DAG serving workloads | throughput/latency simulation | workload-specific | simulated serving | throughput error vs real system and simulation speed | real-system measurements/reference evidence |
-| SF-2026-PARASON | mathematical reasoning benchmarks | 8B policy；paper-listed teachers/baselines | training/inference hardware Not Disclosed in headline contract | Not Disclosed | structured subtask/trial trajectories | math solution branches | PA-GRPO groups | explicit parallel branches | accuracy and wall-clock/parallelism metrics | answer verifier + branch grammar |
-| SF-2026-OPDVR | RLVR + on-policy distillation reasoning tasks | paper-listed student/teacher models | hardware in Appendix C；Not Disclosed here | Not Disclosed | sampled-token trajectories | reasoning response | group-relative variants | rollout-specific | task accuracy and training dynamics | verifiable reward + teacher distribution |
-| SF-2026-STEPGUARD | static guardrail and guarded-agent benchmarks | StepGuard checkpoint + evaluated agents | Not Disclosed | Not Disclosed | prefix-aligned trajectories | step safety/utility verdict | benchmark-specific | offline + guarded-agent loop | safety, utility and balance metrics | synthetic annotations + benchmark outcomes |
-| SF-2026-BROWSERFORGE | 203,238 trajectories；online Mind2Web evaluation | paper-listed web-agent backbone | parallel browser sandbox cluster；SKU Not Disclosed | Not Disclosed | open-web pages and tasks | browser action trajectory | training recipe-specific | parallel sandboxes | task success；25.66→33.33 author result | environment completion + cleaning/verifier pipeline |
-| SF-2026-SPO-PLUSPLUS | ALFWorld at 0.8B/4B and Math-TIR | small Qwen3.5 models | ALFWorld 2 train/6 rollout GPUs；Math 4/4 | bfloat16 SFT noted；RL precision otherwise Not Disclosed | variable tool trajectories | terminal outcome/action tokens | 128 prompts/update variants | one request per same prompt；cross-prompt async | reward-curve area and final-five reward | environment/verifier terminal reward |
-| SF-2026-ACTION-WORLD-MODEL-EVAL | 50 RoboTwin tasks + real-robot tasks | six baseline world models + WorldSync | simulator/robot stack；training GPU Not Disclosed here | Not Disclosed | expert and feasible off-expert action rollouts | generated video/trajectory | task macro-average | offline generation + policy iteration | visual pass, raw NDTW, integrity-gated error, policy success | simulator replay, pose extraction and task success |
-
 ## 3. Review Completion Receipt
 
 下面的 receipt 与有界 Review body 一一对应。`complete` 只表示已按公开材料完成相应 route，不表示作者实验已被独立复现；未公开的 artifact 或限制保持 `Not Disclosed`。
@@ -155,10 +131,10 @@
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-TP-VS-KV | RP-45cb037a02662d6e | deep | arXiv:2608.23962v1 | SRC-ARXIV@arXiv:2608.23962v1 | https://arxiv.org/html/2608.23962v1#S3 | https://arxiv.org/html/2608.23962v1#S4 | https://arxiv.org/html/2608.23962v1#S7 | Not Disclosed — v1 provides no public implementation artifact | claim:SF-2026-TP-VS-KV | complete |
-| SF-2026-RAGSENTINEL | RP-2138d37b0153b041 | deep | arXiv:2608.23965v1 | SRC-ARXIV@arXiv:2608.23965v1 | https://arxiv.org/html/2608.23965v1#S4 | https://arxiv.org/html/2608.23965v1#S6 | https://arxiv.org/html/2608.23965v1#S9 | Not Disclosed — v1 does not link a frozen public implementation | claim:SF-2026-RAGSENTINEL | complete |
-| SF-2026-MCP-TOOL-DISCOVERY | RP-b7ee9d15433e48fc | deep | arXiv:2608.23992v1 | SRC-ARXIV@arXiv:2608.23992v1 | https://arxiv.org/pdf/2608.23992v1#page=7 | https://arxiv.org/pdf/2608.23992v1#page=12 | https://arxiv.org/pdf/2608.23992v1#page=16 | Not Disclosed — v1 describes a production deployment but publishes no frozen implementation artifact | claim:SF-2026-MCP-TOOL-DISCOVERY | complete |
+| SF-2026-RAGSENTINEL | RP-50fcb1e9fc7ed52b | deep | arXiv:2608.23965v1 | SRC-ARXIV@arXiv:2608.23965v1 | https://arxiv.org/html/2608.23965v1#S4 | https://arxiv.org/html/2608.23965v1#S6 | https://arxiv.org/html/2608.23965v1#S9 | Not Disclosed — v1 does not link a frozen public implementation | claim:SF-2026-RAGSENTINEL | complete |
+| SF-2026-MCP-TOOL-DISCOVERY | RP-70e1f31d844488bc | deep | arXiv:2608.23992v1 | SRC-ARXIV@arXiv:2608.23992v1 | https://arxiv.org/pdf/2608.23992v1#page=7 | https://arxiv.org/pdf/2608.23992v1#page=12 | https://arxiv.org/pdf/2608.23992v1#page=16 | Not Disclosed — v1 describes a production deployment but publishes no frozen implementation artifact | claim:SF-2026-MCP-TOOL-DISCOVERY | complete |
 | SF-2026-AGENTSPEC | RP-0cebef9ea1668334 | deep | arXiv:2608.24004v1 | SRC-ARXIV@arXiv:2608.24004v1 | https://arxiv.org/html/2608.24004v1#S4 | https://arxiv.org/html/2608.24004v1#S5 | https://arxiv.org/html/2608.24004v1#S6 | Not Disclosed — v1 has no frozen public commit | claim:SF-2026-AGENTSPEC | complete |
-| SF-2026-ATTNLOCATE | RP-1fe578d33d846740 | deep | arXiv:2608.24022v1 | SRC-ARXIV@arXiv:2608.24022v1 | https://arxiv.org/html/2608.24022v1#S4 | https://arxiv.org/html/2608.24022v1#S5 | Not Disclosed — v1 has no dedicated limitations section; attention is not causal attribution | Not Disclosed — v1 has no frozen public implementation | claim:SF-2026-ATTNLOCATE | complete |
+| SF-2026-ATTNLOCATE | RP-bb96cd7ce7669261 | deep | arXiv:2608.24022v1 | SRC-ARXIV@arXiv:2608.24022v1 | https://arxiv.org/html/2608.24022v1#S4 | https://arxiv.org/html/2608.24022v1#S5 | Not Disclosed — v1 has no dedicated limitations section; attention is not causal attribution | Not Disclosed — v1 has no frozen public implementation | claim:SF-2026-ATTNLOCATE | complete |
 | SF-2026-VISCACHE | RP-c5c8644abb8fb8ab | standard | arXiv:2608.24063v1 | SRC-ARXIV@arXiv:2608.24063v1 | https://arxiv.org/html/2608.24063v1#S3 | https://arxiv.org/html/2608.24063v1#S4 | https://arxiv.org/html/2608.24063v1#S6 | Not Required — linked repository is floating; no event-time commit was frozen | claim:SF-2026-VISCACHE | complete |
 | SF-2026-PONDERPOUNCE | RP-4ff6575088293194 | deep | arXiv:2608.24115v1 | SRC-ARXIV@arXiv:2608.24115v1 | https://arxiv.org/html/2608.24115v1#S3 | https://arxiv.org/html/2608.24115v1#S4 | https://arxiv.org/html/2608.24115v1#S7 | Not Disclosed — v1 has no frozen public training commit | claim:SF-2026-PONDERPOUNCE | complete |
 | SF-2026-METARAG | RP-b8386dc2b1aed105 | deep | arXiv:2608.24214v1 | SRC-ARXIV@arXiv:2608.24214v1 | https://arxiv.org/html/2608.24214v1#S3 | https://arxiv.org/html/2608.24214v1#S4 | https://arxiv.org/html/2608.24214v1#S5 | Not Disclosed — v1 has no frozen public implementation | claim:SF-2026-METARAG | complete |
@@ -166,12 +142,12 @@
 | SF-2026-FARCA | RP-f5354b799fb5d8c9 | deep | arXiv:2608.24350v1 | SRC-ARXIV@arXiv:2608.24350v1 | https://arxiv.org/html/2608.24350v1#S3 | https://arxiv.org/html/2608.24350v1#S4 | Not Disclosed — v1 has no dedicated limitations section; fact-verifier error bounds remain open | Not Disclosed — the cited framework is generic and no paper-specific event-time commit was frozen | claim:SF-2026-FARCA | complete |
 | SF-2026-RESISPEC | RP-8b57eb43b744d392 | deep | arXiv:2608.24411v1 | SRC-ARXIV@arXiv:2608.24411v1 | https://arxiv.org/html/2608.24411v1#S3 | https://arxiv.org/html/2608.24411v1#S4 | https://arxiv.org/html/2608.24411v1#S3.SS3 | Not Disclosed — v1 links `https://github.com/Czzzk/Resispec`, but the public endpoint returned 404 during review; no code claim is used | claim:SF-2026-RESISPEC | complete |
 | SF-2026-JUDGE-DELTA-VALIDITY | RP-8bd30a16a76eb3f7 | deep | arXiv:2608.24419v1 | SRC-ARXIV@arXiv:2608.24419v1 | https://arxiv.org/html/2608.24419v1#S2 | https://arxiv.org/html/2608.24419v1#S5 | https://arxiv.org/html/2608.24419v1#S6 | Not Required — the linked dataset was not used to support the mechanism claim; data-release existence remains a paper-reported fact | claim:SF-2026-JUDGE-DELTA-VALIDITY | complete |
-| SF-2026-UQ-ENSEMBLES | RP-3a4a6de2a8983254 | deep | arXiv:2608.24492v1 | SRC-ARXIV@arXiv:2608.24492v1 | https://arxiv.org/html/2608.24492v1#S3 | https://arxiv.org/html/2608.24492v1#S4 | https://arxiv.org/html/2608.24492v1#S5 | Not Disclosed — supplemental code is described but no frozen commit is linked | claim:SF-2026-UQ-ENSEMBLES | complete |
+| SF-2026-UQ-ENSEMBLES | RP-caba0331a64c8cfd | deep | arXiv:2608.24492v1 | SRC-ARXIV@arXiv:2608.24492v1 | https://arxiv.org/html/2608.24492v1#S3 | https://arxiv.org/html/2608.24492v1#S4 | https://arxiv.org/html/2608.24492v1#S5 | Not Disclosed — supplemental code is described but no frozen commit is linked | claim:SF-2026-UQ-ENSEMBLES | complete |
 | SF-2026-SMITH-TOOLS | RP-600b8074f96ae62e | deep | arXiv:2608.24571v1 | SRC-ARXIV@arXiv:2608.24571v1 | https://arxiv.org/html/2608.24571v1#S2 | https://arxiv.org/html/2608.24571v1#S3 | https://arxiv.org/html/2608.24571v1#S4 | Not Disclosed — v1 has no frozen public implementation commit | claim:SF-2026-SMITH-TOOLS | complete |
 | SF-2026-SIMTHESIZER | RP-d08379833194e5fd | standard | arXiv:2608.24650v1 | SRC-ARXIV@arXiv:2608.24650v1 | https://arxiv.org/html/2608.24650v1#S4 | https://arxiv.org/html/2608.24650v1#S7 | Not Disclosed — v1 has no dedicated limitations section; simulator fidelity is configuration-bound | Not Disclosed — linked repository exists but no event-time commit was frozen | claim:SF-2026-SIMTHESIZER | complete |
 | SF-2026-PARASON | RP-3be0ac68973d14e7 | deep | arXiv:2608.24658v1 | SRC-ARXIV@arXiv:2608.24658v1 | https://arxiv.org/html/2608.24658v1#S3 | https://arxiv.org/html/2608.24658v1#S4 | https://arxiv.org/html/2608.24658v1#A1 | Not Disclosed — v1 has no frozen public implementation | claim:SF-2026-PARASON | complete |
 | SF-2026-OPDVR | RP-970e6cca75aac541 | deep | arXiv:2608.24696v1 | SRC-ARXIV@arXiv:2608.24696v1<br>SRC-GITHUB-COMMIT@commit:2e14685ea4cbf051073aa0a26bc0e9c75f17878d | https://arxiv.org/html/2608.24696v1#S4 | https://arxiv.org/html/2608.24696v1#S5 | Not Disclosed — v1 has no dedicated limitations section; verifier/teacher error is not bounded | https://github.com/LeapLabTHU/OPDVR/commit/2e14685ea4cbf051073aa0a26bc0e9c75f17878d | claim:SF-2026-OPDVR | complete |
-| SF-2026-STEPGUARD | RP-5c0fcf35f97c1f36 | deep | arXiv:2608.24777v1 | SRC-ARXIV@arXiv:2608.24777v1 | https://arxiv.org/html/2608.24777v1#S4 | https://arxiv.org/html/2608.24777v1#S6 | https://arxiv.org/html/2608.24777v1#S9 | Not Disclosed — v1 has no frozen public checkpoint/commit link | claim:SF-2026-STEPGUARD | complete |
+| SF-2026-STEPGUARD | RP-c775af9899f729b4 | deep | arXiv:2608.24777v1 | SRC-ARXIV@arXiv:2608.24777v1 | https://arxiv.org/html/2608.24777v1#S4 | https://arxiv.org/html/2608.24777v1#S6 | https://arxiv.org/html/2608.24777v1#S9 | Not Disclosed — v1 has no frozen public checkpoint/commit link | claim:SF-2026-STEPGUARD | complete |
 | SF-2026-BROWSERFORGE | RP-d4755fe449b14d90 | deep | arXiv:2608.24848v1 | SRC-ARXIV@arXiv:2608.24848v1 | https://arxiv.org/html/2608.24848v1#S3 | https://arxiv.org/html/2608.24848v1#S4 | Not Disclosed — v1 has no dedicated limitations section; open-web safety and corpus bias remain unbounded | Not Disclosed — this is a generic base framework, not a frozen BrowserForge artifact | claim:SF-2026-BROWSERFORGE | complete |
 | SF-2026-SPO-PLUSPLUS | RP-a94fa16c9a989fb7 | deep | arXiv:2608.24870v1 | SRC-ARXIV@arXiv:2608.24870v1 | https://arxiv.org/html/2608.24870v1#S2 | https://arxiv.org/html/2608.24870v1#S3 | https://arxiv.org/html/2608.24870v1#S5 | Not Disclosed — v1 has no frozen public implementation | claim:SF-2026-SPO-PLUSPLUS | complete |
 | SF-2026-ACTION-WORLD-MODEL-EVAL | RP-18c10cbf357f53d0 | deep | arXiv:2608.24885v1 | SRC-ARXIV@arXiv:2608.24885v1 | https://arxiv.org/html/2608.24885v1#S3 | https://arxiv.org/html/2608.24885v1#S4 | https://arxiv.org/html/2608.24885v1#S5 | Not Disclosed — v1 has no frozen public training/evaluation commit | claim:SF-2026-ACTION-WORLD-MODEL-EVAL | complete |
@@ -283,7 +259,36 @@
 研究在 50 个 RoboTwin task、多个 world-model baseline 与真实机器人任务中组合 WorldEcho/WorldSync、SE(3) trajectory、integrity-gated error 和 policy success。pose extractor、simulator replay、短 horizon、action generator 与 embodiment 限制 causal 外推；第25章吸收的是 evaluation contract，不是单一榜单结论。
 <!-- review:SF-2026-ACTION-WORLD-MODEL-EVAL:end -->
 
-## 4. Deep Analysis Selection
+## 4. Benchmark Contracts
+
+以下均为作者论文的 evaluation contract；未披露字段保持 `Not Disclosed`，不同论文的 speedup、accuracy 或 success rate 不相加。
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-TP-VS-KV | synthetic W1/W2 memory-bound serving | Llama-2 7B/70B；7-model feasibility sweep | profiled A100 80GB, A40 48GB, H100 80GB；作者无 GPU 实测 | KV 16/8/4-bit；weights按论文假设 | max context 4096；synthetic context/batch sweep | per-token decode | simulator-defined | TP 1/2/4/8 and matched cache relief | cost per million tokens、latency、capacity；无 quality SLO | profiled simulator + closed-form feasibility |
+| SF-2026-RAGSENTINEL | NQ, HotpotQA, MS MARCO；3 poison attacks | Phi-3.5-mini, Llama-3.1-8B, Qwen-2.5-7B；BGE-M3 surrogate | 3×L40S 48GB | Not Disclosed | top-k=10 retrieved documents；100 queries/dataset | QA answer | query-level；3 seeds | offline attacks | ACC and ASR under honest-majority setting | reference answers + attack target |
+| SF-2026-MCP-TOOL-DISCOVERY | 49-query retrieval set + PayPal production catalog | six MCP clients；embedding model/version Not Disclosed | production Milvus/OpenAI embedding stack；SKU Not Disclosed | Not Disclosed | 2,000+ tools / 200+ servers；200k context | top-k schemas then tool calls | top-k default 5 | 1,921 requests/24h；8,209/7d latency sample | Hit@1/5, MRR, token share, p50/p95, fallback rate | author labels + production telemetry |
+| SF-2026-AGENTSPEC | five agent workloads + non-agent benchmark | four target/draft model families | paper-specified GPU setup；SKU按 Appendix A.1 | Not Disclosed | block- and task-specific | agent reasoning/tool blocks | batched inference | batch/workload-specific | end-to-end latency、acceptance、up to 2.02× author speedup | target-token exactness + workload completion |
+| SF-2026-ATTNLOCATE | 10 model/attack configurations for prompt/tool injection | paper-listed agent LLMs + attention-feature locator | Not Disclosed | Not Disclosed | mixed provider/user/tool contexts | localized span + authorization verdict | benchmark-specific | offline | localization and unauthorized-behavior metrics | attack labels + provider authority policy |
+| SF-2026-VISCACHE | ActCap, DREAM1K, NExTQA, ActQA, EgoSchema, MVBench | Qwen2.5-VL 3B/32B；CLIP ViT-B/32 scout | 4×A100 80GB；single-path latency tables | Not Disclosed | long videos；retention 40/28/19% | 64/128-token latency sweeps among tasks | Not Disclosed | offline single-model evaluations | VQA/VS quality, FLOPs, memory, TTFT/TPOT/E2E | task metrics and author latency instrumentation |
+| SF-2026-PONDERPOUNCE | RoboMME + RoboCasa-DC | Qwen3.5-9B context model + 3–3.6B controller | training 8×B200；serving H100/A100 batch 1 | bf16 serving | 0.8K–14K context；16K cache | cognition and 45-token subgoal fires | global batch 32 training；batch 1 serving | single control loop | success rate and p50/p95 component latency | simulator task gates + held-out task success |
+| SF-2026-METARAG | seven QA benchmarks + BrowseComp-Plus | Qwen2.5 3B/7B；robustness on Llama3.2-3B/Qwen3-14B | 8×A100 single node | Not Disclosed | search history up to 4 turns | answer or Search/Answer action | recipe-specific | rollout groups | EM accuracy, searches/question, AUROC/PRR | exact match + internal belief probe + external diagnostic |
+| SF-2026-MAS-FAULT-INJECTION | 30 ProgramDev tasks；demo and one real LLM-MAS | underlying systems/models Not Disclosed | Not Disclosed | Not Disclosed | Planner→Coder traces | workflow output and span traces | paired baseline/fault runs | controlled injection | latency amplification and trace alignment | OpenTelemetry spans + run artifacts |
+| SF-2026-FARCA | factual QA/reasoning tasks in author setup | paper-listed policy/reference models | Not Disclosed | Not Disclosed | atomic-fact decomposed responses | reasoning answer | RL recipe-specific | rollout-specific | factuality and reasoning metrics | fact extractor/verifier + counterfactual attribution |
+| SF-2026-RESISPEC | multi-candidate speculative decoding benchmarks | paper-listed target/draft models | paper-specified GPU；exact SKU varies | Not Disclosed | prompt/verify lengths按 setup | autoregressive tokens | benchmark-specific | candidate count sweep | throughput/latency and distributional exactness | target distribution + empirical path marginals |
+| SF-2026-JUDGE-DELTA-VALIDITY | target-changing and target-preserving contrast arms | multiple judge models；pinned artifact revisions | Not Disclosed | provider-specific | sentence/claim contrasts | judge verdict | paired items；3 human annotators | offline | sensitivity lower bound and invariance lower bound | human codebook + frozen intervention protocol |
+| SF-2026-UQ-ENSEMBLES | 9 datasets；short/long QA and Python code | Gemini-2.5 Flash/Pro, GPT-4o/mini | provider APIs；Not Disclosed | provider-specific | response/claim/task-specific | answer/code + 10 samples for sampling scorers | 25 stratified 70/30 splits | offline | AUROC and ECE | references/tests/FactScore；Gemini grader + 400-item human audit |
+| SF-2026-SMITH-TOOLS | Reasoning-Gym, TabMWP-Hard, GQA, BFCL v4 no-web | Qwen3 4B/8B；30B-activated judge | Not Disclosed | Not Disclosed | one Python function + JSON schema per tool | tool artifact + answer/call | mixed build/use batches | on-policy rollout | task success, transfer and tool-call accuracy | executable reward + format/judge reward |
+| SF-2026-SIMTHESIZER | KV quantization, speculation, hybrid Mamba simulator extensions | vLLM-based real system + Codex synthesis agent | profiled system hardware按 repository；not one frozen SKU | Not Disclosed | dynamic DAG serving workloads | throughput/latency simulation | workload-specific | simulated serving | throughput error vs real system and simulation speed | real-system measurements/reference evidence |
+| SF-2026-PARASON | mathematical reasoning benchmarks | 8B policy；paper-listed teachers/baselines | training/inference hardware Not Disclosed in headline contract | Not Disclosed | structured subtask/trial trajectories | math solution branches | PA-GRPO groups | explicit parallel branches | accuracy and wall-clock/parallelism metrics | answer verifier + branch grammar |
+| SF-2026-OPDVR | RLVR + on-policy distillation reasoning tasks | paper-listed student/teacher models | hardware in Appendix C；Not Disclosed here | Not Disclosed | sampled-token trajectories | reasoning response | group-relative variants | rollout-specific | task accuracy and training dynamics | verifiable reward + teacher distribution |
+| SF-2026-STEPGUARD | static guardrail and guarded-agent benchmarks | StepGuard checkpoint + evaluated agents | Not Disclosed | Not Disclosed | prefix-aligned trajectories | step safety/utility verdict | benchmark-specific | offline + guarded-agent loop | safety, utility and balance metrics | synthetic annotations + benchmark outcomes |
+| SF-2026-BROWSERFORGE | 203,238 trajectories；online Mind2Web evaluation | paper-listed web-agent backbone | parallel browser sandbox cluster；SKU Not Disclosed | Not Disclosed | open-web pages and tasks | browser action trajectory | training recipe-specific | parallel sandboxes | task success；25.66→33.33 author result | environment completion + cleaning/verifier pipeline |
+| SF-2026-SPO-PLUSPLUS | ALFWorld at 0.8B/4B and Math-TIR | small Qwen3.5 models | ALFWorld 2 train/6 rollout GPUs；Math 4/4 | bfloat16 SFT noted；RL precision otherwise Not Disclosed | variable tool trajectories | terminal outcome/action tokens | 128 prompts/update variants | one request per same prompt；cross-prompt async | reward-curve area and final-five reward | environment/verifier terminal reward |
+| SF-2026-ACTION-WORLD-MODEL-EVAL | 50 RoboTwin tasks + real-robot tasks | six baseline world models + WorldSync | simulator/robot stack；training GPU Not Disclosed here | Not Disclosed | expert and feasible off-expert action rollouts | generated video/trajectory | task macro-average | offline generation + policy iteration | visual pass, raw NDTW, integrity-gated error, policy success | simulator replay, pose extraction and task success |
+
+## 5. Deep Analysis Selection
 
 本节在 Source Review 完成后冻结 eligibility 与叙事分组。三项长叙事按共同状态责任聚合；被 subsume 的 family 仍保留独立 Review、评分与 Books Decision，不因篇幅限制降级。
 
@@ -345,7 +350,7 @@ Parason 把 subtask branch 与 trial branch 的类型显式化，因此这一单
 <!-- analysis-decision:SF-2026-BROWSERFORGE:start -->未选为长篇分析：它处理离线 browser trajectory 生产、sandbox isolation 与训练数据治理；episode 数量不等于请求时 trial branch，现有 AGENT-PLATFORM 章节已承载其边界。<!-- analysis-decision:SF-2026-BROWSERFORGE:end -->
 <!-- analysis-decision:SF-2026-SPO-PLUSPLUS:start -->未选为长篇分析：它处理异步 Agent RL 的 event-time policy identity、freshness 与 single-stream normalization，属于 TRAIN-GRPO 数据流；不与 runtime reasoning branch 共用控制权。<!-- analysis-decision:SF-2026-SPO-PLUSPLUS:end -->
 
-## 5. Books Comparison
+## 6. Books Comparison
 
 Evidence Review 完成后，逐项对读目标及相邻章节。`Integrate` 只沉淀长期机制与边界；`No Change` 表示当前章节已有同一命题，并非候选不重要。下列决定已经 fresh-context Books Audit 复核，未解决 finding 为零。
 
@@ -396,7 +401,7 @@ Evidence Review 完成后，逐项对读目标及相邻章节。`Integrate` 只�
 <!-- books-review:SF-2026-SPO-PLUSPLUS:start --><!-- existing:SF-2026-SPO-PLUSPLUS:start -->第33章已有 event-time policy identity、异步 rollout、freshness 与 token/sample normalization。<!-- existing:SF-2026-SPO-PLUSPLUS:end --><!-- delta:SF-2026-SPO-PLUSPLUS:start -->single-stream measure 是受限训练 recipe，现有演进链已完整承载。<!-- delta:SF-2026-SPO-PLUSPLUS:end --><!-- books-review:SF-2026-SPO-PLUSPLUS:end -->
 <!-- books-review:SF-2026-ACTION-WORLD-MODEL-EVAL:start --><!-- existing:SF-2026-ACTION-WORLD-MODEL-EVAL:start -->第25章已区分视频生成、action-conditioned dynamics、imagined rollout 与 policy coupling，但缺少统一 integrity gate。<!-- existing:SF-2026-ACTION-WORLD-MODEL-EVAL:end --><!-- delta:SF-2026-ACTION-WORLD-MODEL-EVAL:start -->新增 visual integrity、expert/off-expert alignment 与 matched-budget policy improvement 三段式 evaluation contract。<!-- delta:SF-2026-ACTION-WORLD-MODEL-EVAL:end --><!-- books-review:SF-2026-ACTION-WORLD-MODEL-EVAL:end -->
 
-## 6. Semantic Audit
+## 7. Semantic Audit
 
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
@@ -406,18 +411,18 @@ Evidence Review 完成后，逐项对读目标及相邻章节。`Integrate` 只�
 | SA-20260826-SELECTION | fresh-context:final_contract_review | deep_analysis_selection | validator:deep-analysis-selection-v1; analysis:DA-RESOURCE-FEASIBILITY; analysis:DA-PARALLEL-AGENT-CONTROL; analysis:DA-BEHAVIOR-AUTHORITY | — | 已解决 SEL-0826-01：PonderPounce、BrowserForge、SPO++ 从错误 subsumption 拆为三项独立 bounded decision；Parason 独占 runtime branch control 单元；全部 eligible family 均有最终 selection disposition | passed |
 | SA-20260826-BOOKS | fresh-context:final_contract_review | books | validator:books-comparison-v1; books-review:SF-2026-TP-VS-KV; books-review:SF-2026-JUDGE-DELTA-VALIDITY | — | 已解决 BOOK-0826-01/02：21/21 Books Comparison 完成；11 Integrate、10 No Change；修正 invariance 方向并限定 TP/KV 只在审阅的 MHA/head-partition 配置中同时切分，一般系统保留 layout/placement 实现边界 | passed |
 
-## 7. Ignored Noise
+## 8. Ignored Noise
 
 930 个 arXiv v1 中，909 个未进入候选分母。排除原因包括：垂直领域应用而无 AI-System contract 增量；单一数据集/benchmark 的局部质量提升；常规优化、检测或生成应用；仅标题包含 LLM/Agent 但 contribution 属于应用层；以及同一 family 的 cross-listing。该 909 是 topic closure，不是“已全文审阅”。
 
-## 8. Recommended Action
+## 9. Recommended Action
 
 1. 以真实 production trace 复测 TP/KV feasibility，并把 quality floor、topology、batch 与 TTFT/TPOT/SLO 放在同一合同中。
 2. 将 influence locator、retrieval consensus 与 step guard 作为不同 sensor 评估；最终 authorization 继续由 deterministic policy 与 human escalation 拥有。
 3. 对 parallel Agent workload 分别测 subtask、trial、environment concurrency 的 cancel/commit、tail latency、verifier correlation 与资源回收。
 4. 在后续 Weekly 中重新执行跨日去重和 evidence evolution；本日报的作者 benchmark 不外推为通用生产结论。
 
-## 9. Repository Changes
+## 10. Repository Changes
 
 - 新建本日报与 arXiv 原始查询快照。
 - 冻结 Hugging Face discovery、Huawei Noah 日期归档、19 个 Required Daily 机构收据、18 份 ordinary-client response 和五份规范化动态 listing 摘录。
@@ -428,14 +433,14 @@ Evidence Review 完成后，逐项对读目标及相邻章节。`Integrate` 只�
 - 未生成 Weekly；Historical cursor 保持用户暂停状态。
 - 未 stage、commit 或 push。
 
-## 10. Open Questions
+## 11. Open Questions
 
 - KV compression 与 TP 的成本边界在真实 production batching、quality SLO 与非 A100/A40/H100 拓扑下如何变化？
 - attention-derived influence locator 能否支持因果 authority 判断，还是只是一种可迁移但可被规避的 sensor？
 - reasoning parallelism 的 trial branch 如何定义 cancellation、result commit、budget ownership 与 verifier independence？
 - world model 的 action-following metric 是否能预测 closed-loop policy improvement，而不是只测局部视频一致性？
 
-## 11. Sources
+## 12. Sources
 
 访问日期均为 2026-08-26；论文日期使用 arXiv v1。
 
@@ -462,3 +467,9 @@ Evidence Review 完成后，逐项对读目标及相邻章节。`Integrate` 只�
 - https://arxiv.org/abs/2608.24848v1
 - https://arxiv.org/abs/2608.24870v1
 - https://arxiv.org/abs/2608.24885v1
+
+## 13. Final Status
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；unresolved findings=0。
+
+本节只汇总前述收据与 fresh-context 审计的最终状态，不以格式校验替代语义验收。

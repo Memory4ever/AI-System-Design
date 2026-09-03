@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-19 09:00:00` 至 `2026-08-20 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 398 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：0 个 Deep Review、4 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`INFER-TENSORRT-LLM` 中由《Pre-Compiled Pipeline Shards for Distributed LLM Inference on Intel AI PC Fleets》暴露的状态/证据边界；`PLATFORM-KSERVE` 中由《The Lazy Pod That Lies: Deferred Cost and Failure Semantics of Lazy Container Image Pulling for Model Serving on Kubernetes》暴露的状态/证据边界；`AGENT-TOOL-CALLING` 中由《Outcome Monitors: Recovery Affordances for Silent Tool Failures》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -78,7 +77,6 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 | SF-2026-ARXIV-2608-19412 | RP-4073ac2ee9c6a151 | standard | arXiv:2608.19412v1 | SRC-ARXIV@arXiv:2608.19412v1 | https://arxiv.org/html/2608.19412v1#S3 (III Methodology) | https://arxiv.org/html/2608.19412v1#S4 (§§IV–VI and Tables I–IV: promise, price, and failure/recovery measurements) | https://arxiv.org/html/2608.19412v1#S8 (VIII Threats to Validity) | Not Required — v1 exposes a public artifact, but this Standard review relies only on the versioned paper and does not import repository code or an event-time commit | claim:SF-2026-ARXIV-2608-19412 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-19147:start -->
 #### Pre-Compiled Pipeline Shards for Distributed LLM Inference on Intel AI PC Fleets
 
@@ -130,6 +128,10 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 - Score rationale：Design Delta：提供服务控制器契约的一条受限机制/诊断分支；System Reach：会跨模型、runtime 与平台边界传播；Durability：高度依赖当前模型/版本。
 - Knowledge owner：`PLATFORM-KSERVE`；Disposition：`Weekly Only — Context`。
 <!-- review:SF-2026-ARXIV-2608-19412:end -->
+
+## 4. Benchmark Contracts
+
+None — Candidate Ledger 中没有需要单独登记的 benchmark claim。
 
 ## 5. Deep Analysis Selection
 
@@ -192,3 +194,5 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

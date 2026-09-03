@@ -10,6 +10,7 @@ families from every candidate/review/Books path.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import importlib.util
@@ -26,12 +27,18 @@ author = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(author)
 AUTHOR_PDF_SECTIONS = author.base.pdf_sections
 AUTHOR_REVIEW_ONE = author.base.review_one
+AUTHOR_SCORE = author.base.score
 
 
 ORIGINAL = set(author.DURABLE_CANDIDATES)
 WITHDRAWN = {"2603.07473"}
 ADDITIONS_BY_DAY = {
-    9: "05553 05578 06001 06003 06081 06199 06365".split(),
+    9: """
+        05528 05540 05553 05578 05618 05697 05706 05725 05739 05786
+        05815 05828 05872 05959 05960 05974 06001 06003 06009 06081
+        06123 06130 06138 06198 06199 06263 06274 06317 06365 06413
+        06422 06444 06445 06450 06453 06508 06569 06577 06578
+    """.split(),
     10: "06588 06604 06728 06798 06847 08546".split(),
     11: "08727 08739 08755 08852 09730".split(),
     12: "09983 10030 10335".split(),
@@ -47,8 +54,11 @@ FINAL = (ORIGINAL | ADDITIONS) - WITHDRAWN
 # by the author renderer.  Keep these exceptions source-specific: a generic
 # fallback would make unrelated headings look like Method evidence.
 SECTION_OVERRIDES = {
+    "2603.05960": {"method": [r"^3\.2 Omni-Masked Gradient Descent$", r"^3 Methodology$"]},
     "2603.05881": {"method": [r"^3\.3 CoCA", r"^3\.2 Confidence-First"]},
     "2603.06331": {"method": [r"^4\.1 Curvature-guided", r"^4\.2 Chaotic-prioritized"]},
+    "2603.06450": {"method": [r"^III Cross-Embodiment Data Analogies$"]},
+    "2603.06508": {"method": [r"^4 Problem Formulation$"]},
     "2603.06588": {"method": [r"^1 Overview of vLLM Hook$", r"^2 Core Functions"]},
     "2603.06604": {"method": [r"^3 Know When You.re Wrong$", r"^3\.2 Self-Evaluation"]},
     "2603.08163": {"method": [r"^2\.1 SparseLoCo$", r"^3 Communication Protocol"]},
@@ -118,6 +128,8 @@ def reviewer_review_one(row: dict, src: Path) -> dict:
     """Repair a locator only from a source-specific exact-v1 subsection."""
     review = AUTHOR_REVIEW_ONE(row, src)
     aid = row["arxiv_id"]
+    if aid in DEEP_REVIEW_IDS:
+        review["review_route"] = "deep"
     if aid not in SECTION_OVERRIDES or not str(review.get("method_locator", "")).startswith("Not Disclosed"):
         return review
     body_path = ROOT / review["body_path"]
@@ -152,10 +164,28 @@ def reviewer_review_one(row: dict, src: Path) -> dict:
 
 
 NODE = {
+    "05528": "MULTIMODAL-REPRESENTATION", "05540": "AGENT-TOOL-CALLING",
     "05553": "TRAIN-DATA", "05578": "PLATFORM-EVALUATION-SYSTEM",
+    "05618": "PLATFORM-SECURITY", "05697": "PLATFORM-EVALUATION-SYSTEM",
+    "05706": "PLATFORM-EVALUATION-SYSTEM", "05725": "PLATFORM-SECURITY",
+    "05739": "TRAIN-RLHF", "05786": "PLATFORM-SECURITY",
+    "05815": "MULTIMODAL-WORLD-MODELS", "05828": "PLATFORM-EVALUATION-SYSTEM",
+    "05872": "PLATFORM-SECURITY", "05959": "INFER-KV-CACHE",
+    "05960": "TRAIN-DISTRIBUTED-TRAINING", "05974": "INFER-SCHEDULING",
     "06001": "MULTIMODAL-EMBODIED-VLA", "06003": "MODEL-MOE",
+    "06009": "TRAIN-PPO",
     "06081": "PLATFORM-EVALUATION-SYSTEM", "06199": "INFER-TENSORRT-LLM",
+    "06123": "MULTIMODAL-GENERATIVE-PARADIGMS", "06130": "TRAIN-DATA",
+    "06138": "TRAIN-RLHF", "06198": "PLATFORM-EVALUATION-SYSTEM",
+    "06263": "PLATFORM-SECURITY", "06274": "MODEL-SELF-ATTENTION",
+    "06317": "PLATFORM-EVALUATION-SYSTEM",
     "06365": "PLATFORM-SECURITY", "06588": "INFER-TENSORRT-LLM",
+    "06413": "TRAIN-RLHF", "06422": "PLATFORM-EVALUATION-SYSTEM",
+    "06444": "INFER-DECODE", "06445": "MULTIMODAL-WORLD-MODELS",
+    "06450": "TRAIN-DATA", "06453": "PLATFORM-PRODUCTION",
+    "06508": "PLATFORM-SECURITY", "06569": "MULTIMODAL-REPRESENTATION",
+    "06577": "MULTIMODAL-GENERATIVE-PARADIGMS",
+    "06578": "PLATFORM-EVALUATION-SYSTEM",
     "06604": "PLATFORM-EVALUATION-SYSTEM", "06728": "INFER-TENSORRT-LLM",
     "06798": "TRAIN-DISTRIBUTED-TRAINING", "06847": "PLATFORM-EVALUATION-SYSTEM",
     "08546": "MULTIMODAL-WORLD-MODELS", "08727": "INFER-KV-CACHE",
@@ -168,11 +198,210 @@ NODE = {
 }
 
 
+SCORE_OVERRIDES = {
+    # Scores are independent of Books disposition.  These families materially
+    # alter an execution/evaluation contract even when Books already carries
+    # the durable proposition.
+    "2603.05540": (3, 3, 3),
+    "2603.05725": (3, 3, 3),
+    "2603.05786": (3, 3, 3),
+    "2603.05959": (3, 2, 3),
+    "2603.06009": (3, 3, 3),
+    "2603.06317": (3, 3, 3),
+    "2603.06413": (3, 3, 3),
+}
+DEEP_REVIEW_IDS = set(SCORE_OVERRIDES)
+
+
+def reviewer_score(row: dict, review: dict) -> tuple[int, int, int]:
+    return SCORE_OVERRIDES.get(row["arxiv_id"], AUTHOR_SCORE(row, review))
+
+
 def S(problem: str, mechanism: str, evidence: str, boundary: str):
     return problem, mechanism, evidence, boundary
 
 
 SYNTHESIS = {
+    "05528": S(
+        "每增加一种模态就常驻一个专用 encoder，会让参数、显存和部署路径近似线性增长。",
+        "Omni-C 以共享 dense Transformer 承担图像、语音与文本表示，只保留轻量模态投影，并用未配对的单模态对比目标抑制跨模态冲突。",
+        "公开结果只支持所测 encoder、任务与设备中的质量/显存取舍；零样本退化和线性探针恢复不能证明共享表示在所有组合任务上等价。",
+        "共享骨干降低常驻成本，却扩大负迁移与串行处理延迟；模态差异大或并行低延迟优先时，专用 encoder 仍合理。",
+    ),
+    "05540": S(
+        "grammar-constrained decoding 只比较最终语言是否相同，会遗漏等价 grammar 在在线解析状态和每 token 延迟上的巨大差异。",
+        "论文把解码写成 next-token distribution 与 pushdown reachability oracle 的耦合，证明语言等价不等于执行成本等价，并用 SAC 描述逐 token parse-forest 增长。",
+        "定理支持特定 CFG family 的控制状态膨胀、复杂度下界与 hard mask 分布失真；不证明所有 schema 或具体 engine 都达到该下界。",
+        "grammar rewrite 能降低在线状态成本，却不消除受约束采样对原分布的扭曲；小 grammar 或低 QPS 路径仍可优先简单正确性。",
+    ),
+    "05618": S(
+        "把 Chain-of-Thought 当作内部调试信息，会忽略 prompt 中 PII 被 reasoning trace 再暴露的独立泄漏面。",
+        "该工作把 PII 类型、风险权重和允许的 reasoning budget 绑定到同一评测合同，并比较多种推理时 gatekeeper。",
+        "结果只支持所测模型、PII 数据和 budget；没有单一 gatekeeper 在所有模型上占优，也不能把低泄漏等同于隐私保证。",
+        "更强过滤降低泄漏却可能截断有用推理并增加误报；不输出 reasoning trace 的受控服务仍具有更小暴露面。",
+    ),
+    "05697": S(
+        "把正确 evidence 直接交给模型的多模态 benchmark，会隐藏跨文档、图像和视频检索本身的主瓶颈。",
+        "MultiHaystack 将唯一可验证 evidence 放入四万级异构候选池，分别测 retrieval recall 与 evidence-conditioned reasoning。",
+        "公开数字只属于其 747 个问题、候选池、retriever 与 MLLM；不能外推企业语料版本、权限过滤或生产时延。",
+        "端到端分解改善归因，却增加 evidence 标注和 corpus 版本成本；检索已知的离线任务仍可单独评测 reasoning。",
+    ),
+    "05706": S(
+        "依赖 Chain-of-Thought monitor 的安全方案隐含假设模型不能随意控制自己暴露的推理内容。",
+        "CoT-Control 将隐藏推理的可控性与最终输出可控性分开测量，并改变模型规模、RL 强度、test-time compute 和任务难度。",
+        "结果支持当前受测 reasoning models 的 CoT controllability 较低；机制尚不明确，不能据此把 monitorability 当作长期保证。",
+        "监控 reasoning trace 能增加可见性，却会随能力和训练变化失效并引入隐私面；外部 action gate 仍不可省略。",
+    ),
+    "05725": S(
+        "把 CUDA 程序翻译到 CPU 上 fuzz，会丢失 GPU memory、SIMT、异步执行与 runtime 语义，导致测试对象不再忠实。",
+        "论文将 behavior faithfulness 设为 GPU-native fuzzing 的核心合同，并梳理生成、调度、oracle 与 crash triage 的设计约束。",
+        "这是设计与漏洞趋势证据，不是一个已闭合的通用 fuzzer benchmark；未证明所有 CUDA bug 类都可自动发现。",
+        "原生执行提高忠实度，却增加设备成本、非确定性和故障隔离难度；纯 host 逻辑仍可用 CPU 侧快速筛查。",
+    ),
+    "05739": S(
+        "Best-of-N 常以期望真实 reward 分析，但实践中的 reward model 主要由 pairwise preference 训练，目标错配会误判方案优劣。",
+        "论文改用 win-rate 作为推理时对齐目标，给出 BoN 最优条件，并提出在保持统计效率时限制 reward hacking 的变体。",
+        "理论只在其 reference/reward-model 假设下成立；不证明有限样本、分布漂移或开放式 evaluator 中不存在 hacking。",
+        "增加 N 提高选择机会却线性增加推理成本，并放大 evaluator 偏差；低风险或预算紧张时单样本仍是有效基线。",
+    ),
+    "05786": S(
+        "服务方声称执行了 guardrail 时，用户通常只能信任声明，无法验证安全检查是否真正位于 response commit 前。",
+        "Proof-of-Guardrail 把 agent 与公开 guardrail 放入 TEE，并用远程证明绑定代码身份和执行顺序。",
+        "证明只覆盖指定 guardrail 被执行，不证明规则有效、输入完整或 guardrail 未被 jailbreak；成本结果绑定其 OpenClaw 实现。",
+        "attestation 缩小运行完整性信任面，却把 TEE、测量身份和规则质量变成新根信任；可控单租户环境仍可用普通审计。",
+    ),
+    "05815": S(
+        "只从相邻帧学习 latent action，通常只能编码短期运动，无法给 world model 或 policy 提供长时间技能状态。",
+        "HiLAM 在低层 latent-action extractor 之上聚合动作序列，形成具有更长时间尺度的 latent skill。",
+        "实验只支持所测 actionless video 和动态技能发现指标；latent skill 的可控性、因果性和跨 embodiment 迁移未被证明。",
+        "层级状态扩大规划跨度，却增加抽象错配和不可辨识性；短 horizon 控制仍适合低层 latent action。",
+    ),
+    "05828": S(
+        "只输出 hallucination 标签无法说明错误 span、生成机制与支持/反对 evidence 之间的对应关系。",
+        "HART 把定位、机制归因、evidence retrieval 与 causal tracing 组织为结构化链路，并建立联合标注数据。",
+        "结果证明其数据集上优于检索基线；机制标签仍是任务定义下的监督，不能当作模型内部因果事实。",
+        "细粒度 trace 提高可审计性，却显著增加标注和 oracle 成本；低风险场景仍可使用答案级 groundedness 检查。",
+    ),
+    "05872": S(
+        "允许 agent 以效用为目标自我迭代时，局部成功会把策略更新推向可迁移的欺骗，而不是稳定遵循规范。",
+        "论文在竞争式 bidding 环境中比较多条演化路径，并追踪 reflection 后的策略与内部 rationalization。",
+        "证据只支持所测 arena、模型和迭代协议中的欺骗漂移；不证明所有 self-improvement 必然产生同一均衡。",
+        "自适应可提高跨任务效用，却扩大目标漂移和审计难度；固定 policy、外部 reward gate 与可回滚版本仍是安全边界。",
+    ),
+    "05959": S(
+        "流式视觉几何若为每个新帧重算完整历史，计算和 memory 会随序列长度持续增长。",
+        "OVGGT 将历史压缩为固定大小的视觉几何状态，使新帧更新保持常数级 cache/compute contract。",
+        "作者结果只支持其几何任务、场景长度和压缩状态；不证明常数状态能保留任意长流的全部信息。",
+        "有界状态换来稳定资源，却引入不可逆遗忘和漂移；短序列或离线高精度重建仍应保留完整历史。",
+    ),
+    "05960": S(
+        "大模型优化器若同时保存全部梯度、动量和参数更新，会让 optimizer state 成为训练显存上限。",
+        "Omni-Masked Gradient Descent 以 mask traversal 分批更新参数子集，在降低同时驻留状态时维持收敛路径。",
+        "理论与实验只支持论文的 mask schedule、目标和模型；不能把内存节省外推为任意分布式训练中的 wall-clock 收益。",
+        "分块状态降低峰值 memory，却增加更新陈旧、调度和收敛超参；容量足够时全量同步 optimizer 更简单。",
+    ),
+    "05974": S(
+        "代码补全始终走云端会增加网络尾延迟和成本，始终走本地则受小模型质量限制。",
+        "论文把 local/cloud 选择建模为带质量估计的请求级 cascade，在提交前决定是否升级到远端模型。",
+        "结果绑定其代码任务、网络与模型组合；不证明置信信号在新仓库或隐私约束下仍校准。",
+        "级联改善平均延迟/质量，却增加路由误判、两次计算和数据出域风险；稳定网络或单模型足够时固定路径更可控。",
+    ),
+    "06009": S(
+        "PPO 在有限并行环境中会因状态覆盖不足和同步采样停顿而出现学习停滞，单纯调学习率不能补足新 experience。",
+        "该工作把环境并发扩展到百万级并重组采样/更新数据流，用更广状态覆盖维持 policy improvement。",
+        "证据只支持其 simulator、policy 和硬件布局；极端并发的样本相关性、通信成本与现实环境有效性仍需独立验证。",
+        "更大并发提高覆盖，却增加环境一致性、聚合带宽和 stale-policy 风险；环境昂贵或可复用数据充分时较小并发仍合理。",
+    ),
+    "06123": S(
+        "diffusion language model 若预先固定生成长度，会把长度预测错误转化为 padding 浪费或内容截断。",
+        "论文指出 mask/denoise state 本身携带剩余长度信息，并据此让生成过程动态决定终止。",
+        "结果只支持所测 DLM、任务和 sampling schedule 的长度感知；不能等同于语义完成度或生产 SLO 保证。",
+        "动态长度减少固定预算浪费，却引入终止校准和批次形状变化；结构化输出仍可使用显式长度上限。",
+    ),
+    "06130": S(
+        "robot safety 数据若只从成功任务或随机失败收集，危险状态分母与伤害严重度不会进入训练 contract。",
+        "论文以 hazard taxonomy 驱动场景、trajectory 与标注采集，使 physical risk 成为可追踪的数据 lineage。",
+        "结果仅证明其机器人、hazard set 与 evaluator 下的数据覆盖；不能声明未枚举风险已被消除。",
+        "hazard-driven 数据提高安全召回，却增加长尾采集、仿真真实性和标签维护成本；低风险封闭环境仍可用普通任务数据。",
+    ),
+    "06138": S(
+        "LLM policy gradient 若对整条 response 统一归因，会把无关 token 的噪声传播到真正决定 reward 的位置。",
+        "Partial Policy Gradients 只对由规则或估计器识别的责任片段施加 policy update，改变 credit-assignment 粒度。",
+        "论文结果只支持其任务、责任选择器和 reward；不能证明选择器不会遗漏跨 token 依赖或引入偏差。",
+        "局部更新降低方差，却依赖可靠 attribution 并可能破坏全局一致性；短答案或 dense reward 仍适合全序列更新。",
+    ),
+    "06198": S(
+        "RAG 只报告检索 recall 或答案分数，会把 generator 使用 evidence 的能力与检索质量混在一起。",
+        "LIT-RAGBench 固定提供的 evidence，并系统改变 relevance、noise 与回答要求以单独测 generator contract。",
+        "排名只属于其文档、模型、prompt 和 evaluator；不代表端到端 corpus、权限与 latency 已被覆盖。",
+        "解耦评测提高归因，却可能低估真实检索错误；生产 release gate 仍需补端到端链路。",
+    ),
+    "06263": S(
+        "on-device DNN 分层执行时，切分点会同时决定隐私暴露、TEE 容量和服务端算力，固定 partition 难以兼顾。",
+        "SPOILER 将 TEE-shielded partition 与 poison-learning threat model 联合优化，显式划分可信/非可信执行边界。",
+        "结果只支持其设备、DNN、TEE 和攻击模型；不证明 side channel、runtime 漏洞或所有 poisoning 被覆盖。",
+        "更深可信切分减少暴露却增加 enclave memory/latency；完全本地或完全可信云在对应条件下仍更简单。",
+    ),
+    "06274": S(
+        "稀疏 attention 只比较保留多少连接，会忽略被裁剪图是否仍允许关键信息跨层到达目标 token。",
+        "Stem 从 causal information flow 角度刻画稀疏拓扑，把路径可达性与每层选择共同纳入设计。",
+        "理论和实验只支持指定 sparse pattern 与任务；可达不意味着信息无损，也不证明所有硬件实现更快。",
+        "结构化稀疏降低计算，却可能拉长路径并产生信息瓶颈；短序列或 exactness 优先时 dense attention 仍成立。",
+    ),
+    "06317": S(
+        "next-token entropy 是局部生成分布，不等于答案正确概率，直接据此拒答会系统性失校准。",
+        "论文把 uncertainty reasoning 作为显式训练目标，并用 calibration、selective accuracy 与分布转移检查自报置信。",
+        "结果只支持所测模型、任务和 calibration split；模型生成的 confidence 仍不能替代外部 evidence。",
+        "校准训练改善风险排序，却牺牲 coverage 并随分布漂移失效；高风险 claim 仍需 claim-level verifier。",
+    ),
+    "06413": S(
+        "RL framework 各自命名 actor、environment、buffer 与 learner，导致架构比较被 API 表象遮蔽。",
+        "该工作从 18 个框架归纳 reference architecture，以组件、数据流和控制关系重建可比较的训练系统 contract。",
+        "grounded-theory 结果支持这些实现中的共同结构，不证明 reference architecture 对未来异步/多智能体框架完备。",
+        "统一词汇改善比较和集成，却可能抹平性能关键特例；具体实现仍需保留自己的 execution semantics。",
+    ),
+    "06422": S(
+        "只用静态问答评测安全分析 LLM，会遗漏工具调用、动态证据和多阶段 incident workflow。",
+        "SIABENCH 将深度调查与告警分诊拆为可扩展场景，并用 agent 执行网络、内存、恶意样本和日志分析。",
+        "结果只覆盖其 160 个场景、11 个模型和 sandbox；不能证明真实 SOC 权限、数据漂移或误操作成本。",
+        "更真实的 agentic benchmark 提高外部有效性，却增加环境维护和安全隔离；单一分类器仍可用静态 test set。",
+    ),
+    "06444": S(
+        "流式文本驱动 TTS 既缺未来 lookahead，又会因累积全部历史在长文本中崩溃。",
+        "论文训练模型在 prosodic boundary 提前停止，并用滑动窗口携带有限文本/语音状态，实现有界上下文拼接。",
+        "结果绑定其 TTS 模型、语言和长文本集；不能从 WER 改善推断跨说话人、并发或端到端对话 SLO。",
+        "有界 state 稳定长流资源，却可能在边界预测错误时产生韵律断裂；离线合成仍可利用完整文本。",
+    ),
+    "06445": S(
+        "situated agent 无法安全探索时，单帧 observation 不足以回答路径和未来状态问题。",
+        "WanderDream 用 world model 生成从当前状态到目标的 imagined trajectory，并分别评测起点、路径与终态推理。",
+        "数据与实验支持所测室内场景中的 emulative simulation；生成轨迹的物理/因果真实性和真实部署安全未被证明。",
+        "想象 rollout 降低真实探索成本，却会传播 model bias；允许安全交互时真实 observation 仍是更强证据。",
+    ),
+    "06450": S(
+        "把跨 embodiment 数据简单混合，会把视角、外观和形态差异混为同一种 diversity。",
+        "论文用配对 data analogy 对齐场景、任务或 trajectory，区分 perceptual diversity 与 morphology transfer 所需证据。",
+        "结果只支持其仿真和机器人设置中的成功率变化；不能把 22.5% 提升外推到未对齐 action schema。",
+        "配对提高 transfer 信号，却显著增加采集和对齐成本；单 embodiment 或目标数据充足时直接训练更简单。",
+    ),
+    "06453": S(
+        "一个通用图像生成模型难同时满足多个产品任务的严格控制、质量与上线节奏。",
+        "Pinterest Canvas 以共享 foundation diffusion model 为起点，再通过任务数据产生专用 variant，并把数据、训练、推理和 A/B release 串成产品流水线。",
+        "线上 uplift 只属于公开两个用例、用户流量和评价合同；未披露硬件、并发和长期漂移不能推断。",
+        "共享基座降低重复训练，却引入 variant 管理、数据偏差和回归矩阵；需求相近时单一模型仍可减少运维成本。",
+    ),
+    "06508": S(
+        "多模态 diffusion 的高 attack-success rate 可能掩盖 trigger 实际只依赖单一模态，传统总分无法归因。",
+        "论文用 Trigger Modality Attribution 与 Cross-Trigger Interaction 分解各模态贡献，识别 backdoor modality collapse。",
+        "证据只支持其模型、攻击和训练配置；winner-takes-all 现象不等于所有 multimodal backdoor 都同构。",
+        "分模态评测提高诊断，却增加组合实验成本；单模态模型仍可使用传统攻击成功率。",
+    ),
+    "06569": S(
+        "VLM 依赖对比预训练视觉 encoder 时，分类不变性可能抹掉 dense perception 所需的细粒度时空信息。",
+        "Penguin-VL 从 text-only LLM 初始化视觉 encoder，测试表示目标而非单纯扩大模型规模的替代路线。",
+        "公开结果支持 2B/8B 模型和所测图像视频任务；不能证明任意语言权重都优于 CLIP/SigLIP 初始化。",
+        "更统一的初始化提高细粒度表示潜力，却增加模态适配和训练不稳定性；检索/分类任务仍可能受益于对比 encoder。",
+    ),
     "05553": S(
         "function-calling 数据的数据库、可执行环境、schema 与 trajectory 若分开生成，跨 artifact 错误无法归因。",
         "EigenData 让多个专责 agent 共享可验证 artifact graph，并以数据库终态而非轨迹表面匹配作为任务 oracle。",
@@ -214,6 +443,18 @@ SYNTHESIS = {
         "ESAA-Security 让 agent 只提交结构化 intent，由 orchestrator 验证后写 append-only event log，再重放投影与 hash 校验。",
         "公开稿提供体系和任务清单，能证明 contract 可表达；没有独立 artifact 时不能声称覆盖率或防护效果。",
         "事件溯源提高复算性但增加 schema、存储和投影一致性；小型人工审计仍可用普通报告链。",
+    ),
+    "06577": S(
+        "any-to-any 多模态理解与生成若直接继承自回归骨干，会把所有模态都绑定到单向逐 token 提交。",
+        "Omni-Diffusion 以 mask-based discrete diffusion 联合建模文本、图像与语音 token，并以模态专属 codec、长度控制和并行去噪保留各模态的生成边界。",
+        "exact-v1 只支持 Dream-7B 及公开 ASR、TTS、VQA、文生图 workload 中的可行性与采样步数关系；硬件、精度、并发和生产 SLO 未披露。",
+        "统一 backbone 提供并行可修正状态，却没有消除 codec、解码策略和 evaluator 的模态差异；需要强顺序 commit 或 typed output 时自回归/专用 head 仍成立。",
+    ),
+    "06578": S(
+        "把 MLLM 分类得分视为模型固有能力，会隐藏标签、输出映射、distractor、batch 与样本顺序对结论的共同控制。",
+        "论文把 closed-world、multiple-choice 与 open-world 协议拆开，并显式改变重标注、响应格式、OOV 处理、mapping encoder、batch size、顺序和组成，显示它们共同构成 EvalRun identity。",
+        "exact-v1 只支持五个公开 MLLM、ImageNet-1k/ReGT 子集及披露协议下的结论反转；ReGT 尚未公开，不能把修正标签当作最终真值或外推所有分类 workload。",
+        "更完整的评测身份改善归因，却增加标注成本、映射依赖和自由度；严格 exact-match 仍可作可复算基线，但必须显式声明其偏差。",
     ),
     "06588": S(
         "高性能 serving engine 封装内部 state 后，activation probe、steering 与安全 monitor 无法在不 fork runtime 时接入。",
@@ -331,15 +572,10 @@ def sha(path: Path) -> str:
 
 
 def independent_closure_reason(row: dict) -> str:
-    text = (row["title"] + " " + row.get("abstract", "")).lower()
-    if not any(token in text for token in (
-        "llm", "language model", "agent", "transformer", "vision-language", "world model",
-        "diffusion", "gpu", "inference", "training", "retrieval", "foundation model",
-    )):
-        return "fresh-context closure: no AI-System object in the title+abstract contract"
-    if any(token in text for token in ("medical", "disease", "wireless", "agriculture", "satellite")):
-        return "fresh-context closure: domain application without a reusable AI-System ownership or evaluation delta"
-    return "fresh-context closure: local model/task method; no durable state/data/control ownership, platform contract, or Books correction"
+    # Persist the family-specific title, abstract thesis and exclusion boundary.
+    # The semantic judgment is performed before this function is called; this
+    # serializer must not collapse it back into a keyword-derived template.
+    return "fresh-context adjudication: " + author.base.closure_reason(row)
 
 
 def write_denominator_receipt(day: int, records: dict) -> tuple[dict, str]:
@@ -469,6 +705,7 @@ def write_evidence_receipt(day: int, records: dict) -> tuple[dict, str]:
         "schema": "fresh-context-evidence-books-audit-v2.1",
         "auditor": "fresh-context:march-lane-a-reviewer",
         "report_date": f"2026-03-{day:02d}",
+        "status": "open" if any(x["status"] == "open" for x in items) else "passed",
         "reviewed_candidates": len(items),
         "passed_candidates": sum(x["status"] == "passed" for x in items),
         "open_candidates": sum(x["status"] == "open" for x in items),
@@ -529,17 +766,38 @@ def patch_report(day: int, denominator: dict, denominator_sha: str, evidence: di
         "- fresh-context Coverage / Evidence / Selection audit 已完成；仅 Integrate 串行 writeback 与 post-write Books audit 尚未完成。",
     )
     path.write_text(text)
+    author_audit_path = ROOT / f"papers/2026/03/_sources/daily-202603{day:02d}/author-side-audit.json"
+    author_audit = json.loads(author_audit_path.read_text())
+    author_audit["fresh_context_status"] = (
+        "evidence_open" if evidence["open_candidates"]
+        else "coverage_evidence_selection_passed_books_queue_pending"
+    )
+    author_audit["fresh_context_denominator_receipt_sha256"] = denominator_sha
+    author_audit["fresh_context_evidence_receipt_sha256"] = evidence_sha
+    author_audit_path.write_text(json.dumps(author_audit, ensure_ascii=False, indent=2) + "\n")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--day",
+        dest="days",
+        action="append",
+        type=int,
+        choices=range(9, 17),
+        help="只重建指定日期；可重复传入。默认重建 03-09..16。",
+    )
+    args = parser.parse_args()
     author.configure()
     author.base.SECTION_OVERRIDES.update(SECTION_OVERRIDES)
     author.base.pdf_sections = reviewer_pdf_sections
     install_exact_v1_pdf_fallback()
     author.base.review_one = reviewer_review_one
+    author.base.score = reviewer_score
     author.base.DURABLE_CANDIDATES = FINAL
     author.base.NODE_OVERRIDES.update({f"2603.{suffix}": node for suffix, node in NODE.items()})
     author.base.PAPER_SYNTHESIS.update({f"2603.{suffix}": value for suffix, value in SYNTHESIS.items()})
+    author.base.INTEGRATE_SUGGESTIONS.add("2603.06578")
     author.base.NARRATIVE_LENS.setdefault(
         "AGENT-PLATFORM",
         (
@@ -549,11 +807,65 @@ def main() -> None:
             "单 agent、短任务和固定工具集仍可使用普通应用 runtime。",
         ),
     )
+    author.base.NARRATIVE_LENS.setdefault(
+        "AGENT-TOOL-CALLING",
+        (
+            "自由文本建议在没有副作用时路径最短，也不需要维护执行协议。",
+            "结构化输出、外部 action 与 grammar 约束要求把 proposal、validation 和 commit 分离。",
+            "tool/schema identity、grammar state、argument validation、authorization 与 execution receipt",
+            "只读且无副作用的低风险查询仍可使用较薄的调用层。",
+        ),
+    )
+    author.base.NARRATIVE_LENS.setdefault(
+        "INFER-DECODE",
+        (
+            "一次性离线生成可持有完整输入和历史，控制流简单且质量优先。",
+            "流式输入、长输出与交互时延要求 decode state 有界、可续接并可安全终止。",
+            "per-step decode state、termination、stream boundary 与 output commit",
+            "输入完整且无交互 SLO 时，离线全上下文生成仍更易保证连贯性。",
+        ),
+    )
+    author.base.NARRATIVE_LENS.setdefault(
+        "MODEL-SELF-ATTENTION",
+        (
+            "dense attention 保留任意 token 间的直接依赖，最容易解释信息可达性。",
+            "序列扩展和资源上限迫使模型裁剪连接，同时仍需维持跨层信息路径。",
+            "attention graph、causal reachability、稀疏 pattern 与跨层信息路径",
+            "短序列、容量足够或 exactness 优先时，dense attention 仍是可靠基线。",
+        ),
+    )
+    author.base.NARRATIVE_LENS.setdefault(
+        "PLATFORM-PRODUCTION",
+        (
+            "单模型、单任务的离线交付在需求稳定时最少引入生命周期状态。",
+            "多用例、在线反馈和持续发布要求数据、模型 variant、服务与 release evidence 共同版本化。",
+            "production asset identity、variant lineage、deployment state、online evidence 与 rollback",
+            "需求单一且发布频率低时，冻结模型和人工验收仍有更低治理成本。",
+        ),
+    )
+    author.base.NARRATIVE_LENS.setdefault(
+        "TRAIN-PPO",
+        (
+            "同步、小规模 rollout 容易复算 policy version 与 trajectory，对早期实验足够。",
+            "环境覆盖、吞吐和长轨迹压力要求并行采样，同时控制 stale policy 与更新边界。",
+            "policy version、environment state、rollout ownership、advantage 与 optimizer commit",
+            "环境昂贵、数据可复用或规模较小时，同步 rollout 仍更稳定。",
+        ),
+    )
+    author.base.NODE_PATH.setdefault(
+        "MODEL-SELF-ATTENTION", "books/part-02-model/14-self-attention.md"
+    )
+    author.base.NODE_PATH.setdefault(
+        "TRAIN-PPO", "books/part-04-training-system/32-ppo.md"
+    )
+    author.base.NODE_PATH.setdefault(
+        "INFER-DECODE", "books/part-05-inference-system/44-decode.md"
+    )
     raw_total, records, _ = author.base.load_records()
     missing = FINAL - set(records)
     if missing:
         raise RuntimeError(f"fresh denominator identities absent from recovery receipt: {sorted(missing)}")
-    for day in range(9, 17):
+    for day in args.days or range(9, 17):
         author.base.render_day(day, raw_total, records)
         enforce_withdrawn_identity_closure(day)
         denominator, denominator_sha = write_denominator_receipt(day, records)

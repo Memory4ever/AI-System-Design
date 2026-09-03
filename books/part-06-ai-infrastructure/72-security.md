@@ -566,6 +566,14 @@ semantics 与可枚举 transition 一旦被 schema evolution、外部副作用�
 系统。Formal Verification of Agentic Systems 提供这一受限分支的理论证据，不证明任意 LLM Agent 可验证；trace、
 simulation、canary 与 incident evidence 因而继续存在。
 
+### Behavioral Contract 把 Invariant、Drift 与 Recovery 变成运行期状态
+
+有界 model checking 适合 transition schema 与可达状态都可枚举的系统；开放式 Agent 的自然语言输出、概率行为和持续会话往往无法提前穷举。运行期 contract 可以把每轮 precondition、hard/soft invariant、probabilistic satisfaction、drift score 与 recovery action 编译为可执行 `ContractSpec`，monitor 在 action/effect 前读取结构化 state、记录 violation，并由独立 recovery policy 决定 retry、repair、defer 或终止。多 Agent 串联时，每个局部 guarantee 只能在下游 precondition 接受且 composition identity 一致时传递，不能把单 Agent 分数直接相乘成系统安全证明。
+
+Contract evaluator 是 reference monitor 的一个受限实现，不是原始事实传感器。`tone_score`、PII flag 或 confidence 等字段仍由独立 extractor 产生，其版本、误差和缺失必须传播为 Unknown；概率阈值、reference distribution 与 recovery success 也会漂移。`arXiv:2602.22302v1` 的 exact-v1 只支持 §3 的 contract 语义、§4.3 composition、§5 的 reference architecture、作者 benchmark/实验与 §8.2 限制，不证明 live production Agent 已满足形式保证。feature 不可验证、contract 冲突、composition 假设失效或 action 不可逆时，应 fail closed、sandbox 或人工审批；静态 policy、trace audit 与有界 model checking 继续作为更强或更便宜的共存分支。
+
+<!-- source-family:SF-2026-ARXIV-2602-22302 -->
+
 ## 从 Scalar Confidence 到 Safe-commit Certificate
 
 即使状态空间无法完整验证，高风险 action 也不应只凭一个“置信度”提交。运行时可以从 observation、Memory 与 tool
@@ -733,6 +741,14 @@ owners 回报 propagation，audit 只验证证据而不复活已删除内容。A
 forgetting 又与 incident recovery 和合规留存冲突；两者必须由 purpose-specific policy 解决。GateMem 的作者
 benchmark 揭示 utility-only memory 的这一缺口，但自动 judge 与 synthetic principals 不证明现实法律删除或
 所有隐式泄漏已覆盖。
+
+#### Forgetting 必须关闭 Parameter–Memory Backflow
+
+模型参数与外部 memory 分别删除，在两者从不互相写回时可以独立验收；Agent 会把参数生成的摘要写进 memory，也会用 memory 检索结果继续训练或适配参数，于是只清理一侧会让另一侧把目标信息重新注入。forgetting transaction 必须以 source item 与派生 lineage 为根，同时版本化参数删除、memory/index/cache tombstone、再训练/再嵌入任务和 leak probes：memory lifecycle owner 提交外部副本删除，training owner 提交候选参数 artifact，independent audit 在两条路径都闭合后才签发完成状态。
+
+同步关闭 backflow 提高删除一致性，却扩大 lineage、重算和 retained-utility 回归成本；不完整 provenance 会产生“看似删除、随后恢复”的 failure mode。两侧确实隔离、外部 memory 从未持久化或可以从干净源完全重建时，独立删除仍是较简单的旧路径；lineage 无法证明时应保留未完成状态、限制服务或重训，不能把一次 probe 未命中当成全局遗忘。
+
+<!-- SF-2026-ARXIV-2602-17692 -->
 
 ### Agent 自己的 Instruction、Config 与 Memory 也是受保护资产
 
@@ -1055,6 +1071,14 @@ data access and consent
 第27章拥有实验数据 lineage，第66章拥有 claim/evidence 判断，第81章拥有 approval、durable execution 与 replication state；本章拥有身份、最小权限、危险操作 policy、隔离、审计和 emergency stop。高质量模型输出不能越过领域专家、实验设施和法规所拥有的 authority。
 
 ## 风险管理而不是一次性认证
+
+### Incident Response 必须闭合 Trigger、Check、Remediation 与 Rule Revision
+
+只在部署前认证 policy，在威胁与运行环境稳定时成本最低；Agent 取得工具与持续状态后，安全事件会在运行期暴露，单次认证既不能决定当前 incident 是否真实，也不能保证 remediation 没有扩大副作用。可执行 response contract 应把触发信号、incident-specific check、结构化 remediation、每步后的 environment observation 和最终 guardrail revision 串成受控状态机：检测器与模型只产生风险/动作 proposal，reference monitor 在 effect time 重新授权，incident owner 依据 outcome receipt 决定继续、回滚、隔离或升级人工处理。
+
+把处置结果反馈成规则可以缩短同类事件响应，却可能把误报固化为长期拒绝、让攻击者污染 policy，或因语义检查延迟扩大恢复时间；静态规则在资产和威胁简单时仍更易审计。`arXiv:2602.11749v1` 的 exact-v1 只支持 AIR DSL 披露的 trigger、incident check、structured remediation、stepwise state observation 与 rule derivation，以及作者实验；其 false positives、检查延迟和当前 plan-level instantiation 不证明自动修复可取代独立 authorization、生产 incident command 或人工复核。
+
+<!-- source-family:SF-2026-ARXIV-2602-11749 -->
 
 ### 训练态共享统计也是隐私通道
 
@@ -1439,6 +1463,14 @@ prompt-injection detector 的 calibration 要按 attack severity 与 shift slice
 
 <!-- source-family:SF-2026-ARXIV-2605-16776 -->
 
+#### Deployed Precision 是 Forgetting Evidence 的组成部分
+
+在全精度 checkpoint 上验证 unlearning，在训练与部署 artifact 完全一致时是合理的；部署量化会把权重投影到离散网格，小幅删除更新可能被 rounding 抹去，使全精度中已经降低的目标行为重新出现。因而“已经遗忘”不能只绑定训练 run：evidence identity 必须同时包含 base checkpoint、unlearning delta/adapter、merge 顺序、quantizer、bit width、calibration data、kernel 与最终 serving artifact。训练系统只产生候选删除状态，artifact pipeline 拥有量化事实，独立 evaluation 才能为每个实际部署版本签发或拒绝 forgetting gate。
+
+为量化鲁棒性扩大更新幅度或保留低秩删除分量，会提高跨精度保持率，却可能损害 retained utility、增加 artifact 组合和回归测试成本；某个位宽通过也不能证明其他量化器或后来 merge 仍安全。高风险删除、校准数据改变或 artifact lineage 不完整时，应停止发布、保留更高精度版本或回到数据删除与重训，而不能用一次全精度拒答结果替代部署态擦除证据。
+
+<!-- SF-2026-ARXIV-2602-13151 -->
+
 ### Referential Security：身份声明必须可持续验证
 
 依赖 provider name、model label 或一次性 fingerprint，在封闭供应链中足够；API 代理、动态路由与静默更新使同一名称不再稳定指向同一执行对象。Security owner 需要把 reference identity、attestation/fingerprint、调用时版本与允许变更策略组成可验证链，漂移时阻断、降权或重新评估。收益是减少“名称相同、对象已变”的供应链风险，代价是 attestation 基础设施、密钥/指纹轮换和兼容性；没有可验证标识时只能标记版本事实并缩小权限。exact-v1 提供 threat model、workflow 与架构提案及 provider identifier survey，没有证明大规模生产部署效果。<!-- source-family:SF-2026-ARXIV-2605-25673 -->
@@ -1494,11 +1526,31 @@ Agent 场景还要分开 trigger optimization 与 payload optimization：前者�
 
 <!-- source-family:SF-2026-ARXIV-2605-08876 -->
 
+### Control Evaluation 要测试 Attacker 如何选择攻击时机
+
+随机注入攻击可以估计 monitor 在给定分布上的识别能力，却会高估有耐心的 attacker 面前的安全性。对手会先为候选攻击估计被发现风险，再根据质量与审计预算决定是否提交；低频、高选择性攻击会让安全对 monitor false-positive rate 比平均 true-positive rate 更敏感。因此 red-team contract 必须同时冻结 attack generator、quality estimator、submission policy、attempt opportunity 和 audit budget，不能只报一个 monitor accuracy。
+
+这种评测更接近自适应对手，但受 red-team 能力、攻击候选集和窄审计预算强烈影响，不是真实攻击概率上界。选择器未被充分激发时，应将结论降为已见攻击下界，并保留独立审计、最小权限和 safe-commit gate。<!-- source-family:SF-2026-ARXIV-2602-04930 -->
+
+### Partial TEE 协议的秘密随机性不得跨请求复用
+
+把一部分算子放进 TEE 并不自动保护外部 accelerator 上的模型机密性或计算完整性。为减少在 enclave 内生成随机状态的成本而复用 precomputed static secret basis，会让多次观测抵消噪声并恢复 permutation、weights 或伪造 integrity check。协议 identity 必须显式包含 entropy source、nonce/counter、request binding、key epoch、allowed reuse 范围与 crash-recovery 规则；不能只记录“TEE enabled”。
+
+每请求新鲜秘密会增加 enclave 计算、通信和恢复状态，但预计算优化只有在可证明 domain separation 与不可组合性时才可用。做不到时应回退完整 TEE/MPC、受信硬件或缩小机密性声明；作者对特定协议和模型的攻击不证明所有 split-inference 设计都可同样攻破。<!-- source-family:SF-2026-ARXIV-2602-11088 -->
+
 ## 小结
 
 AI security 必须贯穿数据、训练、artifact、serving 与 action。正确设计不依赖模型永远服从，而是让任何不可信输出都经过独立、最小权限、可审计的执行边界；来源、行为 probe、运行隔离与 rollback 分层共存，任何一层都不能单独证明安全。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-22302`（Status: Experimental）：exact-v1 §3、§4.3 与 §5 支持 executable behavioral contract、probabilistic satisfaction、composition、per-turn enforcement 与 recovery；§6～§7 是作者 benchmark/实验，§8.2 明示 structured feature extraction 等边界，不证明 live production Agent 的通用安全。https://arxiv.org/html/2602.22302v1
+
+- `SF-2026-ARXIV-2602-11749`（Status: Experimental）：exact-v1 支持 AIR 的 trigger、incident check、structured remediation、stepwise state observation 与 post-incident rule derivation；作者结果同时暴露 safe-task false positives，且语义检查 latency、learned check 与 plan-level 实例化不构成生产自动修复授权。https://arxiv.org/html/2602.11749v1
+
+- `SF-2026-ARXIV-2602-17692`（Status: Experimental）：exact-v1 的 §3.1～3.2 定义 agent memory 与 synchronized backflow unlearning，§4.1～4.3 给出作者设置、结果与消融，§5/Ethical Statement 不证明不可恢复删除、现实合规或所有派生副本已覆盖；它支持同步 contract，不支持用有限 leak probe 宣称全局擦除。https://arxiv.org/html/2602.17692v1
+
+- `SF-2026-ARXIV-2602-13151`（Status: Experimental）：exact-v1 的 §III 展示 quantization-induced unlearning failure，§IV 给出低秩鲁棒方案，§V～VI 固定指标、实现和结果，§VII 不证明所有模型、量化器、bit width 或攻击 probe 下的擦除；它支持“按最终部署 artifact 重验”，不支持把行为拒答等同于参数不可恢复。https://arxiv.org/html/2602.13151v1
 
 - `SF-2026-ARXIV-2604-23205`（Status: Experimental）：exact-v1 支持 burst-aligned AES-CTR weight streaming、隔离 SRAM plaintext window 与 proxy/idealized evaluation；不证明 fabricated NPU、invasive/side-channel/supply-chain security 或生产 SLO。https://arxiv.org/abs/2604.23205v1
 - `SF-2026-ARXIV-2604-24790`（Status: Experimental）：exact-v1 支持 simulated tool-calling robot 中短 audio injection 对 stop/acknowledgement/alert 状态的影响；不证明真实声学链路、生产机器人或 prompt defense 可替代独立 controller。https://arxiv.org/abs/2604.24790v1

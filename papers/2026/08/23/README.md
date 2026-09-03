@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-22 09:00:00` 至 `2026-08-23 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 222 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：4 个 Deep Review、0 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`AGENT-MEMORY` 中由《MemGuard: Persisting Verifier Signals for LLM-Agent Memory Governance》暴露的状态/证据边界；`AGENT-WORKFLOW` 中由《Training Needs Trustworthy Worlds: Verified Synthetic Web Environments for Agent Learning》暴露的状态/证据边界；`AGENT-PLATFORM` 中由《Repo2Skill-Evo: Repository Skills Go Stale in Silence》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -74,13 +73,12 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 <!-- validator:review-completion-v1 -->
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2608-21836 | RP-b59f3bd78cfc672c | deep | arXiv:2608.21836v1 | SRC-ARXIV@arXiv:2608.21836v1 | https://arxiv.org/html/2608.21836v1 (§§3.1–3.3: phase-aware extraction, episodic optimization and deployment-time patch acceptance) | https://arxiv.org/html/2608.21836v1 (§§4.1–4.5 and Appendix A.4–A.5: ten A100/H100 workloads, deployment baselines, KernelBench and ablations) | https://arxiv.org/html/2608.21836v1 (§§2.1–2.2 and Appendix A.1–A.3: speedup reversal, runtime failure, restart/search and API-compatibility boundaries) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-21836 | complete |
-| SF-2026-ARXIV-2608-21867 | RP-34c2b25cdf00de41 | deep | arXiv:2608.21867v1 | SRC-ARXIV@arXiv:2608.21867v1; SRC-GITHUB-COMMIT@https://github.com/whyyyyy123/MemGuard/commit/589b818aecc108c3cf665de68f66e21e9d71fa96 | https://arxiv.org/html/2608.21867v1 (§§3.2–3.5 and Appendix D.1–D.3: structured memory units, verifier admission, retrieval, consolidation and governance) | https://arxiv.org/html/2608.21867v1 (§§4.1–4.4 plus Appendices A and C: four-backbone matched-budget evaluation, verifier controls and ablations) | https://arxiv.org/html/2608.21867v1 (post-§5 limitation subsections and Appendices C.4/E: verifier dependence, label noise, privacy and malicious-memory residual risk) | https://github.com/whyyyyy123/MemGuard/commit/589b818aecc108c3cf665de68f66e21e9d71fa96 (event-time commit 2026-08-22T07:52:31Z) | claim:SF-2026-ARXIV-2608-21867 | complete |
-| SF-2026-ARXIV-2608-21898 | RP-66205f7b2918c682 | deep | arXiv:2608.21898v1 | SRC-ARXIV@arXiv:2608.21898v1 | https://arxiv.org/html/2608.21898v1 (§§4.1–4.4 and Appendices A.2–A.9: typed state, verification-guided construction, event simulation and state-grounded reward) | https://arxiv.org/html/2608.21898v1 (§§5.1–5.2 plus Appendices B–C: 500-environment, six-domain feasibility, transfer and independent-audit evidence) | https://arxiv.org/html/2608.21898v1 (Appendix D and §§C.5–C.8: generation distribution, verifier/repair reliability, policy failure and real-site-drift boundaries) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-21898 | complete |
-| SF-2026-ARXIV-2608-21964 | RP-d05c277a4f19cc03 | deep | arXiv:2608.21964v1 | SRC-ARXIV@arXiv:2608.21964v1 | https://arxiv.org/html/2608.21964v1 (§§3.1–3.4 and §§9.1–9.3: traceable skill set, patch-grounded maintenance task, scaffold and obsolete-set construction) | https://arxiv.org/html/2608.21964v1 (§§4.1–4.4 and §§10–11: 57 repositories, 105 transitions, six agents, localization ablation and robustness diagnostics) | https://arxiv.org/html/2608.21964v1 (§5 and §§10.1–10.2: corpus scope, contamination, coverage/localization and recall-versus-over-edit precision boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-21964 | complete |
+| SF-2026-ARXIV-2608-21836 | RP-4aee6297567d95b8 | deep | arXiv:2608.21836v1 | SRC-ARXIV@arXiv:2608.21836v1 | https://arxiv.org/html/2608.21836v1 (§§3.1–3.3: phase-aware extraction, episodic optimization and deployment-time patch acceptance) | https://arxiv.org/html/2608.21836v1 (§§4.1–4.5 and Appendix A.4–A.5: ten A100/H100 workloads, deployment baselines, KernelBench and ablations) | https://arxiv.org/html/2608.21836v1 (§§2.1–2.2 and Appendix A.1–A.3: speedup reversal, runtime failure, restart/search and API-compatibility boundaries) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-21836 | complete |
+| SF-2026-ARXIV-2608-21867 | RP-3c2ff71420db5a11 | deep | arXiv:2608.21867v1 | SRC-ARXIV@arXiv:2608.21867v1; SRC-GITHUB-COMMIT@https://github.com/whyyyyy123/MemGuard/commit/589b818aecc108c3cf665de68f66e21e9d71fa96 | https://arxiv.org/html/2608.21867v1 (§§3.2–3.5 and Appendix D.1–D.3: structured memory units, verifier admission, retrieval, consolidation and governance) | https://arxiv.org/html/2608.21867v1 (§§4.1–4.4 plus Appendices A and C: four-backbone matched-budget evaluation, verifier controls and ablations) | https://arxiv.org/html/2608.21867v1 (post-§5 limitation subsections and Appendices C.4/E: verifier dependence, label noise, privacy and malicious-memory residual risk) | https://github.com/whyyyyy123/MemGuard/commit/589b818aecc108c3cf665de68f66e21e9d71fa96 (event-time commit 2026-08-22T07:52:31Z) | claim:SF-2026-ARXIV-2608-21867 | complete |
+| SF-2026-ARXIV-2608-21898 | RP-1f90d165cf620d53 | deep | arXiv:2608.21898v1 | SRC-ARXIV@arXiv:2608.21898v1 | https://arxiv.org/html/2608.21898v1 (§§4.1–4.4 and Appendices A.2–A.9: typed state, verification-guided construction, event simulation and state-grounded reward) | https://arxiv.org/html/2608.21898v1 (§§5.1–5.2 plus Appendices B–C: 500-environment, six-domain feasibility, transfer and independent-audit evidence) | https://arxiv.org/html/2608.21898v1 (Appendix D and §§C.5–C.8: generation distribution, verifier/repair reliability, policy failure and real-site-drift boundaries) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-21898 | complete |
+| SF-2026-ARXIV-2608-21964 | RP-199c83c3b3aa26f1 | deep | arXiv:2608.21964v1 | SRC-ARXIV@arXiv:2608.21964v1 | https://arxiv.org/html/2608.21964v1 (§§3.1–3.4 and §§9.1–9.3: traceable skill set, patch-grounded maintenance task, scaffold and obsolete-set construction) | https://arxiv.org/html/2608.21964v1 (§§4.1–4.4 and §§10–11: 57 repositories, 105 transitions, six agents, localization ablation and robustness diagnostics) | https://arxiv.org/html/2608.21964v1 (§5 and §§10.1–10.2: corpus scope, contamination, coverage/localization and recall-versus-over-edit precision boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-21964 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-21836:start -->
 #### LLM4LLM: Bridging Kernel Benchmarks and Real Deployment via Closed-Loop Agentic Optimization
 
@@ -91,7 +89,7 @@ LLM4LLM 从目标推理脚本提取 phase-aware kernel task，由 episodic agent
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 2 / System Reach 3 / Durability 2 = **7/9**。
 - Score rationale：Design Delta：提供编译后的执行计划的一条受限机制/诊断分支；System Reach：会跨模型、runtime 与平台边界传播；Durability：机制可复用，但证据仍依赖当前 workload。
-- Knowledge owner：`INFER-TENSORRT-LLM`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`INFER-TENSORRT-LLM`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-21836:end -->
 
 <!-- review:SF-2026-ARXIV-2608-21867:start -->
@@ -104,7 +102,7 @@ MemGuard 将 verifier 的 reward、confidence、label 与 uncertainty 持久附�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了持久及派生记忆的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以写入、检索、更新与回滚为长期设计约束。
-- Knowledge owner：`AGENT-MEMORY`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`AGENT-MEMORY`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-21867:end -->
 
 <!-- review:SF-2026-ARXIV-2608-21898:start -->
@@ -117,7 +115,7 @@ MemGuard 将 verifier 的 reward、confidence、label 与 uncertainty 持久附�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
 - Score rationale：Design Delta：改变了可恢复 workflow state的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：机制可复用，但证据仍依赖当前 workload。
-- Knowledge owner：`AGENT-WORKFLOW`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`AGENT-WORKFLOW`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-21898:end -->
 
 <!-- review:SF-2026-ARXIV-2608-21964:start -->
@@ -130,7 +128,7 @@ Repo2Skill-Evo 将一次 V1→V2 release patch 变成 skill maintenance task，�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
 - Score rationale：Design Delta：改变了Agent 运行与治理状态的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：机制可复用，但证据仍依赖当前 workload。
-- Knowledge owner：`AGENT-PLATFORM`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`AGENT-PLATFORM`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-21964:end -->
 
 ## 4. Benchmark Contracts
@@ -246,3 +244,5 @@ Repo2Skill-Evo 将一次 V1→V2 release patch 变成 skill maintenance task，�
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

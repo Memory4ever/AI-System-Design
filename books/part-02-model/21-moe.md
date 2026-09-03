@@ -159,6 +159,31 @@ full-width token state
 
 Dense MLP 在模型较小和 portability 优先时仍合理；标准 full-width MoE 在互联充足、机制简单和质量可预测性更重要时继续成立。Latent-coordinate MoE 只有在 projection cost、信息损失与 placement 复杂度能被 communication/weight-read 收益覆盖时才有意义。模型报告中的整体能力与 Serving headline 不能证明这一个组件的独立贡献。
 
+### Expert 粒度缩到向量后，Router 与执行顺序都必须重写
+
+传统 MoE 把一个完整 MLP 作为 expert，router 的候选数有限，选中后的 token batch 也容易交给 grouped GEMM；
+它在显存和通信可接受时保持了清晰的模块边界。把 expert 继续细化到 vector-level atomic unit 可以扩大组合容量，
+却让平坦路由的候选空间、随机 weight lookup 和小算子数量同时失控。此时不能只减小 expert 而沿用旧执行路径：
+router 可以把大索引分解为 Cartesian-product coordinates，executor 则从 token-centric gather 改为
+expert-centric scheduling，把共享同一 atomic expert 的 token 聚集后执行规则矩阵运算。
+
+```text
+token state
+→ factorized atomic-expert coordinates
+→ selected atomic expert set
+→ expert-centric regrouping
+→ dense batched execution
+→ combine into shared residual path
+```
+
+模型层拥有 factorization、shared dense branch 与 combine semantics；runtime 只拥有 permutation、batch formation 和
+kernel plan，不能为了 GEMM 方便改写已选择的 atomic experts。更细粒度换来更大组合空间，也新增 coordinate
+collision、router calibration、irregular regroup、metadata 与 shared-branch 归因问题。候选规模小、batch 太小、
+通信昂贵或 kernel 不支持稳定 regroup 时，粗粒度 expert 仍更合理。exact-v1 只在作者的模型、七个 benchmark 与
+实现上支持机制可行性，不证明 atomic granularity 普遍优于 coarse/fine-grained MoE。
+
+<!-- source-family:SF-2026-ARXIV-2602-05711 -->
+
 ## 为什么负载均衡是模型正确性的一部分
 
 如果 router 总把 tokens 送到少数 experts：
@@ -207,6 +232,21 @@ top-k 还会产生 distribution gap。Router policy、adapter/expert 参数、se
 ReMix 在单一模型家族和若干任务上的结果只证明这种分责可以避免其定义下的 routing collapse；它没有覆盖大规模 MoE、
 adapter paging、batch locality 或多租户 serving。Softmax mixture 在 top-1、规模较小或需要平滑端到端优化时仍合理；离散选择
 只有在额外训练方差与推理状态成本小于有效容量收益时才成立。
+
+### Batch-aware Expert Sharing 只能改执行集合，不能改 Router 语义
+
+逐 token Top-K 在请求独立、batch 小时最直接；continuous batching 和 speculative candidates 会扩大同一轮被激活的
+expert union，使每个 expert 只得到很小工作量，weight traffic 与 expert-parallel 峰值重新成为瓶颈。一个中间分支是
+保留每个 token 的 gating scores，却在 batch boundary 上选择可共享的有限 expert set：optimizer 以总 gating mass 为
+proposal objective，hierarchical selector 先处理请求/候选相关性，runtime 只让通过 admission 的 token 使用共享集合。
+
+共享集合不是新的模型真值。Router 仍拥有 token→expert scores，sharing policy 只能在显式质量预算内压缩本 batch 的
+可执行 expert union，并把被裁剪 mass、batch composition、speculative-tree identity 与 fallback 写入回执。收益是更大
+expert batch、更低 peak load 和更少 weight activation；代价是 token-specific specialization 损失、不同请求相互影响、
+batch churn、selector cost 与 fairness。高风险请求、低相关 batch、质量预算不足或 expert 全驻留时，应回退原始 Top-K。
+作者结果只覆盖其模型、batch、expert-parallel 与 speculative 设置，不能成为通用吞吐或质量承诺。
+
+<!-- source-family:SF-2026-ARXIV-2602-07265 -->
 
 ## Capacity 怎样约束 Expert
 
@@ -299,6 +339,25 @@ router-owned token / expert demand
 fabric topology 与生效 epoch；迁移期间还要处理 optimizer/checkpoint 一致性、双写或 quiescence。TAOT 的
 4×8 A800、Qwen3-30B-A3B 实验只支持 topology-aware replica placement 在该 contract 下可行，未覆盖故障恢复、
 多租户或 optimizer migration。固定 placement 在 workload 稳定、迁移昂贵或规模较小时仍是正确旧分支。
+
+固定显存预算还会限制“复制热点 expert”这条路径：若所有原件保持同一精度，新增副本可能根本放不下。一个受限的
+replicate-and-quantize 分支先在 calibration set 上分开 load 与 importance，再复制 heavy-hitter experts，并量化副本
+及低重要度原件以守住原 memory envelope。这里 frequency 只决定容量压力，不能独自代表语义重要度：
+
+```text
+router trace + per-expert load
++ quality sensitivity under a frozen calibration identity
+→ choose replicas and precision per expert
+→ validate memory, load and quality together
+→ publish one placement / precision epoch
+```
+
+Router 不变，placement owner 持有 replica mapping，quantization artifact 持有每个 expert 的 format/scale，runtime 按同一
+epoch dispatch。它用 calibration、量化误差和更复杂的 artifact 组合换并行容量；traffic/importance drift、错误 scale、
+副本版本不一致或热点迁移都可能同时破坏质量与平衡。显存充足、热点不稳定、质量回归不可接受时，应只重排、不量化
+或回退单副本。exact-v1 的作者结果只支持所测 sparse MoE 与 calibration contract，不证明 ±0.6% 一类结果跨模型成立。
+
+<!-- source-family:SF-2026-ARXIV-2602-19938 -->
 
 ## 通信为何可能吃掉稀疏收益
 
@@ -431,6 +490,14 @@ route collapse、quality drift、kernel shape 和 rollback state。ZEDA 的作�
 phase-throughput 与训练样本合同，不证明生产 latency/SLO 或“跳过一半 experts”可跨模型复用。原 static top-k
 在低风险、分布漂移或 distillation evidence 不足时仍是正确旧方案。
 
+### Execution Phase 可以成为 Router State，但不能成为隐藏标签
+
+token-level router 在每个位置独立选择 expert，适合语义局部且执行阶段不可观测的生成；Agent RL 的 planning、tool use、observation assimilation 与 answer commit 具有不同动作分布，把它们全部交给同一瞬时 router，可能在 phase boundary 上反复切换或让高频阶段吞噬容量。条件分支可以把显式 phase state 作为 router 输入，并对相邻时刻施加有限 temporal consistency：workflow/runtime 拥有 phase transition，router 只据此提出 expert mixture，expert weights 或 LoRA expert 仍是版本化 artifact，不能由模型在无证据时自行改写 phase。
+
+phase-aware routing 可以降低跨阶段梯度冲突、形成行为 specialization，却会增加 phase annotation/recognition error、切换滞后、router collapse 和专家闲置；过强一致性还会阻止真正的阶段转换。阶段边界不可靠、任务不是多阶段或 token-level evidence 已足够时，原有 top-k router 仍更可解释。任何收益都必须同时报告 phase definition、expert utilization、task return 与额外 routing/communication cost，不能把可命名 expert 当作真实能力所有权。
+
+<!-- SF-2026-ARXIV-2602-17038 -->
+
 ## MoE 与模型“专家化”的边界
 
 ### Conditional Compute 之前也可以先压缩 Sequence
@@ -518,6 +585,12 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-05711`（Status: Experimental）：primary=`arXiv:2602.05711v1`；Method=`§2 Methodology`；Evaluation=`§3.2 Main Results`；Non-proof=`§3.3 Ablation Studies`。只支持 Cartesian Product Router 与 expert-centric execution 在作者 atomic-expert 模型/实现中的机制和结果，不证明通用粒度最优或生产 SLO。
+- `SF-2026-ARXIV-2602-07265`（Status: Experimental）：primary=`arXiv:2602.07265v1`；Method=`§3.4 Practical Algorithm`；Evaluation=`§6 Experiments`；Non-proof=`§7 Conclusion`。只支持所测 batch、speculative candidates 与 expert-parallel 环境中的共享 expert-set admission，不证明所有 batch composition 下保持质量或吞吐。
+- `SF-2026-ARXIV-2602-19938`（Status: Experimental）：primary=`arXiv:2602.19938v1`；Method=`§2 Method: Replicate-and-Quantize for Efficient SMoE Inference`；Evaluation=`§3.2 Results`；Non-proof=`§5 Conclusion`。只支持所测模型中按 calibration 分离 load/importance、复制热点并量化以守住内存预算；不外推其他模型、精度、硬件或长期 traffic drift。
+
+- `SF-2026-ARXIV-2602-17038`（Status: Experimental）：exact-v1 的 Method/Phase-Aware Router/Temporal Consistency/Behavioral Experts 定义 phase-conditioned routing，Experiments/Main Results/Ablation Studies 给出作者设置中的结果，Supplementary failure analysis 暴露 gradient conflict、entropy mismatch 与 simplicity bias；它不证明 phase 标签普适、行为 expert 可解释或生产 serving 收益。https://arxiv.org/html/2602.17038v1
 
 - `SF-2026-ARXIV-2604-23036`（Status: Experimental）：exact-v1 支持 bias routing 与 always-active gated condenser 在作者 GPT-OSS/DeepSeek MoE SFT 合同中保留长尾 expert 信息；不证明低频 expert 的通用语义、跨模型最优 routing 或生产收益。https://arxiv.org/abs/2604.23036v1
 

@@ -1,0 +1,1332 @@
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration
+for Vision-Language-Action Models
+
+Yuting Huang * 1 Leilei Ding * 1 Zhipeng Tang * 1 Zenghuan Zhu 1 Jiajun Deng 1 Xinrui Lin 1 Shuo Liu 1
+Haojie Ren 1 Jianmin Ji 1 Yanyong Zhang 1
+
+Abstract
+Inference Time
+
+arXiv:2602.00780v1 [cs.AI] 31 Jan 2026
+
+While Vision-Language-Action (VLA) models
+hold promise in embodied intelligence, their
+large parameter counts lead to substantial inference latency that hinders real-time manipulation, motivating parameter sparsification. However, as the environment evolves during VLA
+execution, the optimal sparsity patterns change
+accordingly. Static pruning lacks the adaptability required for environment dynamics, whereas
+fixed-interval dynamic layer pruning suffers
+from coarse granularity and high retraining
+overheads. To bridge this gap, we propose
+EcoVLA, a training-free, plug-and-play adaptive pruning framework that supports orthogonal combination with existing VLA acceleration
+methods. EcoVLA comprises two components:
+Environment-aware Adaptive Pruning (EAP) and
+Interleaved Inference Orchestration (I2 O). EAP
+is a lightweight adaptive channel pruning method
+that incorporates the temporal consistency of the
+physical environment to update sparsity patterns.
+I2 O leverages the FLOPs bubbles inherent in VLA
+inference to schedule the pruning method in parallel, ensuring negligible impact on latency. Evaluated on diverse VLA models and benchmarks,
+EcoVLA delivers state-of-the-art performance,
+achieving up to 1.60× speedup with only a 0.4%
+drop in success rate, and further reaches 2.18×
+speedup with only a 0.5% degradation when combined with token pruning. We further validate the
+effectiveness of EcoVLA on real-world robots.
+
+Attention Head Importance Score
+
+MLP Channel Importance Score
+
+Figure 1. During VLA execution, channel importance scores vary
+dynamically as the environment evolves, causing the optimal sparsity pattern to shift accordingly.
+
+understanding into robot control (Black et al.; Li et al.,
+2024a; Kim et al., 2024). Despite promising real-world
+results from recent VLA models such as OpenVLA (Kim
+et al., 2024) and π0.5 (Intelligence et al.), inference latency
+remains the primary bottleneck for real-time control (Yang
+et al., 2025). In this context, token pruning (Wang et al.,
+2025; Liu et al., 2025) has been extensively researched as
+a method to reduce input size, which decreaces latency by
+discarding redundant visual tokens at the risk of losing critical semantics with high pruning ratio. While token-level
+optimization has been thoroughly studied (Shinde et al.,
+2025), comparatively little attention has been paid to VLA
+model pruning. In this work, we focus on VLA model
+pruning, an area with less research, to further accelerate
+inference by reducing redundant model parameters. Typically, a VLA architecture comprises a lightweight action
+expert and a heavy VLM backbone, which dominates the
+parameter count and shows high sparsity, making it a prime
+target for pruning (Chen & Li, 2025; Jabbour et al., 2025).
+Existing research on VLA model sparsification primarily
+bifurcates into two directions, static and dynamic pruning.
+Static pruning, such as RLRC (Chen & Li, 2025) and GLUESTICK (Jabbour et al., 2025), prunes parameters based on
+fixed calibration data. However, they fail to adapt to the
+dynamic evolving task environment (e.g.,transitioning from
+large-scale navigation to fine-grained local manipulation)
+where optimal sparsity patterns vary dynamically, as shown
+in Fig.1 (Liu et al., 2023b). Consequently, these static approaches often suffer performance degradation under dy-
+
+1. Introduction
+Vision-Language-Action (VLA) models are moving embodied intelligence toward generalization by injecting semantic
+*
+
+Equal contribution 1 University of Science and Technology
+of China, Hefei, China. Correspondence to: Jianmin Ji <jianmin@ustc.edu.cn>, Yanyong Zhang <yanyongz@ustc.edu.cn>.
+
+1
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+namic sparsity shifts. Moreover, they are heavily shackled
+by the requirement for massive retraining cycles or a reconstruction process that incurs unsustainable computational
+costs. To address the inflexibility of static approaches, dynamic pruning like MoLe-VLA (Zhang et al., 2025) and
+DeeR-VLA (Yue et al., 2024) selects layers at fixed intervals
+based on runtime inputs but suffer from critical drawbacks:
+the dependency on auxiliary routers incurs extra training and
+runtime inference overheads, while their coarse layer-level
+granularity overlooks fine-grained intra-layer redundancy.
+
+evaluate EcoVLA on robotic manipulation across two simulators (LIBERO (Liu et al., 2023a) and SIMPLER (Sun
+et al., 2023)) and three VLA models (OpenVLA-OFT (Kim
+et al., 2025), π0.5 (Intelligence et al.) and CogACT (Li
+et al., 2024a)). EcoVLA achieves 1.6× speedup with only a
+0.4% reduction in success rate. Furthermore, by integrating
+with token pruning methods, EcoVLA boosts the speedup
+from 1.21× (achieved by FastV with a 50% pruning ratio)
+to 2.18×. Crucially, it recovers the accuracy drop caused
+by FastV, narrowing the performance gap with the vanilla
+baseline to just 0.5%. To validate our approach beyond
+simulation, we deploy EcoVLA on a 7-DoF Kinova Gen3
+robot, demonstrating its practical acceleration capabilities
+in real-world scenarios.
+
+To bridge these gaps, a training-free, fine-grained, and
+environment-aware adaptive model pruning method is urgently needed. However, two major challenges remain.
+First, VLA models’ sparsity patterns evolve with the environment, making real-time computation difficult. Additionally, relying only on instantaneous observations fails
+to capture the continuous nature of VLA execution. Second, adaptive pruning introduces real-time overhead. While
+existing methods for LLMs use large-batch inference to
+amortize overhead across multiple samples (Le et al., 2025),
+VLA models constrained by single-sample streaming bear
+the pruning overhead individually, directly adding it to the
+end-to-end inference latency. For frequency-sensitive VLA
+models, such delays limit the effective policy update rate,
+inducing robotic stuttering and jittering (Black et al., 2025).
+
+2. Related Work
+Vision-Language-Action Models. VLAs extend VLMs by
+incorporating action modalities for embodied control (Brohan et al., 2022; Black et al.). Despite their efficacy, deployment is constrained by high computational costs (Yang
+et al., 2025). As action heads (e.g., MLPs, diffusion) are
+lightweight, the VLM backbone remains the dominant computational bottleneck (Zhang et al., 2025; Ma et al., 2025).
+Efficient Vision-Language-Action Models. VLA acceleration typically employs token pruning (Wang et al.,
+2025; Liu et al., 2025) or KV caching (Xu et al., 2025)
+to exploit input redundancy. Regarding model sparsification, static methods (Chen & Li, 2025; Jabbour et al., 2025)
+prune parameters offline but lack environmental adaptability
+and require retraining. Conversely, fixed-interval dynamic
+methods (Yue et al., 2024; Zhang et al., 2025) offer taskdependence but suffer from high retraining costs and limited
+transferability. Consequently, a training-free, plug-and-play,
+and fine-grained adaptive pruning framework is needed.
+
+To address these challenges, we propose EcoVLA, a
+training-free, plug-and-play pruning framework capable of
+adapting sparsity patterns via real-time environmental perception while minimizing pruning overhead through nonblocking parallel inference. EcoVLA comprises two core
+components: Environment-aware Adaptive Pruning (EAP)
+and Interleaved Inference Orchestration (I2 O).
+EAP is a lightweight, environment-aware adaptive structured channel pruning method. First, leveraging visual observations, EAP perceives environmental dynamics to identify variations in sparsity patterns. Crucially, to maintain the
+temporal consistency essential for stable VLA execution,
+we incorporate a temporal feature aggregation strategy. By
+strategically integrating the instantaneous features with historical features, EAP precisely identifies redundant channels
+for pruning. The continuous update of historical features
+with the latest features further guarantees the temporal consistency of the sparsity patterns.
+
+3. Preliminaries
+3.1. Vision-Language-Action Models
+Vision-Language-Action (VLA) models unify visual and
+linguistic inputs to generate robotic actions, typically consisting of a Vision-Language Model (VLM) backbone and
+an Action Expert (Kim et al., 2025; Wen et al., 2025). While
+Action Expert architectures vary (e.g., Diffusion-based or
+Parallel Decoding) (Kim et al., 2025), they are lightweight
+compared to the VLM backbone. Thus, the VLM constitutes
+the primary bottleneck, rendering its standardized architecture the ideal candidate for pruning.
+
+I2 O replaces the conventional sequential paradigm with
+a non-blocking parallel paradigm, strategically exploiting FLOPs Bubbles within VLA inference. Specifically,
+I2 O orchestrates two parallel streams, comprising an Inference Stream for real-time action generations and a Pruning Stream for pruning execution. By interleaving pruning
+computations into the FLOPs bubbles, we maximize overall hardware utilization, effectively masking the pruning
+overhead to ensure robust real-time streaming control. We
+
+3.2. Formulation of VLA Structured Pruning
+Let πΘ be a VLA model with Large Language Model (LLM)
+backbone Θ. We target Θ for pruning due to its domi2
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+( ) Environment-aware Adaptive Pruning (EAP)
+VLA Sequential Execution
+Reuse Sparsity Pattern
+
+Sparsity Variations
+Predictor
+푺� . �. �. �
+
+no
+changes
+
+sparsity
+changes
+
+Visual Observation
+
+Temporal Consistency Pruning
+Vision
+Encoder
+
+Historical �,(�−1)
+�
+Feature : �
+
+Instantaneous �� =
+�,���,� 2
+Feature : �:,�
+2
+�,�
+
+Fusion ��,(�)
+= �·��,(�−1)
+�
+�
+Feature :
++ (1 − �)·��,�
+�
+
+Action
+Head
+Robot
+Action
+
+Instruction
+
+Put the can
+into the …
+
+Inference
+Stream
+
+Shared Memory
+Interface
+
+Tokenizer
+
+Sparse LLM
+
+Sparse LLM
+
+Sparse LLM
+
+(b) Interleaved Inference Orchestration (�� �)
+
+VLM
+Backbone
+
+VLM
+Backbone
+
+Action Expert
+
+&
+Intermediate Feature
+
+Action Expert
+
+Sparse Load
+
+Intermediate Feature
+
+Dense Weight
+
+Channel Index
+
+Sparsity Pattern Compute
+
+Pruning Stream
+High FLOPs
+
+�,풇�� � �
+
+��,�
+
+Low FLOPs
+
+Lower FLOPs
+
+Sparsity Pattern Compute
+Dense Inference
+
+Sparse Inference
+
+Compute
+
+Data Transfer
+
+&
+
+Load Weight
+
+Figure 2. Overall pipeline of EcoVLA. (a) Environment-aware Adaptive Pruning (EAP): EAP is a lightweight, environment-aware
+method that identifies sparsity variations by perceiving real-time dynamics. Considering the temporal consistency of VLA execution
+in physical environments, EAP integrates instantaneous features with historical features to jointly compute the sparsity pattern. (b)
+Interleaved Inference Orchestration (I2 O): I2 O interleaves sparsity pattern computation into the inherent FLOPs bubbles within the VLA
+inference using a non-blocking parallel paradigm.
+
+f l,gate , W
+f l,up ∈ R|Cl |×Cout and W
+f l,down ∈
+where W
+l
+RCout ×|C | . The notation |Cl | is the cardinality of Cl . Similarly, in attention blocks, pruning heads removes coupled
+output channels of WQ,K,V and input channels of WO .
+
+nant model size. We optimize a structural binary mask
+m ∈ {0, 1}|Θ| (where grouped elements share values) to
+minimize the divergence between dense and pruned policies:
+arg min L (πΘ , πΘ⊙m , D)
+
+s.t.
+
+∥m∥0 = κ
+
+(1)
+
+m
+
+where ⊙ denotes the element-wise product, κ is sparsity constraint , D represents the calibration dataset. The objective
+L measures the divergence between models.
+
+4. Methodology
+In this section, we introduce EcoVLA, the first training-free,
+plug-and-play adaptive pruning framework for VLA models,
+as illustrated in Fig.2. We first detail Environment-aware
+Adaptive Pruning (EAP) in Sec.4.1, which begins with a
+lightweight predictor to identify real-time sparsity variations and subsequently employs a pruning method based on
+temporal consistency. Next, we introduce Interleaved Inference Orchestration (I2 O) in Sec.4.2, a parallel execution
+paradigm that exploits inference FLOPs bubbles to schedule
+pruning operations, thereby reducing additional overhead.
+
+To efficiently solve the global optimization problem defined
+in (1), we decompose the LLM into layer-wise reconstruction paradigm (An et al., 2024; Le et al., 2025). The LLM
+consists of L blocks. Each block l transforms the input
+hidden state Xl ∈ RB×S×D via a residual mapping:
+Xl+1 = Xl + F l (Xl )
+
+(2)
+
+We decompose the block function F l into an intermediate
+transformation and a final linear projection:
+F l (Xl ) = Xl,int (Wl,final )T ,
+
+Xl,int = T l (LN(Xl ))
+
+4.1. Environment-aware Adaptive Pruning
+
+(3)
+
+4.1.1. L IGHTWEIGHT E NVIRONMENT- AWARE S PARSITY
+VARIATIONS P REDICTOR
+
+Here, T l is intermediate transformations (e.g.,WK or Wup ),
+while Wl,final represents the final weight matrix (e.g., WO
+or Wdown ). For hardware acceleration, structured pruning
+aligns output channels with input channels, retaining indices
+Cl ⊆ {1, 2, . . . , Cin }:
+f l,gate = Wl,gate [Cl , :],
+W
+f l,down = Wl,down [:, Cl ],
+W
+
+f l,up = Wl,up [Cl , :],
+W
+
+The optimal sparsity patterns of VLA models evolve dynamically during execution. To capture these changes efficiently,
+we introduce a lightweight environment aware sparsity variations predictor. This module leverages visual feature similarities alongside a temporal context-conditioned trigger,
+enabling rapid and robust identification of changes.
+
+(4)
+3
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+Lightweight Visual Similarity Metric. To avoid introducing substantial computational overhead, we discard the
+popular attention-based semantic similarity (Xu et al., 2025),
+opting instead to leverage the visual features extracted by
+the VLA visual encoder to compute the similarity between
+step t and t − 1. Let ft , ft−1 ∈ RN ×D denote the image
+token features, where N is the number of visual tokens and
+D is the feature dimension. We define the similarity score
+as the average token-wise cosine similarity:
+
+formulation in Sec.3.2, we can compute the current intermediate hidden states Xl,int,τ = T l (LN(Xl,τ ) )). Given that
+VLA models operate on single-sample streaming inputs,
+the dimensionality of Xl,int,τ is defined as (1, S, Cin ). For
+notational simplicity, we omit the batch dimension in the
+subsequent formulation. To quantify the activation of the
+current input across structured channels, we compress the
+activation along the sequence dimension to obtain the instantaneous feature. Formally, for the k-th structured channel,
+the calculation is performed as follows:
+
+N
+
+st =
+
+i
+fti · ft−1
+1 X
+i
+N i=1 ∥fti ∥2 ft−1
+2
+
+(5)
+
+ϵl,τ
+k =
+
+We posit that if the visual features ft and ft−1 exhibit
+high similarity, the sparsity pattern remains stable between
+frames. Conversely, significant deviation in visual features
+implies considerable variation in the sparsity pattern.
+
+2
+
+= Xl,int,τ
+:,k
+
+2
+2
+
+(8)
+
+where ϵl,τ
+k represents the instantaneous feature of the k-th
+structured channel given the current input.
+However, relying solely on instantaneous features is suboptimal, as the physical execution of VLA models exhibits
+inherent temporal consistency. This temporal consistency
+is characterized by smooth, continuous transitions in both
+physical environments and proprioceptive states across adjacent frames, rather than discrete, abrupt jumps. In light of
+this, we aggregate the instantaneous feature with the historical feature. Specifically, we initialize the historical feature
+E l,(0) ∈ RCin for each block l by applying Eq. 8 on a
+calibration dataset. For each subsequent update step τ , we
+can compute the fused feature by leveraging the previous
+historical feature E l,(τ −1) as a temporal prior:
+
+(6)
+
+Based on this temporal context, we adopt a dynamic decision criterion where the sparsity update is triggered if the
+current similarity drops below the p-th quantile of the Ht .
+The sparsity pattern update policy is formally defined as:
+ut = I (st < Quantile(Ht , p))
+
+Xl,int,τ
+j,k
+
+j=1
+
+Temporal Context–Conditioned Sparsity Trigger. In
+open-world robotic manipulation, the environment is dynamic, causing the distribution of visual feature similarities
+to evolve over time. Since we rely on these similarities to
+update sparsity pattern, a static decision criterion becomes
+brittle under distribution shifts. Therefore, we introduce a
+lightweight Temporal Context-Conditioned Sparsity Trigger, which leverages temporal context to adapt to such shifts.
+Specifically, we maintain a fixed-size sliding window Ht
+storing the similarities of the recent T frames:
+Ht = {st−T , st−T +1 , . . . , st−1 }
+
+S 
+X
+
+l,(τ −1)
+
+Ẽkl,τ = α · Ek
+
++ (1 − α) · ϵl,τ
+k
+
+(9)
+
+where α ∈ [0, 1) is the temporal inertia parameter. A larger
+α leads to a more conservative update. We update the historical feature on full channels using an exponential moving
+average. Here, the momentum λ ensures temporal consistency, providing a stable prior for subsequent steps:
+
+(7)
+
+Here, p serves as a sensitivity hyperparameter, where
+a higher p enhances responsiveness to subtle changes,
+whereas lower p prioritizes stability. This mechanism yields
+self-regulative behavior. During rapid motion, the quantile
+naturally decreases, suppressing excessive updates to ensure
+stability. Conversely, in stable phases, the quantile increases,
+facilitating the sensitive detection of fine-grained variations.
+
+E l,τ = λ · E l,(τ −1) + (1 − λ) · ϵl,τ
+
+(10)
+
+Finally, we can compute the sparsity pattern. Following
+PPsp (Le et al., 2025), we evaluate the significance of the kth channel in the l-th layer based on both weight magnitude
+and fused feature. Let Wl,final ∈ RCout ×Cin denote the
+final weight matrix in block l. The importance score Skl,τ is
+formulated as:
+
+Cout
+2
+l,final
+Skl,τ =
+Wi,k
+· Ẽkl,τ
+(11)
+
+4.1.2. T EMPORAL C ONSISTENCY P RUNING
+This section details the sparsity pattern computation. Upon
+triggering a sparsity update at frame t, we execute a dense
+inference to perform the pruning calculation. We first compute the instantaneous features from the current input at
+frame t, which are subsequently aggregated with historical features. The newly computed sparsity pattern is then
+applied starting from the frame t + 1 for sparse inference.
+
+i=0
+
+2
+
+where {·} denotes the set of elements, and S l,τ ∈ RCin .
+Crucially, identifying and pruning the k-th input channel of
+Wl,final (associated with low Skl,τ ) necessitates the simultaneous removal of the corresponding k-th output channel of
+the intermediate transformations T l .
+
+To formalize this computation, we denote the update triggered at frame t as the τ -th sparsity update step. Specifically, as the current input reaches block l, following the
+4
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+4.1.3. A NALYSIS OF C OMPUTATIONAL C OST
+
+steps. Operating under the real-time, robotic control streaming (batch size = 1), computational demand falls orders of
+magnitude below the GPU’s peak parallel processing capacity. In this state, the powerful Tensor Cores remain largely
+under-utilized, leaving a substantial computational reservoir
+that can be reclaimed to execute auxiliary tasks.
+
+The computational overhead of EAP is primarily divided
+into visual feature similarity and sparsity pattern computation. For an image represented by N visual tokens with
+feature dimension D and a block with Cin input and Cout
+output channels, the sparsity pattern overhead includes instantaneous feature computation, feature fusion, historical
+feature updates for Cin channels, and importance score
+computation. Although weight L2 -norms are typically precomputed to reduce online costs to 1 · Cin , the worst-case
+complexity occurs when weight magnitudes are computed
+online, leading to the following FLOPs formulation:
+FLOPs ≈ 5N D + 2SCin + 3Cin Cout + 4Cin
+
+4.2.2. H IDING P RUNING OVERHEADS VIA I 2 O
+The conventional synchronous pruning stream is serially
+scheduled either preceding or succeeding the main inference
+stream, thereby linearly increasing the total latency. To
+circumvent this bottleneck, EcoVLA introduces Interleaved
+Inference Orchestration (I2 O) as illustrated in Fig.2, whose
+core philosophy is to interleave sparsity pattern computation
+into the FLOPs bubbles of the VLA pipelines.
+
+(12)
+
+The computational overhead of EAP is marginal, as it primarily consists of element-wise operations that exhibit a
+negligible footprint compared to the VLA.
+
+Specifically, we decouple the sparsity pattern computation
+for step t + 1 from the main dense inference of the current
+step t by dispatching it to an parallel pruning stream. During the VLM Backbone stage, where the GPU is computesaturated but memory bandwidth remains undersaturated,
+the pruning stream concurrently buffers the requisite intermediate activations. Subsequently, as the inference transitions to the Action Expert stage, I2 O interleaves the sparsity
+pattern computation into FLOPs bubbles, effectively utilizing the idle Tensor Cores. As a result, I2 O fully taps
+into the GPU’s untapped computational potential, achieving a balanced workload distribution across the inference
+pipeline. By interleaving the sparsity pattern computation
+into the FLOPs bubbles, our approach avoids intense GPU
+resource contention, enabling low latency sparsity pattern
+computation overhead.
+
+4.2. Interleaved Inference Orchestration
+In this section, we first analyze the computational characteristics of VLA inference, revealing FLOPs bubbles arising from resource under-utilization. We then introduce
+Interleaved Inference Orchestration (I2 O), which exploits
+the complementary resource profiles between the VLM
+Backbone and Action Expert stages to absorb sparsity pattern computation into these bubbles with minimal overhead
+(Fig.2). Finally, we present hardware-efficient implementations to further accelerate both dense and sparse execution.
+4.2.1. FLOP S BUBBLES OF VLA I NFERENCE
+In this section, our profiling reveals temporal FLOPs bubbles during VLA inference due to a mismatch between
+model workload and hardware capacity, providing a opportunity to absorb sparsity pattern computation overhead.
+
+Building on this efficient orchestration, we now turn our attention to the latency analysis of I2 O. Let Tinf er denote the
+VLA inference latency and Tprune the overhead. In conventional synchronous approaches, the total latency is additive:
+Lsynch = Tinf er + Tprune . In I2 O, the latency becomes
+LI 2 O = Tinf er + δ, where δ accounts for the overhead
+induced by concurrent execution, such as Streaming Multiprocessor (SM) scheduling costs, memory bandwidth contention and minor GPU resource competition. Owing to the
+lightweight design of the adaptive pruning module and its execution within FLOPs bubbles, δ is minimal. Consequently,
+this orchestration ensures that adaptive pruning is integrated
+seamlessly without impacting the latency-sensitive VLA
+control loop, thus maintaining the high-frequency reactivity
+essential for smooth robotic manipulation.
+
+The VLM Backbone Stage. This stage is dominated
+by large-scale General Matrix Multiplications (GEMMs)
+within the transformer layers, rendering it inherently
+compute-bound. Given the massive model dimensions
+(N, K) and the extensive sequence length (M ), the arithmetic intensity (I) of these operations significantly exceeds
+the hardware’s compute-to-memory ratio:
+Tcompute
+FLOPs
+2·M ·N ·K
+=
+≫
+(13)
+Bytes
+2 · (N K + M K + M N )
+Tbandwidth
+where Tcompute and Tbandwidth compute throughput and memory bandwidth, respectively. Consequently, the GPU Tensor
+Cores operate at near-peak saturation, while the memory
+bandwidth remains largely under-saturated, providing the
+necessary headroom for concurrent auxiliary tasks.
+
+4.3. Hardware-efficient Implementation
+In this section, we detail the hardware-level optimizations
+implemented for both dense and sparse VLA inference to
+achieve practical inference acceleration.
+
+The Action Expert Stage. In stark contrast, this stage
+consists of lightweight MLPs or diffusion-based denoising
+5
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+including OpenVLA-OFT (Kim et al., 2025), π0.5 (Intelligence et al.), and CogACT (Li et al., 2024a). For fair
+comparison, we benchmark EcoVLA against Wanda (Sun
+et al., 2023), a mainstream static pruning method. Beyond
+standalone improvements, we demonstrate that EcoVLA
+is broadly compatible and can be stacked with other acceleration techniques. Experiments combining EcoVLA
+with FastV (Chen et al., 2024) and VLA-Cache (Xu et al.,
+2025) yield substantial additional speedups with negligible
+performance degradation. For real-world evaluation, we
+fine-tune π0.5 for deployment on a 7-DoF Kinova Gen3
+robotic arm. The model is trained for 10, 000 steps with
+default parameters. See App.A for further details.
+
+4.3.1. S PARSE E FFICIENT K ERNELS
+We apply three kernel-level optimizations targeting memory
+efficiency and computation throughput in sparse inference.
+Sparse Linear Transformation Kernel. In the standard
+PyTorch implementation, the retained weights are indexed
+before performing the linear transformation, which incurs
+additional memory I/O overhead. In contrast, we have implemented a sparse linear transformation Triton kernel that
+directly loads only the retained weights during computation,
+avoiding this overhead and improving efficiency.
+Memory coalescing. As described in Sec.3.2, when performing pruning on the Wdown weights of the MLP, we actually prune the columns of the weights. In the sparse implementation, this results in indices pointing to non-contiguous
+memory regions, leading to reduced memory access efficiency. We simply store these matrices in column-major format to enhance memory access locality. Similarly, we also
+store the output projection weights WO in the self-attention
+module in a column-major format.
+
+Evaluation Protocol. To ensure a comprehensive comparison, we adopt different pruning ratios. Specifically, for
+OpenVLA-OFT (Kim et al., 2025) and CogACT (Li et al.,
+2024a), we perform evaluations at pruning ratios of 25%
+and 40%, while for π0.5 (Intelligence et al.), we evaluate
+at 25% and 37.5% to accommodate the architecture. The
+evaluation metrics primarily include task success rate(%),
+inference latency(ms), and FLOPs(T ).
+
+High-Performance Fused Kernels. During sparse VLA
+inference, the MLP computes gate projection, up projection,
+SiLU activation, and element-wise multiplication. We fuse
+these four operations into a single Triton kernel that reads
+the input once and keeps intermediate results in registers,
+eliminating redundant memory traffic and reducing kernel
+launches from 4 to 1, yielding nearly 2× speedup in practice.
+
+Implementation Details. We follow the original experimental settings of FastV (Chen et al., 2024) and VLACache (Xu et al., 2025). All experiments conducted on
+an NVIDIA RTX 3090 GPU, and latency is measured following VLA-Cache. Since VLA-Cache is incompatible
+with FlashAttention (Dao et al., 2022), we use eager
+LlamaAttention when integrating EcoVLA with VLACache; otherwise, FlashAttention is enabled by default.
+More hyperparameter details are provided in the App.A.3.
+
+4.3.2. D ENSE M ETRIC ACCELERATION
+In addition to I2 O, we apply two memory-level optimizations to accelerate sparsity pattern computation.
+
+Benchmarks. We evaluate EcoVLA on two simulators
+and three real-robot tasks. The LIBERO (Liu et al., 2023a)
+benchmark is designed to evaluate robotic manipulation capabilities across four task suites: LIBERO-Spatial, LIBEROObject, LIBERO-Goal, and LIBERO-Long. Each task suite
+examines different capabilities of VLA. The SIMPLER (Li
+et al., 2024b) simulation environment provides two evaluation settings, including Visual Matching and Variant Aggregation. We evaluate four tasks on the Google Robot arm:
+1) Pick Coke Can (PickCan), 2) Move Near (MoveNear),
+3) Open/Close Drawer (Drawer), and 4) Open Top Drawer
+and Place Apple (DrawerApple). To assess EcoVLA in
+real-world settings, we conduct experiments across three
+tasks (shown in Fig.3): Place the apple in the basket, Put
+the pill bottle in the cabinet, and Place the banana in the
+basket. More details are provided in the App.A.4.
+
+Allocation-Free Caching. As noted in Eq.11, computing the sparsity pattern involves weight norms and activation norms, where standard implementations suffer from
+repeated weight loading and dynamic memory allocation.
+We address this by pre-computing weight norms as compact
+vectors (a 99.97% reduction) and pre-allocating static activation buffers, transforming memory-bound operations into
+lightweight lookups while eliminating runtime allocations.
+Batched Metric Computation. Per-layer sparsity computation incurs many separate kernel launches. We instead
+stack weight norms and activation buffers across layers into
+contiguous tensors, enabling kernel fusion that amortizes
+launch overhead and exposes layer-level parallelism.
+
+5. Experiments
+
+5.2. Main Results
+
+5.1. Experimental Settings
+
+Results on OpenVLA-OFT. Using the LIBERO benchmark, we evaluate EcoVLA on OpenVLA-OFT and show
+its compatibility by combining it orthogonally with acceleration techniques like FastV and VLA-Cache. Tab.1
+
+Baselines. To validate the generalizability of EcoVLA,
+we evaluate it across diverse VLA architectures. In simulation, we conduct experiments on open-source VLA models,
+6
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+Table 1. Performance of EcoVLA on OpenVLA-OFT in LIBERO at 25% and 40% pruning ratio.
+Success Rate (%) ↑
+Method
+
+FLOPs (T) ↓
+
+Latency (ms) ↓
+
+Speedup ↑
+
+96.7
+94.4
+96.6
+
+4.05 (100.0%) 143.56 (162.78)
+2.49 (61.48%)
+118.57
+3.03 (74.81%)
+148.51
+
+1.00×
+1.21×
+1.10×
+
+93.8
+96.8
+96.2
+95.5
+
+3.14 (77.53%)
+3.23 (79.75%)
+1.96 (48.39%)
+2.43 (60.00%)
+
+124.32
+113.98
+65.85
+121.24
+
+1.15×
+1.26×
+2.18×
+1.34×
+
+88.8
+94.0
+92.9
+93.6
+
+2.57 (63.46%)
+2.74 (67.65%)
+1.64 (40.49%)
+2.03(50.12%)
+
+106.47
+101.58
+61.16
+108.48
+
+1.35×
+1.41×
+2.35×
+1.50×
+
+LIBERO-Spatial LIBERO-Object LIBERO-Goal LIBERO-Long Average
+
+Vanilla
+FastV
+VLA-Cache
+
+97.6
+96.4
+96.6
+
+98.4
+97.2
+98.6
+
+96.2
+89.0
+96.4
+
+Wanda
+Ours
+FastV + Ours
+VLA-Cache + Ours
+
+95.8
+97.4
+96.6
+96.8
+
+98.8
+98.8
+98.2
+98.4
+
+87.2
+94.6
+94.0
+92.4
+
+Wanda
+Ours
+FastV + Ours
+VLA-Cache + Ours
+
+89.2
+95.6
+94.4
+93.0
+
+98.4
+97.8
+97.8
+98.2
+
+77.0
+89.4
+85.8
+89.6
+
+94.6
+94.8
+94.8
+
+Pruning Ratio 25%
+93.2
+96.4
+96.0
+94.2
+
+Pruning Ratio 40%
+90.6
+93.2
+93.4
+93.4
+
+Table 2. Performance of EcoVLA on π0.5 in LIBERO at 25% and 37.5% pruning ratio.
+Success Rate (%) ↑
+Method Sparsity
+
+LIBERO-Spatial LIBERO-Object LIBERO-Goal LIBERO-Long Average
+
+FLOPs (T) ↓ Latency (ms) ↓ Speedup ↑
+
+Vanilla
+
+0%
+
+98.8
+
+98.2
+
+98.0
+
+92.4
+
+96.9
+
+1.99 (100.0%)
+
+81.94
+
+1.00×
+
+Ours
+
+25.0%
+37.5%
+
+98.2
+97.8
+
+98.6
+98.4
+
+98.4
+96.8
+
+91.6
+87.0
+
+96.7
+95.0
+
+1.64 (82.41%)
+1.47 (73.87%)
+
+62.66
+55.98
+
+1.31×
+1.46×
+
+Table 3. Performance of EcoVLA on CogACT in SIMPLER at 25% and 40% pruning ratio.
+Success Rate (%) ↑
+SIMPLER
+
+Method Sparsity
+
+Pick Coke Move Near Open/Close Open Top Average
+
+FLOPs(T)↓
+
+Latency (ms) ↓ Speedup ↑
+
+Visual Matching
+
+Vanilla
+ours
+ours
+
+0
+25%
+40%
+
+93.3
+95.0
+93.0
+
+83.8
+82.1
+85.4
+
+74.5
+70.8
+73.5
+
+41.7
+38.9
+42.6
+
+73.3
+71.7
+73.6
+
+1.81 (100%)
+1.45 (80.11%)
+1.25 (69.06%)
+
+104.16
+72.65
+66.43
+
+1.00×
+1.44×
+1.57×
+
+Variant Aggregation
+
+Vanilla
+ours
+ours
+
+0
+25%
+40%
+
+88.7
+85.9
+86.1
+
+76.8
+75.3
+74.3
+
+26.7
+27.2
+33.1
+
+51.9
+46.0
+48.7
+
+61.0
+58.6
+60.6
+
+1.81 (100.0%)
+1.47 (81.22%)
+1.28 (70.72%)
+
+105.87
+73.98
+66.25
+
+1.00×
+1.43×
+1.60×
+
+Table 4. Performance of EcoVLA on π0.5 on a real-world robot.
+Method
+
+Task1
+
+Task2
+
+Task3
+
+Latency(ms)
+
+baseline
+Ours
+
+12/20
+12/20
+
+18/20
+16/20
+
+16/20
+15/20
+
+86.08
+68.40
+
+Place the apple
+in the basket.
+
+Put the pill bottle
+in the cabinet.
+
+Place the banana
+in the basket.
+
+Figure 3. Robot Manipulation on Kinova Gen3 Platform.
+
+Figure 4. Acceleration breakdown for dense and sparse inference.
+
+shows that EcoVLA achieves 1.26× and 1.41× speedups
+at 25% and 40% pruning ratios, with success rate losses
+of only 0.35% and 2.8%, respectively. The robustness of
+EcoVLA is particularly pronounced on the pruning-sensitive
+LIBERO-Goal benchmark, significantly outperforming the
+mainstream method Wanda. Specifically, EcoVLA establishes a commanding lead of 7.4% and 12.4% over Wanda
+at the respective pruning ratios. Beyond this robustness,
+EcoVLA achieves lower latency than Wanda despite a additional pruning overhead, as I2 O conceals the pruning
+
+cost within FLOPs bubbles. Combined with our hardwareefficient design, this enables EcoVLA to deliver distinctly
+higher wall-clock speedups over Wanda.
+Our results empirically validate the broad compatibility of
+EcoVLA. When combined with FastV (50% token pruning),
+it achieves a 2.18× speedup with a negligible 0.5% loss at
+25% sparsity, and reaches a 2.35× speedup at 40%. When
+combined with VLA-cache, it achieves a 1.34× speedup
+with a negligible 0.5% loss at 25% sparsity, and reaches a
+7
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+Efficiency Plateau
+
+Figure 5. Trade-off between Success Rate and Latency.
+
+Table 5. Overhead of Pruning Stream.
+Execution Method
+
+Latency (ms)
+
+Normal VLA Inference
+I2 O
+
+143.56
+148.06
+
+Figure 6. Impact on Hyperparameters α and p.
+
+5.3. More Results
+
+2.35× speedup at 40%. Notably, these combinations deliver
+significantly higher speedups compared to the standalone
+baselines. While generally incurring only a slight decline
+in success rate, intriguingly, we observe a performance improvement in the FastV combination. We attribute this phenomenon to the regularization effect induced by our precise,
+adapti model sparsification (Jin et al., 2022).
+
+Ablation Study on Acceleration. Fig.4 details the acceleration breakdown. For dense inference, bubble scheduling,
+buffer optimization, and batched metrics reduce latency
+by 36.04 ms, 10 ms, and 21.14 ms respectively, yielding
+148.06 ms. For sparse inference, utilizing sparse kernels,
+memory coalescing, and kernel fusion cuts latency by 36.04
+ms, 13.49 ms, and 1.76 ms, resulting in 108.24 ms.
+
+Results on π0.5 . To demonstrate the cross-model generalizability of EcoVLA, we conduct experiments on the state-ofthe-art VLA model, π0.5 , as shown in Tab.2. At 25% and
+37.5% pruning ratios, EcoVLA achieves 1.31× and 1.46×
+speedups with marginal accuracy drops of 0.2% and 1.85%,
+respectively. Notably, for the LIBERO-Object, we observe
+a 0.2% accuracy improvement at the 37.5% pruning ratio. This observation corroborates the regularization benefit
+discussed earlier, suggesting that selective pruning effectively filters out noise from redundant parameters. Most
+significantly, despite π0.5 ’s inherently efficient structure and
+low latency (81.94 ms), EcoVLA still manages to extract
+a substantial 1.46× acceleration. This capability to further
+accelerate an already fast model redefines the standards for
+efficient real-time deployment.
+
+Trade-off between Performance and Latency. As shown
+in Fig.5, we analyze the trade-off between success rate
+and latency. While the success rate remains robust below
+40% pruning, it deteriorates rapidly beyond this threshold.
+We observe an optimal trade-off between performance and
+latency at a 40% pruning ratio.
+Overhead of Pruning Stream. The parallel pruning stream
+introduces overhead δ (e.g., SM scheduling), detailed in
+Tab.5. Due to the lightweight design, δ is limited to 4.5 ms.
+Hyperparameters Studies. Fig.6 analyzes the impact
+of α and p on LIBERO-Long. High α over-relies on historical features, causing sparsity lag, while low α leads to
+instability. Performance peaks at α = 0.7, validating our
+design. Similarly, low p overlooks subtle cues, whereas high
+p causes hypersensitivity to noise. The peak success rate at
+p = 80% confirms EcoVLA effectively filters noise while
+maintaining the sensitivity required for robust operation.
+Additional analysis is provided in the App.C
+
+Results on CogACT. We evaluate EcoVLA’s generalization
+on CogACT within SIMPLER, as summarized in Tab.3. In
+the Visual Matching setting, EcoVLA achieves a 1.57×
+speedup at a 40% pruning ratio with a success rate drop of
+only 0.3%. Similarly, in the Variant Aggregation setting, it
+reaches a 1.6× speedup at 40% pruning while incurring a
+marginal accuracy reduction of 0.6%.
+
+6. Conclusion
+
+Results on Real Robot. We evaluate real-world performance on a physical 7-DoF Kinova Gen3 arm controlled
+by π0.5 . As shown in Tab.3, our approach delivers a 1.26×
+wall-clock speedup at the cost of minor performance loss,
+underscoring its viability for real-robot deployment. We
+further analyze the underlying reasons in App.B.
+
+We present EcoVLA, a training-free, plug-and-play adaptive pruning framework for VLA models that combines
+Environment-aware Adaptive Pruning (EAP) with Interleaved Inference Orchestration (I2 O) to update sparsity online with negligible overhead. We validate EcoVLA on both
+real robots and high-fidelity simulators.
+8
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+References
+
+Kim, M. J., Finn, C., and Liang, P. Fine-tuning visionlanguage-action models: Optimizing speed and success.
+arXiv preprint arXiv:2502.19645, 2025.
+
+An, Y., Zhao, X., Yu, T., Tang, M., and Wang, J. Fluctuationbased adaptive structured pruning for large language models. In Proceedings of the AAAI Conference on Artificial
+Intelligence, volume 38, pp. 10865–10873, 2024.
+
+Le, Q., Diao, E., Wang, Z., Wang, X., Ding, J., Yang, L.,
+and Anwar, A. Probe pruning: Accelerating llms through
+dynamic pruning via model-probing. arXiv preprint
+arXiv:2502.15618, 2025.
+
+Black, K., Brown, N., Driess, D., Esmail, A., Equi, M., Finn,
+C., Fusai, N., Groom, L., Hausman, K., Ichter, B., et al.
+π0: A vision-language-action flow model for general
+robot control. corr, abs/2410.24164, 2024. doi: 10.48550.
+arXiv preprint ARXIV.2410.24164.
+
+Li, Q., Liang, Y., Wang, Z., Luo, L., Chen, X., Liao, M.,
+Wei, F., Deng, Y., Xu, S., Zhang, Y., et al. Cogact: A
+foundational vision-language-action model for synergizing cognition and action in robotic manipulation. arXiv
+preprint arXiv:2411.19650, 2024a.
+
+Black, K., Galliker, M. Y., and Levine, S. Real-time execution of action chunking flow policies. arXiv preprint
+arXiv:2506.07339, 2025.
+
+Li, X., Hsu, K., Gu, J., Pertsch, K., Mees, O., Walke, H. R.,
+Fu, C., Lunawat, I., Sieh, I., Kirmani, S., et al. Evaluating real-world robot manipulation policies in simulation.
+arXiv preprint arXiv:2405.05941, 2024b.
+
+Brohan, A., Brown, N., Carbajal, J., Chebotar, Y., Dabis, J.,
+Finn, C., Gopalakrishnan, K., Hausman, K., Herzog, A.,
+Hsu, J., et al. Rt-1: Robotics transformer for real-world
+control at scale. arXiv preprint arXiv:2212.06817, 2022.
+
+Liu, B., Zhu, Y., Gao, C., Feng, Y., Liu, Q., Zhu, Y., and
+Stone, P. Libero: Benchmarking knowledge transfer for
+lifelong robot learning. Advances in Neural Information
+Processing Systems, 36:44776–44791, 2023a.
+
+Chen, L., Zhao, H., Liu, T., Bai, S., Lin, J., Zhou, C., and
+Chang, B. An image is worth 1/2 tokens after layer
+2: Plug-and-play inference acceleration for large visionlanguage models. In European Conference on Computer
+Vision, pp. 19–35. Springer, 2024.
+
+Liu, Z., Wang, J., Dao, T., Zhou, T., Yuan, B., Song, Z.,
+Shrivastava, A., Zhang, C., Tian, Y., Re, C., et al. Deja
+vu: Contextual sparsity for efficient llms at inference time.
+In International Conference on Machine Learning, pp.
+22137–22176. PMLR, 2023b.
+
+Chen, Y. and Li, X. Rlrc: Reinforcement learning-based
+recovery for compressed vision-language-action models.
+arXiv preprint arXiv:2506.17639, 2025.
+
+Liu, Z., Chen, Y., Cai, H., Lin, T., Yang, S., Liu, Z., and
+Zhao, B. Vla-pruner: Temporal-aware dual-level visual
+token pruning for efficient vision-language-action inference. arXiv preprint arXiv:2511.16449, 2025.
+
+Dao, T., Fu, D., Ermon, S., Rudra, A., and Ré, C. Flashattention: Fast and memory-efficient exact attention with
+io-awareness. Advances in neural information processing
+systems, 35:16344–16359, 2022.
+
+Ma, Y., Zhou, Y., Yang, Y., Wang, T., and Fan, H. Running
+vlas at real-time speed. arXiv preprint arXiv:2510.26742,
+2025.
+
+Intelligence, P., Black, K., Brown, N., Darpinian, J., Dhabalia, K., Driess, D., Esmail, A., Equi, M., Finn, C.,
+Fusai, N., et al. π0. 5: a vision-language-action model
+with open-world generalization, 2025. URL https://arxiv.
+org/abs/2504.16054, 1(2):3.
+
+Shinde, G., Ravi, A., Dey, E., Sakib, S., Rampure, M., and
+Roy, N. A survey on efficient vision-language models.
+Wiley Interdisciplinary Reviews: Data Mining and Knowledge Discovery, 15(3):e70036, 2025.
+
+Jabbour, J., Kim, D.-K., Smith, M., Patrikar, J., Ghosal, R.,
+Wang, Y., Agha, A., Reddi, V. J., and Omidshafiei, S.
+Don’t run with scissors: Pruning breaks vla models but
+they can be recovered. arXiv preprint arXiv:2510.08464,
+2025.
+
+Sun, M., Liu, Z., Bair, A., and Kolter, J. Z. A simple and
+effective pruning approach for large language models.
+arXiv preprint arXiv:2306.11695, 2023.
+Wang, H., Xu, J., Pan, J., Zhou, Y., and Dai, G. Specprunevla: Accelerating vision-language-action models via
+action-aware self-speculative pruning. arXiv preprint
+arXiv:2509.05614, 2025.
+
+Jin, T., Carbin, M., Roy, D., Frankle, J., and Dziugaite,
+G. K. Pruning’s effect on generalization through the
+lens of training and regularization. Advances in Neural
+Information Processing Systems, 35:37947–37961, 2022.
+
+Wen, J., Zhu, Y., Li, J., Zhu, M., Tang, Z., Wu, K., Xu, Z.,
+Liu, N., Cheng, R., Shen, C., et al. Tinyvla: Towards fast,
+data-efficient vision-language-action models for robotic
+manipulation. IEEE Robotics and Automation Letters,
+2025.
+
+Kim, M. J., Pertsch, K., Karamcheti, S., Xiao, T., Balakrishna, A., Nair, S., Rafailov, R., Foster, E., Lam, G., Sanketi, P., et al. Openvla: An open-source vision-languageaction model. arXiv preprint arXiv:2406.09246, 2024.
+9
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+Xu, S., Wang, Y., Xia, C., Zhu, D., Huang, T., and Xu,
+C. Vla-cache: Towards efficient vision-language-action
+model via adaptive token caching in robotic manipulation.
+arXiv preprint arXiv:2502.02175, 2025.
+Yang, Y., Wang, Y., Wen, Z., Zhongwei, L., Zou, C., Zhang,
+Z., Wen, C., and Zhang, L. Efficientvla: Training-free
+acceleration and compression for vision-language-action
+models. arXiv preprint arXiv:2506.10100, 2025.
+Yue, Y., Wang, Y., Kang, B., Han, Y., Wang, S., Song, S.,
+Feng, J., and Huang, G. Deer-vla: Dynamic inference
+of multimodal large language models for efficient robot
+execution. Advances in Neural Information Processing
+Systems, 37:56619–56643, 2024.
+Zhang, R., Dong, M., Zhang, Y., Heng, L., Chi, X., Dai,
+G., Du, L., Du, Y., and Zhang, S. Mole-vla: Dynamic
+layer-skipping vision language action model via mixtureof-layers for efficient robot manipulation. arXiv preprint
+arXiv:2503.20384, 2025.
+
+10
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+A. Experimental Settings
+A.1. VLA Model Details
+OpenVLA-OFT. Derived from the OpenVLA architecture, OpenVLA-OFT incorporates an Optimized Fine-Tuning strategy
+that simultaneously enhances manipulation precision and computational efficiency. By adopting a continuous action space
+optimized via L1 regression alongside parallel decoding and action chunking mechanisms, it achieves superior throughput
+and success rates on the LIBERO benchmark. A key characteristic of this variant is the deployment of bidirectional attention
+during inference.
+π0.5 . π0.5 is a generalist Vision-Language-Action (VLA) model designed to achieve broad open-world generalization in
+mobile manipulation by leveraging a heterogeneous co-training recipe. Building upon the π0 architecture and the PaliGemma
+VLM backbone, π0.5 integrates diverse data sources—including cross-embodiment robot data, multimodal web data, and
+high-level semantic predictions—to bridge the generalization gap. The model employs a hierarchical inference mechanism
+where it first predicts a high-level semantic subtask (e.g., ”pick up the pillow”) based on the visual observation and global
+instruction, which then conditions a specialized ”action expert” to generate continuous low-level control actions via flow
+matching. This capability is developed through a two-stage training process that transitions from scalable discrete token
+pre-training to precise continuous flow-matching post-training, enabling the execution of complex, long-horizon tasks in
+environments completely unseen during training.
+CogACT. This architecture synthesizes perception and reasoning by employing DINOv2 and SigLIP for visual encoding
+alongside a Llama2-7B language backbone. To bridge the gap between high-level cognition and low-level action, CogACT
+utilizes a specialized Diffusion Transformer (DiT). By conditioning this diffusion-based action module on the features
+extracted by the VLM, the model effectively addresses the challenges of generating precise, continuous, and temporally
+correlated robotic trajectories.
+A.2. Acceleration Method Details
+FastV. FastV addresses inference latency in Large Vision-Language Models (LVLMs) by mitigating visual token redundancy.
+The method is grounded in the observation that deep layers often exhibit an attention sink phenomenon, where visual tokens
+consume substantial computational resources despite receiving minimal attention weights. To counter this, FastV introduces
+a plug-and-play mechanism that monitors attention scores to dynamically discard low-utility visual tokens after a certain
+depth, thereby reducing FLOPs while preserving model accuracy.
+VLA-Cache. VLA-Cache is a training-free inference accelerator tailored for robotic VLA models. It exploits the observation
+that visual scenes in robotic tasks remain largely stable between consecutive frames, particularly in background areas. By
+distinguishing between static and dynamic elements, the method recycles KV-cache states for unchanged tokens while
+enforcing full computation for critical, task-relevant features to ensure precision. Furthermore, it incorporates an adaptive
+strategy that modulates the caching ratio according to layer-specific attention patterns.
+A.3. Implementation Details
+For OpenVLA-OFT, we set the sensitivity parameter p = 5. Regarding temporal inertia parameter, we set α = 0.7 for
+LIBERO-Spatial and LIBERO-Long to reduce historical reliance in dynamic spatial layouts. Conversely, for LIBERO-Object
+and LIBERO-Goal, we use a higher α = 0.9 as these manipulation tasks feature relatively stable environments. For π0.5 ,
+given its enhanced execution stability, we set the sensitivity parameter to 80 to mitigate environmental noise. The temporal
+inertia parameter is kept fixed at 0.7. For CogACT, we set the sensitivity parameter p = 5, α = 0.7.
+A.4. Benchmarks Details
+Real-Robot Setup. We conducted experiments on a 7-DoF Kinova Gen3 robotic arm, with the hardware setup shown in
+Fig.7. Our system uses two Intel RealSense D435i cameras: one providing a third-person view and the other mounted on the
+wrist.
+Training Details. For each task, we collected 50 demonstrations. When fine-tuning the π0.5 model, we froze the VLM
+backbone and performed LoRA-based adaptation only, while fullly fine-tuning the action expert. We used a global batch
+size of 32 and trained for 10k steps on a single GPU.
+
+11
+
+Environment-Aware Adaptive Pruning with Interleaved Inference Orchestration for Vision-Language-Action Models
+
+Kinova Gen3
+
+Intel RealSense D435i
+
+Figure 7. Kinova Gen3 Robot Setup.
+
+B. Real-robot Analysis
+We conduct experiments on a real-robot platform. Specifically, we fine-tune π0.5 on our collected dataset, training each
+task for 10,000 steps with a batch size of 32. During evaluation, to more thoroughly assess the model’s capability, we test
+on 20 randomly sampled object placements within the training range, re-randomizing the object position in every trial to
+probe the model’s spatial reasoning and generalization across object locations. On real-robot tasks, while achieving a 1.26×
+speedup, EcoVLA exhibits a minor performance drop compared to π0.5 . We further observe that most failures occur when
+the object is placed near the boundary of the workspace. We conjecture that such edge-case placements require finer-grained
+spatial cues and stricter geometric constraints, making the pruned model more susceptible to representation loss and thus
+less robust in spatial generalization.
+
+C. Hyperparameter Analysis
+We evaluate the influence of sensitivity parameter p and temporal inertia parameter, α on success rates using π0.5 .
+Impact of Sensitivity Parameter. As shown in Fig.6 (b), we evaluate the impact of the sensitivity parameter p, as it
+directly dictates EcoVLA’s responsiveness to environmental dynamics. At low p values, EcoVLA adopts a conservative
+strategy, updating sparsity patterns only during drastic environmental changes, thereby overlooking subtle cues. Conversely,
+an excessively high p induces hypersensitivity, where sensor noise or lighting fluctuations are misidentified as dynamics.
+This triggers redundant updates that disrupt temporal continuity. Performance peaks at p = 80%, a setting that effectively
+filters noise while retaining sufficient sensitivity to capture physical transitions, ensuring robust operation in complex
+environments.
+Impact of Temporal Inertia Parameter. We investigate the properties of α on LIBERO-Long (Fig.6 (a)), as this parameter
+is critical for long-horizon tasks with varying spatial layouts. High α excessively weights history, causing the model to miss
+new critical features, whereas extremely low α relies on single-frame inputs, disrupting inference stability. Performance
+peaks at 87.0% with an intermediate α, validating our Temporal Consistency Pruning strategy. This confirms that EcoVLA
+effectively filters high-frequency noise while maintaining sensitivity to environmental dynamics.
+
+12
+
+

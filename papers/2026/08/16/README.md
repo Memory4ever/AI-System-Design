@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-15 09:00:00` 至 `2026-08-16 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 244 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：1 个 Deep Review、3 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`PLATFORM-EVALUATION-SYSTEM` 中由《From LLM Inference to Agentic Workloads: Characterization and Implications for Serving Systems》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -73,12 +72,11 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2608-14967 | RP-03946a157035196b | standard | arXiv:2608.14967v1 | SRC-ARXIV@arXiv:2608.14967v1 | https://arxiv.org/html/2608.14967v1#S5 (5 Methodology: an open measurement plan for the ecosystem) | https://arxiv.org/html/2608.14967v1#S6 (6 Analytical evaluation (pre-measurement)) | https://arxiv.org/html/2608.14967v1#S7 (7 Discussion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-14967 | complete |
-| SF-2026-ARXIV-2608-15127 | RP-c773104e62cdc620 | deep | arXiv:2608.15127v1 | SRC-ARXIV@arXiv:2608.15127v1 | https://arxiv.org/html/2608.15127v1 (§§3–4: instrumentation and ten-application workload taxonomy) | https://arxiv.org/html/2608.15127v1 (§§5–6 and Table 2: controlled measurements, production traces and design explorations) | https://arxiv.org/html/2608.15127v1 (§7 Discussion/Limitations and Table 2 application-coverage boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-15127 | complete |
+| SF-2026-ARXIV-2608-15127 | RP-a2cba2bf57960e55 | deep | arXiv:2608.15127v1 | SRC-ARXIV@arXiv:2608.15127v1 | https://arxiv.org/html/2608.15127v1 (§§3–4: instrumentation and ten-application workload taxonomy) | https://arxiv.org/html/2608.15127v1 (§§5–6 and Table 2: controlled measurements, production traces and design explorations) | https://arxiv.org/html/2608.15127v1 (§7 Discussion/Limitations and Table 2 application-coverage boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-15127 | complete |
 | SF-2026-ARXIV-2608-15171 | RP-6717fdfdbaba917a | standard | arXiv:2608.15171v1 | SRC-ARXIV@arXiv:2608.15171v1 | https://arxiv.org/html/2608.15171v1#S3 (3 Prefill-Pressure Adaptive Scheduling (P-PAS)) | https://arxiv.org/html/2608.15171v1#S5 (5 Evaluation) | https://arxiv.org/html/2608.15171v1#S8 (8 Conclusion and Future Work) | Not Required — v1 exposes a public artifact, but this Standard review relies only on the versioned paper and does not import repository code or an event-time commit | claim:SF-2026-ARXIV-2608-15171 | complete |
 | SF-2026-ARXIV-2608-15383 | RP-22563f03c8d11e65 | standard | arXiv:2608.15383v1 | SRC-ARXIV@arXiv:2608.15383v1 | https://arxiv.org/html/2608.15383v1#S3 (3 Method) | https://arxiv.org/html/2608.15383v1#S4 (4 Experimental Setup) | https://arxiv.org/html/2608.15383v1#S7 (7 Limitations) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-15383 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-14967:start -->
 #### When Does Distributed AI Inference Need More Wide-Area Bandwidth? A Co-Design Evaluation of Optical, Packet, and Software Levers
 
@@ -102,7 +100,7 @@ AgentSysBench 用十个 Agent 应用和生产 trace 同时刻画模型调用、�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了可复算评估证据的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以任务、环境与 evaluator contract为长期设计约束。
-- Knowledge owner：`PLATFORM-EVALUATION-SYSTEM`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`PLATFORM-EVALUATION-SYSTEM`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-15127:end -->
 
 <!-- review:SF-2026-ARXIV-2608-15171:start -->
@@ -210,3 +208,5 @@ AgentSysBench 用十个 Agent 应用和生产 trace 同时刻画模型调用、�
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

@@ -320,6 +320,14 @@ Repetition、frequency、presence penalties 会根据已生成 tokens 修改 log
 
 本章不展开具体 API，因为参数定义和顺序依赖实现。稳定原则是：任何 logits 变换都应进入 Evaluation 和可复现配置。
 
+### 从固定 Logit 变换到 Sensor-gated Safety Decoding
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-02027:start -->
+固定 safety mask 或 request-level guidance strength 在风险边界稳定时最简单，但它无法适应风险在生成轨迹中途才出现的情况。一条实验性分支同时保留 base 与 safety-expert 分布，以二者逐 token 的差异作为 risk sensor，经 temporal accumulator 判断风险是否持续，再只在触发时对 union Top-k candidates 做分布插值后提交 token。prompt-level self-reflection 决定一次请求的 intervention strength，token-level disagreement 决定当前 step 是否介入；两者是不同状态，不能合并成一个“模型知道自己危险”的置信度。
+
+这仍只是 sensor-driven logits policy，不是事实或安全 authority。专家差异可能来自无害的能力偏差，累积阈值可能漏掉单步危险 token，gate 漂移又会造成过度拒答或漏防；safety expert 还带来额外计算。`base/safety checkpoint / risk dimensions / accumulator / threshold / candidate-set rule / judge version` 必须共同版本化并在 false refusal、未见攻击与 utility 上校准。公开实验使用特定模型、安全/效用 benchmark 和 GPT-4-Turbo judge，只能证明该条件化分支在这些设定中的行为，不构成生产安全保证。弱 alignment、分布外攻击或 gate 失配时，grammar constraint、tool authorization、外部 policy 与 release gate 仍必须保留。
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-02027:end -->
+
 ## Sampling 不能修复模型能力
 
 降低 temperature 可以让高概率行为更稳定，但若正确答案本来概率很低，它不会创造知识。提高 temperature 可能偶尔采到正确答案，也会增加错误候选。
@@ -394,6 +402,18 @@ Decoder hidden state
 12. Pairwise selector 需要持久化哪些 graph state，为什么 score difference 不等于置信度？
 13. 为什么 selector 的 calibration 必须按 question 分组并测量 within-question ranking？
 
+### Accepted-generation Risk 需要 Chance Constraint，不是 Confidence Threshold
+
+当同一接口被反复调用时，降低平均幻觉率不等于控制“已接受生成中的失败频率”。一条更强的提交路径把每次生成视为随机约束试验，以 sequential，anytime-valid 证据逐步判定当前输入是否达到了预设的 chance constraint，然后再 accept、defer 或宣告不可行。这与按 confidence 排序不同：后者可以提升选择后质量，却不自动给出概率风险边界。
+
+该分支以多次采样成本、constraint scorer 误差和独立/相关性假设换取可组合的风险控制；输入分布、scorer 或采样假设偏移时，证书不得继续流用。低风险且延迟敏感的请求仍可使用固定 decoding 或普通 selective prediction；公开证据只支持作者的 QA、多跳任务与披露采样协议，不证明生产幻觉率上界。<!-- source-family:SF-2026-ARXIV-2602-01637 -->
+
+### Anchored Decoding 把版权风险编译为序列信息预算
+
+仅在输出后查找相同片段，无法阻止高风险 LM 在生成过程中已经进入逐字复现路径。Anchored Decoding 保留原模型的 proposal，同时引入只用宽松许可数据训练的 reference distribution，把用户选择的 sequence-level information budget 分配到每个 token step，只提交满足局部距离约束的候选。跨 tokenizer 组合时，byte-level fusion 也必须成为 sampler identity 的一部分。
+
+这条路径降低可测的 verbatim-copying 风险，代价是双模型执行、词表对齐、utility 损失与 reference model 本身的数据边界。它不是法律合规证书，也不覆盖意译、情节或外部检索泄漏；当 reference 不可信、budget 无法校准或 exact sampling 是必要语义时，回退固定 decoding、输出检查与人工版权复核。<!-- source-family:SF-2026-ARXIV-2602-07120 -->
+
 ## 小结
 
 Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 选择局部最大值，temperature 改变分布锐度，top-k 固定候选数量，top-p 根据累计质量动态截断。
@@ -401,6 +421,9 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 这些选择会在自回归循环中持续改变后续状态，因此必须与模型、prompt、seed、停止条件和 Evaluation 一起版本化。Sampling 控制能力如何表达，不创造模型没有的能力。
 
 ## Review notes
+
+- Light Alignment / neuron-gated safety decoding（Status: Experimental）:
+  https://arxiv.org/abs/2602.02027
 
 本轮联章 Review 明确本章是 token 生成主干的闭环点，第 21～22 章属于回看主干的容量扩展。正文仍以固定 logits 完成 temperature、top-k、top-p 的数值比较，并明确 processor 顺序和 seed 的实现边界。RLHF/SFT 属于 Part IV，batch scheduling 属于 Part V，不在本章展开。
 

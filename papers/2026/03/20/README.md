@@ -8,9 +8,12 @@
 
 **Contract:** V2.1 Full Replay；Historical Daily 独立重放，Weekly dependency=0。
 
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed；fresh-context Coverage / Evidence / Selection / Books Semantic Audit 与必要的 post-write audit 均已闭合。
+**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open。2026-09-03 fresh-context 反证审计已重开；当前机器结构和既有 retained Review 仍可复用，但 denominator completeness 尚未按“不得抽样、逐项判断”合同重新验收。
+
 
 ## Executive Summary
+
+> **2026-09-03 Semantic Reopen：** 旧 `Complete` 声明已被 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 取代。在 `MAR26-FC-001/MAR26-FC-002/MAR26-FC-003` 与 `MAR26-FC-004` 关闭前，本日报不得恢复 `Complete`；validator 通过只表示机器接口自洽。
 
 严格窗口 raw/registered/screened=644/644/644；denominator=19、pre-denominator closures=625。exact-v1 Review complete=19、blocked=0；Integrate 建议=0。旧 Weekly 未参与发现、筛选、评分、Review、Books 判断或漏项校准。
 
@@ -31,10 +34,10 @@
 | Previous Denominator ID | — |
 | Denominator ID | DEN-20260320-AUTHOR-19 |
 | Denominator Frozen At | 2026-09-02T16:17:56.686449+08:00 |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
+| Completion Status | In Progress |
+| Coverage Gate | Open |
+| Evidence Gate | Open |
+| Books Gate | Open |
 
 ### Source Coverage Receipt
 
@@ -686,10 +689,10 @@ prompt injection 的实质是低优先级不可信内容夺取高优先级控制
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| SA-20260320-COVERAGE | fresh-context:march-lane-b-reviewer | coverage | coverage:SRC-ARXIV:20260320 | — | accepted: strict-window raw inventory、逐项 screening、withdrawn closure 与 weekly_dependency=0 已复核 | passed |
+| SA-20260320-COVERAGE | fresh-context:march-lane-b-reviewer | coverage | coverage:SRC-ARXIV:20260320 | MAR26-FC-001/MAR26-FC-002/MAR26-FC-003 | pending: full-row fresh-context false-positive/false-negative replay; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
 | SA-20260320-EVIDENCE | fresh-context:march-lane-b-reviewer | evidence | validator:review-completion-v1 | — | accepted: retained family 均完成 exact-v1 review，blocked/unverified/disputed=0 | passed |
-| SA-20260320-SELECTION | fresh-context:march-lane-b-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1 | — | accepted: fresh-context false-positive / false-negative 与 Deep Analysis selection 已复核 | passed |
-| SA-20260320-BOOKS | fresh-context:march-lane-b-reviewer | books | validator:books-comparison-v1 | — | accepted: 所有 Books disposition 已复核，本日无需写回 | passed |
+| SA-20260320-SELECTION | fresh-context:march-lane-b-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1 | MAR26-FC-004 | pending: recompute after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
+| SA-20260320-BOOKS | fresh-context:march-lane-b-reviewer | books | validator:books-comparison-v1 | MAR26-FC-004 | pending: recheck disposition after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
 
 ## 8. Ignored Noise
 
@@ -697,7 +700,7 @@ prompt injection 的实质是低优先级不可信内容夺取高优先级控制
 
 ## 9. Recommended Action
 
-本日所有候选均已获得最终 disposition；没有需要写入 Books 的长期机制，后续仅在 primary revision 或新反证出现时重开。
+当前 retained Review 可复用，但 denominator 的 full-row fresh-context 反证发现 false-negative；按 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 重做全量语义复核后，再重算 Selection 与 Books disposition。
 
 ## 10. Repository Changes
 
@@ -707,7 +710,7 @@ prompt injection 的实质是低优先级不可信内容夺取高优先级控制
 
 ## 11. Open Questions
 
-- 普通 Gate finding=0；blocked / unverified / disputed=0。
+- 未解决语义 finding=4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）；blocked / unverified / disputed 仍为 0。
 - 论文自身未证明边界保留在各 Source Review 的 Claim Boundary 中；它们不是本次流程 pending。
 
 ## 12. Sources
@@ -724,8 +727,8 @@ prompt injection 的实质是低优先级不可信内容夺取高优先级控制
 
 ## 13. Final Status
 
-- Completion Status: `Complete`
-- Coverage: `Closed`
-- Evidence: `Passed`
-- Books: `Passed`
-- unresolved findings: 0
+- Completion Status: `In Progress`
+- Coverage: `Open`
+- Evidence: `Open`
+- Books: `Open`
+- unresolved findings: 4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）

@@ -5500,6 +5500,35 @@ Status: W15, W21 and W22 written back after root review; W12 remains open; Histo
   release/tag export, so the Candidate Evidence Gate remains open under the explicit blocked ledger.
 - No Historical Books integration was performed. No file was staged, committed or pushed.
 
+## 2026-09-03 Latest-Contract Daily 重建暂停点
+
+- 本轮因额度约束暂停，不再启动新日期。这里的 `author-side Evidence complete` 不等于 Daily `Complete`：只有独立 fresh-context Semantic Audit、Books 对读/必要写回及 post-write audit 全部通过，三项 Gate 才能闭合。
+- 2026-07 已完成 9 个 zero-owner 日；另有 15 个非空日（07-13～17、07-20～24、07-27～31）完成作者侧 Evidence，共 `8,547 raw → 1,554 retained + 6,993 pre-denominator closures`、1,554/1,554 exact-v1 Review、blocked=0。它们的独立审计与 Books queue 均待 root 处理。07-01～03、07-07～10 仍未完成最新合同作者侧重建，下一入口为 07-01。机器账本见 `papers/2026/07/_sources/LATEST_CONTRACT_CHECKPOINT_20260903.json`。
+- 2026-06 只有 10 个 zero-owner 日通过；20 个非空日均仍待最新合同重建。已恢复总计 14,963 个 raw identity，但旧 1,484 个 retained 与 13,479 个 closure 只是待重审 proposal。06-02 已停在 `1,449 raw / old retained 51 / old closure proposal 1,398` 的 denominator route 准备阶段，尚未冻结新分母，也未开始 exact-v1 Review。机器账本见 `papers/2026/06/_sources/LATEST_CONTRACT_CHECKPOINT_20260903.json`。
+- 2026-03-09 已完成独立 Coverage/Evidence 审计：`527 raw → 54 retained + 473 closures`，54/54 exact-v1、blocked=0；4 项 Integrate 仍等待按日期串行 Books writeback 与 post-write audit，所以状态为 `Coverage=Closed / Evidence=Passed / Books=Open / In Progress`。
+- 2026-08-03 完成作者侧 `430 raw → 102 retained + 328 closures`、102/102 exact-v1、blocked=0，并生成 102 项 Books comparison queue；独立语义审计与 Books writeback 尚未完成，因此三项 Gate 保持 Open。
+
+## 2026-09-03 February 2026 Full-row Fresh-context Reclosure
+
+- 旧的 February completion 只对 12,236 个 closure 做了 392-row sample 加规则扫描，不能证明全量 false-negative challenge；该快照已被本检查点取代。新审计逐行读取 12,520/12,520 个 raw identity 的 title 与 abstract，最终重冻结为 313 retained 与 12,207 个 family-specific pre-denominator closure，并恢复 29 个 false negative。
+- 原 284 retained 已全部重新接受 false-positive、日期 owner、withdrawn、Score V2、Review route/locator、Deep selection 与 Stable Node 检查；最终 313/313 exact-v1 Review 完成且可访问，`deep / standard / blocked = 306 / 7 / 0`。两篇 whole-paper withdrawal 继续留在 pre-denominator closure，不进入评分、Review、Deep selection 或 Books。
+- 新恢复的 29 项按报告日期完成 target + adjacent current-content comparison：12 项形成 canonical-owner 最小写回，17 项为 `No Change — Existing Coverage`；全月 active Books 决策现为 63 Integrate 与 250 No Change，另保留 7 条历史 demotion。28 份 Daily 均为 `Complete / Coverage Closed / Evidence Passed / Books Passed / unresolved=0`；发现、筛选、评分、Review 与 Books 均未使用 Weekly。
+
+## 2026-09-03 全量 Daily 最新合同复核检查点
+
+- 复核范围冻结为仓库当前 218 份正式 Daily：2025-05 共 4 份，2026-02～08 共 212 份，2026-09 共 2 份；目标不是只修 8 月。统一机器可复算总账位于 `papers/_sources/daily-latest-contract-audit-20260903/`。
+- 首轮 readiness audit 将“现有报告自称 Semantic Audit passed”与“可由新 fresh-context reviewer 重新验收”分开。进一步把 zero-hit 也纳入 official listing receipt 要求，并禁止 0 字节恢复空壳充当 Receipt/Ledger 后，当前只有 8/218 具备完整机械前置，210/218 必须先重开至少一个 Coverage / denominator 前置；全部 218 份的本轮 fresh-context re-audit 仍为 pending，不能据旧 `Complete` 声明整体完成。
+- 主要重开原因是 official arXiv announcement/listing ownership receipt 缺失（198 日）、raw inventory 不可复算（82 日）、逐 identity pre-denominator closure ledger 缺失（80 日）、screening ledger 缺失（48 日），以及 4 份 Historical Daily 明示使用旧 Weekly discovery baseline。6 月 `_sources` 还存在大量 0 字节恢复空壳；它们只说明恢复目标曾存在，不构成证据。已有 primary Review 与 Books 写回作为可复用证据保留，但不会替代 owner-date 与 false-positive/false-negative 复核。
+- 跨报告集合校验发现 `SF-2026-ARXIV-2608-12103` 同时被 2026-08-13 与 2026-09-02 声明为 owner。官方 2026-09-01 listing receipt 与 exact-v1 header 的 2026-08-12 submission provenance 不能混同；08-13 的提前 owner 已删除并重开为 `In Progress / Open / Open / Open`，09-02 暂保留为 listing owner。下一检查点从 official-listing owner reconciliation 与对应逐 identity closure 恢复继续。
+
+## 2026-09-03 2026 年 2 月 Historical Daily 独立重建闭环
+
+- 2026-02-01～02-28 的 28 份 Historical Daily 已按北京时间前一日 09:00 至当日 09:00 的半开窗口独立重建；发现、Candidate Denominator、Score V2、exact-v1 Review、Books Decision 与 fresh-context audit 均未使用旧 Weekly 作为语义输入。
+- 全月覆盖 12,520 个注册身份，最终冻结 284 个候选与 12,236 个 family-specific pre-denominator closure；284/284 exact-v1 Review 完成，`Blocked / Unverified / unresolved finding = 0 / 0 / 0`。两篇 whole-paper withdrawal 仅保留权威撤稿收据，不进入评分、Review、Deep Analysis 或 Books。
+- 独立 false-negative replay 从原 closure 中恢复 85 个系统级候选，并修正自动 section hit、正向 Conclusion 冒充 limitation 及 owner 漂移；最终 852 个 Method/Evaluation/Limitations facet 均有 frozen-body witness 或明确 `Not Disclosed` 收窄边界。
+- Books 审计共 291 行：51 `Integrate`、233 `No Change — Existing Coverage`、7 `Demote — Pre-denominator Closure`。51/51 Integration 已完成 canonical owner 正文写回与 post-write semantic audit，未把 Daily disposition 当作写回完成证明。
+- 28/28 Daily 当前为 `Complete / Coverage Closed / Evidence Passed / Books Passed`，112/112 Semantic Audit rows passed；`scripts/validate_research.py` 28/28 通过，withdrawal、ROADMAP owner、Score/route、北京时间窗口、marker、receipt hash 与 `git diff --check` 均通过。本轮未修改 Weekly，未 stage、commit 或 push。
+
 ## 2026-09-02 2026 年 4 月 Historical Daily 独立重建闭环
 
 - 2026-04-01～04-30 的 30 份 Historical Daily 已按北京时间前一日 09:00 至当日 09:00 的窗口独立重建；发现、Candidate Denominator、评分、Source Review、Books Decision 与 fresh-context audit 均未使用旧 Weekly 作为语义输入，30/30 `weekly-dependency-audit.json` 为 0。

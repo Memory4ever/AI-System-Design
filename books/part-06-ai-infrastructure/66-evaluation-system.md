@@ -1190,6 +1190,14 @@ generated answer
 verifier 和高风险人工裁决继续拥有最终权威。无法取得内部状态或 calibration slice 漂移时，多样本检查与显式检索
 仍是更稳健但更昂贵的分支。
 
+### Single-token Evaluator 把生成收缩为版本化分类 Sensor
+
+让通用 LLM 自由生成评分与理由，在 rubric 复杂、需要解释时很灵活，却把 decode path、format parsing 和 verbosity 都带入 evaluator variance。若一个 metric 已有有限离散等级，可以让共享 decoder-only 小模型通过 metric-specific LoRA/head 只生成一个预先映射的 class token，并仅在这些 class-token logits 上归一化为分数；prompt template 选择该 metric 允许看到的 trace fields。这样把 evaluator 从开放生成器收缩为低成本分类 sensor，但 class-token mapping、tokenizer、base model、adapter、prompt fields 与 calibration data 必须共同进入 artifact identity。
+
+一个 token 约束输出格式，不会自动提供 truth 或 calibrated probability；不同 metric 共用 backbone 还可能产生 interference，domain/trace schema 漂移会让原概率失效。确定性 checker 可表达时仍应优先使用，风险高或 calibration slice 不匹配时回退独立 judge/人工标注。`arXiv:2602.18583v1` 的 exact-v1 只支持 Luna-2 的 metric-specific adapter/head、single-token class probability 与作者实验，不证明跨 metric、模型、语言或生产分布的校准稳定性。
+
+<!-- source-family:SF-2026-ARXIV-2602-18583 -->
+
 ### Reasoning Graph Agreement 仍是 Sensor，不是 Truth
 
 多次推理文本可以先拆成 claim/relation graph，再用 versioned embedding 与 graph distance 衡量拓扑一致性，并选择
@@ -2476,6 +2484,12 @@ Embodied evaluation 也不能把“环境任务已经完成”和“Agent 正确
 <!-- source-family:SF-CAUSAL-STATE-BINDING-PREDICTS-ACTION-CONTROL-IN-LANGUAGE-AGENTS -->
 EvalSpec 需要冻结 event/state schema、可控干预、matched interface、action scorer 与 tolerance，并保存每对干预样本的 trajectory。它能把相关性成功分解为更强的 behavioral evidence，却增加构造 matched interventions 的成本，也可能因遗漏真正 mediator 而误判。无法构造可信干预时，应把结论降级为 observational association，继续使用真实 outcome、人工 adjudication 与 production incident evidence。即使双臂通过，也只证明披露任务上的结构耦合，不证明模型具有内在 agency 或能迁移到开放环境。[受限证据：arXiv:2605.09692v1]
 
+### Safety Evaluation 还需要 Depth-oriented Repeated Inference
+
+横向扩大 prompt/category 覆盖不能替代对同一运行条件的纵向压测。生产中同类请求会被反复采样，单次“安全”只是 Bernoulli outcome；EvalSpec 应冻结 prompt family、model/runtime、temperature、seed policy、judge/scorer 和采样次数，分别报告每次失败概率、置信区间、首次失败深度与相关性。这使“广度覆盖多少风险类别”和“持续使用时某一风险多久出现一次”成为两份独立证据。
+
+加速重复采样会增加调用成本，还可能因共享 cache、provider drift、judge 误差或近重复 prompt 而破坏独立假设。因此它是对 breadth benchmark 的补充，不是取代；预算不足时应保留高风险 slice 的最低采样深度并将未见失败标为上界未决。公开实验只支持披露模型、AIR-BENCH 派生 prompts 与 decoding 配置，不给出生产故障频率。<!-- source-family:SF-2026-ARXIV-2602-11786 -->
+
 ## 小结
 
 Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页面。它把 intended use 转化为 EvalSpec，把有限数据和环境转化为带不确定性的 evidence，再把 evidence 放入受风险政策约束的发布与反馈决策。对 MoE 等条件计算系统，负载统计只是运行证据，功能 specialization 仍需独立指标与干预验证。release-grade 结论还必须能重建其 artifact、harness 与环境；无法重建的历史分数只能作为描述性记录。
@@ -2483,6 +2497,8 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 它的长期不变量是：完整 subject identity、明确分布、可审计 scorer、per-example evidence、切片与不确定性、分离的 decision policy，以及从生产反馈回到新版本的受控闭环。下一章进入 Monitoring，讨论平台怎样以受控成本持续获得 observed state，而不把“发生了什么”误当成“是否足够好”。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-18583`（Status: Experimental）：exact-v1 支持 Luna-2 以 metric-specific LoRA/head、trace-field prompt 与 exactly-one class token 构成 evaluator sensor，并对 class-token probabilities 归一化；作者实验不证明输出天然校准、跨分布稳定、共享 backbone 无干扰或可替代独立 truth source。https://arxiv.org/html/2602.18583v1
 
 - `SF-2026-ARXIV-2604-21930`（Status: Experimental）：exact-v1 支持 temporal taskification、profile distance 与训练前 boundary sensitivity 诊断；不证明存在唯一正确切分或通用阈值。https://arxiv.org/abs/2604.21930v1
 - `SF-2026-ARXIV-2604-22038`（Status: Experimental）：exact-v1 在 11 个 VLM 的 target-modality retrieval 中支持语义/句法 cue 会影响 source binding；模型自述不是 authoritative provenance。https://arxiv.org/abs/2604.22038v1

@@ -451,6 +451,12 @@ MoE 路由原本是执行状态，若不同输入在 expert 选择与 GPU 活动
 
 <!-- source-family:SF-2026-ARXIV-2605-24817 -->
 
+### Host 与 Device 都不可信时，用计算挑战构造旁路遥测
+
+硬件 counter 假设 firmware、driver 或 hypervisor 至少有一层可信；这些层都可被篡改时，平台可以主动投递可版本化的计算挑战，把 probabilistic parallel work、sequential latency work、GEMM throughput 与 VRAM-residency hashing 的时延/带宽响应组合成统计证据。这些 observables 只证明受挑战时的某类架构活动，不证明运行了哪个模型、目的是否合规或所有时间都可见。
+
+挑战本身消耗算力和功耗，会受竞争负载、功率限制、虚拟化和架构差异干扰，而且统计分布会随硬件变更。因此 monitor 只能产生 suspect/unknown，由治理策略结合资产注册、调度回执与人工调查决定行动；有可信 counter/attestation 时它们仍是更直接的基线。<!-- source-family:SF-2026-ARXIV-2602-09369 -->
+
 ## 小结
 
 Monitoring 用受控成本提供系统健康的统计视图。它适合发现趋势、提出 fail-slow suspect 并驱动分层控制环，却不能独自判定节点故障，也不能解释某一次失败的完整上下文。下一章用 structured logs 保存事件证据。

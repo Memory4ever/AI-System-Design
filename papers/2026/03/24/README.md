@@ -8,9 +8,12 @@
 
 **Contract:** V2.1 Full Replay；Historical Daily 独立重放，Weekly dependency=0。
 
-**Status:** Conditional；Coverage=Closed、Evidence=Conditional Pass、Books=Conditional Pass；fresh-context Coverage / Evidence / Selection / Books Semantic Audit 与必要的 post-write audit 均已闭合；外部证据限制已精确登记。
+**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open。2026-09-03 fresh-context 反证审计已重开；当前机器结构和既有 retained Review 仍可复用，但 denominator completeness 尚未按“不得抽样、逐项判断”合同重新验收。
+
 
 ## Executive Summary
+
+> **2026-09-03 Semantic Reopen：** 旧 `Complete` 声明已被 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 取代。在 `MAR26-FC-001/MAR26-FC-002/MAR26-FC-003` 与 `MAR26-FC-004` 关闭前，本日报不得恢复 `Complete`；validator 通过只表示机器接口自洽。
 
 严格窗口 raw/registered/screened=1102/1102/1102；denominator=34、pre-denominator closures=1068。exact-v1 Review complete=34、blocked=0；Integrate 建议=1。旧 Weekly 未参与发现、筛选、评分、Review、Books 判断或漏项校准。
 
@@ -31,10 +34,10 @@
 | Previous Denominator ID | — |
 | Denominator ID | DEN-20260324-AUTHOR-34 |
 | Denominator Frozen At | 2026-09-02T16:17:56.686449+08:00 |
-| Completion Status | Conditional |
-| Coverage Gate | Closed |
-| Evidence Gate | Conditional Pass |
-| Books Gate | Conditional Pass |
+| Completion Status | In Progress |
+| Coverage Gate | Open |
+| Evidence Gate | Open |
+| Books Gate | Open |
 
 ### Source Coverage Receipt
 
@@ -1151,10 +1154,10 @@ checkpoint 和 execution trace 能回答发生了什么，却难以跨调查聚�
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| SA-20260324-COVERAGE | fresh-context:march-lane-b-reviewer | coverage | coverage:SRC-ARXIV:20260324 | — | accepted: strict-window raw inventory、逐项 screening、withdrawn closure 与 weekly_dependency=0 已复核 | passed |
+| SA-20260324-COVERAGE | fresh-context:march-lane-b-reviewer | coverage | coverage:SRC-ARXIV:20260324 | MAR26-FC-001/MAR26-FC-002/MAR26-FC-003 | pending: full-row fresh-context false-positive/false-negative replay; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
 | SA-20260324-EVIDENCE | fresh-context:march-lane-b-reviewer | evidence | validator:review-completion-v1 | — | conditionally accepted: retained family 均完成 exact-v1 review；普通 blocked/unverified=0，外部 disputed claim 已登记 Materials Request，且未写成已证实结论 | passed |
-| SA-20260324-SELECTION | fresh-context:march-lane-b-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1 | — | accepted: fresh-context false-positive / false-negative 与 Deep Analysis selection 已复核 | passed |
-| SA-20260324-BOOKS | fresh-context:march-lane-b-reviewer | books | validator:books-comparison-v1 | — | accepted: Integrate 项已写入 canonical owner，且非写作者 post-write audit 通过 | passed |
+| SA-20260324-SELECTION | fresh-context:march-lane-b-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1 | MAR26-FC-004 | pending: recompute after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
+| SA-20260324-BOOKS | fresh-context:march-lane-b-reviewer | books | validator:books-comparison-v1 | MAR26-FC-004 | pending: recheck disposition after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
 
 ## 8. Ignored Noise
 
@@ -1190,8 +1193,8 @@ checkpoint 和 execution trace 能回答发生了什么，却难以跨调查聚�
 
 ## 13. Final Status
 
-- Completion Status: `Conditional`
-- Coverage: `Closed`
-- Evidence: `Conditional Pass`
-- Books: `Conditional Pass`
-- unresolved findings: 1
+- Completion Status: `In Progress`
+- Coverage: `Open`
+- Evidence: `Open`
+- Books: `Open`
+- unresolved findings: 4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）

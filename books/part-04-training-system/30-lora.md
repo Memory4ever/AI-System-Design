@@ -238,6 +238,14 @@ QLoRA 论文还讨论 NF4、double quantization 和 paged optimizers 等设计�
 
 Quantized base 不代表所有计算都以 4-bit 执行，也不代表 adapter、optimizer 或 activation 使用相同精度。Compute dtype 与量化误差需要单独记录和评估。
 
+### Bit Width 与 Adapter Rank 共享同一个容量预算
+
+先固定统一 base precision、再单独选择 LoRA rank，搜索空间小且 artifact 容易比较；当内存预算严格时，某层降低 bit width 释放的空间可以用于提高另一层 adapter rank，而量化误差与低秩补偿又并非独立。更完整的配置应把 per-layer bit width、rank、target modules、compute dtype 和总 memory constraint 组成联合候选：search controller 只提出可行组合，训练 run 产生 adapter，artifact builder 记录 quantized base 与 adapter 的精确配对，独立 evaluation 决定是否发布。
+
+联合搜索可以在固定预算内重新分配表示误差和更新容量，却引入多保真 proxy bias、搜索成本、不可比较的 layer configurations 及更大的发布矩阵；较高 rank 也未必能补偿错误量化造成的能力损失。预算宽裕、任务简单或搜索证据不足时，统一精度加固定 rank 仍更清晰；任何自动配置都必须保存 search space、repair rule、seed、训练步数与最终 artifact lineage，不能只发布一个“最优”平均分。
+
+<!-- SF-2026-ARXIV-2602-22268 -->
+
 ## Merge 与动态 Adapter 是两种资产策略
 
 ### Recurrent Launch State：权重与 Prompt 之外的第三个适配面
@@ -471,6 +479,8 @@ LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters
 QLoRA 继续压缩冻结基座存储，merge 与动态加载则把训练选择传播到 Serving。LoRA 的完整系统价值不只在“参数少”，而在 base、adapter、objective、checkpoint 和 runtime 之间形成可管理契约。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-22268`（Status: Experimental）：exact-v1 的 §3.1～3.3 定义 bit-width/rank 联合问题、多保真 evolutionary search 与 Bayesian refinement，§4.1～4.5 及 Appendix E 固定作者模型、任务、search efficiency 与消融；§5/Impact Statement 和 task-wise appendix 不证明自动搜索跨模型、预算或 workload 普遍最优。https://arxiv.org/html/2602.22268v1
 
 - `SF-2026-ARXIV-2604-26340`（Status: Experimental）：exact-v1 支持 LoRA-MoE exploratory training 后的 per-module Gini、routing entropy 与 drift-aware expert pruning；不证明该策略适用于任意 base MoE、adapter、任务或生产 SLO。https://arxiv.org/abs/2604.26340v1
 

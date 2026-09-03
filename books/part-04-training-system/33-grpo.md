@@ -946,6 +946,14 @@ simulator fidelity、重复错误去重、额外 rollout compute 与 failure-dis
 
 服务化解决 trajectory 从哪里来，不解决 credit 应落在哪个 decision boundary。单轮、同角色、单 verifier 的 sequence reward 仍是最小方案；当角色、阶段、环境状态和分支增多时，样本 identity 必须先细化，才能讨论更局部的 advantage、持久 partial rollout 或跨 policy reuse。
 
+### Hierarchy of Groups 必须成为 Trajectory Identity
+
+标准 GRPO 假设同一 prompt 下采样的 responses 共享可比较起点，组内相对 reward 因而能近似 advantage；长程 Agent 在不同历史中到达相似当前 observation 时，若只按当前 prompt 分组，会把不同 hidden context 的结果当作同一条件分布。更细的 group contract 可以先按任务/当前 state 建立外层比较，再按 history/context identity 建立内层组，只在可比较层级内归一化和聚合 credit。trajectory store 拥有完整历史与 behavior-policy identity，group builder 产生可审计 membership，optimizer 只消费已经冻结的 group graph。
+
+层级分组改善 context inconsistency，却减少每组有效样本、增加方差、history hashing/压缩错误与 group fragmentation；过粗会混入不可比样本，过细又退化成没有相对基线。短任务、同 prompt 独立 rollout 或 history 对动作无影响时，普通 GRPO 仍更简单。无法证明 state equivalence 时，应保留 trajectory-level reward、扩大重新采样或使用 critic/监督信号，而不能用语义相似度伪造同分布组。
+
+<!-- SF-2026-ARXIV-2602-22817 -->
+
 ### Immediate Reward、Delayed Correction 与 Staleness 是同一 Lifecycle
 
 长 Agent trajectory 可在 stage 完成时得到 immediate reward，再由最终 outcome 产生 delayed correction；两者
@@ -1471,6 +1479,8 @@ ratio 粒度是彼此独立的设计轴，方法名称不能替代 objective 与
 
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-22817`（Status: Experimental）：exact-v1 的 §4.1～4.2 定义 historical-context inconsistency 与 hierarchy-of-groups optimization，§5.1～5.5 给出作者环境的结果、参数分析和消融，Appendix A～C 固定算法与训练细节，§6 不证明任意历史表示可建立可比 group 或长程生产稳定性。https://arxiv.org/html/2602.22817v1
 
 - `SF-2026-ARXIV-2606-22570` — primary `arXiv:2606.22570v1`；Method=`arXiv:2606.22570v1 §3 Analysis of Update Factors; §4 Algorithm`；Evaluation=`arXiv:2606.22570v1 §5 Experiments`；Non-proof=`arXiv:2606.22570v1 Appendix N Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 - `SF-2026-ARXIV-2606-22716` — primary `arXiv:2606.22716v1`；Method=`arXiv:2606.22716v1 §3 Method and Reward Formalism`；Evaluation=`arXiv:2606.22716v1 §3.3 Experimental Setup; §4 Results`；Non-proof=`arXiv:2606.22716v1 §Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。

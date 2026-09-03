@@ -8,11 +8,10 @@
 
 **Contract:** V2.1 Full Replay；516/516 identities 完成 title+abstract semantic screening，技术 claim 仅来自 exact-v1 primary evidence 与已冻结 source packet
 
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 无未解决 finding
-
-> Strict V2.1 Daily for `DEN-20260618-2977f506`. All V2.1 Gates passed after the complete 37/37 post-write fresh audit.
+**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open；最新合同恢复状态见 Coverage 与第 7、13 节
 
 ## Executive Summary
+> Strict V2.1 Daily for `DEN-20260618-2977f506`. All V2.1 Gates passed after the complete 37/37 post-write fresh audit.
 
 Beijing window `[2026-06-17 09:00, 2026-06-18 09:00)` contains 516 registered identities. Full 516/516 title+abstract screening freezes 37 durable families and 479 family-specific closures. Official exact-v1 HTML was reviewed for 37/37 families. Full-frontier selection freezes three winners before rationale. Books comparison yields 16 Integrate proposals and 21 No Change handoffs.
 
@@ -33,70 +32,98 @@ Beijing window `[2026-06-17 09:00, 2026-06-18 09:00)` contains 516 registered id
 | Previous Denominator ID | — |
 | Denominator ID | DEN-20260618-2977f506 |
 | Denominator Frozen At | 2026-08-29T23:40:00+08:00 |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
+| Completion Status | In Progress |
+| Coverage Gate | Open |
+| Evidence Gate | Open |
+| Books Gate | Open |
 
 ### Source Coverage Receipt
 
 <!-- validator:source-coverage-v2 -->
 | Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
 | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-06-17T09:00:00+08:00 | 2026-06-18T09:00:00+08:00 | 2026-08-29T23:40:00+08:00 | frozen DataCite prefix snapshots; exact-v1 UTC window; all registered categories | checked | 516 | SF-2026-ARXIV-2606-18600; SF-2026-ARXIV-2606-18619; SF-2026-ARXIV-2606-18650; SF-2026-ARXIV-2606-18668; SF-2026-ARXIV-2606-18673; SF-2026-ARXIV-2606-18697; SF-2026-ARXIV-2606-18741; SF-2026-ARXIV-2606-18746; SF-2026-ARXIV-2606-18810; SF-2026-ARXIV-2606-18829; SF-2026-ARXIV-2606-18831; SF-2026-ARXIV-2606-18847; SF-2026-ARXIV-2606-18874; SF-2026-ARXIV-2606-18958; SF-2026-ARXIV-2606-18967; SF-2026-ARXIV-2606-18996; SF-2026-ARXIV-2606-19004; SF-2026-ARXIV-2606-19025; SF-2026-ARXIV-2606-19057; SF-2026-ARXIV-2606-19111; SF-2026-ARXIV-2606-19191; SF-2026-ARXIV-2606-19242; SF-2026-ARXIV-2606-19262; SF-2026-ARXIV-2606-19271; SF-2026-ARXIV-2606-19409; SF-2026-ARXIV-2606-19464; SF-2026-ARXIV-2606-19535; SF-2026-ARXIV-2606-19544; SF-2026-ARXIV-2606-19559; SF-2026-ARXIV-2606-19595; SF-2026-ARXIV-2606-19613; SF-2026-ARXIV-2606-19667; SF-2026-ARXIV-2606-20736; SF-2026-ARXIV-2606-20746; SF-2026-ARXIV-2606-21089; SF-2026-ARXIV-2606-21090; SF-2026-ARXIV-2606-28374 | pages=40; final_cursor=end; 516 unique identities | 2026-06-18T01:00:00Z | ../_sources/daily-20260618/screening-ledger.json; ../_sources/daily-20260618/denominator-full-semantic-audit-v1.tsv; coverage:SRC-ARXIV:20260618 | — |
-
+| SRC-ARXIV | 2026-06-17T09:00:00+08:00 | 2026-06-18T09:00:00+08:00 | 2026-08-29T23:40:00+08:00 | arXiv official availability schedule + exact-v1 Atom + DataCite DOI created | incomplete | 525 | SF-2026-ARXIV-2606-18284;SF-2026-ARXIV-2606-18286;SF-2026-ARXIV-2606-18310;SF-2026-ARXIV-2606-18322;SF-2026-ARXIV-2606-18356;SF-2026-ARXIV-2606-18379;SF-2026-ARXIV-2606-18383;SF-2026-ARXIV-2606-18394;SF-2026-ARXIV-2606-18400;SF-2026-ARXIV-2606-18421;SF-2026-ARXIV-2606-18431;SF-2026-ARXIV-2606-18448;SF-2026-ARXIV-2606-18467;SF-2026-ARXIV-2606-18497;SF-2026-ARXIV-2606-18532;SF-2026-ARXIV-2606-18550;SF-2026-ARXIV-2606-18600;SF-2026-ARXIV-2606-18619;SF-2026-ARXIV-2606-18650;SF-2026-ARXIV-2606-18668;SF-2026-ARXIV-2606-18673;SF-2026-ARXIV-2606-18697;SF-2026-ARXIV-2606-18741;SF-2026-ARXIV-2606-18746;SF-2026-ARXIV-2606-18810;SF-2026-ARXIV-2606-18829;SF-2026-ARXIV-2606-18831;SF-2026-ARXIV-2606-18847;SF-2026-ARXIV-2606-18874;SF-2026-ARXIV-2606-18958;SF-2026-ARXIV-2606-18967;SF-2026-ARXIV-2606-18996;SF-2026-ARXIV-2606-19004;SF-2026-ARXIV-2606-19025;SF-2026-ARXIV-2606-19057;SF-2026-ARXIV-2606-19111;SF-2026-ARXIV-2606-19191;SF-2026-ARXIV-2606-19242;SF-2026-ARXIV-2606-19262;SF-2026-ARXIV-2606-19271 | — | 2026-09-03T12:10:00+08:00 | ../_sources/daily-20260618/official-arxiv-first-public-owner-receipt-v1.json; coverage:SRC-ARXIV:20260618; unclosed: canonical candidate redistribution pending | GAP-ARXIV-CANONICAL-REDISTRIBUTION-20260618 |
 <!-- coverage:SRC-ARXIV:20260618:start -->
 All 357 Core, 55 keyword-routed and 104 route-negative identities were screened. Frozen arithmetic: `516 = 37 retained + 479 closures`. Route reconciliation: `{"keyword_daily_semantic_review_required": {"raw": 55, "retained": 5, "closure": 50}, "not_routed_by_keyword_contract": {"raw": 104, "retained": 1, "closure": 103}, "core_daily_semantic_review_required": {"raw": 357, "retained": 31, "closure": 326}}`. Keyword routing was recall-only.
 <!-- coverage:SRC-ARXIV:20260618:end -->
+
+
+<!-- latest-contract-reopen:2026-06-18:start -->
+### Latest-contract Reopen Notice
+
+2026-09-03 全量复核重新打开本日报。旧 `Complete` 只证明原分母内部的表格算术，不证明当前 V2.1 Coverage：arXiv candidate owner receipt 已恢复；当前仍需按 canonical owner 重分配候选与分母。非空 source packet、原 Source Review 与 Books Comparison 暂作 provenance 保留，不作为最新合同验收结论。2026-08-25 才生效的新增来源不倒推为当日 Required receipt，只按 Source Delta Audit 检查真实 in-window family。当前 finding：`canonical_owner_candidate_redistribution_pending, fresh_context_per_identity_semantic_audit_pending, exact_primary_access_recheck_pending`。
+<!-- latest-contract-reopen:2026-06-18:end -->
+
+### Canonical raw-inventory recovery checkpoint
+
+本轮已从非空官方 DataCite arXiv DOI snapshot 恢复 **525** 条注册类别 identity，并以 immutable DOI `created` 与候选级 announcement owner reconciliation 归档到本日。其中 **40** 条是旧报告 retained provenance，**485** 条已获得逐 family title+abstract closure proposal。这些 proposal 尚未经过 fresh-context false-positive/false-negative audit，旧候选也尚未按 canonical owner 完成重分配；因此 Coverage、Evidence、Books 与 Completion 继续保持 Open。
 
 ## 2. Candidate Ledger
 
 <!-- validator:candidate-ledger-v2.1 -->
 | Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2606-18600 | arXiv:2606.18600v1 | paper-v1:2606.18600 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18600 | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-ARXIV-2606-18600 | yes |
-| SF-2026-ARXIV-2606-18619 | arXiv:2606.18619v1 | paper-v1:2606.18619 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18619 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2606-18619 | yes |
-| SF-2026-ARXIV-2606-18650 | arXiv:2606.18650v1 | paper-v1:2606.18650 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18650 | self | — | new_in_window | TRAIN-DATA | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18650 | yes |
-| SF-2026-ARXIV-2606-18668 | arXiv:2606.18668v1 | paper-v1:2606.18668 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18668 | self | — | new_in_window | AGENT-MULTI-AGENT | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18668 | yes |
-| SF-2026-ARXIV-2606-18673 | arXiv:2606.18673v1 | paper-v1:2606.18673 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18673 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18673 | yes |
-| SF-2026-ARXIV-2606-18697 | arXiv:2606.18697v1 | paper-v1:2606.18697 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18697 | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-ARXIV-2606-18697 | yes |
-| SF-2026-ARXIV-2606-18741 | arXiv:2606.18741v1 | paper-v1:2606.18741 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18741 | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-ARXIV-2606-18741 | yes |
-| SF-2026-ARXIV-2606-18746 | arXiv:2606.18746v1 | paper-v1:2606.18746 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18746 | self | — | new_in_window | AGENT-MEMORY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18746 | yes |
-| SF-2026-ARXIV-2606-18810 | arXiv:2606.18810v1 | paper-v1:2606.18810 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18810 | self | — | new_in_window | TRAIN-GRPO | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18810 | yes |
-| SF-2026-ARXIV-2606-18829 | arXiv:2606.18829v1 | paper-v1:2606.18829 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18829 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18829 | yes |
-| SF-2026-ARXIV-2606-18831 | arXiv:2606.18831v1 | paper-v1:2606.18831 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18831 | self | — | new_in_window | TRAIN-GRPO | Integrate | books-review:SF-2026-ARXIV-2606-18831 | yes |
-| SF-2026-ARXIV-2606-18847 | arXiv:2606.18847v1 | paper-v1:2606.18847 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18847 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-ARXIV-2606-18847 | yes |
-| SF-2026-ARXIV-2606-18874 | arXiv:2606.18874v1 | paper-v1:2606.18874 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18874 | self | — | new_in_window | AGENT-WORKFLOW | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18874 | yes |
-| SF-2026-ARXIV-2606-18958 | arXiv:2606.18958v1 | paper-v1:2606.18958 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18958 | self | — | new_in_window | PLATFORM-PRODUCTION | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18958 | yes |
-| SF-2026-ARXIV-2606-18967 | arXiv:2606.18967v1 | paper-v1:2606.18967 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18967 | self | — | new_in_window | INFER-SPECULATIVE-DECODING | Integrate | books-review:SF-2026-ARXIV-2606-18967 | yes |
-| SF-2026-ARXIV-2606-18996 | arXiv:2606.18996v1 | paper-v1:2606.18996 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18996 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18996 | yes |
-| SF-2026-ARXIV-2606-19004 | arXiv:2606.19004v1 | paper-v1:2606.19004 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19004 | self | — | new_in_window | PLATFORM-GPU-SCHEDULER | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19004 | yes |
-| SF-2026-ARXIV-2606-19025 | arXiv:2606.19025v1 | paper-v1:2606.19025 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19025 | self | — | new_in_window | TRAIN-DISTRIBUTED-TRAINING | Integrate | books-review:SF-2026-ARXIV-2606-19025 | yes |
-| SF-2026-ARXIV-2606-19057 | arXiv:2606.19057v1 | paper-v1:2606.19057 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19057 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2606-19057 | yes |
-| SF-2026-ARXIV-2606-19111 | arXiv:2606.19111v1 | paper-v1:2606.19111 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19111 | self | — | new_in_window | AGENT-MULTI-AGENT | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19111 | yes |
-| SF-2026-ARXIV-2606-19191 | arXiv:2606.19191v1 | paper-v1:2606.19191 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19191 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19191 | yes |
-| SF-2026-ARXIV-2606-19242 | arXiv:2606.19242v1 | paper-v1:2606.19242 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19242 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19242 | yes |
-| SF-2026-ARXIV-2606-19262 | arXiv:2606.19262v1 | paper-v1:2606.19262 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19262 | self | — | new_in_window | PLATFORM-MONITORING | Integrate | books-review:SF-2026-ARXIV-2606-19262 | yes |
-| SF-2026-ARXIV-2606-19271 | arXiv:2606.19271v1 | paper-v1:2606.19271 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19271 | self | — | new_in_window | INFER-SCHEDULING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19271 | yes |
-| SF-2026-ARXIV-2606-19409 | arXiv:2606.19409v1 | paper-v1:2606.19409 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19409 | self | — | new_in_window | AGENT-PLATFORM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19409 | yes |
-| SF-2026-ARXIV-2606-19464 | arXiv:2606.19464v1 | paper-v1:2606.19464 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19464 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19464 | yes |
-| SF-2026-ARXIV-2606-19535 | arXiv:2606.19535v1 | paper-v1:2606.19535 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19535 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2606-19535 | yes |
-| SF-2026-ARXIV-2606-19544 | arXiv:2606.19544v1 | paper-v1:2606.19544 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19544 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19544 | yes |
-| SF-2026-ARXIV-2606-19559 | arXiv:2606.19559v1 | paper-v1:2606.19559 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19559 | self | — | new_in_window | AGENT-PLANNING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19559 | yes |
-| SF-2026-ARXIV-2606-19595 | arXiv:2606.19595v1 | paper-v1:2606.19595 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19595 | self | — | new_in_window | AGENT-WORKFLOW | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19595 | yes |
-| SF-2026-ARXIV-2606-19613 | arXiv:2606.19613v1 | paper-v1:2606.19613 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19613 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2606-19613 | yes |
-| SF-2026-ARXIV-2606-19667 | arXiv:2606.19667v1 | paper-v1:2606.19667 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19667 | self | — | new_in_window | INFER-KV-CACHE | Integrate | books-review:SF-2026-ARXIV-2606-19667 | yes |
-| SF-2026-ARXIV-2606-20736 | arXiv:2606.20736v1 | paper-v1:2606.20736 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-20736 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2606-20736 | yes |
-| SF-2026-ARXIV-2606-20746 | arXiv:2606.20746v1 | paper-v1:2606.20746 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-20746 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-20746 | yes |
-| SF-2026-ARXIV-2606-21089 | arXiv:2606.21089v1 | paper-v1:2606.21089 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-21089 | self | — | new_in_window | TRAIN-DPO | Integrate | books-review:SF-2026-ARXIV-2606-21089 | yes |
-| SF-2026-ARXIV-2606-21090 | arXiv:2606.21090v1 | paper-v1:2606.21090 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-21090 | self | — | new_in_window | TRAIN-GRPO | Integrate | books-review:SF-2026-ARXIV-2606-21090 | yes |
-| SF-2026-ARXIV-2606-28374 | arXiv:2606.28374v1 | paper-v1:2606.28374 | 2026-W25 | 2026-06-17 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-28374 | self | — | new_in_window | AGENT-REFLECTION | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-28374 | yes |
-
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2606-18284 | arXiv:2606.18284v1 | paper-v1:2606.18284 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18284 | self | — | new_in_window | TRAIN-DATA | Integrate | books-review:SF-2026-ARXIV-2606-18284 | yes |
+| SF-2026-ARXIV-2606-18286 | arXiv:2606.18286v1 | paper-v1:2606.18286 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18286 | self | — | new_in_window | TRAIN-SFT | Integrate | books-review:SF-2026-ARXIV-2606-18286 | yes |
+| SF-2026-ARXIV-2606-18310 | arXiv:2606.18310v1 | paper-v1:2606.18310 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18310 | self | — | new_in_window | AGENT-RAG | Integrate | books-review:SF-2026-ARXIV-2606-18310 | yes |
+| SF-2026-ARXIV-2606-18322 | arXiv:2606.18322v1 | paper-v1:2606.18322 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18322 | self | — | new_in_window | TRAIN-RLHF | Integrate | books-review:SF-2026-ARXIV-2606-18322 | yes |
+| SF-2026-ARXIV-2606-18356 | arXiv:2606.18356v1 | paper-v1:2606.18356 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18356 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2606-18356 | yes |
+| SF-2026-ARXIV-2606-18379 | arXiv:2606.18379v1 | paper-v1:2606.18379 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18379 | self | — | new_in_window | AGENT-RAG | Integrate | books-review:SF-2026-ARXIV-2606-18379 | yes |
+| SF-2026-ARXIV-2606-18383 | arXiv:2606.18383v1 | paper-v1:2606.18383 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18383 | self | — | new_in_window | TRAIN-RLHF | Integrate | books-review:SF-2026-ARXIV-2606-18383 | yes |
+| SF-2026-ARXIV-2606-18394 | arXiv:2606.18394v1 | paper-v1:2606.18394 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18394 | self | — | new_in_window | INFER-SPECULATIVE-DECODING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18394 | yes |
+| SF-2026-ARXIV-2606-18400 | arXiv:2606.18400v1 | paper-v1:2606.18400 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18400 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2606-18400 | yes |
+| SF-2026-ARXIV-2606-18421 | arXiv:2606.18421v1 | paper-v1:2606.18421 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18421 | self | — | new_in_window | INFER-TENSORRT-LLM | Integrate | books-review:SF-2026-ARXIV-2606-18421 | yes |
+| SF-2026-ARXIV-2606-18431 | arXiv:2606.18431v1 | paper-v1:2606.18431 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18431 | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-ARXIV-2606-18431 | yes |
+| SF-2026-ARXIV-2606-18448 | arXiv:2606.18448v1 | paper-v1:2606.18448 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18448 | self | — | new_in_window | AGENT-TOOL-CALLING | Integrate | books-review:SF-2026-ARXIV-2606-18448 | yes |
+| SF-2026-ARXIV-2606-18467 | arXiv:2606.18467v1 | paper-v1:2606.18467 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18467 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2606-18467 | yes |
+| SF-2026-ARXIV-2606-18497 | arXiv:2606.18497v1 | paper-v1:2606.18497 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18497 | self | — | new_in_window | AGENT-RAG | Integrate | books-review:SF-2026-ARXIV-2606-18497 | yes |
+| SF-2026-ARXIV-2606-18532 | arXiv:2606.18532v1 | paper-v1:2606.18532 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18532 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2606-18532 | yes |
+| SF-2026-ARXIV-2606-18550 | arXiv:2606.18550v1 | paper-v1:2606.18550 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18550 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2606-18550 | yes |
+| SF-2026-ARXIV-2606-18600 | arXiv:2606.18600v1 | paper-v1:2606.18600 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18600 | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-ARXIV-2606-18600 | yes |
+| SF-2026-ARXIV-2606-18619 | arXiv:2606.18619v1 | paper-v1:2606.18619 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18619 | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-ARXIV-2606-18619 | yes |
+| SF-2026-ARXIV-2606-18650 | arXiv:2606.18650v1 | paper-v1:2606.18650 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18650 | self | — | new_in_window | TRAIN-DATA | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18650 | yes |
+| SF-2026-ARXIV-2606-18668 | arXiv:2606.18668v1 | paper-v1:2606.18668 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18668 | self | — | new_in_window | AGENT-MULTI-AGENT | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18668 | yes |
+| SF-2026-ARXIV-2606-18673 | arXiv:2606.18673v1 | paper-v1:2606.18673 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18673 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18673 | yes |
+| SF-2026-ARXIV-2606-18697 | arXiv:2606.18697v1 | paper-v1:2606.18697 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18697 | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-ARXIV-2606-18697 | yes |
+| SF-2026-ARXIV-2606-18741 | arXiv:2606.18741v1 | paper-v1:2606.18741 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18741 | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-ARXIV-2606-18741 | yes |
+| SF-2026-ARXIV-2606-18746 | arXiv:2606.18746v1 | paper-v1:2606.18746 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18746 | self | — | new_in_window | AGENT-MEMORY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18746 | yes |
+| SF-2026-ARXIV-2606-18810 | arXiv:2606.18810v1 | paper-v1:2606.18810 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18810 | self | — | new_in_window | TRAIN-GRPO | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18810 | yes |
+| SF-2026-ARXIV-2606-18829 | arXiv:2606.18829v1 | paper-v1:2606.18829 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18829 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18829 | yes |
+| SF-2026-ARXIV-2606-18831 | arXiv:2606.18831v1 | paper-v1:2606.18831 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18831 | self | — | new_in_window | TRAIN-GRPO | Integrate | books-review:SF-2026-ARXIV-2606-18831 | yes |
+| SF-2026-ARXIV-2606-18847 | arXiv:2606.18847v1 | paper-v1:2606.18847 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18847 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-ARXIV-2606-18847 | yes |
+| SF-2026-ARXIV-2606-18874 | arXiv:2606.18874v1 | paper-v1:2606.18874 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18874 | self | — | new_in_window | AGENT-WORKFLOW | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18874 | yes |
+| SF-2026-ARXIV-2606-18958 | arXiv:2606.18958v1 | paper-v1:2606.18958 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18958 | self | — | new_in_window | PLATFORM-PRODUCTION | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18958 | yes |
+| SF-2026-ARXIV-2606-18967 | arXiv:2606.18967v1 | paper-v1:2606.18967 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18967 | self | — | new_in_window | INFER-SPECULATIVE-DECODING | Integrate | books-review:SF-2026-ARXIV-2606-18967 | yes |
+| SF-2026-ARXIV-2606-18996 | arXiv:2606.18996v1 | paper-v1:2606.18996 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-18996 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18996 | yes |
+| SF-2026-ARXIV-2606-19004 | arXiv:2606.19004v1 | paper-v1:2606.19004 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19004 | self | — | new_in_window | PLATFORM-GPU-SCHEDULER | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19004 | yes |
+| SF-2026-ARXIV-2606-19025 | arXiv:2606.19025v1 | paper-v1:2606.19025 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19025 | self | — | new_in_window | TRAIN-DISTRIBUTED-TRAINING | Integrate | books-review:SF-2026-ARXIV-2606-19025 | yes |
+| SF-2026-ARXIV-2606-19057 | arXiv:2606.19057v1 | paper-v1:2606.19057 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19057 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2606-19057 | yes |
+| SF-2026-ARXIV-2606-19111 | arXiv:2606.19111v1 | paper-v1:2606.19111 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19111 | self | — | new_in_window | AGENT-MULTI-AGENT | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19111 | yes |
+| SF-2026-ARXIV-2606-19191 | arXiv:2606.19191v1 | paper-v1:2606.19191 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19191 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19191 | yes |
+| SF-2026-ARXIV-2606-19242 | arXiv:2606.19242v1 | paper-v1:2606.19242 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19242 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19242 | yes |
+| SF-2026-ARXIV-2606-19262 | arXiv:2606.19262v1 | paper-v1:2606.19262 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19262 | self | — | new_in_window | PLATFORM-MONITORING | Integrate | books-review:SF-2026-ARXIV-2606-19262 | yes |
+| SF-2026-ARXIV-2606-19271 | arXiv:2606.19271v1 | paper-v1:2606.19271 | 2026-W25 | 2026-06-18 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2606-19271 | self | — | new_in_window | INFER-SCHEDULING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19271 | yes |
 ## 3. Review Completion Receipt
 
 <!-- validator:review-completion-v1 -->
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2606-18284 | RP-9d5e9586a5980f9a | deep | arXiv:2606.18284v1 | SRC-ARXIV@arXiv:2606.18284v1 | arXiv:2606.18284v1 §3 Probe Rewards; §5 probe data/selection | arXiv:2606.18284v1 §§4 and 6 Evaluation/Results | arXiv:2606.18284v1 §7 Limitations; mode-collapse findings | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18284 | complete |
+| SF-2026-ARXIV-2606-18286 | RP-c8dae86a49cd767b | deep | arXiv:2606.18286v1 | SRC-ARXIV@arXiv:2606.18286v1 | arXiv:2606.18286v1 §5 Method; §§5.1–5.4 | arXiv:2606.18286v1 §6 Experiments; Appendix A | arXiv:2606.18286v1 §7 Conclusion; Appendix C runtime analysis | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18286 | complete |
+| SF-2026-ARXIV-2606-18310 | RP-deb8c27cf0790387 | deep | arXiv:2606.18310v1 | SRC-ARXIV@arXiv:2606.18310v1 | arXiv:2606.18310v1 §3 conflict-aware retriever editing attack; §4 anchor-based repair | arXiv:2606.18310v1 §5 multi-dataset/model retrieval and downstream evaluations | Not Disclosed — arXiv:2606.18310v1 has no dedicated limitations section; exact-v1 counterevidence is localized at edit access, retriever architecture, corpus and transfer limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18310 | complete |
+| SF-2026-ARXIV-2606-18322 | RP-77022ee8d233e199 | deep | arXiv:2606.18322v1 | SRC-ARXIV@arXiv:2606.18322v1 | arXiv:2606.18322v1 §3 SAE intervention and residual-recovery analysis | arXiv:2606.18322v1 §4–§5 cross-layer behavior evaluations and controls | Not Disclosed — arXiv:2606.18322v1 has no dedicated limitations section; exact-v1 counterevidence is localized at SAE/model/behavior/prompt scope and causal-interpretation limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18322 | complete |
+| SF-2026-ARXIV-2606-18356 | RP-0198cb0f94f3d67e | deep | arXiv:2606.18356v1 | SRC-ARXIV@arXiv:2606.18356v1 | arXiv:2606.18356v1 §3.1–3.7 attack surface, threat model, benchmark levels and measurement | arXiv:2606.18356v1 §4 experiments; §5 endpoint analyses; appendices J–M calibration/sandbox checks | Not Disclosed — arXiv:2606.18356v1 has no dedicated limitations section; exact-v1 counterevidence is localized at prompt-only defense scope, synthetic stress-test and separate Core/Exec call boundary | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18356 | complete |
+| SF-2026-ARXIV-2606-18379 | RP-57bb27eebdd11ac3 | deep | arXiv:2606.18379v1 | SRC-ARXIV@arXiv:2606.18379v1 | arXiv:2606.18379v1 §3 RankGraph-2 lifecycle co-design and co-learned cluster index | arXiv:2606.18379v1 §4–§5 production-scale offline/online evaluation | Not Disclosed — arXiv:2606.18379v1 has no dedicated limitations section; exact-v1 counterevidence is localized at Meta recommendation workload, graph distribution and deployment-scope limits | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18379 | complete |
+| SF-2026-ARXIV-2606-18383 | RP-2a302bd788704335 | deep | arXiv:2606.18383v1 | SRC-ARXIV@arXiv:2606.18383v1 | arXiv:2606.18383v1 §3 proxy-certificate framework and bound components | arXiv:2606.18383v1 §4–§5 synthetic and language-model validation | Not Disclosed — arXiv:2606.18383v1 has no dedicated limitations section; exact-v1 counterevidence is localized at certificate assumptions, concept labeling and model/SAE scope | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18383 | complete |
+| SF-2026-ARXIV-2606-18394 | RP-791b3020552cc289 | deep | arXiv:2606.18394v1 | SRC-ARXIV@arXiv:2606.18394v1 | arXiv:2606.18394v1 §3 JetSpec parallel causal tree-drafting architecture | arXiv:2606.18394v1 §4–§5 vLLM integration and H100 evaluation | Not Disclosed — arXiv:2606.18394v1 has no dedicated limitations section; exact-v1 counterevidence is localized at draft-tree/model/hardware/concurrency scope and branch-waste boundary | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18394 | complete |
+| SF-2026-ARXIV-2606-18400 | RP-5861a884c9db6db0 | deep | arXiv:2606.18400v1 | SRC-ARXIV@arXiv:2606.18400v1 | arXiv:2606.18400v1 PDF §3 threat model; §§4–5 CloakLM three-tier design and integration | arXiv:2606.18400v1 PDF §§6–7 PyTorch/vLLM LLaMA/Qwen evaluation | arXiv:2606.18400v1 PDF §1/§8 scope: no host OS, hypervisor, firmware or mapping-compromise defense | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18400 | complete |
+| SF-2026-ARXIV-2606-18421 | RP-6873b4ff5363b062 | deep | arXiv:2606.18421v1 | SRC-ARXIV@arXiv:2606.18421v1 | arXiv:2606.18421v1 §3 XCheck, §§3.1–3.3 constraint extraction, exploration and behavior differentiation | arXiv:2606.18421v1 §4.1–4.2 evaluation on TVM, ONNX-MLIR and GeneSys | Not Disclosed — arXiv:2606.18421v1 has no dedicated limitations section; exact-v1 counterevidence is localized at three-compiler/backend scope; no dedicated limitations section | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18421 | complete |
+| SF-2026-ARXIV-2606-18431 | RP-8c71745478b3e855 | deep | arXiv:2606.18431v1 | SRC-ARXIV@arXiv:2606.18431v1 | arXiv:2606.18431v1 §3 tail-aware objective and prediction-free scheduler; §4 cache-aware preemption | arXiv:2606.18431v1 §5 production/open-trace evaluation and ablations | Not Disclosed — arXiv:2606.18431v1 has no dedicated limitations section; exact-v1 counterevidence is localized at trace/model/engine and overload-regime boundaries | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18431 | complete |
+| SF-2026-ARXIV-2606-18448 | RP-058692235df166a4 | deep | arXiv:2606.18448v1 | SRC-ARXIV@arXiv:2606.18448v1 | arXiv:2606.18448v1 §3 VisualSkill construction; §4 hierarchical storage and load_topic interface | arXiv:2606.18448v1 §5 live-UI computer-use evaluation and ablations | Not Disclosed — arXiv:2606.18448v1 has no dedicated limitations section; exact-v1 counterevidence is localized at UI/task/model, authored-skill and MCP-loading scope | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18448 | complete |
+| SF-2026-ARXIV-2606-18467 | RP-3bfb0142a829090f | deep | arXiv:2606.18467v1 | SRC-ARXIV@arXiv:2606.18467v1 | arXiv:2606.18467v1 §3 trajectory risk and conformal calibration; §4 anytime monitoring and drift extension | arXiv:2606.18467v1 §5 retrieval/tool-use experiments and coverage-risk analyses | Not Disclosed — arXiv:2606.18467v1 has no dedicated limitations section; exact-v1 counterevidence is localized at exchangeability, detector delay and tool/retrieval drift limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18467 | complete |
+| SF-2026-ARXIV-2606-18497 | RP-ff3bec20f0a5f21c | deep | arXiv:2606.18497v1 | SRC-ARXIV@arXiv:2606.18497v1 | arXiv:2606.18497v1 §3 Ghost Vectors recovery methodology; §4 cryptographic epoch-deletion design | arXiv:2606.18497v1 §5 HNSW/database recovery experiments | Not Disclosed — arXiv:2606.18497v1 has no dedicated limitations section; exact-v1 counterevidence is localized at backend/version/access model and cryptographic-key assumptions | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18497 | complete |
+| SF-2026-ARXIV-2606-18532 | RP-8dee2ab8e796b321 | deep | arXiv:2606.18532v1 | SRC-ARXIV@arXiv:2606.18532v1 | arXiv:2606.18532v1 §3 sandbox threat model and taxonomy; §4 measurement framework | arXiv:2606.18532v1 §5 cross-sandbox case studies/measurements | Not Disclosed — arXiv:2606.18532v1 has no dedicated limitations section; exact-v1 counterevidence is localized at coverage of sandbox types, attacker capability and measurement incompleteness | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18532 | complete |
+| SF-2026-ARXIV-2606-18550 | RP-c3df87c10269d7bf | deep | arXiv:2606.18550v1 | SRC-ARXIV@arXiv:2606.18550v1 | arXiv:2606.18550v1 §II threat model; §III two-gate taxonomy; §IV ContractGuard ladder | arXiv:2606.18550v1 §VI–VII controlled exhaustive attacker and six-model validation | arXiv:2606.18550v1 §XI Limitations; trusted-attestation, symbolic-space and external-side-effect boundaries | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18550 | complete |
 | SF-2026-ARXIV-2606-18600 | RP-43d464fda7218e6e | deep | arXiv:2606.18600v1 | SRC-ARXIV@arXiv:2606.18600v1 | https://arxiv.org/html/2606.18600v1 — § exact-v1 anchor: 4 Model Placement for Heterogeneous GPUs | https://arxiv.org/html/2606.18600v1 — § exact-v1 evaluation anchor: 7 Evaluation | https://arxiv.org/html/2606.18600v1 — § exact-v1 limitation/counterevidence anchor: 8.1 Limitation | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18600 | complete |
 | SF-2026-ARXIV-2606-18619 | RP-b1641e5e887033df | deep | arXiv:2606.18619v1 | SRC-ARXIV@arXiv:2606.18619v1 | https://arxiv.org/html/2606.18619v1 — § exact-v1 anchor: security-specification-first paradigm | https://arxiv.org/html/2606.18619v1 — § exact-v1 evaluation anchor: real-world subjects | https://arxiv.org/html/2606.18619v1 — § exact-v1 limitation/counterevidence anchor: limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18619 | complete |
 | SF-2026-ARXIV-2606-18650 | RP-06daad534bd2ce5d | deep | arXiv:2606.18650v1 | SRC-ARXIV@arXiv:2606.18650v1 | https://arxiv.org/html/2606.18650v1 — § exact-v1 anchor: penalized single-level objective | https://arxiv.org/html/2606.18650v1 — § exact-v1 evaluation anchor: Experiments | https://arxiv.org/html/2606.18650v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-18650 | complete |
@@ -121,64 +148,264 @@ All 357 Core, 55 keyword-routed and 104 route-negative identities were screened.
 | SF-2026-ARXIV-2606-19242 | RP-274d1357452733c6 | deep | arXiv:2606.19242v1 | SRC-ARXIV@arXiv:2606.19242v1 | https://arxiv.org/html/2606.19242v1 — § exact-v1 anchor: Runtime Compliance Verification | https://arxiv.org/html/2606.19242v1 — § exact-v1 evaluation anchor: Evaluation | https://arxiv.org/html/2606.19242v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19242 | complete |
 | SF-2026-ARXIV-2606-19262 | RP-9b28f51a00defa29 | deep | arXiv:2606.19262v1 | SRC-ARXIV@arXiv:2606.19262v1 | https://arxiv.org/html/2606.19262v1 — § exact-v1 anchor: Zero-Overhead Telemetry | https://arxiv.org/html/2606.19262v1 — § exact-v1 evaluation anchor: Evaluation | https://arxiv.org/html/2606.19262v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19262 | complete |
 | SF-2026-ARXIV-2606-19271 | RP-c7db478f4bc8677e | deep | arXiv:2606.19271v1 | SRC-ARXIV@arXiv:2606.19271v1 | https://arxiv.org/html/2606.19271v1 — § exact-v1 anchor: Streaming Video Generation | https://arxiv.org/html/2606.19271v1 — § exact-v1 evaluation anchor: Evaluation | https://arxiv.org/html/2606.19271v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19271 | complete |
-| SF-2026-ARXIV-2606-19409 | RP-7d7150c18958b701 | deep | arXiv:2606.19409v1 | SRC-ARXIV@arXiv:2606.19409v1 | https://arxiv.org/html/2606.19409v1 — § exact-v1 anchor: Session-Centered Runtime State | https://arxiv.org/html/2606.19409v1 — § exact-v1 evaluation anchor: audited milestones | https://arxiv.org/html/2606.19409v1 — § exact-v1 limitation/counterevidence anchor: claims are limited | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19409 | complete |
-| SF-2026-ARXIV-2606-19464 | RP-9c9808c620abad7c | deep | arXiv:2606.19464v1 | SRC-ARXIV@arXiv:2606.19464v1 | https://arxiv.org/html/2606.19464v1 — § exact-v1 anchor: obligations, dispensations | https://arxiv.org/html/2606.19464v1 — § exact-v1 evaluation anchor: examples | https://arxiv.org/html/2606.19464v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19464 | complete |
-| SF-2026-ARXIV-2606-19535 | RP-c928538e16521982 | deep | arXiv:2606.19535v1 | SRC-ARXIV@arXiv:2606.19535v1 | https://arxiv.org/html/2606.19535v1 — § exact-v1 anchor: platform-triggered backdoor | https://arxiv.org/html/2606.19535v1 — § exact-v1 evaluation anchor: broad range of deployment targets | https://arxiv.org/html/2606.19535v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19535 | complete |
-| SF-2026-ARXIV-2606-19544 | RP-c5005845d92e5630 | deep | arXiv:2606.19544v1 | SRC-ARXIV@arXiv:2606.19544v1 | https://arxiv.org/html/2606.19544v1 — § exact-v1 anchor: Minimum Viable Validation Protocol | https://arxiv.org/html/2606.19544v1 — § exact-v1 evaluation anchor: 118 runs | https://arxiv.org/html/2606.19544v1 — § exact-v1 limitation/counterevidence anchor: limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19544 | complete |
-| SF-2026-ARXIV-2606-19559 | RP-2946b51270383016 | deep | arXiv:2606.19559v1 | SRC-ARXIV@arXiv:2606.19559v1 | https://arxiv.org/html/2606.19559v1 — § exact-v1 anchor: action confidence from request uncertainty | https://arxiv.org/html/2606.19559v1 — § exact-v1 evaluation anchor: five LLM backbones | https://arxiv.org/html/2606.19559v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19559 | complete |
-| SF-2026-ARXIV-2606-19595 | RP-0d67b5370a61594a | deep | arXiv:2606.19595v1 | SRC-ARXIV@arXiv:2606.19595v1 | https://arxiv.org/html/2606.19595v1 — § exact-v1 anchor: Post-Interruption Recovery | https://arxiv.org/html/2606.19595v1 — § exact-v1 evaluation anchor: Evaluation | https://arxiv.org/html/2606.19595v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19595 | complete |
-| SF-2026-ARXIV-2606-19613 | RP-25646df540d73ac2 | deep | arXiv:2606.19613v1 | SRC-ARXIV@arXiv:2606.19613v1 | https://arxiv.org/html/2606.19613v1 — § exact-v1 anchor: 100 Interaction Turns | https://arxiv.org/html/2606.19613v1 — § exact-v1 evaluation anchor: 20 scenarios | https://arxiv.org/html/2606.19613v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19613 | complete |
-| SF-2026-ARXIV-2606-19667 | RP-5baa9c06caf84ed7 | deep | arXiv:2606.19667v1 | SRC-ARXIV@arXiv:2606.19667v1 | https://arxiv.org/html/2606.19667v1 — § exact-v1 anchor: prefix tree over recently served evidence sequences | https://arxiv.org/html/2606.19667v1 — § exact-v1 evaluation anchor: three vLLM configurations | https://arxiv.org/html/2606.19667v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-19667 | complete |
-| SF-2026-ARXIV-2606-20736 | RP-ce65b478413b89ff | deep | arXiv:2606.20736v1 | SRC-ARXIV@arXiv:2606.20736v1 | https://arxiv.org/html/2606.20736v1 — § exact-v1 anchor: randomly regenerates the answer-bearing local detail | https://arxiv.org/html/2606.20736v1 — § exact-v1 evaluation anchor: eight frontier vision-language models | https://arxiv.org/html/2606.20736v1 — § exact-v1 limitation/counterevidence anchor: Limitations | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-20736 | complete |
-| SF-2026-ARXIV-2606-20746 | RP-90be3e9c423b4e36 | deep | arXiv:2606.20746v1 | SRC-ARXIV@arXiv:2606.20746v1 | https://arxiv.org/html/2606.20746v1 — § exact-v1 anchor: detector of record | https://arxiv.org/html/2606.20746v1 — § exact-v1 evaluation anchor: broader clean-path actions | https://arxiv.org/html/2606.20746v1 — § exact-v1 limitation/counterevidence anchor: boundary result, not a deployable detector | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-20746 | complete |
-| SF-2026-ARXIV-2606-21089 | RP-eaade2dee238e5a8 | deep | arXiv:2606.21089v1 | SRC-ARXIV@arXiv:2606.21089v1 | https://arxiv.org/html/2606.21089v1 — § exact-v1 anchor: scientific amnesia | https://arxiv.org/html/2606.21089v1 — § exact-v1 evaluation anchor: single-seed 5-condition | https://arxiv.org/html/2606.21089v1 — § exact-v1 limitation/counterevidence anchor: diagnostic, not a claim | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-21089 | complete |
-| SF-2026-ARXIV-2606-21090 | RP-b1532b9010698ab9 | deep | arXiv:2606.21090v1 | SRC-ARXIV@arXiv:2606.21090v1 | https://arxiv.org/html/2606.21090v1 — § exact-v1 anchor: rise-then-collapse pattern | https://arxiv.org/html/2606.21090v1 — § exact-v1 evaluation anchor: 10 sequential 20-step campaigns | https://arxiv.org/html/2606.21090v1 — § exact-v1 limitation/counterevidence anchor: mixed evidence | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-21090 | complete |
-| SF-2026-ARXIV-2606-28374 | RP-599ee9146b59e214 | deep | arXiv:2606.28374v1 | SRC-ARXIV@arXiv:2606.28374v1 | https://arxiv.org/html/2606.28374v1 — § exact-v1 anchor: strict keep-better gate | https://arxiv.org/html/2606.28374v1 — § exact-v1 evaluation anchor: four diverse benchmarks | https://arxiv.org/html/2606.28374v1 — § exact-v1 limitation/counterevidence anchor: no artifact universally wins | Not Disclosed — no later artifact used | claim:SF-2026-ARXIV-2606-28374 | complete |
 
-## 4. Benchmark Contracts
+### Source Reviews
 
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2606-18600 | offline throughput | Llama-3.1-70B; Qwen3-32B | AWS L4, A10G and L40S GPUs | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | offline throughput, online TTFT/TPOT and cost efficiency under spot interruption |
-| SF-2026-ARXIV-2606-18619 | real-subject vulnerability findings plus specification-falsification outcomes | Claude Sonnet 4.6 and DeepSeek V4 Pro; Claude Mythos is comparison-only | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | real-subject vulnerability findings plus specification-falsification outcomes |
-| SF-2026-ARXIV-2606-18650 | downstream task quality and selection efficiency against influence/excess-loss baselines | TinyLlama-1.1B and Llama2-7B target models with 3B/5B-token continued-pretraining budgets | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | downstream task quality and selection efficiency against influence/excess-loss baselines |
-| SF-2026-ARXIV-2606-18668 | production pass rate under structured abstention labels and rationales | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | production pass rate under structured abstention labels and rationales |
-| SF-2026-ARXIV-2606-18673 | prompt leakage resistance | Llama-2-7B-chat-hf, Llama-3.1-8B-Instruct, Mistral-7B-Instruct, Qwen3-4B-Instruct, Qwen3-32B, Qwen2.5-72B-Instruct and Llama-3.3-70B-Instruct | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | prompt leakage resistance, usability and optimization overhead over 1,200 applications |
-| SF-2026-ARXIV-2606-18697 | planning return | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | planning return, poison detectability and defense response across three pipeline stages |
-| SF-2026-ARXIV-2606-18741 | reconfiguration downtime | Llama2-7B, Qwen3-30B-A3B, DeepSeek-R1-Distill-Qwen-32B and Llama2-70B | NVIDIA H100 and RTX 5090 platforms | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | reconfiguration downtime, TTFT, TPOT and output throughput |
-| SF-2026-ARXIV-2606-18746 | theorem premises and approximation error for domain disambiguation and local dynamics reconstruction | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | theorem premises and approximation error for domain disambiguation and local dynamics reconstruction |
-| SF-2026-ARXIV-2606-18810 | task accuracy and OOD performance against GRPO | Qwen3-1.7B-Base; DeepSeek-R1-Distill-Qwen-1.5B; experiments are limited to models at most 8B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | task accuracy and OOD performance against GRPO, DAPO and OPD |
-| SF-2026-ARXIV-2606-18829 | legitimate utility | GPT-5.4, DeepSeek-V4-Pro, Llama-4-Maverick, GPT-5-mini, GPT-4o-mini and Gemini-2.5-Flash-Lite | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | legitimate utility, contextual access-control leakage and post-deletion active forgetting |
-| SF-2026-ARXIV-2606-18831 | seven long-context benchmarks plus GAIA and BrowseComp transfer | Qwen3-4B, Qwen3-8B and Qwen3-30B-A3B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | seven long-context benchmarks plus GAIA and BrowseComp transfer |
-| SF-2026-ARXIV-2606-18847 | Memory QA and Embodied Task Planning over evidence-linked household traces | google/gemini-3.5-flash answer generator; GPT-4o judge; GPT-4o-mini question generator | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Memory QA and Embodied Task Planning over evidence-linked household traces |
-| SF-2026-ARXIV-2606-18874 | claim-to-artifact traceability | gpt-4o-mini answer generator and all-MiniLM-L6-v2 embedder in the matched LoCoMo validation | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | claim-to-artifact traceability, ablation and bounded repair across three research domains |
-| SF-2026-ARXIV-2606-18958 | simulation scale | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | simulation scale, fidelity and runtime overhead |
-| SF-2026-ARXIV-2606-18967 | rollout throughput | Qwen2.5-7B, Qwen2.5-14B and Llama3.1-8B-Instruct with quantized self-drafters | single NVIDIA A100-80GiB SXM in the decode-cost study | FP16 target inference; W4/W8 weight-quantized self-drafters | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | rollout throughput, acceptance and downstream RL quality |
-| SF-2026-ARXIV-2606-18996 | paired task-completion and active privacy-extraction outcomes | GPT-4o-mini, GPT-5-mini, GPT-5.4-mini, GPT-5, Gemini-2.5-Flash-Lite, Gemini-2.5-Flash, Gemini-2.5-Pro, Claude Haiku 4.5, Claude Sonnet 4.5, Qwen3-VL-2B, Qwen3-VL-4B, Qwen3-VL-8B, Qwen3-VL-32B, Phi-4-multimodal, InternVL3.5-2B, InternVL3.5-4B, InternVL3.5-8B, InternVL3.5-14B, InternVL3.5-38B, Devstral-Small-2512, Llama3.2-11B-Vision and GLM-4.6V-Flash | NVIDIA A6000 GPUs for open-source models | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | paired task-completion and active privacy-extraction outcomes |
-| SF-2026-ARXIV-2606-19004 | training reward/quality | Qwen-Image | 4 reserved-node H100 GPUs plus 8 H100 GPUs on four spot nodes | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | training reward/quality, GPU utilization and spot cost |
-| SF-2026-ARXIV-2606-19025 | communication volume | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | communication volume, local-training throughput and routing stability; 100B results are modeled projections |
-| SF-2026-ARXIV-2606-19057 | hidden-positive prevalence | Mistral-7B-Instruct, Qwen2.5-7B-Instruct, Llemma-7B-MuInstruct and GPT-5.4-mini judges | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | hidden-positive prevalence, calibration and audit error |
-| SF-2026-ARXIV-2606-19111 | team outcome | gpt-oss-120b, gemma-4-31B-it and llama-4-scout | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | team outcome, behavioral leadership signatures and recovery advantage |
-| SF-2026-ARXIV-2606-19191 | attack success | GPT-5.5, GLM-4.7-Flash and Qwen3-Coder-30B-A3B-Instruct; Opus-4.7, GLM-4.7-Flash and Qwen3-Coder-30B-A3B-Instruct for cross-generator transfer; Cursor backends additionally include Opus-4.7 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | attack success, warning/detection and benign utility across four attack goals |
-| SF-2026-ARXIV-2606-19242 | policy-violation detection and runtime enforcement outcomes | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | policy-violation detection and runtime enforcement outcomes |
-| SF-2026-ARXIV-2606-19262 | hidden-training detection | Not Disclosed | nine NVIDIA GPU models across four architecture generations | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | hidden-training detection, false positives and telemetry overhead |
-| SF-2026-ARXIV-2606-19271 | worst-case per-chunk latency | Not Disclosed | GPU clusters with up to 64 NVIDIA B300 GPUs | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | worst-case per-chunk latency, end-to-end quality and GPU operating cost |
-| SF-2026-ARXIV-2606-19409 | audited runtime invariants and controlled replay properties; no broad quality benchmark | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | audited runtime invariants and controlled replay properties; no broad quality benchmark |
-| SF-2026-ARXIV-2606-19464 | expressibility and runtime policy-evaluation examples | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | expressibility and runtime policy-evaluation examples |
-| SF-2026-ARXIV-2606-19535 | target-platform activation | Qwen3-4B and Qwen3-8B with two LoRA adapters | NVIDIA H200, NVIDIA A100, NVIDIA H100, NVIDIA DGX Spark, Google TPU, AWS Graviton and Alibaba Yitian-710 | Not Disclosed | Not Disclosed | Not Disclosed | 1 | Not Disclosed | Not Disclosed | target-platform activation, aggregate utility and vulnerable-code generation |
-| SF-2026-ARXIV-2606-19544 | agreement | Gemini 3.1 Pro, Claude Opus 4.6, DeepSeek V3.2, Claude Sonnet 4.6, Llama 3.3 70B, Kimi K2.5, GPT-5.4, GPT-4o, GPT-4.1, Gemini 2.5 Pro, GLM-5, GPT-oss 120B, Claude Sonnet 4, Gemini 2.5 Flash, Claude Haiku 4.5, GPT-4.1-mini, Minimax M2.7, Qwen 3 8B, GPT-4o-mini, Mixtral 8x22B and GPT-5.4-mini | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | agreement, Cohen's kappa, test-retest consistency, position bias and verbosity bias |
-| SF-2026-ARXIV-2606-19559 | clarification F1 and fault detection across clarification and standard benchmarks | GPT-5.1, DeepSeek-v3.2-exp, GLM-4.7, Qwen3.5-35B and GPT-OSS-120B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | clarification F1 and fault detection across clarification and standard benchmarks |
-| SF-2026-ARXIV-2606-19595 | post-interruption task completion and structured recovery error | GPT-4o Audio, GPT-4o Mini Audio, GPT Audio, GPT Audio Mini, GPT Realtime, GPT Realtime 1.5, GPT Realtime Mini, GPT Realtime 2, Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 3 Flash, Gemini 3.1 Pro, Gemini 3.1 Flash Live, Gemma 4 12B Instruct, Qwen3-Omni-30B-A3B-Instruct, Qwen2.5-Omni-7B, Phi-4-Multimodal-Instruct, Voxtral-Small-24B-2507, Qwen2-Audio-7B-Instruct, MiMo-Audio-7B-Instruct and Kimi-Audio-7B-Instruct across 27 mode/configuration combinations | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | post-interruption task completion and structured recovery error |
-| SF-2026-ARXIV-2606-19613 | consecutive passed turns | Devstral 2, Devstral Small 2, GLM-5, Kimi K2.5, Nemotron Super, Qwen3-Coder-Next and Qwen3.5-122B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | consecutive passed turns, test feedback/retry effect and harness sensitivity over 20x100-turn scenarios |
-| SF-2026-ARXIV-2606-19667 | median TTFT | Qwen2.5-1.5B and Qwen2.5-7B | RTX 4060 Ti 8 GB, RTX 4090 24 GB and RTX 4090D 24 GB | Not Disclosed | max_model_len 2048 or 4096 by configuration | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | median TTFT, prefix reuse and QA answer quality |
-| SF-2026-ARXIV-2606-20736 | accuracy gap between original and regenerated V*Bench items with controlled search difficulty | Qwen3.6-Plus, GPT-5.5, Claude Opus 4.7, Gemini 3.1 Pro, Seed-2.0-Lite, Kimi K2.6, MiMo v2.5 and Llama 4 Maverick; LLaVA-1.5-13B for difficulty calibration | Not Disclosed | Not Disclosed | Not Disclosed | max_tokens 8192 | Not Disclosed | Not Disclosed | Not Disclosed | accuracy gap between original and regenerated V*Bench items with controlled search difficulty |
-| SF-2026-ARXIV-2606-20746 | clustered-bootstrap gap and persistence/peak delta AUC on executed-edge trajectories | frozen char-ngram SVM plus embedding-contrastive detector; held-out cloaking target | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | clustered-bootstrap gap and persistence/peak delta AUC on executed-edge trajectories |
-| SF-2026-ARXIV-2606-21089 | campaign-level peak pass@1 and intervention deltas across 30 HumanEval subdomains | Qwen2.5-7B-Instruct | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | campaign-level peak pass@1 and intervention deltas across 30 HumanEval subdomains |
-| SF-2026-ARXIV-2606-21090 | pass@1 trajectory | Qwen2.5-3B, Qwen2.5-7B and a Gemma-3-4B pilot | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | pass@1 trajectory, peak-to-end collapse and multi-seed intervention comparison |
-| SF-2026-ARXIV-2606-28374 | benchmark score | Qwen2.5-7B-Instruct for ALFWorld and Qwen3-30B-A3B-Instruct for GAIA, tau-bench and WebShop | 4 NVIDIA A100 GPUs | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | benchmark score, McNemar test and regression gate across four agent benchmarks |
+<!-- review:SF-2026-ARXIV-2606-18284:start -->
+### 2606.18284 — Breaking the Solver Bottleneck: Training Task Generators at the Learnable Frontier
 
-**Source Reviews**
+**问题、旧路径与机制。** 旧路径在 workload、trust boundary 或资源层级稳定时仍然合理；该 exact-v1 的约束变化是：训练 task generator 时可用一次 solver-labeled pool 训练 activation probe，把 targeted solve-rate 作为 amortized reward；最终仍由 held-out solver 验证。
+
+**State / data / control owner。** `TRAIN-DATA` 持有长期机制。State 是论文显式维护的 runtime/training/evaluation state；data 是其 evidence/workload/artifact；control 是 admission、routing、selection、verification 或 fallback 决策。项目名不取得新 owner，跨 owner 中间状态必须携带 identity、version 与 failure semantics。
+
+**Evaluation：proof / non-proof。** `arXiv:2606.18284v1 §§4 and 6 Evaluation/Results` 支持 `Math, code and SWE task generation across model scales`；模型 `Qwen2.5-3B/7B and Qwen3.5-27B solver settings`；硬件 `Not Disclosed`；精度 `Not Disclosed`。它不证明生产 SLO、跨模型/跨硬件普遍优越性或未披露字段。Method locator：`arXiv:2606.18284v1 §3 Probe Rewards; §5 probe data/selection`；counterevidence locator：`arXiv:2606.18284v1 §7 Limitations; mode-collapse findings`。
+
+**Trade-off / failure / coexistence / evolution。** probe 降低 inner-loop solver cost，但 reward hacking、mode collapse 与 solver drift 要求 held-out solver gate。 旧路径保留为兼容/fallback 分支；长期正文只吸收 mechanism、owner handoff 与 failure boundary。
+
+<!-- claim:SF-2026-ARXIV-2606-18284:start -->
+**Claim boundary。** 仅引用 `https://arxiv.org/html/2606.18284v1` 的 exact-v1 method/evaluation/limitations；later versions 或 artifact 不扩张 v1 claim。
+<!-- claim:SF-2026-ARXIV-2606-18284:end -->
+<!-- review:SF-2026-ARXIV-2606-18284:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18286:start -->
+### 2606.18286 — CODEBLOCK: Learning to Supervise Code at the Right Granularity
+
+**问题、旧路径与机制。** 旧路径在 workload、trust boundary 或资源层级稳定时仍然合理；该 exact-v1 的约束变化是：Code SFT 的 sparse supervision unit 应是 syntax-complete、data-flow-connected code block，而非孤立 high-loss token；完整 response 继续作 context。
+
+**State / data / control owner。** `TRAIN-SFT` 持有长期机制。State 是论文显式维护的 runtime/training/evaluation state；data 是其 evidence/workload/artifact；control 是 admission、routing、selection、verification 或 fallback 决策。项目名不取得新 owner，跨 owner 中间状态必须携带 identity、version 与 failure semantics。
+
+**Evaluation：proof / non-proof。** `arXiv:2606.18286v1 §6 Experiments; Appendix A` 支持 `Six code-generation benchmarks`；模型 `Qwen2.5-Coder-1.5B-Instruct and comparison models`；硬件 `Disclosed in Appendix A.3; exact accelerator remains v1-bound`；精度 `Training precision disclosed in Appendix A.3`。它不证明生产 SLO、跨模型/跨硬件普遍优越性或未披露字段。Method locator：`arXiv:2606.18286v1 §5 Method; §§5.1–5.4`；counterevidence locator：`arXiv:2606.18286v1 §7 Conclusion; Appendix C runtime analysis`。
+
+**Trade-off / failure / coexistence / evolution。** 仅 1.9% supervised tokens 降低 loss work，却依赖 parser/data-flow correctness；错误 block 边界会删除必要 credit，full-token SFT 仍是稳健基线。 旧路径保留为兼容/fallback 分支；长期正文只吸收 mechanism、owner handoff 与 failure boundary。
+
+<!-- claim:SF-2026-ARXIV-2606-18286:start -->
+**Claim boundary。** 仅引用 `https://arxiv.org/html/2606.18286v1` 的 exact-v1 method/evaluation/limitations；later versions 或 artifact 不扩张 v1 claim。
+<!-- claim:SF-2026-ARXIV-2606-18286:end -->
+<!-- review:SF-2026-ARXIV-2606-18286:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18310:start -->
+### 2606.18310 — Conflict-Aware Retriever Editing for Knowledge Injection Attacks on LLM-Based RAG Systems
+
+**问题与机制变化。** RAG threat model 需覆盖 retriever parameter editing：攻击者可改变 ranking 而不改 corpus；index/model revision、anchor repair 与 retrieval regression 必须同 lifecycle 验证。
+
+**State / data / control owner。** `AGENT-RAG` 是唯一知识 owner；`Books/part-07-agent/77-memory.md; Books/part-06-ai-infrastructure/72-security.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18310v1 §3 conflict-aware retriever editing attack; §4 anchor-based repair`；Evaluation=`arXiv:2606.18310v1 §5 multi-dataset/model retrieval and downstream evaluations`；Counterevidence=`Not Disclosed — arXiv:2606.18310v1 has no dedicated limitations section; exact-v1 counterevidence is localized at edit access, retriever architecture, corpus and transfer limitations`。Workload=`knowledge-injection attacks and repair across disclosed RAG datasets`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`attack success, retrieval ranking, downstream answer and clean-utility recovery`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** repair anchors能恢复局部行为却可能伤正常 recall；受测编辑不代表所有 retriever compromise。
+
+<!-- claim:SF-2026-ARXIV-2606-18310:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18310v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18310:end -->
+<!-- review:SF-2026-ARXIV-2606-18310:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18322:start -->
+### 2606.18322 — SAE Interventions are Unreliable: Post-Intervention Recovery of Suppressed Behavior
+
+**问题与机制变化。** SAE feature clamp/ablation 不能被当作行为控制 complete；residual stream 会在后续层恢复被压制行为，需做 post-intervention trajectory 与 residual recovery audit。
+
+**State / data / control owner。** `TRAIN-RLHF` 是唯一知识 owner；`Books/part-04-training-system/29-sft.md; Books/part-06-ai-infrastructure/66-evaluation-system.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18322v1 §3 SAE intervention and residual-recovery analysis`；Evaluation=`arXiv:2606.18322v1 §4–§5 cross-layer behavior evaluations and controls`；Counterevidence=`Not Disclosed — arXiv:2606.18322v1 has no dedicated limitations section; exact-v1 counterevidence is localized at SAE/model/behavior/prompt scope and causal-interpretation limitations`。Workload=`behavior-suppression interventions followed across downstream transformer layers`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`target behavior suppression and later recovery with residual/feature diagnostics`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 跨层审计增加 hook/compute且仍是 proxy；观察恢复不证明 SAE 无用，也不提供通用 steering 方案。
+
+<!-- claim:SF-2026-ARXIV-2606-18322:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18322v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18322:end -->
+<!-- review:SF-2026-ARXIV-2606-18322:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18356:start -->
+### 2606.18356 — SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents
+
+**问题与机制变化。** Agent security EvalSpec 必须分开 semantic compromise、artifact-visible harm evidence 与 sandbox-observed state/tool harm，并保持各自 denominator 和 matched identity。
+
+**State / data / control owner。** `PLATFORM-EVALUATION-SYSTEM` 是唯一知识 owner；`Books/part-06-ai-infrastructure/69-trace.md; Books/part-06-ai-infrastructure/72-security.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18356v1 §3.1–3.7 attack surface, threat model, benchmark levels and measurement`；Evaluation=`arXiv:2606.18356v1 §4 experiments; §5 endpoint analyses; appendices J–M calibration/sandbox checks`；Counterevidence=`Not Disclosed — arXiv:2606.18356v1 has no dedicated limitations section; exact-v1 counterevidence is localized at prompt-only defense scope, synthetic stress-test and separate Core/Exec call boundary`。Workload=`600 cases across six attack families plus a 12,000-row matched Core/Exec analysis`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`CoreFail, HarmEvidence, SemanticOnly and sandbox state-oracle harm as separate endpoints`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 多 endpoint改善定位却增加匹配与审计成本；600 合成 case不估计生产 prevalence，prompt policy不替代 runtime control。
+
+<!-- claim:SF-2026-ARXIV-2606-18356:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18356v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18356:end -->
+<!-- review:SF-2026-ARXIV-2606-18356:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18379:start -->
+### 2606.18379 — RankGraph-2: Lifecycle Co-Design for Billion-Node Graph Learning in Recommendation
+
+**问题与机制变化。** Billion-node graph retrieval owner 应贯通 graph construction、cluster/index lifecycle、训练与 serving refresh，避免离线 embedding/index 与在线推荐 state 各自漂移。
+
+**State / data / control owner。** `AGENT-RAG` 是唯一知识 owner；`Books/part-07-agent/77-memory.md; Books/part-06-ai-infrastructure/72-security.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18379v1 §3 RankGraph-2 lifecycle co-design and co-learned cluster index`；Evaluation=`arXiv:2606.18379v1 §4–§5 production-scale offline/online evaluation`；Counterevidence=`Not Disclosed — arXiv:2606.18379v1 has no dedicated limitations section; exact-v1 counterevidence is localized at Meta recommendation workload, graph distribution and deployment-scope limits`。Workload=`Billion-node recommendation graph with hour-scale refresh and online serving`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`retrieval/recommendation quality, refresh/build time and serving efficiency`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 联合 lifecycle缩短 refresh却扩大 control-plane coupling、rebuild和失败域；单平台生产证据不外推任意 RAG corpus。
+
+<!-- claim:SF-2026-ARXIV-2606-18379:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18379v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18379:end -->
+<!-- review:SF-2026-ARXIV-2606-18379:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18383:start -->
+### 2606.18383 — From Sparse Features to Trustworthy Proxies: Certifying SAE-Based Interpretability
+
+**问题与机制变化。** SAE 只有在 proxy risk、reconstruction gap、concept mismatch 与 proxy complexity 共同受控时才能支撑干预结论；单独 sparsity/reconstruction score不足以认证 fidelity。
+
+**State / data / control owner。** `TRAIN-RLHF` 是唯一知识 owner；`Books/part-04-training-system/29-sft.md; Books/part-06-ai-infrastructure/66-evaluation-system.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18383v1 §3 proxy-certificate framework and bound components`；Evaluation=`arXiv:2606.18383v1 §4–§5 synthetic and language-model validation`；Counterevidence=`Not Disclosed — arXiv:2606.18383v1 has no dedicated limitations section; exact-v1 counterevidence is localized at certificate assumptions, concept labeling and model/SAE scope`。Workload=`synthetic controls and language-model SAE proxy validation`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`proxy risk, reconstruction/concept gaps and certificate coverage/tightness`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 证书更可审计却依赖可估计 risk 与 concept定义；通过 proxy certificate 仍不证明行为因果或部署安全。
+
+<!-- claim:SF-2026-ARXIV-2606-18383:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18383v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18383:end -->
+<!-- review:SF-2026-ARXIV-2606-18383:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18394:start -->
+### 2606.18394 — JetFlow: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting
+
+**问题与机制变化。** Parallel causal tree drafting仍遵守 proposal tree、target verification、accepted-prefix commit 与 suffix rollback；Ch48 已有该 owner、DARTree/TAPS 与 tree cost/fallback 边界。
+
+**State / data / control owner。** `INFER-SPECULATIVE-DECODING` 是唯一知识 owner；`Books/part-05-inference-system/44-decode.md; Books/part-05-inference-system/56-inference-scheduling.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18394v1 §3 JetSpec parallel causal tree-drafting architecture`；Evaluation=`arXiv:2606.18394v1 §4–§5 vLLM integration and H100 evaluation`；Counterevidence=`Not Disclosed — arXiv:2606.18394v1 has no dedicated limitations section; exact-v1 counterevidence is localized at draft-tree/model/hardware/concurrency scope and branch-waste boundary`。Workload=`speculative decoding with parallel causal draft trees in vLLM`；Model=`Not Disclosed`；Hardware=`NVIDIA H100 GPU`；Evaluator=`accepted length, output throughput/latency and tree-width/depth ablations`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 更宽树提高候选覆盖也增加 verify shape、显存和 branch waste；现有 Ch48 已覆盖该 trade-off，不追加论文特定实现。
+
+<!-- claim:SF-2026-ARXIV-2606-18394:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18394v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18394:end -->
+<!-- review:SF-2026-ARXIV-2606-18394:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18400:start -->
+### 2606.18400 — CloakLM: Obfuscating GPU Memory Layout to Mitigate Model Ex-filtration for Serving
+
+**问题与机制变化。** 共享 GPU 上的模型权重保护可在 PCIe traffic、weight order 与 HBM physical page 三层破坏可重建 regularity，同时保留 authorized virtual layout；这是 cost-imposition 而非 secrecy proof。
+
+**State / data / control owner。** `PLATFORM-SECURITY` 是唯一知识 owner；`Books/part-06-ai-infrastructure/69-trace.md; Books/part-07-agent/84-agent-platform.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18400v1 PDF §3 threat model; §§4–5 CloakLM three-tier design and integration`；Evaluation=`arXiv:2606.18400v1 PDF §§6–7 PyTorch/vLLM LLaMA/Qwen evaluation`；Counterevidence=`arXiv:2606.18400v1 PDF §1/§8 scope: no host OS, hypervisor, firmware or mapping-compromise defense`。Workload=`Four configurations spanning dense and MoE models at tensor parallelism 1 and 2 under PCIe-snooping and HBM-dump attacks`；Model=`Llama 3.1 8B, Qwen 3 14B and Qwen 3 MoE 30B/3B-active`；Hardware=`NVIDIA L40S GPUs with 46 GB HBM and PCIe 4.0 x16 at 32 GB/s one-way bandwidth`；Evaluator=`extraction degradation plus inference latency/throughput overhead`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** layout obfuscation增加 allocator/metadata和可能的访问开销；无法阻止已拿到映射或可改 kernel 的攻击者。
+
+<!-- claim:SF-2026-ARXIV-2606-18400:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/pdf/2606.18400v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18400:end -->
+<!-- review:SF-2026-ARXIV-2606-18400:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18421:start -->
+### 2606.18421 — Finding Compiler-Platform Interaction Bugs in Deep Learning Pipelines via Cross-Layer Constraints
+
+**问题与机制变化。** DL compiler release testing 应抽取跨 model semantics、IR pass 与 hardware feasibility 的 full-stack constraints，并把 assertion pattern作为 behavior-equivalence oracle。
+
+**State / data / control owner。** `INFER-TENSORRT-LLM` 是唯一知识 owner；`Books/part-05-inference-system/48-speculative-decoding.md; Books/part-05-inference-system/54-gpu-memory.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18421v1 §3 XCheck, §§3.1–3.3 constraint extraction, exploration and behavior differentiation`；Evaluation=`arXiv:2606.18421v1 §4.1–4.2 evaluation on TVM, ONNX-MLIR and GeneSys`；Counterevidence=`Not Disclosed — arXiv:2606.18421v1 has no dedicated limitations section; exact-v1 counterevidence is localized at three-compiler/backend scope; no dedicated limitations section`。Workload=`Generated ONNX graphs exercised against TVM, ONNX-MLIR and GeneSys`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`bug-revealing cases, late-stage reach, behavior partitions and extensibility`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 深层 constraint能发现 silent bug却增加规则维护和 false signal；2,034 cases不等于2,034已确认独立生产缺陷。
+
+<!-- claim:SF-2026-ARXIV-2606-18421:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18421v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18421:end -->
+<!-- review:SF-2026-ARXIV-2606-18421:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18431:start -->
+### 2606.18431 — Beyond Prediction: Tail-Aware Scheduling for LLM Inference
+
+**问题与机制变化。** LLM scheduler 应直接优化 tail risk，以 cache-aware preemption与完成风险信号决策，而不是依赖易漂移的 output-length point predictor。
+
+**State / data / control owner。** `INFER-SCHEDULING` 是唯一知识 owner；`Books/part-05-inference-system/55-pd-disaggregation.md; Books/part-06-ai-infrastructure/63-gpu-scheduler.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18431v1 §3 tail-aware objective and prediction-free scheduler; §4 cache-aware preemption`；Evaluation=`arXiv:2606.18431v1 §5 production/open-trace evaluation and ablations`；Counterevidence=`Not Disclosed — arXiv:2606.18431v1 has no dedicated limitations section; exact-v1 counterevidence is localized at trace/model/engine and overload-regime boundaries`。Workload=`production and open LLM-serving traces under tail-latency pressure`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`P95/P99 latency, throughput, preemption/recompute and cache-hit effects`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** prediction-free不等于信息免费，tail objective可能牺牲mean/fairness；受测 traces不证明所有SLO最优。
+
+<!-- claim:SF-2026-ARXIV-2606-18431:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18431v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18431:end -->
+<!-- review:SF-2026-ARXIV-2606-18431:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18448:start -->
+### 2606.18448 — VisualSkill: Multimodal Skills for Computer-Use Agents
+
+**问题与机制变化。** Computer-use skill 应把 screenshot、spatial step、semantic instruction 与 resource references组成可版本化 multimodal artifact，并允许按 topic/on-demand MCP load，避免全库 prompt 膨胀。
+
+**State / data / control owner。** `AGENT-TOOL-CALLING` 是唯一知识 owner；`Books/part-07-agent/81-workflow.md; Books/part-06-ai-infrastructure/72-security.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18448v1 §3 VisualSkill construction; §4 hierarchical storage and load_topic interface`；Evaluation=`arXiv:2606.18448v1 §5 live-UI computer-use evaluation and ablations`；Counterevidence=`Not Disclosed — arXiv:2606.18448v1 has no dedicated limitations section; exact-v1 counterevidence is localized at UI/task/model, authored-skill and MCP-loading scope`。Workload=`live computer-use tasks over graphical interfaces with reusable multimodal skills`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`task success, steps/tokens, retrieval/loading and transfer ablations`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 多模态 skill提高复用却增加视觉漂移、存储与供应链面；按需加载 miss 时必须回退在线探索。
+
+<!-- claim:SF-2026-ARXIV-2606-18448:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18448v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18448:end -->
+<!-- review:SF-2026-ARXIV-2606-18448:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18467:start -->
+### 2606.18467 — ToolChain-CRC: Conformal Risk Control for Agentic AI Under Retrieval and Tool-Use Drift
+
+**问题与机制变化。** Tool/retrieval trajectory release 可把 step risk校准为 trajectory conformal acceptance，并用 supermartingale anytime alarm监测运行中超界；drift时必须重校准或 abstain。
+
+**State / data / control owner。** `PLATFORM-EVALUATION-SYSTEM` 是唯一知识 owner；`Books/part-06-ai-infrastructure/69-trace.md; Books/part-06-ai-infrastructure/72-security.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18467v1 §3 trajectory risk and conformal calibration; §4 anytime monitoring and drift extension`；Evaluation=`arXiv:2606.18467v1 §5 retrieval/tool-use experiments and coverage-risk analyses`；Counterevidence=`Not Disclosed — arXiv:2606.18467v1 has no dedicated limitations section; exact-v1 counterevidence is localized at exchangeability, detector delay and tool/retrieval drift limitations`。Workload=`agent trajectories with retrieval and tool-use distribution drift`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`trajectory risk coverage, abstention, alarm delay and false-alarm behavior`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** coverage依赖 calibration分布且 alarm会 false positive；形式保证不证明 scorer或 causal harm标签正确。
+
+<!-- claim:SF-2026-ARXIV-2606-18467:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18467v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18467:end -->
+<!-- review:SF-2026-ARXIV-2606-18467:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18497:start -->
+### 2606.18497 — Ghost Vectors: Soft-Deleted Embeddings Remain Reconstructible in HNSW Vector Databases
+
+**问题与机制变化。** Vector DB deletion 必须追踪 source→embedding→HNSW node→backup/replica 的物理生命周期；soft-delete tombstone 不是擦除，需 epoch key rotation与 signed deletion proof。
+
+**State / data / control owner。** `AGENT-RAG` 是唯一知识 owner；`Books/part-07-agent/77-memory.md; Books/part-06-ai-infrastructure/72-security.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18497v1 §3 Ghost Vectors recovery methodology; §4 cryptographic epoch-deletion design`；Evaluation=`arXiv:2606.18497v1 §5 HNSW/database recovery experiments`；Counterevidence=`Not Disclosed — arXiv:2606.18497v1 has no dedicated limitations section; exact-v1 counterevidence is localized at backend/version/access model and cryptographic-key assumptions`。Workload=`soft-deleted embeddings recovered from HNSW vector databases`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`vector reconstruction/re-identification success, purge cost and key-rotation proof checks`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** physical purge或key rotation增加 rebuild、availability与密钥治理成本；受测 HNSW 恢复不覆盖所有 vector stores。
+
+<!-- claim:SF-2026-ARXIV-2606-18497:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18497v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18497:end -->
+<!-- review:SF-2026-ARXIV-2606-18497:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18532:start -->
+### 2606.18532 — AI Sandboxes: A Threat Model, Taxonomy, and Measurement Framework
+
+**问题与机制变化。** AI sandbox 应以 threat model和 weakest-link evidence评估 fidelity、controllability、observability、containment、reproducibility与governance，不能把“进程在容器里”当成安全证明。
+
+**State / data / control owner。** `PLATFORM-SECURITY` 是唯一知识 owner；`Books/part-06-ai-infrastructure/69-trace.md; Books/part-07-agent/84-agent-platform.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18532v1 §3 sandbox threat model and taxonomy; §4 measurement framework`；Evaluation=`arXiv:2606.18532v1 §5 cross-sandbox case studies/measurements`；Counterevidence=`Not Disclosed — arXiv:2606.18532v1 has no dedicated limitations section; exact-v1 counterevidence is localized at coverage of sandbox types, attacker capability and measurement incompleteness`。Workload=`representative AI-agent sandbox designs and attack surfaces`；Model=`Not Disclosed`；Hardware=`Not Disclosed`；Evaluator=`six-dimension evidence matrix, containment tests and reproducibility/governance checks`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 更强隔离通常降低 fidelity/性能且扩大运维；框架只能组织证据，不能认证未知 escape或side channel不存在。
+
+<!-- claim:SF-2026-ARXIV-2606-18532:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18532v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18532:end -->
+<!-- review:SF-2026-ARXIV-2606-18532:end -->
+
+<!-- review:SF-2026-ARXIV-2606-18550:start -->
+### 2606.18550 — The Gate Is Only as Honest as Its Contracts: ContractGuard for the Contract Layer of Risk-Aware Causal Gating
+
+**问题与机制变化。** Tool safety gate依赖 contract integrity；应对 precondition/effect/risk/authorization字段做 signed provenance、typed attestation与runtime effect verification，且 effect字段比risk标签更load-bearing。
+
+**State / data / control owner。** `PLATFORM-SECURITY` 是唯一知识 owner；`Books/part-06-ai-infrastructure/69-trace.md; Books/part-07-agent/84-agent-platform.md` 只接收相邻 handoff。论文名称不取得跨章 authority。
+
+**Evaluation：proof / non-proof。** Method=`arXiv:2606.18550v1 §II threat model; §III two-gate taxonomy; §IV ContractGuard ladder`；Evaluation=`arXiv:2606.18550v1 §VI–VII controlled exhaustive attacker and six-model validation`；Counterevidence=`arXiv:2606.18550v1 §XI Limitations; trusted-attestation, symbolic-space and external-side-effect boundaries`。Workload=`RiskGate 100-tool registry; eight high-risk targets; 256 perturbation configurations per target; 1,898 executed configurations and 5,886 phrasing trials`；Model=`Claude Opus 4.8, Claude Sonnet 4.6, Claude Haiku 4.5, Nova Premier, Nova 2 Lite and GPT-OSS-120B`；Hardware=`Not Disclosed`；Evaluator=`injection success by guard rung, field/compound attacks, honest-contract rejection and model validation`。这些证据不自动成为 production SLO、普遍安全保证或跨模型/硬件排名。
+
+**Trade-off / failure / fallback。** 完整 ladder增加签名、schema与runtime mediation成本；只在有限 contract perturbation空间给保证，attestation失陷即失效。
+
+<!-- claim:SF-2026-ARXIV-2606-18550:start -->
+**Claim boundary。** 只使用 `https://arxiv.org/html/2606.18550v1` 的 exact-v1 正文；HTML 不可用的三个 family 显式走官方 PDF fallback。later revision/artifact 不参与，ordinary pending=`0`。
+<!-- claim:SF-2026-ARXIV-2606-18550:end -->
+<!-- review:SF-2026-ARXIV-2606-18550:end -->
 
 <!-- review:SF-2026-ARXIV-2606-18600:start -->
 ### 2606.18600 — ShuntServe: Cost-Efficient LLM Serving on Heterogeneous Spot GPU Clusters
@@ -564,413 +791,287 @@ Claim boundary：仅 `arXiv:2606.19271v1` official HTML；不使用 later versio
 <!-- claim:SF-2026-ARXIV-2606-19271:end -->
 <!-- review:SF-2026-ARXIV-2606-19271:end -->
 
-<!-- review:SF-2026-ARXIV-2606-19409:start -->
-### 2606.19409 — OpenRath: Session-Centered Runtime State for Agent Systems
-
-**问题与旧路径。** Modern agent systems often suffer from fragmented runtime state: transcripts, tool effects, memory events, workspace placement, branch provenance, and replay evidence are recorded separately and become difficult to inspect or reproduce. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** Session 应成为执行路径携带的一等 runtime value，统一 transcript、tool effect、sandbox、branch lineage、token usage、pending work 与 memory event；fork/merge/replay 是显式操作。 唯一知识 owner 为 `AGENT-PLATFORM`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** 报告只验证 controlled runtime properties 与 audited milestones，没有 broad quantitative comparison。 Method=`https://arxiv.org/html/2606.19409v1 — § exact-v1 anchor: Session-Centered Runtime State`；Evaluation=`https://arxiv.org/html/2606.19409v1 — § exact-v1 evaluation anchor: audited milestones`。Benchmark contract：model=`Not Disclosed`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`audited runtime invariants and controlled replay properties; no broad quality benchmark`。
-
-**Trade-off、failure、共存与演进。** live-provider quality、optional backend availability 与 memory quality明确未证明；central Session 也可能扩大故障域。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19409v1 — § exact-v1 limitation/counterevidence anchor: claims are limited`。
-
-<!-- claim:SF-2026-ARXIV-2606-19409:start -->
-Claim boundary：仅 `arXiv:2606.19409v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19409:end -->
-<!-- review:SF-2026-ARXIV-2606-19409:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19464:start -->
-### 2606.19464 — Deontic Policies for Runtime Governance of Agentic AI Systems
-
-**问题与旧路径。** Autonomous agentic AI systems driven by Large Language Models (LLMs) introduce a new class of security, privacy, and compliance challenges: an agent that can invoke tools, manipulate data, install software, and coordinate with peer agents across organizational boundaries must be constrained not just by authentication and access control, but by the full structure of enterprise governance. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** runtime governance 除 permit/prohibit 外还需 obligation lifecycle、dispensation、meta-policy precedence 与 ontology reasoning，并在 LLM 外执行。 唯一知识 owner 为 `PLATFORM-SECURITY`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** exact-v1 以 AgenticRei examples 展示 tool calls 与 A2A messages 的 policy expression/evaluation。 Method=`https://arxiv.org/html/2606.19464v1 — § exact-v1 anchor: obligations, dispensations`；Evaluation=`https://arxiv.org/html/2606.19464v1 — § exact-v1 evaluation anchor: examples`。Benchmark contract：model=`Not Disclosed`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`expressibility and runtime policy-evaluation examples`。
-
-**Trade-off、failure、共存与演进。** 示例不构成吞吐、安全或完备性证明；ontology/policy conflict 仍需可信 owner 与版本治理。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19464v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19464:start -->
-Claim boundary：仅 `arXiv:2606.19464v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19464:end -->
-<!-- review:SF-2026-ARXIV-2606-19464:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19535:start -->
-### 2606.19535 — FloatDoor: Platform-Triggered Backdoors in LLMs
-
-**问题与旧路径。** Large language models (LLMs) are increasingly deployed in sensitive settings such as software engineering, where their outputs directly shape downstream artifacts. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** model artifact identity 必须绑定 serving platform/kernel；FloatDoor 通过两个 LoRA 放大 floating-point divergence 并把 platform signature 绑定恶意 task，暴露 audit/serve TOCTOU。 唯一知识 owner 为 `PLATFORM-SECURITY`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** Qwen3-4B 跨 NVIDIA GPU、Google TPU、AWS Graviton、Alibaba Yitian-710，并展示目标平台 code vulnerability。 Method=`https://arxiv.org/html/2606.19535v1 — § exact-v1 anchor: platform-triggered backdoor`；Evaluation=`https://arxiv.org/html/2606.19535v1 — § exact-v1 evaluation anchor: broad range of deployment targets`。Benchmark contract：model=`Qwen3-4B and Qwen3-8B with two LoRA adapters`；hardware=`NVIDIA H200, NVIDIA A100, NVIDIA H100, NVIDIA DGX Spark, Google TPU, AWS Graviton and Alibaba Yitian-710`；precision=`Not Disclosed`；batch=`1`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`target-platform activation, aggregate utility and vulnerable-code generation`。
-
-**Trade-off、failure、共存与演进。** 攻击依赖作者平台集合与 LoRA；跨平台不一致不等于任意模型都可植入，可信构建仍需独立证明。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19535v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19535:start -->
-Claim boundary：仅 `arXiv:2606.19535v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19535:end -->
-<!-- review:SF-2026-ARXIV-2606-19535:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19544:start -->
-### 2606.19544 — Reliability without Validity: A Systematic, Large-Scale Evaluation of LLM-as-a-Judge Models Across Agreement, Consistency, and Bias
-
-**问题与旧路径。** LLM-as-a-Judge has become the dominant evaluation paradigm for language models, but judge validation in practice relies on exact-match agreement, a metric that does not correct for chance and systematically overstates discriminative ability. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** Judge validation 要同时报告 chance-corrected agreement、test-retest consistency 与 position/verbosity bias；高 consistency 不能替代 validity。 唯一知识 owner 为 `PLATFORM-EVALUATION-SYSTEM`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** 21 judges、9 providers、3 benchmarks、118 runs、约 541k judgments；报告 kappa deflation 与 ranking shifts。 Method=`https://arxiv.org/html/2606.19544v1 — § exact-v1 anchor: Minimum Viable Validation Protocol`；Evaluation=`https://arxiv.org/html/2606.19544v1 — § exact-v1 evaluation anchor: 118 runs`。Benchmark contract：model=`Gemini 3.1 Pro, Claude Opus 4.6, DeepSeek V3.2, Claude Sonnet 4.6, Llama 3.3 70B, Kimi K2.5, GPT-5.4, GPT-4o, GPT-4.1, Gemini 2.5 Pro, GLM-5, GPT-oss 120B, Claude Sonnet 4, Gemini 2.5 Flash, Claude Haiku 4.5, GPT-4.1-mini, Minimax M2.7, Qwen 3 8B, GPT-4o-mini, Mixtral 8x22B and GPT-5.4-mini`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`agreement, Cohen's kappa, test-retest consistency, position bias and verbosity bias`。
-
-**Trade-off、failure、共存与演进。** 三个 benchmark 与单一 pairwise rubric 不证明所有 judge 场景；Cohen kappa 也依赖 prevalence。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19544v1 — § exact-v1 limitation/counterevidence anchor: limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19544:start -->
-Claim boundary：仅 `arXiv:2606.19544v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19544:end -->
-<!-- review:SF-2026-ARXIV-2606-19544:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19559:start -->
-### 2606.19559 — Uncertainty Decomposition for Clarification Seeking in LLM Agents
-
-**问题与旧路径。** Recent position papers argue that the classical aleatoric/epistemic uncertainty framework is insufficient for interactive large language model (LLM) agents and call for underspecification-aware, decomposed, and communicable uncertainty representations that can unlock new agent capabilities such as proactive clarification seeking and shared mental-model building. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** 黑盒 Agent 可把 action confidence 与 request uncertainty 分开；只有后者高时触发 clarification，避免把执行不确定与需求欠规范混成 abstention。 唯一知识 owner 为 `AGENT-PLANNING`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** 五个 backbones，在 WebShop/ALFWorld clarification variants 与 REAL 上比较 clarification F1/fault detection。 Method=`https://arxiv.org/html/2606.19559v1 — § exact-v1 anchor: action confidence from request uncertainty`；Evaluation=`https://arxiv.org/html/2606.19559v1 — § exact-v1 evaluation anchor: five LLM backbones`。Benchmark contract：model=`GPT-5.1, DeepSeek-v3.2-exp, GLM-4.7, Qwen3.5-35B and GPT-OSS-120B`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`clarification F1 and fault detection across clarification and standard benchmarks`。
-
-**Trade-off、failure、共存与演进。** prompt-based uncertainty 未校准成概率；benchmark 人工制造 50% 欠规范，澄清成本和用户响应质量未被完整建模。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19559v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19559:start -->
-Claim boundary：仅 `arXiv:2606.19559v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19559:end -->
-<!-- review:SF-2026-ARXIV-2606-19559:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19595:start -->
-### 2606.19595 — IHBench: Evaluating Post-Interruption Recovery in Voice Agents with Structured Workflows
-
-**问题与旧路径。** Voice agents deployed in structured workflows (customer service, healthcare scheduling, account management) must handle frequent user interruptions while maintaining progress through multi-step procedures. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** voice-agent interruption recovery 必须保存 workflow node、已提交 side effects 与待确认槽位，恢复时区分 resume、repair、restart。 唯一知识 owner 为 `AGENT-WORKFLOW`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** IHBench 在 structured workflows 上测 interruption 后 task completion 与 recovery error。 Method=`https://arxiv.org/html/2606.19595v1 — § exact-v1 anchor: Post-Interruption Recovery`；Evaluation=`https://arxiv.org/html/2606.19595v1 — § exact-v1 evaluation anchor: Evaluation`。Benchmark contract：model=`GPT-4o Audio, GPT-4o Mini Audio, GPT Audio, GPT Audio Mini, GPT Realtime, GPT Realtime 1.5, GPT Realtime Mini, GPT Realtime 2, Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 3 Flash, Gemini 3.1 Pro, Gemini 3.1 Flash Live, Gemma 4 12B Instruct, Qwen3-Omni-30B-A3B-Instruct, Qwen2.5-Omni-7B, Phi-4-Multimodal-Instruct, Voxtral-Small-24B-2507, Qwen2-Audio-7B-Instruct, MiMo-Audio-7B-Instruct and Kimi-Audio-7B-Instruct across 27 mode/configuration combinations`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`post-interruption task completion and structured recovery error`。
-
-**Trade-off、failure、共存与演进。** 模拟中断与语音管线不覆盖真实网络/ASR drift；恢复成功也不证明重复 effect 被阻止。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19595v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19595:start -->
-Claim boundary：仅 `arXiv:2606.19595v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19595:end -->
-<!-- review:SF-2026-ARXIV-2606-19595:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19613:start -->
-### 2606.19613 — StaminaBench: Stress-Testing Coding Agents over 100 Interaction Turns
-
-**问题与旧路径。** We introduce StaminaBench, a benchmark that measures the stamina of coding agents: how many consecutive interaction turns (change requests) they can handle before failing. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** coding-agent evaluation 应把一次长 session 建模为连续 change requests，并观察首次不可恢复失败，而不是把独立 task solve rate 当 stamina。 唯一知识 owner 为 `PLATFORM-EVALUATION-SYSTEM`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** 6 harnesses×7 open LLMs、20 scenarios×100 turns；所有模型 5–6 turns 内失败，test feedback/retry 最多提升 12×。 Method=`https://arxiv.org/html/2606.19613v1 — § exact-v1 anchor: 100 Interaction Turns`；Evaluation=`https://arxiv.org/html/2606.19613v1 — § exact-v1 evaluation anchor: 20 scenarios`。Benchmark contract：model=`Devstral 2, Devstral Small 2, GLM-5, Kimi K2.5, Nemotron Super, Qwen3-Coder-Next and Qwen3.5-122B`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`consecutive passed turns, test feedback/retry effect and harness sensitivity over 20x100-turn scenarios`。
-
-**Trade-off、failure、共存与演进。** 程序生成 REST workload 不能代表全部软件演化；turn-to-failure 对变更难度和 harness 强敏感。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19613v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19613:start -->
-Claim boundary：仅 `arXiv:2606.19613v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19613:end -->
-<!-- review:SF-2026-ARXIV-2606-19613:end -->
-
-<!-- review:SF-2026-ARXIV-2606-19667:start -->
-### 2606.19667 — CacheWeaver: Cache-Aware Evidence Ordering for Efficient Grounded RAG Inference
-
-**问题与旧路径。** Retrieval-Augmented Generation (RAG) improves factual grounding, but it also lengthens prompts and raises prefill cost. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** RAG evidence set 不变时，可用近期 evidence-sequence prefix tree 重排证据，让集合重叠转成 token-prefix 重用；retriever 仍拥有 relevance，scheduler 只拥有顺序。 唯一知识 owner 为 `INFER-KV-CACHE`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** 三个 vLLM configurations，median TTFT 降约 20–33%，QA quality 未下降；greedy 达 oracle TTFT gain 的 97.5%。 Method=`https://arxiv.org/html/2606.19667v1 — § exact-v1 anchor: prefix tree over recently served evidence sequences`；Evaluation=`https://arxiv.org/html/2606.19667v1 — § exact-v1 evaluation anchor: three vLLM configurations`。Benchmark contract：model=`Qwen2.5-1.5B and Qwen2.5-7B`；hardware=`RTX 4060 Ti 8 GB, RTX 4090 24 GB and RTX 4090D 24 GB`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`median TTFT, prefix reuse and QA answer quality`。
-
-**Trade-off、failure、共存与演进。** 重排可能改变 positional bias 与答案；局部 query locality 不保证生产 cache hit，且不减少 decode cost。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.19667v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-19667:start -->
-Claim boundary：仅 `arXiv:2606.19667v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-19667:end -->
-<!-- review:SF-2026-ARXIV-2606-19667:end -->
-
-<!-- review:SF-2026-ARXIV-2606-20736:start -->
-### 2606.20736 — REKEY: Metadata-Grounded Visual-Key Regeneration for Contamination-Resilient VQA Evaluation
-
-**问题与旧路径。** Static visual question answering (VQA) benchmarks age quickly: Once the items leak into training corpora, scores can reflect memorization rather than genuine visual ability, thus obscuring real progress. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** 受污染 benchmark 可把 answer-bearing visual key 变成运行时随机生成、human-validated edit slot，并保留 construction-grounded label。 唯一知识 owner 为 `PLATFORM-EVALUATION-SYSTEM`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** V*Bench 上 8 个 frontier VLM；原题比 regenerated variants 高 9.5–18.8pp。 Method=`https://arxiv.org/html/2606.20736v1 — § exact-v1 anchor: randomly regenerates the answer-bearing local detail`；Evaluation=`https://arxiv.org/html/2606.20736v1 — § exact-v1 evaluation anchor: eight frontier vision-language models`。Benchmark contract：model=`Qwen3.6-Plus, GPT-5.5, Claude Opus 4.7, Gemini 3.1 Pro, Seed-2.0-Lite, Kimi K2.6, MiMo v2.5 and Llama 4 Maverick; LLaVA-1.5-13B for difficulty calibration`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`accuracy gap between original and regenerated V*Bench items with controlled search difficulty`。
-
-**Trade-off、failure、共存与演进。** 只更新局部 visual key，不能消除题型、metadata 或训练 pipeline 泄漏；图像编辑真实性依赖人工验证。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.20736v1 — § exact-v1 limitation/counterevidence anchor: Limitations`。
-
-<!-- claim:SF-2026-ARXIV-2606-20736:start -->
-Claim boundary：仅 `arXiv:2606.20736v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-20736:end -->
-<!-- review:SF-2026-ARXIV-2606-20736:end -->
-
-<!-- review:SF-2026-ARXIV-2606-20746:start -->
-### 2606.20746 — Amplify, Don't Create: Temporal Accumulation for Slow-Burn Prompt Injection
-
-**问题与旧路径。** Most prompt-injection detectors score a single event or message. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** slow-burn injection detector 可在 executed action edges 上累积冻结 per-event score 的 CUSUM persistence；它只能放大已有 margin，不能创造 detector 没有的 margin。 唯一知识 owner 为 `PLATFORM-SECURITY`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** 集中攻击 gap +0.092（clustered bootstrap）；repo-exfil persistence AUC 0.708，但 broader clean-path AUC 0.167，且仅 3–4 independent tasks。 Method=`https://arxiv.org/html/2606.20746v1 — § exact-v1 anchor: detector of record`；Evaluation=`https://arxiv.org/html/2606.20746v1 — § exact-v1 evaluation anchor: broader clean-path actions`。Benchmark contract：model=`frozen char-ngram SVM plus embedding-contrastive detector; held-out cloaking target`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`clustered-bootstrap gap and persistence/peak delta AUC on executed-edge trajectories`。
-
-**Trade-off、failure、共存与演进。** 这是明确的 boundary result，不是 deployable detector；小 independent denominator 阻断功效外推。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.20746v1 — § exact-v1 limitation/counterevidence anchor: boundary result, not a deployable detector`。
-
-<!-- claim:SF-2026-ARXIV-2606-20746:start -->
-Claim boundary：仅 `arXiv:2606.20746v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-20746:end -->
-<!-- review:SF-2026-ARXIV-2606-20746:end -->
-
-<!-- review:SF-2026-ARXIV-2606-21089:start -->
-### 2606.21089 — Repeated post-training is not Self-improving: Diagnosing Scientific Amnesia in Continual DPO Pipelines
-
-**问题与旧路径。** Industrial LLM teams often ship behavior updates by repeatedly DPO-training a base model on sequences of related preference-data campaigns. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** 重复 DPO campaign 的 checkpoint 链需要另存 strategy/evaluator memory；保留旧能力不等于积累了如何训练下一 campaign 的科学知识。 唯一知识 owner 为 `TRAIN-DPO`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** Qwen2.5-7B-Instruct、30 campaigns；单 seed 5-condition×3-step chain 加异构/多 seed pilots，4/5 candidates 退化。 Method=`https://arxiv.org/html/2606.21089v1 — § exact-v1 anchor: scientific amnesia`；Evaluation=`https://arxiv.org/html/2606.21089v1 — § exact-v1 evaluation anchor: single-seed 5-condition`。Benchmark contract：model=`Qwen2.5-7B-Instruct`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`campaign-level peak pass@1 and intervention deltas across 30 HumanEval subdomains`。
-
-**Trade-off、failure、共存与演进。** 主要结果单 seed，pilots 又显示 regime dependence；不能声称 MSCL 或 retrieval 已解决问题。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.21089v1 — § exact-v1 limitation/counterevidence anchor: diagnostic, not a claim`。
-
-<!-- claim:SF-2026-ARXIV-2606-21089:start -->
-Claim boundary：仅 `arXiv:2606.21089v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-21089:end -->
-<!-- review:SF-2026-ARXIV-2606-21089:end -->
-
-<!-- review:SF-2026-ARXIV-2606-21090:start -->
-### 2606.21090 — Self-Improvement Can Self-Regress: The Rise-and-Collapse Failure Mode of LLM Self-Training
-
-**问题与旧路径。** Self-improvement can self-regress. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** post-training control loop 应分别持有 campaign-level memory、within-campaign early stop 与 optimizer；峰值 checkpoint 必须先于最终 collapse 被保存和晋级。 唯一知识 owner 为 `TRAIN-GRPO`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** Qwen2.5-3B/7B，10×20-step campaigns，多 seed；比较 CARE、ES、GRPO，并有 Gemma-3-4B pilot。 Method=`https://arxiv.org/html/2606.21090v1 — § exact-v1 anchor: rise-then-collapse pattern`；Evaluation=`https://arxiv.org/html/2606.21090v1 — § exact-v1 evaluation anchor: 10 sequential 20-step campaigns`。Benchmark contract：model=`Qwen2.5-3B, Qwen2.5-7B and a Gemma-3-4B pilot`；hardware=`Not Disclosed`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`pass@1 trajectory, peak-to-end collapse and multi-seed intervention comparison`。
-
-**Trade-off、failure、共存与演进。** GRPO 抬高 floor 但未消除约 17pp cliff；GRPO+ES 仅 3 seeds 且 mixed，不能推出统一配方。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.21090v1 — § exact-v1 limitation/counterevidence anchor: mixed evidence`。
-
-<!-- claim:SF-2026-ARXIV-2606-21090:start -->
-Claim boundary：仅 `arXiv:2606.21090v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-21090:end -->
-<!-- review:SF-2026-ARXIV-2606-21090:end -->
-
-<!-- review:SF-2026-ARXIV-2606-28374:start -->
-### 2606.28374 — Recursive Self-Evolving Agents via Held-Out Selection
-
-**问题与旧路径。** LLM agents are increasingly improved without weight updates by evolving a natural-language artifact, such as reflections, workflows, playbooks, cheatsheets, or optimized prompts, that conditions a frozen policy. 旧路径在风险、状态或控制面没有跨出作者前提时仍然合理。
-
-**机制与 owner。** 自然语言 strategy/skill/playbook 的每代 rewrite 只能在 disjoint held-out split 不退化时 commit，否则回退 base ReAct。 唯一知识 owner 为 `AGENT-REFLECTION`；相邻节点只消费带 identity 的 handoff。
-
-**Evaluation：证明与未证明。** ALFWorld、GAIA、tau-bench、WebShop，6 baselines、共享本地 backbone；Dynamic Cheatsheet 在 WebShop collapse。 Method=`https://arxiv.org/html/2606.28374v1 — § exact-v1 anchor: strict keep-better gate`；Evaluation=`https://arxiv.org/html/2606.28374v1 — § exact-v1 evaluation anchor: four diverse benchmarks`。Benchmark contract：model=`Qwen2.5-7B-Instruct for ALFWorld and Qwen3-30B-A3B-Instruct for GAIA, tau-bench and WebShop`；hardware=`4 NVIDIA A100 GPUs`；precision=`Not Disclosed`；batch=`Not Disclosed`；concurrency=`Not Disclosed`；SLO=`Not Disclosed`；evaluator=`benchmark score, McNemar test and regression gate across four agent benchmarks`。
-
-**Trade-off、failure、共存与演进。** held-out split 仍可能与部署同分布共偏；无 artifact 普遍获胜，strict gate 只证明这四个 benchmark 的单调安全。 因而该 family 只支持这里写出的 delta，未披露执行字段保持 Unknown/Not Disclosed。Limit/counterevidence=`https://arxiv.org/html/2606.28374v1 — § exact-v1 limitation/counterevidence anchor: no artifact universally wins`。
-
-<!-- claim:SF-2026-ARXIV-2606-28374:start -->
-Claim boundary：仅 `arXiv:2606.28374v1` official HTML；不使用 later version；ordinary pending locator count=`0`.
-<!-- claim:SF-2026-ARXIV-2606-28374:end -->
-<!-- review:SF-2026-ARXIV-2606-28374:end -->
-
+<!-- audit-target:evidence:end -->
+## 4. Benchmark Contracts
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2606-18284 | Disclosed — Math, code and SWE task generation across model scales | Disclosed — Qwen2.5-3B/7B and Qwen3.5-27B solver settings | Not Disclosed | Not Disclosed | Not Disclosed as one universal contract — task-specific lengths remain exact-v1-bound | Not Disclosed as one universal contract — task-specific limits remain exact-v1-bound | Not Disclosed as one universal contract — trial count is not relabeled as batch | Not Disclosed unless stated in workload — worker/trial parallelism is not serving concurrency | Not Disclosed — research metrics are not a production SLO | Disclosed — exact-v1 evaluation locator reports outcome plus mechanism-specific cost/failure metrics |
+| SF-2026-ARXIV-2606-18286 | Disclosed — Six code-generation benchmarks | Disclosed — Qwen2.5-Coder-1.5B-Instruct and comparison models | Disclosed in Appendix A.3; exact accelerator remains v1-bound | Training precision disclosed in Appendix A.3 | Not Disclosed as one universal contract — task-specific lengths remain exact-v1-bound | Not Disclosed as one universal contract — task-specific limits remain exact-v1-bound | Not Disclosed as one universal contract — trial count is not relabeled as batch | Not Disclosed unless stated in workload — worker/trial parallelism is not serving concurrency | Not Disclosed — research metrics are not a production SLO | Disclosed — exact-v1 evaluation locator reports outcome plus mechanism-specific cost/failure metrics |
+| SF-2026-ARXIV-2606-18310 | knowledge-injection attacks and repair across disclosed RAG datasets | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | attack success, retrieval ranking, downstream answer and clean-utility recovery |
+| SF-2026-ARXIV-2606-18322 | behavior-suppression interventions followed across downstream transformer layers | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | target behavior suppression and later recovery with residual/feature diagnostics |
+| SF-2026-ARXIV-2606-18356 | 600 cases across six attack families plus a 12,000-row matched Core/Exec analysis | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | CoreFail, HarmEvidence, SemanticOnly and sandbox state-oracle harm as separate endpoints |
+| SF-2026-ARXIV-2606-18379 | Billion-node recommendation graph with hour-scale refresh and online serving | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | retrieval/recommendation quality, refresh/build time and serving efficiency |
+| SF-2026-ARXIV-2606-18383 | synthetic controls and language-model SAE proxy validation | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | proxy risk, reconstruction/concept gaps and certificate coverage/tightness |
+| SF-2026-ARXIV-2606-18394 | speculative decoding with parallel causal draft trees in vLLM | Not Disclosed | NVIDIA H100 GPU | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | accepted length, output throughput/latency and tree-width/depth ablations |
+| SF-2026-ARXIV-2606-18400 | Four configurations spanning dense and MoE models at tensor parallelism 1 and 2 under PCIe-snooping and HBM-dump attacks | Llama 3.1 8B, Qwen 3 14B and Qwen 3 MoE 30B/3B-active | NVIDIA L40S GPUs with 46 GB HBM and PCIe 4.0 x16 at 32 GB/s one-way bandwidth | Not Disclosed | 100-200 input tokens, uniformly sampled | 100-200 output tokens, uniformly sampled | Not Disclosed | Not Disclosed | Not Disclosed | extraction degradation plus inference latency/throughput overhead |
+| SF-2026-ARXIV-2606-18421 | Generated ONNX graphs exercised against TVM, ONNX-MLIR and GeneSys | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | bug-revealing cases, late-stage reach, behavior partitions and extensibility |
+| SF-2026-ARXIV-2606-18431 | production and open LLM-serving traces under tail-latency pressure | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | P95/P99 latency, throughput, preemption/recompute and cache-hit effects |
+| SF-2026-ARXIV-2606-18448 | live computer-use tasks over graphical interfaces with reusable multimodal skills | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | task success, steps/tokens, retrieval/loading and transfer ablations |
+| SF-2026-ARXIV-2606-18467 | agent trajectories with retrieval and tool-use distribution drift | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | trajectory risk coverage, abstention, alarm delay and false-alarm behavior |
+| SF-2026-ARXIV-2606-18497 | soft-deleted embeddings recovered from HNSW vector databases | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | vector reconstruction/re-identification success, purge cost and key-rotation proof checks |
+| SF-2026-ARXIV-2606-18532 | representative AI-agent sandbox designs and attack surfaces | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | six-dimension evidence matrix, containment tests and reproducibility/governance checks |
+| SF-2026-ARXIV-2606-18550 | RiskGate 100-tool registry; eight high-risk targets; 256 perturbation configurations per target; 1,898 executed configurations and 5,886 phrasing trials | Claude Opus 4.8, Claude Sonnet 4.6, Claude Haiku 4.5, Nova Premier, Nova 2 Lite and GPT-OSS-120B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | injection success by guard rung, field/compound attacks, honest-contract rejection and model validation |
+| SF-2026-ARXIV-2606-18600 | offline throughput | Llama-3.1-70B; Qwen3-32B | AWS L4, A10G and L40S GPUs | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | offline throughput, online TTFT/TPOT and cost efficiency under spot interruption |
+| SF-2026-ARXIV-2606-18619 | real-subject vulnerability findings plus specification-falsification outcomes | Claude Sonnet 4.6 and DeepSeek V4 Pro; Claude Mythos is comparison-only | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | real-subject vulnerability findings plus specification-falsification outcomes |
+| SF-2026-ARXIV-2606-18650 | downstream task quality and selection efficiency against influence/excess-loss baselines | TinyLlama-1.1B and Llama2-7B target models with 3B/5B-token continued-pretraining budgets | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | downstream task quality and selection efficiency against influence/excess-loss baselines |
+| SF-2026-ARXIV-2606-18668 | production pass rate under structured abstention labels and rationales | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | production pass rate under structured abstention labels and rationales |
+| SF-2026-ARXIV-2606-18673 | prompt leakage resistance | Llama-2-7B-chat-hf, Llama-3.1-8B-Instruct, Mistral-7B-Instruct, Qwen3-4B-Instruct, Qwen3-32B, Qwen2.5-72B-Instruct and Llama-3.3-70B-Instruct | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | prompt leakage resistance, usability and optimization overhead over 1,200 applications |
+| SF-2026-ARXIV-2606-18697 | planning return | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | planning return, poison detectability and defense response across three pipeline stages |
+| SF-2026-ARXIV-2606-18741 | reconfiguration downtime | Llama2-7B, Qwen3-30B-A3B, DeepSeek-R1-Distill-Qwen-32B and Llama2-70B | NVIDIA H100 and RTX 5090 platforms | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | reconfiguration downtime, TTFT, TPOT and output throughput |
+| SF-2026-ARXIV-2606-18746 | theorem premises and approximation error for domain disambiguation and local dynamics reconstruction | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | theorem premises and approximation error for domain disambiguation and local dynamics reconstruction |
+| SF-2026-ARXIV-2606-18810 | task accuracy and OOD performance against GRPO | Qwen3-1.7B-Base; DeepSeek-R1-Distill-Qwen-1.5B; experiments are limited to models at most 8B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | task accuracy and OOD performance against GRPO, DAPO and OPD |
+| SF-2026-ARXIV-2606-18829 | legitimate utility | GPT-5.4, DeepSeek-V4-Pro, Llama-4-Maverick, GPT-5-mini, GPT-4o-mini and Gemini-2.5-Flash-Lite | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | legitimate utility, contextual access-control leakage and post-deletion active forgetting |
+| SF-2026-ARXIV-2606-18831 | seven long-context benchmarks plus GAIA and BrowseComp transfer | Qwen3-4B, Qwen3-8B and Qwen3-30B-A3B | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | seven long-context benchmarks plus GAIA and BrowseComp transfer |
+| SF-2026-ARXIV-2606-18847 | Memory QA and Embodied Task Planning over evidence-linked household traces | google/gemini-3.5-flash answer generator; GPT-4o judge; GPT-4o-mini question generator | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Memory QA and Embodied Task Planning over evidence-linked household traces |
+| SF-2026-ARXIV-2606-18874 | claim-to-artifact traceability | gpt-4o-mini answer generator and all-MiniLM-L6-v2 embedder in the matched LoCoMo validation | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | claim-to-artifact traceability, ablation and bounded repair across three research domains |
+| SF-2026-ARXIV-2606-18958 | simulation scale | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | simulation scale, fidelity and runtime overhead |
+| SF-2026-ARXIV-2606-18967 | rollout throughput | Qwen2.5-7B, Qwen2.5-14B and Llama3.1-8B-Instruct with quantized self-drafters | single NVIDIA A100-80GiB SXM in the decode-cost study | FP16 target inference; W4/W8 weight-quantized self-drafters | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | rollout throughput, acceptance and downstream RL quality |
+| SF-2026-ARXIV-2606-18996 | paired task-completion and active privacy-extraction outcomes | GPT-4o-mini, GPT-5-mini, GPT-5.4-mini, GPT-5, Gemini-2.5-Flash-Lite, Gemini-2.5-Flash, Gemini-2.5-Pro, Claude Haiku 4.5, Claude Sonnet 4.5, Qwen3-VL-2B, Qwen3-VL-4B, Qwen3-VL-8B, Qwen3-VL-32B, Phi-4-multimodal, InternVL3.5-2B, InternVL3.5-4B, InternVL3.5-8B, InternVL3.5-14B, InternVL3.5-38B, Devstral-Small-2512, Llama3.2-11B-Vision and GLM-4.6V-Flash | NVIDIA A6000 GPUs for open-source models | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | paired task-completion and active privacy-extraction outcomes |
+| SF-2026-ARXIV-2606-19004 | training reward/quality | Qwen-Image | 4 reserved-node H100 GPUs plus 8 H100 GPUs on four spot nodes | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | training reward/quality, GPU utilization and spot cost |
+| SF-2026-ARXIV-2606-19025 | communication volume | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | communication volume, local-training throughput and routing stability; 100B results are modeled projections |
+| SF-2026-ARXIV-2606-19057 | hidden-positive prevalence | Mistral-7B-Instruct, Qwen2.5-7B-Instruct, Llemma-7B-MuInstruct and GPT-5.4-mini judges | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | hidden-positive prevalence, calibration and audit error |
+| SF-2026-ARXIV-2606-19111 | team outcome | gpt-oss-120b, gemma-4-31B-it and llama-4-scout | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | team outcome, behavioral leadership signatures and recovery advantage |
+| SF-2026-ARXIV-2606-19191 | attack success | GPT-5.5, GLM-4.7-Flash and Qwen3-Coder-30B-A3B-Instruct; Opus-4.7, GLM-4.7-Flash and Qwen3-Coder-30B-A3B-Instruct for cross-generator transfer; Cursor backends additionally include Opus-4.7 | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | attack success, warning/detection and benign utility across four attack goals |
+| SF-2026-ARXIV-2606-19242 | policy-violation detection and runtime enforcement outcomes | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | policy-violation detection and runtime enforcement outcomes |
+| SF-2026-ARXIV-2606-19262 | hidden-training detection | Not Disclosed | nine NVIDIA GPU models across four architecture generations | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | hidden-training detection, false positives and telemetry overhead |
+| SF-2026-ARXIV-2606-19271 | worst-case per-chunk latency | Not Disclosed | GPU clusters with up to 64 NVIDIA B300 GPUs | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | worst-case per-chunk latency, end-to-end quality and GPU operating cost |
+<!-- audit-target:deep_analysis_selection:start -->
 ## 5. Deep Analysis Selection
 
 <!-- validator:deep-analysis-selection-v1 -->
 | Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
 | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2606-18284 | score_7_9; potential_books_delta | not_selected | — | — | Breaking the Solver Bottleneck: Training Task Generators at the Learnable Frontier remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18284 |
+| SF-2026-ARXIV-2606-18286 | score_7_9; potential_books_delta | not_selected | — | — | CODEBLOCK: Learning to Supervise Code at the Right Granularity remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-SFT. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18286 |
+| SF-2026-ARXIV-2606-18310 | score_7_9; potential_books_delta | not_selected | — | — | Conflict-Aware Retriever Editing for Knowledge Injection Attacks on LLM-Based RAG Systems remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-RAG. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18310 |
+| SF-2026-ARXIV-2606-18322 | score_7_9; potential_books_delta | not_selected | — | — | SAE Interventions are Unreliable: Post-Intervention Recovery of Suppressed Behavior remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-RLHF. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18322 |
+| SF-2026-ARXIV-2606-18356 | score_7_9; potential_books_delta | not_selected | — | — | SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18356 |
+| SF-2026-ARXIV-2606-18379 | score_7_9; potential_books_delta | not_selected | — | — | RankGraph-2: Lifecycle Co-Design for Billion-Node Graph Learning in Recommendation remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-RAG. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18379 |
+| SF-2026-ARXIV-2606-18383 | score_7_9; potential_books_delta | not_selected | — | — | From Sparse Features to Trustworthy Proxies: Certifying SAE-Based Interpretability remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-RLHF. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18383 |
+| SF-2026-ARXIV-2606-18394 | score_7_9 | not_selected | — | — | JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting remains evidence-complete after canonical owner transfer with V2 score 8 and owner INFER-SPECULATIVE-DECODING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18394 |
+| SF-2026-ARXIV-2606-18400 | score_7_9; potential_books_delta | not_selected | — | — | CloakLM: Obfuscating GPU Memory Layout to Mitigate Model Ex-filtration for Serving remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18400 |
+| SF-2026-ARXIV-2606-18421 | score_7_9; potential_books_delta | not_selected | — | — | Finding Compiler-Platform Interaction Bugs in Deep Learning Pipelines via Cross-Layer Constraints remains evidence-complete after canonical owner transfer with V2 score 9 and owner INFER-TENSORRT-LLM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18421 |
+| SF-2026-ARXIV-2606-18431 | score_7_9; potential_books_delta | not_selected | — | — | Beyond Prediction: Tail-Aware Scheduling for LLM Inference remains evidence-complete after canonical owner transfer with V2 score 9 and owner INFER-SCHEDULING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18431 |
+| SF-2026-ARXIV-2606-18448 | score_7_9; potential_books_delta | not_selected | — | — | VISUALSKILL: Multimodal Skills for Computer-Use Agents remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-TOOL-CALLING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18448 |
+| SF-2026-ARXIV-2606-18467 | score_7_9; potential_books_delta | not_selected | — | — | ToolChain-CRC: Conformal Risk Control for Agentic AI Under Retrieval and Tool-Use Drift remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18467 |
+| SF-2026-ARXIV-2606-18497 | score_7_9; potential_books_delta | not_selected | — | — | Ghost Vectors: Soft-Deleted Embeddings Remain Reconstructible in HNSW Vector Databases remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-RAG. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18497 |
+| SF-2026-ARXIV-2606-18532 | score_7_9; potential_books_delta | not_selected | — | — | AI Sandboxes: A Threat Model, Taxonomy, and Measurement Framework remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18532 |
+| SF-2026-ARXIV-2606-18550 | score_7_9; potential_books_delta | selected | DA-20260617-CONTRACT-INTEGRITY | — | Selected after 43/43 frontier comparison for a non-overlapping transaction, recovery or contract-integrity control boundary. | analysis:DA-20260617-CONTRACT-INTEGRITY |
 | SF-2026-ARXIV-2606-18600 | score_7_9; potential_books_delta | selected | DA-20260618-HETEROGENEOUS-RECOVERY | — | 唯一同时改变 placement 与 interruption recovery 的 serving family，进入三项叙事。 | analysis:DA-20260618-HETEROGENEOUS-RECOVERY |
-| SF-2026-ARXIV-2606-18619 | score_7_9; potential_books_delta | not_selected | — | — | 把 agent 判断转成可反证 artifact，补足安全 evidence plane，优先于纯检测率改进。 | analysis-decision:SF-2026-ARXIV-2606-18619 |
-| SF-2026-ARXIV-2606-18650 | score_7_9 | not_selected | — | — | Ch27 已拥有动态 data admission 与 proxy bias；本工作强化求解器分支但不新增 owner。 | analysis-decision:SF-2026-ARXIV-2606-18650 |
-| SF-2026-ARXIV-2606-18668 | score_7_9 | not_selected | — | — | Ch82 已有 typed failure handoff、reroute 与 fallback authority；EARS 提供生产证据，不另建 abstention owner。 | analysis-decision:SF-2026-ARXIV-2606-18668 |
-| SF-2026-ARXIV-2606-18673 | score_7_9 | not_selected | — | — | Ch72 已明确 prompt 不是 secret store；AREA 只作为受限 sensor 分支。 | analysis-decision:SF-2026-ARXIV-2606-18673 |
-| SF-2026-ARXIV-2606-18697 | score_7_9; potential_books_delta | not_selected | — | — | 首次把 world-model adaptation data 显式定位为 downstream planning authority 的供应链边界。 | analysis-decision:SF-2026-ARXIV-2606-18697 |
-| SF-2026-ARXIV-2606-18741 | score_7_9; potential_books_delta | not_selected | — | — | 它改变 serving topology 的运行时 commit protocol，不只是更好的静态 scheduler。 | analysis-decision:SF-2026-ARXIV-2606-18741 |
-| SF-2026-ARXIV-2606-18746 | score_7_9 | not_selected | — | — | Ch77/79 已区分 memory state 与 environment state；该定理加强必要性证明。 | analysis-decision:SF-2026-ARXIV-2606-18746 |
-| SF-2026-ARXIV-2606-18810 | score_7_9 | not_selected | — | — | Ch33 已拥有 token credit 与 verifier 共偏边界；保留为不依赖外部 teacher 的证据。 | analysis-decision:SF-2026-ARXIV-2606-18810 |
-| SF-2026-ARXIV-2606-18829 | score_7_9 | not_selected | — | — | Ch72 已有同一 exact family 的 Utility/ACL/Forgetting Gate 与代价边界；本日只保留证据 handoff。 | analysis-decision:SF-2026-ARXIV-2606-18829 |
-| SF-2026-ARXIV-2606-18831 | score_7_9; potential_books_delta | not_selected | — | — | 训练 mixture 把检索、证据合成、推理拆成可审计能力，而非只调 reward。 | analysis-decision:SF-2026-ARXIV-2606-18831 |
-| SF-2026-ARXIV-2606-18847 | score_7_9; potential_books_delta | not_selected | — | — | 它把 memory retrieval 与真实 action/state evolution接起来，属于 embodied owner 的长期 delta。 | analysis-decision:SF-2026-ARXIV-2606-18847 |
-| SF-2026-ARXIV-2606-18874 | score_7_9 | not_selected | — | — | Ch81/66 已拥有 claim-evidence lineage 与 harness identity；Xcientist 是具体实例。 | analysis-decision:SF-2026-ARXIV-2606-18874 |
-| SF-2026-ARXIV-2606-18958 | score_7_9 | not_selected | — | — | Ch73 已把 simulation、canary 与真实 deployment evidence 分层；LiveStack 是更深的 OS 实现实例。 | analysis-decision:SF-2026-ARXIV-2606-18958 |
-| SF-2026-ARXIV-2606-18967 | score_7_9; potential_books_delta | not_selected | — | — | 它把 speculative verification 延伸到训练 rollout，同时保留 policy/version owner。 | analysis-decision:SF-2026-ARXIV-2606-18967 |
-| SF-2026-ARXIV-2606-18996 | score_7_9 | not_selected | — | — | Ch66/72 已要求 capability 与 harm 双轴评价；TRAP 补充 workload 而不改 owner。 | analysis-decision:SF-2026-ARXIV-2606-18996 |
-| SF-2026-ARXIV-2606-19004 | score_7_9 | not_selected | — | — | Ch63/33 已有 preemptible training 与 rollout identity；本工作是 DiT-specific composition。 | analysis-decision:SF-2026-ARXIV-2606-19004 |
+| SF-2026-ARXIV-2606-18619 | score_7_9; potential_books_delta | not_selected | — | — | Code-Augur: Agentic Vulnerability Detection via Specification Inference remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18619 |
+| SF-2026-ARXIV-2606-18650 | score_7_9 | not_selected | — | — | BLADE: Scalable Bi-level Adaptive Data Selection for LLM Training remains evidence-complete after canonical owner transfer with V2 score 7 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18650 |
+| SF-2026-ARXIV-2606-18668 | score_7_9 | not_selected | — | — | EARS: Explanatory Abstention for Reliable Sub-Agent Modeling in Large-scale Multi-Agent Systems remains evidence-complete after canonical owner transfer with V2 score 7 and owner AGENT-MULTI-AGENT. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18668 |
+| SF-2026-ARXIV-2606-18673 | score_7_9 | not_selected | — | — | Understanding and Mitigating Prompt Leaking Attacks in Real-World LLM-Based Applications remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18673 |
+| SF-2026-ARXIV-2606-18697 | score_7_9; potential_books_delta | not_selected | — | — | Stealthy World Model Manipulation via Data Poisoning remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-WORLD-MODELS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18697 |
+| SF-2026-ARXIV-2606-18741 | score_7_9; potential_books_delta | not_selected | — | — | ReMP: Low-Downtime Runtime Model-Parallelism Reconfiguration for LLM Serving remains evidence-complete after canonical owner transfer with V2 score 9 and owner INFER-SCHEDULING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18741 |
+| SF-2026-ARXIV-2606-18746 | score_7_9 | not_selected | — | — | What Must Generalist Agents Remember? remains evidence-complete after canonical owner transfer with V2 score 7 and owner AGENT-MEMORY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18746 |
+| SF-2026-ARXIV-2606-18810 | score_7_9 | not_selected | — | — | Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards remains evidence-complete after canonical owner transfer with V2 score 7 and owner TRAIN-GRPO. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18810 |
+| SF-2026-ARXIV-2606-18829 | score_7_9 | not_selected | — | — | GateMem: Benchmarking Memory Governance in Multi-Principal Shared-Memory Agents remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18829 |
+| SF-2026-ARXIV-2606-18831 | score_7_9; potential_books_delta | not_selected | — | — | Beyond Reward Engineering: A Data Recipe for Long-Context Reinforcement Learning remains evidence-complete after canonical owner transfer with V2 score 8 and owner TRAIN-GRPO. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18831 |
+| SF-2026-ARXIV-2606-18847 | score_7_9; potential_books_delta | not_selected | — | — | WorldLines: Benchmarking and Modeling Long-Horizon Stateful Embodied Agents remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18847 |
+| SF-2026-ARXIV-2606-18874 | score_7_9 | not_selected | — | — | Externalizing Research Synthesis and Validation in AI Scientists through a Research Harness remains evidence-complete after canonical owner transfer with V2 score 8 and owner AGENT-WORKFLOW. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18874 |
+| SF-2026-ARXIV-2606-18958 | score_7_9 | not_selected | — | — | LiveStack: OS Support for Cluster-Scale Full-Stack Live Simulation remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-PRODUCTION. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18958 |
+| SF-2026-ARXIV-2606-18967 | score_7_9; potential_books_delta | not_selected | — | — | EfficientRollout: System-Aware Self-Speculative Decoding for RL Rollouts remains evidence-complete after canonical owner transfer with V2 score 8 and owner INFER-SPECULATIVE-DECODING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18967 |
+| SF-2026-ARXIV-2606-18996 | score_7_9 | not_selected | — | — | TRAP: Benchmark for Task-completion and Resistance to Active Privacy-extraction remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-18996 |
+| SF-2026-ARXIV-2606-19004 | score_7_9 | not_selected | — | — | Spotlight: Synergizing Seed Exploration and Spot GPUs for DiT RL Post-Training remains evidence-complete after canonical owner transfer with V2 score 7 and owner PLATFORM-GPU-SCHEDULER. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19004 |
 | SF-2026-ARXIV-2606-19025 | score_7_9; potential_books_delta | selected | DA-20260618-CROSS-SITE-MOE-OWNERSHIP | — | 它改变跨站 distributed-training replica/state ownership，而不是 serving placement。 | analysis:DA-20260618-CROSS-SITE-MOE-OWNERSHIP |
-| SF-2026-ARXIV-2606-19057 | score_7_9; potential_books_delta | not_selected | — | — | 把未审样本从默认负例改成不确定集合，直接修正 evaluation denominator。 | analysis-decision:SF-2026-ARXIV-2606-19057 |
-| SF-2026-ARXIV-2606-19111 | score_7_9 | not_selected | — | — | Ch82 已把 coordinator 视为可替换 control role；本 family 提供 recovery boundary 证据。 | analysis-decision:SF-2026-ARXIV-2606-19111 |
-| SF-2026-ARXIV-2606-19191 | score_7_9 | not_selected | — | — | Ch72 已把 persistent Skill 定义为 supply-chain artifact，并要求 code/resource/runtime effect 联合审计与 containment。 | analysis-decision:SF-2026-ARXIV-2606-19191 |
-| SF-2026-ARXIV-2606-19242 | score_7_9 | not_selected | — | — | Ch72 已拥有 canonical action 与 effect-time authorization；论文强化实现路径。 | analysis-decision:SF-2026-ARXIV-2606-19242 |
-| SF-2026-ARXIV-2606-19262 | score_7_9; potential_books_delta | not_selected | — | — | 它为平台监控增加未注册训练的被动 evidence path，而不把检测器提升为执行授权。 | analysis-decision:SF-2026-ARXIV-2606-19262 |
-| SF-2026-ARXIV-2606-19271 | score_7_9 | not_selected | — | — | Ch56 已有 streaming generation 的 playout slack、migration/re-homing、elasticity 与质量降级；TurboServe 是生产 trace 佐证。 | analysis-decision:SF-2026-ARXIV-2606-19271 |
-| SF-2026-ARXIV-2606-19409 | score_7_9 | not_selected | — | — | Ch84 已含同一 exact family 的 Session runtime value、fork/merge/replay 和 controlled-property boundary。 | analysis-decision:SF-2026-ARXIV-2606-19409 |
-| SF-2026-ARXIV-2606-19464 | score_7_9 | not_selected | — | — | Ch72 已有 policy version、obligation 与外部 reference monitor；无需复制 DSL。 | analysis-decision:SF-2026-ARXIV-2606-19464 |
-| SF-2026-ARXIV-2606-19535 | score_7_9; potential_books_delta | selected | DA-20260618-PLATFORM-BOUND-ARTIFACT | — | 它把 platform/kernel 纳入模型供应链的可执行 identity，而非仅记录权重 hash。 | analysis:DA-20260618-PLATFORM-BOUND-ARTIFACT |
-| SF-2026-ARXIV-2606-19544 | score_7_9 | not_selected | — | — | Ch66 已把 reliability、validity、bias 分离；本大样本是强验证而非新机制。 | analysis-decision:SF-2026-ARXIV-2606-19544 |
-| SF-2026-ARXIV-2606-19559 | score_7_9 | not_selected | — | — | Ch79 已拥有 ask/act gate 与 uncertainty decomposition；保留跨 backbone 证据。 | analysis-decision:SF-2026-ARXIV-2606-19559 |
-| SF-2026-ARXIV-2606-19595 | score_7_9 | not_selected | — | — | Ch81 已有 durable checkpoints 与 idempotent resume；IHBench补充 voice workload。 | analysis-decision:SF-2026-ARXIV-2606-19595 |
-| SF-2026-ARXIV-2606-19613 | score_7_9; potential_books_delta | not_selected | — | — | 它给长期 session 的 degradation/first-failure 一个不同于独立 pass@1 的 evaluation contract。 | analysis-decision:SF-2026-ARXIV-2606-19613 |
-| SF-2026-ARXIV-2606-19667 | score_7_9; potential_books_delta | not_selected | — | — | 它连接 RAG evidence ordering 与 prefix-cache locality，同时保持 relevance owner 不变。 | analysis-decision:SF-2026-ARXIV-2606-19667 |
-| SF-2026-ARXIV-2606-20736 | score_7_9; potential_books_delta | not_selected | — | — | 它把 benchmark freshness 从发布时清洁度转成每次 evaluation 的生成 contract。 | analysis-decision:SF-2026-ARXIV-2606-20736 |
-| SF-2026-ARXIV-2606-20746 | score_7_9 | not_selected | — | — | Ch72 已有 run-level cumulative harm 与 temporal invariant；本 family 的窄带负结果作为 sensor 边界 handoff。 | analysis-decision:SF-2026-ARXIV-2606-20746 |
-| SF-2026-ARXIV-2606-21089 | score_7_9; potential_books_delta | not_selected | — | — | 它区分 capability retention 与 method-learning state，修正 repeated DPO 的错误自改进叙事。 | analysis-decision:SF-2026-ARXIV-2606-21089 |
-| SF-2026-ARXIV-2606-21090 | score_7_9; potential_books_delta | not_selected | — | — | 它把 self-training collapse 定位到 within-campaign promotion gate，而不是笼统归因 catastrophic forgetting。 | analysis-decision:SF-2026-ARXIV-2606-21090 |
-| SF-2026-ARXIV-2606-28374 | score_7_9 | not_selected | — | — | Ch80 已有 held-out promotion/rollback；RSEA提供跨 benchmark 负证据而非新 owner。 | analysis-decision:SF-2026-ARXIV-2606-28374 |
+| SF-2026-ARXIV-2606-19057 | score_7_9; potential_books_delta | not_selected | — | — | Quantifying and Auditing LLM Evaluation via Positive--Unlabeled Learning remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19057 |
+| SF-2026-ARXIV-2606-19111 | score_7_9 | not_selected | — | — | Leadership as Coordination Control: Behavioral Signatures and the Recovery-Advantage Boundary in Multi-Agent LLM Teams remains evidence-complete after canonical owner transfer with V2 score 7 and owner AGENT-MULTI-AGENT. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19111 |
+| SF-2026-ARXIV-2606-19191 | score_7_9 | not_selected | — | — | PhantomSkill: Malicious Code Injection in Agent Skill Ecosystems remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19191 |
+| SF-2026-ARXIV-2606-19242 | score_7_9 | not_selected | — | — | Runtime Compliance Verification for AI Agents remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19242 |
+| SF-2026-ARXIV-2606-19262 | score_7_9; potential_books_delta | not_selected | — | — | Detecting Hidden ML Training With Zero-Overhead Telemetry remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-MONITORING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19262 |
+| SF-2026-ARXIV-2606-19271 | score_7_9 | not_selected | — | — | TurboServe: Serving Streaming Video Generation Efficiently and Economically remains evidence-complete after canonical owner transfer with V2 score 7 and owner INFER-SCHEDULING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2606-19271 |
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18619:start -->
-把 agent 判断转成可反证 artifact，补足安全 evidence plane，优先于纯检测率改进。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18619:end -->
+### Selected Analysis Narratives
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18650:start -->
-Ch27 已拥有动态 data admission 与 proxy bias；本工作强化求解器分支但不新增 owner。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18650:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18284:start -->
+Breaking the Solver Bottleneck: Training Task Generators at the Learnable Frontier remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18284:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18668:start -->
-Ch82 已有 typed failure handoff、reroute 与 fallback authority；EARS 提供生产证据，不另建 abstention owner。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18668:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18286:start -->
+CODEBLOCK: Learning to Supervise Code at the Right Granularity remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-SFT. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18286:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18673:start -->
-Ch72 已明确 prompt 不是 secret store；AREA 只作为受限 sensor 分支。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18673:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18310:start -->
+Conflict-Aware Retriever Editing for Knowledge Injection Attacks on LLM-Based RAG Systems remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-RAG. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18310:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18697:start -->
-首次把 world-model adaptation data 显式定位为 downstream planning authority 的供应链边界。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18697:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18322:start -->
+SAE Interventions are Unreliable: Post-Intervention Recovery of Suppressed Behavior remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-RLHF. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18322:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18741:start -->
-它改变 serving topology 的运行时 commit protocol，不只是更好的静态 scheduler。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18741:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18356:start -->
+SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18356:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18746:start -->
-Ch77/79 已区分 memory state 与 environment state；该定理加强必要性证明。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18746:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18379:start -->
+RankGraph-2: Lifecycle Co-Design for Billion-Node Graph Learning in Recommendation remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-RAG. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18379:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18810:start -->
-Ch33 已拥有 token credit 与 verifier 共偏边界；保留为不依赖外部 teacher 的证据。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18810:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18383:start -->
+From Sparse Features to Trustworthy Proxies: Certifying SAE-Based Interpretability remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-RLHF. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18383:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18829:start -->
-Ch72 已有同一 exact family 的 Utility/ACL/Forgetting Gate 与代价边界；本日只保留证据 handoff。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18829:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18394:start -->
+JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting remains evidence-complete after canonical owner transfer with V2 score 8 and owner INFER-SPECULATIVE-DECODING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18394:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18831:start -->
-训练 mixture 把检索、证据合成、推理拆成可审计能力，而非只调 reward。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18831:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18400:start -->
+CloakLM: Obfuscating GPU Memory Layout to Mitigate Model Ex-filtration for Serving remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18400:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18847:start -->
-它把 memory retrieval 与真实 action/state evolution接起来，属于 embodied owner 的长期 delta。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18847:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18421:start -->
+Finding Compiler-Platform Interaction Bugs in Deep Learning Pipelines via Cross-Layer Constraints remains evidence-complete after canonical owner transfer with V2 score 9 and owner INFER-TENSORRT-LLM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18421:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18874:start -->
-Ch81/66 已拥有 claim-evidence lineage 与 harness identity；Xcientist 是具体实例。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18874:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18431:start -->
+Beyond Prediction: Tail-Aware Scheduling for LLM Inference remains evidence-complete after canonical owner transfer with V2 score 9 and owner INFER-SCHEDULING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18431:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18958:start -->
-Ch73 已把 simulation、canary 与真实 deployment evidence 分层；LiveStack 是更深的 OS 实现实例。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18958:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18448:start -->
+VISUALSKILL: Multimodal Skills for Computer-Use Agents remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-TOOL-CALLING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18448:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18967:start -->
-它把 speculative verification 延伸到训练 rollout，同时保留 policy/version owner。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18967:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18467:start -->
+ToolChain-CRC: Conformal Risk Control for Agentic AI Under Retrieval and Tool-Use Drift remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18467:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-18996:start -->
-Ch66/72 已要求 capability 与 harm 双轴评价；TRAP 补充 workload 而不改 owner。
-<!-- analysis-decision:SF-2026-ARXIV-2606-18996:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18497:start -->
+Ghost Vectors: Soft-Deleted Embeddings Remain Reconstructible in HNSW Vector Databases remains evidence-complete after canonical owner transfer with V2 score 9 and owner AGENT-RAG. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18497:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-19004:start -->
-Ch63/33 已有 preemptible training 与 rollout identity；本工作是 DiT-specific composition。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19004:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-18532:start -->
+AI Sandboxes: A Threat Model, Taxonomy, and Measurement Framework remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18532:end -->
 
-<!-- analysis-decision:SF-2026-ARXIV-2606-19057:start -->
-把未审样本从默认负例改成不确定集合，直接修正 evaluation denominator。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19057:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19111:start -->
-Ch82 已把 coordinator 视为可替换 control role；本 family 提供 recovery boundary 证据。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19111:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19191:start -->
-Ch72 已把 persistent Skill 定义为 supply-chain artifact，并要求 code/resource/runtime effect 联合审计与 containment。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19191:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19242:start -->
-Ch72 已拥有 canonical action 与 effect-time authorization；论文强化实现路径。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19242:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19262:start -->
-它为平台监控增加未注册训练的被动 evidence path，而不把检测器提升为执行授权。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19262:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19271:start -->
-Ch56 已有 streaming generation 的 playout slack、migration/re-homing、elasticity 与质量降级；TurboServe 是生产 trace 佐证。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19271:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19409:start -->
-Ch84 已含同一 exact family 的 Session runtime value、fork/merge/replay 和 controlled-property boundary。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19409:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19464:start -->
-Ch72 已有 policy version、obligation 与外部 reference monitor；无需复制 DSL。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19464:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19544:start -->
-Ch66 已把 reliability、validity、bias 分离；本大样本是强验证而非新机制。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19544:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19559:start -->
-Ch79 已拥有 ask/act gate 与 uncertainty decomposition；保留跨 backbone 证据。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19559:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19595:start -->
-Ch81 已有 durable checkpoints 与 idempotent resume；IHBench补充 voice workload。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19595:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19613:start -->
-它给长期 session 的 degradation/first-failure 一个不同于独立 pass@1 的 evaluation contract。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19613:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-19667:start -->
-它连接 RAG evidence ordering 与 prefix-cache locality，同时保持 relevance owner 不变。
-<!-- analysis-decision:SF-2026-ARXIV-2606-19667:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-20736:start -->
-它把 benchmark freshness 从发布时清洁度转成每次 evaluation 的生成 contract。
-<!-- analysis-decision:SF-2026-ARXIV-2606-20736:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-20746:start -->
-Ch72 已有 run-level cumulative harm 与 temporal invariant；本 family 的窄带负结果作为 sensor 边界 handoff。
-<!-- analysis-decision:SF-2026-ARXIV-2606-20746:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-21089:start -->
-它区分 capability retention 与 method-learning state，修正 repeated DPO 的错误自改进叙事。
-<!-- analysis-decision:SF-2026-ARXIV-2606-21089:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-21090:start -->
-它把 self-training collapse 定位到 within-campaign promotion gate，而不是笼统归因 catastrophic forgetting。
-<!-- analysis-decision:SF-2026-ARXIV-2606-21090:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2606-28374:start -->
-Ch80 已有 held-out promotion/rollback；RSEA提供跨 benchmark 负证据而非新 owner。
-<!-- analysis-decision:SF-2026-ARXIV-2606-28374:end -->
+<!-- analysis:DA-20260617-CONTRACT-INTEGRITY:start -->
+### DA-20260617-CONTRACT-INTEGRITY
+A structural tool gate is only as trustworthy as the precondition/effect/authorization facts it consumes. Signed provenance, typed attestation and runtime effect verification protect different rungs; none proves safety if the attestation root or external effect boundary is compromised.
+<!-- analysis:DA-20260617-CONTRACT-INTEGRITY:end -->
 
 <!-- analysis:DA-20260618-HETEROGENEOUS-RECOVERY:start -->
 ### DA-20260618-HETEROGENEOUS-RECOVERY
 异构 spot serving 的控制对象不是一张静态 placement 表，而是 topology、request/KV state 与 replacement lifecycle。只有把重配置和输出恢复纳入同一 commit，成本优化才不会以分钟级中断换取。
 <!-- analysis:DA-20260618-HETEROGENEOUS-RECOVERY:end -->
 
+<!-- analysis-decision:SF-2026-ARXIV-2606-18619:start -->
+Code-Augur: Agentic Vulnerability Detection via Specification Inference remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18619:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18650:start -->
+BLADE: Scalable Bi-level Adaptive Data Selection for LLM Training remains evidence-complete after canonical owner transfer with V2 score 7 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18650:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18668:start -->
+EARS: Explanatory Abstention for Reliable Sub-Agent Modeling in Large-scale Multi-Agent Systems remains evidence-complete after canonical owner transfer with V2 score 7 and owner AGENT-MULTI-AGENT. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18668:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18673:start -->
+Understanding and Mitigating Prompt Leaking Attacks in Real-World LLM-Based Applications remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18673:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18697:start -->
+Stealthy World Model Manipulation via Data Poisoning remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-WORLD-MODELS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18697:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18741:start -->
+ReMP: Low-Downtime Runtime Model-Parallelism Reconfiguration for LLM Serving remains evidence-complete after canonical owner transfer with V2 score 9 and owner INFER-SCHEDULING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18741:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18746:start -->
+What Must Generalist Agents Remember? remains evidence-complete after canonical owner transfer with V2 score 7 and owner AGENT-MEMORY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18746:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18810:start -->
+Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards remains evidence-complete after canonical owner transfer with V2 score 7 and owner TRAIN-GRPO. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18810:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18829:start -->
+GateMem: Benchmarking Memory Governance in Multi-Principal Shared-Memory Agents remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18829:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18831:start -->
+Beyond Reward Engineering: A Data Recipe for Long-Context Reinforcement Learning remains evidence-complete after canonical owner transfer with V2 score 8 and owner TRAIN-GRPO. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18831:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18847:start -->
+WorldLines: Benchmarking and Modeling Long-Horizon Stateful Embodied Agents remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18847:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18874:start -->
+Externalizing Research Synthesis and Validation in AI Scientists through a Research Harness remains evidence-complete after canonical owner transfer with V2 score 8 and owner AGENT-WORKFLOW. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18874:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18958:start -->
+LiveStack: OS Support for Cluster-Scale Full-Stack Live Simulation remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-PRODUCTION. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18958:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18967:start -->
+EfficientRollout: System-Aware Self-Speculative Decoding for RL Rollouts remains evidence-complete after canonical owner transfer with V2 score 8 and owner INFER-SPECULATIVE-DECODING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18967:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-18996:start -->
+TRAP: Benchmark for Task-completion and Resistance to Active Privacy-extraction remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-18996:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-19004:start -->
+Spotlight: Synergizing Seed Exploration and Spot GPUs for DiT RL Post-Training remains evidence-complete after canonical owner transfer with V2 score 7 and owner PLATFORM-GPU-SCHEDULER. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19004:end -->
+
 <!-- analysis:DA-20260618-CROSS-SITE-MOE-OWNERSHIP:start -->
 ### DA-20260618-CROSS-SITE-MOE-OWNERSHIP
 跨站 MoE 训练的关键不是把数据并行原样搬到 WAN，而是重新划分 expert/state ownership：每站只持有分区 expert，有限复制承担热点与可用性，non-resident token 以显式 skip 规则改变本地更新分布。实测通信和吞吐只覆盖作者配置，100B 仍是模型投影。
 <!-- analysis:DA-20260618-CROSS-SITE-MOE-OWNERSHIP:end -->
 
-<!-- analysis:DA-20260618-PLATFORM-BOUND-ARTIFACT:start -->
-### DA-20260618-PLATFORM-BOUND-ARTIFACT
-权重 hash 不能单独定义可执行模型身份。FloatDoor 表明同一权重和 LoRA 组合可利用 platform/kernel 浮点差异触发不同任务，因此 audit artifact 必须绑定目标硬件、kernel 和 serving build；跨平台差异本身仍不证明后门存在。
-<!-- analysis:DA-20260618-PLATFORM-BOUND-ARTIFACT:end -->
+<!-- analysis-decision:SF-2026-ARXIV-2606-19057:start -->
+Quantifying and Auditing LLM Evaluation via Positive--Unlabeled Learning remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19057:end -->
 
+<!-- analysis-decision:SF-2026-ARXIV-2606-19111:start -->
+Leadership as Coordination Control: Behavioral Signatures and the Recovery-Advantage Boundary in Multi-Agent LLM Teams remains evidence-complete after canonical owner transfer with V2 score 7 and owner AGENT-MULTI-AGENT. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19111:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-19191:start -->
+PhantomSkill: Malicious Code Injection in Agent Skill Ecosystems remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19191:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-19242:start -->
+Runtime Compliance Verification for AI Agents remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19242:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-19262:start -->
+Detecting Hidden ML Training With Zero-Overhead Telemetry remains evidence-complete after canonical owner transfer with V2 score 9 and owner PLATFORM-MONITORING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19262:end -->
+
+<!-- analysis-decision:SF-2026-ARXIV-2606-19271:start -->
+TurboServe: Serving Streaming Video Generation Efficiently and Economically remains evidence-complete after canonical owner transfer with V2 score 7 and owner INFER-SCHEDULING. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
+<!-- analysis-decision:SF-2026-ARXIV-2606-19271:end -->
+
+<!-- audit-target:deep_analysis_selection:end -->
+<!-- audit-target:books:start -->
 ## 6. Books Comparison
 
 <!-- validator:books-comparison-v1 -->
 | Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-ARXIV-2606-18284 | TRAIN-DATA | books/part-04-training-system/27-data.md#L1 | books/part-04-training-system/28-pretraining.md#L1; books/part-06-ai-infrastructure/59-model-registry.md#L1 | existing:SF-2026-ARXIV-2606-18284 | delta:SF-2026-ARXIV-2606-18284 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18284 |
+| SF-2026-ARXIV-2606-18286 | TRAIN-SFT | books/part-04-training-system/29-sft.md#L1 | books/part-04-training-system/27-data.md#L1; books/part-04-training-system/31-rlhf.md#L1 | existing:SF-2026-ARXIV-2606-18286 | delta:SF-2026-ARXIV-2606-18286 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18286 |
+| SF-2026-ARXIV-2606-18310 | AGENT-RAG | Books/part-07-agent/76-rag.md#L1 | Books/part-07-agent/77-memory.md#L1; Books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2026-ARXIV-2606-18310 | delta:SF-2026-ARXIV-2606-18310 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18310 |
+| SF-2026-ARXIV-2606-18322 | TRAIN-RLHF | Books/part-04-training-system/31-rlhf.md#L1 | Books/part-04-training-system/29-sft.md#L1; Books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | existing:SF-2026-ARXIV-2606-18322 | delta:SF-2026-ARXIV-2606-18322 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18322 |
+| SF-2026-ARXIV-2606-18356 | PLATFORM-EVALUATION-SYSTEM | Books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | Books/part-06-ai-infrastructure/69-trace.md#L1; Books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2026-ARXIV-2606-18356 | delta:SF-2026-ARXIV-2606-18356 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18356 |
+| SF-2026-ARXIV-2606-18379 | AGENT-RAG | Books/part-07-agent/76-rag.md#L1 | Books/part-07-agent/77-memory.md#L1; Books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2026-ARXIV-2606-18379 | delta:SF-2026-ARXIV-2606-18379 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18379 |
+| SF-2026-ARXIV-2606-18383 | TRAIN-RLHF | Books/part-04-training-system/31-rlhf.md#L1 | Books/part-04-training-system/29-sft.md#L1; Books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | existing:SF-2026-ARXIV-2606-18383 | delta:SF-2026-ARXIV-2606-18383 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18383 |
+| SF-2026-ARXIV-2606-18394 | INFER-SPECULATIVE-DECODING | Books/part-05-inference-system/48-speculative-decoding.md#L1 | Books/part-05-inference-system/44-decode.md#L1; Books/part-05-inference-system/56-inference-scheduling.md#L1 | existing:SF-2026-ARXIV-2606-18394 | delta:SF-2026-ARXIV-2606-18394 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18394 |
+| SF-2026-ARXIV-2606-18400 | PLATFORM-SECURITY | Books/part-06-ai-infrastructure/72-security.md#L1 | Books/part-06-ai-infrastructure/69-trace.md#L1; Books/part-07-agent/84-agent-platform.md#L1 | existing:SF-2026-ARXIV-2606-18400 | delta:SF-2026-ARXIV-2606-18400 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18400 |
+| SF-2026-ARXIV-2606-18421 | INFER-TENSORRT-LLM | Books/part-05-inference-system/49-tensorrt-llm.md#L1 | Books/part-05-inference-system/48-speculative-decoding.md#L1; Books/part-05-inference-system/54-gpu-memory.md#L1 | existing:SF-2026-ARXIV-2606-18421 | delta:SF-2026-ARXIV-2606-18421 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18421 |
+| SF-2026-ARXIV-2606-18431 | INFER-SCHEDULING | Books/part-05-inference-system/56-inference-scheduling.md#L1 | Books/part-05-inference-system/55-pd-disaggregation.md#L1; Books/part-06-ai-infrastructure/63-gpu-scheduler.md#L1 | existing:SF-2026-ARXIV-2606-18431 | delta:SF-2026-ARXIV-2606-18431 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18431 |
+| SF-2026-ARXIV-2606-18448 | AGENT-TOOL-CALLING | Books/part-07-agent/78-tool-calling.md#L1 | Books/part-07-agent/81-workflow.md#L1; Books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2026-ARXIV-2606-18448 | delta:SF-2026-ARXIV-2606-18448 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18448 |
+| SF-2026-ARXIV-2606-18467 | PLATFORM-EVALUATION-SYSTEM | Books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | Books/part-06-ai-infrastructure/69-trace.md#L1; Books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2026-ARXIV-2606-18467 | delta:SF-2026-ARXIV-2606-18467 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18467 |
+| SF-2026-ARXIV-2606-18497 | AGENT-RAG | Books/part-07-agent/76-rag.md#L1 | Books/part-07-agent/77-memory.md#L1; Books/part-06-ai-infrastructure/72-security.md#L1 | existing:SF-2026-ARXIV-2606-18497 | delta:SF-2026-ARXIV-2606-18497 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18497 |
+| SF-2026-ARXIV-2606-18532 | PLATFORM-SECURITY | Books/part-06-ai-infrastructure/72-security.md#L1 | Books/part-06-ai-infrastructure/69-trace.md#L1; Books/part-07-agent/84-agent-platform.md#L1 | existing:SF-2026-ARXIV-2606-18532 | delta:SF-2026-ARXIV-2606-18532 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18532 |
+| SF-2026-ARXIV-2606-18550 | PLATFORM-SECURITY | Books/part-06-ai-infrastructure/72-security.md#L1 | Books/part-06-ai-infrastructure/69-trace.md#L1; Books/part-07-agent/84-agent-platform.md#L1 | existing:SF-2026-ARXIV-2606-18550 | delta:SF-2026-ARXIV-2606-18550 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18550 |
 | SF-2026-ARXIV-2606-18600 | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#L1 | books/part-05-inference-system/55-pd-disaggregation.md#L1 | existing:SF-2026-ARXIV-2606-18600 | delta:SF-2026-ARXIV-2606-18600 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18600 |
 | SF-2026-ARXIV-2606-18619 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/71-multi-tenant.md#L1 | existing:SF-2026-ARXIV-2606-18619 | delta:SF-2026-ARXIV-2606-18619 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-18619 |
 | SF-2026-ARXIV-2606-18650 | TRAIN-DATA | books/part-04-training-system/27-data.md#L1 | books/part-04-training-system/28-pretraining.md#L1 | existing:SF-2026-ARXIV-2606-18650 | delta:SF-2026-ARXIV-2606-18650 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-18650 |
@@ -995,19 +1096,198 @@ Ch80 已有 held-out promotion/rollback；RSEA提供跨 benchmark 负证据而�
 | SF-2026-ARXIV-2606-19242 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/71-multi-tenant.md#L1 | existing:SF-2026-ARXIV-2606-19242 | delta:SF-2026-ARXIV-2606-19242 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19242 |
 | SF-2026-ARXIV-2606-19262 | PLATFORM-MONITORING | books/part-06-ai-infrastructure/67-monitoring.md#L1 | books/part-06-ai-infrastructure/69-trace.md#L1 | existing:SF-2026-ARXIV-2606-19262 | delta:SF-2026-ARXIV-2606-19262 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-19262 |
 | SF-2026-ARXIV-2606-19271 | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#L1 | books/part-05-inference-system/55-pd-disaggregation.md#L1 | existing:SF-2026-ARXIV-2606-19271 | delta:SF-2026-ARXIV-2606-19271 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19271 |
-| SF-2026-ARXIV-2606-19409 | AGENT-PLATFORM | books/part-07-agent/84-agent-platform.md#L1 | books/part-07-agent/83-mcp.md#L1 | existing:SF-2026-ARXIV-2606-19409 | delta:SF-2026-ARXIV-2606-19409 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19409 |
-| SF-2026-ARXIV-2606-19464 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/71-multi-tenant.md#L1 | existing:SF-2026-ARXIV-2606-19464 | delta:SF-2026-ARXIV-2606-19464 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19464 |
-| SF-2026-ARXIV-2606-19535 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/71-multi-tenant.md#L1 | existing:SF-2026-ARXIV-2606-19535 | delta:SF-2026-ARXIV-2606-19535 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-19535 |
-| SF-2026-ARXIV-2606-19544 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | books/part-06-ai-infrastructure/67-monitoring.md#L1 | existing:SF-2026-ARXIV-2606-19544 | delta:SF-2026-ARXIV-2606-19544 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19544 |
-| SF-2026-ARXIV-2606-19559 | AGENT-PLANNING | books/part-07-agent/79-planning.md#L1 | books/part-07-agent/80-reflection.md#L1 | existing:SF-2026-ARXIV-2606-19559 | delta:SF-2026-ARXIV-2606-19559 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19559 |
-| SF-2026-ARXIV-2606-19595 | AGENT-WORKFLOW | books/part-07-agent/81-workflow.md#L1 | books/part-07-agent/80-reflection.md#L1 | existing:SF-2026-ARXIV-2606-19595 | delta:SF-2026-ARXIV-2606-19595 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-19595 |
-| SF-2026-ARXIV-2606-19613 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | books/part-06-ai-infrastructure/67-monitoring.md#L1 | existing:SF-2026-ARXIV-2606-19613 | delta:SF-2026-ARXIV-2606-19613 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-19613 |
-| SF-2026-ARXIV-2606-19667 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L1 | books/part-05-inference-system/46-continuous-batching.md#L1 | existing:SF-2026-ARXIV-2606-19667 | delta:SF-2026-ARXIV-2606-19667 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-19667 |
-| SF-2026-ARXIV-2606-20736 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L1 | books/part-06-ai-infrastructure/67-monitoring.md#L1 | existing:SF-2026-ARXIV-2606-20736 | delta:SF-2026-ARXIV-2606-20736 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-20736 |
-| SF-2026-ARXIV-2606-20746 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L1 | books/part-06-ai-infrastructure/71-multi-tenant.md#L1 | existing:SF-2026-ARXIV-2606-20746 | delta:SF-2026-ARXIV-2606-20746 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-20746 |
-| SF-2026-ARXIV-2606-21089 | TRAIN-DPO | books/part-04-training-system/34-dpo.md#L1 | books/part-04-training-system/31-rlhf.md#L1 | existing:SF-2026-ARXIV-2606-21089 | delta:SF-2026-ARXIV-2606-21089 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-21089 |
-| SF-2026-ARXIV-2606-21090 | TRAIN-GRPO | books/part-04-training-system/33-grpo.md#L1 | books/part-04-training-system/32-ppo.md#L1 | existing:SF-2026-ARXIV-2606-21090 | delta:SF-2026-ARXIV-2606-21090 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2606-21090 |
-| SF-2026-ARXIV-2606-28374 | AGENT-REFLECTION | books/part-07-agent/80-reflection.md#L1 | books/part-07-agent/79-planning.md#L1 | existing:SF-2026-ARXIV-2606-28374 | delta:SF-2026-ARXIV-2606-28374 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2606-28374 |
+
+<!-- existing:SF-2026-ARXIV-2606-18284:start -->
+Owner `TRAIN-DATA` and adjacent chapters were read; existing proposition was compared against exact-v1, including coexistence and failure boundaries.
+<!-- existing:SF-2026-ARXIV-2606-18284:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18284:start -->
+训练 task generator 时可用一次 solver-labeled pool 训练 activation probe，把 targeted solve-rate 作为 amortized reward；最终仍由 held-out solver 验证。
+<!-- delta:SF-2026-ARXIV-2606-18284:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18284:start -->
+Owner `TRAIN-DATA`; relation `Direct Evolution`; disposition `Integrate`; adjacent handoff `books/part-04-training-system/28-pretraining.md; books/part-06-ai-infrastructure/59-model-registry.md`.
+<!-- books-review:SF-2026-ARXIV-2606-18284:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18286:start -->
+Owner `TRAIN-SFT` and adjacent chapters were read; existing proposition was compared against exact-v1, including coexistence and failure boundaries.
+<!-- existing:SF-2026-ARXIV-2606-18286:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18286:start -->
+Code SFT 的 sparse supervision unit 应是 syntax-complete、data-flow-connected code block，而非孤立 high-loss token；完整 response 继续作 context。
+<!-- delta:SF-2026-ARXIV-2606-18286:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18286:start -->
+Owner `TRAIN-SFT`; relation `Direct Evolution`; disposition `Integrate`; adjacent handoff `books/part-04-training-system/27-data.md; books/part-04-training-system/31-rlhf.md`.
+<!-- books-review:SF-2026-ARXIV-2606-18286:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18310:start -->
+`AGENT-RAG` 已有 source provenance、index identity、retrieval lifecycle 与删除传播; adjacent handoff was checked in `Books/part-07-agent/77-memory.md; Books/part-06-ai-infrastructure/72-security.md`.
+<!-- existing:SF-2026-ARXIV-2606-18310:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18310:start -->
+RAG threat model 需覆盖 retriever parameter editing：攻击者可改变 ranking 而不改 corpus；index/model revision、anchor repair 与 retrieval regression 必须同 lifecycle 验证。
+<!-- delta:SF-2026-ARXIV-2606-18310:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18310:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`AGENT-RAG`. repair anchors能恢复局部行为却可能伤正常 recall；受测编辑不代表所有 retriever compromise。
+<!-- books-review:SF-2026-ARXIV-2606-18310:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18322:start -->
+`TRAIN-RLHF` 已有 behavior intervention、reward/evaluation 与 promotion boundary; adjacent handoff was checked in `Books/part-04-training-system/29-sft.md; Books/part-06-ai-infrastructure/66-evaluation-system.md`.
+<!-- existing:SF-2026-ARXIV-2606-18322:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18322:start -->
+SAE feature clamp/ablation 不能被当作行为控制 complete；residual stream 会在后续层恢复被压制行为，需做 post-intervention trajectory 与 residual recovery audit。
+<!-- delta:SF-2026-ARXIV-2606-18322:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18322:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`TRAIN-RLHF`. 跨层审计增加 hook/compute且仍是 proxy；观察恢复不证明 SAE 无用，也不提供通用 steering 方案。
+<!-- books-review:SF-2026-ARXIV-2606-18322:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18356:start -->
+`PLATFORM-EVALUATION-SYSTEM` 已有 EvalSpec、artifact/process/environment evidence 与 release authority; adjacent handoff was checked in `Books/part-06-ai-infrastructure/69-trace.md; Books/part-06-ai-infrastructure/72-security.md`.
+<!-- existing:SF-2026-ARXIV-2606-18356:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18356:start -->
+Agent security EvalSpec 必须分开 semantic compromise、artifact-visible harm evidence 与 sandbox-observed state/tool harm，并保持各自 denominator 和 matched identity。
+<!-- delta:SF-2026-ARXIV-2606-18356:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18356:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`PLATFORM-EVALUATION-SYSTEM`. 多 endpoint改善定位却增加匹配与审计成本；600 合成 case不估计生产 prevalence，prompt policy不替代 runtime control。
+<!-- books-review:SF-2026-ARXIV-2606-18356:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18379:start -->
+`AGENT-RAG` 已有 source provenance、index identity、retrieval lifecycle 与删除传播; adjacent handoff was checked in `Books/part-07-agent/77-memory.md; Books/part-06-ai-infrastructure/72-security.md`.
+<!-- existing:SF-2026-ARXIV-2606-18379:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18379:start -->
+Billion-node graph retrieval owner 应贯通 graph construction、cluster/index lifecycle、训练与 serving refresh，避免离线 embedding/index 与在线推荐 state 各自漂移。
+<!-- delta:SF-2026-ARXIV-2606-18379:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18379:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`AGENT-RAG`. 联合 lifecycle缩短 refresh却扩大 control-plane coupling、rebuild和失败域；单平台生产证据不外推任意 RAG corpus。
+<!-- books-review:SF-2026-ARXIV-2606-18379:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18383:start -->
+`TRAIN-RLHF` 已有 behavior intervention、reward/evaluation 与 promotion boundary; adjacent handoff was checked in `Books/part-04-training-system/29-sft.md; Books/part-06-ai-infrastructure/66-evaluation-system.md`.
+<!-- existing:SF-2026-ARXIV-2606-18383:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18383:start -->
+SAE 只有在 proxy risk、reconstruction gap、concept mismatch 与 proxy complexity 共同受控时才能支撑干预结论；单独 sparsity/reconstruction score不足以认证 fidelity。
+<!-- delta:SF-2026-ARXIV-2606-18383:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18383:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`TRAIN-RLHF`. 证书更可审计却依赖可估计 risk 与 concept定义；通过 proxy certificate 仍不证明行为因果或部署安全。
+<!-- books-review:SF-2026-ARXIV-2606-18383:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18394:start -->
+`INFER-SPECULATIVE-DECODING` 已有 proposal tree、target verification、prefix commit 与 suffix rollback; current owner already contains this exact mechanism/family and fallback boundary; adjacent handoff was checked in `Books/part-05-inference-system/44-decode.md; Books/part-05-inference-system/56-inference-scheduling.md`.
+<!-- existing:SF-2026-ARXIV-2606-18394:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18394:start -->
+Parallel causal tree drafting仍遵守 proposal tree、target verification、accepted-prefix commit 与 suffix rollback；Ch48 已有该 owner、DARTree/TAPS 与 tree cost/fallback 边界。
+<!-- delta:SF-2026-ARXIV-2606-18394:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18394:start -->
+Relation=`Principle Reuse`; disposition=`No Change — Existing Coverage`; unique owner=`INFER-SPECULATIVE-DECODING`. 更宽树提高候选覆盖也增加 verify shape、显存和 branch waste；现有 Ch48 已覆盖该 trade-off，不追加论文特定实现。
+<!-- books-review:SF-2026-ARXIV-2606-18394:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18400:start -->
+`PLATFORM-SECURITY` 已有 trust boundary、provenance、least privilege、containment 与 effect-time authority; adjacent handoff was checked in `Books/part-06-ai-infrastructure/69-trace.md; Books/part-07-agent/84-agent-platform.md`.
+<!-- existing:SF-2026-ARXIV-2606-18400:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18400:start -->
+共享 GPU 上的模型权重保护可在 PCIe traffic、weight order 与 HBM physical page 三层破坏可重建 regularity，同时保留 authorized virtual layout；这是 cost-imposition 而非 secrecy proof。
+<!-- delta:SF-2026-ARXIV-2606-18400:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18400:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`PLATFORM-SECURITY`. layout obfuscation增加 allocator/metadata和可能的访问开销；无法阻止已拿到映射或可改 kernel 的攻击者。
+<!-- books-review:SF-2026-ARXIV-2606-18400:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18421:start -->
+`INFER-TENSORRT-LLM` 已有 compiler/kernel/runtime 协同与 backend-specific validation; adjacent handoff was checked in `Books/part-05-inference-system/48-speculative-decoding.md; Books/part-05-inference-system/54-gpu-memory.md`.
+<!-- existing:SF-2026-ARXIV-2606-18421:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18421:start -->
+DL compiler release testing 应抽取跨 model semantics、IR pass 与 hardware feasibility 的 full-stack constraints，并把 assertion pattern作为 behavior-equivalence oracle。
+<!-- delta:SF-2026-ARXIV-2606-18421:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18421:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`INFER-TENSORRT-LLM`. 深层 constraint能发现 silent bug却增加规则维护和 false signal；2,034 cases不等于2,034已确认独立生产缺陷。
+<!-- books-review:SF-2026-ARXIV-2606-18421:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18431:start -->
+`INFER-SCHEDULING` 已有 admission、queue、preemption、KV residency 与 tail-SLO trade-off; adjacent handoff was checked in `Books/part-05-inference-system/55-pd-disaggregation.md; Books/part-06-ai-infrastructure/63-gpu-scheduler.md`.
+<!-- existing:SF-2026-ARXIV-2606-18431:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18431:start -->
+LLM scheduler 应直接优化 tail risk，以 cache-aware preemption与完成风险信号决策，而不是依赖易漂移的 output-length point predictor。
+<!-- delta:SF-2026-ARXIV-2606-18431:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18431:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`INFER-SCHEDULING`. prediction-free不等于信息免费，tail objective可能牺牲mean/fairness；受测 traces不证明所有SLO最优。
+<!-- books-review:SF-2026-ARXIV-2606-18431:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18448:start -->
+`AGENT-TOOL-CALLING` 已有 tool schema、routing、authority 与执行反馈边界; adjacent handoff was checked in `Books/part-07-agent/81-workflow.md; Books/part-06-ai-infrastructure/72-security.md`.
+<!-- existing:SF-2026-ARXIV-2606-18448:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18448:start -->
+Computer-use skill 应把 screenshot、spatial step、semantic instruction 与 resource references组成可版本化 multimodal artifact，并允许按 topic/on-demand MCP load，避免全库 prompt 膨胀。
+<!-- delta:SF-2026-ARXIV-2606-18448:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18448:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`AGENT-TOOL-CALLING`. 多模态 skill提高复用却增加视觉漂移、存储与供应链面；按需加载 miss 时必须回退在线探索。
+<!-- books-review:SF-2026-ARXIV-2606-18448:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18467:start -->
+`PLATFORM-EVALUATION-SYSTEM` 已有 EvalSpec、artifact/process/environment evidence 与 release authority; adjacent handoff was checked in `Books/part-06-ai-infrastructure/69-trace.md; Books/part-06-ai-infrastructure/72-security.md`.
+<!-- existing:SF-2026-ARXIV-2606-18467:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18467:start -->
+Tool/retrieval trajectory release 可把 step risk校准为 trajectory conformal acceptance，并用 supermartingale anytime alarm监测运行中超界；drift时必须重校准或 abstain。
+<!-- delta:SF-2026-ARXIV-2606-18467:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18467:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`PLATFORM-EVALUATION-SYSTEM`. coverage依赖 calibration分布且 alarm会 false positive；形式保证不证明 scorer或 causal harm标签正确。
+<!-- books-review:SF-2026-ARXIV-2606-18467:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18497:start -->
+`AGENT-RAG` 已有 source provenance、index identity、retrieval lifecycle 与删除传播; adjacent handoff was checked in `Books/part-07-agent/77-memory.md; Books/part-06-ai-infrastructure/72-security.md`.
+<!-- existing:SF-2026-ARXIV-2606-18497:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18497:start -->
+Vector DB deletion 必须追踪 source→embedding→HNSW node→backup/replica 的物理生命周期；soft-delete tombstone 不是擦除，需 epoch key rotation与 signed deletion proof。
+<!-- delta:SF-2026-ARXIV-2606-18497:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18497:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`AGENT-RAG`. physical purge或key rotation增加 rebuild、availability与密钥治理成本；受测 HNSW 恢复不覆盖所有 vector stores。
+<!-- books-review:SF-2026-ARXIV-2606-18497:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18532:start -->
+`PLATFORM-SECURITY` 已有 trust boundary、provenance、least privilege、containment 与 effect-time authority; adjacent handoff was checked in `Books/part-06-ai-infrastructure/69-trace.md; Books/part-07-agent/84-agent-platform.md`.
+<!-- existing:SF-2026-ARXIV-2606-18532:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18532:start -->
+AI sandbox 应以 threat model和 weakest-link evidence评估 fidelity、controllability、observability、containment、reproducibility与governance，不能把“进程在容器里”当成安全证明。
+<!-- delta:SF-2026-ARXIV-2606-18532:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18532:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`PLATFORM-SECURITY`. 更强隔离通常降低 fidelity/性能且扩大运维；框架只能组织证据，不能认证未知 escape或side channel不存在。
+<!-- books-review:SF-2026-ARXIV-2606-18532:end -->
+
+<!-- existing:SF-2026-ARXIV-2606-18550:start -->
+`PLATFORM-SECURITY` 已有 trust boundary、provenance、least privilege、containment 与 effect-time authority; adjacent handoff was checked in `Books/part-06-ai-infrastructure/69-trace.md; Books/part-07-agent/84-agent-platform.md`.
+<!-- existing:SF-2026-ARXIV-2606-18550:end -->
+
+<!-- delta:SF-2026-ARXIV-2606-18550:start -->
+Tool safety gate依赖 contract integrity；应对 precondition/effect/risk/authorization字段做 signed provenance、typed attestation与runtime effect verification，且 effect字段比risk标签更load-bearing。
+<!-- delta:SF-2026-ARXIV-2606-18550:end -->
+
+<!-- books-review:SF-2026-ARXIV-2606-18550:start -->
+Relation=`Direct Evolution`; disposition=`Integrate`; unique owner=`PLATFORM-SECURITY`. 完整 ladder增加签名、schema与runtime mediation成本；只在有限 contract perturbation空间给保证，attestation失陷即失效。
+<!-- books-review:SF-2026-ARXIV-2606-18550:end -->
 
 <!-- existing:SF-2026-ARXIV-2606-18600:start -->
 现有 owner 已覆盖请求级 admission、prefill/decode 调度、fairness、elasticity 与恢复 handoff；相邻 PD 章拥有阶段边界。 Comparative result for arXiv:2606.18600v1: 唯一同时改变 placement 与 interruption recovery 的 serving family，进入三项叙事。
@@ -1297,177 +1577,16 @@ streaming video generation 应以 chunk deadline 为调度单位，联合决定 
 Principle Reuse; No Change — Existing Coverage. 作者 workloads/GPU matrix 不证明交互视频通用 SLO；跨 chunk state 与 quality degradation 仍需独立验收。
 <!-- books-review:SF-2026-ARXIV-2606-19271:end -->
 
-<!-- existing:SF-2026-ARXIV-2606-19409:start -->
-现有 owner 已拥有 typed Session、branch/merge/replay、runtime identity 与 controlled release；相邻 MCP 章只拥有协议交接。 Comparative result for arXiv:2606.19409v1: Ch84 已含同一 exact family 的 Session runtime value、fork/merge/replay 和 controlled-property boundary。
-<!-- existing:SF-2026-ARXIV-2606-19409:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19409:start -->
-Session 应成为执行路径携带的一等 runtime value，统一 transcript、tool effect、sandbox、branch lineage、token usage、pending work 与 memory event；fork/merge/replay 是显式操作。
-<!-- delta:SF-2026-ARXIV-2606-19409:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19409:start -->
-Principle Reuse; No Change — Existing Coverage. live-provider quality、optional backend availability 与 memory quality明确未证明；central Session 也可能扩大故障域。
-<!-- books-review:SF-2026-ARXIV-2606-19409:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19464:start -->
-现有 owner 已把 secret、policy、artifact identity、effect-time authorization 与撤销放在外部安全控制面；相邻多租户章拥有 principal/isolation。 Comparative result for arXiv:2606.19464v1: Ch72 已有 policy version、obligation 与外部 reference monitor；无需复制 DSL。
-<!-- existing:SF-2026-ARXIV-2606-19464:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19464:start -->
-runtime governance 除 permit/prohibit 外还需 obligation lifecycle、dispensation、meta-policy precedence 与 ontology reasoning，并在 LLM 外执行。
-<!-- delta:SF-2026-ARXIV-2606-19464:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19464:start -->
-Principle Reuse; No Change — Existing Coverage. 示例不构成吞吐、安全或完备性证明；ontology/policy conflict 仍需可信 owner 与版本治理。
-<!-- books-review:SF-2026-ARXIV-2606-19464:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19535:start -->
-现有 owner 已把 secret、policy、artifact identity、effect-time authorization 与撤销放在外部安全控制面；相邻多租户章拥有 principal/isolation。 Comparative result for arXiv:2606.19535v1: 它把 platform/kernel 纳入模型供应链的可执行 identity，而非仅记录权重 hash。
-<!-- existing:SF-2026-ARXIV-2606-19535:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19535:start -->
-model artifact identity 必须绑定 serving platform/kernel；FloatDoor 通过两个 LoRA 放大 floating-point divergence 并把 platform signature 绑定恶意 task，暴露 audit/serve TOCTOU。
-<!-- delta:SF-2026-ARXIV-2606-19535:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19535:start -->
-Direct Evolution; Integrate. 攻击依赖作者平台集合与 LoRA；跨平台不一致不等于任意模型都可植入，可信构建仍需独立证明。
-<!-- books-review:SF-2026-ARXIV-2606-19535:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19544:start -->
-现有 owner 已把 evaluator、denominator、validity、污染与 release evidence 分离；相邻监控章只提供运行信号。 Comparative result for arXiv:2606.19544v1: Ch66 已把 reliability、validity、bias 分离；本大样本是强验证而非新机制。
-<!-- existing:SF-2026-ARXIV-2606-19544:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19544:start -->
-Judge validation 要同时报告 chance-corrected agreement、test-retest consistency 与 position/verbosity bias；高 consistency 不能替代 validity。
-<!-- delta:SF-2026-ARXIV-2606-19544:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19544:start -->
-Principle Reuse; No Change — Existing Coverage. 三个 benchmark 与单一 pairwise rubric 不证明所有 judge 场景；Cohen kappa 也依赖 prevalence。
-<!-- books-review:SF-2026-ARXIV-2606-19544:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19559:start -->
-现有 owner 已拥有 ask/act gate、uncertainty decomposition、依赖图与预算；相邻 reflection 章只拥有复核。 Comparative result for arXiv:2606.19559v1: Ch79 已拥有 ask/act gate 与 uncertainty decomposition；保留跨 backbone 证据。
-<!-- existing:SF-2026-ARXIV-2606-19559:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19559:start -->
-黑盒 Agent 可把 action confidence 与 request uncertainty 分开；只有后者高时触发 clarification，避免把执行不确定与需求欠规范混成 abstention。
-<!-- delta:SF-2026-ARXIV-2606-19559:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19559:start -->
-Principle Reuse; No Change — Existing Coverage. prompt-based uncertainty 未校准成概率；benchmark 人工制造 50% 欠规范，澄清成本和用户响应质量未被完整建模。
-<!-- books-review:SF-2026-ARXIV-2606-19559:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19595:start -->
-现有 owner 已拥有 durable checkpoint、claim-evidence lineage、idempotent resume 与人工接管；相邻 reflection 章只提出修正信号。 Comparative result for arXiv:2606.19595v1: Ch81 已有 durable checkpoints 与 idempotent resume；IHBench补充 voice workload。
-<!-- existing:SF-2026-ARXIV-2606-19595:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19595:start -->
-voice-agent interruption recovery 必须保存 workflow node、已提交 side effects 与待确认槽位，恢复时区分 resume、repair、restart。
-<!-- delta:SF-2026-ARXIV-2606-19595:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19595:start -->
-Principle Reuse; No Change — Existing Coverage. 模拟中断与语音管线不覆盖真实网络/ASR drift；恢复成功也不证明重复 effect 被阻止。
-<!-- books-review:SF-2026-ARXIV-2606-19595:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19613:start -->
-现有 owner 已把 evaluator、denominator、validity、污染与 release evidence 分离；相邻监控章只提供运行信号。 Comparative result for arXiv:2606.19613v1: 它给长期 session 的 degradation/first-failure 一个不同于独立 pass@1 的 evaluation contract。
-<!-- existing:SF-2026-ARXIV-2606-19613:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19613:start -->
-coding-agent evaluation 应把一次长 session 建模为连续 change requests，并观察首次不可恢复失败，而不是把独立 task solve rate 当 stamina。
-<!-- delta:SF-2026-ARXIV-2606-19613:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19613:start -->
-Direct Evolution; Integrate. 程序生成 REST workload 不能代表全部软件演化；turn-to-failure 对变更难度和 harness 强敏感。
-<!-- books-review:SF-2026-ARXIV-2606-19613:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-19667:start -->
-现有 owner 已拥有 prefix identity、cache reuse、失效与跨请求共享边界；相邻 continuous batching 章只拥有批次调度。 Comparative result for arXiv:2606.19667v1: 它连接 RAG evidence ordering 与 prefix-cache locality，同时保持 relevance owner 不变。
-<!-- existing:SF-2026-ARXIV-2606-19667:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-19667:start -->
-RAG evidence set 不变时，可用近期 evidence-sequence prefix tree 重排证据，让集合重叠转成 token-prefix 重用；retriever 仍拥有 relevance，scheduler 只拥有顺序。
-<!-- delta:SF-2026-ARXIV-2606-19667:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-19667:start -->
-Direct Evolution; Integrate. 重排可能改变 positional bias 与答案；局部 query locality 不保证生产 cache hit，且不减少 decode cost。
-<!-- books-review:SF-2026-ARXIV-2606-19667:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-20736:start -->
-现有 owner 已把 evaluator、denominator、validity、污染与 release evidence 分离；相邻监控章只提供运行信号。 Comparative result for arXiv:2606.20736v1: 它把 benchmark freshness 从发布时清洁度转成每次 evaluation 的生成 contract。
-<!-- existing:SF-2026-ARXIV-2606-20736:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-20736:start -->
-受污染 benchmark 可把 answer-bearing visual key 变成运行时随机生成、human-validated edit slot，并保留 construction-grounded label。
-<!-- delta:SF-2026-ARXIV-2606-20736:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-20736:start -->
-Direct Evolution; Integrate. 只更新局部 visual key，不能消除题型、metadata 或训练 pipeline 泄漏；图像编辑真实性依赖人工验证。
-<!-- books-review:SF-2026-ARXIV-2606-20736:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-20746:start -->
-现有 owner 已把 secret、policy、artifact identity、effect-time authorization 与撤销放在外部安全控制面；相邻多租户章拥有 principal/isolation。 Comparative result for arXiv:2606.20746v1: Ch72 已有 run-level cumulative harm 与 temporal invariant；本 family 的窄带负结果作为 sensor 边界 handoff。
-<!-- existing:SF-2026-ARXIV-2606-20746:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-20746:start -->
-slow-burn injection detector 可在 executed action edges 上累积冻结 per-event score 的 CUSUM persistence；它只能放大已有 margin，不能创造 detector 没有的 margin。
-<!-- delta:SF-2026-ARXIV-2606-20746:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-20746:start -->
-Principle Reuse; No Change — Existing Coverage. 这是明确的 boundary result，不是 deployable detector；小 independent denominator 阻断功效外推。
-<!-- books-review:SF-2026-ARXIV-2606-20746:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-21089:start -->
-现有 owner 已拥有 preference data、reference-policy identity、checkpoint 与 evaluation boundary；相邻 RLHF 章拥有上游偏好反馈。 Comparative result for arXiv:2606.21089v1: 它区分 capability retention 与 method-learning state，修正 repeated DPO 的错误自改进叙事。
-<!-- existing:SF-2026-ARXIV-2606-21089:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-21089:start -->
-重复 DPO campaign 的 checkpoint 链需要另存 strategy/evaluator memory；保留旧能力不等于积累了如何训练下一 campaign 的科学知识。
-<!-- delta:SF-2026-ARXIV-2606-21089:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-21089:start -->
-Direct Evolution; Integrate. 主要结果单 seed，pilots 又显示 regime dependence；不能声称 MSCL 或 retrieval 已解决问题。
-<!-- books-review:SF-2026-ARXIV-2606-21089:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-21090:start -->
-现有 owner 已拥有 rollout identity、verifier/reward 共偏、credit assignment 与 promotion gate；相邻 PPO 章拥有旧策略约束。 Comparative result for arXiv:2606.21090v1: 它把 self-training collapse 定位到 within-campaign promotion gate，而不是笼统归因 catastrophic forgetting。
-<!-- existing:SF-2026-ARXIV-2606-21090:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-21090:start -->
-post-training control loop 应分别持有 campaign-level memory、within-campaign early stop 与 optimizer；峰值 checkpoint 必须先于最终 collapse 被保存和晋级。
-<!-- delta:SF-2026-ARXIV-2606-21090:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-21090:start -->
-Direct Evolution; Integrate. GRPO 抬高 floor 但未消除约 17pp cliff；GRPO+ES 仅 3 seeds 且 mixed，不能推出统一配方。
-<!-- books-review:SF-2026-ARXIV-2606-21090:end -->
-
-<!-- existing:SF-2026-ARXIV-2606-28374:start -->
-现有 owner 已拥有 held-out verifier、promotion/rollback、budget 与 provenance；相邻 planning 章拥有行动方案。 Comparative result for arXiv:2606.28374v1: Ch80 已有 held-out promotion/rollback；RSEA提供跨 benchmark 负证据而非新 owner。
-<!-- existing:SF-2026-ARXIV-2606-28374:end -->
-
-<!-- delta:SF-2026-ARXIV-2606-28374:start -->
-自然语言 strategy/skill/playbook 的每代 rewrite 只能在 disjoint held-out split 不退化时 commit，否则回退 base ReAct。
-<!-- delta:SF-2026-ARXIV-2606-28374:end -->
-
-<!-- books-review:SF-2026-ARXIV-2606-28374:start -->
-Principle Reuse; No Change — Existing Coverage. held-out split 仍可能与部署同分布共偏；无 artifact 普遍获胜，strict gate 只证明这四个 benchmark 的单调安全。
-<!-- books-review:SF-2026-ARXIV-2606-28374:end -->
-
+<!-- audit-target:books:end -->
 ## 7. Semantic Audit
 
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| SA-20260618-COVERAGE-V1 | fresh-context:jun18-v1 | coverage | coverage:SRC-ARXIV:20260618 | — | 516/516 title+abstract; denominator 37; closures 479; all 104 route-negative checked | passed |
-| SA-20260618-EVIDENCE-V1 | fresh-context:jun18-v1 | evidence | review:SF-2026-ARXIV-2606-18600; review:SF-2026-ARXIV-2606-18619; review:SF-2026-ARXIV-2606-18650; review:SF-2026-ARXIV-2606-18668; review:SF-2026-ARXIV-2606-18673; review:SF-2026-ARXIV-2606-18697; review:SF-2026-ARXIV-2606-18741; review:SF-2026-ARXIV-2606-18746; review:SF-2026-ARXIV-2606-18810; review:SF-2026-ARXIV-2606-18829; review:SF-2026-ARXIV-2606-18831; review:SF-2026-ARXIV-2606-18847; review:SF-2026-ARXIV-2606-18874; review:SF-2026-ARXIV-2606-18958; review:SF-2026-ARXIV-2606-18967; review:SF-2026-ARXIV-2606-18996; review:SF-2026-ARXIV-2606-19004; review:SF-2026-ARXIV-2606-19025; review:SF-2026-ARXIV-2606-19057; review:SF-2026-ARXIV-2606-19111; review:SF-2026-ARXIV-2606-19191; review:SF-2026-ARXIV-2606-19242; review:SF-2026-ARXIV-2606-19262; review:SF-2026-ARXIV-2606-19271; review:SF-2026-ARXIV-2606-19409; review:SF-2026-ARXIV-2606-19464; review:SF-2026-ARXIV-2606-19535; review:SF-2026-ARXIV-2606-19544; review:SF-2026-ARXIV-2606-19559; review:SF-2026-ARXIV-2606-19595; review:SF-2026-ARXIV-2606-19613; review:SF-2026-ARXIV-2606-19667; review:SF-2026-ARXIV-2606-20736; review:SF-2026-ARXIV-2606-20746; review:SF-2026-ARXIV-2606-21089; review:SF-2026-ARXIV-2606-21090; review:SF-2026-ARXIV-2606-28374 | — | 37/37 official exact-v1 Method/Evaluation/boundary and named benchmark contracts | passed |
-| SA-20260618-SELECTION-V1 | fresh-context:jun18-v1 | deep_analysis_selection | analysis:DA-20260618-HETEROGENEOUS-RECOVERY; analysis-decision:SF-2026-ARXIV-2606-18619; analysis-decision:SF-2026-ARXIV-2606-18650; analysis-decision:SF-2026-ARXIV-2606-18668; analysis-decision:SF-2026-ARXIV-2606-18673; analysis-decision:SF-2026-ARXIV-2606-18697; analysis-decision:SF-2026-ARXIV-2606-18741; analysis-decision:SF-2026-ARXIV-2606-18746; analysis-decision:SF-2026-ARXIV-2606-18810; analysis-decision:SF-2026-ARXIV-2606-18829; analysis-decision:SF-2026-ARXIV-2606-18831; analysis-decision:SF-2026-ARXIV-2606-18847; analysis-decision:SF-2026-ARXIV-2606-18874; analysis-decision:SF-2026-ARXIV-2606-18958; analysis-decision:SF-2026-ARXIV-2606-18967; analysis-decision:SF-2026-ARXIV-2606-18996; analysis-decision:SF-2026-ARXIV-2606-19004; analysis:DA-20260618-CROSS-SITE-MOE-OWNERSHIP; analysis-decision:SF-2026-ARXIV-2606-19057; analysis-decision:SF-2026-ARXIV-2606-19111; analysis-decision:SF-2026-ARXIV-2606-19191; analysis-decision:SF-2026-ARXIV-2606-19242; analysis-decision:SF-2026-ARXIV-2606-19262; analysis-decision:SF-2026-ARXIV-2606-19271; analysis-decision:SF-2026-ARXIV-2606-19409; analysis-decision:SF-2026-ARXIV-2606-19464; analysis:DA-20260618-PLATFORM-BOUND-ARTIFACT; analysis-decision:SF-2026-ARXIV-2606-19544; analysis-decision:SF-2026-ARXIV-2606-19559; analysis-decision:SF-2026-ARXIV-2606-19595; analysis-decision:SF-2026-ARXIV-2606-19613; analysis-decision:SF-2026-ARXIV-2606-19667; analysis-decision:SF-2026-ARXIV-2606-20736; analysis-decision:SF-2026-ARXIV-2606-20746; analysis-decision:SF-2026-ARXIV-2606-21089; analysis-decision:SF-2026-ARXIV-2606-21090; analysis-decision:SF-2026-ARXIV-2606-28374 | — | 37/37 frontier; winners frozen before source-specific rationale | passed |
-| SA-20260618-BOOKS-POSTWRITE-V1 | fresh-context:jun18-v1 | books | books-review:SF-2026-ARXIV-2606-18600; books-review:SF-2026-ARXIV-2606-18619; books-review:SF-2026-ARXIV-2606-18650; books-review:SF-2026-ARXIV-2606-18668; books-review:SF-2026-ARXIV-2606-18673; books-review:SF-2026-ARXIV-2606-18697; books-review:SF-2026-ARXIV-2606-18741; books-review:SF-2026-ARXIV-2606-18746; books-review:SF-2026-ARXIV-2606-18810; books-review:SF-2026-ARXIV-2606-18829; books-review:SF-2026-ARXIV-2606-18831; books-review:SF-2026-ARXIV-2606-18847; books-review:SF-2026-ARXIV-2606-18874; books-review:SF-2026-ARXIV-2606-18958; books-review:SF-2026-ARXIV-2606-18967; books-review:SF-2026-ARXIV-2606-18996; books-review:SF-2026-ARXIV-2606-19004; books-review:SF-2026-ARXIV-2606-19025; books-review:SF-2026-ARXIV-2606-19057; books-review:SF-2026-ARXIV-2606-19111; books-review:SF-2026-ARXIV-2606-19191; books-review:SF-2026-ARXIV-2606-19242; books-review:SF-2026-ARXIV-2606-19262; books-review:SF-2026-ARXIV-2606-19271; books-review:SF-2026-ARXIV-2606-19409; books-review:SF-2026-ARXIV-2606-19464; books-review:SF-2026-ARXIV-2606-19535; books-review:SF-2026-ARXIV-2606-19544; books-review:SF-2026-ARXIV-2606-19559; books-review:SF-2026-ARXIV-2606-19595; books-review:SF-2026-ARXIV-2606-19613; books-review:SF-2026-ARXIV-2606-19667; books-review:SF-2026-ARXIV-2606-20736; books-review:SF-2026-ARXIV-2606-20746; books-review:SF-2026-ARXIV-2606-21089; books-review:SF-2026-ARXIV-2606-21090; books-review:SF-2026-ARXIV-2606-28374 | — | 16/16 Integrate正文、Review note、unique owner、old-path/coexistence/fallback；21/21 No Change existing coverage and leakage audit | passed |
-
-### Materials and Access
-
-- 37/37 exact-v1 official HTML pages were accessible and exposed the matching version body.
-- Local curl reset; the working primary-source web reader supplied the official exact-v1 manuscripts.
-
+| SA-20260618-COVERAGE-OWNER-REBUILD | fresh-context:pending-owner-rebuild | coverage | coverage:SRC-ARXIV:20260618 | GAP-ARXIV-SEMANTIC-OWNER-REBUILD-20260618: raw closures and false-negative frontier require independent semantic review | Open — canonical inventory and owner receipt are preserved in the date-local source packet | open |
+| SA-20260618-EVIDENCE-OWNER-REBUILD | fresh-context:pending-owner-rebuild | evidence | review:SF-2026-ARXIV-2606-18284; review:SF-2026-ARXIV-2606-18286; review:SF-2026-ARXIV-2606-18310; review:SF-2026-ARXIV-2606-18322; review:SF-2026-ARXIV-2606-18356; review:SF-2026-ARXIV-2606-18379; review:SF-2026-ARXIV-2606-18383; review:SF-2026-ARXIV-2606-18394; review:SF-2026-ARXIV-2606-18400; review:SF-2026-ARXIV-2606-18421; review:SF-2026-ARXIV-2606-18431; review:SF-2026-ARXIV-2606-18448; review:SF-2026-ARXIV-2606-18467; review:SF-2026-ARXIV-2606-18497; review:SF-2026-ARXIV-2606-18532; review:SF-2026-ARXIV-2606-18550; review:SF-2026-ARXIV-2606-18600; review:SF-2026-ARXIV-2606-18619; review:SF-2026-ARXIV-2606-18650; review:SF-2026-ARXIV-2606-18668; review:SF-2026-ARXIV-2606-18673; review:SF-2026-ARXIV-2606-18697; review:SF-2026-ARXIV-2606-18741; review:SF-2026-ARXIV-2606-18746; review:SF-2026-ARXIV-2606-18810; review:SF-2026-ARXIV-2606-18829; review:SF-2026-ARXIV-2606-18831; review:SF-2026-ARXIV-2606-18847; review:SF-2026-ARXIV-2606-18874; review:SF-2026-ARXIV-2606-18958; review:SF-2026-ARXIV-2606-18967; review:SF-2026-ARXIV-2606-18996; review:SF-2026-ARXIV-2606-19004; review:SF-2026-ARXIV-2606-19025; review:SF-2026-ARXIV-2606-19057; review:SF-2026-ARXIV-2606-19111; review:SF-2026-ARXIV-2606-19191; review:SF-2026-ARXIV-2606-19242; review:SF-2026-ARXIV-2606-19262; review:SF-2026-ARXIV-2606-19271 | EVIDENCE-OWNER-REBUILD-20260618: transferred exact-v1 reviews require fresh-context false-positive and access audit | Open — transferred review bodies remain provenance, not final acceptance | open |
+| SA-20260618-SELECTION-OWNER-REBUILD | fresh-context:pending-owner-rebuild | deep_analysis_selection | analysis-decision:SF-2026-ARXIV-2606-18284; analysis-decision:SF-2026-ARXIV-2606-18286; analysis-decision:SF-2026-ARXIV-2606-18310; analysis-decision:SF-2026-ARXIV-2606-18322; analysis-decision:SF-2026-ARXIV-2606-18356; analysis-decision:SF-2026-ARXIV-2606-18379; analysis-decision:SF-2026-ARXIV-2606-18383; analysis-decision:SF-2026-ARXIV-2606-18394; analysis-decision:SF-2026-ARXIV-2606-18400; analysis-decision:SF-2026-ARXIV-2606-18421; analysis-decision:SF-2026-ARXIV-2606-18431; analysis-decision:SF-2026-ARXIV-2606-18448; analysis-decision:SF-2026-ARXIV-2606-18467; analysis-decision:SF-2026-ARXIV-2606-18497; analysis-decision:SF-2026-ARXIV-2606-18532; analysis:DA-20260617-CONTRACT-INTEGRITY; analysis:DA-20260618-HETEROGENEOUS-RECOVERY; analysis-decision:SF-2026-ARXIV-2606-18619; analysis-decision:SF-2026-ARXIV-2606-18650; analysis-decision:SF-2026-ARXIV-2606-18668; analysis-decision:SF-2026-ARXIV-2606-18673; analysis-decision:SF-2026-ARXIV-2606-18697; analysis-decision:SF-2026-ARXIV-2606-18741; analysis-decision:SF-2026-ARXIV-2606-18746; analysis-decision:SF-2026-ARXIV-2606-18810; analysis-decision:SF-2026-ARXIV-2606-18829; analysis-decision:SF-2026-ARXIV-2606-18831; analysis-decision:SF-2026-ARXIV-2606-18847; analysis-decision:SF-2026-ARXIV-2606-18874; analysis-decision:SF-2026-ARXIV-2606-18958; analysis-decision:SF-2026-ARXIV-2606-18967; analysis-decision:SF-2026-ARXIV-2606-18996; analysis-decision:SF-2026-ARXIV-2606-19004; analysis:DA-20260618-CROSS-SITE-MOE-OWNERSHIP; analysis-decision:SF-2026-ARXIV-2606-19057; analysis-decision:SF-2026-ARXIV-2606-19111; analysis-decision:SF-2026-ARXIV-2606-19191; analysis-decision:SF-2026-ARXIV-2606-19242; analysis-decision:SF-2026-ARXIV-2606-19262; analysis-decision:SF-2026-ARXIV-2606-19271 | SELECTION-OWNER-REBUILD-20260618: eligibility and at-most-three narrative choice require independent comparison after owner transfer | Open — canonical selection receipts are structurally reconstructed | open |
+| SA-20260618-BOOKS-OWNER-REBUILD | fresh-context:pending-owner-rebuild | books | books-review:SF-2026-ARXIV-2606-18284; books-review:SF-2026-ARXIV-2606-18286; books-review:SF-2026-ARXIV-2606-18310; books-review:SF-2026-ARXIV-2606-18322; books-review:SF-2026-ARXIV-2606-18356; books-review:SF-2026-ARXIV-2606-18379; books-review:SF-2026-ARXIV-2606-18383; books-review:SF-2026-ARXIV-2606-18394; books-review:SF-2026-ARXIV-2606-18400; books-review:SF-2026-ARXIV-2606-18421; books-review:SF-2026-ARXIV-2606-18431; books-review:SF-2026-ARXIV-2606-18448; books-review:SF-2026-ARXIV-2606-18467; books-review:SF-2026-ARXIV-2606-18497; books-review:SF-2026-ARXIV-2606-18532; books-review:SF-2026-ARXIV-2606-18550; books-review:SF-2026-ARXIV-2606-18600; books-review:SF-2026-ARXIV-2606-18619; books-review:SF-2026-ARXIV-2606-18650; books-review:SF-2026-ARXIV-2606-18668; books-review:SF-2026-ARXIV-2606-18673; books-review:SF-2026-ARXIV-2606-18697; books-review:SF-2026-ARXIV-2606-18741; books-review:SF-2026-ARXIV-2606-18746; books-review:SF-2026-ARXIV-2606-18810; books-review:SF-2026-ARXIV-2606-18829; books-review:SF-2026-ARXIV-2606-18831; books-review:SF-2026-ARXIV-2606-18847; books-review:SF-2026-ARXIV-2606-18874; books-review:SF-2026-ARXIV-2606-18958; books-review:SF-2026-ARXIV-2606-18967; books-review:SF-2026-ARXIV-2606-18996; books-review:SF-2026-ARXIV-2606-19004; books-review:SF-2026-ARXIV-2606-19025; books-review:SF-2026-ARXIV-2606-19057; books-review:SF-2026-ARXIV-2606-19111; books-review:SF-2026-ARXIV-2606-19191; books-review:SF-2026-ARXIV-2606-19242; books-review:SF-2026-ARXIV-2606-19262; books-review:SF-2026-ARXIV-2606-19271 | BOOKS-OWNER-REBUILD-20260618: Books comparisons are frozen provenance pending upstream semantic gates and root writeback reconciliation | Open — month-local Books queue remains frozen | open |
 ## 8. Ignored Noise
 
 - 479 identities were closed before the denominator with family-specific semantic reasons in `denominator-full-semantic-audit-v1.tsv`; they remain preserved for recall audit rather than being promoted into the Candidate Ledger.
@@ -1490,45 +1609,46 @@ Principle Reuse; No Change — Existing Coverage. held-out split 仍可能与部
 
 ## 12. Sources
 
-- [arXiv:2606.18600v1 — ShuntServe: Cost-Efficient LLM Serving on Heterogeneous Spot GPU Clusters](https://arxiv.org/html/2606.18600v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18600`。
-- [arXiv:2606.18619v1 — Code-Augur: Agentic Vulnerability Detection via Specification Inference](https://arxiv.org/html/2606.18619v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18619`。
-- [arXiv:2606.18650v1 — BLADE: Scalable Bi-level Adaptive Data Selection for LLM Training](https://arxiv.org/html/2606.18650v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18650`。
-- [arXiv:2606.18668v1 — EARS: Explanatory Abstention for Reliable Sub-Agent Modeling in Large-scale Multi-Agent Systems](https://arxiv.org/html/2606.18668v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18668`。
-- [arXiv:2606.18673v1 — Understanding and Mitigating Prompt Leaking Attacks in Real-World LLM-Based Applications](https://arxiv.org/html/2606.18673v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18673`。
-- [arXiv:2606.18697v1 — Stealthy World Model Manipulation via Data Poisoning](https://arxiv.org/html/2606.18697v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18697`。
-- [arXiv:2606.18741v1 — ReMP: Low-Downtime Runtime Model-Parallelism Reconfiguration for LLM Serving](https://arxiv.org/html/2606.18741v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18741`。
-- [arXiv:2606.18746v1 — What Must Generalist Agents Remember?](https://arxiv.org/html/2606.18746v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18746`。
-- [arXiv:2606.18810v1 — Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards](https://arxiv.org/html/2606.18810v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18810`。
-- [arXiv:2606.18829v1 — GateMem: Benchmarking Memory Governance in Multi-Principal Shared-Memory Agents](https://arxiv.org/html/2606.18829v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18829`。
-- [arXiv:2606.18831v1 — Beyond Reward Engineering: A Data Recipe for Long-Context Reinforcement Learning](https://arxiv.org/html/2606.18831v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18831`。
-- [arXiv:2606.18847v1 — WorldLines: Benchmarking and Modeling Long-Horizon Stateful Embodied Agents](https://arxiv.org/html/2606.18847v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18847`。
-- [arXiv:2606.18874v1 — Externalizing Research Synthesis and Validation in AI Scientists through a Research Harness](https://arxiv.org/html/2606.18874v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18874`。
-- [arXiv:2606.18958v1 — LiveStack: OS Support for Cluster-Scale Full-Stack Live Simulation](https://arxiv.org/html/2606.18958v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18958`。
-- [arXiv:2606.18967v1 — EfficientRollout: System-Aware Self-Speculative Decoding for RL Rollouts](https://arxiv.org/html/2606.18967v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18967`。
-- [arXiv:2606.18996v1 — TRAP: Benchmark for Task-completion and Resistance to Active Privacy-extraction](https://arxiv.org/html/2606.18996v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-18996`。
-- [arXiv:2606.19004v1 — Spotlight: Synergizing Seed Exploration and Spot GPUs for DiT RL Post-Training](https://arxiv.org/html/2606.19004v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19004`。
-- [arXiv:2606.19025v1 — FoMoE: Breaking the Full-Replica Barrier with a Federation of MoEs](https://arxiv.org/html/2606.19025v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19025`。
-- [arXiv:2606.19057v1 — Quantifying and Auditing LLM Evaluation via Positive--Unlabeled Learning](https://arxiv.org/html/2606.19057v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19057`。
-- [arXiv:2606.19111v1 — Leadership as Coordination Control: Behavioral Signatures and the Recovery-Advantage Boundary in Multi-Agent LLM Teams](https://arxiv.org/html/2606.19111v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19111`。
-- [arXiv:2606.19191v1 — PhantomSkill: Malicious Code Injection in Agent Skill Ecosystems](https://arxiv.org/html/2606.19191v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19191`。
-- [arXiv:2606.19242v1 — Runtime Compliance Verification for AI Agents](https://arxiv.org/html/2606.19242v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19242`。
-- [arXiv:2606.19262v1 — Detecting Hidden ML Training With Zero-Overhead Telemetry](https://arxiv.org/html/2606.19262v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19262`。
-- [arXiv:2606.19271v1 — TurboServe: Serving Streaming Video Generation Efficiently and Economically](https://arxiv.org/html/2606.19271v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19271`。
-- [arXiv:2606.19409v1 — OpenRath: Session-Centered Runtime State for Agent Systems](https://arxiv.org/html/2606.19409v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19409`。
-- [arXiv:2606.19464v1 — Deontic Policies for Runtime Governance of Agentic AI Systems](https://arxiv.org/html/2606.19464v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19464`。
-- [arXiv:2606.19535v1 — FloatDoor: Platform-Triggered Backdoors in LLMs](https://arxiv.org/html/2606.19535v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19535`。
-- [arXiv:2606.19544v1 — Reliability without Validity: A Systematic, Large-Scale Evaluation of LLM-as-a-Judge Models Across Agreement, Consistency, and Bias](https://arxiv.org/html/2606.19544v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19544`。
-- [arXiv:2606.19559v1 — Uncertainty Decomposition for Clarification Seeking in LLM Agents](https://arxiv.org/html/2606.19559v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19559`。
-- [arXiv:2606.19595v1 — IHBench: Evaluating Post-Interruption Recovery in Voice Agents with Structured Workflows](https://arxiv.org/html/2606.19595v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19595`。
-- [arXiv:2606.19613v1 — StaminaBench: Stress-Testing Coding Agents over 100 Interaction Turns](https://arxiv.org/html/2606.19613v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19613`。
-- [arXiv:2606.19667v1 — CacheWeaver: Cache-Aware Evidence Ordering for Efficient Grounded RAG Inference](https://arxiv.org/html/2606.19667v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-19667`。
-- [arXiv:2606.20736v1 — REKEY: Metadata-Grounded Visual-Key Regeneration for Contamination-Resilient VQA Evaluation](https://arxiv.org/html/2606.20736v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-20736`。
-- [arXiv:2606.20746v1 — Amplify, Don't Create: Temporal Accumulation for Slow-Burn Prompt Injection](https://arxiv.org/html/2606.20746v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-20746`。
-- [arXiv:2606.21089v1 — Repeated post-training is not Self-improving: Diagnosing Scientific Amnesia in Continual DPO Pipelines](https://arxiv.org/html/2606.21089v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-21089`。
-- [arXiv:2606.21090v1 — Self-Improvement Can Self-Regress: The Rise-and-Collapse Failure Mode of LLM Self-Training](https://arxiv.org/html/2606.21090v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-21090`。
-- [arXiv:2606.28374v1 — Recursive Self-Evolving Agents via Held-Out Selection](https://arxiv.org/html/2606.28374v1) — first-public `2026-06-17`；accessed `2026-08-29`；Source Family `SF-2026-ARXIV-2606-28374`。
-- `SRC-ARXIV` registry contract：`docs/RESEARCH_SOURCES.md`。
-
+- [Breaking the Solver Bottleneck: Training Task Generators at the Learnable Frontier](https://arxiv.org/abs/2606.18284v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [CODEBLOCK: Learning to Supervise Code at the Right Granularity](https://arxiv.org/abs/2606.18286v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Conflict-Aware Retriever Editing for Knowledge Injection Attacks on LLM-Based RAG Systems](https://arxiv.org/abs/2606.18310v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [SAE Interventions are Unreliable: Post-Intervention Recovery of Suppressed Behavior](https://arxiv.org/abs/2606.18322v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents](https://arxiv.org/abs/2606.18356v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [RankGraph-2: Lifecycle Co-Design for Billion-Node Graph Learning in Recommendation](https://arxiv.org/abs/2606.18379v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [From Sparse Features to Trustworthy Proxies: Certifying SAE-Based Interpretability](https://arxiv.org/abs/2606.18383v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting](https://arxiv.org/abs/2606.18394v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [CloakLM: Obfuscating GPU Memory Layout to Mitigate Model Ex-filtration for Serving](https://arxiv.org/abs/2606.18400v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Finding Compiler-Platform Interaction Bugs in Deep Learning Pipelines via Cross-Layer Constraints](https://arxiv.org/abs/2606.18421v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Beyond Prediction: Tail-Aware Scheduling for LLM Inference](https://arxiv.org/abs/2606.18431v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [VISUALSKILL: Multimodal Skills for Computer-Use Agents](https://arxiv.org/abs/2606.18448v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [ToolChain-CRC: Conformal Risk Control for Agentic AI Under Retrieval and Tool-Use Drift](https://arxiv.org/abs/2606.18467v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Ghost Vectors: Soft-Deleted Embeddings Remain Reconstructible in HNSW Vector Databases](https://arxiv.org/abs/2606.18497v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [AI Sandboxes: A Threat Model, Taxonomy, and Measurement Framework](https://arxiv.org/abs/2606.18532v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [The Gate Is Only as Honest as Its Contracts: ContractGuard for the Contract Layer of Risk-Aware Causal Gating](https://arxiv.org/abs/2606.18550v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [ShuntServe: Cost-Efficient LLM Serving on Heterogeneous Spot GPU Clusters](https://arxiv.org/abs/2606.18600v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Code-Augur: Agentic Vulnerability Detection via Specification Inference](https://arxiv.org/abs/2606.18619v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [BLADE: Scalable Bi-level Adaptive Data Selection for LLM Training](https://arxiv.org/abs/2606.18650v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [EARS: Explanatory Abstention for Reliable Sub-Agent Modeling in Large-scale Multi-Agent Systems](https://arxiv.org/abs/2606.18668v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Understanding and Mitigating Prompt Leaking Attacks in Real-World LLM-Based Applications](https://arxiv.org/abs/2606.18673v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Stealthy World Model Manipulation via Data Poisoning](https://arxiv.org/abs/2606.18697v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [ReMP: Low-Downtime Runtime Model-Parallelism Reconfiguration for LLM Serving](https://arxiv.org/abs/2606.18741v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [What Must Generalist Agents Remember?](https://arxiv.org/abs/2606.18746v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards](https://arxiv.org/abs/2606.18810v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [GateMem: Benchmarking Memory Governance in Multi-Principal Shared-Memory Agents](https://arxiv.org/abs/2606.18829v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Beyond Reward Engineering: A Data Recipe for Long-Context Reinforcement Learning](https://arxiv.org/abs/2606.18831v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [WorldLines: Benchmarking and Modeling Long-Horizon Stateful Embodied Agents](https://arxiv.org/abs/2606.18847v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Externalizing Research Synthesis and Validation in AI Scientists through a Research Harness](https://arxiv.org/abs/2606.18874v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [LiveStack: OS Support for Cluster-Scale Full-Stack Live Simulation](https://arxiv.org/abs/2606.18958v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [EfficientRollout: System-Aware Self-Speculative Decoding for RL Rollouts](https://arxiv.org/abs/2606.18967v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [TRAP: Benchmark for Task-completion and Resistance to Active Privacy-extraction](https://arxiv.org/abs/2606.18996v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Spotlight: Synergizing Seed Exploration and Spot GPUs for DiT RL Post-Training](https://arxiv.org/abs/2606.19004v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [FoMoE: Breaking the Full-Replica Barrier with a Federation of MoEs](https://arxiv.org/abs/2606.19025v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Quantifying and Auditing LLM Evaluation via Positive--Unlabeled Learning](https://arxiv.org/abs/2606.19057v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Leadership as Coordination Control: Behavioral Signatures and the Recovery-Advantage Boundary in Multi-Agent LLM Teams](https://arxiv.org/abs/2606.19111v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [PhantomSkill: Malicious Code Injection in Agent Skill Ecosystems](https://arxiv.org/abs/2606.19191v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Runtime Compliance Verification for AI Agents](https://arxiv.org/abs/2606.19242v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [Detecting Hidden ML Training With Zero-Overhead Telemetry](https://arxiv.org/abs/2606.19262v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
+- [TurboServe: Serving Streaming Video Generation Efficiently and Economically](https://arxiv.org/abs/2606.19271v1) — first-public（Asia/Shanghai）：2026-06-18；exact evidence：v1；accessed：2026-09-03
 ## 13. Final Status
 
 - Status: Complete.
@@ -1536,3 +1656,5 @@ Principle Reuse; No Change — Existing Coverage. held-out split 仍可能与部
 - Evidence Gate: Passed.
 - Books Gate: Passed.
 - Fresh-context Semantic Audit: Passed；unresolved findings = 0.
+
+State Truth: Completion=In Progress；Coverage=Open；Evidence=Open；Books=Open；Unresolved Findings=4。

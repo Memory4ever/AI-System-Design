@@ -1,0 +1,1490 @@
+Published as a conference paper at ICLR 2026
+
+E XPLORATORY M EMORY-AUGMENTED LLM AGENT
+VIA H YBRID O N - AND O FF -P OLICY O PTIMIZATION
+Zeyuan Liu1∗ , Jeonghye Kim1,2∗ , Xufang Luo1† , Dongsheng Li1 , Yuqing Yang1
+1
+Microsoft Research 2 KAIST
+
+arXiv:2602.23008v1 [cs.LG] 26 Feb 2026
+
+gritmaybe@gmail.com, jeonghye.kim@kaist.ac.kr,
+{xufluo, dongsli, yuqyang}@microsoft.com
+project page
+agent-lightning/empo2
+
+A BSTRACT
+Exploration remains the key bottleneck for large language model agents trained
+with reinforcement learning. While prior methods exploit pretrained knowledge,
+they fail in environments requiring the discovery of novel states. We propose
+Exploratory Memory-Augmented On- and Off-Policy Optimization (EMPO2 ), a
+hybrid RL framework that leverages memory for exploration and combines onand off-policy updates to make LLMs perform well with memory while also ensuring robustness without it. On ScienceWorld and WebShop, EMPO2 achieves
+128.6% and 11.3% improvements over GRPO, respectively. Moreover, in outof-distribution tests, EMPO2 demonstrates superior adaptability to new tasks, requiring only a few trials with memory and no parameter updates. These results
+highlight EMPO2 as a promising framework for building more exploratory and
+generalizable LLM-based agents.
+
+1
+
+I NTRODUCTION
+
+Large Language Models (LLMs) have recently emerged as powerful agents capable of reasoning,
+planning, and interacting with external environments (Achiam et al., 2023; Park et al., 2023; Yao
+et al., 2023; Kim et al., 2025). When combined with reinforcement learning (RL), such agents can
+adapt their behavior based on experience and feedback, enabling them to go beyond static prompting
+or supervised fine-tuning (Guo et al., 2025; Tan et al., 2024). This paradigm has driven recent
+
+(a)
+
+(b)
+
+Figure 1: (a) Comparison of the learning curves of GRPO and EMPO2 (ours) on the ScienceWorld power-component task. While GRPO converges to suboptimal performance, EMPO2
+continues to improve and accomplish the task. (b) Comparison of EMPO2 and other baselines in
+in-distribution (ID) and out-of-distribution (OOD) settings on and WebShop. In ID experiments,
+it adapts well to familiar environments, achieving 128.6% on ScienceWorld and 11.3% on Webshop improvements over GRPO. In OOD experiments, it also shows strong performance with few
+trials and no weight updates, indicating effective use of memory to explore unfamiliar environments.
+Full results are in Tables 1, 2, and Figure 8.
+∗
+†
+
+Equal contribution; work done during an internship at Microsoft Research.
+Corresponding author.
+
+1
+
+Published as a conference paper at ICLR 2026
+
+progress in areas such as interactive decision-making, tool use, and embodied AI (Feng et al., 2025b;
+Lu et al., 2025b; Feng et al., 2025a; Dong et al., 2025; Luo et al., 2025).
+However, a key limitation of current LLM-based agents lies in their reliance on exploiting prior
+knowledge rather than engaging in systematic exploration. While RL frameworks emphasize balancing exploration and exploitation, many LLM-agent systems primarily leverage pretrained knowledge and conduct only limited search within familiar distributions. As a result, these agents often
+struggle in environments where progress depends on discovering novel states or actively acquiring
+new information, rather than reusing what is already known.
+To address this challenge, recent research has incorporated external memory modules into LLMs as
+a form of long-term memory. This enables models to leverage past experiences to correct failed attempts, thereby improving decision-making in subsequent trials without requiring parameter updates
+(Shinn et al., 2023; Zhang et al., 2023). However, as noted in Zhang et al. (2023), the performance
+of such methods tends to saturate quickly, since collecting experiences with static parameters cannot
+fully capture the diversity needed for continuous improvement.
+In this work, we present a unified framework that enables LLM agents
+to learn more effectively through broader exploration by jointly updating
+their parametric policy parameters with RL and their non-parametric
+memory module through interaction. Crucially, the non-parametric updates not only complement but also enhance the efficiency of parametric learning, thereby enabling more effective exploration and adaptation.
+This dual-update paradigm serves as a bridge between parameter-level
+Figure 2: Non-parametric
+optimization and memory-augmented reasoning. While memory is uti- updates can encourage
+lized during learning, moving toward more generalizable intelligence re- exploration, bootstrapping
+quires reducing dependence on external memory and instead embedding parametric updates.
+its benefits directly into the model’s parameters. To this end, we propose Exploratory Memory-Augmented On- and Off-Policy Optimization (EMPO2 ), a new hybrid
+RL algorithm that incorporates two modes in the rollout phase—depending on whether memory is
+used—and two modes in the update phase—on-policy and off-policy learning—thereby enabling
+agents to leverage memory when available while remaining robust in its absence.
+In our experiments, we evaluate EMPO2 on two widely used multi-step embodied reasoning environments that require exploration to solve complex tasks: ScienceWorld (Wang et al., 2022) and
+WebShop (Yao et al., 2022). We compare its performance against a range of non-parametric and
+parametric (offline and online) RL approaches. As summarized in Figure 1, EMPO2 substantially
+outperforms prior algorithms, achieving a 128.6% improvement on ScienceWorld and an 11.3%
+improvement on WebShop over the strong online RL baseline GRPO. The training curve in Figure 1 (a) further shows that, unlike GRPO, which converges prematurely to a suboptimal solution,
+EMPO² leverages continuous exploration and successfully solves the task. Moreover, for the OOD
+experiments (Figure 1, rightmost), the model also achieves good scores with only a few trials and no
+weight updates, indicating that the updated model has acquired the ability to use memory to explore
+unseen or unfamiliar environments. These results highlight EMPO2 as a promising direction for
+building more adaptive and generalizable embodied agents.
+
+2
+
+P RELIMINARIES
+
+Online RL consists of alternating between a rollout phase, in which trajectories are generated using
+the current policy π parameterized by θ, and an update phase, in which the policy is optimized based
+on those rollouts.
+Policy Rollout.
+We consider a setting where, given a sampled task u ∼ p(U), an LLM agent
+solves the task through multi-step interactions with the environment. Starting from task u, the LLM
+πθ generates the first natural-language action a1 ∼ πθ (· | u) ∈ A. Executing this action, the environment returns a reward r1 and the next state s1 . At a general timestep t, conditioned on the current
+state st and the task u, the policy produces the next action at+1 ∼ πθ (· | st , u). This interaction loop
+continues until the task is completed or a maximum number of steps is reached. A rollout trajectory
+
+is thus defined as the sequence of states, actions, and rewards, τ = u, a1 , r1 , s1 , a2 , r2 , . . . , sT .
+2
+
+Published as a conference paper at ICLR 2026
+
+Group Relative Policy Optimization. Group Relative Policy Optimization (GRPO) (Shao et al.,
+2024) updates the policy by comparing multiple rollouts of the same task u, removing the need for
+the value function in PPO (Schulman et al., 2017). Given a task u, the policy πθ generates N rollout
+trajectories {τ (1) , . . . , τ (N ) }. Each trajectory receives a return {R(1) , . . . , R(N ) }, defined as the
+PT
+(i)
+(i)
+sum of rewards along the trajectory: R(i) = t=1 rt .. For each action at taken in trajectory τ (i) ,
+(i)
+
+R(i) − 1
+
+PN
+
+R(j)
+
+j=1
+N
+we define its relative advantage as: A(at ) =
+, where actions from trajectories
+σ(R)
+with higher-than-average reward obtain positive advantage, while those from lower-performing ones
+obtain negative advantage. The GRPO loss is then:
+"
+#
+N T
+
+
+
+1 XX
+(i)
+(i)
+(i)
+(i)
+E u∼p(U )
+min ρθ (at )A(at ), clip ρθ (at ), 1 − ϵ, 1 + ϵ A(at )
+N T i=1 t=1
+{τ (i) }N
+∼π
+θ
+i=1
+old
+
+− β DKL πθ (·|u) ∥ πref (·|u) ,
+(1)
+
+(i)
+
+where ρθ (at ) =
+ence policy πref .
+
+3
+
+(i)
+
+(i)
+
+πθ (at |st ,u)
+(i) (i)
+πθold (at |st ,u)
+
+, with β ≥ 0 controlling the regularization strength toward a refer-
+
+T HE E XPLORATION P ROBLEM OF LLM AGENTS
+
+LLMs encode rich prior knowledge, but such priors often fail to reflect the actual rules or dynamics
+of a given environment. Blind reliance on these priors can lead to erroneous behaviors, making it
+necessary for agents to adapt through direct interaction and trial-and-error. A key requirement for
+such adaptation is exploration, which involves seeking information beyond pre-training, sometimes
+by taking atypical or counterintuitive actions. However, current LLM-based agents struggle with this
+(Qiao et al., 2024; Zhou et al., 2024), as it demands stepping outside the distribution of behaviors
+where the model feels most confident.
+Consequently, many prior studies have sought to align agents with new environments through warmstart supervised fine-tuning (SFT) using numerous golden trajectories (Song et al., 2024; Qiao et al.,
+2024; Xiang et al., 2024), leveraging large-scale models such as GPT-4 (Tang et al., 2024; Lin et al.,
+2023), or employing human engineering or well-established simulation information (Choudhury &
+Sodhi, 2025). While these methods achieve strong results in constrained settings, their effectiveness
+is limited to cases where such external support is available, and they generalize poorly to unseen
+scenarios without it.
+
+Figure 3: When training LLM with GRPO in ScienceWorld, the agent struggles because of
+insufficient exploration. For instance, in the task “turn on the red light bulb,” the agent must first
+find the red light bulb before activating it. However, the agent fails to locate it and, as a result, cannot
+complete the task. Rather than analyzing the cause of failure and exploring alternative actions, the
+agent proceeds unchanged, so its score stagnates even as additional training steps are taken.
+Therefore, we focus on how to efficiently train agents in online RL through trial and error, without any prior embedding of the environment’s rules. The key challenge is that, without intrinsic
+exploration capability, online RL struggles to optimize effectively. As illustrated in Figure 3, in
+ScienceWorld (Wang et al., 2022) environment the agent is given the mission “turn on the red light
+3
+
+Published as a conference paper at ICLR 2026
+
+bulb.” The instructions specify that the agent should first focus on the light bulb and then build a
+circuit to activate it, based on the current room observation. However, since no red light bulb is
+present in the observation, the agent must search the environment to locate it. Instead, the agent
+follows the instruction literally, attempts to focus on the red light bulb, and fails because it does not
+exist in the room. Ideally, when an agent fails to reach its goal, it should analyze the reasons for
+failure and broaden its action space to discover successful strategies. Yet in representative online RL
+algorithms GRPO (Shao et al., 2024), prior trajectory rollouts provide no continuity beyond a scalar
+reward signal, thereby restricting exploration and ultimately limiting learning.
+
+4
+
+M ETHOD
+
+In this section, we present Exploratory Memory-augmented On- and Off-Policy Optimization
+(EMPO2 ), a novel algorithm aimed at tackling the exploration challenges in online RL. EMPO2
+operates in two modes for both rollout phase and update phase. During rollout, actions can be generated either through (1) prompting without memory, where no retrieved information is used, or
+(2) memory-augmented prompting, conditioned on tips retrieved from memory. In the update
+phase, rollouts with memory-augmented prompting are used in two ways: (a) on-policy, where tips
+are retained and the update is performed with the original prompt, and (b) off-policy, where tips are
+removed during update. Notably, tips are generated not by a separate model but by the policy πθ
+itself, which is continually updated during training. The full algorithm is provided in Appendix A.
+4.1
+
+A DVANCING E XPLORATION WITH S ELF -G ENERATED M EMORY
+
+A key component of EMPO2 is its use of memory to maintain continuity across rollouts. Information
+obtained from an agent’s interactions can be encoded into parameters through policy optimization,
+but it can also be recorded in an external memory that the agent continuously consults. Since our
+policy is initialized from a pretrained LLM with inherent summarization and reflection abilities,
+these abilities can be leveraged as auxiliary signals in addition to scalar rewards, thereby guiding
+exploration more effectively. To realize this, EMPO2 integrates both parametric (parameter updates
+within the LLM) and non-parametric (external memory) updates, strengthening the linkage between
+rollouts and promoting exploration, with all data and guidance generated autonomously by the agent.
+
+Figure 4: In EMPO2 , the current policy parameters πθ are used to review past rollouts, with the
+resulting insights added to memory. This updated memory conditions subsequent rollouts and promotes exploration.
+In the non-parametric updates, similar to Reflexion (Shinn et al., 2023), the agent reviews past
+rollouts, generates self-guidance tips , and stores them in memory. These tips help the agent avoid
+repeated mistakes and explore new strategies. Unlike Reflexion, focuses on iterative verbal guidance
+to achieve higher rewards in the next trial, our approach aims for these tips to lead to enhanced
+exploration that is ultimately consolidated through parametric updates.
+Self-Generated Memory and Tips.
+We define a memory buffer M = {tip1 , tip2 , . . .}, which
+stores reflective tips generated by the policy πθ during trajectory reflection. Formally, when an
+episode i of task u terminates at timestep t, the policy takes the final state st together with a tipgeneration prompt as input and produces a tip, where tipi ∼ πθ (st , u, tip-generation prompt). A set
+of illustrative examples is provided below, while the tip-generation prompt is presented in Appendix
+B, and additional examples are included in Appendix E.1.
+4
+
+Published as a conference paper at ICLR 2026
+
+Examples of Generated Tips – ScienceWorld <power-component> task
+- You moved between the kitchen and bathroom but did not find a green wire or a green light bulb to
+connect.
+- You focused on the red light bulb but did not complete the task of turning on the red light bulb. You
+are in the hallway and need to find a way.
+- The trajectory involves connecting the battery to the green wire terminals to power the green light
+bulb, but the connections to air and other objects are irrelevant.
+- The circuit for the green light bulb was partially connected but still missing the battery connection;
+the task is not fully completed.
+
+4.2
+
+PARAMETERIZE NON - PARAMETRIC UPDATES VIA HYBRID POLICY OPTIMIZATION
+
+Agents can use memory to improve exploration and learning efficiency, but the acquired knowledge
+needs be internalized into model parameters to enhance inherent capabilities. To this end, we propose two modes for the rollout and update phases, whose combinations yield three hybrid learning
+modes (Figure 5).
+
+Figure 5: EMPO2 mode combinations. By combining the two rollout modes and update modes,
+three EMPO mode configurations are possible: on-policy learning without memory, on-policy learning with memory and off-policy learning.
+Rollout Modes. During rollouts, the agent samples between the two modes, selecting one mode
+at each step: mode (2) with memory rollout probability p and mode (1) with probability 1 − p. The
+ablation study of p can be found in Appendix F.1.
+(1) Prompting Without Memory.
+For each task u, at each timestep t, the policy πθ generates
+actions conditioned only on the current state st and the task u: at+1 ∼ πθ (· | st , u).
+(2) Memory-Augmented Prompting.
+For each task u, at each timestep t, a retrieval operator
+Retr(ot ; M) ⊆ M selects tips most relevant to the current state st , e.g., via similarity search in
+the embedding space. We denote the retrieved set as tips t . In memory-augmented prompting,
+
+the policy conditions its action on both st and tips t : at+1 ∼ πθ · st , u, tips t . We limit the
+number of retrieved tips at 10.
+Update Modes.
+Trajectories generated under rollout mode (1) are directly used for updates,
+whereas those generated under rollout mode (2)—memory-augmented prompting—follow one of
+two update modes chosen at random during the update phase. Mode (b) is selected with off-policy
+update probability q, and mode (a) with probability 1 − q. The ablation study of q can be found in
+Appendix F.1.
+(a) On-Policy Updates.
+(i)
+
+(i)
+
+On-policy update uses the same prompt as in the rollout, and ρθ (at ) in
+
+eq.1 becomes ρθ (at ) =
+
+(i) (i)
+πθ (at |st ,u, tips t )
+(i) (i)
+πθold (at |st ,u, tips t )
+
+.
+
+5
+
+Published as a conference paper at ICLR 2026
+
+(b) Off-Policy Updates. In this mode, the stored log-probabilities ℓtips
+= log πθ (at | st , u, tips t )
+t
+are replaced with the log-probabilities assigned by the same policy πθ when conditioned only
+on (st , u), namely ℓno-tips
+= log πθ (at | st , u). In this formulation, the advantage update is
+t
+performed based on how natural the action appears under the distribution without tips.
+This construction can be interpreted as a form of reward-guided knowledge distillation. Trajectories sampled under the tips-conditioned policy act as teacher demonstrations, while the student
+policy πθ (· | s, u) is updated to reproduce those trajectories in proportion to their advantage.
+High-reward trajectories (Ât > 0) are reinforced, while low-reward trajectories (Ât < 0) are
+suppressed, resulting in selective distillation that emphasizes beneficial behaviors. In this way,
+tips serve as an intermediate scaffolding mechanism that improves exploration and trajectory
+quality, while the reward signal ensures that only advantageous behaviors are ultimately retained.
+Consequently, the final policy learns to internalize the benefits of tip conditioning without requiring tips at inference time. Appendix C provides an illustrative breakdown and a summary table
+for the calculation of the importance sampling ratio.
+Stabilizing Off-Policy Training.
+Off-policy training is prone to instability and may collapse (see Figure 6). In such cases, gradient normalization,
+entropy loss, KL loss, and policy gradient loss can all diverge to NaN. Prior
+work, Yang et al. (2025) shows that low-probability tokens destabilize training by amplifying gradient magnitudes through unbounded likelihood ratios.
+Motivated by this, we introduce a masking mechanism that suppresses the advantage term for tokens whose probability under πθ falls below a threshold δ. Figure 6: MaskFinally, the loss in Eq. 1 is modified as
+ing tokens stabilizes
+#
+"
+training.
+N
+T
+
+
+
+1 XX
+(i,t)
+(i)
+(i,t)
+(i)
+min ρθ A(at ), clip ρθ , 1 − ϵ, 1 + ϵ A(at ) · 1π (a(i) |s(i) ,u)≥δ
+E u∼p(U )
+θ
+t
+t
+N T i=1 t=1
+{τ (i) }∼πθold
+
+− βDKL πθ (·|u) ∥ πref (·|u) .
+(2)
+Intrinsic Rewards for Exploration.
+To further encourage exploration,
+and inspired by prior work on exploration-targeted online RL (Burda et al.,
+2018b; Bellemare et al., 2016; Ecoffet et al., 2019), we introduce an intrinsic
+reward based on the novelty of the current state. A memory list stores distinct
+states, and for each new state we compute its cosine similarity with existing
+entries. If the similarity falls below a threshold, the state is added to memory
+and assigned a reward. The intrinsic reward is defined as rintrinsic = n1 , where
+n denotes the number of similar past states. This mechanism encourages the
+agent to explore novel states even when no extrinsic reward is provided by the
+environment and maintains policy entropy, as shown in Figure 7.
+
+5
+
+Figure 7:
+
+Policy
+entropy comparison
+with vs.
+without
+intrinsic rewards.
+
+R ELATED W ORK
+
+LLM Agents in Multi-Step Embodied Tasks. LLM agents for multi-step embodied tasks have
+been studied under different paradigms. Data-driven approaches (Song et al., 2024; Xiong et al.,
+2024; Qiao et al., 2025; 2024; Tajwar et al., 2025) enhance decision-making through effective data
+collection methods and imitation learning. Model-based agents (Tang et al., 2024; Zhou et al.,
+2024) build world models, often by generating code with large closed-source systems such as GPT4. Other methods (Lin et al., 2023; Choudhury & Sodhi, 2025) strengthen reasoning through model
+transitions or by leveraging privileged information provided by the simulation environment. In
+contrast, our approach reduces reliance on such external resources and emphasizes autonomous
+growth through the agent’s own exploration and self-improvement.
+Memory for LLM Agents. To enable progressive improvement from past experiences, Reflexion
+(Shinn et al., 2023) and REMEMBERER (Zhang et al., 2023) leverage external memory. Reflexion
+stores verbal reflections for later prompting, while REMEMBERER records observations, actions,
+rewards, and Q-values, retrieving similar cases as few-shot exemplars. These methods show that
+LLMs can improve without parameter updates. However, with fixed parameters, they cannot expand intrinsic knowledge, so adaptation remains short-term (Zhang et al., 2023), relying on external
+memory rather than achieving long-term evolution and generalization.
+6
+
+Published as a conference paper at ICLR 2026
+
+Learning by Knowledge Distillation Our hybrid off-policy update functions as reward-guided
+knowledge distillation during online training. Snell et al. (2022) introduced context distillation,
+where the model first solves tasks using a Teacher prompt (with instructions, examples, explanations,
+and scratch-pad reasoning) and then learns to produce the final answer from a minimal Student
+prompt via offline, SFT-based distillation. In contrast, we integrate knowledge distillation into online
+RL, leveraging online adaptability while enhancing exploration for more efficient training.
+RL for LLM Agents. RL provides a robust framework for optimizing LLM parameters through
+observations and reward signals from environment interactions. Prior work, Retrospex (Xiang et al.,
+2024), showed that offline RL, which learns optimal policies from large logged datasets, can improve LLM agent performance. Recent studies focus on online RL (Shao et al., 2024; Feng et al.,
+2025b; Wang et al., 2025), where agents learn in real time. GiGPO (Feng et al., 2025b) advanced
+GRPO by grouping rollouts with similar observations, enabling finer credit assignment and stronger
+performance. Our work advances this online RL direction by integrating non-parametric memory
+updates into both on- and off-policy learning, yielding substantially higher sample efficiency.
+Enhancing Exploration for Online RL. A central challenge in online RL is effective exploration.
+Classical methods such as count-based exploration (Bellemare et al., 2016) and Random Network
+Distillation (Burda et al., 2018b) use intrinsic rewards to encourage novelty. Go-Explore (Ecoffet
+et al., 2019) stores key states and re-explores from them, solving hard-exploration tasks like Atari
+games. Its LLM extension, Intelligent Go-Explore (Lu et al., 2025a), achieves strong results in
+environments such as TextWorld (Côté et al., 2018), but relies on large closed-source models and
+does not perform parameter updates. In our concurrent work, RLVMR (Zhang et al., 2025) employs
+warm-start SFT to elicit diverse reasoning types (planning, exploration, and reflection) and provides
+dense, process-level rewards for each reasoning type during online RL, enhancing exploration and
+credit assignment. Together, these studies underscore the importance of structured exploration for
+scaling RL to complex environments.
+
+6
+
+E XPERIMENTS
+
+To examine the effectiveness of EMPO2 , we conduct extensive experiments on two widely used
+LLM agent benchmarks: ScienceWorld (Wang et al., 2022) and WebShop (Yao et al., 2022) using
+Qwen2.5-7B-Instruct (Qwen et al., 2025) as the base model. The EMPO2 performance we evaluate
+is the performance of the trained model without memory at test time.
+6.1
+
+S CIENCE W ORLD
+
+ScienceWorld (Wang et al., 2022) is an interactive text-based benchmark in which an agent performs
+science experiments at the elementary school level. Successfully completing these experiments
+requires long-term multi-step planning, hypothesis testing, and interpretation of outcomes, as well
+as sufficient exploration to determine where the necessary tools are and what appropriate actions
+should be taken. ScienceWorld includes tasks from diverse topics and in our experiments, we cover
+19 tasks spanning chemistry, classification, biology, electricity, and measurement.
+Baselines.
+We compare EMPO2 with several RL approaches. For non-parametric RL, Reflexion (Shinn et al., 2023) updates memory in a non-parametric manner by incorporating LLM
+reflections from previous trajectories and using them in the prompt for the subsequent trial. For
+offline RL, Retrospex (Xiang et al., 2024) leverages an SFT-trained model and uses a Q-function
+learned via Implicit Q-learning (Kostrikov et al., 2022) to dynamically rescore actions. The official Retrospex paper used the smaller Flan-T5-Large (Chung et al., 2024) (770M) and incorporated
+human-designed heuristics to assist the agent during evaluation. In contrast, to ensure consistency
+in our experimental setup, we standardize the base model of Retrospex to Qwen2.5-7B-Instruct and
+exclude these heuristics. Finally, for online RL, we include GRPO (Shao et al., 2024) as a representative baseline. Further details are provided in Appendix D.
+Training Details. Our EMPO2 implementation is based on verl (Sheng et al., 2024), one of the
+representative RL-for-LLM libraries. We extended GRPO in verl from a single-step setup to a multistep setup and incorporated both a memory module and an off-policy loss calculation component.
+We use the same hyperparameter configuration for GRPO and EMPO2 . The prompt used is provided
+in Appendix B, and implementation details are given in Appendix D.2.
+7
+
+Published as a conference paper at ICLR 2026
+
+Table 1: Comparison results of ScienceWorld. Each task in ScienceWorld contains multiple variants. We use the first five variants for training and evaluate on the 20 unseen test variants. Bold
+shows the best performance per task, while red shading marks cases where parametric updates score
+lower than non-parametric updates. The EMPO2 performance we evaluate is the performance of the
+trained model without memory at test time.
+Qwen2.5-7B-Instruct
+Topic Task
+chemistry-mix
+chemistry-mix-paint-secondary-color
+chemistry-mix-paint-tertiary-color
+find-animal
+Classi find-living-thing
+fication find-non-living-thing
+find-plant
+Bio
+identify-life-stages-1
+logy1 identify-life-stages-2
+lifespan-longest-lived
+Bio
+lifespan-longest/shortest-lived
+logy2
+life-span-shortest-lived
+power-component
+power-component-renewable-vsElec
+tricity nonrenewable-energy
+test-conductivity
+test-conductivity-of-unknown-sub
+Measu measure-melting-point-known-sub
+rement use-thermometer
+Chem
+istry
+
+Average
+
+Naive
+
+Non-Parametric
+Reflexion
+
+Offline RL
+Retrospex
+
+GRPO
+
+Online RL
+EMPO2
+
+−42.0±38.0
+−33.0±47.1
+−33.9±44.3
+−58.2±50.2
+−65.1±48.1
+−35.9±68.6
+−47.1±66.2
+−48.9±65.4
+−50.7±65.0
+−51.8±64.8
+−56.2±63.5
+−56.8±63.0
+−90.0±39.4
+
+1.2±0.7
+0.0±0.0
+36.9±5.7
+39.5±5.8
+36.6±6.1
+4.8±2.0
+15.1±3.8
+9.2±2.4
+33.8±5.5
+44.6±6.5
+34.1±5.1
+6.1±1.9
+6.3±1.8
+
+20.8±10.0
+27.8±6.3
+7.6±4.2
+25.9±13.5
+20.6±4.8
+89.1±11.5
+23.0±3.5
+19.0±25.7
+11.0±1.7
+55.0±15.0
+38.0±15.0
+67.0±23.8
+8.2±2.4
+
+12.4±3.5
+7.1±2.8
+42.6±6.2
+72.4±6.8
+68.7±7.1
+24.7±6.4
+46.2±7.9
+17.9±4.7
+39.5±6.0
+78.2±7.3
+62.3±6.9
+20.6±4.4
+15.1±3.9
+
+42.7±12.4
+33.3±0.6
+39.2±8.7
+100.0±0.0
+100.0 ±0.0
+100.0±0.0
+100.0±0.0
+36.2±11.2
+56.3±8.1
+100.0±0.0
+100.0±0.0
+100.0±0.0
+94.3±3.6
+
+−85.0±49.8
+
+11.7±2.9
+
+10.0±3.2
+
+24.6±5.5
+
+92.6±0.9
+
+−86.9±42.4
+−81.7±48.6
+−97.5±7.5
+−83.7±43.6
+
+13.2±3.1
+2.6±1.0
+11.4±3.0
+0.9±0.4
+
+60.0±0.0
+65.5±23.7
+26.5±16.1
+32.5±32.1
+
+27.8±6.1
+9.5±3.4
+19.8±5.0
+7.6±2.5
+
+89.5±3.2
+71.4±6.3
+27.6±4.2
+82.7±13.3
+
+-61.3
+
+17.1
+
+33.8
+
+33.2
+
+75.9
+
+Main Results. Table 1 presents the comparison results among baselines. In ScienceWorld, failed
+tasks lead to negative rewards, producing returns between -100 and 100. The baseline Qwen2.57B-Instruct obtains an average return of -61.3, which improves to 17.1 when non-parametric RL
+(Reflexion) is applied. Offline RL (Retrospex) produces substantial performance gains compared
+to them, but in some tasks underperforms compared to non-parametric RL (highlighted in red).
+Online RL with GRPO also achieves considerable improvements, and its average performance is
+comparable to that of offline RL. However, unlike offline RL, it never underperforms non-parametric
+RL, indicating that online RL generalizes better to unseen variants. Our EMPO2 demonstrates
+substantially higher learning performance compared to all baselines. Among the tasks that initially
+started with negative rewards, seven reached the maximum score of 100. On average, EMPO2
+achieved more than twice the performance improvement over GRPO, demonstrating its effectiveness
+in greatly enhancing learning efficiency in online RL.
+Adaptation in New Tasks with Memory Updates. An agent post-trained on a single task may
+exhibit limited ability to generalize to new scenarios. However, EMPO2 , which acquires the ability
+to explore by leveraging memory, demonstrates significantly stronger adaptability to novel situations compared to GRPO, which is trained without learning to utilize memory. Figure 8 illustrates
+how a model trained on one task adapts when memory is introduced in a new task. In particular,
+we demonstrate cases with varying levels of topic difference. For a relatively similar transition, we
+examine Biology 1 (identify-life-stages-2) → Biology 2 (life-span-shortest-lived). For a more distinct transition, we examine Biology 2 (lifespan-longest-lived) → Electricity (test-conductivity), and
+Electricity (power-component) → Chemistry (chemistry-mix-paint-secondary-color).
+As shown in Figure 8, without memory (step 0), EMPO2 achieves stronger baseline performance
+on novel tasks than GRPO. When memory is enabled, EMPO2 adapts rapidly, yielding an average
+improvement of 136% across three scenarios within 10 steps. GRPO, by contrast, demonstrates
+notable gains in some cases but exhibits greater variability and, in other instances, fails to adapt to
+unfamiliar tasks. In certain situations, its performance even falls below that of the Qwen2.5-7BInstruct base model. Though these findings are preliminary, they indicate that EMPO2 has strong
+potential as an RL framework for developing agents that are both more general and adaptable.
+8
+
+Published as a conference paper at ICLR 2026
+
+Figure 8: Comparison of GRPO and EMPO2 adapting to new tasks. Step 0 has no memory, while
+later steps use accumulated memory as in EMPO2 training.
+6.2
+
+W EB S HOP
+
+WebShop (Yao et al., 2022) is an HTML-based online shopping environment where agents search,
+navigate, and purchase items according to user instructions. When the “buy” action is selected, a
+final reward is given based on how well the product’s attributes and price match the criteria.
+Baselines.
+For the WebShop experiments, we use the same baselines as in the ScienceWorld
+experiments, with the addition of one more online RL baseline, GiGPO (Feng et al., 2025b), as
+GiGPO does not cover ScienceWorld but provides benchmarking results on WebShop. The scores
+of Naive, Reflexion, GRPO, and GiGPO are taken from Feng et al. (2025b), while Retrospex results
+are re-run using the official Retrospex code with the Qwen2.5-7B-Instruct model.
+Training Details.
+The WebShop EMPO2 implementation builds on the official GiGPO (Feng
+et al., 2025b) code with the same hyperparameters. Further details are provided in Appendix D.3.
+Main Results. Table 2 presents the baseline comparison results on WebShop. Consistent with the
+findings in ScienceWorld, EMPO2 once again delivers the strongest performance. Although offline
+RL, online GRPO, and GiGPO each outperform non-parametric RL, GiGPO further enhances GRPO
+by leveraging additional advantage estimation through grouping similar observations within rollout
+groups. Despite these gains, EMPO2 surpasses all baselines, achieving both higher scores and success rates than GiGPO. Taken together, these results indicate that EMPO2 consistently demonstrates
+superior performance in web-based environments due to its improved exploration.
+Table 2: Comparison results of WebShop. Following Feng et al. (2025b), we average results over
+three random seeds and report both the mean score and the mean success rate (%). GiGPOw/ std
+denotes the use of the normalization factor Fnorm = std, whereas GiGPOw/o std uses Fnorm = 1, as
+specified in Feng et al. (2025b). The EMPO2 performance we evaluate is the performance of the
+trained model without memory at test time.
+Qwen2.5-7B-Instruct
+
+Naive
+
+Score
+Succ.
+
+26.4
+7.8
+
+6.3
+
+Non-Parametric
+Reflexion
+58.1
+28.8
+
+Offline RL
+Retrospex
+73.1±4.1
+60.4±3.9
+
+GRPO
+79.3±2.8
+66.1±3.7
+
+Online RL
+GiGPO w/ std
+GiGPO w/o std
+84.4±2.9
+86.2±2.6
+72.8±3.2
+75.2±3.8
+
+EMPO2
+88.3±2.6
+76.9±4.1
+
+A BLATION STUDY ON M ODE C OMBINATIONS
+
+Figure 9: Comparison of training curves between EMPO2 and variants that exclude either off-policy
+learning or on-policy learning with memory.
+As shown in Figure 5, EMPO2 incorporates three mode combinations: on-policy learning without memory, on-policy learning with memory, and off-policy learning, and we further analyze how
+leveraging each affects performance on two ScienceWorld tasks, where EMPO2 shows significant
+9
+
+Published as a conference paper at ICLR 2026
+
+improvements over GRPO. Figure 9 presents training curves comparing EMPO2 with variants that
+exclude either off-policy or on-policy learning with memory. As shown in the graphs, removing
+either component results in suboptimal learning, indicating that a balanced integration of on-policy
+and off-policy updates is most effective for performance improvement. This highlights their complementary roles: on-policy updates contribute to stable learning, while off-policy updates enable
+reasoning as if guided by additional tips, and their combination yields both faster convergence and
+stronger final performance.
+
+7
+
+C ONCLUSION
+
+In this work, we propose EMPO2 , a novel RL method that enhances exploration in parametric RL
+by leveraging non-parametric memory updates. EMPO2 integrates both on-policy and off-policy
+learning, thereby improving training efficiency and stability. Our experiments demonstrate that
+EMPO2 achieves remarkable gains in training efficiency on ScienceWorld and WebShop, and further
+shows the ability to adapt rapidly to new domains in a few-shot manner by incorporating additional
+memory. An ablation study confirms the importance of the three distinct modes of EMPO2 .
+While our study demonstrates the potential of EMPO2 as a RL framework for general agents, our
+current implementation for memory employs a simple similarity-based search for memory retrieval.
+More advanced retrieval mechanisms may further enhance performance. Moreover, although our
+experiments primarily utilize Qwen2.5-7B-Instruct, extending EMPO2 to a broader range of model
+families and sizes could yield deeper insights into its generality and robustness. In particular, scaling
+to larger models may further amplify the benefits of our approach. Beyond model scaling, applying
+EMPO2 to new domains such as mathematics, coding, multi-hop question answering, and multimodal RL represents an exciting and challenging direction for future research. In addition, exploring
+other off-policy techniques beyond importance sampling could be of interest to achieve more stable
+and efficient hybrid optimization.
+
+E THICS STATEMENT
+This work evaluates EMPO2 on ScienceWorld and WebShop, which are publicly available research
+benchmarks that do not include private data or sensitive information. We complied with dataset
+licenses and community standards for responsible use and citation, and no additional data collection
+or modification of the environments was performed.
+Although our method exhibits strong adaptability in exploration and reasoning tasks, online RL systems may be misapplied in safety-critical real-world contexts. To reduce such risks, we confine our
+study to benchmark environments, and for real-world applications, responses generated by LLMs
+will require more careful scrutiny. We hope that future research will further address safety and
+broader societal impacts when extending embodied reasoning agents beyond simulation.
+
+R EPRODUCIBILITY STATEMENT
+We release an Agent Lightning (Luo et al., 2025) version of EMPO2 at
+agent-lightning/empo2. Additionally, we provide detailed training information, including
+pseudocode in Appendix A, the hyperparameters used in our experiments, the hyperparameters
+for the baseline experiments, the GPU resources utilized, and code snippets for the additional
+components implemented in Appendix D.
+
+R EFERENCES
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical
+report. arXiv preprint arXiv:2303.08774, 2023.
+Marc Bellemare, Sriram Srinivasan, Georg Ostrovski, Tom Schaul, David Saxton, and Remi Munos.
+Unifying count-based exploration and intrinsic motivation. Advances in neural information processing systems, 29, 2016.
+10
+
+Published as a conference paper at ICLR 2026
+
+Yuri Burda, Harrison Edwards, Amos Storkey, and Oleg Klimov. Exploration by random network
+distillation. arXiv preprint arXiv:1810.12894, 2018a.
+Yuri Burda, Harrison Edwards, Amos Storkey, and Oleg Klimov. Exploration by random network
+distillation. arXiv preprint arXiv:1810.12894, 2018b.
+Sanjiban Choudhury and Paloma Sodhi. Better than your teacher: LLM agents that learn from
+privileged AI feedback. In The Thirteenth International Conference on Learning Representations,
+2025. URL https://openreview.net/forum?id=st7XqFgbAH.
+Hyung Won Chung, Le Hou, Shayne Longpre, Barret Zoph, Yi Tay, William Fedus, Yunxuan Li,
+Xuezhi Wang, Mostafa Dehghani, Siddhartha Brahma, et al. Scaling instruction-finetuned language models. Journal of Machine Learning Research, 25(70):1–53, 2024.
+Marc-Alexandre Côté, Ákos Kádár, Xingdi Yuan, Ben Kybartas, Tavian Barnes, Emery Fine,
+James Moore, Ruo Yu Tao, Matthew Hausknecht, Layla El Asri, Mahmoud Adada, Wendy
+Tay, and Adam Trischler. Textworld: A learning environment for text-based games. CoRR,
+abs/1806.11532, 2018.
+Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia
+Chen, Jiazhen Du, Huiyang Wang, Fuzheng Zhang, et al. Agentic reinforced policy optimization.
+arXiv preprint arXiv:2507.19849, 2025.
+Adrien Ecoffet, Joost Huizinga, Joel Lehman, Kenneth O Stanley, and Jeff Clune. Go-explore: a
+new approach for hard-exploration problems. arXiv preprint arXiv:1901.10995, 2019.
+Jiazhan Feng, Shijue Huang, Xingwei Qu, Ge Zhang, Yujia Qin, Baoquan Zhong, Chengquan Jiang,
+Jinxin Chi, and Wanjun Zhong. Retool: Reinforcement learning for strategic tool use in llms.
+CoRR, 2025a.
+Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for llm
+agent training. arXiv preprint arXiv:2505.10978, 2025b.
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad
+Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd
+of models. arXiv preprint arXiv:2407.21783, 2024.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu,
+Shirong Ma, Peiyi Wang, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms
+via reinforcement learning. arXiv preprint arXiv:2501.12948, 2025.
+Jeonghye Kim, Sojeong Rhee, Minbeom Kim, Dohyung Kim, Sangmook Lee, Youngchul Sung, and
+Kyomin Jung. Reflact: World-grounded decision making in llm agents via goal-state reflection.
+arXiv preprint arXiv:2505.15182, 2025.
+Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Offline reinforcement learning with implicit qlearning. In International Conference on Learning Representations, 2022. URL https://
+openreview.net/forum?id=68n2s9ZJWF8.
+Bill Yuchen Lin, Yicheng Fu, Karina Yang, Faeze Brahman, Shiyu Huang, Chandra Bhagavatula,
+Prithviraj Ammanabrolu, Yejin Choi, and Xiang Ren. Swiftsage: A generative agent with fast and
+slow thinking for complex interactive tasks. Advances in Neural Information Processing Systems,
+36:23813–23825, 2023.
+Cong Lu, Shengran Hu, and Jeff Clune. Intelligent go-explore: Standing on the shoulders of giant
+foundation models. In The Thirteenth International Conference on Learning Representations,
+2025a. URL https://openreview.net/forum?id=apErWGzCAA.
+Guanxing Lu, Wenkai Guo, Chubin Zhang, Yuheng Zhou, Haonan Jiang, Zifeng Gao, Yansong
+Tang, and Ziwei Wang. Vla-rl: Towards masterful and general robotic manipulation with scalable
+reinforcement learning. arXiv preprint arXiv:2505.18719, 2025b.
+11
+
+Published as a conference paper at ICLR 2026
+
+Xufang Luo, Yuge Zhang, Zhiyuan He, Zilong Wang, Siyun Zhao, Dongsheng Li, Luna K Qiu, and
+Yuqing Yang. Agent lightning: Train any ai agents with reinforcement learning. arXiv preprint
+arXiv:2508.03680, 2025.
+Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy Liang, and
+Michael S Bernstein. Generative agents: Interactive simulacra of human behavior. In Proceedings
+of the 36th annual acm symposium on user interface software and technology, pp. 1–22, 2023.
+Shuofei Qiao, Runnan Fang, Ningyu Zhang, Yuqi Zhu, Xiang Chen, Shumin Deng, Yong Jiang,
+Pengjun Xie, Fei Huang, and Huajun Chen. Agent planning with world knowledge model. Advances in Neural Information Processing Systems, 37:114843–114871, 2024.
+Shuofei Qiao, Zhisong Qiu, Baochang Ren, Xiaobin Wang, Xiangyuan Ru, Ningyu Zhang, Xiang
+Chen, Yong Jiang, Pengjun Xie, Fei Huang, et al. Agentic knowledgeable self-awareness. arXiv
+preprint arXiv:2504.03553, 2025.
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan
+Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang,
+Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin
+Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li,
+Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang,
+Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. Qwen2.5 technical report, 2025.
+URL https://arxiv.org/abs/2412.15115.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300, 2024.
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng,
+Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. arXiv preprint
+arXiv: 2409.19256, 2024.
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion:
+Language agents with verbal reinforcement learning. Advances in Neural Information Processing
+Systems, 36:8634–8652, 2023.
+Charlie Snell, Dan Klein, and Ruiqi Zhong.
+arXiv:2209.15189, 2022.
+
+Learning by distilling context.
+
+arXiv preprint
+
+Yifan Song, Da Yin, Xiang Yue, Jie Huang, Sujian Li, and Bill Yuchen Lin. Trial and error:
+Exploration-based trajectory optimization of llm agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 7584–7600,
+2024.
+Fahim Tajwar, Yiding Jiang, Abitha Thankaraj, Sumaita Sadia Rahman, J Zico Kolter, Jeff
+Schneider, and Ruslan Salakhutdinov. Training a generally curious agent. arXiv preprint
+arXiv:2502.17543, 2025.
+Weihao Tan, Wentao Zhang, Shanqi Liu, Longtao Zheng, Xinrun Wang, and Bo An. True knowledge
+comes from practice: Aligning large language models with embodied environments via reinforcement learning. In The Twelfth International Conference on Learning Representations, 2024. URL
+https://openreview.net/forum?id=hILVmJ4Uvu.
+Hao Tang, Darren Key, and Kevin Ellis. Worldcoder, a model-based llm agent: Building world
+models by writing code and interacting with the environment. Advances in Neural Information
+Processing Systems, 37:70148–70212, 2024.
+Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and Prithviraj Ammanabrolu. Scienceworld: Is
+your agent smarter than a 5th grader? arXiv preprint arXiv:2203.07540, 2022.
+12
+
+Published as a conference paper at ICLR 2026
+
+Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin,
+Kefan Yu, Minh Nhat Nguyen, Licheng Liu, et al. Ragen: Understanding self-evolution in llm
+agents via multi-turn reinforcement learning. arXiv preprint arXiv:2504.20073, 2025.
+Yufei Xiang, Yiqun Shen, Yeqin Zhang, and Nguyen Cam-Tu. Retrospex: Language agent meets offline reinforcement learning critic. In Proceedings of the 2024 Conference on Empirical Methods
+in Natural Language Processing, pp. 4650–4666, 2024.
+Weimin Xiong, Yifan Song, Xiutian Zhao, Wenhao Wu, Xun Wang, Ke Wang, Cheng Li, Wei Peng,
+and Sujian Li. Watch every step! llm agent learning via iterative step-level process refinement. In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pp.
+1556–1572, 2024.
+Zhihe Yang, Xufang Luo, Zilong Wang, Dongqi Han, Zhiyuan He, Dongsheng Li, and Yunjian Xu.
+Do not let low-probability tokens over-dominate in rl for llms. arXiv preprint arXiv:2505.12929,
+2025.
+Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable
+real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems, 35:20744–20757, 2022.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan
+Cao. React: Synergizing reasoning and acting in language models. In The Eleventh International
+Conference on Learning Representations, 2023. URL https://openreview.net/forum?
+id=WE_vluYUL-X.
+Danyang Zhang, Lu Chen, Situo Zhang, Hongshen Xu, Zihan Zhao, and Kai Yu. Large language
+models are semi-parametric reinforcement learning agents. Advances in Neural Information Processing Systems, 36:78227–78239, 2023.
+Zijing Zhang, Ziyang Chen, Mingxiao Li, Zhaopeng Tu, and Xiaolong Li. Rlvmr: Reinforcement
+learning with verifiable meta-reasoning rewards for robust long-horizon agents. arXiv preprint
+arXiv:2507.22844, 2025.
+Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, Zheyan Luo, Zhangchi Feng, and
+Yongqiang Ma. Llamafactory: Unified efficient fine-tuning of 100+ language models. arXiv
+preprint arXiv:2403.13372, 2024.
+Siyu Zhou, Tianyi Zhou, Yijun Yang, Guodong Long, Deheng Ye, Jing Jiang, and Chengqi Zhang.
+Wall-e: World alignment by rule learning improves world model-based llm agents. arXiv preprint
+arXiv:2410.07484, 2024.
+
+13
+
+Published as a conference paper at ICLR 2026
+
+A
+
+P SEUDO C ODE
+
+Algorithm 1 presents the pseudocode of EMPO2 . Compared to the original GRPO algorithm,
+EMPO2 introduces several new components: a memory buffer, and tip retrieval and addition, and
+two rollout modes and two update modes.
+Algorithm 1 EMPO2 : Exploratory Memory-Augmented On- and Off-Policy Optimization
+1: Inputs: Initial policy πθold , memory buffer M, task distribution p(U), group size N , batch size B, max
+episode length T
+2: for each training iteration do
+3:
+{// Multi-step rollout}
+4:
+Sample B tasks u ∼ p(U) and initialize N identical environments (total B × N )
+5:
+Sample mrollout ∼ {Prompting Without Memory : p, Memory-Augmented Prompting : 1 − p}
+(i)
+6:
+Initialize state s0 ← u(i) for i = 0, . . . , B × N − 1
+7:
+for t = 0 to T − 1 do
+8:
+for i = 0 to B × N − 1 do
+9:
+if mrollout = Memory-Augmented Prompting then
+(i)
+10:
+tips t ← Retr(st ; M)
+(i)
+(i)
+11:
+Sample at ∼ πθold (· | st , tips t , u(i) )
+12:
+else
+(i)
+(i)
+13:
+Sample at ∼ πθold (· | st , u(i) )
+14:
+end if
+(i)
+(i)
+(i)
+15:
+Execute at , observe rt , st+1
+16:
+end for
+17:
+end for
+18:
+for i = 0 to B × N − 1 do
+19:
+Sample tips ∼ πθold (· | s(i) , u(i) , tip-generation prompt)
+20:
+Append tips to M
+21:
+end for
+22:
+{// Policy update}
+23:
+if mrollout = Memory-Augmented Prompting then
+24:
+Sample mupdate ∼ {On-Policy : q, Off-Policy : 1 − q}
+25:
+if mupdate = Off-Policy then
+26:
+for i = 0 to B × N − 1 do
+(i)
+(i)
+27:
+log πθold (a | st , tips t , u(i) ) ← log πθold (a | st , u(i) )
+28:
+end for
+29:
+end if
+30:
+end if
+31:
+Update policy θ using the loss function in Eq. 2.
+32: end for
+
+B
+
+P ROMPTS
+
+The following prompts were used in our experiments. The ScienceWorld and WebShop prompts
+were used identically for both the online RL baseline and EMPO2 , with the WebShop prompt
+adapted from Feng et al. (2025b). The content inside the curly brackets ({}) is dynamically filled
+based on the current progress at each episode step.
+Tip Generation Prompt
+Thanks for your playing. Now you have ended a trajectory and collect some meaningless or valuable
+information from the interactions with the environment. Please summary the trajectory, and also summary what information you get from this trajectory, and how far this trajectory is from fully completing
+the task. Please response with only one sentence with only one line, do not include any extra words.
+You sentence should be less than 100 words.
+
+14
+
+Published as a conference paper at ICLR 2026
+
+Prompt for ScienceWorld
+You have done a few science experiments successfully and below are the action history of your
+experiments with similar tasks. Here is 2 examples: {example 1} {example 2} Follow the report of
+the two example tasks shown to you previously, try to solve a similar new task.
+Task Description: {task description}
+All your possible action formats are: {available action description}
+If you enter an unfamiliar room for the first time, you can use the action ’look around’ to discover the
+objects in it. Items in your inventory: {inventory}
+Important! You can only use FOCUS actions on these items: {focus items}. You cannot FOCUS on any other things. Please only use FOCUS as required by the task description. Also, please
+FOCUS more directly, try not to focus on the container. You could try to explore different actions,
+especially when you are not sure what the best action for your current observation.
+{current observation}
+
+Prompt for WebShop
+You are an expert autonomous agent operating in the WebShop e-commerce environment.
+Your task is to: {task description}.
+Prior to this step, you have already taken {step count} step(s). Below are the most recent
+{history length} observations and the corresponding actions you took: {action history}
+You are now at step current step and your current observation is: {current observation}.
+Your admissible actions of the current situation are:
+[{available actions}].
+Now it’s your turn to take one action for the current step.
+You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within
+<think> </think> tags.
+Once you’ve finished your reasoning, you should choose an admissible action for current step
+and present it within <action> </action> tags.
+
+C
+
+D ETAILED E XPLANATION OF I MPORTANCE S AMPLING R ATIOS IN P OLICY
+U PDATES
+
+To further clarify our policy update mechanism, this section details the calculation of the importance
+sampling ratio ρθ . The specific calculation depends on whether tips were used during the rollout
+and update phases. This leads to three distinct scenarios, as summarized in Table 3. The importance
+sampling ratio ρθ is defined as the ratio of the probability of an action under the current policy πθ
+to its probability under the old policy πθold , used to correct for the distributional shift in off-policy
+learning.
+Table 3: Calculation of the importance sampling ratio ρθ for different policy update modes. The
+ratio is computed as ρθ = ππθθ (a(at |·)
+, which in practice is often calculated using log-probabilities.
+t |·)
+old
+
+Update Mode
+Regular On-Policy
+On-Policy w/ Tips
+Off-Policy
+
+Rollout Condition
+No tips
+With tips t
+With tips t (rollout)
+
+Current Log Prob
+log πθ (at | st , u)
+log πθ (at | st , u, tips t )
+log πθ (at | st , u)
+
+15
+
+Old Log Prob
+log πθold (at | st , u)
+log πθold (at | st , u, tips t )
+log πθold (at | st , u, tips t )
+
+Published as a conference paper at ICLR 2026
+
+The three update modes shown in the table cover all scenarios. An update is considered on-policy
+when the policy used to generate actions (πθold ) and the policy being updated (πθ ) are conditioned
+on the same information. This applies to the first two modes:
+• Regular On-Policy: This is the standard on-policy update. The conditioning context for
+both the current and old policies is identical (st , u), with no tips involved.
+• On-Policy w/ Tips: This mode is also on-policy because both policies are consistently
+conditioned on the provided tips (st , u, tips t ).
+The Off-Policy update is the key mechanism through which the model learns from external guidance. In this scenario, actions are sampled from the old policy augmented with tip information:
+πθold (· | st , u, tips t ). However, to “internalize” this guidance, the current log-probabilities for the
+new policy πθ are recomputed without the tips, using only πθ (at | st , u). This mismatch in conditioning between the new and old policies makes the update off-policy and allows the base policy to
+absorb the knowledge contained in the tips.
+While the importance sampling variant in Table 3 is theoretically unbiased, the distribution shift can
+still lead to instability in practice. Therefore, this allows for different implementation choices, such
+as tuning the clipping scheme or computing the old log-probabilities without tips, in order to better
+control the bias–variance trade-off.
+
+D
+
+E XPERIMENTS D ETAILS
+
+D.1
+
+R ETROSPEX
+
+In Retrospex (Xiang et al., 2024), the base models differ by environment: Flan-T5-Large (Chung
+et al., 2024) is used for ScienceWorld, while Llama-3-8B-Instruct (Grattafiori et al., 2024) is used for
+WebShop. To ensure consistency in our experiments, we standardized the base model to Qwen2.57B-Instruct. For this purpose, we utilized the offline trajectories provided by Retrospex and conducted SFT with LLaMA-Factory (Zheng et al., 2024). For the IQL (Kostrikov et al., 2022) Qfunction, we employed the model released by Retrospex. During SFT training, we tuned the hyperparameters over learning rates 1.0 × 10−5 , 5.0 × 10−5 , 1.0 × 10−6 and epochs 3, 8, and adopted
+the configuration that yielded the best performance. Each run was conducted using two NVIDIA
+A100 GPUs with 80GB memory.
+Moreover, in our Retrospex ScienceWorld evaluation, we remove human-designed heuristics to reduce reliance on manual rules. Retrospex normally skips any “focus on” action unless repeated three
+times or explicitly mentioned in the task, and replaces step-by-step “go to” actions with direct “teleport” moves. Removing these heuristics ensures the evaluation better reflects the agent’s inherent
+capabilities.
+D.2
+
+O NLINE RL: S CIENCE W ORLD
+
+We base our EMPO2 implementation on the GRPO framework provided in verl (Sheng et al., 2024),
+while introducing the following key modifications:
+• Multi-step implementation: In the original GRPO implementation in verl, an LLM rollout terminates after generating a single response to a given problem. We extend this to a multi-step setting,
+where the agent continues interacting with the environment until either a maximum episode length
+is reached or the environment issues a termination signal. This modification allows the agent to
+perform sequential reasoning and adapt its responses across turns.
+• Memory buffer integration: To support EMPO2 ’s memory-based mechanism, we incorporate
+an explicit memory buffer. During multi-step rollouts, the agent can retrieve tips from memory
+and append newly generated tips to it. The code snippet for this part is as follows:
+import numpy as np, requests, uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import List, Optional
+app = FastAPI()
+
+16
+
+Published as a conference paper at ICLR 2026
+
+cnt, mem_list, content_set = {}, {}, {}
+class MemRequest(BaseModel):
+key: List[float]
+idx: Optional[int] = None
+content: Optional[str] = None
+score: Optional[float] = None
+@app.post("/mem/")
+async def mem_handler(req: MemRequest):
+global cnt, mem_list, content_set
+key, idx, content, score = req.key, req.idx, req.content, req.score
+if content == "Reset": # Reset all buffers
+content_set = {i: set() for i in range(idx)}
+mem_list = {i: [] for i in range(idx)}
+cnt = {i: 0 for i in range(idx)}
+return {"status": "reset"}
+if content is not None: # Store new memory
+if content not in content_set[idx]:
+content_set[idx].add(content)
+mem_list[idx].append(
+{"cnt": cnt[idx], "key": key, "content": content, "score": score})
+cnt[idx] += 1
+if len(mem_list[idx]) > 1000: # Evict oldest
+content_set[idx].discard(mem_list[idx][0]["content"])
+mem_list[idx] = mem_list[idx][-1000:]
+return {"status": "added", "total": cnt[idx]}
+# Retrieve by cosine similarity (threshold > 0.5), return top-10 by score
+key_vec = np.array(key)
+candidates = []
+for m in mem_list[idx]:
+m_vec = np.array(m["key"])
+sim = np.dot(key_vec, m_vec) / (np.linalg.norm(key_vec) * np.linalg.norm(m_vec))
+if sim > 0.5:
+candidates.append(m)
+data = [x["content"] for x in sorted(candidates, key=lambda x: -x["score"])[:10]]
+return {"count": len(data), "data": data}
+# --- Client utilities --def compress_text(text):
+return requests.post("http://127.0.0.1:8000/key_cal/", json={"text": text}).json()["key"
+]
+def retrieve_memory(idx, key):
+r = requests.post("http://127.0.0.1:8001/mem/", json={"key": key, "idx": idx}).json()
+return r["count"], r["data"]
+def add_memory(idx, key, content, score):
+requests.post("http://127.0.0.1:8001/mem/",
+json={"key": key, "idx": idx, "content": content, "score": score})
+# --- Training-phase memory retrieval --if phase in ["on-policy-with-memory", "off-policy"]:
+text = " ".join(f"{c[’role’]}: {c[’content’]}" for c in conversations)
+key = np.array(compress_text(text)).reshape(-1).tolist()
+count, memories = retrieve_memory(buffer_id, key)
+else:
+count, memories = 0, []
+if __name__ == "__main__":
+uvicorn.run(app, host="0.0.0.0", port=8001, workers=4)
+
+Listing 1: Implementation of memory buffer integration.
+
+Hyperparameters.
+All online RL algorithms (GRPO, EMPO2 ) use the same hyperparameter
+configuration. The maximum response length is set to 32 tokens per step and 4,500 tokens in total,
+and each episode is limited to 30 steps. The actor learning rate is set to 1 × 10−6 . For GRPO, the
+group size is fixed at 8 and the mini-batch size at 16. The KL-divergence loss coefficient is set to
+0.0. In addition, the actor rollout parameters are specified as follows: the clipping upper bound is
+set to 0.30, the clipping lower bound to 0.20, and the clipping ratio coefficient to 10.0.
+Computing Resources.
+
+All experiments were conducted using eight NVIDIA A100 40GB GPUs.
+17
+
+Published as a conference paper at ICLR 2026
+
+D.3
+
+O NLINE RL: W EB S HOP
+
+We base our EMPO2 implementation on the GRPO framework provided in verl-agent (Feng et al.,
+2025b), and the modifications for EMPO2 are the same as those described in Appendix D.2.
+Hyperparameters. All online RL algorithms (GRPO, GiGPO, EMPO2 ) use the same hyperparameter configuration, following Feng et al. (2025b). The maximum response length is set to 512
+tokens, and each episode is limited to 15 steps. The actor learning rate is configured as 1 × 10−6 .
+For GRPO, the group size is fixed at 8. The rollout temperature is set to 1.0, while the validation
+temperature is set to 0.4. The mini-batch size is 64, and the KL-divergence loss coefficient is 0.01.
+Finally, the discount factor γ is set to 0.95.
+Computing Resources.
+GPUs (40GB each).
+
+All online RL experiments were conducted using eight NVIDIA A100
+
+E
+
+QUALITATIVE ANALYSIS ON TIPS
+
+E.1
+
+M ORE E XAMPLES OF G ENERATED T IPS
+
+Following the example of the generated tips in Section 4.1, below are more detailed examples of
+how the tips evolve as the task progresses.
+ScienceWorld <power-component> task
+You focused on the red light bulb but did not complete the task of turning on the red light bulb. You
+are in the hallway and need to find a way; At that timestep, The specific action your took was focus
+on red light bulb. score -100.0
+Trajectory far from completion; connected battery to red wire but not in correct configuration;
+gained insights on available objects but missed key steps in circuit creation.; At that timestep, The
+specific action your took was connect battery cathode to red wire terminal 1. score 0.0
+Connected green wire to green light bulb but did not find the battery to complete the circuit.
+Trajectory is incomplete as the task requires powering the green light bulb.; At that timestep, The
+specific action your took was connect battery to green wire terminal 1, connect green wire terminal 2
+to green light bulb, connect red wire terminal 1 to battery. score 7.0
+Connected green wire to green light bulb, but task not fully completed due to missing battery
+connection.; At that timestep, The specific action your took was connect green wire to green light
+bulb. score 13.0
+Task incomplete, terminal connections incorrect; got red wire, battery, and red light bulb, but
+terminal connections not successfully made to power red light bulb.; At that timestep, The specific
+action your took was connect battery cathode to red wire terminal 1. score 27.0
+I persisted in connecting the green wire to the green light bulb but the circuit was interrupted
+by other wires, affecting the task completion.; At that timestep, The specific action your took was
+connect green wire terminal 2 to green light bulb. score 33.0
+You moved to the workshop, connected the circuit, but the green light bulb is still not powered
+on due to the lack of a power source and proper connections.; At that timestep, The specific action
+your took was turn on green light bulb. score 83.0
+The green light bulb was turned on, but the door to the workshop was closed repeatedly.; At
+that timestep, The specific action your took was open door to workshop. score 83.0
+
+18
+
+Published as a conference paper at ICLR 2026
+
+ScienceWorld <chemistry-mix-paint-secondary-color> task
+You moved to the greenhouse but did not find the necessary materials to create green paint, indicating
+the task cannot be completed with the current information and location.; At that timestep, The specific
+action your took was go to kitchen. score -100.0
+Failed to execute the task due to unknown actions; collected information about paint colors
+and mixing process but unable to complete the task of creating green paint.; At that timestep, The
+specific action your took was pour cup containing yellow paint in art studio in bowl, pour cup
+containing blue paint in art studio in bowl, mix bowl. score 0.0
+Failed to find a way to the kitchen or other useful areas; picked up an orange but it’s not suitable for making green paint. At that timestep, The specific action your took was open door to kitchen.
+score 10.0
+Failed to create green paint; mixed blue and yellow paint but action was ambiguous. Collected info on room layout and objects but not sufficient to complete task.; At that timestep, The
+specific action your took was open door to workshop. score 30.0
+The agent attempted to pour yellow paint into the bowl in the art studio but could not find the
+appropriate action, indicating a need to directly interact with the paint containers; At that timestep,
+The specific action your took was pour cup containing yellow paint in art studio in bowl and pour cup
+containing blue paint in art studio in bowl and mix bowl. score 40.0
+The task is to create green paint by mixing blue and yellow paint, but I repeatedly tried to
+pour blue paint into the bowl without success.; At that timestep, The specific action your took was
+pour cup containing blue paint in art studio in bowl. score 40.0
+Created green paint by mixing yellow and blue paint, but focus action was unnecessary as the
+paint was already in the bowl. At that timestep, The specific action your took was pour cup containing
+yellow paint in art studio in bowl. score 80.0
+
+E.2
+
+E FFECTS OF T IPS ON E XPLORATION B EHAVIOR
+
+This section provides a qualitative analysis of how tips promote exploration.
+ScienceWorld <power-component> task
+[With Memory-Augmented Prompting]
+
+[Without Memory]
+Task : Your task is to turn on the red light bulb.
+First, focus on the red light bulb. Then, create an
+electrical circuit that powers it on.
+Observation : This room is called the hallway. In
+it, you see:
+- the agent
+- a picture
+You also see:
+- A door to the workshop (that is open)
+...
+Action : focus on red bulb
+
+Task : Your task is to turn on the red light bulb.
+First, focus on the red light bulb. Then, create an
+electrical circuit that powers it on.
+Observation : This room is called the hallway. In
+it, you see:
+- the agent
+- a picture
+You also see:
+- A door to the workshop (that is open)
+...
+tips : Here are some memories you collected in
+your previous exploration:
+Focus on red light bulb but cannot find it in the
+hallway.; At that timestep, the specific action
+your took was focus on red light bulb; Eventually
+you got the score -100.0/100.
+Action : go to workshop
+Observation : You move to the workshop.
+...
+
+# Task Failed
+
+19
+
+Published as a conference paper at ICLR 2026
+
+ScienceWorld <chemistry-mix-paint-secondary-color> task
+[Without Memory]
+
+[With Memory-Augmented Prompting]
+
+Task : Your task is to use chemistry to create
+green paint. When you are done, focus on the
+green paint.
+Observation : This room is called the hallway. In
+it, you see:
+- the agent
+- a picture
+You also see:
+- A door to the art studio (that is open)
+...
+Action : pour cup containing yellow paint in
+hallway in bowl
+
+Task : Your task is to use chemistry to create
+green paint. When you are done, focus on the
+green paint.
+Observation : This room is called the hallway. In
+it, you see:
+- the agent
+- a picture
+You also see:
+- A door to the art studio (that is open)
+...
+tips : Here are some memories you collected in
+your previous exploration:
+Need to find a green pigment or mixture to create
+green paint.; At that timestep, the specific action
+your took was pour cup containing yellow paint
+in hallway in bowl; Eventually you got the score
+-100.0/100.
+Need to find a green pigment or mixture to
+create green paint.; At that timestep, the specific
+action your took was open door to art studio;
+Eventually you got the score -100.0/100.
+Action : go to art studio
+Observation : You move to the art studio.
+...
+
+# Task Failed
+
+As shown in the examples above, an agent without memory tends to repeat the same mistakes because it cannot incorporate feedback from previous failures into future attempts. In contrast, with
+memory-augmented prompting, the agent can refer to its past unsuccessful attempts, use them as
+guidance, and actively avoid repeating those errors. This enables the agent to explore novel and
+more effective behaviors, ultimately expanding its search capabilities and boosting learning performance.
+
+F
+
+M ORE A BLATION S TUDY
+
+F.1
+
+M ODE S ELECTION P ROBABILITY
+
+As discussed in Section 4.2, EMPO2 employs a memory-rollout probability p during the rollout
+phase and an off-policy update probability q during the update phase. We conduct comprehensive
+ablation studies to systematically investigate the effects of these hyperparameters p and q.
+
+(a)
+
+(b)
+
+Figure 10: (a) EMPO² learning curves with varying p, (b) with varying q
+Ablation on p (Memory Rollout Probability): We evaluated p ∈ {0.1, 0.25, 0.4, 0.7} on the
+chemistry-mix-paint-secondary-color task. When p = 0.1, performance degrades
+significantly because EMPO2 effectively collapses to GRPO, confirming the importance of memory.
+20
+
+Published as a conference paper at ICLR 2026
+
+Both p = 0.4 and p = 0.7 show faster initial learning due to more aggressive knowledge internalization, although p = 0.7 exhibits some fluctuations in the later stages. Our choice of p = 0.25
+provides stable convergence across diverse tasks.
+Ablation on q (Off-Policy Update Probability): We tested q ∈ {0.3, 0.5, 0.67, 0.85, 0.95} on
+the power-component task. Extreme values (q = 0.3 or q = 0.95) underperform: very large
+q overemphasizes distillation at the expense of training the memory policy, while small q slows
+knowledge internalization. Notably, q = 0.85 achieves faster early exploration than our default q =
+2/3. This aligns with our expectations, as the default hyperparameters prioritize overall robustness
+rather than task-specific optimization. Therefore, it is natural that more optimal settings exist for
+particular tasks, highlighting the robustness of EMPO² within a reasonable hyperparameter range.
+These results confirm that EMPO2 performs effectively across a broad hyperparameter range. Our
+default settings represent a well-balanced configuration that generalizes across multiple tasks without task-specific tuning, while the algorithm remains adaptable when further optimization is desired.
+F.2
+
+ROLE OF I NTRINSIC R EWARD
+
+Figure 11: EMPO2 learning curves with different intrinsic reward configurations on ScienceWorld
+chemistry-mix-paint-secondary-color task. We compare our full method against four
+variants: scaling the intrinsic reward coefficient by 0.5× and 2×, substituting it with a Random
+Network Distillation (RND) bonus, and its complete removal (w/o Intrinsic Reward).
+To further investigate the role of the intrinsic reward in our proposed algorithm, EMPO², we conduct
+an ablation study to examine its impact. We compare our full method against variants with different
+intrinsic reward coefficients (0.5× and 2×), a complete removal of the intrinsic reward, and its replacement with a standard exploration bonus based on Random Network Distillation (RND) (Burda
+et al., 2018a). For the RND baseline, we adopt the same hyperparameter configuration as in the
+original work. The results of these experiments are presented in Figure 11.
+Altering the intrinsic reward’s scale mainly affects the learning dynamics. A smaller coefficient
+(0.5×) leads to a smoother but slower convergence, whereas a larger one (2×) introduces minor instabilities. Notably, all variants using an intrinsic reward—including the RND-based one—converge
+to a similar level of final performance. However, removing the intrinsic reward entirely causes learning to plateau at a lower level, suggesting its necessity in preventing the policy from collapsing into
+homogeneous behaviors by encouraging sufficient exploration. Overall, these results indicate that
+EMPO² is robust to the specific mechanism and scale of the intrinsic reward, which primarily influence the stability and speed of learning rather than the final outcome.
+
+21
+
+Published as a conference paper at ICLR 2026
+
+G
+
+A NALYSIS OF C OMPUTATIONAL C OST
+
+G.1
+
+C OST A NALYSIS OF M EMORY-AUGMENTED ROLLOUTS
+
+We analyzed the additional computational overhead introduced by
+the memory mechanism in EMPO². During the rollout phase, this
+mechanism incurs extra costs related to tip generation, retrieval,
+and storage. For the analysis, we conducted experiments using the
+Qwen2.5-7B-Instruct model on 8 A100 40GB GPUs.
+As reported in Figure 12, the memory mechanism adds approximately 50.4 seconds per iteration, which accounts for about 19%
+of the total rollout time. Among these, tip generation and the subsequent storage of tips in memory account for a substantial por- Figure 12: A breakdown of the
+tion of the cost. Therefore, while we have verified that the mem- time each component spends durory mechanism substantially aids exploration and significantly im- ing the rollout of each training
+proves learning efficiency, it is more desirable to internalize these step.
+benefits within the model parameters themselves rather than relying on the mechanism continuously—both to enhance the model’s inherent capabilities and to improve overall efficiency.
+G.2
+
+C OST A NALYSIS OF T OTAL T RAINING T IME
+
+Compared to GRPO, the training time of EMPO2 is primarily influenced by two factors:
+• The memory component: As discussed in the previous section,
+the memory component accounts for 19% of the total rollout time.
+Since memory-augmented prompting is selected with probability
+(1 − p = 0.25) (as described in Section 4.2), this implies that, on
+average, 19% of the rollout time is incurred with a 25% probabilFigure 13: Time–performance
+ity.
+2
+and
+• The response length: In LLM-based RL training, rollout time curves for EMPO
+GRPO
+on
+ScienceWorld
+constitutes a major portion of the total cost. As the response power-component task.
+length increases, the rollout itself becomes slower, and the time
+required for log-probability computation and actor updates increases accordingly. In our experiments, we found that the response length of EMPO2 is generally
+longer than that of GRPO. We attribute this to the model spending more time reasoning and exploring when given the tips, which we believe enhances its exploration behavior and ultimately
+improves performance.
+To ensure a fair comparison with GRPO from a training-time perspective, we plot the performance
+in Figure 13 using training time on the x-axis. The results show that, even under this perspective,
+EMPO2 exhibits substantially higher efficiency than GRPO.
+
+H
+
+T HE U SE OF L ARGE L ANGUAGE M ODELS
+
+We used a LLM to polish the writing of the manuscript. The LLM was not employed in any aspect
+of research ideation, experimental design, or analysis.
+
+22
+
+

@@ -807,8 +807,10 @@ def rp_for(review, review_body: str) -> str:
 def review_one(row, src: Path):
     aid = row["arxiv_id"]
     abs_url = f"https://arxiv.org/abs/{aid}v1"
+    current_abs_url = f"https://arxiv.org/abs/{aid}"
     html_url = f"https://arxiv.org/html/{aid}v1"
     abs_status, abs_body = fetch(abs_url)
+    current_abs_status, current_abs_body = fetch(current_abs_url)
     html_status, html_body = fetch(html_url)
     pdf_url = f"https://arxiv.org/pdf/{aid}v1"
     body_dir = src / "exact-v1-bodies"
@@ -834,8 +836,13 @@ def review_one(row, src: Path):
             body_path = body_dir / f"{aid}v1.abs.html"
             body_path.write_bytes(abs_body)
             source_kind = "Abstract"
-    status_text = ((abs_body + html_body).decode("utf-8", errors="ignore") + pdf_text).lower()
-    withdrawn = bool(re.search(r"this paper has been withdrawn|withdrawn by|withdrawn submission", status_text))
+    # Withdrawal is a source-status fact, not a full-text keyword.  Searching
+    # the manuscript body creates false positives from references such as
+    # "withdrawn by ISO..." and from a historical revision that was later
+    # superseded.  The current unversioned arXiv abstract status is the
+    # authoritative whole-family signal; exact-v1 remains the evidence body.
+    current_status_text = current_abs_body.decode("utf-8", errors="ignore").lower()
+    withdrawn = bool(re.search(r"this paper has been withdrawn by", current_status_text))
     parser = SectionParser()
     if html_body:
         parser.feed(html_body.decode("utf-8", errors="ignore"))
@@ -910,6 +917,8 @@ def review_one(row, src: Path):
         "result": "complete" if accessible else "blocked",
         "withdrawn": withdrawn,
         "abs_status": abs_status,
+        "current_abs_status": current_abs_status,
+        "current_abs_url": current_abs_url,
         "html_status": html_status,
         "pdf_status": pdf_status,
         "source_kind": source_kind,

@@ -508,6 +508,14 @@ FlashAttention 不只是“更快的 attention”。它的核心思想是 IO-awa
 
 FlashAttention-2 进一步优化并行划分和 work partitioning；FlashAttention-3 则面向 Hopper 等新硬件利用异步数据搬运、WGMMA/TMA 和低精度能力。它们说明：kernel 优化不是只改数学公式，而是在适配硬件的 memory hierarchy 和执行单元。
 
+### Heterogeneous Batch Packing 必须同时守住 Attention 语义与 I/O Locality
+
+按最长序列 padding 成矩形 batch，在长度相近、batch 稳定时拥有简单 shape 与成熟 kernel；在线 serving 的 prefill/decode 长度持续变化后，padding 会让大量线程处理无效 token，而仅把请求压平又可能破坏 causal boundary、prefix reuse 和 KV locality。一个 execution-plan 分支先由 scheduler 冻结 request membership、token range、mask 与 KV generation，再把不同长度请求组合为负载更均衡的 execution units，并让 kernel 以 padding-free layout 执行 exact attention；grouping 可以利用 prefix/I/O locality，但不能跨 request 改写可见 token。
+
+packing 减少无效计算并改善 thread-block balance，却增加 metadata、重排、KV layout、group-search 与动态 shape 成本；长度均匀、batch 小或重排开销支配时，普通 padded/continuous batch 仍更稳妥。`arXiv:2602.06072v1` 的 exact-v1 只支持 §3 的 PackInfer grouping、lossless attention、I/O locality 与 prefill/decode integration，以及 §4.3 等作者实验，不证明任意模型、kernel、prefix 分布或 SLO 下都应使用同一 packing policy。
+
+<!-- source-family:SF-2026-ARXIV-2602-06072 -->
+
 ### Exact Top-K 可以复用时间相关性，但必须保留验证权
 
 每个 decode step 从头扫描并排序全部候选，是最稳妥的 exact Top-K；context 很长且稀疏 attention 的 indexer 已经足够快时，这个选择阶段本身会进入 critical path。相邻 decode step 的重要位置常有相关性，因此上一轮 Top-K 可以成为 proposal，但不能直接成为下一轮答案。
@@ -1290,6 +1298,8 @@ Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件�
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-06072`（Status: Experimental）：exact-v1 §3 支持 heterogeneous request packing、lossless attention 与 I/O-local execution，§4.3 提供作者 ablation，Appendix C 记录 solver overhead；不证明所有模型、序列分布、KV layout、hardware 或 production SLO 上的通用收益。https://arxiv.org/html/2602.06072v1
 
 - `SF-2026-ARXIV-2604-22312`（Status: Experimental）：exact-v1 支持以 previous-step Top-K、预索引统计、threshold counting 与最终验证组成 Blackwell sparse-decode 的 exact selection 分支；不支持跨硬件或低时间相关 workload 的普遍加速结论。https://arxiv.org/abs/2604.22312v1
 

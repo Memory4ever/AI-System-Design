@@ -224,6 +224,14 @@ Catalog/index owner 负责 schema version、refresh 与 deletion ordering；auth
 
 全量注入在工具少、context 富余或 discovery 服务不可用时仍是清晰 fallback。Selective discovery 用额外检索 latency、index lifecycle、embedding dependency 与 observability 换 context 容量；生产 claim 必须绑定 catalog size、query set、top-k、latency 分布、fallback rate 与 client revisions，不能把单个企业目录的 token reduction 写成 MCP 协议常数。
 
+### Tool Description 是可执行的 Discovery Interface
+
+工具少、名称唯一且操作者熟悉目录时，description 只是帮助文本；一旦模型根据自然语言 description 决定是否发现和调用工具，遗漏用途、参数约束、前置条件、side effect 或相近工具差异就会直接改变控制流。Catalog owner 应把 description、input schema、server/tool identity 与版本视为同一发布 artifact，并在 admission 时执行 smell lint、schema 一致性检查以及冻结 query set 上的 selection-effect test；retriever 只返回候选，authorization 与 executor 仍在 effect time 复核权限和精确 identity。
+
+更完整的描述能提高可发现性，却消耗 context、暴露能力信息，也可能被关键词堆砌或 prompt injection 操纵；lint 通过只说明已知缺陷未出现，不证明工具正确或安全。目录很小或描述质量不足时，可以回退 allowlisted full schema 与人工选择；任何 description 更新都应使 discovery evidence 失效并重测，而不能沿用旧命中率。
+
+<!-- SF-2026-ARXIV-2602-18914 -->
+
 ### 从单工具扫描到组合级 Admission
 
 逐个检查工具描述或在单一工具内扫描明文 payload，在攻击局限于单点污染时仍然合理。新的约束是恶意信息可以拆成 threshold secret shares，分别藏在多个看似无害的工具描述中，只在特定组合、trigger 或 update 后重构；此时单工具结论不能代表组合安全。MCP 控制面因此要持有 tool-set identity、share/trigger 组合风险、server/update version 与 effect-time authorization，并把 group-level admission 置于工具调用之前。论文只在四类多工具场景、主流 LLM 与两个 MCP client 上报告平均攻击成功率超过 90%，不证明任意 client/trigger 都可攻破，也不证明组合防御不可能。组合状态未知或更新后证据失效时应 deny/quarantine，并交给独立 reference monitor 逐次授权；原有单工具扫描仍作为第一层共存。
@@ -295,6 +303,8 @@ MCP 把工具和资源发现标准化后，新的压力从“能否连接”转�
 MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用外部能力。它标准化接口，不授予信任。最后一章讨论平台如何在这些连接之上治理完整 Agent lifecycle。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-18914`（Status: Experimental）：exact-v1 的 §3、§3.1～3.4 从文献与公开 server metadata 构造 description-smell taxonomy，§4 描述观察研究，§5.1～5.2 测试 component contribution 与 compliant descriptions，§7.2～7.3 明确限制与 validity threats；结果不证明 taxonomy 完备、任意模型/client 的因果收益或 description 可替代授权。https://arxiv.org/html/2602.18914v1
 
 本章区分仍广泛部署的 `2025-11-25` session lifecycle 与 `2026-07-28` 最新稳定
 request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet adoption 仍作为

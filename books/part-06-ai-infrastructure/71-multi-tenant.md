@@ -130,6 +130,14 @@ external identity
 
 每个共享组件都需要 tenant-aware limits、backpressure 和 observability，否则 GPU quota 正确仍会出现跨租户故障。
 
+### Agent Tool Call 需要可传播的 OS Resource Domain
+
+只在 pod 或 agent process 层设置 quota，在每个 agent 生命周期短、工具单一且负载可预测时足够；一个 agent 并发调用 shell、browser、compiler 或数据处理工具后，CPU、memory 与 I/O 消耗属于不同 effect，却被聚合进同一容器，平台无法把 noisy neighbor 归因到具体 tool call。执行控制面应把 `(tenant, agent run, tool call, attempt)` 传播为 OS resource domain，由 cgroup/eBPF 等机制施加和观测有界资源；agent 只能提出工具调用，可信 runtime 才拥有 domain 创建、限额与回收。
+
+细粒度隔离提高归因与自适应控制，却增加 hook/telemetry 开销、policy oscillation、初始化尖峰、镜像下载归属和 retry 累积问题；工具极短或 OS primitive 不完整时，per-process/pod limit 仍是可验证 fallback。`arXiv:2602.09345v1` 的 exact-v1 只支持 AgentCgroup 的 per-tool resource domain、eBPF 控制/遥测与作者 CPU/memory prototype，不证明 GPU、网络、所有工具或生产多租户安全均已闭合。
+
+<!-- source-family:SF-2026-ARXIV-2602-09345 -->
+
 ## 本章在知识树中的位置
 
 本章把 identity、queue、cost 与 evidence 组合成租户边界。下一章进一步按威胁模型检查数据、模型、runtime、API、Prompt 和工具供应链，说明 tenancy 是 security 的一部分而非全部。
@@ -154,6 +162,8 @@ external identity
 Multi-tenancy 要让同一个 tenant identity 穿过 API、workload、data、GPU、serving 与 evidence。Namespace 是起点，不是终点。下一章把这些边界放入完整 security threat model。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-09345`（Status: Experimental）：exact-v1 支持 AgentCgroup 的 tool-call-level resource domain、eBPF control/telemetry 与自适应 policy prototype；证据主要覆盖 CPU/memory，并未闭合大镜像初始化、retry accumulation、GPU/network control 或生产隔离。https://arxiv.org/html/2602.09345v1
 
 本章连接第 62 章 Gateway identity、第 63～65 章 queue、第 70 章 attribution，并为第 72 章 least privilege 与 supply-chain controls 提供资产/主体边界。
 

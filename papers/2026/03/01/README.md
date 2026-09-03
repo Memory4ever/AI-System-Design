@@ -8,9 +8,12 @@
 
 **Contract:** V2.1 Historical Daily independent Full Replay；既有 Weekly 未参与 discovery、分母、评分、Review、Books 判断或漏项校准；Weekly dependency=0。
 
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed；fresh-context Coverage / Evidence / Selection / Books Semantic Audit 与必要的 post-write audit 均已闭合。
+**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open。2026-09-03 fresh-context 反证审计已重开；当前机器结构和既有 retained Review 仍可复用，但 denominator completeness 尚未按“不得抽样、逐项判断”合同重新验收。
+
 
 ## Executive Summary
+
+> **2026-09-03 Semantic Reopen：** 旧 `Complete` 声明已被 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 取代。在 `MAR26-FC-001/MAR26-FC-002/MAR26-FC-003` 与 `MAR26-FC-004` 关闭前，本日报不得恢复 `Complete`；validator 通过只表示机器接口自洽。
 
 窗口内 raw identities=0，完成 title+abstract semantic screening=0/0；冻结 Candidate Denominator=0，pre-denominator closures=0。exact-v1 Review=0/0，withdrawn=0，blocked=0；Books Integrate proposal=0。
 
@@ -31,12 +34,12 @@
 | Baseline Report | — |
 | Changed Source IDs | — |
 | Previous Denominator ID | — |
-| Denominator ID | sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 |
+| Denominator ID | sha256:3680e4407ac2ea4e1a613d1bca01c202daa353fa9d4d6c6489bfad007b5f0662 |
 | Denominator Frozen At | 2026-09-02T08:53:37Z |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
+| Completion Status | In Progress |
+| Coverage Gate | Open |
+| Evidence Gate | Open |
+| Books Gate | Open |
 
 ### Source Coverage Receipt
 
@@ -94,10 +97,10 @@ None — no candidate passed denominator admission.
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| SA-20260301-COVERAGE | fresh-context:march-lane-b-reviewer | coverage | coverage:SRC-ARXIV:20260301 | — | accepted: strict-window raw inventory、逐项 screening、withdrawn closure 与 weekly_dependency=0 已复核 | passed |
+| SA-20260301-COVERAGE | fresh-context:march-lane-b-reviewer | coverage | coverage:SRC-ARXIV:20260301 | MAR26-FC-001/MAR26-FC-002/MAR26-FC-003 | pending: full-row fresh-context false-positive/false-negative replay; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
 | SA-20260301-EVIDENCE | fresh-context:march-lane-b-reviewer | evidence | validator:review-completion-v1 | — | accepted: retained family 均完成 exact-v1 review，blocked/unverified/disputed=0 | passed |
-| SA-20260301-SELECTION | fresh-context:march-lane-b-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1 | — | accepted: fresh-context false-positive / false-negative 与 Deep Analysis selection 已复核 | passed |
-| SA-20260301-BOOKS | fresh-context:march-lane-b-reviewer | books | validator:books-comparison-v1 | — | accepted: 所有 Books disposition 已复核，本日无需写回 | passed |
+| SA-20260301-SELECTION | fresh-context:march-lane-b-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1 | MAR26-FC-004 | pending: recompute after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
+| SA-20260301-BOOKS | fresh-context:march-lane-b-reviewer | books | validator:books-comparison-v1 | MAR26-FC-004 | pending: recheck disposition after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
 
 ## 8. Ignored Noise
 
@@ -105,7 +108,7 @@ None — no candidate passed denominator admission.
 
 ## 9. Recommended Action
 
-本日所有候选均已获得最终 disposition；没有需要写入 Books 的长期机制，后续仅在 primary revision 或新反证出现时重开。
+当前 retained Review 可复用，但 denominator 的 full-row fresh-context 反证发现 false-negative；按 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 重做全量语义复核后，再重算 Selection 与 Books disposition。
 
 ## 10. Repository Changes
 
@@ -115,7 +118,7 @@ None — no candidate passed denominator admission.
 
 ## 11. Open Questions
 
-- 普通 Gate finding=0；blocked / unverified / disputed=0。
+- 未解决语义 finding=4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）；blocked / unverified / disputed 仍为 0。
 - 论文自身未证明边界保留在各 Source Review 的 Claim Boundary 中；它们不是本次流程 pending。
 
 ## 12. Sources
@@ -124,8 +127,8 @@ None — no candidate passed denominator admission.
 
 ## 13. Final Status
 
-- Completion Status: `Complete`
-- Coverage: `Closed`
-- Evidence: `Passed`
-- Books: `Passed`
-- unresolved findings: 0
+- Completion Status: `In Progress`
+- Coverage: `Open`
+- Evidence: `Open`
+- Books: `Open`
+- unresolved findings: 4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）

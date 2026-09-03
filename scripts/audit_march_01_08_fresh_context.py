@@ -291,10 +291,13 @@ def audited_ledger(day: int) -> tuple[dict, dict]:
                 row.pop(key, None)
         rows.append(row)
     retained = [r for r in rows if r["screening_decision"] == "retained"]
-    digest = hashlib.sha256("\n".join(sorted(r["arxiv_id"] for r in retained)).encode()).hexdigest()
+    report_date = f"2026-03-{day:02d}"
+    digest = hashlib.sha256(
+        (report_date + "\n" + "\n".join(sorted(r["arxiv_id"] for r in retained))).encode()
+    ).hexdigest()
     author_shape = {
         "schema": "screening-ledger-v2.1-fresh-context",
-        "report_date": f"2026-03-{day:02d}", "registered_identities": len(rows), "full_semantic_screened": len(rows),
+        "report_date": report_date, "registered_identities": len(rows), "full_semantic_screened": len(rows),
         "candidate_denominator": len(retained), "pre_denominator_closed": len(rows) - len(retained),
         "denominator_id": f"sha256:{digest}", "fresh_context_false_positive_false_negative_audit": "passed",
         "identities": rows,

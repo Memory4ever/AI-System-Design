@@ -311,7 +311,7 @@ def existing_mechanism_line(candidate: Candidate, target: Path) -> int:
     return line
 
 
-def parse_candidates(text: str) -> list[Candidate]:
+def parse_candidates(text: str, *, require_review_claim: bool = True) -> list[Candidate]:
     titles: dict[str, tuple[str, str]] = {}
     pattern = re.compile(
         r"<!-- review:(SF-[^:]+):start -->\n#### ([^\n]+)\n\n"
@@ -333,7 +333,10 @@ def parse_candidates(text: str) -> list[Candidate]:
         if not (in_ledger and line.startswith("| SF-")):
             continue
         columns = [cell.strip() for cell in line.strip("|").split("|")]
-        title, claim = titles[columns[0]]
+        if require_review_claim:
+            title, claim = titles[columns[0]]
+        else:
+            title, claim = titles.get(columns[0], ("", ""))
         candidates.append(Candidate(columns, title, claim))
     return candidates
 
@@ -354,7 +357,11 @@ def books_decision(candidate: Candidate, node_paths: dict[str, Path]) -> str:
 
 
 def update_source_review_dispositions(
-    text: str, candidates: list[Candidate], decisions: dict[str, str]
+    text: str,
+    candidates: list[Candidate],
+    decisions: dict[str, str],
+    *,
+    require_line: bool = True,
 ) -> str:
     """Keep each human-readable Source Review aligned with its ledger truth."""
     for candidate in candidates:
@@ -372,10 +379,27 @@ def update_source_review_dispositions(
             block,
             count=1,
         )
-        if count != 1:
+        if count != 1 and require_line:
             raise ValueError(f"missing disposition line in {candidate.family}")
+        if count == 0:
+            continue
         text = text[: match.start()] + updated + text[match.end() :]
     return text
+
+
+def repair_consistency_only(path: Path) -> None:
+    """Synchronize rendered dispositions and provenance without changing decisions."""
+    text = path.read_text()
+    candidates = parse_candidates(text, require_review_claim=False)
+    decisions = {candidate.family: candidate.columns[19] for candidate in candidates}
+    text = update_source_review_dispositions(
+        text,
+        candidates,
+        decisions,
+        require_line=False,
+    )
+    text = refresh_review_provenance(text, candidates)
+    path.write_text(text)
 
 
 def _canonical_multi(value: str) -> str:
@@ -429,6 +453,11 @@ def refresh_review_provenance(text: str, candidates: list[Candidate]) -> str:
                 columns[3].strip("`"),
                 _canonical_multi(columns[4]),
                 columns[2],
+                *(
+                    (f"review-override:{candidate.columns[13]}",)
+                    if candidate.columns[13] not in {"", "none"}
+                    else ()
+                ),
                 _canonical_multi(columns[5]),
                 _canonical_multi(columns[6]),
                 _canonical_multi(columns[7]),
@@ -841,11 +870,20 @@ def main() -> None:
         action="store_true",
         help="record the independent fresh-context PASS after it has occurred",
     )
+    parser.add_argument(
+        "--repair-consistency-only",
+        action="store_true",
+        help="synchronize explicit Source Review dispositions and RP hashes only",
+    )
     args = parser.parse_args()
     node_paths, ordered_nodes = roadmap_nodes()
     report_root = ROOT / f"papers/2026/{args.month:02d}"
     for day in range(args.start, args.end + 1):
         path = report_root / f"{day:02d}" / "README.md"
+        if args.repair_consistency_only:
+            repair_consistency_only(path)
+            print(path.relative_to(ROOT))
+            continue
         update_report(path, args.month, day, node_paths, ordered_nodes, args.finalize_audits)
         print(path.relative_to(ROOT))
 

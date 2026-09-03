@@ -335,6 +335,14 @@ Cancellation 或 failure 可能发生在任一状态。Source 不能在 destinat
 
 跨 worker correctness 应验证 model revision、adapter、KV dtype/layout、block size、position 与 parallel mapping，而不仅是 checksum。
 
+### 多轮交互把 Prefill 重新变成可路由的增量任务
+
+初始 prompt 固定进入 Prefill pool、后续 Decode 固定留在 Decode worker，在单轮请求或历史短时拥有清楚的 role boundary；多轮 Agent session 中，Decode worker 已持有历史 KV，而每一轮新增 prompt 又需要少量 Prefill，强制远端 Prefill 会重复搬运 history，全部留本地则可能让 Decode queue 被 Prefill 干扰。session scheduler 可以把每次 initial/incremental Prefill 独立路由：根据预计 TTFT、Decode interference 与 KV transfer cost 选择本地 Decode worker 或远端 Prefill worker；远端路径只有被选中时才 lazy-read 历史 KV，并在有界 lookahead 内重排队列，超过 starvation bound 必须执行。
+
+session binding owner 继续拥有 KV 与 conversation generation，router 只拥有本轮 Prefill placement，destination completion 后才能推进同一 session。动态路由改善多轮复用，却增加离线 profile 漂移、local interference、remote transfer、lookahead fairness 与 worker failure state；短 session、负载稳定或 profile 不可信时，固定 PD 路由仍更易验证。`arXiv:2602.14516v1` 的 exact-v1 只支持 AMPD 披露的本地/远端决策、lazy KV read、bounded queue reordering 和作者配置结果，不证明任意 Agent trace、topology、P:D ratio 或 SLO 下的通用最优性。
+
+<!-- source-family:SF-2026-ARXIV-2602-14516 -->
+
 ### 单一路径为什么会在高复用 Agent Workload 下失衡
 
 最初的 PD 数据面通常把所有 KV movement 都交给同一条路径：Prefill miss 时从存储读取 prefix，Prefill
@@ -438,6 +446,8 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-14516`（Status: Experimental）：exact-v1 支持 AMPD 的 session-bound KV ownership、per-turn local/remote Prefill routing、lazy history-KV read 与 bounded-lookahead queue reordering；证据限于作者 workload/profile/拓扑，不证明跨系统最优路由或生产 failure/fairness。https://arxiv.org/html/2602.14516v1
 
 - `SF-2026-ARXIV-2606-22541` — primary `arXiv:2606.22541v1`；Method=`arXiv:2606.22541v1 §3 ASAP Design`；Evaluation=`arXiv:2606.22541v1 §5 Evaluation`；Non-proof=`arXiv:2606.22541v1 §6 Discussion and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript describes the PyTorch 2.1/CANN 8.3 implementation but this review did not use a stable public artifact locator`。
 

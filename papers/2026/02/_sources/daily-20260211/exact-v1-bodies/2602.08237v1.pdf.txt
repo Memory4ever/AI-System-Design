@@ -1,0 +1,1414 @@
+Preprint.
+
+Document Reconstruction Unlocks Scalable Long-Context
+RLVR
+Yao Xiao1,2 , Lei Wang1 , Yue Deng1 , Guanzheng Chen1 , Ziqi Jin1 ,
+Jung-jae Kim3 , Xiaoli Li2 , Roy Ka-wei Lee2 , Lidong Bing1
+1 Infinity Lab, MiroMind AI 2 SUTD
+3 Institute for Infocomm Research, A*Star, Singapore
+
+Reinforcement Learning with Verifiable Rewards (RLVR) has become a
+prominent paradigm to enhance the capabilities (i.e. long-context) of Large
+Language Models (LLMs). However, it often relies on gold-standard answers or explicit evaluation rubrics provided by powerful teacher models
+or human experts, which are costly and time-consuming. In this work,
+we investigate unsupervised approaches to enhance the long-context capabilities of LLMs, eliminating the need for heavy human annotations or
+teacher models’ supervision. Specifically, we first replace a few paragraphs
+with special placeholders in a long document. LLMs are trained through
+reinforcement learning to reconstruct the document by correctly identifying
+and sequencing missing paragraphs from a set of candidate options. This
+training paradigm enables the model to capture global narrative coherence, significantly boosting long-context performance. We validate the
+effectiveness of our method on two widely used benchmarks, RULER and
+LongBench v2. While acquiring noticeable gains on RULER, it can also
+achieve a reasonable improvement on LongBench v2 without any manually curated long-context QA data. Furthermore, we conduct extensive
+ablation studies to analyze the impact of reward design, data curation
+strategies, training schemes, and data scaling effects on model performance.
+We publicly release our code, data, and models1 .
+
+1
+
+Introduction
+
+1 https://github.com/XYaoooo/reconstruction long
+
+1
+
+Score
+
+Reinforcement Learning with Verifiable Rewards (RLVR) has recently achieved the
+75
+34
+RULER
+LongBench
+state-of-the-art in Large Language Model
+Base
+Base
+Ours
+Ours
+70
+(LLM) reasoning (Kumar et al., 2025; Yu
+31
+et al., 2025; Yeo et al., 2025; Zeng et al., 2025a;
+65
+Liu et al., 2025; Anthropic, PBC, 2025). Using ground-truth feedback to guide gener28
+60
+ation, RLVR enables models like DeepSeekR1 (Guo et al., 2025) to navigate complex
+55
+25
+multi-step problem-solving paths in doQwen2.5-7B LLaMA-3.1-8B
+Qwen2.5-7B LLaMA-3.1-8B
+mains such as mathematics and programming with unprecedented precision (Yang Figure 1: We report the average score of
+et al., 2025a). However, as LLMs evolve RULER and overall score of LongBench v2
+into agents that must interact with expan- for Qwen2.5-7B-Instruct-1M and LLaMA-3.1sive real-world datasets, the challenge shifts 8B-Instruct.
+from local reasoning to global context processing (Team et al., 2025b;c; Prabhakar et al., 2025). Here, a significant gap remains: models
+that excel at step-by-step logic reasoning often struggle to maintain coherence when retrieving and synthesizing information across tens of thousands of tokens (Wu et al., 2025b;
+Score
+
+arXiv:2602.08237v1 [cs.CL] 9 Feb 2026
+
+Abstract
+
+Preprint.
+
+Zhuang et al., 2025; Wu et al., 2025c; Bai et al., 2025b). This suggests that reasoning gains
+do not necessarily scale with context length, leaving a gap between reasoning capacity and
+long-context understanding.
+The pursuit of extending the context window has thus become a central objective in developing frontier LLMs (Zhu et al., 2024; An et al., 2024; Peng et al., 2024; Gao et al., 2025; Lu et al.,
+2025; Yang et al., 2025b; Wan et al., 2025; Xu et al., 2026). From analyzing massive code bases
+to distilling insights from an entire document, the ability to process and reason over long
+sequences is essential for practical applications. However, as the context length increases,
+the difficulty of maintaining global coherence and performing precise retrieval increases
+exponentially. Models frequently suffer from the well-documented “lost in the middle”
+phenomenon (Liu et al., 2024), where information in the center of a long prompt is ignored,
+or they struggle to maintain the logical consistency of a narrative over tokens (Hsieh et al.,
+2024b;a; Du et al., 2025). Although RLVR offers a powerful framework for LLMs to refine
+their long-range dependency handling, its application is currently restricted by a heavy
+reliance on external supervision.
+Recent RLVR approaches (Wang et al., 2025) to enhance the long-context capability of LLMs
+are constrained by the availability of gold-standard answers or evaluation rubrics, which
+are typically provided by expensive human experts and frontier teacher models (often
+close-source) (Chen et al., 2025a; Zhang et al., 2025; Huang et al., 2025). This dependency
+creates a significant scalability bottleneck: while the need for long-context understanding
+is universal, question-answering pairs from human annotations required for training are
+prohibitively expensive and difficult to generate at the scale needed for reinforcement
+learning. Furthermore, relying on teacher models can introduce biases or limit the potential
+of student models to the capabilities of the supervisor (Kim et al., 2025; Cheng & Amiri,
+2025). To unlock the next level of long-context ability of LLMs, we explore a training
+mechanism that can derive objective, verifiable rewards directly from the data itself in an
+unsupervised manner.
+In this work, we introduce a fully unsupervised RLVR framework that bypasses the need
+for costly human annotations or rubrics from teacher models, enabling a more scalable
+approach to long-context training. We hypothesize that long documents possess an inherent
+structure, specifically their narrative flow and logical sequence, which contains valuable
+internal signals. The signals can act as a natural and verifiable reward for training model
+through RLVR. We formalize this through a document reconstruction task. We first mask a
+few random paragraphs within a long document and require the LLM to correctly identify
+and sequence these missing segments from a shuffled pool of candidates. Since the original
+documents provide the ground truth, the resulting reward enjoys the desirable property
+of being both verifiable and fully automated. This reconstruction training mechanism
+encourages LLMs to move beyond surface-level pattern matching and instead develop a
+deeper, more structural understanding of the global context (Yang et al., 2019).
+We evaluate our method on two of the most rigorous benchmarks in the field: RULER (Hsieh
+et al., 2024a) and LongBench v2 (Bai et al., 2025a). Our empirical results demonstrate that
+this unsupervised paradigm yields substantial gains on RULER and moderate improvement
+performance on LongBench v2, as shown in Figure 1. These findings suggest that the underlying long-range structural integrity of documents provides a valuable training paradigm,
+offering a scalable path toward more capable long-context LLMs. Our contributions are
+summarized as follows:
+• We propose an unsupervised RLVR framework based on document reconstruction
+to improve the long-context capabilities of LLMs, eliminating the need for human
+annotations or teacher model supervision.
+• We formulate document reconstruction as a sequential selection problem with
+verifiable rewards, encouraging models to learn global narrative coherence and
+long-range structural dependencies.
+• We validate our approach through extensive experiments on RULER and LongBench v2, showing that it provides a scalable and effective alternative to supervised
+long-context training.
+2
+
+Preprint.
+
+Corrupted Document
+Original Document
+
+LLM Input
+
+RL Training
+Prediction
+
+Reward
+
+B A C
+
+1/3
+
+B C A
+
+1
+
+C A B
+
+0
+
+P1
+
+P1
+This is first paragraph
+
+This is first paragraph
+
+P2
+
+P2
+
+This is second paragraph
+
+<CHUNK_1>MISSING<\CHUNK_1>
+
+P3
+
+P3
+
+This is third paragraph
+
+B: This is the second…
+
+This is third paragraph
+
+P4
+
+P4
+
+This is fourth paragraph
+
+This is fourth paragraph
+
+P5
+
+P5
+<CHUNK_2>MISSING<\CHUNK_2>
+
+This is fifth paragraph
+
+C: This is the fifth...
+
+P6
+
+P6
+
+This is sixth paragraph
+
+This is sixth paragraph
+
+P7
+
+P7
+
+This is seventh paragraph
+
+Reward =
+Correct Options / Total Options
+
+<CHUNK_3>MISSING<\CHUNK_3>
+
+A: This is the seventh…
+
+Figure 2: Overview of the document reconstruction framework. Given a long document, we
+corrupt it by selecting some paragraphs and shuffle them as options. We train LLMs via
+RLVR to reconstruct the document by generating the option sequence by order.
+• We perform comprehensive ablation studies to examine the effects of reward formulation, data curation strategies, and training configurations, offering deeper insights
+into the characteristics of our method.
+
+2
+
+Background
+
+Group Relative Policy Optimization (GRPO). Group Relative Policy Optimization
+(GRPO) (Shao et al., 2024; Guo et al., 2025) is a policy-gradient method that removes the
+need for an explicit value function by estimating advantages through relative comparisons
+within a group of sampled responses. Given a query q, GRPO samples a group of trajectories
+{τ (i) }iG=1 ∼ πθold (· | q) and assigns each trajectory a scalar reward Rτ (i) . The advantage for
+each trajectory is computed by normalizing its reward against the group:
+
+
+Rτ (i) − mean { Rτ ( j) }G
+j =1
+
+
+A ( τ (i ) ) =
+G
+std { Rτ ( j) } j=1
+GRPO then optimizes a PPO-style clipped surrogate objective using these group-relative
+advantages, enabling stable policy updates without learning a separate value function.
+Using the normalized group-relative advantages, GRPO performs policy updates via a
+PPO-style clipped surrogate objective:
+h
+i
+LGRPO (θ ) = Eτ ∼πθ
+min rθ (τ ) A(τ ), clip(rθ (τ ), 1 − ϵ, 1 + ϵ) A(τ )
+old
+
+where
+rθ (τ ) =
+
+πθ (τ | q)
+.
+πθold (τ | q)
+
+This clipped objective constrains policy updates while leveraging group-normalized rewards
+as a low-variance advantage estimator, eliminating the need for a learned critic.
+
+3
+
+Method
+
+3.1
+
+Task Formulation: Document Reconstruction
+
+Our goal is to derive a verifiable reward from raw text without labels from human annotators.
+Given a long document consisting of n paragraphs, denoted as D = { p1 , p2 , . . . , pn }, we
+3
+
+Preprint.
+
+first select a subset of paragraphs to mask. The original document is then transformed into a
+corrupted context, where the masked paragraphs are replaced by placeholders marked with
+identifiers, denoted as <CHUNK i>MISSING</CHUNK i>. i means the i-th masked paragraph of
+the document.
+The model is presented with the context and a set of shuffled candidates labeled with options.
+LLMs are asked to reconstruct the original text by first reasoning and then generating a list
+of these options in the correct order. For example, if four paragraphs were selected, the
+model’s output would be a formatted list such as { B, A, D, C }. This formulation transforms
+the long context understanding problem into a sequential decision making task, where the
+model must utilize global narrative flow and logical consistency to determine the correct
+placement of each segment. The overview of our method can be found in Figure 2.
+3.2
+
+Reward Design
+
+Unlike open-ended generation, our reconstruction task provides an objective and verifiable
+answer. Since the original document provides ground truth ordering, we define a verifiable
+reward function that evaluates the model output against ground truth as follows:
+
+
+
+1,
+
+
+
+1 K
+Reward(o, g) =
+∑ i = 1 I [ o i = gi ] ,
+
+K
+
+
+
+0,
+
+if o = g,
+if ValidPermutation(o ) ∧ o ̸= g,
+
+(1)
+
+otherwise.
+
+In this formulation, K represents the total number of masked segments, while oi and gi
+denote the predicted and ground-truth options for the i-th placeholder, respectively. The
+function I[·] is an indicator function that yields 1 for a correct match and 0 otherwise. A
+critical component of this reward structure is the ValidPermutation(o ) condition. We define
+a predicted output as a valid permutation if and only if the set of options provided in the
+model’s response is identical to the set of ground-truth options. This constraint requires the
+model to correctly identify and utilize the complete pool of candidates, without omitting or
+duplicating any options (Wu et al., 2025a; Lu et al., 2026).
+This piecewise reward structure balances global accuracy with fine-grained feedback. A
+full reward of 1 is assigned when the reconstruction is exact (o = g). For outputs that are
+not perfectly ordered but remain structurally valid, defined as sequences whose predicted
+option set exactly matches the ground truth, we assign a partial reward proportional to the
+fraction of correctly placed segments. This design encourages the model to progressively
+refine its global structure even when full sequence accuracy is not achieved. In contrast, any
+output that violates the required format or constitutes an invalid permutation receives a
+reward of 0. The entire training signal is fully automated and does not depend on human
+annotations or external teacher models.
+3.3
+
+Curriculum through Complexity Scaling
+
+An appealing advantage of our framework is the ability to precisely calibrate the difficulty
+of training samples by adjusting the complexity of the reconstruction task. Our intuition is
+that larger K leads to more challenging samples. As K increases, the search space expands
+exponentially because the number of possible permutations for the candidate set is K!. By
+treating K as a tunable hyperparameter, we can implement a curriculum (Bengio et al., 2009)
+that allows the model to first master local coherence with fewer options before tackling
+the complex global structural dependencies required for extremely long contexts. This
+controllable difficulty (Zeng et al., 2025b; Wang et al., 2026a) ensures that the model can
+progressively build its long-context understanding capabilities.
+4
+
+Preprint.
+
+4
+
+Experimental Setup
+
+Data Curation We source our training documents from the corpus provided by Chen et al.
+(2025a), which covers three diverse domains: books, arXiv papers, and code. We curate a
+subset consisting of the 8,000 longest documents from the book domain, along with 3,000
+documents each from arXiv and code (total 14,000). We apply varying levels of difficulty
+to these documents by setting K ∈ {2, 4, 6, 8} with their corresponding number ratio being
+3 : 3 : 3 : 5, which we find useful in our preliminary experiment. The average token number
+of samples in the training set is 49,000. This multi-scale approach to the number of masked
+segments ensures that the training set provides a broad spectrum of structural challenges. In
+addition, we also curate 500 samples for validation set to better observe training dynamics.
+Training. We adopt the curriculum schedule (Bengio et al., 2009) to progressively train
+models by increasing K from 2 to 8. Our implementation is built on the Verl framework
+(Sheng et al., 2024). To optimize the training process, we employ Group Relative Policy
+Optimization (GRPO) (Shao et al., 2024). For RL training, we use the AdamW optimizer
+with a constant learning rate of 1e-6 and a 5-step linear warmup. During rollouts, we use
+a prompt batch size of 128 and sample 8 responses per prompt, with a maximum context
+length of 64K and a response length of 4096. Our reconstruction prompt can be found below.
+Reconstruction Prompt
+The following document contains missing segments marked as <C i>MISSING</C i>.
+Please reason about the logical and narrative structure of the document and select
+appropriate chunks one by one from the given options to reconstruct it.
+Then, output the label for each missing chunk by order in \boxed{} separated by
+commas.
+The document is as follows: {corrupted document}
+The options are: {options}
+
+Evaluation. Benchmarks. We evaluate all models on two challenging long-context QA
+benchmarks: (1) RULER (Hsieh et al., 2024a): A synthetic benchmark testing multi-hop
+reasoning over arbitrary context length. Specifically, we evaluate on four tasks of it (Variable
+Tracking, Code Writing and Execution, Few-shot Word Extraction, Question Answering). (2)
+LongBench v2 (Bai et al., 2025a): A realistic multi-choice QA benchmark on documents up
+to 128K tokens. We evaluate the lengths of 32K, 64K, and 128K. In our analysis, we primarily
+focus on RULER, as it provides a more comprehensive and diverse task results.
+Models and Baselines. We select LLaMA-3.1-8B-Instruct and Qwen2.5-7B-Instruct-1M
+as our backbone models, which also serve as our baseline. A discussion about continual
+pretraining on long documents is also presented in Appendix A.1.
+
+5
+
+Results and Analysis
+
+5.1
+
+Main Results
+
+We summarize the main results across different context lengths and backbone models in
+Figure 3. In addition, we also report the average on RULER and the overall score in Figure 1.
+On RULER, our method produces substantial improvements, with consistent gains as the
+context length increases from 32K to 128K. This trend indicates that our unsupervised reconstruction training effectively enhances the model’s ability to maintain global coherence and
+retrieve relevant information in long contexts. On LongBench v2, we also observe moderate
+improvements across most context lengths. And these gains are achieved without using any
+manually curated long-context QA data, highlighting the effectiveness of reconstruction
+training even for question answering. The improvements remain consistent across different
+5
+
+Preprint.
+
+80
+
+70
+65
+60
+
+32K
+
+64K
+
+30
+
+20
+
+128K
+
+Length
+
+32K
+
+64K
+
+128K
+
+Length
+
+(a) Qwen2.5-7B-Instruct-1M
+
+40
+
+RULER
+Base
+Ours
+
+75
+65
+55
+
+LongBench
+Base
+Ours
+
+35
+
+Score
+
+Score
+
+35
+
+25
+
+85
+
+30
+25
+
+45
+35
+
+LongBench
+Base
+Ours
+
+40
+
+Score
+
+75
+
+Score
+
+45
+
+RULER
+Base
+Ours
+
+32K
+
+64K
+
+Length
+
+20
+
+128K
+
+32K
+
+64K
+
+Length
+
+128K
+
+(b) LLaMA-3.1-8B-Instruct
+
+Figure 3: Performance comparison across different context lengths and models.
+backbone architectures, including Qwen2.5-7B-Instruct-1M and LLaMA-3.1-8B-Instruct,
+demonstrating that our method is not tied to a specific model family.
+Taken together, these results show that unsupervised document reconstruction via RLVR
+provides a scalable and effective mechanism for improving long-context capabilities. The
+method delivers strong gains on synthetic reasoning benchmarks and meaningful improvements on realistic QA tasks, all while eliminating the need for human annotations or
+teacher-model supervision. We also record the performance on our curated validation set
+during the training process in Appendix A.2. Detailed scores on RULER can be found in
+Appendix A.3.
+Dense vs. Sparse Reward
+
+In our main experiments, we employ a dense reward that
+provides partial credit for partially correct reconstructions. To better understand the role of reward shaping in
+document reconstruction, we compare this design with
+a sparse reward formulation, defined as
+(
+Reward(o, g) =
+
+1,
+
+if o = g,
+
+0,
+
+otherwise.
+
+75
+
+Base
+
+Sparse
+
+Dense
+
+70
+
+Score
+
+5.2
+
+65
+60
+
+(2)
+
+55
+
+Qwen2.5-7B
+
+LLaMA-3.1-8B
+
+This sparse reward assigns a non-zero signal only when
+Figure 4: Average scores of
+the predicted ordering exactly matches the ground truth,
+RULER. We compare perforproviding a stricter but less informative supervision sigmance of dense and sparse renal. As shown in Figure 4, sparse rewards obtain perwards.
+formance similar to dense rewards on LLaMA-3.1-8BInstruct. However, it causes significant performance degradation on Qwen2.5-7B-Instruct6
+
+Preprint.
+
+1M. We hypothesize that sparse rewards are more likely to cause training instability due to
+the sparsity of positive rewards in the training process.
+5.3
+
+Robustness to Option Mixture Ratios
+
+Score
+
+In our main experiments, we adopt the option mixture
+75
+ratio for K = 2, 4, 6, and 8 as 3 : 3 : 3 : 5, which assigns
+Base
+only a moderate portion of training samples to small
+3:3:3:5
+values of K (e.g., K=2). To further validate robustness,
+1:2:2:2
+70
+we conduct an ablation study by shifting more training
+samples toward larger K, using the ratio 1 : 2 : 2 : 2. In
+65
+Figure 5, empirical results demonstrate that our method
+maintains high performance across varying option length
+60
+distributions. For the Qwen2.5-7B-Instruct-1M model, the
+1 : 2 : 2 : 2 ratio yielded the highest score, surpassing
+55
+Qwen2.5-7B
+LLaMA-3.1-8B
+baseline. In the case of LLaMA-3.1-8B-Instruct model, the
+3 : 3 : 3 : 5 ratio proves most effective. These findings
+suggest that while specific ratios can offer marginal gains Figure 5: Average scores of
+on different model architecture, the overall framework RULER. We compare the perforremains robust. The consistency in performance across mance of different option length
+different difficulty blends confirms that the method does mixture ratios.
+not rely on a brittle or overly specific data composition to succeed.
+Longer Documents Bring Consistent Improvement
+
+During data curation of main experiment, we
+retain the longest 8,000, 3,000, and 3,000 documents from the book, arXiv, and code domains,
+respectively. In this experiment, we compare
+this document selection strategy against two
+alternative counterparts: shortest and random.
+The shortest counterpart selects the shortest documents while preserving the same domain ratios
+and total number of documents. The random
+counterpart samples documents randomly, keeping all other factors identical.
+
+75
+
+Base
+
+Short
+
+Random
+
+Long
+
+70
+
+Score
+
+5.4
+
+65
+60
+55
+
+Qwen2.5-7B
+
+LLaMA-3.1-8B
+
+As shown in Figure 6, although short-document Figure 6: We report the average score of
+training brings modest gains for LLaMA-3.1-8B- RULER
+Instruct, it does not exceed the baseline performance of Qwen2.5-7B-Instruct-1M. Moreover,
+random document sampling leads to consistent but limited improvements on Qwen2.5-7BInstruct-1M. In contrast, training on long documents leads to more overall improvements,
+suggesting the importance of longer contexts for the reconstruction task. In summary,
+these observations indicate that document length plays a critical role in enabling effective
+long-context understanding through reconstruction training.
+5.5
+
+More Documents, Better Performance
+
+Scaling training data is an important factor in understanding the effectiveness of reconstruction learning. In this part, we study the effect of training data scale on model performance
+by increasing the number of reconstruction training samples from 0 to 14,000. This setting
+allows us to examine how model performance evolves when we increase the number of
+reconstruction samples. For each data scale, we train models under identical optimization
+settings and evaluate them on RULER. When the data size is set to 0, the model corresponds
+to the original backbone without reconstruction training, serving as a baseline. We record
+the performance in Figure 7, model performance generally improves as the number of
+reconstruction training samples increases.
+7
+
+Preprint.
+
+Although performance may fluctuate slightly at smaller data 74
+scales, especially when the training set is limited, the overall 72
+trend is clearly positive as more data is introduced. In partic- 70
+ular, performance consistently increases when the data scale 68
+Qwen2.5-7B
+exceeds 4,000 samples, indicating that sufficient reconstruc- 66
+tion data is crucial for effectively enhancing long-context un- 68
+derstanding. These results suggest that reconstruction-based 65
+training scales well with data size and that increasing training 62
+data is an effective and stable way to improve model per- 59
+LLaMA-3.1-8B
+formance. Notably, we do not observe a clear performance 56 0
+2
+4
+8
+14
+#Data(K)
+plateau within the evaluated data range, suggesting that the
+model may continue to benefit from additional reconstruction
+training data. Significant performance gains can be achieved Figure 7: Average scores of
+on Qwen2.5-7B-Instruct-1M by scaling data to 3,0000, which RULER when we scale data
+from 0 to 14K.
+can be found in Appendix A.4.
+5.6
+
+Training Strategy: Shuffle or Not
+
+As mentioned in Section 3, we curate training data by progressively increasing the option
+length K from 2 to 8, following a curriculumstyle training strategy. Our intuition is that reconstruction tasks with larger K are substantially
+more challenging, and gradually exposing the
+model to harder samples can facilitate more stable optimization.
+
+Model
+
+Qwen
+
+LLaMA
+
+Base
+
+68.86
+
+58.76
+
+Shuffle
+True
+False
+
+69.82
+72.20
+
+65.00
+67.12
+
+Table 1: Effect of training strategy during
+To validate this design choice, we compare the reconstruction training on RULER.
+curriculum strategy with a shuffled training variant. As shown in Table 1, the curriculum-based strategy (shuffle is false) consistently outperforms shuffled training for both Qwen2.5-7B-Instruct-1M and LLaMA-3.1-8B-Instruct
+backbones. These results demonstrate that a curriculum of option length is an important
+component of our training framework.
+5.7
+
+Analysis of Option Length
+
+In this part, we study the influence of sample
+Model Qwen LLaMA
+difficulty on model performance. Intuitively, a
+sample with more candidate options is more
+Base
+68.86
+58.76
+challenging, as the model must search over a
+K=2
+64.79
+63.96
+larger permutation space and rely more heavily
+K=4
+65.83
+64.27
+on global contextual cues. Specifically, we ranK=6
+64.69
+64.19
+domly down-sample 5,000 documents from the
+K=8
+64.83
+63.53
+training corpus and create four distinct training
+sets, where each set is constructed using a fixed
+option length K ∈ {2, 4, 6, 8}, without mixing Table 2: Average performance of different
+different values of K within the same set. We K values on RULER.
+train an independent model for each curated training set, where each model is associated
+with a specific K.
+As shown in Table 2, we observe that model performance is relatively stable across different
+option lengths K. While increasing K substantially enlarges the permutation space and task
+difficulty, it does not lead to a significant degradation in downstream RULER performance
+for either backbone. This suggests that the reconstruction-based training objective encourages robust global structure understanding rather than overfitting to a specific difficulty
+level. Interestingly, intermediate option lengths (K = 4 and K = 6) slightly outperform both
+smaller and larger values of K, indicating a potential trade-off between task difficulty and
+learning efficiency. In addition, training of single K benefits weaker LLaMA-3.1-8B-Instruct,
+while degrades performance of stronger Qwen2.5-7B-Instruct-1M, suggesting different sen8
+
+Preprint.
+
+sitivity to task specialization across backbones. Qwen2.5-7B-Instruct-1M may be more likely
+to overfit to a single pattern of reconstruction. It also highlights the importance our data
+curation strategy in main experiment, which mixes training samples from various K.
+
+6
+
+Related Work
+
+Reinforcement Learning with Verifiable Rewards Reinforcement Learning with Verifiable Rewards provides an objective and scalable framework for improving the reasoning
+capabilities of large language models by supervising them with ground-truth answers (Lambert et al., 2025; Guo et al., 2025). This paradigm has proven particularly effective in domains
+with unambiguous correctness criteria, including mathematics and programming. Previous work shows that RLVR can elevate models to expert-level reasoning performance by
+encouraging the discovery of correct internal reasoning trajectories through outcome-only
+rewards (OpenAI et al., 2024; Kim et al., 2025; Huang & Yang, 2025; Mo et al., 2025; Wang
+et al., 2026b). Most existing RLVR studies focus on self-contained reasoning tasks, where
+the central challenge is to recover a valid trajectory (Yue et al., 2025). In these settings,
+emergent behaviors, such as self-reflection, have been identified as important contributors
+to performance gains (Gandhi et al., 2025). Recent reasoning-oriented models, including
+OpenAI’s o1 series and DeepSeek, have popularized RLVR-based training pipelines and
+reinforcement learning algorithms such as GRPO.
+Long-Context Training of LLMs Training large language models for long-context reasoning poses challenges that differ fundamentally from those addressed by standard reinforcement learning with verifiable rewards. The outcome reward provides limited guidance
+in long-context settings, where success depends on identifying and grounding relevant
+evidence from extensive context (Wan et al., 2025). Most existing approaches to long-context
+training rely on supervised fine-tuning with synthetic data rather than reinforcement learning (Li et al., 2024; Yen et al., 2025; Chen et al., 2025b). Prior work pads questions with
+unrelated passages, shuffles document order, or fills contexts with irrelevant text to artificially increase sequence length (Trivedi et al., 2023). However, synthetic-data construction
+often introduces superficial complexity and fails to produce high-quality and challenging
+examples, limiting the effectiveness of the resulting long-context capabilities. Despite these
+limitations, improving long-context reasoning has become increasingly important due to
+the rapid emergence of agent applications (Zhao et al., 2024; Team et al., 2025a;b; Prabhakar
+et al., 2025; Gandhi et al., 2026). Thus, developing scalable and principled training methods that move beyond synthetic context expansion and provide effective supervision for
+long-context training is becoming urgent for advancing large language models.
+
+7
+
+Conclusion
+
+In this work, we present an unsupervised reinforcement learning framework for improving
+the long-context capabilities of large language models through document reconstruction. By
+formulating reconstruction as a sequential decision-making problem with verifiable rewards
+derived directly from raw documents, our approach eliminates the need for manually
+curated long-context QA data or teacher-model supervision. This enables a scalable and
+principled alternative to existing long-context training paradigms.
+Extensive experiments on RULER and LongBench v2 demonstrate that reconstruction-based
+RLVR effectively enhances long-context performance across multiple backbone models and
+context lengths. Beyond empirical gains, our findings highlight document structure itself
+as a valuable and underexplored supervision signal for long-context learning. We hope
+that this work motivates further research into unsupervised and self-supervised training
+objectives that leverage intrinsic structure in raw data and contributes to the development
+of more capable and scalable long-context language models.
+9
+
+Preprint.
+
+8
+
+Limitations
+
+Despite its effectiveness, our approach has several limitations. Our method requires access
+to sufficiently long and well-structured documents, which may limit its applicability in
+domains where long-form data is scarce or noisy. In addition, we observe that the benefits
+of reconstruction training vary across backbone models. And models may have different
+requirements about document quality and length. Finally, while our method scales well
+within the evaluated data range, its behavior at substantially larger scales and with different
+model sizes remains an open area for future work.
+
+References
+Chenxin An, Fei Huang, Jun Zhang, Shansan Gong, Xipeng Qiu, Chang Zhou, and Lingpeng Kong. Training-free long-context scaling of large language models. In Forty-first
+International Conference on Machine Learning, 2024. URL https://openreview.net/forum?
+id=If4xW9vF7U.
+Anthropic, PBC. Claude. https://www.claude.ai, 2025. Accessed: 2025-10-01.
+Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng
+Xu, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench v2: Towards deeper
+understanding and reasoning on realistic long-context multitasks. In Wanxiang Che, Joyce
+Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (eds.), Proceedings of the 63rd
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp.
+3639–3664, Vienna, Austria, July 2025a. Association for Computational Linguistics. ISBN
+979-8-89176-251-0. doi: 10.18653/v1/2025.acl-long.183. URL https://aclanthology.org/
+2025.acl-long.183/.
+Yushi Bai, Jiajie Zhang, Xin Lv, Linzhi Zheng, Siqi Zhu, Lei Hou, Yuxiao Dong, Jie Tang,
+and Juanzi Li. Longwriter: Unleashing 10,000+ word generation from long context
+LLMs. In The Thirteenth International Conference on Learning Representations, 2025b. URL
+https://openreview.net/forum?id=kQ5s9Yh0WI.
+Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston. Curriculum learning.
+In International Conference on Machine Learning, 2009. URL https://api.semanticscholar.
+org/CorpusID:873046.
+Guanzheng Chen, Xin Li, Michael Shieh, and Lidong Bing. LongPO: Long context selfevolution of large language models through short-to-long preference optimization. In
+The Thirteenth International Conference on Learning Representations, 2025a. URL https:
+//openreview.net/forum?id=qTrEq31Shm.
+Hao Chen, Abdul Waheed, Xiang Li, Yidong Wang, Jindong Wang, Bhiksha Raj, and Marah I
+Abdin. On the diversity of synthetic data and its impact on training large language
+models, 2025b. URL https://openreview.net/forum?id=oqsQbn4XfT.
+Jiali Cheng and Hadi Amiri. Do students debias like teachers? on the distillability of bias
+mitigation methods. In ICML 2025 Workshop on Reliable and Responsible Foundation Models,
+2025. URL https://openreview.net/forum?id=LLnjLFeKBJ.
+Yufeng Du, Minyang Tian, Srikanth Ronanki, Subendhu Rongali, Sravan Babu Bodapati,
+Aram Galstyan, Azton Wells, Roy Schwartz, Eliu A Huerta, and Hao Peng. Context length
+alone hurts LLM performance despite perfect retrieval. In Christos Christodoulopoulos,
+Tanmoy Chakraborty, Carolyn Rose, and Violet Peng (eds.), Findings of the Association
+for Computational Linguistics: EMNLP 2025, pp. 23281–23298, Suzhou, China, November
+2025. Association for Computational Linguistics. ISBN 979-8-89176-335-7. doi: 10.18653/
+v1/2025.findings-emnlp.1264. URL https://aclanthology.org/2025.findings-emnlp.
+1264/.
+Kanishk Gandhi, Ayush Chakravarthy, Anikait Singh, Nathan Lile, and Noah D. Goodman. Cognitive behaviors that enable self-improving reasoners, or, four habits of highly
+effective stars, 2025. URL https://arxiv.org/abs/2503.01307.
+10
+
+Preprint.
+
+Kanishk Gandhi, Shivam Garg, Noah D. Goodman, and Dimitris Papailiopoulos. Endless
+terminals: Scaling rl environments for terminal agents, 2026. URL https://arxiv.org/
+abs/2601.16443.
+Tianyu Gao, Alexander Wettig, Howard Yen, and Danqi Chen. How to train long-context
+language models (effectively). In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and
+Mohammad Taher Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers), pp. 7376–7399, Vienna, Austria,
+July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi:
+10.18653/v1/2025.acl-long.366. URL https://aclanthology.org/2025.acl-long.366/.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu,
+Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin
+Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao
+Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chong Ruan, Damai Dai,
+Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao,
+Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Honghui Ding, Huazuo Gao, Hui
+Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jingchang Chen, Jingyang Yuan, Jinhao Tu, Junjie
+Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaichao
+You, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang
+Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang,
+Minghui Tang, Mingxu Zhou, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan
+Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge, Ruisong Zhang,
+Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou,
+Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan,
+S. S. Li, Shuang Zhou, Shaoqing Wu, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding
+Zeng, Wen Liu, Wenfeng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao,
+Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin
+Liu, Xin Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q.
+Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan
+Song, Xinyi Zhou, Xianzu Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang,
+Yanhong Xu, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan
+Shi, Yiliang Xiong, Ying He, Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu,
+Yongqiang Guo, Yuan Ou, Yuduan Wang, Yue Gong, Yuheng Zou, Yujia He, Yunfan Xiong,
+Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou, Y. X. Zhu, Yanping Huang, Yaohui
+Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying Tang, Yukun Zha, Yuting Yan, Z. Z. Ren,
+Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao,
+Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun Liu, Zilin Li, Ziwei Xie,
+Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, and Zhen Zhang.
+Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature, 645
+(8081):633–638, September 2025. ISSN 1476-4687. doi: 10.1038/s41586-025-09422-z. URL
+http://dx.doi.org/10.1038/s41586-025-09422-z.
+Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia,
+and Boris Ginsburg. RULER: What’s the real context size of your long-context language
+models? In First Conference on Language Modeling, 2024a. URL https://openreview.net/
+forum?id=kIoBbc76Sy.
+Cheng-Yu Hsieh, Yung-Sung Chuang, Chun-Liang Li, Zifeng Wang, Long Le, Abhishek
+Kumar, James Glass, Alexander Ratner, Chen-Yu Lee, Ranjay Krishna, and Tomas Pfister.
+Found in the middle: Calibrating positional attention bias improves long context utilization. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.), Findings of the Association
+for Computational Linguistics: ACL 2024, pp. 14982–14995, Bangkok, Thailand, August
+2024b. Association for Computational Linguistics. doi: 10.18653/v1/2024.findings-acl.890.
+URL https://aclanthology.org/2024.findings-acl.890/.
+Yichen Huang and Lin F. Yang. Winning gold at imo 2025 with a model-agnostic verificationand-refinement pipeline, 2025. URL https://arxiv.org/abs/2507.15855.
+Zenan Huang, Yihong Zhuang, Guoshan Lu, Zeyu Qin, Haokai Xu, Tianyu Zhao, Ru Peng,
+Jiaqi Hu, Zhanming Shen, Xiaomeng Hu, Xijun Gu, Peiyi Tu, Jiaxin Liu, Wenyu Chen,
+11
+
+Preprint.
+
+Yuzhuo Fu, Zhiting Fan, Yanmei Gu, Yuanyuan Wang, Zhengkai Yang, Jianguo Li, and
+Junbo Zhao. Reinforcement learning with rubric anchors, 2025. URL https://arxiv.org/
+abs/2508.12790.
+Minwu Kim, Anubhav Shrestha, Safal Shrestha, Aadim Nepal, and Keith W. Ross. RLVR
+vs. distillation: Understanding accuracy and capability in LLM mathematical reasoning.
+In The 5th Workshop on Mathematical Reasoning and AI at NeurIPS 2025, 2025. URL https:
+//openreview.net/forum?id=DH9hjro5eu.
+Aviral Kumar, Vincent Zhuang, Rishabh Agarwal, Yi Su, John D Co-Reyes, Avi Singh, Kate
+Baumli, Shariq Iqbal, Colton Bishop, Rebecca Roelofs, Lei M Zhang, Kay McKinney, Disha
+Shrivastava, Cosmin Paduraru, George Tucker, Doina Precup, Feryal Behbahani, and
+Aleksandra Faust. Training language models to self-correct via reinforcement learning.
+In The Thirteenth International Conference on Learning Representations, 2025. URL https:
+//openreview.net/forum?id=CjwERcAU7w.
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze
+Brahman, Lester James V. Miranda, Alisa Liu, Nouha Dziri, Shane Lyu, Yuling Gu,
+Saumya Malik, Victoria Graf, Jena D. Hwang, Jiangjiang Yang, Ronan Le Bras, Oyvind
+Tafjord, Chris Wilhelm, Luca Soldaini, Noah A. Smith, Yizhong Wang, Pradeep Dasigi,
+and Hannaneh Hajishirzi. Tulu 3: Pushing frontiers in open language model post-training,
+2025. URL https://arxiv.org/abs/2411.15124.
+Yanyang Li, Shuo Liang, Michael Lyu, and Liwei Wang. Making long-context language
+models better multi-hop reasoners. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.), Proceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), pp. 2462–2475, Bangkok, Thailand, August 2024.
+Association for Computational Linguistics. doi: 10.18653/v1/2024.acl-long.135. URL
+https://aclanthology.org/2024.acl-long.135/.
+Mingjie Liu, Shizhe Diao, Ximing Lu, Jian Hu, Xin Dong, Yejin Choi, Jan Kautz, and Yi Dong.
+ProRL: Prolonged reinforcement learning expands reasoning boundaries in large language
+models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+2025. URL https://openreview.net/forum?id=YPsJha5HXQ.
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni,
+and Percy Liang. Lost in the middle: How language models use long contexts. Transactions
+of the Association for Computational Linguistics, 12:157–173, 2024. doi: 10.1162/tacl a 00638.
+URL https://aclanthology.org/2024.tacl-1.9/.
+Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu,
+Weiran He, Enming Yuan, Yuzhi Wang, Zhiqi Huang, Huan Yuan, Suting Xu, Xinran Xu,
+Guokun Lai, Yanru Chen, Huabin Zheng, Junjie Yan, Jianlin Su, Yuxin Wu, Neo Y. Zhang,
+Zhilin Yang, Xinyu Zhou, Mingxing Zhang, and Jiezhong Qiu. Moba: Mixture of block
+attention for long-context llms, 2025. URL https://arxiv.org/abs/2502.13189.
+Ximing Lu, David Acuna, Jaehun Jung, Jian Hu, Di Zhang, Shizhe Diao, Yunheng Zou,
+Shaokun Zhang, Brandon Cui, Mingjie Liu, Hyunwoo Kim, Prithviraj Ammanabrolu, Jan
+Kautz, Yi Dong, and Yejin Choi. Golden goose: A simple trick to synthesize unlimited rlvr
+tasks from unverifiable internet text, 2026. URL https://arxiv.org/abs/2601.22975.
+Zhanfeng Mo, Xingxuan Li, Yuntao Chen, and Lidong Bing. Multi-agent tool-integrated
+policy optimization, 2025. URL https://arxiv.org/abs/2510.04678.
+OpenAI, :, Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky,
+Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, Alex Iftimie, Alex
+Karpenko, Alex Tachard Passos, Alexander Neitz, Alexander Prokofiev, Alexander Wei,
+Allison Tam, Ally Bennett, Ananya Kumar, Andre Saraiva, Andrea Vallone, Andrew
+Duberstein, Andrew Kondrich, Andrey Mishchenko, Andy Applebaum, Angela Jiang,
+Ashvin Nair, Barret Zoph, Behrooz Ghorbani, Ben Rossen, Benjamin Sokolowsky, Boaz
+Barak, Bob McGrew, Borys Minaiev, Botao Hao, Bowen Baker, Brandon Houghton, Brandon McKinzie, Brydon Eastman, Camillo Lugaresi, Cary Bassin, Cary Hudson, Chak Ming
+12
+
+Preprint.
+
+Li, Charles de Bourcy, Chelsea Voss, Chen Shen, Chong Zhang, Chris Koch, Chris Orsinger,
+Christopher Hesse, Claudia Fischer, Clive Chan, Dan Roberts, Daniel Kappler, Daniel
+Levy, Daniel Selsam, David Dohan, David Farhi, David Mely, David Robinson, Dimitris
+Tsipras, Doug Li, Dragos Oprica, Eben Freeman, Eddie Zhang, Edmund Wong, Elizabeth Proehl, Enoch Cheung, Eric Mitchell, Eric Wallace, Erik Ritter, Evan Mays, Fan
+Wang, Felipe Petroski Such, Filippo Raso, Florencia Leoni, Foivos Tsimpourlas, Francis Song, Fred von Lohmann, Freddie Sulit, Geoff Salmon, Giambattista Parascandolo,
+Gildas Chabot, Grace Zhao, Greg Brockman, Guillaume Leclerc, Hadi Salman, Haiming
+Bao, Hao Sheng, Hart Andrin, Hessam Bagherinezhad, Hongyu Ren, Hunter Lightman,
+Hyung Won Chung, Ian Kivlichan, Ian O’Connell, Ian Osband, Ignasi Clavera Gilaberte,
+Ilge Akkaya, Ilya Kostrikov, Ilya Sutskever, Irina Kofman, Jakub Pachocki, James Lennon,
+Jason Wei, Jean Harb, Jerry Twore, Jiacheng Feng, Jiahui Yu, Jiayi Weng, Jie Tang, Jieqi Yu,
+Joaquin Quiñonero Candela, Joe Palermo, Joel Parish, Johannes Heidecke, John Hallman,
+John Rizzo, Jonathan Gordon, Jonathan Uesato, Jonathan Ward, Joost Huizinga, Julie
+Wang, Kai Chen, Kai Xiao, Karan Singhal, Karina Nguyen, Karl Cobbe, Katy Shi, Kayla
+Wood, Kendra Rimbach, Keren Gu-Lemberg, Kevin Liu, Kevin Lu, Kevin Stone, Kevin Yu,
+Lama Ahmad, Lauren Yang, Leo Liu, Leon Maksin, Leyton Ho, Liam Fedus, Lilian Weng,
+Linden Li, Lindsay McCallum, Lindsey Held, Lorenz Kuhn, Lukas Kondraciuk, Lukasz
+Kaiser, Luke Metz, Madelaine Boyd, Maja Trebacz, Manas Joglekar, Mark Chen, Marko
+Tintor, Mason Meyer, Matt Jones, Matt Kaufer, Max Schwarzer, Meghan Shah, Mehmet Yatbaz, Melody Y. Guan, Mengyuan Xu, Mengyuan Yan, Mia Glaese, Mianna Chen, Michael
+Lampe, Michael Malek, Michele Wang, Michelle Fradin, Mike McClay, Mikhail Pavlov,
+Miles Wang, Mingxuan Wang, Mira Murati, Mo Bavarian, Mostafa Rohaninejad, Nat
+McAleese, Neil Chowdhury, Neil Chowdhury, Nick Ryder, Nikolas Tezak, Noam Brown,
+Ofir Nachum, Oleg Boiko, Oleg Murk, Olivia Watkins, Patrick Chao, Paul Ashbourne,
+Pavel Izmailov, Peter Zhokhov, Rachel Dias, Rahul Arora, Randall Lin, Rapha Gontijo
+Lopes, Raz Gaon, Reah Miyara, Reimar Leike, Renny Hwang, Rhythm Garg, Robin Brown,
+Roshan James, Rui Shu, Ryan Cheu, Ryan Greene, Saachi Jain, Sam Altman, Sam Toizer,
+Sam Toyer, Samuel Miserendino, Sandhini Agarwal, Santiago Hernandez, Sasha Baker,
+Scott McKinney, Scottie Yan, Shengjia Zhao, Shengli Hu, Shibani Santurkar, Shraman Ray
+Chaudhuri, Shuyuan Zhang, Siyuan Fu, Spencer Papay, Steph Lin, Suchir Balaji, Suvansh
+Sanjeev, Szymon Sidor, Tal Broda, Aidan Clark, Tao Wang, Taylor Gordon, Ted Sanders,
+Tejal Patwardhan, Thibault Sottiaux, Thomas Degry, Thomas Dimson, Tianhao Zheng,
+Timur Garipov, Tom Stasi, Trapit Bansal, Trevor Creech, Troy Peterson, Tyna Eloundou,
+Valerie Qi, Vineet Kosaraju, Vinnie Monaco, Vitchyr Pong, Vlad Fomenko, Weiyi Zheng,
+Wenda Zhou, Wes McCabe, Wojciech Zaremba, Yann Dubois, Yinghai Lu, Yining Chen,
+Young Cha, Yu Bai, Yuchen He, Yuchen Zhang, Yunyun Wang, Zheng Shao, and Zhuohan
+Li. Openai o1 system card, 2024. URL https://arxiv.org/abs/2412.16720.
+Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and Enrico Shippole. YaRN: Efficient context
+window extension of large language models. In The Twelfth International Conference on
+Learning Representations, 2024. URL https://openreview.net/forum?id=wHBfxhZu1u.
+Akshara Prabhakar, Roshan Ram, Zixiang Chen, Silvio Savarese, Frank Wang, Caiming
+Xiong, Huan Wang, and Weiran Yao. Enterprise deep research: Steerable multi-agent
+deep research for enterprise analytics. arXiv preprint arXiv:2510.17797, 2025.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of
+mathematical reasoning in open language models, 2024. URL https://arxiv.org/abs/
+2402.03300.
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua
+Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework.
+arXiv preprint arXiv: 2409.19256, 2024.
+Kimi Team, Yifan Bai, Yiping Bao, Guanduo Chen, Jiahao Chen, Ningxin Chen, Ruijue Chen,
+Yanru Chen, Yuankun Chen, Yutian Chen, Zhuofu Chen, Jialei Cui, Hao Ding, Mengnan
+Dong, Angang Du, Chenzhuang Du, Dikang Du, Yulun Du, Yu Fan, Yichen Feng, Kelin
+Fu, Bofei Gao, Hongcheng Gao, Peizhong Gao, Tong Gao, Xinran Gu, Longyu Guan,
+13
+
+Preprint.
+
+Haiqing Guo, Jianhang Guo, Hao Hu, Xiaoru Hao, Tianhong He, Weiran He, Wenyang He,
+Chao Hong, Yangyang Hu, Zhenxing Hu, Weixiao Huang, Zhiqi Huang, Zihao Huang,
+Tao Jiang, Zhejun Jiang, Xinyi Jin, Yongsheng Kang, Guokun Lai, Cheng Li, Fang Li,
+Haoyang Li, Ming Li, Wentao Li, Yanhao Li, Yiwei Li, Zhaowei Li, Zheming Li, Hongzhan
+Lin, Xiaohan Lin, Zongyu Lin, Chengyin Liu, Chenyu Liu, Hongzhang Liu, Jingyuan Liu,
+Junqi Liu, Liang Liu, Shaowei Liu, T. Y. Liu, Tianwei Liu, Weizhou Liu, Yangyang Liu,
+Yibo Liu, Yiping Liu, Yue Liu, Zhengying Liu, Enzhe Lu, Lijun Lu, Shengling Ma, Xinyu
+Ma, Yingwei Ma, Shaoguang Mao, Jie Mei, Xin Men, Yibo Miao, Siyuan Pan, Yebo Peng,
+Ruoyu Qin, Bowen Qu, Zeyu Shang, Lidong Shi, Shengyuan Shi, Feifan Song, Jianlin Su,
+Zhengyuan Su, Xinjie Sun, Flood Sung, Heyi Tang, Jiawen Tao, Qifeng Teng, Chensi Wang,
+Dinglu Wang, Feng Wang, Haiming Wang, Jianzhou Wang, Jiaxing Wang, Jinhong Wang,
+Shengjie Wang, Shuyi Wang, Yao Wang, Yejie Wang, Yiqin Wang, Yuxin Wang, Yuzhi
+Wang, Zhaoji Wang, Zhengtao Wang, Zhexu Wang, Chu Wei, Qianqian Wei, Wenhao Wu,
+Xingzhe Wu, Yuxin Wu, Chenjun Xiao, Xiaotong Xie, Weimin Xiong, Boyu Xu, Jing Xu,
+Jinjing Xu, L. H. Xu, Lin Xu, Suting Xu, Weixin Xu, Xinran Xu, Yangchuan Xu, Ziyao Xu,
+Junjie Yan, Yuzi Yan, Xiaofei Yang, Ying Yang, Zhen Yang, Zhilin Yang, Zonghan Yang,
+Haotian Yao, Xingcheng Yao, Wenjie Ye, Zhuorui Ye, Bohong Yin, Longhui Yu, Enming
+Yuan, Hongbang Yuan, Mengjie Yuan, Haobing Zhan, Dehao Zhang, Hao Zhang, Wanlu
+Zhang, Xiaobin Zhang, Yangkun Zhang, Yizhi Zhang, Yongting Zhang, Yu Zhang, Yutao
+Zhang, Yutong Zhang, Zheng Zhang, Haotian Zhao, Yikai Zhao, Huabin Zheng, Shaojie
+Zheng, Jianren Zhou, Xinyu Zhou, Zaida Zhou, Zhen Zhu, Weiyu Zhuang, and Xinxing
+Zu. Kimi k2: Open agentic intelligence, 2025a. URL https://arxiv.org/abs/2507.20534.
+MiroMind Team, Song Bai, Lidong Bing, Carson Chen, Guanzheng Chen, Yuntao Chen, Zhe
+Chen, Ziyi Chen, Jifeng Dai, Xuan Dong, et al. Mirothinker: Pushing the performance
+boundaries of open-source research agents via model, context, and interactive scaling.
+arXiv preprint arXiv:2511.11793, 2025b.
+Tongyi DeepResearch Team, Baixuan Li, Bo Zhang, Dingchu Zhang, Fei Huang, Guangyu
+Li, Guoxin Chen, Huifeng Yin, Jialong Wu, Jingren Zhou, Kuan Li, Liangcai Su, Litu Ou,
+Liwen Zhang, Pengjun Xie, Rui Ye, Wenbiao Yin, Xinmiao Yu, Xinyu Wang, Xixi Wu,
+Xuanzhong Chen, Yida Zhao, Zhen Zhang, Zhengwei Tao, Zhongwang Zhang, Zile Qiao,
+Chenxi Wang, Donglei Yu, Gang Fu, Haiyang Shen, Jiayin Yang, Jun Lin, Junkai Zhang,
+Kui Zeng, Li Yang, Hailong Yin, Maojia Song, Ming Yan, Minpeng Liao, Peng Xia, Qian
+Xiao, Rui Min, Ruixue Ding, Runnan Fang, Shaowei Chen, Shen Huang, Shihang Wang,
+Shihao Cai, Weizhou Shen, Xiaobin Wang, Xin Guan, Xinyu Geng, Yingcheng Shi, Yuning
+Wu, Zhuo Chen, Zijian Li, and Yong Jiang. Tongyi deepresearch technical report, 2025c.
+URL https://arxiv.org/abs/2510.24701.
+Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. Interleaving
+retrieval with chain-of-thought reasoning for knowledge-intensive multi-step questions.
+In Anna Rogers, Jordan Boyd-Graber, and Naoaki Okazaki (eds.), Proceedings of the 61st
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp.
+10014–10037, Toronto, Canada, July 2023. Association for Computational Linguistics. doi:
+10.18653/v1/2023.acl-long.557. URL https://aclanthology.org/2023.acl-long.557/.
+Fanqi Wan, Weizhou Shen, Shengyi Liao, Yingcheng Shi, Chenliang Li, Ziyi Yang, Ji Zhang,
+Fei Huang, Jingren Zhou, and Ming Yan. Qwenlong-l1: Towards long-context large
+reasoning models with reinforcement learning, 2025. URL https://arxiv.org/abs/2505.
+17667.
+Siyuan Wang, Gaokai Zhang, Li Lyna Zhang, Ning Shang, Fan Yang, Dongyao Chen, and
+Mao Yang. Loongrl: Reinforcement learning for advanced reasoning over long contexts,
+2025. URL https://arxiv.org/abs/2510.19363.
+Yinjie Wang, Tianbao Xie, Ke Shen, Mengdi Wang, and Ling Yang. Rlanything: Forge
+environment, policy, and reward model in completely dynamic rl system, 2026a. URL
+https://arxiv.org/abs/2602.02488.
+Zirui Wang, Junyi Zhang, Jiaxin Ge, Long Lian, Letian Fu, Lisa Dunlap, Ken Goldberg,
+XuDong Wang, Ion Stoica, David M. Chan, Sewon Min, and Joseph E. Gonzalez. Visgym:
+14
+
+Preprint.
+
+Diverse, customizable, scalable environments for multimodal agents, 2026b. URL https:
+//arxiv.org/abs/2601.16973.
+Penghao Wu, Yushan Zhang, Haiwen Diao, Bo Li, Lewei Lu, and Ziwei Liu. Visual jigsaw
+post-training improves mllms, 2025a. URL https://arxiv.org/abs/2509.25190.
+Wenhao Wu, Yizhong Wang, Guangxuan Xiao, Hao Peng, and Yao Fu. Retrieval head
+mechanistically explains long-context factuality. In The Thirteenth International Conference
+on Learning Representations, 2025b. URL https://openreview.net/forum?id=EytBpUGB1Z.
+Yuhao Wu, Yushi Bai, Zhiqiang Hu, Roy Ka-Wei Lee, and Juanzi Li. Longwriter-zero:
+Mastering ultra-long text generation via reinforcement learning, 2025c. URL https:
+//arxiv.org/abs/2506.18841.
+Ran Xu, Tianci Liu, Zihan Dong, Tony You, Ilgee Hong, Carl Yang, Linjun Zhang, Tao Zhao,
+and Haoyu Wang. Alternating reinforcement learning for rubric-based reward modeling
+in non-verifiable llm post-training, 2026. URL https://arxiv.org/abs/2602.01511.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu,
+Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei
+Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu,
+Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang,
+Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei
+Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li,
+Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren,
+Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang,
+Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report, 2025a.
+URL https://arxiv.org/abs/2505.09388.
+An Yang, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoyan Huang, Jiandong
+Jiang, Jianhong Tu, Jianwei Zhang, Jingren Zhou, Junyang Lin, Kai Dang, Kexin Yang,
+Le Yu, Mei Li, Minmin Sun, Qin Zhu, Rui Men, Tao He, Weijia Xu, Wenbiao Yin, Wenyuan
+Yu, Xiafei Qiu, Xingzhang Ren, Xinlong Yang, Yong Li, Zhiying Xu, and Zipeng Zhang.
+Qwen2.5-1m technical report, 2025b. URL https://arxiv.org/abs/2501.15383.
+Zhilin Yang, Zihang Dai, Yiming Yang, Jaime Carbonell, Russ R Salakhutdinov, and
+Quoc V Le. Xlnet: Generalized autoregressive pretraining for language understanding. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett (eds.), Advances in Neural Information Processing Systems, volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper files/paper/2019/
+file/dc6a7e655d7e5840e66733e9ee67cc69-Paper.pdf.
+Howard Yen, Tianyu Gao, Minmin Hou, Ke Ding, Daniel Fleischer, Peter Izsak, Moshe
+Wasserblat, and Danqi Chen. HELMET: How to evaluate long-context models effectively
+and thoroughly. In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=293V3bJbmE.
+Edward Yeo, Yuxuan Tong, Xinyao Niu, Graham Neubig, and Xiang Yue. Demystifying
+long chain-of-thought reasoning in LLMs. In ICLR 2025 Workshop on Navigating and
+Addressing Data Problems for Foundation Models, 2025. URL https://openreview.net/
+forum?id=AgtQlhMQ0V.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai,
+Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua
+Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei,
+Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu,
+and Mingxuan Wang. Dapo: An open-source llm reinforcement learning system at scale,
+2025. URL https://arxiv.org/abs/2503.14476.
+Yang Yue, Zhiqi Chen, Rui Lu, Andrew Zhao, Zhaokai Wang, Yang Yue, Shiji Song, and Gao
+Huang. Does reinforcement learning really incentivize reasoning capacity in llms beyond
+the base model?, 2025. URL https://arxiv.org/abs/2504.13837.
+15
+
+Preprint.
+
+Weihao Zeng, Yuzhen Huang, Qian Liu, Wei Liu, Keqing He, Zejun MA, and Junxian
+He. SimpleRL-zoo: Investigating and taming zero reinforcement learning for open
+base models in the wild. In Second Conference on Language Modeling, 2025a. URL https:
+//openreview.net/forum?id=vSMCBUgrQj.
+Zhiyuan Zeng, Hamish Ivison, Yiping Wang, Lifan Yuan, Shuyue Stella Li, Zhuorui Ye,
+Siting Li, Jacqueline He, Runlong Zhou, Tong Chen, Chenyang Zhao, Yulia Tsvetkov,
+Simon Shaolei Du, Natasha Jaques, Hao Peng, Pang Wei Koh, and Hannaneh Hajishirzi.
+Rlve: Scaling up reinforcement learning for language models with adaptive verifiable
+environments, 2025b. URL https://arxiv.org/abs/2511.07317.
+Jiajie Zhang, Zhongni Hou, Xin Lv, Shulin Cao, Zhenyu Hou, Yilin Niu, Lei Hou, Yuxiao
+Dong, Ling Feng, and Juanzi Li. LongReward: Improving long-context large language
+models with AI feedback. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and
+Mohammad Taher Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers), pp. 3718–3739, Vienna, Austria,
+July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi:
+10.18653/v1/2025.acl-long.187. URL https://aclanthology.org/2025.acl-long.187/.
+Jun Zhao, Can Zu, Xu Hao, Yi Lu, Wei He, Yiwen Ding, Tao Gui, Qi Zhang, and Xuanjing Huang. LONGAGENT: Achieving question answering for 128k-token-long documents through multi-agent collaboration. In Yaser Al-Onaizan, Mohit Bansal, and
+Yun-Nung Chen (eds.), Proceedings of the 2024 Conference on Empirical Methods in Natural
+Language Processing, pp. 16310–16324, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.emnlp-main.912. URL
+https://aclanthology.org/2024.emnlp-main.912/.
+Dawei Zhu, Nan Yang, Liang Wang, Yifan Song, Wenhao Wu, Furu Wei, and Sujian Li. PoSE:
+Efficient context window extension of LLMs via positional skip-wise training. In The
+Twelfth International Conference on Learning Representations, 2024. URL https://openreview.
+net/forum?id=3Z1gxuAQrA.
+Yonghao Zhuang, Lanxiang Hu, Longfei Yun, Souvik Kundu, Zhengzhong Liu, Eric P.
+Xing, and Hao Zhang. Scaling long context training data by long-distance referrals.
+In The Thirteenth International Conference on Learning Representations, 2025. URL https:
+//openreview.net/forum?id=tePFpDgyqg.
+
+A
+
+Appendix
+
+A.1
+
+On continual Pretraining
+
+We further explore continual pretraining by training the models for one epoch on our
+curated long-document corpus. However, this approach results in significantly worse
+performance compared to the original models. We attribute this degradation to two main
+factors. First, the quality of our collected long documents may not exceed that of the
+proprietary data used during the original pretraining of the models. Second, continual
+pretraining on instruction-tuned models may disrupt their instruction-following capabilities.
+As a result, continual pretraining of LLaMA-3.1-8B-Instruct and Qwen2.5-7B-Instruct-1M
+does not yield performance improvements.
+A.2
+
+On Validation
+
+During training, we monitor model performance on a held-out validation set to assess
+optimization stability and learning dynamics in reconstruction training. Specifically, we
+track three metrics: (1) the success rate of answer extraction (i.e., producing a valid permutation), (2) the dense reward, and (3) the sparse reward for Qwen2.5-7B-Instruct-1M. As
+shown in Figure 8, all three metrics improve smoothly over training steps, indicating stable
+optimization without severe oscillation or collapse. Notably, the dense reward increases
+earlier and more steadily than the sparse reward. Overall, these validation trends suggest
+16
+
+Preprint.
+
+1.0
+0.8
+0.6
+0.4
+
+Answer Extraction
+Dense Reward
+Sparse Reward
+80
+100
+
+0.2
+0.0
+
+0
+
+20
+
+40
+
+Step
+
+60
+
+Figure 8: We report metrics on validation set during training process.
+Model
+
+Qwen
+
+LLaMA
+
+32k
+
+Task
+
+64k
+
+128k
+
+base
+
+ours
+
+base
+
+ours
+
+base
+
+ours
+
+vt
+cwe
+fwe
+qa 1
+qa 2
+
+58.32
+87.92
+85.53
+77.40
+60.00
+
+67.36
+90.66
+91.27
+78.40
+64.20
+
+46.80
+82.46
+83.07
+73.00
+56.80
+
+61.56
+84.38
+84.33
+71.20
+61.40
+
+54.84
+69.78
+77.13
+70.60
+49.40
+
+56.28
+73.42
+80.33
+65.00
+59.60
+
+avg
+
+73.83
+
+78.38
+
+68.43
+
+72.57
+
+64.35
+
+65.65
+
+vt
+cwe
+fwe
+qa 1
+qa 2
+
+78.48
+86.54
+81.40
+76.60
+47.80
+
+83.76
+92.56
+87.00
+74.40
+56.20
+
+54.04
+60.92
+73.47
+74.20
+43.20
+
+77.20
+80.20
+73.93
+74.40
+51.40
+
+24.72
+10.96
+61.00
+68.00
+40.00
+
+49.48
+28.14
+67.67
+67.80
+43.00
+
+avg
+
+74.16
+
+78.78
+
+61.17
+
+71.43
+
+40.94
+
+51.22
+
+Table 3: Performance comparison across sequence lengths.
+that the proposed reconstruction-based RLVR framework provides a stable and effective
+training.
+A.3
+
+Ruler Score Details
+
+As shown in Table 3, we report the evaluation scores for each subtask for RULER.
+A.4
+
+Scaling Data to 3W
+
+We collect 10,000 samples from each domain: books, arXiv, and code. We end up with 30,000
+long document. The ratio of data with K = 2, 4, 6, 8 is 1 : 1 : 2 : 2. We train on backbone
+model Qwen2.5-7B-Instruct-1M. As shown in Figure 9. The performance of our model can
+surpass baseline by about 10 points.
+
+17
+
+Preprint.
+
+90
+
+RULER
+Base
+Ours
+
+Score
+
+80
+70
+60
+50
+
+32K
+
+64K
+
+128K
+
+Length
+
+AVG
+
+Figure 9: We report the performance of RULER when scaling the data to 30,000 samples on
+Qwen2.5-7B-Instruct-1M.
+
+18
+
+

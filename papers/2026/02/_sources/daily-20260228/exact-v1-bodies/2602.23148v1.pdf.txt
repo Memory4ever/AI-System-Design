@@ -1,0 +1,1405 @@
+On Sample-Efficient Generalized Planning via Learned Transition Models
+Nitin Gupta* , Vishal Pallagani* , John A. Aydin, Biplav Srivastava
+
+arXiv:2602.23148v1 [cs.AI] 26 Feb 2026
+
+University of South Carolina
+{niting@email., vishalp@email., jaaydin@email., biplav}@sc.edu
+
+Abstract
+Generalized planning studies the construction of solution
+strategies that generalize across families of planning problems sharing a common domain model, formally defined
+by a transition function γ : S × A → S. Classical approaches achieve such generalization through symbolic abstractions and explicit reasoning over γ. In contrast, recent
+Transformer-based planners, such as PlanGPT and Plansformer, largely cast generalized planning as direct actionsequence prediction, bypassing explicit transition modeling.
+While effective on in-distribution instances, these approaches
+typically require large datasets and model sizes, and often
+suffer from state drift in long-horizon settings due to the absence of explicit world-state evolution. In this work, we formulate generalized planning as a transition-model learning
+problem, in which a neural model explicitly approximates
+the successor-state function γ̂ ≈ γ and generates plans by
+rolling out symbolic state trajectories. Instead of predicting
+actions directly, the model autoregressively predicts intermediate world states, thereby learning the domain dynamics as
+an implicit world model. To study size-invariant generalization and sample efficiency, we systematically evaluate multiple state representations and neural architectures, including
+relational graph encodings. Our results show that learning
+explicit transition models yields higher out-of-distribution
+satisficing-plan success than direct action-sequence prediction in multiple domains, while achieving these gains with
+significantly fewer training instances and smaller models.
+This is an extended version of a short paper accepted at
+ICAPS 2026 under the same title.
+
+Code —
+https://github.com/ai4society/state-centric-gen-planning
+
+Introduction
+Classical automated planning is defined over a statetransition system Σ = ⟨S, A, γ⟩, where S is the set of states,
+A the set of actions, and γ : S × A → S the transition function. A planning task Π = ⟨Σ, s0 , g⟩ consists of an initial
+state s0 ∈ S and a goal condition g, typically represented
+as a set of literals such that a state s satisfies g iff g ⊆ s. A
+solution is an action sequence π = ⟨a1 , . . . , an ⟩ such that
+* These authors contributed equally.
+Copyright © 2026, Association for the Advancement of Artificial
+Intelligence (www.aaai.org). All rights reserved.
+
+st+1 = γ(st , at ) and the final state sn satisfies g. Generalized planning seeks strategies that solve families of such
+tasks sharing a common γ.
+Recent learning-based approaches to generalized planning predominantly model the conditional distribution
+p(π | Π), for example via an autoregressive factorization
+QT
+p(π | Π) = t=1 p(at | Π, a<t ) or a policy πθ (at | st , g),
+and directly predict action sequences from problem descriptions, as in Plansformer (Pallagani et al. 2022), PlanGPT
+(Rossetti et al. 2024b), and symmetry-aware Transformers
+(Fritzsche, Gestrin, and Seipp 2025). This action-centric
+formulation bypasses explicit modeling of γ: the evolving
+world state st is never directly represented, and long-horizon
+reasoning relies on implicit correlations between action tokens, leading to state drift in out-of-distribution regimes.
+In this work, we instead model generalized planning as
+a transition-model learning problem. Rather than predicting the next action, we learn a goal-conditioned neural transition model Tθ that predicts the successor state along a
+plan trajectory, i.e., given the current state st and goal g
+(or problem description Π), the model outputs a prediction
+ŝt+1 = Tθ (st , g). Plans are then obtained by rolling out
+the predicted state trajectory and recovering the corresponding actions via local symbolic search over applicable operators, by matching γ(st , a) to ŝt+1 . This formulation enforces
+explicit world-state evolution, enables successor validation,
+and constrains learning to respect frame axioms and causal
+effects. It is consistent with model-based world modeling in
+reinforcement learning (Ha and Schmidhuber 2018; Hafner
+et al. 2019), but applied here to symbolic generalized planning.
+For clarity, we refer to methods that directly predict actions (e.g., modeling p(π | Π) or πθ (at | st , g)) as actioncentric learning, and to methods that predict successor states
+via Tθ (st , g) as state-centric learning. This usage is distinct
+from heuristic-based state-space learning in existing GP taxonomies (Chen, Trevizan, and Thiébaux 2025) and serves
+only to distinguish transition-model learning from direct action modeling.
+A central challenge in learning Tθ for GP is size invariance: the description of a state in S scales with the number
+of objects. To address this, we systematically evaluate multiple fixed-dimensional state representations, including fixedsize factored encodings and Weisfeiler–Leman (WL) graph
+
+Figure 1: State-Centric Generalized Planning Pipeline. From a symbolic planning instance Π, executable plans are generated using a learned transition model. (1) State Encoding: Symbolic state–goal pairs (st , g) are mapped to fixed-dimensional
+embeddings ϕ(st ) using either WL graph kernels or fixed-size factored vectors. (2) Transition Modeling: A parametric
+model (LSTM) or a non-parametric model (XGBoost) learns residual state transitions ∆t to predict successor embeddings.
+(3) Neuro-Symbolic Plan Decoding: The predicted successor embedding ϕ̂(st+1 ) is matched against all valid symbolic successors Succ(st ) induced by γ, and the nearest valid successor is selected to recover the executable action. This guarantees
+symbolic validity while enabling transition-model-based generalization.
+embeddings (Chen, Trevizan, and Thiébaux 2024). WL embeddings map variable-sized relational states to fixed-length
+structural feature vectors, enabling compact models such as
+LSTMs (Hochreiter and Schmidhuber 1997) and XGBoost
+(Chen 2016) to generalize from small to large problem instances. We empirically show that relational WL features
+are critical for size-invariant and sample-efficient generalization. Our contributions, thus, are (i) a transition-model-based formulation of generalized planning via goal-conditioned successor-state prediction; (ii) a systematic evaluation of state representations for size-invariant and sample–
+efficient generalization; and (iii) an empirical demonstration
+that compact models achieve competitive GP performance
+with orders of magnitude fewer parameters and training instances than Transformer-based planners.
+
+Related Work
+Learning-based approaches to generalized planning seek
+policies or models that transfer across problem instances
+within a domain. Early neural GP work introduced relational inductive biases to enable size generalization, including Action Schema Networks (Toyer et al. 2018) and
+graph-based deep RL for Blocksworld (Rivlin, Hazan, and
+Karpas 2020), as well as finite-state policy representations
+(Ståhlberg, Bonet, and Geffner 2022). More recent work
+formulates GP as sequence prediction: Plansformer (Pallagani et al. 2022) and PlanGPT (Rossetti et al. 2024b)
+train Transformer architectures to directly generate action
+sequences, while symmetry-aware Transformers (Fritzsche,
+Gestrin, and Seipp 2025) introduce architectural and contrastive constraints to improve permutation invariance. How-
+
+ever, such action-centric models do not explicitly learn transition dynamics and often exhibit state drift under distributional shift. In parallel, graph-based state representations have been extensively studied for learning heuristics and value functions in planning, including STRIPSHGN (Shen, Trevizan, and Thiébaux 2020), GOOSE (Chen,
+Thiébaux, and Trevizan 2023), and domain-independent
+graph transformations (Chen and Thiébaux 2024). Recent
+work shows that Weisfeiler–Leman (WL) graph kernels
+combined with lightweight regressors can match or exceed
+GNN performance at far lower cost (Chen, Trevizan, and
+Thiébaux 2024; Chen 2025; Hao et al. 2025). Hybrid neurosymbolic systems integrate learned components with symbolic solvers or validators, including LLM+P (Liu et al.
+2023), symbolic validation for PlanGPT (Rossetti et al.
+2024a), LLM-Modulo (Kambhampati et al. 2024), and SayCan for robotics (Ahn et al. 2022). Separately, model-based
+reinforcement learning demonstrates the benefits of learning explicit world models for planning (Ha and Schmidhuber 2018; Hafner et al. 2019). In contrast to prior actionsequence and heuristic-centric neural planners, our work
+adopts a transition-prediction formulation of generalized
+planning with size-invariant state representations, enabling
+sample-efficient and robust out-of-distribution generalization using compact models. Extended discussion is in Appendix B.
+
+Transition-Model-Based Generalized Planning
+Figure 1 illustrates the complete pipeline of our approach,
+consisting of symbolic data generation, size-invariant state
+encoding, transition-model learning, and plan decoding via
+
+symbolic verification.
+
+Algorithm 1: State-Centric GP with Plan Decoding
+
+Generalized Planning Setup. A planning instance is Π =
+⟨O, P, A, s0 , g⟩, where O is a finite object set, P a predicate vocabulary, A a set of operators, s0 ⊆ P(O) the initial
+state, and g ⊆ P(O) the goal condition. Operators induce
+a deterministic transition function γ : S × A → S. A plan
+π = ⟨a1 , . . . , aT ⟩ satisfies st+1 = γ(st , at ) and g ⊆ sT .
+Generalized planning seeks a single parameterized model
+trained on instances from Dtrain (small |O|) that generalizes
+to Dtest with much larger |O|.
+
+Require: Initial state s0 , goal g, operators A, learned model
+fθ , embedding ϕ
+Ensure: Valid plan π
+1: t ← 0, π ← ⟨⟩, st ← s0
+2: while g ̸⊆ st do
+3:
+vt ← ϕ(st ) + fθ (ϕ(st ), ϕ(g))
+4:
+Succ(st ) ← {γ(st , a) | a ∈ A, a applicable in st }
+5:
+st+1 ← arg mins′ ∈Succ(st ) ∥ϕ(s′ ) − vt ∥2
+6:
+at ← unique a such that γ(st , a) = st+1
+7:
+π.append(at ), st ← st+1 , t ← t + 1
+8: end while
+9: return π
+
+Size-Invariant State Representation. Each state-goal
+pair (s, g) is encoded as a relational instance graph Gs,g
+and embedded using k iterations of WL color refinement.
+Node color histograms yield a fixed-dimensional embedding ϕ(s, g) ∈ RD , where D depends only on the domain
+and is independent of |O|. We overload notation and write
+ϕ(s) and ϕ(g) for the state and goal components, respectively. The resulting representation is permutation-invariant,
+size-invariant, and as expressive as 1-WL message-passing
+GNNs while enabling lightweight downstream models.
+State-Centric Transition-Model Learning. Rather than
+learning a policy πθ (at | st , g), we learn a neural transition
+model fθ : RD × RD → RD that predicts state updates in
+embedding space. We denote this embedding-space transition model as fθ ; the conceptual model Tθ from the introduction is realized as
+Tθ (st , g) ≈ ϕ−1 (ϕ(st ) + fθ (ϕ(st ), ϕ(g)))
+where the inverse is approximated via nearest-neighbor
+decoding. To exploit the sparsity of STRIPS-style transitions, where most predicates remain unchanged, we adopt
+a residual formulation:
+ϕ̂(st+1 ) = ϕ(st ) + fθ (ϕ(st ), ϕ(g))
+where fθ predicts a delta vector ∆t . This explicitly encodes frame axioms and improves sample efficiency, particularly for non-sequential models. We train by minimizing
+the squared error over expert trajectories:
+X
+L=
+∥ϕ̂(st+1 ) − ϕ(st+1 )∥22 .
+t
+
+Plan Decoding via Neuro-Symbolic Verification. At test
+time, the true symbolic state st is maintained throughout execution. Given st , the transition model produces a target embedding vt = ϕ(st ) + fθ (ϕ(st ), ϕ(g)). Using the symbolic
+operators, we enumerate all valid successors
+Succ(st ) = {γ(st , a) | a ∈ A, a applicable in st }
+and select the successor whose embedding is closest to
+the neural prediction:
+st+1 = arg ′ min
+
+s ∈Succ(st )
+
+∥ϕ(s′ ) − vt ∥2 .
+
+The executed action is the unique a satisfying γ(st , a) =
+st+1 , which is well-defined under deterministic operators.
+
+This decoding step guarantees symbolic validity at every
+timestep and performs online correction of neural prediction errors. The procedure terminates when g ⊆ st . The full
+planning algorithm is summarized in Algorithm 1.
+
+Experimental Setup
+We evaluate whether learning an explicit transition model
+enables sample-efficient and size-invariant generalized planning. Our experiments assess (i) extrapolative out-ofdistribution (OOD) generalization from small to large instances, (ii) whether parametric function approximation is
+necessary for learning transition dynamics, and (iii) the impact of size-invariant state representations.
+Domains and Data. We evaluate on 4 IPC benchmark domains: Blocksworld, Gripper, Logistics, and VisitAll. Problem instances are sourced from the Symmetry-Aware Transformer repository, following the same data splits for fair
+comparison. Symbolic plans are generated using Fast Downward (Helmert 2006) with the landmark-cut heuristic, and
+complete state trajectories are reconstructed using VAL
+(Howey, Long, and Fox 2004). Data is partitioned into four
+splits by object count: Training (small instances, e.g., 4–
+7 blocks), Validation (similar or slightly larger sizes, held
+out), Interpolation (unseen configurations within the training size range), and Extrapolation (strictly larger than any
+training instance, e.g., 9–17 blocks). Extrapolation is the primary evaluation axis for size-invariant generalized planning.
+Full dataset statistics are reported in Appendix section D.
+State Representations. We compare WL graph embeddings (Chen and Thiébaux 2024), which are permutationand size-invariant, against Fixed-Size Factored (FSF) encodings. FSF encodings represent states as fixed-dimensional
+vectors with pre-assigned object slots, deliberately omitting
+the relational structure of WL to isolate the contribution of
+invariant representations to OOD generalization (Boutilier,
+Dearden, and Goldszmidt 2000; Guestrin et al. 2003). Details about both representations are in Appendix sections E
+and F.
+Transition Models. We evaluate two transition-model
+classes: a parametric neural model (two-layer LSTM) and a
+tree-based, nonparametric regressor (XGBoost). The LSTM
+
+tests whether sequential memory is necessary for trajectorylevel transition dynamics, while XGBoost tests whether a
+local approximation of the transition kernel suffices. This
+comparison isolates the role of temporal memory. Both
+models are trained in state-prediction and delta-prediction
+modes, as defined in previous sections. The entire technical
+pipeline and hyperparameters are reported in Appendix section G.
+Baselines. We compare against published results from
+Symmetry-Aware Transformers (SATr), which include results on PlanGPT, including applicability-filtered and regrounded variants. We further run inference with Plansformer on our test instances using its publicly released
+checkpoint; it was trained on Blocksworld but not on Gripper, Logistics, or VisitAll, so its zero-shot cross-domain performance is expected to be limited. PlanGPT results are
+taken directly from Fritzsche, Gestrin, and Seipp (2025),
+who train and evaluate PlanGPT on the same data splits and
+counts as SATr; the weak interpolation/extrapolation performance reflects the difficulty of learning generalized policies
+from small training sets via action-centric sequence prediction. As a symbolic upper bound, we include Fast Downward with A* and the landmark-cut heuristic. While alternative configurations such as LAMA (Richter and Westphal
+2010) may improve coverage on extrapolation instances at
+varying runtimes, we retain A*+LM-cut as a fixed reference; the neural baselines serve primarily to compare learning paradigms rather than to benchmark against optimized
+classical planners.
+Inference and Metrics. At test time, plans are generated using the neuro-symbolic decoding procedure in Algorithm 1 with beam width 3 and a horizon cap of 100.
+Performance is measured by satisficing success rate, i.e.,
+the fraction of instances for which a generated plan is valid
+under the transition model and reaches a goal state within
+the horizon limit, as verified by VAL. We additionally report changes in satisficing success across successive rollouts
+(seeds) to quantify stability under repeated decoding.
+
+Results and Analysis
+Table 1 reports satisficing-plan success rates across all domains, splits, representations, model classes, and prediction modes. The primary empirical finding is that explicit
+transition-model learning combined with size-invariant relational representations yields stronger or matching extrapolation than action-centric sequence prediction in domains
+with locally factored domains, while remaining insufficient
+for the Logistics benchmark under strict size extrapolation.
+Comparison with action-centric planners. Under strict
+extrapolation, Plansformer and all PlanGPT variants achieve
+0.00 success across all four domains. Plansformer further
+exhibits 0.00 on non-Blocksworld domains since they are
+not present in its training data. SATr attains non-zero extrapolation in Blocksworld (0.13), Gripper (0.79), and VisitAll (0.64), but fails in Logistics. The best state-centric models exceed SATr in Blocksworld (WL-XGB delta 0.45 vs.
+
+0.13) and VisitAll (0.87 vs. 0.64), while SATr remains superior in Gripper extrapolation (0.79 vs. 0.25). Notably,
+these gains are obtained using compact transition models
+trained on unaugmented state trajectories: our LSTM has
+∼1M parameters and XGBoost ∼115K tree nodes, compared to ∼25–35M (SATr), ∼125M (PlanGPT), and ∼220M
+(Plansformer). Furthermore, SATr augments training data
+via symmetry-based state-space expansion, whereas our
+models are trained on the original small training sets without
+any augmentation (e.g., 9 instances in Blocksworld). This
+indicates that, under appropriate relational abstractions, explicit transition learning can match or exceed extrapolation
+at orders-of-magnitude lower model and data cost, suggesting that learning domain physics provides a stronger inductive bias for generalization than architectural scale or
+data augmentation alone. A detailed breakdown of parameter counts and training data requirements is provided in Appendix section C.2.
+Effect of size-invariant relational representations.
+Across all domains, FSF-based encodings yield negligible
+extrapolation performance: Blocksworld (0.00), Gripper
+(0.00), VisitAll (≤ 0.13), and Logistics (0.00). In contrast,
+WL-based models achieve strictly positive extrapolation in
+three domains. In Blocksworld, WL-XGB (delta) reaches
+0.45 compared to 0.00 for all FSF variants. In VisitAll,
+WL-XGB (delta) reaches 0.87 while FSF-XGB (delta)
+reaches only 0.13. This establishes that extrapolation
+beyond the training object bound requires a permutationand size-invariant abstraction ϕ : S → RD . Fixed-slot
+encodings restrict the hypothesis class to a bounded object
+universe and therefore fail when |O|test > |O|train .
+Effect of residual transition modeling. For tree-based
+models, residual parameterization consistently improves extrapolation. In Blocksworld, WL-XGB improves from 0.25
+(state) to 0.45 (delta). In VisitAll, it improves from 0.08 to
+0.87. This behavior is consistent with STRIPS transition semantics, γ(s, a) = (s \ Del(a)) ∪ Add(a), which induces
+sparse state differences. The delta formulation constrains
+learning to the subspace of changed fluents, reducing regression variance for non-parametric models. For LSTM, the effect is domain dependent: delta improves Blocksworld extrapolation (0.03 → 0.15) but degrades Gripper (0.25 →
+0.17), indicating interaction between residual bias and recurrent state memory.
+Sequential versus non-sequential transition learning.
+Comparing WL-LSTM and WL-XGB isolates the role of
+temporal memory. In Gripper extrapolation, WL-LSTM
+(state) attains 0.25 while both XGB variants remain at
+0.00, indicating that under the chosen abstraction the induced transition kernel P (ϕ(st+1 ) | ϕ(st ), ϕ(g)) is not
+well-approximated by a purely local regressor. In contrast,
+in Blocksworld and VisitAll, WL-XGB (delta) outperforms
+WL-LSTM: Blocksworld (0.45 vs. 0.15) and VisitAll (0.87
+vs. 0.59), indicating that the Markovian assumption, where
+the future depends only on the present state and not history,
+suffices under relational abstraction in these domains.
+
+Table 1: Coverage rates (%) across all configurations. Values are reported as M ean±Std . Best result per row (over all non-FD
+configurations) is bolded, second best is underlined. Light gray columns denote our state-centric implementations. FD = Fast
+Downward (60s timeout). ∗ Results from Fritzsche, Gestrin, and Seipp (2025).
+SATr (enc)∗
+greedy
+
+SATr (enc-dec)∗
+greedy
+appl.
+regr.
+
+1.00 1.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+Val.
+Interp. 1.00 1.00±0.00 0.56±0.16 0.56±0.16 0.00±0.00
+Extrap. 0.60 0.10±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+
+1.00±0.00
+1.00±0.00
+0.05±0.07
+
+1.00±0.00 1.00±0.00 0.00±0.00 0.56±0.16 0.67±0.00 1.00±0.00 0.67±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+1.00±0.00 1.00±0.00 1.00±0.00 0.56±0.16 0.89±0.16 1.00±0.00 1.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+0.07±0.02 0.13±0.05 0.00±0.00 0.03±0.02 0.15±0.07 0.25±0.00 0.45±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+
+Val.
+1.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+Gripper Interp. 1.00 0.00±0.00 0.00±0.00 0.44±0.16 0.00±0.00
+Extrap. 0.13 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+
+1.00±0.00
+0.89±0.16
+0.02±0.03
+
+0.17±0.24 1.00±0.00 1.00±0.00 1.00±0.00 0.67±0.47 0.00±0.00 0.00±0.00 0.17±0.24 0.33±0.24 0.00±0.00 0.00±0.00
+0.67±0.00 1.00±0.00 1.00±0.00 1.00±0.00 0.67±0.47 0.00±0.00 0.00±0.00 0.45±0.32 0.00±0.00 0.67±0.00 0.00±0.00
+0.00±0.00 0.15±0.06 0.79±0.16 0.25±0.08 0.17±0.19 0.00±0.00 0.00±0.00 0.06±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+
+Val.
+1.00 0.00±0.00 0.00±0.00 0.14±0.12 0.00±0.00
+Interp. 1.00 0.00±0.00 0.05±0.04 0.67±0.18 0.41±0.22
+Extrap. 0.50 0.00±0.00 0.00±0.00 0.02±0.02 0.00±0.00
+
+1.00±0.00
+1.00±0.00
+0.42±0.11
+
+0.33±0.09 0.93±0.04 0.99±0.02 0.99±0.02 0.79±0.29 1.00±0.00 1.00±0.00 0.03±0.04 0.49±0.02 0.13±0.00 0.92±0.00
+0.87±0.01 0.99±0.01 1.00±0.00 1.00±0.00 0.99±0.01 1.00±0.00 1.00±0.00 0.56±0.02 0.38±0.02 0.86±0.00 0.95±0.00
+0.00±0.00 0.15±0.05 0.64±0.12 0.47±0.05 0.59±0.40 0.08±0.00 0.87±0.00 0.00±0.00 0.03±0.01 0.00±0.00 0.13±0.00
+
+Val.
+1.00 0.00±0.00 0.00±0.00 0.08±0.12 0.00±0.00
+Logistics Interp. 1.00 0.00±0.00 0.07±0.05 0.44±0.09 0.19±0.14
+Extrap. 0.26 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+
+0.00±0.00
+0.11±0.00
+0.00±0.00
+
+0.00±0.00 0.00±0.00 0.00±0.00 0.17±0.12 0.08±0.12 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+0.22±0.31 0.26±0.29 0.22±0.31 0.78±0.16 0.29±0.10 0.11±0.00 0.00±0.00 0.18±0.10 0.11±0.00 0.44±0.00 0.11±0.00
+0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00 0.00±0.00
+
+FD
+Domain Split
+Blocks
+
+VisitAll
+
+Plansf.
+greedy
+
+PlanGPT∗
+appl.
+
+regr.
+
+Limitations under hierarchical causal coupling. All
+learned models, including all state-centric variants, achieve
+0.00 extrapolation in Logistics. Even Fast Downward degrades from 1.00 (validation) to 0.26 (extrapolation) under
+a 60-second timeout, reflecting the exponential state-space
+growth of extrapolation instances. The Logistics domain exhibits deep multi-layer causal coupling across object types
+and transport modalities, which is not preserved under local
+successor matching. This identifies a concrete structural limitation of one-step neural transition prediction under strict
+size extrapolation for this domain.
+Summary of empirical findings. The results support
+three data-grounded conclusions: (i) size-invariant relational
+representations are necessary for extrapolation beyond training object bounds; (ii) residual (delta) modeling significantly improves non-parametric transition learning in sparse
+STRIPS domains; and (iii) the necessity of sequential memory in transition learning is domain dependent. Transitionmodel learning alone, however, remains insufficient for hierarchical domains under strict extrapolation. An extended
+experimental analysis is presented in Appendix section C.
+
+Conclusion and Future Work
+We presented a state-centric formulation of generalized
+planning in which models learn to predict successor states
+rather than action sequences. When combined with size- and
+permutation-invariant relational embeddings, this approach
+enables compact transition models (∼1M parameters, no
+data augmentation) to achieve strong extrapolation performance in locally factored domains, matching or exceeding
+Transformer baselines (∼25–220M parameters) that rely on
+orders of magnitude more data and parameters. Empirically,
+our results show that explicit transition modeling provides
+a stronger inductive bias for extrapolation than architectural
+scale alone, though limitations remain in domains with hierarchical and long-range dependencies. The neuro-symbolic
+decoding interface further improves robustness by enforcing symbolic validity at every planning step. Future work
+will target hierarchical and long-range dependency domains,
+where one-step state prediction fails under strict extrapolation. We will extend the state-centric framework to multi-
+
+WL-LSTM
+state
+delta
+
+WL-XGB
+state
+delta
+
+FSF-LSTM
+state
+delta
+
+FSF-XGB
+state
+delta
+
+step or abstract transitions while preserving symbolic verification.
+
+Acknowledgments
+This work is partially supported by NSF Awards #2454027
+and NAIRR250014, and Faculty Award by JP Morgan Research.
+
+References
+Ahn, M.; Brohan, A.; Brown, N.; Chebotar, Y.; Cortes, O.;
+David, B.; Finn, C.; Fu, C.; Gopalakrishnan, K.; Hausman,
+K.; et al. 2022. Do as i can, not as i say: Grounding language
+in robotic affordances. arXiv preprint arXiv:2204.01691.
+Battaglia, P. W.; Hamrick, J. B.; Bapst, V.; SanchezGonzalez, A.; Zambaldi, V.; Malinowski, M.; Tacchetti, A.;
+Raposo, D.; Santoro, A.; Faulkner, R.; et al. 2018. Relational
+inductive biases, deep learning, and graph networks. arXiv
+preprint arXiv:1806.01261.
+Boutilier, C.; Dearden, R.; and Goldszmidt, M. 2000.
+Stochastic dynamic programming with factored representations. Artificial intelligence, 121(1-2): 49–107.
+Chen, D.; and Thiébaux, S. 2024. Graph learning for numeric planning. Advances in Neural Information Processing
+Systems, 37: 91156–91183.
+Chen, D. Z. 2024. WLPlan: Relational Features for Symbolic Planning. CoRR, abs/2411.00577.
+Chen, D. Z. 2025. Weisfeiler-Leman Features for Planning:
+A 1,000,000 Sample Size Hyperparameter Study. arXiv
+preprint arXiv:2508.18515.
+Chen, D. Z.; Thiébaux, S.; and Trevizan, F. 2023. Goose:
+Learning domain-independent heuristics. In NeurIPS 2023
+Workshop on Generalization in Planning.
+Chen, D. Z.; Trevizan, F.; and Thiébaux, S. 2024. Return to
+tradition: Learning reliable heuristics with classical machine
+learning. In Proceedings of the International Conference on
+Automated Planning and Scheduling, volume 34, 68–76.
+Chen, D. Z.; Trevizan, F.; and Thiébaux, S. 2025. Learning
+for Generalised Planning. Tutorial, International Conference
+on Automated Planning and Scheduling (ICAPS). https://
+l4p-tutorial.github.io/slides.pdf.
+
+Chen, T. 2016. XGBoost: A Scalable Tree Boosting System.
+Cornell University.
+Fritzsche, M.; Gestrin, E.; and Seipp, J. 2025. SymmetryAware Transformer Training for Automated Planning. arXiv
+preprint arXiv:2508.07743.
+Guestrin, C.; Koller, D.; Parr, R.; and Venkataraman, S.
+2003. Efficient solution algorithms for factored MDPs. Journal of Artificial Intelligence Research, 19: 399–468.
+Ha, D.; and Schmidhuber, J. 2018. World models. arXiv
+preprint arXiv:1803.10122, 2(3).
+Hafner, D.; Lillicrap, T.; Fischer, I.; Villegas, R.; Ha, D.;
+Lee, H.; and Davidson, J. 2019. Learning latent dynamics
+for planning from pixels. In International conference on machine learning, 2555–2565. PMLR.
+Hafner, D.; Pasukonis, J.; Ba, J.; and Lillicrap, T. 2023.
+Mastering diverse domains through world models. arXiv
+preprint arXiv:2301.04104.
+Hao, M.; Chen, D. Z.; Trevizan, F.; and Thiébaux, S. 2025.
+Effective data generation and feature selection in learning
+for planning. In European Conference on Artificial Intelligence (ECAI-25).
+Helmert, M. 2006. The fast downward planning system.
+Journal of Artificial Intelligence Research, 26: 191–246.
+Hochreiter, S.; and Schmidhuber, J. 1997. Long short-term
+memory. Neural computation, 9(8): 1735–1780.
+Howey, R.; Long, D.; and Fox, M. 2004. VAL: Automatic
+plan validation, continuous effects and mixed initiative planning using PDDL. In 16th IEEE International Conference
+on Tools with Artificial Intelligence, 294–301. IEEE.
+Kambhampati, S.; Valmeekam, K.; Guan, L.; Verma, M.;
+Stechly, K.; Bhambri, S.; Saldyt, L. P.; and Murthy, A. B.
+2024. Position: LLMs can’t plan, but can help planning in
+LLM-modulo frameworks. In Forty-first International Conference on Machine Learning.
+Liu, B.; Jiang, Y.; Zhang, X.; Liu, Q.; Zhang, S.; Biswas, J.;
+and Stone, P. 2023. Llm+ p: Empowering large language
+models with optimal planning proficiency. arXiv preprint
+arXiv:2304.11477.
+Pallagani, V.; Muppasani, B.; Murugesan, K.; Rossi, F.;
+Horesh, L.; Srivastava, B.; Fabiano, F.; and Loreggia, A.
+2022. Plansformer: Generating symbolic plans using transformers. arXiv preprint arXiv:2212.08681.
+Richter, S.; and Westphal, M. 2010. The LAMA planner:
+Guiding cost-based anytime planning with landmarks. Journal of Artificial Intelligence Research, 39: 127–177.
+Rivlin, O.; Hazan, T.; and Karpas, E. 2020. Generalized
+planning with deep reinforcement learning. arXiv preprint
+arXiv:2005.02305.
+Rossetti, N.; Tummolo, M.; Gerevini, A. E.; Olivato, M.;
+Putelli, L.; and Serina, I. 2024a. Enhancing GPT-based planning policies by model-based plan validation. In International Conference on Neural-Symbolic Learning and Reasoning, 328–337. Springer.
+Rossetti, N.; Tummolo, M.; Gerevini, A. E.; Putelli, L.; Serina, I.; Chiari, M.; and Olivato, M. 2024b. Learning general
+
+policies for planning through GPT models. In Proceedings
+of the International Conference on Automated Planning and
+Scheduling, volume 34, 500–508.
+Segovia-Aguas, J.; Jiménez, S.; and Jonsson, A. 2021. Generalized planning as heuristic search. In Proceedings of
+the International Conference on Automated Planning and
+Scheduling, volume 31, 569–577.
+Shen, W.; Trevizan, F.; and Thiébaux, S. 2020. Learning
+domain-independent planning heuristics with hypergraph
+networks. In Proc. of the International Conference on Automated Planning and Scheduling, volume 30, 574–584.
+Shervashidze, N.; Schweitzer, P.; Van Leeuwen, E. J.;
+Mehlhorn, K.; and Borgwardt, K. M. 2011. Weisfeilerlehman graph kernels. Journal of Machine Learning Research, 12(9).
+Shlomi, E.; Azran, G.; Shapira, E.; Nahum, O.; Uziel, G.;
+Katz, M.; Tavor, A. A.; Reichart, R.; and Keren, S. 2025.
+Transition Function Prediction in AI Planning Using LLMs.
+In AAAI 2025 Workshop LM4Plan.
+Ståhlberg, S.; Bonet, B.; and Geffner, H. 2022. Learning
+generalized policies without supervision using gnns. arXiv
+preprint arXiv:2205.06002.
+Toyer, S.; Trevizan, F.; Thiébaux, S.; and Xie, L. 2018. Action schema networks: Generalised policies with deep learning. In Proc. of the AAAI Conference on Artificial Intelligence, volume 32.
+Weisfeiler, B.; and Leman, A. 1968. The reduction of
+a graph to canonical form and the algebra which appears
+therein. nti, Series, 2(9): 12–16.
+Xu, K.; Hu, W.; Leskovec, J.; and Jegelka, S. 2018.
+How powerful are graph neural networks? arXiv preprint
+arXiv:1810.00826.
+
+Appendix
+This appendix provides supplementary material to support
+reproducibility and extended analysis. It is organized as follows:
+A. Notation and Terminology . . . . . . . . . . . . . . . . . . . . . . . . . 7
+B. Extended Related Work . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+C. Extended Experimental Analysis . . . . . . . . . . . . . . . . . . . . 9
+D. Dataset Details and Statistics . . . . . . . . . . . . . . . . . . . . . . . 9
+E. Weisfeiler–Leman Graph Embedding Details . . . . . . . . 11
+F. Fixed-Size Factored Encoding Details . . . . . . . . . . . . . . 12
+G. Technical Implementation Pipeline . . . . . . . . . . . . . . . . .12
+
+A
+
+Notation and Terminology
+
+We summarize all symbols and technical terms used
+throughout the paper for clarity and reproducibility in Table 2.
+
+B
+
+Extended Related Work
+
+This section expands on the related work discussion in the
+main paper, providing additional context and citations for
+each research direction relevant to our work.
+
+B.1
+
+Learning for Generalized Planning
+
+Generalized Planning (GP) seeks solution strategies that
+transfer across problem instances within a domain, rather
+than solving each instance independently (Segovia-Aguas,
+Jiménez, and Jonsson 2021). Early neural approaches introduced relational inductive biases to enable such transfer.
+Action Schema Networks (ASNs) (Toyer et al. 2018) exploited the lifted action structure of planning domains by
+constructing neural architectures that mirror action schemas,
+enabling policies to generalize beyond training instances.
+Rivlin, Hazan, and Karpas (2020) combined graph neural networks with deep reinforcement learning to learn
+Blocksworld policies that scale to instances orders of magnitude larger than those seen during training. These works
+established that an appropriate relational structure is critical for extrapolation in learned planners. More recent approaches have explored diverse architectural choices for GP.
+Ståhlberg, Bonet, and Geffner (2022) investigated learning
+general policies represented as finite-state controllers, providing theoretical grounding for the expressivity required for
+GP.
+
+B.2
+
+Symmetry and Invariance in Neural Planning
+
+A fundamental challenge in neural planning is handling the
+symmetries inherent in planning problems: permuting object names should not change the solution structure. This
+has motivated architectures with explicit invariance properties. Graph Neural Networks (GNNs) naturally handle
+permutation invariance through message-passing operations
+(Battaglia et al. 2018).
+The Symmetry-Aware Transformer (SATr) framework
+(Fritzsche, Gestrin, and Seipp 2025) addresses symmetry
+
+in sequence-to-sequence planning. It introduces three innovations: compositional tokenization (separating objects
+and predicates), removal of positional encodings (preventing
+memorization of absolute positions), and contrastive learning objectives (encouraging mapping of symmetric states to
+similar representations). SATr achieves state-of-the-art performance on several IPC domains through extensive data
+augmentation (state-space expansion).
+Our work differs from SATr in two fundamental respects.
+First, we adopt a state-centric rather than action-centric objective: predicting successor states rather than next actions.
+This forces the model to learn transition dynamics explicitly, providing natural grounding that architectural modifications alone cannot guarantee. Second, we achieve competitive generalization without massive data augmentation, relying instead on size-invariant representations (WL embeddings) that provide structural inductive bias.
+
+B.3
+
+Graph-Based State Representations
+
+To handle variable-sized object sets, recent planners use
+graph-based state representations where objects are nodes
+and predicates define edges or features. Hypergraph networks such as STRIPS-HGN (Shen, Trevizan, and Thiébaux
+2020) learned domain-independent heuristics directly from
+planning graphs. Chen, Thiébaux, and Trevizan (2023) proposed GOOSE, a GNN-based heuristic learner that significantly outperformed STRIPS-HGN and generalized to much
+larger problem instances. Subsequent work (Chen, Trevizan,
+and Thiébaux 2024) showed that classical Weisfeiler-Leman
+(WL) graph kernels (Weisfeiler and Leman 1968; Shervashidze et al. 2011) with simple regression models can
+match or exceed GNN performance at orders of magnitude lower computational cost. This finding motivates our
+use of WL embeddings: they provide the expressivity of
+1-WL message-passing GNNs while enabling deployment
+with lightweight models.
+Recent extensions have further improved graph-based
+representations for planning. Chen and Thiébaux (2024)
+introduced domain-independent graph transformations that
+enhance generalization, while Chen (2025) provided theoretical analysis connecting WL expressivity to planningspecific structures. Hao et al. (2025) demonstrated effective
+combinations of WL features with neural architectures for
+learning domain-independent heuristics.
+
+B.4
+
+Action-Centric Sequence Models for
+Planning
+
+Another line of work formulates plan generation as a sequence prediction task. Plansformer (Pallagani et al. 2022)
+fine-tuned a Transformer on symbolic plan traces to generate action sequences with high validity on classical planning benchmarks, substantially outperforming zero-shot language models. More recently, PlanGPT (Rossetti et al.
+2024b) trained GPT-style architectures directly on planning data to learn general planning policies. While effective in-distribution, such autoregressive models often suffer from state drift and logical inconsistency on longer
+horizons or out-of-distribution problems due to the lack of
+
+Table 2: Summary of notation used throughout the paper.
+Category
+
+Planning
+
+Goals & Successors
+
+Learning & Transitions
+
+Symbol
+
+Meaning
+
+Σ = ⟨S, A, γ⟩
+S
+A, A
+γ :S×A→S
+O
+P
+P(O)
+s ⊆ P(O)
+Π = ⟨Σ, s0 , G⟩; Π = ⟨O, P, A, s0 , g⟩
+
+State-transition system (set of states S, actions A, and transition
+function γ)
+Set of all symbolic world states
+Set of grounded actions (operators)
+Deterministic transition function
+Finite object set in a planning instance
+Predicate vocabulary
+Set of all grounded predicates over O
+A symbolic state
+Planning task (global and instance-level formulations)
+
+s0
+G⊆S
+g ⊆ P(O)
+Succ(s)
+st+1 = γ(st , at )
+
+Initial state of a planning instance
+Set of goal states in the state-transition formulation
+Goal condition in the propositional formulation
+Set of valid symbolic successors of state s under γ
+Successor state obtained by applying action at in st
+
+Dtrain , Dtest
+Tθ
+ŝt+1
+ϕ : S → RD
+ϕ(g)
+fθ
+
+Training and test distributions over planning instances
+Learned goal-conditioned transition model
+Predicted successor state from Tθ
+Fixed-dimensional state embedding
+Embedded representation of the goal condition
+Delta-prediction function in the residual transition parameterization
+Residual transition update at step t
+Predicted next-state embedding, e.g., ϕ̂(st+1 ) = ϕ(st ) + ∆t
+Target embedding used for decoding at step t
+
+∆t
+ϕ̂(st+1 )
+vt
+st+1 = arg ′ min
+
+s ∈Succ(st )
+
+∥ϕ(s′ ) − vt ∥2
+
+−1
+
+Neuro-symbolic successor selection rule
+
+at = γ (st → st+1 )
+T
+π = ⟨a1 , . . . , aT ⟩
+
+Action inducing the selected symbolic transition
+Plan horizon (length of π)
+Plan as an action sequence
+
+WL
+FSF
+ILG
+Gs,g
+k
+D
+
+Weisfeiler–Leman (graph-kernel) state embedding
+Fixed-Size Factored state encoding
+Instance Learning Graph (relational encoding of (s, g))
+Relational instance graph encoding the pair (s, g)
+Number of WL refinement iterations
+Dimensionality of the embedding ϕ(s) ∈ RD
+
+Models
+
+LSTM
+XGBoost (XGB)
+State mode
+Delta mode
+θ
+γ̂
+
+Parametric recurrent transition model
+Tree-based non-parametric regressor
+Direct prediction of ϕ(st+1 )
+Prediction of residual ∆t with reconstruction ϕ(st ) + ∆t
+Trainable parameters of the learned models
+Learned approximation of the symbolic transition function γ
+
+Evaluation
+
+Validation / Interpolation / Extrapolation
+Satisficing plan
+FD
+Coverage / Success rate
+
+Size-based dataset splits by object count
+Any valid plan whose execution reaches a goal state
+Fast Downward planner (A* with LM-cut heuristic, 60s timeout)
+Fraction of test instances for which a satisficing plan is found
+
+Decoding
+
+Representations
+
+explicit state tracking. Concurrent work by Shlomi et al.
+(2025) explores LLM-based transition prediction from (s, a)
+pairs, but targets single-instance prediction rather than sizeinvariant generalized planning.
+Hybrid LLM–Symbolic Planning. To mitigate these limitations, several hybrid frameworks integrate LLMs with
+symbolic planners or validators. LLM+P (Liu et al. 2023)
+uses an LLM to generate PDDL formulations that are solved
+by a classical planner, while recent PlanGPT variants incorporate symbolic validation to enforce action applicability
+(Rossetti et al. 2024a). Kambhampati et al. (2024) formalized this paradigm as LLM-Modulo, advocating tight coupling between LLMs and model-based solvers. In robotics,
+SayCan (Ahn et al. 2022) combines language models with
+learned affordance models to iteratively select feasible actions for long-horizon task execution.
+Model-Based Learning and World Models. In reinforcement learning, learning explicit transition dynamics has
+proven beneficial for planning and generalization. World
+Models (Ha and Schmidhuber 2018) and subsequent modelbased RL methods demonstrate that agents can learn compact environment simulators and plan via internal rollouts.
+However, most neural planners for classical planning remain
+action-centric or heuristic-driven and do not explicitly learn
+the symbolic transition dynamics. DreamerV3 (Hafner et al.
+2023) extends world-model learning to diverse RL domains,
+motivating explicit dynamics modeling.
+Positioning of Our Work. In contrast to prior actionsequence and heuristic-centric approaches, our work adopts
+a state-centric, model-based learning paradigm in which the
+planner is trained to predict state transitions directly. This
+enables explicit state grounding at every step, mitigates state
+drift, and yields significantly improved robustness on out-ofdistribution instances using compact models. To the best of
+our knowledge, this transition-prediction formulation with
+size-invariant representations has not been previously explored for generalized neural planning.
+
+C
+
+Performance Across Data Sets
+
+Figures 2–4 show satisficing-plan success rate across different data splits, with plots showing the validation, interpolation, and extrapolation splits for each domain. These figures
+visualize the data presented in Table 1, providing a more intuitive view of performance trends across problem sizes and
+model configurations.
+
+C.2
+
+Parameter Count Derivations. Table 3 summarizes
+model sizes across all methods. We detail the parameter calculations for our models below.
+Table 3: Model size comparison across all methods. SATr
+estimates are derived from architectural specifications in
+Fritzsche, Gestrin, and Seipp (2025) (12-layer sharedweight encoder/decoder, hidden size 768); exact counts depend on domain-specific vocabulary embeddings, which are
+not reported in the SATr work.
+Method
+
+Parameters
+
+Architecture
+
+Ratio
+
+Plansformer
+PlanGPT
+SATr (enc–dec)
+
+∼220M
+∼125M
+∼25–35M
+
+CodeT5
+GPT-2
+Transformer
+
+∼230×
+∼130×
+∼30×
+
+Ours (LSTM)
+Ours (XGB)
+
+∼0.93M
+∼115K nodes
+
+2-layer LSTM
+Gradient boosting
+
+1×
+—
+
+LSTM parameter breakdown. The LSTM architecture comprises dual linear encoders (D → 32), a two-layer LSTM
+(256-unit hidden size), and a two-stage output head (256 →
+256 → D). The parameter count is dominated by the recurrent layers (∼0.86M) and scales linearly with the embedding dimension D. Across all experimental domains where
+D ranges from 412 to 723, the model contains between
+∼0.88M and ∼0.97M trainable parameters, which we report
+as ∼1M.
+XGBoost model size. XGBoost learns an ensemble of regression trees via gradient boosting. Model size is measured in
+total tree nodes across all boosting rounds and output dimensions. With a maximum depth of 8 and early stopping,
+typical models contain ∼115,000 total nodes across all trees.
+Unlike neural models, XGBoost has no “trainable parameters” in the gradient-descent sense; the tree structure and leaf
+values are determined by the training algorithm.
+
+D
+
+Extended Experimental Analysis
+
+This section provides additional experimental analysis, including performance trends across problem sizes and perproblem breakdowns.
+
+C.1
+
+This subsection provides detailed breakdowns supporting
+these claims.
+
+Model and Data Efficiency Analysis
+
+A central empirical observation of this work is that explicit
+transition-model learning achieves competitive or superior
+extrapolation to action-centric Transformer baselines while
+requiring dramatically fewer parameters and training data.
+
+D.1
+
+Dataset Details and Statistics
+
+Domain Descriptions
+
+We evaluate on four standard IPC benchmark domains that
+admit a classical STRIPS-style representation. Each domain
+is specified by a tuple ⟨O, P, A⟩, where O is the object
+set, P is the predicate vocabulary, and A is the operator
+set inducing a deterministic transition function γ(s, a) =
+s \ Del(a) ∪ Add(a). Detailed dataset statistics for each split
+are reported in Table 4.
+Blocksworld. Blocksworld is a canonical manipulation domain defined over a set of blocks
+O = {b1 , . . . , bn }. The predicate set includes P =
+{on(x, y), ontable(x), clear(x), holding(x), handempty}.
+The operator set A consists of PICKUP, PUTDOWN, STACK,
+and UNSTACK. A state s ⊆ P(O) encodes a partial
+order over blocks. The branching factor grows quadratically in the number of clear blocks due to all admissible
+STACK/ UNSTACK combinations. Transitions exhibit sparse
+
+Figure 2: Satisficing-plan success rates on the validation split across all domains, comparing PlanGPT, SATr, WL-based, and
+FSF baselines.
+
+Figure 3: Satisficing-plan success rates on the interpolation split, comparing PlanGPT, SATr, WL-based, and FSF baselines for
+generalization to in-distribution problem instances.
+
+Figure 4: Satisficing-plan success rates on the extrapolation split, , comparing PlanGPT, SATr, WL-based, and FSF baselines
+for generalization in out-of-distribution problem instances.
+
+Table 4: Dataset statistics. Each cell shows count (complexity values) for the corresponding split. Complexity is measured
+in blocks, balls, goals, or cells depending on the domain. Training uses small instances; extrapolation tests generalization to
+significantly larger problems.
+
+Domain
+Blocksworld (blocks)
+Gripper (balls)
+Logistics (goals)
+VisitAll (cells)
+
+Train
+
+Validation
+
+Interpolation
+
+Extrapolation
+
+9 (4, 6, 7)
+4 (2, 4, 6, 8)
+12 (1, 3, 5)
+207 (1, 3, 4, 6, 10, 11, 12, 14, 16)
+
+3 (8)
+2 (9, 10)
+4 (6)
+24 (18, 20)
+
+3 (5)
+3 (3, 5, 7)
+9 (2, 4)
+37 (2, 5, 8, 9, 15)
+
+20 (9–17)
+16 (12–42, even)
+18 (7–15)
+219 (24–121)
+
+add–delete structure, making this domain well-suited for
+residual state prediction.
+Gripper. Gripper models a robot with two grippers transporting balls between rooms. The object set factorizes as
+O = B ∪ R ∪ {robot}, where B are balls and R are
+rooms. Predicates include at(x, r), free(g), carry(x, g), and
+at-robot(r). Operators include MOVE, PICK, and DROP. Although single-step transitions remain sparse, Gripper induces longer causal chains in which object transport must
+be synchronized with robot motion, creating trajectory-level
+dependencies not captured by purely local transitions.
+Logistics. Logistics is a multi-modal transportation domain with object types O = P ∪T ∪A∪C (packages, trucks,
+airplanes, cities). Predicates include at(x, l), in(x, v), and
+at-vehicle(v, l). Operators include LOAD, UNLOAD, DRIVE,
+and FLY. Unlike Blocksworld and VisitAll, Logistics induces long-range dependencies across heterogeneous object
+types and transport layers. Valid plans require coordination
+across multiple abstraction levels, resulting in deep coupling
+between distant subgoals. This property severely limits the
+effectiveness of one-step transition prediction under strict
+size extrapolation.
+VisitAll. VisitAll is a grid navigation domain defined over
+a lattice of cells O = {(i, j)}. Predicates include at(r, c) and
+visited(c). Operators correspond to unit grid
+V motions that
+update both at and visited. The goal is g = c∈O visited(c).
+Although each transition affects only a small number of fluents, the goal conjunct grows linearly with |O|, and the resulting state space grows exponentially. This domain isolates
+the effect of goal scaling under otherwise simple local dynamics.
+Relevance to State-Centric Modeling. All four domains
+admit deterministic STRIPS semantics with sparse add–
+delete operators. This ensures that successor states admit a
+decomposition
+
+E
+
+Weisfeiler–Leman Graph Embedding
+Details
+
+This section provides a comprehensive description of the
+Weisfeiler–Leman (WL) graph embedding procedure used
+in our state-centric planning framework.
+
+E.1
+
+Background: The WL Algorithm
+
+The Weisfeiler–Leman (WL) algorithm (Weisfeiler and Leman 1968) is an iterative color refinement procedure for
+graphs. Given a graph G = (V, E) with initial node colors c(0) : V → Σ, the algorithm iteratively refines colors by
+aggregating neighborhood information:
+c(k+1) (v) =
+
+
+H ASH c(k) (v), {{(c(k) (u), ℓ(u, v)) | u ∈ N (v)}}
+where N (v) denotes the neighbors of v, ℓ(u, v) is the
+edge label, and {{·}} denotes a multiset. After k iterations, the algorithm produces a multiset of colors C (k) =
+Sk
+(i)
+i=0 {{c (v) | v ∈ V }}.
+
+E.2
+
+Instance Learning Graph Construction
+
+We use the Instance Learning Graph (ILG) representation
+(Chen, Trevizan, and Thiébaux 2024) to encode planning
+states. Given a planning instance Π = ⟨O, P, A, s, g⟩, the
+ILG Gs,g = (V, E, Fcat , L) is constructed as follows:
+Nodes. V = O ∪ X(s) ∪ g, where:
+• O: object nodes (one per domain object)
+• X(s) = Xp (s)∪Xn (s): state variable nodes (true propositions and numeric fluents)
+• g: goal condition nodes
+Edges. For
+each
+grounded
+p = σ(o1 , . . . , oar(σ) ) ∈ X(s) ∪ gp :
+
+predicate
+
+E ⊇ {(p, oi ) | i ∈ [1, ar(σ)]}
+Node Features. Categorical features Fcat : V → ΣV encode node semantics:
+
+st+1 = st \ Del(at ) ∪ Add(at ),
+which directly motivates our residual transition formulation
+ϕ̂(st+1 ) = ϕ(st ) + ∆t . The domains thus provide a controlled testbed for evaluating whether learned neural approximations γ̂ can preserve symbolic transition structure under
+strict size extrapolation.
+
+
+
+object
+if u ∈ O \ Oconst
+
+
+
+
+u
+if
+u ∈ Oconst
+
+Fcat (u) = (pred(u), apg) if u ∈ Xp (s) ∩ gp
+
+
+
+(pred(u), upg) if u ∈ gp \ Xp (s)
+
+
+
+(pred(u), apn) if u ∈ Xp (s) \ gp
+
+Edge Labels.
+L(p, oi ) = i.
+
+E.3
+
+L : E → N encodes argument position:
+
+Feature Extraction
+
+Given the ILG Gs,g and k WL iterations, we extract a fixeddimensional feature vector ϕ(s, g) ∈ RD as follows:
+1. Color Refinement: Run k iterations of WL on Gs,g , producing color multiset C (k) .
+2. Vocabulary Construction: During training, collect all
+unique colors across all training graphs to form vocabulary V = {c1 , . . . , cD }.
+3. Histogram Embedding: For each graph, compute:
+ϕ(s, g)i = C OUNT(C (k) , ci ),
+
+E.4
+
+i ∈ [1, D]
+
+Implementation Details
+
+• Graph representation: Instance Learning Graph (ILG)
+• Iterations: k = 2
+• Hash function: Multiset hash (deterministic)
+• Pruning: None
+Vocabulary Sizes. The resulting vocabulary sizes (feature
+dimensions D) per domain are:
+
+Blocksworld
+Gripper
+Logistics
+VisitAll
+
+E.5
+
+Dimension D
+587
+412
+723
+498
+
+General Structure
+
+FSF encodings have the form ϕFSF (s) ∈ RN +1 , where N is
+the maximum number of objects across all problems in the
+domain. The encoding consists of:
+• Slot 0: Global/robot state information
+• Slots 1–N : Per-object state information
+• −99.0: Padding (slot unused for this problem size)
+• −10.0: Don’t-care (goal variable not specified)
+
+F.2
+
+Size Invariance. The dimension D depends only on the
+domain’s predicate structure and training distribution, not on
+|O|. A model trained on 4-block problems produces embeddings of the same dimension for 100-block problems.
+Expressivity. WL embeddings are exactly as expressive as
+1-WL message-passing GNNs (Xu et al. 2018): two graphs
+receive the same embedding if and only if 1-WL cannot distinguish them.
+Computational Complexity. For a graph with n nodes,
+maximum degree δ, and k iterations, the WL algorithm runs
+in O(nkδ) time, which is linear in graph size for boundeddegree graphs typical in planning.
+
+Fixed-Size Factored Encoding Details
+
+While factored representations have been extensively studied in planning (Boutilier, Dearden, and Goldszmidt 2000;
+Guestrin et al. 2003), our Fixed-Size Factored (FSF) encodings deliberately omit relational structure to serve as a
+
+Domain-Specific Semantics
+
+Table 5 provides detailed semantics for each domain.
+
+F.3
+
+Example: Blocksworld Encoding
+
+Consider a 4-block Blocksworld state where:
+• Block A is on the table
+• Block B is on Block A
+• Block C is being held
+• Block D is on the table
+With object ordering {A 7→ 1, B 7→ 2, C 7→ 3, D 7→ 4}:
+ϕFSF (s) = [0, |{z}
+0 , |{z}
+1 , −1 , |{z}
+0 , −99, . . .]
+|{z}
+
+Properties of WL Embeddings
+
+Permutation Invariance. WL embeddings are invariant
+to object renaming: for any bijection σ : O → O, we have
+ϕ(σ(s), σ(g)) = ϕ(s, g).
+
+F
+
+F.1
+
+Special Values.
+
+We use the wlplan library (Chen 2024) for WL feature
+extraction with the following configuration:
+
+Domain
+
+controlled ablation baseline. FSF represents states as vectors of fixed dimension, where each dimension corresponds
+to a specific object slot with domain-specific semantics. This
+design isolates the contribution of permutation and size invariance to generalization by providing a representation that:
+(i) requires a predetermined maximum object count, (ii) depends on fixed object-to-slot mappings, and (iii) necessitates
+domain-specific manual design.
+
+A on table B on A C held D on table
+
+F.4
+
+Limitations of FSF Encodings
+
+No Size Invariance. FSF encodings require a predetermined maximum object count N . Problems with |O| > N
+cannot be represented. This fundamentally limits extrapolation to larger instances.
+No Permutation Invariance. FSF encodings depend on
+a fixed object-to-slot mapping. Different orderings of the
+same objects yield different vectors, preventing generalization across equivalent states.
+Domain-Specific Design. Each domain requires manual
+design of the encoding semantics, limiting applicability to
+new domains without expert knowledge.
+These limitations motivate the use of WL embeddings,
+which provide permutation and size invariance without
+domain-specific engineering.
+
+G
+
+Technical Implementation Pipeline
+
+This section describes the complete technical pipeline from
+symbolic planning instances to trained neural transition
+models, enabling full reproducibility of our experimental results.
+
+Table 5: Detailed FSF encoding semantics by domain.
+
+Domain
+
+Slot Interpretation
+
+Value Semantics
+
+Blocksworld
+
+Slot 0: Unused (constant 0)
+Slot i (i > 0): Block i
+
+—
+0 = on table; −1 = held by gripper; j > 0 = on block j
+
+Slot 0: Robot location
+Slot i (ball): Ball i location
+Slot i (gripper): Gripper i status
+
+Room index where robot is located
+Room index if at room; −j if carried by gripper j
+0 = free; j > 0 = holding ball j
+
+Slot 0: Unused (constant 0)
+Slot i: Object i (pkg/truck/plane)
+
+—
+Location index if at location; −j if inside vehicle j
+
+Slot 0: Robot position
+Slot i (i > 0): Cell i
+
+Cell index where robot is located
+0 = unvisited; 1 = visited
+
+Gripper
+Logistics
+
+VisitAll
+
+G.1
+
+Data Generation Pipeline
+
+The data generation process transforms raw PDDL domain
+and problem files into machine-learning-ready state trajectory embeddings through four sequential stages.
+Stage 1: Symbolic Plan Generation. We use Fast Downward with a two-tier solving strategy to maximize coverage across problem difficulties. The baseline configuration
+runs A* search with the landmark-cut admissible heuristic
+under a 60-second timeout. For problems that exceed this
+limit, we invoke a fallback configuration using greedy bestfirst search with the FF heuristic and a 300-second timeout.
+This staged approach achieves high coverage on training instances (which are intentionally kept small) while maintaining plan quality where possible. Plans are written in standard
+PDDL action-sequence format.
+Stage 2: State Trajectory Reconstruction. Given a valid
+plan, we reconstruct the complete sequence of intermediate
+world states using the VAL plan validator in verbose mode.
+VAL applies each action symbolically and outputs the predicates added or deleted at each timestep. We parse this output
+to build the full trajectory ⟨s0 , s1 , . . . , sT ⟩ where each st is
+represented as a sorted list of ground predicates. This reconstruction is necessary because Fast Downward’s search only
+maintains heuristic state information, not the explicit symbolic states required for supervised learning. The resulting
+trajectory files are saved in plain-text format with one state
+per line.
+Stage 3: Weisfeiler-Leman Feature Collection. WL embeddings require a fixed vocabulary collected from the training distribution. For each domain, we parse all training trajectory files and construct instance learning graphs Gs,g for
+every state-goal pair encountered. We run k = 2 iterations
+of color refinement and collect the multiset of final node colors across all training graphs. These color strings are sorted
+lexicographically and assigned integer indices to form the
+vocabulary V. The vocabulary size D = |V| is domaindependent but fixed once collected, enabling embeddings of
+arbitrary test-time problem sizes into RD .
+
+Stage 4: Trajectory Embedding. With the vocabulary established, we embed every trajectory across all data splits.
+For each state st in a trajectory, we construct its instance
+graph Gst ,g , perform k = 2 WL iterations using the fixed
+vocabulary V, and compute the normalized color histogram
+as the embedding ϕ(st ) ∈ RD . Goals are embedded analogously. The resulting trajectory is a matrix of shape [T, D]
+where T is the plan length, stored as a NumPy array alongside a separate goal vector of shape [D]. This compact representation supports efficient batch loading during training.
+
+G.2
+
+Transition Model Training
+
+Dataset Construction for LSTM. The LSTM operates on
+variable-length sequences. For each problem instance, we
+load the embedded trajectory matrix [ϕ(s0 ), . . . , ϕ(sT )] and
+the goal vector ϕ(g). During training, these are collated into
+padded batches with a custom collate function that tracks the
+true sequence length of each trajectory. The goal embedding
+is replicated across all timesteps to form a constant conditioning signal. For delta-mode training, we compute target
+residuals ∆t = ϕ(st+1 ) − ϕ(st ) on the fly.
+Dataset Construction for XGBoost. XGBoost requires
+flattened tabular input. We extract all consecutive state pairs
+(st , st+1 ) from every trajectory and construct feature vectors by concatenating the current state embedding, the goal
+embedding, and (for delta mode) the difference vector. Concretely, each training example is a row of shape [2D] (concatenated state and goal) with a target vector of shape [D]
+(next state or delta). This flattening procedure is applied independently to training and validation splits, yielding dense
+matrices suitable for gradient boosting.
+LSTM Architecture and Training. The LSTM model
+consists of a linear encoder projecting the D-dimensional
+state and goal vectors into a shared 32-dimensional embedding space. These low-dimensional embeddings are concatenated and fed into a two-layer LSTM with 256 hidden
+units per layer. The LSTM output is passed through a twolayer feedforward head that projects back to the original Ddimensional space. For state-mode training, we minimize
+
+cosine embedding loss between predictions and targets, encouraging alignment in direction. For delta-mode training,
+we minimize mean squared error on the residual vectors. We
+train with the Adam optimizer at a learning rate of 10−2 for
+250 epochs with early stopping based on validation loss.
+
+Table 6: Complete hyperparameter settings for all models.
+
+XGBoost Architecture and Training. XGBoost is configured for multi-output regression using the squared-error
+objective. We use histogram-based tree construction on GPU
+with a maximum tree depth of 8 and a learning rate of 0.1.
+Training proceeds for up to 1000 boosting rounds with early
+stopping if validation loss does not improve for 10 consecutive rounds. The model learns an ensemble of regression trees that collectively approximate the mapping from
+[ϕ(st ), ϕ(g)] to ϕ(st+1 ) or ∆t . The best iteration checkpoint
+is retained based on validation performance.
+Loss Function Selection. For state-mode training, we
+adopt cosine embedding loss rather than mean squared error. This choice reflects the sparse, high-dimensional nature of WL embeddings: states differing by a single predicate may have Euclidean distances dominated by uninformative dimensions, whereas cosine similarity emphasizes
+directional alignment in the feature space. Empirically, we
+observe that cosine loss enables more stable convergence for
+LSTM models predicting full state vectors. For delta-mode
+training, we use mean squared error directly on the residual
+vectors ∆t , as these deltas are inherently sparse and lowmagnitude, making component-wise regression more appropriate than angular alignment. XGBoost uses squared error
+in both modes as it does not support cosine objectives natively, though the distance metric used during inference (cosine for state mode, Euclidean for delta mode) remains consistent with the training objective’s geometric assumptions.
+
+G.3
+
+Inference and Plan Decoding
+
+Symbolic State Maintenance. During test-time execution, we maintain the current symbolic state st explicitly as a
+set of ground predicates. This state is initialized to the problem’s s0 and updated only through valid operator applications, ensuring that every intermediate state is well-formed
+under the domain’s transition function γ.
+Neural Successor Prediction. At each planning step, we
+embed the current symbolic state and goal to obtain ϕ(st )
+and ϕ(g). These embeddings are passed through the learned
+transition model to produce either a direct next-state prediction ϕ̂(st+1 ) or a residual prediction ∆t that is added to
+ϕ(st ). The resulting target vector vt represents the model’s
+internal prediction of where the plan should transition next.
+Symbolic Successor Enumeration. Using the ground operator set A and applicability preconditions, we enumerate
+all valid symbolic successors Succ(st ) = {γ(st , a) | a ∈
+A, a applicable in st }. Each candidate successor is embedded using the same WL procedure as during training, yielding a set of embedding vectors {ϕ(s′ ) | s′ ∈ Succ(st )}.
+Nearest Neighbor Decoding. We compute the Euclidean
+distance (for delta mode) or cosine distance (for state mode)
+
+Parameter
+
+LSTM
+
+XGBoost
+
+Architecture
+Hidden dimension
+Embedding dimension
+Number of layers
+Tree depth
+
+256
+32
+2
+—
+
+—
+—
+—
+8
+
+Training
+Learning rate
+Batch size
+Max epochs / rounds
+Early stopping patience
+Optimizer
+Loss (state mode)
+Loss (delta mode)
+
+10−2
+32
+250
+25
+Adam
+Cosine
+MSE
+
+0.1
+—
+1000
+10
+—
+MSE
+MSE
+
+Inference
+Beam width
+Max planning steps
+Distance metric (state)
+Distance metric (delta)
+
+3
+100
+Cosine
+Euclidean
+
+3
+100
+Cosine
+Euclidean
+
+Model Size
+Parameters
+Total tree nodes
+
+927, 602
+—
+
+—
+∼ 115, 000
+
+between vt and each candidate embedding ϕ(s′ ). The candidate with minimum distance is selected as the next symbolic
+state st+1 , and the unique action a satisfying γ(st , a) =
+st+1 is appended to the plan. This guarantees that every generated action is applicable and that state evolution respects
+the symbolic transition semantics.
+Termination. Planning terminates when the goal condition g ⊆ st is satisfied or when a maximum horizon of 100
+steps is reached. The resulting action sequence is validated
+externally using VAL to confirm correctness.
+
+G.4
+
+Computational Resources
+
+All experiments were conducted on an HPC cluster with the
+following specifications:
+• GPU: NVIDIA A100 (40GB VRAM)
+• CUDA Version: 11.7
+• CPU: 128 cores per node (for data generation)
+• Memory: 256GB RAM per node
+Total compute time: approximately 1 GPU-hour for all
+experiments.
+
+G.5
+
+Hyperparameters
+
+Table 6 provides complete hyperparameter settings.
+
+

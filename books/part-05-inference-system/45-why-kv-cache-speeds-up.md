@@ -155,6 +155,10 @@ Verifier 只拥有 score readout，不拥有 trajectory truth；Search 决策层
 
 Access plan 必须绑定 model、prompt / tokenization、KV layout、knowledge revision 与 compiler version。收益来自减少 HBM traffic，代价是 plan staleness、irregular gather、漏掉因果依赖和 fallback 成本；短 Context、访问稠密或 gather kernel 不成熟时，dense FullKV 仍更合理。第 76 章拥有 relevance 与 provenance，本章拥有 plan 到 physical KV read 的执行接口，第 49 章拥有 kernel realization。
 
+一种更具体的实现把语义选择编译成 `Grid → Chunk → Page` 的层级访问计划：较粗表示先缩小候选区域，较细选择再落到与 physical KV page 对齐的索引，executor 直接 gather 已驻留 page，而不是重新拼接一份逻辑 Context。这样减少的是 selection metadata、重复搬运与 attention read，不是原始事实本身；selector 只拥有 page proposal，cache manager 仍验证 page generation、offset、residency 和 fallback。层级池化或 coarse miss 会永久跳过细粒度证据，page 对齐也可能保留无关 token；短 Context、选择稠密或 zero-copy path 不可用时，dense read 仍是正确基线。
+
+<!-- SF-2026-ARXIV-2602-20732 -->
+
 只读取既有 KV 的前提是这些 row 已包含当前组合上下文需要的因果信息。独立文档分别 Prefill 后再拼接 cache 时，这个前提可能失效：每个 chunk 内部状态从未看到其他 chunk。全量重新 Prefill 最可靠，却放弃了复用收益；选择性重算则把 access plan 从“读哪些 row”扩展为“哪些局部状态必须在完整上下文中修复”。一个可行的 proposal 可以联合 token semantic relevance 与 positional influence 选择重算目标，让复用路径和 causal repair 共用同一份 versioned selection contract。
 
 这种方法节省的不是任意 Prefill，而是被判定为无需修复的部分；代价包括 selection error、额外估计开销和 optimized kernel 难以高效执行的 irregular causal mask。未选 token 仍可能影响答案，作者实验也不能证明选择器跨模型、任务和长度分布保持充分。因此高风险请求、依赖稠密、短 Context 或选择置信不足时，应回退 full-context Prefill；只有模型、chunking、position、selection rule 与 KV layout identity 全部兼容时，局部重算结果才可复用。
@@ -379,6 +383,14 @@ mapping 和执行；两者都不能宣称已经知道未来 token 会需要什�
 稀释跨边界的重要 span。受限实验甚至显示，在未 pinned 的事实上，累计 attention 在部分规模下优于 semantic decay，
 因此 semantic region 不是 attention 的线性替代。标签缺失、风险高或 calibration 漂移时，FullKV、attention-only、
 offload 或 recomputation 仍是合理分支；policy/model/workload revision 必须进入 cache identity。
+
+#### Model-driven GC 只能提出 Eviction，不拥有删除权限
+
+固定 recency/attention heuristic 在 token utility 随时间近似平稳时便宜且可复算；长程 Agent 会让早期 tool output 在多个 turn 后重新变得关键，模型的任务语义可以作为新的 utility sensor。一个隔离的 auxiliary branch 可以读取同一 context snapshot，输出待删除 cursor/segment proposal，而主 reasoning branch 不消费其管理 token；runtime 保存 proposal、source snapshot、policy revision 和实际 page mapping，只有在结构保护、预算与 fallback 检查通过后才提交 eviction。
+
+模型理解提高了动态语义选择能力，也带来 self-confirmation、管理 token 成本、并行分支竞争和错误删除；模型声称“已经无用”仍不是未来效用真值。高风险任务、branch identity 不一致、proposal 无法映射到完整 message/page 或连续压缩失败时，应拒绝删除并回退 FullKV、静态窗口、offload 或重算。模型只拥有 proposal，cache runtime 始终拥有 physical mutation 与恢复责任。
+
+<!-- SF-2026-ARXIV-2602-22603 -->
 
 FullKV 把每个历史位置都视为可能影响未来 token，在短序列、correctness-first 或 HBM 足够时，它仍是
 最清晰的基线。传统 eviction 通常根据 recency、frequency、固定窗口或局部 attention 近似未来效用；
@@ -787,6 +799,38 @@ Tail-Replay 的作者实验只覆盖三种披露的 hybrid models、LongBench/RU
 
 <!-- source-family:SF-2026-ARXIV-2608-30310 -->
 
+#### Sparse Recurrent Checkpoint 让 Partial Prefix Hit 变成可恢复状态
+
+Hybrid / recurrent LLM 最容易实现的是 exact-match prefix cache，但它有一个结构性缺口：recurrent layer
+把整个 prefix 折叠成固定大小状态，并不像 attention layer 那样保留逐 token KV；只缓存最终状态时，较短的
+partial prefix hit 无法从中间恢复。每次从 prefix 起点重算虽然正确，却让 KV-centric cache 在 hybrid model
+上失去大部分复用价值。
+
+一个中间分支不是保存每个位置，而是在 prefix 轴上稀疏保存可精确恢复的 recurrent state。请求命中 overlap
+depth `t` 时，Runtime 选择最近的 `c <= t` checkpoint，恢复 `c` 的 state，再只回放 `(c, t]` suffix；
+full-attention layer 的 token KV 仍按各自 identity 管理。checkpoint placement 不应只用固定间隔猜测，而应把
+观测到的 overlap-depth distribution 作为输入，在显式 memory budget 下选择一组位置，使期望 replay cost
+与 checkpoint residency 达成可审计的 trade-off：
+
+```text
+model / tokenizer / recurrent-state layout identity
+-> observed prefix-overlap-depth distribution
+-> sparse exact-checkpoint placement under a memory budget
+-> restore nearest checkpoint at hit time
+-> replay only the missing suffix
+-> continue Prefill / Decode or fall back to full recomputation
+```
+
+这条 `Alternative Branch` 不替代 dense per-token cache，而是用 recurrent-state residency、load cost 与 suffix
+replay compute 交换部分前缀复用。exact output 的前提是 state extraction / restore 本身精确，并且 checkpoint
+绑定 model、tokenizer、state layout 与 policy revision；请求分布漂移会让旧 placement 失效，checkpoint budget
+过小会退化为长回放，过大又接近 dense residency。状态不可精确恢复、overlap 很弱或 hybrid layer identity
+不一致时，必须回退 full recomputation / exact-match cache。
+
+`arXiv:2605.05219v1` 给出 checkpoint placement 的 exact dynamic program，并在 QuALITY 与 System Prompts 的
+overlap distribution 上报告 prototype Pareto frontier；这些结果不证明该 policy 能跨 workload、model、
+continuous batching 或 production serving SLO 保持同样收益。<!-- source-family:SF-2026-ARXIV-2605-05219 -->
+
 #### Video Ingestion State 与 Decode KV 是两个不同 Cache Object
 
 逐帧保留全部 visual KV，在视频较短、质量优先或内存足够时最容易保证每个 frame token 可被生成阶段访问；长视频让
@@ -838,6 +882,14 @@ Dual-axis normalization、Hadamard rotation 或额外 scale 可以降低某类�
 mixed-layout migration 与 effective-bit accounting。KVarN 的 2-bit pseudo-decode 实验支持 static error 不能代表
 autoregressive accumulation，但没有完整并发、paged sharing、MLA/GQA 与 production SLO；FP16、4-bit 或 mixed
 precision 在短输出、kernel 生态不成熟和高精度任务中继续成立。
+
+#### Inner-dimension Grouping 把量化误差与物理读取布局绑在一起
+
+按 outer/token 维分组便于沿现有 cache row 管理 scale，却可能让一次 dot product 读取更多独立量化组和 scale；沿 inner/reduction 维分组可以让计算单元复用 scale、减少 memory access，但同时改变 K/V 的 layout、dequantization 顺序和 kernel interface。更完整的 artifact 还需要区分 K/V 的 hybrid symmetric/asymmetric mode、保留 recent 与 sink token 的高精度窗口，并把 K 的 per-channel normalization 在 Prefill 时确定后折入后续 query transform。
+
+这条路线交换的是带宽、scale metadata 与误差分布，不是免费的 bit reduction。inner-dimension grouping 可能只适合一侧 cache 或特定 GEMV/attention kernel；高精度窗口减少 outlier leakage，也占用预算并依赖窗口策略。kernel 不支持、cache sharing/layout conversion 成本过高或任务对低比特误差敏感时，应保留 outer grouping、较高位宽或 FP16。evaluation 必须同时绑定最终质量、effective bits、page/layout、硬件与完整 attention latency。
+
+<!-- SF-2026-ARXIV-2602-23200 -->
 
 #### Cache Geometry 也可能是训练出的 Artifact
 
@@ -1073,6 +1125,10 @@ KV Cache 是 LLM Serving 的核心状态契约：它以显存换取历史 comput
 每个 active request 都拥有随进度演化的 state，runtime 必须管理 allocation、sharing、transfer、protection 和 release。下一章讨论 Continuous Batching：请求长度和结束时间不同，scheduler 怎样在每一轮重新组合这些携带状态的请求。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-20732`（Status: Experimental）：exact-v1 的 §3.1～3.3 定义层级语义表示、coarse-to-fine selection 与 adaptive recomputation，§4.1～4.3 实现数据结构、pruning 与 FlashInfer 集成，§5.1～5.3 固定作者质量和系统实验；§7/Impact Statement 不证明 selector 跨模型/任务充分或 zero-copy 在所有 runtime 成立。https://arxiv.org/html/2602.20732v1
+- `SF-2026-ARXIV-2602-22603`（Status: Experimental）：exact-v1 的 §3.1～3.4 定义并行 auxiliary branch、model-driven cursor eviction、训练数据与开销，§4.1～4.7 给出作者 agent workload 的结果和 serving 分析，§5 明确限制；它不证明模型能知道未来 utility，也不授权模型直接删除 physical KV。https://arxiv.org/html/2602.22603v1
+- `SF-2026-ARXIV-2602-23200`（Status: Experimental）：exact-v1 的 §4、§4.1～4.4 定义 hybrid mode、高精度窗口、K normalization 与 inner-dimension layout，§5.1～5.3/§6 给出质量、cache size、latency 和消融，§7 不证明跨硬件、kernel、模型或 workload 的普遍最优。https://arxiv.org/html/2602.23200v1
 
 - IntentKV（arXiv:2606.09916v1；Status: Experimental）：用于把 QueryMemory 与 sentinel slot-map eviction 纳入跨 turn KV identity；证据限于作者模型/BCP/8k budget，不证明生产 latency、通用 intent 或安全语义保持。https://arxiv.org/html/2606.09916v1
 
@@ -1450,3 +1506,11 @@ Primary-source entry points：
 
   **已吸收的语义增量：** 补足固定 cache budget 内换回重要 orphan、换出冗余 donor 的 kept-set membership swap；不把它误写为 K/V 重建。
 <!-- daily-books-trace:SF-2026-TWINKV:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2605-05219:start -->
+- `SF-2026-ARXIV-2605-05219` — Daily `2026-05-08`；primary `arXiv:2605.05219v1`；Books review `books-review:SF-2026-ARXIV-2605-05219`。
+
+  **已吸收的语义增量：**Hybrid / recurrent prefix cache 不再只有 exact-match“全中/全重算”：沿 prefix 轴稀疏保存
+  exact recurrent state，partial-prefix hit 恢复最近 checkpoint 后回放缺失 suffix；checkpoint placement 由 overlap-depth
+  distribution 与 memory budget 共同决定，并保留 distribution drift、state identity 与 full-recompute fallback。
+<!-- daily-books-trace:SF-2026-ARXIV-2605-05219:end -->

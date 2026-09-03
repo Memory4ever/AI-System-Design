@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-21 09:00:00` 至 `2026-08-22 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 414 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：0 个 Deep Review、4 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`TRAIN-PRETRAINING` 中由《Training, learning and inference: unified dynamics of neural systems》暴露的状态/证据边界；`INFER-GPU-MEMORY` 中由《SAEM: Stage-Aware Expert Management for Memory-Efficient MoE Inference in Chain-of-Thought Reasoning》暴露的状态/证据边界；`MULTIMODAL-GENERATIVE-PARADIGMS` 中由《Is Multimodal Speculative Decoding Ready for Diffusion-Based Parallel Drafting? A Survey and Empirical Diagnosis》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -78,7 +77,6 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 | SF-2026-ARXIV-2608-21614 | RP-2221beaffe52bc4d | standard | arXiv:2608.21614v1 | SRC-ARXIV@arXiv:2608.21614v1 | https://arxiv.org/html/2608.21614v1#S4 (IV SAEM: System Design) | https://arxiv.org/html/2608.21614v1#S5 (V Experimental Evaluation) | https://arxiv.org/html/2608.21614v1#S6 (VI Discussion & Limitations) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-21614 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-20743:start -->
 #### Is Multimodal Speculative Decoding Ready for Diffusion-Based Parallel Drafting? A Survey and Empirical Diagnosis
 
@@ -130,6 +128,10 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 - Score rationale：Design Delta：提供多层内存状态的一条受限机制/诊断分支；System Reach：影响集中在该 owner 或受限 workload；Durability：机制可复用，但证据仍依赖当前 workload。
 - Knowledge owner：`INFER-GPU-MEMORY`；Disposition：`Weekly Only — Context`。
 <!-- review:SF-2026-ARXIV-2608-21614:end -->
+
+## 4. Benchmark Contracts
+
+None — Candidate Ledger 中没有需要单独登记的 benchmark claim。
 
 ## 5. Deep Analysis Selection
 
@@ -192,3 +194,5 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

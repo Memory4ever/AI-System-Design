@@ -199,6 +199,14 @@ communication 路线提供 `Status: Experimental` 的实现证据；它不证明
 任意 precision 都有相同收益。长期原则是：**TP collective 应恢复下游算子真正需要的数学信息，而不是习惯性
 恢复完整 tensor。**
 
+### SSM Tensor Parallelism 必须按 Recurrent State 与 Convolution History 切分
+
+Transformer TP 按 projection/head 维切分，在算子主要是 GEMM 与 Attention 时拥有清楚的 column/row 代数；SSM 层把 recurrent state 与短 convolution history 带入 token-by-token execution，若仍只切 parameter matrix，跨 rank 重建 state 会把通信重新放回每步关键路径。更合适的 layout 先沿独立 channel 共同切分参数、recurrent state 和 convolution cache，使每个 rank 本地推进自己的 state shard；packed parameter stream 保持相同 channel identity，只有真正需要的边界才 collective，必要时再对残余 AllReduce 使用经验证的量化分支。
+
+state/cache shard owner 必须记录 sequence、layer、channel range 与 generation，TP runtime 只能按相同 layout 更新；serving state 恢复还要同时重建参数布局和两类运行状态。它减少同步，却受 channel divisibility、load balance、模型变体和 cache layout 限制；state coupling 不可分、短序列或通信不是瓶颈时，replicated state/普通 TP 更简单，量化 collective 失败质量 Gate 时必须回退全精度。`arXiv:2602.21144v1` 的 exact-v1 只支持作者对 Mamba、Falcon-Mamba、Zamba inference 的 channel-wise split、cache locality 与所披露 A6000/A100 实验；本章只吸收“切分必须服从 operator state”这一代数边界，不把部署结果外推为训练正确性、收敛或 checkpoint 证据。
+
+<!-- source-family:SF-2026-ARXIV-2602-21144 -->
+
 ## Forward 与 Backward 的 Collective
 
 TP communication 不只发生在 forward：
@@ -311,6 +319,8 @@ Tensor Parallel 通过 column/row decomposition 把一个 operator 分配给多�
 TP 直接降低单层参数与计算压力，也把 collective 放进每层关键路径。Head divisibility、GQA、local GEMM、topology 和 checkpoint layout 共同决定它能否从 capacity 方案变成高效训练方案。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-21144`（Status: Experimental）：exact-v1 §IV 支持 SSM inference 中 parameter、recurrent state 与 short-convolution history 的 channel-wise sharding、packed stream 和 optional AllReduce quantization；作者 evaluation 仅覆盖所列 SSM family 与 A6000 PCIe/A100 NVLink，不证明训练正确性、收敛或跨模型/拓扑/精度的普遍收益。https://arxiv.org/html/2602.21144v1
 
 本轮 Review 在既有 column/row 主线上补齐统一 shape、TP=2 数值维度例子、MLP/Attention pairing、backward collective、GQA、Sequence/Context Parallel 与 checkpoint conversion。多维 process-group 组合仍留给第 40 章。
 

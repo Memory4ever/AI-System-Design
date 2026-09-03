@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-20 09:00:00` 至 `2026-08-21 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 404 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 11 个候选：1 个 Deep Review、10 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`MULTIMODAL-EMBODIED-VLA` 中由《SafeBranch: Branch-Pair Safety Alignment for Embodied Agents》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -85,14 +84,13 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 | SF-2026-ARXIV-2608-19652 | RP-ee2b4247470e60cf | standard | arXiv:2608.19652v1 | SRC-ARXIV@arXiv:2608.19652v1 | https://arxiv.org/html/2608.19652v1#S3 (3 Problem Formulation: State Drift) | https://arxiv.org/html/2608.19652v1#S6 (6 Results) | https://arxiv.org/html/2608.19652v1#S7 (7 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-19652 | complete |
 | SF-2026-ARXIV-2608-19677 | RP-90b4d079ffc22f38 | standard | arXiv:2608.19677v1 | SRC-ARXIV@arXiv:2608.19677v1 | https://arxiv.org/html/2608.19677v1#S3.SS1 (3.1–3.2 planning, admission, placement, and operational semantics) | https://arxiv.org/html/2608.19677v1#S5 (5 Evaluation) | https://arxiv.org/html/2608.19677v1#S6 (6 Discussion and Limitations) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-19677 | complete |
 | SF-2026-ARXIV-2608-19701 | RP-22ecee0ee7965cf1 | standard | arXiv:2608.19701v1 | SRC-ARXIV@arXiv:2608.19701v1 | https://arxiv.org/html/2608.19701v1#Sx3 (Methodology) | https://arxiv.org/html/2608.19701v1#Sx4 (Experiments) | https://arxiv.org/html/2608.19701v1#Sx5 (Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-19701 | complete |
-| SF-2026-ARXIV-2608-19729 | RP-161b9b5dc0b5b32d | deep | arXiv:2608.19729v1 | SRC-ARXIV@arXiv:2608.19729v1 | https://arxiv.org/html/2608.19729v1 (§§3.2 and 4.1–4.2 plus Appendix D: rollback branch-pair construction, filtering and BranchPO) | https://arxiv.org/html/2608.19729v1 (§§5.1–5.3 plus Appendices B, C and F: IS-Bench/SafetyALFRED/OOD evaluation, runtime baselines and ablations) | https://arxiv.org/html/2608.19729v1 (Appendix G plus §5.3: single-seed, critic-trigger, simulator rollback and physical-irreversibility failure modes) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-19729 | complete |
+| SF-2026-ARXIV-2608-19729 | RP-7de42d7a645bb743 | deep | arXiv:2608.19729v1 | SRC-ARXIV@arXiv:2608.19729v1 | https://arxiv.org/html/2608.19729v1 (§§3.2 and 4.1–4.2 plus Appendix D: rollback branch-pair construction, filtering and BranchPO) | https://arxiv.org/html/2608.19729v1 (§§5.1–5.3 plus Appendices B, C and F: IS-Bench/SafetyALFRED/OOD evaluation, runtime baselines and ablations) | https://arxiv.org/html/2608.19729v1 (Appendix G plus §5.3: single-seed, critic-trigger, simulator rollback and physical-irreversibility failure modes) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-19729 | complete |
 | SF-2026-ARXIV-2608-19758 | RP-a092df96c570bb7b | standard | arXiv:2608.19758v1 | SRC-ARXIV@arXiv:2608.19758v1 | https://arxiv.org/html/2608.19758v1#S3 (3 Method) | https://arxiv.org/html/2608.19758v1#S4 (4 Experiments) | https://arxiv.org/html/2608.19758v1#S5 (5 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-19758 | complete |
 | SF-2026-ARXIV-2608-20290 | RP-9608fef5dd67f3a9 | standard | arXiv:2608.20290v1 | SRC-ARXIV@arXiv:2608.20290v1 | https://arxiv.org/html/2608.20290v1#S3 (3 A transition-level audit, and what it must control for) | https://arxiv.org/html/2608.20290v1#S5 (5 What the controlled audit shows) | https://arxiv.org/html/2608.20290v1#A5.SS3 (E.3 Limitations, in full) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-20290 | complete |
 | SF-2026-ARXIV-2608-20314 | RP-ed46dfc5c3ba28e6 | standard | arXiv:2608.20314v1 | SRC-ARXIV@arXiv:2608.20314v1 | https://arxiv.org/html/2608.20314v1#S2 (2 MidTool : Scalable Pipeline for Agentic Mid-training Data Synthesizing) | https://arxiv.org/html/2608.20314v1#S3 (3 Experiment) | https://arxiv.org/html/2608.20314v1#S5 (5 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-20314 | complete |
 | SF-2026-ARXIV-2608-20316 | RP-512e7a2d752b3a11 | standard | arXiv:2608.20316v1 | SRC-ARXIV@arXiv:2608.20316v1 | https://arxiv.org/html/2608.20316v1#S4 (4 Pandora’s Router) | https://arxiv.org/html/2608.20316v1#A4 (Appendix D Supplemental Results) | https://arxiv.org/html/2608.20316v1#S7 (7 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-20316 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-19535:start -->
 #### From Retrieved Context to Runtime Control: Adaptive Compression for Edge-based RAG
 
@@ -181,7 +179,7 @@ SafeBranch 从 actor 自身不安全 rollout 回滚到 safety-critical step，�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了感知到动作的闭环状态的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以控制频率、设备预算与安全为长期设计约束。
-- Knowledge owner：`MULTIMODAL-EMBODIED-VLA`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`MULTIMODAL-EMBODIED-VLA`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-19729:end -->
 
 <!-- review:SF-2026-ARXIV-2608-19758:start -->
@@ -322,3 +320,5 @@ SafeBranch 从 actor 自身不安全 rollout 回滚到 safety-critical step，�
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

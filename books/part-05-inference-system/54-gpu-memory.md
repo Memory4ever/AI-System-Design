@@ -214,6 +214,14 @@ Paging、prefix sharing 和更精确 admission 减少预留与碎片，却不改
 
 CPU/SSD/off-node cache 扩大总容量，却加入 transfer latency、bandwidth contention 和 consistency。它们把“装不下”改成“何时值得搬”。
 
+#### Peer GPU Spare Memory 是可撤销的中间 Cache Tier
+
+单个模型独占固定 GPU、各卡 HBM 都接近饱和时，memory hierarchy 只需要在本卡 HBM 与 CPU/SSD 之间选择；多 GPU 节点同时承载异构请求后，有些 peer GPU 可能暂时拥有空闲 HBM，且 NVLink 路径比 host offload 更近。cache manager 可以把这些空闲页作为 opportunistic tier，按 model/expert/KV generation 注册 peer residency，并在计算 owner 需要容量或 topology/tenant policy 改变时撤销；canonical weight 或 KV 身份仍由原 owner 持有，peer 只保存可重建副本。
+
+这条层级减少 host transfer，却会与 TP/PP collective、其他租户和 peer compute 争用互联，并新增 remote pointer、revocation、stale generation 与 tail-latency failure。拓扑不明、隔离要求高、peer 压力上升或副本无法及时回收时，应回退本地 HBM/CPU tier。`arXiv:2602.00328v1` 的 exact-v1 只在单机双 GPU NVLink 和作者所列模型/强制 offload 设置中验证 Harvest，不证明 NVSwitch、多租户、并行通信竞争或生产 SLO 下仍有同等收益。
+
+<!-- source-family:SF-2026-ARXIV-2602-00328 -->
+
 最简单的 offload 在当前 layer 请求某页后才开始搬运，容易保持正确顺序，却会把 CPU selection、PCIe transfer
 和 GPU attention 串在 token critical path 上。当相邻 layer 的访问具有可预测结构时，可以让 CPU 提前一层计算
 下一层候选集，并把 selection/transfer 与当前 GPU layer 重叠：
@@ -467,6 +475,8 @@ Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定�
 GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文、模型不受支持或内存峰值超限时，hybrid path 可能更稳健。现有证据仅来自 Snapdragon X Elite 单机和 120-query corpus，不能外推其他 NPU 或线上多租户容量；迁移不完整时，新增 device transfer 还可能抵消节能收益。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-00328`（Status: Experimental）：exact-v1 支持将 peer GPU spare HBM 作为可撤销 cache tier 以及作者双 GPU NVLink 实验；证据不覆盖 NVSwitch、并发 model-parallel traffic、多租户隔离、生产 tail latency 或所有模型均自然产生可用余量。https://arxiv.org/html/2602.00328v1
 
 - `SF-2026-ARXIV-2606-21023` — primary `arXiv:2606.21023v1`；Method=`arXiv:2606.21023v1 §2.3 The Microscopic Origin: Boundary Truncation; §3 HEAL; Appendix C HEAL Implementation`；Evaluation=`arXiv:2606.21023v1 §4 Evaluation; Appendix A Detailed Experimental Setup; Appendix D Additional Performance Results; Appendix E MCR-Bench`；Non-proof=`arXiv:2606.21023v1 §6 Conclusion; Appendix B error, flip-rate and truncation studies`；Artifact=`Not Disclosed — no later artifact used`。
 

@@ -268,6 +268,32 @@ prefill/decode 的历史状态和 online reduction。更强的 depth routing 换
 而且作者在特定 MoE 配方中的 loss/benchmark 不能证明它会普遍取代标准 residual。模型较浅、吞吐优先、
 跨 stage 带宽紧张或公开实现尚不成熟时，单一 residual stream 仍是更稳健的设计。
 
+### Parallel Tracks 用周期融合换更少的跨设备依赖
+
+标准 Transformer stack 让每层读取上一层唯一 residual state；配合 Tensor Parallel 时，每个子层内部通常还要
+同步 partial result。这个结构简单、语义清楚，也能利用成熟 kernel，但在跨设备通信相对计算越来越昂贵时，逐层
+同步会把网络延迟固定在 critical path 上。另一种架构分支把 block 划成多个相对独立的 parallel tracks：每条
+track 连续更新自己的 residual state，只在声明的 fusion point 交换或聚合信息。
+
+```text
+one residual stream + per-operator synchronization
+→ independent track-local states
+→ several local layer updates
+→ periodic fusion barrier
+→ next track-local interval
+```
+
+这里 checkpoint 拥有 track topology、每条路径的参数和 fusion function；runtime 只能把完整 track 映射到设备，
+并在 fusion point 执行同步，不能自行改变融合频率。它也不是 MoE：track 是架构规定的并行路径，而不是 router
+按 token 选择的条件专家。减少同步次数的代价是重新分配参数、保留多份 track-local activation/residual state、
+track 间信息陈旧、fusion hotspot
+以及新的训练配方；任一 track 失衡还可能把周期 barrier 重新变成 straggler point。
+
+`arXiv:2602.07306v1` 只在作者披露的模型与 TensorRT-LLM/vLLM serving 实现中支持这种结构—通信交换，不能
+证明同等质量、通用速度或任意网络拓扑上的收益。模型较小、跨 track 交互必须逐层发生、设备负载不均或现有
+Tensor Parallel 已能隐藏通信时，单 residual stream 加标准 TP 仍应保留。
+<!-- source-family:SF-2026-ARXIV-2602-07306 -->
+
 ### Parameter Depth 与 Execution Depth 可以分离
 
 普通 Transformer 把“有多少组不同参数”与“一个样本执行多少次 block”绑定为同一个 `L`。这使
@@ -493,6 +519,11 @@ Transformer Layer 通过 residual stream 把复杂计算组织成 shape 稳定�
 Pre-Norm 与 Post-Norm 的差异不只是代码顺序，而是梯度路径设计。理解完整 shape 流后，模型深度、activation、KV Cache 与分布式切层之间的联系也变得可见。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-07306`（Parallel Track Transformer；Status: Experimental）：exact-v1 的 §2
+  定义 independent tracks 与 periodic fusion，§3.3 报告作者模型和 serving stacks 下的 evaluation，§4 不证明
+  跨模型质量等价、任意互连拓扑的普遍加速或对标准 Tensor Parallel 的全面替代。
+  https://arxiv.org/html/2602.07306v1
 
 本章聚焦标准可堆叠 block，不扩展为 Transformer 变体目录。后续 Review 应以具体架构核验 Norm 类型、放置、bias、activation 和 residual 形式；这些都属于 checkpoint 语义，而非 runtime 可随意切换的优化。
 

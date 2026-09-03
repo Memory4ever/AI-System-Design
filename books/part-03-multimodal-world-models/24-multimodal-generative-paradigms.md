@@ -180,6 +180,21 @@ corrector owns mutable refinement
 runtime owns commit, rollback and KV compaction
 ```
 
+### Diffusion Constrained Decoding 必须验证“仍可完成”，而不只是当前合法
+
+自回归生成每次只提交下一个 token，因此 grammar-constrained decoding 可以从当前 parser state 枚举合法后继；
+masked diffusion 同时为多个位置提出分布，若只检查刚填入的 token 是否局部合法，provisional sequence 仍可能进入
+再也无法补全为合法句子的死状态。约束变化后，admission 需要从“当前 token 合法”推进为“加入该 token 后，剩余
+mask 仍存在至少一条可完成路径”。
+
+一种受限分支是在每轮 proposal 时利用所有位置的并行分布做 lookahead：diffusion model 只拥有候选概率，grammar
+automaton 拥有语言状态与可达性，verifier 决定 proposal 是否保留，runtime 仍独占最终 commit。这样保留了并行
+proposal，却新增 lookahead search、grammar 编译、长度/终止状态和 mask ordering；grammar 复杂、可达性检查昂贵
+或目标不是形式语言时，延后到完整 block 验证或使用自回归 constrained decoding 仍更简单。exact-v1 只在四个
+dLLM 与三个 benchmark 上支持 syntactic-completability 机制，不证明语义正确、任意 CFG 的成本或生产尾延迟。
+
+<!-- source-family:SF-2026-ARXIV-2602-00612 -->
+
 ## 从 Specialist Head 到 Typed Unified Generation
 
 分类、检测、分割、深度与多视角几何传统上各自使用专用 head、loss 和 decoder。这一结构在单任务、固定输出
@@ -249,6 +264,14 @@ T_total = T_queue
 - batch、concurrency、length、precision、hardware；
 - TTFT、inter-token latency 或最终 completion latency；
 - rollback、cache compaction 和 scheduler overhead。
+
+### Output Decoder 是独立的版本化 Generation Artifact
+
+只统计 latent denoiser 或 token generator，在 decoder 轻量、输出分辨率固定时足以近似端到端成本；视频生成中，VAE decoder 可能独自占据显著 latency 与 memory bandwidth，且它的结构、压缩率和精度会改变最终画面。generation identity 因此不能止于主模型 checkpoint：latent shape/scale、decoder revision、operator/kernel、precision、resolution 与 frame count 必须一起进入 artifact 和 evaluation contract。主生成器拥有 latent proposal，decoder 拥有 latent-to-output transform，只有最终媒体通过质量和格式 gate 后才算 committed output。
+
+channel pruning、operator replacement 与 distillation 可以缩短 decode，却会引入重建误差、时序闪烁、分辨率/帧数外推失效和硬件特化；主模型质量不变也不能证明最终输出等价。decoder 不是瓶颈、质量容忍度低或运行条件离校准域很远时，应保留原 decoder 或逐级 fallback。优化必须报告完整 pipeline latency 与最终质量，而不能把 decoder microbenchmark 当成整个生成系统加速。
+
+<!-- SF-2026-ARXIV-2602-19161 -->
 
 如果论文为每个 dataset 事后选择最佳 tree budget，它证明“存在有效 operating point”，不等于已经给出线上 controller。
 
@@ -339,6 +362,23 @@ model 产生 confidence，runtime 根据 queue、memory 和 SLO 选择 operating
 图像或视频 diffusion 还可以把 patch granularity 变成 trajectory policy：早期或低变化阶段使用 coarse patch，细节阶段回到 fine patch。这里必须分开两层：artifact 先通过训练获得多种 patch shape 的语义能力，runtime 才能依据 latent history 和 threshold 选择 shape。“选择规则在 test time 运行”不等于整个方案 training-free。
 
 这种 adaptive granularity 减少单请求 token 数，也新增 latent-history state、threshold calibration、shape switching 与多分支 artifact identity；不同请求选择不同 shape 时，还可能破坏 batching、graph capture 与 kernel reuse。固定 fine patch 在 worst-case detail、可预测 shape 和成熟 kernel 场景仍成立。若论文的 threshold table、hardware、precision 或配置记录相互矛盾，Books 只能吸收机制与 failure mode，不能吸收精确 speedup。
+
+### Conditional Guidance 把 Diffusion 并行策略变成逐 Step 状态
+
+空间 patch data parallel 容易在边界引入 artifact 和 All-Gather，固定 pipeline parallel 又会让跨 step 的旧估计累积；
+它们在并行形态固定、分辨率和拓扑稳定时仍是可预测基线。conditional diffusion 同时计算 conditional 与
+unconditional denoising path 后，多出一条与图像 patch 不同的切分轴：两个 path 可以分到不同设备，随后再合成
+guidance update；当两条 path 的 denoising discrepancy 随 step 改变时，runtime 还可以在 condition-based data
+parallel 与 pipeline schedule 之间有界切换。
+
+这使 parallel policy 必须绑定 denoising step、latent revision、conditional/unconditional branch identity、discrepancy
+metric、threshold、GPU topology 与切换 epoch。model 产生两条 denoising state，scheduler 只提出 parallel plan，
+runtime 在 step boundary 同步后 commit；任一 branch 缺失或版本不一致都不能继续合成。收益来自利用原本已存在的
+guidance 分支，而不是免费减少模型计算；代价是双分支同步、metric calibration、切换 barrier、额外通信和随机
+轨迹下的抖动。discrepancy 不稳定、单 GPU、无 classifier-free guidance 或固定计划更易捕获 graph 时，应回退静态
+data/pipeline 或单设备执行。作者结果只覆盖 SDXL、SD3 与其双 RTX 3090 配置，不能外推其他模型、并发或 SLO。
+
+<!-- source-family:SF-2026-ARXIV-2602-21760 -->
 
 ### 从一次生成到 Plan → Generate → Validate → Retry
 
@@ -465,6 +505,11 @@ Fréchet 类表示距离通常用于训练后评估，因为 batch 内同时估�
 <!-- source-family:SF-2026-ARXIV-2605-10980 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-00612`（Status: Experimental）：primary=`arXiv:2602.00612v1`；Method=`§3 Methodology`；Evaluation=`§4.1 Benchmark`；Non-proof=`§7 Conclusion`。证据只支持 dLLM 在所测 CFG benchmark 中用并行位置分布做 lookahead、拒绝不可完成 proposal；不证明语义正确、任意 grammar 复杂度或生产延迟。
+- `SF-2026-ARXIV-2602-21760`（Status: Experimental）：primary=`arXiv:2602.21760v1`；Method=`§4.2 Hybrid Parallel Inference Framework；§4.3 Adaptive Switching via Denoising Discrepancy`；Evaluation=`§5.2 Main Results`；Non-proof=`§5.3 Ablation Study`。证据绑定 SDXL/SD3、作者实现与双 RTX 3090，不证明其他 diffusion family、拓扑、并发和 tail-SLO。
+
+- `SF-2026-ARXIV-2602-19161`（Status: Experimental）：exact-v1 的 §3.1～3.3 定义 VAE decoder pruning、operator optimization 与三阶段 distillation，§4.1～4.3 及 Appendix B.2～B.3 给出作者质量、消融与 pipeline latency，§5/Impact Statement 不证明跨 decoder、分辨率、frame count、硬件或端到端生成等价。https://arxiv.org/html/2602.19161v1
 
 - `SF-2026-ARXIV-2606-22370` — primary `arXiv:2606.22370v1`；Method=`arXiv:2606.22370v1 §3 Method`；Evaluation=`arXiv:2606.22370v1 §4 Experiments`；Non-proof=`arXiv:2606.22370v1 §5 Conclusion and long-single-shot scope`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

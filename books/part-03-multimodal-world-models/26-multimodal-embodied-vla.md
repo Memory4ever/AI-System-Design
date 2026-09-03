@@ -299,6 +299,14 @@ domain randomization 改善部分 robustness，却不能覆盖未建模物理；
 
 ## Latency 与 control frequency
 
+### Quantization、Placement 与 Frequency 共享同一个闭环预算
+
+固定切分点、统一精度和静态设备频率，在网络稳定且模型中间表示大小固定时最容易部署；具身闭环同时受到端侧算力、上行带宽、服务端排队、能耗和输出失真的约束，分别优化这些变量可能得到局部最优却错过 control deadline。运行时应把 stage placement、传输表示、量化位宽和可用频率组织成一次受约束的 plan：artifact builder 声明可执行的 split/precision 与 kernel 集合，telemetry 提供当下链路和设备状态，planner 提出满足 distortion、latency 与 energy budget 的组合，controller 仍拥有动作提交权。
+
+联合规划能在资源变化时交换通信量、计算量与表示误差，但会增加 profiling、搜索和重新配置开销；论文中的 rate-distortion 近似若遇到新 embodiment、激活分布漂移或 tail queueing，最优解可能不再可行。变化快于重规划、distortion 无法校准或安全 deadline 很紧时，应回退到经过验证的固定切分、保守位宽和低层 controller，而不是让优化器把平均延迟当作物理安全证明。
+
+<!-- SF-2026-ARXIV-2602-13052 -->
+
 ### 从语言推理到 One-step Meta-action
 
 自然语言 reasoning 作为 driving action interface 可解释，但逐步生成会把标注、延迟和 grounding 放进控制关键路径。One-step meta-action 把高层语义压成有限 action schema，由低层 controller 解释坐标、速度和安全 envelope；policy 只拥有 meta-action proposal，确定性/实时控制器拥有物理 commit。
@@ -663,6 +671,8 @@ action-only diffusion policy 可在 inference 时由 world model 预测 state，
 AI 从语言进入物理世界后，最重要的变化不是多了一种输出 token，而是输出拥有 deadline、控制权和后果。越强的 generative prior，越需要独立的现实反馈和安全边界。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-13052`（Status: Experimental）：exact-v1 的 §II～V 建模端云切分、传输、延迟/能耗、量化失真和联合设计，§VI 验证作者近似与方案，§VII 不证明真实动态网络、tail latency、所有 VLA 或物理安全；硬件、模型、位宽与链路条件必须作为同一 evaluation contract。https://arxiv.org/html/2602.13052v1
 
 - `SF-2026-ARXIV-2604-23073`（Status: Experimental）：exact-v1 支持以 RL token 和小型 actor–critic head 对 pretrained VLA 做受限在线动作细化；结果绑定几小时真实实践与四项机器人任务，不证明开放环境安全或通用 VLA 适应。https://arxiv.org/abs/2604.23073v1
 

@@ -46,6 +46,11 @@ reference implementation 对齐。
 - 最小 tokenizer、逐模块 Transformer 与 reference parity tests。
 - 一份可用于 Lab 03 Decode 的小模型 checkpoint 和 shape/state contract。
 
+## Experiment Packs
+
+- [GDN / GDN-2 选择性记忆实验](runs/2026-09-03-gdn-gdn2/README.md)：从 recurrent-state
+  correctness、关联记忆与 context switch，推进到同预算小模型和 Qwen 风格 hybrid ablation。
+
 ## Invariants
 
 - Causal position 不读取未来 token。
@@ -84,4 +89,3 @@ reference implementation 对齐。
 
 向 Lab 03 交付 deterministic checkpoint、tokenizer、causal mask、逐层 shape 以及 full-sequence forward reference；
 下一步把 teacher-forced 全序列计算改成逐 token runtime。
-

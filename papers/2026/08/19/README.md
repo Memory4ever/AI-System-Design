@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-18 09:00:00` 至 `2026-08-19 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 449 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 4 个候选：2 个 Deep Review、2 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`INFER-TENSORRT-LLM` 中由《TileMix: Tile-Centric Mixed-Precision Attention for LLM Inference Acceleration》暴露的状态/证据边界；`PLATFORM-SECURITY` 中由《FESC: Remodeling Long-Context Private Inference with Encrypted State-Space Models》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -74,13 +73,12 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 <!-- validator:review-completion-v1 -->
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2608-17336 | RP-be5e9fc21eff550a | deep | arXiv:2608.17336v1 | SRC-ARXIV@arXiv:2608.17336v1; SRC-GITHUB-COMMIT@https://github.com/HanzhiZhang-Ulrica/TileMix/commit/3eee6c9e0267b7579f24e2025cea0e5fdc211efa | https://arxiv.org/html/2608.17336v1 (§§4.1–4.3 and Appendices B–D: tile-group routing, bitmask encoding and mixed-precision execution) | https://arxiv.org/html/2608.17336v1 (§§5.1–5.4 and Appendices E–G: LongEval/LV-Eval quality, A100 efficiency and numerical behavior) | https://arxiv.org/html/2608.17336v1 (§5.4 and Appendix G.1–G.5: sequence/depth accumulation, pattern exposure and kernel-numerics boundaries) | https://github.com/HanzhiZhang-Ulrica/TileMix/commit/3eee6c9e0267b7579f24e2025cea0e5fdc211efa (event-time commit 2026-08-18T03:26:42Z) | claim:SF-2026-ARXIV-2608-17336 | complete |
-| SF-2026-ARXIV-2608-17442 | RP-9654eeca469ed61a | deep | arXiv:2608.17442v1 | SRC-ARXIV@arXiv:2608.17442v1 | https://arxiv.org/html/2608.17442v1 (§IV, §§V-A–V-F, §§VI-A–VI-D and §VII: factorized HEScan, resident blocks, MPC nonlinearities and conversion) | https://arxiv.org/html/2608.17442v1 (§VIII, §§IX-A–IX-F and Appendices F/G/I: three long-document tasks, A100 runs, baselines, accuracy, memory and scaling) | https://arxiv.org/html/2608.17442v1 (§II-C, §XI and Appendices D/G: semi-honest threat model, approximation, 77.3-minute latency, refresh and sequence/memory feasibility boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-17442 | complete |
+| SF-2026-ARXIV-2608-17336 | RP-19afc4fd825bd95a | deep | arXiv:2608.17336v1 | SRC-ARXIV@arXiv:2608.17336v1; SRC-GITHUB-COMMIT@https://github.com/HanzhiZhang-Ulrica/TileMix/commit/3eee6c9e0267b7579f24e2025cea0e5fdc211efa | https://arxiv.org/html/2608.17336v1 (§§4.1–4.3 and Appendices B–D: tile-group routing, bitmask encoding and mixed-precision execution) | https://arxiv.org/html/2608.17336v1 (§§5.1–5.4 and Appendices E–G: LongEval/LV-Eval quality, A100 efficiency and numerical behavior) | https://arxiv.org/html/2608.17336v1 (§5.4 and Appendix G.1–G.5: sequence/depth accumulation, pattern exposure and kernel-numerics boundaries) | https://github.com/HanzhiZhang-Ulrica/TileMix/commit/3eee6c9e0267b7579f24e2025cea0e5fdc211efa (event-time commit 2026-08-18T03:26:42Z) | claim:SF-2026-ARXIV-2608-17336 | complete |
+| SF-2026-ARXIV-2608-17442 | RP-f1133b4132c71834 | deep | arXiv:2608.17442v1 | SRC-ARXIV@arXiv:2608.17442v1 | https://arxiv.org/html/2608.17442v1 (§IV, §§V-A–V-F, §§VI-A–VI-D and §VII: factorized HEScan, resident blocks, MPC nonlinearities and conversion) | https://arxiv.org/html/2608.17442v1 (§VIII, §§IX-A–IX-F and Appendices F/G/I: three long-document tasks, A100 runs, baselines, accuracy, memory and scaling) | https://arxiv.org/html/2608.17442v1 (§II-C, §XI and Appendices D/G: semi-honest threat model, approximation, 77.3-minute latency, refresh and sequence/memory feasibility boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-17442 | complete |
 | SF-2026-ARXIV-2608-17616 | RP-09e09e67c1f5ca3b | standard | arXiv:2608.17616v1 | SRC-ARXIV@arXiv:2608.17616v1 | https://arxiv.org/html/2608.17616v1#S3 (3 MoNe: Modular Neural Memory for Pretrained Transformer Attention) | https://arxiv.org/html/2608.17616v1#S4 (4 Experiments) | https://arxiv.org/html/2608.17616v1#S5 (5 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-17616 | complete |
 | SF-2026-ARXIV-2608-17756 | RP-e89e53c572a21224 | standard | arXiv:2608.17756v1 | SRC-ARXIV@arXiv:2608.17756v1 | https://arxiv.org/html/2608.17756v1#Sx2 (D 2 ACCI Framework) | https://arxiv.org/html/2608.17756v1#Sx3 (Experiments) | https://arxiv.org/html/2608.17756v1#Sx5 (Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-17756 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-17336:start -->
 #### TileMix: Tile-Centric Mixed-Precision Attention for LLM Inference Acceleration
 
@@ -91,7 +89,7 @@ TileMix 以 tile group 为精度分配单位，使 attention 量化同时考虑�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了编译后的执行计划的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以可移植性、kernel 与静态内存为长期设计约束。
-- Knowledge owner：`INFER-TENSORRT-LLM`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`INFER-TENSORRT-LLM`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-17336:end -->
 
 <!-- review:SF-2026-ARXIV-2608-17442:start -->
@@ -104,7 +102,7 @@ FESC 把私有长上下文从 encrypted Transformer 的二次 attention 改造�
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了授权与安全证据的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以policy、隔离与执行边界为长期设计约束。
-- Knowledge owner：`PLATFORM-SECURITY`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`PLATFORM-SECURITY`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-17442:end -->
 
 <!-- review:SF-2026-ARXIV-2608-17616:start -->
@@ -225,3 +223,5 @@ TileMix 以 tile group 为精度分配单位，使 attention 量化同时考虑�
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

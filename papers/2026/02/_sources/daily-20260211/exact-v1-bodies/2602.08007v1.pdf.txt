@@ -1,0 +1,3344 @@
+arXiv:2602.08007v1 [cs.LG] 8 Feb 2026
+
+From O(mn) to O(r2): Two-Sided Low-Rank
+Communication for Adam in Distributed Training
+with Memory Efficiency
+
+Sizhe Dang∗
+Xi’an Jiaotong University
+darknight1118@stu.xjtu.edu.cn
+
+Jiaqi Shao∗
+Xi’an Jiaotong University
+shaojiaqi@stu.xjtu.edu.cn
+
+Xiaodong Zheng
+Xi’an Jiaotong University
+zxd_xjtu@stu.xjtu.edu.cn
+
+Guang Dai
+SGIT AI Lab
+guang.dai@gmail.com
+
+Yan Song
+University of Science and Technology of China
+clksong@gmail.com
+
+Haishan Ye†
+Xi’an Jiaotong University
+yehaishan@xjtu.edu.cn
+
+Abstract
+As foundation models continue to scale, pretraining increasingly relies on dataparallel distributed optimization, making bandwidth-limited gradient synchronization a key bottleneck. Orthogonally, projection-based low-rank optimizers were
+mainly designed for memory efficiency, but remain suboptimal for communicationlimited training: one-sided synchronization still transmits an O(rn) object for an
+m × n matrix gradient and refresh steps can dominate peak communicated bytes.
+We propose TSR, which brings two-sided low-rank communication to Adamfamily updates (TSR-Adam) by synchronizing a compact core U ⊤ GV ∈ Rr×r ,
+reducing the dominant per-step payload from O(mn) to O(r2 ) while keeping
+moment states in low-dimensional cores. To further reduce the peak communication from subspace refresh, TSR-Adam adopts a randomized SVD-based refresh
+that avoids full-gradient synchronization. We additionally extend low-rank communication to embedding gradients with embedding-specific ranks and refresh
+schedules, yielding additional communication and memory savings over keeping
+embeddings dense. Across pretraining from 60M to 1B model scales, TSR-Adam
+reduces average communicated bytes per step by 13×, and on GLUE fine-tuning
+it reduces communication by 25×, while achieving comparable performance; we
+further provide a theoretical stationarity analysis for the proposed update. Code is
+available at https://github.com/DKmiyan/TSR-Adam.
+
+1
+
+Introduction
+
+Large-scale pretraining has established itself as the cornerstone of modern foundation models Brown
+et al. [2020], Bommasani [2021], Touvron et al. [2023]. However, practical training at these scales
+relies heavily on distributed data-parallel execution, where synchronizing gradients across many accelerators can become a substantial bottleneck. This limitation is exacerbated by the disparity between
+∗
+†
+
+equal contribution.
+Corresponding author.
+
+(a)LLaMA-60M
+
+(b)LLaMA-130M
+
+(c)LLaMA-350M
+
+Figure 1: Bytes-to-Loss. Training loss as a function of cumulative communicated bytes for
+representative model scales. TSR-Adam reaches lower loss under the same communication budget
+compared with baselines. (a)–(c) correspond to three representative model scales.
+Table 1: Communication objects and scaling laws for synchronizing a matrix gradient G ∈ Rm×n .
+The dominant communicated payload changes from O(mn) (dense) or O(rn) (one-sided) to O(r2 )
+(two-sided core).
+M ETHOD
+
+S YNCHRONIZED OBJECT
+
+S IZE
+
+S CALING
+
+A DAM W
+LORA
+O NE - SIDED
+TSR
+
+G
+′
+GA , GB (W = W + AB)
+C = U ⊤G
+C = U ⊤ GV
+
+mn
+rm + rn
+rn ( OR mr)
+r2
+
+O(mn)
+O(r(m + n))
+O(rn)
+O(r2 )
+
+high-bandwidth on-node interconnects and lower-bandwidth cross-node links (e.g., NVLink vs. PCIe),
+so communication overhead can quickly dominate once synchronization traverses bandwidth-limited
+boundaries. As model sizes and cluster scales grow, reducing the gradient synchronization volume
+becomes a central systems constraint for scalable pretraining Narayanan et al. [2021].
+Existing work mitigates distributed-training overhead from multiple angles. System-level techniques
+such as sharding Rajbhandari et al. [2021] and generic compression Tang et al. [2021], Karimireddy
+et al. [2019] reduce the effective synchronization cost, but largely operate independently of the matrix
+representation being synchronized. Complementary to these system-level remedies, projection-based
+low-rank optimizers such as GaLore Zhao et al. [2024] maintain low-dimensional optimizer states
+for memory efficiency, yet remain suboptimal for communication-limited training: with one-sided
+projection, synchronizing an m × n matrix gradient still requires transmitting an O(rn) (or O(mr))
+object, and SVD-style refresh can dominate the peak communicated bytes. Most recently, concurrent
+work such as GreedyLore Chen et al. [2025] augments GaLore-style low-rank compression with error
+feedback and improved guarantees; however, it inherits the GaLore-type one-sided communication
+object (scaling with a matrix dimension) and does not achieve the O(r2 ) shared-core synchronization.
+Motivated by a communication-first view of data-parallel training, we focus on the gradient as the
+synchronization object and measure efficiency by the transmitted bytes required to reach a target loss
+(Figure 1). For a matrix gradient G ∈ Rm×n , dense synchronization scales as O(mn) per step, while
+one-sided low-rank methods still communicate an O(rn) (or O(mr)) factor and remain expensive
+when one dimension is large (Table 1). A natural way to break this scaling is to maintain two low-rank
+projection bases, U ∈ Rm×r and V ∈ Rn×r , and synchronize only the core C = U ⊤ GV ∈ Rr×r ,
+reducing the dominant payload to O(r2 ) while storing Adam moments in the same core space.
+Making this approach practical hinges on two issues: (i) refresh steps must update base without
+falling back to full-gradient synchronization, otherwise peak communicated bytes can dominate; and
+(ii) communication-heavy layers should be accounted for explicitly, notably embeddings, which are
+often kept dense in prior low-rank treatments but can occupy a non-trivial fraction of synchronization
+volume (Figure 5).
+To address these two issues, we propose TSR, a two-sided low-rank communication mechanism for
+data-parallel training; in this paper we instantiate TSR with Adam-family updates, yielding TSRAdam(Figure 2). At each step, TSR-Adam synchronizes only the core C = U ⊤ GV and performs
+Adam moment updates in this same core space, reducing the dominant per-step communication from
+O(mn) (dense) or O(rn)/O(mr) (one-sided) to O(r2 ), while retaining low-dimensional moment
+states and thus the memory benefits of low-rank training. To ensure subspace maintenance does not
+2
+
+Table 2: The number of parameters in the Embedding and Linear layer weights, as well as in the
+optimizer state. Assume W ∈ Rm×n , rank r, Embedding rank re and vocabulary size V.
+M ETHOD
+
+W EIGHTS
+
+O PTIMIZER S TATE
+
+V ×m
+V ×m
+V ×m
+V ×m
+
+V × m + 2V × m
+V × m + 2V × m
+V × m + 2V × m
+V × re + re × m + 2re2
+
+mn
+mn + rm + rn
+mn
+mn
+
+2mn
+2mr + 2nr
+mr + 2nr
+mr + nr + 2r2
+
+E MBEDDING L AYER
+A DAM
+L O RA
+O NE - SIDED
+TSR
+L INEAR L AYERS
+A DAM
+LORA
+O NE - SIDED
+TSR
+
+dominate peak bytes, TSR-Adam refreshes the two projection bases via a randomized SVD procedure
+that communicates only low-dimensional sketches, avoiding full-gradient synchronization. We further
+apply the same low-rank communication principle to embedding gradients with embedding-specific
+ranks and refresh schedules, yielding additional communication and memory savings over keeping
+embeddings dense. We evaluate TSR-Adam on pretraining from 60M to 1B model scales and on
+GLUE fine-tuning benchmarks, and provide a convergence analysis for the resulting update. Overall,
+our contributions are summarized as follows:
+• Communication-first rethinking of low-rank optimizers. We demonstrate that projectionbased low-rank optimizers, originally developed for memory efficiency, can be reframed as a
+communication mechanism. We optimize them explicitly for bandwidth-limited data-parallel
+training, surpassing the limitations of prior one-sided designs.
+• Two-sided O(r2 ) core synchronization with preserved memory benefits. We introduce
+TSR-Adam, which synchronizes a compact core C = U ⊤ GV ∈ Rr×r for each matrix
+gradient, reducing the dominant per-step payload from O(mn) (dense) and O(rn) (onesided) to O(r2 ), while keeping Adam moment states in the same low-dimensional core
+space.
+• Practical peak-byte reduction and embedding-aware design. We develop a randomized
+SVD-based refresh that avoids full-gradient synchronization to control peak communication
+on refresh steps, and we extend low-rank communication to embedding gradients with
+embedding-specific ranks and refresh schedules, yielding additional communication and
+memory savings over keeping embeddings dense.
+• Empirical gains and theory. Across pretraining from 60M to 1B model scales, TSR-Adam
+reduces average communicated bytes per step by 13× and on GLUE fine-tuning it reduces
+communication by 25×, with comparable performance; we further provide a theoretical
+stationarity guarantee for the resulting update.
+
+2
+
+Related Work
+
+Communication bottlenecks in large-scale LLM pretraining. As foundation models continue
+to scale Brown et al. [2020], Bommasani [2021], Touvron et al. [2023], pretraining increasingly
+relies on data-parallel (often hybrid-parallel) distributed optimization, where dense gradient synchronization can become a dominant cost once training spans many devices and nodes Narayanan
+et al. [2021], Rasley et al. [2020], Shoeybi et al. [2019], Jiang et al. [2024]. Prior work mitigates
+distributed training overheads through multiple routes: (i) state/gradient sharding such as ZeRO-style
+partitioning that removes redundancy across workers Rajbhandari et al. [2020, 2021], Zhao et al.
+[2023]; (ii) quantization/compression that transmits low-bit updates with convergence guarantees
+(e.g., QSGD) Alistarh et al. [2017] and extends to adaptive optimizers (e.g., 1-bit Adam) Tang et al.
+[2021]; (iii) sparsification that communicates only salient entries with error feedback/momentum
+correction (e.g., DGC) Lin et al. [2017], Karimireddy et al. [2019]; and (iv) structured compression such as low-rank matrix-factor communication, where gradients are approximated by low-rank
+3
+
+Figure 2: Comparison of Communication Mechanisms. Visualizing synchronized objects (block
+volume) and bandwidth usage (arrow width). (a) Adam transmits dense gradients (O(mn)). (b)
+GaLore compresses linear layers (O(rn)) but leaves embeddings dense (large blue cube) and uses
+heavy SVD refresh. (c) TSR-Adam synchronizes tiny r × r cores (O(r2 )) across all layers and uses
+lightweight sketches (green bars) for refresh, achieving the lowest communication footprint.
+factors to reduce payload Vogels et al. [2019]. Recent work also explores GaLore-style low-rank
+compression with improved error control and convergence analysis (e.g., GreedyLore) Chen et al.
+[2025]. Importantly, most existing low-rank compressors synchronize factors or subspaces whose
+size still scales with at least one large matrix dimension (commonly O(r(m + n)) or O(rn)), and
+subspace-refresh steps can induce pronounced peak communication.
+Low-rank optimization for memory-efficient training. In addition to bandwidth, LLM training is
+often constrained by memory due to optimizer states and activation storage. Low-rank methods reduce
+memory by restricting adaptation or optimization to compact subspaces. For parameter-efficient
+fine-tuning, LoRA Hu et al. [2022] injects trainable low-rank adapters while keeping pretrained
+weights frozen, with widely-used variants improving rank allocation, quantization, and stability
+(e.g., AdaLoRA, QLoRA, DoRA) Zhang et al. [2023], Dettmers et al. [2023], Liu et al. [2024]. For
+pretraining and full-parameter learning, projection-based low-rank optimizers such as GaLore Zhao
+et al. [2024] maintain full-rank weights but project gradients into a learned low-rank subspace to reduce optimizer-state memory, with subsequent extensions improving scalability and refresh/staleness
+handling (e.g., GaLore 2, Tensor-GaLore; Online Subspace Descent; “Breaking the Frozen Subspace”) Su et al. [2025], George et al. [2024], Liang et al. [2024], Zhang et al. [2025]. Overall, much
+of the low-rank optimizer literature is primarily driven by memory efficiency, whereas optimizing for
+communication-limited pretraining—especially achieving dimension-independent payload scaling
+and accounting for peak communicated bytes—remains comparatively under-explored.
+
+3
+
+Method
+
+3.1
+
+Background: AdamW
+
+We consider data-parallel distributed training with N workers. Let f (w) denote the training objective
+and w the model parameters. At step t, worker i computes a stochastic gradient gt,i = ∇fi (wt ) over
+its local mini-batch. In standard data parallelism, the optimizer update is applied using the globally
+aggregated gradient
+N
+1 X
+ḡt =
+gt,i ,
+(1)
+N i=1
+which is typically obtained via an all-reduce collective. For clarity, we first review the AdamW update
+under dense synchronization and then identify the tensors that must be communicated.
+Dense AdamW update. AdamW maintains first- and second-moment estimates (mt , vt ) and
+applies decoupled weight decay. Given the aggregated gradient ḡt , the moment updates are
+mt = β1 mt−1 + (1 − β1 ) ḡt ,
+
+(2)
+
+
+vt = β2 vt−1 + (1 − β2 ) ḡt ◦ ḡt ,
+4
+
+(3)
+
+followed by bias correction m̂t = mt /(1 − β1t ) and v̂t = vt /(1 − β2t ). The parameter update is
+
+
+m̂t
++ λ wt .
+(4)
+wt+1 = wt − η √
+v̂t + ϵ
+In distributed data parallelism, the communication-critical step is the construction of ḡt in (1); once
+ḡt is available, all remaining computations in (2)–(4) are local.
+Matrix-shaped parameters. Our method targets matrix-shaped parameter blocks, which constitute
+the dominant portion of trainable weights in transformers (e.g., linear and embedding matrices). For
+a matrix parameter block W (ℓ) ∈ Rmℓ ×nℓ , let
+(ℓ)
+
+Gt,i := ∇W (ℓ) fi (wt ) ∈ Rmℓ ×nℓ
+denote worker i’s local gradient, and
+N
+
+(ℓ)
+
+Ḡt
+
+=
+
+1 X (ℓ)
+G
+N i=1 t,i
+
+the synchronized gradient used by dense AdamW. Dense synchronization communicates an mℓ × nℓ
+tensor per step for each matrix block ℓ, which scales with the full parameter size and can become the
+dominant bottleneck when interconnect bandwidth is limited.
+3.2
+
+Problem Formulation
+
+We consider data-parallel training with N workers and focus on matrix-shaped parameter blocks
+(ℓ)
+{W (ℓ) }ℓ∈Lmat . At step t, each worker i computes a local matrix gradient Gt,i and dense synchronizaPN
+(ℓ)
+(ℓ)
+tion forms Ḡt = N1 i=1 Gt,i , which is then used by AdamW. From a communication perspective,
+the key question is: what tensors must be synchronized across workers at each step?
+(ℓ)
+
+For a given method, let St denote the set of tensors synchronized for layer ℓ at step t. For dense
+(ℓ)
+(ℓ)
+(ℓ)
+AdamW, St = {Ḡt }. Low-rank communication replaces Ḡt by compact representations, and
+may additionally synchronize auxiliary tensors on subspace-refresh steps.
+Let bdtype be the number of bytes per element of the communicated dtype (e.g., 2 for bf16/fp16, 4 for
+(ℓ)
+(ℓ)
+fp32), and let |St | denote the total number of scalar entries across all tensors in the set St . We
+define the step-wise communicated bytes at step t as
+X
+(ℓ)
+Bt :=
+bdtype · St .
+ℓ∈Lmat
+
+Over T optimization steps, we further report the average communicated bytes per step,
+PT
+Bytes/Step := T1 t=1 Bt , the peak communicated bytes per step, PeakBytes := max1≤t≤T Bt ,
+Pt
+and the cumulative communicated bytes up to step t, CumulativeBytes(t) := τ =1 Bτ .
+3.3
+
+TSR-Adam: Two-Sided Low-Rank Core Synchronization
+
+We compress and synchronize matrix gradients through a two-sided low-rank core representation.
+For each matrix-shaped parameter block W (ℓ) ∈ Rmℓ ×nℓ , TSR-Adam maintains orthonormal bases
+(ℓ)
+(ℓ)
+(ℓ)
+(ℓ)
+(ℓ)
+(ℓ)
+Ut ∈ Rmℓ ×rℓ and Vt ∈ Rnℓ ×rℓ , with (Ut )⊤ Ut = I and (Vt )⊤ Vt = I. At step t, worker
+(ℓ)
+i computes the local matrix gradient Gt,i and forms the local core
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+Ct,i := (Ut )⊤ Gt,i Vt
+
+∈ Rrℓ ×rℓ .
+PN
+(ℓ)
+(ℓ)
+We then synchronize only the core via all-reduce, C̄t = N1 i=1 Ct,i , and reconstruct the gradient
+locally as
+(ℓ) (ℓ)
+(ℓ)
+b (ℓ)
+G
+:= Ut C̄t (Vt )⊤ .
+(5)
+t
+(ℓ)
+
+Compared with dense synchronization of Ḡt ∈ Rmℓ ×nℓ , this reduces the per-step synchronized
+payload for layer ℓ from O(mℓ nℓ ) elements to O(rℓ2 ) elements on non-refresh steps.
+5
+
+Algorithm 1 TSR-Adam for a matrix block W (ℓ) (use (remb , Kemb ) for embeddings; (r, K) otherwise)
+Input: rank rℓ , refresh interval Kℓ , oversampling p, AdamW hyperparams (η, λ, β1 , β2 , ϵ)
+State: bases (U, V ), core moments (m, v), step t ← 1
+Set r ← rℓ , K ← Kℓ , k ← r + p. Initialize m ← 0, v ← 0, and (U, V ) by one refresh. Let AR(·)
+denote all-reduce averaging across workers.
+(Algorithm is for a fixed layer ℓ; we omit (ℓ) in variables for brevity.)
+repeat
+Each worker i computes local gradient Gt,i
+if t mod K = 0 then
+Sample shared Ω (shared RNG seed)
+Yt,i ← Gt,i Ω
+row
+Qt,i ← orth(Yt,i ) , Yt,i
+← G⊤
+t,i Qt,i
+row
+Qrow
+←
+orth(Y
+)
+t,i
+t,i
+Yt,i ← Gt,i Qrow
+t,i
+Qt,i ← orth(Yt,i )
+Bt,i ← Q⊤
+B̄t ← AR(Bt,i )
+▷ B̄t
+t,i Gt,i ,
+e ΣVe ⊤
+Q̄t ← AR(Qt,i ), B̄t = U
+▷ Q̄t
+e[:,1:r] , V ← Ve[:,1:r]
+U ← Q̄ U
+end if
+Ct,i ← U ⊤ Gt,i V, C̄t ← AR(Ct,i )
+▷ C̄t
+m ← β1 m + (1 − β1 )C̄t
+
+v ← β2 v + (1 − β2 ) C̄t ◦ C̄t
+t
+m̂ ← m/(1 √
+− β1 ), v̂ ← v/(1 − β2t )
+D ← m̂ ⊘ ( v̂ + ϵ)
+∆Wt ← U DV ⊤
+W ← W − η (∆Wt + λW )
+t←t+1
+until convergence criteria met
+
+3.4
+
+AdamW Updates in Core Space and Reconstruction
+
+TSR-Adam performs AdamW updates using the synchronized two-sided core as the effective
+gradient. For each matrix block W (ℓ) , we maintain AdamW first- and second-moment states
+(ℓ) (ℓ)
+mt , vt ∈ Rrℓ ×rℓ in the low-dimensional core space. At step t, after synchronizing the core
+PN
+(ℓ)
+(ℓ)
+(ℓ) (ℓ)
+C̄t = N1 i=1 (Ut )⊤ Gt,i Vt , we update
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+mt = β1 mt−1 + (1 − β1 ) C̄t ,
+(ℓ)
+
+vt
+
+= β2 vt−1 + (1 − β2 ) C̄t
+
+(ℓ) 
+
+◦ C̄t
+
+,
+(ℓ)
+
+(ℓ)
+
+where ◦ denotes the Hadamard (element-wise) product. With bias correction m̂t = mt /(1 − β1t )
+(ℓ)
+(ℓ)
+and v̂t = vt /(1 − β2t ), the normalized update in core space is
+q
+
+(ℓ)
+(ℓ)
+(ℓ)
+Dt = m̂t ⊘
+v̂t + ϵ ,
+where ⊘ is element-wise division. We then lift the update back to the original parameter space via
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+(ℓ)
+
+= Ut Dt (Vt )⊤ ,
+
+∆Wt
+and apply the standard AdamW rule
+(ℓ)
+
+(ℓ)
+
+Wt+1 = Wt
+
+
+
+(ℓ)
+(ℓ)
+− η ∆Wt + λ Wt
+.
+
+All non-matrix parameters (e.g., biases and normalization parameters) are synchronized and updated
+in dense form.
+3.5
+
+Randomized Refresh of Two-Sided Bases and Peak Communication
+(ℓ)
+
+(ℓ)
+
+The bases (Ut , Vt ) must track the evolving gradient subspaces; stale bases can degrade the quality
+of the reconstructed update direction in Eq. (5).
+6
+
+Table 3: Main Results Summary. We report final loss, bytes per step, peak communication volume,
+memory, and the average update time per subspace refresh interval (including relative communication
+reduction factors).
+S CALE M ETHOD
+60M
+60M
+60M
+
+K F INAL LOSS↓ B YTES / STEP↓ P EAK B YTES M EMORY U PDATE T IME
+
+R ANK
+
+A DAM W
+512
+–
+G A L ORE
+128
+200
+TSR
+256(64) 100
+
+3.53
+3.55
+3.61
+
+0.17G
+0.10G
+0.020G
+
+0.17G
+0.14G
+0.10G
+
+0.28G
+0.21G
+0.17G
+
+0.42 S
+0.43 S
+0.45 S
+
+130M A DAM W
+768
+–
+130M G A L ORE
+256
+200
+130M
+TSR
+384(96) 100
+
+3.22
+3.23
+3.36
+
+0.44G
+0.21G
+0.058G
+
+0.44G
+0.36G
+0.31G
+
+0.71G
+0.51G
+0.45G
+
+0.41 S
+0.59 S
+0.41 S
+
+350M A DAM W
+1024
+–
+350M G A L ORE
+256
+200
+350M
+TSR
+384(128) 100
+
+2.93
+2.99
+3.16
+
+1.34G
+0.44G
+0.11G
+
+1.34G
+0.98G
+0.79G
+
+2.08G
+1.26G
+1.19G
+
+0.50 S
+0.83 S
+0.69 S
+
+1B
+1B
+1B
+
+2.74
+2.75
+3.08
+
+5.09G
+1.48G
+0.21G
+
+5.09G
+3.63G
+2.05G
+
+7.77G
+4.5G
+3.81G
+
+3.19 S
+4.01 S
+3.19 S
+
+A DAM W
+2048
+–
+G A L ORE
+512
+200
+TSR
+512(256) 100
+
+(ℓ)
+
+A naive refresh strategy would first synchronize the full dense gradient Ḡt and then compute an
+exact SVD, incurring both high compute cost and a large peak communication payload on refresh
+(ℓ)
+(ℓ)
+steps. Instead, we refresh (Ut , Vt ) using a sketch-based randomized SVD (rSVD) procedure that
+avoids full-gradient synchronization and only requires communicating low-dimensional sketches.
+Let kℓ = rℓ + p with a small oversampling p. On refresh steps (every Kℓ steps), we draw a
+shared Gaussian matrix Ω(ℓ) ∈ Rnℓ ×kℓ (e.g., via RNG seed). Each worker i forms a range sketch
+(ℓ)
+(ℓ)
+(ℓ)
+(ℓ)
+Yt,i = Gt,i Ω(ℓ) then computes an orthonormal basis Qt,i = orth(Yt,i ) (implemented by thin QR).
+To improve the approximation when the spectrum decays slowly, we optionally apply q steps of power
+iteration. In Algorithm 1 we show the case q = 1 for concreteness; larger q follows by repeating the
+alternating multiplications. Concretely, for j = 1, . . . , q, we compute
+
+
+row,(ℓ)
+(ℓ)
+(ℓ)
+row,(ℓ)
+row,(ℓ)
+Yt,i
+= (Gt,i )⊤ Qt,i , Qt,i
+= orth Yt,i
+,
+
+
+(ℓ)
+(ℓ) row,(ℓ)
+(ℓ)
+(ℓ)
+Yt,i = Gt,i Qt,i
+, Qt,i = orth Yt,i ,
+which matches the standard alternating multiplications by G(ℓ) and (G(ℓ) )⊤ in randomized SVD.
+(ℓ)
+
+Given the final Qt,i , we form the reduced matrix
+(ℓ)
+
+B̄t
+
+
+
+(ℓ)
+(ℓ)
+= AR (Qt,i )⊤ Gt,i ,
+
+
+(ℓ)
+(ℓ)
+Q̄t = AR Qt,i
+
+(ℓ)
+
+(ℓ)
+
+:= (Qt )⊤ Ḡt
+
+(ℓ)
+
+e ΣVe ⊤ . We then refresh the two-sided bases as
+=U
+(ℓ)
+(ℓ) e
+(ℓ)
+Vt ← Ve[:,1:r ] .
+Ut ← Q̄t U
+[:,1:r ] ,
+
+and compute a small SVD B̄t
+
+ℓ
+
+ℓ
+
+(ℓ)
+
+(ℓ)
+
+Accordingly, on non-refresh steps TSR-Adam synchronizes only St = {C̄t }. On refresh steps,
+(ℓ)
+(ℓ)
+(ℓ)
+St additionally includes the communicated sketches Q̄t and B̄t , which determines the peak
+communicated bytes.
+Importantly, refresh communicates only sketches of size mℓ kℓ or nℓ kℓ (repeated a small number
+of times when q > 0), rather than the full mℓ nℓ gradient, thereby substantially reducing the peak
+communicated bytes per step captured by PeakBytes.
+3.6
+
+Embedding-Specific Low-Rank Communication
+
+Embedding matrices can contribute a substantial fraction of communicated gradient volume, especially in smaller models. We therefore apply the same two-sided core synchronization to the
+7
+
+embedding matrix E ∈ R|V|×d , but use a separate rank and refresh schedule, (remb , Kemb ), from
+(emb)
+(emb)
+other linear layers. Concretely, we maintain Ut
+∈ R|V|×remb and Vt
+∈ Rd×remb and synchro(emb)
+(emb) ⊤ (emb) (emb)
+nize the embedding core Ct,i = (Ut
+) Gt,i Vt
+. This decoupling allows TSR-Adam to
+tailor communication and refresh costs to the distinct structure of embeddings without constraining
+the choices for other matrix blocks.
+3.7
+
+Convergence Analysis
+
+Providing convergence guarantees for fully adaptive Adam-family methods is notoriously delicate.
+Following the common practice in low-rank/subspace optimization (e.g., He et al. [2024], Zhang et al.
+[2025]), we therefore establish a stationarity guarantee for a momentum version of TSR that captures
+the core effect of two-sided projection and refresh; all proofs are deferred to Appendix B. Concretely,
+we analyze the update m
+e t := Ut mt Vt⊤ and wt+1 = wt − η m
+e t.
+Assumption (Smoothness). The objective f is L-smooth, i.e., f (y) ≤ f (x) + ⟨∇f (x), y − x⟩ +
+L
+2
+2 ∥y − x∥ for all x, y.
+Assumption (Projected Stochasticity and Approximation). Let Pt := Ut Ut⊤ ∇f (wt )Vt Vt⊤ be
+the projection of the true gradient onto the current subspace. We define the subspace approximation
+error as ∆t := ∥Pt −∇f (wt )∥2 . Furthermore, we assume the synchronized core provides an unbiased
+estimate of the projected gradient, i.e., E[Ut C̄t Vt⊤ ] = Pt , with bounded variance E∥Ut C̄t Vt⊤ −
+Pt ∥2 ≤ σt2 .
+Theorem 1 (Stationarity bound). Suppose the above assumptions hold. Set η = L T12/3 and choose
+√
+√
+√
+40
+40
+β 2 = 1 − 40Lη = 1 − T 1/3
+(so 1 − β 2 = T 1/3
+). Define ∆f := E[f (w0 ) − f ⋆ ], let Irefresh (t) ∈
+⊤
+{0, 1} indicate whether step t is a refresh step, and let Rt := Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+Then for any T ≥ 1,
+
+2
+
+.
+
+T −1
+
+1 X
+4
+2L ∆f
++√
+E∥m
+e 0 − ∇f (w0 )∥2 +
+E∥∇f (wt )∥2 ≤
+1/3
+T t=0
+T
+10 T 2/3
+√
+
+16
+·
+T
+
+T
+−1
+X
+16
+∆t
+q
+q
+
+√ 2
+√ 2
+40
+40
+t=1
+t=1
+1 + 1 − T 1/3
+T 1 + 1 − T 1/3
+ TX
+
+−1
+8
+4
+Irefresh (t) ERt . (6)
++
++ √
+5 T 1/3 t=1
+10 T 2/3
+40
+T 1/3
+
+T
+−1
+X
+
+σt2 +
+
+Remark 1 (Interpretation of Convergence Terms). The bound effectively decomposes into three parts:
+P
+• Stochastic Error: Depends on the averaged projected variance σ̄ 2 := T1 t σt2 , damped by
+a factor proportional to 1 − β, yielding an overall Õ(T −1/3 ) · σ̄ 2 contribution.
+P
+• Approximation Floor: Scales with ¯
+∆ := T1 t ∆t , forming an irreducible error floor.
+Notably, since gradients in large-scale training typically exhibit a low intrinsic dimension,
+¯ remains naturally small, validating the effectiveness of our approach. However, if rank
+∆
+¯ will increase significantly, dominating the bound and leading to
+r is chosen too small, ∆
+divergence.
+P
+• Refresh Trade-off: The refresh-mismatch term aggregates Irefresh (t)ERt . This reflects
+a practical trade-off: larger K reduces the number of refresh steps (lowering the sum count),
+whereas overly large K may increase the subspace error ∆t via staleness.
+
+4
+
+Experiments
+
+4.1
+
+Experimental Setup
+
+We evaluate TSR on both pre-training and fine-tuning of LLMs. All experiments run on NVIDIA
+A100 GPUs and NVIDIA L40S GPUs.
+8
+
+(a)
+
+(b)
+
+(c)
+
+Figure 3: Ablations. We isolate the effects of (a) one-sided vs two-sided compression, (b) randomized SVD-style refresh, and (c) subspace refresh interval K on the loss–communication trade-off.
+
+Figure 4: Loss–communication Pareto frontiers across model scales. Final pretraining loss versus
+communicated Bytes/Step for 60M/130M/350M/1B models. TSR shifts the frontier toward lower
+communication for competitive loss, relative to AdamW and GaLore.
+Pre-training on C4. To evaluate its performance, we apply TSR to train LLaMA-based large
+language models Touvron et al. [2023] of four different scales—60M, 130M, 350M, and 1B—on the
+C4 dataset Raffel et al. [2020]. The C4 dataset is a large, cleaned version of the Common Crawl web
+corpus, primarily designed for pre-training language models and learning word representations.
+Fine-tuning on GLUE tasks. GLUE Wang et al. [2018] is a benchmark for evaluating the performance of NLP models on a variety of tasks, including sentiment analysis, question answering,
+and textual entailment. We use GLUE tasks to benchmark TSR against Adam and GaLore for
+communication efficient fine-tuning.
+4.2
+
+Main Results: Pretraining Communication Efficiency
+
+TSR improves the loss–communication trade-off across model scales. Figure 4 and Table 3
+show that TSR-Adam achieves pretraining loss comparable to dense AdamW and GaLore on
+60M/130M/350M models. For LLaMA-1B, we report a representative run under limited training budget, and TSR still exhibits a highly competitive efficiency profile. Across all scales, TSR
+substantially reduces communication and peak traffic: compared to AdamW, it cuts Bytes/Step by up
+to 24×, reduces PeakBytes by up to 59.72%, and lowers the memory footprint by up to 50%; averaged
+over scales, it achieves a 13× reduction in Bytes/Step with consistent PeakBytes and memory savings.
+In addition, TSR’s per-step update time is lower than GaLore and remains comparable to dense
+AdamW.
+TSR is more bytes-to-loss efficient under a fixed communication budget. On LLaMA-60M, we
+plot training loss against cumulative communicated bytes in Figure 1. TSR reaches comparable loss
+with markedly fewer communicated bytes, suggesting improved end-to-end communication efficiency
+beyond per-step compression. More results can be found in the Appendix C.
+Embedding gradients are a non-trivial communication source, and compressing them matters.
+Embedding layers are often overlooked in low-rank optimization but can dominate communication
+9
+
+in smaller models. Figure 5(a) shows that embeddings account for a significant fraction of gradient
+traffic. Applying TSR to embeddings with embedding-specific (remb , Kemb ) further reduces total
+communication overhead while maintaining competitive pretraining loss (Figure 5(b)), supporting a
+holistic compression strategy that covers both linear and embedding matrices.
+4.3
+
+Ablations: Two-Sidedness, Randomized SVD, and Subspace Refresh Interval
+
+We conduct ablation studies on the LLaMA-60M model to investigate the effects of two-sidedness,
+randomized SVD, and the subspace refresh interval on training convergence. The results are presented
+in Figure 3.
+One-Side vs. Two-Side. The results indicate that the two-sided approach achieves comparable convergence to the one-sided variant while reducing the total communication volume by approximately
+two-thirds. This indicates that two-sided compression can substantially decrease communication
+costs at the expense of only a very small increase in final loss.
+Normal SVD vs. Randomized SVD. The results indicate that using randomized SVD has little
+impact on convergence performance. Randomized SVD achieves a final loss comparable to that of
+standard SVD while using nearly half of the total communication volume. Moreover, our previous
+experiments indicate that, for models of the same scale, randomized SVD reduces the time required
+for subspace refreshes by approximately half.
+Subspace Refresh Interval. The results indicate that a subspace refresh interval of 100 steps achieves
+the best convergence, while intervals of 50 or 200 steps incur degraded performance. Notably,
+excessively frequent refreshes, such as every 20 steps in our experiments, result in a pronounced
+increase in communication overhead.
+Table 4: Fine-tuning results on GLUE benchmark using pre-trained RoBERTa-Base.We report task
+metrics and bytes/step.
+B YTES /S TEP C O LA STS-B MRPC RTE
+A DAM
+G A L ORE
+TSR
+
+4.4
+
+494M
+158M
+20M
+
+62.24
+59.33
+61.32
+
+90.92
+90.82
+90.72
+
+SST2 MNLI QNLI QQP
+
+AVG
+
+91.30 79.42 94.57 87.18 92.33 92.28 86.28
+90.27 77.98 93.92 87.11 92.42 89.54 85.17
+90.38 77.98 93.92 86.88 92.95 90.16 85.54
+
+Fine-tuning Results
+
+We fine-tuned pre-trained RoBERTa-Base Liu et al. [2019] model on the GLUE tasks, and the results
+are shown in Table 4. Our method achieves better or comparable performance to GaLore on 6 of
+the 8 tasks, while requiring only one-eighth of the bytes per step. Compared to Adam, our method
+reduces the bytes per step by approximately 25×, while incurring only a 0.86% drop in average task
+performance. See the Appendix C for parameter settings and convergence graphs for each dataset.
+
+(a)
+
+(b)
+
+Figure 5: Embedding matters. (a) Breakdown of bytes per step for the embedding and linear layers
+across different model sizes. (b) Loss–Bytes curves comparing the use of low-rank compression on
+the embedding layer.
+
+10
+
+5
+
+Conclusion
+
+We propose TSR, a two-sided low-rank communication mechanism for distributed training of large
+language models. By synchronizing only a compact core U ⊤ GV ∈ Rr×r , TSR reduces the dominant
+per-step communication from dense O(mn) to O(r2 ), while keeping optimizer states in the same
+low-dimensional core space. To control refresh-induced peak traffic, TSR adopts a randomized
+SVD-based refresh that communicates only low-dimensional sketches. We further extend the same
+principle to embedding gradients via embedding-specific ranks and refresh schedules. Empirically,
+TSR substantially improves bytes-to-loss efficiency in pretraining and fine-tuning.
+
+References
+Dan Alistarh, Demjan Grubic, Jerry Li, Ryota Tomioka, and Milan Vojnovic. Qsgd: Communicationefficient sgd via gradient quantization and encoding. Advances in neural information processing
+systems, 30, 2017.
+Rishi Bommasani. On the opportunities and risks of foundation models.
+arXiv:2108.07258, 2021.
+
+arXiv preprint
+
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal,
+Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are
+few-shot learners. Advances in neural information processing systems, 33:1877–1901, 2020.
+Chuyan Chen, Yutong He, Pengrui Li, Weichen Jia, and Kun Yuan. Greedy low-rank gradient compression for distributed learning with convergence guarantees. arXiv preprint arXiv:2507.08784,
+2025.
+Arijit Das. Natural galore: Accelerating galore for memory-efficient llm training and fine-tuning.
+arXiv preprint arXiv:2410.16029, 2024.
+Tim Dettmers, Mike Lewis, Sam Shleifer, and Luke Zettlemoyer. 8-bit optimizers via block-wise
+quantization. arXiv preprint arXiv:2110.02861, 2021.
+Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. Qlora: Efficient finetuning
+of quantized llms. Advances in neural information processing systems, 36:10088–10115, 2023.
+Robert Joseph George, David Pitt, Jiawei Zhao, Jean Kossaifi, Cheng Luo, Yuandong Tian, and
+Anima Anandkumar. Tensor-galore: Memory-efficient training via gradient tensor decomposition.
+In OPT 2024: Optimization for Machine Learning, 2024.
+Yutong He, Pengrui Li, Yipeng Hu, Chuyan Chen, and Kun Yuan. Subspace optimization for large
+language models with convergence guarantees. arXiv preprint arXiv:2410.11289, 2024.
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang,
+Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. ICLR, 1(2):3, 2022.
+AJAY KUMAR JAISWAL, Yifan Wang, Lu Yin, Shiwei Liu, Runjin Chen, Jiawei Zhao, Ananth
+Grama, Yuandong Tian, and Zhangyang Wang. From low rank gradient subspace stabilization
+to low-rank weights: Observations, theories, and applications. In Forty-second International
+Conference on Machine Learning, 2025.
+Ziheng Jiang, Haibin Lin, Yinmin Zhong, Qi Huang, Yangrui Chen, Zhi Zhang, Yanghua Peng,
+Xiang Li, Cong Xie, Shibiao Nong, et al. {MegaScale}: Scaling large language model training
+to more than 10,000 {GPUs}. In 21st USENIX Symposium on Networked Systems Design and
+Implementation (NSDI 24), pages 745–760, 2024.
+Sai Praneeth Karimireddy, Quentin Rebjock, Sebastian Stich, and Martin Jaggi. Error feedback fixes
+signsgd and other gradient compression schemes. In International conference on machine learning,
+pages 3252–3261. PMLR, 2019.
+Kaizhao Liang, Bo Liu, Lizhang Chen, and Qiang Liu. Memory-efficient llm training with online
+subspace descent. Advances in Neural Information Processing Systems, 37:64412–64432, 2024.
+11
+
+Yujun Lin, Song Han, Huizi Mao, Yu Wang, and William J Dally. Deep gradient compression:
+Reducing the communication bandwidth for distributed training. arXiv preprint arXiv:1712.01887,
+2017.
+Shih-Yang Liu, Chien-Yi Wang, Hongxu Yin, Pavlo Molchanov, Yu-Chiang Frank Wang, KwangTing Cheng, and Min-Hung Chen. Dora: Weight-decomposed low-rank adaptation. In Forty-first
+International Conference on Machine Learning, 2024.
+Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike
+Lewis, Luke Zettlemoyer, and Veselin Stoyanov. Roberta: A robustly optimized bert pretraining
+approach. arXiv preprint arXiv:1907.11692, 2019.
+Zhanfeng Mo, Long-Kai Huang, and Sinno Jialin Pan. Parameter and memory efficient pretraining
+via low-rank riemannian optimization. In The Thirteenth International Conference on Learning
+Representations, 2025.
+Baorun Mu, Saeed Soori, Bugra Can, Mert Gürbüzbalaban, and Maryam Mehri Dehnavi. Hylo: a
+hybrid low-rank natural gradient descent method. In SC22: International Conference for High
+Performance Computing, Networking, Storage and Analysis, pages 1–16. IEEE, 2022.
+Deepak Narayanan, Mohammad Shoeybi, Jared Casper, Patrick LeGresley, Mostofa Patwary, Vijay
+Korthikanti, Dmitri Vainbrand, Prethvi Kashinkunti, Julie Bernauer, Bryan Catanzaro, et al.
+Efficient large-scale language model training on gpu clusters using megatron-lm. In Proceedings
+of the international conference for high performance computing, networking, storage and analysis,
+pages 1–15, 2021.
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi
+Zhou, Wei Li, and Peter J Liu. Exploring the limits of transfer learning with a unified text-to-text
+transformer. Journal of machine learning research, 21(140):1–67, 2020.
+Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He. Zero: Memory optimizations
+toward training trillion parameter models. In SC20: International Conference for High Performance
+Computing, Networking, Storage and Analysis, pages 1–16. IEEE, 2020.
+Samyam Rajbhandari, Olatunji Ruwase, Jeff Rasley, Shaden Smith, and Yuxiong He. Zero-infinity:
+Breaking the gpu memory wall for extreme scale deep learning. In Proceedings of the international
+conference for high performance computing, networking, storage and analysis, pages 1–14, 2021.
+Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He. Deepspeed: System optimizations enable training deep learning models with over 100 billion parameters. In Proceedings of
+the 26th ACM SIGKDD international conference on knowledge discovery & data mining, pages
+3505–3506, 2020.
+Mohammad Shoeybi, Mostofa Patwary, Raul Puri, Patrick LeGresley, Jared Casper, and Bryan Catanzaro. Megatron-lm: Training multi-billion parameter language models using model parallelism.
+arXiv preprint arXiv:1909.08053, 2019.
+DiJia Su, Andrew Gu, Jane Xu, Yuandong Tian, and Jiawei Zhao. Galore 2: Large-scale llm
+pre-training by gradient low-rank projection. arXiv preprint arXiv:2504.20437, 2025.
+Hanlin Tang, Shaoduo Gan, Ammar Ahmad Awan, Samyam Rajbhandari, Conglong Li, Xiangru Lian,
+Ji Liu, Ce Zhang, and Yuxiong He. 1-bit adam: Communication efficient large-scale training with
+adam’s convergence speed. In International Conference on Machine Learning, pages 10118–10129.
+PMLR, 2021.
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay
+Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open foundation
+and fine-tuned chat models. arXiv preprint arXiv:2307.09288, 2023.
+Thijs Vogels, Sai Praneeth Karimireddy, and Martin Jaggi. Powersgd: Practical low-rank gradient
+compression for distributed optimization. Advances in Neural Information Processing Systems, 32,
+2019.
+12
+
+Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel Bowman. Glue: A
+multi-task benchmark and analysis platform for natural language understanding. In Proceedings of
+the 2018 EMNLP workshop BlackboxNLP: Analyzing and interpreting neural networks for NLP,
+pages 353–355, 2018.
+Haochen Zhang, Junze Yin, Guanchu Wang, Zirui Liu, Lin Yang, Tianyi Zhang, Anshumali Shrivastava, and Vladimir Braverman. Breaking the frozen subspace: Importance sampling for low-rank
+optimization in llm pretraining. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+Qingru Zhang, Minshuo Chen, Alexander Bukharin, Nikos Karampatziakis, Pengcheng He, Yu Cheng,
+Weizhu Chen, and Tuo Zhao. Adalora: Adaptive budget allocation for parameter-efficient finetuning. arXiv preprint arXiv:2303.10512, 2023.
+Jiawei Zhao, Zhenyu Zhang, Beidi Chen, Zhangyang Wang, Anima Anandkumar, and Yuandong
+Tian. Galore: Memory-efficient llm training by gradient low-rank projection. arXiv preprint
+arXiv:2403.03507, 2024.
+Yanli Zhao, Andrew Gu, Rohan Varma, Liang Luo, Chien-Chin Huang, Min Xu, Less Wright, Hamid
+Shojanazeri, Myle Ott, Sam Shleifer, et al. Pytorch fsdp: experiences on scaling fully sharded data
+parallel. arXiv preprint arXiv:2304.11277, 2023.
+
+13
+
+Road Map. Appendix A further elaborates on the relevant work. Appendix B provides a detailed
+proof of the convergence of the algorithm, including the TSR-SGD version of the algorithm, and
+Appendix C shows more experimental setups and experimental graphs.
+
+A
+
+Related Works
+
+Communication Bottlenecks in Large-Scale Pretraining of LLMs The training of large language
+models at scale is often limited not by compute, but by communication overhead. When hundreds or
+thousands of GPUs are used in distributed data-parallel training, the cost of synchronizing gradients
+and model updates over interconnects (PCIe, NVLink, InfiniBand/Ethernet) can dominate the iteration
+time Tang et al. [2021], Narayanan et al. [2021]. In modern LLM pretraining runs, network bandwidth
+becomes a primary bottleneck – for example, multi-node training must send enormous gradients
+(on the order of billions of parameters) across relatively slower inter-node links, leading to idle
+compute while GPUs wait on data exchange Narayanan et al. [2021]. This has motivated a long line
+of communication-efficient optimization techniques to alleviate bandwidth limitations in distributed
+training of foundation models.
+Optimizer state sharding. One approach is to eliminate redundant data transfers by partitioning
+or sharding optimizer states across workers. ZeRO (Zero Redundancy Optimizer) introduced by
+Rajbhandari et al Rajbhandari et al. [2020]. shards the gradient histories and optimizer momentum/variance so that each GPU only stores (and communicates) a fraction of the full state, instead of
+replicating it on all GPUs. By stripping away duplicate communication and memory, ZeRO achieved
+near-linear scaling for models up to 100+ billion parameters, retaining low communication volume
+despite massive model size Rajbhandari et al. [2020]. This idea underpins Fully Sharded Data Parallel
+schemes, ensuring that bandwidth usage grows sub-linearly with the number of accelerators.
+Gradient quantization and compression. Another class of methods reduces the number of bits or
+values that need to be exchanged each step. For instance, QSGD (Alistarh et al., 2017) proposed
+quantizing gradients to low-bit representations, showing one can trade off communication bandwidth
+for convergence time by sending fewer bits per gradient component Alistarh et al. [2017]. Such lossy
+compression directly targets the “high bandwidth cost of communicating gradient updates” in parallel
+SGD Alistarh et al. [2017]. Following this, researchers developed 1-bit SGD/Adam techniques that
+transmit only a 1-bit sign or compressed form of each gradient with error compensation. Notably,
+1-bit Adam Tang et al. [2021]demonstrated up to 5× reduction in communication volume with no
+loss in convergence speed compared to uncompressed Adam. This was achieved by accumulating
+quantization errors and leveraging the stability of Adam’s second moment estimates. Similarly,
+techniques for 8-bit compression of gradients/updates have been explored – for example, Dettmers et
+al. developed 8-bit optimizers that store and communicate optimizer statistics at 8-bit precision while
+preserving 32-bit performance Dettmers et al. [2021]. By quantizing gradient exchanges (e.g. 8-bit or
+even 4-bit), these methods cut bandwidth requirements substantially, at the cost of minimal noise that
+can be mitigated with proper tuning.
+Gradient sparsification. In parallel, researchers have investigated sending only a subset of gradient
+elements to reduce traffic. Deep Gradient Compression (DGC) Lin et al. [2017] showed that 99.9%
+of gradient values in distributed training can be deemed redundant and pruned away with little
+impact on model quality. DGC aggressively sparsifies gradients (e.g. by transmitting only the top-k
+magnitude components) and uses techniques like momentum correction and warm-up to preserve
+accuracy Lin et al. [2017]. The result was a 270×–600× compression of gradient data (e.g. reducing
+a ResNet-50 gradient from 97 MB to 0.35 MB) without loss of accuracy Lin et al. [2017]. Such
+extreme compression allowed training on bandwidth-limited 1 Gbps Ethernet clusters that would
+otherwise be prohibitively slow Lin et al. [2017]. Gradient sparsification and pruning, combined with
+error-feedback mechanisms, continue to be effective for cutting down communication in large-scale
+setups.
+Low-rank gradient communication. More recently, structured approaches have been proposed to
+compress gradients by exploiting linear correlations. PowerSGD Vogels et al. [2019] is a representative method that approximates the gradient matrix in each layer by a low-rank factorization and only
+communicates the low-rank factors. By using a small rank (e.g. r = 1 or 4) and a power iteration
+method to find these factors, PowerSGD can drastically reduce bandwidth while maintaining final
+accuracy close to full-precision SGD. It was one of the first schemes to demonstrate actual wall-clock
+14
+
+speedups in distributed training owing to communication savings Vogels et al. [2019]. Related work
+has combined low-rank compression with second-order information – for example, using a natural
+gradient low-rank scheme that preconditions updates. Mu et al. (2023) showed that a hybrid low-rank
+natural gradient method can reduce communication time by over an order of magnitude (up to 10.7×)
+on multi-GPU training, thanks to smaller transmitted updates and fewer synchronization steps Mu
+et al. [2022]. Overall, by compressing gradients via quantization, sparsity, or low-rank approximation,
+distributed LLM training can significantly mitigate network bottlenecks and push closer to the limits
+of hardware bandwidth. These communication-efficient optimizers have become crucial as model
+sizes and cluster scales continue to grow, ensuring that networking infrastructure does not become
+the rate limiter in large-scale pretraining.
+Low-Rank Optimization for Memory-Efficient Training Scaling up model size not only stresses
+communication, but also introduces severe memory and compute challenges. Modern LLMs with
+billions of parameters demand enormous memory to store model weights, optimizer states, and
+gradients. For example, training a 7B-parameter transformer from scratch with Adam optimizer can
+require on the order of 60 GB of memory per GPU, with optimizer momentum and variance states
+taking much more space than the weights themselves Zhao et al. [2024]. To address this, researchers
+have explored low-rank optimization methods that reduce memory and compute usage by restricting
+updates to low-dimensional subspaces.
+Low-Rank Adaptation (LoRA). A classical approach for memory-efficient training is to constrain
+weight updates to a low-rank form. LoRA Hu et al. [2022] injects trainable low-rank matrices into each
+layer’s weights instead of updating the full weight matrix Zhao et al. [2024]. In LoRA, a pre-trained
+weight W0 is frozen and two small rank-r matrices U, V are learned such that W = W0 + U V T .
+Because U and V have far fewer parameters than W (with r ≪ dim(W )), the number of trainable
+parameters – and crucially the optimizer states for them – are dramatically reduced Zhao et al. [2024].
+LoRA proved to be an efficient fine-tuning strategy, cutting memory usage while maintaining decent
+performance on downstream tasks. However, LoRA’s low-rank constraint can become a limitation in
+full training: the model is confined to a tiny subspace of the full parameter space. Recent studies found
+that LoRA fine-tuning often cannot match the accuracy of full-model tuning, and in pre-training from
+scratch it may even require a full-rank warm-up phase before low-rank updates are viable Zhao et al.
+[2024]. In essence, if the true optimal weights are not low-rank or if the low-rank reparameterization
+alters training dynamics, a fixed small subspace can hurt convergence. This motivates methods
+that preserve the flexibility of full-rank training while still reaping memory savings from low-rank
+structures.
+Gradient low-rank projection (GaLore). Instead of freezing weights to a low-rank form, one
+can project gradients onto a low-rank subspace during training. GaLore Zhao et al. [2024] is an
+optimizer that maintains full-rank model weights but restricts each weight’s gradient to a learned
+low-rank subspace. The key insight is that as training progresses, the gradients of large models often
+lie in a much lower-dimensional subspace than the parameter count – they have a slowly changing,
+low-rank structure. GaLore periodically computes a small set of basis vectors (e.g. via SVD on recent
+gradients) and projects incoming gradients onto this subspace, then applies the optimizer (Adam,
+Adagrad, etc.) in the compressed space Zhao et al. [2024]. By doing so, the memory-heavy optimizer
+states (momentum, etc.) are only kept for the low-rank coordinates rather than for every parameter.
+This approach allows full-parameter training (no accuracy drop from restricting model capacity) but
+yields major memory savings: GaLore reports up to a 65% reduction in optimizer memory compared
+to standard Adam, and up to 82% reduction when combined with 8-bit quantized states Zhao et al.
+[2024]. In practice, GaLore enabled, for the first time, pre-training a 7B LLM on a single 24 GB
+GPU without any offloading or model-parallel tricks Zhao et al. [2024]. Compared to LoRA, which
+limits the model to a fixed low-rank, GaLore’s online subspace descent allows the subspace to evolve
+– e.g. updating the projection basis every few hundred steps – which was shown to preserve model
+quality while still reducing memory by 3̃0% relative to LoRA’s approach.
+Extensions of GaLore. The idea of low-rank optimizer updates has spurred many follow-ups. Some
+works add quantization and other structure on top of GaLore – for example, 8-bit GaLore quantizes
+the projected gradients to further cut memory, and researchers have explored using higher-order tensor
+decompositions (Tensor-GaLore George et al. [2024]) to compress gradients along multiple modes Su
+et al. [2025]. These improvements address practical bottlenecks: GaLore’s original implementation
+incurred non-negligible SVD computation for subspace updates and didn’t natively support sharded
+15
+
+data parallel. In GaLore 2 Su et al. [2025], the framework was optimized with fast randomized
+SVD updates and integration into PyTorch’s Fully Sharded Data Parallel, making it efficient and
+scalable for real-world runs. GaLore 2 demonstrated the ability to pre-train a LLaMA-7B model
+on 500 billion tokens using low-rank gradient projection, indicating that such methods can indeed
+support large-scale training without hitting memory limits. Beyond GaLore itself, researchers have
+looked at the connection between gradient subspaces and weight matrices. JAISWAL et al. [2025]
+observed that as training converges, certain layers’ gradients stabilize in a low-rank subspace and
+correspondingly the weights exhibit implicit low-rank structure. They introduced WeLore (Weight
+Low-Rank Projection), a one-shot compression technique that leverages these observations: after
+pretraining, it categorizes weight matrices into those that can be compressed (low-rank) and those
+that cannot, and compresses the former for memory-efficient fine-tuning or inference JAISWAL et al.
+[2025]. WeLore essentially unifies model compression with the low-rank training insights from
+GaLore, achieving significant memory reduction with minimal performance drop by tailoring the
+rank per layer.
+Dynamic subspace and theoretical advances. An important question for low-rank training is how
+to choose and update the subspace. If the subspace is too restrictive or is not refreshed, training can
+stagnate. Zhang et al. [2025] highlighted this in “Breaking the Frozen Subspace”: they found that
+methods like GaLore which pick the dominant gradient subspace can suffer because the top principal
+components of the gradient stop changing over time, effectively freezing the update directions. To
+counter this, they proposed an importance sampling strategy that occasionally forces exploration
+of new random directions outside the current subspace, and proved that this yields convergence
+guarantees that the purely dominant subspace approach lacks. Empirically, their method outperformed
+prior low-rank optimizers in LLM pretraining, underlining the need to keep the optimization subspace
+from becoming too static. On the theoretical side, He et al. [2024] examined GaLore’s convergence
+properties and showed that GaLore may fail to converge in stochastic training unless certain conditions
+(large batch sizes or isotropic gradient noise) hold. They introduced a variant called GoLore (Gradient
+random Low-Rank projection) that uses randomization in the projection step, and proved it converges
+reliably in standard SGD settings. This work provides formal guarantees for subspace optimization
+algorithms and guides how to design low-rank updates that are stable in theory as well as practice.
+Finally, researchers have begun integrating low-rank methods with second-order optimization and
+manifold geometry. Natural GaLore Das [2024] is one such approach that applies a Riemannian
+preconditioning to GaLore’s low-rank updates. By multiplying the low-rank gradient by the inverse
+Fisher information matrix (estimated efficiently via the Woodbury identity), Natural GaLore accelerates convergence without additional memory overhead. This can be seen as performing natural
+gradient descent within the low-rank subspace, yielding faster loss reduction especially when the
+training budget (number of steps) is limited. In a similar vein, Mo et al. [2025]proposed LORO
+(Low-Rank Riemannian Optimizer) for full low-rank pretraining. Instead of maintaining a full-rank
+model, LORO parameterizes each weight matrix as the product of two rank-r factors from scratch and
+optimizes these factors jointly on the appropriate Riemannian manifold. By updating the factor pair
+in tandem along the manifold’s steepest descent direction (avoiding any reconstruction of full-sized
+gradients), LORO manages to learn low-rank models that match or even exceed the quality of full
+models, while using far less memory. Notably, an LLM pre-trained with LORO (rank 256 on a 1B
+parameter model) reached a slightly better perplexity than a full model, despite using 54% less
+memory and achieving 1.8× faster training and 2.2× faster inference throughput. Such results are
+encouraging as they suggest that, with proper optimization on the low-rank manifold, we can attain
+the dual goals of memory efficiency and high performance. In summary, a rich landscape of low-rank
+optimization methods – from practical GaLore-based techniques to theoretical and second-order
+enhancements – has emerged to enable memory-efficient training of large models. These works
+collectively pave the way for optimizers that address both communication and memory bottlenecks in
+large-scale LLM pretraining, which is precisely the gap our proposed method aims to fill.
+
+16
+
+B
+
+Detailed Convergence Analysis
+
+B.1
+
+Part 1: One-step tracking recursion (no refresh, before shifting wt → wt−1 )
+
+We analyze a fixed step t under the no-refresh condition, i.e., Ut = Ut−1 and Vt = Vt−1 . Recall the
+core-space momentum update
+mt = βmt−1 + (1 − β)C̄t .
+(7)
+Projected gradient and approximation error.
+
+Define the projected full gradient
+
+Ut Ut⊤ ∇f (wt ) Vt Vt⊤ .
+
+Pt :=
+Define the low-rank projection approximation error
+
+2
+
+∆t := E ∥Pt − ∇f (wt )∥ .
+
+(8)
+(9)
+
+Assumption (unbiasedness and variance in the projected space). Let Ft−1 denote the sigma-field
+generated by the history up to step t − 1. Under no refresh, mt−1 , Ut , Vt , wt are Ft−1 -measurable.
+We assume the synchronized core induces an unbiased estimate of the projected gradient:
+
+
+E Ut C̄t Vt⊤ Ft−1 = Pt ,
+(10)
+and satisfies the variance bound
+E Ut C̄t Vt⊤ − Pt
+Step 1: Expand the squared tracking error.
+
+2
+
+≤ σt2 .
+
+(11)
+
+Define
+
+At := Ut mt−1 Vt⊤ − ∇f (wt ),
+
+Bt := Ut C̄t Vt⊤ − ∇f (wt ).
+
+(12)
+
+Using (7), we have
+E Ut mt Vt⊤ − ∇f (wt )
+
+2
+
+2
+
+= E ∥βAt + (1 − β)Bt ∥
+
+= β 2 E∥At ∥2 + (1 − β)2 E∥Bt ∥2 + 2β(1 − β)E⟨At , Bt ⟩.
+
+(13)
+
+Step 2: Handle the cross term E⟨At , Bt ⟩.
+
+Decompose Bt by adding and subtracting Pt :
+
+
++ Pt − ∇f (wt ) .
+{z
+} |
+{z
+}
+
+Ut C̄t Vt⊤ − Pt
+
+Bt =
+|
+
+=:St
+
+(14)
+
+=:Zt
+
+Then
+E⟨At , Bt ⟩ = E⟨At , St ⟩ + E⟨At , Zt ⟩.
+For the first term, by (10) and the tower property,
+h 
+i
+E⟨At , St ⟩ = E E ⟨At , Ut C̄t Vt⊤ − Pt ⟩ | Ft−1
+h
+i
+= E At , E[Ut C̄t Vt⊤ − Pt | Ft−1 ]
+
+(15)
+
+= 0.
+
+(16)
+
+Hence,
+E⟨At , Bt ⟩ = E⟨At , Zt ⟩.
+Next we bound E⟨At , Zt ⟩ via Young’s inequality: for any α > 0,
+1
+2⟨x, y⟩ ≤ α∥x∥2 + ∥y∥2 .
+α
+Applying (18) with x = At , y = Zt and multiplying by β(1 − β) gives
+1
+2β(1 − β)⟨At , Zt ⟩ ≤ β(1 − β)α∥At ∥2 + β(1 − β) ∥Zt ∥2 .
+α
+Choose
+α :=
+2
+
+1+β
+,
+2β
+
+(17)
+
+(18)
+
+(19)
+(20)
+
+2
+
+(1−β)
+so that β(1 − β)α = 1−β
+and β(1 − β) α1 = 2β 1+β
+. Taking expectation and using (17) yields
+2
+
+2β(1 − β)E⟨At , Bt ⟩ ≤
+
+1 − β2
+2β 2 (1 − β)
+E∥At ∥2 +
+∥Zt ∥2 .
+2
+1+β
+17
+
+(21)
+
+Step 3: Bound E∥Bt ∥2 by variance and approximation. Using (14) and ∥x + y∥2 ≤ 2∥x∥2 +
+2∥y∥2 ,
+E∥Bt ∥2 = E∥St + Zt ∥2
+≤ 2E∥St ∥2 + 2∥Zt ∥2
+≤ 2σt2 + 2∆t ,
+
+(22)
+
+where the last inequality uses (11) and (9).
+Step 4: Combine the bounds.
+
+Plugging (21) and (22) into (13), we obtain
+ 1 − β2
+2β 2 (1 − β)
+E∥Ut mt Vt⊤ − ∇f (wt )∥2 ≤ β 2 E∥At ∥2 + (1 − β)2 2σt2 + 2∆t +
+E∥At ∥2 +
+∆t
+2
+1+β
+
+
+1 + β2
+2β 2 (1 − β)
+=
+E∥At ∥2 + 2(1 − β)2 σt2 + 2(1 − β)2 +
+∆t
+2
+1+β
+1 + β2
+2(1 − β)
+=
+E∥Ut mt−1 Vt⊤ − ∇f (wt )∥2 + 2(1 − β)2 σt2 +
+∆t .
+2
+1+β
+(23)
+B.2
+
+Part 2: Shifting ∇f (wt ) to ∇f (wt−1 ) (no refresh)
+
+We continue under the no-refresh condition (Ut = Ut−1 and Vt = Vt−1 ). Starting from (23), the
+remaining task is to upper bound E∥Ut mt−1 Vt⊤ − ∇f (wt )∥2 by a term evaluated at wt−1 plus a
+smoothness error.
+Step 1: A quadratic splitting inequality. For any γ > 0 and any matrices X, Y of the same shape,
+∥X + Y ∥2 = ∥X∥2 + ∥Y ∥2 + 2⟨X, Y ⟩
+1
+1
+(by Young: 2⟨X, Y ⟩ ≤ γ∥X∥2 + ∥Y ∥2 )
+≤ ∥X∥2 + ∥Y ∥2 + γ∥X∥2 + ∥Y ∥2
+γ
+γ
+
+
+1
+= (1 + γ)∥X∥2 + 1 +
+∥Y ∥2 .
+(24)
+γ
+Step 2: Apply the split with X = Ut mt−1 Vt⊤ − ∇f (wt−1 ). Note that
+
+ 
+
+Ut mt−1 Vt⊤ − ∇f (wt ) = Ut mt−1 Vt⊤ − ∇f (wt−1 ) + ∇f (wt−1 ) − ∇f (wt ) .
+
+(25)
+
+Applying (24) to (25) gives, for any γ > 0,
+Ut mt−1 Vt⊤ − ∇f (wt )
+
+2
+
+2
+
+≤ (1 + γ) Ut mt−1 Vt⊤ − ∇f (wt−1 )
+
+
+1
+2
++ 1+
+∥∇f (wt ) − ∇f (wt−1 )∥ .
+γ
+Taking expectation on both sides preserves the inequality:
+E Ut mt−1 Vt⊤ − ∇f (wt )
+
+2
+
+(26)
+
+2
+
+≤ (1 + γ) E Ut mt−1 Vt⊤ − ∇f (wt−1 )
+
+
+1
+2
+E ∥∇f (wt ) − ∇f (wt−1 )∥ .
++ 1+
+γ
+
+(27)
+
+Step 3: Use L-smoothness to bound the gradient difference. Under L-smoothness (Assumption
+2 in the main paper),
+∥∇f (wt ) − ∇f (wt−1 )∥ ≤ L ∥wt − wt−1 ∥ .
+(28)
+Squaring both sides yields
+2
+
+2
+
+∥∇f (wt ) − ∇f (wt−1 )∥ ≤ L2 ∥wt − wt−1 ∥ .
+Substituting (29) into (27) gives
+E Ut mt−1 Vt⊤ − ∇f (wt )
+
+2
+
+≤ (1 + γ) E Ut mt−1 Vt⊤ − ∇f (wt−1 )
+
+
+1
+2
++ 1+
+L2 E ∥wt − wt−1 ∥ .
+γ
+18
+
+(29)
+2
+
+(30)
+
+2
+
+and plug into Part 1.
+Step 4: Choose γ = 1−β
+4
+γ :=
+
+Set
+
+1 − β2
+,
+4
+
+(31)
+
+so that
+1+γ =1+
+
+1 − β2
+,
+4
+
+1+
+
+5 − β2
+1
+4
+=
+.
+=1+
+γ
+1 − β2
+1 − β2
+
+(32)
+
+Combining (23) with (30) and (32) yields
+
+
+1 − β2
+2
+1+
+E Ut mt−1 Vt⊤ − ∇f (wt−1 )
+2
+4
+1 + β2 5 − β2 2
+L E∥wt − wt−1 ∥2
++
+·
+2
+1 − β2
+2(1 − β)
++ 2(1 − β)2 σt2 +
+∆t .
+1+β
+
+1+β
+E∥Ut mt Vt⊤ − ∇f (wt )∥2 ≤
+
+2
+
+(33)
+
+Step 5: Simplify the leading coefficients (no skipped algebra). For the contraction coefficient in
+the first line of (33),
+
+
+1 + β2
+1 − β2
+1 + β2 5 − β2
+(1 + β 2 )(5 − β 2 )
+5 + 4β 2 − β 4
+1+
+=
+·
+=
+=
+.
+(34)
+2
+4
+2
+4
+8
+8
+Moreover,
+3 + β2
+5 + 4β 2 − β 4
+2(3 + β 2 ) − (5 + 4β 2 − β 4 )
+−
+=
+4
+8
+8
+6 + 2β 2 − 5 − 4β 2 + β 4
+(1 − β 2 )2
+=
+=
+≥ 0,
+8
+8
+
+(35)
+
+which implies
+5 + 4β 2 − β 4
+3 + β2
+1 − β2
+≤
+=1−
+.
+8
+4
+4
+For the smoothness coefficient in the second line of (33),
+5 + 4β 2 − β 4
+1 + β2 5 − β2
+·
+=
+.
+2
+2
+1−β
+2(1 − β 2 )
+
+(36)
+
+(37)
+
+Also,
+5 − β2
+5 + 4β 2 − β 4
+2(5 − β 2 ) − (5 + 4β 2 − β 4 )
+−
+=
+1 − β2
+2(1 − β 2 )
+2(1 − β 2 )
+2
+10 − 2β − 5 − 4β 2 + β 4
+β 4 − 6β 2 + 5
+=
+=
+2(1 − β 2 )
+2(1 − β 2 )
+2
+2
+2
+(1 − β )(5 − β )
+5−β
+=
+=
+≥ 0,
+2(1 − β 2 )
+2
+
+(38)
+
+hence
+5 + 4β 2 − β 4
+5 − β2
+≤
+.
+2
+2(1 − β )
+1 − β2
+
+(39)
+
+Final bound for Part 2 (no refresh). Substituting (36) and (39) into (33), we obtain
+
+
+1 − β2
+2
+E∥Ut mt Vt⊤ − ∇f (wt )∥2 ≤ 1 −
+E Ut mt−1 Vt⊤ − ∇f (wt−1 )
+4
+5 − β2 2
+2(1 − β)
++
+L E∥wt − wt−1 ∥2 + 2(1 − β)2 σt2 +
+∆t . (40)
+1 − β2
+1+β
+19
+
+Part 3: Refresh steps and a unified recursion with an Rt term
+
+B.3
+
+In this part we incorporate the effect of refreshing Ut , Vt (i.e., Ut ̸= Ut−1 and/or Vt ̸= Vt−1 ), and
+derive a unified one-step recursion that holds for both refresh and non-refresh steps.
+Notation.
+
+Define the tracking error
+Et := E Ut mt Vt⊤ − ∇f (wt )
+
+2
+
+.
+
+(41)
+
+Let Irefresh be the indicator of a refresh step, i.e., Irefresh = 1 if t mod K = 0 and Irefresh = 0
+otherwise.
+Step 1: A bound for the wt−1 tracking term under refresh. At a refresh step, we need to relate
+2
+2
+⊤
+Ut mt−1 Vt⊤ − ∇f (wt−1 ) to the previous-basis quantity Ut−1 mt−1 Vt−1
+− ∇f (wt−1 ) .
+Write
+
+ 
+
+⊤
+⊤
+Ut mt−1 Vt⊤ − ∇f (wt−1 ) = Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
++ Ut−1 mt−1 Vt−1
+− ∇f (wt−1 ) .
+|
+{z
+} |
+{z
+}
+=:Bt−1
+
+=:Aref
+t
+
+(42)
+Using the splitting inequality (Young), for any γ > 0,
+
+
+1
+2
+2
+2
+∥Aref
++
+B
+∥
+≤
+1
++
+∥Aref
+t−1
+t
+t ∥ + (1 + γ)∥Bt−1 ∥ .
+γ
+Choose
+so that
+1+γ =1+
+
+γ :=
+
+1 − β2
+,
+8
+
+1 − β2
+,
+8
+
+1+
+
+(43)
+
+(44)
+1
+8
+=1+
+.
+γ
+1 − β2
+
+(45)
+
+Then (42)–(45) imply
+2
+Ut mt−1 Vt⊤ − ∇f (wt−1 ) ≤
+
+
+
+8
+2
+⊤
+1+
+Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+1 − β2
+
+
+1 − β2
+2
+⊤
+Ut−1 mt−1 Vt−1
+− ∇f (wt−1 ) .
++ 1+
+8
+
+(46)
+
+Step 2: Plug the refresh bound into the no-refresh recursion from Part 2. From Part 2, we
+already have (for any step t) the inequality
+
+
+1 − β2
+5 − β2 2
+2
+Et ≤ 1 −
+E Ut mt−1 Vt⊤ − ∇f (wt−1 ) +
+L E∥wt − wt−1 ∥2
+4
+1 − β2
+2(1 − β)
+∆t .
+(47)
++ 2(1 − β)2 σt2 +
+1+β
+If t is a refresh step, apply (46) inside (47):
+
+
+
+1 − β2
+1 − β2
+2
+⊤
+Et ≤ 1 −
+1+
+E Ut−1 mt−1 Vt−1
+− ∇f (wt−1 )
+4
+8
+
+
+
+1 − β2
+8
+2
+⊤
++ 1−
+1+
+E Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+4
+1 − β2
+2(1 − β)
+5 − β2 2
+L E∥wt − wt−1 ∥2 + 2(1 − β)2 σt2 +
+∆t .
++
+2
+1−β
+1+β
+Now we simplify the coefficients without skipping steps. Let x := 1 − β 2 ∈ (0, 1]. Then
+
+x 
+x
+x x x2
+x x2
+x
+1 − β2
+1−
+1+
+=1+ − −
+=1− −
+≤1− =1−
+.
+4
+8
+8
+4
+32
+8
+32
+8
+8
+20
+
+(48)
+
+(49)
+
+2
+
+≤ 1,
+Also, since 1 − 1−β
+4
+ 
+
+
+
+8
+1 − β2
+8
+≤ 1+
+.
+1−
+1+
+4
+1 − β2
+1 − β2
+
+(50)
+
+Applying (49) and (50) to (48), we get
+
+
+1 − β2
+2
+⊤
+Et ≤ 1 −
+− ∇f (wt−1 ) + αRt
+E Ut−1 mt−1 Vt−1
+8
+5 − β2 2
+2(1 − β)
++
+L E∥wt − wt−1 ∥2 + 2(1 − β)2 σt2 +
+∆t ,
+1 − β2
+1+β
+
+(51)
+
+where we define the refresh mismatch term (kept for later analysis) as
+⊤
+Rt := E Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+
+α := 1 +
+
+2
+
+.
+
+(52)
+
+8
+.
+1 − β2
+
+(53)
+
+Step 3: A unified recursion for all steps. If t is not a refresh step, then Ut = Ut−1 and Vt = Vt−1 ,
+hence
+2
+⊤
+Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+= 0,
+(54)
+
+
+
+
+2
+2
+≤ 1 − 1−β
+and from (47) we also have the stronger contraction 1 − 1−β
+. Therefore,
+4
+8
+combining both cases yields the unified bound
+
+
+1 − β2
+2
+⊤
+Et ≤ 1 −
+E Ut−1 mt−1 Vt−1
+− ∇f (wt−1 ) + α Irefresh · Rt
+8
+2(1 − β)
+5 − β2 2
+L E∥wt − wt−1 ∥2 + 2(1 − β)2 σt2 +
+∆t .
+(55)
++
+2
+1−β
+1+β
+We will keep the term Irefresh · Rt as is for now and discuss how to further control it later.
+B.4
+
+Part 4: Summing the recursion via a geometric-series lemma
+
+We start from the unified one-step recursion in (55):
+Et ≤ (1 − ρ) Et−1 + α Irefresh · Rt + A L2 E∥wt − wt−1 ∥2 + B σt2 + C ∆t ,
+
+(56)
+
+where we denote
+ρ :=
+
+1 − β2
+,
+8
+
+A :=
+
+5 − β2
+,
+1 − β2
+
+B := 2(1 − β)2 ,
+
+C :=
+
+2(1 − β)
+,
+1+β
+
+(57)
+
+and Et := E∥Ut mt Vt⊤ − ∇f (wt )∥2 .
+Lemma 1 (Summation of a linear contraction recursion). Let {at }t≥0 be a nonnegative sequence
+satisfying, for some ρ ∈ (0, 1),
+at ≤ (1 − ρ)at−1 + bt ,
+
+∀t ≥ 1,
+
+(58)
+
+where bt ≥ 0 for all t. Then for any integer T ≥ 1,
+T
+−1
+X
+
+at ≤
+
+t=0
+
+T −1
+1
+1X
+a0 +
+bt .
+ρ
+ρ t=1
+
+(59)
+
+Proof. Unrolling (58) yields, for t ≥ 1,
+t
+
+at ≤ (1 − ρ) a0 +
+
+t
+X
+k=1
+
+21
+
+(1 − ρ)t−k bk .
+
+(60)
+
+Summing (60) over t = 1, . . . , T − 1 and adding a0 gives
+T
+−1
+X
+
+at ≤ a0 + a0
+
+t=0
+
+T
+−1
+X
+
+(1 − ρ)t +
+
+t=1
+
+≤ a0
+
+∞
+X
+
+(1 − ρ)t +
+
+1
+1
+a0 +
+ρ
+ρ
+
+(1 − ρ)t−k bk
+
+t=1 k=1
+
+t=0
+
+=
+
+T
+−1 X
+t
+X
+
+T
+−1
+X
+k=1
+
+T
+−1
+X
+
+bk
+
+∞
+X
+
+(1 − ρ)j
+
+j=0
+
+bk ,
+
+(61)
+
+k=1
+
+which proves (59).
+Apply Lemma 1 to (56).
+
+We match Lemma 1 by setting
+
+bt := αIrefresh · Rt + A L2 E∥wt − wt−1 ∥2 + B σt2 + C ∆t ,
+
+at := Et ,
+
+(t ≥ 1),
+
+(62)
+
+2
+and ρ = 1−β
+as in (57). Since all terms on the right-hand side are nonnegative, the conditions of
+8
+
+Lemma 1 hold.
+
+Therefore, for any T ≥ 1,
+T
+−1
+X
+
+Et ≤
+
+t=0
+
+T −1
+
+1
+1X
+E0 +
+αIrefresh · Rt + A L2 E∥wt − wt−1 ∥2 + B σt2 + C ∆t .
+ρ
+ρ t=1
+
+(63)
+
+2
+
+1
+8
+Simplify the coefficients (explicitly). Using ρ = 1−β
+8 , we have ρ = 1−β 2 . Then each term in
+(63) becomes:
+
+1
+8
+5 − β2
+8(5 − β 2 )
+·A=
+·
+=
+,
+ρ
+1 − β2 1 − β2
+(1 − β 2 )2
+8
+16(1 − β)2
+16(1 − β)
+1
+2
+·B =
+·
+2(1
+−
+β)
+=
+=
+,
+2
+ρ
+1−β
+(1 − β)(1 + β)
+1+β
+1
+8
+2(1 − β)
+16(1 − β)
+16
+·C =
+·
+=
+=
+,
+ρ
+1 − β2
+1+β
+(1 − β)(1 + β)2
+(1 + β)2
+T −1
+T
+−1
+X
+1X
+8
+αIrefresh Rt =
+αIrefresh Rt .
+ρ t=1
+1 − β 2 t=1
+
+(64)
+(65)
+(66)
+(67)
+
+Substituting (64)–(67) into (63), we obtain
+T
+−1
+X
+
+E Ut mt Vt⊤ − ∇f (wt )
+
+2
+
+t=0
+
+≤
+
+8
+2
+E U0 m0 V0⊤ − ∇f (w0 )
+1 − β2
++
+
+T
+−1
+X
+8
+αIrefresh Rt
+1 − β 2 t=1
+
++
+
+8(5 − β 2 )L2 X
+E∥wt − wt−1 ∥2
+(1 − β 2 )2 t=1
+
+(68)
+
+T −1
+
+T −1
+T
+−1
+X
+16(1 − β) X 2
+16
++
+σ +
+∆t .
+1 + β t=1 t
+(1 + β)2 t=1
+
+We keep the refresh mismatch contribution
+B.5
+
+P
+
+Irefresh Rt for later discussion.
+
+Part 5: Descent lemma and the final stationarity bound (keeping Rt )
+Assume f is L-smooth, i.e., for all x, y,
+L
+f (y) ≤ f (x) + ⟨∇f (x), y − x⟩ + ∥y − x∥2 .
+2
+
+Assumption (smoothness).
+
+22
+
+(69)
+
+Update rule.
+
+Consider the update
+wt+1 = wt − η m
+e t,
+
+where
+
+m
+e t := Ut mt Vt⊤ .
+
+(70)
+
+Lemma 2 (Descent lemma for wt+1 = wt − η m
+e t ). Under (69) and (70), for any t ≥ 0,
+
+
+η
+1
+L
+η
+f (wt+1 ) ≤ f (wt ) − ∥∇f (wt )∥2 −
+−
+∥wt+1 − wt ∥2 + ∥m
+e t − ∇f (wt )∥2 .
+2
+2η
+2
+2
+
+(71)
+
+Proof. Apply L-smoothness (69) with x = wt and y = wt+1 :
+f (wt+1 ) ≤ f (wt ) + ⟨∇f (wt ), wt+1 − wt ⟩ +
+
+L
+∥wt+1 − wt ∥2 .
+2
+
+(72)
+
+Using (70), we have wt+1 − wt = −η m
+e t , hence
+⟨∇f (wt ), wt+1 − wt ⟩ = −η⟨∇f (wt ), m
+e t ⟩ = −η ⟨∇f (wt ), ∇f (wt ) + (m
+e t − ∇f (wt ))⟩
+= −η∥∇f (wt )∥2 − η⟨∇f (wt ), m
+e t − ∇f (wt )⟩.
+
+(73)
+
+Apply Young’s inequality −⟨a, b⟩ ≤ 12 ∥a∥2 + 12 ∥b∥2 to the last term in (73) with a = ∇f (wt ) and
+b=m
+e t − ∇f (wt ):
+−η⟨∇f (wt ), m
+e t − ∇f (wt )⟩ ≤
+
+η
+η
+∥∇f (wt )∥2 + ∥m
+e t − ∇f (wt )∥2 .
+2
+2
+
+(74)
+
+Combining (72)–(74) gives
+η
+η
+L
+f (wt+1 ) ≤ f (wt ) − η∥∇f (wt )∥2 + ∥∇f (wt )∥2 + ∥m
+e t − ∇f (wt )∥2 + ∥wt+1 − wt ∥2
+2
+2
+2
+η
+L
+η
+e t − ∇f (wt )∥2 + ∥wt+1 − wt ∥2 .
+(75)
+= f (wt ) − ∥∇f (wt )∥2 + ∥m
+2
+2
+2
+
+
+1
+1
+Finally, rewrite L2 ∥wt+1 − wt ∥2 = − 2η
+− L2 ∥wt+1 − wt ∥2 + 2η
+∥wt+1 − wt ∥2 , and note that
+η
+1
+2
+e t ∥2 . This yields (71). (Equivalently, one can directly expand ∥m
+e t ∥2 =
+2η ∥wt+1 − wt ∥ = 2 ∥m
+2
+∥∇f (wt ) + (m
+e t − ∇f (wt ))∥ and rearrange.)
+
+Summing Lemma 2.
+
+Taking expectation in (71) and summing from t = 0 to T − 1 yields
+
+T −1
+−1
+
+ η TX
+η X
+E∥∇f (wt )∥2 ≤ E f (w0 ) − f (wT ) +
+E∥m
+e t − ∇f (wt )∥2
+2 t=0
+2 t=0
+
+ T −1
+1
+L X
+−
+−
+E∥wt+1 − wt ∥2 .
+2η
+2 t=0
+
+(76)
+
+(77)
+
+Define ∆f := E[f (w0 ) − f ⋆ ] (f ⋆ is a lower bound). Multiply both sides of (77) by η2 to obtain
+T
+−1
+X
+t=0
+
+E∥∇f (wt )∥2 ≤
+
+
+ T −1
+T
+−1
+X
+2∆f
+1
+L X
++
+E∥m
+e t − ∇f (wt )∥2 −
+−
+E∥wt+1 − wt ∥2 . (78)
+2
+η
+η
+η
+t=0
+t=0
+
+Substitute the bound from Part 4 (keeping
+T
+−1
+X
+t=0
+
+E∥m
+e t − ∇f (wt )∥2 ≤
+
+P
+
+Irefresh Rt ).
+
+From Part 4 (Eq. (68)), we have
+
+T
+−1
+X
+8
+8
+2
+E∥
+m
+e
+−
+∇f
+(w
+)∥
++
+αIrefresh Rt
+0
+0
+1 − β2
+1 − β 2 t=1
+T −1
+
++
+
+T −1
+
+T −1
+
+X
+16(1 − β) X 2
+16
+8(5 − β 2 )L2 X
+E∥wt − wt−1 ∥2 +
+σt +
+∆t .
+2
+2
+2
+(1 − β ) t=1
+1 + β t=1
+(1 + β) t=1
+(79)
+23
+
+Plugging (79) into (78) yields
+T
+−1
+X
+
+E∥∇f (wt )∥2 ≤
+
+t=0
+
+T
+−1
+X
+8
+8
+2∆f
+2
+E∥
+m
+e
+−
+∇f
+(w
+)∥
++
+αIrefresh Rt
++
+0
+0
+η
+1 − β2
+1 − β 2 t=1
+T −1
+T
+−1
+X
+16(1 − β) X 2
+16
+σt +
+∆t
+1 + β t=1
+(1 + β)2 t=1
+
+
+ TX
+−1
+1
+L
+8(5 − β 2 )L2
+−
+−
++
+E∥wt+1 − wt ∥2 ,
+(1 − β 2 )2
+η2
+η
+t=0
+
++
+
+(80)
+
+where we aligned indices by the trivial relabeling t 7→ t + 1.
+A sufficient condition to drop the step-difference term and a concrete parameter choice.
+PT −1
+that the coefficient of t=0 E∥wt+1 − wt ∥2 in (80) is
+
+
+8(5 − β 2 )L2
+1
+L
+Γ :=
+−
+−
+.
+(1 − β 2 )2
+η2
+η
+
+Recall
+
+(81)
+
+We aim to enforce Γ ≤ 0 so that this entire term is non-positive and can be dropped.
+Step 1 (remove the dependence on 5 − β 2 ). Since 5 − β 2 ≤ 5, we have
+40L2
+8(5 − β 2 )L2
+≤
+.
+(1 − β 2 )2
+(1 − β 2 )2
+
+(82)
+
+Step 2 (couple β with η to dominate the L2 term). Assume
+(1 − β 2 )2 ≥ 40Lη.
+
+(83)
+
+40L2
+L
+≤ ,
+(1 − β 2 )2
+η
+
+(84)
+
+8(5 − β 2 )L2
+L
+≤ .
+2
+2
+(1 − β )
+η
+
+(85)
+
+Then
+
+and thus by (82),
+
+1
+Step 3 (ensure the remaining part is non-positive). Assume also η ≤ 2L
+. Then
+
+1
+L
+1
+2L
+− ≥ 2−
+≥ 0.
+η2
+η
+η
+η
+
+(86)
+
+Combining (85) and (86) yields
+Γ≤
+
+L
+−
+η
+
+
+
+1
+L
+−
+η2
+η
+
+
+
+
+=−
+
+1
+2L
+−
+η2
+η
+
+
+≤ 0,
+
+(87)
+
+so the step-difference term in (80) can be dropped under
+η≤
+
+1
+,
+2L
+
+Final stationarity bound (keeping Rt ).
+
+(1 − β 2 )2 ≥ 40Lη.
+
+and
+
+(88)
+
+Under (88), dividing (80) by T gives
+
+T −1
+T
+−1
+X
+1 X
+2∆f
+8
+8
+2
+E∥∇f (wt )∥2 ≤
++
+E∥
+m
+e
+−
+∇f
+(w
+)∥
++
+αIrefresh Rt
+0
+0
+T t=0
+Tη
+(1 − β 2 )T
+(1 − β 2 )T t=1
+T −1
+T
+−1
+X
+16(1 − β) X 2
+16
++
+σ +
+∆t .
+(1 + β)T t=1 t
+(1 + β)2 T t=1
+P
+We will next discuss how to control t Irefresh Rt .
+
+24
+
+(89)
+
+Eliminating η by a concrete choice of (η, β). To express the bound in terms of T , we choose β as
+a function of η by saturating (83):
+p
+p
+1 − β 2 = 40Lη,
+i.e.,
+β 2 = 1 − 40Lη.
+(90)
+Moreover, for β ∈ [0, 1],
+√
+p
+1 − β2
+1 − β2
+40Lη
+1−β =
+10Lη.
+(91)
+≤
+=
+=
+1+β
+2
+2
+√
+√
+Next, we pick η to balance the T -dependent terms T1η and η, i.e., T1η ≍ η, which gives η ≍ T −2/3 .
+A concrete choice is
+1
+.
+(92)
+η=
+L T 2/3
+Then
+p
+1
+L
+1
+= 1/3 ,
+and
+(93)
+Lη = 1/3 .
+Tη
+T
+T
+An explicit T -rate under bounded σt2 , ∆t , and controlled refresh drift. Assume the per-step
+quantities are uniformly bounded:
+σt2 ≤ σ 2 ,
+∆t ≤ ∆,
+∀t.
+(94)
+Recall from (89) that the refresh contribution appears as
+T
+−1
+X
+8α
+Irefresh ERt ,
+(1 − β 2 )T t=1
+
+(95)
+
+8
+where (as in Part 3–4) α := 1 + 1−β
+2 and
+⊤
+Rt := Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+
+2
+
+.
+
+(96)
+
+Assumption (refresh alignment). On refresh steps (t mod K = 0), assume that the lifted core
+⊤
+moment is represented by projecting a common lifted matrix m
+e t−1 := Ut−1 mt−1 Vt−1
+onto the
+refreshed subspaces, i.e.,
+Ut mt−1 Vt⊤ = (Ut Ut⊤ ) m
+e t−1 (Vt Vt⊤ ).
+(97)
+(Equivalently, the core mt−1 is re-expressed so that the lifted quantity equals the doubly-projected
+matrix.)
+Assumption (second-order projection drift at refresh).
+projector drift is controlled as
+⊤
+Ut Ut⊤ − Ut−1 Ut−1
+≤ κU (1 − β 2 )2 ,
+2
+for some constants κU , κV ≥ 0.
+
+Assumption (bounded lifted moment).
+
+On refresh steps (t mod K = 0), the
+
+⊤
+Vt Vt⊤ − Vt−1 Vt−1
+≤ κV (1 − β 2 )2 ,
+2
+
+(98)
+
+Assume the lifted moment is uniformly bounded:
+2
+
+E m
+e t F ≤ M 2,
+
+∀t.
+
+(99)
+
+Bounding the refresh mismatch term. Let PtU := Ut Ut⊤ and PtV := Vt Vt⊤ . On a refresh step,
+by (97) and the definition of m
+e t−1 ,
+⊤
+U
+V
+Ut mt−1 Vt⊤ − Ut−1 mt−1 Vt−1
+= PtU m
+e t−1 PtV − Pt−1
+m
+e t−1 Pt−1
+U
+U
+V
+= (PtU − Pt−1
+)m
+e t−1 PtV + Pt−1
+m
+e t−1 (PtV − Pt−1
+).
+2
+
+2
+
+Using (a + b) ≤ 2a + 2b
+we obtain
+
+2
+
+(100)
+
+and ∥ABC∥F ≤ ∥A∥2 ∥B∥F ∥C∥2 , and noting ∥PtU ∥2 = ∥PtV ∥2 = 1,
+2
++2
+F
+
+U
+Rt ≤ 2 (PtU − Pt−1
+)m
+e t−1 PtV
+2
+
+2
+
+U
+V
+Pt−1
+m
+e t−1 (PtV − Pt−1
+) F
+2
+
+2
+
+2
+
+U
+V
+≤ 2 PtU − Pt−1
+∥m
+e t−1 ∥F + 2 PtV − Pt−1
+∥m
+e t−1 ∥F .
+2
+2
+Taking expectation and applying (98)–(99) yields, on refresh steps,
+ERt ≤ 2(κ2U + κ2V )(1 − β 2 )4 M 2 .
+
+25
+
+(101)
+(102)
+
+Summing
+over refresh steps. Since refresh happens every K steps, we have
+T 
+T
+≤
++
+1. Therefore,
+K
+K
+
+PT −1
+t=1
+
+Irefresh ≤
+
+
+
+T
+−1
+X
+8α
+8α
+T
+Irefresh ERt ≤
++ 1 · 2(κ2U + κ2V )(1 − β 2 )4 M 2
+(1 − β 2 )T t=1
+(1 − β 2 )T K
+≤
+
+16α(κ2U + κ2V )M 2
+16α(κ2U + κ2V )M 2
+(1 − β 2 )3 +
+(1 − β 2 )3 .
+K
+T
+(103)
+
+α
+In particular, the dominant refresh contribution scales as K
+(1 − β 2 )3 .
+
+Closed-form
+bound (with the concrete choice of (η, β)). With (92) and (90), we have 1 − β 2 =
+√
+40Lη = Θ(T −1/3 ), and hence
+α=1+
+
+8
+= Θ(T 1/3 ),
+1 − β2
+
+α(1 − β 2 )3 = Θ(T −2/3 ).
+
+(104)
+
+Substituting (94) and (103) into (89) yields
+T −1
+
+1 X
+2∆f
+8
+16(1 − β) 2
+16
+E∥∇f (wt )∥2 ≤
++
+E∥m
+e 0 − ∇f (w0 )∥2 +
+·σ +
+·∆
+T t=0
+Tη
+(1 − β 2 )T
+1+β
+(1 + β)2
++
+
+16α(κ2U + κ2V )M 2
+16α(κ2U + κ2V )M 2
+(1 − β 2 )3 +
+(1 − β 2 )3 .
+K
+T
+
+(105)
+
+Using (92)–(93) and (104), the leading T -dependent terms in (105) scale as
+2∆f
+= O(T −1/3 ),
+Tη
+
+(1 − β) = O(T
+
+−1/3
+
+),
+
+
+
+α
+1
+2 3
+.
+(1 − β ) = O
+K
+K T 2/3
+
+Therefore, up to constant factors, the stationarity measure satisfies
+
+
+
+
+T −1
+1 X
+1
+1
+2
+E∥∇f (wt )∥ = O
++ O(∆) + O
++ (transient terms).
+T t=0
+T 1/3
+K T 2/3
+
+26
+
+(106)
+
+(107)
+
+Algorithm 2 TSR-SGD (Momentum w/o weight decay)
+Input: rank rℓ , refresh period Kℓ , oversampling p, SGD hyperparams (η, β)
+State: bases (U, V ), core momentum m, step t ← 1
+Set r ← rℓ , K ← Kℓ , k ← r + p. Initialize m ← 0, and (U, V ) by one refresh. Let AR(·) denote
+all-reduce averaging across workers.
+(Algorithm corresponds to the update rule analyzed in Theorem 1.)
+repeat
+Each worker i computes local gradient Gt,i
+// Randomized Subspace Refresh (identical to TSR-Adam)
+if t mod K = 0 then
+Sample shared Ω (shared RNG seed)
+Yt,i ← Gt,i Ω
+Qt,i ← orth(Yt,i )
+row
+Yt,i
+← G⊤
+t,i Qt,i
+row
+Qrow
+←
+orth(Yt,i
+)
+t,i
+row
+Yt,i ← Gt,i Qt,i
+Qt,i ← orth(Yt,i )
+Bt,i ← Q⊤
+Bt ← AR(Bt,i )
+t,i Gt,i ,
+Qt ← AR(Qt,i )
+e ΣVe ⊤
+Bt = U
+(SVD on k × n)
+e[:,1:r] , V ← Ve[:,1:r]
+U ← QU
+end if
+// Core Synchronization
+Ct,i ← U ⊤ Gt,i V, Ct ← AR(Ct,i )
+// Momentum SGD Update in Core Space
+m ← βm + (1 − β)Ct
+D←m
+// Lift and Weight Update (no weight decay)
+∆Wt ← U DV ⊤
+W ← W − η ∆Wt
+t←t+1
+until convergence criteria met
+
+27
+
+C
+
+More about Experiments
+
+C.1
+
+Pre-Training Hyperparameters
+
+We introduce details of the LLaMA architecture and hyperparameters used for pre-training. Table
+5 shows the most hyperparameters of LLaMA models across model sizes.We use a max sequence
+length of 256 for all models,with a batch size of 262K tokens for LLaMA-60M and LLaMA-130M ,
+and a batch size of 131K tokens for LLaMA-350M and LLaMA-1B. For all experiments,we adopt
+learning rate warmup for the first 10% of the training steps,and use cosine annealing for the learning
+rate schedule, decaying to 10% of the initial learning rate.For all model sizes, we use a learning rate
+of 0.01. For the LLaMA-60M model, we apply a scaling factor of 0.5, while the remaining models
+use a scaling factor of 0.75.
+Table 5: Hyperparameters of LLaMA models for evaluation.
+
+C.2
+
+PARAMS
+
+VOCABULARY
+
+H IDDEN
+
+I NTERMEDIATE
+
+H EADS
+
+L AYERS
+
+S TEPS
+
+60M
+130M
+350M
+1B
+
+32000
+32000
+32000
+32000
+
+512
+768
+1024
+52048
+
+1376
+2048
+2736
+5461
+
+8
+12
+16
+32
+
+8
+12
+24
+24
+
+20K
+20K
+90K
+90K
+
+More experiment results
+
+We present additional experimental results in Table 6.
+Table 6: More Experiment Results
+S CALE
+60M
+60M(40 K STEPS )
+130M
+350M
+
+C.3
+
+M ETHOD
+
+R ANK
+
+K
+
+TSR
+TSR
+TSR
+TSR
+
+128(64)
+256(64)
+256(96)
+256(128)
+
+200
+100
+50
+50
+
+F INAL LOSS↓ B YTES / STEP↓ P EAK B YTES M EMORY
+3.82
+3.56
+3.50
+3.30
+
+0.008G
+0.020G
+0.032G
+0.062G
+
+0.05G
+0.10G
+0.20G
+0.52G
+
+0.14G
+0.17G
+0.38G
+1.02G
+
+Details of Fine-Tuning on GLUE
+
+We fine-tune the pre-trained RoBERTa-Base model on the GLUE benchmark.We trained the model
+for 30 epochs with a batch size of 16 for all tasks except for CoLA, which uses a batch size of
+32.We tune the learning rate and scale factor for TSR. Table 7 shows the hyperparameters used for
+fine-tuning RoBERTa-Base for TSR.
+Table 7: Hyperparameters of fine-tuning RoBERTa-Base for TSR.
+C O LA
+
+STS-B
+
+MRPC
+
+RTE
+
+SST2
+
+MNLI
+
+QNLI
+
+QQP
+
+BATCH S IZE
+32
+16
+16
+16
+16
+16
+16
+16
+E POCHS
+30
+30
+30
+30
+30
+30
+30
+30
+L EARNING R ATE 1E − 05 3E − 05 2E − 05 2E − 05 2E − 05 1E − 05 1E − 05 2E − 05
+S CALING FACTOR
+8
+2
+2
+2
+2
+2
+2
+2
+M AX S EQ . L EN .
+512
+
+28
+
+Figure 6: Fine-tuning Loss-Byte curves on GLUE tasks .
+
+29
+
+

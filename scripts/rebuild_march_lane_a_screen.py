@@ -159,10 +159,13 @@ def main() -> None:
         missing = set(selected) - found
         if missing:
             raise RuntimeError(f"03-{day:02d} retained IDs missing from corrected inventory: {sorted(missing)}")
-        digest = hashlib.sha256("\n".join(sorted(found)).encode()).hexdigest()
+        report_date = f"2026-03-{day:02d}"
+        digest = hashlib.sha256(
+            (report_date + "\n" + "\n".join(sorted(found))).encode()
+        ).hexdigest()
         payload = {
             "schema": "screening-ledger-v2.1-independent-author",
-            "report_date": f"2026-03-{day:02d}",
+            "report_date": report_date,
             "registered_identities": len(rows),
             "full_semantic_screened": len(rows),
             "candidate_denominator": len(found),

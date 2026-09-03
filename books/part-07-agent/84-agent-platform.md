@@ -420,6 +420,14 @@ Control plane 不应阻塞每个 token，却必须控制每个高风险 transiti
 选择不是“structured 稳定、gossip 更抗 churn”的固定排序。Exact-v1 的 node-churn 实验中 Kademlia 的 discovery success 通常更稳健；gossip 的优势是较低 maintenance，并在部分 regime 提供较低 latency，面对 node 与 agent instability 叠加时呈现更渐进的退化。两者分别承担 routing-table repair 与 eventual neighborhood convergence，实际选择必须绑定 churn 类型、warm/cold 比例、维护预算与一致性要求；小规模或强一致域仍应使用中心 registry。作者只有 SimPy 的比较，不证明 Internet 生产可用性、对抗安全或最优协议。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-23080:end -->
 
+### Human Participant 需要可寻址的 Capability、Consent 与 Task State
+
+把人工审批实现成一个阻塞输入框，在参与者固定、任务短且只有一次 yes/no 决策时足够；跨团队、异步和长运行任务中，“需要人”并没有说明应该找谁、对方能批准什么、是否仍在线以及回复属于哪次请求。平台应把 human participant 建模成可发现但不可自证权威的协议对象：Human Card 声明能力与通信端点，identity/authorization plane 核验 principal 与 scope，task runtime 保存 request、deadline、consent、response 和撤回状态，再把规范化回复送回等待中的 transition。directory 只拥有候选路由，human principal 拥有同意事实，policy plane 仍拥有该同意能否授权具体 effect 的解释权。
+
+这使异步协作可恢复、可审计，却引入过期能力声明、冒名、通知泄漏、重复响应和 consent replay；Human Card 不能把“可联系”升级成“有权限”。参与者无法验证、响应已过 deadline 或 task identity 不一致时，应继续等待、重新发现、升级到人工调度或取消，而不能让 Agent 猜测同意。
+
+<!-- SF-2026-ARXIV-2602-15831 -->
+
 ## Agent Runtime State Machine
 
 一个通用 run 可表达为：
@@ -806,6 +814,8 @@ Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加�
 到此，七个 Part 形成完整 Draft：从第一性原理理解模型能力，经多模态表示、环境预测与物理行动，再到能力生产、在线交付、平台治理和受控 Agent 行动。后续 refinement 应由 papers、真实系统证据和跨章 Review 驱动，而不是为了扩写而增加内容。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-15831`（Status: Experimental）：exact-v1 的 §3.1～3.3 定义 Human Card、通信 schema 与 channel abstraction，§4.1～4.3 是案例流程和协议效用分析，§5 不提供身份认证、授权安全、生产规模或真实人类研究证明；正文只吸收 addressable human/task state，不把协议提案当成 consent authority。https://arxiv.org/html/2602.15831v1
 
 - `SF-2026-ARXIV-2604-23080`（Status: Experimental）：exact-v1 支持在 SimPy 中比较 Kademlia 与 Cyclon+Vicinity 面对 node/agent 双层 churn 的 discovery 行为；不证明生产网络、身份认证、对抗安全或 readiness 真值。https://arxiv.org/abs/2604.23080v1
 

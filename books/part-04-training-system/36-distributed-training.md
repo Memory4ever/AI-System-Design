@@ -188,6 +188,14 @@ versioned collective policy
 
 通信 runtime 仍拥有 collective 语义、participant ordering 与 completion；policy 只拥有已授权的选择空间，不能改写 tensor、group 或 optimizer-step identity。这提高了策略演进的可审计性，却以表达能力、verifier 维护和版本兼容为代价；固定拓扑或策略很少变化时，静态 NCCL 配置仍更简单。Verifier acceptance 只排除了受限程序中的 memory/control-safety 风险，并不证明策略在语义和性能上合理：一个 memory-safe 的错误 collective policy 仍可能通过验证并显著降低吞吐，因此上线前还需要 operator 语义检查、性能验证与回退条件。Exact-v1 证据只覆盖 `arXiv:2603.11438v1` §3.3 的架构、§5.1 的 CPU/GPU 开销、§5.2 的 verifier rejection 与 hot reload，以及 §5.3 的 policy case studies；§7 所述边界不支持外推到任意策略、故障条件或生产集群。<!-- source-family:SF-2026-ARXIV-2603-11438 -->
 
+#### Overlap 不是免费隐藏：Communication 与 Compute 共享资源预算
+
+把通信尽早异步发出，在通信引擎与计算单元互不干扰时，是最简单也最有效的 overlap 基线；现代 GPU 上的 collective、copy 与 kernel 却会共同消耗 SM、memory bandwidth、NIC injection 和调度队列。此时“把更多资源给通信”既可能缩短 exposed communication，也可能拖慢与它重叠的 compute，静态最大并发不再等于最短 step time。更稳健的 planner 先对同一 overlap group 建立 contention-aware cost model，再按边际收益排序并搜索 communication resource allocation：若最小通信配额已经被计算完全隐藏，就不再扩张；若最大配额仍无法隐藏，则在端点比较；中间区域才寻找通信时间与受干扰计算时间的平衡点。
+
+训练 schedule 拥有 dependency 与允许重叠的窗口，communication planner 只拥有窗口内资源分配，optimizer-step completion 仍是最终提交边界。它用 profiling、模型误差和搜索开销换取更短 critical path；workload、kernel、拓扑或并行度漂移后，旧模型可能造成反向干扰，必须重新 profile 或回退保守静态配额。`arXiv:2602.20656v1` 的 exact-v1 只支持 §3.1～§3.4 的 contention model、priority metric 与 search method，以及 §4 披露环境中的作者结果，不证明任意 collective、GPU 或训练图都能获得同类收益。
+
+<!-- source-family:SF-2026-ARXIV-2602-20656 -->
+
 ### 单一路径 P2P 到可重放的多路径传输
 
 单一 NVLink 或 PCIe/host 路径在消息小、拓扑稳定或额外调度成本占主导时最简单。单一路径成为瓶颈而另一条链路仍有余量时，可把同一 GPU transfer 拆到多个 transport，并把固定的 launch、copy 与 synchronization 序列捕获为可重放执行图。
@@ -255,6 +263,14 @@ portability 成本。PyTorch 2.9 的 Symmetric Memory 是这一分支的版本�
 性能或 failure semantics 已成为跨 runtime 稳定标准。
 
 ## 从 Collective 到 AI State Transfer
+
+### 跨 Vendor GPU 先把兼容 Control Plane 与 Device Data Plane 分开
+
+单一 vendor collective 在拓扑同构、library 语义成熟时仍是训练关键路径的首选；把不同 vendor GPU 放进同一 job 后，直接要求一个 collective library 同时统一设备 API、内存注册、网络插件和所有并行维度，往往先卡在兼容性而非带宽。一条渐进路线以 CPU-forwarding/Gloo 建立可验证的 pipeline-parallel 基线，再把连接、注册与 event handling 留在 host control plane，把已注册 buffer 的数据路径下沉为 device-direct transfer；节点内同构 subgroup 继续使用各自 NCCL/RCCL，跨 vendor 边界只承担必要的 intermediate-state movement。
+
+这种分层没有让异构通信“免费等价”：runtime 必须拥有 buffer generation、device/net-plugin adaptor、completion 与 failure，parallel plan 还要用 uneven layer partition 吸收设备速度差。现有 exact-v1 只在两节点 AMD/NVIDIA、LLaMA-8B/Qwen2-7B 和 pipeline heterogeneity 中验证正确性、稳定性与性能；§4.1 明确没有解决异构 DP/TP collective，错误分区也可能比慢设备基线更差。若 adaptor、direct path 或 load partition 不能通过验证，应回退 CPU-forwarding 或同构子集，而不是让 transport 静默改变 tensor 语义。
+
+<!-- source-family:SF-2026-ARXIV-2602-18007 -->
 
 ### 长 RTT 跨域链路需要显式的远端速率预算
 
@@ -709,6 +725,14 @@ efficiency = 6000 / (8*1000) = 75%
 
 Elastic membership 对纯 DP 相对容易；TP/PP/EP layout 改变通常需要 reshard 或重建模型。第 35 章的 checkpoint correctness 是分布式容错的前提。
 
+### 从同步重启到有提交边界的异步追赶
+
+全组从最近 checkpoint 同步重启，在故障稀少、checkpoint 间隔短且恢复时间可接受时最容易证明副本一致；大规模训练中，单卡故障若让健康 ranks 一起停止，会把恢复成本放大为整个 group 的 idle time。一个条件化分支把 failure detection 与 recovery control 留在 CPU，把正常 tensor data plane 留在 GPU：故障 replica 从 committed checkpoint 恢复后，以不阻塞健康 replica 的方式追赶，但只有 batch/step identity、参数版本与数据 cursor 对齐后，才能重新加入共同提交。
+
+异步追赶减少健康设备停顿，却新增双速副本、重放、重复 batch、落后副本限流和“何时重新可见”的状态；检测误报或 commit frontier 不一致会把吞吐优化变成 silent divergence。因而 exactly-once 风格的一致性指 batch/step 被接纳一次，不是底层传输或进程执行绝不重复。`arXiv:2602.00277v1` 的 exact-v1 支持 FT-HSDP 披露的 hybrid control/data plane、异步恢复与一致性协议及 §6 作者实验，不证明任意 optimizer、动态 world size 或生产故障组合都能无损恢复；无法证明 frontier 时仍应停止全组并回到 committed checkpoint。
+
+<!-- source-family:SF-2026-ARXIV-2602-00277 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-01989:start -->
 通信错误也不一定只能采用“任意 packet loss 都重传”的单一合同。可靠传输在 loss 罕见、梯度语义要求精确时最清楚；同步训练的 microburst 若触发成批重传，tail latency 会被最慢 flow 放大。一条实验性分支让 transport 按训练 phase 和已验证 tolerance 接受**有界 loss**：model/training owner 先证明该 phase、tensor class 与 loss budget 下的收敛影响，transport 再用 round identity、packet bitmap 和上限强制执行，超过预算立即回退可靠路径或重试整轮。
 
@@ -746,6 +770,14 @@ rollout worker 只有在基于正确 base 重构并通过 hash 与 shape 校验�
 <!-- source-family:SF-2026-ARXIV-2606-20582 -->
 
 这三条分支共享同一原则：通信层可以利用上层语义，但不能取得训练正确性的最终所有权。状态类型越丰富，越能减少无效传输或无差别恢复，也越需要版本、计划、校验与 fallback；小规模、稳定 topology 或更新近似 dense 时，完整 snapshot、规则 collective 和可靠重传仍然更合适。
+
+### 跨域 Policy Publication 需要 Delta、Stream 与 Lease 共享版本
+
+Trainer 把完整 policy snapshot 同步复制给每个 rollout worker，在更新不频繁、链路稳定时拥有最清楚的恢复语义；RL post-training 提高发布频率、跨站点 RTT 与 actor 异构性后，完整快照会把训练更新阻塞在广域传输上。更细的 publication protocol 只发送相对已确认 base 的 sparse delta，并在生成过程中 streaming；调度器依据 worker/链路异构性安排发送，lease 则限定某个 actor 可以消费哪个 policy epoch 以及多久。
+
+这里 trainer/checkpoint owner 拥有 canonical policy，publisher 拥有 `(base revision, delta revision, stream offset, hash)`，actor 只有在完整重构并提交目标 epoch 后才可生成可接纳 trajectory；lease 过期、base 不匹配或 delta 丢失时必须回退完整 snapshot。它减少重复 bytes 和发布等待，却增加 delta density drift、链式恢复、partial visibility、lease expiry 与远端 backpressure。`arXiv:2602.11456v1` 的 exact-v1 只支持 §5 的 sparse delta、streaming、heterogeneity-aware scheduling 与 lease-based fault tolerance，以及 §7.2 作者场景结果；§6 不支持把它外推为 geo-distributed gradient aggregation 或任意跨域训练协议。
+
+<!-- source-family:SF-2026-ARXIV-2602-11456 -->
 
 ### 跨设施训练先等待资源，再讨论通信效率
 
@@ -851,6 +883,14 @@ kernel、拓扑拥塞或 elastic failure 无条件复用预测。因而 TP/PP �
 只拥有这些机制如何被组合、验证和回退。
 
 ### 从 Phase 串行到依赖驱动的跨 Phase 重排
+
+#### RL Phase 资源可以成为弹性函数，但训练语义不能随实例伸缩
+
+为 rollout、reward 和 learner 长期保留固定服务，在负载稳定且模型常驻成本可接受时最容易保证版本一致；RLHF 的阶段性 burst 会让大量 actor 在更新阶段闲置，而冷启动又可能把 serverless 节省变成新的 critical path。一个弹性分支将 actor/rollout 封装为可预热、可扩缩的执行单元，用共享 prompt 的 deduplicated Prefill 降低重复工作，并按成本与 locality 调整 actor 数量和 placement。orchestrator 拥有实例生命周期，data plane 必须为每条 trajectory 保留 policy、prompt-prefix、environment/reward 和 actor revision，learner 仍只接纳满足 freshness 与 objective contract 的样本。
+
+弹性化降低空闲资源，却增加 cold/prewarm prediction、image/model loading、remote state、重复执行、函数配额和 prefix-sharing identity；按成本扩容还可能改变 domain/sample mixture。持续高负载、checkpoint 很大、网络隔离严格或 prewarm miss 频繁时，常驻 actor pool 仍更可验证。吞吐收益必须扣除启动、Prefill、数据传输和 staleness rejection，并在 scale event 后重新检查训练分布，而不能把基础设施利用率当作收敛证明。
+
+<!-- SF-2026-ARXIV-2602-22718 -->
 
 <!-- daily-20260621:train-distributed-training:start -->
 ### Sampling quality feedback 与通信 freshness
@@ -1217,6 +1257,16 @@ gradient event
 DP 扩展样本吞吐，TP 切 layer 内算子，PP 切深度，CP 切序列，EP 切 experts，ZeRO/FSDP 切 model states。多模态 variable-shape workload 又要求 batch builder 同时拥有 memory/compute 约束，空间复用则把 placement 与 interference budget 带进同一执行合同。每种机制都会把局部压力迁移到通信、同步、拓扑或状态生命周期，最终必须用吞吐、效率、收敛和恢复共同验证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-00277`（Status: Experimental）：exact-v1 的 FT-HSDP 设计支持 CPU recovery control、GPU normal data plane、asynchronous catch-up 与 batch/step consistency，§6 给出作者实验；它不证明 arbitrary optimizer、elastic topology 或 production failure combinations 下的 exactly-once execution。https://arxiv.org/html/2602.00277v1
+
+- `SF-2026-ARXIV-2602-11456`（Status: Experimental）：exact-v1 §5 支持 sparse delta checkpoint、streaming transfer、heterogeneity-aware scheduling 与 lease fault tolerance，§7.2 是作者 end-to-end evaluation；§6 不证明 geo-distributed gradient aggregation、所有 delta density 或网络故障下的收益。https://arxiv.org/html/2602.11456v1
+
+- `SF-2026-ARXIV-2602-18007`（Status: Experimental）：exact-v1 §2.1～§2.2 支持 CPU-forwarding baseline、device-direct data path 与 adaptor 分层，§3.1～§3.4 只覆盖两节点 AMD/NVIDIA、所列模型及 correctness/stability/performance；§4.1 明确 heterogeneity 仍限于 Pipeline Parallel。https://arxiv.org/html/2602.18007v1
+
+- `SF-2026-ARXIV-2602-20656`（Status: Experimental）：exact-v1 §3.1～§3.4 支持 contention modeling、cost-benefit priority 与 overlap resource search，§4 是作者环境 evaluation；它不证明 profile 在不同 kernel、拓扑、parallel plan 或 workload revision 间可直接复用。https://arxiv.org/html/2602.20656v1
+
+- `SF-2026-ARXIV-2602-22718`（Status: Experimental）：exact-v1 的 §4.1～4.5 定义 serverless RLHF、deduplicated Prefill、prompt assignment、cost-aware scaling 与 locality-aware placement，§5 实现，§6.1～6.7 给出作者环境的性能、消融、扩展性与 latency；§2.2 是旧方案限制而非新方案完备性证明，§8 不证明训练收敛、任意云成本或生产故障恢复。https://arxiv.org/html/2602.22718v1
 
 - `SF-2026-ARXIV-2604-22228`（Status: Experimental）：exact-v1 支持在作者四 GPU NVLink/PCIe OMB 环境中以 UCX 多路径和 CUDA Graph replay 降低部分传输开销；dynamic control flow、graph memory 与跨拓扑外推仍未闭合。https://arxiv.org/abs/2604.22228v1
 

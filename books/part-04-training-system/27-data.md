@@ -308,6 +308,14 @@ annotation 与 verifier 共享错误时，“可验证”仍只相对于该 pipe
 
 Lineage 必须保存 specification revision、task proposal、simulator identity、每次 synthetic transition、过滤 verdict 与最终 real-environment evaluation；还要报告 API × transition coverage、长响应 failure、judge disagreement 与 rejected trace。真实 backend 仍是 effect authority。这条分支用覆盖与成本换取 simulator/judge bias，适合训练 proposal，不适合证明真实 side effect；有可执行环境时，evidence-first 或 specification compilation 仍更强。
 
+#### 从 Synthetic Response 到可执行训练环境
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-10090:start -->
+仅模拟一段 API response 时，环境状态仍由生成模型隐式拥有；当任务需要多步读写、rollback 与结果验证时，训练数据生产必须继续演进为可执行环境。pipeline 从 scenario/task requirement 生成 relational schema、initial state、tool interface 与 executable server，通过 startup/health/self-correction 后在隔离环境运行 rollout，再用 pre/post state diff 和 task-specific verifier 形成 grounded evidence；code-augmented judge 只能解释这些证据和环境的不完备处，不能取代状态事实。
+
+因此一条训练 row 的 identity 至少绑定 `environment revision / initial database / tool schema / task / verifier code / judge version / reward policy / rollout / final state`。step-level format reward 可以尽早终止无效轨迹，却也可能把“总要调用工具”的偏好写进 policy，不能替代 task outcome。generator、environment、verifier 与 judge 还可能共享 ontology blind spot；runtime self-correction 只能修复启动或执行错误，不能证明业务语义正确。公开结果只覆盖作者生成的环境、实际进入训练的子集、Qwen3 模型与披露 benchmark；它不证明 synthetic side effect 等于真实世界，也不证明环境数量继续增长一定带来收益。高风险任务仍需真实环境、人工 gold 或独立 oracle，静态样本在无状态、边界清楚的任务中也仍更便宜可靠。
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-10090:end -->
+
 ### Failure-driven Curriculum：难例必须来自可重放失败，而不是模型自信
 
 随机合成 tool trajectories 覆盖面广，但常把概率质量花在短、浅、同质调用上。若已有可执行 tool environment，
@@ -791,6 +799,12 @@ Raw sources
 15. Validation loss 为什么不能单独证明数据更好？
 16. Failure-driven synthetic curriculum 为什么必须区分 baseline blind spot、harness failure 与真实任务难度？
 
+### Data Contract 要延伸到整次 Pipeline Commit
+
+单表 snapshot 原子性无法防止多表 pipeline 在中途失败后暴露部分新状态。当人与 Agent 并行修改数据逻辑时，可重现还需要把 typed table contract、Git-like data branch/revision 和 transactional run 连成一个 commit protocol：先在隔离 revision 中验证每个 transformation boundary，再以单一 pipeline commit 发布所有输出，失败时不移动 authoritative head。
+
+这使 schema mismatch、dev/prod drift 和 partial publication 在提交边界更可见，但以版本图、多表事务、冲突解析和更高存储成本为代价。单 writer、单表或可容忍中间态的离线任务仍可使用普通 snapshot；公开证据是系统设计、轻量形式模型与反例，不证明高并发生产吞吐、崩溃恢复或任意 connector 的 exactly-once。<!-- source-family:SF-2026-ARXIV-2602-02335 -->
+
 ## 小结
 
 数据 pipeline 通过过滤、去重、配比和采样构造训练分布 `q(x)`。模型优化的不是抽象的“互联网知识”，而是这条 pipeline 实际提供、按特定频率出现的 token sequences。
@@ -799,6 +813,9 @@ Raw sources
 provenance、合规和可复现性。数据决定能力生产的上游边界，也决定后续任何 loss 下降究竟代表什么。
 
 ## Review notes
+
+- Agent World Model / executable synthetic environments for Agent RL（Status: Experimental）:
+  https://arxiv.org/abs/2602.10090
 
 - `SF-2026-ARXIV-2604-24806`（Status: Experimental）：exact-v1 支持 normalized immutable UIH、event-time bounded range scan、length/checksum invariant 与近期 snapshot 物化分支；证据绑定推荐训练 workload，不证明任意数据库、访问模式或线上 SLO。https://arxiv.org/abs/2604.24806v1
 

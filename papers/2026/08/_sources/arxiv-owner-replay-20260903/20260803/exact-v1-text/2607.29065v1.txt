@@ -1,0 +1,122 @@
+[p] Content selection saved. Describe the issue below:
+[h1] Tokenizer-Agnostic Engram Module
+[p] Deepseek’s Engram, a conditional memory module, was introduced to trade-off storage versus reasoning in large language models. However, the module relies on token-level -gram hashing for Engram embedding lookup, introducing a tight coupling to the tokenizer used: a model with a different tokenizer would have to train its own Engram embeddings from scratch. To improve the reusability of Engram embeddings, we propose a change to the hashing routine, enabling compatibility between Engram models using different tokenizers. Instead of modelling disjoint -gram spaces, we treat -gram as a method to sample potentially useful byte sequences, from all possible byte sequences across tokens. We replace the XOR-based hashing with the general polynomial hashing with a joint embedding space across . This work investigates the possible trade-offs and shows that this simple substitution produces comparable performance and achieves tokenizer-agnosticism: hash equivalence for byte-equivalent token sequences.
+[p] Singapore Management University
+[p] DSO National Laboratories
+[p] jiapeng.lim.2021@smu.edu.sg, chaileon@dso.org.sg
+[p] —
+[h2] Introduction
+[h4] DeepSeek’s Engram Module.
+[p] Their influential work proposes using token-level -gram conditional embedding lookup as an efficient parameter store. Each token has an additional vector input, depending on the previous -1 token sequence, with each value acting as a hash key to the Engram embedding table. For each , multiple embedding vectors (heads) are sampled from the corresponding embedding table, i.e., each -gram space is disjoint. These concatenated Engram embeddings along serve as the key/value input to the scaled dot product attention (SPDA) , with the query being the residual of the previous model block. The context-aware SPDA gates the retrieved embeddings, before the 1D convolution operation along the token-level axis and adding the result back to the residual stream.
+[h4] Tokenizer lock in.
+[p] Tokenizers may share the same algorithm, e.g., Byte-Pair Encoding (BPE) or Unigram , but may differ in their vocabulary set and size, resulting in different token sequence inputs. Each token has a corresponding initial hash value with the final hash key(s) being an aggregation of these token hashes in a rolling XOR-wise manner. This causes a tight coupling between the Engram embeddings to the tokenizer used. To share Engram embeddings across different models, they must use the same tokenizer. Model performance scales with tokenizer vocabulary size , so being able to adjust the tokenizer, with respect to model size or architecture, is an important consideration. For models with fewer parameters, a fixed tokenizer requirement hurts the flexibility to control the ratio of embedding to feedforward parameters.
+[h4] -gram modelling an illusion?
+[p] -grams are widely studied and used to evaluate and model local information . We argue that what is crucial is the underlying byte sequence of the -grams rather than modelling specific -gram tokens. Consider this case where our two tokenizers, and , tokenize string into a -gram and -gram respectively. If is informative, ideally, it should not matter in which -gram embedding space this information is stored. We view -gram as a sampling method to shortlist potential byte sequences, from an exponential number of permutations, for the model to learn and determine its usefulness.
+[h4] Tokenizer Agnosticism.
+[p] Hence, our goal is to modify the Engram Module such that it can be (re)used regardless of tokenizer choice. In this work, our contributions are as follow:
+[p] Define the objective of Tokenizer Agnosticsm with respect to the Engram module, i.e., its hashing component.
+[p] Propose a straightforward replacement of XOR hashing with the general polynomial hashing, detailing its advantages and maintaining similar algorithmic efficiency.
+[p] Investigate the potential trade-offs of modelling in a joint -gram embedding space. From our experiments, we obtain comparable results that suggest no downsides.
+[p] We train a model with a different tokenizer on pretrained Engram embeddings for cross-tokenizer transfer, empirically showing that tokenizer agnosticism can be achieved.
+[h2] Related Works
+[h4] Tokenization.
+[p] Besides common tokenization methods such as BPE and Unigram. SuperBPE and BoundlessBPE are tokenization methods that include tokens across predefined delimiters, e.g., white spaces. These additional tokens selected can be viewed as token-level -grams. These -grams are preselected by the tokenizer algorithm, whereas for Engram module, the model learns which -grams are useful during training.
+[h4] Engram Module Adjacent.
+[p] There are other alternative embedding modules/layers whose mechanisms are different from Deepseek’s Engram. Our work focuses on removing the latter’s tokenizer requirement. proposes Lngram which learns discrete symbols from the latent space for embedding lookup; and not via tokens. It trades compute efficiency, as the lookup is reliant on the previous model block’s output for model performance.
+[h4] Hash Embeddings.
+[p] First proposed by , it shares similarity with DeepSeek’s multihead embeddings and context-aware gating . Our work also uses a shared embedding space, with the main difference being hashing from byte sequences to achieve the byte-equivalence property.
+[h2] Hashing for Tokenizer-Agnosticism
+[p] Extending the original tokenizer compression rules, e.g., such as capitalization and space prefix, we also account for special tokens and space prefixes between different tokenizers. However, they are still likely to produce different token sequences. Even if they share some token vocabulary, there is no guarantee that the token sequences will be in the same order or that they will be partitioned using the same tokens.
+[h4] Example.
+[p] In Table , we show (i) token sequences from and differ in token order, and (ii) token sequences from and , “Genghis” are partitioned differently.
+[h3] Problem: Hashing Equivalence between Tokenizers
+[p] We illustrate the problem using two different toy BPE tokenizers and their indexed token sets, only processing strings containing characters ‘a’ and ‘b’.
+[p] Given a string text , the respective tokenizers will produce the following string token sequence.
+[p] Likewise with actual tokenizers, it is not guaranteed that two different tokenizers will produce the same tokenized output. We define as the in-sequence concatenation of bytes from . It is evident that is recovered from and , therefore they are .
+[p] A naïve approach to map byte-equivalent -grams would involve comparing their bytes. Byte equivalence ensures that we can map different token sequences of the same bytes to the same embedding index.
+[p] Notice that for this example , the 3-gram of is byte-equivalent to the 4-gram of . To achieve tokenizer-agnoticism, it is clear that we require byte-level information, and not only rely on token-level information, to ensure equivalence of -grams from different tokenizers. However, this requirement itself presents further challenges:
+[p] Time. Comparing bytes instead of integer tokens results in a more expensive computation as .
+[p] Space. Naïvely storing permutations will not work for large vocabulary size as it requires space.
+[p] An efficient method will involve addressing these concerns, in addition to ensuring byte-equivalent -grams, using common strategies such as:
+[p] Caching hashes for each integer token to reduce repeated computations.
+[p] On-demand calculation of final -gram hashes from the cached integer token hashes.
+[h4] Objective.
+[p] For any token sequences up to length , we expect between the different integer token sequences, from different tokenizers, when there is byte equivalence:
+[p] Note that hash collisions might occur, i.e., there is hash equivalence even when Eq. is not true, simply due to chance.
+[h3] XOR-hashing
+[p] In the original implementation, -gram indices were derived by applying XOR to token hashes (see Fig. ). Given a mapping of token indices to hash and hyperparameters and (allocated Engram embedding table size),
+[p] This is insufficient to achieve hash equivalence for byte-equivalent -grams.
+[h4] Counterexample 1.
+[p] Two byte-equivalent -grams from different tokenizers might differ in the partitions. Given and , with different token hashes and omitted, unless collision by chance,
+[h4] Counterexample 2.
+[p] Two byte-equivalent -grams differ in . Given and , with different token hashes and omitted, unless collision by chance,
+[p] For both examples, we get different hashes for byte-equivalent -grams. A simple fix could involve removing the positional hyperparameters. However, XOR’s commutative property increases hash collisions:
+[p] Information destruction. Given , , and a byte-hash map function . A , which makes it a hash of odd-count unique tokens or bytes, when .
+[p] Lack of position information. Given , , the order independence results in when , affecting the byte anagrams produced by the previous scenario.
+[p] Another possible approach involves mapping the tokens between two tokenizers. However, it is unclear how these non-one-to-one hash embeddings will aggregate or disentangle during training. Such methods are likely to require additional complex mechanics.
+[h3] Polynomial-hashing as an Efficient Alternative
+[p] To achieve hash equivalence for byte-equivalent sequences, we need to accumulate hash information. Polynomial-hashing is a common hashing approach that fits this criterion. Given string , byte-hash map function , and hyperparameter and (Engram embedding table size),
+[p] Eq. can be rewritten as an equivalent streaming variant,
+[p] However, as previously described, we have to cache the token hashes to efficiently calculate the final -gram hash. We can do so by caching the hash of each token , (Eq. ), and exponents, (Eq. ).
+[p] We can then modify Eq. to use Eq. and Eq. ,
+[p] The equivalent streaming variant of Eq. is more convenient as it removes the requirement to track remaining length,
+[p] After initializing the cache, computing the polynomial hash of a token sequence is and can be computed using matrix operations, achieving the same complexity as original XOR-hash routine.
+[h4] Example.
+[p] Given string , where its token sequence , following Eq. , we get
+[p] The following cached values for its tokens are
+[p] Rearranging Eq. shows that Eq. Eq. ,
+[p] Simply substituting the hashing mechanism enables us to preserve similar algorithmic efficiency. We use the general polynomial hashing approach for this work. Other specific hashing approaches, such as , may be applicable.
+[h3] Research Questions
+[p] When comparing the different token sequences from different tokenizers, there are three key scenarios that will influence the training of tokenizer-agnostic Engram embeddings.
+[h4] -gram does not exist.
+[p] A -gram from a tokenizer A might never be found in any token sequence from tokenizer B. This disparity can be largely attributed to different tokenization behaviours and vocabulary. Theoretically, when is large enough, there will be more chances to align byte-equivalent -grams from different tokenizers. Additionally, most tokenizers preprocess texts similarly, e.g., splitting before space, and thus share similar points of partitions. Nevertheless, are there enough byte-equivalent -grams between different tokenizers such that pretrained engram embeddings will be useful?
+[h4] Joint embedding space for different -grams.
+[p] Due to -gram mismatch, different tokenizers might partition the same byte sequence into different numbers of tokens, e.g., a -gram from a target tokenizer might be a -gram of another reference tokenizer. The original implementation models -grams in a disjoint manner, i.e., embedding spaces between different are disjoint. This means that even if the exact byte-equivalent -gram had been learnt, due to the allocation of the embedding table, the information is inaccessible unless is similar for both tokenizers. A straightforward solution will involve removing the specific -gram allocations and allow mixing between the -grams of different . This would imply that the Engram embeddings will lose useful -related information, if any, and such information will be learnt upstream as the down-projection of concatenated -gram embeddings remains unchanged. Will this -gram mixing adversely affect the learning of Engram embeddings?
+[h4] -gram requirement.
+[p] The original implementation does not model 1-gram information as the backbone model is responsible for that. Between different tokenizers, it is plausible that single tokens from one tokenizer will be partitioned into multiple tokens when using another tokenizer. If we ignore 1-grams in the Engram embedding space, there could be information loss when transferring the Engram embeddings to a model with a different tokenizer. To include 1-grams, there will be a small increase in parameters for the down-projection to key/values. Since 1-gram hashes will be frequently accessed and updated during training, will they adversely affect the learning of Engram embeddings?
+[h2] Experiments
+[h3] Backbone Language Models
+[p] For our experiments, we pretrain from scratch multiple variants using these three decoder-only transformer backbones:
+[p] . The underlying architecture is , with full SPDA attention blocks .
+[p] . Uses Group Query Attention (GQA) instead of full attention.
+[p] . While this model can process both image and text modalities, we only utilize its 0.7B text-relevant parameters. It uses Gated Delta Net blocks, at a ratio of 3:1 to transformer blocks.
+[p] These models use mostly default settings from HuggingFace’s repository, with changes to use other tokenizers and to add Engram modules. We allocate 35% of total parameters to the Engram module, similar to . During pretraining, we use AdamW optimizer with a cosine scheduler with warm up.
+[h3] Benchmark and Metrics.
+[p] We use several popular benchmarks, from EleutherAI’s , that are commonly-used for pretraining evaluation: ARC , BoolQ , COPA , HellaSwag , LAMBADA , PIQA , SCIQ , and Winogrande . When possible, for these multiple-choice question benchmarks, we use length-normalized accuracy () instead of accuracy (). For aggregation across benchmarks, we report the of all accuracy and accuracy norm values together. Finally, as we will be comparing across tokenizers, we report of benchmark .
+[h3] Byte-equivalent -grams Analysis
+[p] First, we examine the occurrences of -grams, from the target tokenizer, 1) that do not exist in the reference tokenizer and 2) byte-equivalent -grams with different , i.e., found in both target and reference tokenizer. We select three different tokenizers, with (32 size) and (49 size) tokenizers as target tokenizers, and (100 size) as the reference tokenizer. We employ our target and reference tokenizers to tokenize wikitext , consisting of 641 documents totaling 2M tokens, obtaining unique -grams varying . We then compare the obtained unique -gram sets, per document. We expect some target -grams to be missing from the reference -grams. A reference tokenizer with a larger tokenizer vocabulary tends to compress better, which may result in fewer unique -grams.
+[h4] Byte-equivalent -grams exists across tokenizers.
+[p] From Table , observe that there is a healthy percentage of unique -grams, sampled from wikitext , from our target tokenizers and found in the reference tokenizer. If these byte-equivalent -grams exist, this means that information stored in their respective Engram embeddings can be accessed despite the difference in tokenizers.
+[h4] Byte-equivalent -grams with different .
+[p] From our detailed breakdown in Figure , observe that when target increases, the proportion of byte-equivalent -gram found in other reference increases substantially. This implies that without enforcing the byte-equivalence constraint across , we decrease the possible avenues for cross-tokenizer information transfer via -grams.
+[h3] Comparing XOR and Poly. Hashing Engrams
+[p] For this experiment in this subsection, we wish to determine whether the requirements of 1) -gram and 2) joint embedding spaces will affect the pretraining of Engram modules. We train three models using as the backbone with its native tokenizer, on 32B tokens from :
+[p] . As the main comparisons of our subsequent models are along various dimensions, this model serves as a point of reference and normalizes the results for easier comparison. The difference between the subsequent models and the base models highlights the value add from the additional Engram module, giving a better perspective compared to a direct comparison.
+[p] Additional 0.8B Engram module with hyperparameter , 1M indices of size 192 per block.
+[p] Using the original XOR hashing, we adapt DeepSeek’s demonstration code for our training infrastructure.
+[p] Using our proposed polynomial hashing, there are three main changes. First, we directly substitute the hashing algorithm. Second, we remove the disjoint embedding spaces by using the same positional hyperparameter for all . Lastly, we include hash indices per token. To reduce the impact of at the start of training, we scale its embedding values by . Note that as training progress, if is indeed informative, this scaling will be made redundant.
+[p] We compare the inter-hashing results between the different hashing approaches and intra-hashing results where we isolate the contribution of the Engram module. If the additional Engram module is redundant, we expect no performance difference when the Engram module is deactivated, as the model is wholly reliant on the backbone model.
+[h4] Results.
+[p] As reported in Table , for our first comparison, we examine the difference between models with different hashing approaches. With the exception of BoolQ, the results of polynomial hashing, from other benchmarks, are comparable to that of XOR hashing. This suggests that modifications for -gram and joint-embedding spaces did not degrade pretraining performance. When we compare the results between active and inactive engram modules, within the same Engram models, we observe large improvements in mean and bits-per-byte which suggests that there are contributions from the additional Engram modules.
+[h4] Discussion.
+[p] From this empirical experiment, we can conclude that Engram modules are useful in both Engram models. The inclusion of -gram does not seem to negatively impact training, which we will again verify in our subsequent ablation. The key benefit of modelling disjoint embedding spaces allows us to designate the proportion of embedding parameters to specific , controlling the importance of specific . A larger proportion assigned will decrease the chances of hash collision for that specific -gram. Our experiment assumed equal proportion. The context-aware SPDA mechanism, in the Engram module, serves to gate these collisions. Hence, collisions across may not matter as much or are mitigated by using the complete embedding table. The similarity of the results suggests that the useful information lies at the byte-level and by happenstance in the -gram space, and the main role of -grams is to sample and shortlist potential useful byte sequences.
+[h3] Training Tokenizer-agnostic Engrams
+[p] Our reference tokenizer is , and our target tokenizer is . This experiment examines whether our proposed hashing approach allows a model with a target tokenizer to use Engram embeddings trained from a different reference tokenizer. We pretrain Model : a model with a 2B Engram module (, 2M indices of size 192 per block) on 150B reference tokens from . Then, we pretrain two variants of a smaller Model based on backbone:
+[p] No Engram module, serving as the point of reference.
+[p] We attach an Engram module (), that uses the previously pretrained engram embeddings as frozen parameters. Note that the other 15M parameters in the Engram module are trainable.
+[p] Both variants of Model are trained on 100B target tokens from in the same order flow. Our previous analysis show that there are many byte-equivalent -grams across tokenizers. If these common -grams are meaningful lookups to the pretrained Engram embeddings, we expect to observe an improvement in our selected benchmarks, indicating the value add of the additional parameters.
+[h4] Results.
+[p] Between the Engram module activations and the reference model, in Table , we observe that Model +Engram shows improvements in most benchmarks, notably in BoolQ (+10%) and COPA (+7%). Without activating the Engram module, benchmark performance decreases, suggesting that the common -grams are meaningful and cross-tokenizer lookups on pretrained Engram embeddings are successful, evidence of tokenizer agnosticism.
+[h3] Ablation Study
+[p] Since our proposed method includes -grams, could the model have relied on -grams to achieve better performance? We introduce another Engram Model , similar to Engram Model , except that we set , essentially allowing the model to access only byte-equivalent -grams found in the tokenizer. We pretrain Engram Model on 32B, on the same data flow as the corresponding checkpoint of the Engram Model .
+[h4] Results.
+[p] With the results in Table , we can see that for Model , there is only a marginal difference between activating and deactivating the engram module, compared to the more substantial differences from Model . This indifference suggests that for Model , its Engram module was not beneficial. We further examine the training loss curves in Figure , which shows that the additional engram parameters, for Model , were counterproductive. This rules out that the improvements were from -grams, and that -grams had successful lookups to the pretrained Engram embeddings. Comparing between Engram module activation modes, this evaluation methodology shows that having more parameters does not necessarily lead to better performance.
+[h2] Conclusion and Future Work
+[p] Reusing, modifying, and improving pretrained weights constitute an important and prevalent direction for cost-effective academic research. We highlight the substitutability of byte-level and token-level -gram information, to remove the tight tokenizer coupling from Engram module. To achieve this, we propose using the general polynomial hashing approach to attain hash equivalence for byte-equivalent token sequences. This requires us to modify the Engram module to accept 1-gram information and to model -grams in a shared embedding space. Our experiments show that these modifications are reasonable and enables effective cross-tokenizer transfer. Possible future work directions involve scaling Engram in a tokenizer-agnostic manner. Beyond the dominant English language, it will also be interesting to investigate the multilingual capability of its hashed embeddings.
+[h2] References
+[h2] Instructions for reporting errors
+[p] We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+[li] Click the "Report Issue" button, located in the page header.
+[p] You can select the relevant text first, to include it in your report.
+[p] Our team has already identified . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+[p] Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a , and welcome .

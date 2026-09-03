@@ -281,6 +281,40 @@ Network timeout 后，执行器可能不知道远端操作是否成功。直接�
 
 Exactly-once 往往是端到端协议属性，不是调用 SDK 的一个开关。模型不应自己猜测“上次可能失败，再试一次”。
 
+<!-- source-family:SF-2026-ARXIV-2602-10986 -->
+### Tool-value Cache：Cache Hit 必须证明 Environment State 等价
+
+最简单的 cache 用 `tool name + arguments` 作为 key。它对无副作用、输入完备且结果不随时间变化的纯函数足够，
+却不能直接复用于会改变环境的工具：两次相同的 `read_file(path)`、SQL 或 shell call，可能因为先前 action、初始
+环境、权限或外部依赖不同而观察到不同结果。此时复用的对象不只是 value，而是一次**从确定前置状态出发的状态
+转移及其 observation**。
+
+一种更强的分支把已执行的 tool-call sequence 组织成图或树，并让节点同时引用 tool result 与可恢复的 sandbox
+snapshot。Exact hit 要求从同一初始环境沿完整、规范化调用历史到达同一节点；prefix hit 只能恢复已证明等价的
+snapshot，再从分叉点真实执行后续 call，不能把最长前缀相似误写成结果等价。缓存身份至少应绑定：
+
+```text
+task / initial environment revision
++ normalized tool name, arguments and schema/runtime revision
++ ordered tool-call history and snapshot lineage
++ authorization principal and dependency versions
++ validity window
+→ cache identity
+```
+
+其中论文的 exact-v1 证据直接支持受控 sandbox 中的完整历史匹配、prefix snapshot 恢复与并发 cache 服务；
+`principal / dependency revision / validity window` 是把该机制推广到生产系统时必须补上的工程约束，而不是论文已
+证明的实现事实。即使 key 命中，执行器也应保存原调用的 effect receipt、result provenance 与 snapshot hash，并在
+tool/schema、初始镜像、权限、时钟敏感输入或外部状态发生变化时使条目失效。否则所谓 exact cache 只是在错误身份
+上稳定重放旧 observation。
+
+这条路线用更高 hit rate 和更少重复 tool wait，换取 tool-call graph、snapshot storage、并发控制、持久化、
+invalidation 与恢复成本。图或快照增长会产生内存压力，cache server 会成为新的 tail-latency 与可用性瓶颈；隐藏的
+非确定性、未记录的 side effect、跨 principal 复用和过期 snapshot 则会把性能优化变成 correctness 或安全故障。
+受控、确定性的训练 sandbox 且 rollout 大量共享前缀时，stateful cache 值得承担这些状态；纯函数继续使用简单
+content-addressed cache；真实外部系统、高风险副作用或身份无法闭合时，应 bypass cache、重新执行，并沿原有
+idempotency/status-query/compensation 路径处理不确定结果。
+
 ## Observation 也不可信
 
 Tool result 可能包含：
@@ -507,6 +541,8 @@ Primary-source 入口：
 - `2026-05-02 / SF-TOOL-CALL-UTILITY-GATE` — exact-v1 `arXiv:2605.00737v1`；正文吸收 benefit/latency/failure-risk admission，强制合规与高风险工具仍不能被 utility 跳过。
 
 #### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2602-10986` — primary `arXiv:2602.10986v1`；Method=`§3.1 Tool Call Graph Structure；§3.2 Cache Lookups, Hits, and Misses；§3.3 Selective Sandbox Snapshotting；§3.4 TVCache Implementation`；Evaluation=`§4 Evaluating TVCache；Appendix C End-to-end evaluation configuration`；non-proof=`§6 Conclusion 及受控 sandbox / 已披露 workload 边界`；Artifact=`https://github.com/TVCache/TVCache`，但 exact commit/tag 与本次审计使用的 artifact 对应关系未披露。该版本支持完整 tool history、TCG 节点与 sandbox snapshot 共同决定复用状态，并在 terminal、SQL 与 video-understanding 后训练 workload 中验证作者实现；它不证明相同调用序列在含时钟、网络、跨租户权限或未版本化外部依赖的生产环境中必然得到相同状态，也不证明其性能结果可外推到其他 workload、硬件、并发或 SLO。Primary: https://arxiv.org/html/2602.10986v1
 
 - `SF-2026-ARXIV-2606-23049` — primary `arXiv:2606.23049v1`; Method=`arXiv:2606.23049v1 — §3 Method; §3.5 Training Recipe; §4.2 Evaluation Protocol`; Evaluation=`arXiv:2606.23049v1 — §4.2 Evaluation Protocol`; non-proof=`arXiv:2606.23049v1 — §7 Discussion and Limitations; §8 Conclusion`; fallback=该 family 的 failure pressure 是：The gains are strongest on app and mini-app tasks, while long-horizontal cross-app workflows remain an important open challenge. 披露的 evaluation signal 是：Across a 150-task human evaluation on real phones spanning apps, mini-apps, and cross-app workflows, task success rate improves from 36.67\% after supervised fine-tuning to 40.67\% after real-app RL and 45.33\% after mixed RL. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
 - `SF-2026-ARXIV-2606-23112` — primary `arXiv:2606.23112v1`; Method=`arXiv:2606.23112v1 — §4. Method; §4.1. Overall Architecture; §4.2.1. Graph Construction and Edge Weights`; Evaluation=`arXiv:2606.23112v1 — §5.3. Error Analysis; §5.5. DPO Training Analysis`; non-proof=`arXiv:2606.23112v1 — §6. Conclusion`; fallback=该 family 的 failure pressure 是：Existing approaches often separate inference-time orchestration from parameter-level learning, leaving tool selection weakly structured and preference updates vulnerable to train--deployment prompt mismatch. 披露的 evaluation signal 是：For within-benchmark self-improvement, ToolGraph combines schema-derived topology, transition weights estimated from successful rollouts, and history-aware controls for write prerequisites and repeated-search loops. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。

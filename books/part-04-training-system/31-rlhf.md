@@ -486,6 +486,14 @@ exact-v1 §3–4 描述经验驱动 reflection，§5 的 MiniHack/ALFWorld 结�
 
 <!-- source-family:SF-2026-ARXIV-2605-22731 -->
 
+### Memory-conditioned Rollout 改变 Behavior Distribution Identity
+
+在每个 episode 清空外部状态，rollout distribution 只需绑定 policy、prompt 和 environment；让 Agent 先生成 tips/memory 并在后续 episode 中读取，会同时改变 observation、exploration path 与 action probability。若随后混合 on-policy 与 replayed/off-policy updates，样本 identity 必须增加 memory content/hash、生成它的 policy/reward revision、read mode、behavior probability、episode lineage 与清空边界。memory generator 只产生 exploration proposal，trajectory store 保存真实 context，learner 根据 support/freshness 决定 update，outcome verifier 仍拥有任务正确性。
+
+跨 episode memory 可以复用探索经验，却引入 self-confirmation、错误 tips 放大、memory staleness、importance-ratio 方差和训练/部署状态不一致；把 memory 内化进参数后，也不能默认外部 scaffold 已可删除。memory 来源不可信、behavior probability 不可恢复或 deployment 不提供相同 read path 时，应清空状态、回退 fresh on-policy rollout 或仅使用可审计的监督样本，而不能把混合经验当成同一 policy distribution。
+
+<!-- SF-2026-ARXIV-2602-23008 -->
+
 ## PPO、GRPO、DPO 分别接住什么
 
 ### Feedback Loop 从固定环境演进为双层控制系统
@@ -503,6 +511,14 @@ exact-v1 §3–4 描述经验驱动 reflection，§5 的 MiniHack/ALFWorld 结�
 完整 trajectory 后更新实现简单，但长 horizon 与 partial observation 会让 credit 延迟且内存增长。维护 recurrent hidden state 与 eligibility trace 可在每一步执行 exact online update，把“当前可见状态”和“历史如何影响参数”分别交给两个状态 owner。收益是流式学习，代价是 recurrent state 漂移、截断恢复与并行训练更复杂；短 episode 或可离线重放时，batch trajectory 仍更容易验证。当前结论只覆盖特定 diagonal recurrent 架构及其实验，并不证明所有大模型后训练可直接使用同一更新规则。
 
 <!-- source-family:SF-2026-ARXIV-2605-24709 -->
+
+#### Off-policy Action Credit 必须绑定 Behavior Policy 与 Decision State
+
+完整 trajectory 由同一版 policy 生成时，return 与 action 的归属最清楚；但真实 VLA 数据常由旧 policy、人工接管和不同环境条件混合产生，直接把离线 advantage 当作当前 policy 的 on-policy credit，会把策略变化误算成动作质量。更完整的 transition identity 至少应包含 observation/action prefix、behavior-policy revision 与 action probability、critic revision、environment/task revision 以及 intervention state。数据采集端拥有 behavior facts，evaluator 只产生 action-level credit proposal，learner 才拥有参数更新的提交权。
+
+importance correction 与 advantage weighting 能提高旧轨迹的利用率，却会引入高方差、support mismatch 和 critic bias；clip 或筛选能控制方差，也会丢弃稀有但关键的纠错动作。当前 policy 已明显离开 behavior support、概率不可恢复或人工动作没有可比较 propensity 时，应回退到新鲜 rollout、受控再采集或仅把样本用于监督学习，而不能给离线 credit 伪造精确归属。
+
+<!-- SF-2026-ARXIV-2602-12691 -->
 
 ### Reward Model 误差必须在 Deployment Policy 下结算
 
@@ -650,6 +666,10 @@ RLHF 把相对偏好拟合为 reward，再在 reference policy 约束下优化�
 当 task generator、validator 与 policy 一同进入反馈循环时，curriculum 本身也成为需要版本化和独立评估的训练状态；可自动验证不等于任务分布自然充分。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-23008`（Status: Experimental）：exact-v1 的 §4.1～4.2 定义 self-generated memory 与 hybrid on/off-policy optimization，§6.1～6.3 和附录 D/F/G 报告作者任务、消融与成本，Appendix C 解释 importance ratios，§7/Ethics/Reproducibility 不证明 tips 忠实、跨环境迁移或任意 replay mixture 无偏。https://arxiv.org/html/2602.23008v1
+
+- `SF-2026-ARXIV-2602-12691`（Status: Experimental）：exact-v1 的 §IV（尤其 §IV-A～B）定义 VLA action-level off-policy critic 与 advantage-weighted policy improvement，§V 给出论文任务、比较与消融，§VI 仅支持作者设置中的结论；它不证明任意 behavior-policy mixture、不可恢复 propensity 或开放物理环境中的 credit 都可被无偏估计。https://arxiv.org/html/2602.12691v1
 
 - **APPA（arXiv:2604.04261v1；Status: Experimental）**：exact-v1 支持历史 group reward 驱动的 federated PPO weighting，以及 GLOBALQA/OQA、Gemma 2 2B、Llama 3.2 3B、Qwen3 0.6B 设置中的 fairness/alignment trade-off；不证明未测人群或真实偏好协议。https://arxiv.org/abs/2604.04261v1
 

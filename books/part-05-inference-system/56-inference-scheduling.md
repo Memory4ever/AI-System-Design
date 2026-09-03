@@ -163,6 +163,42 @@ Online LP routing 的 v1 证据来自四张 A100 上的 Vidur simulation 与作�
 模型内部可能产生与正确性相关的 feeling-of-knowing/judgment-of-learning signal，却不会自动把它变成停止、追加计算或升级的控制动作。Metacognitive harness 把 monitor 与 reasoner 分开：monitor 提议 confidence/state，scheduler 在校准、budget 与 SLO 下选择 continue、verify、route 或 abstain。收益是把 test-time compute 投向不确定样本，代价是 monitor 误校准、额外调用和 self-assessment 共因偏差；无 held-out calibration 或高风险任务时回退固定预算加独立 verifier。
 <!-- semantic-body-binding:SF-LLMS-KNOW-WHEN-THEY-KNOW-BUT-DO-NOT-ACT-ON-IT-A-METACOGNITIVE-HARNESS-FO:end -->
 
+### Model Switch Point 是生成中的版本边界
+
+请求开始前选择单一模型是合理的 routing baseline：artifact、KV、计费和故障归因都保持单一身份。但长回答的难度
+并不恒定，始终使用大模型会把简单 suffix 也按最昂贵路径执行；仅按输入分类又看不到生成过程中才显现的难点变化。
+一种 training-free 分支先离线校准模型在不同生成状态下的 token-probability margin 等 switch cues，再让 scheduler
+在 segment boundary 决定后续片段是否交给较小模型，而不是把两个模型的 token 任意交错。
+
+```text
+committed segment + calibrated switch cue
+→ scheduler selects next model revision
+→ establish compatible context / state
+→ generate next segment
+→ quality guard or route back to larger model
+```
+
+控制权必须保持分层：offline profiler 拥有 cue calibration artifact；scheduler 拥有 switch decision；当前 runtime
+拥有已提交 prefix 与 KV；目标模型拥有后续 token distribution。若 tokenizer、position semantics、prompt template 或
+KV representation 不兼容，handoff 必须重算 context，不能把旧 cache 当成新模型的 state。收益来自只让大模型处理
+困难片段，代价是 profile drift、状态迁移、额外首 token 延迟和错误切换造成的质量下降。cue 未校准、输出短、模型
+不兼容或严格一致性任务中，请求级单模型 routing 仍是可靠 fallback。这不是 exact speculative decoding：没有 target
+逐 token 验证时，模型切换明确改变输出分布。<!-- source-family:SF-2026-ARXIV-2602-06454 -->
+
+### Drop 决策从超时后的反应演进为剩余预算准入
+
+只有请求已经超时才 drop，容易实现且不依赖预测，在轻载或短 pipeline 中完全合理；多模型 pipeline 里，失败请求
+可能在到达 deadline 前已消耗多个 stage，反应式丢弃既回收不了过去的 compute，也可能保留了更不可能完成的请求。
+主动策略把剩余 latency budget、下游 queue、当前 workload intensity 与 request progress 合成 risk signal，分别回答
+“何时应取消”和“取消哪一个”。
+
+这里 stage telemetry 只能提出风险；pipeline admission/scheduling owner 才能提交 cancel，并负责释放 KV、intermediate
+state 和 reservation。Product policy 继续拥有 tenant priority、不可饥饿约束与不可丢弃类别。更早释放容量可提高
+deadline goodput，却把预测误差、fairness 和 wasted-work accounting 引入控制面：误杀会损失本可完成的请求，偏向
+短请求会造成 starvation，取消传播不完整还会留下 orphan state。预测未校准、低并发或强完成保证场景应退回
+deadline-aware admission 加保守的 reactive drop，而不是让 learned policy 越过硬约束。
+<!-- source-family:SF-2026-ARXIV-2602-08747 -->
+
 ### Inference-time Process Guidance 也是可调度资源
 
 训练期 process reward 把监督写进参数；另一分支在 inference 中检索参考过程或让 reward Agent 对当前 trajectory
@@ -203,6 +239,14 @@ serving subject
 每轮要在 token budget 内选择 Prefill chunks、Decode tokens 和 speculative verification。常见 policy 倾向包括 FCFS、priority/deadline、shortest-estimated-work 或 fairness-aware sharing。
 
 输出长度未知使 shortest-job policy 只能基于估计；只偏好短请求可能 starvation 长请求。Age、tenant quota 或 virtual time 可以作为公平性信号，但会牺牲部分吞吐。
+
+### Prefill 的抢占边界不应等于执行 Chunk 边界
+
+把长 Prefill 切成固定 chunks，能在 chunk 结束时让出 GPU，也让 batching 容易实现；但 chunk 越大，短请求越可能被长 chunk 阻塞，chunk 越小又会增加重复调度与 kernel 效率损失。更细的分支把抢占点下沉到 operator completion event：executor 在已经完成的算子边界保存可恢复状态，event-driven scheduler 再根据 SLO slack、剩余 Prefill work 和 ready queue 决定继续、换入或重组 batch。执行粒度仍可为较大的高效 chunk，控制频率不再被它锁死。
+
+这里 scheduler 只拥有下一次 dispatch 与 preemption decision；model executor 仍拥有 operator dependency、已物化 activation/KV 与恢复正确性。细粒度控制会付出 event、queue synchronization、resume state 和 host scheduling 开销，过于频繁的抢占也可能破坏吞吐。`arXiv:2602.16603v1` 的 exact-v1 只支持 FlowPrefill 在作者披露的模型、trace、SLO、vLLM 实现与硬件上的 operator-level preemption、event-driven scheduling 和实验结果，不证明任意 kernel 或 workload 都能提高 goodput。请求同质、HoL 很弱、event 开销不可忽略或恢复状态不可证实时，应回退固定 chunk、普通 chunked prefill 或 P/D 隔离。
+
+<!-- source-family:SF-2026-ARXIV-2602-16603 -->
 
 ### Exclusive Batching 的 Phase Switch 是 Workload-dependent State
 
@@ -329,6 +373,14 @@ load/locality 冲突；model、domain 或 decoder 数变化都会使旧 centroid
 MI300X/ROCm/vLLM、P/D 拓扑和离线 workload，不能变成普遍吞吐常数。Dense model、domain structure 弱、低负载、
 worker churn 频繁或普通 queue 已满足 SLO 时，least-load routing 仍更简单可靠。
 
+#### MoE 调度从事后搬运到预测性 Working-set Control
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-00509:start -->
+跨请求 locality 仍然依赖已经发生的路由统计；当语义分布快速变化或 expert 无法全部驻留时，reactive hotness 天然落后一层。预测性分支把当前层 activation 作为下一层 router workload 的 proposal，在有限的 transfer-hiding window 内联合决定 expert replicas、token reassignment、copy bytes 与 compute/All-to-All overlap，再让下一层消费已提交的 placement。这里 predictor 只提出候选；planner 必须同时满足 replica slots、设备 compute、网络 ingress/egress 和可隐藏时间窗，不能把高预测概率直接当成可执行计划。
+
+`predictor / planner / replica buffer / routing assignment / execution epoch` 因而是一组一致性状态。预测 miss 会浪费带宽并保留 straggler，transfer 超窗会反过来进入 critical path，split-phase transmission 还可能与 All-to-All 争用；planner 超时、CUDA Graph 不兼容或 buffer 不足时必须回退静态 expert placement。作者实验只覆盖其 8×Hopper/NVSwitch、Qwen3-MoE 与 GPT-OSS、BF16 及特定 SGLang/DeepEP/NVSHMEM 组合，且没有独立 Limitations 章节；稳定 workload、专家全部驻留或迁移代价更高时，静态 EP 仍更简单可靠。
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-00509:end -->
+
 ### Expert Mapping 还要吸收设备速度的时间变化
 
 按平均负载固定 expert placement 在设备稳定时合理；频率、干扰和通信带宽变化后，同样 token count 会产生不同完成时间。runtime 应用 measured service rate 更新 expert-to-device mapping，并限制迁移频率；收益是降低 straggler，代价是测量噪声、迁移成本与控制震荡。变化慢时保留静态映射。<!-- source-family:SF-2026-ARXIV-2605-19945 --> exact-v1 §3–5 只支持作者设备与模型，§6 不证明所有 variability 都能在线补偿。
@@ -336,6 +388,22 @@ worker churn 频繁或普通 queue 已满足 SLO 时，least-load routing 仍更
 ### MoE 并行形态从部署配置演进为运行时状态
 
 当请求并发长期稳定时，部署阶段固定 tensor parallel 或 expert parallel 是合理的：它减少运行时重排并让容量规划可预测。约束变化在于 MoE decode 的并发会连续跨越两种并行方式的优势区间，静态选择会把阶段性通信瓶颈固化。因而调度状态需要增加并行形态、切换阈值、byte-identical expert weight/KV 的固定地址映射和 in-flight request epoch，由运行时只在 decode step 边界提交切换。论文在 8×H200、Qwen3-235B-A22B 上报告 215–434 ms 切换、2.4% memory overhead 与 RL rollout 1.16–1.25× 吞吐收益；这不证明未测模型、互联、并发轨迹或生产 tail latency 下仍安全。切换成本、地址一致性和抖动是新增 failure mode；证据不足或状态校验失败时继续使用静态 TP/EP，旧路径与动态路径按稳定性区间共存。
+
+#### MoE Failure Recovery 必须拥有 Request 与 Expert Generation
+
+整组 replica 失败后统一重启，在故障少、模型小且恢复窗口宽时最清楚；disaggregated MoE 中，attention state、expert weights、block table、communicator 与 captured graph 分属不同生命周期，部分恢复若没有共同 generation 会把旧请求送入新 collective 或让新 worker 读取损坏 expert。recovery coordinator 应先冻结受影响 request frontier，确认 failure scope 与 weight integrity，再恢复 sequence/block-table state、重建 communicator/graph，最后以新的 execution epoch 重新接纳请求。detector 只报告故障，cache/expert owners 回报状态，scheduler 才提交 role switch 或 replay。
+
+局部恢复可以缩短停机，却增加 false detection、状态复制、role-switch capacity、通信重建和重复 token/side effect 风险；允许缺失 expert 继续服务还会把 availability trade-off 变成质量变化。state receipt 不完整、请求带不可重放副作用或恢复超过 SLO 时，应失败终止、切换完整健康副本或上游重试，而不能从某个局部 checkpoint 猜测全局一致性。
+
+<!-- SF-2026-ARXIV-2602-21140 -->
+
+#### Request、Engine 与 Expert 决策需要共享一份调度状态
+
+先用 request queue 选择 engine、再由 engine 排序 request、最后独立替换 expert，在各层负载近似独立时便于模块化；MoE reasoning 中，prompt length、prefix reuse、active expert set 与 device residency 会共同决定 TTFT/TPOT，逐层局部最优可能把同一热点反复向下转移。控制面需要一份版本化 plan，把 DP engine assignment、request priority、prefix-cache eligibility、expert placement/replacement 和执行 epoch 放在同一约束图中；各层 controller 可以分别求解，但最终 plan 必须由 scheduler 原子提交，并在任一 state stale 时回退。
+
+联合状态能减少局部冲突，却引入 cost-model drift、MILP/search 开销、跨层震荡和更大的 telemetry consistency 面。低并发、专家全驻留或 engine 同质时，分层独立 heuristic 仍更简单；在线求解超过 deadline、prefix 或 expert state 不可证实时，应退回 least-load/SJF/static placement 的已验证组合，而不是沿用部分过期计划。
+
+<!-- SF-2026-ARXIV-2602-21626 -->
 
 ### Value Estimation 本身也有成本
 
@@ -819,6 +887,14 @@ MoE serving 不能在假定资源已就绪后只优化单次 all-to-all：expert
 
 边缘多模型场景进一步要求优化系统级 deadline risk，而非逐模型平均吞吐。scheduler 要同时考虑 model choice、early exit、batch 与剩余 slack，并在超载时执行可解释降级。预测失准或关键请求不能降级时，保守 reservation 仍优于激进复用。
 
+#### DP↔TP 切换是带版本的在线状态转换
+
+离线为每个 replica 固定 DP 或 TP，在流量稳定时最容易验证；突发并发、优先请求与超长 Context 会连续改变复制吞吐、单请求并行和 KV capacity 的优势区间。在线切换不能只改一个 parallelism flag：weight manager 要提供 byte-identical 的 shard/view，KV adaptor 要让不同 TP degree 解释同一组 generation-tagged blocks，communicator pool 要预建并按 epoch 激活通信组，scheduler 只在明确的 request/token frontier 提交 soft wait 或 hard preemption。任何一项状态未就绪，都不能向请求暴露“已经切换”。
+
+这种虚拟化减少 cold restart，并允许 scheduler 在 queue pressure、priority、context capacity 与切换成本之间选择，却增加固定地址空间、额外 memory view、communicator 生命周期、in-flight epoch 和抢占恢复风险。`arXiv:2602.22593v1` 的 exact-v1 只支持 Flying Serving 披露的单节点多 GPU、所列模型/workload 与 §3～§6 机制和实验；§5.3.2 明确不覆盖需要多节点 model parallelism 的模型，也不证明生产 tail SLO。weight/KV/communicator identity 不一致、切换成本超过剩余 slack 或 hard-preempt 状态不可恢复时，应继续使用经过验证的静态 DP/TP 实例或 cold restart，而不能部分提交转换。
+
+<!-- source-family:SF-2026-ARXIV-2602-22593 -->
+
 <!-- source-family:SF-NITSUM-SERVING-TIERED-LLM-REQUESTS-WITH-ADAPTIVE-TENSOR-PARALLELISM -->
 <!-- source-family:SF-EDGESERVING-DEADLINE-AWARE-MULTI-DNN-SERVING-AT-THE-EDGE -->
 
@@ -875,6 +951,14 @@ Runtime 仍拥有真实 page、queue 与 completion state，workflow graph 只�
 这条路线用更复杂预测、DAG metadata 和错误估计风险换潜在 makespan/cache 收益；单请求、低共享率、图不可信
 或强 deadline isolation 时，FIFO/EDF 与普通 prefix-aware policy 仍更稳。
 
+#### LLM Program 把 Workflow、KV 与 Tool State 变成联合调度对象
+
+只给每轮 LLM request 附 session ID，能够维持对话路由，却看不见同一 Agent program 正处于 Prefill、Decode、等待工具还是环境初始化。Program-aware runtime 将 program identity、control-flow phase、KV residency、tool/environment lifecycle、backend cache capacity 与 queue state 放进同一个可版本化 `ProgramState`；scheduler 据此决定等待、运行、保留或驱逐，并让工具返回与资源释放成为显式 transition，而不是用固定 timeout 猜测。workflow 提供 dependency，cache manager 拥有真实 blocks，tool runtime 拥有外部资源，只有 scheduler 提交跨域 plan。
+
+联合状态可减少跨 program KV thrashing、节点 memory imbalance 和工具资源泄漏，也会引入 program metadata stale、不可预测 tool time、全局队列瓶颈、过早 eviction 与跨层故障传播。`arXiv:2602.13692v1` 的 exact-v1 只支持 ThunderAgent §4.1～§4.4 披露的 abstraction、cost model、policy/tool management 及作者 §5 workload；§B.1 只说明 middleware 接口，不是机制本身的唯一证据。program identity 不可信、tool lifecycle 不可观测、全局状态过期或 workflow 很短时，应回退 engine-local queue、普通 prefix-aware routing 和独立 tool orchestration。
+
+<!-- source-family:SF-2026-ARXIV-2602-13692 -->
+
 ### 从局部结果到可执行的系统边界
 
 <!-- body-source:SF-2026-ARXIV-2606-22327 -->
@@ -906,6 +990,12 @@ Runtime 仍拥有真实 page、queue 与 completion state，workflow graph 只�
 
 <!-- source-family:SF-2026-ARXIV-2605-08908 -->
 
+### User Retrial 是 Endogenous Arrival，不是独立新请求
+
+经典 queueing 假设到达过程不受路由和等待体验影响；对话服务中，不满意用户的 retrial 会同时表达对模型的隐式偏好，并把新工作量反馈回 backlog。因而 scheduler 应把 `request lineage / retry interval / prior route / observed completion / queue state` 作为联合状态，路由策略用隐式反馈更新模型选择，但仍由队列稳定与 aging 约束拥有提交权。
+
+这条 contextual queueing-bandit 分支减少显式打分摩擦，却会把网络重试、双击、放弃或客户端 bug 误当偏好，forced exploration 也会临时伤害 SLO。无法可靠关联 retrial identity 时，应回退显式反馈、静态路由与 FIFO/EDF/aging；作者的后悔界和离线/合成实验不证明生产多租户队列的稳定性。<!-- source-family:SF-2026-ARXIV-2602-02061 -->
+
 ## 小结
 
 Part V 最终把 inference 还原为一个受状态与约束驱动的调度系统。模型结构定义每步计算，KV Cache 定义 request memory，runtime mechanisms 改变可执行 work，Serving engines 管理单个执行域，Dynamo/KServe LLM 扩展到分布式控制面。弹性粒度可以从完整模型副本下沉到阶段乃至 operator DAG，但每次细化都会把更多 profile、interference、routing 与 failure state 带入控制面。
@@ -913,6 +1003,27 @@ Part V 最终把 inference 还原为一个受状态与约束驱动的调度系�
 推理调度负责在这些机制之上兑现 SLO，而不是让某个局部指标最大化。下一部分进入 AI Infrastructure，继续讨论模型、服务和 GPU capability 怎样被平台统一治理。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-13692`（Status: Experimental）：exact-v1 §4.1～§4.4 支持 program abstraction、cost model、program-aware scheduling 与 tool resource lifecycle，§5 支持作者所列 agentic workloads；不证明跨 engine/工具生态、生产多租户或任意 tool-time distribution 下的通用收益。https://arxiv.org/html/2602.13692v1
+
+- `SF-2026-ARXIV-2602-16603`（Status: Experimental）：exact-v1 §5.1～§5.2 支持 operator-level preemption 与 event-driven scheduling，§6 给出作者 vLLM、模型、trace 与 SLO 实验；不证明任意 kernel、恢复状态或 workload 下都优于固定 chunk。https://arxiv.org/html/2602.16603v1
+
+- `SF-2026-ARXIV-2602-22593`（Status: Experimental）：exact-v1 §3～§5 支持 weight view、KV layout、communicator pool 与 soft/hard preemption 组成的 DP↔TP transition，§6 为作者单节点实验；§5.3.2 不覆盖多节点 model parallelism，也不证明生产 tail SLO。https://arxiv.org/html/2602.22593v1
+
+- `SF-2026-ARXIV-2602-06454`（RelayGen；Status: Experimental）：exact-v1 的 `Profiling Method`
+  定义离线校准 model-specific switch cues 与 segment-level intra-generation switching，§5.2 给出作者 workload
+  的 evaluation，`Limitations` 不证明跨 tokenizer/KV schema 的无损 handoff，也不构成 exact speculative
+  verification。https://arxiv.org/html/2602.06454v1
+- `SF-2026-ARXIV-2602-08747`（PARD；Status: Experimental）：exact-v1 的 §5.1 定义基于 pipeline runtime
+  state 的 proactive dropping policy，§5 报告作者 pipeline evaluation，§3.1 说明 reactive dropping 的局限；
+  证据不证明预测在任意 workload shift、tenant fairness 或 hard completion contract 下都安全。
+  https://arxiv.org/html/2602.08747v1
+
+- `SF-2026-ARXIV-2602-21140`（Status: Experimental）：exact-v1 的 §3.1～3.6 定义 failure detection、sequence/block-table recovery、weight integrity、communicator 与 graph 重建，§4.1～4.3 评估 recovery time、lost-expert accuracy 和 role switching；§6 不证明所有故障、不可重放请求或生产集群均可局部恢复。https://arxiv.org/html/2602.21140v1
+- `SF-2026-ARXIV-2602-21626`（Status: Experimental）：exact-v1 的 §III-A～D 定义 DP load balancing、SJF 与 expert dynamic replacement，§IV 实现，§V-A～B 报告作者 testbed 的 TTFT、TPOT 与 prefix-cache 结果，§VII 不证明跨模型、拓扑、并发轨迹或生产 tail SLO 的全局最优。https://arxiv.org/html/2602.21626v1
+
+- PROBE（MoE next-layer predictive prefetch / placement；Status: Experimental）:
+  https://arxiv.org/abs/2602.00509
 
 - **BloomBee（arXiv:2604.21072v1；Status: Experimental）**：支持在 GPU-memory constraint 下联合优化 inter-node hops、per-hop volume 与 decode execution 的 communication-centric design。其结果限于作者低带宽环境、模型与系统配置，不证明跨地域生产 SLO、故障恢复或任意拓扑下的普遍收益。https://arxiv.org/abs/2604.21072v1
 

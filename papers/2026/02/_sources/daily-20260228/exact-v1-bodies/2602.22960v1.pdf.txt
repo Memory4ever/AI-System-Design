@@ -1,0 +1,1332 @@
+arXiv:2602.22960v1 [cs.CV] 26 Feb 2026
+
+UCM: Unifying Camera Control and Memory with Time-aware
+Positional Encoding Warping for World Models
+Tian-Xing Xu∗
+
+Zi-Xuan Wang∗
+
+Guangyuan Wang∗†
+
+xutx21@mails.tsinghua.edu.cn
+Tsinghua University
+China
+
+wangzixu21@mails.tsinghua.edu.cn
+Tsinghua University
+China
+
+yixuan.wgy@alibaba-inc.com
+Tongyi Lab, Alibaba
+China
+
+Li Hu†
+
+Zhongyi Zhang
+
+Peng Zhang
+
+hooks.hl@alibaba-inc.com
+Tongyi Lab, Alibaba
+China
+
+ericzhang@mail.ustc.edu.cn
+University of Science and Technology
+of China
+China
+
+futian.zp@alibaba-inc.com
+Tongyi Lab, Alibaba
+China
+
+Bang Zhang‡
+
+Song-Hai Zhang‡
+
+bangzhang@gmail.com
+Tongyi Lab, Alibaba
+China
+
+shz@tsinghua.edu.cn
+Tsinghua University
+China
+
+(a) Prompt: A lone figure in a dark robe with an intricate emblem strides along a stone path, framed by towering monoliths and lush hills under a soft sky…
+
+(b) Prompt: A quiet Japanese residential street is lined with two-story houses in soft hues, adorned with balconies, potted plants, and flowers.…
+
+(c) Prompt: A lone person in a dark coat stands by a calm lake. They watch a flash of lightning break through the dark, stormy sky in the distance…
+
+Figure 1: Visual results of our proposed UCM. Given a reference image, a user-specified camera trajectory and a prompt, UCM enables
+camera-controlled, long-term consistent world generation via time-aware positional encoding warping.
+
+Abstract
+World models based on video generation demonstrate remarkable
+potential for simulating interactive environments but face persistent difficulties in two key areas: maintaining long-term content
+consistency when scenes are revisited and enabling precise camera control from user-provided inputs. Existing methods based
+on explicit 3D reconstruction often compromise flexibility in unbounded scenarios and fine-grained structures. Alternative methods
+rely directly on previously generated frames without establishing
+explicit spatial correspondence, thereby constraining controllability and consistency. To address these limitations, we present
+∗ Co-first authors.
+† Project leaders.
+‡ Corresponding authors.
+
+UCM, a novel framework that unifies long-term memory and precise camera control via a time-aware positional encoding warping mechanism. To reduce computational overhead, we design an
+efficient dual-stream diffusion transformer for high-fidelity generation. Moreover, we introduce a scalable data curation strategy
+utilizing point-cloud-based rendering to simulate scene revisiting,
+facilitating training on over 500K monocular videos. Extensive experiments on real-world and synthetic benchmarks demonstrate
+that UCM significantly outperforms state-of-the-art methods in
+long-term scene consistency, while also achieving precise camera controllability in high-fidelity video generation. Project Page:
+https://humanaigc.github.io/ucm-webpage/
+
+Tian-Xing et al.
+
+1
+
+Introduction
+
+World models [1, 2, 6, 9, 12, 19, 35, 39, 45, 64] have drawn increasing attention for their capability to simulate real environments
+in response to user inputs, serving as a fundamental pillar for diverse interactive applications, ranging from simulation [39, 64], autonomous driving [19, 35] and robotics [2] to game engines [9, 45].
+Recent advances [15, 36, 39, 51, 55] in video-generation-based world
+models have substantially advanced this domain, enabling highfidelity generation of potential future scenarios through training on
+large-scale real-world videos. Within this paradigm, adapting powerful video generation models for world simulation confronts two
+core challenges: 1) maintaining long-term content consistency and
+2) achieving precise user-guided camera control. Although contemporary methods [24, 61] ensure frame-to-frame temporal coherence,
+they frequently fail to maintain consistency when revisiting previously observed scenes—a limitation that is often attributed to
+the finite context window of temporal conditioning [51, 55]. Furthermore, integrating precise camera control into video generation
+models remains difficult, primarily due to the inherent viewpoint
+diversity present in open-world videos.
+To address these problems, inspired by ViewCrafter [57], some
+method [51] employs explicit 3D scene reconstruction to preserve
+long-term geometry and incorporate viewpoint information. It
+aggregates 3D point clouds estimated from all historical frames
+through truncated signed distance function (TSDF) fusion [58],
+subsequently rendering these points from target viewpoints to
+condition new frame generation. However, reliance on explicit 3D
+representations often compromises flexibility in large-scale, unbounded scenes and can result in a loss of details, particularly for
+fine-grained structures.
+Another pipeline conditions future video generation directly
+on previously generated frames, typically by concatenating them
+along the temporal axis. For camera controllability and inter-frame
+correspondence modeling, they encode either raw camera parameters [55] or Plücker embeddings [31, 52] via a learnable camera
+encoder, subsequently injecting them into the feature sequence
+for camera-controlled generation. Despite promising results, such
+methods rely on implicitly learned 3D priors—derived solely from
+2D posed frames—to capture cross-view correspondences. This reliance on implicit priors hinders precise camera control and weakens spatial correspondence, ultimately resulting in content inconsistencies.
+In this paper, we propose a novel framework, named UCM,
+which unifies precise camera control and long-term memory capability via time-aware positional encoding warping for world
+models. We build our method upon a diffusion transformer (DiT)
+based video generation model, which represents videos as visual tokens augmented with 3D positional encodings (PEs) to encapsulate
+spatio-temporal information. Following previous works [31, 52, 55],
+all historical frames serve as memory in UCM to condition the
+generation of subsequent sequences. Inspired by PE-Field [5], we
+reassign the 3D PEs of tokens from both the reference image and
+historical frames via a time-aware geometry-grounded warping
+operation. This process provides a robust, explicit spatio-temporal
+correspondence between tokens for camera control and memory
+injection. Notably, concatenating conditional tokens extends the
+
+input sequence length. Since the 3D self-attention within DiTs has
+quadratic complexity with respect to this length, it thereby incurs
+considerable computational costs. Therefore, we present an efficient
+dual-stream diffusion transformer architecture designed to model
+conditional generation with minimal computational overhead. Another practical challenge for training is the scarcity of large-scale
+video datasets featuring long-term revisits of the same dynamic
+scenes from different viewpoints. To overcome this limitation, we
+implement a scalable data curation strategy that employs pointcloud-based rendering to simulate scene revisiting, enabling us
+leverage over 500K videos from diverse scenarios for training. This
+strategy significantly enhances the generalizability of our method
+to open-world environments.
+To comprehensively evaluate our method, we collect diverse
+open-source videos with large camera movement from Tanks &
+Temples [28], RealEstate10K [63], Context-as-Memory [55] and
+MiraData [25], ranging from indoor to outdoor environments and
+realistic to synthetic styles. Our method significantly outperforms
+existing methods by a large margin in terms of visual quality and
+long-term consistency upon scene revisiting, while achieving stateof-the-art camera controllability. Extensive ablation studies validate
+the effectiveness of our proposed efficient dual-stream diffusion
+model and data curation strategy. Our contributions are summarized as follows:
+• We introduce a novel time-aware positional encoding warping
+mechanism into world models, which establishes robust, explicit
+spatio-temporal correspondence between tokens to enable precise camera control and ensure long-term scene consistency.
+• We present an efficient dual-stream video diffusion model for
+high-fidelity generation with minimal computational overhead.
+• We employ a simple yet efficient data curation strategy designed
+to simulate long-term scene revisiting, which enables training
+on large-scale monocular videos and substantially improves our
+model’s generalization.
+
+2
+
+Related Works
+
+Video generation models. The recent scaling of video datasets
+has substantially advanced the capabilities of video generation
+models, such as Sora [64], Seedance [16] and HY Video [29]. Fullsequence diffusion models [16, 29, 46, 53] have emerged as a predominant paradigm due to their high-quality generation. However,
+GPU memory constrains limit the length of generated videos, and
+these models generally lack scene consistency across multiple, distinct video clips. Alternative architectures, such as auto-regressive
+models [10, 17, 24, 42, 61], generate new frames conditioned on preceding outputs, thereby achieving video generation of considerable
+length, but are similarly constrained by a finite temporal context
+window, lacking long-term memory capability.
+Memory for long-term video generation. Many demos [12, 26,
+42] exhibit gradual scene drift due to limited context window length.
+To preserve long-term geometry, recent works [51] utilize 3D reconstruction model to estimate explicit 3D representations like point
+clouds from previously generated frames. These 3D representations
+are aggregated via TSDF fusion [58] to condition subsequent clip
+generation. However, such explicit 3D representations often lack
+
+Unifying Camera Control and Memory with Time-aware PE Warping for World Models
+
+flexibility in large, unbounded scenes and suffer from loss of details
+for fine-grained structure. Other methods [31, 52, 55] conditions
+generation directly on retrieved historical frames, using metrics like
+view frustum similarity [52, 55] or 3D surfel splatting [31]. These
+methods depend on implicit 3D priors learned during training to
+model inter-frame relationships, which impedes robust long-term
+scene coherence across diverse scenarios.
+Camera controlled video generation. Enabling video generation conditioned on explicit camera trajectories remains a central
+challenge for long-term generation. One line of work employs explicit 3D representations derived from an initial frame to guide
+image-to-video generation, utilizing techniques such as point cloud
+rendering [8, 14, 32, 38, 54, 56, 57, 59], tracking [18] or optical
+flow [7]. Alternatively, other approaches incorporate additional
+trainable modules into existing video diffusion models to learn
+the implicit frame-wise correspondence from data, conditioning
+on raw pose parameters [4, 50], Plücker embeddings [3, 20, 21] or
+relative camera encodings [60]. We argue that establishing explicit,
+token-level spatial correspondence offers superior camera controllability and memory capability compared to implicit conditioning,
+and propose to unify camera control and memory with time-aware
+positional encoding warping for world models.
+
+3
+
+Preliminaries
+
+DiT-based video generation models. Our method is built on a
+pretrained image-to-video (I2V) generation model [46]. This model
+consists of a causal spatio-temporal Variational Autoencoder [27]
+(VAE), which learns compact latent representations from highdimensional visual data, and a latent diffusion transformer [40]
+(DiT) that models the data distribution by iteratively denoising.
+Each transformer block is instantiated as a sequence of 3D selfattention to model spatio-temporal relationships, cross-attention
+to integrate text information, and a feed-forward network (FFN)
+for feature refinement. Following Rectified Flows [13], the forward
+diffusion process is defined as x𝑡 = 𝑡x1 + (1 − 𝑡)x0 , where x1 is the
+clean latent code encoded by the causal VAE, x0 ∼ N (0, 𝐼 ) denotes
+Gaussian noise and the timestep 𝑡 ∈ [0, 1] is sampled from a predefined distribution. The latent transformer 𝑢𝜃 learns to predict
+the velocity field v𝑡 = 𝑑x𝑡 /𝑑𝑡 = x1 − x0 , which defines an ordinary
+differential equation (ODE), by minimizing the training objective
+L (𝜃 ) = Ex0 ,x1 ,𝑡 ||𝑢𝜃 (x0, x1, 𝑡) − v𝑡 || 22
+
+(1)
+
+Here, 𝜃 denotes the learned model weights. During inference, the
+network iteratively transforms a randomly sampled Gaussian noise
+into a clean latent, which is then decoded by the VAE to generate
+the final video.
+Positional encoding field (PE-Field). In DiT-based image generation models, the latent code x is patchified and flattened into
+a sequence of tokens. 2D positional encodings (PE) (specifically
+RoPEs [43]) are appended to each token to indicate its 2D spatial
+locations, primarily enforcing spatial coherence within the selfattention mechanism [5]. Motivated by this finding, PE-Field [5]
+formulates novel view synthesis (NVS) as image generation conditioned on the source image and relative camera transformation. It
+concatenates clean tokens from the source image with noisy target
+tokens along the sequence dimension, and reassigns the PEs of
+
+clean tokens according to their projected positions, derived from
+3D reconstruction and the target view transformation. Given that
+patch tokens are spatially coarser than pixel-wise warping, PE-field
+proposes multi-level PEs for sub-patch detail modeling to improve
+alignment precision, which apply different heads of attention layers
+with warped PEs derived from different resolution grids. Additionally, PE-field extends PEs with per-token depth values to allow DiT
+to perceive relative depth relationships.
+
+4
+
+Method
+
+Starting from a reference image 𝐼 𝑟 ∈ R𝐻 ×𝑊 ×3 , we aim to leverage
+powerful video generation models for world simulation guided by a
+user-specified camera trajectory. Our method follows a clip-by-clip
+generation paradigm for long-term simulation, in which each clip
+𝑉 = {𝐼𝑖 }𝑇𝑖=1 ∈ R𝑇 ×𝐻 ×𝑊 ×3 is conditioned on either the reference
+image or the last frame of the preceding clip. To ensure long-term
+scene coherence, we follow previous approaches [31, 52, 55] by re𝑀 ×𝐻 ×𝑊 ×3
+trieving the most relevant historical frames {𝐼ℎ 𝑗 }𝑀
+𝑗=1 ∈ R
+𝑀
+𝑀
+×4×4
+with corresponding view matrices {𝑐ℎ 𝑗 } 𝑗=1 ∈ R
+, which serve
+as memory to condition subsequent clip generation. The overview
+of our proposed UCM is illustrated in Fig. 2, which unifies camera
+control and memory injection with time-aware positional encoding
+warping (Sec. 4.1). This operation establishes robust spatio-temporal
+token correspondences, where the conditional information is integrated using an efficient dual-stream video diffusion architecture
+with minimal computational overhead (Sec. 4.2). To address the
+scarcity of long-term, multiple revisiting videos, we adopt a simple
+yet effective dataset curation strategy, facilitating model training
+on large-scale monocular video datasets (Sec. 4.3).
+
+4.1
+
+Time-aware Positional Encoding Warping
+
+𝑀
+Given retrieved memory frames {𝐼ℎ 𝑗 }𝑀
+𝑗=1 with view matrices {𝑐ℎ 𝑗 } 𝑗=1
+𝑟
+and a reference frame 𝐼 as the conditional image, our objective
+is to generate a high-fidelity video 𝑉 = {𝐼𝑖 }𝑇𝑖=1 that adheres to
+a text prompt and a specific new camera trajectory. We first apply the 3D VAE and patchify operation to the memory frames,
+conditional image and target video for dimension compression,
+𝑀 ×𝐻˜ ×𝑊˜ ×𝐷 , 𝑥 𝑟 ∈ R𝐻˜ ×𝑊˜ ×𝐷
+obtaining latent codes xℎ = {𝑥ℎ 𝑗 }𝑀
+𝑗=1 ∈ R
+˜
+
+˜
+
+𝑁 ∈ R𝑁 ×𝐻 ×𝑊 ×𝐷 , respectively. Supposing 𝑠 and 𝑟
+and x = {𝑥𝑖 }𝑖=1
+denote the spatial and temporal compression ratios, the shape of
+the latent codes satisfies 𝐻˜ = 𝐻 /𝑠, 𝑊˜ = 𝑊 /𝑠, and 𝑁 = (𝑇 +𝑟 − 1)/𝑟 .
+To achieve temporal alignment between the camera trajectory and
+the latent sequence, we assume the view transformation matrices
+change uniformly within 𝑟 continuous frames, applying average
+𝑁 ∈ R𝑁 ×4×4 .
+pooling to the input trajectory to obtain c = {𝑐𝑖 }𝑖=1
+These latent codes are then flattened into a sequence of tokens and
+processed by DiT blocks, which are adapted to learn the conditional
+distribution
+
+x ∼ 𝑝 (x|xℎ , 𝑥 𝑟 , c, cℎ , 𝑤)
+
+(2)
+
+where 𝑤 represents the user-provided text condition. Existing I2V
+models [29, 46] typically treat the reference image as the first frame
+to guide synthesis. For notational simplicity, we consider the reference image as a special historical frame 𝐼ℎ0 = 𝐼 𝑟 with an associated
+𝑀
+camera pose 𝑐ℎ0 = 𝑐 1 , forming xℎ = {𝑥ℎ 𝑗 }𝑀
+𝑗=0 and cℎ = {𝑐ℎ 𝑗 } 𝑗=0 .
+
+Tian-Xing et al.
+
+Noisy Tokens
+
+Text
+
+Original PEs
+
+Time-aware warped PEs
+Generated Video
+
+Text
+Encoder
+
+Clean Tokens of Initial Frame
+& Historical Frames
+
+Denoising
+
+History
+Trajectory
+
+Current
+Trajectory
+
+Initial Frame &
+Historical Fames
+
+VAE Decoder
+
+···
+
+UCM DiT-Block
+
+UCM DiT-Block
+
+UCM DiT-Block
+
+Patchify
+
+VAE Encoder
+
+Noise
+
+Attach PE
+
+Figure 2: An overview of our proposed UCM. Given previously generated frames and a specific camera trajectory as input, UCM encodes
+the historical frames into clean tokens to condition the denoising of noisy tokens. For camera control and memory injection, the framework
+proposes time-aware positional encoding warping to establish spatio-temporal correspondence and an efficient dual-stream transformer
+architecture for processing. After iterative denoising, UCM yields a high-fidelity, scene-consistent video that adheres to the user-specified
+trajectory.
+To model the relationship between the historical frames and the
+target views, previous works concatenate these conditional codes
+xℎ to the noisy codes x𝑡 along the temporal axis before flattening,
+employing an auxiliary camera encoder to inject raw camera parameters [55] or Plücker embeddings [31, 52] into the generation
+process. These methods establish only frame-level viewpoint correspondence, relying on implicit 3D priors learned during training,
+thereby limiting their ability to track complex camera trajectories
+and maintain long-term consistency. To address this, we introduce time-aware PE warping, inspired by PE-Field [5], to unify
+camera control and memory for world models. Specifically, existing DiT-based methods apply 3D PEs to each visual token to
+capture inter-token relationships, which are obtained from their
+3D coordinate (𝑡, 𝑢, 𝑣). We first estimate a sequence of depth maps
+(𝑀+1) ×𝐻 ×𝑊 for memory frames and reference im{𝐷ℎ 𝑗 }𝑀
+𝑗=0 ∈ R
+age via a streaming depth estimation method [30], then lift them
+into point clouds {Pℎ 𝑗 }𝑀
+𝑗=0 via the given view matrices cℎ through
+inverse perspective projection 𝜙 −1
+Pℎ 𝑗 = 𝜙 −1 (𝐷ℎ 𝑗 , 𝑐ℎ 𝑗 )
+
+(3)
+
+With the point cloud Pℎ 𝑗 , we can project it into the camera coordinate system of 𝑖-th target frame using the view transformation
+matrices 𝑐𝑖 , obtaining warped image coordinate maps for each pixel
+of the historical image 𝐼ℎ 𝑗
+h
+i
+ℎ
+ℎ
+𝑈𝑖 𝑗 , 𝑉𝑖 𝑗 = 𝜙 (Pℎ 𝑗 , 𝑐𝑖 )
+(4)
+ℎ
+
+ℎ
+
+where 𝑈𝑖 𝑗 , 𝑉𝑖 𝑗 ∈ R𝐻 ×𝑊 . These coordinate maps are downsampled
+to match the spatial resolution of the latent codes xℎ and augmented
+with the temporal index 𝑖 to form the time-aware warped positional
+ℎ
+ℎ
+ℎ
+encoding 𝑊𝑖 𝑗 = [𝑖, 𝑈𝑖 𝑗 , 𝑉𝑖 𝑗 ] for each conditional code 𝑥ℎ 𝑗 .
+A key consideration is determining the target viewpoints for
+warping each conditional token 𝑥ℎ 𝑗 , because exhaustively warping
+to all 𝑁 viewpoints would introduce unacceptable computational
+complexity. Thus, for frame-level camera control, we replicate the
+
+visual code 𝑥ℎ0 of the reference image 𝑁 times, warping their positional encodings to each target viewpoint 𝑐𝑖 . For memory-guided
+generation, each historical frame 𝐼ℎ 𝑗 is projected only to its most relevant viewpoint 𝑘 𝑗 , obtaining the final conditional token sequence
+with time-aware warped PEs as
+n
+o 𝑁 Ø n
+o 𝑀
+ℎ
+𝑥ℎ0 ,𝑊𝑖ℎ0
+𝑥ℎ 𝑗 ,𝑊𝑘 𝑗
+(5)
+𝑖=1
+
+𝑗
+
+𝑗=1
+
+These conditional tokens with time-aware warped PEs are then
+concatenated with the noisy tokens and fed into DiT blocks to
+guide camera-controlled, scene-coherent video generation. Following PE-Field [5], we employ multi-level PEs to enhance sub-patch
+alignment precision. Unlike PE-Field, we do not explicitly incorporate depth values into the PEs, as the temporal coherence of
+video data enables the model to learn relative depth relationships
+implicitly.
+
+4.2
+
+Efficient Dual-stream Video Diffusion
+
+Although the time-aware warped PEs in Eq. 5 establish strong,
+explicit spatio-temporal correspondence between tokens, the computational overhead from the additional tokens constrains the handling of extensive memory frames. Notably, the input tokens to
+the DiT can be categorized into two groups: clean tokens serve as
+conditioning signals to guide denoising, while noisy tokens represent the generated content and require complex modeling through
+iterative denoising. Building on this observation, we propose an
+efficient dual-stream video diffusion model, composed of sequential
+UCM DiT-blocks. As shown in Fig. 3, each block processes visual
+tokens through dual-stream 3D sparse attention, followed by a
+cross-attention layer to inject the text prompt and a feed-forward
+network (FFN) for feature refinement. For each clean token from
+the conditional code 𝑥ℎ 𝑗 , we restrict these tokens to attend only to
+other tokens from 𝑥ℎ 𝑗 , while the keys and values of these tokens
+are concatenated with warped time-awared PEs to noisy tokens
+to guide content generation. For the noisy tokens, in addition to
+the inherited 3D full attention among noisy tokens, the strong
+
+Unifying Camera Control and Memory with Time-aware PE Warping for World Models
+
+5 Experiments
+5.1 Implementation Details
+
+Text Emb.
+
+𝑊1
+
+𝑊2 𝑊1ℎ0 𝑊2ℎ0 𝑊1ℎ1 𝑊2ℎ2
+
+𝒙1 𝑊1
+𝒙2 𝑊2
+
+𝒙𝒉𝒋 𝑊1
+
+𝒙𝒉𝟏
+
+𝒙𝒉𝟐
+
+FFN
+
+𝒙2 𝒙𝒉𝟎 𝒙𝒉𝟎 𝒙𝒉𝟏 𝒙𝒉𝟐
+
+FFN
+
+𝒙𝒉𝟎
+
+𝒙1
+
+FFN
+
+𝒙2
+
+K/V
+
+Q
+
+𝒙1
+
+Cross Attention
+CA
+CA
+
+Dual-stream 3D Sparse Attention
+
+𝒙𝒉𝒋 𝑊1
+
+Figure 3: The architecture of UCM DiT-block. Each noisy token
+attends to all other noisy tokens and is guided by clean tokens via
+time-aware warped PEs, implemented through KV concatenation.
+For the clean tokens, each token attends only to other clean tokens within the same frame using original PEs. This block-sparse
+attention mask (here, with 𝑘 𝑗 = 𝑗 for visualization) enables camera
+control and memory guidance with reduced computational cost.
+
+spatio-temporal correspondence provided by time-aware PE warping enables the application of a binary attention mask. This mask
+forces each noisy tokens, as a query, to attend only to those clean
+tokens warped into the same camera views. Leveraging the block
+sparsity of attention, our method achieves high-fidelity video generation with precise camera control and consistent content, while
+incurring only minimal computational overhead.
+
+4.3
+
+Data Curation
+
+Training our method ideally requires long-term videos with multiple revisits to the same scene from varying viewpoints. However, existing datasets either are collected under multi-view settings [11, 34, 41], containing only static scenes without dynamic
+foreground objects, or are limited in scale and diversity. Alternative
+methods utilizing render engines like Unreal Engine 5 to synthesize
+multi-camera [4] or long-term revisitation videos [55] yield nonphotorealistic imagery, thereby limiting model generalization to
+real-world data. To overcome these limitations, we adopt a simple
+yet effective data curation strategy, training our model on largescale monocular videos. Given a monocular video 𝑉 = {𝐼𝑖 }𝑇𝑖=1 , we
+leverage a 3D reconstruction model [33] to obtain a sequence of
+point clouds {P𝑖 }𝑇𝑖=1 and the associated camera trajectory {𝑐𝑖 }𝑇𝑖=1 .
+To simulate scene revisits, we randomly select several frames and
+render their respective point clouds P𝑖 from novel viewpoints, defined by a randomly sampled camera offset Δ𝑐. This process yields
+a rendered image 𝐼𝑖′ ∈ R𝐻 ×𝑊 ×3 with a binary mask M𝑖′ ∈ R𝐻 ×𝑊
+that indicates occluded and out-of-frame regions, as shown in Fig. 4.
+Since our I2V model accepts a binary mask concatenated with the
+latent codes as input to indicate the preserved frame, we replace it
+with the rendered mask M𝑖′ , explicitly informing the model which
+tokens from historical frames can reliably guide high-fidelity generation. For further data augmentation, we warp 𝐼𝑖′ to frame 𝐼𝑖+Δ𝑖
+with a random temporal shift Δ𝑖. This curation strategy enables
+the proposed UCM to achieve high-fidelity video generation with
+robust generalization across diverse real-world scenarios.
+
+Training. Our UCM is built upon an internal I2V model finetuned
+from Wan2.1 1.3B-parameter T2V model [46] for comparison, supporting 81-frame (21 latent frames) video generation at a resolution of 640×352. For training, we collect 561k monocular videos
+with large camera motion from Miradata [25], SpatialVID [47] and
+Context-as-Memory [55], ranging from real-world street views to
+synthetic game engine scenes, with each video comprising 801
+frames. Camera poses and point clouds, required for our data curation pipeline, are annotated using the robust 3D reconstruction
+method Depth Anything 3 [33]. UCM is trained for 30000 iterations with an AdamW [37] optimizer at a learning rate of 3 × 10−6 .
+The training process is conducted on 8 NVIDIA-A100 GPUs with a
+mini-batch size of 8, requiring approximately four days.
+Inference. During inference, we adopt STream3R [30] to estimate
+a depth map for each generated frame. Following previous methods [52, 55], we retrieve 20 relevant historical frames with the
+co-visibility of Fields of View (FoV), defined by the Intersection
+of Union (IoU) ratio between target and historical camera views.
+For each target latent frame, we warp the most similar historical
+frame to its viewpoint, excluding the first latent frame, which is
+conditioned directly on the reference image. During sampling, we
+employ Classifier-Free Guidance (CFG) [23] for text prompts, with
+50 sampling steps.
+Evaluation. We evaluate UCM along two primary dimensions:
+camera controllability and long-term scene consistency. For quantitative assessment, we collect videos with large camera motion from
+Realestate10K [63], Tanks-and-Temples [28], and a 5% held-out
+subset of Context-as-Memory [55], comprising 112 diverse videos
+of static scenes. These videos cover diverse indoor and outdoor
+scenarios with both realistic and synthetic styles. For qualitative
+comparison, we additionally employ held-out videos of dynamic
+scenes from MiraData [25]. We compare our method against previous state-of-the-art methods using the following metrics:
+• Camera Control. To quantify alignment between the camera
+trajectories of generated and ground-truth videos, we employ
+Depth Anything 3 [33] to extract camera poses from videos.
+Following CameraCtrl [20], camera poses are expressed relative
+to the first frame with normalized translation. We report the
+SO3 rotation distance (RotErr) and the 𝐿2 translation distances
+(TransErr).
+• Visual Quality. We calculate Fréchet Inception Distance (FID) [22]
+and Fréchet Video Distance (FVD) [44] between the ground truth
+and generated videos, for image-level and video-level quality
+assessment, respectively.
+• View Recall Consistency. We employ PSNR [48], SSIM [49],
+and LPIPS [62] to measure the similarity between image pairs
+from identical viewpoints.
+
+5.2
+
+Camera Control
+
+For camera controllability, we compare our method with previous representative video generation-based world models, including
+Context-as-Memory (C-a-M) [55] and VMem [31], which encode
+
+Tian-Xing et al.
+
+Source Frame
+
+Table 1: Quantitative comparison of camera controllability.
+We highlight the best and second best entries.
+
+Point Rendering
+
+Method Camera Enc.
+
+GT
+
+UCM(Ours)
+
+VWM
+
+VMem
+
+C-a-M
+
+UCPE
+
+Figure 4: Simulated revisiting from different viewpoints.We
+apply point cloud rendering with randomly perturbed viewpoints
+to simulate revisiting of the same scene for monocular videos.
+
+Figure 5: Visual comparison of camera controllability. We
+highlight imprecise camera-controlled frame generation with red
+boxes.
+raw camera parameters and Plücker embeddings via a camera encoder to learn implicit 3D priors from data, and Video World Model
+(VWM) [51], which utilizes 3D point cloud renderings as conditions. Furthermore, we also evaluate the state-of-the-art relative
+camera encoding method UCPE [60] on 81-frame videos extracted
+from the videos we collected. Due to the inaccessibility of model
+weights [51, 55], or their unsuitability for I2V tasks [31, 60], we
+reimplement these methods on the same 1.3B-parameter foundational model as our approach, training with our proposed data
+curation strategy. As shown in Tab. 1 and Fig. 5, our method consistently outperforms previous implicit camera-controlled methods
+by an obvious margin, demonstrating the precise view transformation correspondence provided by time-aware positional encoding
+warping. While VWM also achieves state-of-the-art performance,
+it relies heavily on the quality of 3D representation, thereby exhibiting limitations in handling unbounded scenes and preserving
+fine-grained structural details, as discussed in Sec. 5.3 and shown
+in Fig. 7.
+
+5.3
+
+Long-term Memory
+
+We compare our method with Context-as-Memory (C-a-M) [55],
+VMem [31] and Video World Model (VWM) [51] under two evaluation protocols, following previous method [55].
+
+UCPE Relative Enc.
+C-a-M Raw Param.
+VMem
+Plücker
+VWM Point cloud
+Ours TPE Warping
+
+Camera Control
+Visual Quality
+RotErr (◦ ) ↓ TransErr ↓ FID ↓ FVD ↓
+6.28
+5.45
+2.22
+1.54
+1.01
+
+0.39
+0.46
+0.30
+0.10
+0.11
+
+86.32 422.36
+81.99 377.56
+79.14 362.91
+68.79 250.49
+69.76 261.27
+
+• Memory Initialization. For each 801-frame video, we utilize the
+previous consecutive 480 frames as historical frames to predict
+the following 321 frames. We exclude videos from RealEstate10K [63]
+for their short durations. The quality of the 321 generated frames
+is assessed through direct comparison with the ground truths.
+• Cycle Trajectory. Given the initial frame and a text prompt
+as conditions, we generate a long-term video that adheres to
+the cycle camera trajectory by making the camera return to the
+starting point along the same path in reverse order. For visual
+quality metrics, we evaluate whether newly generated frames
+match historical temporally symmetric generated frames.
+As shown in Tab. 2, our UCM achieves the best performance under both evaluation settings, exhibiting significant improvements
+across all evaluation metrics. Qualitative comparisons are provided
+in Fig. 6 and Fig. 7. Implicit methods, such as C-a-M and VMem,
+lacking a token-level explicit correspondence prior, struggle to
+adhere faithfully to the camera trajectory and sometimes fail to
+preserve long-term geometry (Fig. 6, left). Although VWM also
+demonstrates promising camera-controllability, it relies on TSDF
+fusion for aggregating multi-frame point clouds, leading to inflexibility for unbounded scenes (Fig. 6, left) or fine-grained structures
+(Fig. 6, right; Fig. 7, right). In contrast, our method generates highfidelity videos across both gaming and realistic scenarios with 2.4
+seconds per frame on an A100 GPU, while achieving precise camera controllability and long-term scene consistency, thanks to our
+proposed time-aware PE warping and the efficient dual-stream
+video diffusion model. We also provide more visual results in Fig. 8,
+which demonstrates the effectiveness of our proposed method on
+long-term scene-consistent world generation.
+
+5.4
+
+Ablation Studies
+
+Number of memory frames. We explore how the number of retrieved historical frames affects memory capability in Tab. 3. As the
+number of retrieved frames increases, long-term memory preservation of UCM improves under two settings with moderate computational overhead, facilitated by our proposed dual-stream video
+diffusion model. To balance the performance and computational
+cost, we retrieve 20 frames as our baseline for a good trade-off.
+Efficient dual-stream video diffusion model. To demonstrate
+the effectiveness of dual-stream architecture and the binary block
+mask in 3D attention, we ablate them by 1) concatenating both the
+noisy tokens and conditional tokens before feeding them into the
+diffusion model, or 2) applying the 3D full attention for injecting
+conditions. As shown in Tab. 3, although ablating the dual-stream
+design leads to an improvement under the cycle trajectory, it also
+
+Unifying Camera Control and Memory with Time-aware PE Warping for World Models
+
+Memory Initialization
+
+Cycle Trajectory
+
+GT
+
+UCM(Ours)
+
+UCM(Ours)
+
+VWM
+
+VWM
+
+VMem
+
+VMem
+
+C-a-M
+
+C-a-M
+
+Inconsistency
+
+Consistency
+
+Figure 6: Visual comparison of long-term memory under two evaluation settings. Red boxes highlight obvious failure cases of
+camera-controlled generation or inconsistent scene generation.
+Table 2: Quantitative evaluations for long-term memory persistency. We highlight the best and second best entries.
+Method
+
+Memory Initialization
+Cycle Trajectory
+Camera Control
+Visual Quality View Recall Consistency
+Camera Control
+Visual Quality View Recall Consistency
+RotErr (◦ ) ↓ TransErr ↓ FID ↓ FVD ↓ SSIM ↑ PSNR ↑ LPIPS ↓ RotErr (◦ ) ↓ TransErr ↓ FID ↓ FVD ↓ SSIM ↑ PSNR ↑ LPIPS ↓
+
+C-a-M
+VMem
+VWM
+Ours
+
+10.87
+5.35
+2.60
+2.32
+
+0.39
+0.23
+0.13
+0.12
+
+115.17 303.34
+110.91 292.08
+115.11 301.77
+83.44 198.84
+
+0.35
+0.38
+0.46
+0.48
+
+12.44
+12.78
+15.06
+15.57
+
+0.56
+0.50
+0.42
+0.34
+
+11.50
+4.78
+3.54
+3.29
+
+0.52
+0.35
+0.13
+0.12
+
+37.51
+44.05
+61.43
+21.78
+
+138.29
+133.95
+179.72
+61.47
+
+0.50
+0.55
+0.68
+0.77
+
+15.68
+16.35
+19.54
+23.01
+
+0.34
+0.28
+0.23
+0.09
+
+Table 3: Quantitative evaluations for ablation studies on sparse attention and the number of memory frames. We highlight the
+best and second best entries. “Mem” indicates the number of retrieved memory frames, while “Dual” and “Sparse” represent dual-stream
+architecture and sparse attention, respectively. “Data” is the data curation strategy.
+
+Mem
+
+Dual
+
+Sparse
+
+Data
+
+2
+4
+5
+10
+20
+40
+20
+20
+20
+
+✓
+✓
+✓
+✓
+✓
+✓
+
+✓
+✓
+✓
+✓
+✓
+✓
+
+✓
+✓
+
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+
+✓
+
+Memory Initialization
+Visual Quality
+View Recall Consistency
+FID ↓ FVD ↓ SSIM ↑ PSNR ↑ LPIPS ↓
+
+Cycle Trajectory
+Visual Quality
+View Recall Consistency
+FID ↓ FVD ↓ SSIM ↑ PSNR ↑ LPIPS ↓
+
+88.24
+84.92
+85.29
+84.05
+83.44
+80.68
+85.05
+94.72
+90.65
+
+27.81
+24.92
+24.46
+22.98
+23.01
+18.76
+17.13
+29.28
+29.53
+
+226.35
+207.05
+213.19
+211.89
+198.84
+188.41
+205.43
+270.09
+248.87
+
+0.47
+0.47
+0.47
+0.48
+0.48
+0.49
+0.47
+0.47
+0.48
+
+15.43
+15.49
+15.54
+15.49
+15.57
+15.79
+15.32
+14.30
+15.08
+
+0.36
+0.35
+0.35
+0.35
+0.34
+0.34
+0.35
+0.37
+0.35
+
+significantly increases the computational cost and hinders practical
+applications. Notably, applying block attention masks not only
+accelerates the generation speed but also forces each token to attend
+its most relevant frame, resulting in an obvious performance gain.
+
+6
+
+Data curation strategy. To ablate data curation, we replace point
+cloud renderings with historical frames sampled from videos, leading to a consistent performance drop in terms of visual quality and
+recall consistency in Tab. 3. The comparison demonstrates that data
+curation allows our model to generate high-fidelity videos under
+diverse scenarios.
+
+75.25
+67.32
+68.49
+61.82
+58.16
+52.72
+37.55
+98.49
+103.46
+
+0.65
+0.69
+0.70
+0.74
+0.77
+0.80
+0.77
+0.73
+0.74
+
+20.14
+21.35
+21.59
+22.49
+23.57
+23.79
+23.76
+20.42
+20.74
+
+0.15
+0.12
+0.12
+0.10
+0.09
+0.08
+0.08
+0.12
+0.11
+
+Generation
+Speed
+s/frame ↓
+1.72
+1.80
+1.81
+2.03
+2.40
+3.26
+5.14
+2.94
+2.40
+
+Conclusion
+
+We present UCM, a novel approach that unifies camera control and
+memory mechanism with time-aware positional encoding warping
+for world models. To reduce the computational overhead during
+generation, we introduce an efficient dual-stream video diffusion
+model, which incorporates block attention masks for memory and
+camera injection. Instead of relying on scarce long-term videos with
+multiple revisits, we employ point cloud renderings to simulate
+revisiting, which enables us leverage web-scale monocular videos
+to train our model. Extensive evaluations demonstrate that our
+
+Tian-Xing et al.
+
+method achieves high-fidelity video generation under precise camera control and long-term memory preservation, outperforming
+previous approaches with an obvious margin.
+Limitations. Although achieving promising generation, our proposed UCM still suffers from the following limitations: 1) As shown
+in Fig. 8 (a)(b), over clip-by-clip sequences, minor prediction errors accumulate, potentially impeding the appearance integrity of
+the simulation. 2) Our method relies on learned priors to distinguish dynamic objects and static scenes during memory injection,
+thus sometimes suffers from artifacts caused by movable objects.
+3) As the number of generated frames increases, the storage and
+computational overhead of streaming depth estimation methods is
+non-negligible. How to efficiently organize historical information
+will be required for practical deployment.
+
+Acknowledgement
+Tian-Xing Xu, Zi-Xuan Wang and Zhongyi Zhang completed this
+work during their internship at Tongyi Lab, Alibaba.
+
+References
+[1] Eloi Alonso, Adam Jelley, Vincent Micheli, Anssi Kanervisto, Amos J Storkey,
+Tim Pearce, and François Fleuret. 2024. Diffusion for world modeling: Visual
+details matter in atari. Advances in Neural Information Processing Systems 37
+(2024), 58757–58791.
+[2] Genesis Authors. 2024. Genesis: A universal and generative physics engine for
+robotics and beyond, December 2024. URL https://github. com/Genesis-EmbodiedAI/Genesis 9 (2024).
+[3] Sherwin Bahmani, Ivan Skorokhodov, Guocheng Qian, Aliaksandr Siarohin,
+Willi Menapace, Andrea Tagliasacchi, David B Lindell, and Sergey Tulyakov.
+2025. Ac3d: Analyzing and improving 3d camera control in video diffusion
+transformers. In Proceedings of the Computer Vision and Pattern Recognition
+Conference. 22875–22889.
+[4] Jianhong Bai, Menghan Xia, Xiao Fu, Xintao Wang, Lianrui Mu, Jinwen Cao,
+Zuozhu Liu, Haoji Hu, Xiang Bai, Pengfei Wan, et al. 2025. Recammaster:
+Camera-controlled generative rendering from a single video. arXiv preprint
+arXiv:2503.11647 (2025).
+[5] Yunpeng Bai, Haoxiang Li, and Qixing Huang. 2025. Positional encoding field.
+arXiv preprint arXiv:2510.20385 (2025).
+[6] Amir Bar, Gaoyue Zhou, Danny Tran, Trevor Darrell, and Yann LeCun. 2025.
+Navigation world models. In Proceedings of the Computer Vision and Pattern
+Recognition Conference. 15791–15801.
+[7] Ryan Burgert, Yuancheng Xu, Wenqi Xian, Oliver Pilarski, Pascal Clausen, Mingming He, Li Ma, Yitong Deng, Lingxiao Li, Mohsen Mousavi, et al. 2025. Go-withthe-flow: Motion-controllable video diffusion models using real-time warped
+noise. In Proceedings of the Computer Vision and Pattern Recognition Conference.
+13–23.
+[8] Chenjie Cao, Jingkai Zhou, Shikai Li, Jingyun Liang, Chaohui Yu, Fan Wang,
+Xiangyang Xue, and Yanwei Fu. 2025. Uni3c: Unifying precisely 3d-enhanced
+camera and human motion controls for video generation. In Proceedings of the
+SIGGRAPH Asia 2025 Conference Papers. 1–12.
+[9] Haoxuan Che, Xuanhua He, Quande Liu, Cheng Jin, and Hao Chen. 2024.
+Gamegen-x: Interactive open-world game video generation. arXiv preprint
+arXiv:2411.00769 (2024).
+[10] Boyuan Chen, Diego Martí Monsó, Yilun Du, Max Simchowitz, Russ Tedrake,
+and Vincent Sitzmann. 2024. Diffusion forcing: Next-token prediction meets
+full-sequence diffusion. Advances in Neural Information Processing Systems 37
+(2024), 24081–24125.
+[11] Angela Dai, Angel X Chang, Manolis Savva, Maciej Halber, Thomas Funkhouser,
+and Matthias Nießner. 2017. Scannet: Richly-annotated 3d reconstructions of
+indoor scenes. In Proceedings of the IEEE conference on computer vision and pattern
+recognition. 5828–5839.
+[12] Etched Decart, Quinn McIntyre, Spruce Campbell, Xinlei Chen, and Robert
+Wachen. 2024. Oasis: A universe in a transformer. URL: https://oasis-model.
+github. io (2024).
+[13] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller,
+Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. 2024.
+Scaling rectified flow transformers for high-resolution image synthesis. In Fortyfirst international conference on machine learning.
+
+[14] Wanquan Feng, Jiawei Liu, Pengqi Tu, Tianhao Qi, Mingzhen Sun, Tianxiang Ma,
+Songtao Zhao, Siyu Zhou, and Qian He. 2024. I2vcontrol-camera: Precise video
+camera control with adjustable motion strength. arXiv preprint arXiv:2411.06525
+(2024).
+[15] Jianxiong Gao, Zhaoxi Chen, Xian Liu, Junhao Zhuang, Chengming Xu, Jianfeng Feng, Yu Qiao, Yanwei Fu, Chenyang Si, and Ziwei Liu. 2025. LongVie
+2: Multimodal Controllable Ultra-Long Video World Model. arXiv preprint
+arXiv:2512.13604 (2025).
+[16] Yu Gao, Haoyuan Guo, Tuyen Hoang, Weilin Huang, Lu Jiang, Fangyuan Kong,
+Huixia Li, Jiashi Li, Liang Li, Xiaojie Li, et al. 2025. Seedance 1.0: Exploring the
+Boundaries of Video Generation Models. arXiv preprint arXiv:2506.09113 (2025).
+[17] Yuchao Gu, Weijia Mao, and Mike Zheng Shou. 2025. Long-context autoregressive
+video modeling with next-frame prediction. arXiv preprint arXiv:2503.19325
+(2025).
+[18] Zekai Gu, Rui Yan, Jiahao Lu, Peng Li, Zhiyang Dou, Chenyang Si, Zhen Dong,
+Qifeng Liu, Cheng Lin, Ziwei Liu, et al. 2025. Diffusion as shader: 3d-aware
+video diffusion for versatile video generation control. In Proceedings of the Special Interest Group on Computer Graphics and Interactive Techniques Conference
+Conference Papers. 1–12.
+[19] Xiangyu Guo, Zhanqian Wu, Kaixin Xiong, Ziyang Xu, Lijun Zhou, Gangwei
+Xu, Shaoqing Xu, Haiyang Sun, Bing Wang, Guang Chen, et al. 2025. Genesis:
+Multimodal Driving Scene Generation with Spatio-Temporal and Cross-Modal
+Consistency. arXiv preprint arXiv:2506.07497 (2025).
+[20] Hao He, Yinghao Xu, Yuwei Guo, Gordon Wetzstein, Bo Dai, Hongsheng Li,
+and Ceyuan Yang. 2024. Cameractrl: Enabling camera control for text-to-video
+generation. arXiv preprint arXiv:2404.02101 (2024).
+[21] Hao He, Ceyuan Yang, Shanchuan Lin, Yinghao Xu, Meng Wei, Liangke Gui,
+Qi Zhao, Gordon Wetzstein, Lu Jiang, and Hongsheng Li. 2025. Cameractrl ii:
+Dynamic scene exploration via camera-controlled video diffusion models. arXiv
+preprint arXiv:2503.10592 (2025).
+[22] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and
+Sepp Hochreiter. 2017. Gans trained by a two time-scale update rule converge to
+a local nash equilibrium. Advances in neural information processing systems 30
+(2017).
+[23] Jonathan Ho and Tim Salimans. 2022. Classifier-Free Diffusion Guidance. CoRR
+abs/2207.12598 (2022). arXiv:2207.12598 doi:10.48550/ARXIV.2207.12598
+[24] Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. 2025.
+Self Forcing: Bridging the Train-Test Gap in Autoregressive Video Diffusion.
+arXiv preprint arXiv:2506.08009 (2025).
+[25] Xuan Ju, Yiming Gao, Zhaoyang Zhang, Ziyang Yuan, Xintao Wang, Ailing Zeng,
+Yu Xiong, Qiang Xu, and Ying Shan. 2024. Miradata: A large-scale video dataset
+with long durations and structured captions. Advances in Neural Information
+Processing Systems 37 (2024), 48955–48970.
+[26] Anssi Kanervisto, Dave Bignell, Linda Yilin Wen, Martin Grayson, Raluca
+Georgescu, Sergio Valcarcel Macua, Shan Zheng Tan, Tabish Rashid, Tim Pearce,
+Yuhan Cao, et al. 2025. World and human action models towards gameplay
+ideation. Nature 638, 8051 (2025), 656–663.
+[27] Diederik P Kingma and Max Welling. 2013. Auto-encoding variational bayes.
+arXiv preprint arXiv:1312.6114 (2013).
+[28] Arno Knapitsch, Jaesik Park, Qian-Yi Zhou, and Vladlen Koltun. 2017. Tanks
+and temples: Benchmarking large-scale scene reconstruction. ACM Transactions
+on Graphics (ToG) 36, 4 (2017), 1–13.
+[29] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng
+Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. 2024. Hunyuanvideo: A systematic
+framework for large video generative models. arXiv preprint arXiv:2412.03603
+(2024).
+[30] Yushi Lan, Yihang Luo, Fangzhou Hong, Shangchen Zhou, Honghua Chen,
+Zhaoyang Lyu, Shuai Yang, Bo Dai, Chen Change Loy, and Xingang Pan. 2025.
+Stream3r: Scalable sequential 3d reconstruction with causal transformer. arXiv
+preprint arXiv:2508.10893 (2025).
+[31] Runjia Li, Philip Torr, Andrea Vedaldi, and Tomas Jakab. 2025. VMem: Consistent
+Interactive Video Scene Generation with Surfel-Indexed View Memory. arXiv
+preprint arXiv:2506.18903 (2025).
+[32] Teng Li, Guangcong Zheng, Rui Jiang, Shuigen Zhan, Tao Wu, Yehao Lu, Yining
+Lin, Chuanyun Deng, Yepan Xiong, Min Chen, et al. 2025. Realcam-i2v: Realworld image-to-video generation with interactive complex camera control. In
+Proceedings of the IEEE/CVF International Conference on Computer Vision. 28785–
+28796.
+[33] Haotong Lin, Sili Chen, Junhao Liew, Donny Y Chen, Zhenyu Li, Guang Shi,
+Jiashi Feng, and Bingyi Kang. 2025. Depth anything 3: Recovering the visual
+space from any views. arXiv preprint arXiv:2511.10647 (2025).
+[34] Lu Ling, Yichen Sheng, Zhi Tu, Wentian Zhao, Cheng Xin, Kun Wan, Lantao
+Yu, Qianyu Guo, Zixun Yu, Yawen Lu, et al. 2024. Dl3dv-10k: A large-scale
+scene dataset for deep learning-based 3d vision. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition. 22160–22169.
+[35] Tianran Liu, Shengwen Zhao, and Nicholas Rhinehart. 2025. Towards foundational LiDAR world models with efficient latent flow matching. arXiv preprint
+arXiv:2506.23434 (2025).
+
+Unifying Camera Control and Memory with Time-aware PE Warping for World Models
+
+[36] Yifan Liu, Zhiyuan Min, Zhenwei Wang, Junta Wu, Tengfei Wang, Yixuan Yuan,
+Yawei Luo, and Chunchao Guo. 2025. Worldmirror: Universal 3d world reconstruction with any-prior prompting. arXiv preprint arXiv:2510.10726 (2025).
+[37] Ilya Loshchilov and Frank Hutter. 2017. Decoupled weight decay regularization.
+arXiv preprint arXiv:1711.05101 (2017).
+[38] Baorui Ma, Huachen Gao, Haoge Deng, Zhengxiong Luo, Tiejun Huang, Lulu
+Tang, and Xinlong Wang. 2025. You see it, you got it: Learning 3d creation
+on pose-free videos at scale. In Proceedings of the Computer Vision and Pattern
+Recognition Conference. 2016–2029.
+[39] J Parker-Holder, P Ball, J Bruce, V Dasagi, K Holsheimer, C Kaplanis, A Moufarek, G Scully, J Shar, J Shi, et al. 2024. Genie 2: A large-scale foundation
+world model. URL: https://deepmind. google/discover/blog/genie-2-a-large-scalefoundation-world-model (2024).
+[40] William Peebles and Saining Xie. 2023. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF international conference on computer vision.
+4195–4205.
+[41] Mike Roberts, Jason Ramapuram, Anurag Ranjan, Atulit Kumar, Miguel Angel
+Bautista, Nathan Paczan, Russ Webb, and Joshua M Susskind. 2021. Hypersim:
+A photorealistic synthetic dataset for holistic indoor scene understanding. In
+Proceedings of the IEEE/CVF international conference on computer vision. 10912–
+10922.
+[42] Kiwhan Song, Boyuan Chen, Max Simchowitz, Yilun Du, Russ Tedrake, and
+Vincent Sitzmann. 2025. History-guided video diffusion. arXiv preprint
+arXiv:2502.06764 (2025).
+[43] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng
+Liu. 2024. Roformer: Enhanced transformer with rotary position embedding.
+Neurocomputing 568 (2024), 127063.
+[44] Thomas Unterthiner, Sjoerd Van Steenkiste, Karol Kurach, Raphael Marinier,
+Marcin Michalski, and Sylvain Gelly. 2018. Towards accurate generative models
+of video: A new metric & challenges. arXiv preprint arXiv:1812.01717 (2018).
+[45] Dani Valevski, Yaniv Leviathan, Moab Arar, and Shlomi Fruchter. 2024. Diffusion
+models are real-time game engines. arXiv preprint arXiv:2408.14837 (2024).
+[46] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen,
+Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. 2025. Wan: Open and advanced
+large-scale video generative models. arXiv preprint arXiv:2503.20314 (2025).
+[47] Jiahao Wang, Yufeng Yuan, Rujie Zheng, Youtian Lin, Jian Gao, Lin-Zhuo Chen,
+Yajie Bao, Yi Zhang, Chang Zeng, Yanxi Zhou, et al. 2025. Spatialvid: A large-scale
+video dataset with spatial annotations. arXiv preprint arXiv:2509.09676 (2025).
+[48] Zhou Wang and Alan C Bovik. 2002. A universal image quality index. IEEE
+signal processing letters 9, 3 (2002), 81–84.
+[49] Zhou Wang, Alan C Bovik, Hamid R Sheikh, and Eero P Simoncelli. 2004. Image
+quality assessment: from error visibility to structural similarity. IEEE transactions
+on image processing 13, 4 (2004), 600–612.
+[50] Zhouxia Wang, Ziyang Yuan, Xintao Wang, Yaowei Li, Tianshui Chen, Menghan
+Xia, Ping Luo, and Ying Shan. 2024. Motionctrl: A unified and flexible motion
+controller for video generation. In ACM SIGGRAPH 2024 Conference Papers. 1–11.
+[51] Tong Wu, Shuai Yang, Ryan Po, Yinghao Xu, Ziwei Liu, Dahua Lin, and Gordon
+Wetzstein. 2025. Video World Models with Long-term Spatial Memory. arXiv
+preprint arXiv:2506.05284 (2025).
+[52] Zeqi Xiao, Yushi Lan, Yifan Zhou, Wenqi Ouyang, Shuai Yang, Yanhong Zeng,
+and Xingang Pan. 2025. Worldmem: Long-term consistent world simulation with
+memory. arXiv preprint arXiv:2504.12369 (2025).
+[53] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng
+Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. 2024.
+Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv
+preprint arXiv:2408.06072 (2024).
+[54] Meng You, Zhiyu Zhu, Hui Liu, and Junhui Hou. 2024. Nvs-solver: Video diffusion
+model as zero-shot novel view synthesizer. arXiv preprint arXiv:2405.15364 (2024).
+[55] Jiwen Yu, Jianhong Bai, Yiran Qin, Quande Liu, Xintao Wang, Pengfei Wan, Di
+Zhang, and Xihui Liu. 2025. Context as memory: Scene-consistent interactive
+long video generation with memory retrieval. arXiv preprint arXiv:2506.03141
+(2025).
+[56] Mark YU, Wenbo Hu, Jinbo Xing, and Ying Shan. 2025. Trajectorycrafter: Redirecting camera trajectory for monocular videos via diffusion models. arXiv
+preprint arXiv:2503.05638 (2025).
+[57] Wangbo Yu, Jinbo Xing, Li Yuan, Wenbo Hu, Xiaoyu Li, Zhipeng Huang, Xiangjun
+Gao, Tien-Tsin Wong, Ying Shan, and Yonghong Tian. 2024. Viewcrafter: Taming
+video diffusion models for high-fidelity novel view synthesis. arXiv preprint
+arXiv:2409.02048 (2024).
+[58] Andy Zeng, Shuran Song, Matthias Nießner, Matthew Fisher, Jianxiong Xiao,
+and Thomas A. Funkhouser. 2017. 3DMatch: Learning Local Geometric Descriptors from RGB-D Reconstructions. In 2017 IEEE Conference on Computer Vision
+and Pattern Recognition, CVPR 2017, Honolulu, HI, USA, July 21-26, 2017. IEEE
+Computer Society, 199–208. doi:10.1109/CVPR.2017.29
+[59] Shangjin Zhai, Zhichao Ye, Jialin Liu, Weijian Xie, Jiaqi Hu, Zhen Peng, Hua Xue,
+Danpeng Chen, Xiaomeng Wang, Lei Yang, et al. 2025. Stargen: A spatiotemporal autoregression framework with video diffusion model for scalable and
+controllable scene generation. In Proceedings of the Computer Vision and Pattern
+
+Recognition Conference. 26822–26833.
+[60] Cheng Zhang, Boying Li, Meng Wei, Yan-Pei Cao, Camilo Cruz Gambardella,
+Dinh Phung, and Jianfei Cai. 2025. Unified Camera Positional Encoding for
+Controlled Video Generation. arXiv preprint arXiv:2512.07237 (2025).
+[61] Lvmin Zhang and Maneesh Agrawala. 2025. Packing input frame context in nextframe prediction models for video generation. arXiv preprint arXiv:2504.12626
+(2025).
+[62] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang.
+2018. The unreasonable effectiveness of deep features as a perceptual metric.
+In Proceedings of the IEEE conference on computer vision and pattern recognition.
+586–595.
+[63] Tinghui Zhou, Richard Tucker, John Flynn, Graham Fyffe, and Noah Snavely.
+2018. Stereo magnification: Learning view synthesis using multiplane images.
+arXiv preprint arXiv:1805.09817 (2018).
+[64] Zheng Zhu, Xiaofeng Wang, Wangbo Zhao, Chen Min, Bohan Li, Nianchen Deng,
+Min Dou, Yuqi Wang, Botian Shi, Kai Wang, et al. 2024. Is sora a world simulator?
+a comprehensive survey on general world models and beyond. arXiv preprint
+arXiv:2405.03520 (2024).
+
+Tian-Xing et al.
+
+Cycle Trajectory
+
+Memory Initialization
+
+C-a-M
+VMem
+VWM
+UCM(Ours)
+
+GT
+
+UCM(Ours)
+
+VWM
+
+VMem
+
+C-a-M
+
+Inconsistency
+
+Consistency
+
+C-a-M
+VMem
+VWM
+UCM(Ours)
+
+GT
+
+UCM(Ours)
+
+VWM
+
+VMem
+
+C-a-M
+
+Inconsistency
+
+Consistency
+
+C-a-M
+VMem
+VWM
+UCM(Ours)
+
+GT
+
+UCM(Ours)
+
+VWM
+
+VMem
+
+C-a-M
+
+Inconsistency
+
+Consistency
+
+Figure 7: Supplementary visual comparison of long-term memory preservation. Red boxes indicate inaccurate camera control or
+scene inconsistency during generation.
+
+Unifying Camera Control and Memory with Time-aware PE Warping for World Models
+
+(a) Prompt: A rider in dark clothing follows a trail on horseback through the wilderness. Under cloudy skies, misty mountains stand quietly over the rocky land…
+
+(b) Prompt: A lone rider in dark medieval armor, with two swords on his back, gallops across a vibrant meadow blooming with yellow, pink, and purple wildflowers…
+
+(c) Prompt: A long-haired man with a crossbow walks carefully through a rocky, snowy path, under misty mountains and swaying bamboo, in a still and watchful moment…
+
+(d) Prompt: A serene traditional Dutch village basks in the sunshine, with rows of red-roofed brick houses lining a cobblestone street and a small canal, all under a clear blue sky…
+
+(e) Prompt: A quiet Japanese residential street glows in the soft evening light, lined with houses and apartment buildings in warm tones. A few parked cars sit along the curbs under a pastel sky…
+
+(f) Prompt: A beige building with blue-trimmed windows and a balcony stands along a quiet street. Overhead power lines crisscross against a backdrop of distant snow-capped mountains…
+
+(g) Prompt: A modern kitchen with warm wood cabinets and dark gray counters features a central island and a dining area under an elephant painting…
+
+(h) Prompt: Sunlight fills an open living space with a brown leather sectional and patterned rug. A visible kitchen island and a white staircase complete the bright, contemporary design…
+
+(i) Prompt: An elegant dining room centers around a dark wood table with eight beige chairs under a geometric chandelier. Glass doors open to a patio on the left…
+
+Figure 8: Supplementary visual results of our proposed UCM. Starting from a reference image, UCM can generate long-term videos
+that maintain scene consistency when viewing the same scene from different viewpoints.
+
+

@@ -4,10 +4,11 @@
 
 **Timezone:** Asia/Shanghai
 
-**Special Window:** 2026-08-24 09:00:00 ～ 2026-08-25 09:00:00（北京时间，严格 24 小时）
+**Strict Window:** 2026-08-24 09:00:00 ～ 2026-08-25 09:00:00（北京时间，左闭右开）
 
-**Scope:** Papers only；本次不纳入产品公告、Release、RFC、PR 或新闻
-**Status:** Complete；fresh-context Books adjacency re-audit 已通过；Tuesday，不生成 provisional Weekly
+**Contract:** V2.1 Full Replay
+
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
 
@@ -65,7 +66,7 @@ Books Integration 吸收三项长期增量：将 prefix invariance 提升为 seq
 | SRC-STEPFUN | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T17:38:00+08:00 | https://www.stepfun.com/research；paper only | no_hit | 0 | — | page=1; final_cursor=end; search-visible surface reconciled | 2026-08-25T09:00:00+08:00 | coverage:SRC-STEPFUN:20260825 | — |
 | SRC-XIAOMI-MIMO | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T17:39:00+08:00 | https://mimo.xiaomi.com/；paper only | no_hit | 0 | — | page=1; final_cursor=end; arXiv reconciliation applied | 2026-08-25T09:00:00+08:00 | coverage:SRC-XIAOMI-MIMO:20260825 | — |
 | SRC-INCLUSION-AI | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T17:40:00+08:00 | https://www.inclusion-ai.org/publication/；paper only | no_hit | 0 | — | page=1; final_cursor=end; arXiv reconciliation applied | 2026-08-25T09:00:00+08:00 | coverage:SRC-INCLUSION-AI:20260825 | — |
-| SRC-ARXIV | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T17:45:00+08:00 | Atom API: registered core + Daily-filtered routes; submittedDate 202608240100–202608250100 UTC | checked | 390 | SF-2026-WNW-KV<br>SF-2026-CACHEROUTER<br>SF-2026-COMPACTION-CLIFF<br>SF-2026-XTC<br>SF-2026-DRY-SAMPLING<br>SF-2026-TAILSIEVE<br>SF-2026-CATCHBENCH<br>SF-2026-AGENTFLOW<br>SF-2026-PREFIX-INVARIANCE<br>SF-2026-EXECUTION-EDITS<br>SF-2026-PROCESS-EVAL<br>SF-2026-POINTING-VLA<br>SF-2026-DIFFUSION-SUFFIX<br>SF-2026-CONTEXT-ALLOCATION<br>SF-2026-NEXTCHUNK-RL-SFT<br>SF-2026-SIGMOID-KV<br>SF-2026-INJECMEM<br>SF-2026-INTERACTION-TAX<br>SF-2026-SWE-REFACTOR<br>SF-2026-REWORLD<br>SF-2026-BPCO-CRITIC | page=1; start=0; max_results=2000; totalResults=390; final_cursor=end | 2026-08-25T01:00:00Z | coverage:SRC-ARXIV:20260825 | — |
+| SRC-ARXIV | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T17:45:00+08:00 | arXiv official availability schedule + exact-v1 Atom + DataCite DOI created | incomplete | 390 | SF-2026-WNW-KV<br>SF-2026-CACHEROUTER<br>SF-2026-COMPACTION-CLIFF<br>SF-2026-XTC<br>SF-2026-DRY-SAMPLING<br>SF-2026-TAILSIEVE<br>SF-2026-CATCHBENCH<br>SF-2026-AGENTFLOW<br>SF-2026-PREFIX-INVARIANCE<br>SF-2026-EXECUTION-EDITS<br>SF-2026-PROCESS-EVAL<br>SF-2026-POINTING-VLA<br>SF-2026-DIFFUSION-SUFFIX<br>SF-2026-CONTEXT-ALLOCATION<br>SF-2026-NEXTCHUNK-RL-SFT<br>SF-2026-SIGMOID-KV<br>SF-2026-INJECMEM<br>SF-2026-INTERACTION-TAX<br>SF-2026-SWE-REFACTOR<br>SF-2026-REWORLD<br>SF-2026-BPCO-CRITIC | — | 2026-09-03T12:10:00+08:00 | ../_sources/daily-20260825/official-arxiv-first-public-owner-receipt-v1.json; coverage:SRC-ARXIV:20260825; unclosed: canonical candidate redistribution pending | GAP-ARXIV-CANONICAL-REDISTRIBUTION-20260825 |
 | SRC-HF-PAPERS | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | 2026-08-25T17:50:00+08:00 | https://huggingface.co/papers；Aug 24 visible list; discovery only | no_hit | 0 | — | page=1; final_cursor=end; 70 recommendations yielded 0 unique primary families | 2026-08-25T09:00:00+08:00 | coverage:SRC-HF-PAPERS:20260825 | — |
 
 <!-- coverage:SRC-OPENAI:20260825:start -->OpenAI official research listing contained no paper dated inside the frozen window.<!-- coverage:SRC-OPENAI:20260825:end -->
@@ -123,34 +124,6 @@ Books Integration 吸收三项长期增量：将 prefix invariance 提升为 seq
 | SF-2026-REWORLD | arXiv:2608.23565v1 | paper-v1:2608.23565 | 2026-W35 | 2026-08-24 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-REWORLD | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | No Change — Existing Coverage | books-review:SF-2026-REWORLD | yes |
 | SF-2026-BPCO-CRITIC | arXiv:2608.23566v1 | paper-v1:2608.23566 | 2026-W35 | 2026-08-24 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-BPCO-CRITIC | self | — | new_in_window | TRAIN-PPO | Integrate | books-review:SF-2026-BPCO-CRITIC | yes |
 
-### Benchmark Contracts
-
-以下字段只记录论文公开的 evaluation contract；`Not Disclosed` 不以推断补齐。作者实验不因此升级为独立评估。
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-WNW-KV | LibriSpeech-Long speech understanding | Voxtral-mini-3B; Qwen2.5-Omni-3B | GPU with CPU KV complement; exact SKU Not Disclosed | Not Disclosed — v1 does not freeze precision here | long-form audio; task-specific | autoregressive task output | Not Disclosed — see paper setup | Not Disclosed — see paper setup | accuracy at 20% GPU audio-KV retention plus decode overhead | task accuracy and latency defined by authors |
-| SF-2026-CACHEROUTER | 55 functional tool queries; 30-turn dialogue | router plus main LLM; exact checkpoint varies by experiment | Not Disclosed — prototype execution environment | Not Disclosed — no precision contract | tool schemas and dialogue context; token counts reported | tool result and dialogue response | 1 request path | prototype sequential calls | cache-hit token rate; input-cost estimate under DeepSeek pricing | functional success and provider token accounting |
-| SF-2026-COMPACTION-CLIFF | recursive compaction, decomposition, retrieval and three downstream agent tasks | Claude Sonnet 4.6 compactor plus compared methods | Not Disclosed — API and corpus evaluation | Not Disclosed — provider model | corpus- and compression-ratio-specific | retained rules or downstream actions | corpus-specific | offline evaluations | rule recall, locality violation, recall@50 and task success | author labels, behavioral checks and paired tests |
-| SF-2026-XTC | creative generation, IFEval and human preference | Gemma 3 12B/27B; DeepSeek R1 14B; Llama 3.3 70B | Not Disclosed — inference hardware not frozen in report | Q4 or Q6 depending checkpoint | 12 prompt genres; exact token length varies | open-ended generated text | Not Disclosed — see v1 setup | Not Disclosed — see v1 setup | diversity-repetition frontier with instruction accuracy guardrail | lexical metrics, IFEval, AMT and model judges |
-| SF-2026-DRY-SAMPLING | nine prompt families plus MT-Bench, MMLU and GSM8K | models from 1.5B to 120B | Not Disclosed — inference hardware varies | includes AWQ 70B and 120B | context-dependent suffix histories | open-ended generation | Not Disclosed — see v1 setup | Not Disclosed — see v1 setup | loop reduction without benchmark degradation | suffix-extension rate, task metrics and 600-pair human study |
-| SF-2026-TAILSIEVE | RL/OPD/evaluation rollout makespan | five Qwen configurations | one 8-GPU server; topology per paper | Not Disclosed — v1 setup | prompt groups with long-tail completion behavior | rollout completion length varies | hierarchical rollout groups | TP1/TP2 and route-specific concurrency | step makespan and routing-only speedup | vLLM timing and author workload replay |
-| SF-2026-CATCHBENCH | PRE, LIVE and POST agent audits across seven task contracts | 72 entrants; 11 LLM judges across nine families | Not Disclosed — heterogeneous evaluated entrants | Not Disclosed — heterogeneous entrants | 1,187 configurations and 1,162 runs | state-dependent audit outputs | task-specific | offline evaluation | task-specific evidential metrics; unresolved contrasts retained | released predictions and Gold-derived diagnostics |
-| SF-2026-AGENTFLOW | AgentDojo, AgentDyn and replayed agent-security suites | configured agent models and AgentFlow monitor | Not Disclosed — prototype runtime | Not Disclosed — model/provider dependent | benchmark prompts, sensitive fields and policy paths | tool/action trajectories | benchmark-specific | benchmark-specific | compromise and utility under configured flow policies | benchmark outcome checks and bounded verifier |
-| SF-2026-PREFIX-INVARIANCE | injected causality faults and checkpoint audit | eight checkpoints including Zamba2 and Nemotron-H | CPU/GPU paths in paper; exact SKU varies | checkpoint- and backend-specific | T=48 and additional boundary-length tests | layer-local prefix representations | paired two-forward executions | single audit execution | fault localization and invariance violation | deterministic prefix-difference audit with tolerance |
-| SF-2026-PROCESS-EVAL | coding-agent file localization traces | evaluated coding agents and post-hoc judge | Not Disclosed — offline trace analysis | Not Disclosed — model-specific | complete trajectories with step prefixes | action/task/step labels | trace-level | offline | association surviving false-discovery correction | paper-defined judge and statistical tests |
-| SF-2026-POINTING-VLA | Bridge/WidowX tasks and physical pick-place | Embodied-R1; NORA-1.5; pi0.5 integration | robot/controller setup and external suite; exact accelerator varies | Not Disclosed — checkpoint-specific | images plus instruction and spatial state | points, heatmaps, trajectories or actions | task-specific | physical closed-loop control | task success and controller/readout latency | task completion under collision-enabled CuRobo and physical trials |
-| SF-2026-DIFFUSION-SUFFIX | long-sequence diffusion-language generation | three DLMs | Not Disclosed — see v1 setup | Not Disclosed — no unified precision field | local/middle/tail suffix regions | denoised token sequence | Not Disclosed — see v1 setup | iterative denoising steps | quality plus latency; combined acceleration explicitly identified | task metrics and wall-clock defined by authors |
-| SF-2026-CONTEXT-ALLOCATION | generative-search portfolio recall | multiple LLMs up to 32B | Not Disclosed — see repository and v1 setup | Not Disclosed — no shared precision contract | factorial context budgets and retrieved evidence | sequential portfolio generations | budget-specific | sequential generations | portfolio recall under fixed compute/context allocation | causal leave-one-out probe and task recall |
-| SF-2026-NEXTCHUNK-RL-SFT | no-CoT math training followed by RLVR | paper-specified base and post-trained models | Not Disclosed — training hardware not frozen here | Not Disclosed — training precision not frozen here | no-CoT and long-CoT corpora | reasoning responses | recipe-specific | training pipeline | post-RLVR ceiling and training compute | in-domain and out-of-domain reasoning benchmarks |
-| SF-2026-SIGMOID-KV | learned hard KV eviction on OpenWebText | GPT-2-scale Transformers | Not Disclosed — controlled training setup | Not Disclosed — controlled setup | matched live-cache protocol | language-model continuation | controlled factorial cells | offline | perplexity under matched cache budget | PPL against dense references, H2O and KeyDiff implementations |
-| SF-2026-INJECMEM | one-interaction memory injection across 19 synthetic domains | Qwen, Llama and Mistral backbones with MemoryOS/MemGPT | Not Disclosed — offline memory-system evaluation | Not Disclosed — multiple backbones | variable fused contexts and placements | targeted later responses | system/domain-specific | repeated related queries | targeted retrieval/generation with non-target utility boundary | author attack success and topic-conditioned behavior |
-| SF-2026-INTERACTION-TAX | 11 verifier-scored optimization tasks | multiple LLM families under matched budgets | Not Disclosed — provider/model execution | Not Disclosed — heterogeneous models | task prompts and exchanged solutions/critiques | candidate solutions | matched total budget | independent or interacting agents | verifier score per equal budget and diversity change | deterministic task verifiers |
-| SF-2026-SWE-REFACTOR | 20 whole-repository stack migrations | eight frontier models; 26 effort configurations | Not Disclosed — heterogeneous agent providers | Not Disclosed — provider models | whole repositories | migrated repositories and tests | 520 runs | agent-run-specific | migration completeness plus behavioral correctness | migration audit, fixed tests and six-agent targeted verification |
-| SF-2026-REWORLD | interactive video world rollouts and out-and-back revisit | Wan2.2-based 5B world model | Not Disclosed — real-time serving hardware in v1 setup | Not Disclosed — no single precision contract | 64-second / 384-latent long rollout among other tests | 704x1280 streamed video | 1 interactive trajectory | streaming generation | action following, long-horizon recall, video quality and real-time mode | three-axis author protocol against six systems |
-| SF-2026-BPCO-CRITIC | mathematical reasoning RL and rubric rewards | 1.5B model; two Qwen3 30B-A3B MoE variants | Not Disclosed — training hardware not frozen in claim | Not Disclosed — verl recipe details are source of truth | up to 24k response length in larger-data study | one rollout per prompt for critic branch | 1,024 trajectories per iteration in sanity test; other setups vary | training iteration | held-out AIME accuracy, training reward and explained variance | author-controlled ablations and group-based baseline |
-
 ## 3. Review Completion Receipt
 
 <!-- validator:review-completion-v1 -->
@@ -163,7 +136,7 @@ Books Integration 吸收三项长期增量：将 prefix invariance 提升为 seq
 | SF-2026-DRY-SAMPLING | RP-ee4a135fed0f61bf | closure | arXiv:2608.22761v1 | SRC-ARXIV@arXiv:2608.22761v1 | https://arxiv.org/abs/2608.22761v1 | Not Required — closure route does not assess performance | Not Required — rejection is based on durability and owner coverage | Not Required — closure route does not require an artifact | claim:SF-2026-DRY-SAMPLING | complete |
 | SF-2026-TAILSIEVE | RP-07d0212f2c1c4534 | deep | arXiv:2608.22788v1 | SRC-ARXIV@arXiv:2608.22788v1 | https://arxiv.org/html/2608.22788#S3 | https://arxiv.org/html/2608.22788#S4 | https://arxiv.org/html/2608.22788#S5 | Not Disclosed — v1 does not link a frozen implementation commit | claim:SF-2026-TAILSIEVE | complete |
 | SF-2026-CATCHBENCH | RP-1524b2130e44159d | deep | arXiv:2608.22808v1 | SRC-ARXIV@arXiv:2608.22808v1 | https://arxiv.org/html/2608.22808#S3 | https://arxiv.org/html/2608.22808#S5 | https://arxiv.org/html/2608.22808#S7 | https://arxiv.org/html/2608.22808#S6 | claim:SF-2026-CATCHBENCH | complete |
-| SF-2026-AGENTFLOW | RP-e32d4356dcb7c016 | deep | arXiv:2608.22868v1 | SRC-ARXIV@arXiv:2608.22868v1 | https://arxiv.org/html/2608.22868#S3 | https://arxiv.org/html/2608.22868#S8 | https://arxiv.org/html/2608.22868#S9 | Not Disclosed — v1 describes a prototype without a frozen public commit | claim:SF-2026-AGENTFLOW | complete |
+| SF-2026-AGENTFLOW | RP-d801c77f823e828c | deep | arXiv:2608.22868v1 | SRC-ARXIV@arXiv:2608.22868v1 | https://arxiv.org/html/2608.22868#S3 | https://arxiv.org/html/2608.22868#S8 | https://arxiv.org/html/2608.22868#S9 | Not Disclosed — v1 describes a prototype without a frozen public commit | claim:SF-2026-AGENTFLOW | complete |
 | SF-2026-PREFIX-INVARIANCE | RP-f90e73f20012556a | deep | arXiv:2608.22876v1 | SRC-ARXIV@arXiv:2608.22876v1 | https://arxiv.org/html/2608.22876#S2 | https://arxiv.org/html/2608.22876#S3 | https://arxiv.org/html/2608.22876#S5 | Not Disclosed — v1 does not link a frozen audit implementation | claim:SF-2026-PREFIX-INVARIANCE | complete |
 | SF-2026-EXECUTION-EDITS | RP-27b8a7453730e221 | standard | arXiv:2608.22928v1 | SRC-ARXIV@arXiv:2608.22928v1 | https://arxiv.org/abs/2608.22928v1 | https://github.com/eunomia-bpf/agent-check-restore-safety | https://arxiv.org/abs/2608.22928v1 | Not Required — standard route does not require artifact review beyond identity | claim:SF-2026-EXECUTION-EDITS | complete |
 | SF-2026-PROCESS-EVAL | RP-7700af5220c649f0 | deep | arXiv:2608.22960v1 | SRC-ARXIV@arXiv:2608.22960v1 | https://arxiv.org/html/2608.22960#S3 | https://arxiv.org/html/2608.22960#S4 | https://arxiv.org/html/2608.22960#S6 | Not Disclosed — v1 does not link a frozen evaluation artifact | claim:SF-2026-PROCESS-EVAL | complete |
@@ -172,7 +145,7 @@ Books Integration 吸收三项长期增量：将 prefix invariance 提升为 seq
 | SF-2026-CONTEXT-ALLOCATION | RP-fe3cd1b30d3b2fcf | deep | arXiv:2608.23252v1 | SRC-ARXIV@arXiv:2608.23252v1 | https://arxiv.org/html/2608.23252#S2 | https://arxiv.org/html/2608.23252#S5 | https://arxiv.org/html/2608.23252#S7 | https://github.com/PeiYangLiu/ascp | claim:SF-2026-CONTEXT-ALLOCATION | complete |
 | SF-2026-NEXTCHUNK-RL-SFT | RP-d433dd4edb30edb1 | standard | arXiv:2608.23256v1 | SRC-ARXIV@arXiv:2608.23256v1 | https://arxiv.org/abs/2608.23256v1 | https://arxiv.org/abs/2608.23256v1 | https://arxiv.org/abs/2608.23256v1 | Not Required — standard route does not require an artifact | claim:SF-2026-NEXTCHUNK-RL-SFT | complete |
 | SF-2026-SIGMOID-KV | RP-c381305673095026 | standard | arXiv:2608.23296v1 | SRC-ARXIV@arXiv:2608.23296v1 | https://arxiv.org/abs/2608.23296v1 | https://arxiv.org/abs/2608.23296v1 | https://arxiv.org/abs/2608.23296v1 | Not Required — standard route does not require an artifact | claim:SF-2026-SIGMOID-KV | complete |
-| SF-2026-INJECMEM | RP-3189cec823ea2bcc | deep | arXiv:2608.23471v1 | SRC-ARXIV@arXiv:2608.23471v1 | https://arxiv.org/html/2608.23471#S3 | https://arxiv.org/html/2608.23471#S4 | https://arxiv.org/html/2608.23471#S6 | Not Disclosed — v1 does not identify a frozen public implementation commit | claim:SF-2026-INJECMEM | complete |
+| SF-2026-INJECMEM | RP-718548e715acc91b | deep | arXiv:2608.23471v1 | SRC-ARXIV@arXiv:2608.23471v1 | https://arxiv.org/html/2608.23471#S3 | https://arxiv.org/html/2608.23471#S4 | https://arxiv.org/html/2608.23471#S6 | Not Disclosed — v1 does not identify a frozen public implementation commit | claim:SF-2026-INJECMEM | complete |
 | SF-2026-INTERACTION-TAX | RP-9b5640aeaeeedbce | deep | arXiv:2608.23541v1 | SRC-ARXIV@arXiv:2608.23541v1 | https://arxiv.org/html/2608.23541#S3 | https://arxiv.org/html/2608.23541#S4 | https://arxiv.org/html/2608.23541#S6 | Not Disclosed — v1 does not link a frozen implementation commit | claim:SF-2026-INTERACTION-TAX | complete |
 | SF-2026-SWE-REFACTOR | RP-eca7db715c83701f | deep | arXiv:2608.23564v1 | SRC-ARXIV@arXiv:2608.23564v1 | https://arxiv.org/html/2608.23564#S3 | https://arxiv.org/html/2608.23564#S5 | https://arxiv.org/html/2608.23564#S6 | https://arxiv.org/html/2608.23564#S4 | claim:SF-2026-SWE-REFACTOR | complete |
 | SF-2026-REWORLD | RP-b0316d92ad440129 | deep | arXiv:2608.23565v1 | SRC-ARXIV@arXiv:2608.23565v1 | https://arxiv.org/html/2608.23565#S3 | https://arxiv.org/html/2608.23565#S4 | Not Disclosed — v1 has no explicit limitations section; physical-action correctness is unevaluated | Not Disclosed — v1 does not link a frozen training repository | claim:SF-2026-REWORLD | complete |
@@ -285,7 +258,35 @@ World Models chapter已区分 video generation、action-conditioned transition �
 这补全 PPO 章节对 critic failure 的机制解释，并把 PPO / GRPO 的选择从“状态还是采样”推进为 credit fidelity、variance、rollout compute 与 overfitting 的联合权衡。
 <!-- review:SF-2026-BPCO-CRITIC:end -->
 
-## 4. Deep Analysis Selection
+## 4. Benchmark Contracts
+
+以下字段只记录论文公开的 evaluation contract；`Not Disclosed` 不以推断补齐。作者实验不因此升级为独立评估。
+
+<!-- validator:benchmark-contract-v1 -->
+| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SF-2026-WNW-KV | LibriSpeech-Long speech understanding | Voxtral-mini-3B; Qwen2.5-Omni-3B | GPU with CPU KV complement; exact SKU Not Disclosed | Not Disclosed — v1 does not freeze precision here | long-form audio; task-specific | autoregressive task output | Not Disclosed — see paper setup | Not Disclosed — see paper setup | accuracy at 20% GPU audio-KV retention plus decode overhead | task accuracy and latency defined by authors |
+| SF-2026-CACHEROUTER | 55 functional tool queries; 30-turn dialogue | router plus main LLM; exact checkpoint varies by experiment | Not Disclosed — prototype execution environment | Not Disclosed — no precision contract | tool schemas and dialogue context; token counts reported | tool result and dialogue response | 1 request path | prototype sequential calls | cache-hit token rate; input-cost estimate under DeepSeek pricing | functional success and provider token accounting |
+| SF-2026-COMPACTION-CLIFF | recursive compaction, decomposition, retrieval and three downstream agent tasks | Claude Sonnet 4.6 compactor plus compared methods | Not Disclosed — API and corpus evaluation | Not Disclosed — provider model | corpus- and compression-ratio-specific | retained rules or downstream actions | corpus-specific | offline evaluations | rule recall, locality violation, recall@50 and task success | author labels, behavioral checks and paired tests |
+| SF-2026-XTC | creative generation, IFEval and human preference | Gemma 3 12B/27B; DeepSeek R1 14B; Llama 3.3 70B | Not Disclosed — inference hardware not frozen in report | Q4 or Q6 depending checkpoint | 12 prompt genres; exact token length varies | open-ended generated text | Not Disclosed — see v1 setup | Not Disclosed — see v1 setup | diversity-repetition frontier with instruction accuracy guardrail | lexical metrics, IFEval, AMT and model judges |
+| SF-2026-DRY-SAMPLING | nine prompt families plus MT-Bench, MMLU and GSM8K | models from 1.5B to 120B | Not Disclosed — inference hardware varies | includes AWQ 70B and 120B | context-dependent suffix histories | open-ended generation | Not Disclosed — see v1 setup | Not Disclosed — see v1 setup | loop reduction without benchmark degradation | suffix-extension rate, task metrics and 600-pair human study |
+| SF-2026-TAILSIEVE | RL/OPD/evaluation rollout makespan | five Qwen configurations | one 8-GPU server; topology per paper | Not Disclosed — v1 setup | prompt groups with long-tail completion behavior | rollout completion length varies | hierarchical rollout groups | TP1/TP2 and route-specific concurrency | step makespan and routing-only speedup | vLLM timing and author workload replay |
+| SF-2026-CATCHBENCH | PRE, LIVE and POST agent audits across seven task contracts | 72 entrants; 11 LLM judges across nine families | Not Disclosed — heterogeneous evaluated entrants | Not Disclosed — heterogeneous entrants | 1,187 configurations and 1,162 runs | state-dependent audit outputs | task-specific | offline evaluation | task-specific evidential metrics; unresolved contrasts retained | released predictions and Gold-derived diagnostics |
+| SF-2026-AGENTFLOW | AgentDojo, AgentDyn and replayed agent-security suites | configured agent models and AgentFlow monitor | Not Disclosed — prototype runtime | Not Disclosed — model/provider dependent | benchmark prompts, sensitive fields and policy paths | tool/action trajectories | benchmark-specific | benchmark-specific | compromise and utility under configured flow policies | benchmark outcome checks and bounded verifier |
+| SF-2026-PREFIX-INVARIANCE | injected causality faults and checkpoint audit | eight checkpoints including Zamba2 and Nemotron-H | CPU/GPU paths in paper; exact SKU varies | checkpoint- and backend-specific | T=48 and additional boundary-length tests | layer-local prefix representations | paired two-forward executions | single audit execution | fault localization and invariance violation | deterministic prefix-difference audit with tolerance |
+| SF-2026-PROCESS-EVAL | coding-agent file localization traces | evaluated coding agents and post-hoc judge | Not Disclosed — offline trace analysis | Not Disclosed — model-specific | complete trajectories with step prefixes | action/task/step labels | trace-level | offline | association surviving false-discovery correction | paper-defined judge and statistical tests |
+| SF-2026-POINTING-VLA | Bridge/WidowX tasks and physical pick-place | Embodied-R1; NORA-1.5; pi0.5 integration | robot/controller setup and external suite; exact accelerator varies | Not Disclosed — checkpoint-specific | images plus instruction and spatial state | points, heatmaps, trajectories or actions | task-specific | physical closed-loop control | task success and controller/readout latency | task completion under collision-enabled CuRobo and physical trials |
+| SF-2026-DIFFUSION-SUFFIX | long-sequence diffusion-language generation | three DLMs | Not Disclosed — see v1 setup | Not Disclosed — no unified precision field | local/middle/tail suffix regions | denoised token sequence | Not Disclosed — see v1 setup | iterative denoising steps | quality plus latency; combined acceleration explicitly identified | task metrics and wall-clock defined by authors |
+| SF-2026-CONTEXT-ALLOCATION | generative-search portfolio recall | multiple LLMs up to 32B | Not Disclosed — see repository and v1 setup | Not Disclosed — no shared precision contract | factorial context budgets and retrieved evidence | sequential portfolio generations | budget-specific | sequential generations | portfolio recall under fixed compute/context allocation | causal leave-one-out probe and task recall |
+| SF-2026-NEXTCHUNK-RL-SFT | no-CoT math training followed by RLVR | paper-specified base and post-trained models | Not Disclosed — training hardware not frozen here | Not Disclosed — training precision not frozen here | no-CoT and long-CoT corpora | reasoning responses | recipe-specific | training pipeline | post-RLVR ceiling and training compute | in-domain and out-of-domain reasoning benchmarks |
+| SF-2026-SIGMOID-KV | learned hard KV eviction on OpenWebText | GPT-2-scale Transformers | Not Disclosed — controlled training setup | Not Disclosed — controlled setup | matched live-cache protocol | language-model continuation | controlled factorial cells | offline | perplexity under matched cache budget | PPL against dense references, H2O and KeyDiff implementations |
+| SF-2026-INJECMEM | one-interaction memory injection across 19 synthetic domains | Qwen, Llama and Mistral backbones with MemoryOS/MemGPT | Not Disclosed — offline memory-system evaluation | Not Disclosed — multiple backbones | variable fused contexts and placements | targeted later responses | system/domain-specific | repeated related queries | targeted retrieval/generation with non-target utility boundary | author attack success and topic-conditioned behavior |
+| SF-2026-INTERACTION-TAX | 11 verifier-scored optimization tasks | multiple LLM families under matched budgets | Not Disclosed — provider/model execution | Not Disclosed — heterogeneous models | task prompts and exchanged solutions/critiques | candidate solutions | matched total budget | independent or interacting agents | verifier score per equal budget and diversity change | deterministic task verifiers |
+| SF-2026-SWE-REFACTOR | 20 whole-repository stack migrations | eight frontier models; 26 effort configurations | Not Disclosed — heterogeneous agent providers | Not Disclosed — provider models | whole repositories | migrated repositories and tests | 520 runs | agent-run-specific | migration completeness plus behavioral correctness | migration audit, fixed tests and six-agent targeted verification |
+| SF-2026-REWORLD | interactive video world rollouts and out-and-back revisit | Wan2.2-based 5B world model | Not Disclosed — real-time serving hardware in v1 setup | Not Disclosed — no single precision contract | 64-second / 384-latent long rollout among other tests | 704x1280 streamed video | 1 interactive trajectory | streaming generation | action following, long-horizon recall, video quality and real-time mode | three-axis author protocol against six systems |
+| SF-2026-BPCO-CRITIC | mathematical reasoning RL and rubric rewards | 1.5B model; two Qwen3 30B-A3B MoE variants | Not Disclosed — training hardware not frozen in claim | Not Disclosed — verl recipe details are source of truth | up to 24k response length in larger-data study | one rollout per prompt for critic branch | 1,024 trajectories per iteration in sanity test; other setups vary | training iteration | held-out AIME accuracy, training reward and explained variance | author-controlled ablations and group-based baseline |
+
+## 5. Deep Analysis Selection
 
 <!-- validator:deep-analysis-selection-v1 -->
 | Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
@@ -328,7 +329,7 @@ PPO 的 token-prefix critic 提供细粒度 credit，却引入 value state、boo
 因此选择应绑定 reward structure、credit granularity、group mixed-outcome probability、rollout price、straggler distribution 与 critic calibration，而不是默认“GRPO 更新、PPO 过时”。单 rollout critic 在受控 math reward 下可能降低采样成本，却增加 value overfit 与 recipe complexity；group-relative baseline 在 parallel rollout 便宜且比较信号可靠时仍更直接。Interaction Tax 的 matched-budget evidence 提醒我们，同理也不能把更多 Agent communication 当作免费的探索增量。
 <!-- analysis:DA-CREDIT-ECONOMICS:end -->
 
-## 5. Books Comparison
+## 6. Books Comparison
 
 <!-- validator:books-comparison-v1 -->
 | Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
@@ -361,7 +362,7 @@ PPO 的 token-prefix critic 提供细粒度 credit，却引入 value state、boo
 <!-- books-review:SF-2026-REWORLD:start --><!-- existing:SF-2026-REWORLD:start -->第25章已拥有 view-indexed memory、recent/local 与 global state、fixed budget、revisit 和 observation reconciliation。<!-- existing:SF-2026-REWORLD:end --><!-- delta:SF-2026-REWORLD:start -->ReWorld 把这些机制组合进实时视频生成，但未提升到物理 causal correctness。<!-- delta:SF-2026-REWORLD:end -->相邻边界复核：第24章拥有生成 factorization，第26章拥有 physical action；latent transition 与 revisable world state 仍归 World Models。<!-- books-review:SF-2026-REWORLD:end -->
 <!-- books-review:SF-2026-BPCO-CRITIC:start --><!-- existing:SF-2026-BPCO-CRITIC:start -->第32章已有 value/GAE、critic cost 与 GRPO 分支，但缺少 critic instability 的联合 failure contract。<!-- existing:SF-2026-BPCO-CRITIC:end --><!-- delta:SF-2026-BPCO-CRITIC:start -->新增 value range、unbiased target、raw advantage、length-adaptive GAE 与 privileged critic input 的条件链，并保留实验边界。<!-- delta:SF-2026-BPCO-CRITIC:end -->相邻边界复核：RLHF 只拥有 reward/alignment 目标，GRPO 拥有 group-relative branch；critic 的联合稳定性合同仍归 PPO。<!-- books-review:SF-2026-BPCO-CRITIC:end -->
 
-## 6. Semantic Audit
+## 7. Semantic Audit
 
 <!-- validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
@@ -373,7 +374,7 @@ PPO 的 token-prefix critic 提供细粒度 credit，却引入 value state、boo
 
 <!-- semantic-review:SA-20260825-BOOKS:start -->Fresh-context reviewer verified all 13 Books receipts after target and semantic-adjacency corrections; no unresolved finding remains.<!-- semantic-review:SA-20260825-BOOKS:end -->
 
-## 7. Ignored Noise
+## 8. Ignored Noise
 
 390 条 arXiv 命中中，369 条未进入最终 denominator，按以下可复算理由闭合：
 
@@ -385,14 +386,14 @@ PPO 的 token-prefix critic 提供细粒度 credit，却引入 value state、boo
 
 代表性拒绝包括 domain-specific KG-RAG、医疗 dialogue、单项 image/video generation 与常规 federated optimization；它们没有被当作“低分候选”稀释账本，而是完成 identity/topic closure 后计入 rejection denominator。
 
-## 8. Recommended Action
+## 9. Recommended Action
 
 1. 2026-W35 Sunday Weekly 聚合时复用本日报的 Review Provenance，并检查 8 月 25～30 日是否出现 revision、artifact 或反证。
 2. 对本次三个 Books Integration 章节做人工顺读，重点检查是否与相邻段落重复，而不是只确认 Git Diff。
 3. BPCO 的 privileged critic input 只作为 training-time branch；没有独立 reward correctness 和 overfit evidence 时，不提升为默认 recipe。
 4. ReWorld、Pointing-VLA 与 AgentFlow 的作者 benchmark 保持 Experimental / scoped，不把画面质量、局部实机成功率或 benchmark ASR 外推到生产。
 
-## 9. Repository Changes
+## 10. Repository Changes
 
 - 重建 `papers/2026/08/25/README.md`，替换旧宽窗口 V2.1 migration report。
 - 更新 `books/part-02-model/17-transformer-layer.md`：prefix invariance 与行为审计。
@@ -401,14 +402,14 @@ PPO 的 token-prefix critic 提供细粒度 credit，却引入 value state、boo
 - 不更新 `docs/LEARNING_STATE.md`；本次没有推进学习进度或改变全书结构。
 - 不生成 provisional Weekly，不 stage、commit 或 push。
 
-## 10. Open Questions
+## 11. Open Questions
 
 - Critic recipe 从 math outcome reward 迁移到 long-horizon tool environment 后，value range、target 与 privileged information 如何重新定义？
 - 类型化 compaction 的 classifier 错误如何进入 safety SLO，哪些规则必须由 deterministic registry 而非 LLM classification 拥有？
 - Prefix invariance audit 如何扩展到 fused kernels、distributed sequence parallel 与缓存复用，而不把数值噪声误判为 causality leak？
 - World-model landmark memory 能否在 object mutation、contradictory observation 与 multi-agent interaction 下保持 identity 和 supersession？
 
-## 11. Sources
+## 12. Sources
 
 访问日期均为 2026-08-25；论文日期均以 arXiv v1 为准。
 
@@ -433,3 +434,9 @@ PPO 的 token-prefix critic 提供细粒度 credit，却引入 value state、boo
 - SWE Refactor Bench: https://arxiv.org/abs/2608.23564v1
 - ReWorld: https://arxiv.org/abs/2608.23565v1
 - How to Train a Critic Stably and Efficiently: https://arxiv.org/abs/2608.23566v1
+
+## 13. Final Status
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；unresolved findings=0。
+
+本节只汇总前述收据与 fresh-context 审计的最终状态，不以格式校验替代语义验收。

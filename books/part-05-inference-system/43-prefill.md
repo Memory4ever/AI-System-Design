@@ -59,6 +59,22 @@ prompt self-attention:    O(B * T_p^2 * d_model)
 
 Sparse Prefill 不是一个统一机制。它至少可沿两个轴演进：固定 window/block pattern 保持规则访问；query-dependent selector 每层或每 head 重新选 token；phase-aware layer plan 则只在 Prefill 跳过部分层，同时为 Decode 物化这些层所需的 KV projection。最后一种利用 Prefill/Decode 的工作负载不对称，却要求 boundary token、跳层 profile、KV completeness 与 model revision 共同进入 contract。
 
+#### Phase-aware layer execution：Prefill 与 Decode 不必共享同一计算图
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-03295:start -->
+完整模型在 Prefill 与 Decode 使用同一层图，最容易维持表示和 KV 一致性；但这也假设两个阶段的层重要性相同。若校准证据表明某些深层对 prompt token 的边际贡献较小，一条实验性分支可以只让 `x[1:N-1]` 在 Prefill 跳过这些层的 Attention 与 FFN，同时独立计算被跳层的 K/V projection；`x[N]` 仍作为第一个经过完整模型的生成 token，由此把近似限制在 Prefill，而不把残缺 KV 带入 Decode。
+
+independent KV projection 只补齐 Decode 所需状态，并不消除跳层造成的 representation mismatch；跳层也仍需加载完整权重，所以它减少的是特定 Prefill compute，而不是自动降低 peak VRAM。layer plan 必须绑定 model、modality、校准集、跳层 ratio、KV projection 规则与 runtime revision，并分别检查 prefill quality、first-token boundary、后续 decode quality 和 TTFT。模型层冗余不足、输入分布漂移、PD 分离使状态交接更复杂，或 strict fidelity 优先时，完整层图仍是正确基线。
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-03295:end -->
+
+#### Block-conditioned FFN working set：从少算 Token Pair 到少算 Channel
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-00397:start -->
+Sparse Attention 减少 token pair，却没有处理短到中等 context 下可能占主要 FLOPs 的 FFN。Decode 常用的逐 token neuron mask 又会破坏 Prefill 的块并行；相反，等完整 prompt 表示生成后再选择，已经错过当前 block 的执行时机。细粒度分支因此先聚合一个 prompt block 的表示，由轻量 predictor 提议共享的 FFN neuron working set，再以 structured sparse FFN 执行；逐层 error compensator 用于限制近似误差累积，但它本身也是需要训练和版本化的 approximation state，而不是免费精度恢复。
+
+这种路线把 `block size / predictor / compensator / layer-wise sparsity budget / kernel implementation` 一起带入 execution identity。预测和 mask selection 会进入 TTFT，少数 token 需要的 neuron 可能被 block aggregate 淹没，动态 weight gather 也可能把 FLOPs 节省换成带宽瓶颈。公开实验只说明特定 LLaMA/Qwen、LongBench、稀疏率与 A100/A5000 组合中的受限收益，不证明在线 batch 或其他加速器同样成立。短 prompt、通用 dense kernel 更快、校准已经漂移或 correctness-first 时，dense FFN 继续作为 fallback。
+<!-- semantic-body-binding:SF-2026-ARXIV-2602-00397:end -->
+
 跳层并未自动降低 peak KV capacity，也可能只减少部分 layer compute；动态 selection 则新增 scoring、compaction 与 irregular gather。完整 Prefill 在 prompt 短、实现简单性或 correctness-first 时继续成立。任何 sparse/skip plan 都必须分别报告 selection cost、KV materialization、TTFT、Decode quality 与 fallback，而不能只引用 attention FLOPs。
 
 当 proxy budget 继续收紧时，binary mask 不只表达“保留哪些 block”，还可以表达“先处理哪些 block”。
@@ -373,6 +389,9 @@ Prefill 利用已知 prompt 的 token-parallelism，高效形成第一个生成�
 Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度。下一章进入 Decode，观察瓶颈怎样转向逐 token 访存与调度。
 
 ## Review notes
+
+- Fast Forward / predictive FFN sparsity（block-conditioned Prefill FFN working set；Status: Experimental）:
+  https://arxiv.org/abs/2602.00397
 
 - Virtual Pipeline Parallelism（prefix-growth-aware virtual stage mapping；Status: Experimental）：
   https://arxiv.org/abs/2608.26523v1

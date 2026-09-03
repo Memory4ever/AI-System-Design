@@ -1240,6 +1240,12 @@ Agent Memory 从追加历史演进成受治理的持久状态系统。写入前�
 
 <!-- source-family:SF-2026-ARXIV-2605-09033 -->
 
+### Stateless API 仍可能承载跨调用的 Implicit Memory
+
+服务端不保存 session state，只能证明没有显式外部 Memory；若上一次输出被应用、用户或另一 Agent 带回新 Context，模型可以在自然语言表面下编码状态，形成 output-mediated hidden channel。这类状态没有独立 record ID、ACL、expiry 或 deletion API，却可影响后续行为，甚至只在达到时间/次数条件后触发。
+
+因此 Memory audit 要同时覆盖显式 store 和可见输出的再注入路径：绑定 predecessor output、normalization、transport、prompt wrapper 与后继行为，用 matched context 与时序对照区分真正渠道与普通语义持续性。输出 scrub/rewrite 会损害 utility 且不能证明移除所有编码；高风险链路应回退结构化 typed handoff、通道白名单或不传回自由文本。公开证据只支持披露的可行性与 time-bomb 实验，不证明所有模型或输出都存在此通道。<!-- source-family:SF-2026-ARXIV-2602-08563 -->
+
 ## 小结
 
 Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多文本。可靠 Memory 保留 provenance、confidence、authorization、target identity、update history 和修正路径，并在多目标干扰下分别验收检索、冲突消解与聚合。下一章从信息状态进入外部行动。

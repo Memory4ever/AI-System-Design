@@ -285,6 +285,12 @@ Reflection 从生成一段自评文字演进到可治理的 skill/strategy revis
 6. Reflection 写入 Memory 需要哪些限制？
 7. Task-scoped improvement state 与普通摘要、长期 Memory 有什么不同？
 
+### Critic Accuracy 不等于 Intervention Value
+
+离线 critic 能准确预测轨迹将失败，仍不能推出“现在打断并提醒它”会提高成功率。介入价值应显式分解为 `recovered failures - disrupted successes - intervention cost`：相同的预测器可以在高失败任务中恢复部分轨迹，却在本来会成功的任务中打断有效状态。因而 deployment gate 应先在小型、代表性 pilot 上运行 paired intervene/no-intervene，直接估计净效应，不用 AUROC 替代该因果对照。
+
+这个 gate 会增加 pilot 成本，也受任务 mixture、critic/model identity 与打断方式偏移影响。样本少或任务高风险时，不确定性应导致关闭自动介入、升级强 verifier/人工审批，而不是默认批量打断。作者披露的特定 agent/benchmark 结果不构成其他 workflow 的通用改进幅度。<!-- source-family:SF-2026-ARXIV-2602-03338 -->
+
 ## 小结
 
 Reflection 的价值来自 evidence-backed feedback、constraint-wise audit 和有界修正，

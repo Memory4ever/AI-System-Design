@@ -108,7 +108,6 @@ Denominator `daily-v2.1:2026-06-24:4c83bfc338f0fa38`. Resolved: 43 source famili
 
 - Target: `books/part-04-training-system/36-distributed-training.md`
 - Adjacent handoff: `books/part-04-training-system/38-pipeline-parallel.md`
-- Source families: SF-2026-ARXIV-2606-24143, SF-2026-ARXIV-2606-24369, SF-2026-ARXIV-2606-24722
 
 ## TRAIN-GRPO
 

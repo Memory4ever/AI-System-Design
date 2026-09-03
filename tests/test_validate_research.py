@@ -834,6 +834,37 @@ class ReportValidationTests(unittest.TestCase):
         )
         self.assertEqual([], self.validator.validate_report_text(report, self.registry))
 
+    def test_historical_daily_may_preserve_optional_arxiv_zero_hit_receipt(self):
+        registry_text = VALID_REGISTRY.replace(
+            "<!-- validator:source-registry-end -->",
+            "| SRC-ARXIV | Academic preprint | Primary Manuscript | Required Daily | "
+            "https://arxiv.org/ | paper | announcement owner | all pages | checked/no-hit "
+            "plus cursor | manuscript identity and claims | — | 2026-08-25 | arXiv |\n"
+            "<!-- validator:source-registry-end -->",
+        )
+        registry, registry_errors = self.validator.validate_registry_text(registry_text)
+        self.assertEqual([], registry_errors)
+        report = VALID_DAILY_V21.replace(
+            "**Contract:** V2.1 Full Replay",
+            "**Contract:** V2.1 Historical Daily Full Replay",
+        ).replace("2026-08-25", "2026-08-01").replace(
+            "2026-08-24", "2026-07-31"
+        ).replace(
+            "2026-08-23", "2026-07-31"
+        ).replace(
+            "| Registry Version | 2026-08-01 |", "| Registry Version | 2026-08-25 |"
+        ).replace("2026-W35", "2026-W31")
+        arxiv_receipt = (
+            "| SRC-ARXIV | 2026-07-31T09:00:00+08:00 | 2026-08-01T09:00:00+08:00 | "
+            "2026-09-03T21:15:00+08:00 | official owner replay | no_hit | 0 | — | "
+            "pages=1; final_cursor=end; rows=0 | 2026-08-01T09:00:00+08:00 | "
+            "coverage:SRC-ARXIV:20260801 | — |\n\n"
+            "<!-- coverage:SRC-ARXIV:20260801:start -->zero owner rows; cursor closed"
+            "<!-- coverage:SRC-ARXIV:20260801:end -->\n"
+        )
+        report = report.replace("\n## 2. Candidate Ledger", "\n" + arxiv_receipt + "\n## 2. Candidate Ledger")
+        self.assertEqual([], self.validator.validate_report_text(report, registry))
+
     def test_checked_hits_require_candidate_families(self):
         invalid = VALID_DAILY.replace("| checked | 1 | SF-001 |", "| checked | 1 | — |")
         errors = self.validator.validate_report_text(invalid, self.registry)
@@ -1771,6 +1802,21 @@ The second source is fully reviewed but remains Weekly Only.
         )
         errors = self.validator.validate_report_text(missing, self.registry)
         self.assertTrue(any("Reviewed Evidence Versions" in error for error in errors))
+
+    def test_explicit_source_review_disposition_matches_candidate_ledger(self):
+        mismatched = VALID_DAILY_V21.replace(
+            "<!-- review:SF-001:end -->",
+            "- Disposition: `Integrate`.\n<!-- review:SF-001:end -->",
+            1,
+        )
+        errors = self.validator.validate_report_text(mismatched, self.registry)
+        self.assertTrue(
+            any(
+                "Source Review Disposition 'Integrate' does not match Candidate Ledger "
+                "Books Disposition 'No Change — Existing Coverage'" in error
+                for error in errors
+            )
+        )
 
         prefixed_primary = VALID_DAILY_V21.replace(
             "| arXiv:2608.00001v1 | ORG-A@arXiv:2608.00001v1 |",

@@ -8,10 +8,9 @@
 
 **Contract:** V2.1 Full Replay；先冻结全局分母，再按 first-public timestamp 回写 owner Daily
 
-**Status:** Complete；fresh-context Coverage、Selection 与 Books audits 已通过；本次回放不生成 provisional Weekly
+**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
 
 ## Executive Summary
-
 本日报严格覆盖 `2026-08-17 09:00:00` 至 `2026-08-18 09:00:00`。官方 arXiv API 的冻结快照在该窗口内返回 526 条唯一 v1；经过 AI-System route filter、Source Family 去重与 primary identity 核验后，分母冻结为 10 个候选：4 个 Deep Review、6 个 Standard Review。候选按首次公开时间归属，不按旧日报发现日搬运。
 
 本窗口最值得长期保留的不是孤立论文名，而是以下系统压力：`INFER-KV-CACHE` 中由《Pallas: A Proactive KV Cache Migration Framework for LLM Inference in AI-RAN》暴露的状态/证据边界；`PLATFORM-SECURITY` 中由《Security of Foundation-Model-Powered Embodied Agents: Attack Surfaces, Attacks, Defenses, and Evaluation》暴露的状态/证据边界；`AGENT-TOOL-CALLING` 中由《SkillEffect: Checked Lowering for Memory-Bounded Agent Tools》暴露的状态/证据边界。所有作者实验都保留 workload 与 evidence boundary，不转写为通用生产结论。
@@ -45,7 +44,7 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 <!-- validator:source-coverage-v2 -->
 | Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
 | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-08-17T09:00:00+08:00 | 2026-08-18T09:00:00+08:00 | 2026-08-25T23:19:00+08:00 | https://export.arxiv.org/api/query; V2.1 replay | checked | 526 | SF-2026-ARXIV-2608-16002<br>SF-2026-ARXIV-2608-16068<br>SF-2026-ARXIV-2608-16477<br>SF-2026-ARXIV-2608-16798<br>SF-2026-ARXIV-2608-16843<br>SF-2026-ARXIV-2608-17007<br>SF-2026-ARXIV-2608-17071<br>SF-2026-ARXIV-2608-17095<br>SF-2026-ARXIV-2608-17124<br>SF-2026-ARXIV-2608-17202 | page count=7 snapshot files; final_cursor=end; daily-window total=526; deduplicated by arXiv ID; [archived manifest](../_sources/arxiv-v2.1-replay-20260801-24/README.md) | 2026-08-18T09:00:00+08:00 | coverage:SRC-ARXIV:20260818 | — |
+| SRC-ARXIV | 2026-08-17T09:00:00+08:00 | 2026-08-18T09:00:00+08:00 | 2026-08-25T23:19:00+08:00 | arXiv official availability schedule + exact-v1 Atom + DataCite DOI created | incomplete | 526 | SF-2026-ARXIV-2608-16002<br>SF-2026-ARXIV-2608-16068<br>SF-2026-ARXIV-2608-16477<br>SF-2026-ARXIV-2608-16798<br>SF-2026-ARXIV-2608-16843<br>SF-2026-ARXIV-2608-17007<br>SF-2026-ARXIV-2608-17071<br>SF-2026-ARXIV-2608-17095<br>SF-2026-ARXIV-2608-17124<br>SF-2026-ARXIV-2608-17202 | — | 2026-09-03T12:10:00+08:00 | ../_sources/daily-20260818/official-arxiv-first-public-owner-receipt-v1.json; coverage:SRC-ARXIV:20260818; unclosed: canonical candidate redistribution pending | GAP-ARXIV-CANONICAL-REDISTRIBUTION-20260818 |
 
 <!-- coverage:SRC-ARXIV:20260818:start -->submittedDate query filtered to [2026-08-17T09:00:00+08:00, 2026-08-18T09:00:00+08:00); canonical snapshot-manifest sha256:4e6b4bd4e75a28b227c1ca674bae32e7fd08419d0da4c1702a091950d83b78d7 (rows sorted by basename as basename<TAB>sha256(file)<LF>); raw gzip snapshots, exact UTC queries and per-file hashes are archived at papers/2026/08/_sources/arxiv-v2.1-replay-20260801-24/README.md; 10 routed families.<!-- coverage:SRC-ARXIV:20260818:end -->
 
@@ -80,17 +79,16 @@ Books 判断在 Source Review 完成后执行。只有能够定位到当前 owne
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2608-16002 | RP-c29c72eb1aac3b7b | standard | arXiv:2608.16002v1 | SRC-ARXIV@arXiv:2608.16002v1 | https://arxiv.org/html/2608.16002v1#S4 (4 Methods) | https://arxiv.org/html/2608.16002v1#S5 (5 Experiments) | https://arxiv.org/html/2608.16002v1#S6 (6 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-16002 | complete |
 | SF-2026-ARXIV-2608-16068 | RP-59ecafa987289f54 | standard | arXiv:2608.16068v1 | SRC-ARXIV@arXiv:2608.16068v1 | https://arxiv.org/html/2608.16068v1#S3.SS1 (3.1 Problem Formulation) | https://arxiv.org/html/2608.16068v1#S7 (7 Experiments) | https://arxiv.org/html/2608.16068v1#S8 (8 Limitations) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-16068 | complete |
-| SF-2026-ARXIV-2608-16477 | RP-3c64994879fc9847 | deep | arXiv:2608.16477v1 | SRC-ARXIV@arXiv:2608.16477v1 | https://arxiv.org/html/2608.16477v1 (§§3–4.5: prefetch-window model, online selection, parallel preparation, replanning and contention-aware migration) | https://arxiv.org/html/2608.16477v1 (§§6.1–6.5, Figs. 5–9 and Tables 2–3: three-model A6000/vLLM evaluation, traces, concurrency and ablations) | https://arxiv.org/html/2608.16477v1 (§§4.4–4.5 and §6.3–6.4: prediction availability, stale preparation, target mismatch and joint resource-allocation boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-16477 | complete |
+| SF-2026-ARXIV-2608-16477 | RP-7069fd4c718a916a | deep | arXiv:2608.16477v1 | SRC-ARXIV@arXiv:2608.16477v1 | https://arxiv.org/html/2608.16477v1 (§§3–4.5: prefetch-window model, online selection, parallel preparation, replanning and contention-aware migration) | https://arxiv.org/html/2608.16477v1 (§§6.1–6.5, Figs. 5–9 and Tables 2–3: three-model A6000/vLLM evaluation, traces, concurrency and ablations) | https://arxiv.org/html/2608.16477v1 (§§4.4–4.5 and §6.3–6.4: prediction availability, stale preparation, target mismatch and joint resource-allocation boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-16477 | complete |
 | SF-2026-ARXIV-2608-16798 | RP-cb58b943783431ed | standard | arXiv:2608.16798v1 | SRC-ARXIV@arXiv:2608.16798v1 | https://arxiv.org/html/2608.16798v1#S2.SS3 (2.3 Agentic Reinforcement Learning Algorithms) | https://arxiv.org/html/2608.16798v1#S4 (4 Experiments) | https://arxiv.org/html/2608.16798v1#S5 (5 Conclusion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-16798 | complete |
-| SF-2026-ARXIV-2608-16843 | RP-d039f0b8a11f0d59 | deep | arXiv:2608.16843v1 | SRC-ARXIV@arXiv:2608.16843v1 | https://arxiv.org/html/2608.16843v1 (§§2.1–2.5: study population, temporal boundary, multi-label coding and six coding dimensions) | https://arxiv.org/html/2608.16843v1 (§8 and Appendices A–B: quantitative coding of 58 attack and 61 defense records; §9 evaluation recommendations) | https://arxiv.org/html/2608.16843v1 (§2.5 and §§11.1–11.4: methodology limits, preprint drift, multi-label judgment and paper-count-versus-risk boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-16843 | complete |
-| SF-2026-ARXIV-2608-17007 | RP-a80407859a959ab9 | deep | arXiv:2608.17007v1 | SRC-ARXIV@arXiv:2608.17007v1 | https://arxiv.org/html/2608.17007v1 (§§2.1–2.3 and §§3.1–3.3: relation registry, independent lowering check, capacity lease and staged publication) | https://arxiv.org/html/2608.17007v1 (§§4.1–4.8 and Appendices A–F: six operator families, five bounded patterns, adversarial proposals and runtime integration) | https://arxiv.org/html/2608.17007v1 (§2.2, §6 and Appendices A/D: trusted-base, parser, plugin coverage, calibration, remote-effect and evaluation-breadth limits) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-17007 | complete |
+| SF-2026-ARXIV-2608-16843 | RP-948925535bbd7168 | deep | arXiv:2608.16843v1 | SRC-ARXIV@arXiv:2608.16843v1 | https://arxiv.org/html/2608.16843v1 (§§2.1–2.5: study population, temporal boundary, multi-label coding and six coding dimensions) | https://arxiv.org/html/2608.16843v1 (§8 and Appendices A–B: quantitative coding of 58 attack and 61 defense records; §9 evaluation recommendations) | https://arxiv.org/html/2608.16843v1 (§2.5 and §§11.1–11.4: methodology limits, preprint drift, multi-label judgment and paper-count-versus-risk boundary) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-16843 | complete |
+| SF-2026-ARXIV-2608-17007 | RP-58746e8785b1c91b | deep | arXiv:2608.17007v1 | SRC-ARXIV@arXiv:2608.17007v1 | https://arxiv.org/html/2608.17007v1 (§§2.1–2.3 and §§3.1–3.3: relation registry, independent lowering check, capacity lease and staged publication) | https://arxiv.org/html/2608.17007v1 (§§4.1–4.8 and Appendices A–F: six operator families, five bounded patterns, adversarial proposals and runtime integration) | https://arxiv.org/html/2608.17007v1 (§2.2, §6 and Appendices A/D: trusted-base, parser, plugin coverage, calibration, remote-effect and evaluation-breadth limits) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-17007 | complete |
 | SF-2026-ARXIV-2608-17071 | RP-e570ce0ff8f6a7ae | standard | arXiv:2608.17071v1 | SRC-ARXIV@arXiv:2608.17071v1 | https://arxiv.org/html/2608.17071v1#S3 (3. Methodology) | https://arxiv.org/html/2608.17071v1#S4 (4. Experimental Results) | https://arxiv.org/html/2608.17071v1#S5 (5. Analysis and Discussion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-17071 | complete |
 | SF-2026-ARXIV-2608-17095 | RP-843ef8ee50caf8d0 | standard | arXiv:2608.17095v1 | SRC-ARXIV@arXiv:2608.17095v1 | https://arxiv.org/html/2608.17095v1#S3 (3 Method) | https://arxiv.org/html/2608.17095v1#S4 (4 Experimental Setup) | https://arxiv.org/html/2608.17095v1#S6 (6 Discussion and Limitations) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-17095 | complete |
 | SF-2026-ARXIV-2608-17124 | RP-7cd19ff73820bb44 | standard | arXiv:2608.17124v1 | SRC-ARXIV@arXiv:2608.17124v1 | https://arxiv.org/html/2608.17124v1#S3 (3 Method) | https://arxiv.org/html/2608.17124v1#S5 (5 Experimental setup) | https://arxiv.org/html/2608.17124v1#S8 (8 Discussion) | Not Disclosed — the reviewed v1 full text does not identify an artifact used by this standard disposition | claim:SF-2026-ARXIV-2608-17124 | complete |
-| SF-2026-ARXIV-2608-17202 | RP-a151323d42c359f8 | deep | arXiv:2608.17202v1 | SRC-ARXIV@arXiv:2608.17202v1 | https://arxiv.org/html/2608.17202v1 (§§III–IV: threat model, decoy corpus, attacked-state binding, refusal pin and benign leash) | https://arxiv.org/html/2608.17202v1 (§§V–VII plus Appendices F–N: seven-model registered gates, K=64 attacks, frozen splits and utility checks) | https://arxiv.org/html/2608.17202v1 (§IX plus §VII-H and Appendices L–O: clean escape, benign shift, tell leakage and jailbreak/non-coverage boundaries) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-17202 | complete |
+| SF-2026-ARXIV-2608-17202 | RP-b920e5aad2846b92 | deep | arXiv:2608.17202v1 | SRC-ARXIV@arXiv:2608.17202v1 | https://arxiv.org/html/2608.17202v1 (§§III–IV: threat model, decoy corpus, attacked-state binding, refusal pin and benign leash) | https://arxiv.org/html/2608.17202v1 (§§V–VII plus Appendices F–N: seven-model registered gates, K=64 attacks, frozen splits and utility checks) | https://arxiv.org/html/2608.17202v1 (§IX plus §VII-H and Appendices L–O: clean escape, benign shift, tell leakage and jailbreak/non-coverage boundaries) | Not Disclosed — the reviewed v1 paper does not identify a repository/commit used by this replay conclusion | claim:SF-2026-ARXIV-2608-17202 | complete |
 
 ### Source Reviews
-
 <!-- review:SF-2026-ARXIV-2608-16002:start -->
 #### From Sequence to Structure: Relational Uncertainty Propagation for LLM Agents
 
@@ -127,7 +125,7 @@ Pallas 在无线 handover 前预测迁移并主动搬运 KV，vLLM 0.8.5、A6000
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了context-conditioned KV state的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以容量、带宽、精度与恢复为长期设计约束。
-- Knowledge owner：`INFER-KV-CACHE`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`INFER-KV-CACHE`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-16477:end -->
 
 <!-- review:SF-2026-ARXIV-2608-16798:start -->
@@ -153,7 +151,7 @@ Pallas 在无线 handover 前预测迁移并主动搬运 KV，vLLM 0.8.5、A6000
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了授权与安全证据的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以policy、隔离与执行边界为长期设计约束。
-- Knowledge owner：`PLATFORM-SECURITY`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`PLATFORM-SECURITY`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-16843:end -->
 
 <!-- review:SF-2026-ARXIV-2608-17007:start -->
@@ -166,7 +164,7 @@ SkillEffect 不信任模型生成的 tool program，而由独立 checker 从 imm
 - Evidence Level：primary paper v1；Review Route：`deep`。
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Score rationale：Design Delta：改变了动作提案与工具结果的表示、控制点或验证路径；System Reach：会跨模型、runtime 与平台边界传播；Durability：结论以schema、权限与副作用为长期设计约束。
-- Knowledge owner：`AGENT-TOOL-CALLING`；Disposition：`Weekly Only — Context`。
+- Knowledge owner：`AGENT-TOOL-CALLING`；Disposition：`Integrate`。
 <!-- review:SF-2026-ARXIV-2608-17007:end -->
 
 <!-- review:SF-2026-ARXIV-2608-17071:start -->
@@ -336,3 +334,5 @@ SkillEffect 不信任模型生成的 tool program，而由独立 checker 从 imm
 ## 13. Final Status
 
 Daily V2.1 的 frozen denominator、Evidence Review、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，Coverage、Evidence 与 Books Gates 已闭合。
+
+State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；Unresolved Findings=0。

@@ -278,6 +278,12 @@ Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、mod
 5. 单位成本下降为什么可能让总成本上升？
 6. 共享 serving 的成本归因为什么只能近似？
 
+### Generation Energy 不是 Token 数的线性函数
+
+按 `input_tokens + output_tokens` 估算能耗在窄长度区间容易复算，却隐藏了 prefill 与 autoregressive decode 对计算、内存访存和固定启动成本的不同叠加。更精确的模型应保留 input/output length 二维曲面与 model/runtime/hardware identity，先找到单位有效 token 的局部 operating point，再评估截断、摘要或 generation budget 是否真正降低 `energy_per_successful_goal`。
+
+所谓 sweet spot 会随 batch、KV cache、quantization、clock/power cap 和硬件改变，摘要还可能增加额外请求并降低质量。因而分析式模型只用于 proposal/what-if，必须用当前 runtime 能耗与质量/SLO 回执校准；稳定窄负载仍可使用线性模型。公开结果只支持披露的 H100、TensorRT-LLM、模型和长度网格，不可外推跨硬件节能倍数。<!-- source-family:SF-2026-ARXIV-2602-05695 -->
+
 ## 小结
 
 成本是资源时间、结果与约束的关系。平台应优化满足质量和 SLO 的有效结果，而不是孤立追求 GPU busy 或最低 token 单价。下一章为这些归因和政策建立租户边界。

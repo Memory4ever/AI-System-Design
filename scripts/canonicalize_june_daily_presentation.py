@@ -118,6 +118,15 @@ def _normalize_existing_canonical(text: str, research_date: str) -> str:
         canonical_preamble += "\n".join(preserved_lines).strip() + "\n\n"
     text = canonical_preamble + text[executive_start + len(executive_heading) :].lstrip("\n")
 
+    if "## 4. Benchmark Contracts" not in text:
+        section5 = text.index("## 5. Deep Analysis Selection")
+        text = (
+            text[:section5].rstrip()
+            + "\n\n## 4. Benchmark Contracts\n\n"
+            + "None — Candidate Ledger 中没有需要单独登记的 benchmark claim。\n\n"
+            + text[section5:]
+        )
+
     section3 = text.index("## 3. Review Completion Receipt")
     section4 = text.index("## 4. Benchmark Contracts", section3)
     section5 = text.index("## 5. Deep Analysis Selection", section4)

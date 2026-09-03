@@ -231,6 +231,14 @@ Offload 是否有效取决于：
 
 目标不是移出最多 bytes，而是在不让 GPU 等待的前提下，把 cold state 放到更大层级。
 
+### Full Host Cache 用容量换跨节点 Communication
+
+ZeRO/FSDP 在每次需要完整参数时通过 inter-node collective 重建 working set，在网络带宽充足、host memory 受限时最合理；若每个节点都有足够 DRAM 而跨节点链路成为瓶颈，可以让每个节点的 host memory 缓存完整参数，在节点内按 layer/operation 将 active shard stream 到 GPU。这样以 host capacity 与 PCIe traffic 换掉重复的 inter-node parameter collective：host cache 拥有完整 parameter generation，GPU 只拥有当前 working set，optimizer/gradient ownership 仍按并行计划提交，prefetch 不能让未完成的新版本提前可见。
+
+完整 host cache 增加每节点内存、NUMA/pinned-buffer、CPU-GPU copy 与 cache coherence 成本；参数更新、恢复或 world-size 改变时，任一节点的 stale copy 都可能污染训练。网络较快、DRAM 不足或模型可完全驻留 HBM 时，普通 ZeRO/FSDP 仍更简单。`arXiv:2602.06499v1` 的 exact-v1 只支持 FCDP 在 4×8 A40、100Gbps EDR、所披露 FP16/FP32 与 DeepSpeed 配置下的 full host cache、prefetch 和作者结果，不证明不同拓扑、模型、optimizer 或 failure recovery 下的普遍优势。
+
+<!-- source-family:SF-2026-ARXIV-2602-06499 -->
+
 ### 从 GPU-resident Shard 到 CPU-authoritative Layer Stream
 
 ZeRO/FSDP 假设 state 分片后各 rank 的 active working set 能进入 accelerator；当总权重、gradient 与 optimizer
@@ -327,6 +335,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 它不是通用 OOM 开关。Activation、workspace、network、offload 层级和恢复语义必须分别建模。正确 ZeRO 配置应从 memory breakdown 出发，并用通信、吞吐、数值与 restore 共同验证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-06499`（Status: Experimental）：exact-v1 支持 FCDP 的 per-node full host parameter cache、pinned NUMA-local buffers、dedicated CUDA stream 与作者 4×8 A40/100Gbps EDR 实验；不证明所有模型、网络、optimizer、精度或恢复路径上都优于 ZeRO/FSDP。https://arxiv.org/html/2602.06499v1
 
 - MegaTrain（CPU-authoritative layer-streamed training；Status: Experimental）: https://arxiv.org/abs/2604.05091
 

@@ -475,6 +475,14 @@ Answer cache 只按 query key 复用，在知识稳定、答案无时间敏感�
 
 这种 evidence-aware cache 用 dependency index、invalidation fan-out 与命中前验证换一致性；文档频繁变化时验证成本可能接近重算，错误的 support extraction 也会制造假新鲜。稳定、只读 corpus 仍可使用 TTL 或版本化 namespace；需要删除语义、审计或强时效时，则应让 evidence identity 而不是 query string 拥有复用权。
 
+### 异步验证只能修订未来 Cache State，不能改写当前请求
+
+每次语义 cache miss 都同步调用强 judge，在高风险请求上容易解释，却把昂贵验证放入每条请求的 critical path；只按 embedding threshold 直接命中又会把语义相似误当答案等价。一条中间路线保留静态阈值和动态 cache 的快路径：落入灰区的当前请求照常检索/生成，同时把候选问答送到 off-path judge；只有 judge 确认等价后，cache owner 才以新 query key、answer/evidence generation 与 verdict revision 原子写入，供未来请求复用。触发验证的当前请求不能被事后改写，judge 也不能绕过 corpus freshness 与权限检查。
+
+异步修订移出在线 judge latency，却增加 delayed benefit、错误 overwrite、stale answer、重复验证与 cache pollution；高风险 claim、动态 corpus 或 judge 未校准时仍应同步验证或直接 miss。`arXiv:2602.13165v1` 的 exact-v1 只支持 Krites 披露的 grey-zone scheduling 与 auxiliary overwrite 机制；其 trace-driven simulation 用 benchmark equivalence class 代替真实在线 judge，且没有闭合生产 judge 准确率、cache capacity、overlap distribution 或删除传播，因此不能证明开放域语义 cache 的端到端可靠性。
+
+<!-- source-family:SF-2026-ARXIV-2602-13165 -->
+
 ### GraphRAG 的 Citation 必须绑定实际 Traversal
 
 在扁平文档检索中，citation 通常绑定被送入 Context 的 chunk；图检索还会经由实体、关系和多跳邻域选择证据。若最终只列出几条可见文档，系统就无法区分“被访问但未采用”“作为中间桥接”“真正支持 claim”的节点。可审计路径应同时冻结 graph revision、遍历邻域、访问集合、支持边和最终 citation：
@@ -569,6 +577,14 @@ Passage ranking 在语料静态、事实长期有效时足够简单；持续变�
 
 让 reader 在 prompt 中隐式决定是否检索、查哪里，在 corpus 小且单轮任务中最简单；多源、权限与预算约束出现后，决策无法审计或恢复。RAG controller 应外置 retrieval state，记录 query tree、已访问 source、预算、权限、证据覆盖与下一 routing action，再把受控证据交给 reader。收益是可重放、可恢复和最小权限，代价是 state schema 与 router 错误；state stale、错误剪枝或跨租户泄漏时应回退静态检索/人工批准。exact-v1 只支持 StateRAG 披露的 MARS/SMP 等机制和实验，不证明任意 corpus 或 reader 上的收益。<!-- source-family:SF-2026-ARXIV-2605-25379 -->
 
+### Multimodal Memory Graph 必须分离 Evidence Identity 与 Structural Credit
+
+把所有页面切成独立 chunk，在查询局部且文档关系弱时最简单；超长视觉文档中的同一事实却可能分散在图、表、正文与跨页引用里，单次向量排序既丢失关系，也无法说明一条推理路径为何保留某个视觉区域。更强的检索对象可以把文本或视觉单元、关系边和来源 locator 组成版本化 memory graph：graph builder 拥有结构 proposal，retrieval controller 记录实际 traversal、分辨率分配与 pruning frontier，reader 只消费已经接纳的 evidence subgraph。训练得到的 structural credit 可以影响下一次搜索，却不能改写节点来源或把高 reward 升格为事实。
+
+图结构换来跨页组合与稀疏检索，也引入 graph construction error、过期 edge、错误剪枝和更昂贵的 provenance 维护；压缩后的视觉 memory 还可能删除后来问题所需的细节。因此 corpus 小、页面独立或关系提取不可靠时，保留 flat retrieval 与原页 fallback 更稳妥；高风险回答必须能从 traversal 回到原始 page/region，而不能只引用派生图节点。
+
+<!-- SF-2026-ARXIV-2602-12735 -->
+
 ### Checker Reward 不能同时充当训练信号和独立证据
 
 用 NLI/grounding checker 给 RAG policy 奖励，checker 与真实质量高度一致时能减少人工标注；policy 适应 checker 后，可能通过迎合判别边界获得高分而不改善证据支持。Training owner 与 evaluation owner 必须分离：checker 可生成 proposal reward，但 release gate 需独立 judge、held-out evidence 与多 seed regression。收益是保留可扩展反馈，代价是双评估链和更高成本；独立性不足或 reward collapse 时应冻结 policy、回退基线并审查错误 cascade。exact-v1 只支持论文的医疗 RAG、checker、模型和实验设置，不证明临床正确性或跨域稳定性。<!-- source-family:SF-2026-ARXIV-2605-25988 -->
@@ -626,6 +642,10 @@ RAG 从 top-k 相似度检索演进到 evidence admission 和闭环预算控制�
 RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。预测性检索可以隐藏部分 IO，SSD filtered ANN 可以扩大索引复用，但二者都必须把错误预测、过期、最终过滤和 evidence admission 留给明确 owner。下一章进入可跨会话演化的 Memory。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-13165`（Status: Experimental）：exact-v1 支持 Krites 的 static/dynamic threshold fast path、grey-zone off-path verification 与 future-only auxiliary overwrite；evaluation 以 benchmark ground-truth equivalence classes 模拟 judge，未证明真实在线 judge、动态 corpus、capacity/invalidation 或生产 tail latency。https://arxiv.org/html/2602.13165v1
+
+- `SF-2026-ARXIV-2602-12735`（Status: Experimental）：exact-v1 的 §3.1～3.3 描述 multimodal memory graph、graph-modulated visual memory 与 graph-guided policy optimization，§4.1～4.3 给出作者 benchmark、结果与分析，§6/Impact Statement 不构成开放域可靠性证明；证据不覆盖 graph provenance 的生产维护、动态 corpus 或高风险事实核验。https://arxiv.org/html/2602.12735v1
 
 - **HaS（arXiv:2604.20452v1；Status: Experimental）**：支持基于历史 homologous query 的 speculative retrieval draft、surrogate validation 与 full-retrieval fallback。证据限于作者数据集、cache/fuzzy channels 和实验设置，不证明代理条件在开放域、高风险或动态 corpus 中可靠。https://arxiv.org/abs/2604.20452v1
 

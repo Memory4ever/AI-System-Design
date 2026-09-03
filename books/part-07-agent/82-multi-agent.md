@@ -658,6 +658,12 @@ Multi-Agent 从广播全部对话演进到 typed role、message、shared state �
 
 <!-- source-family:SF-2026-ARXIV-2605-08647 -->
 
+### Multi-Agent Failure 要按 Intra / Inter / Environment 分层归因
+
+只检查最终 RCA 答案会把三种责任混成“模型不够强”：单 Agent 内部的证据误读/探索不全，Agent 之间的消息缺失/语义变形，以及 Agent 与工具环境之间的 observation/action 错配。可运维的 failure ledger 应为每次 run 保存 earliest evidence-backed failure span、责任层、影响的 handoff/state 与最终 outcome；修复也应对应层级，不把 prompt rewrite 当作所有失败的公用补丁。
+
+更丰富的 inter-agent protocol 可能减少通信失败，却会增加 token、schema、延迟与错误状态传播，也无法修复工具返回错误或单 Agent 未探索。简单任务仍以单 Agent 和 deterministic verifier 为基线；这一 taxonomy 只在作者的 cloud-RCA benchmark、模型和协议上得到验证，不证明其失败比例能外推到任意 multi-Agent 系统。<!-- source-family:SF-2026-ARXIV-2602-09937 -->
+
 ## 小结
 
 Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，而不是更多对话。稳定系统依赖 typed handoffs、shared workflow state、bounded delegation 和独立 verification。下一章进入连接标准 MCP。
