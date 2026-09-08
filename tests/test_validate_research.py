@@ -352,8 +352,7 @@ def write_contract_root(root: Path) -> None:
             "docs/REPORT_CONTRACTS.md",
         )
     )
-    (root / "CODEX_DAILY_RESEARCH_PROMPT.md").write_text(links, encoding="utf-8")
-    (root / "CODEX_HISTORICAL_RESEARCH_PROMPT.md").write_text(links, encoding="utf-8")
+    (root / "CODEX_RESEARCH_PROMPT.md").write_text(links, encoding="utf-8")
     (root / "ROADMAP.md").write_text(
         "| 稳定节点 ID | 当前章节 | 当前路径 | 旧章节 |\n"
         "| --- | ---: | --- | ---: |\n"
@@ -870,6 +869,37 @@ class ReportValidationTests(unittest.TestCase):
         errors = self.validator.validate_report_text(invalid, self.registry)
         self.assertTrue(any("checked source with Hits greater than 0" in error for error in errors))
 
+    def test_checked_source_can_close_all_hits_before_denominator(self):
+        registry = dict(self.registry)
+        registry["ORG-B"] = dict(registry["ORG-A"])
+        receipt = (
+            "| ORG-B | 2026-08-24T09:00:00+08:00 | 2026-08-25T09:00:00+08:00 | "
+            "2026-08-25T09:00:00+08:00 | https://example.org/papers | checked | 1 | — | "
+            "pages=1; final_cursor=end | 2026-08-25T09:00:00+08:00 | coverage:ORG-B:closed | — |\n"
+        )
+        closure_row = "| arXiv:2608.00002v1 | pre-denominator closure | Single-dataset accuracy improvement without a change to execution, state ownership, or evaluation contract. |"
+        proof = (
+            "\n<!-- coverage:ORG-B:closed:start -->\n"
+            "| Primary Identifier | Screening Decision | Reason |\n"
+            "| --- | --- | --- |\n" + closure_row + "\n"
+            "<!-- coverage:ORG-B:closed:end -->\n"
+        )
+        report = VALID_DAILY_V21.replace("\n\n## 2. Candidate Ledger", "\n" + receipt + "\n## 2. Candidate Ledger") + proof
+        self.assertEqual([], self.validator.validate_report_text(report, registry))
+        for changed in (
+            report.replace("| checked | 1 | — |", "| checked | 2 | — |"),
+            report.replace("pre-denominator closure", "screening pending"),
+            report.replace("arXiv:2608.00002v1", "Pending — identity not resolved"),
+            report.replace("arXiv:2608.00002v1", "section 3"),
+            report.replace("arXiv:2608.00002v1", "coverage:ORG-B:closed"),
+            report.replace(closure_row, closure_row + "\n" + closure_row),
+            report.replace("Single-dataset accuracy improvement without a change to execution, state ownership, or evaluation contract.", "—"),
+            report.replace(proof, ""),
+        ):
+            with self.subTest(changed=changed[-250:]):
+                errors = self.validator.validate_report_text(changed, registry)
+                self.assertTrue(any("checked source with Hits greater than 0" in error for error in errors))
+
     def test_receipt_and_candidate_ledger_are_bidirectionally_reconciled(self):
         unknown_family = VALID_DAILY.replace("| checked | 1 | SF-001 |", "| checked | 1 | SF-MISSING |")
         errors = self.validator.validate_report_text(unknown_family, self.registry)
@@ -1350,6 +1380,167 @@ class CollectionValidationTests(unittest.TestCase):
         reports = [(Path("papers/a.md"), VALID_DAILY), (Path("papers/b.md"), VALID_DAILY)]
         errors = self.validator.validate_report_collection(reports, Path("/repo"))
         self.assertTrue(any("duplicate Denominator ID" in error for error in errors))
+
+
+def daily_v22():
+    """V2.2 retains evidence/Books receipts, not the editorial selection ledger."""
+    text = VALID_DAILY_V21.replace("V2.1", "V2.2")
+    text = text.replace("2026-08-23T09:00:00+08:00", "2026-08-24T09:00:00+08:00")
+    text = text.replace("| Contract Version | V2.2 |", "| Contract Version | V2.2 |\n| Family Records Ref | records.json |")
+    start = text.index("<!-- validator:deep-analysis-selection-v1 -->")
+    end = text.index("## 6. Books Comparison", start)
+    text = text[:start] + "Selection is editorial, not an evidence prerequisite.\n\n" + text[end:]
+    text = text.replace("## 5. Deep Analysis Selection", "## 5. Deep Analysis")
+    text = text.replace("| evidence | review:SF-001; claim:SF-001 |",
+                        "| evidence | review:SF-001; claim:SF-001; analysis:DA-001 |")
+    return "\n".join(line for line in text.split("\n") if not line.startswith("| AUD-DA-001 |"))
+
+
+class ReportV22ValidationTests(unittest.TestCase):
+    def test_closed_receipt_cannot_precede_window_end(self):
+        text = daily_v22().replace(
+            "2026-08-25T09:00:00+08:00 | https://example.com/research",
+            "2026-08-25T08:59:59+08:00 | https://example.com/research",
+            1,
+        )
+        errors = self.validator.validate_report_text(text, self.registry, strict=True)
+        self.assertTrue(any("cannot close a window before Window End" in error for error in errors))
+
+    def test_closed_receipt_compares_timezone_aware_instants(self):
+        text = daily_v22().replace(
+            "2026-08-25T09:00:00+08:00 | https://example.com/research",
+            "2026-08-25T01:00:00+00:00 | https://example.com/research",
+            1,
+        )
+        self.assertEqual([], self.validator.validate_report_text(text, self.registry, strict=True))
+
+    def test_early_receipt_may_remain_incomplete(self):
+        text = daily_v22().replace(
+            "2026-08-25T09:00:00+08:00 | https://example.com/research",
+            "2026-08-25T08:59:59+08:00 | https://example.com/research",
+            1,
+        ).replace("| checked | 1 |", "| incomplete | 1 |", 1)
+        errors = self.validator.validate_report_text(text, self.registry, strict=True)
+        self.assertFalse(any("cannot close a window before Window End" in error for error in errors))
+        self.assertTrue(any("incomplete" in error for error in errors))
+
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = load_validator()
+        cls.registry, errors = cls.validator.validate_registry_text(VALID_REGISTRY)
+        assert not errors, errors
+
+    def test_editorial_selection_does_not_gate_complete_evidence(self):
+        self.assertEqual([], self.validator.validate_report_text(daily_v22(), self.registry, strict=True))
+
+    def test_books_discovery_does_not_require_preselection_prediction(self):
+        text = daily_v22().replace("No Change — Existing Coverage", "Integrate")
+        self.assertEqual([], self.validator.validate_report_text(text, self.registry, strict=True))
+
+    def test_evidence_audit_still_required(self):
+        text = "\n".join(line for line in daily_v22().split("\n") if not line.startswith("| AUD-EVD-001 |"))
+        self.assertTrue(any("scope evidence" in e for e in self.validator.validate_report_text(text, self.registry)))
+
+    def test_pending_still_prevents_complete(self):
+        text = daily_v22().replace("| deep_complete | accessible |", "| pending | accessible |")
+        self.assertTrue(self.validator.validate_report_text(text, self.registry))
+
+    def test_records_ref_required_and_unknown_version_rejected(self):
+        text = daily_v22().replace("| Family Records Ref | records.json |\n", "")
+        self.assertTrue(any("Family Records Ref" in e for e in self.validator.validate_report_text(text, self.registry)))
+        self.assertTrue(self.validator.validate_report_text(daily_v22().replace("V2.2", "V9.9"), self.registry))
+
+    def test_unknown_explicit_version_on_earlier_interface_is_rejected(self):
+        text = VALID_DAILY.replace("| Score Schema | V2 |", "| Score Schema | V2 |\n| Contract Version | V9.9 |")
+        self.assertTrue(any("Contract Version" in e for e in self.validator.validate_report_text(text, self.registry)))
+
+    def test_complete_or_partially_absent_freeze_is_rejected(self):
+        text = daily_v22().replace("DEN-2026-08-25-V21-001", "—").replace("2026-08-25T23:00:00+08:00", "—")
+        self.assertTrue(self.validator.validate_report_text(text, self.registry))
+        text = text.replace("Complete", "In Progress").replace("Coverage=Closed", "Coverage=Open")
+        text = text.replace("| Coverage Gate | Closed |", "| Coverage Gate | Open |")
+        text = text.replace("| Denominator ID | — |", "| Denominator ID | DEN-PARTIAL |")
+        self.assertTrue(any("Denominator Frozen At" in e for e in self.validator.validate_report_text(text, self.registry)))
+
+    def test_closed_coverage_requires_passed_audit_even_before_complete(self):
+        text = daily_v22().replace("Complete", "In Progress")
+        text = "\n".join(line for line in text.split("\n") if not line.startswith("| AUD-COV-001 |"))
+        self.assertTrue(any("Coverage Gate Closed" in e for e in self.validator.validate_report_text(text, self.registry)))
+
+    def test_canonical_record_drift_is_checked_from_file(self):
+        import json
+        from scripts import research_records
+        text = daily_v22()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "README.md"
+            canonical = research_records.extract(text)
+            path.write_text(text, encoding="utf-8")
+            (root / "records.json").write_text(json.dumps(canonical), encoding="utf-8")
+            self.assertEqual([], self.validator.validate_family_records(text, path, root))
+            canonical["families"][0]["Durability"] = "1"
+            canonical["families"][0]["Review Status"] = "standard_complete"
+            (root / "records.json").write_text(json.dumps(canonical), encoding="utf-8")
+            self.assertTrue(self.validator.validate_family_records(text, path, root))
+            outside = text.replace("| records.json |", "| ../outside.json |")
+            self.assertTrue(self.validator.validate_family_records(outside, path, root))
+
+    def test_narrative_still_limited_to_three_units(self):
+        text = daily_v22() + "\n" + "\n".join(
+            f"<!-- analysis:DA-{n}:start -->\nAn additional analysis.\n<!-- analysis:DA-{n}:end -->"
+            for n in range(2, 5)
+        )
+        self.assertTrue(any("at most 3" in e for e in self.validator.validate_report_text(text, self.registry)))
+
+    def test_shared_section_locator_is_allowed_for_v22_facets(self):
+        from scripts import research_records
+        text = daily_v22()
+        records = research_records.extract(text)
+        records["families"][0]["Evaluation Locators"] = records["families"][0]["Method / Identity Locators"]
+        rendered = research_records.render(text, records)
+        self.assertEqual([], self.validator.validate_report_text(rendered, self.registry, strict=True))
+
+    def test_v22_still_rejects_nonlocating_evidence(self):
+        from scripts import research_records
+        text = daily_v22()
+        records = research_records.extract(text)
+        records["families"][0]["Evaluation Locators"] = "already checked"
+        rendered = research_records.render(text, records)
+        self.assertTrue(any("Evaluation Locators" in e for e in self.validator.validate_report_text(rendered, self.registry)))
+
+    def test_passed_evidence_audit_must_cover_every_v22_narrative(self):
+        text = daily_v22().replace(
+            "## 5. Deep Analysis\n",
+            "## 5. Deep Analysis\n\n<!-- analysis:DA-NEW:start -->\n"
+            "A mechanism claim supported by review:SF-001.\n<!-- analysis:DA-NEW:end -->\n",
+        )
+        errors = self.validator.validate_report_text(text, self.registry, strict=True)
+        self.assertTrue(any("evidence audit" in e and "analysis:DA-NEW" in e for e in errors))
+        covered = text.replace("; analysis:DA-001 |", "; analysis:DA-001; analysis:DA-NEW |")
+        self.assertEqual([], self.validator.validate_report_text(covered, self.registry, strict=True))
+
+    def test_open_evidence_audit_may_have_an_unreviewed_v22_narrative(self):
+        text = daily_v22().replace("Complete", "In Progress")
+        text = text.replace("Evidence=Passed", "Evidence=Open").replace("Books=Passed", "Books=Open")
+        text = text.replace("| Evidence Gate | Passed |", "| Evidence Gate | Open |")
+        text = text.replace("| Books Gate | Passed |", "| Books Gate | Open |")
+        text = text.replace("| none | Not Required — no unresolved evidence finding | passed |",
+                            "| EVD-NARRATIVE | Pending analysis:DA-NEW review | open |")
+        text = text.replace("## 5. Deep Analysis\n", "## 5. Deep Analysis\n\n"
+                            "<!-- analysis:DA-NEW:start -->\nA pending synthesis.\n<!-- analysis:DA-NEW:end -->\n")
+        self.assertEqual([], self.validator.validate_report_text(text, self.registry, strict=True))
+
+    def test_family_books_can_finish_while_report_coverage_is_open(self):
+        text = daily_v22().replace("Complete", "In Progress").replace("Coverage=Closed", "Coverage=Open")
+        text = text.replace("Evidence=Passed", "Evidence=Open").replace("Books=Passed", "Books=Open")
+        text = text.replace("| Coverage Gate | Closed |", "| Coverage Gate | Open |")
+        text = text.replace("| Evidence Gate | Passed |", "| Evidence Gate | Open |")
+        text = text.replace("| Books Gate | Passed |", "| Books Gate | Open |")
+        text = text.replace("| none | Not Required — no unresolved coverage finding | passed |",
+                            "| COV-OTHER-SOURCE | Pending unrelated source pagination | open |")
+        # The reviewed family remains accessible, deep-complete and compared with Books.
+        text = text.replace("DEN-2026-08-25-V21-001", "—").replace("2026-08-25T23:00:00+08:00", "—")
+        self.assertEqual([], self.validator.validate_report_text(text, self.registry))
 
 
 class ReportV21ValidationTests(unittest.TestCase):
@@ -2497,8 +2688,7 @@ class BundleValidationTests(unittest.TestCase):
                 "| Books Gate | Passed / Conditional Pass / Open / Not Applicable |\n",
                 encoding="utf-8",
             )
-            (root / "CODEX_DAILY_RESEARCH_PROMPT.md").write_text("docs/RESEARCH_CONTRACT.md\n", encoding="utf-8")
-            (root / "CODEX_HISTORICAL_RESEARCH_PROMPT.md").write_text("docs/RESEARCH_CONTRACT.md\n", encoding="utf-8")
+            (root / "CODEX_RESEARCH_PROMPT.md").write_text("docs/RESEARCH_CONTRACT.md\n", encoding="utf-8")
             errors = self.validator.validate_contract_bundle(root)
             self.assertTrue(any("RESEARCH_SOURCES.md" in error for error in errors))
             self.assertTrue(any("REPORT_CONTRACTS.md" in error for error in errors))
@@ -2526,10 +2716,9 @@ class BundleValidationTests(unittest.TestCase):
                     "docs/REPORT_CONTRACTS.md",
                 )
             )
-            (root / "CODEX_DAILY_RESEARCH_PROMPT.md").write_text(
+            (root / "CODEX_RESEARCH_PROMPT.md").write_text(
                 links + "\nTechnical Novelty\n", encoding="utf-8"
             )
-            (root / "CODEX_HISTORICAL_RESEARCH_PROMPT.md").write_text(links, encoding="utf-8")
             errors = self.validator.validate_contract_bundle(root)
             self.assertFalse(any("Score V1 policy" in error for error in errors))
 
@@ -2563,66 +2752,40 @@ class BundleValidationTests(unittest.TestCase):
             errors = self.validator.validate_contract_bundle(root)
             self.assertTrue(any("Books Gate must publish Conditional Pass" in error for error in errors))
 
-    def test_repository_registry_contains_the_approved_source_delta(self):
+    def test_repository_source_list_covers_project_routes(self):
         records, errors = self.validator.validate_registry_text(
             (ROOT / "docs" / "RESEARCH_SOURCES.md").read_text(encoding="utf-8")
         )
         self.assertEqual([], errors)
         required = {
-            "SRC-AI21",
-            "SRC-STABILITY-AI",
-            "SRC-BLACK-FOREST-LABS",
-            "SRC-RUNWAY",
-            "SRC-LIQUID-AI",
-            "SRC-TOGETHER-AI",
-            "SRC-MEITUAN-LONGCAT",
-            "SRC-PHYSICAL-INTELLIGENCE",
-            "SRC-WORLD-LABS",
-            "SRC-METR",
-            "SRC-UK-AISI",
-            "SRC-NIST-AI",
-            "SRC-MLCOMMONS",
-            "SRC-STANFORD-CRFM",
-            "SRC-MLSYS",
-            "SRC-ACM-DL",
-            "SRC-IEEE-XPLORE",
-            "SRC-USENIX",
-            "SRC-VERL",
-            "SRC-NEMO-RL",
-            "SRC-TORCHTITAN",
-            "SRC-MAXTEXT",
-            "SRC-LLM-D",
-            "SRC-GATEWAY-INFERENCE",
-            "SRC-KUEUE",
-            "SRC-JOBSET",
-            "SRC-LEADERWORKERSET",
-            "SRC-NCCL",
-            "SRC-RCCL",
-            "SRC-TRANSFORMER-ENGINE",
-            "SRC-FLASHINFER",
-            "SRC-DEEPEP",
-            "SRC-DEEPGEMM",
-            "SRC-MCP",
-            "SRC-A2A",
-            "SRC-TRITON-LANGUAGE",
-            "SRC-TRITON-SERVER",
+            "SRC-ARXIV", "SRC-OPENAI", "SRC-GOOGLE-AI",
+            "SRC-BLACK-FOREST-LABS", "SRC-PHYSICAL-INTELLIGENCE", "SRC-WORLD-LABS",
+            "SRC-METR", "SRC-MLCOMMONS", "SRC-MLSYS", "SRC-USENIX",
+            "SRC-PYTORCH", "SRC-VERL", "SRC-MEGATRON-LM", "SRC-DEEPSPEED",
+            "SRC-VLLM", "SRC-SGLANG", "SRC-TRITON-LANGUAGE", "SRC-FLASHINFER",
+            "SRC-NCCL", "SRC-KSERVE", "SRC-KUEUE", "SRC-MCP",
         }
         self.assertEqual(set(), required - set(records))
+        for row in records.values():
+            self.assertNotIn("Expected Coverage Receipt", row)
+            self.assertNotIn("Fallback", row)
 
-    def test_repository_registry_preserves_merge_and_cadence_policy(self):
+    def test_repository_source_list_preserves_identity_and_bounded_cadence(self):
         records, errors = self.validator.validate_registry_text(
             (ROOT / "docs" / "RESEARCH_SOURCES.md").read_text(encoding="utf-8")
         )
         self.assertEqual([], errors)
         self.assertNotIn("SRC-GOOGLE-DEEPMIND", records)
-        self.assertIn("Google DeepMind", records["SRC-GOOGLE-AI"]["Aliases"])
-        self.assertIn("Zhipu AI", records["SRC-ZAI"]["Aliases"])
-        self.assertEqual("Required Weekly", records["SRC-APPLE-ML"]["Cadence"])
-        self.assertEqual("Required Weekly", records["SRC-OPENREVIEW"]["Cadence"])
-        self.assertEqual("Discovery / Recovery Backstop", records["SRC-GOOGLE-SCHOLAR"]["Cadence"])
-        self.assertEqual("Discovery / Metadata", records["SRC-HF-PAPERS"]["Authority Role"])
-        self.assertEqual("Discovery / Metadata", records["SRC-HF-BLOG"]["Authority Role"])
-
+        self.assertIn("Google DeepMind", records["SRC-GOOGLE-AI"]["Official Endpoints"])
+        self.assertIn("智谱", records["SRC-ZAI"]["Source Name"])
+        self.assertEqual("Required Daily", records["SRC-ARXIV"]["Cadence"])
+        for source_id in ("SRC-TENCENT-HUNYUAN", "SRC-ZAI", "SRC-BYTEDANCE-SEED",
+                          "SRC-BAIDU-ERNIE", "SRC-XIAOMI-MIMO", "SRC-MINIMAX"):
+            self.assertEqual("Required Daily", records[source_id]["Cadence"])
+        self.assertEqual("Event Trigger", records["SRC-OPENREVIEW"]["Cadence"])
+        self.assertNotIn("SRC-GOOGLE-SCHOLAR", records)
+        self.assertNotIn("SRC-HF-PAPERS", records)
+        self.assertNotIn("SRC-ORCID", records)
 
 if __name__ == "__main__":
     unittest.main()

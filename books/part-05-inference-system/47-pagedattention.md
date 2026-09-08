@@ -181,6 +181,18 @@ vLLM 把 PagedAttention 作为核心设计之一，用它支撑高吞吐 LLM Ser
 
 因此在知识树里，本章只讲 PagedAttention 的内存管理思想；第 50 章的 LLM Serving Engine 案例会进一步讨论 vLLM 如何把这个机制和 scheduler、API、distributed inference 组合起来。
 
+### Shared Prefix 与 Private Suffix 可以使用不同页粒度
+
+统一小页降低 suffix 内部碎片，却增加共享 prefix 的 block table、refcount 与 kernel metadata；统一大页便于连续读取，又会浪费短而频繁变化的 private suffix。Allocator 可让高复用共享 prefix 使用连续大粒度 HOT region，让请求私有 suffix 使用 token/small-page COLD region，并在生命周期变化时受控迁移。它改善 locality 与 metadata，却引入双 allocator、迁移、边界碎片和 CoW 复杂度；长度和复用均匀时统一粒度仍更稳。`arXiv:2608.15584v1` 的 GraniKV 结果只覆盖作者 runtime/workload，不证明所有 prefix 分布或 kernels 都适合该切分。
+
+<!-- source-family:SF-2026-ARXIV-2608-15584 -->
+
+## 同一请求内部也可能需要不同分配粒度
+
+统一 page size 简化 allocator 和 attention kernel，但长共享 prefix 与短 private suffix 的复用、碎片和访问模式不同。高复用 prefix 可以放入 contiguous hot pool，suffix 保持 token-granular cold pages，再由 dispatcher 在两个 backend 间组合读取。这避免为了 suffix 灵活性切碎 prefix，也避免为了 prefix 连续性浪费 suffix 容量。
+
+双 allocator 会增加 metadata、迁移和 kernel dispatch 复杂度；共享 prefix 短、复用低或请求同质时，统一分页依旧更可靠。是否启用必须同时核算存储节省、cascade attention、调度开销和 fallback，而不是只看 cache hit。
+
 ## 本章在知识树中的位置
 
 ```text
@@ -211,6 +223,8 @@ PagedAttention 从解决连续 KV 分配碎片，演进到 prefix sharing、copy
 6. Prefix sharing 为什么需要 Copy-on-Write 或不可变 block？
 7. PagedAttention 的 trade-off 是什么？
 8. Token eviction 后为什么会重新出现内部碎片？Liveness decision 与 physical reclamation 为什么应由不同 owner 负责？
+
+低秩 KV page 的 canonical 机制由 [Ch45](./45-why-kv-cache-speeds-up.md) 负责；本章只补充执行交接：allocator 必须把 rank、factor layout 与重构 kernel 版本视为 page metadata，迁移或复用时不能只复制逻辑 page ID。
 
 ## 小结
 

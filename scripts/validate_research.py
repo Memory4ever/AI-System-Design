@@ -1,21 +1,38 @@
 #!/usr/bin/env python3
 """Validate versioned research contracts and their Markdown integrity.
 
-Legacy Score V1 reports remain compatible. New V2 reports additionally expose
-small machine-readable tables whose meaning is owned by the shared contracts.
+Current reports use a single readable Markdown contract. Older report formats
+remain readable without requiring changes to archived evidence.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import unquote
+
+try:
+    from . import check_report_v3
+except ImportError:
+    try:
+        import check_report_v3
+    except ImportError:
+        from scripts import check_report_v3
+
+
+def is_v3_report(text: str) -> bool:
+    """Recognize current reports even when their version declaration is broken."""
+    return bool(re.search(r"^\*\*规范：\*\*", text, re.MULTILINE)) or (
+        METADATA_MARKER not in text
+        and bool(re.search(r"^\*\*窗口：\*\*|^## 3\. 候选与判断$", text, re.MULTILINE))
+    )
 
 
 REGISTRY_MARKER = "<!-- validator:source-registry-v1 -->"
@@ -767,6 +784,39 @@ def validate_markdown_structure(text: str) -> List[str]:
     return errors
 
 
+def _report_interval(text: str, metadata: Mapping[str, str], errors: List[str]):
+    """Resolve the one coverage interval; API fetch ranges are not report windows."""
+    local_zone = timezone(timedelta(hours=8))
+    try:
+        start_day = date.fromisoformat(metadata.get("Window Start", ""))
+        end_day = date.fromisoformat(metadata.get("Window End", ""))
+    except ValueError:
+        return None
+    if metadata.get("Report Type") != "Daily":
+        return (datetime.combine(start_day, datetime.min.time(), local_zone),
+                datetime.combine(end_day + timedelta(days=1), datetime.min.time(), local_zone))
+    match = re.search(
+        r"^\*\*Strict Window:\*\*\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
+        r" ～ (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})([^\n]*)$", text, re.M
+    )
+    if not match or not re.search(r"Asia/Shanghai|北京时间", match.group(3)):
+        errors.append("Daily Strict Window requires exact local timestamps and Asia/Shanghai timezone")
+        return None
+    try:
+        interval = tuple(datetime.fromisoformat(value).replace(tzinfo=local_zone)
+                         for value in match.group(1, 2))
+    except ValueError:
+        errors.append("Daily Strict Window contains an invalid timestamp")
+        return None
+    expected_end = datetime.combine(end_day, datetime.min.time(), local_zone) + timedelta(hours=9)
+    expected = (expected_end - timedelta(days=1), expected_end)
+    if interval[0] >= interval[1]:
+        errors.append("Daily Strict Window must have positive duration")
+    if interval != expected and not _is_specific_statement(metadata.get("Window Override Reason", "")):
+        errors.append("Non-default Daily Strict Window requires an explicit Window Override Reason")
+    return interval
+
+
 def validate_daily_presentation(text: str, metadata: Mapping[str, str]) -> List[str]:
     """Keep every V2.1 Daily on one stable reader-facing schema."""
     if metadata.get("Report Type") != "Daily":
@@ -819,7 +869,9 @@ def validate_daily_presentation(text: str, metadata: Mapping[str, str]) -> List[
     except ValueError:
         expected_window = ""
     strict_window = parsed_preamble.get("Strict Window", "")
-    if (
+    if metadata.get("Contract Version") == "V2.2":
+        _report_interval(text, metadata, errors)
+    elif (
         not expected_window
         or expected_window not in strict_window
         or not re.search(r"Asia/Shanghai|北京时间", strict_window)
@@ -837,10 +889,13 @@ def validate_daily_presentation(text: str, metadata: Mapping[str, str]) -> List[
         )
 
     actual_headings = [entry[2] for entry in h2_entries]
-    if actual_headings != DAILY_PRESENTATION_HEADINGS:
+    expected_headings = list(DAILY_PRESENTATION_HEADINGS)
+    if metadata.get("Contract Version") == "V2.2":
+        expected_headings[5] = "## 5. Deep Analysis"
+    if actual_headings != expected_headings:
         errors.append(
             "Daily canonical H2 sequence mismatch; expected "
-            + " -> ".join(DAILY_PRESENTATION_HEADINGS)
+            + " -> ".join(expected_headings)
         )
 
     status_text = parsed_preamble.get("Status", "")
@@ -1115,6 +1170,39 @@ def _registry_version(text: str, errors: List[str]) -> Optional[date]:
 
 
 def validate_registry_text(text: str) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
+    if '<!-- validator:source-list -->' in text:
+        marker = '<!-- validator:source-list -->'
+        rows, errors = [], []
+        for section in text.split(marker)[1:]:
+            group_rows, group_errors = _expect_columns(marker + section, marker, ['ID', '来源', '入口', '频率', '关注内容'])
+            rows.extend(group_rows)
+            errors.extend(group_errors)
+        records = RegistryRecords(_registry_version(text, errors))
+        frequencies = {'每日': 'Required Daily', '每周': 'Required Weekly', '按需': 'Event Trigger'}
+        endpoints: Dict[str, str] = {}
+        for row in rows:
+            source_id = row['ID'].strip('`')
+            if not re.fullmatch(r'[A-Z][A-Z0-9-]+', source_id) or source_id in records:
+                errors.append(f'invalid or duplicate source ID: {source_id}')
+            if any(not value.strip() or value in ABSENT_VALUES for value in row.values()):
+                errors.append(f'{source_id}: source fields cannot be empty')
+            if row['频率'] not in frequencies:
+                errors.append(f'{source_id}: invalid source frequency')
+            urls = _extract_urls(row['入口'])
+            if not urls or any(not u.startswith('https://') for u in urls):
+                errors.append(f'{source_id}: source entry requires HTTPS links')
+            for url in urls:
+                if url in endpoints and endpoints[url] != source_id:
+                    errors.append(f'duplicate source endpoint: {url}')
+                endpoints[url] = source_id
+            records[source_id] = {
+                'Source ID': source_id, 'Source Name': row['来源'],
+                'Official Endpoints': row['入口'], 'Cadence': frequencies.get(row['频率'], ''),
+                'Event Trigger / Topic Filter': row['关注内容'],
+            }
+        if not records:
+            errors.append('source list cannot be empty')
+        return records, errors
     rows, errors = _expect_columns(text, REGISTRY_MARKER, REGISTRY_COLUMNS)
     registry_version = _registry_version(text, errors)
     records: Dict[str, Dict[str, str]] = RegistryRecords(registry_version)
@@ -1218,6 +1306,17 @@ def validate_registry_text(text: str) -> Tuple[Dict[str, Dict[str, str]], List[s
     return records, errors
 
 
+def _unfrozen_v22(metadata: Mapping[str, str]) -> bool:
+    """Only an explicitly open V2.2 report may omit its final freeze identity."""
+    return (
+        metadata.get("Contract Version") == "V2.2"
+        and metadata.get("Completion Status") == "In Progress"
+        and metadata.get("Coverage Gate") == "Open"
+        and metadata.get("Denominator ID") == "—"
+        and metadata.get("Denominator Frozen At") == "—"
+    )
+
+
 def _metadata(rows: Sequence[Mapping[str, str]], errors: List[str]) -> Dict[str, str]:
     values: Dict[str, str] = {}
     for row in rows:
@@ -1246,6 +1345,8 @@ def _metadata(rows: Sequence[Mapping[str, str]], errors: List[str]) -> Dict[str,
     for key in sorted(required - set(values)):
         errors.append(f"missing report metadata field {key}")
     for key in required & set(values):
+        if key in {"Denominator ID", "Denominator Frozen At"} and _unfrozen_v22(values):
+            continue
         if key not in {
             "Baseline Report",
             "Changed Source IDs",
@@ -1450,6 +1551,35 @@ def _is_specific_statement(value: str) -> bool:
     return stripped not in ABSENT_VALUES and stripped.casefold() not in GENERIC_COMPLETION_WORDS
 
 
+def _all_hits_screened_out(text: str, ref: str, hits: int) -> bool:
+    """Check closure accounting, not the correctness of semantic exclusions."""
+    if not ref.startswith("coverage:"):
+        return False
+    segment = _bounded_segment(text, ref, "screening closure", [])
+    if segment is None:
+        return False
+    rows = [
+        row
+        for headers, table in _markdown_tables(segment)
+        if {"Primary Identifier", "Screening Decision", "Reason"}.issubset(headers)
+        for row in table
+    ]
+    identities = [row["Primary Identifier"].strip().strip("`") for row in rows]
+    return (
+        len(rows) == hits
+        and len(set(identities)) == hits
+        and all(
+            re.fullmatch(r"(?:https://|(?:arxiv|doi|commit|release):)\S+", identity, re.IGNORECASE)
+            for identity in identities
+        )
+        and all(
+            row["Screening Decision"].strip().strip("`") == "pre-denominator closure"
+            and _is_specific_statement(row["Reason"])
+            for row in rows
+        )
+    )
+
+
 def _required_review_route(row: Mapping[str, str]) -> str:
     if row.get("Review Override") != "none":
         return "deep"
@@ -1466,260 +1596,53 @@ def _required_review_route(row: Mapping[str, str]) -> str:
     return "closure"
 
 
-def _validate_v21_completion_interfaces(
+def _actual_review_route(row: Mapping[str, str]) -> str:
+    """Completed work may exceed, but never lower, the minimum evidence route."""
+    minimum = _required_review_route(row)
+    actual = {"closure_complete": "closure", "standard_complete": "standard",
+              "deep_complete": "deep"}.get(row.get("Review Status"))
+    rank = {"closure": 0, "standard": 1, "deep": 2}
+    if minimum in rank and actual in rank and rank[actual] >= rank[minimum]:
+        return actual
+    return minimum
+
+
+def _validate_trigger(body, source_id, interval, prefix, errors):
+    """Check trigger identity/time shape; the coverage auditor judges its meaning."""
+    event = re.search(r"\b\d{4}-\d{2}-\d{2}(?:T[^\s<>;,]+)?", body or "")
+    if not body or not (event and re.search(r"https?://\S+", body)
+                         and re.search(r"(?<![\w-])" + re.escape(source_id) + r"(?![\w-])", body)):
+        errors.append(f"{prefix}: trigger requires source-bound dated primary event evidence")
+        return
+    value = event.group(0)
+    try:
+        if "T" in value:
+            moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if moment.utcoffset() is None:
+                raise ValueError("trigger timestamps must include a timezone")
+            in_window = interval is None or interval[0] <= moment < interval[1]
+        else:
+            # Date precision can establish exclusion, not exact 09:00 ownership.
+            day = date.fromisoformat(value)
+            start = datetime.combine(day, datetime.min.time(), timezone(timedelta(hours=8)))
+            in_window = interval is None or (start < interval[1] and start + timedelta(days=1) > interval[0])
+        if not in_window:
+            errors.append(f"{prefix}: trigger event is outside the report interval")
+    except ValueError:
+        errors.append(f"{prefix}: trigger event date is invalid")
+
+
+def _validate_v21_selection(
     text: str,
-    metadata: Mapping[str, str],
     candidates: Mapping[str, Mapping[str, str]],
-    stable_node_ids: Optional[set],
+    books_rows: Sequence[Mapping[str, str]],
     errors: List[str],
 ) -> None:
-    review_rows, table_errors = _expect_columns(
-        text, REVIEW_COMPLETION_MARKER, REVIEW_COMPLETION_COLUMNS
-    )
-    errors.extend(table_errors)
+    """Legacy editorial ledger; V2.2 does not execute this compatibility path."""
     analysis_rows, table_errors = _expect_columns(
         text, DEEP_ANALYSIS_SELECTION_MARKER, DEEP_ANALYSIS_SELECTION_COLUMNS
     )
     errors.extend(table_errors)
-    books_rows, table_errors = _expect_columns(
-        text, BOOKS_COMPARISON_MARKER, BOOKS_COMPARISON_COLUMNS
-    )
-    errors.extend(table_errors)
-    audit_rows, table_errors = _expect_columns(
-        text, SEMANTIC_AUDIT_MARKER, SEMANTIC_AUDIT_COLUMNS
-    )
-    errors.extend(table_errors)
-
-    review_by_family: Dict[str, Mapping[str, str]] = {}
-    seen_provenance: Dict[str, str] = {}
-    for number, receipt in enumerate(review_rows, start=1):
-        family = receipt.get("Source Family ID", "").strip("`")
-        prefix = f"Review Completion row {number}"
-        if family in ABSENT_VALUES:
-            errors.append(f"{prefix}: Source Family ID cannot be empty")
-            continue
-        if family in review_by_family:
-            errors.append(f"{prefix}: duplicate Source Family ID {family}")
-        review_by_family[family] = receipt
-        candidate = candidates.get(family)
-        if candidate is None:
-            errors.append(f"{prefix}: unknown Source Family ID {family}")
-            continue
-        route = receipt.get("Review Route", "")
-        result = receipt.get("Completion Result", "")
-        if route not in REVIEW_ROUTES:
-            errors.append(f"{prefix}: invalid Review Route {route!r}")
-        expected_route = _required_review_route(candidate)
-        if route != expected_route:
-            errors.append(
-                f"{prefix}: Review Route {route!r} does not match required route {expected_route!r}"
-            )
-        if result not in REVIEW_COMPLETION_RESULTS:
-            errors.append(f"{prefix}: invalid Completion Result {result!r}")
-        review_status = candidate.get("Review Status", "")
-        expected_status = {
-            ("deep", "complete"): "deep_complete",
-            ("standard", "complete"): "standard_complete",
-            ("closure", "complete"): "closure_complete",
-            ("not_required", "not_required"): "not_required",
-        }.get((route, result))
-        if result == "blocked":
-            expected_status = "blocked"
-        if result == "pending":
-            expected_status = "pending"
-        if expected_status and review_status != expected_status:
-            errors.append(
-                f"{prefix}: Completion Result {result!r} and route {route!r} "
-                f"require Review Status {expected_status!r}"
-            )
-
-        evidence_version = receipt.get("Primary Evidence Version", "").strip("`")
-        reviewed_versions_value = receipt.get("Reviewed Evidence Versions", "").strip("`")
-        reviewed_versions = _split_multi(reviewed_versions_value)
-        if re.match(r"^[A-Z][A-Z0-9-]+@", evidence_version):
-            errors.append(
-                f"{prefix}: Primary Evidence Version must contain the exact version only, "
-                "without a Source ID prefix"
-            )
-        if result == "pending":
-            if not _is_reasoned_exception(evidence_version) and not _is_source_locator(evidence_version):
-                errors.append(
-                    f"{prefix}: pending Primary Evidence Version must identify known evidence "
-                    "or the concrete unfinished scope"
-                )
-        elif route != "not_required" and result != "blocked":
-            if not _is_source_locator(evidence_version) or not re.search(r"\d", evidence_version):
-                errors.append(f"{prefix}: Primary Evidence Version must identify a versioned source")
-        elif route == "not_required" and not _is_reasoned_exception(evidence_version):
-            errors.append(f"{prefix}: not_required route needs a reasoned Primary Evidence Version")
-
-        if result == "complete":
-            if not reviewed_versions:
-                errors.append(f"{prefix}: Reviewed Evidence Versions cannot be empty for a completed review")
-            elif len(reviewed_versions) != len(set(reviewed_versions)):
-                errors.append(f"{prefix}: Reviewed Evidence Versions must be unique")
-            for version in reviewed_versions:
-                if (
-                    not re.match(r"^[A-Z][A-Z0-9-]+@.+", version)
-                    or not _is_source_locator(version)
-                    or not re.search(r"\d", version)
-                ):
-                    errors.append(
-                        f"{prefix}: Reviewed Evidence Versions must use "
-                        "Source ID@concrete versioned evidence"
-                    )
-            matching_reviewed_versions = [
-                version
-                for version in reviewed_versions
-                if version == evidence_version
-                or ("@" in version and version.split("@", 1)[1] == evidence_version)
-            ]
-            if len(matching_reviewed_versions) != 1:
-                errors.append(
-                    f"{prefix}: Reviewed Evidence Versions must include exactly one "
-                    "Source ID entry whose version part matches Primary Evidence Version"
-                )
-        elif result in {"pending", "blocked"}:
-            if not reviewed_versions and not _is_reasoned_exception(reviewed_versions_value):
-                errors.append(
-                    f"{prefix}: {result} Reviewed Evidence Versions must list known versions "
-                    "or the concrete unfinished boundary"
-                )
-        elif result == "not_required" and not _is_reasoned_exception(reviewed_versions_value):
-            errors.append(
-                f"{prefix}: not_required Reviewed Evidence Versions needs an explicit reason"
-            )
-
-        facet_columns = {
-            "Method / Identity Locators": route in {"deep", "standard", "closure"},
-            "Evaluation Locators": route in {"deep", "standard"},
-            "Limitations / Counterevidence Locators": route in {"deep", "standard"},
-            "Artifact Locators": route == "deep",
-        }
-        for column, required in facet_columns.items():
-            value = receipt.get(column, "").strip("`")
-            if result in {"blocked", "pending"}:
-                if not _is_source_locator(value):
-                    errors.append(
-                        f"{prefix}: {result} receipt must record a locator or reasoned boundary for {column}"
-                    )
-            elif required:
-                if not _is_source_locator(value):
-                    errors.append(f"{prefix}: {column} requires a source locator or a reasoned exception")
-            elif not _is_source_locator(value):
-                errors.append(f"{prefix}: {column} must use a source locator or reasoned Not Required value")
-            if (
-                route == "deep"
-                and result == "complete"
-                and column != "Artifact Locators"
-                and not _is_stable_deep_facet_locator(value)
-            ):
-                errors.append(
-                    f"{prefix}: {column} for a completed Deep review must identify a stable "
-                    "fragment, numbered section/table/appendix, exact unique heading, or reasoned exception"
-                )
-
-        if route == "deep" and result == "complete":
-            concrete_facets = [
-                receipt.get(column, "").strip("`")
-                for column in facet_columns
-                if not _is_reasoned_exception(receipt.get(column, "").strip("`"))
-            ]
-            if len(concrete_facets) != len(set(concrete_facets)):
-                errors.append(
-                    f"{prefix}: deep review facets cannot borrow one locator for distinct evidence claims"
-                )
-
-        claim_ref = receipt.get("Claim Boundary Ref", "").strip("`")
-        review_ref = candidate.get("Review Ref", "").strip("`")
-        if result != "pending" and claim_ref != f"claim:{family}":
-            errors.append(f"{prefix}: Claim Boundary Ref must equal claim:{family}")
-        if result == "pending" and not (
-            claim_ref == f"claim:{family}" or _is_reasoned_exception(claim_ref)
-        ):
-            errors.append(
-                f"{prefix}: pending Claim Boundary Ref must be bounded or state a concrete pending reason"
-            )
-        if result == "complete" and review_ref != f"review:{family}":
-            errors.append(f"candidate {family}: Review Ref must equal review:{family}")
-        review_segment: Optional[str] = None
-        review_body_sha256 = ""
-        if result != "pending":
-            review_segment = _bounded_segment(
-                text, review_ref, f"candidate {family} Review Ref", errors
-            )
-            if review_segment is not None:
-                review_body_sha256 = _normalized_body_sha256(review_segment)
-                declared_dispositions = {
-                    value.strip()
-                    for value in re.findall(
-                        r"(?:Books\s+)?Disposition\s*[：:]\s*`([^`]+)`",
-                        review_segment,
-                        flags=re.IGNORECASE,
-                    )
-                }
-                if len(declared_dispositions) > 1:
-                    errors.append(
-                        f"candidate {family}: Source Review declares conflicting Disposition values: "
-                        + ", ".join(sorted(declared_dispositions))
-                    )
-                elif declared_dispositions:
-                    declared_disposition = next(iter(declared_dispositions))
-                    ledger_disposition = candidate.get("Books Disposition", "").strip("`")
-                    if declared_disposition != ledger_disposition:
-                        errors.append(
-                            f"candidate {family}: Source Review Disposition "
-                            f"{declared_disposition!r} does not match Candidate Ledger "
-                            f"Books Disposition {ledger_disposition!r}"
-                        )
-
-        provenance = receipt.get("Review Provenance ID", "").strip("`")
-        if result == "pending":
-            if provenance not in ABSENT_VALUES:
-                errors.append(f"{prefix}: pending Review Provenance ID must be —")
-        else:
-            expected_provenance = _expected_review_provenance(
-                family,
-                candidate,
-                route,
-                evidence_version,
-                reviewed_versions_value,
-                receipt.get("Method / Identity Locators", "").strip("`"),
-                receipt.get("Evaluation Locators", "").strip("`"),
-                receipt.get("Limitations / Counterevidence Locators", "").strip("`"),
-                receipt.get("Artifact Locators", "").strip("`"),
-                claim_ref,
-                review_ref,
-                review_body_sha256,
-            )
-            if provenance != expected_provenance:
-                errors.append(
-                    f"{prefix}: Review Provenance ID {provenance!r} does not match "
-                    f"recomputed {expected_provenance!r}"
-                )
-            previous = seen_provenance.get(provenance)
-            if previous and previous != family:
-                errors.append(f"Review Provenance ID {provenance} is reused across {previous} and {family}")
-            seen_provenance[provenance] = family
-        if result == "complete":
-            claim_segment = _bounded_segment(text, claim_ref, f"{prefix} Claim Boundary Ref", errors)
-            if claim_segment is not None and review_segment is not None:
-                claim_start = text.find(f"<!-- {claim_ref}:start -->")
-                claim_end = text.find(f"<!-- {claim_ref}:end -->")
-                review_start = text.find(f"<!-- {review_ref}:start -->")
-                review_end = text.find(f"<!-- {review_ref}:end -->")
-                if not (review_start < claim_start < claim_end < review_end):
-                    errors.append(f"{prefix}: Claim Boundary Ref must be contained by Review Ref")
-
-    for family, candidate in candidates.items():
-        status = candidate.get("Review Status", "")
-        receipt = review_by_family.get(family)
-        if status in {"deep_complete", "standard_complete", "closure_complete", "blocked", "not_required"}:
-            if receipt is None:
-                errors.append(f"candidate {family}: Review Completion receipt is required for status {status}")
-        elif status == "pending" and receipt is None:
-            errors.append(f"candidate {family}: pending review requires a pending Review Completion receipt")
-
     eligible: Dict[str, set] = {}
     allowed_eligibility: Dict[str, set] = {}
     for family, candidate in candidates.items():
@@ -1830,6 +1753,291 @@ def _validate_v21_completion_interfaces(
     if len(selected_units) > 3:
         errors.append("Deep Analysis Selection may select at most 3 units")
 
+    for number, row in enumerate(books_rows, start=1):
+        family = row.get("Source Family ID", "").strip("`")
+        if family not in candidates:
+            continue
+        prefix = f"Books Comparison row {number}"
+        decision = row.get("Decision", "")
+        required_selection_fact = {
+            "Integrate": "potential_books_delta",
+            "Structural Candidate": "potential_structural_gap",
+        }.get(decision)
+        if required_selection_fact and required_selection_fact not in selected_eligibility.get(
+            family, set()
+        ):
+            errors.append(
+                f"{prefix}: {decision} requires Deep Analysis Selection Eligibility "
+                f"{required_selection_fact} before the Books decision"
+            )
+
+
+def _validate_v21_completion_interfaces(
+    text: str,
+    metadata: Mapping[str, str],
+    candidates: Mapping[str, Mapping[str, str]],
+    stable_node_ids: Optional[set],
+    errors: List[str],
+) -> None:
+    streamlined = metadata.get("Contract Version") == "V2.2"
+    review_rows, table_errors = _expect_columns(
+        text, REVIEW_COMPLETION_MARKER, REVIEW_COMPLETION_COLUMNS
+    )
+    errors.extend(table_errors)
+    narrative_refs = []
+    if streamlined:
+        if DEEP_ANALYSIS_SELECTION_MARKER in text:
+            errors.append("V2.2 uses editorial narratives, not a Deep Analysis Selection ledger")
+        narrative_refs = re.findall(r"<!-- (analysis:[^\s>]+):start -->", _mask_markdown_code(text))
+        if len(narrative_refs) != len(set(narrative_refs)):
+            errors.append("Deep Analysis narrative IDs must be unique")
+        if len(narrative_refs) > 3:
+            errors.append("Deep Analysis may contain at most 3 units")
+        for ref in narrative_refs:
+            _bounded_segment(text, ref, "Deep Analysis", errors)
+    books_rows, table_errors = _expect_columns(
+        text, BOOKS_COMPARISON_MARKER, BOOKS_COMPARISON_COLUMNS
+    )
+    errors.extend(table_errors)
+    audit_rows, table_errors = _expect_columns(
+        text, SEMANTIC_AUDIT_MARKER, SEMANTIC_AUDIT_COLUMNS
+    )
+    errors.extend(table_errors)
+
+    review_by_family: Dict[str, Mapping[str, str]] = {}
+    seen_provenance: Dict[str, str] = {}
+    for number, receipt in enumerate(review_rows, start=1):
+        family = receipt.get("Source Family ID", "").strip("`")
+        prefix = f"Review Completion row {number}"
+        if family in ABSENT_VALUES:
+            errors.append(f"{prefix}: Source Family ID cannot be empty")
+            continue
+        if family in review_by_family:
+            errors.append(f"{prefix}: duplicate Source Family ID {family}")
+        review_by_family[family] = receipt
+        candidate = candidates.get(family)
+        if candidate is None:
+            errors.append(f"{prefix}: unknown Source Family ID {family}")
+            continue
+        route = receipt.get("Review Route", "")
+        result = receipt.get("Completion Result", "")
+        if route not in REVIEW_ROUTES:
+            errors.append(f"{prefix}: invalid Review Route {route!r}")
+        expected_route = (_actual_review_route(candidate) if streamlined
+                          else _required_review_route(candidate))
+        if route != expected_route:
+            errors.append(
+                f"{prefix}: Review Route {route!r} does not match required route {expected_route!r}"
+            )
+        if result not in REVIEW_COMPLETION_RESULTS:
+            errors.append(f"{prefix}: invalid Completion Result {result!r}")
+        review_status = candidate.get("Review Status", "")
+        expected_status = {
+            ("deep", "complete"): "deep_complete",
+            ("standard", "complete"): "standard_complete",
+            ("closure", "complete"): "closure_complete",
+            ("not_required", "not_required"): "not_required",
+        }.get((route, result))
+        if result == "blocked":
+            expected_status = "blocked"
+        if result == "pending":
+            expected_status = "pending"
+        if expected_status and review_status != expected_status:
+            errors.append(
+                f"{prefix}: Completion Result {result!r} and route {route!r} "
+                f"require Review Status {expected_status!r}"
+            )
+
+        evidence_version = receipt.get("Primary Evidence Version", "").strip("`")
+        reviewed_versions_value = receipt.get("Reviewed Evidence Versions", "").strip("`")
+        reviewed_versions = _split_multi(reviewed_versions_value)
+        if re.match(r"^[A-Z][A-Z0-9-]+@", evidence_version):
+            errors.append(
+                f"{prefix}: Primary Evidence Version must contain the exact version only, "
+                "without a Source ID prefix"
+            )
+        if result == "pending":
+            if not _is_reasoned_exception(evidence_version) and not _is_source_locator(evidence_version):
+                errors.append(
+                    f"{prefix}: pending Primary Evidence Version must identify known evidence "
+                    "or the concrete unfinished scope"
+                )
+        elif route != "not_required" and result != "blocked":
+            if not _is_source_locator(evidence_version) or not re.search(r"\d", evidence_version):
+                errors.append(f"{prefix}: Primary Evidence Version must identify a versioned source")
+        elif route == "not_required" and not _is_reasoned_exception(evidence_version):
+            errors.append(f"{prefix}: not_required route needs a reasoned Primary Evidence Version")
+
+        if result == "complete":
+            if not reviewed_versions:
+                errors.append(f"{prefix}: Reviewed Evidence Versions cannot be empty for a completed review")
+            elif len(reviewed_versions) != len(set(reviewed_versions)):
+                errors.append(f"{prefix}: Reviewed Evidence Versions must be unique")
+            for version in reviewed_versions:
+                if (
+                    not re.match(r"^[A-Z][A-Z0-9-]+@.+", version)
+                    or not _is_source_locator(version)
+                    or not re.search(r"\d", version)
+                ):
+                    errors.append(
+                        f"{prefix}: Reviewed Evidence Versions must use "
+                        "Source ID@concrete versioned evidence"
+                    )
+            matching_reviewed_versions = [
+                version
+                for version in reviewed_versions
+                if version == evidence_version
+                or ("@" in version and version.split("@", 1)[1] == evidence_version)
+            ]
+            if len(matching_reviewed_versions) != 1:
+                errors.append(
+                    f"{prefix}: Reviewed Evidence Versions must include exactly one "
+                    "Source ID entry whose version part matches Primary Evidence Version"
+                )
+        elif result in {"pending", "blocked"}:
+            if not reviewed_versions and not _is_reasoned_exception(reviewed_versions_value):
+                errors.append(
+                    f"{prefix}: {result} Reviewed Evidence Versions must list known versions "
+                    "or the concrete unfinished boundary"
+                )
+        elif result == "not_required" and not _is_reasoned_exception(reviewed_versions_value):
+            errors.append(
+                f"{prefix}: not_required Reviewed Evidence Versions needs an explicit reason"
+            )
+
+        facet_columns = {
+            "Method / Identity Locators": route in {"deep", "standard", "closure"},
+            "Evaluation Locators": route in {"deep", "standard"},
+            "Limitations / Counterevidence Locators": route in {"deep", "standard"},
+            "Artifact Locators": route == "deep",
+        }
+        for column, required in facet_columns.items():
+            value = receipt.get(column, "").strip("`")
+            if result in {"blocked", "pending"}:
+                if not _is_source_locator(value):
+                    errors.append(
+                        f"{prefix}: {result} receipt must record a locator or reasoned boundary for {column}"
+                    )
+            elif required:
+                if not _is_source_locator(value):
+                    errors.append(f"{prefix}: {column} requires a source locator or a reasoned exception")
+            elif not _is_source_locator(value):
+                errors.append(f"{prefix}: {column} must use a source locator or reasoned Not Required value")
+            if (
+                route == "deep"
+                and result == "complete"
+                and column != "Artifact Locators"
+                and not _is_stable_deep_facet_locator(value)
+            ):
+                errors.append(
+                    f"{prefix}: {column} for a completed Deep review must identify a stable "
+                    "fragment, numbered section/table/appendix, exact unique heading, or reasoned exception"
+                )
+
+        if not streamlined and route == "deep" and result == "complete":
+            concrete_facets = [
+                receipt.get(column, "").strip("`")
+                for column in facet_columns
+                if not _is_reasoned_exception(receipt.get(column, "").strip("`"))
+            ]
+            if len(concrete_facets) != len(set(concrete_facets)):
+                errors.append(
+                    f"{prefix}: deep review facets cannot borrow one locator for distinct evidence claims"
+                )
+
+        claim_ref = receipt.get("Claim Boundary Ref", "").strip("`")
+        review_ref = candidate.get("Review Ref", "").strip("`")
+        if result != "pending" and claim_ref != f"claim:{family}":
+            errors.append(f"{prefix}: Claim Boundary Ref must equal claim:{family}")
+        if result == "pending" and not (
+            claim_ref == f"claim:{family}" or _is_reasoned_exception(claim_ref)
+        ):
+            errors.append(
+                f"{prefix}: pending Claim Boundary Ref must be bounded or state a concrete pending reason"
+            )
+        if result == "complete" and review_ref != f"review:{family}":
+            errors.append(f"candidate {family}: Review Ref must equal review:{family}")
+        review_segment: Optional[str] = None
+        review_body_sha256 = ""
+        if result != "pending":
+            review_segment = _bounded_segment(
+                text, review_ref, f"candidate {family} Review Ref", errors
+            )
+            if review_segment is not None:
+                review_body_sha256 = _normalized_body_sha256(review_segment)
+                declared_dispositions = {
+                    value.strip()
+                    for value in re.findall(
+                        r"(?:Books\s+)?Disposition\s*[：:]\s*`([^`]+)`",
+                        review_segment,
+                        flags=re.IGNORECASE,
+                    )
+                }
+                if len(declared_dispositions) > 1:
+                    errors.append(
+                        f"candidate {family}: Source Review declares conflicting Disposition values: "
+                        + ", ".join(sorted(declared_dispositions))
+                    )
+                elif declared_dispositions:
+                    declared_disposition = next(iter(declared_dispositions))
+                    ledger_disposition = candidate.get("Books Disposition", "").strip("`")
+                    if declared_disposition != ledger_disposition:
+                        errors.append(
+                            f"candidate {family}: Source Review Disposition "
+                            f"{declared_disposition!r} does not match Candidate Ledger "
+                            f"Books Disposition {ledger_disposition!r}"
+                        )
+
+        provenance = receipt.get("Review Provenance ID", "").strip("`")
+        if result == "pending":
+            if provenance not in ABSENT_VALUES:
+                errors.append(f"{prefix}: pending Review Provenance ID must be —")
+        else:
+            expected_provenance = _expected_review_provenance(
+                family,
+                candidate,
+                route,
+                evidence_version,
+                reviewed_versions_value,
+                receipt.get("Method / Identity Locators", "").strip("`"),
+                receipt.get("Evaluation Locators", "").strip("`"),
+                receipt.get("Limitations / Counterevidence Locators", "").strip("`"),
+                receipt.get("Artifact Locators", "").strip("`"),
+                claim_ref,
+                review_ref,
+                review_body_sha256,
+            )
+            if provenance != expected_provenance:
+                errors.append(
+                    f"{prefix}: Review Provenance ID {provenance!r} does not match "
+                    f"recomputed {expected_provenance!r}"
+                )
+            previous = seen_provenance.get(provenance)
+            if previous and previous != family:
+                errors.append(f"Review Provenance ID {provenance} is reused across {previous} and {family}")
+            seen_provenance[provenance] = family
+        if result == "complete":
+            claim_segment = _bounded_segment(text, claim_ref, f"{prefix} Claim Boundary Ref", errors)
+            if claim_segment is not None and review_segment is not None:
+                claim_start = text.find(f"<!-- {claim_ref}:start -->")
+                claim_end = text.find(f"<!-- {claim_ref}:end -->")
+                review_start = text.find(f"<!-- {review_ref}:start -->")
+                review_end = text.find(f"<!-- {review_ref}:end -->")
+                if not (review_start < claim_start < claim_end < review_end):
+                    errors.append(f"{prefix}: Claim Boundary Ref must be contained by Review Ref")
+
+    for family, candidate in candidates.items():
+        status = candidate.get("Review Status", "")
+        receipt = review_by_family.get(family)
+        if status in {"deep_complete", "standard_complete", "closure_complete", "blocked", "not_required"}:
+            if receipt is None:
+                errors.append(f"candidate {family}: Review Completion receipt is required for status {status}")
+        elif status == "pending" and receipt is None:
+            errors.append(f"candidate {family}: pending review requires a pending Review Completion receipt")
+
+    if not streamlined:
+        _validate_v21_selection(text, candidates, books_rows, errors)
+
     required_books = {
         family
         for family, candidate in candidates.items()
@@ -1850,17 +2058,6 @@ def _validate_v21_completion_interfaces(
         decision = row.get("Decision", "")
         if decision != candidate.get("Books Disposition"):
             errors.append(f"{prefix}: Decision must match Candidate Ledger Books Disposition")
-        required_selection_fact = {
-            "Integrate": "potential_books_delta",
-            "Structural Candidate": "potential_structural_gap",
-        }.get(decision)
-        if required_selection_fact and required_selection_fact not in selected_eligibility.get(
-            family, set()
-        ):
-            errors.append(
-                f"{prefix}: {decision} requires Deep Analysis Selection Eligibility "
-                f"{required_selection_fact} before the Books decision"
-            )
         node = row.get("Stable Node ID", "").strip("`")
         candidate_node = candidate.get("Stable Node ID", "").strip("`")
         if decision == "Structural Candidate":
@@ -1905,7 +2102,8 @@ def _validate_v21_completion_interfaces(
             errors.append(f"{prefix}: Audit ID must be non-empty and unique")
         audit_ids.add(audit_id)
         scope = row.get("Scope", "")
-        if scope not in SEMANTIC_SCOPES:
+        allowed_scopes = SEMANTIC_SCOPES - {"deep_analysis_selection"} if streamlined else SEMANTIC_SCOPES
+        if scope not in allowed_scopes:
             errors.append(f"{prefix}: invalid Scope {scope!r}")
             continue
         if scope in audits:
@@ -1932,6 +2130,13 @@ def _validate_v21_completion_interfaces(
         findings = row.get("Findings", "")
         resolution = row.get("Resolution", "")
         if status == "passed":
+            if streamlined and scope == "evidence":
+                missing_narratives = sorted(set(narrative_refs) - set(refs))
+                if missing_narratives:
+                    errors.append(
+                        "passed evidence audit must cover every Deep Analysis narrative; missing "
+                        + ", ".join(missing_narratives)
+                    )
             if findings not in ABSENT_VALUES and findings.casefold() != "none":
                 errors.append(f"{prefix}: passed audit requires zero unresolved findings")
             if resolution not in ABSENT_VALUES and not _is_specific_statement(resolution):
@@ -1946,9 +2151,11 @@ def _validate_v21_completion_interfaces(
         ):
             errors.append(f"{prefix}: not_applicable is allowed only for Historical books scope")
 
-    required_scopes = {"coverage", "evidence", "deep_analysis_selection", "books"}
+    required_scopes = {"coverage", "evidence", "books"}
+    if not streamlined:
+        required_scopes.add("deep_analysis_selection")
     for scope in sorted(required_scopes - set(audits)):
-        errors.append(f"V2.1 report requires semantic audit scope {scope}")
+        errors.append(f"{metadata.get('Contract Version')} report requires semantic audit scope {scope}")
     books_audit = audits.get("books", {})
     if books_audit.get("Status") == "passed":
         books_reviewed_refs = set(_split_multi(books_audit.get("Reviewed Refs", "")))
@@ -1988,13 +2195,16 @@ def _validate_v21_completion_interfaces(
         ):
             errors.append(f"{gate} Passed requires semantic audit scope {scope} passed")
 
+    if streamlined and metadata.get("Coverage Gate") == "Closed" and audits.get("coverage", {}).get("Status") != "passed":
+        errors.append("Coverage Gate Closed requires semantic audit scope coverage passed")
+
     if audits.get("coverage", {}).get("Status") == "open" and metadata.get(
         "Coverage Gate"
     ) != "Open":
         errors.append("open coverage semantic audit requires Coverage Gate Open")
     if any(
         audits.get(scope, {}).get("Status") == "open"
-        for scope in ("evidence", "deep_analysis_selection")
+        for scope in (("evidence",) if streamlined else ("evidence", "deep_analysis_selection"))
     ):
         if metadata.get("Evidence Gate") != "Open":
             errors.append(
@@ -2028,6 +2238,10 @@ def validate_report_text(
     stable_node_ids: Optional[set] = None,
 ) -> List[str]:
     """Validate one report; legacy/unmarked Score V1 reports are accepted unchanged."""
+    if is_v3_report(text):
+        return validate_markdown_structure(text) + check_report_v3.validate(
+            text, registry, stable_node_ids=stable_node_ids,
+        )
     if METADATA_MARKER not in text:
         if strict:
             return [f"missing marker {METADATA_MARKER}; strict reports require metadata Score Schema V2"]
@@ -2042,11 +2256,18 @@ def validate_report_text(
         BOOKS_COMPARISON_MARKER,
         SEMANTIC_AUDIT_MARKER,
     }
-    present_v21 = {marker for marker in v21_markers if marker in text}
     metadata_rows, table_errors = _expect_columns(text, METADATA_MARKER, METADATA_COLUMNS)
     errors.extend(table_errors)
     metadata = _metadata(metadata_rows, errors)
-    declared_v21 = metadata.get("Contract Version") == "V2.1"
+    if "Contract Version" in metadata and metadata["Contract Version"] not in {"V2.1", "V2.2"}:
+        errors.append(f"unsupported Contract Version {metadata['Contract Version']!r}")
+    if metadata.get("Contract Version") == "V2.2":
+        record_ref = metadata.get("Family Records Ref", "")
+        if not record_ref.endswith(".json") or Path(record_ref).is_absolute():
+            errors.append("V2.2 requires a relative JSON Family Records Ref")
+        v21_markers.remove(DEEP_ANALYSIS_SELECTION_MARKER)
+    present_v21 = {marker for marker in v21_markers if marker in text}
+    declared_v21 = metadata.get("Contract Version") in {"V2.1", "V2.2"}
     is_v21 = bool(present_v21) or declared_v21
     if is_v21 and present_v21 != v21_markers:
         for marker in sorted(v21_markers - present_v21):
@@ -2062,8 +2283,8 @@ def validate_report_text(
     _validate_withdrawn_primary_source_purge(text, candidate_rows, errors)
 
     if is_v21:
-        if metadata.get("Contract Version") != "V2.1":
-            errors.append("V2.1 report metadata requires Contract Version V2.1")
+        if metadata.get("Contract Version") not in {"V2.1", "V2.2"}:
+            errors.append("V2.1 report metadata requires Contract Version V2.1 or V2.2")
     elif strict:
         errors.append(
             "strict report validation requires Contract Version V2.1 and the V2.1 report interfaces"
@@ -2157,7 +2378,7 @@ def validate_report_text(
         due_ids = set()
 
     denominator_id = metadata.get("Denominator ID", "")
-    if denominator_id in ABSENT_VALUES:
+    if denominator_id in ABSENT_VALUES and not _unfrozen_v22(metadata):
         errors.append("Denominator ID cannot be empty")
     if (
         coverage_mode == "Delta Audit"
@@ -2165,14 +2386,17 @@ def validate_report_text(
         and previous_denominator_id == denominator_id
     ):
         errors.append("Delta Audit requires a new Denominator ID")
-    _parse_iso_datetime(
-        metadata.get("Denominator Frozen At", ""),
-        "Denominator Frozen At",
-        errors,
-    )
+    if not _unfrozen_v22(metadata):
+        _parse_iso_datetime(
+            metadata.get("Denominator Frozen At", ""),
+            "Denominator Frozen At",
+            errors,
+        )
 
     window_start = _parse_iso_date(metadata.get("Window Start", ""), "Window Start", [])
     window_end = _parse_iso_date(metadata.get("Window End", ""), "Window End", [])
+    report_interval = (_report_interval(text, metadata, errors)
+                       if metadata.get("Contract Version") == "V2.2" else None)
     report_owner_week = ""
     if window_start:
         iso_year, iso_week, _ = window_start.isocalendar()
@@ -2210,17 +2434,26 @@ def validate_report_text(
             receipt_end = _parse_iso_datetime(
                 row.get("Window End", ""), f"{prefix} Window End", errors
             )
-            if receipt_start and window_start and receipt_start.date() > window_end:
+            if report_interval and (receipt_start, receipt_end) != report_interval:
+                errors.append(f"{prefix}: receipt window must equal the authoritative report interval")
+            if metadata.get("Contract Version") != "V2.2" and receipt_start and window_start and receipt_start.date() > window_end:
                 errors.append(f"{prefix}: execution window does not overlap the report archive day/window")
-            if receipt_end and window_start and receipt_end.date() < window_start:
+            if metadata.get("Contract Version") != "V2.2" and receipt_end and window_start and receipt_end.date() < window_start:
                 errors.append(f"{prefix}: execution window does not overlap the report archive day/window")
             if receipt_start and receipt_end and receipt_start > receipt_end:
                 errors.append(f"{prefix}: Window Start must not be after Window End")
-            _parse_iso_datetime(row.get("Executed At", ""), f"{prefix} Executed At", errors)
+            executed_at = _parse_iso_datetime(row.get("Executed At", ""), f"{prefix} Executed At", errors)
             watermark = row.get("Window Watermark", "").strip("`")
             closure_evidence = row.get("Closure Evidence", "").strip("`")
             cursor = row.get("Pagination / Cursor", "").strip("`")
             requires_closure = result in {"checked", "no_hit", "not_due"}
+            if (
+                metadata.get("Contract Version") == "V2.2"
+                and requires_closure
+                and receipt_end and executed_at
+                and executed_at < receipt_end
+            ):
+                errors.append(f"{prefix}: cannot close a window before Window End")
             if requires_closure or watermark not in ABSENT_VALUES:
                 _parse_iso_datetime(watermark, f"{prefix} Window Watermark", errors)
             if requires_closure or closure_evidence not in ABSENT_VALUES:
@@ -2267,7 +2500,11 @@ def validate_report_text(
             if hits == 0:
                 errors.append(f"{prefix}: checked with Hits 0 must use no_hit")
             if hits is not None and hits > 0 and not families:
-                errors.append(f"{prefix}: checked source with Hits greater than 0 requires candidate families")
+                if not (is_v21 and _all_hits_screened_out(text, closure_evidence, hits)):
+                    errors.append(
+                        f"{prefix}: checked source with Hits greater than 0 requires candidate families "
+                        "or a complete per-identity pre-denominator closure receipt"
+                    )
         if result == "not_due" and ((hits is not None and hits != 0) or families):
             errors.append(f"{prefix}: not_due requires Hits 0 and no candidate families")
         if result == "not_due":
@@ -2578,8 +2815,15 @@ def validate_report_text(
         if disposition in {"Integrate", "No Change — Existing Coverage"} and books_review_ref in ABSENT_VALUES:
             errors.append(f"{prefix}: {disposition} requires Books Review Ref")
         if disposition == "Integrate":
-            if candidate_state != "retained":
-                errors.append(f"{prefix}: Integrate requires Candidate State retained")
+            eligible_revision = (
+                metadata.get("Contract Version") == "V2.2"
+                and candidate_state == "revision"
+                and row.get("Review Override") == "important_revision"
+                and row.get("Reconciliation") == "same_window_revision"
+                and row.get("Owner Report Ref") not in ABSENT_VALUES | {"self"}
+            )
+            if candidate_state != "retained" and not eligible_revision:
+                errors.append(f"{prefix}: Integrate requires retained or an important in-window revision")
             if review != "deep_complete":
                 errors.append(f"{prefix}: Integrate requires deep_complete Review Status")
             if access != "accessible":
@@ -2595,6 +2839,19 @@ def validate_report_text(
                 )
 
     for source_id, row_number in sorted(conditionally_due_required_receipts.items()):
+        if metadata.get("Contract Version") == "V2.2":
+            trigger = re.search(r"\btrigger:([A-Za-z0-9_-]+)",
+                                seen_coverage[source_id].get("Endpoint / Filter", ""))
+            if trigger:
+                body = _bounded_segment(text, trigger.group(0),
+                                        f"source coverage row {row_number} trigger", errors)
+                _validate_trigger(body, source_id, report_interval,
+                                  f"source coverage row {row_number}", errors)
+            else:
+                errors.append(f"source coverage row {row_number}: non-due Required source {source_id} requires trigger evidence")
+            # Activation precedes screening; no surviving candidate is required.
+            # Do not fall back to the legacy candidate-dependent permission below.
+            continue
         if source_id not in used_supporting_source_ids:
             historical_daily_arxiv_zero_receipt = (
                 source_id == "SRC-ARXIV"
@@ -2714,6 +2971,30 @@ def _resolve_report_path(path: Path, root: Path) -> Path:
     return (path if path.is_absolute() else root / path).resolve()
 
 
+def validate_family_records(text: str, path: Path, root: Path) -> List[str]:
+    """Check the canonical source against generated tables, not semantic correctness."""
+    metadata_rows, _ = _expect_columns(text, METADATA_MARKER, METADATA_COLUMNS)
+    metadata = {row.get("Field"): row.get("Value", "") for row in metadata_rows}
+    if metadata.get("Contract Version") != "V2.2":
+        return []
+    try:
+        # CLI and namespace-package use share the same renderer.
+        try:
+            import research_records
+        except ImportError:
+            from scripts import research_records
+        ref = metadata.get("Family Records Ref", "")
+        if not ref or Path(ref).is_absolute():
+            raise ValueError("missing/absolute Family Records Ref")
+        record_path = (path.parent / ref).resolve()
+        if root.resolve() not in record_path.parents:
+            raise ValueError("Family Records Ref escapes repository")
+        canonical = json.loads(record_path.read_text(encoding="utf-8"))
+        return research_records.drift(text, canonical)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        return [f"Family Records Ref: {exc}"]
+
+
 def validate_report_collection(
     reports: Sequence[Tuple[Path, str]],
     root: Path,
@@ -2744,6 +3025,7 @@ def validate_report_collection(
         metadata_errors: List[str] = []
         metadata = _metadata(metadata_rows, metadata_errors)
         errors.extend(f"report {path}: {error}" for error in metadata_errors)
+        errors.extend(f"report {path}: {error}" for error in validate_family_records(text, path, root))
         if metadata.get("Score Schema") != "V2":
             errors.append(f"report {path} metadata Score Schema must be V2")
         snapshots[path] = (metadata, candidate_rows)
@@ -3080,8 +3362,7 @@ def validate_contract_bundle(root: Path) -> List[str]:
         "research": root / "docs" / "RESEARCH_CONTRACT.md",
         "sources": root / "docs" / "RESEARCH_SOURCES.md",
         "reports": root / "docs" / "REPORT_CONTRACTS.md",
-        "daily": root / "CODEX_DAILY_RESEARCH_PROMPT.md",
-        "historical": root / "CODEX_HISTORICAL_RESEARCH_PROMPT.md",
+        "prompt": root / "CODEX_RESEARCH_PROMPT.md",
     }
     texts: Dict[str, str] = {}
     for name, path in paths.items():
@@ -3101,13 +3382,12 @@ def validate_contract_bundle(root: Path) -> List[str]:
         for term in ("Design Delta", "System Reach", "Durability"):
             if term not in texts["research"]:
                 errors.append(f"docs/RESEARCH_CONTRACT.md is missing Score V2 dimension {term}")
-    if "reports" in texts:
+    if "reports" in texts and not re.search(r"^版本：V3\s*$", texts["reports"], re.MULTILINE):
         for marker in (
             METADATA_MARKER,
             SOURCE_COVERAGE_MARKER,
             CANDIDATE_LEDGER_MARKER,
             REVIEW_COMPLETION_MARKER,
-            DEEP_ANALYSIS_SELECTION_MARKER,
             BOOKS_COMPARISON_MARKER,
             SEMANTIC_AUDIT_MARKER,
             MATERIALS_REQUEST_MARKER,
@@ -3125,7 +3405,7 @@ def validate_contract_bundle(root: Path) -> List[str]:
         "docs/RESEARCH_SOURCES.md",
         "docs/REPORT_CONTRACTS.md",
     )
-    for name in ("daily", "historical"):
+    for name in ("prompt",):
         if name not in texts:
             continue
         for link in required_links:
@@ -3154,6 +3434,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--report", action="append", type=Path, default=[])
     parser.add_argument("--audit", action="append", type=Path, default=[])
+    parser.add_argument(
+        "--registry", type=Path,
+        help="Explicit registry snapshot for reports; relative paths resolve from --root",
+    )
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
@@ -3171,9 +3455,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             stable_node_ids, roadmap_errors = parse_stable_node_ids(roadmap_text)
             errors.extend(roadmap_errors)
     registry: Dict[str, Dict[str, str]] = {}
-    registry_path = root / "docs" / "RESEARCH_SOURCES.md"
-    if registry_path.exists():
-        registry, _ = validate_registry_text(registry_path.read_text(encoding="utf-8"))
+    simple_source_list = False
+    registry_path = args.registry or Path("docs/RESEARCH_SOURCES.md")
+    if not registry_path.is_absolute():
+        registry_path = root / registry_path
+    try:
+        registry_bytes = registry_path.read_bytes()
+        registry, registry_errors = validate_registry_text(registry_bytes.decode("utf-8"))
+        simple_source_list = b'<!-- validator:source-list -->' in registry_bytes
+    except (OSError, UnicodeError) as exc:
+        errors.append(f"cannot read report registry {registry_path}: {exc}")
+    else:
+        if args.registry is not None:
+            print(
+                f"Report registry snapshot: {registry_path.resolve()} "
+                f"sha256:{hashlib.sha256(registry_bytes).hexdigest()} "
+                "(caller-supplied; provenance not authenticated)"
+            )
+            errors.extend(f"{registry_path}: {error}" for error in registry_errors)
 
     strict_paths = {
         (path if path.is_absolute() else root / path).resolve()
@@ -3192,7 +3491,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         report_paths.extend(discovered)
     seen: set = set()
     v2_reports: List[Tuple[Path, str]] = []
+    v3_count = 0
     v21_count = 0
+    v22_count = 0
     v20_count = 0
     legacy_count = 0
     for path in report_paths:
@@ -3208,9 +3509,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except (OSError, UnicodeError) as exc:
             errors.append(f"cannot read report path {path}: {exc}")
             continue
-        if METADATA_MARKER in text:
+        if is_v3_report(text):
+            v3_count += 1
+            errors.extend(validate_local_markdown_links(text, path, root))
+            if args.registry is not None:
+                errors.append(f"{path}: 当前报告必须使用当前来源清单；--registry 仅用于旧格式结构核对。")
+                continue
+            for error in validate_report_text(text, registry, strict=True, stable_node_ids=stable_node_ids):
+                errors.append(f"{path}: {error}")
+        elif simple_source_list and (METADATA_MARKER in text or path in strict_paths or re.match(r"# (Daily|Weekly) Research", text)):
+            errors.extend(validate_local_markdown_links(text, path, root))
+            errors.append(
+                f"{path}: 旧格式报告不能使用当前简明来源表校验，本次未验收。"
+                "继续生成时保留有效证据并按当前 Report 合同整理；"
+                "仅核对旧结构时，用 --registry <对应旧来源快照> 显式检查，不代表当前标准通过。"
+            )
+        elif METADATA_MARKER in text:
             if CANDIDATE_LEDGER_MARKER in text:
-                v21_count += 1
+                rows, _ = _expect_columns(text, METADATA_MARKER, METADATA_COLUMNS)
+                if any(r.get("Field") == "Contract Version" and r.get("Value") == "V2.2" for r in rows):
+                    v22_count += 1
+                else:
+                    v21_count += 1
             else:
                 v20_count += 1
             v2_reports.append((path, text))
@@ -3239,16 +3559,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     errors.extend(validate_report_collection(v2_reports, root, registry))
 
+    if v2_reports:
+        print("旧格式结构校验不是当前标准验收，也不认证 Evidence、Books 或语义完成。")
+
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
     print(
         "Schema / consistency validation passed; "
-        f"checked {v21_count} V2.1 report(s) and {v20_count} earlier Score V2 report(s); "
+        f"checked {v21_count} V2.1 report(s), {v22_count} V2.2 report(s) and {v20_count} earlier Score V2 report(s); "
+        f"{v3_count} V3 report(s); "
         f"legacy skipped: {legacy_count}; semantic completeness not validated for legacy/V2.0. "
         "A validator pass confirms interface consistency, not semantic truth; "
-        "V2.1 semantic claims remain attributable to the recorded fresh-context/human auditor."
+        "Semantic claims remain attributable to the recorded fresh-context/human auditor."
     )
     return 0
 

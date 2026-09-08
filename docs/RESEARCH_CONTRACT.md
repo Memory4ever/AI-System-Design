@@ -1,496 +1,209 @@
 # 研究合同
 
-版本：V2.1
-生效日期：2026-08-25
+## 1. 目标与分工
 
-## 1. 目的
+为 AI-System-Design 找到值得长期保留的大模型与大模型基础设施知识，而不是覆盖整个 AI / 机器学习领域。
+Daily、Weekly 和历史补跑共用本合同；时间、报告形式和完成条件见 [Report 合同](./REPORT_CONTRACTS.md)，
+具体入口见 [来源注册表](./RESEARCH_SOURCES.md)。
 
-本合同定义 Daily、Sunday Weekly 与 Historical Weekly 共用的研究生命周期。目标不是扩大新闻数量，而是让每个长期结论都能回答：候选从哪里来、为何归入这个时间窗口、读到了什么证据、证据没有证明什么，以及它是否改变现有知识树。
-
-统一流程只有一条：
-
-```text
-确定窗口
-→ 执行到期来源并保存 Coverage Receipt
-→ 冻结 Source Family 候选分母
-→ 校正日期、revision、spillback 与重复关系
-→ 按路由完成 Source Review
-→ 记录可审计的 Review Completion Receipt
-→ 写入 Report
-→ 执行 Deep Analysis Selection
-→ 作出 Books Comparison 与 Decision
-→ 由 fresh-context reviewer 完成 Semantic Audit
-```
-
-来源入口由 [RESEARCH_SOURCES.md](./RESEARCH_SOURCES.md) 维护；三类 Report 的归档时钟、表结构和完成条件由 [REPORT_CONTRACTS.md](./REPORT_CONTRACTS.md) 维护。本文件不重复维护具体机构名单或 Report 模板。
-
-## 2. 五个正交对象
-
-研究系统必须把下列对象分开。任何一个字段都不能代替另一个字段。
-
-1. **Source Family Identity**：同一论文、release、artifact 与后续 revision 的稳定身份。
-2. **Score V2**：候选值得投入多深的审阅成本。
-3. **Supporting Evidence / Review / Access State**：哪些 Source ID 支撑结论、读到什么程度、材料是否可取得。
-4. **Claim Scope**：证据允许支持哪些事实，禁止外推哪些事实。
-5. **Integration Disposition**：结论是否进入长期 Books，以及由哪个 Stable Knowledge Node 拥有。
-
-“高分”“来源权威”“全文已读”“可以进入 Books”是四个不同判断。不得把它们压缩成一个单值 `Evidence Level` 或总分。候选通过 `Supporting Source IDs` 关联注册表，再由各 Source ID 的 Authority Role 和 Allowed Claim Scope 派生证据边界。
-
-## 3. Source Family 与事件归属
-
-稳定 family 身份使用：
+研究按以下漏斗推进，准备好的单篇可先推进，不等待无关材料：
 
 ```text
-Source Family ID
-+ canonical primary identifier set
+原始命中 → 本窗去重事件 → 项目范围与贡献筛选 → 贡献候选 → 经证据限定的结论 → Books 判断
 ```
 
-单次事件身份使用：
-
-```text
-Source Family ID
-+ event kind / version
-+ first-public date
-```
-
-- 同一论文的 v1、revision、正式发表、作者项目页和代码发布共享一个 Source Family，但可以形成不同 event node。
-- 论文通常以可核验的首次公开正文日期归属 Daily/Weekly；正式发表日不会覆盖更早的公开日期。对 arXiv，
-  `submitted` / version history 只证明作者提交与版本 provenance，不等同于公众可见时间。若审核、hold 或延迟公告
-  使 submission 与公开 listing 分离，必须以官方 announcement/listing receipt 的首次公开时间归属；无法恢复该
-  receipt 时保持 date ownership 未验证，不能仅凭 submission timestamp 把论文写入更早窗口。
-- release、RFC、model/system card 和代码 artifact 按各自首次公开日期记录，并声明它们在 family 中承担的证据角色。
-- discovery feed 的推荐日、第三方索引收录日和搜索发现日不能代替事件日期；但 primary repository 自身的公开
-  announcement/listing 是 first-public 证据，不应与第三方 discovery feed 混同。
-- 同一 Source Family 在一份 Report 的候选分母中只能出现一次。Daily 先跨历史记录去重，再以 canonical primary
-  event 的 first-public time 判断是否进入本轮窗口；HF、搜索索引或其他 discovery feed 的推荐日不能改变归属。
-- 用户明确重建 Historical Daily 时，“跨历史记录去重”只能读取 canonical primary identity、原始来源 metadata
-  与已经独立重建的 Daily。既有 Weekly 是下游聚合产物，不得提供 discovery seed、候选、评分、Review、Books
-  disposition 或漏项校准；Weekly 只能在 Daily 闭环后重新聚合。ISO owner week 仍可由日期计算，但不能借此复用
-  Weekly 内容。
-- feed 在本轮首次暴露、但 primary event 属于更早窗口的 family，只建立 delayed-discovery recovery 通知，不进入
-  当前 Daily 候选分母，也不阻塞当前 Daily Gate。它不是零分或静默忽略：恢复任务必须重开真实 owner Report，并在
-  owner 中完成 Score V2、Source Review、Books Decision 与必要的 Weekly reconciliation。
-- 后续 Daily 再次命中同一 family 且没有重要 revision 时只记录 duplicate/reconciliation，不重复评分；Sunday Weekly
-  可以基于七日证据重新评分，Historical Weekly 仍只在真实 owner week 建立周级评分。
-- 后续 Daily 遇到重要 revision 时，使用 `Candidate State = revision` 和
-  `Reconciliation = same_window_revision`：不成为第二个评分 owner，但必须以
-  `important_revision` 重跑 Deep Review、Selection 和 Books Decision，并指向原 owner Report。
-- 标题、品牌名和 URL 可以变化，不能单独作为身份键。
-- 日期校正只改变 event identity 与 owner week，不创建新的 Source Family。
-
-跨事件关系只使用以下五类：
-
-- `Direct Evolution`
-- `Layering / Dependency`
-- `Principle Reuse`
-- `Explanatory Analogy`
-- `Alternative Branch`
-
-关系的语义以 [LEARNING_PHILOSOPHY.md](./LEARNING_PHILOSOPHY.md) 为准。
-
-## 4. Coverage 与候选分母
-
-### 4.1 Coverage Receipt
-
-每个到期来源都必须留下 Coverage Receipt，至少包含：
-
-```text
-Source ID
-覆盖窗口
-使用的 endpoint、venue 或 topic filter
-pagination / cursor / query closure
-命中数量
-候选 Source Family
-不可访问项或限制 ID
-完成状态
-```
-
-Coverage Receipt 还必须保存带时区的实际执行时间、真实检索窗口、listing / release
-watermark 与可复算的 closure evidence。状态只表示以下含义：
-
-- `checked`：窗口已闭合且存在命中；
-- `no_hit`：窗口已闭合但没有命中；
-- `incomplete`：已执行普通扫描，但 cursor、watermark、snapshot 或分页证据未闭合；这是
-  ordinary pending，不是 `checked`，也不是 external failure；
-- `failed`：已精确识别外部访问失败，并绑定 Gap / Limitation 与材料请求；
-- `not_due`：当前窗口未到期的 Periodic / Event / Backstop 来源。
-
-`incomplete` 与 `failed` 不得互换，也不得用口头“已检查”代替 closure evidence。它们对
-Report-level Gate 的影响只由 [REPORT_CONTRACTS.md §8](./REPORT_CONTRACTS.md#8-gate-与完成条件)
-维护。
-
-非确定排序的 Google Scholar、Semantic Scholar 等 Backstop 不参与确定性 Coverage closure 的算术；
-它们不可访问时仍必须记录限制。
-
-### 4.2 Candidate Denominator
-
-候选分母先于审阅冻结。`已完成 Review 数 = 当前候选数` 只能说明“已入池候选处理完”，不能证明“扫描没有遗漏”。冻结前必须完成：
-
-```text
-到期来源逐项闭合
-→ endpoint / filter / pagination 收据完整
-→ 同一来源内去重
-→ 相邻分类与触发源补检
-→ first-public / revision / spillback reconciliation
-→ 生成当前 Report 唯一 family ledger
-```
-
-Coverage recall 与 Candidate admission 是两个不同阶段。全量枚举、Core Daily 逐项 title + abstract
-语义筛选、关键词路由和相邻分类补检，只负责证明“看见并判断过”，不自动把命中项送入候选分母。只有至少
-满足下列一项，family 才能进入 Candidate Ledger 并接受 Score V2：
-
-- 明确改变或补全长期 AI System 机制；
-- 改变 state、data 或 control ownership；
-- 改变可复算的 evaluation / release contract；
-- 改变 Platform、Training 或 Inference 的设计判断与成立边界；
-- 用 primary evidence 修正 Books 的既有认知。
-
-仅仅能映射 ROADMAP、属于 AI 研究、提供单领域方法或 benchmark、改善局部表示/模型指标、或出现
-`agent / memory / world model / inference` 等术语，均不足以入池。此类 family 留在 Coverage screening
-ledger，以 `pre-denominator closure` 逐项记录 identity、日期和 family-specific 理由；不接受 Score V2，
-也不进入 Source Review。Score V2 只决定已经入池候选的审阅深度，绝不能反向承担候选筛选。
-
-冻结分母前还必须核验 primary source 的公开状态。若 arXiv、正式 publisher 或 Review Authority 明确标记
-`withdrawn`、`removed` 或等价撤回状态，该 revision 直接在 screening ledger 以
-`pre-denominator closure = withdrawn_primary_source` 闭合：只保留 identity、first-public date、权威状态来源、
-撤回日期（若披露）与原因原文的短释义，不进入 Candidate Ledger，不打 Score V2，不生成 Source Review、
-Deep Analysis、Books Comparison、Materials Request 或 Books marker。后续新 revision 只有在拥有独立公开版本身份、
-可访问正文且真实 first-public window 重新归属后，才能作为新的 revision node 评估；不得用后续版本复活已撤回
-revision 的 selected 记录。若撤回发生在报告完成后，应重开真实 owner Report，删除其 retained/selected/blocked
-链路并重算 denominator、receipt 与 Gate，而不是把 withdrawal 当成全文访问 blocker。
-
-冻结前必须由 fresh-context reviewer 同时检查 proposed retained 的 false positive 和 pre-denominator
-closures 的 false negative。审计不得只抽样，也不得以预设保留比例代替逐项判断。
-
-Daily 冻结后若发现 canonical event time 仍落在本轮窗口的新 Source Family，重开当日分母并完成评分和对应
-Review。若 primary first-public 属于更早窗口，只更新独立 delayed-discovery recovery ledger；当前 Daily 保留
-发现来源、primary identity、真实 owner 与恢复状态，但候选分母和三个 Gate 不随之扩张。恢复执行时重开真实 owner
-Report；不存在可复用旧 Review 时必须重新评分和审阅，存在可复用 provenance 时按 §11 校验后复用。
-`earlier_owner_pending / earlier_owner_written_back` 仅为已有 V2.1 Report 的兼容解析值，新 Daily 不再生成。
-Historical Weekly 的新增候选仍只重开真实 owner week。
-
-## 5. Authority Role 与 Claim Scope
-
-来源注册表为每个 Source ID 指定一个主要 Authority Role：
-
-- `Creator Primary`：证明该机构公开的模型、机制、版本和 artifact；不能把未披露内容反推成内部事实。
-- `Primary Manuscript`：承载作者公开的论文正文、版本与实验主张；作者实验仍受其 workload 与方法边界约束。
-- `Review Authority`：证明 submission、review、decision、withdrawal 与公开审稿状态；评审意见本身不是已证实机制。
-- `Independent Evaluator`：证明其 evaluation contract 与结果；不能证明被测模型内部机制。
-- `Formal Publisher`：证明正式版本、venue、DOI 与 publication status。
-- `Benchmark / Standard Owner`：证明规则、提交配置、标准文本和对应结果。
-- `Artifact Provenance`：证明 commit、release、RFC、spec、代码路径和公开实现。
-- `Analytical Dataset`：证明其数据方法与估算；估算必须保留 uncertainty，不能冒充厂商披露。
-- `Discovery / Metadata`：只用于发现、身份、去重、引用和恢复；不能支持技术机制结论。
-
-一个 Source Family 可以组合多个角色，例如作者论文提供机制、正式 proceedings 提供发表状态、repository 提供实现、独立机构提供 evaluation。组合证据不会自动扩大任何单一来源的允许范围。`Formal Publisher` 托管的作者 PDF 可以承载作者主张，但 publisher role 本身只证明正式版本与发表状态。
-
-Report 中的每个重要 claim 必须明确归因：
-
-- `官方事实`：creator、standard owner 或 artifact owner 明确公开的事实；
-- `作者实验主张`：论文在特定 evaluation contract 下报告的结果；
-- `独立评估`：Independent Evaluator 在其协议下得到的结果；
-- `社区观点`：只作线索或争议背景，不能单独通过 Evidence Gate；
-- `Agent 推断`：必须显式写为推断，并列出从哪些已核验事实推导而来。
-
-## 6. Score V2：只决定审阅路由
-
-当前 Report 去重后需要处理的每个有效候选使用三个维度，每项 `0～3`：
-
-### 6.1 Design Delta
-
-- `0`：没有可辨识的设计变化，或只是营销包装。
-- `1`：局部实现变化，不改变现有设计判断。
-- `2`：给出重要机制、边界或替代方案。
-- `3`：改变既有设计结论、修正错误或建立新的演进节点。
-
-### 6.2 System Reach
-
-- `0`：与 AI System 无直接关系。
-- `1`：影响单一组件或局部 workload。
-- `2`：跨一个系统边界，影响 state、data flow、control flow 或 SLO。
-- `3`：影响多个层级、生命周期阶段或平台 contract。
-
-### 6.3 Durability
-
-- `0`：短期产品、营销或无法复用的孤立事实。
-- `1`：版本敏感，但对当前工程有记录价值。
-- `2`：在一类稳定约束下可复用。
-- `3`：揭示长期问题、第一性原理或清晰演进关系。
-
-```text
-Total = Design Delta + System Reach + Durability
-范围 = 0～9
-```
-
-处置路由：
-
-- `7～9`：Deep Source Review + Books Decision。
-- `5～6`：保留候选并完成 Standard Source Review。
-- `0～4`：完成 identity、日期、重复关系和最终 disposition 闭合；必要时可做更深审阅。
-
-以下情况无论分数如何都强制 Deep Source Review：
-
-- 修正现有错误；
-- 改变 release 或 security contract；
-- 与 Books 现有结论冲突；
-- 全文证据确认补全一个可定位的长期知识缺口；
-- 属于会改变机制解释或实验结论的重要 revision。
-
-`Source Reliability` 不再参与分数，由 Supporting Source IDs、Authority Role 与 Claim Scope 表达；`Review Status`、`Access Status` 和 Books disposition 也不参与分数。
-
-## 7. Review 合同
-
-### 7.1 Closure Review（通常对应 0～4）
-
-至少核验：
-
-- 唯一身份与 primary identifier；
-- first-public date 与 owner week；
-- revision / duplicate / spillback；
-- 三维评分；
-- 最终 disposition 及其原因。
-
-### 7.2 Standard Source Review（通常对应 5～6）
-
-在 Closure Review 之上，至少核验：
-
-- 原始问题与主要机制；
-- 旧方案为何合理、发生了什么约束变化；
-- evaluation contract 与关键 baseline；
-- 证据证明什么、没有证明什么；
-- trade-off、failure mode 与适用边界；
-- 对应的系统问题与可能的 Stable Node owner；此时只定位知识树，不读取 Books 正文。
-
-### 7.3 Deep Source Review（通常对应 7～9或强制路由）
-
-在 Standard Review 之上，按来源实际公开范围阅读：
-
-- Method、公式、状态所有权、control flow、data flow 与实现；
-- 实验、ablation、sensitivity、overhead、Appendix 与 limitations；
-- artifact、代码路径、release / RFC / commit；
-- workload、model、hardware、precision、input/output length、batch、concurrency、SLO 与 evaluator；
-- 相邻技术、旧方案共存边界和下一重压力；
-- claim attribution、公开范围与未披露字段。
-
-公开材料未披露的字段写 `Not Disclosed`。作者 benchmark 只能证明其绑定的实验合同，不能外推为普遍结论。
-
-`Deep Source Review` 是所有被路由候选的证据包，不限制数量；`Deep Analysis` 是 Report 正文中用于重建技术演进的叙事单元。叙事容量由 Report 合同维护，不能拿它偷换成“只全文审入选项”。每个已完成 Review 都必须有可定位的 `Review Ref`。
-
-### 7.4 Review Completion Receipt
-
-`Review Status = *_complete` 不是作者自由声明。每个候选必须在 Report 的 Review Completion
-Receipt 中占据唯一一行，并记录：
-
-- 本次审阅使用的精确 primary evidence 版本；
-- 本次实际用于 claim 的全部 evidence versions，按 Source ID 与精确 version / tag / DOI / commit 绑定；
-- 由 review schema、family/event identity、实际审阅的 evidence versions、route、全部 locator、
-  claim boundary 与有界 Review 正文内容共同冻结的 Review Provenance ID；
-- 与路由相符的 Method / Identity、Evaluation、Limitations / Counterevidence 与 Artifact locator；
-- 可回溯的 Claim Boundary Ref；
-- 完成、外部受阻或确实无需审阅的结果。
-
-locator 可以是章节、公式、图表、Appendix、commit、RFC 段落或 Report 中的稳定引用。
-不适用或未公开字段必须写带原因的 `Not Required — ...` 或 `Not Disclosed — ...`。
-“已读”“已检查”“见原文”或一段无 locator 的摘要都不是完成证据。合同不使用字数阈值：
-验收对象是可追溯的证据位置和 claim boundary，不是文本长度。
-
-### 7.5 Deep Analysis Selection
-
-Deep Analysis Selection 分配的是长叙事容量，不是研究完成度。eligibility 的最小可复算单位是
-Source Family，而不是作者事后命名的 analysis unit。以下 family 进入显式 eligibility pool：
-
-- Score V2 `7～9`；
-- 强制 Deep Review override；
-- Evidence 阶段根据 `ROADMAP.md` 与候选 claim boundary 判断为 `potential_books_delta`；
-- Evidence 阶段尚找不到稳定 owner、需要在 Books Comparison 中验证的 `potential_structural_gap`；
-- 参与跨 family 日期、安全、release、证据或技术演进修正的 family。
-
-`potential_books_delta / potential_structural_gap` 是读取 Books 正文前的候选信号，不是最终 Books
-Disposition。若后续 Books Comparison 得到 `Integrate` 或 `Structural Candidate`，但该 family 没有对应的
-pre-Books eligibility，必须重开 Selection，而不能用最终 disposition 反向伪造当时的选择依据。
-
-Report 必须为每个 eligible family 恰好记录一行 `selected`、`subsumed` 或 `not_selected`，并给出可审计理由。
-多个 family 只有在共享同一非重复演进链时才能使用同一 selected Analysis Unit ID；selected unit 最多三个。
-“因为只能选三项”不是理由。选择优先级依次考虑：
-
-1. 正确性、security / release contract、Books conflict 和重要 revision；
-2. 是否改变长期系统设计或暴露结构缺口；
-3. Design Delta、System Reach 和 Durability；
-4. 是否能构成非重复的跨候选演进链；
-5. 证据是否足以支持稳定叙事。
-
-`subsumed` 必须通过结构字段指向一个实际 `selected` 的 Analysis Unit ID；`not_selected` 只表示没有进入
-长叙事，不降低其 Source Review 或 Books Decision 责任。选择发生在 Books Comparison 之前，避免由最终
-disposition 倒推 eligibility。
-
-### 7.6 Review 与 Access 状态含义
-
-`Review Status`：
-
-- `deep_complete`
-- `standard_complete`
-- `closure_complete`
-- `pending`
-- `blocked`
-- `not_required`
-
-`Access Status`：
-
-- `accessible`
-- `partial`
-- `blocked`
-- `unverified`
-- `disputed`
-
-`blocked` 是 Review 的最终受阻状态，不是 ordinary `pending` 的别名。`partial` 也不会因为已读到摘要
-就自动变成完成。但如果公开来源确认某字段未披露，在可追溯的 `Not Disclosed — reason`
-界定下，`accessible + *_complete` 仍然成立。
-
-`partial / blocked / unverified` 使用 `blocked` 时必须有精确 Materials Request。`disputed + *_complete`
-必须在 Review Ref 与 Claim Boundary Ref 中并列冲突来源和不可判定边界；只在解决冲突需要外部材料时才进入
-Materials Request。`blocked / unverified / disputed` 不能支持 `Integrate` 或
-`No Change — Existing Coverage`。
-
-Review / Access 组合如何限制 Evidence Gate、Coverage 收据如何限制 Coverage Gate，只由
-[REPORT_CONTRACTS.md §8.1](./REPORT_CONTRACTS.md#81-唯一状态与-gate-真值表) 维护。不在 Research 合同
-复制第二份映射。
-
-## 8. Benchmark 合同
-
-任何 vendor、作者或第三方性能数字都必须绑定：
-
-```text
-workload
-model
-hardware
-precision / quantization
-input length
-output length
-batch
-concurrency
-SLO
-evaluator
-```
-
-缺少的字段写 `Not Disclosed`，而不是猜测。MLPerf、Arena、HELM、METR 或论文实验各自只在其 evaluation contract 内成立；不同 suite、版本、system、division 或 evaluator 的数字不得直接合并。
-
-## 9. Books Gate 与目录外内容
-
-Evidence Gate 只验收来源、身份、claim boundary 与 Review 完成度，不读取 Books 正文。候选通过 Evidence Gate 且可能改变长期知识后，Books Decision 才读取目标与相邻章节，检查现有覆盖、owner 冲突和叙事位置。
-
-`Integrate`、`No Change — Existing Coverage` 与 `Structural Candidate` 必须进入 Books Comparison
-Receipt。该收据必须并列目标 Stable Node、目标及相邻章节、现有中心命题、新证据的真实
-delta、演进关系、证据边界和最终 Decision。它不是把评分或 Weekly 摘要复制到 Books，而是证明
-新结论与现有知识之间的相同、冲突、补全或结构缺口。
-
-`Integrate` 必须同时满足：
-
-- `Review Status = deep_complete`；
-- `Access Status = accessible`；
-- `Review Ref` 可定位；
-- Stable Node ID 可在 `ROADMAP.md` 解析；
-- 目标及相邻章节已审阅，并留下 `Books Review Ref`；
-- 目标、相邻章节与 existing proposition 均定位到当前 Books 中真实存在的文件和标题锚点；占位锚点、
-  自动关键词片段或仅能证明“主题相似”的引用不能通过 Books Gate；
-- 结论达到长期知识门槛。
-
-分数只负责初始审阅路由，不直接决定 Books。低分 correction、Books conflict 或已由全文证据确认的
-long-term knowledge gap 若要进入 Books，必须通过 override 升级为 Deep Review。
-
-每个 Source Family 必须获得一个最终 disposition：
-
-- `Integrate`
-- `No Change — Existing Coverage`
-- `Structural Candidate`
-- `Weekly Only — Context`
-- `Version Fact / Mechanism Not Disclosed`
-- `Blocked / Unverified`
-- `Disputed`
-- `Rejected — Low Durability / Out of Scope`
-
-`Structural Candidate` 进入季度结构复核。它表示当前知识树确实缺少稳定 owner，因此 Candidate Ledger 的 `Stable Node ID` 必须写 `—`，并在叙事区记录建议的结构范围；它不表示应立即新建“前沿技术”章节。经济、社会、行业和产品事实如果不改变 AI System 设计 contract，使用 `Weekly Only — Context`；不能因为不在 Books 范围内而静默丢失，也不能强行写入不相关章节。
-
-Source-Family Books eligibility 与 Report-level Books Gate 相互区分。年度 `Archive Completion` 是 Coverage、Evidence 与 Materials reconciliation 的派生状态，不是第四个平行 Gate。具体决策见 [DECISIONS.md](./DECISIONS.md) 的 ADR-007。
-
-## 10. Semantic Audit 与 Gate
-
-### 10.1 结构校验不等于语义验收
-
-validator 只能确认 marker、字段、引用、枚举、唯一性和状态约束是否满足；它不能证明
-来源已被正确理解、claim 与 locator 相符、Deep Analysis 选得最有价值，或 Books 比较没有曲解
-现有结论。因此，“validator 通过”只能报告为“结构校验通过”，不得简写为
-“研究已验收”或“证据全部通过”。
-
-Report 必须另外保存 Semantic Audit Receipt，由没有参与该 Report 主要写作的
-fresh-context reviewer 对以下 scope 给出可追溯的 reviewed refs、findings、resolution 和 status：
-
-- `coverage`；
-- `evidence`；
-- `deep_analysis_selection`；
-- `books`。
-
-Semantic Audit 不用来追求绝对无误，而是强制区分“报告作者声明”与“独立复核后可接受”。
-存在未解决 finding 时对应 scope 为 `open`；Historical Weekly 未获授权 Books Integration 时，
-books scope 才可为 `not_applicable`。作者不得同时充当该 Report 的 semantic reviewer。
-
-### 10.2 Gate
-
-本系统只保留三个 Gate：
-
-1. **Coverage Gate**：到期来源、收据、候选分母与日期去重是否闭合。
-2. **Evidence Gate**：冻结分母中每个候选是否拥有与路由相符的 Review 或精确 unresolved disposition。
-3. **Books Gate**：已完成证据的候选是否获得最终 integration disposition，并在需要时同步 Books。
-
-三个 Gate 的允许值、Review / Access / Coverage 组合、Semantic Audit 上限、Books N/A 边界与
-`Complete / Conditional / In Progress` 完成条件，只由
-[REPORT_CONTRACTS.md §8](./REPORT_CONTRACTS.md#8-gate-与完成条件) 的唯一真值表维护。本合同不再保存第二份
-状态映射；结构 validator 通过也不会自动改变任何 Gate。
-
-不能再引入含义重叠的 `Discovery Denominator Gate`、`Discovery Recall Gate`、`Candidate Evidence Gate` 等平行名称。历史文字可以保留，但新记录统一映射到上述三个 Gate。
-
-## 11. 历史兼容、Review 复用与 Source Delta Audit
-
-- 旧 Weekly 的六维 `/30` 保留为 `Score V1 Legacy`，不机械重算。
-- V2.1 contract 约束所有新生成或真实重开的 Report，并继续使用 `Score Schema: V2`。命令行对
-  `--report` 使用 strict 模式：缺少 `Contract Version: V2.1` 或 `Score Schema: V2` 都必须失败。
-  `--audit` 才允许 Score V1 Legacy 或缺少 V2.1 contract marker 的 earlier Score V2 Report 保持只读兼容；
-  后者不因此获得 V2.1 semantic-complete 身份。
-- 注册表的 `Effective Date` 表示该来源从何时进入固定合同，不反推此前所有周必然遗漏。
-- 已完成周先做 Source Delta Audit：比较新增来源、现有 owner ledger、相邻周 spillback 与 revision/identity 变化。
-- 只有出现新的 in-window Source Family、日期归属冲突、重要 revision 或无法证明原 denominator 时，才重开真实 owner week。
-- 仅登记待检查 baseline、changed sources 与 continuation point 时，使用
-  [Report 合同 §6](./REPORT_CONTRACTS.md#delta-audit-queue-notification-与-true-reopen) 的非权威
-  `Delta Audit Queued`；它不改变旧 Report 的分母、Gate 或 Completion，也不构成 true reopen。真实重开
-  的触发边界与 strict 要求只由该节维护。
-- 历史 Review 只有在 provenance 完整时才可复用：Source Family identity、primary identifier、精确
-  evidence version、路由所需 locator、claim boundary、Review Provenance ID、Prior Review Ref 和无重要 revision
-  都必须可验证。
-- “旧报告写过 Full Source Review”、相同标题、相同 URL 或一段旧摘要都不构成复用证据。
-  任一 provenance 缺失时，重新审阅或保持 `Review Status = pending`；不得直接迁移完成状态。
-
-Historical V2.1 contract 明确区分：
-
-- `Coverage Mode = Full Replay`：未生成的历史周使用当前注册表完整执行；
-- `Coverage Mode = Delta Audit`：已完成周只检查相对 baseline 的 Changed Source IDs 与受影响 families，
-  当前 Receipt 不复制未变化来源；effective coverage / denominator 由 baseline effective state 加本轮 delta
-  复算。保留旧 V1 或 earlier Score V2 正文和分数，不把整周隐式升级为当前 V2.1 完整来源集。
-
-Delta Audit 必须记录 baseline report、previous denominator 或显式 legacy identity、changed Source IDs、
-新 effective denominator 与冻结时间；没有真实差异时记录 `No Reopen`。
-
-因此，来源补全不等于推倒历史全年重跑。
-
-## 12. 质量与 Git Safety
-
-每次运行至少检查：
-
-- Source ID、Source Family、first-public date、owner week 与 revision 唯一性；
-- Score V2 三项及 Total；
-- Supporting Source IDs、Review、Access 与 Books 状态是否冲突；
-- benchmark 合同是否完整；
-- Report 与 Books owner/disposition 是否一致；
-- Markdown 标题、表格、链接、代码围栏、日期与行尾空白；
-- `git diff --check`、staged/unstaged diff 和工作树范围。
-
-研究自动化不得 stage、commit、push、清理或回滚既有修改，除非用户明确授权。
+原始命中可能重复、窗外或只是推荐；候选表示值得核验的具体知识增量，尚不代表结论成立。
+审阅可以得到支持、收窄、反驳或暂不能判断的结果；Books 再比较这些结果是否需要改变正文。
+各层数量由实际材料决定，不设篇数、保留率或更新配额，也不能单凭数量多寡认定筛选正确或失效。
+对本项目不入选不等于论文没有学术价值；小改进、复现与负面结果也可能提供重要知识。
+
+## 2. 收集与日期去重
+
+按注册表的来源顺序和频率检查原始来源，只覆盖本次时间窗口及实际触发的主题。
+保留足以复查的原始入口、查询/分页、执行时间、命中身份与筛选结果；报告只做简要索引。
+完整性指约定来源与窗口确实处理完，不是宣称互联网上绝无遗漏。补检搜索有召回局限，应直说。
+
+以论文 ID/DOI、官方项目、版本和链接识别同一材料家族（Source Family），不按标题字符串或发现网站重复计数。
+作者论文、项目页、代码和正式发表可以共同支持一个家族，但不同公开事件要分清：
+
+- 首次公开正文决定论文归属；搜索、Hugging Face 推荐或第三方收录日期不改变它。
+- arXiv 的提交时间不一定是公开时间，使用官方公开列表/公告和版本历史判断；不能将 submitted 字段改名为公开时间。
+- 重要修订、release、RFC、card 和 artifact 使用各自事件日期，指向原家族。正式发表不覆盖更早的首次公开。
+- 日期依据保留原字段、原值、时区与精度；仍需判断贡献或拟入选的材料不能确定落窗时记录具体缺口，不补造时刻或当作零命中。
+- 相同事件且已有有效审阅可直接去重；重要修订只审当前精确版本，只有解决具体未决问题才比较旧版。
+  版本号变化、主题相关或 replacement listing 本身不是重要性证明，须指出影响机制、评价、纠错或安全的实际信号。
+- 窗外新发现留作真实归属日的恢复线索，不扩张当前窗口；不能把尚未处理的旧材料伪装成已审重复项。
+
+先用官方窗口列表和已有日期依据排除明确窗外事件、去重并检查撤回状态。日期含糊的材料可先读标题和摘要，
+同时轻量查看当前官方事件页已有的撤回、纠错、勘误、安全及版本说明（withdrawal / correction / erratum / security / revision comment），
+必要时读直接相关的说明；摘要未变也不能忽略版本说明中的评价泄漏纠错等信号。不扩展为全站或完整版本史搜索，
+页面未提供某类标记不等于材料缺失，也不要求另行证明该标记不存在；真正决定处置的必要说明不可取时仍列缺口。
+若据此已能明确排除贡献且无纠错、安全、设计反证或重要修订信号，记录具体理由与日期未核实即可停止，不为排除它追查完整发表史。
+拟入选项仍须确认落窗；贡献排除不能冒充日期核验，也不能代替到期来源的窗口覆盖检查。
+官方撤回/删除的版本不入候选、不评分、不进入 Books，
+只在原始筛选记录保留必要的排除依据。已收录后撤回则清除其入选与采用链路、复核依赖结论，
+不把撤回冒充“全文暂时不可达”。其他有效证据不得随之删除。
+
+## 3. 先判断贡献，再投入审阅
+
+### 项目范围先于贡献判断
+
+研究范围以 [ROADMAP](../ROADMAP.md) 的当前目标与七个 Part 主线为依据，而非以现有章节作封闭白名单：理解模型能力的形成，以及它如何通过多模态、
+训练、推理、基础设施与 Agent 成为完整系统。大模型及其 Infra 是主线，不以参数量、论文是否写出“LLM”、
+或是否跨多个系统层级划硬门槛；学习/表示/优化理论、小模型实验、生成机制、编译与通信研究也可能直接支撑这条主线。
+
+区分“研究这条主线的机制”与“在某个领域使用已有 AI 方法”。仅有领域指标提升、应用组合或可作系统类比，
+不足以建立项目关系；需指出原始材料实际研究的问题如何直接支撑主线，不以章节名称替代依据。
+例如普通 EEG 特征去标识化或晶体生成条件适配不是默认候选；参数泄漏机制、生成范式的适用边界或 KV 隔离则继续判断。
+AI for Science 当前暂缓，按 ROADMAP 的阶段边界执行，不因能映射 Data、Evaluation 或 Agent 而恢复其领域任务。
+
+先以标题作轻量范围判断，只有含义明确、无相关纠错或安全信号的范围外条目可直接关闭并简记原因；
+标题含糊或可能涉及主线就读完整摘要，不凭关键词或学科标签排除。进入贡献判断的材料须读完整题摘。
+范围筛选与贡献筛选共用原始记录，不新增一套账本。
+
+### 范围内还要有值得保留的增量
+
+对本窗来源中尚需判断贡献的独立事件逐项阅读完整标题和摘要；没有摘要的官方 Blog、release 或 RFC，
+阅读对应的核心说明与变更理由。先回答：
+
+**相对已有认识，原文提供了什么值得本项目长期保留的机制、边界或证据；如果成立，会实质改变哪项大模型或其基础设施的解释或设计选择？**
+
+初筛前置使用 ROADMAP，通过以下任一入口说明贡献，不要求逐篇先通读 Books：
+
+| 入口 | 准入依据 |
+| --- | --- |
+| 现有主线贡献 | 指出 ROADMAP 中的具体问题，以及材料为它新增的重要机制、设计分支、适用边界或反证；能对应某个章节本身不够。 |
+| 主线之外的突破 | 无现成章节，但原始题摘显示它可能改变理解或设计模型、训练、推理、基础设施或 Agent 的基本方式；指出被挑战的既有假设、潜在设计变化，以及为什么属于本项目当前目标。 |
+
+第二条不是“新颖即可入选”的豁免，两条入口共用后续评分、证据与独立复核要求，也不能绕过 AI for Science 等明确暂缓范围。
+确有潜在长期价值而缺少 owner 的候选标记为待核验的 `Structural Candidate`，证据审阅后再确认是否需要结构调整；
+不因无章节而遗漏，也不在初筛直接新增章节。初筛记录沿用现有准入理由；Integration 时再读具体章节，核对真实增量与归属。
+
+准入理由把三件事连成一句：原有约束或判断、材料实际新增的内容、因此需要重新考虑的具体选择。
+可使用“在……条件下，原先……；材料提出/观察到……，因此需要核验……是否仍成立”的表达，不要求另填表。
+新增内容必须能定位到原文；对项目的连接可以是自己的推断，但须说明依据和适用条件，
+不能补造机制或把类比当作论文贡献。判断保持在原文能支持的最小范围：范围内的局部模型、任务或小规模实验也可改变具体选择，
+不要求先扩写成跨层平台故事；反过来，系统术语齐全、声明“提出框架”也不证明超出了已有方法。
+
+值得进入候选的包括：补全机制解释，提出有适用前提的替代设计，揭示新的收益/代价关系，
+改变评价或发布的有效性条件，或用独立证据修正已有判断的可信程度。模型表示、优化方法、多模态、物理闭环和
+Agent 均在上述项目范围内按此判断；不要求每篇都发明 runtime 协议、影响多个层级或拥有现成章节。
+论文有学术新意或一个新的局部 operating point，不等于对本项目有值得投入审阅的增量。
+仅复用已知方法获得任务指标提升、重复验证成熟原则或包装成新应用的，直接结束初筛；
+关键是是否新增值得保留的机制解释、改变方案适用边界，或修正重要既有判断，而不是能否为它写出系统术语。
+
+以下是准入口径示例，不是对某篇论文的预先裁决：
+
+| 材料表述 | 单凭这些还不足以入选 | 值得继续核验的具体增量 |
+| --- | --- | --- |
+| 在新任务上组合已有模块 | 换领域、加模块后指标提高 | 分离出决定模块收益的条件，或提供原方法无法满足的约束下的可行机制 |
+| 推理更快、成本更低 | 一个加速数字或更有利的硬件/精度配置 | 新执行方法、明确的质量/资源取舍，或对照后发现原有方法排序和适用范围改变 |
+| Agent 增加审核、记忆或路由 | 将流程重述为状态、控制、责任分工 | 可定位的新失效路径、有效性条件或执行机制，或足以改变原有可行性判断的可检查结果，而非仅换应用场景 |
+| 新数据集、benchmark 或复现 | 增加任务条目、排行榜或重复已有结论 | 暴露原评价测不到的能力、混杂因素或失败边界；受控复现修正重要既有结论 |
+| 新版本、官方发布或综述 | 声望、版本号、术语归纳和未来议程 | 实际改变兼容性、正确性、性能边界，或用新的综合证据解决具体知识分歧 |
+
+“与 AI 相关”“能映射 ROADMAP”“说明需要验证”都不能独立充当贡献理由。
+只把既有原则换成新场景叙述、没有新增机制或证据的材料可排除；已有 Books 覆盖某个主题则不是排除理由，
+范围内、足以修正重要判断的新增验证或反证仍可值得审阅。既有架构的新规模/条件证据只有实质改变可行性或设计边界时才值得准入，
+不因又有一个应用成功就准入，也不因此证明某个组件造成收益。
+局部实验不需要证明普遍定律，也不能被外推为普遍结论。
+
+明确符合的进入候选；明确不符合的在 `_sources` 逐项留下身份及具体排除理由；
+只有决定准入的事实确实含糊时才带着该问题定点补读必要段落，得到判断即可停止，不展开所有引用与附件。
+潜在贡献已经清楚、只是实验可信度待核时进入证据审阅；缺少关键材料与尚未读完分别保留缺口或待办。
+摘要没给全部实验细节不等于没有贡献。关键词只辅助检索，不代替语义筛选，也不默认在初筛读全文。
+
+初筛分批推进，按共享筛选理由界定校准范围，来源和主题只辅助判断影响范围，不要求每个来源新建批次或收据。
+首批拟入选与有代表性的排除项先做独立准入校准，再按该口径批量展开证据审阅；已通过准入复核且未受影响的单篇可继续，其他初筛不等待校准。
+校准要同时检查“仅能讲出关联却被保留”和“有具体增量却因领域窄、无新架构或结果为负而被排除”的例子，
+先核项目范围，再指出原文支撑且值得本项目保留的增量或缺失环节；不能以“局部也有新意”为由恢复范围外或仅应用增量的材料。
+两位审阅者赞同同一句泛泛理由，不构成口径合理的证明。
+这次检查计入后续复核，未变化的内容不另做一遍。发现口径偏差时只暂停受影响部分的扩池与深审，修正共同理由并复查该部分；
+共享错误理由的材料即使跨来源或主题也属受影响部分，其余工作继续，不等待所有来源完成初筛。
+独立复核仍覆盖全部拟入选项和有纠错、安全、设计反证或重要修订信号的排除项；其余明确排除项按来源、
+主题及理由分层抽检，说明样本选择、覆盖数量和未检查范围。发现系统性误收/漏收，修正并扩查受影响部分，
+不把抽检写成全量验证。候选清单在来源和筛选处理完后确定，之后发现真实误收可凭证据修正；
+不能因深审费时、材料受阻或 Books 已覆盖而缩池。保留已读证据及改判原因。
+
+## 4. 三维评分决定最低审阅投入
+
+只给已通过贡献筛选、需要本次处理的候选评分，每项 0～3：
+
+| 维度 | 0 | 1 | 2 | 3 |
+| --- | --- | --- | --- | --- |
+| Design Delta | 无设计变化 | 局部实现变化 | 重要机制/边界/替代方案 | 改变设计结论或纠错 |
+| System Reach | 无直接关系 | 单组件或局部负载 | 跨系统边界 | 跨多个层级或生命周期 |
+| Durability | 短期噪声 | 版本相关的工程价值 | 可复用的稳定约束 | 长期认知基础 |
+
+三项相加为 0～9，不把权威性、访问状态或是否进入 Books 混入分数。
+Design Delta 按材料新增的机制、边界或证据评分，不能把重述已有原则评为设计突破；System Reach 按实际涉及并有依据的
+系统关系评分，不把审阅者能联想到的多个章节算作跨层贡献；Durability 按可保留的具体认识评分，不因出现通用词汇自动给高分。
+评分对象是本次证据拟支持的命题，不是整个项目或它借用的成熟原则；单一场景的可行性证据不因规模大或组件多自动成为长期认知基础。
+先准入再评分，不能用高分倒推准入，也不能用反复抬高分数让所有候选都进入深审。
+
+- **0～4：关闭判断。** 核实身份、日期、重复关系和不进一步采用的具体理由。
+- **5～6：标准审阅。** 核实问题、关键机制、对照与评价条件、收益、代价和适用边界。
+- **7～9：深入审阅并作 Books 判断。** 在标准审阅上，读足以支撑拟采用命题的机制、实现或实验依据与关键反证。
+
+纠错、发布/安全约束变化与重要修订，须同时指出实际变化及其影响的机制解释、保证、评价条件或具体未决问题，才不论分数深入审阅受影响内容；
+版本号、修复标签、模式改名或警告文案本身不触发，真实保护行为变化也不能因归在普通 patch 下而漏审。
+Books 冲突和已确认的长期知识缺口不论分数深入审阅。以上触发不要求遍历同一 release 或材料家族的所有无关内容。
+具体问题需要时可以读得更深，说明原因即可，不为配合工作量或 Books 决定改分。
+
+## 5. 证据读到哪里为止
+
+优先原始来源的精确版本 HTML，必要时使用 PDF；先读核心方法、关键评价和直接相关限制。
+围绕准备采用的命题补读公式、图表、附录、消融或代码，证据和关键反证足够就结束。
+不是必须遍历所有附件，也不是有了全文链接就算审阅完成。
+
+围绕中心主张检查证据能否把收益归因于所述机制：对照是否适当，数据、训练/搜索预算、质量目标和运行配置是否可比，
+是否有消融、受控干预或其他依据排除主要替代解释；需要统计推断时检查重复运行、样本范围与不确定性。
+性能研究还要看端到端成本和失败条件，不能只保留有利的 kernel 时间、平均值或子任务指标；理论结果则核对假设、
+结论与实际问题的对应关系，不机械要求所有材料提供同一套实验。未开源、单 seed 或小幅提升本身不直接判无价值，
+但证据不足以支持比较时，只保留可支持的窄结论或明确未决，不能照录宣传。
+
+记录实际证据位置与解释：来源证明了什么、没证明什么、哪些是自己的推断。论文机制可以由论文证明；
+可选代码没取得不自动阻塞论文结论，但不能声称实现已验证、实验已复现或具备生产能力。
+如果结论确实依赖缺失的代码、图表或实验条件，列明所需材料并继续其他项；未读完的普通工作不能称为外部受阻。
+
+按材料的实际角色判断证据权限：作者/厂商证明其公开事实与实验主张；独立评估只证明相应评价；
+出版方证明发表状态；artifact 证明公开实现；分析数据保留估算性质；搜索/索引只用于发现和身份恢复。
+权威名称不能证明未公开机制，社区观点不能单独支撑长期技术结论。
+
+性能数字绑定适用的 workload、model、hardware、precision/quantization、输入输出长度、batch、concurrency、
+SLO 和 evaluator；未披露写 `Not Disclosed`，不适用说明原因。不把不同评价协议直接合并或将作者 benchmark 外推成普遍结论。
+
+中心结论冲突就保留争议与双方证据，证据弱于宣传就收窄结论。
+只有中心贡献确实不符合准入门槛才改判排除，不能靠降分、删负面证据或改标签逃避审阅。
+
+## 6. 让知识进入合适的章节
+
+候选证据经独立复核、且可能改变长期知识后，读取 `ROADMAP.md` 对应节点、当前具体论点及相关交接内容，
+再决定是否修改。未变化的章节上下文可以复用；不逐篇重复通读整本书。
+
+- **整合**：有深入审阅支持的长期机制、设计修正或知识缺口。写清与原论点的差异，落实到唯一 Stable Node owner。
+- **已有覆盖**：指出现有章节中实际承载该结论的论点，不能只因主题相似就判定无需修改。
+- **仅报告**：上下文、版本事实或未公开机制等不能改变长期知识，说明边界。
+- **结构候选**：确有长期价值而当前知识树缺 owner，记录所缺知识链供结构复核，不强塞其他章节。
+- **暂缓**：必要证据受阻或结论有争议，说明未决问题。不能据此支持整合或已有覆盖；在可用原始材料已审完、采用范围已被隔离且重开条件明确时，它是本次报告的安全终态，不要求为等待作者勘误或私有 artifact 永久阻塞整日报告。
+- **未纳入本次**：仅用于用户明确要求本次不做 Books 的任务。
+
+整合按 [学习方法](./LEARNING_PHILOSOPHY.md) 与 [写作指南](./WRITING_GUIDE.md) 组织进现有论证，
+保持问题、约束变化、机制、trade-off、共存边界和后续压力的联系，不在章末堆论文摘要。
+改完复核真实写入及相邻衔接；报告同步记录位置和剩余问题。“已有覆盖”是合理成果，不为制造 diff 修改书稿。
+
+## 7. 复核与恢复
+
+报告作者与独立复核者分开；来源/准入、采用命题的证据与边界、Books 比较及实际改动均需相应复核。
+可以分批检查、复用未变化结果，在报告中汇总一次，不要求同一事实多处登记。
+具体报告状态和完成条件只由 [Report 合同](./REPORT_CONTRACTS.md) 定义，机器通过不代表语义正确。
+
+恢复时按实际内容区分：尚未判断的继续处理；身份、精确版本、判断依据与采用命题未变化且可核实的复用；
+被具体反例或实质变化影响的只重审相关部分；原判断所需证据因丢失、空文件或其他原因已无法核实的，只恢复相关证明及其依赖判断。
+筛选理由、证据审阅和 Books 落实分别复用，不因一层出错推倒其他有效成果，也不重开未受影响的来源。
+重新裁决必须有实际阅读与明确理由，不能默认复制旧标签充当新判断；旧“完成”标签、相似标题或摘要不能替代证据，
+缺少机械指纹也不等于原证据无效。旧反证与未决问题不能因为换文件就消失，不为这些区分新增平行账本。
+
+历史重建仍用当前标准；仅改合同或来源名单不自动触发全历史重跑。
+新增窗口内材料、身份/日期纠错、重要修订、实际漏项或上述必要证据失效时，只重开受影响报告中的相关工作；用户明确要求全量重审时按其范围执行。
+保护原始证据和已有修改，检查 Markdown、链接、评分、报告与 Books 一致性及工作树范围，不 stage、commit、push。

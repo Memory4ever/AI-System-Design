@@ -271,6 +271,8 @@ ASI-Evolve 支持这种双层 memory 与 lineage-aware search 在作者部分任
 
 ### 在搜索候选之前，先把问题编译成可执行 contract
 
+自然语言 intent 编译成 workflow 时，输出不应只是步骤列表，而是一组 typed artifacts、data/control dependencies、version/approval constraints 与 failure transitions。编译器可以提出结构，runtime 和人类 owner 仍决定是否提交；歧义无法消除时保留动态 planning。更强 IR 提高复用和静态检查，却以 schema、迁移和误编译风险为代价。<!-- semantic-body-binding:SF-2026-ARXIV-2608-21341 -->
+
 Evaluator-driven search 隐含一个容易被忽略的前提：系统已经知道在搜索什么、哪些变量可以
 改变、什么约束绝不能违反，以及怎样判定一个候选更好。若这些内容只存在于自然语言 prompt
 中，后续即使拥有强模型和大量搜索预算，也可能在错误的问题上高效优化。
@@ -329,6 +331,13 @@ benchmark 会造成 search-level overfitting。生产系统至少需要：
 - duplicate detection、lineage 和 failed-run retention；
 - 多指标约束，而不是只追逐一个 scalar reward；
 - 独立复核、审批和部署 authority。
+
+当 Workflow 生成 report metric 时，可执行 artifact 还应携带 source revision 与可由独立进程重执行的 evidence
+query，而不是只保存模型生成的数字。重执行不一致时应 suppress/defer 该 metric；一致也只证明数字与查询结果相符，
+不证明业务定义、join key 或数据完备性正确，后者仍需 schema/coverage critic 和人工 owner。现有证据来自单租户、
+10/10 tables、22 个 joins 与七份 reports，未提供用户效果或 join precision/recall，不能据此外推产品自治能力。
+
+<!-- source-family:SF-2026-ARXIV-2608-28594 -->
 
 因此它不会替代人工研究、形式证明或一次性工程设计。在 objective 难以机器判定、实验昂贵、
 反馈延迟很长或现实副作用不可逆时，人工提出并评审少量候选仍然合理。它也不是模型在“自我
@@ -509,6 +518,8 @@ AgentRewind 在 82 个有确定性检查项的工程任务、指定模型与 har
 unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能证明开放网络、并发协作者和生产副作用已经
 具备 exactly-once recovery。长期结论是：**恢复必须对齐模型所见状态与 Runtime 的 authoritative state，Memory
 只保存失败证据，不能替代环境事务。**
+
+如果修订只影响部分分支，可以复用依赖未变的结果，但不能仅在修订发生时检查一次：仍在执行的 attempt 可能随后读入新状态，最终 commit 必须用完整 read certificate 重新核对其启动后发生的 revision journal。已知依赖允许缩小重算范围，未知依赖则必须扩大失效与重算；这用追踪和提交检查成本换取了比整条 suffix 重跑更细的复用边界。实验性 Runtime 中 revision 与 commit 共用进程内锁，只能支持该受控域的原子校验，不等于跨进程一致性、crash recovery 或对不可逆外部副作用的回滚保证。
 
 ### Trial Evidence 不能直接提交为 Workflow Revision
 
@@ -923,6 +934,35 @@ Coding Agent 生成 compiler optimization 时，还要分开两种证明责任�
 
 <!-- source-family:SF-2026-ARXIV-2605-17998 -->
 
+## 从 Agent Trace 编译 Workflow 需要可归因的数据依赖
+
+编译后的流程还需要一个 versioned policy graph，记录每个节点允许的 action、前置证据、预算、审批与失败转移。DAG 只说明依赖顺序，不能表达谁有权在何种状态提交 effect；policy graph 变化后，旧 checkpoint 必须重新做 capability/admission 检查。它增加治理状态，却避免把“路径可达”误当成“动作获准”。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19861 -->
+
+重复轨迹中同时包含稳定流程、探索、重试和偶然顺序；若仅按事件相邻或高频共现固化 DAG，会把相关性写成错误依赖。更稳妥的编译器只在 consumer 参数能够唯一追溯到 producer output 时建立 hard edge，并把常量、用户输入、复制、变换与残余 LLM 决策分开；证据含糊的边保持 suspected，运行时继续动态决定。它用额外 provenance 分析和较少的静态并行机会换取可审计复用；一次性任务或高度开放流程仍适合保留 Agent 规划。`arXiv:2608.02680v1` 在作者 trace corpus 上支持该机制，也主动披露部分结果不可复现，不证明编译后的 workflow 在开放域完备。<!-- source-family:SF-2026-ARXIV-2608-02680 -->
+
+Observed trace 与 induced workflow 也必须保持两个身份：前者是某次执行的事实记录，后者是从多个记录归纳出的可重用程序。每条推导边要保存支持样本、反例和 compiler revision，并在 replay 中产生新的 evidence；不能把一次观察到的顺序直接升格为规范控制流。归纳提高复用和并行机会，却会固化隐藏依赖，证据不足时应保留动态 Agent 决策。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20319 -->
+
+## Resume 的语义必须比“有 Checkpoint”更具体
+
+代码与文档工作流还需要把 `view → edit → review → submit` 绑定到同一个 workspace revision。只记录自然语言任务，恢复后可能在新分支、已变化依赖或不同文件快照上继续，导致 reviewer 验证的内容不是最终提交的 artifact。每个阶段应携带 repository/worktree identity、base revision、patch digest、toolchain 与 review result；任一输入变化都使旧 review 失效并触发增量重验。它增加快照与冲突处理成本，但让“看过”和“提交过”成为可关联证据。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18050 -->
+
+持久化状态并不自动保证中断后行为正确：prefix 是否连续、已发生 effect 是否重放、fork 是否确定、checkpoint 是否有效、resume value 是否只能消费一次，以及 crash recovery 是否确定，都是不同性质。Workflow runtime 应公开这些属性和 fork intent，把 effect ledger 与普通 state snapshot 分开；若只能提供 at-least-once，就必须让 tool adapter 用 idempotency/postcondition 消解，而不能对外宣称 exactly-once。严格合同以更多状态、并发控制和故障测试换取可预测恢复；无副作用的纯计算节点可以使用更轻的重放语义。`arXiv:2608.03836v1` 的 TLA+ 模型只在声明状态界限内成立，对五个 pinned framework 的 fault matrix 也不代表未来版本。<!-- source-family:SF-2026-ARXIV-2608-03836 -->
+
+### Logical Plan 与 Physical Schedule 必须分别验收
+
+一个 multi-tool plan 在依赖关系上正确，仍可能因为并发资源峰值而失败；反过来，保守串行虽然安全，却可能违反延迟目标。Workflow runtime 应先验证 DAG 与参数，再用显式 CPU、GPU、网络或外部配额做物理调度，并分别记录 planning error 与 scheduling overflow。把两者合成端到端成功率，会让系统无法知道应该修模型还是修调度器。
+<!-- source-family: arxiv:2608.24509v1; semantic-body-binding: tool-workflow-logical-physical-scheduling -->
+
+### Handoff 必须保留约束的 Action-binding Strength
+
+摘要、计划和 ticket 可能仍提到一个 blocker，却把“执行前必须满足”弱化为“可供参考”。因此 handoff artifact 不仅要保留主题，还要保留 prerequisite、authority、fallback 和 execution consequence，并由下游 verifier 在提交动作前重新检查。压缩能降低协作成本，但 action-binding state 不能被当作普通描述性文本合并。
+<!-- source-family: arxiv:2608.24569v1; semantic-body-binding: handoff-action-binding-state -->
+
+### 迭代修复必须重跑完整 Invariant，而非只验证局部 Patch
+
+Agent 修复一个失败点后，局部测试通过并不代表旧安全条件仍成立；修改可能把错误移动到另一分支。每轮 repair 应记录变更、重跑受影响局部检查，并在提交前执行 full-invariant suite 与明确 stopping gate。代价是更多评测和较慢收敛，但能避免“修到某个测试绿”为优化目标的安全回归。
+<!-- source-family: arxiv:2608.13404v1; semantic-body-binding: iterative-repair-full-invariant-gate -->
+
 ## 小结
 
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。执行者可以提出下一步或完成，但只有携带 versioned evidence 的独立 admission path 能提交终态。下一章研究多个 Agent 之间的职责和通信。
@@ -1258,3 +1298,5 @@ Primary-source 与设计入口：
 
   **已吸收的语义增量：** 论文把 synthetic web environment 表示为页面、链接、数据库记录、state-change marker 与 task constraint，并在训练前修复结构、语义、一致性和可行性缺陷；运行时仅通过验证过的 marker 提交持久状态。500 个六领域环境支持作者范围内的 feasible-task 与 transfer 结论，但生成分布、repair verifier 和真实网站漂移仍限制证据。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21898:end -->
+
+- 2026-09-02：REVISE，[arXiv:2609.00643v1](https://arxiv.org/html/2609.00643v1)，采用 §3 的执行中 read provenance 与 commit-time validation 边界。§4.1、Appendix A.6 的受控 revision 实验支持细粒度复用设计，不把全部运行计数当成独立 adversarial 实验，也不将观察到的无 stale commit 外推为生产保证；跨进程协调、crash 与未受控外部 effects 不在所采用结论内。证据审阅与写后复核见当日 Daily。

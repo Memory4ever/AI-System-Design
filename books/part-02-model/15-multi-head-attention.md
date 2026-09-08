@@ -110,6 +110,8 @@ z = [1.0, 0.0, 0.2, 0.8]    shape [4]
 
 多个 heads 是否真的分别对应“语法头”“指代头”，需要实验验证。可视化某个 attention pattern 只能提供行为线索，不能保证每个 head 有稳定、单一的人类概念。
 
+把这样的诊断量直接变成训练目标，还会改变它原先作为线索的意义。例如，放大 matched 与 mismatched demonstrations 的注意力行距离，可以仅通过把权重集中到不同格式 token 而接近指标上限，并不保证取回了与答案有关的 Value。因而“路由对上下文更敏感”与“模型更会利用上下文”必须由独立行为对照区分；训练代理、测量代理与最终能力验收不能互相替代。这不否定注意力分析，而是要求被直接优化的解释指标重新接受行为检验。
+
 ## Head 怎样分化，又为什么会冗余
 
 `H` 是训练前写进架构的超参数，不是模型先观察问题、再像 MoE router 一样动态决定要启动多少个 heads。标准 MHA/GQA 的一次 forward 会生成全部 Query heads，并沿 checkpoint 固定的分组执行 Attention；MoE router 选择的是 FFN Experts，不能替代 Attention head 的路由语义。
@@ -117,6 +119,10 @@ z = [1.0, 0.0, 0.2, 0.8]    shape [4]
 不同 heads 接收同一批 token、服务同一个最终 loss，但各自拥有不同投影参数，并通过不同 score matrix、concat 位置与 `W_O` 路径接收梯度。随机初始化和训练过程会打破完全对称，使它们可能形成互补路由；这不是“每个 head 被分配一个领域”的监督，也不保证最终彼此独立。即使初始化时令投影近似正交，联合优化也可以再次把它们推向相关子空间。
 
 因此，多头结构提供的是**可分化的表达路径**，不是 `H` 份必然有效的独立能力。已有剪枝研究表明，特定训练模型和任务中的一些 heads 可在较小质量变化下移除；这能证明冗余可能存在，却不能推出所有层、所有输入都有同一组“无效 heads”，也不能把 post-hoc 分析直接等同于生产加速。真正跳过 head 需要训练期 pruning、gating 或稀疏执行 contract，并让 checkpoint、kernel 与评估共同支持。
+
+另一个层次的冗余发生在同一 head 的参数坐标内部，而不是多个 heads 做了相同工作。以下 `W_Q/W_K/W_V` 均指该 head 对应的投影块，而非前文全部 heads 合并后的大矩阵。暂不加入位置旋转和 bias，沿本章行向量记法，任取可逆的 `d_h × d_h` 矩阵 `S`，令 `W_Q' = W_Q S`、`W_K' = W_K S^{-T}`，则 `W_Q' W_K'^T = W_Q S S^{-1} W_K^T = W_Q W_K^T`，所以全部输入的 score 与 attention weights 不变。Value 与该 head 对应的输出块 `W_O^(h) [d_h,d_model]` 也有类似换基：`W_V' = W_V R`、`W_O^(h)' = R^{-1} W_O^(h)`。参数可以不同，执行的函数却相同；这叫参数化的不唯一性，不能据单个坐标大小给特征赋予唯一语义。
+
+这种换基不会自动减少 heads、矩阵 shape 或 FLOPs，也不保证优化器按相同轨迹训练。GQA 共享 K/V 后，组内换基必须共同兼容共享参数；RoPE 又要求变换保留位置旋转结构，不能套用任意可逆矩阵。因此，可辨识程度、head 功能冗余与可兑现的推理加速是三个不同问题：前者要固定参数等价关系，后两者仍须任务因果验证与 checkpoint/kernel 合同。第16章的非线性 FFN 也不能照搬这里两个线性因子的任意换基。[受限证据：QK/OV 因子化与共享结构约束，arXiv:2609.01231v1 §4](https://arxiv.org/html/2609.01231v1)
 
 ## 为什么 head 数不是越多越好
 
@@ -273,6 +279,8 @@ MQA 和 GQA 进一步把 Query head 数与 KV head 数解耦，用共享 K/V 换
 本章只扩展多头结构，不重复第14章 softmax 小例子，也不提前展开第19章完整 KV Cache 容量。后续 Review 应继续区分 Query head 与 KV head，并以 checkpoint config 核验 `H`、`H_kv` 和 `d_h`。
 
 Primary-source 校验入口：
+
+- Attention Sensitivity Is Not Enough（Status: Experimental）：https://arxiv.org/html/2609.00064v1 。§3–5 的单模型受控实验支持注意力代理优化与行为改善不等价；分离 regularizer/evaluation loader 后仍须保留单模型、主要单 seed 与有限任务边界，不据此声称全部 in-context learning 消失或某一种 anchoring 独有优势。
 
 - Multi-Head Low-Rank Attention（Status: Experimental）: https://arxiv.org/abs/2603.02188
 

@@ -134,6 +134,18 @@ T_sparse_end_to_end
 < T_dense_attention
 ```
 
+进一步把 pattern 固定成单一 window/block 仍会错配输入：同一层的不同 head/segment 可能分别更适合 A-shape、
+vertical、block-sparse 或 dense。受限的 conditional branch 可以用共享 sampled-attention probe 估计候选 utility、
+omitted mass 与 uncertainty，再按实测 kernel latency、regrouping/launch overhead 联合选择 pattern 和离散 budget；
+不确定项扩大预算或回退 dense。提交的 execution plan 必须绑定 input shape、head/segment、hardware profile、
+worst-slice quality、fallback rate 与 runtime revision，不能只保存理论 FLOPs。
+
+Omitted attention mass 可以给单层 attention-output error 一个局部上界，但 probe 只估计该 mass，校准误差、后续层
+传播和最终生成都不在这个保证内。现有结果只覆盖单个 Llama-3.1-8B、BF16、128K 与 A100 80GB；6.5×、6.8%
+fallback 和 worst-decile 曲线不是跨模型或任意 distribution shift 的配置常数。
+
+<!-- source-family:SF-2026-ARXIV-2608-29058 -->
+
 Active indices 是当前 invocation 从 `Q/K` 派生的 ephemeral execution state，不是可跨请求复用的 KV
 identity。错误 index 可能静默删除 evidence，而不会像越界访问一样立即失败；因此还要记录 model/revision、
 layer/head、threshold policy、sink/window、kernel revision、`q_len/k_len` shape 和 fallback reason。
@@ -232,20 +244,24 @@ T_p = c_1 + c_2 + ... + c_n
 
 #### 等长 Chunk 也不代表等量工作
 
-固定 token 数切块便于实现和容量记账，但后续 chunk 会看到更长的已提交前缀；在 causal Attention 下，同样的
-`q_len` 因 `k_len` 增长而承担不同工作量。把每个物理 chunk 固定映射到一个 pipeline stage，会让后段 stage
-逐渐成为 straggler。一个实验性分支保留 chunk identity 与依赖，只把逻辑块映射为可重排的 virtual stages：
+固定 token 数切块便于实现和容量记账，但同一 prompt 的后续 chunk 会访问更长的前缀 KV；同样的
+`q_len` 因 `k_len` 增长而承担更多 Attention 工作。这里有两个不同的切分轴：chunk 切 token，pipeline
+stage 切模型层；每个 chunk 都要经过全部模型层，而不是一个 chunk 对应一个 stage。
+
+动态改变 chunk 大小可以均衡工作量，却可能增加小算子和调度边界。另一条实验性分支保持等长 chunk，
+把模型层分成四个 virtual stages，首尾放在同一物理 rank，中间两个放在另一个 rank。每个 chunk 的路径是：
 
 ```text
-fixed prompt chunks + cumulative prefix lengths
-→ estimate per-chunk work under the current execution contract
-→ map logical chunks to virtual stages
-→ preserve causal order while balancing stage makespan
+Ck: s0(pp0) → s1(pp1) → s2(pp1) → s3(pp0)
 ```
 
-它改变的是调度映射，不是 Attention 语义，也不允许尚未完成的前缀被后续块读取。收益换来更多 stage metadata、
-dependency bookkeeping、profile drift 与调度开销；模型结构、sequence-length distribution 或 kernel 改变后必须重新校准。
-短 prompt、stage 已均衡或 scheduling overhead 接近 bubble 时，固定映射仍更简单。
+当 Attention 主导、各 chunk 的 stage 耗时近似线性增长时，中间 chunk 的两个中段可与前一 chunk 的出口、
+后一 chunk 的入口近似配平。异步变体只在所需 prefix KV 就绪后重排操作以重叠通信，不在运行时迁移模型层；
+跨请求 packing 则用下一请求的开头填当前请求的 drain bubble，不意味着请求间共享历史 KV。
+
+收益换来更复杂的依赖、双向通信和在途 batch 管理。若耗时增长不再近似线性，仍会出现 bubble；短 prompt、
+原流水已均衡时，传统 CPP 仍是简单基线，动态 chunk 也仍是另一条均衡分支。该案例不改变 causal Attention
+语义，作者配置中的收益不能外推成通用并行训练结论。
 
 ## Batch Prefill 的权衡
 
@@ -337,8 +353,16 @@ Prefill 可把 weight execution 与 attention state 分成独立放置路径，�
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-25426:end -->
 
 <!-- semantic-body-binding:SF-2026-VPP:start -->
-递增前缀 workload 使后续请求复用更长历史、各 stage 成本持续变化；Prefill runtime 因而需要在已完成 prefix identity不变的前提下重排 virtual stages。它用 schedule state 和迁移成本换 bubble 降低；重排收益不足或状态不兼容时回退固定 stage。
+同一 prompt 内等长 chunk 的 Attention 成本随前缀增长，可能使传统 CPP 失衡。上文的实验性分支保持 chunk 大小，改变模型层的固定折返放置，并在 prefix KV 依赖满足时重排操作；代价是依赖与通信管理，不是模型层迁移。近似线性耗时条件不成立时，均衡收益不能保证。
 <!-- semantic-body-binding:SF-2026-VPP:end -->
+
+## 稀疏 Prefill 从算法走向 Engine Contract
+
+动态稀疏只定义“算哪些 attention”，还没有解决低精度数值修正、GQA packing、paged KV 与 continuous batching 如何共存。进入 serving engine 后，selector 输出必须绑定 page layout 和 batch identity，FP8 等低精度路径还需 correction；否则算法级稀疏会被 page fragmentation、batch divergence 或错误选择抵消。
+
+运行时应把 selector 当近似建议：miss 或数值误差越过质量预算时回退 dense prefill。该路径适合长上下文且稀疏结构稳定的 workload；短 prompt、模式漂移或 fallback 频繁时，dense kernel 仍可能更快、更可预测。
+
+生产合同还要明确 selector 构建时间、索引 residency、batch/page layout、命中置信、fallback rate 与 dense replay cost。论文级“少算了多少 Attention”若没有把这些状态放进 TTFT、goodput 和 tail SLO，就不能证明 serving 收益；selector 漂移或 page fragmentation 使净收益转负时应自动回退 dense。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19758 -->
 
 ## 本章在知识树中的位置
 
@@ -483,5 +507,5 @@ Primary-source entry points：
 <!-- daily-books-trace:SF-2026-VPP:start -->
 - `SF-2026-VPP` — Daily `2026-08-28`；primary `arXiv:2608.26523v1`；Books review `books-review:SF-2026-VPP`。
 
-  **已吸收的语义增量：** 补足递增前缀负载和 virtual-stage 重排。
+  **已吸收的语义增量：** 区分 token chunk 与模型层 stage，说明固定折返放置、就绪操作重排及其配平条件；2026-09-05 纠正原先的跨请求历史复用与迁移成本误述。
 <!-- daily-books-trace:SF-2026-VPP:end -->

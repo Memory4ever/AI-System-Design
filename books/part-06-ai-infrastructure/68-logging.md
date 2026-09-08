@@ -83,6 +83,8 @@ OpenTelemetry LogRecord 可以携带 TraceId/SpanId，使日志挂到具体 span
 
 当日志系统故障时，业务是否 fail-open 取决于类型：debug logs 可丢弃，关键安全 audit 可能要求阻断高风险操作。
 
+异步 collector 返回“已接收”也不等于证据已经持久化。对会驱动 release、计费或安全追责的事件，producer 需要拿到绑定 event digest、schema、sink epoch 与 durable offset 的 acknowledgement；只有该 receipt 完成，workflow 才能把相应审计步骤视为提交。同步强一致会增加 critical-path latency，所有日志都等待它又会拖垮服务，因此 debug/metric path 仍可 best effort，只有不可替代的 audit evidence 使用 durable channel。<!-- semantic-body-binding:SF-2026-ARXIV-2608-17176 -->
+
 ## 从错误字符串到决策证据
 
 Scheduler、Gateway 和 controller 不应只打印“failed”。应记录：

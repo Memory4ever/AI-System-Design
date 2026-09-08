@@ -287,6 +287,8 @@ Reflection 从生成一段自评文字演进到可治理的 skill/strategy revis
 
 ### Critic Accuracy 不等于 Intervention Value
 
+资源受限时可以把 reflection 拆成 detector、comparator 与 actor：小模型先判断是否值得复核，再比较有限候选，最终 actor 仍负责生成或修订。Tiny advisor 只拥有排序/触发权，不拥有结论；其收益应以端到端错误减少减去额外调用成本衡量。任务简单、分布漂移或 advisor 校准不足时，直接生成与规则 verifier 仍更可靠。<!-- semantic-body-binding:SF-2026-ARXIV-2608-21027 -->
+
 离线 critic 能准确预测轨迹将失败，仍不能推出“现在打断并提醒它”会提高成功率。介入价值应显式分解为 `recovered failures - disrupted successes - intervention cost`：相同的预测器可以在高失败任务中恢复部分轨迹，却在本来会成功的任务中打断有效状态。因而 deployment gate 应先在小型、代表性 pilot 上运行 paired intervene/no-intervene，直接估计净效应，不用 AUROC 替代该因果对照。
 
 这个 gate 会增加 pilot 成本，也受任务 mixture、critic/model identity 与打断方式偏移影响。样本少或任务高风险时，不确定性应导致关闭自动介入、升级强 verifier/人工审批，而不是默认批量打断。作者披露的特定 agent/benchmark 结果不构成其他 workflow 的通用改进幅度。<!-- source-family:SF-2026-ARXIV-2602-03338 -->

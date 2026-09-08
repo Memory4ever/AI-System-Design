@@ -485,6 +485,17 @@ controller、transfer 与实验设置；§9 不证明任意模型尺度、域序
 
 需要频繁更新、可引用或权限敏感的知识，通常还要考虑 Retrieval、tool 或外部 state。SFT 更稳定的角色是塑造行为和任务接口，而不是替代所有知识系统。
 
+若确实要做参数内的知识更新，监督数据也不能只是互相独立的问答。先固定一份有版本的事件与关系事实集，
+再生成文章和问题，并把生成内容抽回事实层检查局部、跨样本的一致性，可以避免同一事件在不同样本中
+拥有矛盾属性。还应区分新实体、旧事实被替换和根本没有答案的关系：不能把“减少无谓拒答”训练成
+“所有问题都要回答”。这些是数据与验证的责任，不意味着模型参数内部就是这张显式知识图。
+
+[Synapse 的受限研究](https://arxiv.org/html/2609.00184v1) 将这种构造接到文本训练、偏好优化与辅助 SFT，
+说明知识获得和回答行为需要共同处理，而非单靠 SFT loss。它依赖合成事件、人工核验和额外通用数据；
+精确数值回忆仍受益于 retrieval，通用能力也并非自然保持。因此上线前要分别测关系推理、数值事实、
+未知关系拒答与未更新知识，不能用新事件平均分抵消其他退化。如何把正确回答、旧答案和拒答之间的
+选择写入目标函数，正是接下来偏好学习要解决的问题。
+
 ## SFT 不能表达“哪个回答更好”
 
 Demonstration 只给出一个目标 response。它没有直接说明：
@@ -557,6 +568,36 @@ claim 则应优先保留 RAG/tool authority。Knowledge-aligned SFT 的作者实
 
 <!-- source-family:SF-2026-ARXIV-2608-30987 -->
 
+若训练目标还要求“只在当前证据已足够时作答”，仅混合完整答案与拒答 examples，未必能教会模型何时切换。
+可以把监督单位扩为同一道题的受控证据链：无支持、缺关键桥接事实、首次补齐所需事实、保留支持但追加冗余。
+前两种视图监督拒答，后两种监督答案，并分别约束边界前后倾向；冗余不应改变答案则是另一个稳定性目标。
+这种构造让答案内容、证据充分性和无关上下文敏感性得到有关系的监督，而不是从不同题目的平均准确率猜测边界。
+
+这里的“首次足够”只相对于人工或自动构造的有限视图，不证明找到了所有可能证据子集中的最小充分集。
+一种训练信号比较已知 gold answer prefix 与拒答 token 的 log-prob：它可用于离线 loss，却不能在未知答案的线上
+请求中成为真实性判定器；对追加冗余后的 score 下降施加上界，也不等于保证生成答案的 identity 或语义不变。
+前者学习何时允许回答，后者仍须另验 answer identity、正确性与 grounding；实际运行中的补检、拒答和升级由
+[RAG 的 sufficiency gate](../part-07-agent/76-rag.md#relevance-不等于-sufficient-context)接手，不能让训练分数替代证据权威。
+
+代价是构造与验证多视图、额外监督量以及过度拒答风险。自动删除桥接事实可能留下答案泄露，追加材料也可能
+改变问题含义，因此训练和验收都要检查视图关系，并联合报告 raw QA、unsupported answer 与 false abstention。
+证据状态稳定且单一、数据构造不可靠或增量收益很小时，普通 verified-answer/refusal SFT 仍是更简单的选择。
+现有受限实验中，边界 flip 改善并未带来 activation、稳定性或 QA 的全面领先，且基线的监督视图与解码预算不等；
+不能把这一监督设计写成已经证明更准确、更安全的通用方案。
+
+<!-- source-family:SF-2026-ARXIV-2609-01687 -->
+
+## Scaffold 既是策略，也是训练数据生成器
+
+程序化 scaffold 可以在 rollout 时分解任务、调用工具并产生 demonstration，再通过 distillation 把部分行为迁入参数。它因此不是一次性 prompt，而是与 base model、tool contract 和 compiler revision 配对的训练 artifact。模型在移除 scaffold 后成功，只证明某些行为被内化，不证明完整策略、异常处理或权限边界已迁移。
+
+scaffold discovery、数据生成、蒸馏与重新编译可以循环演进，但每轮都可能放大旧错误并改变监督分布。平台应保留无 scaffold baseline、版本 lineage 与 rollback；任务简单或外部程序足够可靠时，继续运行 scaffold 可能比把一切压入权重更可审计。
+
+### 外部 Scaffold 既是执行策略，也是训练数据生产者
+
+传统 SFT 把 demonstration 当成静态样本；当 rollout 由 procedural scaffold graph 生成时，数据分布同时受 base model、tool contract、scaffold 与 compiler revision 控制。平台应把这组配对关系写入 artifact identity，再通过 discovery、distillation 与受控 recompilation 演进，而不是只登记最终权重。蒸馏可降低线上对 scaffold 的依赖，却可能丢失分支条件与恢复逻辑；无 scaffold 测试只能证明受测行为，不证明策略已完整内化，遇到新工具或分布漂移时仍需回退原 scaffold 或重新生成证据。
+<!-- source-family: arxiv:2608.05156v1; daily: 2026-08-07; semantic-body-binding: scaffold-conditioned-demonstration-provenance -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -619,6 +660,9 @@ SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写�
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
 
 ## Review notes
+
+- Evidence Sufficiency Boundary Training（Status: Experimental）：[arXiv:2609.01687v1](https://arxiv.org/html/2609.01687v1) §2–7、§9，Eq4–10、Tables1–4。
+  同题四视图支持局部边界监督；Eq8仅限制gold-prefix score下降，不能证明答案identity不变。Qwen2.5-3B/LoRA、三multi-hop QA数据集、单正式seed；自动构造、不同baseline监督量/解码预算以及SEAL-style在多项指标更强的结果限制外推。没有在线gold oracle、全局最小证据保证或新领域验证。
 
 - `SF-2026-ARXIV-2604-21927`（Status: Experimental）：exact-v1 支持把 trainable parameter subspace 形式化为 projected optimization，并显示 continual-learning 比较会随 adaptation regime 改变；证据限于披露模型、任务序列和 fine-tuning 深度，不给出跨架构最优 regime。https://arxiv.org/abs/2604.21927v1
 

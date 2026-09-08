@@ -60,6 +60,8 @@ estimated_work
 
 估计不精确，但仍优于把一个 50-token 请求和一个 100k-token 请求视作同样成本。Admission 的最终 memory/SLO 判断仍由第 56 章的 serving control loop完成。
 
+对可变 reasoning depth 的请求，`expected_output_tokens` 还不够：admission 应估计额外计算能带来的边际质量，并把最大 amplification、deadline 与 tenant budget 一起冻结。模型或 router 可以请求更多计算，但只有 Gateway/control plane 能批准新的预算 epoch；收益证据不足、队列拥塞或高分位延迟接近上限时回退固定 effort。这样避免“更会思考”变成无界资源占用，也承认在高价值难题上额外计算可能合理。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18921 -->
+
 ## Gateway、EPP 与 Engine Scheduler
 
 三者处于不同时间尺度：
@@ -149,6 +151,19 @@ Schema 只提供可查询、可追溯的控制面语言，不保证自动 evalua
 schema 过宽会把未知值误当作可比较事实。单 provider、单指标服务仍可使用薄 telemetry；异构 provider 和持续
 策略学习场景才值得支付关系化成本。事件时论文只展示其 schema population 与 routing case，不证明固定字段集合
 适用于所有业务。<!-- source-family:SF-2026-ARXIV-2603-26728 -->
+
+Learned router 只能在**已满足硬资格**的候选中提供 utility 排序：Context 容量、tool/modality 支持、region、
+privacy、safety 与 data-residency 先形成 eligible set，预测质量、成本、延迟与 cache reuse 再参与选择；高 utility
+不能补偿不合资格。多轮分类还可把 request history 的 decoder KV 作为 session-owned persistent state，只将当前
+candidate-label roster 作为 transient suffix 计算并丢弃其 KV，避免 endpoint 增删污染对话状态。代价是 label suffix
+仍要关注全部 retained history，延迟同时受 cache length 与 roster size 影响；session/model/tokenizer identity、TTL、
+truncation 与 position handling 任一不可靠时，应回到 stateless classification 或固定 route。
+
+[SCX Router](https://arxiv.org/html/2609.02292v1)只为 direct endpoint path 提供 released/evaluated evidence；profile、
+posterior、hybrid、cascade、portfolio 与 planner-worker 都仍是未完成的组件或提案。其 task taxonomy 的
+problem-solving F1 只有 `.127`，端到端比较又使用预先筛出存在正 routing gain 的 1,000/1,500 tasks，缺少 CI、
+重复 seeds 与冻结 endpoint revision。因此这里只吸收状态归属与 hard-filter-first 边界，不把它写成生产路由收益、
+streaming latency 或 agentic routing 已成立。
 
 ### 条件化机制分支与共存边界
 

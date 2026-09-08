@@ -517,6 +517,8 @@ Memory 可以向 world model提供观察历史，world model 可以把受限预�
 Egocentric video 提供观察序列，却没有天然的 action precondition、object state 或 counterfactual transition。把片段编译成带 provenance 的 symbolic graph 和 transition rules，可让 planner 在可执行 world 中测试 belief update；compiler 拥有 observation-to-state proposal，environment verifier 拥有规则执行和 contradiction。它把视觉数据变成可重复测试，代价是符号化遗漏、规则错误和 domain-specific ontology；开放物理控制仍需真实闭环，不能把 cooking benchmark 的可执行性外推成通用 world-model fidelity。
 <!-- semantic-body-binding:SF-EGO2WORLD-COMPILING-EGOCENTRIC-COOKING-VIDEOS-INTO-EXECUTABLE-WORLDS-FOR:end -->
 
+获得 symbolic state 后，还要把“包含相同事实”与“同样容易学习”分开。独立句子或 pairwise triples 便于逐项检查，状态少、关系简单时仍是合理基线；当动作前置条件同时依赖位置、持有物和对象状态时，按实体集中相关事实可能减少模型重新拼接关系的负担。检验这一收益应固定 fact set、预测 target、训练数据和配置，再比较 serialization，而不能把额外暴露的状态信息算成结构优势。分组也改变文本布局与长度，不单独证明某种图拓扑具有因果优势；模型容量、数据量和评价指标都可能改变收益。[受限证据：HyperWorld v1 §3.2–4.3](https://arxiv.org/html/2609.00002v1)只支持其 TextWorld 中三类 fact-based rendering 的比较，不证明原始观察严格信息等价、任意分组更优或真实物理规划可靠。
+
 一个 evidence ladder：
 
 ```text
@@ -531,6 +533,8 @@ perceptual plausibility
 ```
 
 低层证据不能替代高层。FVD 或人类偏好可评价视频观感，不证明 action consequence；one-step error 低不证明 long rollout；simulator 内 success 不证明 sim-to-real。
+
+诊断 imagined transition 之前，还要固定所问状态、horizon 与测量支持域，先确认初始真实状态能被表示读取、真实干预终点也能被同一测量方法区分；否则预测读数的好坏可能只是测量入口失效。前置检查未通过应标记为尚不能认证这项传播命题，而不是把它算成 world dynamics 成功或失败；额外对照增加评估成本，但能避免把表示捕获、readout 和传播误差混成模型排名。
 
 evaluation contract 应绑定 environment version、initial-state distribution、action policy、horizon、observation schema、seed、hardware/runtime、scorer 和 failure denominator。persistent-state benchmark 还应测试 view revisit、object mutation、contradictory observation、delete/supersede 与 recovery。
 
@@ -654,6 +658,28 @@ Imagine-then-Act 把短期 latent trajectory 置于 action 之前，因此 imagi
 
 重建或一步预测足以训练可用 latent，却不能保证 action-relevant state 在表示中可恢复。若环境动力学满足论文给出的线性可识别条件，representation owner 才能把 latent 作为规划状态，并用 identifiability test 而不是视觉相似度验收。收益是把“能生成”与“可控制”分开；代价是更强的分布和动力学假设，非 Gaussian、非平稳或部分可观测环境会造成错误同一化。条件失败时应保留原 observation、使用非线性 belief state 或回到 simulator。exact-v1 的证明和实验限于 stationary additive-noise、Gaussian 或近 Gaussian 设置及披露的像素控制任务。<!-- source-family:SF-2026-ARXIV-2605-26379 -->
 
+## Persistent World State 需要流式更新与观测校正
+
+逐帧重新编码会重复计算并积累几何漂移。流式 point cache 可以保存可更新空间状态，让新 observation 只修正受影响区域；表示与生成器使用同一 latent domain，还可减少反复域转换。cache owner 必须定义写入、淘汰、冲突和 observation correction，生成结果不能覆盖真实观测 authority。
+
+持久状态提高长序列一致性，也会累积错误和占用内存；scene change、定位失败或 cache confidence 越界时，应重建或回退短窗口。作者场景中的生成指标不证明它已学习真实因果动力学。
+
+## 没有未来真值时，Invariant 可以提供受限 Verifier
+
+World Model 训练常缺少同一状态下的真实未来。若动作存在已知 inverse，可以把 action sequence 与逆序动作组成 cycle，检查空间闭合和 repeated-cycle temporal consistency。它提供无需未来标签的自验证信号，却只适用于可逆、可观测动力学；不可逆动作、隐藏状态或非对称环境必须退出该 reward contract，不能把像素回到原位等同物理正确。
+
+在离散 GUI 等环境中，自由像素生成也不是唯一表示。模型可以预测 action-conditioned executable delta，再由 renderer 生成 provisional state；delta 更容易做 schema、reachability 与 postcondition 检查，但真实 app state 仍是 authority。模拟 transition 适合训练和规划候选，执行后必须用环境 observation 校正。
+
+### 没有未来真值时，可以验证不变量，但不能伪造可逆性
+
+开放 rollout 往往没有对应的真实未来，逐帧监督因此不可得；若动作具有已知逆操作，可以让模型执行 action sequence 再执行 inverse，以空间闭合和重复周期的一致性构造自验证信号。这把 verifier 从“像不像一段视频”推进到“状态转换是否满足已知不变量”，但只适用于可逆、可观测且动力学近似对称的区域。不可逆动作、隐藏状态或耗散过程不能被硬塞进 cycle reward；这些情况仍需真实 transition、外部 simulator 或明确的未验证状态。
+<!-- source-family: arxiv:2608.04964v1; daily: 2026-08-06; semantic-body-binding: invariant-based-world-transition-verification -->
+
+### 离散环境优先预测可执行状态差分，而不是自由像素未来
+
+GUI 等离散环境中，完整图像生成把布局、内容与可达状态混在一起，画面逼真也可能产生不可执行控件。更可验证的分支先读取当前 authoritative state，再预测受 action 约束的 typed delta，由确定性 renderer 得到 provisional next state；训练或规划可以消费该模拟分支，但真实应用状态仍拥有最终提交权。差分表示提高可测性与可回放性，却依赖 schema、renderer 与 action semantics 的版本一致；遇到动态媒体、未知组件或外部副作用时，应回退真实环境观测而非相信模拟画面。
+<!-- source-family: arxiv:2608.05891v1; daily: 2026-08-07; semantic-body-binding: executable-environment-state-delta -->
+
 ## 本章在知识树中的位置
 
 第23章提供 modality/time/provenance identity，第24章提供生成与修正语义；本章只有在状态变换由 action 条件化并可被干预验证时才提升为 World Model。第26章接过 action authority 与真实控制。
@@ -682,6 +708,8 @@ same initial observation + feasible expert/off-expert action
 Integrity gate 防止扭曲或消失的机器人部件被一个轨迹分数掩盖；off-expert queries 检查模型是否只记住 demonstration manifold；downstream policy improvement 则验证 rollout 是否具有决策用途。它们仍不能证明开放世界 causal correctness：可行动作生成、pose extractor、simulator replay、短 horizon 和 embodiment 都会限制结论，真实安全 action 也不能由视频模型自行授权。
 
 训练侧可以扩大 action consequence coverage，并用 action-grounded representation 或 intervention-effect objective 强化条件依赖，但这会用更多 off-policy data、target-domain对齐与 expert module 换覆盖。Expert-only model 在窄任务、低成本和动作分布稳定时仍合理；只有在 deployment policy 会系统性偏离 demonstration 时，off-expert fidelity 才成为必须的发布合同。
+
+跨 embodiment 复用时，不能把一个机器人的 action token 直接解释成另一个机器人的物理控制。可迁移的接口应把高层 action intent 映射为带单位、坐标系、时序和可行域的 transition request，再由 embodiment-specific controller 承担 calibration、动力学与 safety envelope；World Model 预测的是该规范化请求下的状态变化，不拥有最终 actuator authority。统一接口增加适配器和标定误差，但避免语言相同掩盖物理语义不同；硬件差异大或控制频率严格时，专用模型仍更可靠。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18077 -->
 
 ### 把 Reason、Execute 与 Render 拆成不同状态责任
 
@@ -730,6 +758,11 @@ high-level intent / diagnosis
 
 关键压力是从“更逼真”转向“更可干预、更可校准、更可修正”：建立跨视角 object identity、带 uncertainty 的 long rollout、model exploitation 测试、persistent-state recovery，以及 world model 与安全 controller 的 typed interface。
 
+### Latent Action 可以压缩想象，但不能替代物理细节
+
+完整生成未来 observation 能保留环境细节，却使 imagined rollout 的延迟和状态体积快速增长。以 latent action 表示未来控制意图，可以先搜索可行动作分支，再对少量候选恢复高维结果；代价是 latent interface 可能丢掉接触、几何和安全相关细节。因此它适合作为有界 planning state，而非真实环境状态的替代物，关键分支仍需回到可验证 observation 或 simulator。
+<!-- source-family: arxiv:2608.24882v1; semantic-body-binding: latent-action-bounded-imagination -->
+
 ## Reflection
 
 World Model 的价值不在于替现实世界生成一段视频，而在于让系统对“若采取这个 action，会发生什么”形成可证伪的内部假设。越能想象，越需要知道哪些只是想象。
@@ -753,7 +786,19 @@ World Model 的价值不在于替现实世界生成一段视频，而在于让�
 
 <!-- source-family:SF-2026-ARXIV-2605-09241 -->
 
+### 失败动作也是状态转移证据
+
+World Model 若只学习成功轨迹，会把“计划动作”误当成“环境实际执行”。闭环系统应以执行回执和随后 observation 作为状态更新权威：失败、部分执行和外力干预都要进入 action-conditioned transition。这样能提高校正能力，但也引入执行身份、传感延迟和观测噪声；缺少可靠 effect receipt 时，应保持多个可能世界而不是伪造单一确定状态。
+<!-- source-family: arxiv:2608.10232v1; semantic-body-binding: executed-action-authority-for-world-state-update -->
+
+### World Model 评测要分离三种结论
+
+画面逼真只回答生成结果是否像世界，不能证明它会把策略引向更好的行动。评测至少要分离状态真实性、对策略选择的实际影响，以及模型在证据不足时是否保持克制；三者需要不同对照和失败判据。增加这种分层会提高实验成本，却能防止视频质量替代控制价值，并让预测模型与真实环境控制器保留清晰边界。
+<!-- source-family: arxiv:2608.11174v1; semantic-body-binding: world-model-veracity-influence-sobriety-evaluation -->
+
 ## Review notes
+
+- **Intervention Gap — Experimental**：[exact-v1](https://arxiv.org/html/2608.29998v1)§2.2、§4、§6、§8支持capture/readout前置与imagined传播分离；限固定query、horizon、support和作者环境。不能把未通过前置的Dreamer读数解释为传播失败，重复任务family也不是独立模型样本；不采用架构排名、任意scale或真实控制保证。
 
 - `SF-2026-ARXIV-2606-22363` — primary `arXiv:2606.22363v1`；Method=`arXiv:2606.22363v1 §2 Methods`；Evaluation=`arXiv:2606.22363v1 §3 Experiments`；Non-proof=`arXiv:2606.22363v1 Limitation paragraph; §4 Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 - `SF-2026-ARXIV-2606-22488` — primary `arXiv:2606.22488v1`；Method=`arXiv:2606.22488v1 §3 Method`；Evaluation=`arXiv:2606.22488v1 §4 Experiments`；Non-proof=`arXiv:2606.22488v1 Appendix A Limitations and Future Discussions`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。

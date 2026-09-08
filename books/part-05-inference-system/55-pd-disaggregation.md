@@ -107,6 +107,10 @@ compression gain on exact KV bytes
 
 Full KV transfer 在链路充足时仍是最清楚的 baseline。受 profile 支持时，可以先 proactive 发送预测重要的 exact KV；Decode consumption 作为最终 demand signal，并行修复缺失 entry，再用 early-decode behavior 做 bounded speculative prefetch。Importance drift、metadata、remote-fetch tail 与 wasted transfer 是新增代价；低负载或 prediction 不稳时必须回到 full transfer。
 
+链路异构后，“统一使用 RDMA”也只是实现基线，不再是完整 placement policy。更严格的 handoff plan 应读取 source/destination 的 topology epoch，为 NVLink/NVSwitch、PCIe、RDMA 或 TCP 选择可用 transport，并可按 layer 形成 `produce → transfer → consume` 流水；只有该 layer 的 destination completion 已确认，Decode 才能读取。这样能把部分传输隐藏在剩余 Prefill 后面，却新增拓扑发现、并发上限、重试、跨层完成顺序与故障恢复状态。拓扑同构、payload 很小或 transfer 不在 critical path 时，统一传输仍更简单。
+
+现有证据只提供基于公开硬件参数校准的 analytical model、component implementation 与 projected analysis；作者没有异构多节点+CXL testbed，因而不能把 3～18× headline 当作生产 goodput。这里吸收的是 topology-aware transfer contract 与异步生命周期，而不是其投影性能。<!-- source-family:SF-2026-ARXIV-2607-28633 -->
+
 ### 从共享链路调度到物理 Traffic-class Isolation
 
 最简单的部署让 KV transfer、Tensor Parallel collective 和其他数据面流量共享同一 fabric，再由优先级、chunking
@@ -161,6 +165,18 @@ transfer_cost
 ```
 
 这些项不能只从模型参数推导，需要 traffic distribution、`T_p/T_o`、cache hit、network topology 和 SLO 数据。最可靠的方法是在相同 workload 与总 GPU budget 下比较 aggregated 和 disaggregated goodput。
+
+若 transfer 与第二份模型容量过贵，也可以在同一组 GPU 上复用 weights/KV，并让 P、D 分段交错执行。
+但分布式 MoE 不能只靠本地 stream 排序：例如 D 的 AllGather 使用 `{0,2}`、`{1,3}`，P 的 AllReduce 使用
+`{0,1,2,3}`，不同 rank 若先驻留不同 collective，就可能互相等待。独立 communicator 只隔离各自状态，
+不建立跨 communicator 的全局顺序。一个受限方案在安全分段边界对齐各 rank 的 enqueue 阶段，并用一致的
+device order 排列冲突调用；不冲突的计算仍可重叠，不必等待整个 P 完成。
+
+同时，P、D 可共享权重与 KV，却必须分开会被通信 kernel 修改的 buffer、counter、workspace 和 transport
+状态；取消后的半完成操作不能立即把存储交给下一请求。[AInfer-PD](https://arxiv.org/html/2609.00993v1)
+为相交 collective 与 DeepEP 双路径提供了这种实现证据，但只在匹配参与者、健康传输与 backend progress
+假设下消除所识别的等待环，不证明任意拓扑无死锁。新增同步与状态开销也要进入上面的不等式：rollout
+完成更快仍可能让 TTFT 变差。无并存 P 工作、缺少合法切换边界或尾延迟更重要时，串行执行或物理分池仍合理。
 
 ## 从 P/D 到 P/D/A/F：分离是条件化切分，不是单向演进
 
@@ -397,6 +413,18 @@ PD 分离把原本一个调度问题拆成两个调度问题：
 - 集群规模小，简单 co-location 更稳。
 - 团队还没有足够的观测能力定位阶段瓶颈。
 
+### Q-first 依赖重排可让 Memory Sweep 与 Compute 重叠
+
+常规 block 依赖让 Attention 完成后才进入 FFN，边界清楚且兼容既有 checkpoint；若 memory-side KV sweep 与 compute-side projection/FFN 可被模型结构重排为独立前沿，两类设备可以同时推进，再在明确 join point 合并。它缩短 critical path，却不是透明 runtime rewrite：训练、checkpoint 与算子语义必须兼容，join buffer、数值等价和失败恢复也进入 handoff identity。模型不可重训或单设备路径已足够时，原顺序仍正确。`arXiv:2608.15473v1` 只支持 Q-First 的作者模型、硬件与实验，不证明任意 Transformer 或 P/D 拓扑都获益。
+
+<!-- source-family:SF-2026-ARXIV-2608-15473 -->
+
+## 同一 Sequence 内也可以隐藏跨设备空闲
+
+传统 PD 通过不同请求并行隐藏阶段差异；若 Attention 与 FFN 分居不同设备，同一 sequence 的数据依赖仍会让一侧等待。通过最小 block 重排，query 可以在 compute 侧继续工作时先发送，当前 K/V 随后作为非阻塞 cache write，从而把阶段串行改为协议级 overlap。
+
+这种重排改变了模型执行顺序，需要训练或数值验证，不能作为已有 checkpoint 的透明优化。质量风险不可接受、网络无法异步或 stock runtime 不支持时，原始顺序仍是基线。收益还必须结算通信、cache write 与 pipeline bubble，而不能只看单算子空闲。
+
 ## 本章在知识树中的位置
 
 ```text
@@ -437,6 +465,10 @@ P/D 分离从固定两池演进到网络、KV tier、MoE expert、power 与 acce
 9. 继续把 Attention 与 FFN 分池时，新增的 specialization gain 必须覆盖哪些边界成本？
 10. 为什么局部 kernel 或 MFU 提升不能替代同预算、best-vs-best 的完整 provisioning 比较？
 11. Attention/Expert 分离后，为什么 routing epoch 与 KV checkpoint generation 必须共同提交？
+
+## Split Inference 的 Activation 也需要可恢复传输身份
+
+把模型 head/tail 放在可信端、middle layers 放在云端，会让边界 hidden state 成为每次调用的通信瓶颈。若历史 token span 可精确匹配，可以它作为 Prefill reference；同轮已重建 activation 可供返回路径复用，Decode 则只能用 causal predictor 提供 provisional reference。发送端必须按实际 wire format 自行重建 reference，再编码对齐 residual，避免两端状态逐轮漂移；reference miss、校准失效或质量门失败时传原始 activation。它用索引、预测与残差解码换带宽，不能把隐私边界或近似质量当作已证明。`arXiv:2608.04991v1` 只在三模型、九个 model-link pair 上支持该分支。<!-- source-family:SF-2026-ARXIV-2608-04991 -->
 
 ## 小结
 

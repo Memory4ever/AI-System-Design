@@ -354,6 +354,12 @@ working tokens、archive/storage/lookup cost、stale evidence 与 crash recovery
 artifact”，未知关联仍需要 search。短 trajectory 继续保留 full Context；可丢失细节的任务仍可用简单 summary；
 高风险 evidence 则应由平台的 immutable artifact store 管理，而不是依赖模型可覆盖的内存字典。
 
+### 压缩后的 Epistemic Stance 必须是可校验字段
+
+压缩器保存 claim 文本，却可能把“已验证”“推测”“存在冲突”和“未知”压成同样肯定的句式。更可靠的 memory schema 将 epistemic status 与 claim、source revision、验证时间和适用范围分别保存；消费者只能把它当作派生状态，原始 provenance 与当前 evidence 仍拥有事实 authority。这样能降低多轮压缩造成的语气漂移，但增加 schema、校准与迁移成本；字段缺失、过期或与来源冲突时，应回读证据或标记未知，不能从摘要措辞补造确定性。
+
+<!-- source-family: arxiv:2608.06953v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: compressed-memory-explicit-epistemic-status -->
+
 #### 从不可逆 Summary 到可切换的 Raw / Summary Visibility
 
 固定 summary 能持续缩短 Context，却在信息被判为“不重要”后失去 backtracking 能力。更可逆的结构让每个
@@ -896,6 +902,10 @@ graph version。错误 localization 会留下 stale edge，过宽传播又退化
 实验只支持 coarse-to-fine localization/update 的受限价值，未覆盖并发、delete、恶意更新和 rollback。历史短、
 关系弱或审计优先时，raw episode/summary/flat retrieval 仍更简单。
 
+维护派生图还留下一个执行端的问题：新事实已经送达，不代表缓存的计划已用它重新推导。计划应保存实际采用的不可变 parent IDs，工具封装声明影响待执行动作的依赖集合，executor 再将这些 parent 追溯到相应 owner 的当前 head。缺失依赖、owner 不可达或版本变化时，应阻断或重新规划并复验，而不是把最新记录放进 Context 就继续执行。这里复用的是依赖验证思想，不是让模型自行证明“我参考了最新信息”。
+
+这项检查只建立记录的验证点条件：多个 owner 的回复不是原子快照，也不封闭检查与外部副作用之间的时间间隙；外部提交仍由[工具执行](./78-tool-calling.md)与[Workflow](./81-workflow.md)的事务或补偿边界负责。完整依赖声明是前提，少报会漏掉失效，过报会退化成全量同步。低更新率下主动同步仍可能更便宜；高更新率、稀疏依赖才更可能从动作前按需验证获益。[PlanFence v1 §3–6、Appendix B–C](https://arxiv.org/html/2609.03340v1)提供受控实例，不证明自然事故率、恶意 owner 容错或生产事务安全。
+
 ### 从自身 Experience 到 Search-derived Skill，必须经过独立 Held-out Gate
 
 只从自身成功轨迹抽取 Skill 受模型当前知识边界限制；每次都访问外部 search 又增加成本、许可和新鲜度风险。
@@ -915,6 +925,8 @@ web poisoning 都是新增 failure mode。Search2Skill 的作者实验提供这�
 漂移与 adversarial source 已解决。静态 curated Skill 和按需 search 在高风险、低频或 provenance 不闭合时仍成立。
 
 ### Bitemporal Memory 把有效时间与写入时间分开
+
+时间身份还要显式表示 `supersedes` 关系。`valid_time` 说明事实何时在外部世界成立，`transaction_time` 说明系统何时知道它，revision edge 则说明哪条旧判断被哪条新证据替代；只按最后写入覆盖会丢失迟到数据和可追责历史。查询默认选择当前有效视图，高风险 action 仍可回看完整链。它增加索引与冲突解析成本，却避免“最新记录”等同于“当前真相”。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20685 -->
 
 最后写入覆盖旧值在“只关心当前状态、没有迟到事实”时最简单；但真实 Memory 经常同时面对两条时间线：事实从何时
 起在外部世界有效，以及系统何时收到并提交这条事实。把两者压成一个 timestamp，会让迟到更正看起来像最新事实，
@@ -941,6 +953,18 @@ source provenance、retroactive-correction authority 和 overlap policy；index/
 ### Memory Transaction Boundary 同时约束 Admission、Visibility 与 Recovery
 
 Storage atomicity 不能证明候选事实由 source 支持。一个更强边界先由 source-bound admission 接受或拒绝 patch，再由 chronology/conflict policy 声明可见版本，最后由 durable before-image 与 invariant check 恢复完整 application state。Answer model 不拥有 commit；该边界也不证明 semantic truth、并发故障或物理介质损失已解决。
+
+跨实现验证还会暴露另一种缺口：每个返回对象的签名都有效，不代表整组结果没有被遗漏、重排或混入另一授权时期的对象。可移植的读取证明应固定 canonical bytes，把预期成员、顺序、请求、identity epoch、撤销状态与最终返回结果一起绑定，并从证据包之外取得 trust anchor。独立 verifier 对相同正反例返回一致判定，验证的是协议一致性，不是检索效用或内容真实性；这些检查也不能代替 online admission 或阻止管理员销毁数据。它增加编码、版本迁移和密钥管理成本，适用于需要跨服务复核读取与修改权限的路径，不必成为所有轻量 Memory 的默认格式。[可移植记忆完整性协议的受限案例](https://arxiv.org/html/2609.01235v1)
+
+### 恢复记录不等于恢复未来计算
+
+只恢复 Memory store 的旧版本，是一项有效且更窄的记录/视图恢复承诺；若 wrapper 还保留会话摘要、历史缓存或其他跨调用变量，同一份记录却可能产生不同的后续行为。因此，“能撤回一条记录”与“恢复了系统原来的计算状态”是两项承诺。后者先要声明恢复范围：固定模型及转换规则，把范围内所有会持续影响输出的交互状态纳入同一可序列化状态 $S$，而不是只保存用户界面显示的字段。这是在检查计算依赖是否完整，不是把模型参数或 KV Cache 重新归类为 Agent Memory。
+
+这个条件可表为历史充分性：在固定参数 $\theta$ 与转换规则下，若两段历史得到同一 $S$，则对每一个允许且两边相同的未来输入过程，它们应产生相同的未来行为分布。只有此条件成立，且 edit/undo 精确恢复 $S$，才能推出行为分布恢复；匹配随机性、并使转移对给定随机性确定时，才进一步要求逐步 state 与输出一致。受历史影响的随机数状态及消费顺序也必须被保存或显式匹配，仅设同一个 seed 不够；同分布更不意味着两次独立采样的输出相同。恢复旧记录不能补救模型版本变化，也不能撤销外部工具的已提交副作用。
+
+工程上可在 fresh process 中恢复声明的状态，固定模型、tokenizer、adapter/runtime 版本以及测试涉及的工具版本和外部输入，再比较下一 state、pre-decode output 及有界后续轨迹；这些控制是将固定转换与相同输入前提落实为测试。还应分别测目标编辑是否生效、无关行为是否保留、undo 是否恢复，以及是否存在未记录的历史通道。有限测试可以发现遗漏，不能证明所有未来输入；无法封闭环境、随机性或隐藏状态时，应只承诺记录/视图恢复，并沿工具状态查询与补偿路径处理外部影响。
+
+<!-- source-family:SF-2026-ARXIV-2609-03797 -->
 
 ## 一致性与并发
 
@@ -1045,7 +1069,15 @@ ordered episodes + explicit write opportunities
 - privacy deletion completion；
 - poisoning persistence 与 recovery。
 
+评测 harness 自己也是状态的一部分。Memory、retriever、prompt、tool sandbox、受保护任务切片和 evaluator revision 必须冻结为同一 snapshot；否则一次改动可能在公开任务上变好，却悄悄破坏旧能力或泄露测试分布。回归应同时报告新增任务收益与 protected slices 的退化，并保留可重放输入。它增加版本与存储成本，但避免把 harness 漂移误写成 memory 改进。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19013 -->
+
 无 memory baseline 很重要：若 memory 提升个性化却降低事实正确性，需要看到真实 trade-off。
+
+这个 baseline 还必须说明“不读 Memory 时，问题是否已经可答”。必要事实只存在于历史记忆的任务，用来测记忆带来的能力增益；当前 authoritative tool evidence 已足够、旧记忆与之冲突的任务，才更直接测过时证据造成的干扰。应同时报告依赖旧答案的频率与相对无记忆基线的净正确率变化：原本接近随机猜测的模型可能没有多少正确答案可失去，净损失小不能据此证明它更会辨认旧证据。跨模型差异也混合训练与模型身份，不能仅凭参数规模把这一现象写成安全性的因果规律。
+
+相同区分也适用于治理措施。给记忆补充来源、时间或权威标签，仍要求消费者在冲突证据中作出判断；oracle 直接删除已知过时内容，却改变了可消费的证据集合。后者可以作为诊断上界，不能当作已部署冲突检测器的准确率。元数据可能带来实质改善，并非对较弱模型无效，但接近 oracle 的恢复仍须由真实 resolver 的误删、错误保留及下游损害证明。增加这组对照会提高评价成本，却能避免把基线地板效应或已知真值清洗误认成可靠治理；短会话没有过时状态时，简单无记忆对照仍然适用。
+
+<!-- source-family:SF-2026-ARXIV-2609-01852 -->
 
 对于 memory poisoning，还要沿同一恶意语义追踪完整链路：
 
@@ -1082,6 +1114,8 @@ caches 与受 retention policy 管理的副本。
 结构化 oracle 是诊断上界，不是生产 Memory 方案；synthetic ontology、叙述模型和 judge 仍限制外部效度。Top-k 命中率在独立事实检索中继续成立，但不能替代关系完整性。
 
 ### Provenance 必须进入 read、action 与 repair 路径
+
+Provenance 证明内容从哪里来，不证明来源本身正确。即使 lineage 完整，系统仍需用独立 evidence、时间有效性和 action-risk threshold 判断能否采用；攻击者也可能以合法身份持续提供错误输入。授权决定“可否读取”，epistemic validation 决定“是否足以支持结论”，两者不能合并成一个 trust score。<!-- semantic-body-binding:SF-2026-ARXIV-2608-21230 -->
 
 只保存一段自然语言理由，无法证明 action 真由已授权证据推出；只保存 source URL，又缺少中间变换和版本身份。高风险路径应把读取、派生、聚合和决策表示为可签名或可校验的 provenance DAG，并让 action gate 验证依赖闭包，而不是只信最终结论：
 
@@ -1164,6 +1198,8 @@ Memory owner 负责提供带 provenance 的候选事实，commitment policy 才�
 
 ### Temporal Index 可以把生成式整理移出 Write Critical Path
 
+Eviction 也必须沿 dependency closure 进行。删除一个看似低价值的 prerequisite，可能让仍保留的 summary、plan 或 derived skill 失去可重建依据；memory owner 应先追踪依赖者，选择级联失效、重新派生或保留最小支持集。它比独立 item 的 LRU/LFU 昂贵，却防止后续 retrieval 返回“有结论、无前提”的孤儿状态；无派生关系的短期 cache 仍可用简单淘汰。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20400 -->
+
 每次写入都让模型重写完整 summary，适合小 memory，却让 freshness latency 随历史增长，并让一次生成错误覆盖大量状态。分层时间索引可以先以低成本 append immutable episode，在后台按时间层级聚合索引；读取根据时间范围和查询只展开必要节点。
 
 这把写路径从 state-dependent generation 变为数据管理问题，却引入 compaction、层级选择、stale summary 和查询放大。Index 只拥有定位，不拥有事实真值；高风险回答仍需回到原 episode/provenance。会话短或写入稀少时，直接 summary 更简单；层级方案的作者 latency/quality 结果不能外推任意 memory workload。
@@ -1185,6 +1221,23 @@ Memory owner 负责提供带 provenance 的候选事实，commitment policy 才�
 ### Persistent Memory 需要显式状态操作，而不只是 Record
 
 append/get/update/delete 的 record abstraction 适合 CRUD，却无法表达 derived belief、依赖传播与条件 supersession。更强的 memory state owner 应提供带前置条件的 observe、derive、merge、invalidate 与 rollback operator，并以 source identity 维护正确性。收益是让长期状态转移可验证，代价是 operator contract、冲突解析和额外存储；规则不完备会固化错误依赖，应回退 append-only evidence 加人工重建。exact-v1 的 GEM/MemState 是 prototype 与研究议程，没有 production comparison，不能证明通用持久记忆已解决。<!-- source-family:SF-2026-ARXIV-2605-26252 -->
+
+## Memory 的构建、检索与授权不能相互替代
+
+一次读取后的处理结果不能只有“写入/不写入”。更可控的 commit 状态至少区分 `persist`、`current-session only`、`reverify` 与 `clarify`：稳定且有来源的事实才持久化，临时工作状态只留本轮，证据冲突进入复核，缺少用户意图则请求澄清。分类器只提出 disposition，policy owner 结合风险、保留期和权限提交；分类不确定时默认不升级为长期事实。它增加状态机和交互成本，却阻止所有有用文本被无差别沉淀。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19564 -->
+
+Memory 的表示还必须与目标 reader 的消费接口兼容。为某个模型压缩出的 latent、summary 或 procedural state，可能依赖它的 tokenizer、提示约定、隐藏空间和工具协议；换 reader 后“内容仍在”并不等于新模型能可靠读取。可迁移的 memory artifact 应显式绑定 writer、目标 reader family、schema、生成策略与验证任务，迁移时先做兼容性测试，不兼容则回退到带 provenance 的原始 evidence。专用表示能降低 token 与检索成本，却以可移植性和升级成本为代价。<!-- semantic-body-binding:SF-2026-ARXIV-2608-17050 -->
+
+遗忘也不应等价于立即删除。长期状态可先从 active 降为 dormant，再按保留策略进入 retired；每次转换保留原因、依赖与可逆窗口，使错误遗忘能恢复，同时让默认检索不再消费陈旧内容。它用额外索引、存储和治理换可审计性；法定删除、已证实污染或密钥撤销仍需不可逆清理，短会话则不必支付多阶段生命周期成本。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18177 -->
+
+长期记忆系统常把收益归因给“更好的 memory construction”，但受控复现可能发现主要差异来自 retriever、token budget 或注入策略。尤其在宽预算下，压缩摘要可能丢掉原始证据而不再优于直接检索。评测因此要交叉固定 construction 与 retrieval，分别测量 recall、证据保真和最终任务收益；否则组件替换会被误写成 memory 机制进步。
+<!-- source-family: arxiv:2607.29104v1; daily: 2026-08-03; semantic-body-binding: memory-construction-retrieval-attribution -->
+
+更危险的情况是 consolidation 保留了 action trigger，却洗掉低信任来源。派生记忆的 authority 不能高于其依赖证据：每次合并、重写或权重变更都要保存 predecessor、source provenance、signer epoch 与 supersession 关系。签名只能证明某次 mutation 被授权，不能证明内容为真；冲突时应回到原始证据或进入人工裁决，而不是让最新摘要覆盖历史。
+<!-- source-family: arxiv:2607.29167v1; daily: 2026-08-03; semantic-body-binding: memory-authority-non-amplification -->
+<!-- source-family: arxiv:2608.02843v1; daily: 2026-08-05; semantic-body-binding: authorized-memory-mutation-lineage -->
+
+这使 memory identity 与 content truth 分离。immutable record 负责来源，versioned view 负责当前可见状态，retriever 负责选择，模型只消费受限视图。额外 lineage 会增加存储、验证和撤销成本，但换来可审计 rollback，并阻止重复转述把低信任输入升级成高权限事实。
 
 ## 本章在知识树中的位置
 
@@ -1246,11 +1299,48 @@ Agent Memory 从追加历史演进成受治理的持久状态系统。写入前�
 
 因此 Memory audit 要同时覆盖显式 store 和可见输出的再注入路径：绑定 predecessor output、normalization、transport、prompt wrapper 与后继行为，用 matched context 与时序对照区分真正渠道与普通语义持续性。输出 scrub/rewrite 会损害 utility 且不能证明移除所有编码；高风险链路应回退结构化 typed handoff、通道白名单或不传回自由文本。公开证据只支持披露的可行性与 time-bomb 实验，不证明所有模型或输出都存在此通道。<!-- source-family:SF-2026-ARXIV-2602-08563 -->
 
+## Memory 的评分、模态路由与写权限必须分离
+
+当同一个模型既生成 memory、又给 memory 打分、还据此授权写回时，一次判断错误会沿“检索—采信—再写回”形成正反馈；局部高分并不等于持久状态可信。更稳妥的控制链是把质量评分保留为候选证据，由独立校验、provenance 与写策略共同决定是否提交；校验不可得或分歧过大时，保留原始 observation 并拒绝提升 authority。这个分离用额外 judge、延迟与存储换取错误不自我放大，同一模型只作临时 scratchpad、状态可随会话丢弃时，轻量自评仍可接受。`arXiv:2608.00017v1` 只在作者 BIRD 代理环境中验证了 reward inflation 与独立纠错分支，不证明任意 memory judge 都可校准。<!-- source-family:SF-2026-ARXIV-2608-00017 -->
+
+多模态 memory 又增加了一层决策：查询相似不等于证据模态正确。系统可以先生成可撤销的 modality route，再在目标模态检索并用跨模态 anchor 验证；路由器只拥有检索计划权，不能改写证据 provenance。收益是避免文本 embedding 把图像、视频或音频证据压成错误的统一相似度，代价是路由误判、额外索引和多阶段延迟；路由低置信或任务跨模态时，应回退并行检索。`arXiv:2608.01543v1` 的结果只支持作者数据和路由器，不构成开放域可靠性保证。<!-- source-family:SF-2026-ARXIV-2608-01543 -->
+
+## Procedural Memory 的压缩单位应是可展开的 Contract Graph
+
+把整份 skill 当检索单位会加载无关步骤，把它当普通文本摘要又可能删掉 precondition、guard 或 verifier。更稳定的表示是带 intent、输入输出、依赖与 source pointer 的 section-level procedural graph；只有 boundary signature、dependency closure 和 verifier reachability 都保持时，重复 motif 才能折叠成可逆 macro，任务需要时再展开原始段落。收益是跨 skill 复用与更小 context，代价是图构建、版本维护和 contract false-equivalence；无法证明闭包时必须回退完整 skill。`arXiv:2608.05604v1` 的压缩率和依赖/验证可达性只属于作者 technical/embodied benchmark，不构成任意 skill 的语义等价证明。<!-- source-family:SF-2026-ARXIV-2608-05604 -->
+
+### Memory Object 与呈现给 Reader 的 Artifact 不是同一身份
+
+同一段 memory history 经过不同 rendering 后，reader 或 evaluator 可能得到显著不同的结论。这意味着存储正确性不能替代消费端正确性：系统还要版本化 projection、排序、截断、引用和提示包装，并在评测中固定 reader-facing artifact。否则分数变化无法区分是记忆内容改变，还是呈现路径改变；更丰富的 rendering 也可能增加泄露与过度使用。
+<!-- source-family: arxiv:2608.23568v1; semantic-body-binding: memory-rendering-evaluation-identity -->
+
+### Recall、Use 与 Overuse 必须分开测量
+
+直接询问一个已存事实只能证明它可以被取回，不能证明 Agent 会在恰当时机自然使用，也不能证明不会在无关上下文中泄露。长期记忆评测应分别测量 recall、任务效用、使用时机和 overuse，并保留对话历史与 judge contract。这样会增加评测成本，却能防止把“总能说出来”误当成“会正确地记住”。
+<!-- source-family: arxiv:2608.24189v1; semantic-body-binding: memory-recall-use-overuse-separation -->
+
+### Terminal Memory 是需要独立验收的 Artifact
+
+工作记忆在 trajectory 末端被压缩为可持久化对象时，应同时通过 sufficiency 与 claim grounding 两个 gate：前者检查是否保留继续任务所需状态，后者检查每个事实是否能回到 observation。只测最终答案会掩盖记忆碰巧正确或不可复查；保存更多原文可提高可追溯性，却会增加隐私与上下文成本，因此要保留按需展开路径。
+<!-- source-family: arxiv:2608.25618v1; semantic-body-binding: terminal-memory-sufficiency-grounding-gates -->
+
+### Episodic Memory 不能只保留相关片段集合
+
+相关性检索得到的片段可能遗漏 episode 中真正约束行动的 decision、时间顺序和 supersession。可复用 episode 至少要保存 constraint、decision、timestamp、替代关系与 raw transcript locator。结构化压缩提高检索效率，但当压缩对象无法解释为何采取某个动作时，系统必须退回原始轨迹，而不是把片段拼接冒充完整经历。
+<!-- source-family: arxiv:2608.25655v1; semantic-body-binding: operative-episode-state-not-fragments -->
+
+### 分布式 Memory 的收敛、寻址与读取隔离是三件事
+
+grow-only replicated store 可以用 content hash 保证各副本最终拥有同一 KV fragments，但存储收敛不等于查询能找到所需状态，也不保证一次读取不会混入无关片段。routing tag、addressing、hard read mask、recovery 与 final composition 应分别验收。基于 lexical connectivity 的寻址成本低，却会在连接断裂时确定性漏读，因此必须保留可诊断的 fallback。
+<!-- source-family: arxiv:2608.11218v1; semantic-body-binding: replicated-memory-addressing-isolation -->
+
 ## 小结
 
 Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多文本。可靠 Memory 保留 provenance、confidence、authorization、target identity、update history 和修正路径，并在多目标干扰下分别验收检索、冲突消解与聚合。下一章从信息状态进入外部行动。
 
 ## Review notes
+
+- [The Memory Trust Gap](https://arxiv.org/html/2609.01852v1)，exact-v1，Status: Experimental。采用§3–8的基线分层、旧证据依赖与净损害的区分，以及metadata/oracle输入干预边界；300个合成场景、33个模板族及三选一任务不代表完整Memory生命周期或真实外部副作用安全。未采用普遍参数规模安全规律或生产性能结论；证据边界与写后复核已回写09-03 Daily。
 
 <!-- june30-review:start -->
 - **SF-2026-ARXIV-2606-30788 / arXiv:2606.30788v1**：用 process sidecar 隔离可撤销学习状态，避免撤销私有记忆破坏公共技能。Method=`arXiv:2606.30788v1 — §3 Method; §Safety post-training.; §Sensitivity through training.`；Evaluation=`arXiv:2606.30788v1 — §2 Setting and evaluation; §5 Experiments; §5.1 Setup`，模型为 Qwen-2.5-0.5B/1.5B-Instruct 与 Llama-3.2-1B-Instruct；Non-proof=`arXiv:2606.30788v1 — §6 Discussion and limitations; §7 Conclusion; §B.7 Boundary cases for the second-order frontier`，不证明其他模型、任务或生产 SLO 的完全遗忘；Hardware/Precision/Input length/Output length/Batch/Concurrency/SLO/Evaluator=`Not Disclosed`；Artifact=`Not Disclosed — no later artifact used`。若 provenance、实体边界或 validation-selected edit 不成立，隔离实体并转人工审计，保留原始删除或重训 fallback。
@@ -1262,6 +1352,9 @@ Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多�
   - 证据边界：exact-v1 支持 linear-history whole-memory snapshot、natural-language target selection 与 deterministic ID restore；不证明 branch/merge、高并发事务、retrieval-index 原子同步或外部副作用可被 rollback。
 - MemTxn（arXiv:2607.27834v1；Status: Experimental）：https://arxiv.org/html/2607.27834v1
   - 证据边界：exact-v1 支持 source-bound admission、conflict visibility、before-image recovery 和 invariant check 的作者合同；不证明 semantic truth、并发故障隔离、物理介质耐久性或所有 Agent memory backend 已具备数据库事务语义。
+- Transfiver（`SF-2026-ARXIV-2609-03797`；arXiv:2609.03797v1；Status: Experimental）：[当前精确版本](https://arxiv.org/html/2609.03797v1)
+  - Method：§3.3、§5.1 Eq.5 / Definition 1、§5.4 Proposition 1 将完整持久交互状态、固定转换规则与相同未来输入写为条件；行为分布恢复是这些条件与精确 undo 的推论，不是由记录可见性推出的控制保证。§5.1.1 提出 fresh-process、next-state 与 pre-decode 检查；正文的 tokenizer/runtime/工具版本及外部输入控制是落实前提的工程推论，不是作者已验证的部署能力。
+  - Evaluation / non-proof：§7.1 / Table 1 的 44 例 reload 仅覆盖 read 消费的 content、standing、relations 及相对时间视图；provenance、importance、usage 未完整序列化。Appendix A.1 的有界 slot 实验和 A.2 另一实现上的外接时序 readout，均未证明完整自然语言系统满足历史充分性。Table 2 是拟议反证测试，不是全部通过的验收；精确 reader checkpoint、完整训练/评估配置、硬件/精度、并发与 SLO，以及本研究公开 artifact 入口均为 Not Disclosed in exact v1。这里吸收恢复前提与验收分层，不吸收“可见即可控”、普遍未来行为保证或超越所有受治理 RAG 的结论。
 
 - Bitemporal Agent Memory（immutable identity + valid/transaction time + supersession；Status: Experimental）:
   https://arxiv.org/abs/2607.26520v1
@@ -1596,7 +1689,7 @@ Primary-source 入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2608-10509:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21867:start -->
-- `SF-2026-ARXIV-2608-21867` — Daily `2026-08-23`；primary `arXiv:2608.21867v1`；Books review `books-review:SF-2026-ARXIV-2608-21867`。
+- `SF-2026-ARXIV-2608-21867` — Daily `2026-08-25`；primary `arXiv:2608.21867v1`；Books review `books-review:SF-2026-ARXIV-2608-21867`。
 
   **已吸收的语义增量：** MemGuard 将 verifier 的 reward、confidence、label 与 uncertainty 持久附着在每条 memory 上，并让这些 metadata 参与 admission、retrieval、冲突处理、summary 与 archival。四类 benchmark、四 backbones 和 matched runtime 支持其生命周期治理实例；verifier 偏差会被同样持久化，跨域校准与恶意观测仍未解决。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21867:end -->

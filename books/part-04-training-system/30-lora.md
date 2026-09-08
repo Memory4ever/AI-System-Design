@@ -248,6 +248,8 @@ Quantized base 不代表所有计算都以 4-bit 执行，也不代表 adapter�
 
 ## Merge 与动态 Adapter 是两种资产策略
 
+量化存储中的原位学习会产生第三种资产边界：对外仍是整数 cell/served artifact，内部却通过累积 delta、scale 或校正状态改变实际函数。同一编码字节或同一基础 checkpoint 因此不再保证同行为；registry 必须绑定更新状态、写入规则、校准和回滚点。它减少独立 adapter 的数据移动，却增加硬件特化、可复现与耐久性风险；更新频繁或审计优先时，显式 LoRA/adapter 仍更清晰。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20873 -->
+
 ### Recurrent Launch State：权重与 Prompt 之外的第三个适配面
 
 LoRA 改变 weight delta，prefix/prompt 改变显式输入；带 recurrent state 的模型还可能允许冻结权重，仅学习每层
@@ -276,6 +278,8 @@ W_merged = W_0 + (alpha / r) B A
 ```
 
 Merge 的优势是 runtime 执行路径接近普通权重；代价是每个变体重新形成完整 weight artifact，且必须保留 base/adapter lineage 才能追踪来源。
+
+量化基座还多一层问题：训练时使用的更新，导出后是否仍由同一组数值表示。先在高精度中相加再重新量化，可能改变甚至抹去小更新；一种受限分支是固定量化 codes，只学习 scale，并在训练 forward 就使用目标格式的 scale grid。只有导出沿用相同 grid、clamp 和 layout，才能保持训练与部署所表示的权重一致。这里保持的是表示身份，不是高精度 LoRA 的表达空间或质量：scale-only 更新受固定 codes 约束；需要更自由的权重更新时，显式 runtime adapter 或不同精度仍可更合适。
 
 另一种方式是在 runtime 动态加载 adapter：
 
@@ -472,6 +476,11 @@ LoRA 从一次低成本微调演进到多租户、持续变化的 adapter lifecy
 9. 多个 adapters 数学可组合为什么不保证行为兼容？
 10. Adapter checkpoint 为什么必须绑定 exact base revision？
 
+### 从学习适配器到生成适配器：只有低维且可复用时才成立
+
+LoRA 通常把适配器视为需要通过梯度学习得到的模型状态；另一条分支是由模型直接生成任务专用适配器。后者省掉逐任务优化循环，但把误差来源从“训练是否收敛”改成“生成出的高维参数是否足够精确”。因此它只在适配状态维度较低、能够跨多个样本复用、生成与校验成本低于一次优化时更有吸引力；高维或长序列适配仍更适合常规训练。系统不应按方法名称选择，而应比较适配器维度、复用次数、生成误差预算和回退训练成本。
+<!-- source-family: arxiv:2608.21386v1; semantic-body-binding: emitted-specialist-operating-regime -->
+
 ## 小结
 
 LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters、gradients、optimizer states 和每任务 artifact。它保留基座模型的大部分计算，并以受限更新空间换取成本与资产复用。
@@ -479,6 +488,8 @@ LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters
 QLoRA 继续压缩冻结基座存储，merge 与动态加载则把训练选择传播到 Serving。LoRA 的完整系统价值不只在“参数少”，而在 base、adapter、objective、checkpoint 和 runtime 之间形成可管理契约。
 
 ## Review notes
+
+- [Scale-QLoRA v1](https://arxiv.org/html/2609.04526v1)，2026-09-07 Daily：§3目标 scale grid 下的训练/导出权重身份、§4–6有限任务与表达边界。正文不采用通用质量/速度优势；exact merge 以 codes、grid、clamp、layout 一致为条件，不等于高精度 LoRA。未独立复现 artifact。
 
 - `SF-2026-ARXIV-2602-22268`（Status: Experimental）：exact-v1 的 §3.1～3.3 定义 bit-width/rank 联合问题、多保真 evolutionary search 与 Bayesian refinement，§4.1～4.5 及 Appendix E 固定作者模型、任务、search efficiency 与消融；§5/Impact Statement 和 task-wise appendix 不证明自动搜索跨模型、预算或 workload 普遍最优。https://arxiv.org/html/2602.22268v1
 

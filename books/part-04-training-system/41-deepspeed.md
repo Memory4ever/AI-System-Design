@@ -154,6 +154,11 @@ GPU
 
 一个模型从 OOM 变成能运行，只证明 capacity 问题被移动；GPU utilization、step time 和 storage wear 仍可能不可接受。
 
+### 单卡层流训练需要联合规划 Placement、Recompute 与 I/O Overlap
+
+当模型依赖 host memory 或 NVMe 才能训练时，固定 checkpoint / offload 规则会把 PCIe 与存储传输暴露在 critical path。联合选择 activation placement、recomputation、checkpoint 和 communication overlap，可以形成可执行的冻结 plan；代价是求解开销、硬件依赖和运行时漂移。计划必须绑定模型、显存、带宽、optimizer 精度和质量合同，环境变化后重新求解，而不是沿用旧 schedule。这个分支扩展了 offload working-set contract，不意味着必须使用某个特定训练框架。
+<!-- source-family: arxiv:2608.11919v1; semantic-body-binding: limited-resource-training-joint-placement-plan -->
+
 ## ZeRO++ 表明瓶颈会继续迁移
 
 当 sharding 解决 memory，跨节点 collective 可能成为主成本：

@@ -267,6 +267,8 @@ MegaTrain 的作者结果只证明该 layer streaming 在披露模型/硬件/bat
 
 通信压缩可能引入额外 quantize/dequantize compute、数值误差和 topology assumptions。论文性能数字必须绑定模型、网络和并行配置，不能作为任意集群承诺。
 
+若不能接受量化误差，另一条分支是利用参数在相邻更新间的位模式冗余，只传变化部分并编码其余字段。但当发送端依赖 hash cache、接收端依赖 exponent cache 和变化 bitmap 时，“无损”不仅取决于编码器，还取决于双方缓存是否对应同一代张量；有限 hash 的碰撞假设也不能替代确定性的相等检查。系统因此需要声明缓存重建、失配检测与全量回退策略，并把编码、缓存显存和同步成本计入 collective；这些是恢复设计要求，不代表已有有限训练测试验证了故障恢复。变化广泛、网络不再主导或缓存身份难以维持时，无状态传输仍是更简单的基线。
+
 ## Checkpoint 是 State Sharding 的正确性部分
 
 每个 rank 只有局部 shards 时，单 rank `state_dict` 不是完整 checkpoint。系统必须保存：
@@ -335,6 +337,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 它不是通用 OOM 开关。Activation、workspace、network、offload 层级和恢复语义必须分别建模。正确 ZeRO 配置应从 memory breakdown 出发，并用通信、吞吐、数值与 restore 共同验证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2609-04609`，CIERA，Status: Experimental：exact-v1 §2–4、Algorithm A 的双端缓存、字段编码和有限训练测试支持状态化无损通信分支；独立64-bit hash假设不是绝无碰撞证明，4/8/16卡实测与更大规模模拟分开。未采用普适加速数字，未验证失配/故障恢复；正文的重建与回退是设计要求。https://arxiv.org/html/2609.04609v1
 
 - `SF-2026-ARXIV-2602-06499`（Status: Experimental）：exact-v1 支持 FCDP 的 per-node full host parameter cache、pinned NUMA-local buffers、dedicated CUDA stream 与作者 4×8 A40/100Gbps EDR 实验；不证明所有模型、网络、optimizer、精度或恢复路径上都优于 ZeRO/FSDP。https://arxiv.org/html/2602.06499v1
 

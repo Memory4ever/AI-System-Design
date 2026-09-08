@@ -452,6 +452,31 @@ Runtime 需要 max handoffs、dedup keys、leases、timeouts、conflict resoluti
 
 Judge model 自身也要版本化和评估。
 
+### 同根报告可以帮助读懂证据，却不能按独立观察累加
+
+“错误相关”还需要区分两层：原始证据本身可能有误，Agent 对证据的提取也可能有误。重复阅读同一文档，可以
+减少第二层误差，因此把所有同源报告一律丢弃也不合理；但重复阅读不能按独立采样的方式消除第一层误差。
+这解释了为何多份措辞不同、结论一致的回答，仍不应直接让 posterior 越来越尖锐。
+
+一个受限的 Gaussian 例子能看清这条边界：设真实量为 Θ，文档给出 `E = Θ + ε`，各 Agent 的报告为
+`R_i = E + η_i`；ε 与各 η_i 是相互独立、独立于 Θ 的零均值 Gaussian 噪声，方差分别为 σ² 与 ν²>0。此时 m 份报告提供的
+likelihood precision 是 `J_m = m / (ν² + mσ²)`。它随重复读取增加，但当 σ²>0 时最多趋近 `1/σ²`：
+提取越来越准确，不等于文档越来越真实。若提取误差含有正相关的共同分量，不能被平均掉的噪声会进一步降低
+precision 上限；完全无提取噪声时，重复相同观察则没有这项增益。这个公式只解释该统计模型，
+不是任意自然语言 claim 的现成置信度计算器。
+
+因此 aggregation 的输入应从“答案与票数”扩展为“报告、原始观察、派生关系及依赖假设”。Workflow 负责保存
+lineage 与版本，aggregator 根据被允许消费的证据和误差模型决定权重；两者不能混成“有 provenance 就可信”。
+不同 root ID 仍可能共享隐藏来源，同一 root 也可能被提取出互补内容。文本相似度可辅助去重，却不能单独证明
+证据独立；认证来源需要额外成本，且声明被伪造、依赖遗漏或误差模型漂移仍会制造虚假信心。
+
+还有一个容易遗漏的条件：没有新检索，不等于没有新信息。模型可能用参数知识补充已有报告；只有固定其可用
+信息接口，并排除参数或其他渠道带来的新增信息，才能使用“纯转述不增加证据”的界。面对真实独立观察且误差
+模型可靠的任务，独立 pooling 仍然成立；来源不明或相关性无法估计时，应保留不确定性、请求独立证据或交给
+可信 verifier，而不是继续复制同一批 Agent。这里复用的是依赖统计原理，不是用新框架取代所有投票机制。
+
+<!-- source-family:SF-2026-ARXIV-2609-01873 -->
+
 ### Aggregation 还要验证局部答案能否组成同一个联合状态
 
 当各 Agent 只校准自己的概率或判断时，逐项正确、再平均或投票是便宜基线；一旦组件之间存在 coupling，局部证据
@@ -503,6 +528,10 @@ deterministic testing 可能更合理；只有 branch state 可隔离、结果�
 ### Pairwise Judge 可以生成 Shaping Proposal，但不能拥有因果归因
 
 绝对 contribution score 难跨场景校准时，可以用 ordered pairwise comparisons 建矩阵，再经 rank aggregation 形成 potential-based shaping proposal。Judge 只能观察可见 multimodal evidence，不能看见力、私有状态或反事实贡献；position bias、non-stationarity 与 shared-model error 会把排名误写成 credit。最终 task outcome 与独立环境证据仍拥有验收权。
+
+多跳协作还必须把 goal continuity 与 authorization continuity 分开。Handoff 可以转述任务目标，却不能自行扩大原始 principal 授予的 effect scope；每个 pending side effect 都应重新绑定 original request、delegation lineage、当前 executor 与有效 policy revision。逐跳复述权限会发生语义衰减或漂移，source re-anchor 则增加 Context 与验证成本；链不完整时应降级为只读、重新询问或人工授权，而不是让最后一跳根据“团队共识”提交动作。
+
+<!-- source-family: arxiv:2608.07556v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: goal-vs-authorization-lineage-across-delegation -->
 
 顺序微调多个协作 Agent 时，**更新一个成员会改变其余成员训练数据的策略分布**。在固定 peers、短 horizon 和弱耦合任务中，分别训练再组合最简单；若后续 Agent 仍使用旧 joint trajectories，前一个 Agent 更新后的 message/action occupancy 已经变化，缓存样本会变成 off-policy evidence，局部 loss 下降不保证团队策略改善。
 
@@ -630,6 +659,13 @@ MoA 不再把所有历史 reasoning 平铺给 aggregator；reviewer 对轨迹排
 
 固定 agent team 与通信拓扑，在任务类型稳定、角色清晰时容易调试；任务阶段变化后，多余参与会浪费预算，缺失角色又会中断信息链。Coordination owner 可以同时维护 participation graph 和 step-level orchestration，根据当前 task state 选择谁参与、谁拥有下一步以及何时同步。收益是适应任务结构并减少无效通信，代价是联合搜索、centralized training 和更复杂的故障归因；router 漂移或通信成本超预算时应回退固定最小团队。exact-v1 只支持论文测试的任务、模型与预算，不证明任意组织结构或去中心化部署的收益。<!-- source-family:SF-2026-ARXIV-2605-25746 -->
 
+## Latent Communication 必须证明传递了正确样例的状态
+
+Receiver 使用 relayed KV 后性能改善，只能证明它依赖某种 cache，不能证明 cache 携带了当前 teammate 的私有信息。因果验收应加入 mismatched-example、zero 与 moment-matched random intervention：只有正确配对显著优于错配，才能把收益归因于跨 Agent 信息传递。
+
+这种审计会增加运行次数，也无法证明 latent state 可解释或安全；它至少把“存在缓存效应”与“传递了正确协作状态”分开。身份无法绑定或错配不退化时，应回退显式消息、typed artifact 或不共享状态。
+<!-- source-family: arxiv:2608.04893v1; daily: 2026-08-06; semantic-body-binding: causal-audit-of-relayed-agent-state -->
+
 ## 本章在知识树中的位置
 
 Workflow 提供 durable shared state，Multi-Agent 在其上分配责任。下一章 MCP 讨论 Agent/host 如何通过标准协议发现 tools、resources 和 prompts；MCP 可以连接角色，却不定义协作策略。
@@ -658,9 +694,33 @@ Multi-Agent 从广播全部对话演进到 typed role、message、shared state �
 
 <!-- source-family:SF-2026-ARXIV-2605-08647 -->
 
+Handoff compression 还应把 operational facts 与约束它们如何使用的 boundary metadata 分账。时间、实体和决定仍然
+正确，不表示 audience、owner、hedge 或 disclosure caveat 仍然存在；下游看不到原 transcript 时，丢失的边界无法
+由事实内容反推。Typed handoff 因而要让每个 fact 携带显式 allow/deny audience 与来源，extraction 缺失、字段冲突、
+拼写/格式不可解析或否定语义不清时进入 `Unknown` 并拒绝披露，而不是默认继承共享权限。
+
+结构化 schema 本身没有保护权。Gold-derived allowlist 只证明存在一种上界，5%～30% label corruption 与
+typo/format/negation stress 已显示效果取决于边界字段正确性；现有证据来自 36 个合成 handoff 场景和半合成外部 traces，
+没有真实 production、多语言或自动 extraction 验证。短链、同 audience 且可完整 replay 时，保留原 transcript 或
+人工 handoff 仍是更可靠的旧路径。
+
+<!-- source-family:SF-2026-ARXIV-2608-29028 -->
+
 ### Multi-Agent Failure 要按 Intra / Inter / Environment 分层归因
 
 只检查最终 RCA 答案会把三种责任混成“模型不够强”：单 Agent 内部的证据误读/探索不全，Agent 之间的消息缺失/语义变形，以及 Agent 与工具环境之间的 observation/action 错配。可运维的 failure ledger 应为每次 run 保存 earliest evidence-backed failure span、责任层、影响的 handoff/state 与最终 outcome；修复也应对应层级，不把 prompt rewrite 当作所有失败的公用补丁。
+
+当 execution DAG 可 fork 且有 paired-clean replay 时，单事件 ranking 仍会把 jointly necessary repair 与多个
+alternative repairs 混在一起。Failure ledger 应显式声明 intervenable candidate domain、dependency graph、最大
+repair cardinality `q`、共同 replay seeds 与 success threshold；先取 failure sink 的 backward slice，再逐个验证该
+声明域内全部 inclusion-minimal successful sets。输出 `{{u,v}}` 表示联合必要，`{{u},{v}}` 才表示两个替代充分修复。
+
+这种完整性只相对于声明域成立。Graph 缺少相关 influence path、没有 clean counterpart、外部状态不可重放或真实修复
+超过 `q` 时，系统必须扩大 replay/exhaustive search 或保持 `Unknown`，不能继续声称 exact localization。现有结果只
+覆盖 `q<=2`、90 个受控 DAG 与 24 个 1.5B 算术 pilot；10% 隐藏边就已使 macro family exact match 从 1.000 降到
+0.552，不支持 open-world 自动修复。
+
+<!-- source-family:SF-2026-ARXIV-2608-29228 -->
 
 更丰富的 inter-agent protocol 可能减少通信失败，却会增加 token、schema、延迟与错误状态传播，也无法修复工具返回错误或单 Agent 未探索。简单任务仍以单 Agent 和 deterministic verifier 为基线；这一 taxonomy 只在作者的 cloud-RCA benchmark、模型和协议上得到验证，不证明其失败比例能外推到任意 multi-Agent 系统。<!-- source-family:SF-2026-ARXIV-2602-09937 -->
 
@@ -669,6 +729,12 @@ Multi-Agent 从广播全部对话演进到 typed role、message、shared state �
 Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，而不是更多对话。稳定系统依赖 typed handoffs、shared workflow state、bounded delegation 和独立 verification。下一章进入连接标准 MCP。
 
 ## Review notes
+
+- **Epistemic Sybil Resistance（arXiv:2609.01873v1；理论部分的受限解释）**：
+  [exact-v1](https://arxiv.org/html/2609.01873v1) §5 支持指定 Gaussian 模型下的同根提取收益边界，§6 讨论
+  provenance 与参数知识条件。正文不采用其自然语言置信度估计器、生产安全或普遍性能结论。独立审读发现
+  §4.2 的二元 posterior 构造需额外对称误差条件，§8.3 与 Figure 4 的 naive NLL 不一致；后者保持 Disputed，
+  未进入本章。代码与冻结输出尚待作者公开；本次没有独立复现实验。
 
 - **Ledger-State Stigmergy（arXiv:2604.03997v1；Status: Experimental）**：exact-v1 支持以 durable ledger state 表达间接 coordination 的形式语义；没有披露可跨 workload 复算的生产吞吐、容错或长期运行证明。https://arxiv.org/abs/2604.03997v1
 

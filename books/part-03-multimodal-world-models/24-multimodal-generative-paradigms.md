@@ -114,6 +114,8 @@ provisional state  模型仍可修改
 committed output    已对用户、工具或下游产生承诺
 ```
 
+还要把“持久条件副本”与这两者分开：一种迭代生成分支会保存选中的 clean-token 假设并持续覆盖后续 denoiser 输入，但底层 noisy state 仍可变化，最终输出也重新读出，而不是直接复制该假设。它用较稳定的上下文协调并行位置，代价是错误假设持续影响后续步骤；条件保留时间、底层可修改状态与外部输出提交必须分别定义，不能因算法称其为 commitment 就提前向用户承诺。
+
 在 UI 内部重绘一幅图通常安全；已流式发送的文本、已触发的 tool call 或已执行的 robot action 无法简单改写。于是模型机制会向系统传播：
 
 - token revision 是否需要 retract protocol；
@@ -296,6 +298,8 @@ AR teacher forcing 训练看到正确前缀，推理看到自己的历史输出�
 
 proposal-correction training 会显式生成错误中间状态，让模型学习修正。但 synthetic error 是否覆盖真实 rollout error，仍取决于 corruption process。过强 corruption 可能让模型学会恢复不现实噪声，过弱 corruption 又无法处理 aggressive decoding 的错误。
 
+因此，直接把已有 sampler 的步数调小，与专门训练少步生成器不是同一个优化。后一条分支可让冻结 teacher 评价 student 自己走到的中间状态，再把纠正信号用于训练指定步数的 student；它用离线 teacher/critic 计算和额外模型版本换较短的在线轨迹，但没有消除分布偏移，换步数也未必还能复用同一 student。比较时必须同时记录训练成本、实际网络求值次数及在线质量：一步更新可能包含额外预测或 guidance forward，不能把 step 数直接当 latency。
+
 ## Cache、rollback 与 exactness
 
 ### Commitment Policy 可以从未来稳定轨迹学习
@@ -342,6 +346,16 @@ capture 重要时更容易工程化。
 把 diffusion cache 的误差看成每个 site 的固定 representation mismatch，适合静态校准，却忽略先前修正会改变后续输入。trajectory-consistent calibration 沿 corrected history 逐步估计 site-local prior，使 cache 决策读取当前生成轨迹而非一次性误差表；收益是减少累计偏差，代价是离线 prior、prompt 分布和采样 schedule 共同进入 artifact identity。prior 漂移或未覆盖 cache policy 时应回退 base cache 或 full computation。现有证据只覆盖披露图像模型、H800 与采样路径，不能外推在线并发或分布外 prompt。
 
 <!-- source-family:SF-2026-ARXIV-2605-24870 -->
+
+固定 cache schedule 还假设不同 sample 与 timestep 对误差同样敏感；当生成难度和 denoising phase 变化时，这会在简单样本上浪费重算、在高敏感 step 上累积偏差。另一分支把 `reuse / recompute` 建模为 trajectory-conditioned sequential decision，并将 policy 与轻量 error corrector 分开：前者分配计算，后者只修正已选择复用的状态。二者必须共享 state/step identity、quality budget 与 fallback frontier，不能用 policy confidence 代替 correctness。
+
+学习式 cache control 用额外训练、policy drift 与 corrector bias 换取 sample/timestep 自适应；prompt 分布、sampler 或 backbone 变化后需要重新验收。事件时证据覆盖 FLUX.1-dev、DiT 与 CogVideoX 的作者配置，不能把 headline speedup 外推为生产并发收益；低流量、短 trajectory 或校准不足时，固定 schedule 和 full recompute 仍是更可验证的基线。<!-- source-family:SF-2026-ARXIV-2607-29398 -->
+
+### Diffusion Serving 不能直接复用 AR Token Queue
+
+AR serving 的 ready unit 通常是“某请求的下一个 token”；masked diffusion 在同一 denoising step 共同更新多个位置，step difficulty、收敛进度和 CPU dispatch 成为新的状态。Batching 的收益来自多个请求共享一次 step forward，而不是把它们简单塞进同一 token queue；admission 需要同时约束 mask ratio、remaining steps、output budget 与 quality policy。它提高并行机会，却引入 step-level straggler、批间不同步和 dispatch overhead；短输出或单请求时，普通逐请求执行可能更简单。`arXiv:2608.23807v1` 的 LLaDA-8B + D2F LoRA、单 H200、GSM8K/HumanEval 只支持该 operating point，不能证明质量对任意 batch 都不变。
+
+<!-- source-family:SF-2026-ARXIV-2608-23807 -->
 
 ## Scheduling：并行机会也需要被分配
 
@@ -460,6 +474,19 @@ Fréchet 类表示距离通常用于训练后评估，因为 batch 内同时估�
 
 <!-- source-family:SF-2026-ARXIV-2605-04215 -->
 
+若生成中再插入槽位，旧位置与新画布的坐标映射、画布版本和 logits 必须一起绑定；比较分布时需明确哪些旧未决位置可比较，提交只能使用被选画布对应的预测，不能把旧画布 logits 当作新状态。以平均分布差异决定是否扩容是带额外 forward 与对齐成本的启发式，既不保证每个位置不变，也不保证原生成分布或最终延迟不变；固定画布仍是状态简单、容易验证的共存方案。
+
+## 加速不能静默改变生成轨迹
+
+缓存或跳步加速在多模态 Diffusion 中会复用旧的视觉与文本状态。旧状态足够接近时，它减少重复计算；随着轨迹推进，stale state 会让加速输出与未加速模型系统性分叉。因而“更快但 benchmark 仍可用”并不等于语义等价，运行时还要测量 state freshness、输出 agreement 与 refresh cost。
+
+这形成一个明确的控制分支：短 refresh interval 提高一致性却回收较少计算，长 interval 提高速度却扩大漂移。控制器只能把 confidence 当刷新信号，不能当 correctness certificate；漂移超过预算时回退完整 refresh。该分支属于 iterative refinement，不应外推到具有不同状态语义的自回归 Decode。
+
+### 加速后的输出必须与未加速轨迹建立一致性边界
+
+缓存或跳步能减少 diffusion 的重复计算，但“最终观感尚可”不能证明它仍在执行同一生成过程：stale visual state 与已生成文本状态可能把内容推向另一条轨迹。运行时应把 refresh interval、state revision 与同模型 full-compute 输出的一致性作为联合验收量；缩短 refresh 可以提高一致性，却会交还一部分加速收益。该检查只约束近似分支的语义漂移，不保证两个随机样本逐点相同；一致性或 freshness 超界时应恢复更密集刷新或全量重算，固定 schedule 在分布稳定时仍是可预测基线。
+<!-- source-family: arxiv:2607.29079v1; daily: 2026-08-03; semantic-body-binding: accelerated-generation-state-agreement -->
+
 ## 本章在知识树中的位置
 
 第18章解释 Decoder Only AR，第20章解释 token sampling；本章把 AR 放进更宽的生成范式树，并拥有 mutable generation、block refinement 与 commit boundary。第25章只在生成状态同时表达 action-conditioned environment transition 时才称其为 World Model。
@@ -492,6 +519,28 @@ Fréchet 类表示距离通常用于训练后评估，因为 batch 内同时估�
 
 下一阶段压力是让 generation policy 成为 runtime 可控制对象：根据 entropy、queue、memory、deadline 和 output side effect 动态选择 block、proposal、correction 与 commit；同时建立跨 runtime 可复现的 committed-goodput 与 exactness 测试。
 
+## Refinement 位置也可以成为条件计算状态
+
+在并行 refinement 中，不同位置距离稳定状态的远近不同，继续给所有 token 相同 expert budget 会把计算浪费在已经收敛的位置。条件计算可以读取 block-relative position、当前 refinement step 与收敛 frontier，为未稳定位置分配更多专家容量；它没有改变最终 commit owner，却把“还需要多少计算”从固定超参变成运行时状态。收益是减少无效计算，代价是训练—推理联合校准、router 抖动和调度复杂度；短轨迹、负载稳定或状态估计不可靠时，固定预算仍是可验证基线。`arXiv:2608.01784v1` 只支持作者 Diffusion-MoE 配置，不能外推为所有生成模型的通用加速。<!-- source-family:SF-2026-ARXIV-2608-01784 -->
+
+## Few-step Distillation 要在 Student 实际访问的状态上验收
+
+把多个 teacher step 压成一个 student transition 时，离线 teacher trajectory 是合理起点，但 student 的早期并行提交会改变后续 context，使真实状态逐步离开监督分布。更稳妥的 on-policy 分支从 student 自己生成的 partial state 出发，由冻结 teacher 提出 outcome-aligned future candidates，并只提交仍保持 rollout outcome 的最长前缀；验证失败就缩短 transition。收益是减少 function evaluations，代价是在线采样、teacher 计算与一致性判定误差；高风险或状态漂移明显时，多步 refinement 仍是正确性基线。`arXiv:2608.02942v1` 只在作者数学和代码 benchmark 上支持该质量—效率前沿。<!-- source-family:SF-2026-ARXIV-2608-02942 -->
+
+## 双向生成中的 Cache 是可变状态，不是只读前缀
+
+diffusion 或 masked refinement 会反复修改序列两侧，传统只追加 KV cache 的不变量不再成立。复用稳定 affix 可以减少重算，但 request-specific anchor 与被更新位置必须重新计算，并把 timestep、mask 和版本纳入 cache identity。错误地沿用自回归前缀语义会产生静默污染；保守全重算仍是低复用或高变化率下的正确基线。
+<!-- source-family: arxiv:2608.26140v1; semantic-body-binding: bidirectional-affix-cache-mutability -->
+
+进一步的近似分支只复用 token identity 已冻结的 prompt K/V，并以 response state neighborhood 与 decoder margin 判断可变区域是否仍可复用。Prompt reuse 因而是受状态距离约束的 proposal，不是 AR 式 exact prefix：mutable response 必须刷新，越界就回退 full refresh。它用距离估计与误差校准换取较少重算，也会引入阈值漂移和静默近似误差；高风险输出或 state 快速变化时，完整刷新仍是基线。
+
+<!-- source-family: arxiv:2608.08086v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: reversible-response-cache-state-neighborhood -->
+
+## Object Permanence 与 Addressable History 是两个 Gate
+
+视频生成能够在短片段中维持对象外观，不代表系统拥有可寻址、可更新的长期环境状态。环形或有界历史机制可以扩展可引用的过去，但仍需分别验证对象身份持续性和历史容量；两者都通过，也不能自动推出 action-conditioned causal transition。它是生成状态管理的进化，不应被误写成完整 world model。
+<!-- source-family: arxiv:2608.26794v1; semantic-body-binding: video-object-permanence-vs-history-capacity -->
+
 ## Reflection
 
 生成范式不是从“串行”走向“并行”的单向进步史。系统用并行草拟换来了 mutable state，用修正换来了额外 forward，用更大候选空间换来了 verification 和 memory。真正的演进，是让这些成本与输出承诺被显式管理。
@@ -505,6 +554,10 @@ Fréchet 类表示距离通常用于训练后评估，因为 batch 内同时估�
 <!-- source-family:SF-2026-ARXIV-2605-10980 -->
 
 ## Review notes
+
+- 2026-09-01 可变 canvas 的状态绑定：<https://arxiv.org/html/2608.30922v1> §3.2、Algorithm 与 C–F。平均 JS 不覆盖已提交/新增位置，不构成无损证明；always-expand 对照同时改变判定和 expanded forward，不能隔离 JS 判定因果。三模型四任务及 MI210 测量不外推生产 SLO。
+
+- `SF-2026-ARXIV-2609-04531`，Status: Experimental：exact-v1 §2.4、§3.1/3.3、§5与B.5支持student中间轨迹监督及按K分别训练的少步分支。仅采用公开代码生成设置下的机制；不采用任意权重下稳定反向映射保证，也不把K、NFE与wall-time等同。https://arxiv.org/html/2609.04531v1
 
 - `SF-2026-ARXIV-2602-00612`（Status: Experimental）：primary=`arXiv:2602.00612v1`；Method=`§3 Methodology`；Evaluation=`§4.1 Benchmark`；Non-proof=`§7 Conclusion`。证据只支持 dLLM 在所测 CFG benchmark 中用并行位置分布做 lookahead、拒绝不可完成 proposal；不证明语义正确、任意 grammar 复杂度或生产延迟。
 - `SF-2026-ARXIV-2602-21760`（Status: Experimental）：primary=`arXiv:2602.21760v1`；Method=`§4.2 Hybrid Parallel Inference Framework；§4.3 Adaptive Switching via Denoising Discrepancy`；Evaluation=`§5.2 Main Results`；Non-proof=`§5.3 Ablation Study`。证据绑定 SDXL/SD3、作者实现与双 RTX 3090，不证明其他 diffusion family、拓扑、并发和 tail-SLO。
@@ -579,6 +632,8 @@ Side path 增加参数、训练耦合与 cache-version 复杂度；要求 exact 
 
   **已吸收的语义增量：** diffusion model 的 speculative block proposal 必须由 target-model block verifier统一 commit/rollback，才能把并行候选与 exact output distribution 分开
 <!-- daily-books-trace:SF-2026-ARXIV-2606-13426:end -->
+
+- `arXiv:2609.01043v1`（2026-09-02 Daily）：[§4.1、Appendix A](https://arxiv.org/html/2609.01043v1)支持 input-overlay-only 与 mutable noisy state、final argmax 的区别；stored label 不直接复制到输出。§4.2–4.3的oracle/条件独立理论不认证 learned sampler 闭环无偏，§5及Appendix D的GenPPL/entropy排序不等任务正确率或线上latency；仅吸收三类state/commit接口边界。
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-13496:start -->
 - `SF-2026-ARXIV-2606-13496` — Daily `2026-06-12`；primary `arXiv:2606.13496v1`；Books review `books-review:SF-2026-ARXIV-2606-13496`。

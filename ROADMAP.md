@@ -5,7 +5,7 @@
 
 # AI System：从第一性原理到 AI 基建
 
-**版本：** v0.2（七 Part / 84 章）
+**版本：** v0.2
 
 **目标读者：** 已具备软件工程、分布式系统、Kubernetes 或平台工程经验，正在建设 Data / Training → Model → Deployment → Serving → Observability 全链路的工程师。
 
@@ -163,7 +163,7 @@ Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、spec
 
 ### Part VI AI 基础设施（AI Infrastructure，Ch57～73）
 
-平台以 control/data/evidence planes 统一 asset、workload、serving、gateway、typed resources、evaluation、observability、cost、tenancy、security 与 production readiness。AI for Science 是跨 Data → Evaluation → Workflow → Security 的领域路线，不建立独立 Part。
+平台以 control/data/evidence planes 统一 asset、workload、serving、gateway、typed resources、evaluation、observability、cost、tenancy、security 与 production readiness。
 
 ### Part VII Agent（Ch74～84）
 
@@ -195,14 +195,11 @@ MODEL-FFN / MODEL-MOE
 → PLATFORM-GPU-SCHEDULER
 ```
 
-### AI for Science
+### 下一阶段：AI for Science（暂不开展）
 
-```text
-TRAIN-DATA
-→ PLATFORM-EVALUATION-SYSTEM
-→ AGENT-WORKFLOW
-→ PLATFORM-SECURITY
-```
+AI for Science 的领域研究与应用路线暂不纳入当前 Daily、Weekly 及历史补跑的研究和 Books Integration 任务，
+待用户明确开启下一阶段后再规划。现有书稿与来源证据保留，不据此删除；不通过 Data、Evaluation 或 Agent 等通用节点重新引入科学应用研究。
+当前继续完成七个 Part 的模型与系统机制主线，包括多模态、World Model 与 VLA，它们不因本项暂缓而整体退出。
 
 ### 边缘 / 端侧 AI（Edge / On-device AI）
 

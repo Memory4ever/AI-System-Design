@@ -69,6 +69,12 @@ T_sys + T_hist + T_ret + T_tool + T_out <= T_max
 
 `Lost in the Middle` 的实验说明相关信息位置会显著影响表现。这个结论不能外推为固定排序口诀，却足以否定“只要窗口够长就无需 context engineering”。
 
+### Coding Agent 的工作集目标是 Action 前事实充分，而不是 Token 更多
+
+为 coding task 持续扩张 Context，在依赖事实完整且检索准确时可以减少回看；缺少版本、调用关系或 repository convention 时，多模型可能一致编造，额外无关 token 也不能修复缺失变量，甚至会强化旧约定。Assembly 应在 action 前检查 dependency facts、current code state 与约束是否可用，并让测试/工具结果验证输出；缺失时定点检索或 abstain，而不是无差别加长窗口。该策略增加检索和 precondition checks；小仓库、完整工作集已常驻时直接拼接仍简单。`arXiv:2608.16630v1` 只支持作者 coding-agent tasks 中的 working-set failure，不证明所有错误都由 Context 缺失造成。
+
+<!-- source-family:SF-2026-ARXIV-2608-16630 -->
+
 ## Context Assembly Pipeline
 
 可靠 assembly 需要显式阶段：
@@ -127,6 +133,17 @@ foreground interference、buffer backpressure、summary hallucination 与 FIFO e
 实验只支持在其视频问答设置中可以这样隐藏 query 后工作，不证明 textual memory 能替代原始 frames，也不证明
 通用 serving 更省。Query 稀疏、需要回看全局证据或 compute-sensitive 时，post-query global reasoning 仍合理；
 proactive path 只有在 source time range、derived-state revision、correction/replay 和 scheduler priority 明确时成立。
+
+Derived state 是否存在还不够；对 causal model，**它进入 Context 的顺序**决定能否改变原文的表示。若第一遍读取
+长上下文后才得到 task state 或 reasoning trace，把它追加成 `[x,T,q]` 只能影响后续 token，不能重写已经形成的
+`x` 表示；在一次 fresh pass 中改成 `[T,x,q]`，则可让 `T` 作为不完美的条件状态指导模型重新读取 `x`。这里
+query `q` 在两条路径中都位于末尾，比较的是 state 相对 long context 的前后次序，不是把历史计算放到 query 之后。
+
+Fresh reread 用额外完整 pass、trace tokens 与 latency 换取 order-aware contextualization，也会失去普通多轮场景的
+prefix KV reuse。`T` 仍是 model-generated derived claim，必须绑定来源 pass、模型与截断规则，错误 trace 不能覆盖
+原始证据；接口不暴露可复用 state、任务很短或 cache reuse 更重要时，单次 `[x,q]`、普通 retrieval 或局部回读仍
+更合理。[Trace-as-State 的 matched order evidence](https://arxiv.org/html/2609.02702v1)只覆盖三类长上下文任务和
+一次 fresh second pass，未验证 multi-round Agent，不能外推成任意 Transformer 或交互任务的复杂度保证。
 
 当模型可以主动 `writeContext`、`readContext` 或 `deleteContext` 时，Context 从一次性 prompt 又演进成
 显式受控的 working state。模型可以把长 observation 压成 notes、暂时移出当前窗口并按需回读，从而让
@@ -190,6 +207,12 @@ C'_t = compress(C_t, task, budget)
 ```
 
 目标不是最短，而是保留对未来决策充分的信息。摘要可能丢失 exception、否定、数字和 provenance；递归摘要还会累积漂移。
+
+“充分”必须相对于未来任务定义，而不是压缩器自认为语义相似。跨 session handover 可以按三层保存：必须逐字保真的决策、约束与授权；对已知 future-query family 足够的统计量；以及无法安全归约、可供以后回读的原始 observation。理论上最小状态只需保持未来 target distribution，但开放 Agent 通常不知道未来 query，也无法证明自动摘要已经达到 predictive equivalence，所以高风险或任务未知时不能删除原文。
+
+这种分层用较小 handover state 换 writer bias、任务分布假设和错误归约风险；短会话、存储便宜或证据不可约时，完整 transcript 仍更透明。`arXiv:2608.14528v1` 在 exogeneity 等假设下给出 deterministic sufficient handover 的理论刻画及 Gaussian/nonparametric regression 上下界，不证明开放 Agent 能自动知道未来问题、可靠抽取最小状态或忠实保留决策。
+
+<!-- source-family:SF-2026-ARXIV-2608-14528 -->
 
 关键状态应使用 typed workflow fields 或原始 artifact reference，不只存在自然语言摘要。必要时保留摘要到原文的 links，允许按需回读。
 
@@ -394,6 +417,14 @@ context assembly 可以为了预算裁剪历史、检索结果和示例，但 ac
 
 <!-- source-family:SF-SCOUT-ACTIVE-INFORMATION-FORAGING-FOR-LONG-TEXT-UNDERSTANDING-WITH-DECOU -->
 
+## Context Compression 必须保留执行状态，而不只是语义
+
+摘要与原文语义相似，仍可能丢失“下一步从哪里继续”、尚未满足的 session constraint 或时间有效期。压缩验收应在相同 environment state 下重放后续动作，检查 blocked/repeated action、constraint violation 与恢复位置；文本相似度只能作为辅助信号。
+
+长期有效的约束还应从自由文本摘要中分离成 versioned state，记录 scope、expiry、来源与当前执行 frontier。side channel 增加 schema 和迁移成本，但避免多轮 compaction 把强约束降成背景事实。低风险问答仍可使用普通摘要，外部 effect 越大，越需要 paired-state regression。
+
+<!-- source-family: arxiv:2608.06503v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: context-compression-paired-state-regression -->
+
 ## 本章在知识树中的位置
 
 Prompt 定义软接口，Context 定义本次调用的完整 working state。下一章展开 Context 的主要动态来源之一：RAG 如何从外部 corpus 检索 evidence，并为生成保留 provenance。
@@ -419,6 +450,21 @@ Context 从 token 拼接演进为带类型和生命周期的运行时 state：ta
 4. Context assembly 为什么要先 authorization 再 ranking？
 5. Summary 为什么需要链接原始 evidence？
 6. 哪些字段必须进入 context/cache identity？
+
+### Intent-conditioned Compression 会引入不可逆删除边界
+
+面向代码或工具任务的上下文压缩，可以按当前意图优先保留 identifier、path、edit 与局部证据，而不必对所有历史使用统一摘要。它节省 token，却把 intent classifier 变成删除权限的 owner；当任务意图漂移时，被丢弃证据可能无法恢复。系统应保留 raw evidence 的回退路径、projection 版本和触发重建的条件，而不是把压缩结果当作新的唯一事实。
+<!-- source-family: arxiv:2608.24188v1; semantic-body-binding: intent-conditioned-context-projection -->
+
+### Context Compression 的身份必须包含监督语言与分词边界
+
+压缩器在一种语言、segmenter 或 tokenizer 上达到目标预算，并不保证换到另一种组合仍保留相同事实。压缩 artifact 应绑定 supervision language、切分方式、tokenizer、实际达到的预算和 raw fallback；评价同时看信息损失与 token 节省。否则名义相同的压缩比会对应完全不同的语义删除行为。
+<!-- source-family: arxiv:2608.26175v1; semantic-body-binding: multilingual-context-compression-identity -->
+
+### 多个 Context Constraint 会发生联合可靠性坍塌
+
+单个约束各自有较高保留率，并不保证长流程能同时保持全部约束；多次压缩、合并和交接会使联合成功率近似乘法下降。Context 管理因此要保存约束集合、逐项状态和 supersession，并在每次变换后重验，而不是只测平均语义相似度。持续维护增加 token 与检查成本，但能阻止少量局部遗漏累积成执行层违规。
+<!-- source-family: arxiv:2608.12426v1; semantic-body-binding: joint-context-constraint-reliability -->
 
 ## 小结
 

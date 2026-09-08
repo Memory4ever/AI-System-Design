@@ -268,6 +268,8 @@ prefill/decode 的历史状态和 online reduction。更强的 depth routing 换
 而且作者在特定 MoE 配方中的 loss/benchmark 不能证明它会普遍取代标准 residual。模型较浅、吞吐优先、
 跨 stage 带宽紧张或公开实现尚不成熟时，单一 residual stream 仍是更稳健的设计。
 
+保留多个状态不自动保留多个独立方向。跨流 mixer 若只限制最大奇异值不超过一，只保证这一步不放大；最小奇异值仍可接近零，反复混合会抹去流间差异。正交约束同时限制上下界，却只保存所作用子空间的欧氏范数，不保证每个语义方向或流间差异不变，均值与差异仍可交换。它以更受限的混合几何、额外状态和数值实现约束换取传输稳定性；仍须将 mixer 与 write-back、初始化和训练配方共同评估，不能把局部等距当作全网络稳定或质量保证。
+
 ### Parallel Tracks 用周期融合换更少的跨设备依赖
 
 标准 Transformer stack 让每层读取上一层唯一 residual state；配合 Tensor Parallel 时，每个子层内部通常还要
@@ -453,6 +455,16 @@ l = 0,...,L-1
 
 任何 layer-redundancy 结论都应绑定 checkpoint、干预操作、位置、数据切片和 evaluator，并在剪枝后重新验证完整模型。受限实验可以暴露 protocol-dependent redundancy，但不证明跨模型或跨任务存在固定“无用层”；证据不一致时保留原层结构，或只把干预作为诊断而非 release 决策。
 
+当命题从“某一层是否必要”扩展到 Attention head、MLP neuron 与 residual stream 共同形成的因果链时，单次
+activation readout 或单点 ablation 也不够。更完整的验证顺序是：先用只改变目标属性的 minimal pairs 定位候选，
+再用同数量随机干预和双向 activation patching 区分相关性与因果方向，最后把永久 weight edit 作为新的 checkpoint
+重新执行自适应反例、utility 与副作用评估。每一步都要记录具体 projection、layer、token position、probe slice
+与 evaluator；某个模型或某个方向失败时，不能用其他模型的平均收益补成一条普遍电路。
+
+这种协议能提高局部 circuit claim 的可信度，却不能证明被定位组件拥有唯一语义，或证明放大少量权重就是生产安全
+机制。干预可能沿其他 residual path 被补偿，也可能在新攻击、量化或继续训练后改变身份；永久编辑还可能以能力下降
+和过度拒绝换取目标指标。证据链不闭合时，应保留原权重并把定位结果用于诊断，而不是把它直接升级为 release 决策。
+
 <!-- source-family:SF-2026-ARXIV-2605.16234 -->
 
 ### Residual Stream 之外还可能存在跨层更新状态
@@ -464,6 +476,8 @@ l = 0,...,L-1
 ## Dropout、precision 与训练/推理差异
 
 训练时可能在 Attention weights、sub-layer outputs 或 residual branches 使用 dropout；推理时通常关闭。Mixed precision 会让 Norm、residual accumulation 与 softmax 的数值策略更重要。
+
+若目标还包括降低训练执行量，随机置零必须进一步变成结构化的跳过：整层或整条 residual branch 被选中不执行，才可能省掉对应计算，先算完再乘零只改变训练扰动。按样本与按batch选择不同深度，也会改变可批处理程度；比较时应联合固定depth/time schedule、累计active FLOPs、residual缩放与优化器配方，而不能拿最大dropout率代替实际节省。局部期望幅度匹配不保证整网输出等价，少执行也可能损害优化或能力。训练得到的深度弹性若用于推理，直接early exit仍是有损分支，只有完整target验证后的提交才属于第48章的speculation保证；固定深度在稳定性、吞吐和证据不足时仍然成立。
 
 章节公式描述逻辑语义，不代表每个算子都以相同 dtype 独立执行。Fused kernels 可以合并 Norm、projection、bias、activation 或 residual add，但需要保持 checkpoint 与数值容差内的模型语义。
 
@@ -520,6 +534,10 @@ Pre-Norm 与 Post-Norm 的差异不只是代码顺序，而是梯度路径设计
 
 ## Review notes
 
+- [Layer dropout v1](https://arxiv.org/html/2609.05275v1)：采用§3–11的结构mask、实际跳过、schedule/optimizer共同校准及推理分支边界。实验基于Celerity/CS3，不外推GPU加速；部分正文与表格对优劣的概述不一致，8.2B缺dense对照，不采用普遍质量提升、最优dropout率或无损early exit主张。
+
+- oHC（Status: Experimental）：[exact-v1 §3–5、Appendix9–11](https://arxiv.org/html/2609.02672v1)区分mixer上下奇异值界、总范数与均值—差异交换。单一3.9B-A0.4B配方及73B内部语料不证明普遍质量；Eq12的epsilon使理想精确正交与数值实现不同，初始化bit-exact仅按Appendix10的fp32舍入条件。
+
 - `SF-2026-ARXIV-2602-07306`（Parallel Track Transformer；Status: Experimental）：exact-v1 的 §2
   定义 independent tracks 与 periodic fusion，§3.3 报告作者模型和 serving stacks 下的 evaluation，§4 不证明
   跨模型质量等价、任意互连拓扑的普遍加速或对标准 Tensor Parallel 的全面替代。
@@ -554,3 +572,7 @@ Primary-source 校验入口：
   prefix invariance audit 在 8 个 checkpoints、192 个 injected-fault trials 中定位全部注入缺陷，并报告两个共享
   lineage 的实现缺陷；不能外推为行业缺陷率，也不能替代跨长度、dtype、kernel 与 distributed path 的覆盖）:
   https://arxiv.org/abs/2608.22876v1
+- `SF-2026-ARXIV-2609-00051`，From Detection to Refusal（Status: Experimental；minimal-pair localization、
+  matched random ablation、双向 activation patching 与 adaptive re-attack 共同支持受限 circuit-edit evidence
+  chain；六个 4B--8B instruction models 的链路强度和 utility/over-refusal 代价不一致，不构成生产安全保证）:
+  https://arxiv.org/html/2609.00051v1

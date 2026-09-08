@@ -177,6 +177,24 @@ footprint、request distribution、runtime maturity 和 SLO 共同决定。
 
 这也解释了 PagedAttention、RadixAttention、ShadowKV、KV offload 的意义。它们都不是孤立技巧，而是在应对 KV Cache 变成主要 runtime state 后的 memory pressure。
 
+多轮请求还要区分“有多少工作本来可以复用”与“这些状态能否留到下一次访问”。若单个 Prefill worker 不接收
+Decode 产生的 response KV 回写，下一轮的历史回答与新增用户输入仍须在此处计算；即使容量足够保留所有已算
+prefix，也不能让这部分新工作变成命中。因此应看可复用 block/token 工作量占总 Prefill 请求工作量的份额，
+不能直接用“后续轮数占比”或 request hit rate 代替它。
+
+在 whole-content LRU、Poisson 新会话及特定独立轮次增量/等待时间假设下，一个 mean-field 条件模型进一步把
+命中工作量比例分成“固有可复用份额 × 下一轮在淘汰前到来的概率”。容量通过可容忍的 reuse interval 改变后一项，
+不改变固定 workload 的前一项。这是容量规划的受限近似，不是实际 partial-block、ref-count 或 timestamp-based
+缓存的通用定理；共享 prefix、路由和负载相关的 think time 都可能改变模型，不能把拟合出的留存时间当平台常数。
+
+这种分解可以判断继续增加 HBM 是否还有复用空间，却不能替代原有 bytes/OOM 硬约束，也不直接证明 TTFT 或
+goodput。复用身份仍由[第45章](45-why-kv-cache-speeds-up.md)定义，是否迁移 response KV 是
+[第55章](55-pd-disaggregation.md)的传输与 ownership 选择，排队和尾延迟由
+[第56章](56-inference-scheduling.md)联测。请求很少复用、状态身份不相容或等待分布明显漂移时，保守容量预算与
+实际 trace replay 比依赖该近似更稳妥。
+
+<!-- source-family:SF-2026-ARXIV-2609-02027 -->
+
 ## Fragmentation 与 Reserve 为什么真实存在
 
 Logical free bytes 不一定能被目标 kernel 使用。Allocator 粒度、KV block 内部空位、CUDA graph capture pool、tensor alignment 和暂未释放的 asynchronous buffers 都会造成差异。
@@ -213,6 +231,10 @@ Paging、prefix sharing 和更精确 admission 减少预留与碎片，却不改
 ### 扩展层级
 
 CPU/SSD/off-node cache 扩大总容量，却加入 transfer latency、bandwidth contention 和 consistency。它们把“装不下”改成“何时值得搬”。
+
+这里的 CPU 容量层以离散 GPU 与独立 host memory 为前提。在统一内存的移动 SoC 上，CPU 与 GPU 共享同一块物理 RAM，改变访问处理器不会凭空增加容量；压缩 KV 能减少实际占用，但压缩副本仍留在这块 RAM 中，压力继续上升时仍可能需要移到 flash。因而层级设计首先要核实物理容量边界，不能把逻辑上的 CPU/GPU 地址或访问路径重复记为两份空间。
+
+当其他应用可以随时要求回收内存，问题也从固定 offload 比例变成“释放任意一部分后，怎样尽早恢复下一次请求”。细粒度 weight/KV buffer 可以独立释放与恢复，保留较早执行的层，并让 CPU 按后续依赖准备数据；GPU 只消费已就绪的共享 buffer，分配、解压和读取才有机会与计算重叠。收益取决于真实恢复关键路径，代价包括同步、压缩质量、带宽竞争和 profile 随温度或负载漂移；共享地址并不保证无需等待，也不能防止极端压力下进程被终止。内存充足、恢复开销很小或隔离要求更强时，常驻或简单串行恢复仍更可靠。<!-- source-family:SF-2026-ARXIV-2609-01338 -->
 
 #### Peer GPU Spare Memory 是可撤销的中间 Cache Tier
 
@@ -290,6 +312,12 @@ token 搬入整个 expert，则往往无法用计算覆盖传输。模型级 exp
 Experimental evidence，不能当作稳定框架行为。模型较小、expert 分布均匀、带宽紧张或 SLO 严格时，
 全驻留与静态 placement 仍更可预测。
 
+即使更慢的 memory tier 能容纳全部 experts，“容量足够”也不等于“路由后的计算单元被充分占满”。请求只激活少量且分布偏斜的 experts 时，resident weights 解决的是供给带宽，未解决 core occupancy 与 hot-expert contention。更完整的执行路径需要把 co-activation placement、local multicast、load-aware fetch 与 router 输出共同规划：memory pool 只交付不可变 expert weights，router 仍拥有语义选择，executor 决定如何把已选工作映射到可用计算单元。
+
+这条分支用专用 near-memory 组织、放置校准和更复杂的调度换取较高 bandwidth density；路由分布漂移、专家集中度低或硬件不可得时，通用 GPU/HBM 的常驻或按需加载仍更稳妥。`arXiv:2608.13962v1` 的结果来自作者 measured-plus-modeled ReRAM/H20 系统、Qwen3.5 与 GLM-5.2 workload，没有公开可部署芯片 artifact，不能把延迟、能效或 occupancy 结果写成现货硬件保证。
+
+<!-- source-family:SF-2026-ARXIV-2608-13962 -->
+
 更大的硬件系统也会把优化边界从单 accelerator 推到 rack/POD：HBM、互联、CPU、storage、power 与
 cooling 必须按 training、prefill、decode 和 Agent workflow 的不同状态流共同设计。但厂商 platform
 announcement 只能证明版本化产品事实和设计方向，不能把未披露的 workload benchmark 写成通用结论。
@@ -327,6 +355,18 @@ announcement 只能证明版本化产品事实和设计方向，不能把未披�
 Typed pages 能减少错误 eviction 并改善分层放置，但会增加页表、碎片、迁移路径和 kernel dispatch 复杂度；工作负载单一或状态规模很小时，统一页仍更合适。arXiv:2605.22416v1 的系统与实验只支持其混合架构和披露环境，不证明同一分页策略在所有 Mamba、Transformer、硬件与 SLO 下都占优。
 
 <!-- source-family:SF-2026-ARXIV-2605-22416 -->
+
+### Reserve Reclaim 先与更简单的 Chunk Policy 比较
+
+Prefill 为峰值 workspace 预留 HBM、Decode 又长期闲置这部分时，可用 CUDA VMM 暂时把 reserve 页借给 KV pool，并在下一次 Prefill 前撤销映射。它证明 reserve 能成为可回收状态，却不意味着应先引入动态映射：降低 chunked-prefill 的 `max_num_batched_tokens` 可能以更小复杂度释放更多 KV，且对 TTFT 影响很小。正确顺序是先测简单 chunk baseline，再只为剩余容量窗口启用 VMM；后者带来映射抖动、回收 deadline 与 TP 下 reserve 稀释。`arXiv:2608.23658v1` 的负结果和机制只覆盖作者 runtime/hardware，不能外推统一阈值。
+
+<!-- source-family:SF-2026-ARXIV-2608-23658 -->
+
+### Storage-backed Inference 需要可证伪的资源证书
+
+把模型或状态放到 storage-backed memory 时，逻辑 representation、语义 demand、scheduler request 与物理 traffic 不能混成一个“内存使用量”。Resource owner 应分别声明 RSS、page cache、board-wide memory 与 I/O authority；异步复用还要记录可保证 output exactness 的 horizon、fault cell 与失效回退。这样能区分“数据存在”“被请求”“真正传输”和“在限定 horizon 内等价”，代价是跨层 accounting 与更复杂发布证书；状态小或完全常驻时，普通 HBM accounting 仍足够。`arXiv:2608.23805v1` 只在作者单一主实验模型、设备与 64-token/logit/route horizon 上支持该机制，不证明 recurrent/upstream state 全局等价。
+
+<!-- source-family:SF-2026-ARXIV-2608-23805 -->
 
 ## 硬件升级不是最终答案
 
@@ -399,6 +439,30 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 
 <!-- source-family:SF-WHEN-KV-MEETS-EMBEDDINGS-DYNAMIC-GPU-MEMORY-ALLOCATION-FOR-ACCELERATING- -->
 
+## Physical Layout 与 Accessor View 可以分离
+
+同一 tensor 在 prefill、decode 或 MoE routing 阶段可能由不同设备访问。重复维护多份布局会增加同步和容量，单一布局又可能不适合所有 accessor。一个折中是保存一份 physical object，通过 address translation 为 NPU、PIM 或不同 kernel 提供 logical view；translation 只改变访问视图，不拥有 tensor truth。
+
+这类原型增加映射表和一致性成本，且可能被转换开销抵消。是否采用必须绑定实际设备、phase 与 workload，普通 GPU-only 路径仍可使用直接布局。
+
+<!-- source-family: arxiv:2608.06989v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: physical-layout-logical-accessor-separation -->
+
+启动路径还需要区分“字节已读取”与“权重已可执行”。Load-ready state 应原子绑定 artifact layout、连续可导出的 tensor address space、remote mapping lifetime、communicator readiness 与 clone completion；任一分量未提交，都不能让 scheduler 把 replica 标为 ready。预先布局和远端映射可减少碎片、串行 clone 与重复加载，却增加 fabric 依赖、地址生命周期和恢复复杂度；不支持相应互连或映射语义时，普通 loader/NCCL 初始化仍是可靠 fallback。
+
+<!-- source-family: arxiv:2608.08482v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: load-ready-weight-state-atomic-commit -->
+
+## Expert Cache 的结论依赖 Replay Methodology
+
+缓存策略比较只有在 fused event 保持原子、workload 未被模板污染、capacity regime 按层归一化时才可复现。错误的 replay 顺序或回收手段会改变 hit path，甚至反转 LRU 与其他策略排名；offline oracle 也不等于可实现上界。评测因此要冻结 event semantics、reclaim mechanism、warm state 和容量，而不是只报告命中率。
+
+<!-- source-family: arxiv:2608.07911v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: expert-cache-replay-methodology-contract -->
+
+## 模型持续大于显存时，预取对象可以从 Tensor 缩到 Row Delta
+
+传统 offload 在每层搬运完整 tensor；动态稀疏模型只激活少量 neuron，且相邻 token 的 active set 常有重叠。若 GPU 保留当前 resident rows，预测器只需从 storage 预取下一 token 新增的差集，从 whole-tensor streaming 演进为 sparse-row delta movement。
+
+预测器只拥有 prefetch hint，真实 activation 决定 correctness；miss 会重新暴露随机 I/O stall，低 locality 还会让细粒度读取比顺序搬运更差。dense model、短序列或 host bandwidth 充足时，传统 offload 仍更简单。收益必须绑定稀疏度、storage path、缓存命中与预测开销。
+
 ## 本章在知识树中的位置
 
 ```text
@@ -462,6 +526,16 @@ GPU memory 优化从单一 HBM 容量规划演进到 locality、tiering、compre
 9. Hardware specification、compatibility test 与 Serving benchmark 分别能支持什么结论？
 10. 为什么 expert paging 只能复用 tiling 的 IO-aware 原则，不能像 online softmax 一样消除所选 Expert 的权重读取？
 
+### 模型大于内存时，Storage 成为显式权重层级
+
+量化和 offload 通常仍假定压缩后存在一个可容纳模型的预算；当模型始终大于可驻留内存时，存储读取进入每 token 关键路径。利用相邻 token 的稀疏激活局部性，只预取新出现的权重行，可以把 OS demand paging 改为模型感知的 delta movement。收益依赖预测准确率、NVMe 延迟和 buffer 命中率；预测器成本、误取放大和缺页回退必须与权重精度一起计入执行计划。
+<!-- source-family: arxiv:2608.22643v1; semantic-body-binding: storage-backed-delta-weight-prefetch -->
+
+### Recurrent State 的量化误差会递归反馈
+
+权重通常量化一次后重复读取，KV state 也多为写入后只读；recurrent state 却会经历 quantize、read、update、write 的循环，当前误差会成为下一步输入。它的 precision identity 因此要同时约束单步 error energy 与误差随时间的 decay / amplification，而不能沿用静态张量的平均量化误差。低比特状态仍可节省带宽，但必须在目标序列长度上验证稳定性，并保留高精度重置或 checkpoint。
+<!-- source-family: arxiv:2608.27513v1; semantic-body-binding: recurrent-state-quantization-feedback -->
+
 ## 小结
 
 Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定固定底座，KV 决定随请求增长的容量，workspace 与 communication 决定瞬时峰值，fragmentation 和 reserve 决定逻辑公式与实际可分配空间的差距。
@@ -475,6 +549,10 @@ Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定�
 GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文、模型不受支持或内存峰值超限时，hybrid path 可能更稳健。现有证据仅来自 Snapdragon X Elite 单机和 120-query corpus，不能外推其他 NPU 或线上多租户容量；迁移不完整时，新增 device transfer 还可能抵消节能收益。
 
 ## Review notes
+
+- mzCache（Status: Experimental）：[arXiv:2609.01338v1](https://arxiv.org/html/2609.01338v1) 的 Android/Adreno 实验支持 UMA 共享 RAM 下的容量核算与可部分恢复分支；压缩仍占 RAM，恢复依赖 buffer readiness。实验不保证任意外部压力下进程存活或零等待，固定 profile 还受热降频影响；不将混合 kernel/allocation/overlap 收益全部归因驱逐策略。
+
+- Multi-Turn LLM Conversations under the Least-Recently-Used Policy（Status: Experimental）：[arXiv:2609.02027v1](https://arxiv.org/html/2609.02027v1)。whole-content LRU 的 mean-field 分解与实践近似区分可复用工作量上限和容量留存；不把 block-work ratio 写成 request hit rate。实测绑定 Qwen3-8B BF16、1P/4D Ascend 配置及作者 trace；partial-tail 修正、负载相关等待、截断观察和后验分布拟合限制外推。没有生产 SLO 或任意缓存实现的保证。
 
 - `SF-2026-ARXIV-2602-00328`（Status: Experimental）：exact-v1 支持将 peer GPU spare HBM 作为可撤销 cache tier 以及作者双 GPU NVLink 实验；证据不覆盖 NVSwitch、并发 model-parallel traffic、多租户隔离、生产 tail latency 或所有模型均自然产生可用余量。https://arxiv.org/html/2602.00328v1
 
@@ -642,7 +720,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2608-03555:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2608-05483:start -->
-- `SF-2026-ARXIV-2608-05483` — Daily `2026-08-06`；primary `arXiv:2608.05483v1`；Books review `books-review:SF-2026-ARXIV-2608-05483`。
+- `SF-2026-ARXIV-2608-05483` — Daily `2026-08-07`；primary `arXiv:2608.05483v1`；Books review `books-review:SF-2026-ARXIV-2608-05483`。
 
   **已吸收的语义增量：** PLoRA 用 CXL pooled memory 与 near-data processing 承担多 LoRA 状态，把单 GPU 显存约束转成池化容量与传输/计算协同。系统管理器和模拟器由真实硬件校准，但主要结论仍受 H100 与四设备配置约束。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-05483:end -->

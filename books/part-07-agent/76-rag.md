@@ -88,6 +88,8 @@ retrieval program，并只并行 shard-independent transformations。它们都�
 
 Authorization 必须在返回内容前执行。先全局检索再让模型“忽略无权内容”，已经发生数据泄露。
 
+检索入口若已解析一个对象，交接时还需区分“这个对象是否被正确选中”和“它是否被送到 reader”。只有任务合同明确要求保留该对象且授权有效时，才应按稳定 identity 直接解析并预留 Context 位置，让语义 ranking 补充其他证据，而不是把已选对象重新交给相似度竞争。验证也要分开检查 selection、handoff 和最终回答：对象成功送达不证明选对了，更不等于召回了数据集标注的全部证据。预留位置会挤占预算，也可能保留错误选择；没有 selected-return 要求的开放检索仍可完全由 ranking 决定返回集合。
+
 ### Speculative Retrieval Draft 必须经过 Accept / Fallback
 
 每次查询都执行完整检索，在 corpus 大、检索链深时可靠但把全部延迟暴露给 TTFT。若历史缓存中存在与当前 query 同源或高度同构的查询，可以先从窄 cache/fuzzy channel 产生 candidate documents，形成 retrieval draft；关键是 draft 不能因为“看起来相似”就直接进入 Context。
@@ -133,6 +135,8 @@ Kernel pre-filter 用执行耦合与可能的数据倾斜换回安全和 recall�
 <!-- source-family:SF-2026-ARXIV-2605-19335 -->
 
 ## Retrieval 的基本度量
+
+在 retrieval 前，ingestion 本身已经是一段编译过程：解析文档、切分、提取结构、生成 embedding/metadata，再提交 index revision。若把它当成一次离线导入，就无法解释写放大、迟到更新、删除传播和 freshness。Index owner 应保存 source revision、compiler pipeline、segment lineage 与 commit point；查询只读取已提交快照。更丰富的结构索引提高可检索性，却增加构建成本和 stale window，文档小且更新少时直接扫描仍合理。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20845 -->
 
 Retrieval metric 必须与 Agent 实际 query distribution 对齐。面向自然问题训练的 dense retriever，未必适合 deep-research Agent 生成的短 entity、keyword 或逐步 subquery；更强 encoder 在接口分布错位时也可能输给 lexical baseline。评估应联合版本化 query generator、corpus/index、retriever/reranker、packing policy 与 context use，并分开报告 source recall、duplicate evidence、search/tool cost 和 final outcome。
 
@@ -249,6 +253,12 @@ truth。Pointwise/listwise rank 在问题单一、文档同质或低延迟优先
 确实主导 failure 时值得额外成本。Rubric-Oriented Document Set Selection 的作者实验支持这一受限分支，不证明
 其九维 rubric 或 judge 可跨领域直接迁移。
 
+### Recall 还要服从固定 Context 的可用工作集
+
+提高 gold-file recall 在 Context 充足、证据独立时通常有利；固定 slot/token budget 下，加入更多文件会降低单文件深度、证据多样性或关键依赖的完整度，最终 resolve rate 反而可能下降。Retrieval policy 因而要同时报告 recall、每项读取深度、跨源 diversity 与下游任务成功，并允许在边际证据不再提高 sufficiency 时停止。这个结论不是“recall 有害”，而是 capacity 约束改变了目标。`arXiv:2608.14838v1` 的结果绑定 12-slot coding context 与作者任务，不能外推任意 RAG 或 corpus。
+
+<!-- source-family:SF-2026-ARXIV-2608-14838 -->
+
 ## Relevance 不等于 Sufficient Context
 
 一个 chunk 可以与问题高度相关，却没有包含回答所需的 decisive fact。因而 RAG failure 不能
@@ -285,6 +295,23 @@ abstention cost。论文在若干 QA datasets 上报告 selective generation 改
 
 旧的 relevance/reranking 仍然成立：它们负责高效找到候选，sufficiency gate 负责判断候选
 集合是否已足够。前者不能被后者替代，后者也无法从未召回的 corpus 中创造 evidence。
+
+### 真实 Evidence 也必须匹配当前 Query 约束
+
+来源可信、陈述为真且主题相关，仍不等于它对当前问题拥有 support authority。同一实体的上一年度、相邻子集、
+兄弟对象或不同 answer slot 都可能形成高度可检索的真实 evidence；若 reader 把其中答案直接迁移到当前问题，
+factuality 与 relevance gate 都会通过，但结论依然错误。因而 query controller 应冻结原问题 identity 与关键约束，
+包括 entity、time、scope、unit、negation 和 requested answer slot；evidence admission 再记录每个 span 实际支持的
+约束范围、当前 query/rewrite revision 与 accept/reject 理由。只支持相邻问题的材料可以作为 re-query、decompose
+或定位原始来源的 clue，不能直接进入最终 claim commit。
+
+这种约束对齐增加结构抽取、比较与审计成本，抽取器本身也可能漏掉隐含条件；低风险简单查询可继续依赖普通
+rerank，关键约束无法可靠抽取时则回退精确过滤、再次检索或人工核验。构造的 nearby-evidence 实验在 12 个
+model–benchmark pair 中证明这类失败可发生，并显示 later、answer-shaped evidence 更易被采用；但实验隔离了
+真实 indexing、ranking、freshness 与 source reputation，constraint-checking prompt 也只部分缓解。因此它支持
+增加 query–evidence alignment gate，不支持真实网络攻击发生率或“一个 prompt 已完成防御”的结论。
+
+<!-- source-family:SF-2026-ARXIV-2608-30303 -->
 
 ### Escalation 与 Abstention Threshold 必须联合校准
 
@@ -467,6 +494,12 @@ evidence inventory → versioned outline
 
 <!-- source-family:SF-2026-ARXIV-2605-24312 -->
 
+### Self-authored Evidence 必须隔离 Provenance Feedback
+
+RAG 把模型生成内容写回可检索 corpus，在内部知识库和迭代 drafting 中可以降低人工成本；若后续 retrieval 不区分作者来源，系统会把自己的旧输出当作独立证据，形成 citation self-bias、答案同质化与错误自强化。Retrieval identity 应保留 author/model revision、生成链和外部来源，并对 self-authored items 限额、单独聚合或要求独立 evidence corroboration。隔离会牺牲缓存命中和迭代速度；明确标注的个人草稿库仍可复用，但不能计作新的独立来源。`arXiv:2608.22118v1` 的三类 simulation、三个模型家族和 1,019 个请求支持 self-bias 仍存在于控制 reference quality 后，不证明真实 Web 有固定 collapse 概率。
+
+<!-- source-family:SF-2026-ARXIV-2608-22118 -->
+
 ## Freshness、Deletion 与 Consistency
 
 <!-- source-family:SF-2026-ARXIV-2605-27494 -->
@@ -617,6 +650,12 @@ RAG 从 top-k 相似度检索演进到 evidence admission 和闭环预算控制�
 
 更多检索可以提高 recall，却增加噪声、token 成本、污染传播和错误置信。系统应冻结 corpus/index/embedding revision，记录候选为何被选、模型是否实际使用证据，并在 coverage 不足或来源冲突时拒答。小语料、稳定查询或 exact lookup 场景中，简单 top-k 仍可能是更透明的 baseline。
 
+### Adaptive Fusion 的停止必须有未读贡献上界
+
+固定读取 dense 与 lexical 各自 Top-L 最容易复现，却会在两路高度重合时浪费预算，在排序互补时又过早截断。Exact adaptive fusion 可以先冻结完整列表融合后的 ordered Top-K 作为 correctness contract，再用每路未读条目的最大可能贡献决定是否继续读取；只有剩余项不可能改变 Top-K 时才停止，否则安全耗尽列表。节省来自可证停止，而不是把未读项当作零；反相关排序可能读完整表并更慢，低成本近似或固定 Top-L 在允许有损、严格尾延迟时仍是合理分支。
+
+<!-- source-family: arxiv:2608.07152v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: exact-adaptive-fusion-unread-contribution-bound -->
+
 ## 自检问题
 
 1. RAG 相比参数化知识提供了什么能力？
@@ -637,11 +676,28 @@ RAG 从 top-k 相似度检索演进到 evidence admission 和闭环预算控制�
 
 <!-- source-family:SF-2026-ARXIV-2605-08838 -->
 
+### 检索表示决定可表达的匹配，而不只是索引速度
+
+把一段内容压成单一向量很便于建立 ANN 索引，却会把多个局部语义关系折叠为一个相似度。token 级多向量匹配扩大了可表达的相关性类别，但代价是向量数量、候选生成、精排和跨设备数据移动同时上升。因而“召回质量更高”不能脱离表示与执行成本单独讨论：表示层先决定哪些证据关系能够被区分，系统层再决定这些关系能否在延迟和内存预算内被实现。
+<!-- source-family: arxiv:2608.21494v1; semantic-body-binding: multivector-retrieval-expressivity-cost -->
+
+### 多向量检索的数据面要避免搬运高精度向量
+
+多向量匹配需要细粒度表示，却容易让 CPU 驻留的高精度向量在每次查询时跨总线搬到 GPU，计算加速最终被数据移动抵消。异构执行可以让 GPU 常驻低精度 codes 做 candidate generation 与过滤，再由 CPU 上的高精度数据完成 refinement，并重叠两侧计算。它以额外副本、量化误差和一致性管理换取低延迟；验收必须在相同 recall 下报告 host/device memory、传输量、QPS 与尾延迟，不能只比较 kernel 时间。
+<!-- source-family: arxiv:2608.23553v1; semantic-body-binding: heterogeneous-multivector-retrieval-data-plane -->
+
+### Persistent Corpus Structure 把在线搜索变成有限预算导航
+
+每次查询临时重建工作区，会把大量预算花在重复组织同一语料；持久的多视图 corpus map 则让 Agent 在共享结构上逐步导航。真正的评价单位应是证据从可达、被发现、被打开到决定性片段被实现的阶段性概率，而不是“系统可访问完整语料”。持久结构会增加预处理、更新一致性和权限维护成本，但能把在线预算留给证据验证。
+<!-- source-family: arxiv:2608.24764v1; semantic-body-binding: persistent-corpus-navigation-evidence-realization -->
+
 ## 小结
 
 RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。预测性检索可以隐藏部分 IO，SSD filtered ANN 可以扩大索引复用，但二者都必须把错误预测、过期、最终过滤和 evidence admission 留给明确 owner。下一章进入可跨会话演化的 Memory。
 
 ## Review notes
+
+- [Selected-object identity handoff v1](https://arxiv.org/html/2609.04579v1)：采用§2–4、§6及limitations的接口区分，不采用直接lookup普遍提高正确率的推论。实际选中身份与标注身份不等价；64条高反差删除样本及59条sham仅支持该子集，日志hash不证明预声明时间或来源真实性。书稿只增加有明确selected-return合同的条件分支。
 
 - `SF-2026-ARXIV-2602-13165`（Status: Experimental）：exact-v1 支持 Krites 的 static/dynamic threshold fast path、grey-zone off-path verification 与 future-only auxiliary overwrite；evaluation 以 benchmark ground-truth equivalence classes 模拟 judge，未证明真实在线 judge、动态 corpus、capacity/invalidation 或生产 tail latency。https://arxiv.org/html/2602.13165v1
 

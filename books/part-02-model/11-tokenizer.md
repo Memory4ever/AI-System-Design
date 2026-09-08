@@ -169,6 +169,10 @@ Tokenizer
 
 不存在脱离语料和 workload 的“最佳词表大小”。代码、中文、英文、数字和多语言混合流量可能产生完全不同的 token efficiency。
 
+这个选择还会改变输出端的监督单位，而不只是输入端的压缩率。同一段目标文本若被编码成一个整体 token，模型在该位置要完成一次整体分类；若拆成多个 token，目标就分解成依赖先前输出的多次分类。原始样本相同，并不意味着优化器面对相同的预测问题：监督粒度、条件化路径和每个样本包含的 loss 项都会改变。比较 tokenizer 时因此需要同时控制输入与输出的分词方式、loss mask 和训练预算，不能把行为变化全部归因于序列长度或表示容量。
+
+更细的输出粒度可能提供有用的任务分解，也会增加解码步数和状态成本；整体 token 减少步数，却可能要求一次分类承担更多组合关系。这里没有通用的字符级优胜结论。受控小型加法实验只能说明输出监督侧值得独立测量；相同训练步数不等于相同 FLOPs，探针未读出某种中间量也不证明模型没有它。后续位置的 loss 仍可通过共享参数和 Attention 反传，不能把目标被拆分误解成各部分梯度完全隔离。<!-- source-family:SF-2026-ARXIV-2609-01386 -->
+
 ## 从无状态预处理到会话级增量接口
 
 一次性请求中，每次对完整文本重新执行 tokenizer 是合理设计：实现简单、结果容易与模型
@@ -282,6 +286,16 @@ vocabulary 或 role tokens，都会形成 training-serving skew。
 11. 为什么 `tokenize(A) ++ tokenize(B)` 一般不等于 `tokenize(A ++ B)`？
 12. 增量 tokenization 为什么需要 reference equivalence、版本绑定与安全回退？
 
+### Pre-tokenizer Boundary 会形成 BPE 无法补救的硬下界
+
+BPE 只能在 pre-tokenizer 允许合并的边界内学习；如果字符、附加符号或书写单位在此前已被错误切开，后续增加 merge 数量也无法恢复原本应共享的表示。tokenizer 设计因此要先验证语言学边界与 normalization，再优化词表大小和 fertility。旧分词在主流语料上仍可合理，但跨文字系统迁移时必须重新测量不可合并边界。
+<!-- source-family: arxiv:2608.26449v1; semantic-body-binding: pretokenizer-boundary-fertility-floor -->
+
+### Vocabulary 选择要优化整个 Train / Deploy Lifecycle
+
+更大词表可以缩短序列，却扩大 embedding 与 output head；训练阶段和部署阶段对这两类成本的权重不同，batch、硬件、语言和调用量还会移动最优点。tokenizer 因此不是只按训练 perplexity 选定的一次性前处理，而应以训练成本加生命周期推理成本的 workload function 比较。服务规模较小时，简单稳定的旧词表仍可能更优。
+<!-- source-family: arxiv:2608.11361v1; semantic-body-binding: tokenizer-lifecycle-cost-function -->
+
 ## 小结
 
 Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射。Subword 方法在词级 OOV 与字符级长序列之间折中，byte fallback 提供开放输入覆盖，special tokens 则建立模型协议。
@@ -289,6 +303,8 @@ Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射�
 这个选择会一路影响 embedding 参数、sequence length、Attention、KV Cache、成本和多语言公平性。Tokenizer 不是语言学答案，而是 AI System 的第一份模型接口契约。
 
 ## Review notes
+
+- Tokenization as Output Supervision（Status: Experimental）：[arXiv:2609.01386v1](https://arxiv.org/html/2609.01386v1) §2.1/3.1–3.4 将输入与输出 tokenization 解耦、仅在输出侧计算 CE；采用输出监督粒度命题。四层小模型、三位小端加法、十 seeds 不证明通用 tokenizer 优劣；相同步数非同计算量，不采用“未来位没有梯度”或 probe 不可读等于信息不存在的强解释。
 
 本轮联章 Review 补充了 Part II 的主干与扩展分支地图。本章仍止于 token ids，不展开 embedding 训练，也不把 tokenizer training 混入 Part IV 的数据治理。后续 Review 应以具体 checkpoint 的 tokenizer artifact 核验 normalization、special-token 和 byte fallback 行为，避免把某个库的默认配置写成通用机制。
 

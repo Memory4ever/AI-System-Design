@@ -168,6 +168,12 @@ Environment 与 baseline policy 定义反事实语义，estimator 只拥有 cred
 
 整条 trajectory 共用终局 reward，在步骤短、失败点清楚时足够；长推理会把正确前缀与错误后缀一起惩罚。Counterfactual credit 分支由训练系统持有 intermediate-state identity，在候选错误点 reset，并重采样 suffix 来估计局部改动的结果差。它提高归因分辨率，却成倍增加 rollout、依赖可重放环境，并可能被错误 localization 误导；无法可靠 reset 时仍应使用 sequence-level advantage 或 process verifier。exact-v1 只支持 CPI/RRPO/SRPO 与论文披露的 verifiable reasoning 环境，不能证明开放任务中的因果归因。<!-- source-family:SF-2026-ARXIV-2605-25507 -->
 
+### Credit Transport 应服从真实 Computation Graph
+
+固定 GAE 用 reward/value 的时间结构传播 credit，在 action chain 与 computation chain 接近时最清楚；多模块、路由或长内部推理中，真正产生成功证据的 hidden/routing path 可能与 token 距离不一致。一个条件分支把 outcome evidence、credit transport operator 与 policy-update geometry 分开，让 detached attention/activation statistic 参数化 transport，再由 critic 消费 actor computation state。它可能提高 attribution fidelity，却引入 model-internal coupling、额外状态与因果误读；attention concentration 不是责任证明，开放环境或 probe 未校准时仍回退 GAE/group-level credit。`arXiv:2608.21501v1` 的结果限五个 Qwen3-4B seeds 及有限 Llama/Qwen 设置，不证明通用优越性。
+
+<!-- source-family:SF-2026-ARXIV-2608-21501 -->
+
 ## 为什么需要旧策略概率
 
 Rollout 由 `pi_old` 生成，但 update 后评估的是 `pi_theta`。Importance ratio：

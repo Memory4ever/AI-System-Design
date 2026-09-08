@@ -51,6 +51,19 @@ belief_(t+1) = update(belief_t, o_(t+1))
 
 Agent 通常不能直接观察完整 `s_t`，只能维护 belief/context。计划因此不是确定执行轨迹，而是基于当前信息的 conditional policy。
 
+部分可观测性还要区分三种状态：事实在接口中不可获得、事实可由 tool 查询但尚未查询、以及 observation 已实际进入
+当前 Context。把第二种误写成第三种，会让 planner 在没有证据时行动；把第二种误写成第一种，又会漏掉本可通过
+observation action 消除的不确定性。因此 plan node 除业务 action 外，还应显式安排何时查询哪些 latent state，记录
+query freshness，并让查询成本与行动风险竞争同一预算。稳定的小状态若能被动推送或每轮完整读取，旧的固定
+observation schema 更简单，不必强制增加主动监控循环。
+
+“计划过”也不等于“执行过”。对近期可检验承诺，runtime 应把 target、expected action、deadline/window 与完成证据
+写入 typed commitment ledger，再与后续真实 action 和 observation 对齐；窗口内 partial、未执行和被新证据
+supersede 必须分开。该 ledger 为 replanning 提供 mismatch evidence，却会增加抽取误差、陈旧承诺与检查开销，
+也不能把固定窗口命中率当作完整 planning quality。[长时程 tool-mediated pilot](https://arxiv.org/html/2609.02459v1)
+只说明 PMR 与 RAG@10 能暴露“可查询状态未进入 Context”和“自述承诺未落实”两类接口失配；23 次受 playbook
+约束的游戏运行、缺少 random/scripted baseline，不能支持模型排名或通用阈值。
+
 ## Decomposition 的价值与代价
 
 拆分任务可以：

@@ -353,6 +353,10 @@ Monitor 不应重写原始结果、替 Agent 选择动作或直接调用工具�
 简单 validation + escalation 仍更合理。Outcome monitor 的价值应同时用 violation recall、clean-run harm、recovery
 attempt correctness 与最终 task outcome 衡量，不能只报告“发现了多少错误”。
 
+若环境还提供可信、可克隆的状态与转移接口，executor 可以在真实行动前增加一层 shadow validation：先模拟候选动作，再按显式安全合同决定是否允许执行；这不是让上述 observation monitor 获得动作权限。恢复过程可以允许暂未达到终态的安全进展，但须分别检查 violation 的支持集、严重度及累计容差，不能把一个总分下降当作每项约束都满足，更不能把 `SAFE_PROGRESS` 当作任务已经恢复完成。收益以影子环境保真度、额外验证延迟及保守拒绝为代价；模型遗漏真实副作用、允许的微小回退累积，或无可信转移接口时，仍应使用更严格的执行检查与人工升级。
+
+增加模型内部 recurrent depth 可以让一次 proposal 在提交前经历更多自我修正，却不能替代 Tool protocol。内部循环只改变模型计算状态，不会获得新环境 observation，也不会生成授权、幂等键或 side-effect receipt；外部 Tool loop 则改变真实世界并必须由 runtime 提交。纯推理任务可用内部深度减少交互，状态可能变化或需要新证据的任务仍必须通过 typed call、observation 和独立 commit。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18171 -->
+
 ## Loop Boundaries
 
 Agent loop 需要硬限制：
@@ -399,6 +403,10 @@ Trace 应把 model proposal、policy decision、approval、tool call 和 result 
 复杂多轮 tool path 若等完整 reasoning 后才开始交互，用户看到的 latency 由最长链决定。Agent 可在低风险、可取消的边界并行准备候选 tool call 或 UI response，但只能把它们作为 proposal；authorizer 和 side-effect identity 在真实执行前统一 commit，错误分支必须可撤销。收益是隐藏思考延迟，代价是浪费、重复调用和 stale observation；不可逆工具、权限不明或 cancellation 不可靠时回退串行。
 <!-- semantic-body-binding:SF-SPECULATIVE-INTERACTION-AGENTS-BUILDING-REAL-TIME-AGENTS-WITH-ASYNCHRONO:end -->
 
+继续减少交互轮次时，需要区分两种优化：逐个核对最终动作后复用预执行结果，保留原 actor 的决策边界；仅确认宏序列的首动作，再由 executor 接受其余动作，则改变了决策策略，不再是无损复用。后者可以用历史轨迹筛选宏、隔离 draft state，并在提交前检查状态和动作风险，但历史匹配概率不能证明当前后缀合法，首动作相同也不能证明后续决策相同。
+
+因此这条近似分支须同时评价结果变化和关键路径净收益，保留逐步确认作为回退；宏命中或跳步更多不一定更快。快照、预执行、重放与额外模型资源都应计入成本，未知或不可逆副作用不能由模式置信度放行。[Speculative Macro Commit v1 §3–5](https://arxiv.org/html/2609.03236v1)的论文级实验展示了这一取舍，但也出现任务成功率下降；其专用动作检查不证明任意服务的隔离或原子提交，公开代码未取得也不能宣称实现已验证。
+
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-16364:start -->
@@ -436,6 +444,12 @@ streaming tool use 不应在第一个 token 触发；controller 追踪 tool-inte
 ### 高风险 Action 需要确定性的资本预算 Gate
 
 只按模型 confidence 或静态 allowlist 执行动作，在损失近似均匀时简单；不同 action 的尾部风险和时间一致性不同。Action interface owner 可以把每个 proposal 与合约固定的 safe default 比较，用一致 risk mapping 估价，再从 boundary-specific reserve capital 扣减；超预算则拒绝或降级。收益是把风险变成 effect-time contract，代价是风险模型、资本分配和保守拒绝；估价错误或分布突变时必须收紧预算、转人工或仅执行 safe default。exact-v1 只支持 AAI 的形式化合同和论文实验，不证明实际损失分布或监管充分性。<!-- source-family:SF-2026-ARXIV-2605-25632 -->
+
+## 安全执行需要 Preventive Gate 与 Evidential Gate
+
+Sandbox、permission 和 schema validation 在 effect 前限制“允许做什么”；test、log、diff、citation 与 postcondition 在执行后证明“实际做了什么”。只有 preventive control 会产生 false completion，只有 evidential control 又可能让危险 effect 先发生。可靠 runtime 要把 proposal、authorization、effect 与 evidence-gated submission 连成一条链。
+
+position paper 或事故集合只能支持这种责任分离，不能证明某组 gate 足以覆盖所有工具。不可逆动作提高前置门槛，只读动作可以容许更轻量的后验验证；证据缺失时应返回未完成或请求人工，而不是让模型自证成功。
 
 ## 本章在知识树中的位置
 
@@ -504,11 +518,23 @@ Tool Calling 从生成函数名和参数演进到 proposal→validate/simulate�
 
 两级 Gate 的演进关系是：先判断是否需要跨越模型边界，再判断某个具体 proposal 是否可以跨越执行边界。把两者合并会把“最好使用工具”误读成“这个调用已经安全”，把两者完全割裂又会产生无意义的 catalog search 与 latency。
 
+### 失败反馈是 Retry State，不是普通文本
+
+把失败 tool call 的原始 transcript 直接回灌上下文，可能让模型重复同一 action；结构化、规范化的错误表示更容易让下一步区分已尝试动作、失败原因和允许的替代路径。因此 retry state 至少要包含 call identity、postcondition、错误类别、重试预算和禁止重复条件。压缩错误能够减少提示噪声，但若丢掉关键参数或环境状态，又会制造错误修复。
+<!-- source-family: arxiv:2608.23651v1; semantic-body-binding: normalized-tool-error-retry-state -->
+
+### Tool Architecture 会塑造行为，不只是暴露能力
+
+底层信息与动作能力相近，工具的命名、粒度、状态返回和组合方式仍会改变 Agent 的探索范围、重复运行一致性、步骤数与 token 使用。tool schema 因此是 behavior-shaping interface，必须与实现和评测共同版本化。细粒度工具提供更多控制，却增加规划负担；粗粒度工具降低步骤数，却扩大隐藏副作用和验证边界。
+<!-- source-family: arxiv:2608.11386v1; semantic-body-binding: tool-interface-shapes-agent-behavior -->
+
 ## 小结
 
 Tool Calling 把语言能力连接到环境，也把概率错误变成现实副作用。可靠系统把模型输出当作 proposal，由可信执行器实施 typed、authorized、observable action。下一章进入多步 Planning。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2609-04629`，SiLR，Status: Experimental：exact-v1 Threat Model、Method与Evaluation支持trusted shadow、executor shield及非终态安全进展分离；severity含α/ε容差，不是严格逐步不增。有限24个ANM、Qwen14B和固定budget测试不证明总体零风险；正文不把不可信LLM或非绑定monitor变为授权主体。https://arxiv.org/html/2609.04629v1
 
 - Separating Disclosure from Authorization（field-tier minimization + attestation digest；
   Status: Experimental）：https://arxiv.org/abs/2608.25474v1

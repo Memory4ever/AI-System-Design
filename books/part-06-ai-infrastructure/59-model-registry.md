@@ -67,6 +67,16 @@ model_identity =
 
 同一 checkpoint 配不同 tokenizer 或 chat template，logits 与行为会变化；同一 LoRA adapter 应用到错误 base model，shape 可能可加载但语义错误。Registry 必须能够表达这些组合关系。
 
+文件身份无法解释的 drift，可以用版本化的行为指纹补充观测。例如在固定 structured-action / tool schema 下，
+重复采样模型的类别策略，并用预先校准的统计检验与可信 reference 比较；这比自由文本相似度更少受措辞变化影响。
+但 receipt 必须同时绑定 template 与 schema revision、hidden prompt、sampling configuration、query budget、reference
+population、显著性阈值和测试实现。少任一项，都无法区分 model drift、wrapper change 与测量条件变化。
+
+行为指纹是 revalidation trigger，不是权重、provider 或所有权证书。同一权重经过 wrapper 或低比特量化后可能被拒，
+不同实现也可能在有限 probes 上碰巧通过；知道完整 probe 的服务方还可能重放目标分布。因此 Registry 应把指纹结果与
+digest、lineage、部署 receipt 和独立 evaluation 并列保存：变化时阻断 promotion 或启动重评，不能仅凭接受或拒绝
+裁定模型是否被替换。
+
 ### Adapter 从文件变成 Policy Revision
 
 少量 adapter 时，把 LoRA 文件挂到 base model 上已经足够；当训练持续产生大量 policy variants，文件身份却
@@ -90,6 +100,8 @@ runtime 拥有 cache/activation，scheduler 拥有 admission，training worker �
 format portability 的通用保证。
 
 ## Evidence 而不是“分阶段按钮”
+
+模型升级不能只做 `old → new` 二选一。每个能力与接口应分别决定 retain、port、refresh 或 retrain：权重兼容说明 artifact 能加载，行为兼容说明关键契约未破坏，evaluation compatibility 说明分数仍可比较，三者不可互相替代。Registry 保存 upgrade plan、迁移证据和 rollback target；全面重训在差异过大或 lineage 不可信时仍是清晰基线。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20918 -->
 
 传统 registry 常提供 stage 字段。真正的 production promotion 应由 evidence 支撑：
 
@@ -225,6 +237,11 @@ Registry 从保存权重文件演进为模型交付身份图：base、adapter、
 5. 为什么 stage 字段本身不是 promotion evidence？
 6. Registry 为什么不应主动创建 serving workload？
 
+### 私有权重 Artifact 可以增加 Behavior-sensitive Proof
+
+digest 能确认公开字节完全一致，却无法让不暴露权重的服务证明自己运行了预期模型。对行为敏感的 adversarial probes 配合隐私保护证明，可以补充 registry 的远程身份验证；它只能证明被探测行为与承诺模型一致，不能证明完整权重等价，也可能受蒸馏、转发和 probe 泄露影响。因此行为证明应与 artifact digest、attestation 和运行证据并列，而不是替代它们。
+<!-- source-family: arxiv:2608.27954v1; semantic-body-binding: private-model-behavior-sensitive-proof -->
+
 ## 小结
 
 Model Registry 让模型从一组文件变成有身份、有来源、有证据、可发布和可回滚的资产。它连接 Part IV 的 checkpoint 与 Part V 的 runtime artifact，但保持 metadata control plane 的被动边界。
@@ -242,6 +259,9 @@ Primary-source 与官方入口：
 - MLflow Model Registry workflow: https://mlflow.org/docs/latest/ml/model-registry/workflow
 - MinT（managed adapter/policy revision lifecycle；作者系统边界）:
   https://arxiv.org/abs/2605.13779
+- AgentProv（Status: Experimental；structured tool-policy fingerprint、permutation-calibrated MMD 与 prompt/
+  quantization/wrapper controls；结果只触发 deployment revalidation，不证明 provider identity 或 model ownership）:
+  https://arxiv.org/html/2609.00052v1
 
 ### Daily integration evidence trace
 

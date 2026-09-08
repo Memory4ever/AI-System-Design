@@ -69,6 +69,10 @@ HTTP headers 可传播 trace context；queue、batch、PD handoff 和 tool workf
 
 可以让 runtime iteration span 通过 links 关联多个 request spans，同时把 request-level queue/phase durations记录在各自 span。Links 表达相关性，不应伪装成唯一父子因果。
 
+共享 batch 的总 latency 还不能直接复制给每个 request。可按 compute-bound 与 memory-bound regime 建模请求对 iteration 的边际资源份额，再把 attribution model 与 model、hardware、TP、kernel/execution-plan revision 一起版本化；它提供可校准的 causal cost share，不是跨 backend 的常数。模型失配、量化或 PD 路径变化时，应回退 batch-level 观测并重新校准，而不能由分摊值反推单请求独占 latency。
+
+<!-- source-family: arxiv:2608.08382v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: dynamic-batch-request-level-causal-latency-share -->
+
 ### 跨节点时间戳不是天然的因果顺序
 
 单机或时钟误差远小于阶段间隔时，按 wall-clock timestamp 排序最简单，也足以定位大多数延迟问题。流水线跨越多个节点后，系统可以在吞吐与输出都正常的同时，让 clock skew 把后发生的事件排到前面；此时 trace 仍“看起来完整”，因果解释却已经错误。
@@ -184,6 +188,8 @@ raw trace search
 
 ### Trace Optimization 必须把成本与规则决策写入同一证据对象
 
+当结论会驱动真实 action 时，线性 trace 还要升级为 claim-centered evidence graph：每个 claim 指向所用 observation、变换和 policy revision，再连接 action proposal、实际 artifact 与独立 validation。Trace owner 保存“发生了什么”，graph view 表达“哪个证据支持哪个决定”，validator 只确认声明的后置条件；任一边缺失都不能由最终成功反推补齐。它增加 lineage 与 join 成本，却使局部证据撤销可以精确失效下游决定。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18398 -->
+
 完整保存原始 trajectory 在规则少、成本低或审计风险高时最可靠；当 Agent run 变长后，仅凭最终成功与总成本去删除步骤，会混淆“补回缺失依赖的必要 repair”和“对结果无影响的昂贵绕路”。一种受限演进是把 child trace、逐步 billed cost 与 rule type 固化为同一 TraceCard，再让 preserve、prune 与 repair rule 对这个版本化对象提出变换：
 
 ```text
@@ -253,6 +259,10 @@ Trace 从请求 spans 演进到跨 model、tool、workflow 和 environment 的�
 4. Head 与 tail sampling 的偏差分别是什么？
 5. Metrics、Logs、Traces 如何通过 identity 关联？
 6. 为什么 GenAI semantic conventions 需要版本边界？
+
+## 跨层 Trace 只能提出因果候选，不能自动证明根因
+
+大模型服务的请求会依次穿过 host queue、runtime、CUDA launch、Kernel 与通信层；任何单层 trace 都可能把上游等待误判为本层瓶颈。系统应让同一 request identity 贯穿 NVTX/CUPTI/日志事件，先重建 call-chain tree 和时间有向关系，再通过重放、配置干预或受控对照验证 causal slice。这样用更高采集成本与时钟同步复杂度换取可操作根因；层间关联缺失、采样过稀或没有干预时，只能报告 correlation。`arXiv:2608.01975v1` 仅在作者环境中支持该诊断流程，不证明自动搜索得到的路径就是生产事故唯一根因。<!-- source-family:SF-2026-ARXIV-2608-01975 -->
 
 ## 小结
 

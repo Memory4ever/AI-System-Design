@@ -229,6 +229,12 @@ Prompt 变化也属于 evaluation distribution，而不是报告中的装饰。�
 variant 数量增加会抬高推理成本，也可能引入并不等价的改写。因而模板必须有等价性审计，invalid parse 与 abstain 不能默认成错或对。作者的英语多选、1–8B 模型和单一 runtime 结果只说明单 prompt 会隐藏所测条件下的波动，不证明任意开放任务都需要相同数量的 variants。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-02038:end -->
 
+多轮输入还应把 history 本身作为干预变量。检验一次拒答之后是否更容易接受后续请求，可以固定最终请求，
+分别比较空会话、正常同主题前文、相关拒答与无关拒答；若正常前文已经改变基线，不能把相对它的变化全部
+归因于拒答策略。还须分开只要求文字判断的请求与要求可执行产物的请求，并绑定 endpoint revision、采样和
+judge。[顺序请求研究](https://arxiv.org/html/2609.02707v1)显示这些对照会改变局部结论，但未证明跨模型通用
+效应或人类心理机制；跨主题正常前文等缺失对照仍应保留为未决，不能由行为相关性补成因果解释。
+
 这也是第 35 章和第 59 章的接口：Checkpoint 提供可验证 artifact，Registry 提供不可变版本和 evidence references；第 66 章负责说明这些 evidence 是在什么评估契约下产生的。
 
 ### Backend 是 Evaluation Identity 的一部分
@@ -894,6 +900,17 @@ rollback/recovery、metric temporal weighting 和 harness revision。用未来 t
 依赖变化。Snapshot regression 在局部修复中仍最可靠；interactive/evolution benchmark 只在真实 deployment
 也包含反馈或长期 state 时增加证据，并必须和静态、成本及风险指标并列，而不是取代它们。
 
+当可修改对象进一步包含 harness 本身，保存版本号仍不够：一次“优化”可能删除必跑测试、误标结果来源，
+或让被选中的分数对应另一份代码；后续迭代即使没有新增违规，也可能继承已经损坏的评估流程。
+因此检查单位应落到每轮实际应用的完整 diff 与修改前文件，分别问它改变了执行、评分、选择、记录还是
+后续继承，以及受保护文件、来源归属、必需测试集合是否仍成立。最终分数提高不能替代这些检查。
+
+这比固定 harness 的回归测试多出 lineage 保存与变更审计成本，但能区分“这一轮没有发现新问题”和
+“交付版本不再携带旧问题”。自动 auditor 也会误报，应使用同位置的合法修改对照，分别测发现问题和定位
+代码的能力；[harness tampering 研究](https://arxiv.org/html/2609.00069v1) 的注入实验与公开轨迹审计支持
+这种风险，不提供现实修改的完备真值。固定评估通道在无需自修改时仍更简单；允许变更时，继续执行后文
+Generated Evaluator 的独立准入，不能让自改进系统自行批准自己的评分规则。
+
 条件 Workflow 还要求把“答对终点”拆成 branch evidence。若每一层条件为 false 时都应停止，只报告最终答案会把 perception、
 predicate execution、path-state tracking 与 stop/continue bias 混成一个数。更可诊断的评估对象是：
 
@@ -946,6 +963,12 @@ Stress test 扩大了已知攻击面覆盖，却新增 transformation generator 
 所有 PRM 共享同一失效模式，也不证明 stress-test pass 等于生产安全。
 
 <!-- source-family:SF-2026-ARXIV-2606-00437 -->
+
+规则型答案 verifier 也需要同样的双向测试：对声明支持的输入形式，使用保持数学含义的改写检查误拒，
+再用改变含义的扰动检查误收。未承诺的 extraction 格式应记为适用域差异，不能与实现缺陷混算；异常、
+超时和无 verdict 则单列执行覆盖率，不当作一次正确拒绝。数值比较还要按量级测试：相对容差可能接受
+大整数的差一错误，是否可接受取决于任务要求的精确语义。[分类审计](https://arxiv.org/html/2609.01354v1)
+提供了这种 verifier-level 反例，但变换样本的错误率不是模型真实输出的错误率，也不直接证明 RL 训练退化。
 
 ## 从答案评分到可执行证据
 
@@ -1075,6 +1098,23 @@ Reference replay 通过也不能证明 task 代表真实 workload，只能关闭
 把一个 leaderboard total 当成自然常数。固定单机环境在快速回归中仍合理；跨机器 replay 只在 benchmark 要承担
 跨系统比较或发布决策时值得支付成本。Performance-Optimization Benchmark Reliability 的作者研究支持这种
 reference-first 审计，但不证明其任务集覆盖生产优化分布。
+
+Reference 可以稳定重放，仍不意味着它准确表达了请求。代码检索尤其容易暴露这个差别：query 只要求处理正整数，
+测试却额外要求非正数返回某个值，那么删除这个额外分支的程序可能在声明输入域内完全正确，却被测试判错。
+因此 evaluator 要分别固定自然语言任务、允许的输入域、reference 与 test oracle；oracle 拥有可执行判定，
+不自动拥有扩充需求的权力。发现域不一致时，应补明任务合同、修正测试，或将结果限定为“符合这个 oracle”，
+不能直接提升为“语义正确”。这比只验证 reference 能运行更昂贵，却能避免把生成测试的偏差当成模型失败。
+
+还要检查多个指标是否真的提供独立证据。若冻结的检索语料为每个 query 只安排一个可通过测试的 canonical snippet，
+且不存在其他通过项，那么“top-k 中至少一项执行通过”恰好等于 canonical hit@k；执行通过比例则等于 hit@k/k。
+这时两个指标同涨并不是语义标签被另一真值独立证实，nDCG 与它们的排序不同也可能只是折扣和 k 的定义不同。
+真正有诊断价值的对照可以固定其余语料，只加入或移除与目标近似的错误片段，观察首项可用性与召回如何变化；
+但构造的近克隆压力不代表自然语料中的发生率，也不能代替后续代码组合与任务执行成功率。
+
+这些检查由 Evaluation owner 管理，RAG owner 仍负责召回、重排与 context 使用。可信且简单的固定任务可以保留
+单一 reference/test suite；开放需求、多种合法实现或模型生成的测试则需要额外语义审计、反例与不确定项处理。
+ExecRetrieval 的受控语料与 scorer 提供了上述边界的具体案例，不证明一个测试集合穷尽了程序语义。
+<!-- source-family:SF-2026-ARXIV-2609-01865 -->
 
 Dense process score 同样只是训练 proxy。若逐步分数与后续 return 或 target value 不对齐，优化它会奖励看似
 合理却把系统带向失败的中间动作。进入 RL 或 policy selection 前，应在固定 trajectory distribution 上检验
@@ -1523,6 +1563,13 @@ LLM-as-a-Judge 可以降低开放式任务的评估成本，但 judge 也必须�
 
 “让更强模型打分”是一种 measurement design，不是 ground truth 的替代。
 
+当 verifier 还负责挑选纠错训练数据，这个限制会进入反馈回路：只重训被拒绝的答案，会让“答错但被放过”
+的样本缺少直接纠错信号；再用同一 verifier 画质量曲线，便可能把未检出的错误当成质量稳定。应在接受与
+拒绝两类样本中保留独立审计，分别测错误放行和替代答案的错误，不能只盯升级率下降。
+[廉价验证级联的研究](https://arxiv.org/html/2609.01345v1) 测到了这种盲区，但真实训练未实现持续改善；
+其渐近错误下限依赖简化模型与合成实验，不能写成所有自训练系统的定律。独立审计增加成本，开放任务也未必
+存在廉价真值；此时应披露可判断范围，而不是让内部仪表盘自行证明可靠性。
+
 多模态生成还提供一条低训练成本分支：冻结一个 image-conditioned reader，用目标 prompt 在生成图像条件下的
 log-likelihood 作为 **read-back reward sensor**。它测量的是“该 evaluator 能否从图像恢复提示语义”，不是人类
 偏好、事实正确、物理一致或安全。Evaluator model、tokenizer、prompt template、normalization 与 image transform
@@ -1720,6 +1767,14 @@ state 反向生成初始故障，有助于得到可验证环境，但 task gener
 动态、异步环境还必须冻结 event schedule、simulated time、provider/tool versions、timeout 和重放策略，否则评测的
 对象不再只是 Agent policy。
 
+Process judge 本身也要接受受控测试。可以从已验证的正常轨迹出发，每次只注入一种故障，并在干净环境中
+重放工具调用、重新生成 observations；再分别统计结果仍正确的 silent faults、结果已破坏的 loud faults 和
+正常轨迹误报。检出率、检出后的定位准确率与故障类型归因各有分母，不能用同一个 F1 代替。还应单独核对
+最终回复是否得到工具证据支持，因为完整轨迹可见不代表 judge 一定注意到回复中的虚构承诺。
+[trajectory-judge](https://arxiv.org/html/2609.00038v1)在单一客服环境提供了这种对照；均匀注入故障测的是
+检测能力，不是生产故障频率。规则检查、模型判断与独立回复核验因而是互补层，增加同一 judge 的投票次数
+未必能修复它们共同遗漏的证据。
+
 评估“研究 Agent”时还要进一步冻结 training、serving、sandbox、evaluator 与 budget，只让 Agent 拥有明确的
 data-strategy 决策权；否则一次性能变化无法归因于研究能力。每轮 checkpoint 都应作为不可变 evidence，final
 checkpoint 不能默认等于 best checkpoint，因为反馈驱动的搜索可能越过峰值后退化。Controlled substrate 用较低
@@ -1754,6 +1809,10 @@ benchmark gaming surface；final-only 与 component tests 因此不会被淘汰�
 一种可复现的交互式构造从已验证 source repository、tests 与精确 GroundPRD 出发，再有界隐藏 constraints，生成 fuzzy PRD 与 User Agent Data。Agent 可以在固定 question budget 内查询；user simulator 只揭示被冻结的 hidden constraints；最终 repository 同时接受 black-box behavior、artifact、structure 与 interaction diagnostics。evaluation identity 因而必须冻结 source repo/tests、hidden-constraint set、user simulator、question budget、container/image、agent harness 与 scorer。恢复更多 constraints 只是需求访问证据，不等于实现正确；通过 tests 也不能反推交互过程没有遗漏。
 
 这种路线增加了 repository/test bias、user-agent bias 和 framework/environment identity，因而不能线性取代 static issue benchmark。前者适合诊断模糊需求到完整 artifact 的链路，后者仍适合局部 repair 与长期 release regression。公开证据覆盖 480 tasks、12 languages、50-task Lite split、六个模型与 Claude Code，并附 OpenHands 分析；它不提供跨所有 coding workload 的通用排名，provider precision、并发和生产 latency SLO 也不是该实验的声明范围。
+
+对于已有明确 bug 的 repair task，看到测试通过仍不等于测试覆盖了目标缺陷。Evaluation harness 应在捕获 validation command 的 exact working-tree state 后，至少保存三种可重放状态：原始 buggy state、candidate state 与可信 gold/reference fix。只有命令在 buggy state 失败、在 candidate/reference state 按预期通过，才形成 bug-discriminating evidence；在三者都通过的 regression test 只能证明没有触发该 bug，不能获得修复证明权。
+
+这种反事实重放提高 evidence specificity，却要求可重建代码、依赖、测试和副作用隔离。公开实验显示，提醒或返回 buggy-state replay 能减少一部分 inadequate closure，但效应低于作者预设的 practical threshold，且不同 model/scaffold replication 不一致。因此它只是局部 software-repair 的 evidence contract，不是所有 Agent validation 的固定三分支流程；无法安全重放时，应保留人工审查与明确的未验证状态。<!-- source-family:SF-2026-ARXIV-2607-28871 -->
 
 ### Stateful Counterfactual 必须冻结 Fork Identity
 
@@ -2218,6 +2277,62 @@ IID benchmark 也不能直接外推到 deployment drift。Jacobian-sensitive 或
 <!-- source-family:SF-AUTOMATICALLY-FINDING-AND-VALIDATING-UNEXPECTED-SIDE-EFFECTS-OF-INTERVEN -->
 <!-- source-family:SF-PARTIAL-EVIDENCE-BENCH-BENCHMARKING-AUTHORIZATION-LIMITED-EVIDENCE-IN-AG -->
 
+## Agent 与 Kernel 都要按真实 Contract 评测
+
+Agent chaos test 不能只返回“注入过故障”。注入器要证明 crash、omission 或 value corruption 真正在共享 API 边界发生，再记录 downstream effect 与诊断是否正确；否则正常 benchmark 排名无法说明系统具备恢复能力。安全评测也要分离 exposure、execution、observation 与 adjudication，最终服务状态和 effect receipt 才能证明危害实际发生。
+
+<!-- source-family: arxiv:2608.06790v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: chaos-injection-trigger-effect-diagnosis-receipt -->
+
+对于基础设施 Agent，一次 task pass 还会掩盖 durable state、分布式 invariant、side effect 和 cleanup 的失败。评测单元应包含重复运行、最终状态、恢复与资源清理。长周期研发 Agent 同理：solution framing、执行、反馈吸收与跨轮经验复用分别产生证据，不能压成一个 aggregate score。
+
+Kernel 评测则必须超越数值 tolerance。shape、dtype、stride/layout、alias、边界、determinism 与 side effect 都属于 interface contract；performance 只有在全部语义门通过后才可计入。任务最好来自真实 framework integration，并回到 repository tests 和 end-to-end model path，避免孤立 microbenchmark 被投机优化。
+
+MoE 等昂贵系统可以用结构保持的 proxy model 复现 overflow、routing 或 runtime fault，但代理只拥有 diagnosis，不拥有全模型质量结论。验收应证明触发故障的结构因素仍在，并在 full model 上做最终确认。
+
+### Router 上线需要可拒绝的 Gain Certificate
+
+Router 的 AUC 或候选模型互补性只说明选择信号存在，不证明部署路由优于固定 baseline。上线判断应以业务损失定义 conditional regret，按真实 workload cluster 而非独立 prompt 重采样，并报告有限样本置信区间；区间不能排除无增益时就拒绝发布。该证书把统计不确定性写进 release decision，却依赖 cluster 定义和稳定流量；样本稀少或分布漂移时，固定模型或保守规则路由仍更可靠。
+
+<!-- source-family: arxiv:2608.07583v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: router-conditional-regret-gain-certificate -->
+
+### Judge 只能提案，Evidence Gate 才能 Override
+
+Scalar judge 或多数票在候选多、人工昂贵时是合理 selector，但高置信不能抵消证据缺失。非补偿式规则可要求 extractive certificate 先通过 admissibility，才允许 judge override 或触发 repair，并记录被改写决定的 blast radius。它牺牲部分覆盖率并受证据抽取错误限制；证据不足时应保留原决定、拒答或人工复核，不能让同一 judge 自证其选择正确。
+
+<!-- source-family: arxiv:2608.07813v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: evidence-admissibility-gates-judge-override -->
+
+### Adversarial Coverage 不能由一个比例代表
+
+搜索到多少 behavior cells、每个 cell 找到多强 exploit、已覆盖区域上的 repair error，以及未覆盖区域的 metric radius 是不同量。质量—多样性搜索可以保留各 cell 的最严重 correctness-flipping edit，却不能从“覆盖率高”推出全域安全；aggregation rule 改变时 exploit surface 也会变化。更细分解提高运行与 archive 成本，低风险回归仍可保留随机扰动，但 release claim 必须把未覆盖空间显式留作限制。
+
+<!-- source-family: arxiv:2608.08008v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: adversarial-search-vs-exploit-vs-repair-coverage -->
+
+### Agent Replay 必须区分 Artifact 与 Live World Line
+
+静态 artifact replay 可复现 prompt、tool output 与 evaluator，适合定位已知故障；有状态 Agent 的 action 会改变页面、工具和外部环境，因此相同起点的离线输入不保证重建同一后续世界线。最终回归应从冻结 checkpoint 分支 live trajectory，并把环境 revision、side-effect receipt 与 branch identity 纳入 run。Live branch 成本更高且环境可能不稳定，低副作用的确定性任务仍可使用静态 replay；二者不能用同一个“replay passed”合并。
+
+<!-- source-family: arxiv:2608.08239v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: static-artifact-replay-vs-checkpointed-live-branch -->
+
+### KV 压缩评测要追踪错误迁移，而不只看均值
+
+每个压缩方法、预算和长度设置都需要匹配的 FullCache 对照，并分别统计 correct→wrong、wrong→correct 与不变样本；只有这样才能区分平均分相近但受害样本不同的策略。Attention 或干预诊断可以定位原因，却不拥有跨模型因果结论。逐设置对照增加计算成本，探索阶段可先用均值筛选，但 release 前不能用跨设置 aggregate 掩盖 correctness flip 或适用范围。
+
+<!-- source-family: arxiv:2608.09412v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: per-setting-fullcache-error-migration-matrix -->
+
+## Tool Robustness 要按 Failure Stage 注入
+
+干净 E2E 成功率只能告诉系统是否完成任务，不能定位 tool failure 在 selection、schema grounding、argument binding、output interpretation 还是 runtime effect 阶段发生。更可行动的评测应按阶段注入 interface、intent、observation 与 runtime perturbation，并用 typed trace 追踪 cascade；不同故障组合不能假定简单相加。
+
+stage-aligned injection 需要维护 gold fields、故障模型和 scorer，本身也可能偏离真实 incident 分布。干净回归仍是必要基线，只有诊断或发布决策需要时才承担额外成本；未覆盖故障必须保留为 evidence limitation。
+
+## 评测结果属于完整 Runtime Identity
+
+“同一组权重”不保证得到同一评测结果。backend、版本、tokenizer、generation defaults、sampling mode 与 kernel determinism 都可能改变输出；因此 run identity 必须把这些执行条件与模型 artifact 一并冻结。跨 backend 差异只能说明执行路径影响结果，不能据此宣称某个 backend 更正确。
+<!-- source-family: arxiv:2608.04714v1; daily: 2026-08-06; semantic-body-binding: evaluation-runtime-backend-identity -->
+
+在压缩 trace 或筛选评测 workload 时，也不能只追求对最终标签的预测准确率。每个 scheduler、prefill、decode、KV 或 tool component 都至少要保留可直接观测的 bottleneck/failure witness，且标签来自被测 target 的 measurement，而不是由待验证的模型循环生成。这样会降低压缩率，却能防止代表性分布掩盖稀有系统故障。
+<!-- source-family: arxiv:2608.00423v1; daily: 2026-08-04; semantic-body-binding: component-witness-preserving-workload-reduction -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -2411,7 +2526,21 @@ Evaluation 从单一 benchmark 分数演进为版本化的决策证据系统。�
 23. 为什么低 semantic entropy、高 self-consistency 在 adversarially correlated distribution 中仍不能成为 truth evidence？
 24. 为什么低 HTTP error rate 不能证明模型输出质量满足 intended use？
 
+### Harness 配置需要 Item-level Fragility Gate
+
+冻结 prompt、option order 与 scoring rule 能让一次评测可复现，却不能说明模型排序对其他同样合理的 harness 配置稳定。发布 ranking 前应在预先声明的配置族中定位哪些 items 承载排序差异，分别报告 stable-item ranking 与 config-fragile contribution；否则少数脆弱题可能主导总体结论。该 gate 增加组合运行和多重比较成本，也不意味着脆弱 item 没有测量价值；单一生产协议仍应保留其固定结果。`arXiv:2608.21382v1` 固定题目、权重与 greedy decoding，在 12 个模型、3,679 个 items 和 26 种配置上支持这条边界，不证明所有 benchmarks 都失效。
+
+<!-- source-family:SF-2026-ARXIV-2608-21382 -->
+
+### Evaluation-awareness 必须分开 Representation、Verbalization 与 Control
+
+模型内部可区分 evaluation/deployment prompt，不等于它会说出这种判断，也不等于该表示因果控制输出。evaluation-validity audit 应把可解码表示、显式 verbalization、受控 steering effect 与真实 deployment slice 分开，只有因果干预和外部分布都支持时，才可声称 benchmark behavior 会迁移。Probe 增加诊断力，却可能读取模板、数据集或后训练痕迹；无法排除混杂时只能作为 sensor。`arXiv:2608.21766v1` 在六个开源模型与 OLMo checkpoints 上支持三类信号不一致，不证明模型完整“知道自己在被测”或可稳定操纵评测。
+
+<!-- source-family:SF-2026-ARXIV-2608-21766 -->
+
 ## Evaluation Contract 还必须管理配置、样本身份与工作负载状态
+
+重复运行的可靠性不能只保存均值。每个 case 要绑定 attempt、seed、terminal backend state、tool side effects 与异常结束原因，分别统计成功率、方差、删失和不可逆副作用；否则一次重试成功会掩盖前次已改变环境。无副作用的确定性任务可以少量重复，高风险或状态化任务则需要 reset/compensation evidence 后才允许下一 attempt。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19741 -->
 
 ### Pairwise Verdict 需要 Configuration Envelope
 
@@ -2477,6 +2606,12 @@ Embodied evaluation 也不能把“环境任务已经完成”和“Agent 正确
 
 <!-- source-family:SF-2026-ARXIV-2605-11002 -->
 
+### Guardrail 的 Review Unit 必须与 Clean Twin 一起验收
+
+只报告 caught attacks 会奖励更长、更拒绝式的 review，而无法区分真正 discrimination 与统一提高拒绝率。pre-execution monitor 的 evaluation unit 应冻结可见步骤，并为每个错误轨迹构造只差一个 environment-accepted write 的 clean twin；同时报告 catch、false rejection 与 informedness。更长窗口可增加证据，也可能引入无关噪声和过度拒绝，最佳长度依赖任务而不是固定常数。`arXiv:2608.23941v1` 在六个 judges、两个 domains 和五种 nested review length 上支持这一测量缺口，不证明一至两步普遍最优。
+
+<!-- source-family:SF-2026-ARXIV-2608-23941 -->
+
 ## Action Control 需要 Sensitivity 与 Invariance 双臂证据
 
 只看 action accuracy，无法区分 Agent 是否真正消费了当前状态，还是依赖与训练集相关的表面 cue。因果评估应构造两个相互约束的干预臂：改变决定正确 action 的 decisive state 时，行为必须相应改变；保持 decisive state 不变、只替换无关 cue 时，行为应保持在声明容差内。前者测 target-changing sensitivity，后者测 target-preserving invariance；任一单臂通过都不足以证明 action control。
@@ -2490,6 +2625,93 @@ EvalSpec 需要冻结 event/state schema、可控干预、matched interface、ac
 
 加速重复采样会增加调用成本，还可能因共享 cache、provider drift、judge 误差或近重复 prompt 而破坏独立假设。因此它是对 breadth benchmark 的补充，不是取代；预算不足时应保留高风险 slice 的最低采样深度并将未见失败标为上界未决。公开实验只支持披露模型、AIR-BENCH 派生 prompts 与 decoding 配置，不给出生产故障频率。<!-- source-family:SF-2026-ARXIV-2602-11786 -->
 
+## 部分评测必须预先声明停止与淘汰状态
+
+逐层或分批拿到评测结果后再临时决定“是否继续”，会把观察后的选择偏差写进结论。更可审计的过程是在运行前定义继续、提前停止、淘汰与保留四类状态，冻结最小样本量、误差预算与失败成本，再让执行器按规则推进。它用可能的保守计算换取结论可复算；任务不可分层、早期样本不具代表性或错误代价高时，应回退完整评测。`arXiv:2608.02444v1` 只证明作者设定中的 partial-evaluation 决策规则，不保证所有 benchmark 都能安全早停。<!-- source-family:SF-2026-ARXIV-2608-02444 -->
+
+World model 评测也必须把“看起来真实”拆回系统职责。外观质量只检查 observation surface；可控性检查 action 是否改变正确状态；空间一致性检查场景约束；反应性检查环境是否按新 observation 及时更新。只有四者联合，才接近 planning 所需的 transition contract。收益是避免视频质量掩盖不可控制或不响应的环境，代价是需要 action schema、可达状态与闭环 harness；没有交互真值时，自由生成指标仍只能作受限代理。`arXiv:2608.02603v1` 的 1,474 个案例与 20 个模型只支持该 suite 的区分能力，不证明被测 world model 具有因果正确性。<!-- source-family:SF-2026-ARXIV-2608-02603 -->
+
+## 模型编辑必须同时测 Target Effect 与 Control Survival
+
+让目标 skill 的成功率下降只证明行为被压制，不证明该能力被局部、稳定地移除。完整编辑评测应同时冻结目标任务、未目标 control matrix、编辑强度、架构与闭环环境，报告 target suppression、collateral damage、组合编辑和 relearning；几何相似或单层定位只能作诊断，不能代替行为证据。它用更大的闭环矩阵换取不把广泛能力破坏冒充精准删除；只需临时禁用且可由 policy gate 完成时，运行时授权仍比改权重更可逆。`arXiv:2608.04692v1` 的结果只覆盖作者 VLA、suite 和系数，不证明 task-vector negation 等同知识删除。<!-- source-family:SF-2026-ARXIV-2608-04692 -->
+
+## Tool 与 Skill 评测要把失败阶段拆开
+
+Agent 选错工具可能来自语义诱饵、参数陷阱、虚假能力、缺失前置条件、时间状态或粒度选择；单一 task success 无法定位原因。受控 canary 可以每次只改变一个弱点，并由 provider-independent judge 与第二判断者复核 outcome，但 canary 只拥有诊断权，不能进入生产工具列表。该方法用额外 probe 运行换取 failure profile；真实环境与安全结论仍需独立验证。`arXiv:2608.04719v1` 的八模型实验只支持披露 taxonomy 与 harness。<!-- source-family:SF-2026-ARXIV-2608-04719 -->
+
+Skill 被安装也不等于被正确使用。Evaluation 应分别测 agent 是否在需要时主动 Trigger、读取完整 procedure 后是否 Compliance，以及是否守住禁止操作 Boundary；只有三者都成立，execution outcome 才能归因于 skill。progressive disclosure、真实文件和隔离 sandbox 提高外部真实性，却增加 harness/version 依赖，79 个 skills 与 177 个任务不能覆盖整个生态。未触发和触发后违规必须分开报告。<!-- source-family:SF-2026-ARXIV-2608-04828 -->
+
+## 审计记录不能替代最终判断所需的原始证据
+
+把 judge 的“提取 evidence”和“作出 verdict”拆成两次调用，可以留下可读审计记录，却也可能在第一步压缩掉第二步需要的信息。持久 evidence record 应与 source answer 并列：record 负责解释与复核，最终 judge 仍可读取原始候选；只给压缩记录的 locked protocol 是另一种 evaluator，必须单独校准。这样用更大的 context 与隐私面换取较少的信息丢失；原始材料不可再次访问时，系统应降低证据等级而非假装等价。`arXiv:2608.05353v1` 的 24,000 次实验只覆盖两种 judge、三个数据集与披露 protocol。<!-- source-family:SF-2026-ARXIV-2608-05353 -->
+
+## World Model 的物理评测要落到定律与参数
+
+感知相似或人工观感无法说明生成环境是否遵守碰撞、摩擦、动量、振荡和变形规律。更强的合同把现实轨迹、校准参数、坐标/时间处理和测量不确定度共同冻结，分别报告定律形式与参数误差；这样用昂贵的传感、标定和 task-specific observable 换取可诊断物理偏差。没有现实 reference 或任务超出受控场景时，这些分数只能作局部证据。`arXiv:2608.05948v1` 的 22 个 task family 支持该评测分解，不证明任何 simulator 或 video world model 在开放世界物理正确。<!-- source-family:SF-2026-ARXIV-2608-05948 -->
+
+## Harness Optimization 的 Test Boundary 必须对优化器不可见
+
+当模型可以修改 prompt、tool、memory 和 control flow 时，被评对象不再只是权重，而是完整 harness artifact。可复算评测需要冻结 seed、搜索预算、可见 feedback、候选版本和资源计量，并由受信执行环境隔离 held-out test partition；优化器只在预算内提名最终候选，不能读取 test 或选择性重跑。它用较低搜索效率换取对 validation overfitting 和 harness 越权的控制。`arXiv:2608.06301v1` 的五个模型、四个任务与 111 次运行只证明该协议具区分力，不支持通用模型排名。<!-- source-family:SF-2026-ARXIV-2608-06301 -->
+
+### 可组合压缩必须按组合后的 Artifact 验收
+
+专家裁剪、权重量化和 KV 压缩各自通过，并不能推出组合后仍满足质量、内存和延迟目标；它们会共享误差预算，并随 MoE 架构与 workload 发生非线性交互。评测应把压缩顺序、精度、裁剪比例、attention 类型、生成长度、硬件和端到端 runtime 绑定到同一个 artifact identity，分别报告平均结果与最坏子集。单项 benchmark 只能证明局部可行性，不能作为组合部署的替代证据。
+<!-- source-family: arxiv:2608.21693v1; semantic-body-binding: composable-compression-joint-evaluation -->
+
+### Confidence 要在 Belief、Action 与 Outcome 三层校准
+
+模型在采取动作时表达的信心，可能同时偏离内部 belief quality 和最终结果。一个统一的“置信度”因此无法承担发布或授权决策：评测要分别检查模型相信什么、基于它选择了什么动作，以及环境反馈是否支持该动作。开放世界中的真实分布仍需另行验证，但这三层分离能避免把语言上的笃定当作可执行保证。
+<!-- source-family: arxiv:2608.24691v1; semantic-body-binding: belief-action-outcome-calibration -->
+
+### 聚合指标必须能暴露不同 Failure Type
+
+两个生成系统取得相近的 FID 或总分，仍可能在遗漏、模式坍缩、语义偏移和局部伪影上完全不同。评价合同应把 detection、ranking 与 diagnosis 分开，并提供能够推翻总分排序的 counterexample slice。新增指标也不是天然更好；只有在多模型、多数据和清晰失效分类上稳定，才可以进入 release gate。
+<!-- source-family: arxiv:2608.24881v1; semantic-body-binding: aggregate-metric-failure-decomposition -->
+
+### Reasoning Trace 是独立的安全评测对象
+
+只检查 prompt 和 final answer 会漏掉中间推理中的不安全内容，而简单二元标签又无法说明 guardrail 应阻断哪一段。推理模型的安全 contract 应覆盖输入、trace 与输出，并要求 evidence localization；这并不意味着公开完整思维链，而是要求部署侧对其实际可观察或可审计的中间状态定义保护边界。
+<!-- source-family: arxiv:2608.24232v1; semantic-body-binding: reasoning-trace-safety-evaluation-unit -->
+
+### Reference Coverage 决定“未匹配”能否被判错
+
+有限或不完整的 reference set 会把真实但未收录的答案标成 false，进而反转不同模型的 calibration 排名。评价系统必须分别记录 reference coverage、matcher 的等价判定能力和人工复核范围；`unmatched` 只能表示没有被当前 oracle 识别。扩充 reference 与人工审计成本更高，但否则精确分数会掩盖标签生成过程的不确定性。
+<!-- source-family: arxiv:2608.25654v1; semantic-body-binding: unmatched-is-not-false-reference-coverage -->
+
+### Stored Label 要追溯到 Execution、Request 与 Stimulus
+
+评测结果若只保存最终 label，后续可能把执行环境、请求选择或刺激材料的差异误当成模型效果。每个 observation 应能回溯 execution revision、request identity 和原始 stimulus，并记录处理链；否则 treatment leakage 会让训练或版本信息进入本应独立的评价。更完整的 provenance 增加存储成本，却是重放与因果解释的前提。
+<!-- source-family: arxiv:2608.12880v1; semantic-body-binding: evaluation-treatment-provenance-chain -->
+
+### 组件分数不能在相关错误下直接合成系统可靠性
+
+多 Agent 或多阶段系统的组件失败通常共享输入、模型、工具和 judge，独立性假设很容易失效。组合评价应给出 dependence-aware 的可识别上界/下界，并用联合故障样本估计相关结构；没有这些证据时，只能报告观测到的系统级成功率，不能把单组件准确率相乘成保证。
+<!-- source-family: arxiv:2608.12895v1; semantic-body-binding: dependent-component-reliability-bounds -->
+
+### 相似度、分解与代理故障都必须经过反事实校验
+
+Cosine 或 NLI 分数适合发现可能等价的回答，却不能拥有 semantic-equivalence 的发布权：否定反转、实体替换等 matched counterfactual 必须让分数显著变化，并且最终任务结论仍需单独核对。否则“措辞相近”会掩盖控制含义相反。
+<!-- source-family: arxiv:2608.10216v1; semantic-body-binding: semantic-equivalence-needs-matched-reversal-counterfactuals -->
+
+把复杂任务拆成中间 claim 也不是中立预处理。每个 claim 应保留 source entailment、provenance 和重组关系，并验证分解后结论与原任务是否一致；多次生成的一致性只能说明模型重复了同一路径，不能替代外部证据。
+<!-- source-family: arxiv:2608.10627v1; semantic-body-binding: task-decomposition-as-evaluated-transformation -->
+
+用小模型或合成 workload 复现故障时，proxy 必须保留触发问题的结构因素，例如依赖深度、状态寿命或通信形态。代理上的失败能证明诊断路径可触发，不能证明原模型会以相同频率、损失或质量结果失败；它是缩小搜索空间的工具，不是全系统收敛证明。
+<!-- source-family: arxiv:2608.10823v1; semantic-body-binding: failure-proxy-must-preserve-trigger-structure -->
+
+### Agent 与 World Model 的证据要分层闭合
+
+Agent 安全评测应依次记录 exposure、实际执行、环境可见结果与独立 adjudication。提示或轨迹中出现攻击字符串只证明暴露，工具返回成功也未必证明最终世界状态改变；service receipt 和 final-state evidence 才能拥有效果裁决权。
+<!-- source-family: arxiv:2608.10669v1; semantic-body-binding: agent-safety-exposure-execution-observation-adjudication -->
+
+World Model 的复现实验要冻结 environment、数据、checkpoint、rollout protocol、seed 与 success criterion。缺少其中任一项时只能复现局部机制，不能把相似视频或单次成功声明为系统复现；更完整的合同提高复现实验成本，却让失败能回溯到状态、策略或环境差异。
+<!-- source-family: arxiv:2608.10145v1; semantic-body-binding: world-model-reproduction-contract -->
+
+### 在比较优化器前先证明 Reward 穿过信噪比下限
+
+奖励看似有结构，可能只是尺度、方差或长度等低阶统计被模型利用。先构造保持相同矩统计量的 matched-noise placebo：只有真实 reward 相对 placebo 产生稳定增益，才说明信号越过可学习的 SNR floor。这个检查不能证明奖励与目标完全一致，但能避免在无信息信号上继续比较优化器或扩充训练规模。
+<!-- source-family: arxiv:2608.10441v1; semantic-body-binding: matched-moment-placebo-for-reward-signal-floor -->
+
 ## 小结
 
 Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页面。它把 intended use 转化为 EvalSpec，把有限数据和环境转化为带不确定性的 evidence，再把 evidence 放入受风险政策约束的发布与反馈决策。对 MoE 等条件计算系统，负载统计只是运行证据，功能 specialization 仍需独立指标与干预验证。release-grade 结论还必须能重建其 artifact、harness 与环境；无法重建的历史分数只能作为描述性记录。
@@ -2497,6 +2719,17 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 它的长期不变量是：完整 subject identity、明确分布、可审计 scorer、per-example evidence、切片与不确定性、分离的 decision policy，以及从生产反馈回到新版本的受控闭环。下一章进入 Monitoring，讨论平台怎样以受控成本持续获得 observed state，而不把“发生了什么”误当成“是否足够好”。
 
 ## Review notes
+
+- ExecRetrieval，`arXiv:2609.01865v1`，Status: Experimental；[exact-v1](https://arxiv.org/html/2609.01865v1)。
+  §3.3、§5.3–5.7、Appendices A–G 与固定 artifact commit
+  `31c2cb4bf88d7d94a512b91ed4acad385e4df927` 的 scorer/executor 支持这里的受限评价边界。
+  939 个生成任务、4694 个 snippets；938 个 query 含 mechanical distractor，不能与 86135 个
+  query/distractor/model triples 混用。23 个 dense embedding 系统与 BM25 属于作者实验；托管服务硬件、
+  精度、并发/SLO 等未完整披露，正文不吸收跨系统性能排名。Figure 1 / Appendix A 的 query/test 输入域
+  差别限制“错误代码”的解释；生成 oracle 不是独立的完整语义证明。静态实现显示 cache miss 默认判 false，
+  需显式启用 execute-on-miss 才执行；五秒 suite timeout 与隔离 Python 进程不构成文件/网络权限 sandbox。
+  本轮完整读论文与关键静态 scorer/executor，未运行不可信代码、重算 embedding matrices 或复现 leaderboard。
+  artifact commit 时间不证明公开时间，论文事件使用当日 arXiv 公告，未据此追溯或新增旧日期候选。
 
 - `SF-2026-ARXIV-2602-18583`（Status: Experimental）：exact-v1 支持 Luna-2 以 metric-specific LoRA/head、trace-field prompt 与 exactly-one class token 构成 evaluator sensor，并对 class-token probabilities 归一化；作者实验不证明输出天然校准、跨分布稳定、共享 backbone 无干扰或可替代独立 truth source。https://arxiv.org/html/2602.18583v1
 
@@ -3371,7 +3604,7 @@ Semantic judge 与 selector 都可能错误或相关；uncovered/undecidable 必
 <!-- daily-books-trace:SF-2026-ARXIV-2608-15127:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2608-22510:start -->
-- `SF-2026-ARXIV-2608-22510` — Daily `2026-08-24`；primary `arXiv:2608.22510v1`；Books review `books-review:SF-2026-ARXIV-2608-22510`。
+- `SF-2026-ARXIV-2608-22510` — Daily `2026-08-25`；primary `arXiv:2608.22510v1`；Books review `books-review:SF-2026-ARXIV-2608-22510`。
 
   **已吸收的语义增量：** ClawProBench 要求声明 model+runtime，使用 102 个场景、冻结 holdout、typed trace 与三次运行，试图区分 Agent 能力与 harness/runtime 覆盖。它改进的是评估合同，不是模型智能的独立度量；场景代表性和 evaluator 漏检仍需保留。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-22510:end -->

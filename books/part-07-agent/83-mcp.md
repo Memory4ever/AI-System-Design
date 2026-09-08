@@ -236,6 +236,12 @@ Catalog/index owner 负责 schema version、refresh 与 deletion ordering；auth
 
 逐个检查工具描述或在单一工具内扫描明文 payload，在攻击局限于单点污染时仍然合理。新的约束是恶意信息可以拆成 threshold secret shares，分别藏在多个看似无害的工具描述中，只在特定组合、trigger 或 update 后重构；此时单工具结论不能代表组合安全。MCP 控制面因此要持有 tool-set identity、share/trigger 组合风险、server/update version 与 effect-time authorization，并把 group-level admission 置于工具调用之前。论文只在四类多工具场景、主流 LLM 与两个 MCP client 上报告平均攻击成功率超过 90%，不证明任意 client/trigger 都可攻破，也不证明组合防御不可能。组合状态未知或更新后证据失效时应 deny/quarantine，并交给独立 reference monitor 逐次授权；原有单工具扫描仍作为第一层共存。
 
+### Browser Tool 的 Semantic Quarantine 不能早于 Effect-time Gate 提交
+
+Web tool discovery 可以先由无执行权组件检查 metadata/output，再让 privileged executor 调用；这减少恶意描述直接接触高权限路径，却不能让检查结果自动成为 capability。tool identity、registering principal 与 credential 必须绑定，quarantine 只产生 proposal，effect-time authorizer 才能提交。若恶意 tool name 在检查前触发调用，说明 call timing 本身也是协议状态。分层增加 latency 与 false reject；小型静态 catalog 可用较简单 allow-list。`arXiv:2608.24017v1` 的 WebMCP-Phalanx 与适应性攻击只支持作者 browser environment，不证明 semantic filtering 可替代 Ch72 的 reference monitor。
+
+<!-- source-family:SF-2026-ARXIV-2608-24017 -->
+
 ## Observability
 
 ### Consequential Output 必须携带可独立验证的 Claim Receipt
@@ -265,6 +271,12 @@ Tool Programs 将静态 endpoint 列表变成可组合、带类型与执行语�
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-28690:start -->
 把每个 agent protocol lowering 为带 source/type evidence 的有限状态 IR，先做 pairwise composition 与 trace replay，再把 counterexample 编译成可执行回归；未知组合保持隔离。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-28690:end -->
+
+### Tool Availability 本身会改变模型控制流
+
+Host 把工具加入可调用集合，并不是中性的接口扩展：即使 instruction 已内嵌足够数据，模型也可能因工具存在而优先调用它。工具目录、placement 与 availability 因而属于实验和运行时 identity，必须用 matched no-tool control 区分“需要外部信息”与“被接口诱导调用”；首次调用率不等于最终任务正确或 effect 合法。更丰富工具提高能力覆盖，却增加无谓调用、成本与授权面；低风险、证据已在 Context 中的任务可禁用工具或要求明确 trigger，所有外部 effect 仍由 host policy 与 receipt 验收。
+
+<!-- source-family: arxiv:2608.08467v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: tool-availability-changes-model-control-flow -->
 
 ### 多 Server 组合把 Permission 变成 Information-flow 问题
 
@@ -297,6 +309,11 @@ MCP 把工具和资源发现标准化后，新的压力从“能否连接”转�
 5. MCP authorization 为什么不等于业务授权？
 6. Legacy sampling 或同类 extension 为什么扩大信任边界？
 7. MCP 为什么不能替代 Workflow？
+
+### Gateway 必须显式区分用户与服务身份
+
+MCP 或其他 Agent gateway 不能把连接成功当作统一授权。每次调用应同时绑定 user persona、service persona、credential owner、delegation scope、审计主体与 offboarding 生命周期；服务凭据只能代表被授权的服务能力，不能自动继承用户全部权限。身份分层增加凭据管理和撤销复杂度，却让跨工具调用、人员离职与服务替换仍可追责；任何一层身份不完整时都应拒绝或降级为只读。
+<!-- source-family: arxiv:2608.10760v1; semantic-body-binding: gateway-user-service-persona-and-credential-ownership -->
 
 ## 小结
 

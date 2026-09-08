@@ -230,6 +230,12 @@ scalable architecture
 
 这条链不反向证明“出现能力，所以某条 scaling law 必然成立”。也不把工具调用等同于完整 Agent。Part IV 会展开 post-training，Part VII 会展开 Context、Tool Calling、Planning、Memory 和 Agent Platform。
 
+### 记住两个事实，不等于学会组合它们
+
+模型可以分别复现 `A→B` 与 `B→C`，却仍在面对 `A→C` 时失败，因为事实存储和可复用推理电路是两个不同 contract。组合成功要求中间实体在不同 context 中保持可对齐表示，并让后续层读取前层构造的 bridge state；若上层只学到训练分布中的 output mapping，原子事实都正确也不会自动产生新的两跳关系。循环或更深计算可以增加复用机会，却也带来状态漂移和额外计算。受控符号与自然语言实验只支持这一故障机制可能存在，不证明真实大模型的所有 multi-hop failure 都有同一原因。
+
+<!-- source-family: arxiv:2608.07261v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: atomic-fact-storage-vs-composable-reasoning-circuit -->
+
 ## 自检问题
 
 1. 为什么 next-token 接口是局部的，却可能要求模型使用长程和高阶结构？

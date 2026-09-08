@@ -61,24 +61,24 @@ Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action 
 研究系统不把来源数量或总分当作长期知识。统一流程是：
 
 ```text
-Coverage Receipt
-→ Source Family 候选分母
-→ 可定位的 Source Review Receipt
-→ Daily / Weekly
-→ Deep Analysis 选择与 Books Comparison
-→ fresh-context Semantic Audit
+按时间窗口收集来源
+→ 语义筛选与去重
+→ 核验证据
+→ 整理 Daily / Weekly
+→ Books 判断与必要整合
+→ 独立复核
 ```
 
-- [研究合同](./docs/RESEARCH_CONTRACT.md)：定义 Source Family、三维 Score V2、来源归因、Review / Access 状态与 Books eligibility。
+- [研究合同](./docs/RESEARCH_CONTRACT.md)：定义贡献筛选、三维评分、审阅深度、证据边界与 Books 判断。
 - [来源注册表](./docs/RESEARCH_SOURCES.md)：维护唯一 Source ID、官方入口、权威范围与扫描节奏。
-- [Report 合同](./docs/REPORT_CONTRACTS.md)：定义 Daily、Sunday Weekly 与 Historical Weekly 的时间责任、V2.1 可审计账本及 Gate 真值表。
-- [Daily Adapter](./CODEX_DAILY_RESEARCH_PROMPT.md) 与 [Historical Adapter](./CODEX_HISTORICAL_RESEARCH_PROMPT.md)：只保留各自的运行差异。
+- [Report 合同](./docs/REPORT_CONTRACTS.md)：Daily、Weekly 与历史补跑共用的报告结构、时间窗口和完成条件。
+- [统一研究入口](./CODEX_RESEARCH_PROMPT.md)：Daily、Weekly、历史补跑与中断后继续共用。
 
-旧六维 `/30` Weekly 作为 Score V1 Legacy 保留；新增来源只对已完成周执行 Source Delta Audit，不会机械重跑全部历史归档。
+生成和继续生成 Report 统一执行当前合同。仅对真实漏项或证据变化定点补审，不因修改格式重跑全部历史归档。
 
 ## 当前状态
 
-- 路线图：已扩展为 7 Part / 84 章，并建立稳定知识节点 ID，见 [ROADMAP.md](./ROADMAP.md)
+- 路线图：7 Part / 84 章，并建立稳定知识节点 ID，见 [ROADMAP.md](./ROADMAP.md)
 - 书稿：章节内容统一放在 [books/](./books/)
 - 当前草稿：[第1章 为什么学习 AI System](./books/part-01-worldview/01-why-learn-ai-system.md)
 - 写作规则：模板是思考检查清单，不是最终目录结构，见 [docs/WRITING_GUIDE.md](./docs/WRITING_GUIDE.md)
@@ -110,7 +110,7 @@ labs/                  # 与书稿稳定节点双向映射的纵向实践路线
 papers/                # Daily、Weekly 与 primary-source 证据归档
 
 docs/                  # 项目上下文、研究合同、写作原则、学习状态与决策记录
-scripts/               # V2.1 contract / V2 score Report 的无依赖校验器
+scripts/               # Report 校验与按需材料工具，见 scripts/README.md
 tests/                 # 研究合同回归测试
 assets/                # README 和文档使用的图标、图片资源
 ROADMAP.md             # AI System 知识树的唯一事实来源

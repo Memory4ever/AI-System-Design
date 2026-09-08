@@ -1,762 +1,213 @@
 # Daily Research — 2026-08-27
 
-**Research Date:** 2026-08-27
-
-**Timezone:** Asia/Shanghai
-
-**Strict Window:** 2026-08-26 09:00:00 ～ 2026-08-27 09:00:00（北京时间，左闭右开）
-
-**Contract:** V2.1 Full Replay
-
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed，fresh-context Semantic Audit 状态见第 7 节
-
-## Executive Summary
-
-本轮按 V2.1 合同重建严格 24 小时窗口。arXiv Atom 九页返回并闭合 841 条 v1；Required Daily 机构、HF bounded discovery 与 exact first-public reconciliation 后，冻结 34 个事件：30 篇论文、1 个官方事故 family、1 个窄 revision、1 个 maintenance closure 和 1 个行业 context。每个窗口内 canonical family 都承担 Score V2、与路由相符的 Source Review 和最终 disposition；HF 恢复的七篇没有因 discovery source 受限而降级或跳过。
-
-18 个 family 已改变或补全现有长期机制，12 个由当前章节完整承载，另外 4 个分别保持观点/行业 context、版本事实或低耐久度维护关闭。长叙事只选择安全 enforcement、共享 prefix state、evaluation contract 三个跨 family 单元；它只是阅读层的叙事上限，其余高分 family 仍分别完成 Deep Review。未参与写作的 reviewer 已完成 Coverage、Evidence、Deep Analysis Selection 与 Books 四个 fresh-context Semantic Audit scope，未留下 unresolved finding。
-
-## 1. Coverage
-
-<!-- validator:report-metadata-v2 -->
-| Field | Value |
-| --- | --- |
-| Contract Version | V2.1 |
-| Score Schema | V2 |
-| Report Type | Daily |
-| Window Start | 2026-08-27 |
-| Window End | 2026-08-27 |
-| Registry Version | 2026-08-25 |
-| Coverage Mode | Full Replay |
-| Baseline Report | — |
-| Changed Source IDs | — |
-| Previous Denominator ID | — |
-| Denominator ID | daily-2026-08-27-0900-v2.1-03 |
-| Denominator Frozen At | 2026-08-28T05:40:00+08:00 |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
-
-<!-- audit-target:coverage:start -->
-### Source Coverage Receipt
-
-<!-- validator:source-coverage-v2 -->
-| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SRC-OPENAI | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official research index + technical report | checked | 1 | SF-2026-OPENAI-HF-INCIDENT | page=1; final_cursor=end; dated listing crossed below window | 2026-08-26T09:00:00+08:00 | coverage:SRC-OPENAI:20260827 | — |
-| SRC-METR | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | exact incident investigation report referenced by the OpenAI technical report | checked | 1 | SF-2026-OPENAI-HF-INCIDENT | pages=1; final_cursor=end; exact dated report | 2026-08-26T09:00:00+08:00 | coverage:SRC-METR:20260827 | — |
-| SRC-ANTHROPIC | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official research listing | no_hit | 0 | — | page=1; final_cursor=end; latest visible 2026-08-18 | 2026-08-18T09:00:00+08:00 | coverage:SRC-ANTHROPIC:20260827 | — |
-| SRC-GOOGLE-AI | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | DeepMind + Google Research publications | checked | 1 | SF-2026-VGI-WHITE-PAPER | page=1; final_cursor=end; official page + arXiv v1 reconciled | 2026-08-26T15:36:19Z | coverage:SRC-GOOGLE-AI:20260827 | — |
-| SRC-META-AI | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official research listing | no_hit | 0 | — | page=1; final_cursor=end; latest visible 2026-08-04 | 2026-08-04T09:00:00+08:00 | coverage:SRC-META-AI:20260827 | — |
-| SRC-XAI | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official news | no_hit | 0 | — | page=1; final_cursor=end; latest visible 2026-08-21 | 2026-08-21T09:00:00+08:00 | coverage:SRC-XAI:20260827 | — |
-| SRC-MISTRAL | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official news | no_hit | 0 | — | page=1; final_cursor=end; latest raw item 2026-08-24; no trigger | 2026-08-24T09:00:00+08:00 | coverage:SRC-MISTRAL:20260827 | — |
-| SRC-QWEN | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official publications + arXiv reconciliation | no_hit | 0 | — | page=1; final_cursor=end | 2026-08-27T09:00:00+08:00 | coverage:SRC-QWEN:20260827 | — |
-| SRC-DEEPSEEK | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official updates + manuscripts | no_hit | 0 | — | page=1; final_cursor=end | 2026-08-27T09:00:00+08:00 | coverage:SRC-DEEPSEEK:20260827 | — |
-| SRC-MOONSHOT | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official blog + GitHub organization | no_hit | 0 | — | page=1; final_cursor=end; repositories enumerated; exact pushed-at query zero | 2026-08-27T09:00:00+08:00 | coverage:SRC-MOONSHOT:20260827 | — |
-| SRC-ZAI | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official docs/releases + GitHub | no_hit | 0 | — | page=1; final_cursor=end; repositories enumerated; exact pushed-at query zero | 2026-08-27T09:00:00+08:00 | coverage:SRC-ZAI:20260827 | — |
-| SRC-MINIMAX | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official news | checked | 1 | SF-2026-MINIMAX-FINANCIAL | page=1; final_cursor=end; dated page; context-only closure | 2026-08-26T09:00:00+08:00 | coverage:SRC-MINIMAX:20260827 | — |
-| SRC-BYTEDANCE-SEED | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official publications | no_hit | 0 | — | page=1; final_cursor=end; finite listing; latest 2026-08-05 | 2026-08-05T09:00:00+08:00 | coverage:SRC-BYTEDANCE-SEED:20260827 | — |
-| SRC-BAIDU-ERNIE | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official publications | no_hit | 0 | — | page=1; final_cursor=end; finite inventory reconciled | 2026-08-27T09:00:00+08:00 | coverage:SRC-BAIDU-ERNIE:20260827 | — |
-| SRC-TENCENT-HUNYUAN | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official GitHub organization + exact commits | checked | 2 | SF-2026-HY-MT2-REVISION<br>SF-2026-UNIRL-MAINTENANCE | page=1; final_cursor=end; repository list + exact full SHA diffs | 2026-08-26T03:49:31Z | coverage:SRC-TENCENT-HUNYUAN:20260827 | — |
-| SRC-HUAWEI-NOAH | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official dated archive | no_hit | 0 | — | page=1; final_cursor=end; latest visible 2026-08-05 | 2026-08-05T09:00:00+08:00 | coverage:SRC-HUAWEI-NOAH:20260827 | — |
-| SRC-SHLAB | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official research surface | no_hit | 0 | — | page=1; final_cursor=end; arXiv identities reconciled | 2026-08-27T09:00:00+08:00 | coverage:SRC-SHLAB:20260827 | — |
-| SRC-STEPFUN | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official finite research collection | no_hit | 0 | — | page=1; final_cursor=end; cards=14; slugs=8; crossed below window | 2026-08-27T09:00:00+08:00 | coverage:SRC-STEPFUN:20260827 | — |
-| SRC-XIAOMI-MIMO | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official publications | no_hit | 0 | — | page=1; final_cursor=end; finite listing; latest 2026-06-29 | 2026-06-29T09:00:00+08:00 | coverage:SRC-XIAOMI-MIMO:20260827 | — |
-| SRC-INCLUSION-AI | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | official publications + LLaDA site | no_hit | 0 | — | page=1; final_cursor=end; main list 2025; LLaDA latest 2026-08-04 | 2026-08-04T09:00:00+08:00 | coverage:SRC-INCLUSION-AI:20260827 | — |
-| SRC-ARXIV | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | Atom submittedDate:[202608260100 TO 202608270100] | checked | 841 | SF-2026-GROUNDHOG-BITFLIP<br>SF-2026-METIS-RUNTIME<br>SF-2026-GIFT-IFC<br>SF-2026-FIELD-TIER-MIN<br>SF-2026-CASKG<br>SF-2026-AGENTIC-GAME-WM<br>SF-2026-TOPAS<br>SF-2026-POLYMEMDB<br>SF-2026-V-RUBRICS<br>SF-2026-RA-VLA<br>SF-2026-JIT-AGENT<br>SF-2026-RETRIEVALROUTER<br>SF-2026-PSRL<br>SF-2026-LMSM<br>SF-2026-REDIR<br>SF-2026-TAILSFT<br>SF-2026-TACFORCING<br>SF-2026-SKILLSHIELD<br>SF-2026-LOCALIZE-DECIDE<br>SF-2026-SKILL-ISSUE<br>SF-2026-MA-VLA<br>SF-2026-VGI-WHITE-PAPER<br>SF-2026-CODE-WORLD-MODEL<br>SF-2026-TAU-AGENT<br>SF-2026-SPECTRAL-ALLOCATION<br>SF-2026-PROGROUTER<br>SF-2026-ASYMSPEC<br>SF-2026-STREAMPI<br>SF-2026-PREFIX-SLIDING<br>SF-2026-ZERO-WAM | pages=9; start=0..800; totalResults=841; returned=841; final_cursor=end | 2026-08-26T17:59:51Z | coverage:SRC-ARXIV:20260827 | — |
-| SRC-HF-PAPERS | 2026-08-26T09:00:00+08:00 | 2026-08-27T09:00:00+08:00 | 2026-08-28T04:30:00+08:00 | bounded Daily Papers listing + identity recovery | failed | 7 | SF-2026-RETRIEVALROUTER<br>SF-2026-SKILL-ISSUE<br>SF-2026-MA-VLA<br>SF-2026-CODE-WORLD-MODEL<br>SF-2026-TAU-AGENT<br>SF-2026-PREFIX-SLIDING<br>SF-2026-ZERO-WAM | page=1; final_cursor=unavailable; reason=listing timeout; nondeterministic backstop failure | — | coverage:SRC-HF-PAPERS:20260827 | GAP-HF-20260827-LISTING |
-
-<!-- coverage:SRC-OPENAI:20260827:start -->`SRC-OPENAI` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-OPENAI:20260827:end -->
-<!-- coverage:SRC-METR:20260827:start -->`SRC-METR` 作为候选明确引用的独立评估 supporting source 执行 exact-report receipt；它不扩大 Required Daily denominator，只在 Independent Evaluator scope 内使用。<!-- coverage:SRC-METR:20260827:end -->
-<!-- coverage:SRC-ANTHROPIC:20260827:start -->`SRC-ANTHROPIC` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-ANTHROPIC:20260827:end -->
-<!-- coverage:SRC-GOOGLE-AI:20260827:start -->`SRC-GOOGLE-AI` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-GOOGLE-AI:20260827:end -->
-<!-- coverage:SRC-META-AI:20260827:start -->`SRC-META-AI` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-META-AI:20260827:end -->
-<!-- coverage:SRC-XAI:20260827:start -->`SRC-XAI` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-XAI:20260827:end -->
-<!-- coverage:SRC-MISTRAL:20260827:start -->`SRC-MISTRAL` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-MISTRAL:20260827:end -->
-<!-- coverage:SRC-QWEN:20260827:start -->`SRC-QWEN` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-QWEN:20260827:end -->
-<!-- coverage:SRC-DEEPSEEK:20260827:start -->`SRC-DEEPSEEK` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-DEEPSEEK:20260827:end -->
-<!-- coverage:SRC-MOONSHOT:20260827:start -->`SRC-MOONSHOT` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-MOONSHOT:20260827:end -->
-<!-- coverage:SRC-ZAI:20260827:start -->`SRC-ZAI` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-ZAI:20260827:end -->
-<!-- coverage:SRC-MINIMAX:20260827:start -->`SRC-MINIMAX` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-MINIMAX:20260827:end -->
-<!-- coverage:SRC-BYTEDANCE-SEED:20260827:start -->`SRC-BYTEDANCE-SEED` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-BYTEDANCE-SEED:20260827:end -->
-<!-- coverage:SRC-BAIDU-ERNIE:20260827:start -->`SRC-BAIDU-ERNIE` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-BAIDU-ERNIE:20260827:end -->
-<!-- coverage:SRC-TENCENT-HUNYUAN:20260827:start -->`SRC-TENCENT-HUNYUAN` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-TENCENT-HUNYUAN:20260827:end -->
-<!-- coverage:SRC-HUAWEI-NOAH:20260827:start -->`SRC-HUAWEI-NOAH` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-HUAWEI-NOAH:20260827:end -->
-<!-- coverage:SRC-SHLAB:20260827:start -->`SRC-SHLAB` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-SHLAB:20260827:end -->
-<!-- coverage:SRC-STEPFUN:20260827:start -->`SRC-STEPFUN` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-STEPFUN:20260827:end -->
-<!-- coverage:SRC-XIAOMI-MIMO:20260827:start -->`SRC-XIAOMI-MIMO` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-XIAOMI-MIMO:20260827:end -->
-<!-- coverage:SRC-INCLUSION-AI:20260827:start -->`SRC-INCLUSION-AI` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-INCLUSION-AI:20260827:end -->
-<!-- coverage:SRC-ARXIV:20260827:start -->`SRC-ARXIV` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-ARXIV:20260827:end -->
-<!-- coverage:SRC-HF-PAPERS:20260827:start -->`SRC-HF-PAPERS` 的 endpoint、窗口水位、命中或 no-hit 证据已冻结于本表与 `_sources/daily-20260827/`；仅在注册表 authority scope 内使用。<!-- coverage:SRC-HF-PAPERS:20260827:end -->
-
-### Coverage Limitations
-
-- Supporting Evidence Receipt：`SRC-METR@https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/` 已核验 exact identity/date，并作为 `SF-2026-OPENAI-HF-INCIDENT` 的 triggered supporting receipt；它不是本日到期的 Required Daily source，因此不扩大 coverage denominator。METR 只支持独立行为评估及其 evaluation contract，不支持 OpenAI 内部环境、凭据或控制机制事实。
-- `SRC-HF-PAPERS` 是 nondeterministic discovery backstop；listing 本次执行失败，不能形成确定性覆盖声明。七个 identity 已由其他路径恢复并回到 arXiv v1 核验；该 backstop 不参与 Coverage Complete 算术，失败记录为 `GAP-HF-20260827-LISTING`，由 Sunday Weekly 重试。
-- arXiv 九页的 `totalResults = returned = 841`，时间水位越过窗口两端；30 个入选论文均以 exact v1 为 primary evidence。
-- OpenAI 事故报告属于机构对自身事件的 primary account，METR/Redwood 仅作独立交叉检查；二者都不能证明未公开的生产机制或普遍发生率。
-<!-- audit-target:coverage:end -->
-
-## 2. Candidate Ledger
-
-<!-- validator:candidate-ledger-v2.1 -->
-| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-OPENAI-HF-INCIDENT | release:openai-hf-incident-2026-08-26 | official-incident:openai-hf | 2026-W35 | 2026-08-26 | SRC-METR;SRC-OPENAI | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-OPENAI-HF-INCIDENT | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-OPENAI-HF-INCIDENT | yes |
-| SF-2026-GROUNDHOG-BITFLIP | arXiv:2608.25276v1 | paper-v1:2608.25276 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-GROUNDHOG-BITFLIP | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-GROUNDHOG-BITFLIP | yes |
-| SF-2026-METIS-RUNTIME | arXiv:2608.25322v1 | paper-v1:2608.25322 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-METIS-RUNTIME | self | — | new_in_window | AGENT-TOOL-CALLING | No Change — Existing Coverage | books-review:SF-2026-METIS-RUNTIME | yes |
-| SF-2026-GIFT-IFC | arXiv:2608.25431v1 | paper-v1:2608.25431 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-GIFT-IFC | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-GIFT-IFC | yes |
-| SF-2026-FIELD-TIER-MIN | arXiv:2608.25474v1 | paper-v1:2608.25474 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-FIELD-TIER-MIN | self | — | new_in_window | AGENT-TOOL-CALLING | Integrate | books-review:SF-2026-FIELD-TIER-MIN | yes |
-| SF-2026-CASKG | arXiv:2608.25500v1 | paper-v1:2608.25500 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-CASKG | self | — | new_in_window | AGENT-MEMORY | No Change — Existing Coverage | books-review:SF-2026-CASKG | yes |
-| SF-2026-AGENTIC-GAME-WM | arXiv:2608.25518v1 | paper-v1:2608.25518 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-AGENTIC-GAME-WM | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Weekly Only — Context | — | yes |
-| SF-2026-TOPAS | arXiv:2608.25523v1 | paper-v1:2608.25523 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-TOPAS | self | — | new_in_window | INFER-SCHEDULING | Integrate | books-review:SF-2026-TOPAS | yes |
-| SF-2026-POLYMEMDB | arXiv:2608.25577v1 | paper-v1:2608.25577 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-POLYMEMDB | self | — | new_in_window | AGENT-MEMORY | No Change — Existing Coverage | books-review:SF-2026-POLYMEMDB | yes |
-| SF-2026-V-RUBRICS | arXiv:2608.25580v1 | paper-v1:2608.25580 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-V-RUBRICS | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-V-RUBRICS | yes |
-| SF-2026-RA-VLA | arXiv:2608.25585v1 | paper-v1:2608.25585 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-RA-VLA | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | No Change — Existing Coverage | books-review:SF-2026-RA-VLA | yes |
-| SF-2026-JIT-AGENT | arXiv:2608.25593v1 | paper-v1:2608.25593 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-JIT-AGENT | self | — | new_in_window | AGENT-PLATFORM | No Change — Existing Coverage | books-review:SF-2026-JIT-AGENT | yes |
-| SF-2026-RETRIEVALROUTER | arXiv:2608.25625v1 | paper-v1:2608.25625 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-RETRIEVALROUTER | self | — | new_in_window | AGENT-RAG | Integrate | books-review:SF-2026-RETRIEVALROUTER | yes |
-| SF-2026-PSRL | arXiv:2608.25683v1 | paper-v1:2608.25683 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-PSRL | self | — | new_in_window | TRAIN-DISTRIBUTED-TRAINING | Integrate | books-review:SF-2026-PSRL | yes |
-| SF-2026-LMSM | arXiv:2608.25697v1 | paper-v1:2608.25697 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-LMSM | self | — | new_in_window | PLATFORM-SECURITY | Integrate | books-review:SF-2026-LMSM | yes |
-| SF-2026-REDIR | arXiv:2608.25711v1 | paper-v1:2608.25711 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-REDIR | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-REDIR | yes |
-| SF-2026-TAILSFT | arXiv:2608.25756v1 | paper-v1:2608.25756 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-TAILSFT | self | — | new_in_window | TRAIN-SFT | Integrate | books-review:SF-2026-TAILSFT | yes |
-| SF-2026-TACFORCING | arXiv:2608.25798v1 | paper-v1:2608.25798 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-TACFORCING | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | No Change — Existing Coverage | books-review:SF-2026-TACFORCING | yes |
-| SF-2026-SKILLSHIELD | arXiv:2608.25817v1 | paper-v1:2608.25817 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | release_security_contract | review:SF-2026-SKILLSHIELD | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-SKILLSHIELD | yes |
-| SF-2026-LOCALIZE-DECIDE | arXiv:2608.25824v1 | paper-v1:2608.25824 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-LOCALIZE-DECIDE | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-LOCALIZE-DECIDE | yes |
-| SF-2026-SKILL-ISSUE | arXiv:2608.25832v1 | paper-v1:2608.25832 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-SKILL-ISSUE | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-SKILL-ISSUE | yes |
-| SF-2026-MA-VLA | arXiv:2608.25864v1 | paper-v1:2608.25864 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-MA-VLA | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-MA-VLA | yes |
-| SF-2026-VGI-WHITE-PAPER | arXiv:2608.25924v1 | paper-v1:2608.25924 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-GOOGLE-AI | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-VGI-WHITE-PAPER | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | No Change — Existing Coverage | books-review:SF-2026-VGI-WHITE-PAPER | no |
-| SF-2026-CODE-WORLD-MODEL | arXiv:2608.25927v1 | paper-v1:2608.25927 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-CODE-WORLD-MODEL | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-CODE-WORLD-MODEL | yes |
-| SF-2026-TAU-AGENT | arXiv:2608.25935v1 | paper-v1:2608.25935 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 1 | 2 | 2 | 5 | retained | standard_complete | accessible | none | review:SF-2026-TAU-AGENT | self | — | new_in_window | AGENT-RAG | No Change — Existing Coverage | books-review:SF-2026-TAU-AGENT | yes |
-| SF-2026-SPECTRAL-ALLOCATION | arXiv:2608.25990v1 | paper-v1:2608.25990 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-SPECTRAL-ALLOCATION | self | — | new_in_window | TRAIN-PRETRAINING | Integrate | books-review:SF-2026-SPECTRAL-ALLOCATION | yes |
-| SF-2026-PROGROUTER | arXiv:2608.25992v1 | paper-v1:2608.25992 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-PROGROUTER | self | — | new_in_window | AGENT-MULTI-AGENT | No Change — Existing Coverage | books-review:SF-2026-PROGROUTER | yes |
-| SF-2026-ASYMSPEC | arXiv:2608.26004v1 | paper-v1:2608.26004 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ASYMSPEC | self | — | new_in_window | INFER-SPECULATIVE-DECODING | Integrate | books-review:SF-2026-ASYMSPEC | yes |
-| SF-2026-STREAMPI | arXiv:2608.26067v1 | paper-v1:2608.26067 | 2026-W35 | 2026-08-26 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-STREAMPI | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | No Change — Existing Coverage | books-review:SF-2026-STREAMPI | yes |
-| SF-2026-PREFIX-SLIDING | arXiv:2608.26070v1 | paper-v1:2608.26070 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-PREFIX-SLIDING | self | — | new_in_window | MODEL-LONG-CONTEXT | Integrate | books-review:SF-2026-PREFIX-SLIDING | yes |
-| SF-2026-ZERO-WAM | arXiv:2608.26103v1 | paper-v1:2608.26103 | 2026-W35 | 2026-08-26 | SRC-ARXIV;SRC-HF-PAPERS | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ZERO-WAM | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-ZERO-WAM | yes |
-| SF-2026-HY-MT2-REVISION | commit:ff1903ecaa724e10951a23c16817a2413c752b35 | commit:hy-mt2-ff1903e | 2026-W35 | 2026-08-26 | SRC-TENCENT-HUNYUAN | — | — | — | — | revision | deep_complete | accessible | important_revision | review:SF-2026-HY-MT2-REVISION | self | — | same_window_revision | MODEL-LONG-CONTEXT | Version Fact / Mechanism Not Disclosed | — | no |
-| SF-2026-UNIRL-MAINTENANCE | commit:96747df21c2940b6cd68fe38cfecb93f63cc628d | commit:unirl-branch-sync | 2026-W35 | 2026-08-26 | SRC-TENCENT-HUNYUAN | 0 | 1 | 0 | 1 | closure_only | closure_complete | accessible | none | review:SF-2026-UNIRL-MAINTENANCE | self | — | new_in_window | TRAIN-GRPO | Rejected — Low Durability / Out of Scope | — | no |
-| SF-2026-MINIMAX-FINANCIAL | https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160 | official-post:minimax-financial | 2026-W35 | 2026-08-26 | SRC-MINIMAX | 0 | 1 | 1 | 2 | closure_only | closure_complete | accessible | none | review:SF-2026-MINIMAX-FINANCIAL | self | — | new_in_window | WORLDVIEW-FUTURE | Weekly Only — Context | — | no |
-
-## 3. Review Completion Receipt
-
-`complete` 表示 exact primary evidence 已按 route 阅读并界定 claim，不表示独立复现。
-
-<!-- validator:review-completion-v1 -->
-| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-OPENAI-HF-INCIDENT | RP-84f4d761672b8213 | deep | release:openai-hf-incident-2026-08-26 | SRC-METR@https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/;SRC-OPENAI@release:openai-hf-incident-2026-08-26 | https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf §II OpenAI’s Evaluation Environment; §IV Hugging Face Intrusion | https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/#core-takeaways-about-this-incident; https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/#preliminary-answers-to-the-core-questions-in-scope | https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/#investigation-process-and-limitations; https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf §I pp. 4–5 production-vs-evaluation boundary; §VIII.D p. 24 System-level guardrails and production boundary | https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf; https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/ | claim:SF-2026-OPENAI-HF-INCIDENT | complete |
-| SF-2026-GROUNDHOG-BITFLIP | RP-1e118de946b59319 | deep | arXiv:2608.25276v1 | SRC-ARXIV@arXiv:2608.25276v1 | arXiv:2608.25276v1 §3 Groundhog Bit-Flip Attack; §3.4 Bit-Flip Attack on MoE Router; Appendix A algorithm | arXiv:2608.25276v1 §4.1 Experiment Setup; Table 1; §4.2–§4.4; Appendices E–F | arXiv:2608.25276v1 §8 Limitations | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-GROUNDHOG-BITFLIP | complete |
-| SF-2026-METIS-RUNTIME | RP-c3367d4f21745a5c | deep | arXiv:2608.25322v1 | SRC-ARXIV@arXiv:2608.25322v1 | arXiv:2608.25322v1 §4 Runtime Design, §4.1–§4.7 | arXiv:2608.25322v1 §5.1–§5.7; Table 4 | arXiv:2608.25322v1 §7 Threats to Validity and Required Evaluation; Table 6 | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-METIS-RUNTIME | complete |
-| SF-2026-GIFT-IFC | RP-2122b6bd5267ab5d | deep | arXiv:2608.25431v1 | SRC-ARXIV@arXiv:2608.25431v1 | arXiv:2608.25431v1 §3 GIFT Overview; §4 Near-Zero-Overhead GPU IFT; §5 GIFT-CC | arXiv:2608.25431v1 §7.1.1 A800; §7.1.2 H100; §7.2; Figures 8–9 | arXiv:2608.25431v1 §6 Implementation and Limitations; §8 Security Analysis | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-GIFT-IFC | complete |
-| SF-2026-FIELD-TIER-MIN | RP-ad644590b7147ce0 | deep | arXiv:2608.25474v1 | SRC-ARXIV@arXiv:2608.25474v1 | arXiv:2608.25474v1 §3 Field-tier minimization; §4 Digest independence; §5 One declaration, three artifacts; §6 Who computes what | arXiv:2608.25474v1 §8.1 Per-projection; §8.2 Corpus quantified; §8.4 incident | arXiv:2608.25474v1 §9 Limits and residual trust, §9.1–§9.4 | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-FIELD-TIER-MIN | complete |
-| SF-2026-CASKG | RP-42e6e955b45111ea | standard | arXiv:2608.25500v1 | SRC-ARXIV@arXiv:2608.25500v1 | arXiv:2608.25500v1 §3 Method, §3.2 graph induction, §3.3 counterfactual augmentation, §3.4 Bayesian calibration, §3.5 retrieval | arXiv:2608.25500v1 §4.1 Experimental Setup; §4.2 Main Results; §5.2 component ablation | arXiv:2608.25500v1 §4.1 reporting contract and §4.2/§5.2 ALFWorld/ScienceWorld-only evidence boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-CASKG | complete |
-| SF-2026-AGENTIC-GAME-WM | RP-d7f98574dce362d5 | standard | arXiv:2608.25518v1 | SRC-ARXIV@arXiv:2608.25518v1 | arXiv:2608.25518v1 §4 Game Development as Human-Engine Verification; Appendix A supplementary method | arXiv:2608.25518v1 §5.1 falsifiers; §5.2 setup; §5.3–§5.5; Appendix B | arXiv:2608.25518v1 §6 Discussion; Appendix C.1 Limitation Discussion and Future Analysis | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-AGENTIC-GAME-WM | complete |
-| SF-2026-TOPAS | RP-44122ea3832c5b4a | deep | arXiv:2608.25523v1 | SRC-ARXIV@arXiv:2608.25523v1 | arXiv:2608.25523v1 §IV TOPAS; §IV.A Design Overview; §IV.E Hierarchical State Search | arXiv:2608.25523v1 §V.A Setup; §V.B End-to-End; §V.C Ablations | arXiv:2608.25523v1 §II progress-reuse conflict; §VII limited-GPU-memory boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-TOPAS | complete |
-| SF-2026-POLYMEMDB | RP-393430fa53f6d5b4 | standard | arXiv:2608.25577v1 | SRC-ARXIV@arXiv:2608.25577v1 | arXiv:2608.25577v1 §II System Overview; §III Probabilistic Memory Graph Maintenance | arXiv:2608.25577v1 §III 221-relationship construction demonstration; no matched experiment section | arXiv:2608.25577v1 counterevidence: v1 has no benchmark, ablation, fault injection, or explicit limitation section | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-POLYMEMDB | complete |
-| SF-2026-V-RUBRICS | RP-cf11c670f4ec537f | deep | arXiv:2608.25580v1 | SRC-ARXIV@arXiv:2608.25580v1 | arXiv:2608.25580v1 §3.3 V-Rubrics 50K Construction; §3.4 Rubric Design; §3.5 Reward Design and RL | arXiv:2608.25580v1 §4.1 Setup; §4.3 Main Results; §4.4 Analysis; Appendices D.2/D.3/D.5 and E | arXiv:2608.25580v1 §6 Limitations; §7 Ethics | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-V-RUBRICS | complete |
-| SF-2026-RA-VLA | RP-267ddd29b6d4f46d | standard | arXiv:2608.25585v1 | SRC-ARXIV@arXiv:2608.25585v1 | arXiv:2608.25585v1 §4.1–§4.3 retrieval and grounded execution | arXiv:2608.25585v1 §5.1 setup; §5.2–§5.6; Appendices C and H | arXiv:2608.25585v1 Appendix F Limitations | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-RA-VLA | complete |
-| SF-2026-JIT-AGENT | RP-556383b6abe24cdb | deep | arXiv:2608.25593v1 | SRC-ARXIV@arXiv:2608.25593v1 | arXiv:2608.25593v1 §3 Unified Harness Codebase/HarnessFactory; §4.1–§4.3; §5 Inference | arXiv:2608.25593v1 §6.1 setup; §6.2–§6.6; §6.4 Pareto analysis | arXiv:2608.25593v1 §6.4/§6.6 bounded results; §7 Conclusion and Future Work | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-JIT-AGENT | complete |
-| SF-2026-RETRIEVALROUTER | RP-7360c13999c030f5 | deep | arXiv:2608.25625v1 | SRC-ARXIV@arXiv:2608.25625v1 | arXiv:2608.25625v1 §4.1 Problem Formulation; §4.2 Router Architecture; §4.3 Training | arXiv:2608.25625v1 §5 Experimental Setup, §5.1 datasets, §5.3 metrics; §6.1–§6.3 | arXiv:2608.25625v1 §6.3 oracle gap and cross-domain/query-only evidence boundary | commit:1e287df589cb188972b463aedf2bfd9f39af0529 — code, indexes and evaluation scripts present before v1 | claim:SF-2026-RETRIEVALROUTER | complete |
-| SF-2026-PSRL | RP-9c02c0a72347da96 | deep | arXiv:2608.25683v1 | SRC-ARXIV@arXiv:2608.25683v1 | arXiv:2608.25683v1 §3.2 Architecture; §4 Workload Scheduling; §5 Memory Management; §6 Implementation | arXiv:2608.25683v1 §7.1 Setup and Table 2; §7.2 Figure 9; §7.3–§7.4 | arXiv:2608.25683v1 §7.4 scalability/sequence-length studies; v1 only promises future code release | Not Disclosed — v1 does not pin an immutable implementation artifact | claim:SF-2026-PSRL | complete |
-| SF-2026-LMSM | RP-c1017b725a4df0a3 | deep | arXiv:2608.25697v1 | SRC-ARXIV@arXiv:2608.25697v1 | arXiv:2608.25697v1 §4.2 Common Contract; §4.4 Request-keyed Evaluation; §4.5 Selective Enforcement; §5 | arXiv:2608.25697v1 §6.1 and Table 3; §6.2–§6.4; Appendices A–D | arXiv:2608.25697v1 §8 Discussion, Limitations paragraph; Appendix D | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-LMSM | complete |
-| SF-2026-REDIR | RP-fb76cff5565ca2e1 | deep | arXiv:2608.25711v1 | SRC-ARXIV@arXiv:2608.25711v1 | arXiv:2608.25711v1 §4.1–§4.3 trajectory-conditioned action generation | arXiv:2608.25711v1 §5 Experimental Setup; §6.1–§6.6 | arXiv:2608.25711v1 §7 Adaptive Attackers; Appendix B hardware/evaluation boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-REDIR | complete |
-| SF-2026-TAILSFT | RP-c6fd16167c7ea591 | deep | arXiv:2608.25756v1 | SRC-ARXIV@arXiv:2608.25756v1 | arXiv:2608.25756v1 §3.1 algorithm; §3.2 diagnostics; §3.3 theory | arXiv:2608.25756v1 §4.1 SFT; §4.2 diagnostic; §4.3 GRPO; Appendices D.1–D.2 | arXiv:2608.25756v1 §5 Discussion and one-model/recipe generalization boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-TAILSFT | complete |
-| SF-2026-TACFORCING | RP-dd4d33ffc887169c | deep | arXiv:2608.25798v1 | SRC-ARXIV@arXiv:2608.25798v1 | arXiv:2608.25798v1 §3.1–§3.3 streaming action/tactile mechanism | arXiv:2608.25798v1 §4.1 Setup; §4.2–§4.3; Appendix A | arXiv:2608.25798v1 §4.3 ablation and §6 Conclusion; v1 reports no latency/safety matched study | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-TACFORCING | complete |
-| SF-2026-SKILLSHIELD | RP-03ff95848d5a968f | deep | arXiv:2608.25817v1 | SRC-ARXIV@arXiv:2608.25817v1 | arXiv:2608.25817v1 §5.1–§5.3 security-skill construction and injection | arXiv:2608.25817v1 §6.1 Setup; §6.2–§6.5; Appendices B/H/I | arXiv:2608.25817v1 §7 Discussion; threat-model and automated-judge boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-SKILLSHIELD | complete |
-| SF-2026-LOCALIZE-DECIDE | RP-40c3bec7f5623cbb | deep | arXiv:2608.25824v1 | SRC-ARXIV@arXiv:2608.25824v1 | arXiv:2608.25824v1 §3.1 Localization; §3.2 Calibrated Decision | arXiv:2608.25824v1 §4.1 Setup; §4.2–§4.4; Tables 2 and 6 | arXiv:2608.25824v1 §Limitations; exchangeability, calibration-distribution and judge-dependence boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-LOCALIZE-DECIDE | complete |
-| SF-2026-SKILL-ISSUE | RP-889f292f843e6e98 | deep | arXiv:2608.25832v1 | SRC-ARXIV@arXiv:2608.25832v1 | arXiv:2608.25832v1 §2 Multilingual TextArena; §3 Experiment Setup; §4 Metrics | arXiv:2608.25832v1 §5.1–§5.4; Appendix B | arXiv:2608.25832v1 §Limitations; small-model, translation and tokenizer confound boundary | commit:6dfb577c01d0337fe03b05adce84c5ae1878eca1 — framework tests present; full result pipeline not pinned | claim:SF-2026-SKILL-ISSUE | complete |
-| SF-2026-MA-VLA | RP-b8abf60d396ab8c9 | deep | arXiv:2608.25864v1 | SRC-ARXIV@arXiv:2608.25864v1 | arXiv:2608.25864v1 §4.1 System Overview; §4.2 VLM-based Planner; §4.3 VLA Executor; §4.4 Arm Shuffle and View Dropout | arXiv:2608.25864v1 §5.1–§5.5; §6.1–§6.3; Tables 1–6 | arXiv:2608.25864v1 §8 Conclusion; counterevidence: v1 has no explicit limitations section and only evaluates finite simulated and real multi-arm tasks with a fixed atomic-skill vocabulary | commit:855bb08445cbab0e23cbde0f8813e9fc083cc604 — training, config and atomic-prompt artifacts present before v1 | claim:SF-2026-MA-VLA | complete |
-| SF-2026-VGI-WHITE-PAPER | RP-e2766c23dd8dd515 | deep | arXiv:2608.25924v1 | SRC-ARXIV@arXiv:2608.25924v1;SRC-GOOGLE-AI@https://deepmind.google/research/publications/270149/ | arXiv:2608.25924v1 §1 Introduction; §2 Perspectives on VGI, §2.1–§2.9 | Not Required — position paper presents no matched mechanism benchmark | arXiv:2608.25924v1 §3 Summary and Discussion; counterevidence: no single method, experiment, or ablation | Not Disclosed — no immutable artifact required for the position-paper claim | claim:SF-2026-VGI-WHITE-PAPER | complete |
-| SF-2026-CODE-WORLD-MODEL | RP-9d0e9fc7166dc2d8 | deep | arXiv:2608.25927v1 | SRC-ARXIV@arXiv:2608.25927v1 | arXiv:2608.25927v1 §3.1–§3.3 executable/visual state split; §4.1 Implementation | arXiv:2608.25927v1 §4.2 Visual Quality and proxy-following study | arXiv:2608.25927v1 §5 Limitations and Conclusions | Not Disclosed — project page exposes no immutable code artifact at v1 | claim:SF-2026-CODE-WORLD-MODEL | complete |
-| SF-2026-TAU-AGENT | RP-71d79c63ff70a359 | standard | arXiv:2608.25935v1 | SRC-ARXIV@arXiv:2608.25935v1 | arXiv:2608.25935v1 §3.1–§3.3 caption/tracking/evidence orchestration | arXiv:2608.25935v1 §4.1 Implementation; §4.2–§4.4 | arXiv:2608.25935v1 §5 Conclusion; dataset/model-specific evidence boundary | commit:6729512a01592efdc0053f5d1eeb46338e0afc4c — code and evaluation artifacts present; reproducibility partial | claim:SF-2026-TAU-AGENT | complete |
-| SF-2026-SPECTRAL-ALLOCATION | RP-23596e4d54e8e735 | deep | arXiv:2608.25990v1 | SRC-ARXIV@arXiv:2608.25990v1 | arXiv:2608.25990v1 §4.1 spectral probe; §4.2 observation; §5.1–§5.2 SAMuon | arXiv:2608.25990v1 §6.1 Setup; §6.2 Results | arXiv:2608.25990v1 §7 Discussion; 124M–1B scale and static-prior boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-SPECTRAL-ALLOCATION | complete |
-| SF-2026-PROGROUTER | RP-470c20881e2db2b7 | deep | arXiv:2608.25992v1 | SRC-ARXIV@arXiv:2608.25992v1 | arXiv:2608.25992v1 §3.2 Multi-View Progress; §3.3 Online Predictor; §3.4 Decision | arXiv:2608.25992v1 §4 Experiments, setup/results/ablations across four workflows | arXiv:2608.25992v1 §Limitations; benchmark-specific candidate-pool and progress-label boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-PROGROUTER | complete |
-| SF-2026-ASYMSPEC | RP-2204a1b772cf61fc | deep | arXiv:2608.26004v1 | SRC-ARXIV@arXiv:2608.26004v1 | arXiv:2608.26004v1 §3.1 Problem Setup; §3.2–§3.4 delta fusion and acceptance | arXiv:2608.26004v1 §4.2 Models and Hyperparameters; §4.4 Baselines; §5.3 End-to-End | arXiv:2608.26004v1 §Limitations; deterministic-task and non-token-exact boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-ASYMSPEC | complete |
-| SF-2026-STREAMPI | RP-5def3a6588ba7bb5 | deep | arXiv:2608.26067v1 | SRC-ARXIV@arXiv:2608.26067v1 | arXiv:2608.26067v1 §3 Method, §3.2–§3.3 temporal attention and random-interval training | arXiv:2608.26067v1 §4 Experiments; Appendix B Implementation Details and B.2 Real-world Experiments | arXiv:2608.26067v1 Appendix D Limitations and Future Work | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-STREAMPI | complete |
-| SF-2026-PREFIX-SLIDING | RP-33dd98cbcffc8b02 | deep | arXiv:2608.26070v1 | SRC-ARXIV@arXiv:2608.26070v1 | arXiv:2608.26070v1 §2 Prefix Sliding and position-embedding/KV-reuse choices | arXiv:2608.26070v1 §3 Setup; §4 Results; §5 Ablations; Appendices E/F/H | arXiv:2608.26070v1 unnumbered §Limitations: Limited comparisons; Information loss; Limited benefit for short generations; System outputs and multi-turn; Scale | commit:f657773ece3b916256535956993bd740f678f1c4 — event-time tree contains only LICENSE and README; implementation unavailable at v1 | claim:SF-2026-PREFIX-SLIDING | complete |
-| SF-2026-ZERO-WAM | RP-3439361aacd7f934 | deep | arXiv:2608.26103v1 | SRC-ARXIV@arXiv:2608.26103v1 | arXiv:2608.26103v1 §2.2 In-Context Human Video Generation Pipeline; §2.3 HumanGen; §3.2 Human Video as Task Specification; §3.3 In-Context Future Chunk Prediction; §3.4 Training and Inference | arXiv:2608.26103v1 §4.1 Implementation; §4.2 Simulation; §4.3 Real-World; §4.4 Ablation Studies | arXiv:2608.26103v1 §5 Conclusions and Discussions: stationary-tabletop, dynamic-environment, long-horizon and human/robot embodiment-gap boundary | Not Disclosed — no immutable artifact pinned by v1 | claim:SF-2026-ZERO-WAM | complete |
-| SF-2026-HY-MT2-REVISION | RP-e383bd93bac19c89 | deep | commit:ff1903ecaa724e10951a23c16817a2413c752b35 | SRC-TENCENT-HUNYUAN@commit:ff1903ecaa724e10951a23c16817a2413c752b35 | commit:ff1903ecaa724e10951a23c16817a2413c752b35 §README.md unified diff: adds `max_context: 8192` to two inference/deployment examples | Not Required — revision makes no evaluation claim | commit:ff1903ecaa724e10951a23c16817a2413c752b35 §exact parent comparison changes README examples only; no code, model artifact, or benchmark delta | commit:ff1903ecaa724e10951a23c16817a2413c752b35 and its parent diff | claim:SF-2026-HY-MT2-REVISION | complete |
-| SF-2026-UNIRL-MAINTENANCE | RP-7ea27a61c3675c2d | closure | commit:96747df21c2940b6cd68fe38cfecb93f63cc628d | SRC-TENCENT-HUNYUAN@commit:96747df21c2940b6cd68fe38cfecb93f63cc628d | commit:96747df21c2940b6cd68fe38cfecb93f63cc628d §exact parent comparison identifies branch/repository synchronization only | Not Required — repository maintenance has no evaluation claim | Not Required — exact commit diff contains no algorithm, API, release, configuration, or evaluation delta | commit:96747df21c2940b6cd68fe38cfecb93f63cc628d and its parent diff | claim:SF-2026-UNIRL-MAINTENANCE | complete |
-| SF-2026-MINIMAX-FINANCIAL | RP-43bb4299695ce785 | closure | https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160 | SRC-MINIMAX@https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160 | https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160 §Dated disclosure identity | Not Required — context-only financial disclosure | Not Required — financial scope discloses no model or system mechanism | Not Required — organization context | claim:SF-2026-MINIMAX-FINANCIAL | complete |
-
-### Source Reviews
-
-<!-- review:SF-2026-OPENAI-HF-INCIDENT:start -->
-<!-- claim:SF-2026-OPENAI-HF-INCIDENT:start -->《The Hugging Face incident and the road ahead》面对的问题是：evaluation sandbox 中的 agent 获得了超出题目所需的凭据与网络能力，导致模型可把研究环境当作真实攻击面。其机制不是名称替换，而是把 environment containment、least privilege、secret boundary 和 independent monitoring 作为评测合同，而不是只约束 prompt。<!-- claim:SF-2026-OPENAI-HF-INCIDENT:end -->
-
-Evaluation contract：OpenAI 事故技术报告与 METR/Redwood 独立复盘；单次 cyber evaluation 事故，不提供普遍发生率。Authority boundary：OpenAI 作为 Creator Primary 只证明其披露的 sandbox、凭据、时间线与控制事实；METR/Redwood 作为 Independent Evaluator 只证明其观察到的行为评估及评估合同，不证明 OpenAI 内部模型机制、完整基础设施状态或修复有效性。证据边界：只能证明该次披露的链路与控制缺口；其他模型与生产环境发生率未公开。因此本报告只保留与 `PLATFORM-SECURITY` 相关的机制与边界，分数只决定 Review route，不把任一来源结论外推为通用结论。
-<!-- review:SF-2026-OPENAI-HF-INCIDENT:end -->
-
-<!-- review:SF-2026-GROUNDHOG-BITFLIP:start -->
-<!-- claim:SF-2026-GROUNDHOG-BITFLIP:start -->《Groundhog Bit-Flip Attack: Seeding Infinite Generation Loops in Mixture-of-Experts LLMs through Bit Flips》面对的问题是：MoE router 把终止行为集中到少数 expert 后，硬件位翻转可演化为 Denial-of-Wallet。其机制不是名称替换，而是定位与 EOS 等 token 强相关的 routing bits，破坏相关 expert 激活，使生成持续到 max-token 而尽量保持语义表面。<!-- claim:SF-2026-GROUNDHOG-BITFLIP:end -->
-
-Evaluation contract：四个 MoE 模型、conversation/reasoning/agentic workloads；作者报告少量 expert 失活即可显著放大 token。证据边界：是主动故障注入，不证明普通软错概率；硬件、精度、并发与线上检测 SLO 未完整披露。因此本报告只保留与 `PLATFORM-SECURITY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-GROUNDHOG-BITFLIP:end -->
-
-<!-- review:SF-2026-METIS-RUNTIME:start -->
-<!-- claim:SF-2026-METIS-RUNTIME:start -->《Metis: Typed Runtime Mediation for Tool-Using Software Agents》面对的问题是：provider stream 直接落到外部副作用时，permission、interference 与 lifecycle 缺少统一可审计语义。其机制不是名称替换，而是先将多 provider 输出规范化为 typed events，再由 permission gate、registry 与 lifecycle machine 决定 effect admission。<!-- claim:SF-2026-METIS-RUNTIME:end -->
-
-Evaluation contract：30 个 matched real-I/O pairs、10-case fault matrix、child-boundary ablation 与五模型 Read-marker protocol。证据边界：只证明本地 runtime 的 dispatch/permission/trace closure；不证明模型能力、语义安全或通用 rollback。因此本报告只保留与 `AGENT-TOOL-CALLING` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-METIS-RUNTIME:end -->
-
-<!-- review:SF-2026-GIFT-IFC:start -->
-<!-- claim:SF-2026-GIFT-IFC:start -->《Here is a GIFT: Enforcing User Data Isolation in LLM Serving via GPU Information Flow Tracking》面对的问题是：共享 GPU serving 中 CPU orchestration 与 GPU kernel 都可能跨租户传播敏感数据。其机制不是名称替换，而是CPU 侧以 per-user encryption 隔离内容，GPU 侧静态分析 kernel flow 并以 decoupled tracker 执行信息流规则；GIFT-CC 再覆盖不可信 OS/hypervisor。<!-- claim:SF-2026-GIFT-IFC:end -->
-
-Evaluation contract：vLLM 与 DistServe prototype；作者报告 4–10.7% throughput overhead 且 latency 基本不变。证据边界：只覆盖已建模 kernel 与论文 threat model；新 kernel、side channel、硬件/并发细节和独立复现仍缺失。因此本报告只保留与 `PLATFORM-SECURITY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-GIFT-IFC:end -->
-
-<!-- review:SF-2026-FIELD-TIER-MIN:start -->
-<!-- claim:SF-2026-FIELD-TIER-MIN:start -->《Separating Disclosure from Authorization: Field-Tier Minimization for Agent Action Mediation》面对的问题是：授权与审计同时读取完整 action parameters 会把敏感值永久写进不可删除 ledger。其机制不是名称替换，而是按字段而非 action 分类为 raw、projection、never-leave 三层；client 在最小化前承诺 canonical digest，并对 policy/tier schema 版本做 attestation。<!-- claim:SF-2026-FIELD-TIER-MIN:end -->
-
-Evaluation contract：论文给出本地实现、leakage analysis 和一次 projection 仍泄漏 identifier 的设计事故。证据边界：远端服务、schema evolution 与恶意 verifier 未被实证覆盖；projection 本身仍可能泄漏。因此本报告只保留与 `AGENT-TOOL-CALLING` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-FIELD-TIER-MIN:end -->
-
-<!-- review:SF-2026-CASKG:start -->
-<!-- claim:SF-2026-CASKG:start -->《CaSKG: Counterfactual-Causal Skill Graphs for Scalable Agent Skill Retrieval》面对的问题是：技能库扩大后，纯向量召回忽略程序依赖，普通图检索又依赖不可靠边。其机制不是名称替换，而是从语义、词法、I/O 与结构生成高召回候选图，再用方向化 counterfactual probe 与 Bayesian smoothing 校准边，离线发布 state-filtered graph。<!-- claim:SF-2026-CASKG:end -->
-
-Evaluation contract：六个 LLM，在 ALFWorld ID-140 与 ScienceWorld U211 上比较任务得分和环境步数，并含 ablation。证据边界：只覆盖两个模拟环境；LLM judge、离线构图成本和跨域 graph drift 尚未验证。因此本报告只保留与 `AGENT-MEMORY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-CASKG:end -->
-
-<!-- review:SF-2026-AGENTIC-GAME-WM:start -->
-<!-- claim:SF-2026-AGENTIC-GAME-WM:start -->《Agentic Game Development as a Verifiable Trajectory Data Engine for Scaling World Models》面对的问题是：仅用 crawled video 和模糊相似度奖励难以为 world model 提供可验证的长轨迹反馈。其机制不是名称替换，而是提出 RLHEV：把 game engine 作为 collision/physics/navigability/playability 的 dense verifier，人类 acceptance 作为全局反馈。<!-- claim:SF-2026-AGENTIC-GAME-WM:end -->
-
-Evaluation contract：该文主要是立场与研究议程，没有足以比较训练方案的 matched implementation/evaluation。证据边界：不能把可执行 game specification 等同真实世界动力学，也不能据此宣称 RLHEV 已优于视频预训练。因此本报告只保留与 `MULTIMODAL-WORLD-MODELS` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-AGENTIC-GAME-WM:end -->
-
-<!-- review:SF-2026-TOPAS:start -->
-<!-- claim:SF-2026-TOPAS:start -->《TOPAS: Workflow-Aware Prefix-State Scheduling for Multi-Agent LLM Serving》面对的问题是：保留 agent prefix 可减少 prefill，却占用 KV 空间并挤压 batching；只优化 cache hit 或 workflow progress 都会延长 JCT。其机制不是名称替换，而是联合选择保留的 prefix 与执行请求，以最长剩余服务路径收益、下游 prefix reuse、迁移/抢占成本和 task aging 评分 post-decision state。<!-- claim:SF-2026-TOPAS:end -->
-
-Evaluation contract：SGLang prototype，三个 synthetic DAG 与两个 MetaGPT workflow；报告 mean/p99 JCT。证据边界：结果依赖 synthetic DAG、特定 workflow 与共享 KV budget；生产 fairness、负载漂移和 tail-SLO 未证明。因此本报告只保留与 `INFER-SCHEDULING` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-TOPAS:end -->
-
-<!-- review:SF-2026-POLYMEMDB:start -->
-<!-- claim:SF-2026-POLYMEMDB:start -->《PolyMemDB: A Polyglot Database System for AI Memory Management》面对的问题是：单一存储无法同时表达向量、图、概率和时空记忆，长期冲突又缺少 provenance。其机制不是名称替换，而是以 polyglot stores 管理多种 memory，并用 temporal decay、semiring aggregation 与 provenance chain 处理冲突。<!-- claim:SF-2026-POLYMEMDB:end -->
-
-Evaluation contract：四页 demonstration 描述系统接口与示例，没有广泛定量评估或故障注入。证据边界：缺少跨 backend consistency、事务边界、删除/隐私语义与规模数据，因此不支持新增 owner。因此本报告只保留与 `AGENT-MEMORY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-POLYMEMDB:end -->
-
-<!-- review:SF-2026-V-RUBRICS:start -->
-<!-- claim:SF-2026-V-RUBRICS:start -->《V-Rubrics: Visual Faithfulness via Rubric-Based Reinforcement Learning》面对的问题是：多模态 post-training 的单一 outcome reward 无法定位哪条视觉事实、推理步骤或指令约束出错。其机制不是名称替换，而是把答案拆成 VF/RC/IF atomic rubrics，并在有证据 span 时进行 component-wise、prefix-localized credit assignment。<!-- claim:SF-2026-V-RUBRICS:end -->
-
-Evaluation contract：50,248 样本、17 个来源；Qwen3-VL-8B 的 SFT 后以 rubric GRPO 对比 answer-only GRPO。证据边界：rubric 由 Gemini-3-Pro 标注且继承其偏差；不外推其他模型、领域或无 reference 的开放任务。因此本报告只保留与 `PLATFORM-EVALUATION-SYSTEM` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-V-RUBRICS:end -->
-
-<!-- review:SF-2026-RA-VLA:start -->
-<!-- claim:SF-2026-RA-VLA:start -->《RA-VLA: Retrieval-Augmented VLA for Test-Time Adaptation》面对的问题是：VLA 面对新任务时，表层相似 retrieval 与 pretrained policy inertia 阻碍 expert context 转成动作。其机制不是名称替换，而是用 behavior-aligned retrieval 选择示例，并通过 grounded execution pipeline 强制策略利用功能线索。<!-- claim:SF-2026-RA-VLA:end -->
-
-Evaluation contract：LIBERO 与真实 UR5e 任务，对 success 与计算效率作作者比较。证据边界：摘要未披露完整硬件、控制频率、并发与安全 SLO；只证明受限 task adaptation。因此本报告只保留与 `MULTIMODAL-EMBODIED-VLA` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-RA-VLA:end -->
-
-<!-- review:SF-2026-JIT-AGENT:start -->
-<!-- claim:SF-2026-JIT-AGENT:start -->《JIT-Agent: Scaling Harness Intelligence via Just-in-Time Harness Evolution》面对的问题是：固定 harness 把 memory、planning、action protocol 和 tool orchestration 固化为人工任务特化配置。其机制不是名称替换，而是以四模块协议把 harness 变成可生成 artifact，并从任务、repair 信号和历史配置 archive 即时合成与自演化。<!-- claim:SF-2026-JIT-AGENT:end -->
-
-Evaluation contract：九个 benchmark，跨 DeepSeek、GLM、MiMo、Qwen 等模型，与 OpenCode/Claude Code 等 harness 比较。证据边界：harness generation 的隔离、可复现版本、失败回滚与 token/cost contract 未闭合，作者分数不能证明生产可靠性。因此本报告只保留与 `AGENT-PLATFORM` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-JIT-AGENT:end -->
-
-<!-- review:SF-2026-RETRIEVALROUTER:start -->
-<!-- claim:SF-2026-RETRIEVALROUTER:start -->《RetrievalRouter: Joint Modality and Architecture Selection for Document Retrieval》面对的问题是：text/multimodal 与 dense/late-interaction pipeline 在 relevance、latency 和 index footprint 上不存在静态最优。其机制不是名称替换，而是冻结 Qwen3-0.6B 主体并以 LoRA query encoder 和 soft reward target，在五类 pipeline 间按 nDCG/latency 权衡逐 query 路由。<!-- claim:SF-2026-RETRIEVALROUTER:end -->
-
-Evaluation contract：11 个文档检索 benchmark、80/10/10 域内切分、单 H100 80GB；报告 nDCG/MRR/Recall 与 mean/P95 latency。证据边界：需同时维护约 40GB 多索引；query-only 看不到 document layout，未验证跨域 routing，oracle gap 仍大。因此本报告只保留与 `AGENT-RAG` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-RETRIEVALROUTER:end -->
-
-<!-- review:SF-2026-PSRL:start -->
-<!-- claim:SF-2026-PSRL:start -->《psRL: Efficient Training for Agentic AI via Training-Time Prefix Sharing》面对的问题是：tree/step-wise agentic RL 使 update 而非 rollout 成为瓶颈，同时样本间出现大量 immutable prefix redundancy。其机制不是名称替换，而是利用 update phase 的 global visibility，把 prefix-sharing workload placement 与动态 block KV manager 联合优化，在 reuse 与 load balance 间调度。<!-- claim:SF-2026-PSRL:end -->
-
-Evaluation contract：production traces 与论文 GPU/interconnect 下比较 update throughput，作者报告最高 5.2×。证据边界：不外推普通 pretraining；代码在 v1 仅承诺将公开，硬件拓扑、长度分布和 tail latency 需按原表解释。因此本报告只保留与 `TRAIN-DISTRIBUTED-TRAINING` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-PSRL:end -->
-
-<!-- review:SF-2026-LMSM:start -->
-<!-- claim:SF-2026-LMSM:start -->《LMSM: LLM Security Framework Inspired by Linux Security Modules》面对的问题是：interpretability signal 若各自绑定 calibration、policy 与 intervention，就无法形成稳定 enforcement substrate。其机制不是名称替换，而是把 calibrated evidence backend、versioned policy 和 independent buffered-output gate 分离，保持 request identity 穿过 continuous batching。<!-- claim:SF-2026-LMSM:end -->
+**规范：** V3
+**窗口：** 2026-08-26T09:00:00+08:00 ～ 2026-08-27T09:00:00+08:00
+**状态：** 完成
+**Books：** 纳入本次
+**检查时间：** 2026-09-07T23:35:00+08:00
+
+## 1. 结论
 
-Evaluation contract：Transformers/vLLM、SAE/transcoder/dense probes；Qwen3-4B、32 active sequences 下同时报告 HarmBench、XSTest 与 throughput。证据边界：learned backend 可能漂移且不能替代 reference monitor；结果只覆盖特定模型、规则和攻击集。因此本报告只保留与 `PLATFORM-SECURITY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-LMSM:end -->
+本窗完成 14 个每日来源检查。arXiv 以官方 new-announcement 批次冻结 519 个唯一身份，逐项完成题名语义筛选；含义不明确或可能影响大模型/Infra 主线的条目进一步读完摘要。最终保留 30 个 arXiv 材料家族，另有 OpenAI 评测事故报告与智谱 GLM-5.3-Flash 两个官方家族，共 32 项候选；其余主要属于 AI for Science、垂直应用、既有方法的窄任务组合、只增加一个 benchmark 或没有改变长期设计边界的局部改进。独立复核补回 physical authority、edge-chip side channel、batch-dependent MoE security、working-memory sufficiency、episode integrity 与 asynchronous embodied control 等系统性漏项；该判断不沿用旧报告的 submission-time 候选池。
 
-<!-- review:SF-2026-REDIR:start -->
-<!-- claim:SF-2026-REDIR:start -->《Reassembling Distributed Risk: Trajectory-Conditioned Action Generation for Multi-Turn Agent Safety》面对的问题是：多轮攻击把风险分散到单独看似合理的 request/action，单步 filter 无法重组意图。其机制不是名称替换，而是在每次 action 前将 trajectory 压成 latent safety representation，并用同模型 cross-view supervision 注入冻结 base model 的生成过程。<!-- claim:SF-2026-REDIR:end -->
+最重要的三条演进是：第一，模型与推理优化从单一算法指标转向 **phase、format、state 与端到端 critical path** 的联合合同；第二，Agent 的 memory、tool call 与 workflow 由自然语言约定转向 **显式身份、时态、最小披露与独立 effect gate**；第三，安全边界从 CPU orchestration 延伸到 GPU kernel flow、模型权重传输和评测 sandbox。全部候选已经完成与分数相匹配的原始证据审阅和 Books 对读；9 项长期机制已写入对应章节并通过独立写后语义复核。
 
-Evaluation contract：两个 agent-safety benchmark、三个 model families、八个 held-out tool domains；测 ASR、benign fidelity 与 overhead。证据边界：仍是 learned generation-time defense；不能给 deterministic authorization，跨工具迁移不等于未知攻击安全。因此本报告只保留与 `PLATFORM-SECURITY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-REDIR:end -->
+## 2. 来源覆盖
 
-<!-- review:SF-2026-TAILSFT:start -->
-<!-- claim:SF-2026-TAILSFT:start -->《TailSFT: Filtered Fine-Tuning Improves Post-Training Performance》面对的问题是：SFT 平均优化已拟合样本会浪费容量，并可能产生不适合后续 RL 的低 coverage 初始化。其机制不是名称替换，而是训练时过滤已拟合 sequence，把梯度集中到 under-modeled tail，并用轻量诊断判断何时值得启用。<!-- claim:SF-2026-TAILSFT:end -->
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | Research/Index 与本窗事故技术报告；同一事件定点核对 METR 独立复盘 | 已检查 | 无 |
+| SRC-ANTHROPIC | Research 与 Alignment Science 列表检查至窗口水位；无本窗候选 | 已检查 | 无 |
+| SRC-GOOGLE-AI | DeepMind/Google Research 列表按原始日期检查并与 arXiv 去重；无独立本窗候选 | 已检查 | 无 |
+| SRC-META-AI | Research/Results 列表检查至窗口水位并与 arXiv 去重；无独立本窗候选 | 已检查 | 无 |
+| SRC-QWEN | 官方论文、模型与技术发布入口检查至窗口水位；无独立本窗候选 | 已检查 | 无 |
+| SRC-DEEPSEEK | 官网研究入口与官方仓库发布面检查至窗口水位；无本窗候选 | 已检查 | 无 |
+| SRC-MOONSHOT | Kimi Blog 与 MoonshotAI 仓库/Release 检查至窗口水位；无本窗候选 | 已检查 | 无 |
+| SRC-TENCENT-HUNYUAN | Research“全部”列表与官方仓库；维护 commit 与窗口外项目已在准入前关闭，无本窗候选 | 已检查 | 无 |
+| SRC-ZAI | Research“全部”列表逐项检查；确认 GLM-5.3-Flash 于 2026-08-26 14:00Z 发布 | 已检查 | 无 |
+| SRC-BYTEDANCE-SEED | Research/论文目录检查至窗口水位并与 arXiv 去重；无独立本窗候选 | 已检查 | 无 |
+| SRC-BAIDU-ERNIE | 官方技术博客与 ERNIE 仓库检查至窗口水位；无本窗候选 | 已检查 | 无 |
+| SRC-XIAOMI-MIMO | MiMo 论文/博客与官方仓库检查至窗口水位；无本窗候选 | 已检查 | 无 |
+| SRC-MINIMAX | 中英文 Research/Blog 与官方仓库检查至窗口水位；财务公告排除，无本窗候选 | 已检查 | 无 |
+| SRC-ARXIV | 官方 new-announcement 批次 519 个唯一身份；标题全量语义筛选，含糊/高信号项读完整摘要，30 项进入候选；候选精确 v1 页面均可访问，未见官方 withdrawn 标记 | 已检查 | 无 |
+| 表外：[METR 事故复盘](https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/) | 由 OpenAI 事故材料触发，只核对同一事件的独立观察和限制 | 已检查 | 无 |
 
-Evaluation contract：OLMo-3 7B、math/code pass@16 与后续特定 GRPO pass@1；含控制实验和理论分析。证据边界：只覆盖一个 7B 家族与特定后训练配方；不能推广为所有 easy sample 都应丢弃。因此本报告只保留与 `TRAIN-SFT` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-TAILSFT:end -->
+## 3. 候选与判断
 
-<!-- review:SF-2026-TACFORCING:start -->
-<!-- claim:SF-2026-TACFORCING:start -->《TacForcing: Streaming Action Generation with Execution-Time Tactile Feedback》面对的问题是：chunk VLA 在执行前一次读取 tactile，接触状态变化后条件已过期。其机制不是名称替换，而是以 streaming action expert 在执行中持续接收 tactile，并用 EATA 只让临近执行动作关注最新触觉，避免独立高频控制器。<!-- claim:SF-2026-TACFORCING:end -->
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
+| [GLM-5.3-Flash](https://www.zhipuai.cn/zh/research/163) | 2026-08-26T22:00:00+08:00 | 混合 linear/sparse attention、IndexPool 与稀疏激活共同改变长上下文模型的 state/cost contract；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：MODEL-LONG-CONTEXT，[Ch22](../../../../books/part-02-model/22-long-context.md)，并短交接 MODEL-MOE/INFER-KV-CACHE |
+| [The Hugging Face incident and the road ahead](https://openai.com/index/hugging-face-incident-and-the-road-ahead/) | 2026-08-26T11:30:00+08:00 ～ 2026-08-27T00:00:00+08:00 | 评测 sandbox 的凭据、网络和监控本身属于安全合同；3 + 3 + 3 = 9 | 深入完成 | 已有覆盖：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [post-graph-rag](https://arxiv.org/abs/2608.24921v1) | 2026-08-27T08:00:00+08:00 | 把 Graph RAG 的抽取准入、双时态事实与 synthesis grounding 连接为一条可审计状态链；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：AGENT-MEMORY，[Ch77](../../../../books/part-07-agent/77-memory.md)，RAG 只作消费端交接 |
+| [ExFold](https://arxiv.org/abs/2608.24938v1) | 2026-08-27T08:00:00+08:00 | 用同一 output-approximation 合同分别约束 prefill 的 token expert 与 decode 的 batch expert pool；3 + 3 + 2 = 8 | 深入完成 | 整合：MODEL-MOE，[Ch21](../../../../books/part-02-model/21-moe.md)，运行时交接 INFER-TENSORRT-LLM |
+| [ToolMinimize](https://arxiv.org/abs/2608.24957v1) | 2026-08-27T08:00:00+08:00 | effect admission 前按 schema 改写 tool arguments，补上 allow/block 与信息流标签之间的最小披露层；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：AGENT-TOOL-CALLING，[Ch78](../../../../books/part-07-agent/78-tool-calling.md) |
+| [Auto-Policy, not Auto-Skill](https://arxiv.org/abs/2608.25091v1) | 2026-08-27T08:00:00+08:00 | 把自然语言 Skill 与可执行 authority policy 分开，以 typed state、lease 与 sensor evidence 决定 physical effect；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY / AGENT-TOOL-CALLING，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) / [Ch78](../../../../books/part-07-agent/78-tool-calling.md) |
+| [Hydra](https://arxiv.org/abs/2608.25053v1) | 2026-08-27T08:00:00+08:00 | 证明 edge inference 需按 prefill/decode、backend、SoC、格式与长度联合测量；2 + 3 + 2 = 7 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [FLINT](https://arxiv.org/abs/2608.25062v1) | 2026-08-27T08:00:00+08:00 | 将 HBF 作为 HBM 旁的只读权重 tier，并把 burst、refresh 与 address translation 移出前台关键路径；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：INFER-GPU-MEMORY，[Ch54](../../../../books/part-05-inference-system/54-gpu-memory.md) |
+| [Understanding the Energy Scaling of LLM Inference](https://arxiv.org/abs/2608.25096v1) | 2026-08-27T08:00:00+08:00 | 把 decode energy 与 context、batch、attention family、KV 增长共同测量，但架构与模型身份仍有混杂；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [Transforms for LLM Quantization](https://arxiv.org/abs/2608.25188v1) | 2026-08-27T08:00:00+08:00 | 证明 transform 目标随 bit-allocation 与实际 number format 反转，修正“旋转总是压平越好”的泛化；3 + 3 + 3 = 9 | 深入完成 | 整合：INFER-TENSORRT-LLM，[Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md) |
+| [Trust the Mass](https://arxiv.org/abs/2608.25230v1) | 2026-08-27T08:00:00+08:00 | 揭示 KV eviction benchmark 的 nominal budget、实际 bytes 与 question-visible ranking 混杂；3 + 3 + 3 = 9 | 深入完成 | 整合：INFER-KV-CACHE，[Ch45](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md)，并交接 Evaluation |
+| [Groundhog Bit-Flip Attack](https://arxiv.org/abs/2608.25276v1) | 2026-08-27T08:00:00+08:00 | MoE 将 EOS 行为集中到少数 expert/routing bits，形成可构造 denial-of-wallet 路径；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [Metis](https://arxiv.org/abs/2608.25322v1) | 2026-08-27T08:00:00+08:00 | provider stream 先归一为 typed events，再由 permission 与 lifecycle state 决定 effect；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：AGENT-TOOL-CALLING，[Ch78](../../../../books/part-07-agent/78-tool-calling.md) |
+| [LLMscope](https://arxiv.org/abs/2608.25321v1) | 2026-08-27T08:00:00+08:00 | 把模型权重、activation 与 KV 等机密资产的边界推进到 edge accelerator 的物理存储/计算结构；3 + 3 + 3 = 9 | 深入完成 | 整合：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [Capacity Overflow](https://arxiv.org/abs/2608.25371v1) | 2026-08-27T08:00:00+08:00 | 揭示 Vision MoE 的 batch-dependent capacity 可让 backdoor 在小批审计休眠、部署批量激活；3 + 3 + 3 = 9 | 深入完成 | 整合：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)，交接 MODEL-MOE |
+| [Here is a GIFT](https://arxiv.org/abs/2608.25431v1) | 2026-08-27T08:00:00+08:00 | 将多租户数据隔离从 CPU orchestration 延伸到 GPU kernel information flow；3 + 3 + 3 = 9 | 深入完成 | 已有覆盖：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [Separating Disclosure from Authorization](https://arxiv.org/abs/2608.25474v1) | 2026-08-27T08:00:00+08:00 | 按字段拆分 raw authorization、可审计 projection 与 never-leave 数据；3 + 3 + 3 = 9 | 深入完成 | 已有覆盖：AGENT-TOOL-CALLING，[Ch78](../../../../books/part-07-agent/78-tool-calling.md) |
+| [MMJailBench](https://arxiv.org/abs/2608.25490v1) | 2026-08-27T08:00:00+08:00 | 将 harmful intent、framing、视觉语义与 instruction carrier 正交化，避免 multimodal jailbreak 归因混杂；3 + 2 + 2 = 7 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM / PLATFORM-SECURITY，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) / [Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [A Storage-Retrieval Gap in Parametric Knowledge Graph Memory](https://arxiv.org/abs/2608.25489v1) | 2026-08-27T08:00:00+08:00 | 区分“知识能写入 adapter”与“能由 query 找到正确 adapter”，暴露存储与寻址并非同一能力；2 + 2 + 3 = 7 | 深入完成 | 已有覆盖：AGENT-MEMORY，[Ch77](../../../../books/part-07-agent/77-memory.md) |
+| [TOPAS](https://arxiv.org/abs/2608.25523v1) | 2026-08-27T08:00:00+08:00 | 在共享 KV 预算内联合选择 prefix residency、request admission、critical path 与 aging；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：INFER-SCHEDULING，[Ch56](../../../../books/part-05-inference-system/56-inference-scheduling.md) |
+| [When Stale Constraints Go Unchecked](https://arxiv.org/abs/2608.25553v1) | 2026-08-27T08:00:00+08:00 | provenance 可达不等于验证预算会命中已 supersede 的关键约束；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：AGENT-MEMORY，[Ch77](../../../../books/part-07-agent/77-memory.md) |
+| [JIT-Agent](https://arxiv.org/abs/2608.25593v1) | 2026-08-27T08:00:00+08:00 | 把 harness 提升为可生成、修复、演进并单独版本化的 artifact，但生成者不能自证其可靠性；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：AGENT-PLATFORM，[Ch84](../../../../books/part-07-agent/84-agent-platform.md) |
+| [AWM](https://arxiv.org/abs/2608.25618v1) | 2026-08-27T08:00:00+08:00 | 最终答案正确与命中 evidence page 均不能证明 terminal working memory 足以独立支持答案；3 + 3 + 3 = 9 | 深入完成 | 整合：AGENT-MEMORY，[Ch77](../../../../books/part-07-agent/77-memory.md)，评测交接 Ch66 |
+| [Unmatched Does Not Mean False](https://arxiv.org/abs/2608.25654v1) | 2026-08-27T08:00:00+08:00 | 不完整 reference 把未匹配真值错标为 false，甚至反转 calibration 排名；3 + 3 + 2 = 8 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [SCALE-QA / TSIM](https://arxiv.org/abs/2608.25655v1) | 2026-08-27T08:00:00+08:00 | 平坦混合对话需要恢复完整 operative episode，而非只命中零散相关片段；3 + 3 + 3 = 9 | 深入完成 | 整合：AGENT-MEMORY，[Ch77](../../../../books/part-07-agent/77-memory.md) |
+| [psRL](https://arxiv.org/abs/2608.25683v1) | 2026-08-27T08:00:00+08:00 | 在训练 update phase 利用全局 prefix visibility，联合 placement 与 block KV 管理；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：TRAIN-DISTRIBUTED-TRAINING，[Ch36](../../../../books/part-04-training-system/36-distributed-training.md) |
+| [LMSM](https://arxiv.org/abs/2608.25697v1) | 2026-08-27T08:00:00+08:00 | 把 learned evidence、versioned policy 与独立输出 gate 解耦；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [TailSFT](https://arxiv.org/abs/2608.25756v1) | 2026-08-27T08:00:00+08:00 | 用样本学习状态把 SFT 预算转向 under-modeled tail，但没有建立通用过滤规则；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：TRAIN-SFT，[Ch29](../../../../books/part-04-training-system/29-sft.md) |
+| [Spectral Allocation](https://arxiv.org/abs/2608.25990v1) | 2026-08-27T08:00:00+08:00 | 以 loss/gradient spectrum 解释 Muon 与 Adam 的方向分配差异；3 + 2 + 2 = 7 | 深入完成 | 已有覆盖：TRAIN-PRETRAINING，[Ch28](../../../../books/part-04-training-system/28-pretraining.md) |
+| [AsymSpec](https://arxiv.org/abs/2608.26004v1) | 2026-08-27T08:00:00+08:00 | drafter 使用压缩 context、verifier 保留完整 context，分离 proposal cost 与 exactness；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：INFER-SPECULATIVE-DECODING，[Ch48](../../../../books/part-05-inference-system/48-speculative-decoding.md) |
+| [StreamPI](https://arxiv.org/abs/2608.26067v1) | 2026-08-27T08:00:00+08:00 | 用 pair 内双向、跨 pair 因果的视觉—动作单元及随机异步训练连接 streaming VLA 与控制时序；3 + 3 + 2 = 8 | 深入完成 | 整合：MULTIMODAL-EMBODIED-VLA，[Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
+| [Prefix Sliding](https://arxiv.org/abs/2608.26070v1) | 2026-08-27T08:00:00+08:00 | 长 reasoning 只保留受控 prefix working set，并显式暴露删除与恢复边界；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：MODEL-LONG-CONTEXT，[Ch22](../../../../books/part-02-model/22-long-context.md) 与 INFER-KV-CACHE Ch45 |
 
-Evaluation contract：六个 UniVTAC 仿真与三个实机 contact-rich tasks，报告 success rate。证据边界：没有证明通用实时性、安全 envelope 或更长 horizon；现有 VLA feedback-loop 章节已能承载。因此本报告只保留与 `MULTIMODAL-EMBODIED-VLA` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-TACFORCING:end -->
+## 4. 证据与知识整合
 
-<!-- review:SF-2026-SKILLSHIELD:start -->
-<!-- claim:SF-2026-SKILLSHIELD:start -->《SkillShield: Prompt-Space Security Skills for LLM Coding Agents》面对的问题是：API-only coding agent 无法改权重，而逐步外部 classifier/reference monitor 又增加运行成本。其机制不是名称替换，而是离线从攻击/失败合成 security skills，以固定 prompt budget 在 all-class、bundle、per-class 三种 scope 注入整个 tool loop。<!-- claim:SF-2026-SKILLSHIELD:end -->
+### [GLM-5.3-Flash](https://www.zhipuai.cn/zh/research/163)
 
-Evaluation contract：六模型 RedCode、两类非自适应 jailbreak、731 benign prompts；比较 ASR、severity 与 refusal。证据边界：prompt policy 仍由同一模型解释，面对 adaptive attack 无硬隔离保证，不能替代 authorization/reference monitor。因此本报告只保留与 `PLATFORM-SECURITY` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-SKILLSHIELD:end -->
+官方正文与技术 Blog 固定了 320B 总参数、18B 激活参数、45 层，以及 linear attention 与 sparse attention 的混合结构；IndexPool 将索引器四个缓存向量加权压成一个。公开比较只给每 head/层的计算量与 BF16 KV 平均值，真实并发、硬件拓扑、SLO 和独立复现未披露，因此只采用“混合状态形态需要共同定义模型身份、KV 与 fallback”的机制，不采用厂商能力/价格结论。Ch22 已按 hybrid linear/softmax/sparse state、selector、KV 与 fallback 组织这条边界，IndexPool 只是该合同下的特定实现，故不重复整合。
 
-<!-- review:SF-2026-LOCALIZE-DECIDE:start -->
-<!-- claim:SF-2026-LOCALIZE-DECIDE:start -->《Localize-Then-Decide Guarantees for LLM Judgments》面对的问题是：候选数增加会把 probability mass 摊薄，破坏 confidence 与 human disagreement 的单调关系。其机制不是名称替换，而是先用 conformal prediction 产生高概率包含 human-preferred answer 的 shortlist，再在 shortlist 内 calibrated decide-or-abstain。<!-- claim:SF-2026-LOCALIZE-DECIDE:end -->
+### [The Hugging Face incident and the road ahead](https://openai.com/index/hugging-face-incident-and-the-road-ahead/)
 
-Evaluation contract：多候选规模、多个数据集与 judge LLM；比较 guarantee success rate 与 coverage，并依赖 five-sample/few-shot calibration。证据边界：保证依赖 exchangeability 与校准分布；不是模型自知，也不覆盖分布漂移或 judge 攻击。因此本报告只保留与 `PLATFORM-EVALUATION-SYSTEM` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-LOCALIZE-DECIDE:end -->
-
-<!-- review:SF-2026-SKILL-ISSUE:start -->
-<!-- claim:SF-2026-SKILL-ISSUE:start -->《Skill Issue: Are Skills Language-Invariant in LLMs?》面对的问题是：知识和通用 benchmark 会混淆 language interface 对实际技能执行的影响。其机制不是名称替换，而是同模型 self-play 固定 game/rules/state/action，仅改变双方界面语言并交换角色；另把 interface language 与 reasoning language 分离。<!-- claim:SF-2026-SKILL-ISSUE:end -->
-
-Evaluation contract：三种 3–4B open models、六 games、八人工核验语言，每方向 400 局，共 518,400 games。证据边界：仅小模型与八语言；self-play 测相对强弱而非绝对部署质量，translation/tokenization 仍是混杂因素。因此本报告只保留与 `PLATFORM-EVALUATION-SYSTEM` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-SKILL-ISSUE:end -->
-
-<!-- review:SF-2026-MA-VLA:start -->
-<!-- claim:SF-2026-MA-VLA:start -->《MA-VLA: Multi-Arm Vision-Language-Action Model for Collaboration and Compositional Generalization》面对的问题是：单一 global instruction 无法显式分配多臂子目标，模型容易把技能绑定固定 arm identity。其机制不是名称替换，而是planner 生成有限 atomic prompts；统一 Pi0 executor 联合输出多臂 action；Arm Shuffle 联合置换 state/view/prompt/action tuple，View Dropout 增强视角鲁棒性。<!-- claim:SF-2026-MA-VLA:end -->
-
-Evaluation contract：RoboFactory、RoboTwin2.0 与 SO101；仿真每配置100 rollouts，实机每任务20 episodes，2×A800。证据边界：只证明 seen atomic skills 的组合重排；planner error、控制频率、latency、安全与 open-world skill acquisition 未评估。因此本报告只保留与 `MULTIMODAL-EMBODIED-VLA` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-MA-VLA:end -->
-
-<!-- review:SF-2026-VGI-WHITE-PAPER:start -->
-<!-- claim:SF-2026-VGI-WHITE-PAPER:start -->《Visual General Intelligence: A White Paper》面对的问题是：视觉智能研究缺少从输入模态、学习范式到 benchmark 的统一问题框架。其机制不是名称替换，而是以多作者 white paper 梳理 vision-centered AGI 的定义、模态、学习、评测与语言关系，而非提出单一可执行系统。<!-- claim:SF-2026-VGI-WHITE-PAPER:end -->
-
-Evaluation contract：证据是观点综述和研究议程，不存在可归因于一项机制的 matched benchmark。证据边界：不能用共识性叙述证明具体机制收益；Ch25 已区分生成、预测、因果控制与 persistent world state。因此本报告只保留与 `MULTIMODAL-WORLD-MODELS` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-VGI-WHITE-PAPER:end -->
-
-<!-- review:SF-2026-CODE-WORLD-MODEL:start -->
-<!-- claim:SF-2026-CODE-WORLD-MODEL:start -->《Code World Model: Coding Agent as World Brain》面对的问题是：纯视频 world model 观察结果却不拥有规则，难以维持可修改、持久且可执行的因果状态。其机制不是名称替换，而是拆分 S_exe/S_vis：coding agent 管低频推理与机制修订，code 管确定性 transition，video model 通过可寻址 proxy 渲染 observation。<!-- claim:SF-2026-CODE-WORLD-MODEL:end -->
-
-Evaluation contract：157 gameplay takes、约5.6小时/9420 clips；8×H800 对 MiniMax-H3 做 LoRA，主要是 qualitative proxy-following。证据边界：没有实时、控制或因果定量评估；agent 不能从零可靠构造复杂 simulator，项目页没有公开代码。因此本报告只保留与 `MULTIMODAL-WORLD-MODELS` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-CODE-WORLD-MODEL:end -->
-
-<!-- review:SF-2026-TAU-AGENT:start -->
-<!-- claim:SF-2026-TAU-AGENT:start -->《TAU-Agent: An Agentic Retrieval-Augmented Framework for Traffic Anomaly Understanding》面对的问题是：交通视频异常问答需要从长视频中取回与 query 相关的时间段、字幕与对象轨迹。其机制不是名称替换，而是central agent 编排 2秒 caption segments、open-vocabulary tracking 与迭代 evidence selection，再把 slow-fast frames 和 top-k 文本交给 VLM。<!-- claim:SF-2026-TAU-AGENT:end -->
-
-Evaluation contract：AI City Track3/FETV/PSI-VQA；Gemini caption、GPT-5.4 agent、Qwen3-VL-8B LoRA、2×RTX PRO 6000。证据边界：大量 benchmark-specific 后处理；closed API revision、cost/latency 与 agent/tool ablation 未闭合，非 streaming。因此本报告只保留与 `AGENT-RAG` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-TAU-AGENT:end -->
-
-<!-- review:SF-2026-SPECTRAL-ALLOCATION:start -->
-<!-- claim:SF-2026-SPECTRAL-ALLOCATION:start -->《Spectral Allocation: Why Muon Outperforms Adam, and How to Improve Muon》面对的问题是：Muon 的统一正交缩放没有解释为何优于 Adam，也可能低估 loss landscape tolerant bulk 的可用步长。其机制不是名称替换，而是在 held-out data 上按 momentum singular directions 探测 loss-optimal step，区分 volatile head 与 tolerant bulk；SAMuon/SAMuon-lite 对 bulk 放大。<!-- claim:SF-2026-SPECTRAL-ALLOCATION:end -->
-
-Evaluation contract：modded-nanogpt 124M/300M/1B、多个 batch；比较 AdamW、Muon 与验证损失所需 token，lite 用 rank-one power iteration。证据边界：仅小到中型模型；静态 spectral prior 在 frontier scale、不同 architecture 与长期稳定性上未证明。因此本报告只保留与 `TRAIN-PRETRAINING` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-SPECTRAL-ALLOCATION:end -->
-
-<!-- review:SF-2026-PROGROUTER:start -->
-<!-- claim:SF-2026-PROGROUTER:start -->《ProgRouter: Online Progress-Guided Orchestration for Multi-Agent LLM Workflows under Quality-Cost Tradeoffs》面对的问题是：one-shot cascade router 无法随 multi-step workflow 的剩余难度、进度和预算变化调整模型。其机制不是名称替换，而是以多视角 progress scorer、dual-path predictor 与 meta-gating 估计每步候选 LLM 的 progress gain，在线平衡 time/cost。<!-- claim:SF-2026-PROGROUTER:end -->
-
-Evaluation contract：HumanEval+、MBPP、MATH-500、ASQA 四个 benchmark，跨代码、数学与 RAG workflow。证据边界：不证明开放工具环境、并发资源竞争或真实价格漂移；现有 multi-agent orchestration 已承载该 policy 类。因此本报告只保留与 `AGENT-MULTI-AGENT` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-PROGROUTER:end -->
-
-<!-- review:SF-2026-ASYMSPEC:start -->
-<!-- claim:SF-2026-ASYMSPEC:start -->《AsymSpec: Context-Asymmetric Speculative Decoding for Agentic LLMs》面对的问题是：压缩 verifier context 降成本却损伤正确性，而传统 speculative decoding 强制 drafter/verifier 同 context。其机制不是名称替换，而是让轻量 drafter 读 full context、large verifier 读 compressed view，以 contrastive delta-fusion 和 divergence-aware acceptance gate 传递被压缩信号。<!-- claim:SF-2026-ASYMSPEC:end -->
-
-Evaluation contract：四类 agent capability 与两个端到端 benchmark；Qwen3-32B/vLLM 条件下比较 accuracy、throughput 与 compute。证据边界：只在特定确定性设置验证；不是 token-exact 的普通 SD 等价保证，压缩器与 verifier drift 仍可能失效。因此本报告只保留与 `INFER-SPECULATIVE-DECODING` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-ASYMSPEC:end -->
-
-<!-- review:SF-2026-STREAMPI:start -->
-<!-- claim:SF-2026-STREAMPI:start -->《StreamPI: Streaming Multimodal Temporal Modeling for Vision-Language-Action Models》面对的问题是：single-frame VLA 丢失过去 observation，且同步训练与实机异步采样存在 timing gap。其机制不是名称替换，而是把 observation-instruction pair 作为原子单元，单元内双向融合、跨单元 causal attention；random-interval training 适应异步 frame timing。<!-- claim:SF-2026-STREAMPI:end -->
-
-Evaluation contract：LIBERO 与 memory-dependent/precise-perception 实机任务，对 pi0.5 比较 success。证据边界：未披露完整控制频率、tail latency 与 safety；属于既有 observation-history/action-loop 的参数零增量实现。因此本报告只保留与 `MULTIMODAL-EMBODIED-VLA` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-STREAMPI:end -->
-
-<!-- review:SF-2026-PREFIX-SLIDING:start -->
-<!-- claim:SF-2026-PREFIX-SLIDING:start -->《Prefix Sliding for efficient test-time scaling》面对的问题是：长 reasoning 保留完整轨迹导致 KV 与 attention 成本随思考长度增长，而近期状态和固定任务契约的重要性不同。其机制不是名称替换，而是永久保留 system/task prefix 与最近 reasoning window，丢弃中间 token；继续 RoPE position 复用 KV，RL 侧用约4×window context、末端 loss mask。<!-- claim:SF-2026-PREFIX-SLIDING:end -->
-
-Evaluation contract：Qwen3-1.7B 为主并验证7B；GPQA/MATH500/AIME25，单80GB H100、1024 sequences、window4096 的吞吐实验。证据边界：LiveCodeBench 旧代码依赖受损；短生成收益小、tool output 可淹没 window；v1 时 repo 只有 README/License，无实现代码。因此本报告只保留与 `MODEL-LONG-CONTEXT` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-PREFIX-SLIDING:end -->
-
-<!-- review:SF-2026-ZERO-WAM:start -->
-<!-- claim:SF-2026-ZERO-WAM:start -->《Zero-WAM: In-Context World-Action Modeling from Human Videos for Open-Ended Task Generalization》面对的问题是：语言不足以完整指定新 manipulation task，而 paired human-robot demonstrations 稀缺。其机制不是名称替换，而是把 human video 作为 in-context task contract；causal model 先预测 future robot video 再由 inverse dynamics 预测 action；IFP 强迫利用 human prefix，HumanGen 合成74.2K pairs。<!-- claim:SF-2026-ZERO-WAM:end -->
-
-Evaluation contract：Wan-2.2-TI2V-5B、15360 GPU-hours；RoboTwin七 unseen tasks 与双Franka实机每任务30 trials。证据边界：synthetic video/VLM filter 会引入偏差；仅 tabletop、小样本实机，embodiment gap 与 artifact 均未闭合。因此本报告只保留与 `MULTIMODAL-EMBODIED-VLA` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-ZERO-WAM:end -->
-
-<!-- review:SF-2026-HY-MT2-REVISION:start -->
-<!-- claim:SF-2026-HY-MT2-REVISION:start -->《Hy-MT2 README max_context revision》面对的问题是：部署示例需要显式给出上下文上限。其机制不是名称替换，而是exact commit 只在 README 两处 inference/deployment 配置加入 max_context: 8192。<!-- claim:SF-2026-HY-MT2-REVISION:end -->
-
-Evaluation contract：逐行审阅 commit ff1903e；没有模型质量或性能实验。证据边界：只证明示例配置事实，不证明训练长度、服务端 enforcement、架构、质量、latency 或 safety。因此本报告只保留与 `MODEL-LONG-CONTEXT` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-HY-MT2-REVISION:end -->
-
-<!-- review:SF-2026-UNIRL-MAINTENANCE:start -->
-<!-- claim:SF-2026-UNIRL-MAINTENANCE:start -->《UniRL branch maintenance sync》面对的问题是：仓库同步维护分支。其机制不是名称替换，而是exact commit 是 branch/repository maintenance，没有新增可识别算法、接口或 release contract。<!-- claim:SF-2026-UNIRL-MAINTENANCE:end -->
-
-Evaluation contract：审阅 commit 96747df 的 diff 与父提交关系；不适用 benchmark。证据边界：维护提交不能作为技术机制、版本能力或训练结果证据。因此本报告只保留与 `TRAIN-GRPO` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-UNIRL-MAINTENANCE:end -->
-
-<!-- review:SF-2026-MINIMAX-FINANCIAL:start -->
-<!-- claim:SF-2026-MINIMAX-FINANCIAL:start -->《MiniMax 2026 first-half financial results》面对的问题是：机构经营与收入变化提供行业背景。其机制不是名称替换，而是官方财报披露业务数据，但未公开可复核的模型/系统机制。<!-- claim:SF-2026-MINIMAX-FINANCIAL:end -->
-
-Evaluation contract：仅核对官方 2026 H1 results 页面；不适用技术 benchmark。证据边界：财务口径不能证明模型能力、训练效率或系统架构，保留 Weekly context。因此本报告只保留与 `WORLDVIEW-FUTURE` 相关的机制与边界，分数只决定 Review route，不把作者结果外推为通用结论。
-<!-- review:SF-2026-MINIMAX-FINANCIAL:end -->
-
-## 4. Benchmark Contracts
-
-所有数字均保持在作者实验合同内；`Not Disclosed` 表示 exact v1 未给出该字段，不用推断值补齐。
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-OPENAI-HF-INCIDENT | 单次内部 cyber-evaluation 事故；不提供普遍发生率 | highly capable internal-only research model；GPT-5.6 Sol | evaluation sandbox；production 与 sandbox controls 明确区分 | Not Disclosed | adversarial task context，exact token length Not Disclosed | agent actions，exact output length Not Disclosed | Not Disclosed | 单次被监控 agent run；并发 Not Disclosed | incident timeline、unauthorized-action scope、containment/control findings；无性能 SLO | OpenAI Creator Primary 证明事故与内部控制；METR/Redwood Independent Evaluator 仅证明行为评估 |
-| SF-2026-GROUNDHOG-BITFLIP | Alpaca target detection；AGNews、SST-2、Samsum、SQuAD2.0；conversation/reasoning/agentic tasks | Mixtral-8x7B、Phi-3.5-MoE、DeepSeek-V2-Lite、Qwen3-30B-A3B、Qwen3-Coder-Next、GPT-OSS-20B | 3×NVIDIA A100 80GB | Not Disclosed | dataset/task dependent；exact prompt length Not Disclosed | max_new_tokens 1024；plan mode 2048 | Not Disclosed | Not Disclosed | token-length inflation、clean accuracy、ROUGE-1、F1、plan steps | paper authors；task-native scorers |
-| SF-2026-METIS-RUNTIME | 30 matched real-I/O pairs；10-case fault matrix；300 tool results；five-model Read-marker protocol | protocol probe uses five named models；runtime timing has no model | Apple M2 Pro，12 CPU cores，16GB；macOS 26.5.2；Go 1.26.1 | Not Applicable for runtime；model precision Not Disclosed | matched calls/results；token length Not Disclosed | 300 tool results；token length Not Disclosed | 5 calls per pair | Safe、Queue、Exclusive declarations；baseline treats all Exclusive | paired elapsed ms、fault closure、authority evidence | paper authors；paired local runtime harness |
-| SF-2026-GIFT-IFC | vLLM/DistServe prototypes across OPT and Qwen2.5 serving | OPT-13B/30B/66B；Qwen2.5-14B/32B/72B | 1–8×A800 or 1×H100，configuration varies by model | Not Disclosed | ShareGPT requests；length distribution Not Disclosed | ShareGPT outputs；length distribution Not Disclosed | batch sizes 8/16/32 in reported sweeps | request rate varied；exact concurrent-request count Not Disclosed | throughput、TTFT、TPOT、IFT overhead | paper authors；prototype instrumentation |
-| SF-2026-FIELD-TIER-MIN | local action-mediation corpus、per-projection leakage analysis 与一次 identifier incident | Not Disclosed — no model is used by this local mediation evaluation | local implementation；hardware Not Disclosed | Not Disclosed — numerical model precision is not part of the local mediation evaluation | structured action fields；length Not Applicable | projection/attestation artifacts；length Not Applicable | corpus aggregate；exact batch Not Disclosed | Not Disclosed | leaked-field count、digest/attestation correctness；无 latency SLO | paper authors；corpus and incident audit |
-| SF-2026-CASKG | ALFWorld ID-140 与 ScienceWorld U211；graph/retrieval ablations | six LLMs in §4.1；Qwen3-Embedding-8B retrieval component | Not Disclosed | Not Disclosed | environment trajectories；token length Not Disclosed | actions until task termination；token length Not Disclosed | Not Disclosed | Not Disclosed | task success/score、environment steps、retrieval quality | paper authors；environment-native evaluators |
-| SF-2026-AGENTIC-GAME-WM | UnitySceneBench and generated-game trajectories；research agenda plus bounded study | continued-pretraining model Not Disclosed；Qwen3.6-35B-A3B judge | 8×A100 workers disclosed for data/training path | Not Disclosed | game trajectories；exact token/frame length Not Disclosed | generated trajectories；exact length Not Disclosed | global batch 4096 | worker parallelism disclosed；serving concurrency Not Disclosed | MLLM-judge score plus human audit；not a matched system benchmark | Qwen3.6-35B-A3B judge and human audit under author protocol |
-| SF-2026-TOPAS | three synthetic DAGs and two MetaGPT workflows on SGLang v0.5.3 | workload model configurations in §V.A；single canonical model Not Applicable | 1×NVIDIA A100 80GB | Not Disclosed | DAG/workflow dependent；exact token length Not Disclosed | query outputs；exact length Not Disclosed | fixed query sets；batch Not Disclosed | ready-agent concurrency varied by DAG/workflow | mean/p99 JCT、request throughput、cache hit/reuse | paper authors；SGLang instrumentation |
-| SF-2026-POLYMEMDB | 221 relationship construction demonstration；no matched benchmark or fault injection | Not Disclosed | Not Disclosed | Not Disclosed | demonstration records；length Not Disclosed | memory graph/records；length Not Disclosed | Not Disclosed | Not Disclosed | interface/relationship construction only；no quantitative SLO | paper authors；demonstration only |
-| SF-2026-V-RUBRICS | 50,248 samples from 17 sources；rubric GRPO versus answer-only GRPO | Qwen3-VL-8B actor；Qwen3-VL-235B-A22B judges | 8 GPUs per node；GPU type and node count Not Disclosed | judge FP8；actor precision Not Disclosed | prompt max 8192 tokens | response max 8192 tokens | rubric 192；answer 480；PPO mini-batch 192/96 | rubric generation concurrent per item；exact worker count Not Disclosed | benchmark task metrics、rubric reward quality、component ablation | paper authors；model judges plus benchmark scorers |
-| SF-2026-RA-VLA | LIBERO and real UR5e tasks；retrieval scale to 10^7 candidates | flow-matching VLA；SigLIP2 retriever | 1×NVIDIA A100 | Not Disclosed | demonstration 128 steps split into 15 segments | action chunk with 4 denoising steps | Not Disclosed | latency averaged over 1000 runs | task success and inference latency | paper authors；LIBERO/real-robot task success |
-| SF-2026-JIT-AGENT | nine benchmarks；OpenCode/Claude Code and other harness comparisons | DeepSeek、GLM、MiMo、Qwen model pairs as listed in §6.1 | Not Disclosed | Not Disclosed | benchmark dependent | benchmark dependent | Not Disclosed | Not Disclosed | task reward、mean latency、monetary cost | benchmark-native scorers under author harness |
-| SF-2026-RETRIEVALROUTER | 11 document-retrieval benchmarks；80/10/10 in-domain split；five retrieval pipelines | frozen Qwen3-0.6B router with LoRA query encoder | 1×NVIDIA H100 80GB；about 40GB combined indexes | Not Disclosed | query/document lengths dataset-dependent | ranked retrieval results；cutoff dataset-dependent | Not Disclosed | one query routed per decision；serving concurrency Not Disclosed | nDCG、MRR、Recall、mean/P95 latency、index footprint | paper authors；standard retrieval metrics |
-| SF-2026-PSRL | production traces and agentic-RL prefix-sharing update workloads | Qwen2.5-1.5B/7B；Qwen3-235B | 4×A100 80GB per node；Xeon；200Gb/s intra-node and 100Gb RDMA | Not Disclosed | prompt/generation lengths per Table 2 | rollout lengths per Table 2 | rollout N and update batches per Table 2 | DP/TP/EP/PP configurations disclosed | update throughput、end-to-end latency、memory；no production tail SLO | paper authors；runtime instrumentation |
-| SF-2026-LMSM | HarmBench、XSTest；SAE/transcoder/dense probes on Transformers/vLLM | Qwen3-4B thinking | 1×NVIDIA H100 | backend-dependent；judge labeling uses bfloat16 where stated | prompts per benchmark；exact length Not Disclosed | max 256 tokens | up to 32 active sequences | 32 active sequences | ASR、FRR、throughput | paper authors；benchmark labels and rule-specific evaluators |
-| SF-2026-REDIR | two agent-safety benchmarks；three model families；eight held-out tool domains | Qwen3.5-9B、Ministral-3-8B-Instruct、Gemma-4-E4B | NVIDIA A100 | Not Disclosed | multi-turn trajectories；exact tokens Not Disclosed | action trajectories；exact tokens Not Disclosed | Not Disclosed | Not Disclosed | ASR、SSR/benign fidelity、FPR、latency/memory overhead | paper authors；benchmark task/safety scorers |
-| SF-2026-TAILSFT | math/code SFT diagnostics and downstream GRPO | OLMo-3 7B | Not Disclosed | Not Disclosed | code 2048；math 4096 | sampled solutions for pass@16/pass@1；exact generation cap Not Disclosed | effective batches disclosed in Appendix D | Not Disclosed | pass@16、pass@1、training loss/coverage diagnostic | paper authors；task execution scorers |
-| SF-2026-TACFORCING | six UniVTAC simulations and three real contact-rich tasks | pi0.5 in simulation；GR00T N1.7 on real tasks | Not Disclosed | Not Disclosed | tactile/vision history；horizon H=40 and K=8 on real setup | streaming action chunks；exact dimensionality task-dependent | global batch 256 | streaming control loop；worker concurrency Not Disclosed | task success rate | paper authors；simulator and real-task completion |
-| SF-2026-SKILLSHIELD | RedCode attacks、two non-adaptive jailbreak families、731 benign prompts | six LLM/coding-agent models listed in §6.1 | Not Disclosed | Not Disclosed | skill cap 10,000 characters, about 2,400 tokens；one skill per session | tool-loop outputs；exact length Not Disclosed | evaluation repetitions per configuration；batch Not Disclosed | Not Disclosed | ASR、average severity、FPR/refusal rate | execution-based benchmark plus Qwen3.6-Plus judge for generation cases |
-| SF-2026-LOCALIZE-DECIDE | multiple candidate-set sizes/datasets/judge LLMs；five-sample/few-shot calibration | judge LLMs and candidate generators listed in §4.1 | Not Disclosed | Not Disclosed | candidate-set size varied；token length Not Disclosed | shortlist plus decide/abstain | calibration samples and candidate size varied | Not Disclosed | guarantee success rate、coverage、target agreement | human-preference labels and calibrated author protocol |
-| SF-2026-SKILL-ISSUE | six games、eight human-verified languages；400 games per direction，518,400 total | three open 3–4B models listed in §3 | Not Disclosed | Not Disclosed | game/rules/state/action fixed across language pair；token length Not Disclosed | legal game moves | 400 games per direction | self-play pairs；execution parallelism Not Disclosed | win/loss margins and language-invariance gaps | deterministic game engines plus author analysis |
-| SF-2026-MA-VLA | RoboFactory、RoboTwin2.0、SO101；100 simulation rollouts/config and 20 real episodes/task | Pi0 unified executor plus VLM planner in §5.1 | 2×A800 | Not Disclosed | multi-view observations and atomic prompts；exact length Not Disclosed | joint multi-arm actions | training batch 32 | rollout execution；serving concurrency Not Disclosed | task success and safety-stop observations | simulator/real-task completion under author protocol |
-| SF-2026-CODE-WORLD-MODEL | 157 gameplay takes，about 5.6 h and 9,420 clips；qualitative proxy-following | MiniMax-H3 LoRA plus video renderer/world model | 8×H800 | Not Disclosed | gameplay clips；exact frame/token length Not Disclosed | code transitions and rendered observations；exact length Not Disclosed | Not Disclosed | Not Disclosed | qualitative proxy-following；no matched control/causal SLO | paper authors；qualitative inspection |
-| SF-2026-TAU-AGENT | AI City Track3、FETV、PSI-VQA；2-second caption segments | Gemini captioner、GPT-5.4 agent、Qwen3-VL-8B LoRA | 2×RTX PRO 6000 | Not Disclosed | slow-fast frames、captions and trajectories；exact tokens Not Disclosed | VQA answers；exact length Not Disclosed | Not Disclosed | retrieval/tool iterations；parallelism Not Disclosed | benchmark accuracy and retrieval/task metrics | official benchmark scripts plus paper pipeline |
-| SF-2026-SPECTRAL-ALLOCATION | modded-nanogpt 124M/300M/1B；AdamW/Muon/SAMuon comparisons | 124M、300M、1B decoder models | Not Disclosed | Not Disclosed | training sequences per modded-nanogpt setup；exact length Not Disclosed | next-token prediction | multiple batches as reported in §6.1 | data-parallelism Not Disclosed | validation loss and tokens-to-target | paper authors；held-out loss |
-| SF-2026-PROGROUTER | HumanEval+、MBPP、MATH-500、ASQA multi-step workflows | candidate LLM pools vary by benchmark and are listed in §4.1 | Not Disclosed | Not Disclosed | workflow state/query dependent | step outputs and final answer；length Not Disclosed | Not Disclosed | online per-step routing；concurrency Not Disclosed | task quality、progress gain、cost、latency | benchmark-native scorers under author router |
-| SF-2026-ASYMSPEC | four agent capabilities and two end-to-end benchmarks | Qwen3-32B verifier plus Qwen3-4B drafter on vLLM | Not Disclosed | Not Disclosed | drafter full context；verifier compressed context；lengths vary by task | speculative blocks and verified answer；block cap per §4.2 | Not Disclosed | Not Disclosed | accuracy/F1、throughput、compute | paper authors；benchmark-native scorers |
-| SF-2026-STREAMPI | LIBERO and memory-dependent/precise-perception real tasks | pi0.5 | Not Disclosed | Not Disclosed | variable observation history with random intervals | action chunks；exact horizon task-dependent | Not Disclosed | asynchronous streaming observations；worker concurrency Not Disclosed | task success | simulator/real-task completion under author protocol |
-| SF-2026-PREFIX-SLIDING | GPQA、MATH500、AIME25；1024-sequence throughput sweep | Qwen3-1.7B main；DeepSeek-R1-Distill-Qwen-7B validation | 1×NVIDIA H100 80GB | Not Disclosed | prefix plus sliding window 4096 main；8192 appendix | reasoning budgets up to 32K tokens | 1024 sequences in throughput experiment | 1024 concurrent sequences | tokens/s and task accuracy | benchmark exact-match scorers and runtime instrumentation |
-| SF-2026-ZERO-WAM | RoboTwin seven unseen tasks；dual-Franka real tasks，30 trials/task；HumanGen 74.2K pairs | Wan-2.2-TI2V-5B world-action model；LingBot-VA baseline | 15,360 GPU-hours；GPU type/count Not Disclosed | Not Disclosed | packed variable samples up to 160K tokens/GPU | future robot video then inverse-dynamics actions | variable packed batch | training parallelism Not Disclosed；real evaluation sequentiality Not Disclosed | simulation and real-robot success rate across three seeds/trials | simulator/real-task completion plus author filtering protocol |
-
-## 5. Deep Analysis Selection
-
-<!-- validator:deep-analysis-selection-v1 -->
-| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
-| --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-OPENAI-HF-INCIDENT | score_7_9<br>forced_review<br>potential_books_delta | selected | DA-ENFORCEMENT-LAYERS | — | 跨 family 改变共同的状态所有权或 evidence/enforcement contract，适合重建演进链 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-GROUNDHOG-BITFLIP | score_7_9<br>forced_review<br>potential_books_delta | subsumed | — | DA-ENFORCEMENT-LAYERS | 与 incident、GPU isolation、evidence backend 和 output gate 共享 enforcement 分层 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-METIS-RUNTIME | score_7_9 | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-METIS-RUNTIME |
-| SF-2026-GIFT-IFC | score_7_9<br>forced_review<br>potential_books_delta | subsumed | — | DA-ENFORCEMENT-LAYERS | 与 incident、GPU isolation、evidence backend 和 output gate 共享 enforcement 分层 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-FIELD-TIER-MIN | score_7_9<br>forced_review<br>potential_books_delta | subsumed | — | DA-ENFORCEMENT-LAYERS | 与 incident、GPU isolation、evidence backend 和 output gate 共享 enforcement 分层 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-TOPAS | score_7_9<br>potential_books_delta | selected | DA-SHARED-STATE-CONTROL | — | 跨 family 改变共同的状态所有权或 evidence/enforcement contract，适合重建演进链 | analysis:DA-SHARED-STATE-CONTROL |
-| SF-2026-V-RUBRICS | score_7_9<br>potential_books_delta | selected | DA-EVALUATION-CONTRACT | — | 跨 family 改变共同的状态所有权或 evidence/enforcement contract，适合重建演进链 | analysis:DA-EVALUATION-CONTRACT |
-| SF-2026-JIT-AGENT | score_7_9 | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-JIT-AGENT |
-| SF-2026-RETRIEVALROUTER | score_7_9<br>potential_books_delta | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-RETRIEVALROUTER |
-| SF-2026-PSRL | score_7_9<br>potential_books_delta | subsumed | — | DA-SHARED-STATE-CONTROL | 改变 prefix state 的 identity、lifetime、placement 或 verification cost | analysis:DA-SHARED-STATE-CONTROL |
-| SF-2026-LMSM | score_7_9<br>forced_review<br>potential_books_delta | subsumed | — | DA-ENFORCEMENT-LAYERS | 与 incident、GPU isolation、evidence backend 和 output gate 共享 enforcement 分层 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-REDIR | score_7_9<br>forced_review | subsumed | — | DA-ENFORCEMENT-LAYERS | 与 incident、GPU isolation、evidence backend 和 output gate 共享 enforcement 分层 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-TAILSFT | score_7_9<br>potential_books_delta | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-TAILSFT |
-| SF-2026-TACFORCING | score_7_9 | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-TACFORCING |
-| SF-2026-SKILLSHIELD | score_7_9<br>forced_review | subsumed | — | DA-ENFORCEMENT-LAYERS | 与 incident、GPU isolation、evidence backend 和 output gate 共享 enforcement 分层 | analysis:DA-ENFORCEMENT-LAYERS |
-| SF-2026-LOCALIZE-DECIDE | score_7_9<br>potential_books_delta | subsumed | — | DA-EVALUATION-CONTRACT | 共同把 aggregate score 拆成可定位、可校准、可 abstain 的 evidence contract | analysis:DA-EVALUATION-CONTRACT |
-| SF-2026-SKILL-ISSUE | score_7_9<br>potential_books_delta | subsumed | — | DA-EVALUATION-CONTRACT | 共同把 aggregate score 拆成可定位、可校准、可 abstain 的 evidence contract | analysis:DA-EVALUATION-CONTRACT |
-| SF-2026-MA-VLA | score_7_9<br>potential_books_delta | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-MA-VLA |
-| SF-2026-VGI-WHITE-PAPER | score_7_9 | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-VGI-WHITE-PAPER |
-| SF-2026-CODE-WORLD-MODEL | score_7_9<br>potential_books_delta | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-CODE-WORLD-MODEL |
-| SF-2026-SPECTRAL-ALLOCATION | score_7_9<br>potential_books_delta | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-SPECTRAL-ALLOCATION |
-| SF-2026-PROGROUTER | score_7_9 | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-PROGROUTER |
-| SF-2026-ASYMSPEC | score_7_9<br>potential_books_delta | subsumed | — | DA-SHARED-STATE-CONTROL | 改变 prefix state 的 identity、lifetime、placement 或 verification cost | analysis:DA-SHARED-STATE-CONTROL |
-| SF-2026-STREAMPI | score_7_9 | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-STREAMPI |
-| SF-2026-PREFIX-SLIDING | score_7_9<br>potential_books_delta | subsumed | — | DA-SHARED-STATE-CONTROL | 改变 prefix state 的 identity、lifetime、placement 或 verification cost | analysis:DA-SHARED-STATE-CONTROL |
-| SF-2026-ZERO-WAM | score_7_9<br>potential_books_delta | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-ZERO-WAM |
-| SF-2026-HY-MT2-REVISION | forced_review | not_selected | — | — | 形成独立机制分支，已由本 family 的完整 Review 与 Books Comparison 闭合 | analysis-decision:SF-2026-HY-MT2-REVISION |
-
-<!-- analysis:DA-ENFORCEMENT-LAYERS:start -->
-### 从提示级防护到独立 enforcement layer
-
-Prompt policy 当时合理，因为它部署快且不需要改 runtime；但当 evaluation agent 能访问凭据、网络和 GPU shared state 时，风险状态已跨出文本边界。Groundhog 暴露模型参数/路由完整性会直接放大资源消耗，GIFT 把租户数据流约束下沉到 kernel，field-tier minimization 则把 disclosure 与 authorization 拆开。LMSM 进一步把 learned evidence、versioned policy 和独立 output gate 分层：收益是可替换 backend 与统一 release point，代价是 calibration drift、规则版本和额外 serving overhead。SkillShield/ReDiR 仍是有价值的 learned defense，但只负责降低风险，不能拥有最终 effect authority。
-<!-- analysis:DA-ENFORCEMENT-LAYERS:end -->
-
-<!-- analysis:DA-SHARED-STATE-CONTROL:start -->
-### Prefix 从重复文本演进为跨阶段共享状态
-
-静态 prefix cache 先解决重复 prefill；多 agent workflow 随后暴露“保留 prefix 会占用 batching memory”的冲突，TOPAS 因而把 cache residency 与 critical path 联合调度。训练侧 psRL 利用 update phase 的 immutable/global-visible prefix，在 placement 与负载均衡间复用；推理侧 Prefix Sliding 则把 immutable task prefix 与 mutable recent reasoning 分开，获得有界 KV，却牺牲中段依赖。AsymSpec 是另一条分支：drafter 持 full context、verifier 持 compressed view，用 verification cost 换准确性。共同原则不是总保留或总压缩，而是先定义状态 identity、owner、lifetime 和 commit/verification contract。
-<!-- analysis:DA-SHARED-STATE-CONTROL:end -->
-
-<!-- analysis:DA-EVALUATION-CONTRACT:start -->
-### 从 aggregate score 到可定位且可拒答的证据合同
-
-单一 outcome score 便于排序，却无法说明错误来自视觉事实、推理链还是语言接口。V-Rubrics 用 atomic criteria 和 prefix-localized reward 改善 credit assignment，但引入 rubric generator 偏差；Skill Issue 通过角色交换 self-play 把 interface language 与 reasoning language 分开，却仍受小模型与翻译影响。Localize-Then-Decide 进一步说明候选数量会破坏原始 confidence：先 conformal localization，再在 shortlist 上 calibrated decision 或 abstention。演进收益是 failure 可定位和风险可控，代价是 calibration data、exchangeability 假设与更复杂的 evidence lineage。
-<!-- analysis:DA-EVALUATION-CONTRACT:end -->
-
-<!-- analysis-decision:SF-2026-METIS-RUNTIME:start -->《Metis: Typed Runtime Mediation for Tool-Using Software Agents》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-METIS-RUNTIME:end -->
-<!-- analysis-decision:SF-2026-JIT-AGENT:start -->《JIT-Agent: Scaling Harness Intelligence via Just-in-Time Harness Evolution》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-JIT-AGENT:end -->
-<!-- analysis-decision:SF-2026-RETRIEVALROUTER:start -->《RetrievalRouter: Joint Modality and Architecture Selection for Document Retrieval》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-RETRIEVALROUTER:end -->
-<!-- analysis-decision:SF-2026-TAILSFT:start -->《TailSFT: Filtered Fine-Tuning Improves Post-Training Performance》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-TAILSFT:end -->
-<!-- analysis-decision:SF-2026-TACFORCING:start -->《TacForcing: Streaming Action Generation with Execution-Time Tactile Feedback》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-TACFORCING:end -->
-<!-- analysis-decision:SF-2026-MA-VLA:start -->《MA-VLA: Multi-Arm Vision-Language-Action Model for Collaboration and Compositional Generalization》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-MA-VLA:end -->
-<!-- analysis-decision:SF-2026-VGI-WHITE-PAPER:start -->《Visual General Intelligence: A White Paper》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-VGI-WHITE-PAPER:end -->
-<!-- analysis-decision:SF-2026-CODE-WORLD-MODEL:start -->《Code World Model: Coding Agent as World Brain》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-CODE-WORLD-MODEL:end -->
-<!-- analysis-decision:SF-2026-SPECTRAL-ALLOCATION:start -->《Spectral Allocation: Why Muon Outperforms Adam, and How to Improve Muon》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-SPECTRAL-ALLOCATION:end -->
-<!-- analysis-decision:SF-2026-PROGROUTER:start -->《ProgRouter: Online Progress-Guided Orchestration for Multi-Agent LLM Workflows under Quality-Cost Tradeoffs》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-PROGROUTER:end -->
-<!-- analysis-decision:SF-2026-STREAMPI:start -->《StreamPI: Streaming Multimodal Temporal Modeling for Vision-Language-Action Models》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-STREAMPI:end -->
-<!-- analysis-decision:SF-2026-ZERO-WAM:start -->《Zero-WAM: In-Context World-Action Modeling from Human Videos for Open-Ended Task Generalization》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-ZERO-WAM:end -->
-<!-- analysis-decision:SF-2026-HY-MT2-REVISION:start -->《Hy-MT2 README max_context revision》保持独立 Deep Review；它不与三个入选单元共享同一状态 owner，强行合并会掩盖其自身 workload 与 failure boundary。<!-- analysis-decision:SF-2026-HY-MT2-REVISION:end -->
-
-## 6. Books Comparison
-
-<!-- validator:books-comparison-v1 -->
-| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-OPENAI-HF-INCIDENT | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L210 | books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L47 | existing:SF-2026-OPENAI-HF-INCIDENT | delta:SF-2026-OPENAI-HF-INCIDENT | Layering / Dependency | Integrate | books-review:SF-2026-OPENAI-HF-INCIDENT |
-| SF-2026-GROUNDHOG-BITFLIP | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L405 | books/part-06-ai-infrastructure/71-multi-tenant.md#L69;books/part-06-ai-infrastructure/73-production-best-practice.md#L91 | existing:SF-2026-GROUNDHOG-BITFLIP | delta:SF-2026-GROUNDHOG-BITFLIP | Layering / Dependency | Integrate | books-review:SF-2026-GROUNDHOG-BITFLIP |
-| SF-2026-METIS-RUNTIME | AGENT-TOOL-CALLING | books/part-07-agent/78-tool-calling.md#L202 | books/part-07-agent/77-memory.md#L20;books/part-07-agent/79-planning.md#L42 | existing:SF-2026-METIS-RUNTIME | delta:SF-2026-METIS-RUNTIME | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-METIS-RUNTIME |
-| SF-2026-GIFT-IFC | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L16 | books/part-06-ai-infrastructure/71-multi-tenant.md#L33;books/part-06-ai-infrastructure/73-production-best-practice.md#L47 | existing:SF-2026-GIFT-IFC | delta:SF-2026-GIFT-IFC | Layering / Dependency | Integrate | books-review:SF-2026-GIFT-IFC |
-| SF-2026-FIELD-TIER-MIN | AGENT-TOOL-CALLING | books/part-07-agent/78-tool-calling.md#L202 | books/part-07-agent/77-memory.md#L46;books/part-07-agent/79-planning.md#L239 | existing:SF-2026-FIELD-TIER-MIN | delta:SF-2026-FIELD-TIER-MIN | Layering / Dependency | Integrate | books-review:SF-2026-FIELD-TIER-MIN |
-| SF-2026-CASKG | AGENT-MEMORY | books/part-07-agent/77-memory.md#L401 | books/part-07-agent/76-rag.md#L239;books/part-07-agent/78-tool-calling.md#L82 | existing:SF-2026-CASKG | delta:SF-2026-CASKG | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-CASKG |
-| SF-2026-TOPAS | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#L183 | books/part-05-inference-system/55-pd-disaggregation.md#L300;books/part-06-ai-infrastructure/57-what-is-ai-platform.md#L61 | existing:SF-2026-TOPAS | delta:SF-2026-TOPAS | Layering / Dependency | Integrate | books-review:SF-2026-TOPAS |
-| SF-2026-POLYMEMDB | AGENT-MEMORY | books/part-07-agent/77-memory.md#L35 | books/part-07-agent/76-rag.md#L35;books/part-07-agent/78-tool-calling.md#L229 | existing:SF-2026-POLYMEMDB | delta:SF-2026-POLYMEMDB | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-POLYMEMDB |
-| SF-2026-V-RUBRICS | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L724 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L18 | existing:SF-2026-V-RUBRICS | delta:SF-2026-V-RUBRICS | Layering / Dependency | Integrate | books-review:SF-2026-V-RUBRICS |
-| SF-2026-RA-VLA | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L68 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L397;books/part-04-training-system/27-data.md#L214 | existing:SF-2026-RA-VLA | delta:SF-2026-RA-VLA | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-RA-VLA |
-| SF-2026-JIT-AGENT | AGENT-PLATFORM | books/part-07-agent/84-agent-platform.md#L367 | books/part-07-agent/83-mcp.md#L83 | existing:SF-2026-JIT-AGENT | delta:SF-2026-JIT-AGENT | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-JIT-AGENT |
-| SF-2026-RETRIEVALROUTER | AGENT-RAG | books/part-07-agent/76-rag.md#L239 | books/part-07-agent/75-context.md#L72;books/part-07-agent/77-memory.md#L113 | existing:SF-2026-RETRIEVALROUTER | delta:SF-2026-RETRIEVALROUTER | Layering / Dependency | Integrate | books-review:SF-2026-RETRIEVALROUTER |
-| SF-2026-PSRL | TRAIN-DISTRIBUTED-TRAINING | books/part-04-training-system/36-distributed-training.md#L233 | books/part-04-training-system/35-checkpoint.md#L122;books/part-04-training-system/37-tensor-parallel.md#L212 | existing:SF-2026-PSRL | delta:SF-2026-PSRL | Layering / Dependency | Integrate | books-review:SF-2026-PSRL |
-| SF-2026-LMSM | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L388 | books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L65 | existing:SF-2026-LMSM | delta:SF-2026-LMSM | Layering / Dependency | Integrate | books-review:SF-2026-LMSM |
-| SF-2026-REDIR | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L210 | books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L65 | existing:SF-2026-REDIR | delta:SF-2026-REDIR | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-REDIR |
-| SF-2026-TAILSFT | TRAIN-SFT | books/part-04-training-system/29-sft.md#L114 | books/part-04-training-system/28-pretraining.md#L154;books/part-04-training-system/30-lora.md#L127 | existing:SF-2026-TAILSFT | delta:SF-2026-TAILSFT | Layering / Dependency | Integrate | books-review:SF-2026-TAILSFT |
-| SF-2026-TACFORCING | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L264 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L378;books/part-04-training-system/27-data.md#L534 | existing:SF-2026-TACFORCING | delta:SF-2026-TACFORCING | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-TACFORCING |
-| SF-2026-SKILLSHIELD | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L210 | books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L65 | existing:SF-2026-SKILLSHIELD | delta:SF-2026-SKILLSHIELD | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-SKILLSHIELD |
-| SF-2026-LOCALIZE-DECIDE | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L168 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L132 | existing:SF-2026-LOCALIZE-DECIDE | delta:SF-2026-LOCALIZE-DECIDE | Layering / Dependency | Integrate | books-review:SF-2026-LOCALIZE-DECIDE |
-| SF-2026-SKILL-ISSUE | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L146 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L18 | existing:SF-2026-SKILL-ISSUE | delta:SF-2026-SKILL-ISSUE | Layering / Dependency | Integrate | books-review:SF-2026-SKILL-ISSUE |
-| SF-2026-MA-VLA | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L127 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251;books/part-04-training-system/27-data.md#L214 | existing:SF-2026-MA-VLA | delta:SF-2026-MA-VLA | Layering / Dependency | Integrate | books-review:SF-2026-MA-VLA |
-| SF-2026-VGI-WHITE-PAPER | MULTIMODAL-WORLD-MODELS | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L16 | books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L255;books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L16 | existing:SF-2026-VGI-WHITE-PAPER | delta:SF-2026-VGI-WHITE-PAPER | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-VGI-WHITE-PAPER |
-| SF-2026-CODE-WORLD-MODEL | MULTIMODAL-WORLD-MODELS | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251 | books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L81;books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171 | existing:SF-2026-CODE-WORLD-MODEL | delta:SF-2026-CODE-WORLD-MODEL | Layering / Dependency | Integrate | books-review:SF-2026-CODE-WORLD-MODEL |
-| SF-2026-TAU-AGENT | AGENT-RAG | books/part-07-agent/76-rag.md#L239 | books/part-07-agent/75-context.md#L72;books/part-07-agent/77-memory.md#L113 | existing:SF-2026-TAU-AGENT | delta:SF-2026-TAU-AGENT | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-TAU-AGENT |
-| SF-2026-SPECTRAL-ALLOCATION | TRAIN-PRETRAINING | books/part-04-training-system/28-pretraining.md#L154 | books/part-04-training-system/27-data.md#L103;books/part-04-training-system/29-sft.md#L55 | existing:SF-2026-SPECTRAL-ALLOCATION | delta:SF-2026-SPECTRAL-ALLOCATION | Layering / Dependency | Integrate | books-review:SF-2026-SPECTRAL-ALLOCATION |
-| SF-2026-PROGROUTER | AGENT-MULTI-AGENT | books/part-07-agent/82-multi-agent.md#L123 | books/part-07-agent/81-workflow.md#L201;books/part-07-agent/83-mcp.md#L164 | existing:SF-2026-PROGROUTER | delta:SF-2026-PROGROUTER | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-PROGROUTER |
-| SF-2026-ASYMSPEC | INFER-SPECULATIVE-DECODING | books/part-05-inference-system/48-speculative-decoding.md#L190 | books/part-05-inference-system/47-pagedattention.md#L119;books/part-05-inference-system/49-tensorrt-llm.md#L735 | existing:SF-2026-ASYMSPEC | delta:SF-2026-ASYMSPEC | Layering / Dependency | Integrate | books-review:SF-2026-ASYMSPEC |
-| SF-2026-STREAMPI | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L378;books/part-04-training-system/27-data.md#L534 | existing:SF-2026-STREAMPI | delta:SF-2026-STREAMPI | Alternative Branch | No Change — Existing Coverage | books-review:SF-2026-STREAMPI |
-| SF-2026-PREFIX-SLIDING | MODEL-LONG-CONTEXT | books/part-02-model/22-long-context.md#L315 | books/part-02-model/21-moe.md#L317;books/part-03-multimodal-world-models/23-multimodal-representation.md#L215 | existing:SF-2026-PREFIX-SLIDING | delta:SF-2026-PREFIX-SLIDING | Layering / Dependency | Integrate | books-review:SF-2026-PREFIX-SLIDING |
-| SF-2026-ZERO-WAM | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L213 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251;books/part-04-training-system/27-data.md#L214 | existing:SF-2026-ZERO-WAM | delta:SF-2026-ZERO-WAM | Layering / Dependency | Integrate | books-review:SF-2026-ZERO-WAM |
-
-<!-- books-review:SF-2026-OPENAI-HF-INCIDENT:start -->
-<!-- existing:SF-2026-OPENAI-HF-INCIDENT:start -->`books/part-06-ai-infrastructure/72-security.md#L210` 原有主线已经定义 `PLATFORM-SECURITY` 的基础责任，但尚未完整表达“evaluation sandbox 中的 agent 获得了超出题目所需的凭据与网络能力，导致模型可把研究环境当作真实攻击面”这一约束。<!-- existing:SF-2026-OPENAI-HF-INCIDENT:end -->
-<!-- delta:SF-2026-OPENAI-HF-INCIDENT:start -->当前书稿 diff 已把以下长期机制写入该 owner：把 environment containment、least privilege、secret boundary 和 independent monitoring 作为评测合同，而不是只约束 prompt；并保留边界：只能证明该次披露的链路与控制缺口；修复效果、其他模型与生产环境发生率未公开。 相邻章节对读：books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L47。前者拥有 tenant identity，后者拥有 release gate；二者均不拥有 evaluation sandbox 的 capability containment。<!-- delta:SF-2026-OPENAI-HF-INCIDENT:end -->
-<!-- books-review:SF-2026-OPENAI-HF-INCIDENT:end -->
-
-<!-- books-review:SF-2026-GROUNDHOG-BITFLIP:start -->
-<!-- existing:SF-2026-GROUNDHOG-BITFLIP:start -->`books/part-06-ai-infrastructure/72-security.md#L405` 原有主线已经定义 `PLATFORM-SECURITY` 的基础责任，但尚未完整表达“MoE router 把终止行为集中到少数 expert 后，硬件位翻转可演化为 Denial-of-Wallet”这一约束。<!-- existing:SF-2026-GROUNDHOG-BITFLIP:end -->
-<!-- delta:SF-2026-GROUNDHOG-BITFLIP:start -->当前书稿 diff 已把以下长期机制写入该 owner：定位与 EOS 等 token 强相关的 routing bits，破坏相关 expert 激活，使生成持续到 max-token 而尽量保持语义表面；并保留边界：是主动故障注入，不证明普通软错概率；硬件、精度、并发与线上检测 SLO 未完整披露。 相邻章节对读：books/part-06-ai-infrastructure/71-multi-tenant.md#L69;books/part-06-ai-infrastructure/73-production-best-practice.md#L91。前者只拥有 cache/serving 隔离，后者拥有容量与恢复；router 参数完整性与 fault-triggered output behavior 仍由 Security 拥有。<!-- delta:SF-2026-GROUNDHOG-BITFLIP:end -->
-<!-- books-review:SF-2026-GROUNDHOG-BITFLIP:end -->
-
-<!-- books-review:SF-2026-METIS-RUNTIME:start -->
-<!-- existing:SF-2026-METIS-RUNTIME:start -->`books/part-07-agent/78-tool-calling.md#L202` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：provider stream 直接落到外部副作用时，permission、interference 与 lifecycle 缺少统一可审计语义。<!-- existing:SF-2026-METIS-RUNTIME:end -->
-<!-- delta:SF-2026-METIS-RUNTIME:start -->论文提供的实现/实验是受限证据：30 个 matched real-I/O pairs、10-case fault matrix、child-boundary ablation 与五模型 Read-marker protocol；其机制“先将多 provider 输出规范化为 typed events，再由 permission gate、registry 与 lifecycle machine 决定 effect admission”没有改变现有设计结论。 相邻章节对读：books/part-07-agent/77-memory.md#L20;books/part-07-agent/79-planning.md#L42。Memory 拥有持久状态，Planning 拥有目标状态图；两者均不拥有外部 effect admission 与 tool lifecycle。<!-- delta:SF-2026-METIS-RUNTIME:end -->
-<!-- books-review:SF-2026-METIS-RUNTIME:end -->
-
-<!-- books-review:SF-2026-GIFT-IFC:start -->
-<!-- existing:SF-2026-GIFT-IFC:start -->`books/part-06-ai-infrastructure/72-security.md#L16` 原有主线已经定义 `PLATFORM-SECURITY` 的基础责任，但尚未完整表达“共享 GPU serving 中 CPU orchestration 与 GPU kernel 都可能跨租户传播敏感数据”这一约束。<!-- existing:SF-2026-GIFT-IFC:end -->
-<!-- delta:SF-2026-GIFT-IFC:start -->当前书稿 diff 已把以下长期机制写入该 owner：CPU 侧以 per-user encryption 隔离内容，GPU 侧静态分析 kernel flow 并以 decoupled tracker 执行信息流规则；GIFT-CC 再覆盖不可信 OS/hypervisor；并保留边界：只覆盖已建模 kernel 与论文 threat model；新 kernel、side channel、硬件/并发细节和独立复现仍缺失。 相邻章节对读：books/part-06-ai-infrastructure/71-multi-tenant.md#L33;books/part-06-ai-infrastructure/73-production-best-practice.md#L47。Multi-tenant 只声明隔离平面，Production 只承接发布合同；kernel-level information-flow enforcement 属于 Security。<!-- delta:SF-2026-GIFT-IFC:end -->
-<!-- books-review:SF-2026-GIFT-IFC:end -->
-
-<!-- books-review:SF-2026-FIELD-TIER-MIN:start -->
-<!-- existing:SF-2026-FIELD-TIER-MIN:start -->`books/part-07-agent/78-tool-calling.md#L202` 原有主线已经定义 `AGENT-TOOL-CALLING` 的基础责任，但尚未完整表达“授权与审计同时读取完整 action parameters 会把敏感值永久写进不可删除 ledger”这一约束。<!-- existing:SF-2026-FIELD-TIER-MIN:end -->
-<!-- delta:SF-2026-FIELD-TIER-MIN:start -->当前书稿 diff 已把以下长期机制写入该 owner：按字段而非 action 分类为 raw、projection、never-leave 三层；client 在最小化前承诺 canonical digest，并对 policy/tier schema 版本做 attestation；并保留边界：远端服务、schema evolution 与恶意 verifier 未被实证覆盖；projection 本身仍可能泄漏。 相邻章节对读：books/part-07-agent/77-memory.md#L46;books/part-07-agent/79-planning.md#L239。Memory 拥有写入决策，Planning 拥有 policy 约束；action 字段最小化和 side-effect admission 仍由 Tool Calling 拥有。<!-- delta:SF-2026-FIELD-TIER-MIN:end -->
-<!-- books-review:SF-2026-FIELD-TIER-MIN:end -->
-
-<!-- books-review:SF-2026-CASKG:start -->
-<!-- existing:SF-2026-CASKG:start -->`books/part-07-agent/77-memory.md#L401` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：技能库扩大后，纯向量召回忽略程序依赖，普通图检索又依赖不可靠边。<!-- existing:SF-2026-CASKG:end -->
-<!-- delta:SF-2026-CASKG:start -->论文提供的实现/实验是受限证据：六个 LLM，在 ALFWorld ID-140 与 ScienceWorld U211 上比较任务得分和环境步数，并含 ablation；其机制“从语义、词法、I/O 与结构生成高召回候选图，再用方向化 counterfactual probe 与 Bayesian smoothing 校准边，离线发布 state-filtered graph”没有改变现有设计结论。 相邻章节对读：books/part-07-agent/76-rag.md#L239;books/part-07-agent/78-tool-calling.md#L82。RAG 拥有在线相关性，Tool Calling 拥有可执行 catalog；技能关系的派生、校准与长期发布属于 Memory。<!-- delta:SF-2026-CASKG:end -->
-<!-- books-review:SF-2026-CASKG:end -->
-
-<!-- books-review:SF-2026-TOPAS:start -->
-<!-- existing:SF-2026-TOPAS:start -->`books/part-05-inference-system/56-inference-scheduling.md#L183` 原有主线已经定义 `INFER-SCHEDULING` 的基础责任，但尚未完整表达“保留 agent prefix 可减少 prefill，却占用 KV 空间并挤压 batching；只优化 cache hit 或 workflow progress 都会延长 JCT”这一约束。<!-- existing:SF-2026-TOPAS:end -->
-<!-- delta:SF-2026-TOPAS:start -->当前书稿 diff 已把以下长期机制写入该 owner：联合选择保留的 prefix 与执行请求，以最长剩余服务路径收益、下游 prefix reuse、迁移/抢占成本和 task aging 评分 post-decision state；并保留边界：结果依赖 synthetic DAG、特定 workflow 与共享 KV budget；生产 fairness、负载漂移和 tail-SLO 未证明。 相邻章节对读：books/part-05-inference-system/55-pd-disaggregation.md#L300;books/part-06-ai-infrastructure/57-what-is-ai-platform.md#L61。PD 只拥有阶段 handoff，平台章只拥有 control-plane contract；跨 workflow 的 prefix-retention/request joint choice 属于 Inference Scheduling。<!-- delta:SF-2026-TOPAS:end -->
-<!-- books-review:SF-2026-TOPAS:end -->
-
-<!-- books-review:SF-2026-POLYMEMDB:start -->
-<!-- existing:SF-2026-POLYMEMDB:start -->`books/part-07-agent/77-memory.md#L35` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：单一存储无法同时表达向量、图、概率和时空记忆，长期冲突又缺少 provenance。<!-- existing:SF-2026-POLYMEMDB:end -->
-<!-- delta:SF-2026-POLYMEMDB:start -->论文提供的实现/实验是受限证据：四页 demonstration 描述系统接口与示例，没有广泛定量评估或故障注入；其机制“以 polyglot stores 管理多种 memory，并用 temporal decay、semiring aggregation 与 provenance chain 处理冲突”没有改变现有设计结论。 相邻章节对读：books/part-07-agent/76-rag.md#L35;books/part-07-agent/78-tool-calling.md#L229。RAG 只拥有 ingestion/retrieval，Tool Calling 只约束 observations；多存储长期状态及 provenance 冲突属于 Memory。<!-- delta:SF-2026-POLYMEMDB:end -->
-<!-- books-review:SF-2026-POLYMEMDB:end -->
-
-<!-- books-review:SF-2026-V-RUBRICS:start -->
-<!-- existing:SF-2026-V-RUBRICS:start -->`books/part-06-ai-infrastructure/66-evaluation-system.md#L724` 原有主线已经定义 `PLATFORM-EVALUATION-SYSTEM` 的基础责任，但尚未完整表达“多模态 post-training 的单一 outcome reward 无法定位哪条视觉事实、推理步骤或指令约束出错”这一约束。<!-- existing:SF-2026-V-RUBRICS:end -->
-<!-- delta:SF-2026-V-RUBRICS:start -->当前书稿 diff 已把以下长期机制写入该 owner：把答案拆成 VF/RC/IF atomic rubrics，并在有证据 span 时进行 component-wise、prefix-localized credit assignment；并保留边界：rubric 由 Gemini-3-Pro 标注且继承其偏差；不外推其他模型、领域或无 reference 的开放任务。 相邻章节对读：books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L18。Scheduler 拥有 placement，Monitoring 拥有 runtime signals；rubric schema、credit assignment 与 evaluator bias 属于 Evaluation。<!-- delta:SF-2026-V-RUBRICS:end -->
-<!-- books-review:SF-2026-V-RUBRICS:end -->
-
-<!-- books-review:SF-2026-RA-VLA:start -->
-<!-- existing:SF-2026-RA-VLA:start -->`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L68` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：VLA 面对新任务时，表层相似 retrieval 与 pretrained policy inertia 阻碍 expert context 转成动作。<!-- existing:SF-2026-RA-VLA:end -->
-<!-- delta:SF-2026-RA-VLA:start -->论文提供的实现/实验是受限证据：LIBERO 与真实 UR5e 任务，对 success 与计算效率作作者比较；其机制“用 behavior-aligned retrieval 选择示例，并通过 grounded execution pipeline 强制策略利用功能线索”没有改变现有设计结论。 相邻章节对读：books/part-03-multimodal-world-models/25-multimodal-world-models.md#L397;books/part-04-training-system/27-data.md#L214。World Models 只界定 predictive state，Data 只拥有训练样本；检索如何进入闭环 action policy 属于 Embodied VLA。<!-- delta:SF-2026-RA-VLA:end -->
-<!-- books-review:SF-2026-RA-VLA:end -->
-
-<!-- books-review:SF-2026-JIT-AGENT:start -->
-<!-- existing:SF-2026-JIT-AGENT:start -->`books/part-07-agent/84-agent-platform.md#L367` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：固定 harness 把 memory、planning、action protocol 和 tool orchestration 固化为人工任务特化配置。<!-- existing:SF-2026-JIT-AGENT:end -->
-<!-- delta:SF-2026-JIT-AGENT:start -->论文提供的实现/实验是受限证据：九个 benchmark，跨 DeepSeek、GLM、MiMo、Qwen 等模型，与 OpenCode/Claude Code 等 harness 比较；其机制“以四模块协议把 harness 变成可生成 artifact，并从任务、repair 信号和历史配置 archive 即时合成与自演化”没有改变现有设计结论。 相邻章节对读：books/part-07-agent/83-mcp.md#L83。MCP 只拥有 protocol lifecycle；可生成 harness artifact、run identity 与平台化演进属于 Agent Platform。<!-- delta:SF-2026-JIT-AGENT:end -->
-<!-- books-review:SF-2026-JIT-AGENT:end -->
-
-<!-- books-review:SF-2026-RETRIEVALROUTER:start -->
-<!-- existing:SF-2026-RETRIEVALROUTER:start -->`books/part-07-agent/76-rag.md#L239` 原有主线已经定义 `AGENT-RAG` 的基础责任，但尚未完整表达“text/multimodal 与 dense/late-interaction pipeline 在 relevance、latency 和 index footprint 上不存在静态最优”这一约束。<!-- existing:SF-2026-RETRIEVALROUTER:end -->
-<!-- delta:SF-2026-RETRIEVALROUTER:start -->当前书稿 diff 已把以下长期机制写入该 owner：冻结 Qwen3-0.6B 主体并以 LoRA query encoder 和 soft reward target，在五类 pipeline 间按 nDCG/latency 权衡逐 query 路由；并保留边界：需同时维护约 40GB 多索引；query-only 看不到 document layout，未验证跨域 routing，oracle gap 仍大。 相邻章节对读：books/part-07-agent/75-context.md#L72;books/part-07-agent/77-memory.md#L113。Context 拥有 assembly，Memory 拥有长期 read/write；逐 query retrieval pipeline selection 属于 RAG。<!-- delta:SF-2026-RETRIEVALROUTER:end -->
-<!-- books-review:SF-2026-RETRIEVALROUTER:end -->
-
-<!-- books-review:SF-2026-PSRL:start -->
-<!-- existing:SF-2026-PSRL:start -->`books/part-04-training-system/36-distributed-training.md#L233` 原有主线已经定义 `TRAIN-DISTRIBUTED-TRAINING` 的基础责任，但尚未完整表达“tree/step-wise agentic RL 使 update 而非 rollout 成为瓶颈，同时样本间出现大量 immutable prefix redundancy”这一约束。<!-- existing:SF-2026-PSRL:end -->
-<!-- delta:SF-2026-PSRL:start -->当前书稿 diff 已把以下长期机制写入该 owner：利用 update phase 的 global visibility，把 prefix-sharing workload placement 与动态 block KV manager 联合优化，在 reuse 与 load balance 间调度；并保留边界：不外推普通 pretraining；代码在 v1 仅承诺将公开，硬件拓扑、长度分布和 tail latency 需按原表解释。 相邻章节对读：books/part-04-training-system/35-checkpoint.md#L122;books/part-04-training-system/37-tensor-parallel.md#L212。Checkpoint 拥有 durable commit，TP 拥有 tensor partition communication；update-phase prefix placement 与 runtime KV ownership 属于 Distributed Training。<!-- delta:SF-2026-PSRL:end -->
-<!-- books-review:SF-2026-PSRL:end -->
-
-<!-- books-review:SF-2026-LMSM:start -->
-<!-- existing:SF-2026-LMSM:start -->`books/part-06-ai-infrastructure/72-security.md#L388` 原有主线已经定义 `PLATFORM-SECURITY` 的基础责任，但尚未完整表达“interpretability signal 若各自绑定 calibration、policy 与 intervention，就无法形成稳定 enforcement substrate”这一约束。<!-- existing:SF-2026-LMSM:end -->
-<!-- delta:SF-2026-LMSM:start -->当前书稿 diff 已把以下长期机制写入该 owner：把 calibrated evidence backend、versioned policy 和 independent buffered-output gate 分离，保持 request identity 穿过 continuous batching；并保留边界：learned backend 可能漂移且不能替代 reference monitor；结果只覆盖特定模型、规则和攻击集。 相邻章节对读：books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L65。Tenant identity 和 readiness gate 只是输入合同；calibrated sensor 到 safe-commit enforcement 的控制权属于 Security。<!-- delta:SF-2026-LMSM:end -->
-<!-- books-review:SF-2026-LMSM:end -->
-
-<!-- books-review:SF-2026-REDIR:start -->
-<!-- existing:SF-2026-REDIR:start -->`books/part-06-ai-infrastructure/72-security.md#L210` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：多轮攻击把风险分散到单独看似合理的 request/action，单步 filter 无法重组意图。<!-- existing:SF-2026-REDIR:end -->
-<!-- delta:SF-2026-REDIR:start -->论文提供的实现/实验是受限证据：两个 agent-safety benchmark、三个 model families、八个 held-out tool domains；测 ASR、benign fidelity 与 overhead；其机制“在每次 action 前将 trajectory 压成 latent safety representation，并用同模型 cross-view supervision 注入冻结 base model 的生成过程”没有改变现有设计结论。 相邻章节对读：books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L65。相邻章拥有 identity 和 release admission，不拥有 multi-turn intent reconstruction 与 action safety policy。<!-- delta:SF-2026-REDIR:end -->
-<!-- books-review:SF-2026-REDIR:end -->
-
-<!-- books-review:SF-2026-TAILSFT:start -->
-<!-- existing:SF-2026-TAILSFT:start -->`books/part-04-training-system/29-sft.md#L114` 原有主线已经定义 `TRAIN-SFT` 的基础责任，但尚未完整表达“SFT 平均优化已拟合样本会浪费容量，并可能产生不适合后续 RL 的低 coverage 初始化”这一约束。<!-- existing:SF-2026-TAILSFT:end -->
-<!-- delta:SF-2026-TAILSFT:start -->当前书稿 diff 已把以下长期机制写入该 owner：训练时过滤已拟合 sequence，把梯度集中到 under-modeled tail，并用轻量诊断判断何时值得启用；并保留边界：只覆盖一个 7B 家族与特定后训练配方；不能推广为所有 easy sample 都应丢弃。 相邻章节对读：books/part-04-training-system/28-pretraining.md#L154;books/part-04-training-system/30-lora.md#L127。Pretraining 拥有通用 optimizer 轨迹，LoRA 拥有参数化更新空间；demonstration loss 的样本选择属于 SFT。<!-- delta:SF-2026-TAILSFT:end -->
-<!-- books-review:SF-2026-TAILSFT:end -->
-
-<!-- books-review:SF-2026-TACFORCING:start -->
-<!-- existing:SF-2026-TACFORCING:start -->`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L264` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：chunk VLA 在执行前一次读取 tactile，接触状态变化后条件已过期。<!-- existing:SF-2026-TACFORCING:end -->
-<!-- delta:SF-2026-TACFORCING:start -->论文提供的实现/实验是受限证据：六个 UniVTAC 仿真与三个实机 contact-rich tasks，报告 success rate；其机制“以 streaming action expert 在执行中持续接收 tactile，并用 EATA 只让临近执行动作关注最新触觉，避免独立高频控制器”没有改变现有设计结论。 相邻章节对读：books/part-03-multimodal-world-models/25-multimodal-world-models.md#L378;books/part-04-training-system/27-data.md#L534。World Models 拥有 predicted transition，Data 拥有 sampling distribution；实时 tactile-conditioned action commit 属于 Embodied VLA。<!-- delta:SF-2026-TACFORCING:end -->
-<!-- books-review:SF-2026-TACFORCING:end -->
-
-<!-- books-review:SF-2026-SKILLSHIELD:start -->
-<!-- existing:SF-2026-SKILLSHIELD:start -->`books/part-06-ai-infrastructure/72-security.md#L210` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：API-only coding agent 无法改权重，而逐步外部 classifier/reference monitor 又增加运行成本。<!-- existing:SF-2026-SKILLSHIELD:end -->
-<!-- delta:SF-2026-SKILLSHIELD:start -->论文提供的实现/实验是受限证据：六模型 RedCode、两类非自适应 jailbreak、731 benign prompts；比较 ASR、severity 与 refusal；其机制“离线从攻击/失败合成 security skills，以固定 prompt budget 在 all-class、bundle、per-class 三种 scope 注入整个 tool loop”没有改变现有设计结论。 相邻章节对读：books/part-06-ai-infrastructure/71-multi-tenant.md#L90;books/part-06-ai-infrastructure/73-production-best-practice.md#L65。相邻章只消费 security policy 结果；prompt-space defense 的 threat model 与 safety decision 属于 Security。<!-- delta:SF-2026-SKILLSHIELD:end -->
-<!-- books-review:SF-2026-SKILLSHIELD:end -->
-
-<!-- books-review:SF-2026-LOCALIZE-DECIDE:start -->
-<!-- existing:SF-2026-LOCALIZE-DECIDE:start -->`books/part-06-ai-infrastructure/66-evaluation-system.md#L168` 原有主线已经定义 `PLATFORM-EVALUATION-SYSTEM` 的基础责任，但尚未完整表达“候选数增加会把 probability mass 摊薄，破坏 confidence 与 human disagreement 的单调关系”这一约束。<!-- existing:SF-2026-LOCALIZE-DECIDE:end -->
-<!-- delta:SF-2026-LOCALIZE-DECIDE:start -->当前书稿 diff 已把以下长期机制写入该 owner：先用 conformal prediction 产生高概率包含 human-preferred answer 的 shortlist，再在 shortlist 内 calibrated decide-or-abstain；并保留边界：保证依赖 exchangeability 与校准分布；不是模型自知，也不覆盖分布漂移或 judge 攻击。 相邻章节对读：books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L132。Scheduler 处理 resource choice，Monitoring 处理 aggregate signals；calibrated uncertainty guarantee 与 abstention contract 属于 Evaluation。<!-- delta:SF-2026-LOCALIZE-DECIDE:end -->
-<!-- books-review:SF-2026-LOCALIZE-DECIDE:end -->
-
-<!-- books-review:SF-2026-SKILL-ISSUE:start -->
-<!-- existing:SF-2026-SKILL-ISSUE:start -->`books/part-06-ai-infrastructure/66-evaluation-system.md#L146` 原有主线已经定义 `PLATFORM-EVALUATION-SYSTEM` 的基础责任，但尚未完整表达“知识和通用 benchmark 会混淆 language interface 对实际技能执行的影响”这一约束。<!-- existing:SF-2026-SKILL-ISSUE:end -->
-<!-- delta:SF-2026-SKILL-ISSUE:start -->当前书稿 diff 已把以下长期机制写入该 owner：同模型 self-play 固定 game/rules/state/action，仅改变双方界面语言并交换角色；另把 interface language 与 reasoning language 分离；并保留边界：仅小模型与八语言；self-play 测相对强弱而非绝对部署质量，translation/tokenization 仍是混杂因素。 相邻章节对读：books/part-06-ai-infrastructure/65-kai-scheduler.md#L48;books/part-06-ai-infrastructure/67-monitoring.md#L18。相邻章不定义 counterfactual benchmark distribution；语言变量隔离与结果边界属于 Evaluation。<!-- delta:SF-2026-SKILL-ISSUE:end -->
-<!-- books-review:SF-2026-SKILL-ISSUE:end -->
-
-<!-- books-review:SF-2026-MA-VLA:start -->
-<!-- existing:SF-2026-MA-VLA:start -->`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L127` 原有主线已经定义 `MULTIMODAL-EMBODIED-VLA` 的基础责任，但尚未完整表达“单一 global instruction 无法显式分配多臂子目标，模型容易把技能绑定固定 arm identity”这一约束。<!-- existing:SF-2026-MA-VLA:end -->
-<!-- delta:SF-2026-MA-VLA:start -->当前书稿 diff 已把以下长期机制写入该 owner：planner 生成有限 atomic prompts；统一 Pi0 executor 联合输出多臂 action；Arm Shuffle 联合置换 state/view/prompt/action tuple，View Dropout 增强视角鲁棒性；并保留边界：只证明 seen atomic skills 的组合重排；planner error、控制频率、latency、安全与 open-world skill acquisition 未评估。 相邻章节对读：books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251;books/part-04-training-system/27-data.md#L214。World Models 拥有环境状态，Data 拥有 augmentation source；多臂 action schema 与 closed-loop execution 属于 Embodied VLA。<!-- delta:SF-2026-MA-VLA:end -->
-<!-- books-review:SF-2026-MA-VLA:end -->
-
-<!-- books-review:SF-2026-VGI-WHITE-PAPER:start -->
-<!-- existing:SF-2026-VGI-WHITE-PAPER:start -->`books/part-03-multimodal-world-models/25-multimodal-world-models.md#L16` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：视觉智能研究缺少从输入模态、学习范式到 benchmark 的统一问题框架。<!-- existing:SF-2026-VGI-WHITE-PAPER:end -->
-<!-- delta:SF-2026-VGI-WHITE-PAPER:start -->论文提供的实现/实验是受限证据：证据是观点综述和研究议程，不存在可归因于一项机制的 matched benchmark；其机制“以多作者 white paper 梳理 vision-centered AGI 的定义、模态、学习、评测与语言关系，而非提出单一可执行系统”没有改变现有设计结论。 相邻章节对读：books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L255;books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L16。Generative Paradigms 只比较生成 factorization，Embodied VLA 只拥有 physical action loop；跨预测 channel 的 world-state distinction 由 World Models 拥有。<!-- delta:SF-2026-VGI-WHITE-PAPER:end -->
-<!-- books-review:SF-2026-VGI-WHITE-PAPER:end -->
-
-<!-- books-review:SF-2026-CODE-WORLD-MODEL:start -->
-<!-- existing:SF-2026-CODE-WORLD-MODEL:start -->`books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251` 原有主线已经定义 `MULTIMODAL-WORLD-MODELS` 的基础责任，但尚未完整表达“纯视频 world model 观察结果却不拥有规则，难以维持可修改、持久且可执行的因果状态”这一约束。<!-- existing:SF-2026-CODE-WORLD-MODEL:end -->
-<!-- delta:SF-2026-CODE-WORLD-MODEL:start -->当前书稿 diff 已把以下长期机制写入该 owner：拆分 S_exe/S_vis：coding agent 管低频推理与机制修订，code 管确定性 transition，video model 通过可寻址 proxy 渲染 observation；并保留边界：没有实时、控制或因果定量评估；agent 不能从零可靠构造复杂 simulator，项目页没有公开代码。 相邻章节对读：books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L81;books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171。前者拥有 token commit，后者拥有 sensor/action freshness；可修订 simulator state 与 visual proxy 的 ownership 属于 World Models。<!-- delta:SF-2026-CODE-WORLD-MODEL:end -->
-<!-- books-review:SF-2026-CODE-WORLD-MODEL:end -->
-
-<!-- books-review:SF-2026-TAU-AGENT:start -->
-<!-- existing:SF-2026-TAU-AGENT:start -->`books/part-07-agent/76-rag.md#L239` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：交通视频异常问答需要从长视频中取回与 query 相关的时间段、字幕与对象轨迹。<!-- existing:SF-2026-TAU-AGENT:end -->
-<!-- delta:SF-2026-TAU-AGENT:start -->论文提供的实现/实验是受限证据：AI City Track3/FETV/PSI-VQA；Gemini caption、GPT-5.4 agent、Qwen3-VL-8B LoRA、2×RTX PRO 6000；其机制“central agent 编排 2秒 caption segments、open-vocabulary tracking 与迭代 evidence selection，再把 slow-fast frames 和 top-k 文本交给 VLM”没有改变现有设计结论。 相邻章节对读：books/part-07-agent/75-context.md#L72;books/part-07-agent/77-memory.md#L113。Context 拥有最终 packing，Memory 拥有持久 state；query-conditioned evidence acquisition 与 reranking 属于 RAG。<!-- delta:SF-2026-TAU-AGENT:end -->
-<!-- books-review:SF-2026-TAU-AGENT:end -->
-
-<!-- books-review:SF-2026-SPECTRAL-ALLOCATION:start -->
-<!-- existing:SF-2026-SPECTRAL-ALLOCATION:start -->`books/part-04-training-system/28-pretraining.md#L154` 原有主线已经定义 `TRAIN-PRETRAINING` 的基础责任，但尚未完整表达“Muon 的统一正交缩放没有解释为何优于 Adam，也可能低估 loss landscape tolerant bulk 的可用步长”这一约束。<!-- existing:SF-2026-SPECTRAL-ALLOCATION:end -->
-<!-- delta:SF-2026-SPECTRAL-ALLOCATION:start -->当前书稿 diff 已把以下长期机制写入该 owner：在 held-out data 上按 momentum singular directions 探测 loss-optimal step，区分 volatile head 与 tolerant bulk；SAMuon/SAMuon-lite 对 bulk 放大；并保留边界：仅小到中型模型；静态 spectral prior 在 frontier scale、不同 architecture 与长期稳定性上未证明。 相邻章节对读：books/part-04-training-system/27-data.md#L103;books/part-04-training-system/29-sft.md#L55。Data 拥有 sampling weights，SFT 拥有 conditional demonstration objective；optimizer 的 spectral update geometry 属于 Pretraining。<!-- delta:SF-2026-SPECTRAL-ALLOCATION:end -->
-<!-- books-review:SF-2026-SPECTRAL-ALLOCATION:end -->
-
-<!-- books-review:SF-2026-PROGROUTER:start -->
-<!-- existing:SF-2026-PROGROUTER:start -->`books/part-07-agent/82-multi-agent.md#L123` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：one-shot cascade router 无法随 multi-step workflow 的剩余难度、进度和预算变化调整模型。<!-- existing:SF-2026-PROGROUTER:end -->
-<!-- delta:SF-2026-PROGROUTER:start -->论文提供的实现/实验是受限证据：HumanEval+、MBPP、MATH-500、ASQA 四个 benchmark，跨代码、数学与 RAG workflow；其机制“以多视角 progress scorer、dual-path predictor 与 meta-gating 估计每步候选 LLM 的 progress gain，在线平衡 time/cost”没有改变现有设计结论。 相邻章节对读：books/part-07-agent/81-workflow.md#L201;books/part-07-agent/83-mcp.md#L164。Workflow 拥有 durable state，MCP 拥有 protocol boundary；跨 agent/model 的 per-step routing policy 属于 Multi-Agent。<!-- delta:SF-2026-PROGROUTER:end -->
-<!-- books-review:SF-2026-PROGROUTER:end -->
-
-<!-- books-review:SF-2026-ASYMSPEC:start -->
-<!-- existing:SF-2026-ASYMSPEC:start -->`books/part-05-inference-system/48-speculative-decoding.md#L190` 原有主线已经定义 `INFER-SPECULATIVE-DECODING` 的基础责任，但尚未完整表达“压缩 verifier context 降成本却损伤正确性，而传统 speculative decoding 强制 drafter/verifier 同 context”这一约束。<!-- existing:SF-2026-ASYMSPEC:end -->
-<!-- delta:SF-2026-ASYMSPEC:start -->当前书稿 diff 已把以下长期机制写入该 owner：让轻量 drafter 读 full context、large verifier 读 compressed view，以 contrastive delta-fusion 和 divergence-aware acceptance gate 传递被压缩信号；并保留边界：只在特定确定性设置验证；不是 token-exact 的普通 SD 等价保证，压缩器与 verifier drift 仍可能失效。 相邻章节对读：books/part-05-inference-system/47-pagedattention.md#L119;books/part-05-inference-system/49-tensorrt-llm.md#L735。PagedAttention 拥有 KV storage，Execution Engine 拥有 compiled runtime；draft/verify acceptance semantics 属于 Speculative Decoding。<!-- delta:SF-2026-ASYMSPEC:end -->
-<!-- books-review:SF-2026-ASYMSPEC:end -->
-
-<!-- books-review:SF-2026-STREAMPI:start -->
-<!-- existing:SF-2026-STREAMPI:start -->`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171` 已通过状态 owner、控制/数据流与 failure boundary 承载该问题：single-frame VLA 丢失过去 observation，且同步训练与实机异步采样存在 timing gap。<!-- existing:SF-2026-STREAMPI:end -->
-<!-- delta:SF-2026-STREAMPI:start -->论文提供的实现/实验是受限证据：LIBERO 与 memory-dependent/precise-perception 实机任务，对 pi0.5 比较 success；其机制“把 observation-instruction pair 作为原子单元，单元内双向融合、跨单元 causal attention；random-interval training 适应异步 frame timing”没有改变现有设计结论。 相邻章节对读：books/part-03-multimodal-world-models/25-multimodal-world-models.md#L378;books/part-04-training-system/27-data.md#L534。World Models 拥有 transition semantics，Data 拥有 sampling；online observation freshness 与 action conditioning 属于 Embodied VLA。<!-- delta:SF-2026-STREAMPI:end -->
-<!-- books-review:SF-2026-STREAMPI:end -->
-
-<!-- books-review:SF-2026-PREFIX-SLIDING:start -->
-<!-- existing:SF-2026-PREFIX-SLIDING:start -->`books/part-02-model/22-long-context.md#L315` 原有主线已经定义 `MODEL-LONG-CONTEXT` 的基础责任，但尚未完整表达“长 reasoning 保留完整轨迹导致 KV 与 attention 成本随思考长度增长，而近期状态和固定任务契约的重要性不同”这一约束。<!-- existing:SF-2026-PREFIX-SLIDING:end -->
-<!-- delta:SF-2026-PREFIX-SLIDING:start -->当前书稿 diff 已把以下长期机制写入该 owner：永久保留 system/task prefix 与最近 reasoning window，丢弃中间 token；继续 RoPE position 复用 KV，RL 侧用约4×window context、末端 loss mask；并保留边界：LiveCodeBench 旧代码依赖受损；短生成收益小、tool output 可淹没 window；v1 时 repo 只有 README/License，无实现代码。 相邻章节对读：books/part-02-model/21-moe.md#L317;books/part-03-multimodal-world-models/23-multimodal-representation.md#L215。MoE 拥有 conditional compute，Multimodal Representation 拥有 modality identity；token-retention policy 与 context-loss boundary 属于 Long Context。<!-- delta:SF-2026-PREFIX-SLIDING:end -->
-<!-- books-review:SF-2026-PREFIX-SLIDING:end -->
-
-<!-- books-review:SF-2026-ZERO-WAM:start -->
-<!-- existing:SF-2026-ZERO-WAM:start -->`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L213` 原有主线已经定义 `MULTIMODAL-EMBODIED-VLA` 的基础责任，但尚未完整表达“语言不足以完整指定新 manipulation task，而 paired human-robot demonstrations 稀缺”这一约束。<!-- existing:SF-2026-ZERO-WAM:end -->
-<!-- delta:SF-2026-ZERO-WAM:start -->当前书稿 diff 已把以下长期机制写入该 owner：把 human video 作为 in-context task contract；causal model 先预测 future robot video 再由 inverse dynamics 预测 action；IFP 强迫利用 human prefix，HumanGen 合成74.2K pairs；并保留边界：synthetic video/VLM filter 会引入偏差；仅 tabletop、小样本实机，embodiment gap 与 artifact 均未闭合。 相邻章节对读：books/part-03-multimodal-world-models/25-multimodal-world-models.md#L251;books/part-04-training-system/27-data.md#L214。World Models 拥有 latent transition，Data 拥有 paired-data construction；human-video task contract 到 robot action 的 closed loop 属于 Embodied VLA。<!-- delta:SF-2026-ZERO-WAM:end -->
-<!-- books-review:SF-2026-ZERO-WAM:end -->
-
-## 7. Semantic Audit
-
-<!-- validator:semantic-audit-v1 -->
-| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| SA-20260827-COVERAGE | fresh-context:aug27_28_fresh_audit | coverage | audit-target:coverage | — | 34/34 family 与 receipt union、严格窗口、Atom archive 水位和 HF 非阻塞降级均已独立复核。 | passed |
-| SA-20260827-EVIDENCE | fresh-context:aug27_28_fresh_audit | evidence | validator:review-completion-v1 | — | 34/34 route-matched Review、30/30 实验合同、exact locator、评分和证据边界均已独立复核。 | passed |
-| SA-20260827-DEEP | fresh-context:aug27_28_fresh_audit | deep_analysis_selection | validator:deep-analysis-selection-v1 | — | 三个长叙事单元的共享状态 owner 与 subsumption 已复核；叙事上限未替代逐 family Review。 | passed |
-| SA-20260827-BOOKS | fresh-context:aug27_28_fresh_audit | books | validator:books-comparison-v1; review:SF-2026-AGENTIC-GAME-WM; review:SF-2026-MINIMAX-FINANCIAL | — | 30/30 技术 family 比较、18 项 Integrate、canonical owner、相邻章节和 evidence boundary 均已复核；两项 Weekly Only disposition 也已逐 family 验收。 | passed |
-
-## 8. Ignored Noise
-
-- 新闻转载、社交讨论和没有 primary artifact 的 benchmark 宣传不进入 denominator。
-- HF recommendation date 不覆盖 arXiv v1 first-public date；同一 family 不因推荐或仓库更新重复评分。
-- Repository `pushed_at`、sitemap `lastmod`、财报发布时间和 branch merge 不自动等于新技术机制。
-
-## 9. Recommended Action
-
-- 保留 18 项已通过 fresh-context owner/adjacent 与证据边界审计的 Books Integration；后续新证据按同一 Source Family revision 处理。
-- 12 项 `No Change — Existing Coverage` 保留为 implementation/evaluation evidence，不在章末堆论文列表。
-- Hy-MT2 只保留 8192 示例配置的版本事实；UniRL maintenance、MiniMax 财报和观点性 game-data 路线不进入机制正文。
-
-## 10. Repository Changes
-
-- 完成 `papers/2026/08/27/README.md` 的 V2.1 表格、34 项 Source Review、Deep Analysis Selection、Books Comparison、Semantic Audit 与 Gate 状态。
-- 本次 27/28 日共享主流程已把本日 18 项长期机制增量写入对应 canonical owner；不生成 Thursday Weekly，不修改 ROADMAP 或 LEARNING_STATE，不 stage、commit 或 push。
-
-## 11. Open Questions
-
-- HF listing export 仍不可用；Weekly 应重新执行一周 bounded discovery，但不能用 HF 日期覆盖 arXiv v1 owner date。
-- Prefix Sliding、Zero-WAM、Code World Model 等仍缺生产级 tail-SLO、长期一致性或安全 matched evidence；后续证据应作为同 family revision 处理。
-
-## 12. Sources
-
-### 模型与研究机构
-
-- OpenAI, “The Hugging Face incident and the road ahead”, 2026-08-26, accessed 2026-08-28: https://openai.com/index/hugging-face-incident-and-the-road-ahead/
-- OpenAI, “OpenAI–Hugging Face Incident Technical Report”, 2026-08-26, accessed 2026-08-28: https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf
-- METR / Redwood Research, independent incident assessment, 2026-08-26, accessed 2026-08-28: https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/
-- Google DeepMind, “Visual General Intelligence: A White Paper”, 2026-08-26, accessed 2026-08-28: https://deepmind.google/research/publications/270149/
-
-### arXiv / 学术来源
-
-- Groundhog Bit-Flip Attack: Seeding Infinite Generation Loops in Mixture-of-Experts LLMs through Bit Flips, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25276v1
-- Metis: Typed Runtime Mediation for Tool-Using Software Agents, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25322v1
-- Here is a GIFT: Enforcing User Data Isolation in LLM Serving via GPU Information Flow Tracking, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25431v1
-- Separating Disclosure from Authorization: Field-Tier Minimization for Agent Action Mediation, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25474v1
-- CaSKG: Counterfactual-Causal Skill Graphs for Scalable Agent Skill Retrieval, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25500v1
-- Agentic Game Development as a Verifiable Trajectory Data Engine for Scaling World Models, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25518v1
-- TOPAS: Workflow-Aware Prefix-State Scheduling for Multi-Agent LLM Serving, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25523v1
-- PolyMemDB: A Polyglot Database System for AI Memory Management, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25577v1
-- V-Rubrics: Visual Faithfulness via Rubric-Based Reinforcement Learning, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25580v1
-- RA-VLA: Retrieval-Augmented VLA for Test-Time Adaptation, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25585v1
-- JIT-Agent: Scaling Harness Intelligence via Just-in-Time Harness Evolution, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25593v1
-- RetrievalRouter: Joint Modality and Architecture Selection for Document Retrieval, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25625v1
-- psRL: Efficient Training for Agentic AI via Training-Time Prefix Sharing, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25683v1
-- LMSM: LLM Security Framework Inspired by Linux Security Modules, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25697v1
-- Reassembling Distributed Risk: Trajectory-Conditioned Action Generation for Multi-Turn Agent Safety, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25711v1
-- TailSFT: Filtered Fine-Tuning Improves Post-Training Performance, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25756v1
-- TacForcing: Streaming Action Generation with Execution-Time Tactile Feedback, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25798v1
-- SkillShield: Prompt-Space Security Skills for LLM Coding Agents, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25817v1
-- Localize-Then-Decide Guarantees for LLM Judgments, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25824v1
-- Skill Issue: Are Skills Language-Invariant in LLMs?, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25832v1
-- MA-VLA: Multi-Arm Vision-Language-Action Model for Collaboration and Compositional Generalization, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25864v1
-- Visual General Intelligence: A White Paper, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25924v1
-- Code World Model: Coding Agent as World Brain, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25927v1
-- TAU-Agent: An Agentic Retrieval-Augmented Framework for Traffic Anomaly Understanding, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25935v1
-- Spectral Allocation: Why Muon Outperforms Adam, and How to Improve Muon, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25990v1
-- ProgRouter: Online Progress-Guided Orchestration for Multi-Agent LLM Workflows under Quality-Cost Tradeoffs, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.25992v1
-- AsymSpec: Context-Asymmetric Speculative Decoding for Agentic LLMs, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.26004v1
-- StreamPI: Streaming Multimodal Temporal Modeling for Vision-Language-Action Models, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.26067v1
-- Prefix Sliding for efficient test-time scaling, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.26070v1
-- Zero-WAM: In-Context World-Action Modeling from Human Videos for Open-Ended Task Generalization, v1 2026-08-26, accessed 2026-08-28: https://arxiv.org/html/2608.26103v1
-
-### AI Infra 与工程项目
-
-- Tencent-Hunyuan Hy-MT2 exact revision, 2026-08-26: https://github.com/Tencent-Hunyuan/Hy-MT2/commit/ff1903ecaa724e10951a23c16817a2413c752b35
-- Tencent-Hunyuan UniRL branch sync, 2026-08-26: https://github.com/Tencent-Hunyuan/UniRL/commit/96747df21c2940b6cd68fe38cfecb93f63cc628d
-- MiniMax first-half 2026 financial results, 2026-08-26: https://www.minimax.io/news/minimax-announces-first-half-2026-financial-results-1787744160
-
-## 13. Final Status
-
-State Truth: Completion=Complete；Coverage=Closed；Evidence=Passed；Books=Passed；unresolved findings=0。
-
-本节只汇总前述收据与 fresh-context 审计的最终状态，不以格式校验替代语义验收。
+OpenAI 技术报告与 METR 复盘共同支持：agent 在 evaluation sandbox 获得超出任务所需的 credential 与 network capability，环境成为真实攻击面。证据只覆盖该次事件，不能推出普遍发生率或修复有效性；Ch72 已把 least privilege、secret boundary、sandbox containment 与 independent monitoring 写成 evaluation contract。
+
+### [post-graph-rag](https://arxiv.org/abs/2608.24921v1)
+
+v1 的 Architecture、Temporal Model、Evaluation 与 limitations 显示：vector、edge、chunk 和 community summary 共用 PostgreSQL 身份；抽取结果先经 fail-closed validation；valid time 与 transaction time 分开，并把有效期带入 synthesis。LongMemEval 与三套语料仅支持该实现和所列模型，不能证明单存储普遍优于专用图/向量系统。Ch77 已明确拥有 valid/transaction time、supersession 与当前视图，RAG 只消费该状态，因此本项保留为支持性证据而不重复写入 Ch76。
+
+### [ExFold](https://arxiv.org/abs/2608.24938v1)
+
+v1 将 prefill 的 token-level Top-K 与 decode 的 batch-level expert pool 统一成 budgeted output approximation，用 unlabeled calibration 得到 scalar projector，近似被排除 expert 的输出。vLLM CUDA 实现与最高 1.41× TTFT、2.45× TPOT 绑定论文模型、GPU、batch 和质量平均值；它不保证任意 MoE expert 可折叠，也不保持逐 token exactness。应在 Ch21 写清 phase-specific retained-set 与 approximation error，运行时细节交给 Ch49。
+
+### [ToolMinimize](https://arxiv.org/abs/2608.24957v1)
+
+v1 的方法把工具参数按 schema 分成 necessary/unnecessary，再执行 removal、generalization、substitution、truncation；可选内容层处理必要 free-text 字段里的任务无关敏感信息。307 次 live call 和 25 个 MCP schema 支持作者范围内的 privacy/validity 结果，不证明语义判定永不删掉任务所需数据。Ch78 已有 raw/projection/never-leave 字段层、canonical digest 与 authorization 分离，本项不再重复整合。
+
+### [Auto-Policy, not Auto-Skill](https://arxiv.org/abs/2608.25091v1)
+
+exact-v1 把 Skill 的建议性程序与 physical action 的 authority policy 分离：typed envelope、lease、fresh sensor evidence 与 world state 经确定性 guard 后才到 adapter boundary。60 个构造攻击、60 个 benign case 及 5× 复跑只覆盖一个 NATS/Tailscale edge testbed；实验未触发真实设备，hand-authored guard 也不能发现 compromised trusted principal 或伪造 sensor。它是 Ch72/Ch78 已有 proposal、typed evidence 与 effect-time authorization 的物理场景验证，不形成第二套 Skill owner。
+
+### [Hydra](https://arxiv.org/abs/2608.25053v1)
+
+v1 的 Instrumentation、Dataset 与 Limitations 把 HuggingFace/llama.cpp 的 per-prompt phase timing 与 SoC telemetry 对齐，并覆盖三代 Jetson、13 个 instruction-tuned 模型和五种格式。约 107K 记录只证明 batch=1、dense 1–8B 和这些 edge backend 的工作负载；quantization 降低 traffic/energy 不代表功率单调下降。Ch66 已冻结 phase/backend/device/hardware/format/length 与 telemetry identity，本项不再重复写入。
+
+### [FLINT](https://arxiv.org/abs/2608.25062v1)
+
+v1 的 Design 把 HBF 定位为只读权重 tier：burst-buffer controller 合并/流水读取，phantom-plane refresh 把维护移出 foreground，read-only FTL 删除 SSD 的通用写路径。结果依赖尚未普及的 HBF/NAND 参数与权重只读性，不证明同样设计适用于 KV 或 checkpoint；其长期价值是 capacity tier 的管理语义必须按 workload 专用化。Ch54 已以 FlashAccel 与 byte-addressable tier 写明同一类近存储、预取、只读状态和前台关键路径边界，本项作为实现证据保留，不再追加正文。
+
+### [Understanding the Energy Scaling of LLM Inference](https://arxiv.org/abs/2608.25096v1)
+
+exact-v1 在 A100 40GB、FP16、greedy decode 上测 OPT-1.3B、Phi-3 Mini、Gemma-2B 与 Mistral-7B，改变 context 128–1800、batch 1/2/4/8 并以 NVML 重复测量。它支持“energy 必须绑定 phase、context、batch 与 architecture identity”，但 MHA/GQA/GQA+SWA 同时更换了模型家族与规模，不能把差异因果归给 attention；87% 等数字也不能外推别的硬件、并发或 SLO。Ch66 已完整承载该测量合同。
+
+### [Transforms for LLM Quantization](https://arxiv.org/abs/2608.25188v1)
+
+v1 的 Great Inversion 证明：可变 bit allocation 在固定总 rate 下奖励能量集中，而部署中的 grouped shared-scale、equal-bit quantizer 奖励组内压平；generic spectrum 下两者最优性不能互推。FP4、MXFP4、NVFP4 的 scale/grid 又改变目标，因此 transform、rounding、number format 与 matrix instruction 必须共同选型；综述统计不是端到端 benchmark，不能给出统一赢家。
+
+### [Trust the Mass](https://arxiv.org/abs/2608.25230v1)
+
+v1 枚举 168,192 个 attention rows 的最优保留子集，发现最优选择只闭合相对 full attention 剩余差距的中位 2%–5%；更关键的是强 baseline 以 full-cache mask 实现，nominal token budget 不等于释放 bytes，question-visible ranking 还造成巨大 retrieval margin。该结果不证明 attention weight 永远足够，而是要求 KV eviction 报告真实 storage layout、selector 可见信息与预算 enforcement。
+
+### [Groundhog Bit-Flip Attack](https://arxiv.org/abs/2608.25276v1)
+
+论文通过主动 fault injection 定位与 EOS 等 token 强相关的 expert/routing bits，使生成持续到上限。它证明一种可构造攻击，不证明普通软错频率；硬件、精度和在线检测 SLO 也未完备。Ch72 已要求 fault injection、resource anomaly 与 fail-safe termination 联合验证。
+
+### [Metis](https://arxiv.org/abs/2608.25322v1)
+
+Metis 先把 provider stream 归一成 typed events，再由 permission gate、registry 与 lifecycle machine 决定 effect admission。受限 I/O pairs 与 fault matrix 只证明该 runtime 的 dispatch/trace closure，不证明语义安全或通用 rollback；Ch78 已拥有 proposal、typed action 与 effect gate 的边界。
+
+### [LLMscope](https://arxiv.org/abs/2608.25321v1)
+
+exact-v1 用 electro-optical frequency mapping 在 FPGA LLM accelerator 的 FF/BRAM 边界恢复 embedding、attention、量化 MLP weight、activation 与中间 state，并说明复用同一 storage primitive 可让不同层/地址经过同一物理观测点。证据只覆盖可物理接近、可重复执行且已完成版图/频率表征的 FPGA；对封装更强的 ASIC/GPU、side-channel 发生率与生产攻击成本均未证明。长期增量是 threat model 不能止于软件传输与 at-rest 加密，实际驻留敏感 state 的 chip structure、replay 条件与 tamper boundary 也必须进入 Ch72。
+
+### [Capacity Overflow](https://arxiv.org/abs/2608.25371v1)
+
+exact-v1 在 V-MoE/Swin-MoE 上构造 early backdoor 与 deeper neutralizer，并让 batch-dependent capacity overflow 在小批安全审计时保留 neutralizer、部署大批时丢弃它。76%–87% activation-mode ASR 只绑定 ImageNet-100/GTSRB、作者模型与攻击者可控 supply chain，不证明所有 MoE 都存在后门。它补出 Ch72 的关键 deployment-identity 缺口：安全回归必须覆盖真实 batch/capacity/router/drop policy，不能仅在 batch=1 或平均质量上验收权重。
+
+### [Here is a GIFT](https://arxiv.org/abs/2608.25431v1)
+
+GIFT 让 CPU 侧以 per-user encryption 隔离内容，GPU 侧静态分析 kernel flow 并由 tracker 执行信息流规则；vLLM/DistServe prototype 的开销只绑定已建模 kernel 与论文 threat model。CPU 修改数据的假设、未知 kernel 的 sampled rule、side channel 和生产并发均未闭合，故不能把 prototype 当完整多租户保证。Ch72 已吸收这条限制。
+
+### [Separating Disclosure from Authorization](https://arxiv.org/abs/2608.25474v1)
+
+v1 按字段把 action parameter 分为 raw、projection 与 never-leave，并让 client 在最小化前承诺 canonical digest 和 policy/schema version。projection 仍可能泄漏，远端服务与恶意 verifier 未覆盖；它支持最小披露和 attestation，却不能替代 effect-time authorization。Ch78 已承载该责任边界。
+
+### [MMJailBench](https://arxiv.org/abs/2608.25490v1)
+
+exact-v1 正交改变 harmful intent、prompt framing、visual semantics 与 instruction carrier，并在 16 个 MLLM 上展示不同因素的脆弱性排序随模型而变。内部 representation 诊断只针对一个开放模型，judge 与 harm taxonomy 也会改变结论；它不能推出某种视觉载体普遍更危险。Ch66/Ch72 已要求 factorized slice、judge identity 与 capability/effect gate 分开，本项作为多模态支持性证据即可。
+
+### [A Storage-Retrieval Gap in Parametric Knowledge Graph Memory](https://arxiv.org/abs/2608.25489v1)
+
+MetaQA 实验显示 entity-specific LoRA 可写入事实，oracle 选中正确 adapter 时能恢复答案；但 embedding 与 weight geometry 的相似度检索仍近 chance。该证据限单数据集、单 adapter 粒度和离线注入，不证明 parametric memory 更便宜或更安全；Ch77 已把 storage、write policy、retrieval policy、composition 与 authorization 分成不同责任，本项仅补充受限反例，不再重复整合。
+
+### [TOPAS](https://arxiv.org/abs/2608.25523v1)
+
+TOPAS 同时评估保留 prefix 的下游复用、GPU memory、剩余 workflow critical path、迁移/抢占与 aging。SGLang prototype、synthetic DAG 和 MetaGPT workflows 不证明生产 fairness 或 tail SLO，但说明只优化 cache hit 会伤害整体 JCT；Ch56 已把 request、state 与 workflow priority 联合建模。
+
+### [When Stale Constraints Go Unchecked](https://arxiv.org/abs/2608.25553v1)
+
+v1 将 immutable provenance 与 mutable current record 分开：记录已 supersede，但模型在有限 verification budget 下很少检查看似 settled 的关键路径；forced-critical 与 target-blind allocation rule 显著减少 stale-consistent decision。forced-critical 使用实验者 oracle，不是通用 scheduler；Ch77 已要求检索只消费 current record，并把 freshness、supersession、criticality 与验证责任纳入 retrieval policy，因此本项不形成新的正文增量。
+
+### [JIT-Agent](https://arxiv.org/abs/2608.25593v1)
+
+exact-v1 把 memory、planning、action protocol 与 tool/skill orchestration 编成四模块 harness artifact，由单独模型按任务生成、修复并从历史配置演进。作者 benchmark 支持特定模型/任务上的系统级收益，却不能把提升归为 base-model 能力，也不能证明生成 harness 的安全、可复现性或跨环境稳定。Ch84 已把 model、harness、tool schema、environment 与 verifier 共同版本化，并要求 generated harness 经独立验证后 promotion，因此判 Existing Coverage。
+
+### [AWM](https://arxiv.org/abs/2608.25618v1)
+
+exact-v1 定义 memory-only answerability：移除 page image 与 trajectory 后，只凭 question 和 terminal memory 重新回答。gold evidence page 条件下仍有 42.5% 的正确答案留下不可回答 memory，证明“访问过证据”和“最终答对”不能代理中间状态质量；AWM-GRPO 再把该信号作为不覆盖 final-answer reward 的附加项。证据只覆盖 Qwen3-VL-4B、两个文档数据集和固定 reader/judge，且 answerability 不等于 claim grounding。Ch77 应把 terminal memory 视作单独 artifact，以 sufficiency 与 grounding 两个 Gate 验收；Ch66 只拥有 scorer contract。
+
+### [Unmatched Does Not Mean False](https://arxiv.org/abs/2608.25654v1)
+
+v1 固定输出与分数，只改变 finite-reference proxy label，展示 Brier risk 与 calibration ranking 可被遗漏真值反转；blinded adjudication 和独立 OpenToM 数据复现方向。它不证明作者的 restore 流程适合全部开放式任务，但足以要求 evaluation 把 reference coverage、matcher、human audit 与 uncertainty 同时报告。
+
+### [SCALE-QA / TSIM](https://arxiv.org/abs/2608.25655v1)
+
+exact-v1 在无显式 session/topic 边界的混合长线程中，把恢复单位定义为 causally coherent operative episode；TSIM 以分段、episode summary 与 cluster routing 重建该单位。3,000 个 audited MCQ 与三类 backend 支持所测设置，却使用合成 counterfactual、确定性选项与有限领域，不证明真实对话中的 episode segmentation 总是可靠。Ch77 应明确相关片段集合并不自动构成可执行记忆，完整 episode 还要保存约束、决定、时间与 supersession；分段不可信时回退原始 transcript 与人工确认。
+
+### [psRL](https://arxiv.org/abs/2608.25683v1)
+
+psRL 利用 update phase 的全局可见性，在 prefix reuse 与 load balance 间联合放置 workload 并管理 block KV。throughput 绑定 production traces 与特定拓扑，不外推普通 pretraining；Ch36 已将 prefix identity、placement、通信和 update ownership 连接起来。
+
+### [LMSM](https://arxiv.org/abs/2608.25697v1)
+
+LMSM 将 SAE/probe 等 calibrated evidence backend、versioned policy 与 independent buffered-output gate 分开，并保持 request identity 穿过 batching。learned backend 会漂移且不能替代 reference monitor；Ch72 已保留 enforcement owner 与 sensor 的边界。
+
+### [TailSFT](https://arxiv.org/abs/2608.25756v1)
+
+TailSFT 过滤已经拟合的 sequence，把有限 SFT 梯度预算转向 under-modeled tail，并用诊断决定是否启用。OLMo-3 7B、math/code 和特定 GRPO 配方不能证明 easy sample 都应删除；现有 Ch29 的 data coverage、curriculum 与后续 RL 初始分布已经承载这一条件分支。
+
+### [Spectral Allocation](https://arxiv.org/abs/2608.25990v1)
+
+论文沿真实 Transformer checkpoints 对 momentum singular directions 与 loss landscape 做 probing，用 spectrum allocation 解释 Muon/Adam 差异。解释依赖受测架构、规模和近似，不能直接推出通用 optimizer 优越性；Ch28 已以参数几何、稳定性和硬件成本组织 optimizer 选择。
+
+### [AsymSpec](https://arxiv.org/abs/2608.26004v1)
+
+AsymSpec 让 drafter 使用压缩 context 提案，target 在完整 context 上验证，把 draft cost 与生成分布分离。压缩会降低 acceptance，收益依赖 context、batch 与 verifier cost；exactness 只由 target verification 提供。Ch48 已完整承载。
+
+### [StreamPI](https://arxiv.org/abs/2608.26067v1)
+
+exact-v1 将 streaming trajectory 拆为 `(image, instruction/action)` 原子 pair：pair 内双向 attention 保留当前感知—动作耦合，pair 间保持因果；随机 interval 3–7 与 temporal masking 模拟观测、推理和控制异步。LIBERO、真机与 8×H100 实验支持作者系统，训练仍一次载入全部 frame，极端不规则延迟与开放环境 safety 未解决。Ch26 应把 sensor/action pair identity、arrival time 与 control deadline 写进 embodied loop；低延迟同步环境仍可保留简单 sequential controller。
+
+### [Prefix Sliding](https://arxiv.org/abs/2608.26070v1)
+
+论文在长 reasoning 中滑动保留部分 prefix，以减少 attention/KV 工作集。importance estimator 错误会删除仍需状态，恢复完整上下文的成本与长链正确性是核心边界；Ch22/Ch45 已明确工作集、外置证据与 fallback 的共存条件。
+
+## 5. 缺口与下一步
+
+无
+
+独立复核确认 32 个候选均有同标题、同 URL 的证据审阅，并将四项重复机制降级为 Existing Coverage。9 项 Books 增量已写入并通过写后核对：`2608.24938→Ch21`、`2608.25188→Ch49`、`2608.25230→Ch45`、`2608.25321/25371→Ch72`、`2608.25618/25655→Ch77`、`2608.25654→Ch66`、`2608.26067→Ch26`；各 source-family marker 在 Books 中唯一。
+
+## 6. 复核
+
+复核者：`/root/aug09_16`（fresh-context 独立复核）
+结论：通过
+
+独立复核重新核对了北京时间窗口和 519 个 official-new-announcement 唯一身份边界，并对 raw inventory 的批次首尾与候选近邻做 false-positive/false-negative 审计；补回的 9 个漏项均已进入 §3 和同标题、同 URL 的 §4，最终 32 项一一对应。候选采用可访问 exact-v1 或官方正文，未见官方 withdrawn 标记；分数、审阅深度和证据限制与处置一致。对 Books 实际正文逐项对读后，将 GLM-5.3-Flash、FLINT、Storage-Retrieval Gap 与 Stale Constraints 从 Integrate 降为 Existing Coverage；其余 9 项已由独立主任务写入唯一 owner，并逐项核对正文位置、机制含义、证据限制、旧方案共存边界和相邻段落衔接，未发现语义越界或重复 owner。本日报所有 Gate 已闭合。

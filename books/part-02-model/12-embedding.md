@@ -100,6 +100,8 @@ cos(x, y) = (x dot y) / (||x|| * ||y||)
 
 但不能把距离近当作语义的完整定义。几何由训练数据、目标、模型架构和参数化共同塑造；不同 checkpoint 的坐标系不能直接逐维比较，token embedding 的近邻也不必等同于人类定义的同义词。
 
+甚至“这些向量需要多少内在维度”也依赖测量方法。基于最近两个邻居距离比的估计器，在许多向量共同以少数短范数 rows 为近邻时，可能因为两个距离趋近、比值趋于 1 而给出很高的维度读数。对分析副本进行等量随机裁剪、短范数裁剪、重新加回或归一化，可以检查读数是否受这种 hub 几何支配；这不是从模型里删除 token，也不能把裁剪后的较低读数当作真实维度或容量冗余。保留原始表能保持部署对象不变，改变分析距离则有助于定位估计敏感性，两者回答的是不同问题。
+
 更重要的是，模型不直接在初始 embedding 上完成大部分任务。后续 layers 会不断读取上下文并改写 hidden states。
 
 ## 初始表示不等于上下文表示
@@ -213,6 +215,7 @@ Embedding 把无序类别 id 映射为可学习的连续坐标。Lookup 与 one-
 
 Primary-source 校验入口：
 
+- [A Hub of Short Rows Inflates Intrinsic Dimension Estimation, 2608.29702v1](https://arxiv.org/html/2608.29702v1)：§3–7 与 B–D 的邻距、trim/add-back 及估计器控制支持上述测量敏感性；不外推为真实维度、无用 token 或通用宽度冗余。§3 的 top-decile 措辞与后续 shortest-norm 定义不一致，采用后者明确实验定义；GLM 归一化后仍有明显变化，不采用“归一化总能消除效应”的强说法。
 - Tomas Mikolov et al., "Efficient Estimation of Word Representations in Vector Space", 2013: https://arxiv.org/abs/1301.3781
 - Ofir Press, Lior Wolf, "Using the Output Embedding to Improve Language Models", 2017: https://arxiv.org/abs/1608.05859
 - Ashish Vaswani et al., "Attention Is All You Need", 2017: https://arxiv.org/abs/1706.03762

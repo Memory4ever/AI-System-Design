@@ -337,6 +337,19 @@ candidate Skill artifact quality
 但其中间 LLM judges 噪声明显、任务经过人工筛选，不能证明自动 Skill 可自发布。Registry 应要求 independent
 outcome、applicability slices、supersession 与 rollback；open-ended tasks 可长期保留 human-authored Skill。
 
+Skill 的 authoring pass 与下一次 deployment success 还必须跨一条 reproduction boundary。Producer 可以用对话、
+临时 workspace 和工具反馈解题，但 release 前只允许冻结后的 package 跨界；fresh executor 在恢复的初始 workspace、
+fresh container 与独立 context 中重新执行，hidden grader 才对这次 output 判定。Release identity 因而要绑定 package
+digest、executor model/harness、container/environment 和逐次 deployment outcome，而不是把 producer 的成功 trace
+当成可复现能力。
+
+Fresh execution 仍是 stochastic sample，不是可靠性证明；`pass@k`、best-of-search 或 mean-of-3 只能描述多次尝试的
+recoverability/均值，不能写成下一次运行成功率。现有实验覆盖 86 个 tasks、两个 models，且每个 ablation arm 只有一次
+evolution realization；任务 bootstrap 不包含 run-to-run search variance。样本不足、高风险 SOP 或 fresh executor 不可用时，
+保留 human-curated Skill、增加重复 deployment trials 或拒绝 promotion。
+
+<!-- source-family:SF-2026-ARXIV-2608-28638 -->
+
 #### Skill Compiler 必须绑定 Target Profile，而不是只绑定模型名
 
 同一 `SKILL.md` 在不同 model、harness、tool schema、dependency 与 context budget 下可能产生不同 trajectory。
@@ -480,6 +493,8 @@ Agent Platform 同时面对多个时间尺度：
 | Workflow/platform | runs、tenants、budgets、priorities |
 
 Agent waiting 不应占用模型/GPU。Runtime 可在 event 到来时重新组装 Context。Tool/API concurrency、rate limits 和 external quotas 也成为 capacity。
+
+调用次数与单次授权还不能约束多个 Agent 累积产生的外部副作用。需要这类控制时，可由 Agent 之外的可信定价与身份层给动作赋予风险计量单位，提交前在 Agent、Workflow 与 Tenant 账本同时预留，只有确认取消或实际补偿后才按对应规则释放；这样约束的是累计宣告暴露，而非模型自报的风险。账面额度上界不是真实损失上界：定价失准、身份拆分和相关动作仍可能低估后果，跨层协调也会增加阻塞与饥饿。短程、低副作用任务仍可保留简单调用预算；高风险动作的独立授权与人工接管不能被“还有余额”替代。
 
 当并发 Agent 共享 execution lanes、provider rate limits 与有限 Context 时，FIFO 只在任务成本相近且没有僵尸执行时足够。AgentRM 把这些跨 run 资源提升为平台状态：MLFQ lane scheduler 根据运行行为调整优先级，zombie reaper 回收失去进展的 execution，rate-limit-aware admission 避免 provider quota cascade，DRF-inspired policy 近似分配共享资源；Context Lifecycle Manager 另行管理分层存储、compaction 与 hibernation，resource monitor 为这些控制器提供反馈。它把调度与 Context 生命周期从 Workflow 中剥离，却新增错误分类、饥饿、reaper 误杀和压缩损失；单 Agent、短任务或固定资源时，简单队列仍更可验证。`arXiv:2603.13110v1` 的 §IV 只支持上述 middleware 组件，§VI 结果绑定由观察模式构造的 simulated agent workloads，§VII-C 之外不证明生产语义公平、durable workflow commit、versioned lease 或 lease recovery。<!-- source-family:SF-2026-ARXIV-2603-13110 -->
 
@@ -755,6 +770,13 @@ Agent 空闲时什么都不做最安全；在下一需求可预测且 memory 可
 
 一次性 benchmark 能比较初始能力，却看不到 memory、skill、dependency 与 policy 随时间退化。Platform owner 应按版本保存长期 checkpoint，把 degradation 分类为知识陈旧、状态污染、工具漂移或协调失败，再把 repair target 指向对应 owner，而不是整体重置 Agent。收益是可定位修复，代价是长期环境维护和漂移归因；synthetic aging 或 evaluator 变化会伪造趋势，应保留 immutable baseline 与人工复核。exact-v1 只支持 AgingBench 的 synthetic/closed-agent 设置和 preview，不证明真实长期部署的老化率。<!-- source-family:SF-2026-ARXIV-2605-26302 -->
 
+## 长任务恢复依赖 Event Log，而不是 Transcript
+
+后台 coding Agent 会跨多次模型调用、工具执行和进程重启。append-only event log 应记录实际 dispatch、effect、workspace revision 与验证结果，模型 context 只是从日志构造的派生视图。恢复时要重新核对外部状态和 authorization，不能重放已经发生的副作用，也不能假设旧 context 仍代表当前仓库。
+
+当模型与 harness 通过轨迹共同训练时，两者也构成配对 artifact：model version、tool schema、prompt/compiler 与 verifier 都应一起登记。联合训练可能提高长程执行，却会扩大版本耦合和回滚面；平台必须允许回退到已验证的 model–harness 组合，而不是只替换权重。官方博客只支持其公开的后台执行、event log 与联合训练设计，不证明 exactly-once、副作用隔离、权限延续或跨仓库普适性。
+<!-- source-family: https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2; daily: 2026-08-05; semantic-body-binding: event-sourced-long-running-agent-harness -->
+
 ## 本章在知识树中的位置：全书知识树收束
 
 ```text
@@ -807,6 +829,16 @@ Promotion Gate 应冻结一组 capability vector：新目标任务、历史核�
 
 这不是要求能力永远单调，也不证明固定 replay suite 覆盖未来任务。它只把“获得新能力”和“保留旧能力”分成两个可追责证据对象，使不可避免的 trade-off 由 policy 明确接受，而不是被最终平均分隐藏。
 
+### Self-modification 只有在 Recovery 可表达且可验证时才允许提交
+
+Agent 修改自身规则、skill 或 workflow 前，不仅要保存旧状态，还要证明恢复操作能够精确指向被改对象、具有明确 witness semantics，并能由独立 verifier 检查。若 mutation 的 inverse 无法在恢复语言中表达，或执行后状态无法可靠 grounding，系统应拒绝提交而不是寄希望于自然语言“撤销”。这种保守 gate 会限制自我优化速度，却把不可逆漂移变成显式设计选择。
+<!-- source-family: arxiv:2608.28363v1; semantic-body-binding: verifiable-self-modification-recovery -->
+
+### Skill Lifecycle 需要 Admission 与 Runtime 两个 Gate
+
+Skill 被写入或检索命中，只说明它成为候选能力；执行前仍要验证当前主体、参数、环境、版本和副作用预算。平台应分别管理 skill authoring / promotion 与 runtime admission，并保留调用后的 postcondition。合并两道 gate 会让历史上“看起来有用”的 procedure 在新上下文中自动获得执行权。
+<!-- source-family: arxiv:2608.12851v1; semantic-body-binding: skill-lifecycle-dual-gates -->
+
 ## 小结
 
 Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加有状态、可行动、可恢复的 runtime。它让 Prompt、Context、RAG、Memory、Tools、Planning、Reflection、Workflow、Multi-Agent 和 MCP 进入同一 identity、policy 和 evidence graph。
@@ -814,6 +846,8 @@ Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加�
 到此，七个 Part 形成完整 Draft：从第一性原理理解模型能力，经多模态表示、环境预测与物理行动，再到能力生产、在线交付、平台治理和受控 Agent 行动。后续 refinement 应由 papers、真实系统证据和跨章 Review 驱动，而不是为了扩写而增加内容。
 
 ## Review notes
+
+- **Irreversibility Budget（arXiv:2609.00275v1；Status: Experimental）**：§3–4 支持由可信 effect/pricing 层执行层级 reserve/commit 与宣告额度约束；§5 为构造采购模拟、公开轨迹分析及单机内存微基准，§6 明确关联风险、定价与生命周期实现边界。正文不把 VaR 当默认安全定价，不采用模拟性能，也不宣称 durable ledger 或真实损失保证。https://arxiv.org/html/2609.00275v1
 
 - `SF-2026-ARXIV-2602-15831`（Status: Experimental）：exact-v1 的 §3.1～3.3 定义 Human Card、通信 schema 与 channel abstraction，§4.1～4.3 是案例流程和协议效用分析，§5 不提供身份认证、授权安全、生产规模或真实人类研究证明；正文只吸收 addressable human/task state，不把协议提案当成 consent authority。https://arxiv.org/html/2602.15831v1
 

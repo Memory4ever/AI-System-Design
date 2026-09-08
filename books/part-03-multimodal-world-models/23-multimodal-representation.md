@@ -297,6 +297,8 @@ token identity。Dense frames 在格式多样、证据完整性优先或 codec p
 按比例下降。评估必须绑定 source codec、resolution、duration、sampling/GOP、model、hardware、precision、
 batch/concurrency 与 SLO，并分别测 retained evidence、encode cost 和 downstream outcome。
 
+另一条分支不是改变视频的编码格式，而是由当前问题决定下一次读取的时间段、帧率与模态，通过读取工具取得视觉、音频或 transcript 后再继续推理。它能避开无关输入并回看短暂事件，却把证据遗漏、读取历史与额外推理/tool round-trip 变成新的责任；少载入 token 不保证更低的端到端时延，短片或完整证据优先时，固定读取仍更简单可靠。
+
 ## Failure modes
 
 ### 语义锚点不是原模态的替代品
@@ -356,6 +358,28 @@ batch/concurrency 与 SLO，并分别测 retained evidence、encode cost 和 dow
 
 <!-- source-family:SF-2026-ARXIV-2605-16745 -->
 
+## Token Hierarchy 可以承载不同时间尺度
+
+音频等高带宽模态若只用单层离散码，要么语义结构过粗，要么 token rate 过高。分层 residual quantization 可以让上层 code 承担长程语义和结构，下层 code 补局部声学细节；相应生成器也可分为 global sequence model、local refinement 与连续 decoder。
+
+层次化表示提高可控性，却引入 codebook synchronization、跨层 error propagation 和更复杂的 bitrate/latency 预算。它是表示分解，不证明某个公开音乐模型的质量结论可外推；Ch24 只接手后续生成与修正机制。
+
+## Streaming Multimodal Identity 不止是 Token Type
+
+实时全双工系统中，用户音频、视频、文本与 assistant 输出会并发到达，输入不会在生成开始前自然结束。表示层必须把 token 绑定到 timestamp、speaker/turn、observation revision 与 interrupt frontier；fusion 只负责产生共享表示，runtime 才决定哪些输出可以继续、取消或提交。
+
+统一 attention 可以促进跨模态协同，却也可能让高资源模态挤压另一模态。modality-specific encoder/FFN 保留专用容量，shared layer 提供交互；早统一减少接口鸿沟但增加目标竞争，晚统一更稳定却容易形成“vision laziness”。选择应随数据复杂度、模态预算和交互 deadline 变化，不存在仅凭统一程度判断优劣的结论。
+
+### 实时多模态表示还必须拥有可中断的时间状态
+
+离线的图文拼接可以在全部输入到齐后一次编码；full-duplex 交互中，音频、视频、文本、tool event 却在不同时间抵达，用户还可能在模型输出中途插话。表示层因而不仅要标记 modality，还要保存 timestamp、stream revision、turn ownership 与 interrupt boundary，使后续状态机知道哪些 token 已提交、哪些生成应取消、哪些观测仍可继续复用。统一 backbone 减少专用管线，却把时钟漂移、乱序、过期观测和半双工回退变成显式 failure mode；无法稳定对齐时，分模态缓冲与保守 turn-taking 仍是合理旧方案。官方公告只支持所披露系统具备统一音视频文本与全双工交互接口，没有公开这些状态字段的内部实现，也不构成通用打断或安全保证。
+<!-- source-family: https://seed.bytedance.com/en/blog/seedrealtime-audio-visual-full-duplex-llm-released-toward-omni-modal-natural-interaction; daily: 2026-08-05; semantic-body-binding: interruptible-streaming-multimodal-identity -->
+
+### 共享表示的收益来自可控的容量交换，而不是“越早融合越好”
+
+晚融合让各模态保留专用容量，训练稳定且易隔离，却可能让视觉只在末端提供旁路信息；早融合让 attention 与 normalization 更早交换信息，但也会让文本与视觉目标竞争同一容量。一种中间分支是共享跨模态交互层、保留 modality-specific FFN 或路由容量，并按数据复杂度与 token 预算重新选择配比。它用更强 transfer 换来 routed capacity、通信和配比校准成本；在数据不足、模态分布漂移或硬实时单模态路径中，专用 encoder 与晚融合仍应共存。
+<!-- source-family: arxiv:2608.05000v1; daily: 2026-08-06; semantic-body-binding: multimodal-capacity-sharing-frontier -->
+
 ## 本章在知识树中的位置
 
 Part II 给出通用 Transformer 组件；本章把单一文本 token 扩展为跨模态 representation contract。第24章进一步比较这些表示如何生成与修正；第25章要求表示支持 action-conditioned dynamics；第26章把 timestamp、coordinate 和 action schema 放进物理闭环。
@@ -393,6 +417,8 @@ Part II 给出通用 Transformer 组件；本章把单一文本 token 扩展为�
 如果把多模态简化为“更多输入类型”，系统会在数据、缓存、计费和验证阶段重新付出隐藏成本。真正统一的不是所有信号的物理性质，而是它们进入模型前后都有清楚的身份、损失边界和可验证接口。
 
 ## Review notes
+
+- Google Agentic Video（官方机制说明）：https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-agentic-video-in-gemini/ — 首发How it works支持query-conditioned时间/帧率/模态读取；不采用缺完整可复算合同的通用token、价格或准确率headline。后续开发指南只用于核验读取上下文与计账边界，不把新型号倒填首发。
 
 - `SF-2026-ARXIV-2606-22565` — primary `arXiv:2606.22565v1`；Method=`arXiv:2606.22565v1 §2 Problem Formulation; §3 Strengths and Pitfalls; §4 Shallow Visual Reflection`；Evaluation=`arXiv:2606.22565v1 §5 Experiments`；Non-proof=`arXiv:2606.22565v1 §Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

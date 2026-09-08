@@ -987,6 +987,10 @@ Rollplex 在 Qwen2.5-VL-32B、32×H800、指定 GRPO、长度与 batch contract 
 
 收益是固定 GPU 下延长 context，代价是 host/storage bandwidth、page identity、replay time、failure recovery 与更长 state lifetime。短 prompt、足够 HBM 或无法证明 gradient boundary 时，完整常驻 graph 仍更可靠。LongStraw 的 Qwen/GLM、8/32×H20 receipt 支持部分容量与 replay contract；论文明确未闭合的 Qwen CP dK/dV 和 GLM global DSA/CP gradient semantics 必须保留为边界。
 
+反过来，若生成和更新共用可微执行路径、optimizer step 前 policy 不变，重复前向也未必必要。对使用终局 advantage 的 diffusion trajectory-logprob objective，可保留选定 denoising steps 的 graph，等 reward 到达再 backward；也可先以单位 advantage backward、释放 activation，保存每条轨迹的临时梯度。设轨迹 $i$ 的临时梯度为 $G_i$、终局权重为 $A_i$，真正需要的是 $\sum_i A_iG_i$，不是对已混合的 $\sum_iG_i$ 乘一个共同权重。因此必须先逐样本校正，再 reduce-scatter；同 prompt 的跨 rank 布局只是在分摊状态，不是让不同生成共享同一份激活。
+
+前者的显存随保留步数增长，后者转而保存完整的样本梯度，micro-batch 增大也会 OOM。实数算术下的重排等价不保证低精度逐位一致；policy 已更新后再复用旧 rollout、生成与训练 backend 不同，或 objective 不使用这类 transition log-probability 时，都不能直接采用该优化。原来的 no-grad rollout 加更新期重算因此仍有明确成立区间。[LeanGRPO 的机制、消融与适用边界](https://arxiv.org/html/2609.03528v1)
+
 ## 正确的并行策略选择顺序
 
 <!-- source-family:SF-2026-ARXIV-2605-27678 -->
@@ -1077,6 +1081,12 @@ MoE 扩展又把 expert placement、pipeline stage、communication 与 memory �
 
 <!-- source-family:SF-CCL-D-A-HIGH-PRECISION-DIAGNOSTIC-SYSTEM-FOR-SLOW-AND-HANG-ANOMALIES-IN- -->
 <!-- source-family:SF-PIPER-EFFICIENT-LARGE-SCALE-MOE-TRAINING-VIA-RESOURCE-MODELING-AND-PIPEL -->
+
+## Compute-optimal 不等于 Cluster-optimal
+
+先按 scaling law 选择模型和数据，再让系统“尽量跑快”，可能得到无法在目标集群高效放置的 shape。MoE sparsity、activated parameters、MFU、通信、内存和并行布局应在同一可行域中求解：模型 loss frontier 只是输入，真实目标还要满足 hardware topology、wall-clock 与预算。
+
+联合搜索依赖 scaling fit 和系统校准，超出训练规模或更换硬件时会漂移；小规模实验仍可采用简单 compute-optimal 设计。重要的是把算法 shape 与执行计划的耦合显式化，而不是把某个搜索器的输出当普遍最优。
 
 ## 本章在知识树中的位置
 
@@ -1249,6 +1259,31 @@ gradient event
 <!-- source-family:SF-2026-ARXIV-2605-18710 -->
 
 当训练 collective 进一步进入 fused、device-initiated kernel 时，计算与通信的联合 code generation、合法性验证和执行计划搜索不再由训练并行策略拥有；这些责任交给第 49 章。训练侧只提供 dependency、并行语义、topology 与 correctness contract，并继续用收敛、恢复和端到端 step time 验收生成的执行计划。
+
+### Optimizer State 的压缩必须验收更新误差
+
+分布式训练中的 optimizer state 往往比参数本身占用更多内存；低比特或非均匀表示可以降低驻留与通信压力，但压缩率不是正确性合同。真正需要约束的是解码后的 update error、不同 state 分布和 scale 下的稳定性，以及最终训练 loss。只有这些量在目标优化器、精度和训练阶段上成立，压缩 state 才能视为可替代的训练状态，而不只是更小的文件。
+<!-- source-family: arxiv:2608.22322v1; semantic-body-binding: optimizer-state-update-error-contract -->
+
+### Hybrid-attention Rollout Tree 需要联合管理多种状态
+
+RL rollout 同时使用 attention prefix、recurrent state、MoE routing 与多分支采样时，调度对象不再只是 token 数。runtime 要共同拥有 prefix compression、state handoff / replay、microbatch、DP slot 和同一 prompt 下的语义 multiplicity，才能避免错误复用或重复计算。联合规划可提高吞吐，但作者 speedup 只属于特定 workload；任何跨设备迁移都必须验证 state identity 与 step sealing。
+<!-- source-family: arxiv:2608.28158v1; semantic-body-binding: hybrid-rollout-tree-state-scheduling -->
+
+### Expert Placement 与 Sample Packing 可以共享 Rollout Routing State
+
+RL rollout 已经产生 token-to-expert 路由；若训练系统仍分别优化样本 packing 与 expert placement，可能同时放大 attention padding 和 all-to-all。联合 planner 可以在 sealed planning window 内重放路由并共同选择两者，但 forward/backward 必须保持 logical routing、placement revision 和 sample assignment 一致。收益来自复用真实状态，代价是更强的 step sealing、元数据和 planner 开销。
+<!-- source-family: arxiv:2608.12146v1; semantic-body-binding: joint-expert-placement-sample-packing -->
+
+### Agentic RL 的弹性单位是可恢复 Rollout
+
+同步训练按固定 rank 划分工作时，长尾 trajectory 会让大量设备等待。Agentic RL 可以依据 rollout readiness、可恢复状态与有效样本 goodput 动态分配 rank，但调度器必须保留 policy version、采样概率和 staleness 边界，否则“更高利用率”会改变 on-policy 语义。弹性伸缩解决的是等待与故障恢复，不会自动解决奖励偏差；旧的同步批次在严格同策略、短轨迹场景仍更容易验证。
+<!-- source-family: arxiv:2608.10402v1; semantic-body-binding: elastic-rank-allocation-by-recoverable-rollout-state -->
+
+### MoE 扩展要寻找 Cluster-optimal Frontier
+
+参数量或训练 FLOPs 的 scaling law 只描述模型侧需求，不能直接给出集群最优配置。MoE 的 expert placement、并行维度、All-to-All、显存余量和实际 MFU 共同决定每单位时间能完成多少有效训练；扩大模型可能降低 token goodput。规划应把质量曲线与硬件拓扑、通信和恢复成本联合求解，并保留较小或更稠密模型作为低通信、低运维复杂度分支。
+<!-- source-family: arxiv:2608.10605v1; semantic-body-binding: moe-cluster-optimal-scaling-frontier -->
 
 ## 小结
 

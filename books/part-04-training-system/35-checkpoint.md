@@ -137,6 +137,10 @@ scheduler and data cursor corresponding to s
 
 Loader 只接受已经 commit 的 manifest，不通过“目录是否存在”判断成功。Object storage 没有传统 rename 语义时，completion manifest 更重要。
 
+这个流程还隐含了一个更早的条件：各 rank 必须对“有哪些 shards、谁负责哪个 shard”达成一致。假设两个 rank 各取文件列表的一半，rank 0 看到 `[a, b, c, d]` 并取前半，rank 1 看到 `[c, d, a, b]` 并取后半，最终两者都处理 `a, b`，而 `c, d` 被遗漏。每个文件都能正常写入，并不能发现这种 ownership 错误。对相同文件集合先按稳定标识排序，可以消除枚举顺序造成的差异；但排序不证明各节点的文件集合或内容相同，因此还需要由 manifest 核对完整集合、身份和校验值。这一前提同样适用于把已有权重分配给多个发送 rank 的在线更新过程。
+
+发布 metadata 时也要区分保证的层次：同一文件系统内写临时文件、`fsync` 文件再原子替换，可以避免 reader 读到被截断的单文件；它不自动构成全部 weights 与 metadata 的事务，也不单独证明掉电后的目录项持久性或多 writer 一致性。上面的第 5、6 步不能被一次 `rename` 或 `replace` 合并替代。2026-09-04 合入的 checkpoint-engine 官方更新示例修复分别展示了这两个局部边界；其证据只覆盖 example path，不代表整个库已经提供完整 checkpoint 事务。
+
 `latest` 只能是指针，不能是唯一身份。每个 checkpoint 应有 immutable id，避免重试或并发 job 覆盖已有状态。
 
 ## 分布式 Sharded Checkpoint
@@ -515,7 +519,7 @@ Checkpoint 从周期性磁盘快照演进到异步保存、内存 recovery gener
 2. Adam resume 为什么需要保存参数之外的状态？
 3. 1B 参数的示例为什么约为 16 GB，而不是固定定律？
 4. Distributed ranks 的 checkpoint 为什么必须属于同一逻辑 step？
-5. Completion manifest 怎样防止读取半成品？
+5. Completion manifest 怎样防止读取半成品？多个 rank 对文件分别排序后，为什么仍须核验共同的文件集合与内容身份？
 6. Resharding 为什么需要 global tensor metadata？
 7. Data cursor 与 RNG state 分别影响什么？
 8. 异步保存将 pause 转化成了哪些资源问题？
@@ -540,6 +544,7 @@ Primary-source / official documentation 校验入口：
 - PyTorch Distributed Checkpoint documentation: https://docs.pytorch.org/docs/stable/distributed.checkpoint.html
 - PyTorch, "Getting Started with Distributed Checkpoint": https://docs.pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
 - Megatron Core Distributed Checkpointing API Guide: https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.dist_checkpointing.html
+- checkpoint-engine 官方 `examples/update.py` 的确定性文件分配与单文件 metadata 发布修订（2026-09-04 合入；本轮静态审阅，未运行测试）：[PR #103](https://github.com/MoonshotAI/checkpoint-engine/pull/103)、[PR #105](https://github.com/MoonshotAI/checkpoint-engine/pull/105)。
 - SVDQuant: Absorbing Outliers by Low-Rank Components for 4-Bit Diffusion Models: https://arxiv.org/abs/2411.05007
 - Hugging Face, "Bringing Nunchaku 4-bit Diffusion Inference to Diffusers": https://huggingface.co/blog/nunchaku-diffusers
 - Diffusers Nunchaku Lite integration: https://github.com/huggingface/diffusers/pull/14100

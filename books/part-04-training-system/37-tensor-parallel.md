@@ -312,6 +312,16 @@ In-switch 计算可以减少端点流量和热点等待，却引入硬件专用�
 <!-- semantic-body-binding:SF-ACCELERATING-MOE-WITH-DYNAMIC-IN-SWITCH-COMPUTING-ON-MULTI-GPUS:end -->
 <!-- semantic-body-binding:SF-TOWARDS-COMPUTE-AWARE-IN-SWITCH-COMPUTING-FOR-LLMS-TENSOR-PARALLELISM-ON:end -->
 
+### 扩大 Scale-up Domain 会放大同步尾部
+
+更大的高速互联域降低单次 collective 的平均传输成本，却不会消除不同 rank 的到达时间差；barrier 等待会把最慢路径扩散到整个 step。并行度选择因此必须把计算时间、collective service time 和 synchronization tail 分开核算。旧方案在负载均匀且通信占主导时仍合理；当专家路由、输入长度或硬件噪声扩大尾部时，继续扩域可能反而降低有效吞吐。
+<!-- source-family: arxiv:2608.22503v1; semantic-body-binding: scale-up-synchronization-tail-tax -->
+
+### Optical Interconnect 也有物理控制回路成本
+
+光互联的名义带宽不能直接替代训练 step time：MoE 的突发通信会触发调谐与热稳定过程，使链路在完成逻辑路由之外还承担物理控制延迟。规划并行度时要把 tuning、thermal stall、故障恢复和流量形态纳入 collective contract。跨层模拟可以揭示风险，但在真实 wafer-scale 训练验证前，只能作为 placement 的约束，不是确定的性能收益。
+<!-- source-family: arxiv:2608.24637v1; semantic-body-binding: optical-interconnect-control-loop-cost -->
+
 ## 小结
 
 Tensor Parallel 通过 column/row decomposition 把一个 operator 分配给多个 ranks。局部 GEMM 只有与正确 collective 和相邻 operator layout 组合，才保持原模型语义。

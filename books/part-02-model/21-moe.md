@@ -159,6 +159,19 @@ full-width token state
 
 Dense MLP 在模型较小和 portability 优先时仍合理；标准 full-width MoE 在互联充足、机制简单和质量可预测性更重要时继续成立。Latent-coordinate MoE 只有在 projection cost、信息损失与 placement 复杂度能被 communication/weight-read 收益覆盖时才有意义。模型报告中的整体能力与 Serving headline 不能证明这一个组件的独立贡献。
 
+另一条降低 small-batch weight traffic 的分支不缩小 token coordinate，而是改变 experts 的参数独立性。标准 MoE 为每个 expert 保留完整 MLP，提供最大的专门化自由，却会在一次请求命中多个 experts 时搬运大量相似权重；department-style 组织让一组 experts 共享 trunk，仅保留较小 private delta，并用两级 router 先选组再选私有分支：
+
+```text
+token state
+→ route to shared department trunk
+→ route to small private expert delta
+→ combine into residual path
+```
+
+共享提高 weight reuse、缩小工作集，却用表示耦合、两级 routing 与潜在 expert interference 换取内存收益。需要强独立专业化、共享部分形成负迁移或大 batch 已能摊薄独立 weight load 时，标准 experts 仍更合理。`arXiv:2608.14385v1` 只在作者的 7B pretraining 与 DeepSeek-V3 microbenchmark、A40/H100 配置上支持这一 operating point，不证明跨节点吞吐、训练稳定性或语义专业化普遍改善。
+
+<!-- source-family:SF-2026-ARXIV-2608-14385 -->
+
 ### Expert 粒度缩到向量后，Router 与执行顺序都必须重写
 
 传统 MoE 把一个完整 MLP 作为 expert，router 的候选数有限，选中后的 token batch 也容易交给 grouped GEMM；
@@ -306,6 +319,8 @@ Fusion 获得较少 HBM traffic 与 graph capture 机会，却绑定 weight layo
 expert-shape heuristic 和 correctness matrix。占满 SM 也未必最佳，headroom 又可能在通信很少时浪费算力。
 NVIDIA 2026 的 SM100 fused-kernel 材料只支持这一机制边界，不证明其厂商端到端百分比由单一 fusion 导致。
 Unfused/composable path 在非目标硬件、稀有 shape、数值诊断或 portability 优先时仍合理。
+
+另一条分支不是在同一函数内重排执行，而是主动改变模型依赖：让 dispatch 使用前层完整 state、后续 attention 先消费尚未包含部分 expert 输出的 activation，再把迟到项接回 residual。最终补齐所有加项不等于恢复原来的非线性函数，因此这种重叠必须作为新架构训练，分别验收质量与系统收益，不能直接对原 checkpoint 宣称免费等价重排；无法承担重训与质量复验时，仍应选择上述保持原依赖的执行优化。
 
 Expert Parallel 与其他并行维度不同：
 
@@ -536,6 +551,14 @@ Dense FFN 或固定 expert 配置中，直接复用一组已经调好的 learnin
 
 <!-- source-family:SF-2026-ARXIV-2605-23893 -->
 
+## Dispatch 与 Aggregation 是两种不同责任
+
+Top-k router 同时决定“哪些 expert 计算”和“这些结果以多大权重提交”时，选择与信任被耦合。固定 expert IDs 和计算量后，单独学习 aggregation 仍可能改变结果，说明 dispatch 负责容量与通信，aggregation 才负责对候选 expert 输出的 commitment。
+
+拆分增加一个 head 和校准状态，也可能在小模型上得不偿失；传统 router 在路由稳定、实现简单优先时仍合理。该结论来自有限模型，不应外推成所有 MoE 必须解耦，但系统监控和负载均衡不能把 aggregation weight 误当 dispatch identity。
+
+<!-- source-family: arxiv:2608.08853v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: expert-dispatch-vs-aggregation-ownership -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -577,6 +600,16 @@ MoE 最初只把 Dense MLP 的全部激活改成 top-k 条件激活；在 expert
 11. Grouped GEMM 减少了什么执行开销，又没有消除哪些路由不均衡成本？
 12. 为什么标准 MoE 是 router、shared layers 与 experts 的 joint optimization，而不是按人类领域逐 expert 独立训练？
 
+### Prefill 与 Decode 可以使用不同 Expert Set，但必须共享误差合同
+
+prefill 的 token 之间差异大，适合按 token 保留专家；decode 的小 batch 则可能让路由碎片化，使 batch-level expert pool 更利于复用。两种 phase-specific 策略不能只比较命中率，而要在相同输出近似误差、capacity、drop policy 和 batch 条件下验收，并把 retained set 写入执行身份。这样可以降低部署成本，但也增加跨阶段状态切换与回退复杂度。
+<!-- source-family: arxiv:2608.24938v1; semantic-body-binding: phase-specific-expert-retention-contract -->
+
+### Shared-first 与 Routed-residual 是另一种容量分工
+
+传统 MoE 先由 Router 决定 token 进入哪些专家，公共能力也可能被稀疏路由切碎。另一条分支让共享路径先承担稳定公共变换，再只把剩余误差交给专家路由；它降低了公共知识对路由抖动的敏感性，却会把共享层变成新瓶颈，并不能消除 expert collapse。两种结构应按公共容量、路由熵、通信和尾部质量共同验收，而不是把 shared-first 当作无条件升级。
+<!-- source-family: arxiv:2608.10392v1; semantic-body-binding: shared-first-routed-residual-capacity-boundary -->
+
 ## 小结
 
 MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 experts，使总容量可随 expert 数增加，而单 token expert compute 主要随 top-k 增长。
@@ -585,6 +618,8 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 
 ## Review notes
+
+- Instella-MoE，https://arxiv.org/html/2609.00791v1 ，§2.1.3、§3.3.1/Table13、§3.4 与 Appendix A：FarSkip 的 partial/outdated activation 属于架构变化，而不是同函数调度等价。200B tokens / 48K steps、固定设置与 seed 的单次对照只支持受限平均质量比较，各任务有升降；不采用未绑定完整 workload/SLO 的速度 headline，也不据此否定标准 MoE 内可行的通信重叠。
 
 - `SF-2026-ARXIV-2602-05711`（Status: Experimental）：primary=`arXiv:2602.05711v1`；Method=`§2 Methodology`；Evaluation=`§3.2 Main Results`；Non-proof=`§3.3 Ablation Studies`。只支持 Cartesian Product Router 与 expert-centric execution 在作者 atomic-expert 模型/实现中的机制和结果，不证明通用粒度最优或生产 SLO。
 - `SF-2026-ARXIV-2602-07265`（Status: Experimental）：primary=`arXiv:2602.07265v1`；Method=`§3.4 Practical Algorithm`；Evaluation=`§6 Experiments`；Non-proof=`§7 Conclusion`。只支持所测 batch、speculative candidates 与 expert-parallel 环境中的共享 expert-set admission，不证明所有 batch composition 下保持质量或吞吐。

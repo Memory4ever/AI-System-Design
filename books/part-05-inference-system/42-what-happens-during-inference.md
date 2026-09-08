@@ -248,6 +248,8 @@ Part V 后续章节按三层定位：
 
 Framework 会变化，这三层问题不会同时消失。一个新 Serving 项目首先应被问：它改变了哪个 stage、哪类状态、哪项资源约束或哪条 control loop？
 
+推理预算本身也应进入 request contract。`reasoning_effort`、最大思考 token 或自适应计算开关不是普通展示参数：它们会改变 decode 路径、成本、deadline 与可比较的质量分布。Gateway 可以接收预算，admission 按租户与 SLO 判定是否允许，runtime 只执行已批准的上限；模型自报“还需要思考”最多是扩容提议，不能自行突破预算。固定预算在可预测延迟优先时仍是基线，自适应预算只有在额外计算的边际收益经过校准且可回退时才成立。<!-- semantic-body-binding:SF-2026-ARXIV-2608-16956 -->
+
 第24章的 editable/block generation 还会改变 Stage contract：输出可能先处于 provisional state，再经 correction 或 verification commit。Part V 不重新定义生成概率，只负责让 mutable window、cache invalidation、rollback 和 user-visible streaming 在 runtime 中一致。图像、视频和 action workload 还要把 modality decoder 与不可逆 action deadline 纳入同一端到端时间边界。
 
 ## 为什么没有单一“推理性能”

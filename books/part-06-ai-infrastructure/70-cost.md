@@ -259,6 +259,19 @@ facility power and redundancy
 
 <!-- source-family:SF-2026-ARXIV-2604-27855 -->
 
+## Memory Cost 由内部维护行为决定
+
+两段同样长度的对话，在不同 memory system 中可能触发完全不同的 summary、retrieval、rewrite 和 model-call 次数。只按输入 token 估算会遗漏 write amplification、周期 consolidation、查询 fan-out 与额外 judge。成本模型应逐层记录 archive write、derived view、retrieval、injection 和 rebuild，并与 rolling/full-context baseline 比较 break-even。
+
+break-even 依赖模型价格、对话分布和正确率目标，不能把某个轮数当普遍阈值。会话短或记忆命中低时，保留更多原始 context 可能更便宜；长期、高复用场景才值得承担 memory control plane。
+
+## 共享 Batch 的成本必须按边际贡献归因
+
+多个请求共享一次 batch 时，总能耗不是各请求 token 数的线性和：最长序列、padding、KV traffic 与同步会让一个请求改变其他请求的执行成本。按 token 比例分摊虽然便宜，却可能系统性低估长请求或高外部性请求。
+
+更可审计的路线是先离线重放请求子集，建立边际能耗或 Shapley-style reference，再用可在线取得的长度、phase 与资源特征拟合估计器。reference 负责校准，不等于唯一公平政策；在线 estimator 还要携带误差预算，误差过大时只用于容量规划而不用于 chargeback。该方法增加重放成本，但把测量模型与业务定价规则分开。
+<!-- source-family: arxiv:2608.00026v1; daily: 2026-08-04; semantic-body-binding: request-marginal-energy-attribution -->
+
 ## 本章在知识树中的位置
 
 Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、model selection 和 lifecycle policy。下一章进入多租户：只有 identity 与 isolation 完整，成本归因和公平政策才可执行。
@@ -283,6 +296,11 @@ Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、mod
 按 `input_tokens + output_tokens` 估算能耗在窄长度区间容易复算，却隐藏了 prefill 与 autoregressive decode 对计算、内存访存和固定启动成本的不同叠加。更精确的模型应保留 input/output length 二维曲面与 model/runtime/hardware identity，先找到单位有效 token 的局部 operating point，再评估截断、摘要或 generation budget 是否真正降低 `energy_per_successful_goal`。
 
 所谓 sweet spot 会随 batch、KV cache、quantization、clock/power cap 和硬件改变，摘要还可能增加额外请求并降低质量。因而分析式模型只用于 proposal/what-if，必须用当前 runtime 能耗与质量/SLO 回执校准；稳定窄负载仍可使用线性模型。公开结果只支持披露的 H100、TensorRT-LLM、模型和长度网格，不可外推跨硬件节能倍数。<!-- source-family:SF-2026-ARXIV-2602-05695 -->
+
+### 节能控制前先证明 Actuator Authority
+
+训练系统观测到功率变化，不代表当前 controller 真能通过 group size、并行度或调度动作稳定改变能耗；sharding 与运行时可能覆盖这些设置。闭合节能控制环前，应在明确 measurement window 内做干预，确认 actuator 对 power、step time 与质量的因果影响，并把控制权归属写入运行配置。否则 RL 或自动调参只是在追逐相关性。
+<!-- source-family: arxiv:2608.11226v1; semantic-body-binding: energy-control-actuator-authority -->
 
 ## 小结
 

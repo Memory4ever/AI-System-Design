@@ -232,6 +232,12 @@ Continuous Batching 提高 GPU 利用率，但代价是调度器更复杂。
 
 这些问题决定了 batching 策略是否真正有效。
 
+## Batch 饱和后，请求数不再是容量尺度
+
+在 Decode 阶段，active KV length 会改变每步 DRAM traffic。随着 batch 增大，系统可能先获得更高并行度，随后进入 bandwidth plateau；继续增加 request count 只会扩大排队、HBM 占用与尾延迟。调度器因此应同时观察 active sequence、KV footprint 与 bandwidth headroom，而不是把“大 batch”视为单调更优。
+
+旧的固定 batch 在短上下文、同质请求或尚未饱和时仍然简单有效。一旦边际 throughput 接近零，admission 应停止扩 batch，把新请求留在队列或路由到其他 replica。该规则依赖真实硬件 profiling，不能从某个模型的饱和点外推通用阈值。
+
 ## 本章在知识树中的位置
 
 Continuous Batching 连接了 Decode、KV Cache 和推理调度：

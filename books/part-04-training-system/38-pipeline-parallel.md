@@ -221,6 +221,12 @@ Boundary bytes 取决于 dtype、sequence、micro-batch 和 partition location�
 
 单一机房内，固定 stage mapping 加局部带宽估计通常足够；跨地域链路的带宽、价格与故障域不同，schedule ordering 不能再与 transport path 分开。Pipeline control owner 需要联合持有 micro-batch priority、可用链路、路径成本与 completion state，并在带宽变化时重新分配。这样可减少远距离 bubble 与账单失控，代价是在线 pathfinding、控制开销和更大的 failure surface；预测失准或控制器故障时，应回退到静态安全路径或单区域执行。exact-v1 只支持 BACE-Pipe 的模拟器与 trace 条件，不证明任意云际网络或真实故障下的收益。<!-- source-family:SF-2026-ARXIV-2605-25375 -->
 
+### 跨层 KV 共享会改变 Pipeline 的真实 Stage Cost
+
+按层数或静态 FLOPs 切 stage，在每层计算同构时合理；若模型引入 tail-first cross-layer KV sharing，后层复用前层状态会改变 per-layer Attention FLOPs、activation/KV boundary 与 memory pressure。Partitioner 必须对新 checkpoint 的依赖图重新 profile，再决定 stage placement；它不能把共享当作免费的 runtime cache。该分支以模型结构改动和跨层耦合换取更均衡 pipeline，既有 checkpoint 不可改或通信超过节省时，普通 layer-local KV 仍成立。`arXiv:2608.15943v1` 的 KV-Pipe 证据限作者模型与训练/推理设置，不证明通用 PP 加速。
+
+<!-- source-family:SF-2026-ARXIV-2608-15943 -->
+
 ## Stage Balance 比平均 Layer 数更重要
 
 不同 layers 成本可能不同：
@@ -322,6 +328,16 @@ PP 也不会自动提高模型质量。它只改变同一 forward/backward graph
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-07881:start -->
 异步 Pipeline Parallel 允许相邻 stage 在有界 weight inconsistency 下继续推进，以减少同步 bubble；runtime 必须记录每个 microbatch 读取的 weight version，并用 staleness bound 决定接受、等待或回退同步 schedule。它用更复杂的版本状态和收敛风险换吞吐，不能把局部 bubble 降低外推成端到端训练收益。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-07881:end -->
+
+## Pipeline Boundary 不一定只传 Activation
+
+线性递归或 attention–recurrence hybrid 模型把长序列切成 chunk 后，还必须显式传播 recurrence boundary state 及其 gradient。chunk 长度因此同时影响计算平衡、state lifetime 和依赖深度；均匀切分可能让 attention 与 recurrence 阶段失衡。该分支扩展了传统 stage pipeline，但收益绑定模型结构和序列长度。
+
+<!-- source-family: arxiv:2608.06838v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: sequence-pipeline-recurrence-boundary-state -->
+
+另一条实验分支用局部目标解除全局 backprop update locking，使多个 chunk 并发更新。它减少等待，却引入 objective mismatch、跨 chunk representation drift 和新的 recovery state；大规模精确训练仍以全局 BP 为基线。只有局部目标经过收敛与下游验证时，才把并发更新当可接受近似。
+
+<!-- source-family: arxiv:2608.07974v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: local-objective-unlocks-pipeline-updates -->
 
 ## 本章在知识树中的位置
 

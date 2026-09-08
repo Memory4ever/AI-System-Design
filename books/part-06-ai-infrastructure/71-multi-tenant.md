@@ -90,6 +90,8 @@ timing 或 metadata probe 只能提示异常，不能证明缓存内容已被恢
 pool 或完整重算，普通单租户调用继续使用 provider 原生 cache。exact-v1 的观察只覆盖论文披露的三个 provider、
 随机 prompts 与检测阈值，不支持从 timing signal 推导具体内容泄露。
 
+同一原则也适用于任何上游托管模型：credential 不只是计费凭据，还可能隐式决定 provider 侧 cache、rate limit 与日志域。平台若复用一把 key 服务多个租户，就必须在本地禁用跨 principal 的状态复用，或向上游申请可验证的独立 namespace，并把实际 credential/organization identity 写入请求 evidence。独立凭据增加密钥治理和 cache fragmentation；上游无法披露隔离语义时，敏感租户应使用专用 endpoint 或关闭相关复用。<!-- semantic-body-binding:SF-2026-ARXIV-2608-17485 -->
+
 <!-- source-family:SF-2026-ARXIV-2605-30613 -->
 
 ### 共享 Backbone、私有状态：多租户 VLA 后训练的隔离与复用边界
@@ -137,6 +139,13 @@ external identity
 细粒度隔离提高归因与自适应控制，却增加 hook/telemetry 开销、policy oscillation、初始化尖峰、镜像下载归属和 retry 累积问题；工具极短或 OS primitive 不完整时，per-process/pod limit 仍是可验证 fallback。`arXiv:2602.09345v1` 的 exact-v1 只支持 AgentCgroup 的 per-tool resource domain、eBPF 控制/遥测与作者 CPU/memory prototype，不证明 GPU、网络、所有工具或生产多租户安全均已闭合。
 
 <!-- source-family:SF-2026-ARXIV-2602-09345 -->
+
+## Cache Replacement 与 Admission Responsibility 是两件事
+
+共享 prefix cache 的 replacement policy 回答“现在保留哪个 block”，却不回答“哪个租户造成了新增压力”。如果污染请求结束后责任也消失，攻击者可以持续制造一次性 prefix，让其他租户承担 eviction。平台应按新生成 block 计量 admission debt，使责任跨请求持续，并在 promotion 或 eviction 时优先回收高债务来源。
+
+这不是要取消 work-conserving sharing：空闲容量仍可被任何租户使用，只是共享收益不能抹掉资源责任。debt policy 会增加状态和治理复杂度，也不天然等于业务公平；replacement value、租户配额和 chargeback 仍是独立控制面。
+<!-- source-family: arxiv:2608.01657v1; daily: 2026-08-04; semantic-body-binding: persistent-prefix-admission-responsibility -->
 
 ## 本章在知识树中的位置
 

@@ -134,6 +134,10 @@ taxonomy 与 lexical proxy 都构成 selection/measurement boundary；日志去�
 
 Monitoring 可以把已经校准的 evaluation results 聚合为时间序列，用于观察 slice drift、burn rate 和触发调查；它不能从 `HTTP 200`、低 latency 或 token 正常结束自动推导内容正确。否则 dashboard 会把“系统稳定地产生错误答案”显示成健康。
 
+有些 runtime 已经为 speculative decoding 训练了 MTP/draft head。与其另跑完整 guard model，一条受限分支可把 draft hidden states 送入轻量 context-aware probe，使同一 speculative work 同时产生 token proposal 与风险信号。这样降低边际监控成本，却让 sensor quality 依赖 draft 的训练预算、层选择和当前 model revision；它仍不拥有阻断或输出 commit 权。没有原生 draft head、风险分布漂移或 probe 置信不足时，应回退独立 guard/evaluator。`arXiv:2608.28099v1` 只证明其受测 MTP 架构与分类任务中的准确率—成本关系，不证明近零成本、开放攻击覆盖或生产安全保证。
+
+<!-- source-family:SF-2026-ARXIV-2608-28099 -->
+
 ### 从 Error Counter 到 Layer × Detectability Failure Coordinate
 
 按 transport status、timeout、OOM 和 dependency error 统计失败，在请求语义与 transport outcome 高度一致时最直接；但多 provider gateway、流式协议、tool call 和 session failover 把“成功返回”与“状态连续”拆开了。一个请求可能得到 `2xx`、完整结束 SSE stream，却已经发生 tool index collision、跨 provider state 丢失或 retry storm。此时继续把 Errors 定义成单个 counter，会让系统只看见容易检测的症状，看不见 silent contract failure。
@@ -378,6 +382,16 @@ wall-clock moment detector 在 Agent cadence 下可能结构性双稳态；monit
 
 <!-- source-family:SF-2026-ARXIV-2605-24683 -->
 
+## 从请求 Trace 演进到 Agent Trajectory
+
+传统 serving observability 以 request、token 和 GPU kernel 为边界，因为一次请求通常就是一次可结算执行。Agent workload 改变了这个前提：一次任务会跨越多个模型调用、tool effect、sandbox lease 与环境观测，单个请求成功不能证明 trajectory 完成，token throughput 也无法解释工具等待、突发资源占用或 harness failure。
+
+因此平台需要一个贯穿全过程的 trajectory identity。model intent、实际 tool payload、外部 effect、sandbox revision 与返回 observation 都应挂在同一条因果链上；request trace 仍负责局部性能，trajectory trace 才拥有任务级 continuity 与 recovery。代价是高基数、跨域时钟对齐和隐私面扩大，所以默认保留摘要 span，只在异常窗口展开原始证据。
+<!-- source-family: arxiv:2607.29069v1; daily: 2026-08-03; semantic-body-binding: agent-trajectory-resource-observability -->
+
+同样的原则也适用于 heterogeneous attention state。KV、latent cache、稀疏 selector 与 recurrent state 可能使用不同误差度量；不能把它们的平均值直接相加成一个“健康分”。每层 telemetry 必须携带 state identity、metric type 和证据等级，无法转换时就保持不可比较，组合风险继承最弱 tier。这样提高了 fail-closed 的概率，却避免 slot reuse 或 state mismatch 被均值掩盖。
+<!-- source-family: arxiv:2608.05863v1; daily: 2026-08-07; semantic-body-binding: typed-attention-state-risk-ledger -->
+
 ## 本章在知识树中的位置
 
 Monitoring 承接第 66 章对 Evaluation/Observability 的边界，为第 57 章 Evidence Plane 提供聚合 observed state，并向 evaluation sampling、autoscaling、admission、cost 与 incident response 提供输入。下一章转向离散事件：当指标告诉我们“出问题了”，Logging 如何留下可查询证据。
@@ -456,6 +470,16 @@ MoE 路由原本是执行状态，若不同输入在 expert 选择与 GPU 活动
 硬件 counter 假设 firmware、driver 或 hypervisor 至少有一层可信；这些层都可被篡改时，平台可以主动投递可版本化的计算挑战，把 probabilistic parallel work、sequential latency work、GEMM throughput 与 VRAM-residency hashing 的时延/带宽响应组合成统计证据。这些 observables 只证明受挑战时的某类架构活动，不证明运行了哪个模型、目的是否合规或所有时间都可见。
 
 挑战本身消耗算力和功耗，会受竞争负载、功率限制、虚拟化和架构差异干扰，而且统计分布会随硬件变更。因此 monitor 只能产生 suspect/unknown，由治理策略结合资产注册、调度回执与人工调查决定行动；有可信 counter/attestation 时它们仍是更直接的基线。<!-- source-family:SF-2026-ARXIV-2602-09369 -->
+
+### 外部 Telemetry 与 Agent 自报属于不同证据通道
+
+Agent 说“我正在偏离”并不是可靠 monitor；外部 trace 可以用 sequential test 观察 action、tool 和状态变化，但 false-alarm budget 必须按 runtime regime 校准。工作负载、模型或工具链变化后，旧阈值不再自动有效。外部监控能覆盖可观察行为，却仍看不到 belief-level、quiet 或刻意规避传感器的失败，因此不能替代授权与最终 outcome verification。
+<!-- source-family: arxiv:2608.27808v1; semantic-body-binding: external-sequential-agent-monitoring -->
+
+### 观察路径必须独立于被观察进程
+
+当训练进程自身可能挂起、污染缓存或重写日志时，进程内 telemetry 无法证明故障前后的真实状态。监测平面应从独立副本或旁路读取信号，先验证副本等价性，再用原位 replay 定位差异；这增加了资源与同步成本，却避免 observer 与故障共享同一失效域。副本不等价时只能报告异常线索，不能归因。
+<!-- source-family: arxiv:2608.11034v1; semantic-body-binding: independent-observation-path-and-in-situ-replay -->
 
 ## 小结
 

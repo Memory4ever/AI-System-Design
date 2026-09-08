@@ -251,6 +251,10 @@ sequence operator semantics
 
 即使数学与状态形式已确定，稀疏 Attention 的工作量仍可能随 head 改变。按 head 数静态切分在 token budget 均匀时控制成本最低；S-HPLB 先用 calibration 为不同 head 冻结差异化 token budget，这一步已经选择了 approximation/accuracy trade-off，再以这些预算的估计工作量做 greedy head-to-device assignment，后一步只负责 load balance，不能在运行时悄悄改写预算。收益来自减少 straggler，但代价是 calibration artifact、预算漂移和跨设备通信；负载均匀时静态并行更简单，而分布漂移、互联退化时需要重新校准或回退——这是系统设计推论，不是论文单独证明的 failure guarantee。`arXiv:2603.10353v1` 只在 §3.2–§3.3 和 §5.1–§5.4 所披露的模型、稀疏配置与实验环境中支持预算和放置机制。<!-- source-family:SF-2026-ARXIV-2603-10353 -->
 
+同一条原则也适用于跨 NUMA GPU 的不规则算子，但此时“工作量相等”仍不等于“数据代价相等”。若多个 task 对 operand 的共享范围不同，把它们只按 FLOPs 均分会让全局共享、局部共享和私有数据在互联上反复迁移；execution plan 应先根据共享域与拓扑估算 data movement，再把 task 放到能复用 operand 的 GPU，并把调度决策与 operand generation、layout 和拓扑版本共同冻结。这样用更复杂的全局放置换取较少的远端读和更高 locality，却会增加 profiling、调度开销与拓扑漂移风险；矩阵规则、共享模式均匀或单设备已足够时，静态切分仍更稳妥。`arXiv:2607.28824v1` 只用作者构造的内存访问 trace 与 cycle-level simulation 支持该 NUMA placement 机制，未在真实多 GPU 系统上证明端到端收益、容错行为或生产调度成本。
+
+<!-- source-family:SF-2026-ARXIV-2607-28824 -->
+
 最朴素的 GEMM 可以让每个 output element 独立遍历 `K`。问题是相邻 outputs 会反复从 HBM 读取相同的 A rows 和 B columns。现代 kernel 将输出切成 `B_M x B_N` tiles，并沿 `K` 以 `B_K` 分段：
 
 ```text
@@ -302,6 +306,10 @@ static weight sparsity
 fallback。获得更高有效稀疏率的代价是 bespoke layout、索引解码、质量校准、phase dispatch 和 portability；batch 增大、
 稀疏度不足、量化/硬件组合未验证时，dense 或 structured-sparse GEMM 仍可能更快、更容易证明正确。本节拥有的是
 execution-plan 分支，不把特定作者在 A10G/L4/L40S、LLaMA-2-7B 与 matched-perplexity workload 上的结果外推为通用加速。
+
+若 weights 与 activations 同时稀疏，单独优化压缩率或跳零率仍可能让 SIMD lanes 消耗在格式解码、索引交汇和冲突累加上。双稀疏 SpMspV 的 execution identity 因而还要包含双方格式、SIMT decoder、operand-sharing domain 与 shared accumulation protocol；格式不是离线存储细节，而是决定 kernel control flow 的一部分。联合设计可以减少无效读取和重复累加，却用更复杂的 metadata、分支与 shape-specific tuning换取收益；稀疏度不足、索引分布不规则或 batch 已适合 dense GEMM 时，应回退 dense/structured-sparse kernel。`arXiv:2608.01536v1` 只以作者 kernel、模拟或微基准支持该机制，不证明生产端到端延迟、跨硬件 portability 或模型质量保持。
+
+<!-- source-family:SF-2026-ARXIV-2608-01536 -->
 
 ## cuBLAS 不是一个固定 GEMM Kernel
 
@@ -370,6 +378,32 @@ stage s-1: previous result enters epilogue / store path
 - 小 tile、非规则访问或很短的 `K` 可能不足以摊薄 descriptor、barrier 和 pipeline 管理成本。
 
 所以 TMA 的正确心智模型不是“异步 memcpy 更快”，而是**把 tile movement 变成可与 Tensor Core work 并行推进、且必须显式同步的独立硬件流水**。
+
+异步流水还受计算侧存储生命周期限制，不能只计算 shared-memory stages。以某个 Blackwell D128 Attention
+布局为例，两组各128列的 score/P 复用区与两组各128列的 FP32 output 已占满512列 TMEM。Score 转成
+probability 后，该区域仍由后续 PV 消费；最后一个消费者结束前，下一轮 QK 没有合法的新写入区。
+加 barrier 可以保证顺序，却不能凭空增加容量。Execution plan 必须共同安排 score、P、output 的空间与
+最后使用时刻，再判断双缓冲是否真的允许 overlap，而非把 SMEM 节省直接折算成并行度。
+
+这个布局例子也提醒我们：同一论文中的 forward kernel 与训练路径未必使用同一精度。
+[Direct-P 的精确版本](https://arxiv.org/html/2609.04105v1) 给出了低精度概率表示的前向方案，但其受测
+MXFP4 P/V 长训练路径发散，保留的训练路线使用 FP8 P/V，且仍有 validation-loss 差距。因此，前向内核
+变快不能自动支持低精度训练收敛；回退精度、数据布局转换及端到端质量都必须分别验收。上述 TMEM 数量
+只描述该 D128 布局，不外推到其他 head dimension 或全部 Blackwell GPU。
+
+### 跨 Block 共享先改变协作范围，再判断是否值得
+
+TMA 解决怎样搬运，另一条正交问题是搬入后的数据能由谁保存和复用。单个 CTA（thread block）把一行数据保留在自己的 shared memory 中，局部同步和生命周期最简单；但某些算子需要先求整行统计量，再多次遍历原数据。行宽超过一个 CTA 的保留能力时，全局内存重读仍是正确而通用的基线，只是开始重复支付数据移动成本。
+
+支持 thread block cluster 的硬件提供了一个中间协作范围：多个 CTA 各自保存不相交的 bulk slice，用 distributed shared memory（DSMEM）交换少量 reduction partials，得到整行统计量后，各 CTA 继续本地读取自己的 slice。这里扩展的是协作容量，而不是得到一块无成本、物理统一的缓存；不应把每次 bulk read 都改成 remote read。
+
+这条路径把原来的“重读整行”换成“局部保留 + 紧凑统计量复制 + cluster 同步”。在向每个 peer 推送 partials 的具体实现中，远端复制量随 CTA 数 P 按 P(P−1) 增长；同一轮的 scratch 只有在 peer 已消费完毕后才能复用，owner 也不能提前退出。更大的 cluster 虽能缩小每个 CTA 的 slice，却可能增加同步、资源占用和调度波次。Kernel plan 因而要共同决定 slice ownership、统计量布局、可见性、生命周期与资源可行性，而不只是打开硬件功能。
+
+收益判断应先比较同 shape 的非 cluster 路径：可消除的重复读取时间，是否大于新增的控制、局部 replay、未被隐藏的 staging 与远端统计量写入成本。已有基线可能命中 cache，也可能已经采用 CTA-local staging，不能一律按峰值 HBM 带宽估算收益。匹配资源布局的 control microbenchmark 可以帮助估计代价，但成本模型仍只是筛选器，不能替代 correctness、实际 cluster 配置搜索和上层 runtime 测量。
+
+因此它与单 CTA tiling、fusion、TMA 是有条件组合，不是线性替代。小行宽、无需重读、统计量不紧凑或资源竞争强时，旧路径仍可能更快；DRAM bytes 下降也不保证同比例延迟收益。现有受限算子实验只能支持这种选择边界，不能直接升级为训练收敛、完整推理吞吐或生产 SLO 的保证。
+
+<!-- source-family:SF-2026-ARXIV-2609-01864 -->
 
 ## DeepGEMM 是专用分支，不是 cuBLAS 的线性替代
 
@@ -516,6 +550,14 @@ packing 减少无效计算并改善 thread-block balance，却增加 metadata、
 
 <!-- source-family:SF-2026-ARXIV-2602-06072 -->
 
+### Output Projection 也有精确与近似两条执行路径
+
+标准输出层计算全部 vocabulary logits，再执行 Top-K/Top-P；它在 batch 足够大、GPU GEMM 高效或任务要求完整分布时最简单，也保留精确采样语义。小模型保留十万级多语言词表、且交互式 decode 的 batch 很小时，输出矩阵却可能从“普通尾层”变成 memory-bandwidth critical path。此时可以把 `hidden state × token embedding` 的最大内积选择改写成近似 MIPS：静态索引只召回少量候选 token，再由既有 logit processor 消费稀疏结果。
+
+该分支用近似检索误差、非连续访存和额外索引内存换掉全词表扫描；索引参数与模型 revision 必须共同版本化，并以真实 token states 检查 Top-K recall 与生成质量。batch 变大后，连续 GEMM 的复用会重新胜过图遍历；量化、GPU 索引和完整 softmax 需求也会移动交叉点。`arXiv:2608.27460v1` 只在 CPU FP32、batch 1 为主的 Gemma/Llama/Qwen 小模型上证明这一受限 operating point，且使用 LLM judge 检查生成质量；它不证明近似 head 保持原分布、适合高吞吐 GPU serving，或 82% 的端到端提升可迁移。
+
+<!-- source-family:SF-2026-ARXIV-2608-27460 -->
+
 ### Exact Top-K 可以复用时间相关性，但必须保留验证权
 
 每个 decode step 从头扫描并排序全部候选，是最稳妥的 exact Top-K；context 很长且稀疏 attention 的 indexer 已经足够快时，这个选择阶段本身会进入 critical path。相邻 decode step 的重要位置常有相关性，因此上一轮 Top-K 可以成为 proposal，但不能直接成为下一轮答案。
@@ -599,6 +641,28 @@ aggregate quality / perplexity
 
 更多诊断带来额外推理、存储和 evaluator 成本，也可能在未覆盖 slice 上漏检。作者对四个模型、llama.cpp 量化配置和离线数据集的结果不能推出通用“安全 bit-width”；低比特方案仍可在自己的 workload contract 内通过独立校准后成立。量化机制与 execution artifact 由本章拥有，跨 slice calibration、证据保留与 release governance 交给第 66 章。
 
+逐例交换还需要一个能解释风险变化、但不冒充正确性证明的局部量。量化前的 decision margin 在同一模型、同一位宽与同一 decision family 内，可用于估计扰动把原决定推过边界的概率；不同 family 还可能存在方向性偏移，因此 tool call、拒答与普通选择不能共享一个阈值。Margin 只是经本模型本配置校准的 risk sensor，不是跨模型 certificate；极低位宽下表示本身失真时应回退逐例回归和端到端 effect 测试。
+
+<!-- source-family: arxiv:2608.06564v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: quantization-margin-as-calibrated-decision-risk -->
+
+### 规则码流与自适应重建可以分离
+
+非均匀量化不必要求物理码流也完全不规则。部署 artifact 可以保存规则 packed magnitude codes，再用少量 shape/scale metadata 将它们映射到单调、可自适应的重建 levels；这样在保留直接 kernel 消费能力的同时，适配权重分布。代价是重建参数、group size、activation path 与 kernel shape 一起进入版本身份，而且规则码并不自动保证 downstream quality。硬件缺少对应 kernel、shape crossover 不成立或质量回归失败时，uniform quantization 仍是更简单的分支。
+
+<!-- source-family: arxiv:2608.06763v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: regular-packed-codes-adaptive-reconstruction -->
+
+数值验收还要区分“允许的误差”与“能检测出的错误”。两个 kernel 即使各自可复现，也可能因 epilogue 的
+scale 运算与舍入顺序产生不同输出；若合法差异与错误舍入都落在一个 BF16 相邻值间距内，容差检查会同时
+放过二者。通过只说明已测输入上的差异受限，不证明 bitwise equality 或 kernel interchangeability。
+因此应向 verifier 注入已知故障，分别记录适用条件、检测能力与未覆盖情形，而不只用正确实现测试它。
+
+若业务确实要求逐位一致，可以收紧数值实现合同，而非把容差机械改为零。例如，在整数累加无溢出、进入
+浮点时可精确表示、缩放不进入异常数值范围等前提下，power-of-two scales 可消除特定 epilogue 的运算自由。
+但修改 scale 必须从原始权重重新量化，不能留下按旧 scale 编码的整数权重；除法 dtype、scale 生成规则和
+kernel identity 也要共同冻结。该分支在受测 Qwen3 与 CUTLASS/Triton 配置中支持确定性，不保证其他实现或
+所有输入；质量代价与吞吐仍须另测。[对应纠错研究](https://arxiv.org/html/2609.00363v1) 已撤回其前作
+“容差检查决定可互换性”的强表述，不能继续把错误的 weight–scale 配对当作约束本身的质量成本。
+
 ### 量化前先诊断分布：保持代数等价不等于保持量化结果
 
 对 Attention 的 Q、K 使用同一套对称量化路径，前提是二者的 channel distribution 与 outlier structure 足够
@@ -633,6 +697,13 @@ fusion 作为 artifact identity；条件不成立时必须回退到普通量化�
 
 全局 rotation 在 coarse group 下简单且稳定；group 变细后，跨组扩散的 outlier 可能反而破坏局部分布。执行计划应把 rotation scope、group size、outlier permutation、scale/zero-point dtype、accumulator 与 output dtype 一起版本化。局部 rotation 或 scope/group 解耦只在校准收益覆盖 permutation、metadata 和专用 kernel 成本时成立；缺少目标硬件实现时，RTL/model 结果不能外推为 GPU 或生产 tail latency。
 
+共享 scale 还使误差不只属于 outlier 本身：它抬高一组的量化步长后，同组普通值也会失去分辨率。因而在格式与
+group size 固定时，可以用校准统计为 outlier 选择低幅度 companions，对 activation 与 weight 做配对 channel
+permutation，再在新顺序下修复 weight 误差。高精度线性运算仍等价，低精度舍入却已改变；RMS 只是低成本选择
+代理，偏好 activation 的顺序可能损害 weight 量化。只有重排能与 normalization/quantization 融合、额外 gather
+没有吃掉访存节省时，这条分支才值得采用；分布不稳定或缺少相应 kernel 时，固定分组仍更简单。现有 NVFP4
+实验只支持受测 Llama/Qwen、原生 16 值分组及 RTX 5090 实现，不证明其他 group 的模拟结果有同样硬件收益。
+
 ### 二阶敏感度把 Output Gradient 带进量化 Artifact
 
 只根据 activation range 或 weight magnitude 分配 bit，假设输入统计足以代表输出损失敏感度；当不同输出方向的
@@ -652,6 +723,13 @@ calibration activations + output gradients
 它把 calibration dataset、loss/objective、gradient capture、factorization 与 bit map 都纳入 artifact identity，成本和
 数值风险显著高于 activation-only 方法。Artifact perplexity 改善不等于目标 backend 已有更快 kernel；若 gradient
 采集或矩阵分解成本无法摊薄，简单 channel-wise/activation-aware quantization 仍更合适。
+
+二阶近似也不必与更新策略一起冻结。固定曲率下的解析补偿计算便宜，误差较小且局部近似可靠时仍合理；顺序量化
+不断改变当前 residual 后，可以保留粗粒度解析补偿，再用当前 surrogate loss 的梯度调整尚未量化的列，已经量化的
+列则保持固定。滑动相邻 block 的损失能纳入有限下游效应，却增加反向计算、optimizer 状态和校准成本。这里动态
+更新的是 residual 梯度，不是每步重建 Fisher；SGD 的下降方向分析也不自动保证 Adam 收敛。受测 W4A16 案例支持
+改善相对参考模型的分布保真，但 KL 更小不等于任务质量最优，更不等于推理更快；离线预算不足时，原来的静态补偿
+仍是有效选择。
 
 ### Distribution-conditioned Quantization：共享权重不等于共享 Scale
 
@@ -940,6 +1018,18 @@ address-width failure surface 换旧硬件可执行性。未合并 PR 只能作�
 
 <!-- source-family:SF-2026-ARXIV-2605-23078 -->
 
+### Layout Plan 必须跨算子优化，并单独验证 Cost Model
+
+逐算子选择局部最快 layout，在单 operator 或转换很少时简单有效；dataflow graph 中相邻算子偏好的 layout 不同时，局部最优会累积 conversion cost。Build owner 应把 operator execution、tensor layout 与 conversion edge 组成全局 plan，并把 solver optimality 与 cost-model accuracy 分开验收：求解器已优化声明目标却在线上落后，说明估价或 workload identity 错了，不能继续调搜索器掩盖。全局求解用编译时间、profile revision 与动态 shape 适配换取更少转换；图很小或 workload 漂移快时，局部 heuristic 仍合理。`arXiv:2608.21555v1` 只支持其困难性结果、bounded-treewidth exact algorithm、MaxSAT 近似与作者生产编译器 workload，不证明任意后端都获益。
+
+<!-- source-family:SF-2026-ARXIV-2608-21555 -->
+
+### Intended Placement 必须由硬件计数器复核
+
+Compiler graph 标注某 accelerator，不等于该算子和权重真的在那里执行；等价 graph expression、encoding 或 runtime fallback 都可能改变 residency 与 byte stream。Execution-plan validation 因而要同时保存 intended graph、编译产物和 measured placement evidence，例如 memory-controller/driver counter，并按真实 decode bytes 与 latency 判断是否命中目标路径。测量增加平台专用探针和反向工程不确定性；官方支持路径稳定且可由 runtime receipt 直接证明时，不必每次做同等深度 sweep。`arXiv:2608.22110v1` 的证据只覆盖作者 CoreML/Apple Neural Engine 与小模型，不能外推 CUDA、其他 accelerator 或大模型性能。
+
+<!-- source-family:SF-2026-ARXIV-2608-22110 -->
+
 ## Build-time 与 Runtime-time
 
 ### Diffusion Decode Granularity 也是运行时调度状态
@@ -1091,6 +1181,12 @@ early exit 或极端专用 layout 仍可能需要 custom kernel；固定 chunk�
 外推 continuous batching。因而正确关系是 `Layering / Dependency`：算法先暴露合法的编译面，compiler 与
 custom kernel 再按 workload 分工，而不是前者普遍取代后者。
 
+### CPU Decode 可以把模型依赖图改写为 Stage-major Dataflow
+
+传统 layer-major Transformer 在 GPU compute-bound 路径上最成熟；CPU 或 storage-tier Decode 若被 weight bandwidth 支配，逐层读取完整权重会让 cache reuse 很差。一条受限 co-design 分支修改 inter-layer dependency，使 runtime 以 vertical stage-major 顺序复用 L2-sized weight tiles，并只流过已选 experts。它用模型重训、非标准依赖和复杂验证换取 weight locality；模型不可重训、GPU compute-bound 或 batch 足够大时，传统 layer-major 仍更合理。`arXiv:2608.23841v1` 的 TinyStories 与 30.9B CPU/disk-tier 结果只支持可行性，不证明主流 GPU、通用模型质量或任意 MoE 收益。
+
+<!-- source-family:SF-2026-ARXIV-2608-23841 -->
+
 ### 层间依赖也可以成为受限的并行分支
 
 常规 decoder 严格按层推进，因为后一层消费前一层完整 hidden state；这种顺序执行正确、稳定，也最容易与 kernel fusion 和 KV 生命周期对齐。另一条实验分支把整条 hidden-state trace 写成 nonlinear residual equation，再用 structured Newton-style correction 并行更新多个层。它改变的不是 tensor parallel 的切分维度，而是把“层序列”从既定控制流变为待收敛状态。
@@ -1098,6 +1194,12 @@ custom kernel 再按 workload 分工，而不是前者普遍取代后者。
 潜在收益是暴露 layer parallelism；代价是 correction 迭代、Jacobian/近似结构、额外激活状态与收敛失败。残差不降、数值条件恶化或 correction 成本超过顺序执行时，必须回退标准 layer order。现有 exact-v1 只支持其披露模型、近似、任务和硬件上的实验结果，不证明任意 decoder 都能保持质量、降低端到端尾延迟或适合生产 serving。
 
 <!-- source-family:SF-2026-ARXIV-2605-17842 -->
+
+### Software-defined Dataflow 仍需明确 Placement Authority
+
+Thread-centric accelerator 把大部分调度隐含在硬件；software-defined locally accessed dataflow 则让编译器显式安排数据移动与局部执行，引入可编程 data-movement engine。它可能让 layout、placement 与通信更贴近模型图，却把正确性和性能责任转给 compiler schedule、memory dependency 与 fallback；通用 kernel/线程模型在动态 workload 和 portability 优先时仍成立。`arXiv:2608.24664v1` 可支持 Maia 200 的架构与 placement 思路，但 10,145 TFLOP/s FP4、7 TB/s HBM、750W 等是厂商披露，不能作为跨系统优势证明。
+
+<!-- source-family:SF-2026-ARXIV-2608-24664 -->
 
 ## 专用加速器首先是一份 Workload Contract
 
@@ -1186,6 +1288,8 @@ Mixed-precision policy 也需要进入同一闭环。Analytical proxy 可以先�
 却引入搜索预算、校准过拟合和 compiler/hardware version drift。固定硬件且代价模型成熟时，离线静态 policy
 仍更简单；跨设备复用一份 mixed-precision policy 不能默认保持 Pareto 关系。
 
+配置搜索还应分成 feasibility 与 ranking 两阶段。第一阶段由显存、shape、kernel support、并行整除与通信拓扑等硬约束排除不可构建计划；第二阶段才用 cost model 或实测在可实现域内排序。若把二者混成单一预测分数，模型可能把“预测很快但无法部署”的配置排到最前，也难以解释失败来自约束还是估计误差。分阶段会增加 constraint model 维护，但能让 fallback 回到已验证 plan。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19296 -->
+
 <!-- source-family:SF-2026-ARXIV-2605-28704 -->
 
 浮点执行语义还包含 reduction order 与 activation approximation，而不只是“BF16/FP16”标签。并行度、batch shape 或 kernel plan 改变后，结合律失效会让同一输入走到不同舍入路径；若 activation 用近似实现，其 bounded-ULP contract 也必须进入 engine artifact。要声明可重放，需共同绑定 precision、reduction topology、kernel/activation implementation、compiler/runtime 与硬件目标，并在这些条件变化时重新验证。
@@ -1232,6 +1336,11 @@ GPU binary 到可分析 IR 的迁移不是指令文本替换：统一 register f
 
 <!-- source-family:SF-RANGEGUARD-EFFICIENT-BOUNDED-APPROXIMATE-ERROR-CORRECTION-FOR-RELIABLE-D -->
 
+运行时检测与回退并非在所有执行合同中都可用。若加密推理要求计算电路不根据密文内容改变工作量，直接把明文侧的动态 early exit 搬过去就会破坏这一前提；近似预算可以改在离线分配：训练时为不同算子位置学习迭代深度的松弛分布，同时调整模型权重，随后为每个位置选择固定迭代次数，并在这一离散电路下继续适应权重。部署时所有输入执行同一位置预算，而不是在服务器上读取密文状态后决定是否退出。这里变化的是近似计算的控制权从在线请求迁移到训练与编译产物；低深度先验只是成本代理，不能直接充当实际 bootstrap 次数或端到端时延。
+
+这种分支用训练、校准和权重—电路耦合换取较少的固定计算，但没有消除误差验收。训练中的范围限制不等于部署输入始终落在收敛域，部分非线性还可能在训练与部署使用不同实现；packing、密码参数和输入分布改变后，都需要重新验证。参数复用、训练预算不足或校准域不稳定时，较保守的固定近似仍更易审计；明文执行允许可靠检测时，在线 correction 仍是另一条成立的路径。单一小模型的 teacher-forced 加密链只能支持这种有限机制，不能证明自由生成质量、通用低延迟服务或密码安全认证。
+<!-- source-family:SF-2026-ARXIV-2609-01730 -->
+
 ### Quantization Correctness 不能只看 Accuracy
 
 模型量化保持 aggregate accuracy 时，通常被视为语义等价；对会给出 counterfactual recourse 的系统，同一个建议在 full-precision 模型上有效，却可能在 quantized decision boundary 上失效。执行计划验收因此应加入 Validity Drop 与 minimal Recourse Cost Gap 等 task-specific invariants，而不是只测输出一致率。
@@ -1239,6 +1348,12 @@ GPU binary 到可分析 IR 的迁移不是指令文本替换：统一 register f
 这些指标揭示决策边界漂移，却依赖可计算的 recourse oracle，作者在表格分类任务上的结果不能外推到 LLM serving。若产品不提供 recourse，可继续使用常规质量切片；一旦输出会驱动可行动建议，就必须在目标 dtype/kernel 上重验，失败时提高精度或回退原 engine。
 
 <!-- source-family:SF-2026-ARXIV-2605-17160 -->
+
+## Kernel Agent 应生成 Typed Schedule，而不是自由文本 Patch
+
+自由文本 kernel 代码很难表达 tile、memory hierarchy、synchronization 和 target hardware 的约束，错误也只能在最终编译或 benchmark 暴露。typed schedule IR 把这些选择变成可验证对象，由 verifier 检查语义、成本模型估计候选，再用局部诊断驱动修正。
+
+该闭环把 Agent proposal 与 compiler/runtime commit 分开，却依赖 IR 对算子和架构的表达能力；无法表示的新 pattern 仍需人工或回退成熟 kernel。收益必须在完整 model execution plan 中验证，不能用 standalone kernel speedup 替代端到端结果。
 
 ## 本章在知识树中的位置
 
@@ -1289,6 +1404,41 @@ Execution engine 从调用通用 kernel library 演进到 JIT、superoptimizatio
 17. Base family 的选择如何在 Prefill、Decode 与非文本输出之间迁移 correction 成本？
 18. 为什么 MoE 的 token balance、activated-expert balance 与 topology-aware balance 各自只有条件成立区间？
 
+### 异构执行计划要按算子的数据移动特征分配位置
+
+Attention、状态空间层与 MoE 的瓶颈并不相同：有的受复用和带宽约束，有的受稀疏权重搬运与路由约束。统一把它们放到同一计算层会让局部 kernel 优化被跨层数据移动抵消。执行计划应以算子状态、可复用性、互联成本和回退路径决定 placement；near-memory 或专用单元的模拟结果只能说明一个候选 operating point，不能替代真实硬件上的端到端验证。
+<!-- source-family: arxiv:2608.22613v1; semantic-body-binding: heterogeneous-operator-global-placement -->
+
+### Quantization Transform 与 Number Format 必须共同选型
+
+旋转、缩放或其他 transform 的排序并不独立于量化格式：variable-bit allocation、group shared scale 和数值编码会改变 transform 要优化的误差形状，甚至反转原先更优的选择。编译器因此不能先固定 transform 再替换 format；它要把校准数据、grouping、bit allocation、kernel 支持和质量目标编成同一个 plan，并为超出校准分布的层保留回退。
+<!-- source-family: arxiv:2608.25188v1; semantic-body-binding: quantization-transform-format-joint-plan -->
+
+### Communication Lowering 应先利用 Reduction Algebra
+
+collective 的物理 routing 之前仍有一层逻辑优化空间：根据 reduction 的结合性、交换性和 carrier 结构，编译器可以重写依赖图、缩小中间状态，再映射到 mesh。收益来自少搬数据而不只是寻找更短路径；代价是必须证明重写保持数值与同步语义，并把 precision、chunking 和失败恢复纳入 plan identity。
+<!-- source-family: arxiv:2608.26220v1; semantic-body-binding: reduction-algebra-before-routing -->
+
+### Generated Kernel 必须先进入 Typed Schedule IR
+
+模型生成的 kernel 或 schedule 不应直接进入性能竞争。先把 shape、dtype、layout、memory effect 和并行决策编成 typed IR，再由 verifier 检查正确性，并用局部 cost feedback 指向需要修改的节点，才能形成可恢复的 compiler loop。验证与 IR 限制会降低搜索自由度，却把“能编译”和“在目标 contract 下正确且更快”分开。
+<!-- source-family: arxiv:2608.12629v1; semantic-body-binding: generated-kernel-typed-schedule-ir -->
+
+### MoE 量化损伤要拆成 Compute Error 与 Routing Mediator
+
+router 的 margin 只能说明路由是否容易翻转，不能说明翻转后的 expert 会造成多大输出误差。诊断应分别运行量化、冻结原路由、只替换路由和参考路径，把计算误差与 routing-mediated error 拆开，再决定保护 gate、expert 或执行格式。更细的因果 profiling 增加成本，却避免把高精度预算浪费在无害 route flip 上。
+<!-- source-family: arxiv:2608.11212v1; semantic-body-binding: moe-quantization-routing-mediated-error -->
+
+### 量化发布必须按语言与任务切片
+
+总体平均质量相近，仍可能掩盖某些语言、文字体系或 tool/safety decision family 的非对称退化。量化 artifact 的身份应同时绑定模型、位宽、校准集和执行格式，并以语言、typology 与任务切片设置 release gate；切片样本不足时标记未知，而不是用总均值放行。更细评测增加成本，但能把格式收益与不可接受的局部行为翻转分开。
+<!-- source-family: arxiv:2608.09941v1; semantic-body-binding: quantization-release-by-language-and-task-slice -->
+
+### 离线权重重建是量化的一条条件分支
+
+直接舍入把每个权重独立映射到低比特网格，简单且容易复现；当层间误差累积成为主要约束时，可用生成式或迭代式重建在离线阶段联合选择 rounding。它不改变运行时格式，却把成本移动到校准、层选择与离线搜索，并可能过拟合重建分布。采用前必须在同一 runtime format 下同时验收离线成本、目标任务质量和未重建层的回退路径。
+<!-- source-family: arxiv:2608.11045v1; semantic-body-binding: offline-generative-weight-reconstruction-quantization-branch -->
+
 ## 小结
 
 TensorRT-LLM 把模型、NVIDIA GPU 和 Serving runtime 联结成经过优化的 execution contract。GEMM 执行从 `M/N/K` 和 dtype/layout contract 出发：cuBLASLt 用广覆盖的 heuristic kernel space 交付通用路径，DeepGEMM 一类专用库用 JIT、TMA、MMA 和模型特定 layout 换取更深优化。二者可以在同一 runtime 中共存。MoE 还要求 execution plan 把 activated-expert weight floor、token/tile compute、expert placement 与 communication 放入同一条件成本模型，不能把 token count 当成跨 regime 的固定时间代理。
@@ -1298,6 +1448,10 @@ Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件�
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2609-01730`（HEAT；Status: Experimental）：[exact-v1](https://arxiv.org/html/2609.01730v1) §3–5、Appendix A–F 支持离线 site-wise 迭代预算、固定 mode 与 weight consolidation；训练松弛、range guard 和实际部署电路不是同一对象。作者使用 GPT-2 124M、OpenWebText 与 128 条各 128 token 的 teacher-forced 加密链；正文不采用速度数字，不外推生产 concurrency、SLO、自由生成质量或正式密码安全。精确缓存及作者/独立审阅保存在 Sep03 的 `_sources`；本轮未复跑 artifact。
+
+- `SF-2026-ARXIV-2609-01864`（CREDIT；Status: Experimental）：[exact-v1](https://arxiv.org/html/2609.01864v1) §II–IV 支持 owner-local bulk、compact partial replication 与 shape/device-conditioned profitability。作者实验为 H100 SXM / RTX 5090、CUDA 13、PyTorch 2.11、Triton 3.6、六类 reduction-reuse 算子；FP32 input，row quantization 输出 int8，N=4K…64K，M=2048 或 4096，P∈{2,4,8} 实测选优。小形状存在负收益，不含完整模型、在线 concurrency 或 SLO 验证。代码对读固定在 [9169b43](https://github.com/zhengxiongli08/CREDIT/tree/9169b43b8538611c16e06ff6c9f074dcefc1fb30)，核对代表性 LayerNorm backward、cost model、control 和结果汇总；未复跑 GPU，commit 时间不证明首次公开时间。正文不引用 headline speedup，不宣称成本模型免除了 tuning。
 
 - `SF-2026-ARXIV-2602-06072`（Status: Experimental）：exact-v1 §3 支持 heterogeneous request packing、lossless attention 与 I/O-local execution，§4.3 提供作者 ablation，Appendix C 记录 solver overhead；不证明所有模型、序列分布、KV layout、hardware 或 production SLO 上的通用收益。https://arxiv.org/html/2602.06072v1
 
@@ -1619,7 +1773,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2608-17336:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21836:start -->
-- `SF-2026-ARXIV-2608-21836` — Daily `2026-08-23`；primary `arXiv:2608.21836v1`；Books review `books-review:SF-2026-ARXIV-2608-21836`。
+- `SF-2026-ARXIV-2608-21836` — Daily `2026-08-25`；primary `arXiv:2608.21836v1`；Books review `books-review:SF-2026-ARXIV-2608-21836`。
 
   **已吸收的语义增量：** LLM4LLM 从目标推理脚本提取 phase-aware kernel task，由 episodic agent 搜索 patch，再以集成后的 in-model validation 决定接受，而不是只信 standalone KernelBench。十个 workload、A100/H100 结果支持其 benchmark-to-deployment gap；未披露的并发、模型更新和长期维护成本限制外推。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21836:end -->
@@ -1629,3 +1783,6 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 补足 route、launch、memory、communication 同时决定端到端收益的上限，并保留模型、拓扑与 workload 边界。
 <!-- daily-books-trace:SF-2026-MOE-INFERENCE-OPT-LIMITS:end -->
+
+- `SF-2026-ARXIV-2609-00049`，REAL-Q（Status: Experimental）：[exact-v1 §4–7](https://arxiv.org/html/2609.00049v1)。采用冻结二阶近似与当前 residual 梯度补偿的区分；W4A16、Llama3.1/Qwen3、WikiText2校准，KL/PPL与下游任务分报。SGD分析不构成Adam保证，离线成本不等于serving收益。
+- `SF-2026-ARXIV-2609-00066`，OCGQuant（Status: Experimental）：[exact-v1 §3–5](https://arxiv.org/html/2609.00066v1)。采用共享scale的collateral error、配对permutation、weight重建与融合执行链；原生NVFP4 group16、单RTX5090，其他group的pseudo-quantization不证明相同硬件收益，RMS与activation优先顺序仍有局限。

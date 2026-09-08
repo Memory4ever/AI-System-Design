@@ -155,6 +155,14 @@ validation leakage、oscillation、distributed-state access 和恢复问题。�
 teacher 与 student 的 observation modality、action abstraction、browser/environment revision、verifier 和
 side-effect policy；否则 privileged structural teacher 编译出的 screenshot-only 行为会失去关键 lineage。
 
+当 control plane 接受的不是整版 mixture，而是一次 bounded data patch 时，验收对象也不能只写成“新增了多少
+examples”。Patch proposal 至少应同时绑定 fixed checkpoint/compute、实际替换的 mixture 份额与数据 identity、
+`accepted supervision / teacher token`、独立 held-out transfer 和 regression gate；否则 additive 与 replacement
+路径、teacher 成本和真正进入训练的监督量无法比较。语法或格式 gate 只能证明样本可解析，不能证明其语义正确；
+按 example 数匹配的 control 若没有同时匹配内容、分布和 token，也不能把收益归因给某一个 data operator。
+
+<!-- source-family:SF-2026-ARXIV-2608-31102 -->
+
 这不是静态清洗和配比的淘汰。信号噪声大、训练短、审计复现优先或 controller 成本高时，冻结 manifest 与
 mixture 仍更可靠。阶段化 data pipeline 与动态 control 的论文只证明各自 workload 中的可行机制，不提供可
 跨模型照搬的比例、stage 或演化律。
@@ -484,6 +492,18 @@ Exact dedup 可以删除完全相同的 documents；near dedup 则要识别局�
 
 还必须明确去重集合：只在单个 shard 内去重，会漏掉跨 shard 重复；只在训练集内部去重，也不能发现训练与 Evaluation 之间的 contamination。
 
+当数据集还会持续到达、替换或撤回时，去重集合进一步成为需要维护的状态，而不只是一次任务的输入。
+索引应区分“某个来源拥有这个去重 key”与“该文档通过历史重复检查后进入训练语料”。例如，先对单个数据集去重得到 `D′`，
+再对历史集合筛查得到输出 `D″`；若只把 `D″` 写回索引，后来撤回一个早期来源时，可能连带丢失仍由其他来源拥有的重复证据。
+按 dataset tag 保存 `D′` 的 key provenance，并通过 manifest 控制索引可见性，可以保留这一责任边界。
+但 compaction 合并段后，撤回可能需要从保留来源的 sidecar 重建共享 key 集合；较低查询 fanout 换来写放大和撤回成本，
+较独立的来源分段则有相反取舍。固定、一次性的语料构建仍可使用更简单的离线全量去重。
+
+这里恢复的是**索引成员关系，不是反事实训练语料**。已经被历史重复筛查拒绝的文档不会因某个 tag 消失而自动回到输出；
+若要回答“这个来源从未存在时会得到什么语料”，仍须重放受影响的筛查，并保存当时的规则、顺序与输入身份。
+这也不等于模型权重已经遗忘该来源。[可撤回在线去重的受限案例](https://arxiv.org/html/2608.28622v1)支持上述生命周期区分，
+但其成员判定依赖固定 MinHash/LSH 规则，不能证明语义重复完全正确、训练质量提高或分布式事务成立。
+
 ## Contamination 为什么破坏评估因果
 
 若 benchmark 问题、答案或高度相似变体出现在训练数据中，模型得分无法清楚区分泛化与记忆。污染检查至少要区分：
@@ -672,6 +692,12 @@ physical sample / simulation state
 
 <!-- source-family:SF-2026-ARXIV-2605-18891 -->
 
+### Data Mixture 应先被当作交互实验，而不是比例预测
+
+只拟合各 domain 的独立收益，在 domain effects 可加且 scale 稳定时成本最低；不同数据源会通过 tokenizer、能力迁移与优化轨迹相互作用，弱单域也可能在组合中变得关键。更稳健的 pilot 把 mixture shares 放在 simplex 上，以稀疏二阶 response surface 表达 pairwise interaction，再用 model-robust experimental design 选择 proxy runs；controller 只能在经过 scale-transfer 检查后消费该 surface。它用更多设计运行和模型假设换取交互可见性，domain 很少或数据预算固定时简单 sweep 仍合理。`arXiv:2608.23922v1` 的 RegMix case 与 calibration simulation 不证明跨 tokenizer/scale 存在固定最优 mixture。
+
+<!-- source-family:SF-2026-ARXIV-2608-23922 -->
+
 ## Streaming 与随机性
 
 大规模数据常无法先完全 shuffle 到单机文件。系统会在 shards、workers 和局部 buffer 上执行多级随机化。
@@ -759,6 +785,17 @@ problem + verified solution forks
 
 沿用稳定训练阶段的大 batch 穿过 quality transition，在分布平稳时可以维持吞吐；新数据阶段刚切换时，梯度信号与噪声结构同时改变，固定 batch 会稀释短暂但有用的方向。Data/optimizer control owner 可以在切换点先降 batch、低位积累信号，再逐步 ramp up 抑制噪声。收益是把 phase transition 变成显式控制状态，代价是吞吐波动和额外调参；切换检测错误、数据异质性或 ramp 过快都会放大不稳定。没有可信 transition signal 时，固定 batch 或保守 warmup 仍更合适。exact-v1 只支持论文的理论结构与所测 midtraining 配置，不证明该 schedule 对所有模型规模与集群都优。<!-- source-family:SF-2026-ARXIV-2605-25698 -->
 
+## Duplicate Detection 与 Retention Policy 必须分离
+
+分片内去重会漏掉跨 shard 重复，重分片还可能改变最终留下哪一份。更稳定的数据合同先用全局 identity 建立 duplicate group，再由独立 policy 根据频率、长度、质量与 provenance 决定保留数量。检测层回答“哪些内容相同”，policy 层回答“为了训练目标保留多少”，不能用一次 exact match 隐式决定二者。
+
+全局聚合会增加通信、索引与 lineage 成本；小规模、单 shard 语料仍可采用局部去重。无论实现如何，shard layout 变化都不应静默改变 retention semantics，模型 artifact 也应记录使用的 group identity 与 policy revision。
+
+### 重复检测与副本保留必须由两个 Owner 决定
+
+把去重写成“找到重复便只留一份”，会让 shard 边界和处理顺序静默改变训练分布。检测层应先以稳定内容身份生成跨 shard 的 duplicate group；策略层再依据 frequency、length、来源权重与污染风险决定每组保留几份，并把决定写入 dataset revision。全局聚合提高语义稳定性，却增加 shuffle、索引与治理成本；在可证明 shard-local 且重复极少的数据上，局部检测仍可作为低成本分支，但不能冒充全局 exact dedup。
+<!-- source-family: arxiv:2608.03089v1; daily: 2026-08-05; semantic-body-binding: duplicate-identity-before-retention-policy -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -804,6 +841,11 @@ Raw sources
 单表 snapshot 原子性无法防止多表 pipeline 在中途失败后暴露部分新状态。当人与 Agent 并行修改数据逻辑时，可重现还需要把 typed table contract、Git-like data branch/revision 和 transactional run 连成一个 commit protocol：先在隔离 revision 中验证每个 transformation boundary，再以单一 pipeline commit 发布所有输出，失败时不移动 authoritative head。
 
 这使 schema mismatch、dev/prod drift 和 partial publication 在提交边界更可见，但以版本图、多表事务、冲突解析和更高存储成本为代价。单 writer、单表或可容忍中间态的离线任务仍可使用普通 snapshot；公开证据是系统设计、轻量形式模型与反例，不证明高并发生产吞吐、崩溃恢复或任意 connector 的 exactly-once。<!-- source-family:SF-2026-ARXIV-2602-02335 -->
+
+### 以最终参数为目标的 Data Influence 是 Endpoint-relative Attribution
+
+训练样本对最终参数或输出的 influence 只解释已发生的优化轨迹：它依赖初始化、顺序、optimizer 与停止点，不能自动回答“若换掉该数据，模型因果上会怎样”。这类信号适合调试和审计 endpoint，却不能单独充当数据价值或删除优先级。需要因果判断时仍要用重训练、受控替换或更明确的反事实近似。
+<!-- source-family: arxiv:2608.13515v1; semantic-body-binding: endpoint-relative-training-data-influence -->
 
 ## 小结
 

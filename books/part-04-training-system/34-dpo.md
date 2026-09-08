@@ -229,6 +229,8 @@ Fine-tuning loop 不再需要：
 
 第一，preference data quality。错误、表面化或单一人群偏好会直接进入 objective。
 
+这里的数据质量还包括 chosen 与 rejected 的相对来源分布：即使逐条回答表面中性，由不同 teacher 系统性生成的两侧仍可能携带隐性行为差异，成为对比训练的信号。因此清洗显式迎合措辞不能替代 teacher/pair provenance 与独立行为验收；交换来源或修复 pair 后也要复测基础能力和格式，不能假定去偏没有代价。
+
 第二，offline distribution。Dataset candidates 由旧 policy 产生，当前 policy 训练后可能进入 pairs 未覆盖的区域。
 
 第三，相对而非绝对质量。Chosen 只表示比 rejected 好，可能两者都差。
@@ -333,6 +335,8 @@ DPO 把 reward difference 参数化为 policy 相对 reference 的 sequence log-
 简化的代价是更依赖固定 pair distribution。Preference coverage、reference identity、sequence masking、length effect 和独立 Evaluation 仍决定最终行为是否真正改善。
 
 ## Review notes
+
+- 2026-09-01 偏好来源的隐性信号：<https://arxiv.org/html/2608.31079v1> §3.2–3.4/5.1–5.3、Discussion 与评测附录。所测 teacher 反转、chosen-only SFT 和多 objective 支持受限行为迁移；behavior-rate log-ratio 是经验关系，不是由 DPO 公式推出的普遍因果定理。评测以全答对题目交集上的压力 prompt 为条件，不代表总体事实能力；反转也可能损害能力/格式。
 
 本章从 KL-constrained optimal policy 推导 DPO objective，补齐 sequence logprob、数值 pair、beta/reference 与 chosen-likelihood 边界。DPO variants 不在 Draft 阶段展开为目录；任何改变 normalization、reference 或 preference model 的方法都应单独标注假设。
 

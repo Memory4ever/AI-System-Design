@@ -172,6 +172,8 @@ baseline 同时评估速度与质量。**
 
 Draft 一次提出 4 个 tokens。若前 3 个依次通过，第 4 个拒绝，则本轮 target verification 至少推进 3 个 accepted positions，并在拒绝位置按 target-corrected distribution 产生 replacement token；第 4 个以后依赖错误 prefix 的候选全部作废。
 
+这里作废的是提交资格及对应错误 prefix 的 KV，不意味着已经计算的辅助 hidden feature 永远不能作为下一轮 proposal 的条件；这种跨轮复用仍须从更正后的 prefix 生成并重新验证，不能把辅助 feature 冒充正确前缀的 target KV。它用额外特征对齐、有限生命周期与 reset 管理换取较好的下一轮草稿；当失效状态难以隔离或收益不足时，丢弃并重算仍是更简单可靠的路径。
+
 衡量收益时应记录：
 
 ```text
@@ -212,6 +214,8 @@ expected accepted progress
 这不是说某一种动态算法天然最优。在线策略需要估计 prefix survival，并结合当前 engine
 在不同 verification shapes、batch composition 和硬件上的 throughput profile。若
 confidence calibration、traffic mix 或 scheduler 行为变化，旧 profile 就可能失效。
+
+旧 block 的接受长度统计还受自身上限截断：接受到顶只说明后续没有被这次测量观察到，不等于下一位置已被拒绝；频繁到顶可提示需要另测更长 block，但不能直接把缺失尾部当成可兑现收益。尤其双向 block drafter 扩大 horizon 后，原有位置的 proposal 分布也可能改变，因此必须重新测量完整接受长度、EOS处理和实际验证成本，不能把旧 histogram 无条件外推成更长 block 的吞吐承诺。
 
 ### 接受率损失要分成 Information Floor 与 Model Gap
 
@@ -716,6 +720,13 @@ Token-exact speculative decoding 的验证边界清楚：目标模型接受多�
 
 <!-- source-family:SF-2026-ARXIV-2606-20591 -->
 
+## Stochastic Target 改变了 Block Drafter 的 Factorization
+
+在 greedy target 下，block drafter 可把未来位置近似为较稳定的单一路径；sampling entropy 升高后，各位置存在相关的多模态 continuation，独立预测会组合出 target 几乎不会采样的 block。更合适的 drafter 应显式建模跨位置依赖，并以 expected verified progress 而非逐 token likelihood 作为训练目标。
+
+exact target 仍拥有最终验证与 commit 权，因此该变化提高的是 proposal quality，不改变 correctness owner。它会增加 drafter 复杂度，且收益依赖 target entropy、batch 和验证成本；低熵或短 block 场景仍可使用简单独立 draft。
+<!-- source-family: arxiv:2608.05448v1; daily: 2026-08-07; semantic-body-binding: stochastic-block-draft-factorization -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -766,6 +777,24 @@ exactness 结论。压缩器、融合参数与 divergence threshold 都成为版
 11. Edge/cloud speculation 中，为什么 verify depth 必须同时看到网络状态与 target capacity？
 12. 为什么 hybrid attention/recurrent model 的 speculative rollback 不能只移动 KV cached-length pointer？
 
+## MoE Verifier 的 Expert Budget 应对齐真实提交概率
+
+MoE target 验证一个 draft block 时，各位置到达最终输出的概率不同；把每个 draft token 的 router mass 等权相加并固定 expert 数，会为很可能被前序拒绝截断的位置搬运无效权重。更合理的 verifier selector 以离线估计的 position commitment probability 加权 expert demand，用需求分布有效秩自适应决定集合大小，再在不移除 root token 自然 top-k 的前提下按 residency 裁剪。收益是减少 verifier expert traffic，代价是提交概率漂移、额外统计和 rerouting 风险；校准失效或正确性预算紧时回退完整路由。`arXiv:2608.02989v1` 只在 12 个 model-task pair 上验证该机制。<!-- source-family:SF-2026-ARXIV-2608-02989 -->
+
+## 云边 Speculation 把网络消息纳入 Exact Verification
+
+draft 位于边缘、target 位于云端时，经典 acceptance 之外还多了一条非对称通信路径。常见接受路径可以只上传 acceptance-sufficient 信息；拒绝时再由下行逐级补充 correction，只有 total-variation certificate 证明有限 top-k 足以恢复 residual distribution 时才允许提交，否则升级到更完整表示。调度器只在 confirmed-prefix frontier 上跨请求流水，不执行依赖尚未确认前缀的同请求 runahead。收益是隐藏受限上行链路，代价是证书计算、多轮纠正和复杂恢复；网络稳定或同机验证时经典协议更简单。`arXiv:2608.04974v1` 的 2.82–28.03× 仅属于三组模型 pair、两类 workload 和三个网络 profile。<!-- source-family:SF-2026-ARXIV-2608-04974 -->
+
+### 多模态 Drafter 应按状态取证，而不是固定携带视觉预算
+
+不同任务和 decode 阶段需要的视觉证据并不相同：固定少量 token 会削弱 grounding，固定大量 token 又会拖慢 drafter 并降低接受率。可复用视觉 memory 配合有界、state-conditioned retrieval，把视觉读出作为 hidden-state correction 而不是反复插入自回归上下文，可以改善 cache 复用。它仍需在目标模型、视觉任务和质量门槛下校准；动态取证错误必须能退回完整视觉条件。
+<!-- source-family: arxiv:2608.22883v1; semantic-body-binding: state-conditioned-visual-speculation -->
+
+### 多个 Drafter 可以非破坏地嫁接到共享 Speculation Tree
+
+不同 drafter 的调用成本和命中区域不同，若每次都重建候选树，就会重复支付 target state 与验证开销。把新分支非破坏地 graft 到共享 tree，并依据在线接受状态决定 call、skip 或切换更强 drafter，可以把成本集中在最可能被提交的路径。代价是 tree ownership、节点去重和 verifier commit 必须保持一致，错误分支不能污染已经验证的前缀。
+<!-- source-family: arxiv:2608.26112v1; semantic-body-binding: multi-drafter-shared-speculation-tree -->
+
 ## 小结
 
 Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 drafter 先提供已知候选，使 target model 能并行验证多个 positions。Exact acceptance 保护输出分布，系统收益则取决于 accepted progress 是否覆盖额外 draft、verification 和状态管理成本。放宽 verification 可以改变速度—质量 operating point，但那是新的 sampling contract，不再是语义透明的纯执行优化。
@@ -773,6 +802,10 @@ Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 
 至此第46～48章分别从 batch membership、KV placement 和 serial target steps 三个正交方向优化 runtime。下一章开始把这些机制映射到实际 Serving stacks。
 
 ## Review notes
+
+- **Ceiling-Clipped Acceptance Histograms — Experimental**：[exact-v1](https://arxiv.org/html/2608.30427v1)§3、§4.1、§5.5、§7.2仅支持接受长度的上限删失、双向horizon改变与重测职责。anchor和proposal计数、EOS过滤、近似相同均值与浮点tie须分开；正文不采用附录A6的普遍保证、硬件条件不明的加速或无条件exactness。
+
+- ReTrace（Status: Experimental）：[exact-v1 PDF](https://arxiv.org/pdf/2608.29748v1)第3–6页支持上一轮verification辅助特征参与下一轮draft、位置对齐与有限轮次状态的设计；正文只吸收proposal条件与target提交状态分离。Dense/low-rank实验不互相替代，不据此主张可以复用错误prefix KV或任意并发下都加速。
 
 - `SF-2026-ARXIV-2602-05145`（TIDE；Status: Experimental）：exact-v1 的 §3.1 定义从 target serving
   hidden states 复用训练信号、解耦 inference/training 及 runtime activation gate；§A.4 披露 heterogeneous GPU

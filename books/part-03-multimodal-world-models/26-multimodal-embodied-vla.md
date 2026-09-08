@@ -460,6 +460,8 @@ chained terminal observation and controller state
 test 与真实组合可靠性分开。VLM readiness judge 仍只是传感器，不是物理真值；接触、位置和安全条件应尽量由
 环境或独立 controller evidence 确认。局部 Skill 测试继续适合快速回归，却不能替代 chained-state、恢复与停止测试。
 
+训练和控制之间还可能出现另一种语义漂移：MPC 的目标、RL 的 reward 与阶段完成谓词分别手写，实际指向了不同的“完成”。在稳定的 typed operator 库与 scene frame 下，可先统一关系残差、单位、容差及 stage-entry snapshot，再分别编译这些消费者需要的成本或谓词；共享定义不等于数值函数相同，也不能替代外部 outcome 验收，语义版本与编译器成为新增维护责任。最终蒸馏出的视觉策略若不携带该程序，不能继承训练期程序的监控保证，仍需独立部署闭环。
+
 #### 用下游成功估计训练 Handoff Quality
 
 readiness verifier 可以在运行时拒绝坏 handoff，但若 base VLA 经常把当前 phase 停在下游不可恢复的状态，仅靠拒绝会反复重试。一个训练分支是从最后 phase 向前做 backward induction：冻结 base policy，用下游 rollout 标注当前 terminal observation 的 future success，再训练 phase-specific residual policy 只修正 terminal-state quality。
@@ -596,6 +598,35 @@ visual foresight 在 test time 自适应可以利用当前场景，却意味着 
 <!-- source-family:SF-FROM-PIXELS-TO-TOKENS-A-SYSTEMATIC-STUDY-OF-LATENT-ACTION-SUPERVISION-FO -->
 <!-- source-family:SF-TEST-TIME-TRAINING-FOR-VISUAL-FORESIGHT-VISION-LANGUAGE-ACTION-MODELS -->
 
+## 压缩容忍度应由动作敏感性定义
+
+压缩是否可接受最终要由闭环 action deviation 决定，而不只是重建误差。相同视觉差异在低速导航中可能无害，在高速接触控制中却会越过安全边界；评估应绑定 control frequency、latency、action distribution、动力学与 safety envelope，并比较未压缩 reference。该合同增加仿真与真实回放成本，但防止平均感知指标掩盖少量致命控制偏移。<!-- semantic-body-binding:SF-2026-ARXIV-2608-21247 -->
+
+视觉 token 在重建空间里相似，不代表对当前动作等价。更直接的压缩信号是 language-conditioned action deviation：删除或近似某 token 后，policy 输出是否仍落在任务和安全允许的 JND 范围内。selector 由此从静态视觉冗余演进为 action-conditioned resource hint。
+
+平均动作偏差不能证明物理安全，低频关键障碍也可能被漏掉；safety monitor 和真实 environment transition 仍拥有 commit 权。控制频率紧、场景稳定时可提高压缩，风险不确定或动作不可逆时应扩大观察集并回退 dense perception。
+
+## 闭环可靠性取决于状态 Gate，而不只是 Cache
+
+VLA 的复用或 token skipping 只有在 gate 确认 observation 与 action state 仍有效时才安全。若 gate 自身来自被复用的陈旧特征，reuse 与 delete 两种机制都会累积错误。更稳健的做法是把 gate 绑定到生成它的 dense observation revision，并在 actuation slack 中执行周期性 dense refresh；这会消耗余量，但把 freshness 从模型猜测变成可检查状态。
+
+动作级检测还应关注 action-conditioned visual corridor：环境变化是否落在当前动作可能影响的区域、时序是否一致、传感器 revision 是否新鲜。检测器只提供 risk evidence，不能替代低层 controller 的 veto；遮挡、分布外几何或检测失败时，应降速、刷新或请求人工接管。
+
+语言推理也不是控制环的必经阶段。生成自由文本 CoT 会增加延迟，并可能把未 grounded 的叙述送入动作分支。实时控制更适合消费结构化、可定位的视觉或深度证据，只对 action 监督；高层语言规划仍可在较慢周期更新 subgoal。这样牺牲可读中间叙述，换取明确的 deadline 和 authority boundary。
+
+### 闭环检测必须读取动作产生时的控制状态
+
+只观察 action output 的检测器看不到“动作本身合理、所依据观测却已过期”的错位。更完整的 monitor 用近期 action、kinematics、proprioception 与 observation revision 界定当前应关注的视觉区域，再检查 motion 与 freshness 是否一致；恢复候选只有通过这一致性检查才可交回控制器。它用额外状态同步和 detector latency 换取对 stale observation 的可见性，但不拥有最终 effect commit；模型不确定或传感器不同步时，controller veto、减速和安全停机仍是权威回退。
+<!-- source-family: arxiv:2607.29169v1; daily: 2026-08-03; semantic-body-binding: action-conditioned-observation-freshness-monitor -->
+
+缓存策略正确，也不能补偿一个被污染的 Gate。VLA 的 skip/reuse 决策必须绑定产生 gate 的 dense observation revision；如果 gate 从已跳过或过期的状态自举，错误会沿控制环累积，而不是被下一次复用自动修正。可以在 actuator 尚有 action-buffer slack 时执行 dense refresh 隐藏部分延迟，但 refresh 后仍须由 controller 重新验收，不能把时间余量解释为放松安全边界；低延迟收益不足或 gate provenance 不完整时，逐步 dense inference 仍更可靠。
+<!-- source-family: arxiv:2608.00391v1; daily: 2026-08-04; semantic-body-binding: vla-gate-provenance-before-cache-policy -->
+
+### Grounded language 是可消费观测，不必成为控制关键路径的生成物
+
+高层语言能组织任务和指向 detector、depth 或 VLM 工具，但让低层控制器先生成自由文本 CoT，会增加延迟，并把未经 grounding 的叙述混入 action state。硬实时分支应让高层模块产生结构化、可追溯的 evidence，低层 policy 消费它并只对 action token 负责；语言解释可以异步生成，不能阻塞 control deadline。该分层牺牲了单模型端到端叙述的简洁性，却保留 action objective 与实时控制权；在低频、可人工复核的任务中，显式推理文本仍可作为辅助分支。
+<!-- source-family: arxiv:2608.05738v1; daily: 2026-08-07; semantic-body-binding: grounded-language-outside-control-critical-path -->
+
 ## 本章在知识树中的位置
 
 第23章定义 sensor/modality identity，第24章解释生成与 commit，第25章提供 action-conditioned prediction；本章把这些机制接到真实 actuator 和 environment feedback。Part IV 训练这些能力，Part V 交付模型 execution，Part VI 管理 evidence 与安全，Part VII 的 Agent Planning/Workflow 管理长程任务。
@@ -653,6 +684,26 @@ action-only diffusion policy 可在 inference 时由 world model 预测 state，
 7. late action result 应怎样处理？
 8. real-robot evaluation 为什么必须报告 denominator 和 intervention？
 
+### Fast / Slow Controller 的切换必须保持 Prompt Authority
+
+实时 VLA 可以让快速 controller 持续执行，只在不确定阶段调用更慢的推理路径；这样把昂贵推理从每个控制周期移到少数决策点。切换不能顺手累积任意中间 prompt，因为输入形式漂移会同时改变延迟与策略行为。系统需要 canonical compact prompt、明确的触发信号、超时后的安全动作和能够撤销慢路径建议的 controller authority；否则“按需思考”会成为新的控制抖动来源。
+<!-- source-family: arxiv:2608.23224v1; semantic-body-binding: fast-slow-vla-prompt-authority -->
+
+### Inference Latency 会改变 RL 所见的环境动力学
+
+VLA 在等待大模型推理时仍可能继续执行已提交动作，延迟因此不只是性能指标，而会改变 observation 与 action 的时间对应，破坏普通 RL 假定的 Markov state。延迟感知训练需要把 committed action、推理中的中间 observation 和实际生效时间纳入状态；收益是控制不中断，代价是状态更复杂且异步 credit assignment 更难。无延迟 baseline 仍适用于足够小的 policy 或允许停顿的环境。
+<!-- source-family: arxiv:2608.23831v1; semantic-body-binding: latency-aware-vla-rl-state -->
+
+### Streaming VLA 的基本身份是 Sensor / Action Pair
+
+流式控制中，单个 frame 或 action token 都不足以定义一次可验证决策；系统必须绑定产生 observation 的传感器状态、对应 action、到达时间和 control deadline。异步处理可以提高吞吐，却可能让旧 observation 驱动新动作。因而 queue、丢帧和重采样策略都要保持 pair identity，并在超时后进入明确的安全回退。
+<!-- source-family: arxiv:2608.26067v1; semantic-body-binding: streaming-vla-sensor-action-pair -->
+
+### 持续语言约束要编译成 Controller 可执行的 Automaton
+
+“始终避开”“直到某事件前不得执行”这类约束跨越多个控制周期，不能只在每次 prompt 中重新解释。模型可以把语言映射为可组合的 event-trace automaton，再由独立 controller 检查状态转移、执行阻断与反例修正。这样把语义理解和 enforcement 分开；代价是表达力受所选自动机语言限制，无法可靠编译的约束必须保持人工或更保守的安全策略。
+<!-- source-family: arxiv:2608.27797v1; semantic-body-binding: language-constraint-event-trace-automata -->
+
 ## Research Outlook
 
 下一阶段不是只扩大 VLA 参数，而是形成可验证闭环：跨 embodiment typed action、real-time adaptive chunking、uncertainty-aware controller、physical failure injection、sim/real evidence alignment 和人类接管后的状态恢复。
@@ -670,7 +721,14 @@ action-only diffusion policy 可在 inference 时由 world model 预测 state，
 
 AI 从语言进入物理世界后，最重要的变化不是多了一种输出 token，而是输出拥有 deadline、控制权和后果。越强的 generative prior，越需要独立的现实反馈和安全边界。
 
+### 可读的 Action Token 只能是辅助目标
+
+用语言重建约束 action token 保留可读语义，可以改善调试、监督与高层规划接口，但表示可被解释不等于控制可执行。真实系统仍由控制频率、动力学、延迟、校准和 safety envelope 约束；语义对齐只能作为实验性辅助目标，由低层 controller 和 effect receipt 决定是否提交。它提升了可解释性，却可能牺牲连续控制精度，因此应与原生轨迹表示和紧急回退共同存在。
+<!-- source-family: arxiv:2608.10484v1; semantic-body-binding: action-token-interpretability-as-auxiliary-objective -->
+
 ## Review notes
+
+- 2026-09-01 typed task semantics：<https://arxiv.org/html/2608.31167v1> III-A–D、IV-D 与 V。采用一次定义/不同消费者编译的分工，不将有限MPC筛门或simulation误判率变成安全证明；外部终态指标参与训练，最终DP3不携带SUN程序，实机宏均值与池化成功率不同。
 
 - `SF-2026-ARXIV-2602-13052`（Status: Experimental）：exact-v1 的 §II～V 建模端云切分、传输、延迟/能耗、量化失真和联合设计，§VI 验证作者近似与方案，§VII 不证明真实动态网络、tail latency、所有 VLA 或物理安全；硬件、模型、位宽与链路条件必须作为同一 evaluation contract。https://arxiv.org/html/2602.13052v1
 

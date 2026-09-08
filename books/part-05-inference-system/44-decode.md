@@ -283,6 +283,11 @@ Decode 从逐 token kernel loop 演进成长期驻留的状态推进器后，故
 
 <!-- source-family:SF-2026-ARXIV-2605-08913 -->
 
+### Decode-only Compute Branch 仍必须尊重单一 KV Owner
+
+某些额外计算只在 decode 阶段有价值，可以绕开 prefill 以降低总成本；但它不能暗中维护第二份不一致的历史状态。主模型 KV 或等价 recurrent state 应有唯一 owner，decode branch 只读取版本化快照并产出可验证的增量。这样保留 phase-specific 优化，同时避免 prefill/decode 分叉后出现无法解释的状态漂移。
+<!-- source-family: arxiv:2608.12385v1; semantic-body-binding: decode-only-branch-single-state-owner -->
+
 ## 小结
 
 Decode 把模型推理变成持续的状态推进问题。每个请求内部必须按 token 顺序执行，但多个请求可以共享每轮模型执行。性能不只取决于 kernel，还取决于谁进入这一轮、携带多长历史以及何时再次获得资格。

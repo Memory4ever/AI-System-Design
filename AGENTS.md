@@ -12,9 +12,6 @@ AI System: From First Principles to AI Infrastructure
 ## 主要读者
 
 主要读者是经验丰富的软件与基础设施工程师，熟悉：
-
-- 分布式系统、Flink 与 Kafka；
-- Kubernetes、Kubeflow 与 KServe；
 - 模型训练平台与 LLM 推理基础设施。
 
 读者正在建设端到端 AI 模型生命周期平台：
@@ -23,7 +20,7 @@ AI System: From First Principles to AI Infrastructure
 Data / Training → Model → Deployment → Serving → Observability
 ```
 
-不要面向毫无基础的初学者写作。
+不是面向毫无基础的初学者写作。
 
 ## 项目级不变量
 
@@ -51,7 +48,7 @@ Data / Training → Model → Deployment → Serving → Observability
 2. `docs/PROJECT_CONTEXT.md`
 3. `docs/LEARNING_PHILOSOPHY.md`
 4. `docs/WRITING_GUIDE.md`
-5. `docs/LEARNING_STATE.md`
+5. `docs/LEARNING_STATE.md` 中最新相关 checkpoint
 6. 目标章节与相邻章节
 
 ### 生成 Daily、Weekly 或 Historical Weekly
@@ -61,22 +58,23 @@ Data / Training → Model → Deployment → Serving → Observability
 1. `docs/RESEARCH_CONTRACT.md`
 2. `docs/RESEARCH_SOURCES.md`
 3. `docs/REPORT_CONTRACTS.md`
-4. 对应的 Daily 或 Historical Adapter
+4. `CODEX_RESEARCH_PROMPT.md`
 5. `ROADMAP.md` 与最新相关 checkpoint
 
-公共规则按唯一 owner 维护：`docs/RESEARCH_CONTRACT.md` 负责 Coverage discovery 语义、Source Family、
-Score V2、Review / Access 语义与 Books eligibility；`docs/RESEARCH_SOURCES.md` 负责来源注册表；
-`docs/REPORT_CONTRACTS.md` 负责
-Report schema、Semantic Audit 到 Gate 的映射及完成状态真值表。Prompt、Heartbeat 与其他说明文件只引用，
-不得复制这些公共定义。
+生成和继续生成 Report 一律执行当前合同；字段细节在对应步骤需要时加载。历史报告默认只读取去重身份和
+未决项索引，命中具体关联再读正文。不同日期/周按独立文件 ownership 并行，共享文件才协调写入。
 
-`scripts/validate_research.py` 只证明机器接口与跨报告状态自洽，不能证明来源被正确理解或长期结论成立。
-Evidence / Books Gate 只有在路由所需收据完整、且 `docs/REPORT_CONTRACTS.md` 定义的相关 fresh-context
-Semantic Audit scope 没有未解决 finding 时才能通过；不得把 validator 通过表述成语义验收完成。
+公共规则按唯一 owner 维护：`docs/RESEARCH_CONTRACT.md` 负责贡献筛选、去重、评分、证据审阅与 Books 判断；
+`docs/RESEARCH_SOURCES.md` 负责来源入口；`docs/REPORT_CONTRACTS.md` 负责时间窗口、报告结构、独立复核与完成条件。
+Prompt、Heartbeat 与其他说明文件只引用，不复制这些定义。
+
+`scripts/validate_research.py` 只检查格式与可判定的一致性，不能证明来源被正确理解或长期结论成立。
+报告完成必须有充分证据、落实必要的 Books 改动，并通过独立语义复核；不能用校验通过或额外收据替代实际研究。
 
 ### Research → Books
 
-候选通过 Evidence Gate 且可能改变长期知识后，再读取目标及相邻章节并执行 Books Decision。Weekly 摘要、评分或 `Must Read` 本身不构成 Books Gate。
+候选满足 Report 合同的单篇证据与独立复核条件且可能改变长期知识后，再读取目标命题及相邻交接内容，执行
+Books Decision；不等待无关候选，但整体报告不能提前 Complete。Weekly 摘要、评分或 `Must Read` 本身不构成 Books Gate。
 
 ## 写作风格
 
@@ -93,7 +91,7 @@ Semantic Audit scope 没有未解决 finding 时才能通过；不得把 validat
 2. 阅读相邻内容并保留术语一致性；
 3. 保护运行前已有及无关修改；
 4. 学习进度或稳定认知实际变化时，只增加必要的 `LEARNING_STATE` checkpoint；
-5. 重大结构或公共合同决策写入 `docs/DECISIONS.md`；
+5. 重大结构或公共合同取舍尚待选择、验证时写入 `docs/DECISIONS.md`；落实后更新对应权威文件并移除待决记录；
 6. 检查 Markdown、链接、`git diff --check`、diff 与工作树范围。
 
 除非用户明确授权，不 stage、commit、push，不执行破坏性 Git 操作。

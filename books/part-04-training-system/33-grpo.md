@@ -176,6 +176,10 @@ A_(i,1) = ... = A_(i,|y_i|) = A_i
 
 Process reward、step verifier 或更细粒度 credit assignment 可以提供局部信号，但会增加标注/evaluator 复杂度，并引入新的 exploit surface。
 
+一个较粗的 process 分支不逐步给分，而是请 teacher 定位失败 rollout 的首个推理错误，减少此前有效前缀承受的惩罚。它仍需先用可执行 verifier 检查 teacher 的参考解，参考解不可靠时回到 outcome-only GRPO。Cliff 的具体形式在错误前使用 `lambda * A_cor - b`、从错误处起使用 `A_inc - b`，其中 `A_cor`/`A_inc` 是组内成功/失败 advantage，`b` 是 token-weighted 居中项。主实验取 `lambda=0`，所以前缀得到的是 `-b`，不是必然为正的奖励或零梯度。
+
+这种单边界监督节省密集标注，却把错误定位、step-to-token 对齐与参考解质量变成新的训练依赖。正确终点可能掩盖错误过程，错误步骤也可能被后续修复，不能把“首错后的推理全无价值”当成定理。作者对超长 rollout 把错误位置设为开头，并在正向前缀奖励过强时观察到长度增长；这支持联合审计 truncation、长度和最终正确率，不证明杜绝 reward hacking。可靠终局检查且过程定位误差较大时，原来的 sequence reward 仍更稳妥。[首错边界监督的公式与限制](https://arxiv.org/html/2609.02817v1)
+
 ## 为什么 GRPO 不是“无 Critic 的免费 PPO”
 
 移除 critic 节省：
@@ -818,6 +822,10 @@ supersession 和 rollback，不能只存一段“成功经验”。
 
 ### Environment 与 Policy 可以共同演进，但 Held-out Evidence 不能回流
 
+基础 environment 与对它施加的 harness transformation 必须分别版本化。增加噪声、工具限制、prompt wrapper 或 reward adapter 会改变 agent 可观察状态和 transition，即使底层 simulator 未变，也不再是同一训练分布。rollout identity 因此同时绑定 base environment revision 与 transformation graph；跨版本复用样本前要证明 observation/action 兼容，否则重新执行。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19880 -->
+
+若 environment 是由模型生成的可执行程序，语法通过只证明它能启动，不证明语义、隔离或评分正确。进入 rollout pool 前必须在 sandbox 中执行 deterministic checks、资源与 effect policy，并用生成过程不可见的 held-out tasks 验证 transition 和 scorer；失败 artifact 隔离而非进入训练。生成环境扩大任务覆盖，却会把 generator bias、漏洞和 evaluator leakage 带入 objective，人工构造或已验证环境在高风险训练中仍是基线。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19197 -->
+
 固定人工 environment 提供清楚 schema、oracle 与长期可比性；当 tool 组合、database state 和 capability gap
 快速变化时，可从 tool/MCP specification 生成 candidate environment、task 与 executable oracle，再用 failure
 trace 形成 targeted curriculum：
@@ -954,7 +962,13 @@ simulator fidelity、重复错误去重、额外 rollout compute 与 failure-dis
 
 <!-- SF-2026-ARXIV-2602-22817 -->
 
+跨 update 使用历史经验时，还要区分“历史参与 credit 的参照”与“历史样本直接参与 policy loss”。前者可以为同一任务目标和初始环境保留 transition graph，让旧路径帮助评价当前动作离成功状态的距离；也可把旧组的 outcome 作为 detached reference，与当前重新采样组共同计算相对分数。真正进入 clipped loss 的仍只有 current-policy rollouts，而不是把旧轨迹 token 伪装成新样本。这改变了 credit estimator 和任务重访分布，不等同于保持原 GRPO objective 完全不变。
+
+这种参照要求任务、状态与转移条件仍兼容，重访也应替换既定 rollout 配额而不是隐形增加预算。图越积越大、旧路径失效或相同 observation 隐藏不同状态时，历史参照会引入成本与偏差；应保留仅当前组的基线，并同时核验 group size、环境步数和最终 outcome。TIGPO 在两个交互式环境中的实验支持该受限分支，但对照的每组采样数不同，不能将收益全部归给图持久化，也不能将测量中未显著增加开销写成历史管理免费。[跨更新参照与当前策略采样的区分](https://arxiv.org/html/2609.03383v1)
+
 ### Immediate Reward、Delayed Correction 与 Staleness 是同一 Lifecycle
+
+交互轨迹的 credit 还必须对齐真实执行顺序。若环境在后续 turn 才暴露早期 action 的后果，训练 artifact 应把 reverse-turn correction 指回原 action，同时绑定产生该 action 的 policy version；不能把迟到信号平均分给当前模型的所有 token。它提高因果对齐，却依赖可追踪 action identity，并会放大长延迟与 stale-policy variance；无法建立 lineage 时应降低权重或重新 rollout。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18682 -->
 
 长 Agent trajectory 可在 stage 完成时得到 immediate reward，再由最终 outcome 产生 delayed correction；两者
 必须绑定同一 behavior-policy/token identity。若 correction 到达时 policy 已更新，trainer 要么丢弃、降权，要么
@@ -989,6 +1003,10 @@ Continual GUI adaptation 把 reward contract 再推进一步：新 domain、reso
 mode-level diversity，再对高置信错误施加更强 correction；这分别解决 correct-mode collapse 与 overconfident
 negative update。二者都依赖当前/reference policy 的概率校准、长度归一化与 binary verifier，不能合并成
 “多样性越高越好”。DSDR 与 ACE 是这两个相邻 actuator 的受限案例。
+
+即使已经只在正确 outcome 内测多样性，也要区分“很少进入一种解法”与“进入后无法完成”。前者改变的是早期分支概率，后者是条件执行能力；单看自由采样的 pass@k 或正确轨迹数量会把两者混在一起。在可枚举、可验证的环境中，可以固定任务与预算，对照自由采样和外置的最小可行入口，再观察后续完成率。有限预算内没有采到某分支，并不证明其概率严格为零；外置入口得到的完成率也不能直接替代 policy 自然选择入口后的条件分布。
+
+这把探索调节从“整体提高 entropy”收窄到具体失效位置。若主要压力是入口收窄，增加相同 policy 的重复 rollout 可能收益递减；受限的入口配额、多解监督或 checkpoint 混合可以作为实验分支，但分别需要可行族定义、数据覆盖和额外模型/校准成本。长轨迹仍可能在进入后执行失败，跨模型的首计算 proxy 也不等于完整解空间；因此不能把一个受控实验写成 RLVR 必然收窄、SFT 必然更优或参数插值无损。单次正确率是唯一目标、可行分支不可验证或干预成本过高时，普通组采样与现有 regularization 仍是清楚的基线。
 
 多模态 tool RL 还应把 interaction budget 写入 reward。Python、crop、zoom 或 perception tool 可能增加必要证据，
 也可能被 policy 当成容易获得的 shaping reward；group selection 若偏向恰好会调用工具的样本，又会改变训练分布。
@@ -1400,7 +1418,23 @@ RLVR 把答案是否通过 verifier 变成稳定 reward，在任务分布与当�
 
 ### Tool Feedback 只能密化已有接口信息
 
+Step-level credit 不能只由 judge 对自然语言轨迹评分。至少要在可重置环境中实际 replay 所声称的 action，并用 shuffled 或 counterfactual control 检查 reward 是否依赖正确步骤而非位置、长度或模板。执行验证增加环境成本且仍受 simulator fidelity 限制；不可重放副作用应使用 receipt 或人工审计，而不是伪造 control。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19760 -->
+
 Outcome-only RLVR 在工具任务早期有效，因为最终答案可验证；当 policy 学会 exploit 稀疏信号后，训练可能先升后塌。把 tool error、observation 与 intermediate verifier 写入 token/step credit 可以提前暴露失败，但 feedback owner 只能传播接口已经提供的信息，不能凭 reward densification 修复含糊 schema 或不可观测状态。收益是更短的 credit path，代价是工具日志耦合和 shaping bias；反馈被 hack 或与目标冲突时，应回退 outcome gate、修复 interface，再逐步恢复 dense reward。exact-v1 只支持 Freebase/CWQ、Qwen-7B、四 seed 与 oracle ablation，不证明所有工具环境都能避免 collapse。<!-- source-family:SF-2026-ARXIV-2605-26037 -->
+
+### On-policy 来源不等于 Conditioning State 一致
+
+Student 自己采样 action 只能证明 action source 是 on-policy；若 teacher 在不同 token positions、visibility mask、memory encoding 或 environment snapshot 上为该 action 评分，训练信号仍来自 student 从未访问的条件状态。Replay 因而必须记录 invocation 的 token IDs、positions、causal mask、memory revision 与 environment snapshot，并证明 packed reconstruction 与原执行等价。更严格身份增加存储与重算成本；状态无法重建时应放弃该 teacher score，回退当前状态上的 outcome RL，而不能用“动作来自 student”掩盖 state off-policy。
+
+<!-- source-family: arxiv:2608.07068v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: on-policy-action-conditioning-state-equality -->
+
+## 多步 Credit 要先分配给 Action，再分配给 Token
+
+把 episode reward 均匀广播给所有 token，会让长动作获得隐式更大权重，也无法区分真正改变环境的步骤。一个更守恒的分解先用 temporal signal 分配 action-level credit，再根据 teacher–student likelihood gap 等证据分到该 action 的 token；归一化必须保证总 credit 和符号不被长度改变。
+
+这种估计会继承 value/teacher bias，并增加额外推理成本。reward 本就稠密、动作短或 teacher 不可靠时，简单 outcome advantage 仍可能更稳。验收应同时检查 credit conservation、长度敏感性与最终 policy，而不是只看训练 loss。
+
+<!-- source-family: arxiv:2608.07118v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: action-then-token-credit-conservation -->
 
 ## 本章在知识树中的位置
 
@@ -1428,6 +1462,8 @@ LLM reasoning RL 的 update quality 取决于 rollout freshness、update count �
 离线 teacher traces 成本可控、容易复现，但 learner policy 演进后会遇到训练集未覆盖的状态。在线 teacher 可在 learner 当前 rollout 上提供 critique/reward，使监督对齐真实访问分布；代价是采样、teacher 调用和反馈相关性显著增加。
 
 Teacher 只拥有辅助信号，不拥有最终 objective；需要绑定 learner/teacher revision、rollout policy 与 judge，并保留 frozen holdout。成本过高、teacher 不稳定或在线分布过窄时，回退离线数据或混合 replay。
+
+在线蒸馏后的提升也不自动证明教师知识被迁移。一个必要的归因对照是在相同任务与可比 rollout/token 预算下移除 teacher，改用固定 advantage 或只作用于特定概率位置的更新，并检查 entropy、长度与 held-out outcome 是否仍出现相近变化。若 teacher-free 对照已经解释主要收益，结论应收窄为 student policy 的重塑，而不是宣称获得新的教师知识或扩大了探索边界。这类对照增加训练与评价成本，也不证明 teacher 永远无用；只有在额外知识增量得到独立验证时，才将那部分收益归因给教师监督，普通离线蒸馏仍适用于行为迁移明确、成本优先的情形。
 
 现有 exact-v1 只在其披露的 reasoning learner、teacher、任务集合与采样预算中验证这种 on-policy distillation；它支持“当前 rollout 能暴露离线 trace 未覆盖状态”，不证明任意 teacher、开放任务或更大预算下都优于离线监督。未披露模型、硬件、并发与 judge 条件保持 Not Disclosed。
 
@@ -1469,6 +1505,21 @@ GRPO 去掉 critic 后，把主要状态转移到同 prompt rollout group、相�
 16. DAPO 的 token-level reduction 与 Dr. GRPO 的 fixed-budget normalization 为什么不能被视为同一目标？
 17. CISPO 与 GSPO 分别改变 clipping 的什么对象和 importance ratio 的什么粒度？
 
+### Tool-use RL 的训练对象包含环境编排
+
+当 trajectory 跨越多个工具回合时，policy 的 reward 同时受环境隔离、工具等待和 rollout 调度影响。把每个 MCP 环境作为有版本、可回收的执行单元，并用重叠流水线覆盖 I/O stall，可以提高 rollout goodput；但训练日志必须保留环境镜像、tool response、timeout 和 episode ownership，才能区分策略改善与运行时差异。RL backend 只负责更新参数，不应隐式拥有这些外部状态。
+<!-- source-family: arxiv:2608.22167v1; semantic-body-binding: mcp-rollout-environment-ownership -->
+
+### Audio-native Trajectory 还包含 Observation Error
+
+语音 Agent 的 rollout 不只是文本 token 序列：ASR、speaker turn、时间边界和声学歧义都会改变 policy 实际看到的 observation。训练与评测要把 modality observation error、reward density、工具结果和最终 outcome 分开；更密的 process reward 可以改善 credit assignment，却不能替代任务结果与授权 gate。否则模型可能学会迎合中间评分而非完成真实交互。
+<!-- source-family: arxiv:2608.26432v1; semantic-body-binding: audio-native-trajectory-observation-error -->
+
+### Rollout Allocation 的统计单元应是 Comparison Pair
+
+GRPO 的相对优势来自组内比较，额外 token 或 rollout 若只按单条样本分配，会改变哪些 comparison pair 被观测。以 pair 为统计单元并按 inclusion probability 校正，可以在理想单步、无裁剪和无标准化条件下保持估计无偏；真实训练中的 clipping、多 epoch 与 advantage normalization 会破坏该证明。工程实现应把它标为近似并用重复实验检查偏差。
+<!-- source-family: arxiv:2608.11368v1; semantic-body-binding: pair-level-rollout-allocation -->
+
 ## 小结
 
 GRPO 用同 prompt 多个 responses 的相对 reward 代替 learned critic baseline。它减少 value-model 状态，并保留 clipped policy update 与 reference constraint，适合 reward 可比较、尤其可验证的 rollout 任务。
@@ -1479,6 +1530,10 @@ ratio 粒度是彼此独立的设计轴，方法名称不能替代 objective 与
 
 
 ## Review notes
+
+- [Does On-Policy Distillation Really Distill? v1](https://arxiv.org/html/2608.31046v1)：采用§3.1–3.2的low-logp与teacher-free fixed-advantage对照，结合§4.1、§5及Appendix A/C的entropy、预算和范围限制。作者观察支持“提升不能单独证明知识蒸馏”的归因反证；不采用固定负值/百分位为通用配置，也不从所测Qwen规模与任务推断所有教师无价值或探索边界扩张。
+
+- [Locked at the Entrance, Open Inside](https://arxiv.org/html/2608.29188v1) 的 Countdown 受控实验区分自由采样访问与外置最小入口后的执行；一般数学的首计算只是 proxy，有限采样的未观察不证明零 support。采用 §3–7 与 Appendix A/B.2/I 的局部诊断，不采用“RLVR 必然坍塌”或摘要中的插值无损说法；Table 4 的置信区间不足以支持该等价结论。Source Family：`arxiv:2608.29188`，对应当前日报的精确版本证据笔记。
 
 - `SF-2026-ARXIV-2602-22817`（Status: Experimental）：exact-v1 的 §4.1～4.2 定义 historical-context inconsistency 与 hierarchy-of-groups optimization，§5.1～5.5 给出作者环境的结果、参数分析和消融，Appendix A～C 固定算法与训练细节，§6 不证明任意历史表示可建立可比 group 或长程生产稳定性。https://arxiv.org/html/2602.22817v1
 

@@ -179,6 +179,10 @@ o_t = S_t q_t
 
 Gated DeltaNet-2 继续细分这个 update contract：channel-wise decay 负责背景遗忘，erase gate `b_t` 决定沿当前 key 清除哪些旧内容，write gate `w_t` 决定提交哪些新 value channels。原 Gated DeltaNet 用同一个标量 update gate 耦合定向擦除与写入，因而“需要纠正旧关联但只少量写入”和“保留旧关联但大量写入”不能独立表达。解耦获得更细的 memory editing，自身代价是更多 gate state、反向与 kernel 复杂度；作者的 1.3B/100B-token 实验只能作为该 recipe 的受限证据，不能证明它普遍优于 softmax 或其他 recurrent architectures。
 
+但把 erase 与 write 分开仍不保证所有已读信息都可编辑。若 fast-weight update 只能沿当前 key 的方向修改状态，未来 query 仍可能从与该 key 正交的子空间读到旧干扰；写入规则的方向因此也定义了“可纠正子空间”。一种受限扩展是从 query 派生额外 erase direction，再与原有 key-directed delta 共同更新。它增加了可编辑性，却同时增加 gate、方向估计与训练稳定性成本；短上下文、干扰很弱或附加方向收益不足时，原有 key-gated update 更简单。`arXiv:2608.13668v1` 只在 340M 模型、15B training tokens 和作者的合成 retrieval/语言任务上支持该机制，部分消融并不显著，不能把约两倍 usable context 外推为通用结论。
+
+<!-- source-family:SF-2026-ARXIV-2608-13668 -->
+
 这种思想与 LSTM 共享“有限状态需要学习保留和遗忘”的祖先，但 state contract 不同。LSTM 主要维护向量 cell state，并用 input/forget/output gates 做逐维递归更新；DeltaNet 一类机制维护矩阵 fast-weight state，用 Query 读取、用 key-value association 与 prediction error 定向改写。前者更像更新当前序列摘要，后者显式暴露内容寻址的关联结构。两者都把历史压进固定状态，都会碰撞、覆盖和遗忘；Gated DeltaNet 的 chunkwise parallel algorithm 改善的是训练执行路径，不会把有损状态变成完整 token archive。
 
 ### Context switch 与重复表述暴露固定状态的真实边界
@@ -205,6 +209,8 @@ source-layer state / value stream
 Projection、route topology 与 gate 都进入 checkpoint identity；额外路径可能放大梯度、形成层间 shortcut 或破坏
 kernel 规整性。实验比较还必须固定 optimizer、learning rate、训练 token 与 pure/hybrid stack，不能把训练 recipe
 差异归因于 routing。表示基底天然共享或额外路径收益不足时，逐层独立 state 仍是更简单的基线。
+
+同样的约束延伸到跨层 KV mixing：被复用的 K/V 不是“同一 token 的通用缓存”，而是由 source layer、projection、position、precision 与 receiver contract 共同定义的派生状态。若 runtime 只按 token prefix 命中，可能把旧 mixing topology 下的 cache 交给新模型路径。cache key 应绑定跨层连接与投影 revision；配置变化时失效重算。复用能缩短状态路径，却用更复杂的身份、训练耦合和失效规则换取收益。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18486 -->
 
 它与常说的 gated softmax attention 只复用 gating principle，不是同一机制。后者仍先计算标准 SDPA，再用当前 query 产生的 head-specific sigmoid gate 调节该 head output，可抽象为：
 
@@ -276,6 +282,10 @@ Prefill/Decode 两阶段收益、KV traffic 与迁移成本，而不是只比较
 
 Sparse Attention 还包含两个独立 ownership 轴。第一，谁周期性读取 full history 并刷新 selector；第二，哪些层或 heads 复用该 selector 与 KV。让少数 full layers 同时产出 block scores 与 global KV，再由后续 sparse layers 复用，可以摊薄全局检索；保留 layer-local sliding-window KV 则维持局部 representation。另一分支只让少数 retrieval heads 刷新 token indices，其余 heads 继承选择集合。
 
+冻结权重中的 `W_K^T W_Q` 几何还可作为不读取运行时 attention score 的候选 admission signal，用于提出哪些 head 更可能承担 retrieval、哪些更适合 streaming。它减少校准 prompt 和在线 profiling 成本，却不把 head role 变成输入无关真值；最终 sparse selection 仍需长上下文任务、输入分布与 dense fallback 验收，multimodal 或 cross-attention 也不能直接继承该分类。
+
+<!-- source-family: arxiv:2608.06849v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: frozen-qk-geometry-as-sparse-head-admission-signal -->
+
 ```text
 global refresh owner: layer interval / retrieval heads
 local state owner: current layer or head
@@ -284,6 +294,19 @@ invalidation: model/profile/context revision
 ```
 
 更粗的复用减少 selector 与 memory traffic，却会放大 stale selection、head imbalance 和 index error；更细粒度选择质量更灵活，却增加 irregular gather、专用 kernel 与 metadata。Dense/full+window 在短上下文、实现成熟度或低迁移风险优先时继续成立。
+
+上述路线通常把 token indices 当作由当前 query 或周期性 full layer 重新生成的选择结果。另一条并存分支把
+**地址本身**提升为跨层状态：每个 token 除 hidden features 外，还携带稀疏 edge indices 与可微 weights；referral
+把两跳候选路径组合后 coalesce，并以 hard top-s 保持固定访问预算，sparse attention 再把 `log(edge weight)` 与
+query-key score 一起归一化。这样后续层既传递内容，也能继续演化“下一层应到哪里读取”的地址；它改变的是
+Attention 的连接状态，不是替换 MLP。
+
+这种分支用可在 `O(n)` 历史中动态变化的常数级访问，换来 hard selection 后只有保留权重接收梯度、duplicate
+coalescing、irregular gather、额外参数和专用 kernel。Dense refresh 或周期性 dense layer 仍要承担全局纠偏与
+fallback；短文档、成熟 dense kernel 或必须精确回读时，现有 dense/full+window 方案更可靠。现有
+[稀疏 edge referral 与 attention](https://arxiv.org/html/2609.02881v1)只证明 596M 规模、单 seed、15.7B-token
+预训练中的可训练性；其文档平均长度远小于 4,096，generic PyTorch 原型反而慢数倍，因此不能据此声称已获得
+长上下文能力或端到端加速。
 
 Block selector 还必须尊重 position encoding。对 RoPE 后的 K 在 block 内直接求均值，可能让不同频率分量
 发生相消；因此“pool 后再打分”并非与位置表示正交的通用近似。一条受限分支是把低频与高频子空间分开：
@@ -464,6 +487,12 @@ reset 问题；压缩后的 memory 也不能提供 Attention 那样逐 token 的
 还必须与第 77 章的 Agent Memory 划清边界：这里的 owner 是模型 forward 过程中的内部自适应
 state，通常没有用户授权、来源追踪、跨会话持久化和删除语义；Agent Memory 则是平台管理的
 外部 durable state。二者只有 `Principle Reuse`，不能因为都叫 memory 就共享同一治理结论。
+
+### Memory Capacity 可以随序列渐进解锁
+
+固定 recurrent capacity 在短序列和实现简单性优先时可预测，却迫使模型从第一步就支付完整状态，或在长序列过早饱和。渐进解锁分支让可写 memory capacity 随序列阶段增长，以早期 bottleneck 换后期 retention；controller 必须声明何时扩容、旧状态如何迁移以及不同长度下的训练覆盖。它降低早期成本，却可能损伤早期细节、制造阶段不连续和专用 kernel 需求；短上下文或要求全程无损 recall 时静态容量仍更合理。`arXiv:2608.16844v1` 的 Proteus 结果只覆盖作者模型、长度和任务，不证明任意长上下文都应动态扩容。
+
+<!-- source-family:SF-2026-ARXIV-2608-16844 -->
 
 ### State continuity：历史可访问与计算连续性不是同一问题
 
@@ -669,6 +698,11 @@ Long Context 的第一阶段是扩大可见窗口，随后压力依次转移到�
 12. Gated DeltaNet 的 memory-transition gate 与 gated softmax attention 的 output gate 分别控制什么？
 13. Gated DeltaNet-2 为什么要把 erase 与 write 解耦，它没有解决什么？
 14. 为什么同一序列的 context switch 不能等同于 runtime 的请求隔离？
+
+### 长上下文能力是联合架构属性
+
+短序列上的训练损失不能单独证明模型已经具备长上下文能力。归一化、位置规则、GQA/MQA 的共享方式、预训练实际见过的长度以及部署窗口共同决定长序列中的数值稳定性和检索路径。早期架构筛选可以用短序列指标缩小范围，但进入长上下文发布前仍需在目标长度、任务与 KV 配置上回归；失败时应保留较短窗口或更稠密注意力作为共存路径。
+<!-- source-family: arxiv:2608.10296v1; semantic-body-binding: long-context-readiness-as-joint-architecture-property -->
 
 ## 小结
 

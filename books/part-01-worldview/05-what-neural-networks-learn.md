@@ -137,6 +137,8 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 它带来一个 trade-off：共享可以提高表示容量，却增加干扰和解释难度。单个神经元可能是 polysemantic 的，一个概念也可能分布在多个方向上。通过 probing、activation patching、feature visualization 或 sparse decomposition 可以获得证据，但这些方法观察的是模型行为的某个投影，不应轻易升级为完整因果解释。
 
+共享概念方向还不足以表达关系：同样包含“老师”和“摄影师”，谁跟随谁仍取决于施事与受事的绑定。分布式表示可以同时编码 filler 与 role，例如用各项张量积之和表达绑定；在角色向量独立等条件下可以解绑定，但这只是一种解释模型，不意味着网络实际执行了张量积程序。冻结表示的拟合、角色干预与局部替换可以检验这种结构是否可用，代价是人工角色方案与近似误差；表征可组合也不保证模型在新任务上行为可组合泛化。
+
 尤其要区分三种结论：
 
 ```text
@@ -242,6 +244,14 @@ revision 和 intervention 必须进入 evidence identity。Invariant Algorithmic
 
 这些方法也有成本。切片越细，样本数越少；评估越贴近真实业务，复现和标注越困难；内部解释越深入，越容易依赖特定模型版本。平台需要根据风险选择证据强度，而不是追求一套万能 dashboard。
 
+### 文本表示的上限来自输入本身，而不只来自模型容量
+
+更大数据、更强目标和更宽网络可以让模型逼近“从 utterance form 推断 meaning”的最佳规则，却不能恢复输入中没有携带的信息。若同一表面形式在不同外部情境中对应不同意图，那么任何只读取该文本的 featurizer 都面对不可约条件熵；扩参数只能更接近这个上限，不能消除上限。这里的非确定性不是模型“还没学会”，而是 observation contract 不足。
+
+系统因此要把缺失变量作为显式状态补回：对话与环境 Context、可追溯检索、用户确认、工具 observation，或在证据不足时 abstain。代价是隐私、延迟、检索错误和新的 trust boundary；当任务定义本来只依赖文本形式时，纯文本模型仍是更简单的正确基线。`arXiv:2608.28560v1` 给出信息论上界并在人工语言、中文零代词和颜色指称上作有限验证，实验模型不超过 14B；它不证明任意具体回答必然不可知，也不把外部 Context 自动变成真值。
+
+<!-- source-family:SF-2026-ARXIV-2608-28560 -->
+
 ## 几种过度解释
 
 第一，“模型学到了人类相同的概念”。相似行为可以由不同内部机制产生。除非有更强证据，否则应说模型形成了对任务有用的表示，而不是断言其概念与人类等同。
@@ -285,6 +295,16 @@ Generalization asks: where does that computation remain valid?
 9. correlation、decodability 和 causation 在可解释性中有何区别？
 10. 生产系统应怎样组合数据切片、受控扰动、跨分布评估和线上反馈？
 
+### 模型状态里“有知识”不等于当前路径会正确取用
+
+一次失败至少可能来自三层：参数或外部状态没有保存所需知识，路由/注意力没有把它送到当前计算路径，或生成后没有通过 repair 纠正。只用最终准确率无法区分这些原因，也会让“增加知识”“改善路由”和“加强验证”被误当成可互换方案。诊断应分别施加可控干预，确认信息是否存在、是否被访问以及错误是否可修复，再决定训练、结构还是运行时补救。
+<!-- source-family: arxiv:2608.12321v1; semantic-body-binding: knowledge-routing-repair-separation -->
+
+### 可读出不等于可拆卸或可控制
+
+探针能从某层表示中解码出属性，只说明该属性与当前表示相关；它不证明对应知识集中在一个可移除模块，也不证明干预该方向会按预期改变行为。训练样本的混合粒度会把多个因素共同压进参数，因此模块性必须靠删除、替换和跨分布干预验证。探针仍适合发现候选结构，但在因果证据缺失时，只能拥有诊断权，不能拥有模型编辑或发布决策权。
+<!-- source-family: arxiv:2608.10214v1; semantic-body-binding: probe-decodability-versus-modular-control -->
+
 ## 小结
 
 神经网络学到的不是可直接翻阅的规则表，而是分布在参数与激活中的计算结构。它把输入映射到为训练目标服务的表示空间，在其中放大有用差异、压缩部分无关变化，并让后续层更容易完成任务。
@@ -292,6 +312,8 @@ Generalization asks: where does that computation remain valid?
 这种能力既来自数据中的规律，也来自架构和优化的偏好。它可以表现为泛化，也可以夹带记忆、偏差和 shortcut；它能在训练分布上工作，也可能在 distribution shift 下迅速失效。理解这些边界，是把模型指标连接到 Evaluation、Observability 和数据反馈闭环的前提。
 
 ## Review notes
+
+- 2026-09-01 角色绑定的受限解释：<https://arxiv.org/html/2608.29034v1> §2–3/7 与 <https://arxiv.org/html/2608.29530v1> §3/6–9。人工 role、受控任务与有限替换不证明表示唯一；生成 token 等原 forward 仍保留，DISCOVER 的组合 holdout 不等于 target 预训练未见。正文不采神经/符号的哲学定论。
 
 - Train the Model, Not the Reader: Decodability Supervision for Verifiable Activation Explanations（arXiv:2607.20379v1；Status: Experimental）：https://arxiv.org/html/2607.20379v1
   - 证据边界：支持披露设置中 reconstruction-only scoring 的失败与 RECAP/probe 结果；不证明 neuron-level causal use、完整 semantic legibility、adaptive training 下的安全性，或高 AUC probe 必然产生 faithful language explanation。

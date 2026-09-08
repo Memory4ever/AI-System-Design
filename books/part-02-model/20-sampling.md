@@ -188,9 +188,8 @@ Stop string 可能跨 token 边界，需要 detokenization 或增量匹配；EOS
 
 ### Test-time Budget 是 Runtime Policy，不是免费能力
 
-Reasoning model 让停止条件进一步变成 compute policy：runtime 可以在达到上限时强制结束
-thinking，也可以在模型过早结束时抑制 delimiter、追加 continuation cue，再给它更多 token。
-这类 budget forcing 证明“生成长度”可以成为可控变量，却不证明更多 token 必然提高质量。
+Reasoning model 让停止条件进一步变成 compute policy：runtime 可以在达到上限时硬性停止生成，也可以注入结束标记，尝试把 thinking 通道切到 answer；后者不保证后续不再出现 reasoning-like 续写，阻止结束标记再次出现也不等于停止这种行为。反过来，模型过早结束时，可以抑制 delimiter、追加 continuation cue，再给它更多 token。
+这类 budget forcing 证明“生成长度”可以成为可控变量，却不证明更多 token 必然提高质量，也不能仅凭文本 phase 标记推断不可直接观察的内部推理状态。[受限行为与干预证据](https://arxiv.org/html/2609.03633v1)
 
 它把旧的自然 EOS 行为换成显式 sequential-compute budget：获得 capacity planning 与质量/成本
 曲线的可控性，同时引入 forced continuation 的分布偏移、重复或错误推理、tail latency、KV
@@ -237,6 +236,12 @@ prompt + decoding policy
 问系统能否从已有候选中识别它。`pass@N` 只能给出前者的上界，不能证明 self-verifier 能达到这个
 上界。扩大 `N` 可能提高覆盖率，也会带来更多近似答案、相关错误和选择成本；若 selector 的辨别力
 没有同步提高，更多样本甚至可能让最终选择更不稳定。
+
+这里还要区分三种对象：单条 trajectory 的概率、归一化 answer 的总概率质量，以及有限样本真正覆盖到多少种可用 reasoning path。对 token 分布做全局 power sharpening，可能提高正确答案的理论总质量，却同时压低若干中等概率但互补的正确路径；当最终答案依赖 self-consistency 聚合时，有限样本反而更容易集中到相关错误 mode。因而分布变尖不是单调的质量开关，deformation 参数应按任务与 selection rule 校准，并同时观察 answer accuracy 与 path support。
+
+这条分支以更复杂的 query-local 校准换取更好的 coverage/selection 配合；单样本、分布近单峰或没有轨迹聚合时，低温或普通 Top-P 仍更简单。`arXiv:2608.14420v1` 在作者受测模型与 reasoning benchmarks 上给出固定 exponent 的反例，最高下降 18.5 个百分点，但不证明所有 verifier、search pipeline 或 workload 都有相同失效。
+
+<!-- source-family:SF-2026-ARXIV-2608-14420 -->
 
 旧的聚合方法各自对应不同假设：majority vote 假设正确轨迹形成最大等价类；pointwise scoring
 假设每条候选可被独立校准；pairwise comparison 只要求局部判断两个候选的相对优劣。Pairwise
@@ -319,6 +324,12 @@ Repetition、frequency、presence penalties 会根据已生成 tokens 修改 log
 它们都发生在 token selection 层，却解决不同问题：penalty 是启发式偏好，grammar mask 是硬候选约束。它们可能改善格式或减少重复，也可能屏蔽正确 token。
 
 本章不展开具体 API，因为参数定义和顺序依赖实现。稳定原则是：任何 logits 变换都应进入 Evaluation 和可复现配置。
+
+### Stateful Exact Conditioning 是有限状态约束的条件分支
+
+Rejection sampling 或生成后 repair 在约束稀疏、状态难形式化时最通用，却可能反复产生无效前缀。若约束能编译为冻结、可判定的有限状态 validator，可以把它与模型状态做 product construction，并通过精确条件化只采样仍可接受的路径。这样获得 soundness，却会让多个约束的状态空间乘法增长；约束过大、动态或无法完备建模时，应回退 grammar mask、rejection 或生成后验证，不能把局部 validator 当作开放语义正确性证明。
+
+<!-- source-family: arxiv:2608.08282v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: finite-state-exact-conditioning-product-cost -->
 
 ### 从固定 Logit 变换到 Sensor-gated Safety Decoding
 
@@ -413,6 +424,16 @@ Decoder hidden state
 仅在输出后查找相同片段，无法阻止高风险 LM 在生成过程中已经进入逐字复现路径。Anchored Decoding 保留原模型的 proposal，同时引入只用宽松许可数据训练的 reference distribution，把用户选择的 sequence-level information budget 分配到每个 token step，只提交满足局部距离约束的候选。跨 tokenizer 组合时，byte-level fusion 也必须成为 sampler identity 的一部分。
 
 这条路径降低可测的 verbatim-copying 风险，代价是双模型执行、词表对齐、utility 损失与 reference model 本身的数据边界。它不是法律合规证书，也不覆盖意译、情节或外部检索泄漏；当 reference 不可信、budget 无法校准或 exact sampling 是必要语义时，回退固定 decoding、输出检查与人工版权复核。<!-- source-family:SF-2026-ARXIV-2602-07120 -->
+
+### Prefix Feasibility 不等于能在 Token Budget 内完成
+
+一个前缀仍可扩展为合法输出，只说明没有进入死路；它可能距离 accepting state 太远，最终在 token budget 用尽时截断。带栈约束的解码可以同时维护 PDA reachability 与 distance-to-acceptance，在接近预算时优先选择可完成路径。这样提高结构完成的 soundness，却增加预处理、beam 状态与运行开销，也不能表达所有语义约束；自由文本仍需后置验证。
+<!-- source-family: arxiv:2608.28229v1; semantic-body-binding: constrained-decoding-distance-to-acceptance -->
+
+### 大型有限输出集合适合专用 Trie Automaton
+
+当合法输出是一个很大的有限集合时，通用 grammar 每步解析会重复计算，而 trie 可以把共享前缀编成紧凑 automaton，只允许仍可到达某个合法叶子的 token。它以预处理时间和内存换取稳定 decode；集合频繁变化、语义约束开放或 tokenizer 不一致时，专用结构的维护成本会超过收益，应回退通用 constrained decoding 或后置验证。
+<!-- source-family: arxiv:2608.12574v1; semantic-body-binding: finite-set-trie-decoding-path -->
 
 ## 小结
 
