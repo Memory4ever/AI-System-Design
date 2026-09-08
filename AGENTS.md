@@ -97,3 +97,13 @@ Books Decision；不等待无关候选，但整体报告不能提前 Complete。
 除非用户明确授权，不 stage、commit、push，不执行破坏性 Git 操作。
 
 目标不是让内容数量最大化，而是建立可验证、可维护、连贯的 AI System 心智模型。
+
+
+## 本地历史 Daily 协调（2026-09-08）
+
+用户已启用信号触发的历史 Daily 队列，自动从 2026 年 1 月向后，手动从 7 月向前。
+执行任何研究任务前，如以下本地文件存在，读取其中的日期占用、共享写入锁与完成登记规则并执行：
+`/Users/apple/Documents/Codex/2026-09-08/chatgpt/outputs/codex-reset-watch/COORDINATION.md`。
+日期/月占用防止历史任务重复；Books、跨日索引和 Learning State 写入使用共享占用，取得后重新读取再写。
+实际占用工具安装在 `/Users/apple/Library/Application Support/CodexResetHistory/watch.py`；以协调说明中的命令为准。
+这些规则只协调执行，不复制或替代研究合同；不将信号队列变成每日 9 点任务的历史 cursor。
